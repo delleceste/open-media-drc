@@ -308,12 +308,6 @@ fi
 
 process_name="brutefir"
 
-# Wrap mpc with a timeout so a slow or stuck MPD cannot block the script
-# indefinitely.  All mpc calls go through _mpc; || true is intentional —
-# if MPD is unreachable the audio chain has already changed and we still
-# want the script to finish cleanly.
-_mpc() { timeout 5 mpc "$@" 2>/dev/null || true; }
-
 stop_brutefir() {
   if pgrep -x "$process_name" > /dev/null 2>&1; then
     echo "stopping brutefir"
@@ -327,14 +321,7 @@ stop_brutefir() {
     while pgrep -x "$process_name" > /dev/null 2>&1; do
       if [ "$i" -ge 25 ]; then
         killall -KILL "$process_name" 2>/dev/null || true
-        # Poll up to 2 s more: SIGKILL delivery and ALSA device release are
-        # asynchronous — MPD must not try to open the device while the kernel
-        # is still reaping the process.
-        local j=0
-        while pgrep -x "$process_name" > /dev/null 2>&1 && [ "$j" -lt 10 ]; do
-          sleep 0.2
-          j=$((j + 1))
-        done
+        sleep 0.5
         break
       fi
       sleep 0.2
@@ -392,7 +379,7 @@ if [ "$mode" = "off" ]; then
   # NB: mpc has no "disable all" keyword (it errors "all: no such output");
   # "enable only <name>" is the correct idiom: it enables the named output
   # and disables all others atomically.
-  _mpc enable only "OKTO-DAC"
+  mpc enable only "OKTO-DAC"
   echo "DRC stopped"
   exit 0
 fi
@@ -411,9 +398,9 @@ fi
 # loopback — then re-enable the right one once the chain is confirmed up.
 # Disabling first also forces the later "enable only" to genuinely reopen the
 # output instead of being a no-op on an already-enabled (but stale) output.
-_mpc disable "OKTO-DAC"
-_mpc disable "DRC-native"
-_mpc disable "DRC-resamp"
+mpc disable "OKTO-DAC"   2>/dev/null || true
+mpc disable "DRC-native" 2>/dev/null || true
+mpc disable "DRC-resamp" 2>/dev/null || true
 # "mpc disable" returns before MPD's player thread has actually closed the
 # device; give it a moment so MPD releases /dev/dsp1 (and the DAC) before
 # we tear down virtual_oss underneath it.  Yanking the backend out from under
@@ -467,7 +454,7 @@ if ! start_brutefir; then
   if ! $IS_LINUX; then
     stop_virtual_oss
   fi
-  _mpc enable only "OKTO-DAC"
+  mpc enable only "OKTO-DAC" 2>/dev/null || true
   # last_arg is left unchanged on purpose: it records the *desired* state, so the
   # next trigger (devd ATTACH / drc.sh restore) retries this config rather than
   # silently staying off after a transient failure.
@@ -482,7 +469,7 @@ else
 fi
 # Enable ONLY the selected DRC output (disables the direct + the other DRC
 # output). "mpc disable all" is not valid in mpc — use "enable only <name>".
-_mpc enable only "$mpd_output"
+mpc enable only "$mpd_output"
 
 # ── record state ─────────────────────────────────────────────────────────────
 state_args="${rate}${variant:+ ${variant}}"
