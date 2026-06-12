@@ -271,7 +271,22 @@ if [ -z "${DRC_LOCKED:-}" ]; then
   if command -v lockf >/dev/null 2>&1; then
     exec lockf -s -t 30 "$LOCK_FILE" "$0" "$@"
   elif command -v flock >/dev/null 2>&1; then
-    exec flock -w 30 "$LOCK_FILE" "$0" "$@"
+    # Linux: acquire the lock on an explicit fd we control (9) instead of the
+    # command form `flock FILE "$0" "$@"`.  The command form leaves the lock fd
+    # open *without* close-on-exec, so the brutefir daemon spawned later
+    # inherits it and keeps the advisory lock for its entire lifetime.  The next
+    # mutating run then deadlocks — most visibly `drc.sh off`: it must hold the
+    # lock to run stop_brutefir, but the lock is not released until brutefir
+    # (the very process off needs to kill) exits, so flock waits the full 30 s
+    # and the run silently does nothing.  Holding the lock on a known fd lets us
+    # close it in the child when launching brutefir (see start_brutefir: 9>&-).
+    # FreeBSD's lockf above does not leak the fd into the daemon, so it keeps
+    # the plain re-exec form.
+    exec 9>"$LOCK_FILE"
+    if ! flock -w 30 9; then
+      echo "drc.sh: another run holds $LOCK_FILE; aborting" >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -336,7 +351,10 @@ start_brutefir() {
   local attempt i
   for attempt in 1 2 3; do
     echo "starting brutefir (attempt $attempt): $conf_file"
-    brutefir "$conf_file" -daemon > /tmp/brutefir.out 2>&1 || true
+    # 9>&- closes the inherited flock lock fd (Linux) in the daemon so it does
+    # not hold the lock for its whole lifetime and deadlock the next run; a
+    # no-op on FreeBSD, where fd 9 is not the lock.  See the lock block above.
+    brutefir "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
     # brutefir -daemon forks and the parent returns 0 immediately, before
     # the daemon has opened the audio devices.  Poll until the daemon shows
     # up, then confirm it *stays* up — it exits a moment later if it cannot
