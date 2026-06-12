@@ -416,9 +416,11 @@ fi
 # loopback — then re-enable the right one once the chain is confirmed up.
 # Disabling first also forces the later "enable only" to genuinely reopen the
 # output instead of being a no-op on an already-enabled (but stale) output.
-mpc disable "OKTO-DAC"   2>/dev/null || true
-mpc disable "DRC-native" 2>/dev/null || true
-mpc disable "DRC-resamp" 2>/dev/null || true
+# stdout silenced: each "mpc disable" echoes the full output list, which is
+# just noise here — the post-start "enable only" below prints the final state.
+mpc disable "OKTO-DAC"   >/dev/null 2>&1 || true
+mpc disable "DRC-native" >/dev/null 2>&1 || true
+mpc disable "DRC-resamp" >/dev/null 2>&1 || true
 # "mpc disable" returns before MPD's player thread has actually closed the
 # device; give it a moment so MPD releases /dev/dsp1 (and the DAC) before
 # we tear down virtual_oss underneath it.  Yanking the backend out from under
