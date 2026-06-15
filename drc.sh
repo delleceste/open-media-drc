@@ -347,21 +347,27 @@ if [ "$mode" != "off" ] && [ "$prev_rate" != "$actual_rate" ]; then
   prime=1
 fi
 
-process_name="brutefir"
+# brutefir renames its forked worker processes via prctl(PR_SET_NAME) on Linux
+# (compat.c: set_thread_name -> "input"/"output"/...), so their `comm` is no
+# longer "brutefir" and `pgrep -x` / `killall` by name match nothing.  On
+# FreeBSD set_thread_name is a no-op, which is why name matching worked there.
+# Match the full command line instead so detection and teardown work on both.
+bf_pattern='(^|/)brutefir .*-daemon'
+bf_running() { pgrep -f "$bf_pattern" > /dev/null 2>&1; }
 
 stop_brutefir() {
-  if pgrep -x "$process_name" > /dev/null 2>&1; then
+  if bf_running; then
     echo "stopping brutefir"
-    killall "$process_name" 2>/dev/null || true
+    pkill -f "$bf_pattern" 2>/dev/null || true
     # Wait for the process to actually exit so it releases the DAC
     # (/dev/dsp0) and the loopback before we restart.  A bare "sleep 1"
     # is not enough when the (USB) DAC is slow to release — that race is
     # what made the new brutefir silently fail to open the device on the
     # first run.  Escalate to SIGKILL after ~5 s.
     local i=0
-    while pgrep -x "$process_name" > /dev/null 2>&1; do
+    while bf_running; do
       if [ "$i" -ge 25 ]; then
-        killall -KILL "$process_name" 2>/dev/null || true
+        pkill -KILL -f "$bf_pattern" 2>/dev/null || true
         sleep 0.5
         break
       fi
@@ -388,21 +394,21 @@ start_brutefir() {
     i=0
     while [ "$i" -lt 10 ]; do
       sleep 0.3
-      if pgrep -x "$process_name" > /dev/null 2>&1; then
+      if bf_running; then
         break
       fi
       i=$((i + 1))
     done
-    if pgrep -x "$process_name" > /dev/null 2>&1; then
+    if bf_running; then
       sleep 0.5
-      if pgrep -x "$process_name" > /dev/null 2>&1; then
+      if bf_running; then
         echo "brutefir running"
         return 0
       fi
     fi
     echo "brutefir did not stay up; last output:"
     tail -n 5 /tmp/brutefir.out 2>/dev/null | sed 's/^/  /' || true
-    killall "$process_name" 2>/dev/null || true
+    pkill -f "$bf_pattern" 2>/dev/null || true
     sleep 1
   done
   return 1
