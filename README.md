@@ -186,7 +186,8 @@ $EDITOR config.env        # set AUDIO_USER, AUDIO_HOME, PREFIX, MUSIC_DIR, QOBUZ
 `install.sh` generates the live configs/service files (MPD, upmpdcli, BruteFIR,
 rc.d / systemd units) from the templates and prints the OS-specific commands to
 link them into place. omdrc-ctrl builds with cmake (`cmake -B build && cmake
---build build`) — see `omdrc-ctrl/README.md`.
+--build build` from `omdrc-ctrl/`) and renders its own `commands.conf` with
+`OMDRC_REPO_DIR` defaulting to this checkout — see `omdrc-ctrl/README.md`.
 
 # configs/ directory
 
