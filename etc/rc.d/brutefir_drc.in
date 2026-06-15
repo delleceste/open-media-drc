@@ -51,7 +51,9 @@ brutefir_drc_start()
 
 brutefir_drc_stop()
 {
-	_drc_as_user "${brutefir_drc_drcsh} off"
+	# `stop` (not `off`): a transient teardown at shutdown / USB detach that does
+	# not record the off state, so a reboot of a running system is restored.
+	_drc_as_user "${brutefir_drc_drcsh} stop"
 }
 
 brutefir_drc_status()

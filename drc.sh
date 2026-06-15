@@ -135,7 +135,7 @@ stop_virtual_oss() {
 }
 
 usage() {
-  echo "Usage: $0 <rate>|resamp|restore|off|status [variant]"
+  echo "Usage: $0 <rate>|resamp|restore|off|stop|status [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
   echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
@@ -143,7 +143,11 @@ usage() {
   echo "  resamp   : MPD resamples everything to 192000 Hz"
   echo "  restore  : re-apply the last saved state (reads last_arg file);"
   echo "             falls back to 192000 if no previous active state exists"
-  echo "  off      : stop brutefir and DRC; enable direct DAC output"
+  echo "  off      : stop brutefir and DRC; enable direct DAC output; record"
+  echo "             the off state so a reboot stays off"
+  echo "  stop     : like off but transient — does NOT record the off state."
+  echo "             Used by the service stop-paths (shutdown, USB unplug) so a"
+  echo "             reboot of a running system is restored, not left off"
   echo "  status   : show DRC state, virtual_oss rate, brutefir, and MPD output"
   echo "             (also the default when no argument is given)"
   echo "  variant  : optional filter variant, e.g. +2dB (default: none)"
@@ -325,8 +329,12 @@ if [ -z "${DRC_LOCKED:-}" ]; then
 fi
 
 # ── argument parsing ──────────────────────────────────────────────────────────
-if [ $# -eq 1 ] && [ "$1" = "off" ]; then
-  mode="off"
+if [ $# -eq 1 ] && { [ "$1" = "off" ] || [ "$1" = "stop" ]; }; then
+  # off  = user intent to disable DRC — records the off state below.
+  # stop = transient teardown used by the service stop-paths (shutdown, USB
+  #        unplug); identical teardown but does NOT touch the saved state, so a
+  #        clean reboot of a running system restores it instead of staying off.
+  mode="$1"
   rate=""
   variant=""
 elif [ $# -eq 1 ] || [ $# -eq 2 ]; then
@@ -354,7 +362,7 @@ fi
 prev_rate=""
 [ -f "$STATE_FILE" ] && prev_rate=$(state_to_rate "$(cat "$STATE_FILE")")
 prime=""
-if [ "$mode" != "off" ] && [ "$prev_rate" != "$actual_rate" ]; then
+if [ "$mode" != "off" ] && [ "$mode" != "stop" ] && [ "$prev_rate" != "$actual_rate" ]; then
   prime=1
 fi
 
@@ -428,8 +436,8 @@ start_brutefir() {
 # ── stop brutefir ────────────────────────────────────────────────────────────
 stop_brutefir
 
-# ── off: re-enable direct DAC, stop virtual_oss ──────────────────────────────
-if [ "$mode" = "off" ]; then
+# ── off / stop: re-enable direct DAC, stop virtual_oss ───────────────────────
+if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # Tear down the DRC chain first so /dev/dsp0 is free before the direct
   # output opens it (the DAC is single-open: vchans off / bit-perfect).
   if ! $IS_LINUX; then
@@ -441,10 +449,14 @@ if [ "$mode" = "off" ]; then
   # "enable only <name>" is the correct idiom: it enables the named output
   # and disables all others atomically.
   mpc enable only "OKTO-DAC"
-  # Record that DRC is off so a reboot/restore stays off — but leave STATE_FILE
-  # (the remembered sample rate) untouched, so turning DRC back on restores it.
-  echo "off" > "$POWER_FILE"
-  chmod 644 "$POWER_FILE" 2>/dev/null || true
+  # Only an explicit `off` records the off state (so a reboot/restore stays
+  # off).  `stop` is a transient teardown (service shutdown / USB unplug) and
+  # leaves last_power untouched, so a running system that simply reboots is
+  # restored rather than left off.  STATE_FILE (the rate) is never touched here.
+  if [ "$mode" = "off" ]; then
+    echo "off" > "$POWER_FILE"
+    chmod 644 "$POWER_FILE" 2>/dev/null || true
+  fi
   echo "DRC stopped"
   exit 0
 fi

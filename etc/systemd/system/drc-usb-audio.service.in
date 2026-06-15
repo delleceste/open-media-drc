@@ -15,4 +15,4 @@ LimitRTPRIO=99
 LimitMEMLOCK=infinity
 ExecStartPre=/bin/sleep 1
 ExecStart=@REPO_DIR@/drc.sh restore
-ExecStop=@REPO_DIR@/drc.sh off
+ExecStop=@REPO_DIR@/drc.sh stop
