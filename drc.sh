@@ -15,6 +15,10 @@ IS_LINUX=false
 # from any checkout location and for any user, with no hardcoded $HOME or path.
 base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_FILE="$base_dir/last_arg"
+# Power state (on/off) kept separately from the rate: `off` records "off" here
+# but leaves STATE_FILE (the remembered rate) intact, so `restore` stays off
+# across a reboot yet can bring DRC back at the last rate when turned on.
+POWER_FILE="$base_dir/last_power"
 
 # Skip sudo when already root (service files run as root); avoids the sudo
 # parent+monitor process tree that results in multiple processes in ps.
@@ -163,6 +167,13 @@ usage() {
 
 # ── restore: re-apply the last saved state ───────────────────────────────────
 if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
+  # Honour the on/off state recorded at shutdown.  If DRC was off, stay off;
+  # otherwise fall through and restore the last sample rate.  Kept separate from
+  # STATE_FILE so turning off never erases the remembered rate.
+  if [ -f "$POWER_FILE" ] && [ "$(cat "$POWER_FILE")" = "off" ]; then
+    echo "Last power state was off — leaving DRC disabled (direct DAC)"
+    exec "$0" off
+  fi
   state=""
   [ -f "$STATE_FILE" ] && state=$(cat "$STATE_FILE")
   args=$(state_to_args "$state")
@@ -430,6 +441,10 @@ if [ "$mode" = "off" ]; then
   # "enable only <name>" is the correct idiom: it enables the named output
   # and disables all others atomically.
   mpc enable only "OKTO-DAC"
+  # Record that DRC is off so a reboot/restore stays off — but leave STATE_FILE
+  # (the remembered sample rate) untouched, so turning DRC back on restores it.
+  echo "off" > "$POWER_FILE"
+  chmod 644 "$POWER_FILE" 2>/dev/null || true
   echo "DRC stopped"
   exit 0
 fi
@@ -527,5 +542,9 @@ mpc enable only "$mpd_output"
 state_args="${rate}${variant:+ ${variant}}"
 echo "$state_args" > "$STATE_FILE"
 chmod 644 "$STATE_FILE" 2>/dev/null || true
+# DRC is now running — record the on state alongside the rate so `restore`
+# brings it back (the off path above writes "off" here instead).
+echo "on" > "$POWER_FILE"
+chmod 644 "$POWER_FILE" 2>/dev/null || true
 
 echo "DRC active: $(state_label "$state_args") (MPD output: ${mpd_output})"

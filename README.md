@@ -189,6 +189,24 @@ link them into place. omdrc-ctrl builds with cmake (`cmake -B build && cmake
 --build build` from `omdrc-ctrl/`) and renders its own `commands.conf` with
 `OMDRC_REPO_DIR` defaulting to this checkout — see `omdrc-ctrl/README.md`.
 
+**5. BruteFIR defaults** — BruteFIR reads its general/I/O defaults (float precision,
+partition size, and the ALSA/OSS input+output devices) from
+`~/.config/BruteFIR/brutefir_defaults.conf`. The per-rate configs in `configs/`
+deliberately leave their `input`/`output` blocks empty and inherit the devices from
+here, so this file **must** be deployed:
+
+```sh
+mkdir -p ~/.config/BruteFIR
+cp brutefir_defaults.linux.conf ~/.config/BruteFIR/brutefir_defaults.conf   # Linux / ALSA
+# FreeBSD / OSS: cp brutefir_defaults.conf ~/.config/BruteFIR/brutefir_defaults.conf
+```
+
+> ⚠️ If this file is missing, BruteFIR (≥ 1.1) silently auto-generates a fallback
+> `~/.brutefir_defaults` that uses a `file` I/O module with no path. Every start then
+> fails with *"Parse error: path not set … module 'file'"*, and `drc.sh` rolls back to
+> direct DAC output — so DRC never comes up at boot. Deploying the file above (and
+> leaving the auto-generated `~/.brutefir_defaults`, if any, deleted) prevents this.
+
 # configs/ directory
 
 Per-geometry, per-rate brutefir configuration files live under `configs/<geometry>/`.
@@ -276,16 +294,27 @@ Signature: `drc.sh <rate>|resamp|restore|off [variant]`
 - `<rate>` — start brutefir at the given sample rate (44100, 48000, 88200, 96000, 192000);
   restarts virtual_oss at the same rate; switches MPD to `DRC-native`
 - `resamp` — restarts everything at 192000 Hz; switches MPD to `DRC-resamp` (MPD resamples)
-- `restore` — reads `last_arg` and re-applies the last saved state; falls back to 192000 if
-  no active state was saved; used by all service files on start
-- `off` — stops brutefir and virtual_oss; switches MPD back to output 1
+- `restore` — re-applies the state the system was in at shutdown; used by all service
+  files on start. It honours the two state files below: if DRC was **off** it stays
+  off, otherwise it restores the last sample rate (falling back to 192000 when no rate
+  was ever saved)
+- `off` — stops brutefir and virtual_oss; switches MPD back to output 1; records the
+  off state (but keeps the remembered rate)
 - `variant` — optional second argument, e.g. `+2dB`, selects an alternate filter set
 
-State is saved to `last_arg` on each successful invocation so `restore` can recover it.
-The saved state contains only the active mode and optional variant, for example
-`192000`, `resamp`, or `192000 +2dB`; geometry is not part of the active config
-state. Geometry (speaker position) is hardcoded at the top of the script
-(`GEOMETRY="120.blue"`).
+State is split across two files in the repo root so the on/off state and the
+remembered rate stay independent:
+
+- `last_arg` — the last *active rate* and optional variant (e.g. `192000`, `resamp`,
+  `192000 +2dB`). Written on each successful rate/`resamp` run and **never erased by
+  `off`**, so turning DRC back on restores the rate you last used. Geometry is not part
+  of it — it is hardcoded at the top of the script (`GEOMETRY="120.blue"`).
+- `last_power` — `on` or `off`. A rate/`resamp` run writes `on`; `off` writes `off`.
+  This is what makes `off` survive a reboot: `restore` reads `last_power` first and
+  stays off when it is `off`.
+
+So `drc.sh off` followed by a reboot leaves DRC off (direct DAC); a reboot while DRC is
+running brings it back at the same rate. Both files are runtime state (git-ignored).
 
 ## MPD native DRC output format
 
@@ -536,9 +565,11 @@ USB device detached               → service drc_usb_audio onestop
 
 ## What `drc.sh restore` does
 
-`restore` replays the **desired** state recorded in `last_arg` (e.g. `resamp`,
-`192000`, `192000 +2dB`). It re-execs `drc.sh` with those arguments, and that run
-rebuilds the chain:
+`restore` brings the system back to the state it was in at shutdown. It first reads
+`last_power`: if that is `off`, it re-execs `drc.sh off` and stops there — DRC stays
+disabled across the reboot. Otherwise it replays the **desired** state recorded in
+`last_arg` (e.g. `resamp`, `192000`, `192000 +2dB`). It re-execs `drc.sh` with those
+arguments, and that run rebuilds the chain:
 
 1. Stop any running BruteFIR and wait for it to release the DAC.
 2. Disable all MPD outputs so the DAC and the loopback are free.

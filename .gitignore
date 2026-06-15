@@ -14,3 +14,4 @@ configs/*/*.conf
 
 # Runtime state written by drc.sh
 /last_arg
+/last_power
