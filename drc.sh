@@ -5,7 +5,7 @@ set -euo pipefail
 GEOMETRY="120.blue"   # speaker geometry / filter set to use
 
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
-VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp1 -a 0 -l dsp.loop"
+VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -a 0 -l dsp.loop"
 
 IS_LINUX=false
 [ "$(uname)" = "Linux" ] && IS_LINUX=true
@@ -393,7 +393,7 @@ fi
 
 # ── free the audio devices before rebuilding the chain ───────────────────────
 # brutefir opens /dev/dsp0 (the single-open DAC); MPD's direct output holds it
-# while playing, and the DRC outputs hold /dev/dsp1.  Disable all MPD
+# while playing, and the DRC outputs hold /dev/dsp.play.  Disable all MPD
 # outputs now so brutefir is guaranteed a free DAC and virtual_oss a free
 # loopback — then re-enable the right one once the chain is confirmed up.
 # Disabling first also forces the later "enable only" to genuinely reopen the
@@ -402,7 +402,7 @@ mpc disable "OKTO-DAC"   2>/dev/null || true
 mpc disable "DRC-native" 2>/dev/null || true
 mpc disable "DRC-resamp" 2>/dev/null || true
 # "mpc disable" returns before MPD's player thread has actually closed the
-# device; give it a moment so MPD releases /dev/dsp1 (and the DAC) before
+# device; give it a moment so MPD releases /dev/dsp.play (and the DAC) before
 # we tear down virtual_oss underneath it.  Yanking the backend out from under
 # an open MPD output is what produced "exception: Failed to open audio output"
 # and forced a second run.
