@@ -30,6 +30,7 @@ fi
 : "${PREFIX:=/usr/local}"
 : "${MUSIC_DIR:?set MUSIC_DIR in config.env}"
 : "${QOBUZ_USER:=}"
+: "${FRIENDLY_NAME:=$(hostname)}"
 
 render() {
 	tpl=$1
@@ -40,6 +41,7 @@ render() {
 	    -e "s|@PREFIX@|${PREFIX}|g" \
 	    -e "s|@MUSIC_DIR@|${MUSIC_DIR}|g" \
 	    -e "s|@QOBUZ_USER@|${QOBUZ_USER}|g" \
+	    -e "s|@FRIENDLY_NAME@|${FRIENDLY_NAME}|g" \
 	    "$tpl" > "$out"
 	# Preserve the executable bit (rc.d scripts) — sed output does not.
 	[ -x "$tpl" ] && chmod +x "$out"
@@ -74,19 +76,32 @@ if [ "$(uname)" = "FreeBSD" ]; then
             drc_usb_audio_enable=YES
             # Enable ONLY drc_usb_audio for DRC: it probes for the DAC at boot
             # and is driven by devd on hotplug. Do NOT enable brutefir_drc.
+    brutefir: mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
+              cp "${REPO_DIR}/brutefir_defaults.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
+              # Required: BruteFIR inherits its I/O devices from this file. If it
+              # is missing, BruteFIR auto-generates a broken ~/.brutefir_defaults
+              # (a "file" I/O module with no path) and fails to start.
 EOF
 else
 	cat <<EOF
   Linux:
-    modules-load.d : sudo cp "${REPO_DIR}/etc/modules-load.d/snd-aloop.conf" /etc/modules-load.d/
+    modules-load.d : sudo ln -sf "${REPO_DIR}/etc/modules-load.d/snd-aloop.conf" /etc/modules-load.d/
                      sudo modprobe snd-aloop
-    systemd system : sudo cp "${REPO_DIR}"/etc/systemd/system/*.service /etc/systemd/system/
-                     sudo systemctl daemon-reload   # then: systemctl enable --now brutefir-drc.service
-    systemd --user : mkdir -p ~/.config/systemd/user
-                     cp "${REPO_DIR}"/etc/systemd/user/*.service ~/.config/systemd/user/
-                     systemctl --user daemon-reload  # then: systemctl --user enable --now upmpdcli.service
-                     loginctl enable-linger ${AUDIO_USER}
-    udev (USB DAC) : sudo cp "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
+    systemd system : for s in drc-usb-audio upmpdcli; do
+                       sudo ln -sf "${REPO_DIR}/etc/systemd/system/\$s.service" /etc/systemd/system/
+                     done
+                     sudo mkdir -p /etc/systemd/system/mpd.service.d
+                     sudo ln -sf "${REPO_DIR}/etc/systemd/system/mpd.service.d/open-media-drc.conf" /etc/systemd/system/mpd.service.d/
+                     sudo systemctl disable --now mpd.socket  # not used: we bypass socket activation
+                     sudo systemctl daemon-reload
+                     sudo systemctl enable --now upmpdcli.service
+                     sudo systemctl restart mpd.service
+    udev (USB DAC) : sudo ln -sf "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
                      sudo udevadm control --reload-rules
+    brutefir       : mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
+                     cp "${REPO_DIR}/brutefir_defaults.linux.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
+                     # Required: BruteFIR inherits its I/O devices from this file. If
+                     # it is missing, BruteFIR auto-generates a broken
+                     # ~/.brutefir_defaults ("file" I/O module) and fails to start.
 EOF
 fi

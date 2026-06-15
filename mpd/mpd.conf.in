@@ -70,7 +70,7 @@ audio_output {
 audio_output {
         type "alsa"
         name "DRC-native"
-        device "hw:1,0"
+        device "hw:Loopback,0,0"
         format "*:*:*"
         enabled "no"
         mixer_type        "none"
@@ -82,7 +82,7 @@ audio_output {
 audio_output {
         type "alsa"
         name "DRC-resamp"
-        device "hw:1,0"
+        device "hw:Loopback,0,0"
         format "192000:24:2"
         enabled "no"
         mixer_type        "none"

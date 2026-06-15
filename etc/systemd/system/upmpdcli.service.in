@@ -1,0 +1,19 @@
+[Unit]
+Description=upmpdcli UPnP/OpenHome MPD renderer
+After=network-online.target sound.target mpd.service
+Wants=network-online.target mpd.service
+
+# Template — generated to upmpdcli.service by install.sh from config.env.
+# System service running as @AUDIO_USER@, mirroring the FreeBSD rc.d model.
+# Deploy to /etc/systemd/system/ alongside mpd.service and drc-usb-audio.service.
+
+[Service]
+Type=simple
+User=@AUDIO_USER@
+Environment=HOME=@AUDIO_HOME@
+ExecStart=@PREFIX@/bin/upmpdcli -c @REPO_DIR@/upmpdcli/upmpdcli.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

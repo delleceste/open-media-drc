@@ -1,6 +1,7 @@
 [Unit]
 Description=DRC audio routing when USB DAC is connected
-After=sound.target
+After=sound.target mpd.service
+Wants=mpd.service
 
 # Template — generated to drc-usb-audio.service by install.sh from config.env.
 

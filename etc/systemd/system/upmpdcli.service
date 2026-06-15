@@ -1,0 +1,19 @@
+[Unit]
+Description=upmpdcli UPnP/OpenHome MPD renderer
+After=network-online.target sound.target mpd.service
+Wants=network-online.target mpd.service
+
+# Template — generated to upmpdcli.service by install.sh from config.env.
+# System service running as giacomo, mirroring the FreeBSD rc.d model.
+# Deploy to /etc/systemd/system/ alongside mpd.service and drc-usb-audio.service.
+
+[Service]
+Type=simple
+User=giacomo
+Environment=HOME=/home/giacomo
+ExecStart=/usr/local/bin/upmpdcli -c /home/giacomo/open-media-drc/upmpdcli/upmpdcli.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

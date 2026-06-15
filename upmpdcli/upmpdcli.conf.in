@@ -6,8 +6,8 @@
 #
 # Template — generated to upmpdcli.conf by ../install.sh from ../config.env.
 # Do not edit the generated file; edit this .in or config.env.
-# OS-independent: paths use @PREFIX@/@AUDIO_HOME@ so the same template works on
-# Linux and FreeBSD (source build under @PREFIX@, default /usr/local).
+# OS-independent: paths use @PREFIX@ / @AUDIO_HOME@ so the same template works
+# on Linux and FreeBSD (source build under @PREFIX@, default /usr/local).
 
 # Upmpdcli configuration
 
@@ -35,7 +35,7 @@ pkgdatadir=@PREFIX@/share/upmpdcli
 # Media Renderer parameters
 
 # "Friendly Name" for the UPnP Media Renderer.
-friendlyname = bee
+friendlyname = @FRIENDLY_NAME@
 # Enable UPnP AV services (0/1).
 upnpav = 0
 # Enable OpenHome services (0/1).
@@ -99,7 +99,7 @@ mpdport = 6600
 # The name of the room where the Product is located.
 #ohproductroom = Main Room
 # Path to an external file with radio definitions.
-radiolist = @PREFIX@/share/upmpdcli/radio_scripts/radiolist.conf
+radiolist = @REPO_DIR@/upmpdcli/radio_scripts/radiolist.conf
 # Manufacturer name.
 #ohmanufacturername = UpMPDCli heavy industries Co.
 # Manufacturer information.

@@ -15,6 +15,10 @@ IS_LINUX=false
 # from any checkout location and for any user, with no hardcoded $HOME or path.
 base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_FILE="$base_dir/last_arg"
+# Power state (on/off) kept separately from the rate: `off` records "off" here
+# but leaves STATE_FILE (the remembered rate) intact, so `restore` stays off
+# across a reboot yet can bring DRC back at the last rate when turned on.
+POWER_FILE="$base_dir/last_power"
 
 # Skip sudo when already root (service files run as root); avoids the sudo
 # parent+monitor process tree that results in multiple processes in ps.
@@ -50,12 +54,28 @@ state_to_args() {
 
 format_rate() {
   case "$1" in
-    44100)  printf '44.1 kHz\n' ;;
-    48000)  printf '48 kHz\n' ;;
-    88200)  printf '88.2 kHz\n' ;;
-    96000)  printf '96 kHz\n' ;;
-    192000) printf '192 kHz\n' ;;
+    44100)  printf '44.1k\n' ;;
+    48000)  printf '48k\n' ;;
+    88200)  printf '88.2k\n' ;;
+    96000)  printf '96k\n' ;;
+    192000) printf '192k\n' ;;
     *)      printf '%s Hz\n' "$1" ;;
+  esac
+}
+
+# Accept shorthand sample-rate inputs and map them to the canonical Hz value:
+# bare kHz (96, 88, 44.1) and an optional "k" suffix (96k, 44.1k, 192k).
+# 88 / 88.2 both mean 88200 (88.2 kHz).  Unrecognised input is passed
+# through unchanged so the later config-existence check reports it.
+normalize_rate() {
+  local r="${1%[kK]}"            # strip a trailing k/K: 96k -> 96, 44.1k -> 44.1
+  case "$r" in
+    44|44.1|44100) printf '44100\n' ;;
+    48|48000)      printf '48000\n' ;;
+    88|88.2|88200) printf '88200\n' ;;
+    96|96000)      printf '96000\n' ;;
+    192|192000)    printf '192000\n' ;;
+    *)             printf '%s\n' "$1" ;;
   esac
 }
 
@@ -117,6 +137,7 @@ stop_virtual_oss() {
 usage() {
   echo "Usage: $0 <rate>|resamp|restore|off|status [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
+  echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
   echo "             MPD uses DRC-native format *:*:* and does not resample"
   echo "  resamp   : MPD resamples everything to 192000 Hz"
@@ -124,6 +145,7 @@ usage() {
   echo "             falls back to 192000 if no previous active state exists"
   echo "  off      : stop brutefir and DRC; enable direct DAC output"
   echo "  status   : show DRC state, virtual_oss rate, brutefir, and MPD output"
+  echo "             (also the default when no argument is given)"
   echo "  variant  : optional filter variant, e.g. +2dB (default: none)"
   echo
   echo "  Geometry is fixed to: $GEOMETRY"
@@ -138,8 +160,20 @@ usage() {
   echo "  $0 off"
 }
 
+# ── default action: with no arguments, report status ─────────────────────────
+# A bare `drc.sh` is a query, not a mutation — fall through to the status block
+# below (which runs lock-free) rather than printing usage and exiting non-zero.
+[ $# -eq 0 ] && set -- status
+
 # ── restore: re-apply the last saved state ───────────────────────────────────
 if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
+  # Honour the on/off state recorded at shutdown.  If DRC was off, stay off;
+  # otherwise fall through and restore the last sample rate.  Kept separate from
+  # STATE_FILE so turning off never erases the remembered rate.
+  if [ -f "$POWER_FILE" ] && [ "$(cat "$POWER_FILE")" = "off" ]; then
+    echo "Last power state was off — leaving DRC disabled (direct DAC)"
+    exec "$0" off
+  fi
   state=""
   [ -f "$STATE_FILE" ] && state=$(cat "$STATE_FILE")
   args=$(state_to_args "$state")
@@ -271,7 +305,22 @@ if [ -z "${DRC_LOCKED:-}" ]; then
   if command -v lockf >/dev/null 2>&1; then
     exec lockf -s -t 30 "$LOCK_FILE" "$0" "$@"
   elif command -v flock >/dev/null 2>&1; then
-    exec flock -w 30 "$LOCK_FILE" "$0" "$@"
+    # Linux: acquire the lock on an explicit fd we control (9) instead of the
+    # command form `flock FILE "$0" "$@"`.  The command form leaves the lock fd
+    # open *without* close-on-exec, so the brutefir daemon spawned later
+    # inherits it and keeps the advisory lock for its entire lifetime.  The next
+    # mutating run then deadlocks — most visibly `drc.sh off`: it must hold the
+    # lock to run stop_brutefir, but the lock is not released until brutefir
+    # (the very process off needs to kill) exits, so flock waits the full 30 s
+    # and the run silently does nothing.  Holding the lock on a known fd lets us
+    # close it in the child when launching brutefir (see start_brutefir: 9>&-).
+    # FreeBSD's lockf above does not leak the fd into the daemon, so it keeps
+    # the plain re-exec form.
+    exec 9>"$LOCK_FILE"
+    if ! flock -w 30 9; then
+      echo "drc.sh: another run holds $LOCK_FILE; aborting" >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -288,6 +337,9 @@ elif [ $# -eq 1 ] || [ $# -eq 2 ]; then
     actual_rate=192000
   else
     mode="normal"
+    # Canonicalise shorthand (96, 44.1k, 192 …) to Hz so the config path,
+    # STATE_FILE, restore and rate-change detection all use the full value.
+    rate="$(normalize_rate "$rate")"
     actual_rate="$rate"
   fi
 else
@@ -306,21 +358,27 @@ if [ "$mode" != "off" ] && [ "$prev_rate" != "$actual_rate" ]; then
   prime=1
 fi
 
-process_name="brutefir"
+# brutefir renames its forked worker processes via prctl(PR_SET_NAME) on Linux
+# (compat.c: set_thread_name -> "input"/"output"/...), so their `comm` is no
+# longer "brutefir" and `pgrep -x` / `killall` by name match nothing.  On
+# FreeBSD set_thread_name is a no-op, which is why name matching worked there.
+# Match the full command line instead so detection and teardown work on both.
+bf_pattern='(^|/)brutefir .*-daemon'
+bf_running() { pgrep -f "$bf_pattern" > /dev/null 2>&1; }
 
 stop_brutefir() {
-  if pgrep -x "$process_name" > /dev/null 2>&1; then
+  if bf_running; then
     echo "stopping brutefir"
-    killall "$process_name" 2>/dev/null || true
+    pkill -f "$bf_pattern" 2>/dev/null || true
     # Wait for the process to actually exit so it releases the DAC
     # (/dev/dsp0) and the loopback before we restart.  A bare "sleep 1"
     # is not enough when the (USB) DAC is slow to release — that race is
     # what made the new brutefir silently fail to open the device on the
     # first run.  Escalate to SIGKILL after ~5 s.
     local i=0
-    while pgrep -x "$process_name" > /dev/null 2>&1; do
+    while bf_running; do
       if [ "$i" -ge 25 ]; then
-        killall -KILL "$process_name" 2>/dev/null || true
+        pkill -KILL -f "$bf_pattern" 2>/dev/null || true
         sleep 0.5
         break
       fi
@@ -336,7 +394,10 @@ start_brutefir() {
   local attempt i
   for attempt in 1 2 3; do
     echo "starting brutefir (attempt $attempt): $conf_file"
-    brutefir "$conf_file" -daemon > /tmp/brutefir.out 2>&1 || true
+    # 9>&- closes the inherited flock lock fd (Linux) in the daemon so it does
+    # not hold the lock for its whole lifetime and deadlock the next run; a
+    # no-op on FreeBSD, where fd 9 is not the lock.  See the lock block above.
+    brutefir "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
     # brutefir -daemon forks and the parent returns 0 immediately, before
     # the daemon has opened the audio devices.  Poll until the daemon shows
     # up, then confirm it *stays* up — it exits a moment later if it cannot
@@ -344,21 +405,21 @@ start_brutefir() {
     i=0
     while [ "$i" -lt 10 ]; do
       sleep 0.3
-      if pgrep -x "$process_name" > /dev/null 2>&1; then
+      if bf_running; then
         break
       fi
       i=$((i + 1))
     done
-    if pgrep -x "$process_name" > /dev/null 2>&1; then
+    if bf_running; then
       sleep 0.5
-      if pgrep -x "$process_name" > /dev/null 2>&1; then
+      if bf_running; then
         echo "brutefir running"
         return 0
       fi
     fi
     echo "brutefir did not stay up; last output:"
     tail -n 5 /tmp/brutefir.out 2>/dev/null | sed 's/^/  /' || true
-    killall "$process_name" 2>/dev/null || true
+    pkill -f "$bf_pattern" 2>/dev/null || true
     sleep 1
   done
   return 1
@@ -380,6 +441,10 @@ if [ "$mode" = "off" ]; then
   # "enable only <name>" is the correct idiom: it enables the named output
   # and disables all others atomically.
   mpc enable only "OKTO-DAC"
+  # Record that DRC is off so a reboot/restore stays off — but leave STATE_FILE
+  # (the remembered sample rate) untouched, so turning DRC back on restores it.
+  echo "off" > "$POWER_FILE"
+  chmod 644 "$POWER_FILE" 2>/dev/null || true
   echo "DRC stopped"
   exit 0
 fi
@@ -398,9 +463,11 @@ fi
 # loopback — then re-enable the right one once the chain is confirmed up.
 # Disabling first also forces the later "enable only" to genuinely reopen the
 # output instead of being a no-op on an already-enabled (but stale) output.
-mpc disable "OKTO-DAC"   2>/dev/null || true
-mpc disable "DRC-native" 2>/dev/null || true
-mpc disable "DRC-resamp" 2>/dev/null || true
+# stdout silenced: each "mpc disable" echoes the full output list, which is
+# just noise here — the post-start "enable only" below prints the final state.
+mpc disable "OKTO-DAC"   >/dev/null 2>&1 || true
+mpc disable "DRC-native" >/dev/null 2>&1 || true
+mpc disable "DRC-resamp" >/dev/null 2>&1 || true
 # "mpc disable" returns before MPD's player thread has actually closed the
 # device; give it a moment so MPD releases /dev/dsp.play (and the DAC) before
 # we tear down virtual_oss underneath it.  Yanking the backend out from under
@@ -475,5 +542,9 @@ mpc enable only "$mpd_output"
 state_args="${rate}${variant:+ ${variant}}"
 echo "$state_args" > "$STATE_FILE"
 chmod 644 "$STATE_FILE" 2>/dev/null || true
+# DRC is now running — record the on state alongside the rate so `restore`
+# brings it back (the off path above writes "off" here instead).
+echo "on" > "$POWER_FILE"
+chmod 644 "$POWER_FILE" 2>/dev/null || true
 
 echo "DRC active: $(state_label "$state_args") (MPD output: ${mpd_output})"
