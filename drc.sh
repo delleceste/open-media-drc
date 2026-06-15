@@ -50,12 +50,28 @@ state_to_args() {
 
 format_rate() {
   case "$1" in
-    44100)  printf '44.1 kHz\n' ;;
-    48000)  printf '48 kHz\n' ;;
-    88200)  printf '88.2 kHz\n' ;;
-    96000)  printf '96 kHz\n' ;;
-    192000) printf '192 kHz\n' ;;
+    44100)  printf '44.1k\n' ;;
+    48000)  printf '48k\n' ;;
+    88200)  printf '88.2k\n' ;;
+    96000)  printf '96k\n' ;;
+    192000) printf '192k\n' ;;
     *)      printf '%s Hz\n' "$1" ;;
+  esac
+}
+
+# Accept shorthand sample-rate inputs and map them to the canonical Hz value:
+# bare kHz (96, 88, 44.1) and an optional "k" suffix (96k, 44.1k, 192k).
+# 88 / 88.2 both mean 88200 (88.2 kHz).  Unrecognised input is passed
+# through unchanged so the later config-existence check reports it.
+normalize_rate() {
+  local r="${1%[kK]}"            # strip a trailing k/K: 96k -> 96, 44.1k -> 44.1
+  case "$r" in
+    44|44.1|44100) printf '44100\n' ;;
+    48|48000)      printf '48000\n' ;;
+    88|88.2|88200) printf '88200\n' ;;
+    96|96000)      printf '96000\n' ;;
+    192|192000)    printf '192000\n' ;;
+    *)             printf '%s\n' "$1" ;;
   esac
 }
 
@@ -117,6 +133,7 @@ stop_virtual_oss() {
 usage() {
   echo "Usage: $0 <rate>|resamp|restore|off|status [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
+  echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
   echo "             MPD uses DRC-native format *:*:* and does not resample"
   echo "  resamp   : MPD resamples everything to 192000 Hz"
@@ -124,6 +141,7 @@ usage() {
   echo "             falls back to 192000 if no previous active state exists"
   echo "  off      : stop brutefir and DRC; enable direct DAC output"
   echo "  status   : show DRC state, virtual_oss rate, brutefir, and MPD output"
+  echo "             (also the default when no argument is given)"
   echo "  variant  : optional filter variant, e.g. +2dB (default: none)"
   echo
   echo "  Geometry is fixed to: $GEOMETRY"
@@ -137,6 +155,11 @@ usage() {
   echo "  $0 status"
   echo "  $0 off"
 }
+
+# ── default action: with no arguments, report status ─────────────────────────
+# A bare `drc.sh` is a query, not a mutation — fall through to the status block
+# below (which runs lock-free) rather than printing usage and exiting non-zero.
+[ $# -eq 0 ] && set -- status
 
 # ── restore: re-apply the last saved state ───────────────────────────────────
 if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
@@ -303,6 +326,9 @@ elif [ $# -eq 1 ] || [ $# -eq 2 ]; then
     actual_rate=192000
   else
     mode="normal"
+    # Canonicalise shorthand (96, 44.1k, 192 …) to Hz so the config path,
+    # STATE_FILE, restore and rate-change detection all use the full value.
+    rate="$(normalize_rate "$rate")"
     actual_rate="$rate"
   fi
 else
