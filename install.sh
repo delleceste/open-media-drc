@@ -76,6 +76,11 @@ if [ "$(uname)" = "FreeBSD" ]; then
             drc_usb_audio_enable=YES
             # Enable ONLY drc_usb_audio for DRC: it probes for the DAC at boot
             # and is driven by devd on hotplug. Do NOT enable brutefir_drc.
+    brutefir: mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
+              cp "${REPO_DIR}/brutefir_defaults.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
+              # Required: BruteFIR inherits its I/O devices from this file. If it
+              # is missing, BruteFIR auto-generates a broken ~/.brutefir_defaults
+              # (a "file" I/O module with no path) and fails to start.
 EOF
 else
 	cat <<EOF
@@ -93,5 +98,10 @@ else
                      sudo systemctl restart mpd.service
     udev (USB DAC) : sudo ln -sf "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
                      sudo udevadm control --reload-rules
+    brutefir       : mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
+                     cp "${REPO_DIR}/brutefir_defaults.linux.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
+                     # Required: BruteFIR inherits its I/O devices from this file. If
+                     # it is missing, BruteFIR auto-generates a broken
+                     # ~/.brutefir_defaults ("file" I/O module) and fails to start.
 EOF
 fi
