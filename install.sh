@@ -91,7 +91,11 @@ else
                        sudo ln -sf "${REPO_DIR}/etc/systemd/system/\$s.service" /etc/systemd/system/
                      done
                      sudo mkdir -p /etc/systemd/system/mpd.service.d
-                     sudo ln -sf "${REPO_DIR}/etc/systemd/system/mpd.service.d/open-media-drc.conf" /etc/systemd/system/mpd.service.d/
+                     # cp (NOT ln): this drop-in is read at early boot, before
+                     # /home (a separate mount) is available. A symlink into the
+                     # checkout would be dangling then, the User override skipped,
+                     # and MPD would start as 'mpd' and fail to read its config.
+                     sudo cp "${REPO_DIR}/etc/systemd/system/mpd.service.d/open-media-drc.conf" /etc/systemd/system/mpd.service.d/omdrc.conf
                      sudo systemctl disable --now mpd.socket  # not used: we bypass socket activation
                      sudo systemctl daemon-reload
                      sudo systemctl enable --now upmpdcli.service

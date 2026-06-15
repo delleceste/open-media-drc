@@ -161,6 +161,15 @@ sudo pacman -S mpd            # Arch
 > file.  **Do not** copy or create a full
 > `/etc/systemd/system/mpd.service` — it will not help and will only add
 > confusion.
+>
+> **This drop-in must be a real file copied into `/etc`, NOT a symlink into the
+> checkout.**  If `/home` is a separate mount (common), systemd loads
+> `mpd.service` and its drop-ins during early boot *before* `/home` is mounted,
+> so a symlink pointing into the checkout is dangling at that moment and the
+> override is silently skipped — MPD then starts as the package default `mpd`
+> and dies with `Failed to open ".../mpd.conf": Permission denied` (it cannot
+> read the config under a `700` home).  `install.sh` therefore `cp`s this one
+> drop-in instead of symlinking it; everything else may stay symlinked.
 
 **3. BruteFIR** — built from the fork **`github.com/delleceste/brutefir`**
 (adds FreeBSD OSS fixes — `bfio_oss` fragment-size fix, `brutefir_loopback`
