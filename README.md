@@ -393,8 +393,11 @@ resets the service to inactive so the next plug-in works correctly.
 | File | Installed to | Purpose |
 |---|---|---|
 | `99-usb-audio-drc.rules` | `/etc/udev/rules.d/` | udev rule: triggers the service on DAC plug-in/unplug |
-| `etc/systemd/system/mpd.service.d/open-media-drc.conf` | `/etc/systemd/system/mpd.service.d/` | MPD drop-in: run as AUDIO_USER, read config from checkout |
+| `etc/systemd/system/mpd.service.d/open-media-drc.conf` | `/etc/systemd/system/mpd.service.d/omdrc.conf` | MPD drop-in: run as AUDIO_USER, read config from checkout |
 | `etc/systemd/system/drc-usb-audio.service` | `/etc/systemd/system/` | Starts/stops DRC on USB DAC attach/detach |
+
+All three are **copied** into the system path (not symlinked from the checkout): each
+is parsed by systemd/udevd at early boot, before `/home` is mounted — see Installation.
 
 ## The udev rule (`99-usb-audio-drc.rules`)
 
@@ -422,13 +425,33 @@ switched on later) — no separate boot service is needed.
 
 ## Installation
 
-Use the Makefile at the root of the repository:
+Render the host-specific files from `config.env`, then deploy them:
 
 ```bash
-make install          # copy all files and reload udev + systemd
-make install-systemd  # copy service files and reload systemd only
-make install-udev     # copy udev rule and reload udev only
+$EDITOR config.env     # AUDIO_USER, AUDIO_HOME, PREFIX, MUSIC_DIR, ...
+./install.sh           # renders *.in; prints the exact OS-specific deploy commands
 ```
+
+`install.sh` only renders templates; it then prints the deploy commands (run as root
+for the system paths). **Whether a file is copied or symlinked follows one rule — by
+*when* it is read:**
+
+- **Deploy glue parsed at early boot** — the systemd `.service` units, the `mpd`
+  drop-in, the udev rule, `modules-load.d` (on FreeBSD: the `rc.d` scripts and `devd`
+  rule) — is **copied** into the system path. systemd/udevd/rc parse these *before*
+  `/home` (a separate mount) is available, so a symlink into the checkout would be
+  dangling at parse time and silently skipped — e.g. MPD would fall back to the
+  package `User=mpd` and fail to read its config under a `700` home. (Ordering the
+  service `After=local-fs.target` does **not** help: that defers *start*, not the
+  *parse*. Equivalently the glue could be symlinked from the *root* fs, just not from
+  `/home`.)
+- **Payload read at runtime** — `mpd.conf`, `drc.sh`, the filters, and BruteFIR's
+  `~/.config/BruteFIR/brutefir_defaults.conf` — stays in the checkout/home: it is read
+  only after `local-fs.target`, and the services are ordered after the mount, so no
+  copy is needed. Re-run the deploy step after a `git pull` to refresh the copied glue.
+
+> A `make install` (CMake) front-end that performs this deploy in one step — instead
+> of copy-pasting the printed commands — is planned.
 
 `make install` requires sudo (prompted once per target that needs it).
 
@@ -488,7 +511,7 @@ drc_usb_audio_enable="YES"
 (`/dev/dsp0`): if the DAC is on it brings DRC up once; if not, it does nothing and
 lets `devd` start DRC when the DAC is switched on later. Do **not** also enable
 `brutefir_drc` — it is the worker invoked by `drc_usb_audio` (it runs
-`drc.sh restore`) and must stay symlinked but unenabled, otherwise boot starts the
+`drc.sh restore`) and must stay installed but unenabled, otherwise boot starts the
 chain twice and the two runs race. `drc.sh` itself now serializes mutating runs
 under a lock (`lockf` on FreeBSD, `flock` on Linux), so overlapping triggers are
 safe, and a failed BruteFIR start rolls back to direct DAC output instead of
@@ -569,8 +592,10 @@ Its `start` does three things, in order:
    `drc.sh restore`, then write the `.active` marker.
 
 `brutefir_drc` is just that worker — it runs `drc.sh restore` / `drc.sh stop`. It is
-**symlinked but not enabled**: `drc_usb_audio` calls it on demand, so it has to
-resolve as a service, but it must not start on its own at boot.
+**installed but not enabled**: `drc_usb_audio` calls it on demand, so it has to
+resolve as a service, but it must not start on its own at boot. (Like the other rc.d
+glue it is *copied* into `/usr/local/etc/rc.d/`, not symlinked from the checkout —
+rc.d is read at early boot, before a separately-mounted repo/home is available.)
 
 `devd` drives the same two verbs on hotplug:
 
