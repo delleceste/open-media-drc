@@ -60,6 +60,12 @@ echo "Done. The generated files are read directly from this checkout."
 echo
 echo "Deploy reminder (needs root; install/link the service glue under etc/ into place):"
 echo "  state dirs : mkdir -p \"${AUDIO_HOME}/.local/share/mpd\" \"${AUDIO_HOME}/.cache/mpd\" \"${AUDIO_HOME}/.cache/upmpdcli\""
+echo "  browser launchers (No-DRC Firefox/Chrome/Chromium in the KDE menu):"
+echo "                 mkdir -p \"${AUDIO_HOME}/.local/share/applications\" &&"
+echo "                 for b in firefox chromium chrome; do"
+echo "                   ln -sf \"${REPO_DIR}/browser-nodrc/\$b-nodrc.desktop\" \\"
+echo "                          \"${AUDIO_HOME}/.local/share/applications/\$b-nodrc.desktop\" ; done"
+echo "                 update-desktop-database \"${AUDIO_HOME}/.local/share/applications\" 2>/dev/null || true"
 
 if [ "$(uname)" = "FreeBSD" ]; then
 	cat <<EOF
