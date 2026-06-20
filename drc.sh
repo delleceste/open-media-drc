@@ -4,6 +4,27 @@ set -euo pipefail
 # ── local configuration ───────────────────────────────────────────────────────
 GEOMETRY="120.blue"   # speaker geometry / filter set to use
 
+# Seconds to let the DAC relock on a steady silent stream before the MPD output
+# is enabled.  The OKTO DAC routes silence on a *cold* open — it shows "play" and
+# the host stream is healthy, but no audio comes out until a relock that the host
+# does not wait for (see OKTO-DAC8-silent-first-open.md).  brutefir feeds zeros to
+# the DAC from the moment it starts, so holding it open this long lets the clock
+# relock *before* real audio flows, instead of into a stream the DAC then drops —
+# which is what used to require running drc.sh two or three times.  Tune to taste.
+DAC_WARMUP_SECS=2
+
+# Closed-loop verification (mitigation #3).  After warm-up, confirm the DAC is
+# actually streaming at the requested rate before trusting the chain; if not,
+# tear down and retry up to DAC_VERIFY_RETRIES extra times.  On FreeBSD the
+# check reads the DAC's USB async feedback (dev.pcm.0.feedback_rate), which
+# tracks the live stream rate (~96002 while playing 96 kHz, ~48001 idle); on
+# Linux it reads the ALSA hw_params rate.  Note: this verifies the *clock locked
+# at the right rate*, not that audio is audible — the OKTO can still route
+# silence with a healthy host stream (see OKTO-DAC8-silent-first-open.md) — but
+# it catches EBUSY, a dead chain, and a clock that never switched family.
+DAC_VERIFY_RETRIES=2
+DAC_VERIFY_TOL=100      # Hz tolerance around the requested rate
+
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
 VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -a 0 -l dsp.loop"
 
@@ -19,6 +40,23 @@ STATE_FILE="$base_dir/last_arg"
 # but leaves STATE_FILE (the remembered rate) intact, so `restore` stays off
 # across a reboot yet can bring DRC back at the last rate when turned on.
 POWER_FILE="$base_dir/last_power"
+
+# Persistent operations log (survives reboots — lives beside last_arg, NOT in
+# /tmp).  Each run appends machine-parseable `key=value` lines so the cost and
+# necessity of each step can be mined later: how often brutefir needs attempt
+# 2/3, how often verification fails and a retry is needed, whether warm-up
+# correlates with fewer failures.  The goal is to drop steps that prove useless.
+# Mine it e.g. with:  grep 'event=run_result' "$base_dir/drc.log"
+LOG_FILE="$base_dir/drc.log"
+RUN_ID="$$-$(date +%s 2>/dev/null || echo 0)"
+
+# Append one structured event line.  Best-effort: never let logging failure abort
+# a run (the log dir is normally writable, but be safe under `set -e`).
+log_event() {
+  local ts
+  ts=$(date +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo '?')
+  printf '%s run=%s %s\n' "$ts" "$RUN_ID" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
 
 # Skip sudo when already root (service files run as root); avoids the sudo
 # parent+monitor process tree that results in multiple processes in ps.
@@ -101,20 +139,6 @@ state_label() {
   else
     printf '%s\n' "$state"
   fi
-}
-
-# Map a saved state string to the actual brutefir/DAC sample rate, or "" for
-# off/unknown.  Used to detect a rate change (which needs the OKTO DAC prime).
-state_to_rate() {
-  local s
-  s=$(state_to_args "$1")
-  # shellcheck disable=SC2086
-  set -- $s
-  case "${1:-}" in
-    resamp) printf '192000\n' ;;
-    [0-9]*) printf '%s\n' "$1" ;;
-    *)      printf '\n' ;;
-  esac
 }
 
 stop_virtual_oss() {
@@ -347,17 +371,6 @@ else
   exit 1
 fi
 
-# Detect a sample-rate change.  The OKTO DAC stays silent on the first stream
-# opened at a new rate (it shows "play" and provides USB feedback but routes no
-# audio); a second open at the same rate fixes it.  When the rate changes we
-# prime the DAC below so a single drc.sh run no longer has to be issued twice.
-prev_rate=""
-[ -f "$STATE_FILE" ] && prev_rate=$(state_to_rate "$(cat "$STATE_FILE")")
-prime=""
-if [ "$mode" != "off" ] && [ "$prev_rate" != "$actual_rate" ]; then
-  prime=1
-fi
-
 # brutefir renames its forked worker processes via prctl(PR_SET_NAME) on Linux
 # (compat.c: set_thread_name -> "input"/"output"/...), so their `comm` is no
 # longer "brutefir" and `pgrep -x` / `killall` by name match nothing.  On
@@ -390,9 +403,12 @@ stop_brutefir() {
   fi
 }
 
+# Set by start_brutefir to the number of attempts it took (for the log/stats).
+BF_ATTEMPTS=0
 start_brutefir() {
   local attempt i
   for attempt in 1 2 3; do
+    BF_ATTEMPTS="$attempt"
     echo "starting brutefir (attempt $attempt): $conf_file"
     # 9>&- closes the inherited flock lock fd (Linux) in the daemon so it does
     # not hold the lock for its whole lifetime and deadlock the next run; a
@@ -425,7 +441,50 @@ start_brutefir() {
   return 1
 }
 
+# Closed-loop check that the DAC is actually streaming at $actual_rate.
+# Sets VERIFY_OBSERVED to the observed rate (or "" / "closed").  Returns 0 when
+# the observed rate is within DAC_VERIFY_TOL of the target, 1 otherwise.
+VERIFY_OBSERVED=""
+verify_streaming() {
+  VERIFY_OBSERVED=""
+  local obs=""
+  if $IS_LINUX; then
+    # ALSA hw_params reports "closed" when the DAC stream is idle, else its rate.
+    local f first
+    for f in /proc/asound/card*/pcm*p/sub*/hw_params; do
+      [ -f "$f" ] || continue
+      read -r first < "$f" 2>/dev/null || continue
+      [ "$first" = "closed" ] && continue
+      obs=$(awk '/^rate:/{print $2; exit}' "$f")
+      [ -n "$obs" ] && break
+    done
+    [ -z "$obs" ] && obs="closed"
+  else
+    # FreeBSD: the DAC's USB async feedback tracks the live stream rate.
+    obs=$(sysctl -n dev.pcm.0.feedback_rate 2>/dev/null || echo "")
+  fi
+  VERIFY_OBSERVED="$obs"
+  case "$obs" in
+    ""|closed) return 1 ;;
+  esac
+  # |observed - target| <= tolerance ?
+  local diff=$(( obs - actual_rate ))
+  [ "$diff" -lt 0 ] && diff=$(( -diff ))
+  [ "$diff" -le "$DAC_VERIFY_TOL" ]
+}
+
+# Tear the half-built chain down and re-enable the direct DAC so there is always
+# a working output (never leave the box silent with virtual_oss orphaned).
+rollback_to_direct() {
+  echo "rolling back to direct DAC output (off)" >&2
+  if ! $IS_LINUX; then
+    stop_virtual_oss
+  fi
+  mpc enable only "OKTO-DAC" 2>/dev/null || true
+}
+
 # ── stop brutefir ────────────────────────────────────────────────────────────
+log_event "event=run_start mode=${mode} rate=${actual_rate:-} variant=${variant:-} warmup=${DAC_WARMUP_SECS} verify_retries=${DAC_VERIFY_RETRIES}"
 stop_brutefir
 
 # ── off: re-enable direct DAC, stop virtual_oss ──────────────────────────────
@@ -445,6 +504,7 @@ if [ "$mode" = "off" ]; then
   # (the remembered sample rate) untouched, so turning DRC back on restores it.
   echo "off" > "$POWER_FILE"
   chmod 644 "$POWER_FILE" 2>/dev/null || true
+  log_event "event=run_result mode=off result=stopped"
   echo "DRC stopped"
   exit 0
 fi
@@ -495,33 +555,59 @@ if ! $IS_LINUX; then
   done
 fi
 
-# ── prime the OKTO DAC on a rate change ──────────────────────────────────────
-# The DAC routes silence on the first open at a new rate, so open brutefir once
-# at the new rate, tear it back down, then fall through to the real start.  The
-# real (final) open is then the "second" open at the same rate the DAC needs to
-# actually output — automating what used to require running drc.sh twice.
-if [ -n "$prime" ]; then
-  echo "priming DAC at ${actual_rate} Hz (rate changed from ${prev_rate:-off})"
-  if start_brutefir; then
-    sleep 1
-    stop_brutefir
-    sleep 0.5
-  fi
-fi
+# ── start brutefir, warm the DAC, and verify it streams (with retry) ─────────
+# One attempt = start brutefir + warm-up + closed-loop verify; any of the three
+# can fail.  On failure tear the chain down and retry, up to DAC_VERIFY_RETRIES
+# extra times, before rolling back to the direct DAC.
+#
+# Warm-up rationale: once started, brutefir holds /dev/dsp0 open and feeds it
+# zeros (its loopback input is silent until an MPD output is enabled below).  The
+# OKTO routes silence on a *cold* open until its clock relocks, and the host does
+# not wait for that relock — so historically the first stream was lost and drc.sh
+# had to be run again.  Holding the silent stream open for DAC_WARMUP_SECS lets
+# the clock lock *before* real audio flows.  This replaces the old close/reopen
+# "prime" (which cold-reopened the DAC and so could need priming all over again)
+# and runs every time: the chain is always torn down and cold-reopened above, so
+# a boot/restore or off→on at the same rate needs warming as much as a rate
+# change does.  See OKTO-DAC8-silent-first-open.md.
+chain_ok=""
+total_attempts=$(( DAC_VERIFY_RETRIES + 1 ))
+vattempt=0
+while [ "$vattempt" -lt "$total_attempts" ]; do
+  vattempt=$(( vattempt + 1 ))
 
-# ── start brutefir (verified, with retry) ────────────────────────────────────
-if ! start_brutefir; then
-  echo "ERROR: brutefir failed to start after 3 attempts (see /tmp/brutefir.out)" >&2
-  # Roll back to a defined state instead of leaving the chain half-built.  At
-  # this point all mpc outputs are disabled and virtual_oss may be running; if
-  # we just exit, the box is silent with virtual_oss orphaned (the inconsistent
-  # "off + virtual_oss running" state).  Tear the chain down and re-enable the
-  # direct DAC so there is always a working output.
-  echo "rolling back to direct DAC output (off)" >&2
-  if ! $IS_LINUX; then
-    stop_virtual_oss
+  if ! start_brutefir; then
+    log_event "event=bf_start attempt=$vattempt bf_attempts=${BF_ATTEMPTS} result=fail"
+    echo "brutefir failed to start (attempt $vattempt/$total_attempts)" >&2
+  else
+    log_event "event=bf_start attempt=$vattempt bf_attempts=${BF_ATTEMPTS} result=ok"
+    if [ "${DAC_WARMUP_SECS:-0}" != "0" ]; then
+      echo "warming up DAC for ${DAC_WARMUP_SECS}s at ${actual_rate} Hz (silent stream)"
+      sleep "$DAC_WARMUP_SECS"
+    fi
+    if ! bf_running; then
+      log_event "event=warmup attempt=$vattempt result=died"
+      echo "brutefir exited during warm-up (attempt $vattempt/$total_attempts)" >&2
+    elif verify_streaming; then
+      log_event "event=verify attempt=$vattempt result=ok observed=${VERIFY_OBSERVED} want=${actual_rate}"
+      echo "verified: DAC streaming at ${VERIFY_OBSERVED} Hz"
+      chain_ok=1
+      break
+    else
+      log_event "event=verify attempt=$vattempt result=fail observed=${VERIFY_OBSERVED} want=${actual_rate}"
+      echo "verify FAILED: DAC at '${VERIFY_OBSERVED}', wanted ${actual_rate} Hz (attempt $vattempt/$total_attempts)" >&2
+    fi
   fi
-  mpc enable only "OKTO-DAC" 2>/dev/null || true
+
+  # Attempt failed — tear brutefir down and (if attempts remain) retry.
+  stop_brutefir
+  [ "$vattempt" -lt "$total_attempts" ] && sleep 1
+done
+
+if [ -z "$chain_ok" ]; then
+  echo "ERROR: chain did not come up after ${total_attempts} attempts (see /tmp/brutefir.out)" >&2
+  rollback_to_direct
+  log_event "event=run_result mode=${mode} rate=${actual_rate} result=rolled_back attempts=${vattempt} bf_attempts=${BF_ATTEMPTS}"
   # last_arg is left unchanged on purpose: it records the *desired* state, so the
   # next trigger (devd ATTACH / drc.sh restore) retries this config rather than
   # silently staying off after a transient failure.
@@ -547,4 +633,5 @@ chmod 644 "$STATE_FILE" 2>/dev/null || true
 echo "on" > "$POWER_FILE"
 chmod 644 "$POWER_FILE" 2>/dev/null || true
 
+log_event "event=run_result mode=${mode} rate=${actual_rate} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} observed=${VERIFY_OBSERVED} output=${mpd_output}"
 echo "DRC active: $(state_label "$state_args") (MPD output: ${mpd_output})"
