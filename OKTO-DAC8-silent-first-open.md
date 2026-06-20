@@ -224,6 +224,92 @@ Carrying over from `OKTO-DAC8-FreeBSD-44k1-flicker.md`, focused on the cold open
    confirm the feedback value is valid/stable from the first micro-frame after a
    family switch, so the host does not over/under-feed during relock.
 
+## ⚠ Validity caveat — feedback_rate does not reflect DAC power state
+
+A first instrumented run logged `verify ok observed=96002` **while the DAC was
+switched off**. The OKTO keeps its USB interface enumerated when its output is
+off (standby), so `dev.pcm.0.feedback_rate` reports the **USB/uaudio programmed
+clock** and brutefir streams happily regardless of whether the DAC is powered or
+audible. Consequences:
+
+- `verify_streaming()` proves only that **the USB stream is programmed at the
+  target rate** — NOT that the DAC is powered, has relocked its analog clock, or
+  is producing sound. It is a chain-sanity check, not an audibility check.
+- The latency/retention numbers below were gathered partly with **unconfirmed DAC
+  power state** and may reflect host/`uaudio`-side rate switching rather than the
+  DAC's analog PLL. They are **pending re-validation with the DAC confirmed on**
+  (and, for audibility, confirmed by ear).
+- Open question worth testing: if the OKTO auto-enters standby on a *silent*
+  stream, the silent warm-up/dwell could itself be useless or even counter-
+  productive. Only listening tests can settle this.
+
+## Listening-test findings (2026-06, DECISIVE — confirmed by ear)
+
+With the DAC powered on and MPD confirmed playing, the silence is **strictly
+sample-rate-family dependent**:
+
+| Target | Opens | Audible? |
+|--------|-------|----------|
+| 192 kHz (48 kHz family, via `resamp`) | 1 (cold) | **yes — first open** |
+| 44.1 kHz (44.1 family, native) | 1 (cold) | **no — silent** |
+| 44.1 kHz | 3 (cold opens in a row) | **yes** |
+| 44.1 kHz, single `drc.sh` with prime = 2 cycles + real open (3 total) | 1 command | **yes** |
+
+So the user-visible "have to run drc.sh several times" bug is **44.1 kHz-family
+cold-open silence**: the OKTO routes no audio on the first open(s) at a 44.1 kHz
+rate and only starts after several open/close cycles; the 48 kHz family plays on
+the first open. This is the same clock-domain that the flicker doc and the
+`freebsd-uaudio-patch` (capture-interface-disable) concern.
+
+**Fix applied:** a **family-targeted prime** in `drc.sh` — for a 44.1 kHz-family
+target only, do `DAC_PRIME_CYCLES` (default 2) open/close bounces before the real
+open (3 opens total). A single `drc.sh 44100` then produces audio with no manual
+repeats (verified by ear). The 48 kHz family skips the prime and pays nothing.
+Bit-perfect alternative that sidesteps the quirk entirely: `drc.sh resamp`.
+
+Note this confirms the prime I had *removed* was the right idea for 44.1 kHz — it
+was only "useless" for the 48 kHz family. The prime cannot be auto-verified
+(`feedback_rate` looks healthy whether or not audio routes), so it is a fixed
+recipe, tunable via `DAC_PRIME_CYCLES`.
+
+## Empirical findings (2026-06, this box) — host/USB-side timing
+## (see the validity caveat above; these do NOT address the 44.1k silence)
+
+Measured on FreeBSD with `dev.pcm.0.feedback_rate` (the DAC's programmed clock
+rate; see the memory note) sampled at 100 ms while opening the chain at various
+rates, plus instrumented `drc.log` runs:
+
+1. **The DAC clock retains its last rate while idle.** After the chain is fully
+   stopped, `feedback_rate` stays at the last-played rate for at least 15 s — it
+   does *not* fall back to a 48 kHz idle default. So an `off → on` at the **same
+   rate** needs **no relock** (lock measured at 0 ms); only a real **rate
+   change** relocks, in **~0.7–1.0 s**. There is no large 48-family vs 44.1-family
+   *latency* difference (the flicker doc's family issue is a different symptom).
+
+2. **The relock is already absorbed by `start_brutefir`'s startup wait.**
+   `start_brutefir` polls ~0.3 s for the daemon then confirms with a 0.5 s wait
+   before returning, so by the time the warm-up loop runs its first check the
+   clock has usually already locked. Instrumented runs show `warm_ms` of **0–100
+   ms even on a rate change**. ⇒ a *flat* multi-second warm-up `sleep` is almost
+   entirely **wasted**; the load-bearing delay is the wait that already exists
+   inside `start_brutefir`.
+
+3. **Conclusions applied to `drc.sh`:**
+   - Warm-up made **adaptive**: poll `feedback_rate` until the clock locks, capped
+     at `DAC_WARMUP_SECS`. Costs ~0–100 ms in practice (vs a wasted flat 2 s) and
+     still *guarantees* the MPD output is never enabled before lock. Effectively
+     free insurance — kept.
+   - **Outer-retry on a hard start failure removed.** `start_brutefir` already
+     retries 3× internally; a forced-`EBUSY` test showed the outer verify-retry
+     loop re-running a busy device wasted ~30 s before the inevitable rollback.
+     The outer retry now fires only on a *verify* failure (clock never locked).
+   - **Post-lock dwell (`DAC_SETTLE_SECS`, default 1 s)** is the one remaining
+     deliberate hold. A locked clock does *not* prove the OKTO is routing audio,
+     and that residual silence is **not host-observable** — so this dwell is the
+     knob to confirm/tune **by ear**; set it to 0 to test whether it is needed.
+   - **EBUSY/rollback path verified**: forcing `/dev/dsp0` busy produced clean
+     retries and a rollback to the direct DAC, fully recorded in `drc.log`.
+
 ## Diagnostics to capture next time it happens
 
 - On a *failed* (silent) open vs a *successful* one, compare `cat /dev/sndstat`

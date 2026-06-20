@@ -4,14 +4,22 @@ set -euo pipefail
 # ── local configuration ───────────────────────────────────────────────────────
 GEOMETRY="120.blue"   # speaker geometry / filter set to use
 
-# Seconds to let the DAC relock on a steady silent stream before the MPD output
-# is enabled.  The OKTO DAC routes silence on a *cold* open — it shows "play" and
-# the host stream is healthy, but no audio comes out until a relock that the host
-# does not wait for (see OKTO-DAC8-silent-first-open.md).  brutefir feeds zeros to
-# the DAC from the moment it starts, so holding it open this long lets the clock
-# relock *before* real audio flows, instead of into a stream the DAC then drops —
-# which is what used to require running drc.sh two or three times.  Tune to taste.
-DAC_WARMUP_SECS=2
+# DAC warm-up before the MPD output is enabled.  The OKTO routes silence on a
+# *cold* open until its clock relocks, and the host does not wait for that relock
+# (see OKTO-DAC8-silent-first-open.md).  brutefir feeds the DAC zeros from the
+# moment it starts, so we hold that silent stream open until the clock has locked
+# before letting real audio flow — what used to require running drc.sh twice.
+#
+# Two distinct parts (measured on this box, see tests/dac-lock-latency notes):
+#  * relock wait — ADAPTIVE: poll until the clock reaches the target rate, up to
+#    DAC_WARMUP_SECS.  A rate change relocks in ~0.7–1.0 s; an unchanged rate is
+#    already locked (the clock is retained across an off period) and returns
+#    immediately, so no time is wasted when none is needed.  This is the cap.
+#  * post-lock dwell — DAC_SETTLE_SECS of extra silence *after* lock.  The clock
+#    being locked does not prove the OKTO is routing audio yet; this dwell guards
+#    that device-side quirk and is the knob to tune by ear if silence recurs.
+DAC_WARMUP_SECS=3
+DAC_SETTLE_SECS=1
 
 # Closed-loop verification (mitigation #3).  After warm-up, confirm the DAC is
 # actually streaming at the requested rate before trusting the chain; if not,
@@ -24,6 +32,19 @@ DAC_WARMUP_SECS=2
 # it catches EBUSY, a dead chain, and a clock that never switched family.
 DAC_VERIFY_RETRIES=2
 DAC_VERIFY_TOL=100      # Hz tolerance around the requested rate
+
+# 44.1 kHz-family prime (mitigation, confirmed by listening test 2026-06).  The
+# OKTO routes *silence* on a cold open at a 44.1 kHz-family rate (44.1/88.2/...)
+# and only starts outputting after SEVERAL open/close cycles; the 48 kHz family
+# (48/96/192 kHz) plays on the first open.  Confirmed empirically: 1 open at
+# 44.1k = silent, 3 opens = audible; 192 kHz = audible immediately.  So for a
+# 44.1k-family target we "prime" with DAC_PRIME_CYCLES extra open/close bounces
+# before the real open (total opens = cycles + 1).  This cannot be auto-verified
+# — the silence is a DAC-side routing quirk and the USB feedback looks healthy
+# either way (see OKTO-DAC8-silent-first-open.md) — so it is a fixed recipe.
+# The 48 kHz family skips it entirely and pays nothing.  Bit-perfect alternative
+# that sidesteps the quirk: `drc.sh resamp` (everything → 192 kHz).
+DAC_PRIME_CYCLES=2
 
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
 VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -a 0 -l dsp.loop"
@@ -441,6 +462,32 @@ start_brutefir() {
   return 1
 }
 
+# True for 44.1 kHz-family rates (the ones that need the cold-open prime).
+is_441_family() {
+  case "$1" in
+    44100|88200|176400|352800) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Prime the OKTO at a 44.1 kHz-family rate: open brutefir at $conf_file, let it
+# briefly hold /dev/dsp0, then tear it down — repeated $1 times.  Each bounce is
+# one cold open at the target rate; the real open follows in the main loop, so
+# the DAC sees (cycles + 1) opens, which is what gets the 44.1k clock domain to
+# start routing audio.  Requires virtual_oss already up (brutefir's input).
+prime_dac() {
+  local n=$1 i w
+  for i in $(seq 1 "$n"); do
+    echo "priming DAC (44.1kHz family) cycle $i/$n at ${actual_rate} Hz"
+    brutefir "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
+    w=0; while [ "$w" -lt 15 ]; do bf_running && break; sleep 0.2; w=$((w + 1)); done
+    sleep 0.8                       # hold the open so the 44.1k clock settles
+    pkill -f "$bf_pattern" 2>/dev/null || true
+    while bf_running; do sleep 0.1; done
+    sleep 0.3                       # let the DAC release before the next open
+  done
+}
+
 # Closed-loop check that the DAC is actually streaming at $actual_rate.
 # Sets VERIFY_OBSERVED to the observed rate (or "" / "closed").  Returns 0 when
 # the observed rate is within DAC_VERIFY_TOL of the target, 1 otherwise.
@@ -471,6 +518,25 @@ verify_streaming() {
   local diff=$(( obs - actual_rate ))
   [ "$diff" -lt 0 ] && diff=$(( -diff ))
   [ "$diff" -le "$DAC_VERIFY_TOL" ]
+}
+
+# Hold brutefir's silent stream open until the DAC clock locks to the target
+# rate, polling every 100 ms up to DAC_WARMUP_SECS.  Returns 0 once locked
+# (clock at target), 1 if the cap elapsed without lock, 2 if brutefir died.
+# Sets WARM_MS to the time spent (for the log/stats): an unchanged rate locks
+# at ~0 ms, a real rate change at ~700–1000 ms.
+WARM_MS=0
+warm_until_locked() {
+  local i=0 max=$(( DAC_WARMUP_SECS * 10 ))
+  while :; do
+    bf_running || { WARM_MS=$(( i * 100 )); return 2; }
+    if verify_streaming; then WARM_MS=$(( i * 100 )); return 0; fi
+    [ "$i" -ge "$max" ] && break
+    sleep 0.1
+    i=$(( i + 1 ))
+  done
+  WARM_MS=$(( i * 100 ))
+  return 1
 }
 
 # Tear the half-built chain down and re-enable the direct DAC so there is always
@@ -555,21 +621,23 @@ if ! $IS_LINUX; then
   done
 fi
 
+# ── prime the DAC on a 44.1 kHz-family target ────────────────────────────────
+# 48 kHz-family rates play on the first open and skip this entirely.
+if is_441_family "$actual_rate" && [ "${DAC_PRIME_CYCLES:-0}" -gt 0 ]; then
+  log_event "event=prime rate=${actual_rate} cycles=${DAC_PRIME_CYCLES}"
+  prime_dac "$DAC_PRIME_CYCLES"
+fi
+
 # ── start brutefir, warm the DAC, and verify it streams (with retry) ─────────
-# One attempt = start brutefir + warm-up + closed-loop verify; any of the three
-# can fail.  On failure tear the chain down and retry, up to DAC_VERIFY_RETRIES
-# extra times, before rolling back to the direct DAC.
-#
-# Warm-up rationale: once started, brutefir holds /dev/dsp0 open and feeds it
-# zeros (its loopback input is silent until an MPD output is enabled below).  The
-# OKTO routes silence on a *cold* open until its clock relocks, and the host does
-# not wait for that relock — so historically the first stream was lost and drc.sh
-# had to be run again.  Holding the silent stream open for DAC_WARMUP_SECS lets
-# the clock lock *before* real audio flows.  This replaces the old close/reopen
-# "prime" (which cold-reopened the DAC and so could need priming all over again)
-# and runs every time: the chain is always torn down and cold-reopened above, so
-# a boot/restore or off→on at the same rate needs warming as much as a rate
-# change does.  See OKTO-DAC8-silent-first-open.md.
+# Flow per attempt: start brutefir → adaptive warm-up (hold the silent stream
+# until the clock locks) → post-lock dwell.  A *verify* failure (clock never
+# reached the target) is what the outer retry is for, up to DAC_VERIFY_RETRIES
+# extra times.  A *hard start* failure is NOT outer-retried — start_brutefir
+# already retries 3× internally for the "DAC slow to release" race, and testing
+# showed outer-retrying a busy device just wastes ~30 s before the inevitable
+# rollback.  brutefir feeds the DAC zeros from the moment it starts, so the
+# warm-up replaces the old close/reopen "prime" (which cold-reopened the DAC and
+# could need priming all over again).  See OKTO-DAC8-silent-first-open.md.
 chain_ok=""
 total_attempts=$(( DAC_VERIFY_RETRIES + 1 ))
 vattempt=0
@@ -578,28 +646,33 @@ while [ "$vattempt" -lt "$total_attempts" ]; do
 
   if ! start_brutefir; then
     log_event "event=bf_start attempt=$vattempt bf_attempts=${BF_ATTEMPTS} result=fail"
-    echo "brutefir failed to start (attempt $vattempt/$total_attempts)" >&2
-  else
-    log_event "event=bf_start attempt=$vattempt bf_attempts=${BF_ATTEMPTS} result=ok"
-    if [ "${DAC_WARMUP_SECS:-0}" != "0" ]; then
-      echo "warming up DAC for ${DAC_WARMUP_SECS}s at ${actual_rate} Hz (silent stream)"
-      sleep "$DAC_WARMUP_SECS"
-    fi
-    if ! bf_running; then
-      log_event "event=warmup attempt=$vattempt result=died"
-      echo "brutefir exited during warm-up (attempt $vattempt/$total_attempts)" >&2
-    elif verify_streaming; then
-      log_event "event=verify attempt=$vattempt result=ok observed=${VERIFY_OBSERVED} want=${actual_rate}"
-      echo "verified: DAC streaming at ${VERIFY_OBSERVED} Hz"
+    echo "brutefir failed to start (see /tmp/brutefir.out)" >&2
+    break   # hard start failure: already retried internally — go to rollback
+  fi
+  log_event "event=bf_start attempt=$vattempt bf_attempts=${BF_ATTEMPTS} result=ok"
+
+  echo "warming up DAC at ${actual_rate} Hz (silent stream, up to ${DAC_WARMUP_SECS}s)"
+  warm_until_locked; warm_rc=$?
+  if [ "$warm_rc" -eq 2 ]; then
+    log_event "event=warmup attempt=$vattempt result=died warm_ms=${WARM_MS}"
+    echo "brutefir exited during warm-up (attempt $vattempt/$total_attempts)" >&2
+  elif [ "$warm_rc" -eq 0 ]; then
+    log_event "event=verify attempt=$vattempt result=ok observed=${VERIFY_OBSERVED} want=${actual_rate} warm_ms=${WARM_MS}"
+    echo "DAC clock locked at ${VERIFY_OBSERVED} Hz after ${WARM_MS}ms"
+    # Post-lock dwell: locked clock != audio routed yet (device quirk).
+    [ "${DAC_SETTLE_SECS:-0}" != "0" ] && sleep "$DAC_SETTLE_SECS"
+    if bf_running; then
       chain_ok=1
       break
-    else
-      log_event "event=verify attempt=$vattempt result=fail observed=${VERIFY_OBSERVED} want=${actual_rate}"
-      echo "verify FAILED: DAC at '${VERIFY_OBSERVED}', wanted ${actual_rate} Hz (attempt $vattempt/$total_attempts)" >&2
     fi
+    log_event "event=settle attempt=$vattempt result=died"
+    echo "brutefir exited during post-lock dwell (attempt $vattempt/$total_attempts)" >&2
+  else
+    log_event "event=verify attempt=$vattempt result=fail observed=${VERIFY_OBSERVED} want=${actual_rate} warm_ms=${WARM_MS}"
+    echo "clock did not lock: DAC at '${VERIFY_OBSERVED}', wanted ${actual_rate} Hz (attempt $vattempt/$total_attempts)" >&2
   fi
 
-  # Attempt failed — tear brutefir down and (if attempts remain) retry.
+  # Verify/warm-up failed — tear brutefir down and (if attempts remain) retry.
   stop_brutefir
   [ "$vattempt" -lt "$total_attempts" ] && sleep 1
 done
@@ -633,5 +706,5 @@ chmod 644 "$STATE_FILE" 2>/dev/null || true
 echo "on" > "$POWER_FILE"
 chmod 644 "$POWER_FILE" 2>/dev/null || true
 
-log_event "event=run_result mode=${mode} rate=${actual_rate} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} observed=${VERIFY_OBSERVED} output=${mpd_output}"
+log_event "event=run_result mode=${mode} rate=${actual_rate} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} warm_ms=${WARM_MS} observed=${VERIFY_OBSERVED} output=${mpd_output}"
 echo "DRC active: $(state_label "$state_args") (MPD output: ${mpd_output})"
