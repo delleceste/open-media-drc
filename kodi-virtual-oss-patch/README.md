@@ -2,7 +2,7 @@
 
 Patch for Kodi's FreeBSD OSS audio sink so that **userspace OSS devices created
 by `virtual_oss` (cuse) appear in the audio-device list** and can be selected and
-persisted — letting Kodi feed the DRC chain (`/dev/dsp1` → BruteFIR → OKTO DAC)
+persisted — letting Kodi feed the DRC chain (`/dev/dsp.play` → BruteFIR → DAC)
 instead of only the raw hardware device (`/dev/dsp0` / `pcm0`).
 
 - Patch: [`patch-xbmc_cores_AudioEngine_Sinks_AESinkOSS.cpp`](patch-xbmc_cores_AudioEngine_Sinks_AESinkOSS.cpp)
@@ -11,10 +11,10 @@ instead of only the raw hardware device (`/dev/dsp0` / `pcm0`).
 
 ## The problem
 
-Kodi's audio settings only ever offered `pcm0` (the OKTO DAC, `/dev/dsp0`).
-Selecting the virtual_oss playback node (`/dev/dsp1`, the entry point of the DRC
-loopback) was impossible, and hand-editing `guisettings.xml` did **not** stick —
-the value reverted to `/dev/dsp0` on every launch.
+Kodi's audio settings only ever offered `pcm0` (the hardware DAC, `/dev/dsp0`).
+Selecting the virtual_oss playback node (`/dev/dsp.play`, the entry point of the
+DRC loopback) was impossible, and hand-editing `guisettings.xml` did **not**
+stick — the value reverted to `/dev/dsp0` on every launch.
 
 Two pieces of Kodi source explain this completely:
 
@@ -38,12 +38,12 @@ Two pieces of Kodi source explain this completely:
      current = firstDevice;        // <-- silently resets to /dev/dsp0
    ```
 
-   Because the hand-set `/dev/dsp1` is never in the enumerated list, `foundValue`
+   Because the hand-set `/dev/dsp.play` is never in the enumerated list, `foundValue`
    stays false and the setting is overwritten with the first device. This is why
    editing the XML by hand is futile: the fix has to happen at **enumeration**.
 
 The device string format (see `CAEDeviceInfo::ToDeviceString()`) is
-`driver:m_deviceName|friendlyName`, e.g. `OSS:/dev/dsp1|dsp1 <virtual_oss device>`.
+`driver:m_deviceName|friendlyName`, e.g. `OSS:/dev/dsp.play|dsp.play virtual_oss device`.
 
 ## The fix
 
@@ -68,15 +68,15 @@ systems whose `/dev/sndstat` has no userspace section.
 ### Result
 
 With the patch and `virtual_oss` running, Settings → System → Audio → *Audio
-output device* lists, alongside the OKTO DAC:
+output device* lists, alongside the hardware DAC:
 
 ```
-dsp1 virtual_oss device
+dsp.play virtual_oss device
 ```
 
-Selecting it stores `OSS:/dev/dsp1|dsp1 virtual_oss device` and it now persists.
-`virtual_oss` (i.e. `drc.sh <rate>`) must be running so `/dev/dsp1` exists when
-Kodi initialises audio.
+Selecting it stores `OSS:/dev/dsp.play|dsp.play virtual_oss device` and it now
+persists. `virtual_oss` (i.e. `drc.sh <rate>`) must be running so `/dev/dsp.play`
+exists when Kodi initialises audio.
 
 ## Building only Kodi from the patched port
 
@@ -101,10 +101,12 @@ make patch
 # 4. Compile Kodi only (deps already installed -> no dependency builds)
 make build         # the slow step; uses all installed deps
 
-# 5. Replace the installed package
+# 5. Replace the installed package.  The version is unchanged (22.0.a3), so
+#    `make reinstall` alone is a no-op -- deinstall first, then install.
 sudo make deinstall
-sudo make reinstall
-# (equivalently: sudo make install)
+sudo make install
+# Verify the live binary was actually replaced (must print 1):
+strings /usr/local/lib/kodi/kodi.bin | grep -c "from userspace"
 
 # 6. Clean the work tree when satisfied
 make clean
@@ -207,9 +209,16 @@ still probed with the proper OSSv4 ioctl once discovered.
 
 ## Status / caveats
 
-- Verified: the patch **applies cleanly** (`patch -p0`, both hunks) against the
-  22.0a3 source in the port's distfile, and every OSSv4 symbol used
-  (`SNDCTL_ENGINEINFO`, `oss_audioinfo.{oformats,max_channels,min_rate,max_rate,dev}`)
-  exists in `/usr/include/sys/soundcard.h`.
-- **Not yet compiled** here — a full `make build` is the final confirmation.
+- **Verified working** on this box against `multimedia/kodi` 22.0a3 (Piers): the
+  patch applies cleanly (both hunks), compiles, and at runtime
+  `dsp.play virtual_oss device` appears in Settings → System → Audio → *Audio
+  output device*. Selecting it is **consistent and persistent** — the value
+  survives a Kodi restart instead of reverting to `/dev/dsp0`.
+- Every OSSv4 symbol used (`SNDCTL_ENGINEINFO`,
+  `oss_audioinfo.{oformats,max_channels,min_rate,max_rate,dev}`) exists in
+  `/usr/include/sys/soundcard.h`.
+- Install gotcha: the package version is unchanged (still `22.0.a3`), so
+  `make reinstall` alone is a no-op — run `make deinstall && make install` to
+  actually replace the live binary. Confirm with
+  `strings /usr/local/lib/kodi/kodi.bin | grep -c "from userspace"` (must be 1).
 - Written against 22.0a3 (Piers); upstream `master` may need a trivial rebase.
