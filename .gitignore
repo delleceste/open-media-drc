@@ -18,3 +18,7 @@ configs/*/*.conf
 /last_arg
 /last_power
 /drc.log
+
+# Python bytecode cache (video/webremote and omdrc-ctrl)
+__pycache__/
+*.pyc

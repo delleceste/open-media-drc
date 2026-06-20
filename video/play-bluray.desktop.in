@@ -1,0 +1,13 @@
+[Desktop Entry]
+# Rendered from this .in by ../install.sh (@AUDIO_HOME@ comes from config.env).
+# Deploy: ln -sf @AUDIO_HOME@/open-media-drc/video/play-bluray.desktop \
+#               @AUDIO_HOME@/.local/share/applications/play-bluray.desktop
+Type=Application
+Name=Play Blu-ray
+GenericName=Blu-ray Player
+Comment=Play the disc in the USB Blu-ray drive (mpv + gcache read-ahead, DRC-aware audio)
+Exec=@AUDIO_HOME@/play-bluray.sh
+Icon=media-optical
+Terminal=false
+Categories=AudioVideo;Player;Video;
+Keywords=bluray;bd;disc;mpv;movie;

@@ -870,6 +870,41 @@ separate from REW-to-RAW conversion: `REW2raw.sh` preserves FIR gain according t
 the sample-rate ratio, while `headroom_calc.py` determines the playback attenuation
 needed to avoid clipping.
 
+# Video: mpv playback + phone web remote
+
+Besides the audio DRC chain, this box also plays **video** (Blu-ray discs, DVDs,
+local files, streams) through mpv, with the audio routed through the same
+virtual_oss/brutefir DRC path. Two parts live under [`video/`](video/):
+
+- **Playback launchers** — `play-bluray.sh` (physical USB Blu-ray: gcache
+  read-ahead + longest-title + DRC-aware audio) and `play-media.sh` (files and
+  network/stream URLs). See [`video/README.md`](video/README.md).
+- **Phone web remote** — [`video/webremote/`](video/webremote/README.md): a
+  LAN-only web app (no app to install) to **browse the media drives, tap to
+  play, and control playback from an Android browser** — the mpv-only
+  replacement for Kodi on this headless, keyboard-less box.
+
+```
+ Android phone (browser, LAN only)
+        │  HTTP :9080
+        ▼
+ video webremote (Flask)  ── browse /media/USBHD2/video, thumbnails, IMDb info
+        │  JSON IPC
+        ▼
+ persistent idle mpv  ──→ virtual_oss / brutefir ──→ DAC + projector
+```
+
+The web remote browses the whitelisted media root, shows ffmpeg thumbnails and
+OMDb-verified IMDb details, lets you pin favourite folders, and drives a hidden
+persistent mpv over its JSON IPC socket (play / seek / pause / volume / stop).
+It mirrors the deployment model of the audio control panel
+([`omdrc-ctrl`](omdrc-ctrl/README.md)): run-from-repo, LAN-only, FreeBSD rc.d
+service (`omdrcvideo`), with the idle mpv autostarted by the KDE/Plasma session.
+
+**Full details:** [`video/webremote/README.md`](video/webremote/README.md)
+(install, API, config) and [`video/webremote/ARCHITECTURE.md`](video/webremote/ARCHITECTURE.md)
+(design rationale).
+
 # History and notes
 
 ![VBA filter with ALL-PASS phase filter comparison](doc/xtras/FVBA.vs.ALLPASS.md)

@@ -60,6 +60,8 @@ echo "Done. The generated files are read directly from this checkout."
 echo
 echo "Deploy reminder (needs root; install/link the service glue under etc/ into place):"
 echo "  state dirs : mkdir -p \"${AUDIO_HOME}/.local/share/mpd\" \"${AUDIO_HOME}/.cache/mpd\" \"${AUDIO_HOME}/.cache/upmpdcli\""
+echo "  video remote (idle mpv autostart, KDE/Plasma): mkdir -p \"${AUDIO_HOME}/.config/autostart\" &&"
+echo "                 ln -sf \"${REPO_DIR}/video/webremote/autostart/mpv-idle.desktop\" \"${AUDIO_HOME}/.config/autostart/mpv-idle.desktop\""
 echo "  browser launchers (No-DRC Firefox/Chrome/Chromium in the KDE menu):"
 echo "                 mkdir -p \"${AUDIO_HOME}/.local/share/applications\" &&"
 echo "                 for b in firefox chromium chrome; do"
@@ -82,6 +84,10 @@ if [ "$(uname)" = "FreeBSD" ]; then
             drc_usb_audio_enable=YES
             # Enable ONLY drc_usb_audio for DRC: it probes for the DAC at boot
             # and is driven by devd on hotplug. Do NOT enable brutefir_drc.
+    webremote: ln -sf "${REPO_DIR}/video/webremote/rc.d/omdrcvideo" /usr/local/etc/rc.d/omdrcvideo
+            sysrc omdrcvideo_enable=YES
+            service omdrcvideo start          # phone video web remote on :9080
+            # The idle mpv it drives autostarts in the KDE session (see above).
     brutefir: mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
               cp "${REPO_DIR}/brutefir_defaults.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
               # Required: BruteFIR inherits its I/O devices from this file. If it
@@ -104,6 +110,9 @@ else
                      sudo systemctl restart mpd.service
     udev (USB DAC) : sudo ln -sf "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
                      sudo udevadm control --reload-rules
+    webremote      : no systemd unit yet — run it directly (or add one):
+                     python3 "${REPO_DIR}/video/webremote/src/app.py" \\
+                       --config "${REPO_DIR}/video/webremote/webremote.conf"   # :9080
     brutefir       : mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
                      cp "${REPO_DIR}/brutefir_defaults.linux.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
                      # Required: BruteFIR inherits its I/O devices from this file. If

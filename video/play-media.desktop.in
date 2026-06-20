@@ -1,0 +1,14 @@
+[Desktop Entry]
+# Rendered from this .in by ../install.sh (@AUDIO_HOME@ from config.env).
+# Appears in Dolphin's "Open With" for video files; also runnable from the menu.
+# Deploy: ln -sf @AUDIO_HOME@/open-media-drc/video/play-media.desktop \
+#               @AUDIO_HOME@/.local/share/applications/play-media.desktop
+Type=Application
+Name=Play (DRC audio)
+GenericName=Media Player
+Comment=Play a file or URL through the room-correction audio chain (mpv)
+Exec=@AUDIO_HOME@/play-media.sh %U
+Icon=mpv
+Terminal=false
+Categories=AudioVideo;Player;Video;
+MimeType=video/x-matroska;video/mp4;video/x-msvideo;video/quicktime;video/webm;video/mpeg;video/x-flv;
