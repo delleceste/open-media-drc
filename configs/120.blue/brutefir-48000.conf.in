@@ -2,9 +2,6 @@ logic: "cli" { port: 3000; };
 
 sampling_rate: 48000;
 
-# Filter files not yet present — run scripts/REW2raw.sh to generate them at 48000 Hz
-# and place the results in filters/120.blue/48000/L.raw and R.raw
-
 coeff "c-l" {
 	filename: "@REPO_DIR@/filters/120.blue/48000/L.raw";
 	format: "FLOAT64_LE";
