@@ -33,21 +33,20 @@ DAC_SETTLE_SECS=1
 DAC_VERIFY_RETRIES=2
 DAC_VERIFY_TOL=100      # Hz tolerance around the requested rate
 
-# Crystal-switch prime (mitigation, confirmed by listening tests 2026-06).  The
-# OKTO derives its 44.1k family (44.1/88.2/176.4/352.8) and its 48k family
-# (48/96/192/384) from two different master crystals.  A cold open that *switches
-# crystal* routes SILENCE and only starts outputting after SEVERAL open/close
-# cycles; a same-crystal rate change is fine.  This happens in BOTH directions —
-# NOT 44.1k-only: e.g. idle→44.1k, but also 44.1k→192k, including `drc.sh resamp`
-# (so resamp does NOT sidestep the quirk if the DAC was last on the 44.1k family).
-# Confirmed empirically: 1 cold open across crystals = silent, 3 opens = audible.
-# So when the requested rate crosses crystal families (see the prime block below,
-# which reads the current rate from dev.pcm.0.feedback_rate) we "prime" with
-# DAC_PRIME_CYCLES extra open/close bounces before the real open (total opens =
-# cycles + 1).  This cannot be auto-verified — the silence is a DAC-side routing
-# quirk and the USB feedback / UAC2 clock-valid both look healthy either way (see
-# OKTO-DAC8-silent-first-open.md and freebsd-uaudio-patch/uaudio-clock-valid-bug.md)
-# — so it is a fixed recipe.  Same-crystal changes skip it and pay nothing.
+# Rate-change prime (mitigation, confirmed by listening tests 2026-06).  The OKTO
+# cold-opens SILENT after its clock PLL relocks for a new rate, and only starts
+# routing audio after SEVERAL open/close cycles.  First seen across crystal
+# families (its 44.1k family 44.1/88.2/176.4/352.8 and 48k family 48/96/192/384
+# use different master crystals: e.g. idle→44.1k, 44.1k→`drc.sh resamp`), but it
+# also happens WITHIN a family (observed 48k→192k silent).  So the trigger is a
+# rate *change* of any kind — NOT just a crystal switch, and NOT 44.1k-only.
+# Confirmed empirically: 1 cold open at a changed rate = silent, ~3 opens =
+# audible.  So on any rate change (see the prime block below, which reads the
+# current rate from dev.pcm.0.feedback_rate) we "prime" with DAC_PRIME_CYCLES
+# extra open/close bounces before the real open (total opens = cycles + 1); only
+# a same-rate re-open is skipped.  This cannot be auto-verified — the silence is a
+# DAC-side routing quirk and the USB feedback / UAC2 clock-valid both look healthy
+# either way (see OKTO-DAC8-silent-first-open.md) — so it is a fixed recipe.
 DAC_PRIME_CYCLES=2
 
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
@@ -466,28 +465,13 @@ start_brutefir() {
   return 1
 }
 
-# True for 44.1 kHz-family rates.  Kept as the fallback when the current DAC rate
-# is unknown (fresh boot / unreadable feedback): from the device's idle 48k-
-# crystal default, the 44.1k family is the only crossing, so this matches the
-# historical "prime for 44.1k" behaviour.
-is_441_family() {
-  case "$1" in
-    44100|88200|176400|352800) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# Map a sample rate to its DAC master-crystal domain: "44k" for the 44.1k family
-# (44.1/88.2/176.4/352.8), "48k" for everything else (48/96/192/384).  Tolerant
-# of the few-Hz offset in the USB feedback reading (e.g. 44101, 192004) so it can
-# classify both exact target rates and observed feedback rates.
-crystal_family() {
-  local r="$1" t d
-  for t in 44100 88200 176400 352800; do
-    d=$(( r - t )); [ "$d" -lt 0 ] && d=$(( -d ))
-    [ "$d" -le 60 ] && { printf '44k\n'; return; }
-  done
-  printf '48k\n'
+# True when two sample rates are the same to within the few-Hz slop of the USB
+# feedback reading (e.g. 192000 vs the observed 192004).  Used to tell a genuine
+# rate change (needs a PLL relock → cold-open prime) from a same-rate re-open
+# (lock retained → no prime).
+rates_equal() {
+  local d=$(( ${1:-0} - ${2:-0} )); [ "$d" -lt 0 ] && d=$(( -d ))
+  [ "$d" -le 60 ]
 }
 
 # Best-effort read of the DAC's *currently programmed* rate, to tell whether a
@@ -508,16 +492,16 @@ current_dac_rate() {
   fi
 }
 
-# Prime the OKTO across a crystal switch: open brutefir at $conf_file, let it
+# Prime the OKTO across a rate change: open brutefir at $conf_file, let it
 # briefly hold /dev/dsp0, then tear it down — repeated $1 times.  Each bounce is
 # one cold open at the target rate; the real open follows in the main loop, so
-# the DAC sees (cycles + 1) opens, which is what gets the freshly-switched
-# crystal domain to start routing audio.  Requires virtual_oss already up
+# the DAC sees (cycles + 1) opens, which is what gets the freshly-relocked clock
+# to start routing audio.  Requires virtual_oss already up
 # (brutefir's input).
 prime_dac() {
   local n=$1 i w
   for i in $(seq 1 "$n"); do
-    echo "priming DAC (crystal switch) cycle $i/$n at ${actual_rate} Hz"
+    echo "priming DAC (rate change) cycle $i/$n at ${actual_rate} Hz"
     brutefir "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
     w=0; while [ "$w" -lt 15 ]; do bf_running && break; sleep 0.2; w=$((w + 1)); done
     sleep 0.8                       # hold the open so the 44.1k clock settles
@@ -663,19 +647,19 @@ if ! $IS_LINUX; then
   done
 fi
 
-# ── prime the DAC when the rate crosses crystal families ─────────────────────
-# The OKTO cold-opens *silent* whenever a stream forces a master-crystal switch
-# between the 44.1k family (44.1/88.2/…) and the 48k family (48/96/192/…), in
-# EITHER direction (incl. 44.1k → `drc.sh resamp`/192k); same-family rate changes
-# stay on one crystal and are fine.  Prime only on a genuine crossing.  When the
-# current rate is unknown (fresh boot / unreadable feedback) fall back to "prime
-# for the 44.1k family" — from the idle 48k-crystal default that is the only
-# crossing, so the fallback matches the old behaviour.
-do_prime=false
-if [ -n "${prev_rate:-}" ] && [ "$prev_rate" != "0" ] && [ "$prev_rate" != "closed" ]; then
-  [ "$(crystal_family "$prev_rate")" != "$(crystal_family "$actual_rate")" ] && do_prime=true
-else
-  is_441_family "$actual_rate" && do_prime=true
+# ── prime the DAC on any rate CHANGE ─────────────────────────────────────────
+# The OKTO cold-opens *silent* after the clock PLL relocks for a new rate, then
+# starts routing only after several open/close cycles.  This was first seen
+# across crystal families (44.1k<->48k, e.g. idle→44.1k, 44.1k→resamp) but it
+# also happens WITHIN a family (observed: 48k→192k silent), so the trigger is a
+# rate *change* of any kind, not just a crystal switch.  Safe rule: prime on any
+# change; skip only a confirmed same-rate re-open (off→on at the same rate keeps
+# its lock).  The current rate is read from dev.pcm.0.feedback_rate; when it is
+# unknown (fresh boot / unreadable) we prime, since that is the coldest open.
+do_prime=true
+if [ -n "${prev_rate:-}" ] && [ "$prev_rate" != "0" ] && [ "$prev_rate" != "closed" ] \
+   && rates_equal "$prev_rate" "$actual_rate"; then
+  do_prime=false   # same rate as currently programmed → lock retained, no relock
 fi
 if $do_prime && [ "${DAC_PRIME_CYCLES:-0}" -gt 0 ]; then
   log_event "event=prime rate=${actual_rate} from=${prev_rate:-unknown} cycles=${DAC_PRIME_CYCLES}"
