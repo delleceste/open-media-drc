@@ -1,8 +1,24 @@
 # FreeBSD `uaudio(4)` patch — OKTO DAC8 STEREO 44.1 kHz fix
 
-Local workaround kept in-tree **while waiting for an official FreeBSD fix.**
-See [`FreeBSD-uaudio-shared-clock-bug.md`](FreeBSD-uaudio-shared-clock-bug.md)
-for the full root-cause analysis and instructions for filing the upstream bug.
+Local workarounds kept in-tree **while waiting for an official FreeBSD fix.**
+There are two `uaudio(4)` source patches for this DAC:
+
+1. **`uaudio.c.patch`** — disables the vestigial shared-clock capture interface
+   so the 44.1 kHz family stops dropping lock (the continuous *flicker*).
+   **Works** — confirmed live (`No recording`, no flicker). Full analysis:
+   [`FreeBSD-uaudio-shared-clock-bug.md`](FreeBSD-uaudio-shared-clock-bug.md).
+2. **`uaudio-clock-valid.c.patch`** — waits for the UAC2 Clock Validity control
+   after a rate change, intended to fix the *cold-open silence* / "run drc.sh
+   several times" bug. **⚠️ USELESS on this DAC** (tested 2026-06-21, 15.1-RELEASE):
+   the OKTO reports the clock valid in 0 ms, so the wait is a no-op and a single
+   cold 44.1 kHz open is still silent — `DAC_PRIME_CYCLES` in `drc.sh` is still
+   required. Full analysis + where to look next under `/usr/src`:
+   [`uaudio-clock-valid-bug.md`](uaudio-clock-valid-bug.md).
+
+Patch 1 is the one that matters. Patch 2 is harmless and spec-compliant (a
+reasonable upstream candidate) so it is kept applied, but it does **not** fix the
+cold-open silence here — that fix still has to be found elsewhere in the
+`uaudio(4)` open/teardown path.
 
 ## What it fixes
 
@@ -23,26 +39,29 @@ Result: **bit-perfect 44.1 kHz, stable lock, no flicker.**
 
 ## Built/tested environment
 
-- FreeBSD **15.1-RC1**, amd64, `GENERIC` (`releng/15.1-n283533`)
-- `snd_uaudio.ko` here is built **with `USB_DEBUG`** (restores the
+- FreeBSD **15.1-RELEASE**, amd64, `GENERIC` (`releng/15.1-n283562`)
+- The module is built **with `USB_DEBUG`** (restores the
   `hw.usb.uaudio.debug` sysctl + DPRINTF tracing, matching stock GENERIC).
-- The prebuilt `snd_uaudio.ko` is **ABI-specific to that kernel** — rebuild from
-  the patches after any kernel update.
+- No prebuilt binary is kept here: a `.ko` is **ABI-specific to its kernel** and
+  is overwritten by every OS update, so always **rebuild from the patches**
+  (below) after a kernel change.
 
 ## Contents
 
 | File | Purpose |
 |------|---------|
-| `uaudio.c.patch` | Source change to `sys/dev/sound/usb/uaudio.c` (the device-gated capture-disable). |
+| `uaudio.c.patch` | Source change to `sys/dev/sound/usb/uaudio.c` (the device-gated capture-disable / flicker fix). |
+| `uaudio-clock-valid.c.patch` | Source change to the same file: clock-validity wait after a rate change (cold-open silence fix). |
 | `Makefile.patch` | Adds `CFLAGS+=-DUSB_DEBUG` to the module Makefile. |
-| `snd_uaudio.ko` | Prebuilt module (patch + `USB_DEBUG`) for the environment above. |
-| `FreeBSD-uaudio-shared-clock-bug.md` | Full analysis + upstream bug-filing instructions. |
+| `FreeBSD-uaudio-shared-clock-bug.md` | Flicker bug: full analysis + upstream bug-filing instructions. |
+| `uaudio-clock-valid-bug.md` | Cold-open silence bug: full analysis. |
 
 ## Apply from source and rebuild
 
 ```sh
 cd /usr/src
 patch -p1 < /path/to/uaudio.c.patch
+patch -p1 < /path/to/uaudio-clock-valid.c.patch
 patch -p1 < /path/to/Makefile.patch
 
 cd /usr/src/sys/modules/sound/driver/uaudio
@@ -50,14 +69,17 @@ make clean && make
 # -> /usr/obj/usr/src/amd64.amd64/sys/modules/sound/driver/uaudio/snd_uaudio.ko
 ```
 
-## Install (either freshly built or the prebuilt `snd_uaudio.ko`)
+## Install the freshly built module
 
 ```sh
-# back up the stock module once (if not already done)
-sudo cp -n /boot/kernel/snd_uaudio.ko /boot/kernel/snd_uaudio.ko.orig
+OBJ=/usr/obj/usr/src/amd64.amd64/sys/modules/sound/driver/uaudio/snd_uaudio.ko
+
+# back up the *current* stock module first (refresh it after every OS update,
+# so the revert path always matches the running kernel's ABI)
+sudo cp -f /boot/kernel/snd_uaudio.ko /boot/kernel/snd_uaudio.ko.orig
 
 sudo service musicpd stop                 # release /dev/dsp0
-sudo cp snd_uaudio.ko /boot/kernel/snd_uaudio.ko
+sudo cp -f "$OBJ" /boot/kernel/snd_uaudio.ko
 sudo kldunload snd_uaudio                 # devd auto-reloads from /boot/kernel
 UG=$(usbconfig | awk '/DAC8STEREO/{print $1}' | tr -d ':')
 sudo usbconfig -d "$UG" reset             # clean re-enumeration
