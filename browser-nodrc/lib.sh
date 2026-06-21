@@ -23,23 +23,49 @@ DRC="$HERE/../drc.sh"
 POWER_FILE="$HERE/../last_power"   # "on" / "off"  (matches drc.sh POWER_FILE)
 STATE_FILE="$HERE/../last_arg"     # remembered rate/variant (drc.sh STATE_FILE)
 
-DAC_DEV=/dev/dsp0                  # OSS DAC node the browser opens directly
-DAC_WARMUP_SECS=2                  # silent-stream warm-up before launch
+DAC_DEV=/dev/dsp0                          # OSS DAC node the browser opens directly
+DAC_WARMUP_SECS="${DAC_WARMUP_SECS:-2}"    # final silent warm-up hold before launch
+DAC_PRIME_CYCLES="${DAC_PRIME_CYCLES:-2}"  # open/close bounces before the warm-up
+DAC_PRIME_HOLD="${DAC_PRIME_HOLD:-0.8}"    # seconds to hold the DAC open per bounce
+DAC_PRIME_GAP="${DAC_PRIME_GAP:-0.3}"      # seconds to let the DAC release between bounces
 
-# Warm the DAC clock before the browser opens it.  The OKTO routes silence on a
-# *cold* open (see ../OKTO-DAC8-silent-first-open.md) — which is why the *-nodrc
-# launchers used to need starting two or three times before any sound came out.
-# Feed the DAC a brief silent stream so its clock locks first; the browser's open
-# is then the warm "second" open the DAC actually plays.  Best-effort: skipped
-# silently if the node is absent (non-OSS host) or busy (MPD already playing
-# direct, in which case the DAC is already warm).
+# Hold the DAC open for $1 seconds by feeding it silence, then close.  Returns
+# non-zero (best-effort) only if the node is missing; a busy node means another
+# client (MPD direct) already holds it, so treat that as "already warm".
+_dac_hold_open() {
+	[ -c "$DAC_DEV" ] || return 1
+	dd if=/dev/zero of="$DAC_DEV" bs=8k >/dev/null 2>&1 &
+	_feed_pid=$!
+	sleep "$1"
+	kill "$_feed_pid" 2>/dev/null
+	wait "$_feed_pid" 2>/dev/null
+	return 0
+}
+
+# Prime + warm the DAC before the browser opens it.  The OKTO routes SILENCE on a
+# cold open that switches master crystal (44.1k<->48k family) and only starts
+# routing after SEVERAL open/close cycles — a single held warm-up is NOT enough
+# (see ../OKTO-DAC8-silent-first-open.md and drc.sh's crystal-switch prime, which
+# this mirrors).  So bounce the device open/closed DAC_PRIME_CYCLES times (the
+# "prime"), then one final warm hold so the clock is locked when the browser
+# opens; the browser is then the warm Nth open the DAC actually plays.
+#
+# Rate caveat: dd opens /dev/dsp0 at the OSS default rate, so the prime warms
+# whichever crystal that rate belongs to.  If the browser then plays content from
+# the *other* crystal family, the device must still cross crystals on the
+# browser's own open — which a generic launcher cannot prime, as it can't know
+# the browser's rate in advance — so that case may still need a relaunch.
+# Best-effort throughout: skipped if the node is absent (non-OSS host) or busy
+# (MPD already playing direct, in which case the DAC is already warm).
 drc_warm_dac() {
 	[ -c "$DAC_DEV" ] || return 0
-	dd if=/dev/zero of="$DAC_DEV" bs=8k >/dev/null 2>&1 &
-	_warm_pid=$!
-	sleep "$DAC_WARMUP_SECS"
-	kill "$_warm_pid" 2>/dev/null
-	wait "$_warm_pid" 2>/dev/null
+	_i=0
+	while [ "$_i" -lt "$DAC_PRIME_CYCLES" ]; do
+		_dac_hold_open "$DAC_PRIME_HOLD" || return 0
+		sleep "$DAC_PRIME_GAP"   # let the DAC release before the next open
+		_i=$((_i + 1))
+	done
+	_dac_hold_open "$DAC_WARMUP_SECS"
 	return 0
 }
 
@@ -62,6 +88,6 @@ drc_bypass_begin() {
 	trap _drc_restore EXIT INT TERM
 	echo "browser-nodrc: disabling DRC for direct DAC output" >&2
 	"$DRC" off
-	echo "browser-nodrc: warming DAC clock (${DAC_WARMUP_SECS}s silent stream)" >&2
+	echo "browser-nodrc: priming + warming DAC clock (${DAC_PRIME_CYCLES} bounces + ${DAC_WARMUP_SECS}s hold)" >&2
 	drc_warm_dac
 }

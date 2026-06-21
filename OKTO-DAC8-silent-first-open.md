@@ -196,10 +196,15 @@ without depending on a firmware fix.
    on Linux) and, if possible, that the DAC reports lock; retry the open if not.
    At minimum this turns a silent success into a logged, retried failure.
 
-4. **Browser path: warm + de-race the handoff.** In `drc_bypass_begin`, after
-   `drc.sh off`, feed a short silence burst to `/dev/dsp0` (e.g. ~1.5 s of
-   zeros) to lock the clock before launching the browser, and ensure the device
-   is free first. This is the browser-side equivalent of mitigation (1).
+4. **Browser path: prime + warm the handoff.** `drc_bypass_begin`
+   (`browser-nodrc/lib.sh`), after `drc.sh off`, now **primes** `/dev/dsp0` —
+   `DAC_PRIME_CYCLES` short open/close bounces (via `dd if=/dev/zero`) then a
+   final `DAC_WARMUP_SECS` warm hold — the browser-side equivalent of `drc.sh`'s
+   crystal-switch prime. A single held warm-up was *not* enough (same reason as
+   the DRC path). Caveat: `dd` opens at the OSS default rate, so it primes only
+   that crystal; if the browser then plays the *other* family the browser's own
+   open still crosses crystals (the launcher can't know the rate in advance), so
+   that case may still need a relaunch.
 
 5. **Make the settle constants tunable.** The hard-coded `sleep 0.5` / `sleep 1`
    in the prime and teardown are guesses; expose them (env or vars) so the
