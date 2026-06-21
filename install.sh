@@ -43,7 +43,11 @@ render() {
 	    -e "s|@QOBUZ_USER@|${QOBUZ_USER}|g" \
 	    -e "s|@FRIENDLY_NAME@|${FRIENDLY_NAME}|g" \
 	    "$tpl" > "$out"
-	# Preserve the executable bit (rc.d scripts) — sed output does not.
+	# Preserve the executable bit — sed output does not. Needed by rc.d scripts
+	# AND by KDE/Plasma autostart .desktop files: Plasma refuses to launch an
+	# autostart entry that is neither root-owned nor executable ("Access ...
+	# denied, not owned by root and executable flag not set"). Keep the matching
+	# .in marked executable so the rendered file inherits the trust bit.
 	[ -x "$tpl" ] && chmod +x "$out"
 	echo "  rendered ${out#"$REPO_DIR"/}"
 }

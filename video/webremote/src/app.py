@@ -455,18 +455,43 @@ def api_status():
     })
 
 
+@app.route("/api/tracks")
+def api_tracks():
+    """Audio and subtitle tracks of the current item, for the track menus."""
+    if not mpvipc.is_running(MPV_SOCKET):
+        return jsonify({"ok": True, "running": False})
+    tl = mpvipc.get_property(MPV_SOCKET, "track-list", []) or []
+    audio, sub = [], []
+    for t in tl:
+        typ = t.get("type")
+        if typ == "audio":
+            audio.append({"id": t.get("id"), "lang": t.get("lang"),
+                          "title": t.get("title"), "codec": t.get("codec"),
+                          "channels": t.get("demux-channels"),
+                          "selected": bool(t.get("selected"))})
+        elif typ == "sub":
+            sub.append({"id": t.get("id"), "lang": t.get("lang"),
+                        "title": t.get("title"), "codec": t.get("codec"),
+                        "external": bool(t.get("external")),
+                        "selected": bool(t.get("selected"))})
+    return jsonify({"ok": True, "running": True, "audio": audio, "sub": sub})
+
+
 # op -> mpv IPC command builder. Value (when needed) comes from the request body.
+# IPC commands default to no on-screen feedback; the leading osd-* prefixes force
+# mpv to flash its OSD (osd-bar = the seek/progress bar, osd-msg = text) so changes
+# made from the remote are visible on the TV.
 _CMD_OPS = {
-    "toggle": lambda v: ["cycle", "pause"],
-    "pause":  lambda v: ["set_property", "pause", True],
-    "play":   lambda v: ["set_property", "pause", False],
+    "toggle": lambda v: ["osd-msg-bar", "cycle", "pause"],
+    "pause":  lambda v: ["osd-msg-bar", "set", "pause", "yes"],
+    "play":   lambda v: ["osd-msg-bar", "set", "pause", "no"],
     "stop":   lambda v: ["stop"],                       # back to idle -> window hides
-    "seek":   lambda v: ["seek", float(v), "relative"],
-    "seekto": lambda v: ["seek", float(v), "absolute"],
-    "volume": lambda v: ["set_property", "volume", float(v)],
-    "mute":   lambda v: ["cycle", "mute"],
-    "audio":  lambda v: ["set_property", "aid", v],
-    "sub":    lambda v: ["set_property", "sid", v],
+    "seek":   lambda v: ["osd-bar", "seek", float(v), "relative"],
+    "seekto": lambda v: ["osd-bar", "seek", float(v), "absolute"],
+    "volume": lambda v: ["osd-bar", "set", "volume", float(v)],
+    "mute":   lambda v: ["osd-msg", "cycle", "mute"],
+    "audio":  lambda v: ["osd-msg", "set", "aid", v],
+    "sub":    lambda v: ["osd-msg", "set", "sid", v],
 }
 
 

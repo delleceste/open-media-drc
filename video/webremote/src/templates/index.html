@@ -20,7 +20,7 @@
   #path { color:var(--muted); font-size:13px; word-break:break-all; min-height:18px; }
 
   /* list view (compact) */
-  #list.list { padding:8px 10px 60px; }
+  #list.list { padding:8px 10px var(--list-pb,60px); }
   .list .item { display:flex; align-items:center; gap:12px; padding:10px 12px; margin:8px 0;
          background:var(--card); border:1px solid var(--line); border-radius:10px; }
   .list .thumb { width:64px; height:38px; flex:0 0 auto; }
@@ -29,7 +29,7 @@
 
   /* grid view */
   #list.grid { padding:10px; display:grid; gap:12px;
-         grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); padding-bottom:60px; }
+         grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); padding-bottom:var(--list-pb,60px); }
   .grid .item { background:var(--card); border:1px solid var(--line); border-radius:10px;
          overflow:hidden; display:flex; flex-direction:column; }
   .grid .thumb { width:100%; aspect-ratio:16/9; }
@@ -70,6 +70,13 @@
   .nowbar .ctrls button { flex:1 1 auto; background:#21262d; color:var(--fg);
             border:1px solid var(--line); border-radius:8px; padding:9px; font-size:16px; cursor:pointer; }
   .nowbar .ctrls button.big { flex:1.4 1 auto; color:var(--accent); }
+  .nowbar .trackbtns { display:flex; gap:6px; margin-top:6px; }
+  .nowbar .trackbtns button { flex:1 1 auto; background:#21262d; color:var(--fg);
+            border:1px solid var(--line); border-radius:8px; padding:8px; font-size:13px; cursor:pointer; }
+  .tracks { margin-top:8px; }
+  .trackrow { padding:11px 10px; border:1px solid var(--line); border-radius:8px;
+            margin:6px 0; cursor:pointer; }
+  .trackrow.sel { border-color:var(--accent); color:var(--accent); }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
            background:var(--card); border:1px solid var(--line); border-radius:8px;
            padding:10px 16px; max-width:90%; opacity:0; transition:opacity .2s;
@@ -115,11 +122,15 @@
     <input type="range" id="npSeek" min="0" max="1000" value="0">
     <span id="npDur">0:00</span>
   </div>
+  <div class="trackbtns">
+    <button onclick="showTracks('audio')">🔊 Audio</button>
+    <button onclick="showTracks('sub')">💬 Subtitles</button>
+  </div>
   <div class="ctrls">
-    <button onclick="cmd('seek',-10)">⏪ 10</button>
+    <button id="npRew" onclick="nudge(-1)">« 10</button>
     <button class="big" id="npToggle" onclick="cmd('toggle')">⏸</button>
-    <button onclick="cmd('seek',30)">30 ⏩</button>
-    <button onclick="cmd('mute')">🔈</button>
+    <button id="npFwd" onclick="nudge(1)">10 »</button>
+    <button id="npMute" onclick="cmd('mute')">🔈</button>
     <button onclick="cmd('stop')">⏹</button>
   </div>
 </div>
@@ -364,6 +375,56 @@ async function showImdb(entry) {
   }
 }
 
+// ---- audio / subtitle track menus ---------------------------------------
+function trackLabel(t, isAudio) {
+  const p = [];
+  if (t.lang) p.push(String(t.lang).toUpperCase());
+  if (t.title) p.push(t.title);
+  if (t.codec) p.push(t.codec);
+  if (isAudio && t.channels) p.push(t.channels);
+  if (!isAudio && t.external) p.push("ext");
+  return p.join(" · ") || ("Track " + t.id);
+}
+
+async function showTracks(kind) {
+  scrim.classList.add("show");
+  sheet.innerHTML = `<div class="msg">Loading tracks…</div>`;
+  let d;
+  try { d = await (await fetch("/api/tracks")).json(); }
+  catch (e) { sheet.innerHTML = `<div class="msg err">Network error</div>`; return; }
+  if (!d.ok || !d.running) { sheet.innerHTML = `<div class="msg">Nothing playing</div>`; return; }
+
+  const isAudio = kind === "audio";
+  const list = isAudio ? d.audio : d.sub;
+  sheet.innerHTML = "";
+  const h = document.createElement("div");
+  h.innerHTML = `<h2>${isAudio ? "Audio" : "Subtitles"}</h2>`;
+  sheet.appendChild(h);
+  const wrap = document.createElement("div");
+  wrap.className = "tracks"; sheet.appendChild(wrap);
+
+  const addRow = (label, selected, onclick) => {
+    const r = document.createElement("div");
+    r.className = "trackrow" + (selected ? " sel" : "");
+    r.textContent = (selected ? "● " : "○ ") + label;
+    r.onclick = onclick; wrap.appendChild(r);
+  };
+  if (!isAudio) addRow("Off", !list.some(t => t.selected), () => selTrack("sub", "no"));
+  if (!list.length) wrap.insertAdjacentHTML("beforeend", `<div class="msg">none</div>`);
+  list.forEach(t => addRow(trackLabel(t, isAudio), t.selected,
+                           () => selTrack(isAudio ? "audio" : "sub", t.id)));
+
+  const links = document.createElement("div");
+  links.className = "links";
+  links.innerHTML = `<button class="btn" onclick="closeSheet()">Close</button>`;
+  sheet.appendChild(links);
+}
+
+async function selTrack(op, id) {
+  await cmd(op, id);
+  showTracks(op === "audio" ? "audio" : "sub");   // refresh the highlighted row
+}
+
 // ---- transport bar -------------------------------------------------------
 const nowbar = document.getElementById("nowbar");
 const npTitle = document.getElementById("npTitle");
@@ -371,7 +432,26 @@ const npPos = document.getElementById("npPos");
 const npDur = document.getElementById("npDur");
 const npSeek = document.getElementById("npSeek");
 const npToggle = document.getElementById("npToggle");
+const npMute = document.getElementById("npMute");
+const npRew = document.getElementById("npRew");
+const npFwd = document.getElementById("npFwd");
 let seeking = false, lastDur = 0;
+
+// Coalesce rapid taps: each tap adds ±10 s; a single relative seek fires once
+// the taps stop, so two quick taps jump 20 s in one go.
+let pendingSeek = 0, seekTimer = null;
+function nudge(dir) {
+  pendingSeek += dir * 10;
+  npRew.textContent = pendingSeek < 0 ? "« " + Math.abs(pendingSeek) : "« 10";
+  npFwd.textContent = pendingSeek > 0 ? pendingSeek + " »" : "10 »";
+  clearTimeout(seekTimer);
+  seekTimer = setTimeout(() => {
+    if (pendingSeek) cmd("seek", pendingSeek);
+    pendingSeek = 0;
+    npRew.textContent = "« 10";
+    npFwd.textContent = "10 »";
+  }, 450);
+}
 
 function fmt(s) {
   if (s == null || isNaN(s)) return "0:00";
@@ -403,11 +483,13 @@ async function updateStatus() {
   catch (e) { return; }
   if (!s.ok || !s.running || s.idle) {
     nowbar.classList.remove("show");
+    syncListPad();
     return;
   }
   nowbar.classList.add("show");
   npTitle.textContent = s.title || "";
   npToggle.textContent = s.pause ? "▶" : "⏸";
+  npMute.textContent = s.mute ? "🔇" : "🔈";
   npPos.textContent = fmt(s.time);
   const hasDur = s.duration != null && s.duration > 0;
   lastDur = hasDur ? s.duration : 0;
@@ -415,7 +497,15 @@ async function updateStatus() {
   npDur.textContent = hasDur ? fmt(s.duration) : "live";
   if (hasDur) { if (!seeking) npSeek.value = Math.round((s.time/lastDur) * 1000); }
   else npSeek.value = 0;
+  syncListPad();
 }
+
+// Keep the list clear of the transport bar so bottom folders stay visible.
+function syncListPad() {
+  const pb = nowbar.classList.contains("show") ? nowbar.offsetHeight + 16 : 60;
+  document.documentElement.style.setProperty("--list-pb", pb + "px");
+}
+window.addEventListener("resize", syncListPad);
 setInterval(updateStatus, 1000);
 
 setView(view);

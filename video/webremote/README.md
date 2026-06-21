@@ -33,7 +33,13 @@ the practical install / run / API reference.
   the genuinely-longest title, and loads it into the **same idle mpv** over IPC
   (so the transport bar works for the disc too). A watcher tears the gcache down
   when the disc stops; **Eject** stops playback and releases the drive.
-- **Transport** — a now-playing bar: seek, ±10/30 s, play/pause, mute, stop.
+- **Transport** — a now-playing bar: seek, ±10/30 s, play/pause, mute, stop, and
+  **audio / subtitle menus** (pick the audio track by language/format, choose a
+  subtitle track or turn subtitles off).
+- **Stereo downmix** — the DRC chain / DAC is stereo, so mpv is run with
+  `audio-channels=stereo`; 5.1/7.1 sources are downmixed instead of failing to
+  open a 6-channel output. (You can still select a multichannel track — it is
+  downmixed for output.)
 - **Favourites** — pin folders to the main page with a ★ toggle.
 
 > The disc button reuses the gcache lifecycle of
@@ -146,6 +152,7 @@ app changes).
 | `POST /api/play {path}` | play an item on the idle mpv |
 | `POST /api/disc {op}` | play / eject the physical Blu-ray disc (`op` = `play`/`eject`) |
 | `GET /api/status` | live playback state (poll ~1 s) |
+| `GET /api/tracks` | audio + subtitle track lists (for the menus) |
 | `POST /api/cmd {op,value?}` | `toggle`/`pause`/`play`/`stop`/`seek`/`seekto`/`volume`/`mute`/`audio`/`sub` |
 | `GET /api/thumb?path=` | cached JPEG thumbnail (404 → UI shows a type icon) |
 | `GET /api/imdb?path=` | IMDb info (OMDb-enriched or search-link fallback) |

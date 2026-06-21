@@ -124,8 +124,14 @@ Started at session login (the box autologins to X on the projector):
 mpv --idle=yes --fs \
     --input-ipc-server=/tmp/mpv-socket \
     --ao=oss --audio-device=oss//dev/dsp.play \
+    --audio-channels=stereo \
     --audio-delay=-0.67 --sub-delay=0
 ```
+
+`--audio-channels=stereo` is required: the DRC chain / DAC is stereo, so without
+it mpv repeatedly tries (and fails) to open a 6-channel output for 5.1/7.1
+sources. Multichannel tracks are downmixed for output; the user can still pick
+any audio/subtitle track from the web menus (`/api/tracks` + `/api/cmd`).
 
 **The idle instance is hidden when nothing is playing.** With `--idle=yes` and
 **no `--force-window`**, mpv keeps the process and IPC socket alive but creates
@@ -177,6 +183,7 @@ KDE Connect / MPRIS stay available as a fallback for casual control.
 | `GET /api/browse?path=` | listing under the whitelist: dirs + playable files, each folder tagged `bdmv` / `dvd` / `dir` |
 | `POST /api/play {path}` | dispatch by item type (file / BDMV / DVD / disc) |
 | `GET /api/status` | `get_property` snapshot (state, position, duration, title) |
+| `GET /api/tracks` | audio + subtitle track lists (language/format/channels) |
 | `POST /api/cmd {op,…}` | pause, seek, stop, volume, mute, audio/sub track |
 | `GET /api/thumb?path=` | cached frame-grab image (404 → UI shows a type icon) |
 | `GET /api/imdb?path=` | OMDb-enriched IMDb info (or search-link fallback) |
