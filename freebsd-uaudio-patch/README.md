@@ -1,24 +1,16 @@
 # FreeBSD `uaudio(4)` patch — OKTO DAC8 STEREO 44.1 kHz fix
 
-Local workarounds kept in-tree **while waiting for an official FreeBSD fix.**
-There are two `uaudio(4)` source patches for this DAC:
+Local workaround kept in-tree **while waiting for an official FreeBSD fix.**
+There is one `uaudio(4)` source patch for this DAC:
 
 1. **`uaudio.c.patch`** — disables the vestigial shared-clock capture interface
    so the 44.1 kHz family stops dropping lock (the continuous *flicker*).
    **Works** — confirmed live (`No recording`, no flicker). Full analysis:
    [`FreeBSD-uaudio-shared-clock-bug.md`](FreeBSD-uaudio-shared-clock-bug.md).
-2. **`uaudio-clock-valid.c.patch`** — waits for the UAC2 Clock Validity control
-   after a rate change, intended to fix the *cold-open silence* / "run drc.sh
-   several times" bug. **⚠️ USELESS on this DAC** (tested 2026-06-21, 15.1-RELEASE):
-   the OKTO reports the clock valid in 0 ms, so the wait is a no-op and a single
-   cold 44.1 kHz open is still silent — `DAC_PRIME_CYCLES` in `drc.sh` is still
-   required. Full analysis + where to look next under `/usr/src`:
-   [`uaudio-clock-valid-bug.md`](uaudio-clock-valid-bug.md).
 
-Patch 1 is the one that matters. Patch 2 is harmless and spec-compliant (a
-reasonable upstream candidate) so it is kept applied, but it does **not** fix the
-cold-open silence here — that fix still has to be found elsewhere in the
-`uaudio(4)` open/teardown path.
+(The separate *cold-open silence* / "run drc.sh several times" bug on the
+44.1 kHz family is handled host-side by `DAC_PRIME_CYCLES` in `drc.sh`, not by
+`uaudio(4)`.)
 
 ## What it fixes
 
@@ -51,17 +43,14 @@ Result: **bit-perfect 44.1 kHz, stable lock, no flicker.**
 | File | Purpose |
 |------|---------|
 | `uaudio.c.patch` | Source change to `sys/dev/sound/usb/uaudio.c` (the device-gated capture-disable / flicker fix). |
-| `uaudio-clock-valid.c.patch` | Source change to the same file: clock-validity wait after a rate change (cold-open silence fix). |
 | `Makefile.patch` | Adds `CFLAGS+=-DUSB_DEBUG` to the module Makefile. |
 | `FreeBSD-uaudio-shared-clock-bug.md` | Flicker bug: full analysis + upstream bug-filing instructions. |
-| `uaudio-clock-valid-bug.md` | Cold-open silence bug: full analysis. |
 
 ## Apply from source and rebuild
 
 ```sh
 cd /usr/src
 patch -p1 < /path/to/uaudio.c.patch
-patch -p1 < /path/to/uaudio-clock-valid.c.patch
 patch -p1 < /path/to/Makefile.patch
 
 cd /usr/src/sys/modules/sound/driver/uaudio
