@@ -255,22 +255,40 @@ sample-rate-family dependent**:
 | 44.1 kHz | 3 (cold opens in a row) | **yes** |
 | 44.1 kHz, single `drc.sh` with prime = 2 cycles + real open (3 total) | 1 command | **yes** |
 
-So the user-visible "have to run drc.sh several times" bug is **44.1 kHz-family
-cold-open silence**: the OKTO routes no audio on the first open(s) at a 44.1 kHz
-rate and only starts after several open/close cycles; the 48 kHz family plays on
-the first open. This is the same clock-domain that the flicker doc and the
-`freebsd-uaudio-patch` (capture-interface-disable) concern.
+> **UPDATE 2026-06-21 — the rule is a CRYSTAL SWITCH, not "44.1k-only".** Further
+> listening tests showed the silence is triggered by a **master-crystal switch
+> between the 44.1k family and the 48k family, in EITHER direction** — not by the
+> 44.1k family per se. The table above was taken from the device's idle default
+> (384k = 48k crystal), where opening a 48k-family rate is *not* a switch, which
+> is the only reason 48k looked immune. But with the DAC left on the **44.1k**
+> crystal, a single `drc.sh resamp` (→192k, i.e. a 44.1k→48k switch) is **silent
+> on the first call** and has to be repeated — confirmed by ear. Same-crystal
+> rate changes (48→192k, 44.1→88.2k) never need priming.
+>
+> So `drc.sh resamp` does **NOT** sidestep the quirk when the DAC was last on the
+> 44.1k crystal.
 
-**Fix applied:** a **family-targeted prime** in `drc.sh` — for a 44.1 kHz-family
-target only, do `DAC_PRIME_CYCLES` (default 2) open/close bounces before the real
-open (3 opens total). A single `drc.sh 44100` then produces audio with no manual
-repeats (verified by ear). The 48 kHz family skips the prime and pays nothing.
-Bit-perfect alternative that sidesteps the quirk entirely: `drc.sh resamp`.
+So the user-visible "have to run drc.sh several times" bug is **crystal-switch
+cold-open silence**: the OKTO routes no audio on the first open after a master-
+crystal change and only starts after several open/close cycles. This is the same
+clock-domain that the flicker doc and the `freebsd-uaudio-patch`
+(capture-interface-disable) concern.
 
-Note this confirms the prime I had *removed* was the right idea for 44.1 kHz — it
-was only "useless" for the 48 kHz family. The prime cannot be auto-verified
-(`feedback_rate` looks healthy whether or not audio routes), so it is a fixed
-recipe, tunable via `DAC_PRIME_CYCLES`.
+**Fix applied (current):** a **crystal-switch prime** in `drc.sh` — it primes
+(`DAC_PRIME_CYCLES`, default 2, open/close bounces before the real open) whenever
+the requested rate **crosses crystal families**, decided by comparing the target
+against the DAC's *current* rate read live from `dev.pcm.0.feedback_rate` (see
+`crystal_family()` / `current_dac_rate()` and the prime block) — **not** from
+`last_arg` (which fixes P1 below). This covers idle→44.1k, 44.1k→`resamp`, and any
+other crossing; same-crystal changes skip it and pay nothing. When the current
+rate is unknown (fresh boot / unreadable feedback) it falls back to "prime for the
+44.1k family", which from the idle 48k default is the same thing. Verified by ear:
+a single `drc.sh 44100` and a single `drc.sh resamp` (from the 44.1k crystal) both
+now produce audio with no manual repeats.
+
+The prime cannot be auto-verified (`feedback_rate` looks healthy whether or not
+audio routes — see the validity caveat above), so it is a fixed recipe, tunable
+via `DAC_PRIME_CYCLES`.
 
 ## Empirical findings (2026-06, this box) — host/USB-side timing
 ## (see the validity caveat above; these do NOT address the 44.1k silence)

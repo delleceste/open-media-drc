@@ -33,17 +33,21 @@ DAC_SETTLE_SECS=1
 DAC_VERIFY_RETRIES=2
 DAC_VERIFY_TOL=100      # Hz tolerance around the requested rate
 
-# 44.1 kHz-family prime (mitigation, confirmed by listening test 2026-06).  The
-# OKTO routes *silence* on a cold open at a 44.1 kHz-family rate (44.1/88.2/...)
-# and only starts outputting after SEVERAL open/close cycles; the 48 kHz family
-# (48/96/192 kHz) plays on the first open.  Confirmed empirically: 1 open at
-# 44.1k = silent, 3 opens = audible; 192 kHz = audible immediately.  So for a
-# 44.1k-family target we "prime" with DAC_PRIME_CYCLES extra open/close bounces
-# before the real open (total opens = cycles + 1).  This cannot be auto-verified
-# — the silence is a DAC-side routing quirk and the USB feedback looks healthy
-# either way (see OKTO-DAC8-silent-first-open.md) — so it is a fixed recipe.
-# The 48 kHz family skips it entirely and pays nothing.  Bit-perfect alternative
-# that sidesteps the quirk: `drc.sh resamp` (everything → 192 kHz).
+# Crystal-switch prime (mitigation, confirmed by listening tests 2026-06).  The
+# OKTO derives its 44.1k family (44.1/88.2/176.4/352.8) and its 48k family
+# (48/96/192/384) from two different master crystals.  A cold open that *switches
+# crystal* routes SILENCE and only starts outputting after SEVERAL open/close
+# cycles; a same-crystal rate change is fine.  This happens in BOTH directions —
+# NOT 44.1k-only: e.g. idle→44.1k, but also 44.1k→192k, including `drc.sh resamp`
+# (so resamp does NOT sidestep the quirk if the DAC was last on the 44.1k family).
+# Confirmed empirically: 1 cold open across crystals = silent, 3 opens = audible.
+# So when the requested rate crosses crystal families (see the prime block below,
+# which reads the current rate from dev.pcm.0.feedback_rate) we "prime" with
+# DAC_PRIME_CYCLES extra open/close bounces before the real open (total opens =
+# cycles + 1).  This cannot be auto-verified — the silence is a DAC-side routing
+# quirk and the USB feedback / UAC2 clock-valid both look healthy either way (see
+# OKTO-DAC8-silent-first-open.md and freebsd-uaudio-patch/uaudio-clock-valid-bug.md)
+# — so it is a fixed recipe.  Same-crystal changes skip it and pay nothing.
 DAC_PRIME_CYCLES=2
 
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
@@ -462,7 +466,10 @@ start_brutefir() {
   return 1
 }
 
-# True for 44.1 kHz-family rates (the ones that need the cold-open prime).
+# True for 44.1 kHz-family rates.  Kept as the fallback when the current DAC rate
+# is unknown (fresh boot / unreadable feedback): from the device's idle 48k-
+# crystal default, the 44.1k family is the only crossing, so this matches the
+# historical "prime for 44.1k" behaviour.
 is_441_family() {
   case "$1" in
     44100|88200|176400|352800) return 0 ;;
@@ -470,15 +477,47 @@ is_441_family() {
   esac
 }
 
-# Prime the OKTO at a 44.1 kHz-family rate: open brutefir at $conf_file, let it
+# Map a sample rate to its DAC master-crystal domain: "44k" for the 44.1k family
+# (44.1/88.2/176.4/352.8), "48k" for everything else (48/96/192/384).  Tolerant
+# of the few-Hz offset in the USB feedback reading (e.g. 44101, 192004) so it can
+# classify both exact target rates and observed feedback rates.
+crystal_family() {
+  local r="$1" t d
+  for t in 44100 88200 176400 352800; do
+    d=$(( r - t )); [ "$d" -lt 0 ] && d=$(( -d ))
+    [ "$d" -le 60 ] && { printf '44k\n'; return; }
+  done
+  printf '48k\n'
+}
+
+# Best-effort read of the DAC's *currently programmed* rate, to tell whether a
+# requested rate crosses crystal families.  FreeBSD: the USB async feedback
+# (dev.pcm.0.feedback_rate) holds the live/last rate and persists while idle;
+# Linux: the active ALSA hw_params rate.  Prints empty when unknown.
+current_dac_rate() {
+  if $IS_LINUX; then
+    local f first
+    for f in /proc/asound/card*/pcm*p/sub*/hw_params; do
+      [ -f "$f" ] || continue
+      read -r first < "$f" 2>/dev/null || continue
+      [ "$first" = "closed" ] && continue
+      awk '/^rate:/{print $2; exit}' "$f"; return
+    done
+  else
+    sysctl -n dev.pcm.0.feedback_rate 2>/dev/null
+  fi
+}
+
+# Prime the OKTO across a crystal switch: open brutefir at $conf_file, let it
 # briefly hold /dev/dsp0, then tear it down — repeated $1 times.  Each bounce is
 # one cold open at the target rate; the real open follows in the main loop, so
-# the DAC sees (cycles + 1) opens, which is what gets the 44.1k clock domain to
-# start routing audio.  Requires virtual_oss already up (brutefir's input).
+# the DAC sees (cycles + 1) opens, which is what gets the freshly-switched
+# crystal domain to start routing audio.  Requires virtual_oss already up
+# (brutefir's input).
 prime_dac() {
   local n=$1 i w
   for i in $(seq 1 "$n"); do
-    echo "priming DAC (44.1kHz family) cycle $i/$n at ${actual_rate} Hz"
+    echo "priming DAC (crystal switch) cycle $i/$n at ${actual_rate} Hz"
     brutefir "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
     w=0; while [ "$w" -lt 15 ]; do bf_running && break; sleep 0.2; w=$((w + 1)); done
     sleep 0.8                       # hold the open so the 44.1k clock settles
@@ -550,7 +589,10 @@ rollback_to_direct() {
 }
 
 # ── stop brutefir ────────────────────────────────────────────────────────────
-log_event "event=run_start mode=${mode} rate=${actual_rate:-} variant=${variant:-} warmup=${DAC_WARMUP_SECS} verify_retries=${DAC_VERIFY_RETRIES}"
+# Read the DAC's current crystal family *before* tearing the chain down, so the
+# prime step below can tell whether the requested rate crosses crystal domains.
+prev_rate="$(current_dac_rate)"
+log_event "event=run_start mode=${mode} rate=${actual_rate:-} from=${prev_rate:-unknown} variant=${variant:-} warmup=${DAC_WARMUP_SECS} verify_retries=${DAC_VERIFY_RETRIES}"
 stop_brutefir
 
 # ── off: re-enable direct DAC, stop virtual_oss ──────────────────────────────
@@ -621,10 +663,22 @@ if ! $IS_LINUX; then
   done
 fi
 
-# ── prime the DAC on a 44.1 kHz-family target ────────────────────────────────
-# 48 kHz-family rates play on the first open and skip this entirely.
-if is_441_family "$actual_rate" && [ "${DAC_PRIME_CYCLES:-0}" -gt 0 ]; then
-  log_event "event=prime rate=${actual_rate} cycles=${DAC_PRIME_CYCLES}"
+# ── prime the DAC when the rate crosses crystal families ─────────────────────
+# The OKTO cold-opens *silent* whenever a stream forces a master-crystal switch
+# between the 44.1k family (44.1/88.2/…) and the 48k family (48/96/192/…), in
+# EITHER direction (incl. 44.1k → `drc.sh resamp`/192k); same-family rate changes
+# stay on one crystal and are fine.  Prime only on a genuine crossing.  When the
+# current rate is unknown (fresh boot / unreadable feedback) fall back to "prime
+# for the 44.1k family" — from the idle 48k-crystal default that is the only
+# crossing, so the fallback matches the old behaviour.
+do_prime=false
+if [ -n "${prev_rate:-}" ] && [ "$prev_rate" != "0" ] && [ "$prev_rate" != "closed" ]; then
+  [ "$(crystal_family "$prev_rate")" != "$(crystal_family "$actual_rate")" ] && do_prime=true
+else
+  is_441_family "$actual_rate" && do_prime=true
+fi
+if $do_prime && [ "${DAC_PRIME_CYCLES:-0}" -gt 0 ]; then
+  log_event "event=prime rate=${actual_rate} from=${prev_rate:-unknown} cycles=${DAC_PRIME_CYCLES}"
   prime_dac "$DAC_PRIME_CYCLES"
 fi
 
