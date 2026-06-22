@@ -50,7 +50,7 @@ DAC_VERIFY_TOL=100      # Hz tolerance around the requested rate
 DAC_PRIME_CYCLES=2
 
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
-VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -a 0 -l dsp.loop"
+VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 250ms -f /dev/null -a 0 -d dsp.play -a 0 -l dsp.loop"
 
 IS_LINUX=false
 [ "$(uname)" = "Linux" ] && IS_LINUX=true
