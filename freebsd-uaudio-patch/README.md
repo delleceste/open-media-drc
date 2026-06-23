@@ -1,12 +1,21 @@
 # FreeBSD `uaudio(4)` patch — OKTO DAC8 STEREO 44.1 kHz fix
 
-Local workaround kept in-tree **while waiting for an official FreeBSD fix.**
-There is one `uaudio(4)` source patch for this DAC:
+Local workarounds kept in-tree **while waiting for an official FreeBSD fix.**
+There are two `uaudio(4)` source patches for this DAC:
 
 1. **`uaudio.c.patch`** — disables the vestigial shared-clock capture interface
    so the 44.1 kHz family stops dropping lock (the continuous *flicker*).
    **Works** — confirmed live (`No recording`, no flicker). Full analysis:
    [`FreeBSD-uaudio-shared-clock-bug.md`](FreeBSD-uaudio-shared-clock-bug.md).
+
+2. **`uaudio-feedback-follow.c.patch`** — makes the playback path *follow the
+   device's reported feedback rate directly and smoothly* (fold it into the
+   per-frame sample distribution), the way Linux `snd-usb-audio` does, instead of
+   nudging the nominal rate with a clamped, once-per-second batch. Targets the
+   *occasional tick* on the OKTO that the Cambridge DacMagic 100 never shows on
+   the same host. **Candidate fix — written from a source audit, NOT yet built
+   or heard; build and listen-test before trusting it.** Full analysis:
+   [`uaudio-feedback-follow.md`](uaudio-feedback-follow.md).
 
 (The separate *cold-open silence* / "run drc.sh several times" bug on the
 44.1 kHz family is handled host-side by `DAC_PRIME_CYCLES` in `drc.sh`, not by
@@ -43,14 +52,17 @@ Result: **bit-perfect 44.1 kHz, stable lock, no flicker.**
 | File | Purpose |
 |------|---------|
 | `uaudio.c.patch` | Source change to `sys/dev/sound/usb/uaudio.c` (the device-gated capture-disable / flicker fix). |
+| `uaudio-feedback-follow.c.patch` | Source change to `sys/dev/sound/usb/uaudio.c` (follow the feedback rate smoothly, like Linux). |
 | `Makefile.patch` | Adds `CFLAGS+=-DUSB_DEBUG` to the module Makefile. |
 | `FreeBSD-uaudio-shared-clock-bug.md` | Flicker bug: full analysis + upstream bug-filing instructions. |
+| `uaudio-feedback-follow.md` | Feedback-handling audit: FreeBSD vs Linux 7.1, why "follow the rate", test plan. |
 
 ## Apply from source and rebuild
 
 ```sh
 cd /usr/src
 patch -p1 < /path/to/uaudio.c.patch
+patch -p1 < /path/to/uaudio-feedback-follow.c.patch   # independent region of the same file
 patch -p1 < /path/to/Makefile.patch
 
 cd /usr/src/sys/modules/sound/driver/uaudio
