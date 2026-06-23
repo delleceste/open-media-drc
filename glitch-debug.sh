@@ -14,7 +14,7 @@
 #   tail [N]      last N glitch.log lines (default 40)
 #   analyze [..]  run glitch-analyze.py over glitch.log (passes extra args)
 #   clear         truncate glitch.log
-#   usbtap [SEC]  one bounded USB last-hop capture (default 30s; needs sudo)
+#   usbtap [SEC]  one bounded USB last-hop capture (default 180s; needs sudo)
 #
 set -u
 
@@ -85,7 +85,7 @@ case "${1:-status}" in
     echo "glitch.log cleared"
     ;;
   usbtap)
-    "$USBTAP" "${2:-30}" "$LOG_FILE"
+    "$USBTAP" "${2:-180}" "$LOG_FILE"
     ;;
   *)
     echo "usage: $0 {on|off|status|enabled|tail [N]|analyze [args]|clear|usbtap [sec]}" >&2

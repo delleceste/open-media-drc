@@ -27,7 +27,8 @@ import math
 import argparse
 from collections import defaultdict, Counter
 
-LINE_RE = re.compile(r'\bepoch=(\d+)\s+stage=(\S+)\s+kind=(\S+)')
+# epoch may be a whole second (monitor) or fractional (USB tap, sub-second).
+LINE_RE = re.compile(r'\bepoch=(\d+(?:\.\d+)?)\s+stage=(\S+)\s+kind=(\S+)')
 
 
 def parse(path, since=None, stage=None):
@@ -38,7 +39,7 @@ def parse(path, since=None, stage=None):
                 m = LINE_RE.search(line)
                 if not m:
                     continue
-                ep, st, kind = int(m.group(1)), m.group(2), m.group(3)
+                ep, st, kind = float(m.group(1)), m.group(2), m.group(3)
                 if since and ep < since:
                     continue
                 if stage and st != stage:

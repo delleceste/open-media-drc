@@ -60,7 +60,7 @@ independent, best-effort sources:
 Resolution is the poll interval — fine for periods of **seconds to minutes**.
 For sub-second / sample-accurate timing, use the USB tap.
 
-### `glitch-usbtap.sh` — definitive, last-hop, heavier (the `USB tap` button)
+### `glitch-usbtap.sh` — definitive, last-hop, heavier (CLI only)
 
 The gold standard: it taps the OKTO's **isochronous OUT endpoint 0x01** with
 `usbdump` (same endpoint as `scripts/verify-bitperfect.sh`), downstream of every
@@ -100,8 +100,10 @@ It flags, each with its own timestamp:
 Notes: needs root (`sudo usbdump`, same sudoers the UI uses for
 `service`/`reboot`); writes the pcap to `/var/tmp` (`GLITCH_TMP`) since a 5-minute
 capture is ~525 MB; the **capture** is I/O-bound (low CPU) — the CPU cost is the
-**decode** pass after the window closes. The web Debug card offers 60 s / 3 / 5 /
-10 min; the CLI takes any duration (`glitch-debug.sh usbtap 300`).
+**decode** pass after the window closes. It is **CLI only** (not in the web UI,
+being heavy and root-only): `glitch-debug.sh usbtap [sec]`, default **180 s**,
+any duration accepted. Each event is logged with a **sub-second epoch**, so the
+analyzer can resolve sub-second periodicity of USB events.
 
 ---
 

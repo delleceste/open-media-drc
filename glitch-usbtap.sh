@@ -115,8 +115,10 @@ def hhmmss(sec):
     return f"{int(sec//3600):02d}:{int(sec%3600//60):02d}:{int(sec%60):02d}"
 
 def epoch_of(sec):
+    # keep sub-second precision: usbdump timestamps are microsecond-accurate, so
+    # the analyzer can resolve sub-second periodicity of USB events.
     dt = datetime.datetime.combine(today, datetime.time()) + datetime.timedelta(seconds=sec % 86400)
-    return int(dt.timestamp())
+    return dt.timestamp()
 
 gaps = []
 for i in range(1, n):
@@ -148,9 +150,9 @@ print(f"@@SUMMARY transfers={n} span={span:.1f} gaps={len(gaps)} shorts={len(sho
       f"feedback={feedback} obs_bps={obs_bps:.0f} exp_bps={exp_bps} "
       f"nominal_ms={nominal*1000:.2f} verdict={verdict}")
 for t, d in gaps:
-    print(f"@@EVENT {epoch_of(t)} {hhmmss(t)} usbgap gap {d*1000:.1f} ms (nominal {nominal*1000:.2f})")
+    print(f"@@EVENT {epoch_of(t):.6f} {hhmmss(t)} usbgap gap {d*1000:.1f} ms (nominal {nominal*1000:.2f})")
 for t, sl in shorts[:200]:    # cap the flood if a long stretch is short
-    print(f"@@EVENT {epoch_of(t)} {hhmmss(t)} usbshort SLEN {sl} (nominal {nom_slen})")
+    print(f"@@EVENT {epoch_of(t):.6f} {hhmmss(t)} usbshort SLEN {sl} (nominal {nom_slen})")
 PY
 
 report="$(sudo usbdump -r "$PCAP" 2>/dev/null \
@@ -168,10 +170,11 @@ while IFS= read -r line; do
         "$(now_iso)" "$(date +%s)" "${line#@@SUMMARY }" >> "$LOG_FILE" 2>/dev/null || true
       ;;
     '@@EVENT '*)
-      # @@EVENT <epoch> <hhmmss> <kind> <msg...>
+      # @@EVENT <epoch.frac> <hhmmss> <kind> <msg...>
       set -- ${line#@@EVENT }
       ep="$1"; hhmmss="$2"; kind="$3"; shift 3
-      iso="$(date -r "$ep" +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo "$hhmmss")"
+      # epoch carries sub-second precision; date -r wants whole seconds
+      iso="$(date -r "${ep%.*}" +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo "$hhmmss")"
       printf '%s epoch=%s stage=usb kind=%s msg=%q\n' \
         "$iso" "$ep" "$kind" "$*" >> "$LOG_FILE" 2>/dev/null || true
       ;;
