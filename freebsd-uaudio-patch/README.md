@@ -1,8 +1,16 @@
 # FreeBSD `uaudio(4)` patch — OKTO DAC8 STEREO 44.1 kHz fix
 
 Local workaround kept in-tree **while waiting for an official FreeBSD fix.**
-See [`FreeBSD-uaudio-shared-clock-bug.md`](FreeBSD-uaudio-shared-clock-bug.md)
-for the full root-cause analysis and instructions for filing the upstream bug.
+There is one `uaudio(4)` source patch for this DAC:
+
+1. **`uaudio.c.patch`** — disables the vestigial shared-clock capture interface
+   so the 44.1 kHz family stops dropping lock (the continuous *flicker*).
+   **Works** — confirmed live (`No recording`, no flicker). Full analysis:
+   [`FreeBSD-uaudio-shared-clock-bug.md`](FreeBSD-uaudio-shared-clock-bug.md).
+
+(The separate *cold-open silence* / "run drc.sh several times" bug on the
+44.1 kHz family is handled host-side by `DAC_PRIME_CYCLES` in `drc.sh`, not by
+`uaudio(4)`.)
 
 ## What it fixes
 
@@ -23,20 +31,20 @@ Result: **bit-perfect 44.1 kHz, stable lock, no flicker.**
 
 ## Built/tested environment
 
-- FreeBSD **15.1-RC1**, amd64, `GENERIC` (`releng/15.1-n283533`)
-- `snd_uaudio.ko` here is built **with `USB_DEBUG`** (restores the
+- FreeBSD **15.1-RELEASE**, amd64, `GENERIC` (`releng/15.1-n283562`)
+- The module is built **with `USB_DEBUG`** (restores the
   `hw.usb.uaudio.debug` sysctl + DPRINTF tracing, matching stock GENERIC).
-- The prebuilt `snd_uaudio.ko` is **ABI-specific to that kernel** — rebuild from
-  the patches after any kernel update.
+- No prebuilt binary is kept here: a `.ko` is **ABI-specific to its kernel** and
+  is overwritten by every OS update, so always **rebuild from the patches**
+  (below) after a kernel change.
 
 ## Contents
 
 | File | Purpose |
 |------|---------|
-| `uaudio.c.patch` | Source change to `sys/dev/sound/usb/uaudio.c` (the device-gated capture-disable). |
+| `uaudio.c.patch` | Source change to `sys/dev/sound/usb/uaudio.c` (the device-gated capture-disable / flicker fix). |
 | `Makefile.patch` | Adds `CFLAGS+=-DUSB_DEBUG` to the module Makefile. |
-| `snd_uaudio.ko` | Prebuilt module (patch + `USB_DEBUG`) for the environment above. |
-| `FreeBSD-uaudio-shared-clock-bug.md` | Full analysis + upstream bug-filing instructions. |
+| `FreeBSD-uaudio-shared-clock-bug.md` | Flicker bug: full analysis + upstream bug-filing instructions. |
 
 ## Apply from source and rebuild
 
@@ -50,14 +58,17 @@ make clean && make
 # -> /usr/obj/usr/src/amd64.amd64/sys/modules/sound/driver/uaudio/snd_uaudio.ko
 ```
 
-## Install (either freshly built or the prebuilt `snd_uaudio.ko`)
+## Install the freshly built module
 
 ```sh
-# back up the stock module once (if not already done)
-sudo cp -n /boot/kernel/snd_uaudio.ko /boot/kernel/snd_uaudio.ko.orig
+OBJ=/usr/obj/usr/src/amd64.amd64/sys/modules/sound/driver/uaudio/snd_uaudio.ko
+
+# back up the *current* stock module first (refresh it after every OS update,
+# so the revert path always matches the running kernel's ABI)
+sudo cp -f /boot/kernel/snd_uaudio.ko /boot/kernel/snd_uaudio.ko.orig
 
 sudo service musicpd stop                 # release /dev/dsp0
-sudo cp snd_uaudio.ko /boot/kernel/snd_uaudio.ko
+sudo cp -f "$OBJ" /boot/kernel/snd_uaudio.ko
 sudo kldunload snd_uaudio                 # devd auto-reloads from /boot/kernel
 UG=$(usbconfig | awk '/DAC8STEREO/{print $1}' | tr -d ':')
 sudo usbconfig -d "$UG" reset             # clean re-enumeration

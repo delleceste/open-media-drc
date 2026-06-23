@@ -351,6 +351,71 @@ explicitly asks MPD to resample everything to 192 kHz. `drc.sh 192000` and
 active configs: native 192 kHz playback is shown as `Flat 192 kHz`, while the
 MPD-forced resampling path is shown as `Flat auto-resample`.
 
+# Browser audio without DRC (`browser-nodrc/`)
+
+Web browsers (Firefox, Chrome, Chromium) cannot play through the DRC chain. While
+DRC is on, **BruteFIR holds the DAC (`/dev/dsp0`) single-open**, and a browser
+that tries to open the default audio device gets silence — or refuses to play.
+Unlike MPD or mpv, browsers have no easy hook to route into `/dev/dsp.play`
+(the `virtual_oss` entry point), and their audio is rarely critical-listening
+material anyway, so the pragmatic answer is to **temporarily bypass DRC** for the
+duration of a browsing session and give the browser the DAC directly.
+
+`browser-nodrc/` provides one launcher per browser that does exactly this:
+
+```
+browser-nodrc/
+  lib.sh                  # shared snapshot/disable/restore helper (sourced)
+  firefox-nodrc.sh        # firefox --no-remote, DRC bypassed
+  chromium-nodrc.sh       # chromium, DRC bypassed
+  chrome-nodrc.sh         # google-chrome, DRC bypassed
+  *-nodrc.desktop.in      # KDE/Plasma launcher entries (rendered by install.sh)
+```
+
+## What a launcher does
+
+1. **Snapshots** the current DRC state by reading `drc.sh`'s own persisted state
+   files — `last_power` (`on`/`off`) and `last_arg` (the remembered rate/variant).
+2. Runs `drc.sh off`, freeing `/dev/dsp0` so the browser plays straight to the DAC.
+3. Runs the browser **in the foreground**.
+4. On exit **restores the exact pre-launch state** — re-applying the saved rate if
+   DRC was on, or leaving it off if it was off. This runs from an `EXIT`/`INT`/`TERM`
+   trap, so the state is restored even if the browser crashes or the launcher is
+   killed.
+
+> **Why not `drc.sh restore`?** `drc.sh off` records `off` in `last_power`, and
+> `drc.sh restore` honours that (by design, so an explicit `off` survives a reboot
+> — see *What `drc.sh restore` does*). Calling `restore` after the browser quit
+> would therefore leave DRC **off**. The launchers instead snapshot the state up
+> front and re-apply it directly, so the DRC status you had before is the status
+> you get back.
+
+Firefox is launched with `--no-remote` so it always starts a fresh foreground
+instance (otherwise a second invocation hands its URL to a running Firefox and
+returns immediately, restoring DRC out from under the still-open browser).
+Chrome/Chromium can't use `--no-remote` the same way, so those launchers instead
+detect an already-running instance with `pgrep` and, if found, just open the URL
+without touching DRC.
+
+## Install / deploy
+
+The `.desktop` entries are rendered from their `.in` templates by `./install.sh`
+(`@AUDIO_HOME@` from `config.env`). To make them appear in the KDE launcher,
+symlink the rendered files into `~/.local/share/applications/` — `install.sh`
+prints the exact commands in its deploy reminder:
+
+```sh
+mkdir -p ~/.local/share/applications
+for b in firefox chromium chrome; do
+  ln -sf ~/open-media-drc/browser-nodrc/$b-nodrc.desktop \
+         ~/.local/share/applications/$b-nodrc.desktop
+done
+update-desktop-database ~/.local/share/applications 2>/dev/null || true
+```
+
+The launcher scripts can also be run directly from a terminal:
+`browser-nodrc/firefox-nodrc.sh https://example.com`.
+
 # The doc/ directory
 It shall contain at least two plots (PNG format), each one with two curves: uncorrected and corrected:
 - current.amplitude.png: amplitude
@@ -845,6 +910,41 @@ correct `attenuation:` value for the brutefir `.conf` file. Headroom calculation
 separate from REW-to-RAW conversion: `REW2raw.sh` preserves FIR gain according to
 the sample-rate ratio, while `headroom_calc.py` determines the playback attenuation
 needed to avoid clipping.
+
+# Video: mpv playback + phone web remote
+
+Besides the audio DRC chain, this box also plays **video** (Blu-ray discs, DVDs,
+local files, streams) through mpv, with the audio routed through the same
+virtual_oss/brutefir DRC path. Two parts live under [`video/`](video/):
+
+- **Playback launchers** — `play-bluray.sh` (physical USB Blu-ray: gcache
+  read-ahead + longest-title + DRC-aware audio) and `play-media.sh` (files and
+  network/stream URLs). See [`video/README.md`](video/README.md).
+- **Phone web remote** — [`video/webremote/`](video/webremote/README.md): a
+  LAN-only web app (no app to install) to **browse the media drives, tap to
+  play, and control playback from an Android browser** — the mpv-only
+  replacement for Kodi on this headless, keyboard-less box.
+
+```
+ Android phone (browser, LAN only)
+        │  HTTP :9080
+        ▼
+ video webremote (Flask)  ── browse /media/USBHD2/video, thumbnails, IMDb info
+        │  JSON IPC
+        ▼
+ persistent idle mpv  ──→ virtual_oss / brutefir ──→ DAC + projector
+```
+
+The web remote browses the whitelisted media root, shows ffmpeg thumbnails and
+OMDb-verified IMDb details, lets you pin favourite folders, and drives a hidden
+persistent mpv over its JSON IPC socket (play / seek / pause / volume / stop).
+It mirrors the deployment model of the audio control panel
+([`omdrc-ctrl`](omdrc-ctrl/README.md)): run-from-repo, LAN-only, FreeBSD rc.d
+service (`omdrcvideo`), with the idle mpv autostarted by the KDE/Plasma session.
+
+**Full details:** [`video/webremote/README.md`](video/webremote/README.md)
+(install, API, config) and [`video/webremote/ARCHITECTURE.md`](video/webremote/ARCHITECTURE.md)
+(design rationale).
 
 # History and notes
 

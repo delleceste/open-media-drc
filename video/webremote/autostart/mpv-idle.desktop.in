@@ -1,0 +1,21 @@
+[Desktop Entry]
+# KDE/Plasma session autostart for the persistent idle mpv that the video
+# webremote drives over its JSON IPC socket. Rendered from this .in by
+# ../../../install.sh (@REPO_DIR@ from config.env).
+#
+# Deploy:
+#   ln -sf @REPO_DIR@/video/webremote/autostart/mpv-idle.desktop \
+#          ~/.config/autostart/mpv-idle.desktop
+#
+# Hidden while idle (mpv-idle.sh uses --idle=yes with no --force-window): no
+# window shows until the web app loads a file. Starts with the desktop so mpv
+# owns DISPLAY=:0 / the projector.
+Type=Application
+Name=mpv idle (video web remote)
+Comment=Persistent idle mpv that the phone web remote controls over IPC
+Exec=@REPO_DIR@/video/webremote/mpv-idle.sh
+Icon=mpv
+Terminal=false
+Categories=AudioVideo;Player;Video;
+X-KDE-autostart-phase=2
+X-GNOME-Autostart-enabled=true

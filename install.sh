@@ -43,7 +43,11 @@ render() {
 	    -e "s|@QOBUZ_USER@|${QOBUZ_USER}|g" \
 	    -e "s|@FRIENDLY_NAME@|${FRIENDLY_NAME}|g" \
 	    "$tpl" > "$out"
-	# Preserve the executable bit (rc.d scripts) — sed output does not.
+	# Preserve the executable bit — sed output does not. Needed by rc.d scripts
+	# AND by KDE/Plasma autostart .desktop files: Plasma refuses to launch an
+	# autostart entry that is neither root-owned nor executable ("Access ...
+	# denied, not owned by root and executable flag not set"). Keep the matching
+	# .in marked executable so the rendered file inherits the trust bit.
 	[ -x "$tpl" ] && chmod +x "$out"
 	echo "  rendered ${out#"$REPO_DIR"/}"
 }
@@ -69,6 +73,14 @@ echo "    symlinked. Re-run this deploy step after a 'git pull' to refresh the c
 echo
 echo "Deploy reminder (needs root for the system paths):"
 echo "  state dirs : mkdir -p \"${AUDIO_HOME}/.local/share/mpd\" \"${AUDIO_HOME}/.cache/mpd\" \"${AUDIO_HOME}/.cache/upmpdcli\""
+echo "  video remote (idle mpv autostart, KDE/Plasma): mkdir -p \"${AUDIO_HOME}/.config/autostart\" &&"
+echo "                 ln -sf \"${REPO_DIR}/video/webremote/autostart/mpv-idle.desktop\" \"${AUDIO_HOME}/.config/autostart/mpv-idle.desktop\""
+echo "  browser launchers (No-DRC Firefox/Chrome/Chromium in the KDE menu):"
+echo "                 mkdir -p \"${AUDIO_HOME}/.local/share/applications\" &&"
+echo "                 for b in firefox chromium chrome; do"
+echo "                   ln -sf \"${REPO_DIR}/browser-nodrc/\$b-nodrc.desktop\" \\"
+echo "                          \"${AUDIO_HOME}/.local/share/applications/\$b-nodrc.desktop\" ; done"
+echo "                 update-desktop-database \"${AUDIO_HOME}/.local/share/applications\" 2>/dev/null || true"
 
 if [ "$(uname)" = "FreeBSD" ]; then
 	cat <<EOF
@@ -86,6 +98,10 @@ if [ "$(uname)" = "FreeBSD" ]; then
             drc_usb_audio_enable=YES
             # Enable ONLY drc_usb_audio for DRC: it probes for the DAC at boot
             # and is driven by devd on hotplug. Do NOT enable brutefir_drc.
+    webremote: ln -sf "${REPO_DIR}/video/webremote/rc.d/omdrcvideo" /usr/local/etc/rc.d/omdrcvideo
+            sysrc omdrcvideo_enable=YES
+            service omdrcvideo start          # phone video web remote on :9080
+            # The idle mpv it drives autostarts in the KDE session (see above).
     brutefir: mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
               cp "${REPO_DIR}/brutefir_defaults.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
               # Required: BruteFIR inherits its I/O devices from this file. If it
@@ -111,6 +127,9 @@ else
                      sudo systemctl restart mpd.service
     udev (USB DAC) : sudo cp "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
                      sudo udevadm control --reload-rules
+    webremote      : no systemd unit yet — run it directly (or add one):
+                     python3 "${REPO_DIR}/video/webremote/src/app.py" \\
+                       --config "${REPO_DIR}/video/webremote/webremote.conf"   # :9080
     brutefir       : mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
                      cp "${REPO_DIR}/brutefir_defaults.linux.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
                      # Required: BruteFIR inherits its I/O devices from this file. If

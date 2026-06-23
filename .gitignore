@@ -10,8 +10,15 @@
 /etc/systemd/system/drc-usb-audio.service
 # brutefir per-rate configs are generated from configs/**/*.conf.in
 configs/*/*.conf
+# No-DRC browser launchers are generated from browser-nodrc/*.desktop.in
+/browser-nodrc/*.desktop
 /upmpdcli/upmpdcli.conf
 
 # Runtime state written by drc.sh
 /last_arg
 /last_power
+/drc.log
+
+# Python bytecode cache (video/webremote and omdrc-ctrl)
+__pycache__/
+*.pyc

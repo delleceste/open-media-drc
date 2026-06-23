@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Video Remote</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#30363d; --fg:#e6edf3; --muted:#8b949e;
+          --accent:#388bfd; --gold:#d29922; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { position:sticky; top:0; background:var(--bg); border-bottom:1px solid var(--line);
+           padding:env(safe-area-inset-top) 14px 10px; z-index:5; }
+  .titlebar { display:flex; align-items:center; gap:10px; margin:10px 0 6px; }
+  h1 { font-size:18px; margin:0; flex:1 1 auto; }
+  .viewtoggle button { background:var(--card); color:var(--fg); border:1px solid var(--line);
+           border-radius:8px; padding:7px 11px; font-size:15px; cursor:pointer; }
+  .viewtoggle button.on { border-color:var(--accent); color:var(--accent); }
+  #path { color:var(--muted); font-size:13px; word-break:break-all; min-height:18px; }
+
+  /* list view (compact) */
+  #list.list { padding:8px 10px var(--list-pb,60px); }
+  .list .item { display:flex; align-items:center; gap:12px; padding:10px 12px; margin:8px 0;
+         background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  .list .thumb { width:64px; height:38px; flex:0 0 auto; }
+  .list .meta { flex:1 1 auto; min-width:0; }
+  .list .acts { flex:0 0 auto; }
+
+  /* grid view */
+  #list.grid { padding:10px; display:grid; gap:12px;
+         grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); padding-bottom:var(--list-pb,60px); }
+  .grid .item { background:var(--card); border:1px solid var(--line); border-radius:10px;
+         overflow:hidden; display:flex; flex-direction:column; }
+  .grid .thumb { width:100%; aspect-ratio:16/9; }
+  .grid .meta { padding:8px 10px; }
+  .grid .acts { padding:0 8px 8px; }
+
+  .thumb { background:#000 center/cover no-repeat; border-radius:6px;
+           display:flex; align-items:center; justify-content:center;
+           font-size:24px; color:var(--muted); }
+  .thumb img { width:100%; height:100%; object-fit:cover; display:block; border-radius:inherit; }
+  .name { word-break:break-word; cursor:pointer; }
+  .sub  { color:var(--muted); font-size:12px; margin-top:2px; }
+  .tag  { font-size:11px; color:var(--muted); border:1px solid var(--line);
+          border-radius:6px; padding:1px 6px; margin-left:6px; }
+  .acts { display:flex; gap:8px; margin-top:6px; }
+  .btn  { flex:1 1 auto; background:#21262d; color:var(--fg); border:1px solid var(--line);
+          border-radius:8px; padding:8px; font-size:14px; cursor:pointer; text-align:center; }
+  .btn.play:active { border-color:var(--accent); }
+  .btn.imdb { color:var(--gold); }
+  .btn.star { flex:0 0 auto; min-width:46px; color:var(--gold); }
+  .section { color:var(--muted); font-size:12px; letter-spacing:.05em;
+             text-transform:uppercase; margin:10px 2px 2px; }
+  #list.grid .section { grid-column:1/-1; }
+  .up { color:var(--muted); cursor:pointer; }
+
+  .msg { color:var(--muted); padding:24px 12px; text-align:center; }
+  .err { color:#f85149; }
+  /* now-playing transport bar */
+  .nowbar { position:fixed; left:0; right:0; bottom:0; z-index:14; display:none;
+            background:#11161d; border-top:1px solid var(--line);
+            padding:8px 12px calc(8px + env(safe-area-inset-bottom)); }
+  .nowbar.show { display:block; }
+  .nowbar .nptitle { font-size:13px; color:var(--fg); white-space:nowrap; overflow:hidden;
+            text-overflow:ellipsis; margin-bottom:4px; }
+  .nowbar .seekrow { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+  .nowbar input[type=range] { flex:1 1 auto; accent-color:var(--accent); }
+  .nowbar .ctrls { display:flex; align-items:center; gap:6px; margin-top:6px; }
+  .nowbar .ctrls button { flex:1 1 auto; background:#21262d; color:var(--fg);
+            border:1px solid var(--line); border-radius:8px; padding:9px; font-size:16px; cursor:pointer; }
+  .nowbar .ctrls button.big { flex:1.4 1 auto; color:var(--accent); }
+  .nowbar .trackbtns { display:flex; gap:6px; margin-top:6px; }
+  .nowbar .trackbtns button { flex:1 1 auto; background:#21262d; color:var(--fg);
+            border:1px solid var(--line); border-radius:8px; padding:8px; font-size:13px; cursor:pointer; }
+  .tracks { margin-top:8px; }
+  .trackrow { padding:11px 10px; border:1px solid var(--line); border-radius:8px;
+            margin:6px 0; cursor:pointer; }
+  .trackrow.sel { border-color:var(--accent); color:var(--accent); }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+           background:var(--card); border:1px solid var(--line); border-radius:8px;
+           padding:10px 16px; max-width:90%; opacity:0; transition:opacity .2s;
+           pointer-events:none; z-index:20; }
+  .toast.show { opacity:1; }
+
+  /* IMDb detail panel */
+  .scrim { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+           align-items:flex-end; z-index:15; }
+  .scrim.show { display:flex; }
+  .sheet { background:var(--card); border-top:1px solid var(--line);
+           border-radius:14px 14px 0 0; width:100%; max-height:85vh; overflow:auto;
+           padding:16px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .sheet h2 { font-size:19px; margin:0 6px 0 0; display:inline; }
+  .sheet .yr { color:var(--muted); }
+  .sheet .row2 { display:flex; gap:14px; margin-top:12px; }
+  .sheet .poster { width:96px; flex:0 0 auto; border-radius:8px; background:#000; }
+  .sheet .facts { flex:1 1 auto; font-size:14px; }
+  .sheet .facts b { color:var(--muted); font-weight:600; }
+  .rating { color:var(--gold); font-weight:700; }
+  .sheet .plot { margin-top:12px; font-size:14px; color:#c9d1d9; }
+  .sheet .links { margin-top:16px; display:flex; gap:8px; }
+  .sheet a.btn, .sheet button.btn { text-decoration:none; }
+</style>
+</head>
+<body>
+<header>
+  <div class="titlebar">
+    <h1>🎬 Video Remote</h1>
+    <div class="viewtoggle">
+      <button id="rescan" title="Rescan thumbnails">⟳</button>
+      <button id="vGrid" title="Grid">▦</button>
+      <button id="vList" title="List">☰</button>
+    </div>
+  </div>
+  <div id="path"></div>
+</header>
+<div id="list" class="grid"><div class="msg">Loading…</div></div>
+<div id="nowbar" class="nowbar">
+  <div class="nptitle" id="npTitle"></div>
+  <div class="seekrow">
+    <span id="npPos">0:00</span>
+    <input type="range" id="npSeek" min="0" max="1000" value="0">
+    <span id="npDur">0:00</span>
+  </div>
+  <div class="trackbtns">
+    <button onclick="showTracks('audio')">🔊 Audio</button>
+    <button onclick="showTracks('sub')">💬 Subtitles</button>
+  </div>
+  <div class="ctrls">
+    <button id="npRew" onclick="nudge(-1)">« 10</button>
+    <button class="big" id="npToggle" onclick="cmd('toggle')">⏸</button>
+    <button id="npFwd" onclick="nudge(1)">10 »</button>
+    <button id="npMute" onclick="cmd('mute')">🔈</button>
+    <button onclick="cmd('stop')">⏹</button>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<div id="scrim" class="scrim"><div class="sheet" id="sheet"></div></div>
+
+<script>
+const ICON = { dir:"📁", bdmv:"💿", dvd:"📀", file:"🎞️" };
+const TAG  = { bdmv:"Blu-ray", dvd:"DVD" };
+const listEl  = document.getElementById("list");
+const pathEl  = document.getElementById("path");
+const toastEl = document.getElementById("toast");
+const scrim   = document.getElementById("scrim");
+const sheet   = document.getElementById("sheet");
+let current = "";
+let view = localStorage.getItem("view") || "grid";
+
+function setView(v) {
+  view = v; localStorage.setItem("view", v);
+  listEl.className = v;
+  document.getElementById("vGrid").classList.toggle("on", v === "grid");
+  document.getElementById("vList").classList.toggle("on", v === "list");
+  if (current !== undefined) browse(current);
+}
+document.getElementById("vGrid").onclick = () => setView("grid");
+document.getElementById("vList").onclick = () => setView("list");
+
+function toast(text, isErr) {
+  toastEl.textContent = text;
+  toastEl.classList.toggle("err", !!isErr);
+  toastEl.classList.add("show");
+  setTimeout(() => toastEl.classList.remove("show"), 2400);
+}
+
+function thumbEl(e) {
+  const d = document.createElement("div");
+  d.className = "thumb";
+  if (e.type === "dir") { d.textContent = ICON.dir; return d; }
+  const img = new Image();
+  img.loading = "lazy";
+  img.src = "/api/thumb?path=" + encodeURIComponent(e.path);
+  img.onerror = () => { d.textContent = ICON[e.type] || "🎞️"; };
+  d.appendChild(img);
+  return d;
+}
+
+function itemEl(e) {
+  const it = document.createElement("div");
+  it.className = "item";
+  const open = (e.type === "dir") ? () => browse(e.path) : () => play(e);
+
+  const th = thumbEl(e);
+  th.onclick = open;
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const nm = document.createElement("div");
+  nm.className = "name";
+  nm.textContent = e.title || e.name;
+  if (TAG[e.type]) nm.insertAdjacentHTML("beforeend", `<span class="tag">${TAG[e.type]}</span>`);
+  nm.onclick = open;
+  meta.appendChild(nm);
+  if (e.year) meta.insertAdjacentHTML("beforeend", `<div class="sub">${e.year}</div>`);
+
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  if (e.type !== "dir") {
+    const p = document.createElement("button");
+    p.className = "btn play"; p.textContent = "▶ Play";
+    p.onclick = () => play(e); acts.appendChild(p);
+  }
+  if (e.imdb) {
+    const i = document.createElement("button");
+    i.className = "btn imdb"; i.textContent = "ⓘ IMDb";
+    i.onclick = () => showImdb(e); acts.appendChild(i);
+  }
+  if (e.favable) {
+    const s = document.createElement("button");
+    s.className = "btn star"; s.textContent = e.fav ? "★" : "☆";
+    s.title = "Favourite";
+    s.onclick = (ev) => { ev.stopPropagation(); toggleFav(e, s); };
+    acts.appendChild(s);
+  }
+
+  it.appendChild(th); it.appendChild(meta);
+  if (acts.children.length) it.appendChild(acts);
+  return it;
+}
+
+async function browse(path) {
+  listEl.innerHTML = `<div class="msg">Loading…</div>`;
+  let data;
+  try {
+    const q = path ? "?path=" + encodeURIComponent(path) : "";
+    data = await (await fetch("/api/browse" + q)).json();
+  } catch (e) { listEl.innerHTML = `<div class="msg err">Network error</div>`; return; }
+  if (!data.ok) { listEl.innerHTML = `<div class="msg err">${data.error}</div>`; return; }
+
+  current = data.path || "";
+  pathEl.textContent = current || "Media";
+  listEl.innerHTML = "";
+
+  if (data.roots) {
+    if (data.disc) { section("Disc"); listEl.appendChild(discCard()); }
+    const favs = data.favorites || [];
+    if (favs.length) { section("★ Favourites"); favs.forEach(itemAppend); }
+    section("Media");
+    if (!data.roots.length) listEl.insertAdjacentHTML("beforeend", `<div class="msg">No media roots available.</div>`);
+    data.roots.forEach(itemAppend);
+    return;
+  }
+  if (data.parent !== undefined) {
+    const up = document.createElement("div");
+    up.className = "item"; up.innerHTML = `<div class="thumb">⬆️</div><div class="meta"><div class="name up">..</div></div>`;
+    up.onclick = data.parent ? () => browse(data.parent) : () => browse("");
+    listEl.appendChild(up);
+  }
+  if (!data.entries.length) listEl.insertAdjacentHTML("beforeend", `<div class="msg">(empty)</div>`);
+  data.entries.forEach(itemAppend);
+}
+function itemAppend(e) { listEl.appendChild(itemEl(e)); }
+function section(label) {
+  const h = document.createElement("div");
+  h.className = "section"; h.textContent = label;
+  listEl.appendChild(h);
+}
+
+async function toggleFav(entry, btn) {
+  const method = entry.fav ? "DELETE" : "POST";
+  try {
+    const d = await (await fetch("/api/favorites", {
+      method, headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ path: entry.path }),
+    })).json();
+    if (!d.ok) { toast(d.error, true); return; }
+    entry.fav = d.fav;
+    btn.textContent = entry.fav ? "★" : "☆";
+    toast((entry.fav ? "Pinned: " : "Unpinned: ") + (entry.title || entry.name));
+    if (current === "") browse("");   // refresh the main page's Favourites section
+  } catch (e) { toast("Network error", true); }
+}
+
+function discCard() {
+  const it = document.createElement("div");
+  it.className = "item";
+  const th = document.createElement("div");
+  th.className = "thumb"; th.textContent = "💿"; th.onclick = playDisc;
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.innerHTML = `<div class="name">Blu-ray disc</div><div class="sub">USB optical drive</div>`;
+  meta.onclick = playDisc;
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  const p = document.createElement("button");
+  p.className = "btn play"; p.textContent = "▶ Play"; p.onclick = playDisc;
+  const e = document.createElement("button");
+  e.className = "btn"; e.textContent = "⏏ Eject"; e.onclick = ejectDisc;
+  acts.appendChild(p); acts.appendChild(e);
+  it.appendChild(th); it.appendChild(meta); it.appendChild(acts);
+  return it;
+}
+
+async function discCmd(op, msgOk) {
+  try {
+    const d = await (await fetch("/api/disc", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ op }),
+    })).json();
+    toast(d.ok ? msgOk(d) : d.error, !d.ok);
+    if (d.ok) updateStatus();
+  } catch (e) { toast("Network error", true); }
+}
+function playDisc() {
+  toast("Reading disc… (cache + title scan, ~10 s)");
+  discCmd("play", (d) => "Playing disc " + (d.target || ""));
+}
+function ejectDisc() { discCmd("eject", () => "Disc released — safe to eject"); }
+
+document.getElementById("rescan").onclick = async () => {
+  try {
+    const d = await (await fetch("/api/rescan", { method:"POST" })).json();
+    toast(d.busy ? "Scanning for new thumbnails…" : "Rescan started");
+  } catch (e) { toast("Network error", true); }
+};
+
+async function play(entry) {
+  try {
+    const d = await (await fetch("/api/play", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ path: entry.path }),
+    })).json();
+    toast(d.ok ? ("Playing: " + (entry.title || entry.name)) : d.error, !d.ok);
+  } catch (e) { toast("Network error", true); }
+}
+
+function closeSheet() { scrim.classList.remove("show"); }
+scrim.onclick = (ev) => { if (ev.target === scrim) closeSheet(); };
+
+async function showImdb(entry) {
+  scrim.classList.add("show");
+  sheet.innerHTML = `<div class="msg">Looking up IMDb…</div>`;
+  let d;
+  try {
+    d = await (await fetch("/api/imdb?path=" + encodeURIComponent(entry.path))).json();
+  } catch (e) { sheet.innerHTML = `<div class="msg err">Network error</div>`; return; }
+  if (!d.ok) { sheet.innerHTML = `<div class="msg err">${d.error || "no info"}</div>`; return; }
+
+  if (d.found) {
+    const i = d.info;
+    const poster = i.poster ? `<img class="poster" src="${i.poster}" alt="">` : "";
+    const fact = (label, val) => val ? `<div><b>${label}:</b> ${val}</div>` : "";
+    const link = i.url || d.find_url;
+    sheet.innerHTML = `
+      <div><h2>${i.title}</h2> <span class="yr">${i.year}</span></div>
+      <div class="row2">
+        ${poster}
+        <div class="facts">
+          ${i.rating ? `<div class="rating">★ ${i.rating}/10 <span style="color:var(--muted)">${i.votes||""}</span></div>` : ""}
+          ${fact("Genre", i.genre)}
+          ${fact("Runtime", i.runtime)}
+          ${fact("Director", i.director)}
+          ${fact("Cast", i.actors)}
+        </div>
+      </div>
+      ${i.plot ? `<div class="plot">${i.plot}</div>` : ""}
+      <div class="links">
+        <a class="btn imdb" href="${link}" target="_blank" rel="noopener">Open on IMDb ↗</a>
+        <button class="btn" onclick="closeSheet()">Close</button>
+      </div>`;
+  } else {
+    const note = d.enriched ? "No verified match found — opening a search." :
+                              "IMDb enrichment is off (no API key). Opening a search.";
+    sheet.innerHTML = `
+      <div><h2>${d.title}</h2> ${d.year ? `<span class="yr">${d.year}</span>` : ""}</div>
+      <div class="plot">${note}</div>
+      <div class="links">
+        <a class="btn imdb" href="${d.find_url}" target="_blank" rel="noopener">Search IMDb ↗</a>
+        <button class="btn" onclick="closeSheet()">Close</button>
+      </div>`;
+  }
+}
+
+// ---- audio / subtitle track menus ---------------------------------------
+function trackLabel(t, isAudio) {
+  const p = [];
+  if (t.lang) p.push(String(t.lang).toUpperCase());
+  if (t.title) p.push(t.title);
+  if (t.codec) p.push(t.codec);
+  if (isAudio && t.channels) p.push(t.channels);
+  if (!isAudio && t.external) p.push("ext");
+  return p.join(" · ") || ("Track " + t.id);
+}
+
+async function showTracks(kind) {
+  scrim.classList.add("show");
+  sheet.innerHTML = `<div class="msg">Loading tracks…</div>`;
+  let d;
+  try { d = await (await fetch("/api/tracks")).json(); }
+  catch (e) { sheet.innerHTML = `<div class="msg err">Network error</div>`; return; }
+  if (!d.ok || !d.running) { sheet.innerHTML = `<div class="msg">Nothing playing</div>`; return; }
+
+  const isAudio = kind === "audio";
+  const list = isAudio ? d.audio : d.sub;
+  sheet.innerHTML = "";
+  const h = document.createElement("div");
+  h.innerHTML = `<h2>${isAudio ? "Audio" : "Subtitles"}</h2>`;
+  sheet.appendChild(h);
+  const wrap = document.createElement("div");
+  wrap.className = "tracks"; sheet.appendChild(wrap);
+
+  const addRow = (label, selected, onclick) => {
+    const r = document.createElement("div");
+    r.className = "trackrow" + (selected ? " sel" : "");
+    r.textContent = (selected ? "● " : "○ ") + label;
+    r.onclick = onclick; wrap.appendChild(r);
+  };
+  if (!isAudio) addRow("Off", !list.some(t => t.selected), () => selTrack("sub", "no"));
+  if (!list.length) wrap.insertAdjacentHTML("beforeend", `<div class="msg">none</div>`);
+  list.forEach(t => addRow(trackLabel(t, isAudio), t.selected,
+                           () => selTrack(isAudio ? "audio" : "sub", t.id)));
+
+  const links = document.createElement("div");
+  links.className = "links";
+  links.innerHTML = `<button class="btn" onclick="closeSheet()">Close</button>`;
+  sheet.appendChild(links);
+}
+
+async function selTrack(op, id) {
+  await cmd(op, id);
+  showTracks(op === "audio" ? "audio" : "sub");   // refresh the highlighted row
+}
+
+// ---- transport bar -------------------------------------------------------
+const nowbar = document.getElementById("nowbar");
+const npTitle = document.getElementById("npTitle");
+const npPos = document.getElementById("npPos");
+const npDur = document.getElementById("npDur");
+const npSeek = document.getElementById("npSeek");
+const npToggle = document.getElementById("npToggle");
+const npMute = document.getElementById("npMute");
+const npRew = document.getElementById("npRew");
+const npFwd = document.getElementById("npFwd");
+let seeking = false, lastDur = 0;
+
+// Coalesce rapid taps: each tap adds ±10 s; a single relative seek fires once
+// the taps stop, so two quick taps jump 20 s in one go.
+let pendingSeek = 0, seekTimer = null;
+function nudge(dir) {
+  pendingSeek += dir * 10;
+  npRew.textContent = pendingSeek < 0 ? "« " + Math.abs(pendingSeek) : "« 10";
+  npFwd.textContent = pendingSeek > 0 ? pendingSeek + " »" : "10 »";
+  clearTimeout(seekTimer);
+  seekTimer = setTimeout(() => {
+    if (pendingSeek) cmd("seek", pendingSeek);
+    pendingSeek = 0;
+    npRew.textContent = "« 10";
+    npFwd.textContent = "10 »";
+  }, 450);
+}
+
+function fmt(s) {
+  if (s == null || isNaN(s)) return "0:00";
+  s = Math.max(0, Math.floor(s));
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
+  const mm = (h ? String(m).padStart(2,"0") : m);
+  return (h ? h+":" : "") + mm + ":" + String(ss).padStart(2,"0");
+}
+
+async function cmd(op, value) {
+  try {
+    const d = await (await fetch("/api/cmd", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ op, value }),
+    })).json();
+    if (!d.ok) toast(d.error, true); else updateStatus();
+  } catch (e) { toast("Network error", true); }
+}
+
+npSeek.addEventListener("input", () => { seeking = true; });
+npSeek.addEventListener("change", () => {
+  if (lastDur > 0) cmd("seekto", (npSeek.value/1000) * lastDur);
+  seeking = false;
+});
+
+async function updateStatus() {
+  let s;
+  try { s = await (await fetch("/api/status")).json(); }
+  catch (e) { return; }
+  if (!s.ok || !s.running || s.idle) {
+    nowbar.classList.remove("show");
+    syncListPad();
+    return;
+  }
+  nowbar.classList.add("show");
+  npTitle.textContent = s.title || "";
+  npToggle.textContent = s.pause ? "▶" : "⏸";
+  npMute.textContent = s.mute ? "🔇" : "🔈";
+  npPos.textContent = fmt(s.time);
+  const hasDur = s.duration != null && s.duration > 0;
+  lastDur = hasDur ? s.duration : 0;
+  npSeek.disabled = !hasDur;
+  npDur.textContent = hasDur ? fmt(s.duration) : "live";
+  if (hasDur) { if (!seeking) npSeek.value = Math.round((s.time/lastDur) * 1000); }
+  else npSeek.value = 0;
+  syncListPad();
+}
+
+// Keep the list clear of the transport bar so bottom folders stay visible.
+function syncListPad() {
+  const pb = nowbar.classList.contains("show") ? nowbar.offsetHeight + 16 : 60;
+  document.documentElement.style.setProperty("--list-pb", pb + "px");
+}
+window.addEventListener("resize", syncListPad);
+setInterval(updateStatus, 1000);
+
+setView(view);
+updateStatus();
+</script>
+</body>
+</html>
