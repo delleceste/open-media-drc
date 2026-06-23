@@ -114,6 +114,21 @@ state_to_args() {
   printf '\n'
 }
 
+# Extract just the sample rate (in Hz) from a saved state, for rate-change
+# detection.  resamp always runs the DAC at 192000; an off/empty state yields
+# an empty string so the prime logic treats the next start as a rate change.
+state_to_rate() {
+  local s
+  s=$(state_to_args "$1")
+  # shellcheck disable=SC2086
+  set -- $s
+  case "${1:-}" in
+    resamp) printf '192000\n' ;;
+    [0-9]*) printf '%s\n' "$1" ;;
+    *)      printf '\n' ;;
+  esac
+}
+
 format_rate() {
   case "$1" in
     44100)  printf '44.1k\n' ;;
