@@ -19,6 +19,10 @@ configs/*/*.conf
 /last_power
 /drc.log
 
+# Runtime state written by the glitch-detection subsystem
+/glitch.log
+/.glitch-debug.enabled
+
 # Python bytecode cache (video/webremote and omdrc-ctrl)
 __pycache__/
 *.pyc
