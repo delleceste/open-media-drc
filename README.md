@@ -161,6 +161,15 @@ sudo pacman -S mpd            # Arch
 > file.  **Do not** copy or create a full
 > `/etc/systemd/system/mpd.service` — it will not help and will only add
 > confusion.
+>
+> **This drop-in must be a real file copied into `/etc`, NOT a symlink into the
+> checkout.**  If `/home` is a separate mount (common), systemd loads
+> `mpd.service` and its drop-ins during early boot *before* `/home` is mounted,
+> so a symlink pointing into the checkout is dangling at that moment and the
+> override is silently skipped — MPD then starts as the package default `mpd`
+> and dies with `Failed to open ".../mpd.conf": Permission denied` (it cannot
+> read the config under a `700` home).  `install.sh` therefore `cp`s this one
+> drop-in instead of symlinking it; everything else may stay symlinked.
 
 **3. BruteFIR** — built from the fork **`github.com/delleceste/brutefir`**
 (adds FreeBSD OSS fixes — `bfio_oss` fragment-size fix, `brutefir_loopback`
@@ -289,7 +298,7 @@ The left channel limits in all pairs. Set `attenuation:` in the `.conf` file as 
 `drc.sh` is the single control point for the DRC pipeline. It uses `/usr/bin/env bash`
 so it works with Bash in `/usr/bin` on Linux and `/usr/local/bin` on FreeBSD.
 
-Signature: `drc.sh <rate>|resamp|restore|off [variant]`
+Signature: `drc.sh <rate>|resamp|restore|off|stop [variant]`
 
 - `<rate>` — start brutefir at the given sample rate (44100, 48000, 88200, 96000, 192000);
   restarts virtual_oss at the same rate; switches MPD to `DRC-native`
@@ -298,8 +307,12 @@ Signature: `drc.sh <rate>|resamp|restore|off [variant]`
   files on start. It honours the two state files below: if DRC was **off** it stays
   off, otherwise it restores the last sample rate (falling back to 192000 when no rate
   was ever saved)
-- `off` — stops brutefir and virtual_oss; switches MPD back to output 1; records the
-  off state (but keeps the remembered rate)
+- `off` — stops brutefir and virtual_oss; switches MPD back to output 1; **records the
+  off state** (but keeps the remembered rate), so a reboot stays off. This is the
+  user-facing disable (interactive and the web UI button)
+- `stop` — identical teardown to `off` but **does not record the off state**. Used by
+  the service stop-paths (systemd `ExecStop`, FreeBSD rc.d stop, devd/udev unplug) so a
+  clean reboot of a *running* system is restored rather than left off
 - `variant` — optional second argument, e.g. `+2dB`, selects an alternate filter set
 
 State is split across two files in the repo root so the on/off state and the
@@ -309,12 +322,14 @@ remembered rate stay independent:
   `192000 +2dB`). Written on each successful rate/`resamp` run and **never erased by
   `off`**, so turning DRC back on restores the rate you last used. Geometry is not part
   of it — it is hardcoded at the top of the script (`GEOMETRY="120.blue"`).
-- `last_power` — `on` or `off`. A rate/`resamp` run writes `on`; `off` writes `off`.
-  This is what makes `off` survive a reboot: `restore` reads `last_power` first and
-  stays off when it is `off`.
+- `last_power` — `on` or `off`. A rate/`resamp` run writes `on`; an explicit `off`
+  writes `off`. The service teardown verb `stop` deliberately does **not** write it, so
+  only a real user action changes it. `restore` reads `last_power` first and stays off
+  when it is `off`.
 
 So `drc.sh off` followed by a reboot leaves DRC off (direct DAC); a reboot while DRC is
-running brings it back at the same rate. Both files are runtime state (git-ignored).
+running brings it back at the same rate (the shutdown teardown runs `stop`, which leaves
+`last_power` untouched). Both files are runtime state (git-ignored).
 
 ## MPD native DRC output format
 
@@ -428,7 +443,7 @@ USB DAC plugged in
 USB DAC unplugged
   └─ udev: ACTION==remove, SUBSYSTEM==sound, KERNEL==controlC*, SUBSYSTEMS==usb
        └─ RUN: systemctl stop drc-usb-audio.service
-            └─ ExecStop: drc.sh off
+            └─ ExecStop: drc.sh stop   (transient teardown — does not record off)
                  ├─ stops brutefir
                  ├─ stops virtual_oss
                  └─ switches MPD back to output 1
@@ -443,8 +458,11 @@ resets the service to inactive so the next plug-in works correctly.
 | File | Installed to | Purpose |
 |---|---|---|
 | `99-usb-audio-drc.rules` | `/etc/udev/rules.d/` | udev rule: triggers the service on DAC plug-in/unplug |
-| `etc/systemd/system/mpd.service.d/open-media-drc.conf` | `/etc/systemd/system/mpd.service.d/` | MPD drop-in: run as AUDIO_USER, read config from checkout |
+| `etc/systemd/system/mpd.service.d/open-media-drc.conf` | `/etc/systemd/system/mpd.service.d/omdrc.conf` | MPD drop-in: run as AUDIO_USER, read config from checkout |
 | `etc/systemd/system/drc-usb-audio.service` | `/etc/systemd/system/` | Starts/stops DRC on USB DAC attach/detach |
+
+All three are **copied** into the system path (not symlinked from the checkout): each
+is parsed by systemd/udevd at early boot, before `/home` is mounted — see Installation.
 
 ## The udev rule (`99-usb-audio-drc.rules`)
 
@@ -461,7 +479,8 @@ ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC*", SUBSYSTEMS=="usb",
 
 `drc-usb-audio.service` uses `Type=oneshot` with `RemainAfterExit=yes`. It calls
 `drc.sh restore` on start (with a 1-second `ExecStartPre` settle delay for USB) and
-`drc.sh off` on stop. `RemainAfterExit=yes` keeps the service "active" after ExecStart
+`drc.sh stop` on stop (transient teardown that does not record the off state, so a
+reboot of a running system is restored). `RemainAfterExit=yes` keeps the service "active" after ExecStart
 completes so repeated udev events (one USB device generates several `controlC*` events)
 are ignored and do not launch duplicate brutefir instances.
 
@@ -471,13 +490,33 @@ switched on later) — no separate boot service is needed.
 
 ## Installation
 
-Use the Makefile at the root of the repository:
+Render the host-specific files from `config.env`, then deploy them:
 
 ```bash
-make install          # copy all files and reload udev + systemd
-make install-systemd  # copy service files and reload systemd only
-make install-udev     # copy udev rule and reload udev only
+$EDITOR config.env     # AUDIO_USER, AUDIO_HOME, PREFIX, MUSIC_DIR, ...
+./install.sh           # renders *.in; prints the exact OS-specific deploy commands
 ```
+
+`install.sh` only renders templates; it then prints the deploy commands (run as root
+for the system paths). **Whether a file is copied or symlinked follows one rule — by
+*when* it is read:**
+
+- **Deploy glue parsed at early boot** — the systemd `.service` units, the `mpd`
+  drop-in, the udev rule, `modules-load.d` (on FreeBSD: the `rc.d` scripts and `devd`
+  rule) — is **copied** into the system path. systemd/udevd/rc parse these *before*
+  `/home` (a separate mount) is available, so a symlink into the checkout would be
+  dangling at parse time and silently skipped — e.g. MPD would fall back to the
+  package `User=mpd` and fail to read its config under a `700` home. (Ordering the
+  service `After=local-fs.target` does **not** help: that defers *start*, not the
+  *parse*. Equivalently the glue could be symlinked from the *root* fs, just not from
+  `/home`.)
+- **Payload read at runtime** — `mpd.conf`, `drc.sh`, the filters, and BruteFIR's
+  `~/.config/BruteFIR/brutefir_defaults.conf` — stays in the checkout/home: it is read
+  only after `local-fs.target`, and the services are ordered after the mount, so no
+  copy is needed. Re-run the deploy step after a `git pull` to refresh the copied glue.
+
+> A `make install` (CMake) front-end that performs this deploy in one step — instead
+> of copy-pasting the printed commands — is planned.
 
 `make install` requires sudo (prompted once per target that needs it).
 
@@ -537,7 +576,7 @@ drc_usb_audio_enable="YES"
 (`/dev/dsp0`): if the DAC is on it brings DRC up once; if not, it does nothing and
 lets `devd` start DRC when the DAC is switched on later. Do **not** also enable
 `brutefir_drc` — it is the worker invoked by `drc_usb_audio` (it runs
-`drc.sh restore`) and must stay symlinked but unenabled, otherwise boot starts the
+`drc.sh restore`) and must stay installed but unenabled, otherwise boot starts the
 chain twice and the two runs race. `drc.sh` itself now serializes mutating runs
 under a lock (`lockf` on FreeBSD, `flock` on Linux), so overlapping triggers are
 safe, and a failed BruteFIR start rolls back to direct DAC output instead of
@@ -617,9 +656,11 @@ Its `start` does three things, in order:
 3. **Bring DRC up.** Call the worker `brutefir_drc onestart`, which runs
    `drc.sh restore`, then write the `.active` marker.
 
-`brutefir_drc` is just that worker — it runs `drc.sh restore` / `drc.sh off`. It is
-**symlinked but not enabled**: `drc_usb_audio` calls it on demand, so it has to
-resolve as a service, but it must not start on its own at boot.
+`brutefir_drc` is just that worker — it runs `drc.sh restore` / `drc.sh stop`. It is
+**installed but not enabled**: `drc_usb_audio` calls it on demand, so it has to
+resolve as a service, but it must not start on its own at boot. (Like the other rc.d
+glue it is *copied* into `/usr/local/etc/rc.d/`, not symlinked from the checkout —
+rc.d is read at early boot, before a separately-mounted repo/home is available.)
 
 `devd` drives the same two verbs on hotplug:
 

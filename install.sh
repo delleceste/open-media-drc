@@ -60,9 +60,18 @@ find "$REPO_DIR" -name '*.in' -not -path '*/.git/*' -not -path '*/omdrc-ctrl/*' 
 done
 
 echo
-echo "Done. The generated files are read directly from this checkout."
+echo "Done. Rendered files live in this checkout."
 echo
-echo "Deploy reminder (needs root; install/link the service glue under etc/ into place):"
+echo "Deploy rule — copy vs symlink depends on WHEN the file is read:"
+echo "  * Early-boot artifacts (systemd PID1 loading units/drop-ins, udevd loading"
+echo "    rules, systemd-modules-load; FreeBSD rc/devd) are read BEFORE local"
+echo "    filesystems are mounted. If \$HOME / this repo is on a separate mount, a"
+echo "    symlink into the checkout is dangling at that moment and the file is"
+echo "    SILENTLY SKIPPED. These must be COPIED into the system path."
+echo "  * Files read later / at runtime (BruteFIR defaults under ~/.config) may stay"
+echo "    symlinked. Re-run this deploy step after a 'git pull' to refresh the copies."
+echo
+echo "Deploy reminder (needs root for the system paths):"
 echo "  state dirs : mkdir -p \"${AUDIO_HOME}/.local/share/mpd\" \"${AUDIO_HOME}/.cache/mpd\" \"${AUDIO_HOME}/.cache/upmpdcli\""
 echo "  video remote (idle mpv autostart, KDE/Plasma): mkdir -p \"${AUDIO_HOME}/.config/autostart\" &&"
 echo "                 ln -sf \"${REPO_DIR}/video/webremote/autostart/mpv-idle.desktop\" \"${AUDIO_HOME}/.config/autostart/mpv-idle.desktop\""
@@ -77,12 +86,13 @@ if [ "$(uname)" = "FreeBSD" ]; then
 	cat <<EOF
   FreeBSD:
     rc.d  : for s in musicpd brutefir_drc drc_usb_audio upmpdcli; do
-              ln -sf "${REPO_DIR}/etc/rc.d/\$s" /usr/local/etc/rc.d/\$s
+              cp "${REPO_DIR}/etc/rc.d/\$s" /usr/local/etc/rc.d/\$s   # COPY: read at early boot
             done
-            # All four are symlinked. brutefir_drc is the worker invoked by
-            # drc_usb_audio (service brutefir_drc onestart) — it needs the
-            # symlink to resolve, but is NOT enabled below.
-    devd  : ln -sf "${REPO_DIR}/etc/devd/usb-audio-drc.conf" /usr/local/etc/devd/usb-audio-drc.conf
+            # Copies (not symlinks): rc.d scripts are read by rc at early boot,
+            # before a separately-mounted \$HOME/repo is available. brutefir_drc is
+            # the worker invoked by drc_usb_audio (service brutefir_drc onestart) —
+            # it must resolve, but is NOT enabled below.
+    devd  : cp "${REPO_DIR}/etc/devd/usb-audio-drc.conf" /usr/local/etc/devd/usb-audio-drc.conf   # COPY
             service devd restart
     enable: add to /etc/rc.conf — musicpd_enable=YES upmpdcli_enable=YES \\
             drc_usb_audio_enable=YES
@@ -101,18 +111,21 @@ EOF
 else
 	cat <<EOF
   Linux:
-    modules-load.d : sudo ln -sf "${REPO_DIR}/etc/modules-load.d/snd-aloop.conf" /etc/modules-load.d/
+    # All system-path files below are COPIED (not symlinked): each is read by
+    # early-boot infrastructure before /home (a separate mount) is available, so a
+    # symlink into the checkout would be dangling and silently skipped.
+    modules-load.d : sudo cp "${REPO_DIR}/etc/modules-load.d/snd-aloop.conf" /etc/modules-load.d/
                      sudo modprobe snd-aloop
     systemd system : for s in drc-usb-audio upmpdcli; do
-                       sudo ln -sf "${REPO_DIR}/etc/systemd/system/\$s.service" /etc/systemd/system/
+                       sudo cp "${REPO_DIR}/etc/systemd/system/\$s.service" /etc/systemd/system/
                      done
                      sudo mkdir -p /etc/systemd/system/mpd.service.d
-                     sudo ln -sf "${REPO_DIR}/etc/systemd/system/mpd.service.d/open-media-drc.conf" /etc/systemd/system/mpd.service.d/
+                     sudo cp "${REPO_DIR}/etc/systemd/system/mpd.service.d/open-media-drc.conf" /etc/systemd/system/mpd.service.d/omdrc.conf
                      sudo systemctl disable --now mpd.socket  # not used: we bypass socket activation
                      sudo systemctl daemon-reload
                      sudo systemctl enable --now upmpdcli.service
                      sudo systemctl restart mpd.service
-    udev (USB DAC) : sudo ln -sf "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
+    udev (USB DAC) : sudo cp "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
                      sudo udevadm control --reload-rules
     webremote      : no systemd unit yet — run it directly (or add one):
                      python3 "${REPO_DIR}/video/webremote/src/app.py" \\
