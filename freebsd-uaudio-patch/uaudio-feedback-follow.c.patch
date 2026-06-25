@@ -1,0 +1,52 @@
+--- a/sys/dev/sound/usb/uaudio.c
++++ b/sys/dev/sound/usb/uaudio.c
+@@ -2323,20 +2323,38 @@
+ 		 */
+ 		if (ch->priv_sc->sc_rec_chan[i].num_alt == 0) {
+ 			int32_t jitter_max = howmany(sample_rate, 16000);
++			uint32_t fps = ch->frames_per_second;
++			uint32_t ss = ch->usb_alt[ch->cur_alt].sample_size;
++			uint32_t base = temp / fps;
++			uint32_t bpf_max = howmany(sample_rate, fps) * ss;
+ 
+ 			/*
+-			 * Range check the jitter values to avoid
+-			 * bogus sample rate adjustments. The expected
+-			 * deviation should not be more than 1Hz per
+-			 * second. The USB v2.0 specification also
+-			 * mandates this requirement. Refer to chapter
+-			 * 5.12.4.2 about feedback.
++			 * Follow the device's reported rate directly and smoothly,
++			 * the way Linux snd-usb-audio does: fold the feedback value
++			 * into the per-frame sample-distribution accumulator
++			 * (sample_rem) rather than nudging the nominal rate with a
++			 * clamped, once-per-second batch (jitter_curr).  The batch
++			 * both truncated real device clock offsets to ~62 ppm
++			 * (sample_rate / 16000) and bunched a whole second of
++			 * correction into the first ~1 ms -- an audible periodic
++			 * disturbance on clock-sensitive DACs (OKTO RESEARCH DAC8).
++			 * 'temp' is range-checked above; adopt it only while the
++			 * resulting frame size stays within the nominal allocation
++			 * (bytes_per_frame[1] sized the transfers and ring buffer),
++			 * otherwise fall back to the stock clamped jitter path.
+ 			 */
+-			ch->jitter_curr = temp - sample_rate;
+-			if (ch->jitter_curr > jitter_max)
+-				ch->jitter_curr = jitter_max;
+-			else if (ch->jitter_curr < -jitter_max)
+-				ch->jitter_curr = -jitter_max;
++			if ((base + 1) * ss <= bpf_max) {
++				ch->bytes_per_frame[0] = base * ss;
++				ch->bytes_per_frame[1] = (base + 1) * ss;
++				ch->sample_rem = temp - base * fps;
++				ch->jitter_curr = 0;
++			} else {
++				ch->jitter_curr = temp - sample_rate;
++				if (ch->jitter_curr > jitter_max)
++					ch->jitter_curr = jitter_max;
++				else if (ch->jitter_curr < -jitter_max)
++					ch->jitter_curr = -jitter_max;
++			}
+ 		}
+ 		ch->feedback_rate = temp;
+ 		break;
