@@ -6,6 +6,7 @@
 /etc/rc.d/brutefir_drc
 /etc/rc.d/upmpdcli
 /etc/systemd/user/upmpdcli.service
+/video/webremote/systemd/omdrcvideo.service
 /etc/systemd/system/brutefir-drc.service
 /etc/systemd/system/drc-usb-audio.service
 # brutefir per-rate configs are generated from configs/**/*.conf.in

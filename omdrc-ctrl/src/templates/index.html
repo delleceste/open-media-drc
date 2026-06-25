@@ -1,0 +1,1879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>{{ control_title }}</title>
+    <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+    <style>
+        :root {
+            --bg:      #0d1117;
+            --surface: #161b22;
+            --border:  #30363d;
+            --text:    #e6edf3;
+            --muted:   #8b949e;
+            --accent:  #388bfd;
+            --green:   #3fb950;
+            --yellow:  #d29922;
+            --red:     #f85149;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 16px;
+            max-width: 520px;
+            margin: 0 auto;
+        }
+
+        /* ── header ─────────────────────────────────────────── */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            padding-top: 8px;
+        }
+        h1 { font-size: 1.35rem; font-weight: 600; letter-spacing: -.02em; }
+
+        #srv-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 8px var(--green);
+            transition: background .4s, box-shadow .4s;
+        }
+        #srv-dot.offline { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+        /* ── card ────────────────────────────────────────────── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 0 16px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+        .card-title {
+            font-size: .7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            color: var(--muted);
+            padding: 14px 0 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .refresh-note {
+            font-size: .65rem;
+            font-weight: 500;
+            letter-spacing: 0;
+            text-transform: none;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+        .title-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+        .title-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        /* ── row ─────────────────────────────────────────────── */
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 11px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .row:last-child { border-bottom: none; }
+
+        .row-label {
+            flex: 1;
+            font-size: .9rem;
+            color: var(--text);
+            min-width: 0;
+        }
+
+        /* right-side container — holds action widget + optional Details button */
+        .row-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        /* ── WRITE button ────────────────────────────────────── */
+        .btn-write {
+            min-width: 72px;
+            padding: 7px 16px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            color: var(--accent);
+            font-size: .85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: border-color .2s, color .2s, background .2s;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            text-align: center;
+            white-space: nowrap;
+        }
+        .btn-write:disabled { opacity: .55; cursor: default; }
+        .btn-write.ok    { border-color: var(--green); color: var(--green); background: rgba(63,185,80,.08); }
+        .btn-write.error { border-color: var(--red);   color: var(--red);   background: rgba(248,81,73,.08); }
+
+        /* ── LINK button ─────────────────────────────────────── */
+        .btn-link {
+            min-width: 72px;
+            padding: 7px 16px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            color: var(--muted);
+            font-size: .85rem;
+            font-weight: 500;
+            text-decoration: none;
+            white-space: nowrap;
+            text-align: center;
+            transition: border-color .2s, color .2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .btn-link:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* ── READ output ─────────────────────────────────────── */
+        .read-wrap {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .read-out {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .82rem;
+            color: var(--muted);
+            text-align: right;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-width: 160px;
+            max-height: 72px;
+            overflow-y: auto;
+        }
+        .read-out.error { color: var(--red); }
+
+        .btn-refresh {
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+            padding: 3px 4px;
+            border-radius: 4px;
+            transition: color .15s;
+            touch-action: manipulation;
+            flex-shrink: 0;
+        }
+        .btn-refresh:hover { color: var(--text); }
+        .btn-refresh.spinning { animation: spin .7s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Details button ──────────────────────────────────── */
+        .btn-details {
+            display: none;   /* shown by JS when the unit is active */
+            padding: 7px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            color: var(--muted);
+            font-size: .82rem;
+            font-weight: 500;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: border-color .2s, color .2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .btn-details:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-details.active { display: inline-block; }
+
+        /* ── toast ───────────────────────────────────────────── */
+        #toast {
+            position: fixed;
+            bottom: 20px; left: 50%;
+            transform: translateX(-50%) translateY(70px);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 9px 20px;
+            font-size: .85rem;
+            pointer-events: none;
+            transition: transform .25s ease;
+            z-index: 50;
+            white-space: nowrap;
+        }
+        #toast.show  { transform: translateX(-50%) translateY(0); }
+        #toast.ok    { border-color: var(--green); color: var(--green); }
+        #toast.error { border-color: var(--red);   color: var(--red);   }
+        /* Sticky toasts (errors) stay until dismissed and may wrap long
+           stderr; enable pointer events so the close button is clickable. */
+        #toast.sticky {
+            pointer-events: auto;
+            white-space: normal;
+            max-width: min(90vw, 480px);
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .toast-close {
+            background: none; border: none; color: inherit;
+            font-size: 1.15rem; line-height: 1; cursor: pointer;
+            padding: 0; margin-left: auto; flex: none;
+        }
+
+        #write-status {
+            display: none;
+            border: 1px solid var(--red);
+            border-radius: 8px;
+            background: rgba(248,81,73,.08);
+            color: var(--red);
+            padding: 10px 12px;
+            margin-bottom: 16px;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .75rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+        #write-status.show { display: block; }
+
+        /* ── Qobuz Connect panel ─────────────────────────────── */
+        .qc-card-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .btn-log {
+            font-size: .7rem;
+            font-weight: 600;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            padding: 3px 10px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--muted);
+            cursor: pointer;
+            transition: border-color .15s, color .15s;
+        }
+        .btn-log:hover, .btn-log.active {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .btn-log:disabled {
+            opacity: .4;
+            cursor: not-allowed;
+            border-color: var(--border);
+            color: var(--muted);
+        }
+        /* ── renderer toggle (qobuzconnect2mpd ⇄ upmpdcli) ───── */
+        .qc-switch {
+            display: flex;
+            gap: 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .qc-seg {
+            flex: 1;
+            padding: 9px 8px;
+            font-size: .8rem;
+            font-weight: 600;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            background: var(--bg);
+            color: var(--muted);
+            border: none;
+            cursor: pointer;
+            transition: background .15s, color .15s;
+        }
+        .qc-seg + .qc-seg { border-left: 1px solid var(--border); }
+        .qc-seg:hover:not(.active) { color: var(--text); }
+        .qc-seg.active {
+            background: var(--accent);
+            color: #fff;
+        }
+        .qc-switch.busy { opacity: .55; pointer-events: none; }
+        #qc-line1 {
+            font-size: .95rem;
+            font-weight: 500;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+        #qc-line1.idle { color: var(--muted); font-style: italic; }
+        #qc-line2 {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .78rem;
+            color: var(--muted);
+        }
+        #qconnect-log-panel {
+            border-top: 1px solid var(--border);
+            padding: 10px 0 4px;
+        }
+        .qc-log {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .72rem;
+            color: var(--muted);
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 260px;
+            overflow-y: auto;
+            line-height: 1.55;
+            margin: 0;
+        }
+        .qc-log .qc-err { color: var(--red); }
+        .qc-log .qc-out { color: var(--green); }
+
+        /* ── live spectrum ──────────────────────────────────── */
+        .spectrum-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 0 8px;
+        }
+        .spectrum-status {
+            min-width: 0;
+            color: var(--muted);
+            font-size: .78rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .spectrum-toggle {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            color: var(--accent);
+            font-size: .78rem;
+            font-weight: 600;
+            padding: 6px 12px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .spectrum-toggle.active {
+            color: var(--red);
+            border-color: var(--red);
+            background: rgba(248,81,73,.08);
+        }
+        .spectrum-toggle:disabled {
+            opacity: .45;
+            cursor: default;
+        }
+        .spectrum-mode {
+            display: flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .spectrum-mode button {
+            border: none;
+            background: var(--bg);
+            color: var(--muted);
+            padding: 5px 9px;
+            font-size: .72rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .spectrum-mode button + button { border-left: 1px solid var(--border); }
+        .spectrum-mode button.active {
+            background: var(--accent);
+            color: #fff;
+        }
+        .spectrum-plot {
+            padding: 8px 0 13px;
+            border-top: 1px solid var(--border);
+        }
+        .spectrum-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            color: var(--muted);
+            font-size: .72rem;
+            margin-bottom: 5px;
+        }
+        .spectrum-label strong {
+            color: var(--text);
+            font-size: .78rem;
+        }
+        .spectrum-canvas {
+            width: 100%;
+            height: 260px;
+            display: block;
+            background: #0b0f14;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .spectrum-chart-wrap {
+            position: relative;
+            height: 260px;
+        }
+        .spectrum-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+        .spectrum-channel-title {
+            color: var(--text);
+            font-size: .78rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .spectrum-floor {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0 0;
+            color: var(--muted);
+            font-size: .74rem;
+        }
+        .spectrum-floor input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+        .spectrum-floor output {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            color: var(--text);
+            min-width: 46px;
+            text-align: right;
+        }
+        @media (orientation: landscape) and (min-width: 700px) {
+            body { max-width: 960px; }
+            .spectrum-grid { grid-template-columns: 1fr 1fr; }
+            .spectrum-chart-wrap { height: 230px; }
+        }
+        .vu-wrap {
+            border-top: 1px solid var(--border);
+            padding: 10px 0 14px;
+        }
+        .vu-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .vu-switch {
+            display: flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .vu-seg {
+            border: none;
+            background: var(--bg);
+            color: var(--muted);
+            padding: 5px 9px;
+            font-size: .72rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .vu-seg + .vu-seg { border-left: 1px solid var(--border); }
+        .vu-seg.active {
+            background: var(--accent);
+            color: #fff;
+        }
+        .vu-bars {
+            display: grid;
+            gap: 8px;
+        }
+        .vu-row {
+            display: grid;
+            grid-template-columns: 18px 1fr 44px;
+            align-items: center;
+            gap: 8px;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .72rem;
+            color: var(--muted);
+        }
+        .vu-track {
+            height: 13px;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            background: #0b0f14;
+            overflow: hidden;
+        }
+        .vu-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #388bfd, #3fb950 58%, #d29922 78%, #f85149);
+            transition: width .05s linear;
+        }
+        .vu-needles {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .vu-needle {
+            width: 100%;
+            height: 176px;
+            display: block;
+            background: #100f0c;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+
+        /* ── footer ──────────────────────────────────────────── */
+        footer {
+            text-align: center;
+            padding: 18px 0 10px;
+        }
+        footer a {
+            font-size: .72rem;
+            color: var(--muted);
+            text-decoration: none;
+            opacity: .55;
+            transition: opacity .15s;
+        }
+        footer a:hover { opacity: 1; }
+
+        /* ── confirm dialog ──────────────────────────────────── */
+        #overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,.75);
+            align-items: center; justify-content: center;
+            z-index: 100;
+        }
+        #overlay.show { display: flex; }
+        .dialog {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 24px 20px 20px;
+            width: min(300px, 90vw);
+            text-align: center;
+        }
+        .dialog h3 { color: var(--red); margin-bottom: 6px; }
+        .dialog p  { color: var(--muted); font-size: .88rem; margin-bottom: 20px; line-height: 1.4; }
+        .dialog-btns { display: flex; gap: 10px; }
+        .dialog-btns button {
+            flex: 1; padding: 11px;
+            border-radius: 8px; border: 1px solid var(--border);
+            font-size: .9rem; font-weight: 500; cursor: pointer;
+        }
+        #dlg-cancel { background: var(--bg);  color: var(--text); }
+        #dlg-ok     { background: var(--red); color: #fff; border-color: var(--red); }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>{{ control_title }}</h1>
+    <div id="srv-dot"></div>
+</header>
+
+<div id="write-status"></div>
+
+{% macro render_group(group_name, group_label, cmds) %}
+<div class="card">
+    <div class="card-title"{% if group_name == 'drc' %} style="display:flex;justify-content:space-between;align-items:baseline"{% endif %}>
+        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:baseline;gap:10px"><span id="drc-geometry-label" style="font-size:.75rem;font-weight:400;color:var(--muted)"></span><a class="btn-details active" href="/filter-response">Filter response ↗</a></span>{% endif %}
+    </div>
+
+    {% for cmd in cmds %}
+    <div class="row">
+        <span class="row-label">{{ cmd.what }}</span>
+
+        <div class="row-right">
+
+            {% if cmd.type == 'WRITE' %}
+            <button class="btn-write"
+                    id="btn-{{ cmd.id }}"
+                    data-confirm="{{ cmd.confirm | default('no') }}"
+                    data-what="{{ cmd.what }}"
+                    onclick="handleWrite('{{ cmd.id }}')">
+                {{ cmd.button }}
+            </button>
+
+            {% elif cmd.type == 'LINK' %}
+            <a class="btn-link"
+               href="{{ cmd.url }}"
+               target="_blank"
+               rel="noopener noreferrer">Open ↗</a>
+
+            {% else %}{# READ #}
+            <span class="read-wrap">
+                <span class="read-out"
+                      id="out-{{ cmd.id }}"
+                      data-refresh="{{ cmd.refresh | default('0') }}">
+                    <span style="color:var(--muted)">…</span>
+                </span>
+                <button class="btn-refresh"
+                        id="rbtn-{{ cmd.id }}"
+                        onclick="fetchRead('{{ cmd.id }}')"
+                        title="Refresh">↻</button>
+            </span>
+            {% endif %}
+
+            {% if 'details_link' in cmd %}
+            <a class="btn-details active"
+               href="{{ cmd.details_link }}"
+               target="_blank"
+               rel="noopener noreferrer">Details</a>
+            {% elif cmd.type == 'READ' and 'details_root' in cmd %}
+            <a class="btn-details" id="det-{{ cmd.id }}" href="#">Details</a>
+            {% endif %}
+
+        </div>{# .row-right #}
+    </div>
+    {% endfor %}
+
+</div>
+{% endmacro %}
+
+<!-- MPD info panel -->
+<div class="card">
+    <div class="card-title title-row">
+        <span>MPD <span class="refresh-note" id="mpd-refresh-label">refresh: {{ monitor_interval }}s</span></span>
+        <button class="btn-refresh" id="mpd-refresh-btn" title="Refresh">↻</button>
+    </div>
+    <div id="mpd-panel" style="padding:4px 0">
+        <span style="color:var(--muted);font-style:italic">loading…</span>
+    </div>
+</div>
+
+<!-- Live spectrum analyzer -->
+<div class="card">
+    <div class="card-title title-row">
+        <span>Spectrum <span class="refresh-note">{{ spectrum.refresh_hz }} Hz</span></span>
+        <button class="spectrum-toggle" id="spectrum-toggle" onclick="toggleSpectrum()">Start</button>
+    </div>
+    <!-- Collapsible body: revealed on Start, hidden again on Stop. -->
+    <div id="spectrum-body" style="display:none">
+    <div class="spectrum-head">
+        <div class="spectrum-status" id="spectrum-status">
+            {% if spectrum.enabled %}idle{% else %}disabled in commands.conf{% endif %}
+        </div>
+        <div class="spectrum-mode" id="spectrum-mode">
+            <button type="button" data-mode="music" onclick="setSpectrumMode('music')">Music</button>
+            <button type="button" data-mode="precision" onclick="setSpectrumMode('precision')">Precision</button>
+        </div>
+        <a class="btn-details active" href="/details-spectrum">Details</a>
+    </div>
+    <div class="spectrum-plot">
+        <div class="spectrum-label"><strong>Bands</strong><span>{{ spectrum.bands }} bands · {{ spectrum.sample_rate }} Hz FIFO</span></div>
+        <div class="spectrum-grid">
+            <div>
+                <div class="spectrum-channel-title">Left</div>
+                <div class="spectrum-chart-wrap">
+                    <canvas class="spectrum-canvas" id="spectrum-left"></canvas>
+                </div>
+            </div>
+            <div>
+                <div class="spectrum-channel-title">Right</div>
+                <div class="spectrum-chart-wrap">
+                    <canvas class="spectrum-canvas" id="spectrum-right"></canvas>
+                </div>
+            </div>
+        </div>
+        <label class="spectrum-floor">
+            <span>Floor</span>
+            <input id="spectrum-floor" type="range" min="-80" max="-24" step="1"
+                   value="{{ spectrum.floor_db }}"
+                   oninput="setSpectrumFloor(this.value)">
+            <output id="spectrum-floor-value">{{ spectrum.floor_db }} dB</output>
+        </label>
+    </div>
+    <div class="vu-wrap">
+        <div class="vu-title-row">
+            <div class="spectrum-label" style="margin:0"><strong>VU</strong></div>
+            <div class="vu-switch" id="vu-switch">
+                <button class="vu-seg" type="button" data-mode="bars" onclick="setVuMode('bars')">Bars</button>
+                <button class="vu-seg" type="button" data-mode="needles" onclick="setVuMode('needles')">Needles</button>
+            </div>
+        </div>
+        <div class="vu-bars" id="vu-bars" {% if spectrum.vu_mode != 'bars' %}style="display:none"{% endif %}>
+            <div class="vu-row"><span>L</span><div class="vu-track"><div class="vu-fill" id="vu-bar-l"></div></div><span id="vu-db-l">-∞</span></div>
+            <div class="vu-row"><span>R</span><div class="vu-track"><div class="vu-fill" id="vu-bar-r"></div></div><span id="vu-db-r">-∞</span></div>
+        </div>
+        <div class="vu-needles" id="vu-needles" {% if spectrum.vu_mode != 'needles' %}style="display:none"{% endif %}>
+            <canvas class="vu-needle" id="vu-needle-l"></canvas>
+            <canvas class="vu-needle" id="vu-needle-r"></canvas>
+        </div>
+    </div>
+    </div>{# #spectrum-body #}
+</div>
+
+<!-- Command groups (all except system) -->
+{% for group_name, group_label, cmds in groups if group_name != 'system' %}
+{{ render_group(group_name, group_label, cmds) }}
+{% endfor %}
+
+<!-- Confirm dialog -->
+<div id="overlay">
+    <div class="dialog">
+        <h3 id="dlg-title"></h3>
+        <p  id="dlg-msg"></p>
+        <div class="dialog-btns">
+            <button id="dlg-cancel" onclick="hideConfirm()">Cancel</button>
+            <button id="dlg-ok">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<!-- Brutefir CPU panel -->
+<div class="card">
+    <div class="card-title title-row">
+        <span>Brutefir CPU <span class="refresh-note" id="bf-refresh-label">refresh: {{ brutefir_interval }}s</span></span>
+        <button class="btn-refresh" id="bf-refresh-btn" title="Refresh">↻</button>
+    </div>
+    <div style="padding:12px 0" id="bf-panel">
+        <span style="color:var(--muted);font-style:italic">loading…</span>
+    </div>
+</div>
+
+<!-- RAM panel -->
+<div class="card">
+    <div class="card-title title-row">
+        <span>RAM <span class="refresh-note" id="ram-refresh-label">refresh: 10s</span></span>
+        <button class="btn-refresh" id="ram-refresh-btn" title="Refresh">↻</button>
+    </div>
+    <div id="ram-panel" style="padding:4px 0">
+        <span style="color:var(--muted);font-style:italic">loading…</span>
+    </div>
+</div>
+
+<!-- Audio devices panel -->
+<div class="card">
+    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span style="cursor:pointer;user-select:none" onclick="toggleCard('sndstat')"><span id="sndstat-chevron" style="display:inline-block;width:1em;color:var(--muted)">▾</span>Audio devices <span class="refresh-note" id="sndstat-refresh-label">refresh: {{ sndstat_interval }}s</span></span>
+        <button class="btn-refresh" id="sndstat-refresh-btn" title="Refresh">↻</button>
+    </div>
+    <div id="sndstat-panel" style="padding:4px 0">
+        <span style="color:var(--muted);font-style:italic">loading…</span>
+    </div>
+</div>
+
+<!-- Advanced diagnostics panel -->
+<div class="card">
+    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Advanced <span class="refresh-note">manual</span></span>
+        <button id="advanced-refresh-btn"
+                onclick="fetchAdvancedInfo(this)"
+                style="background:none;border:none;color:var(--muted);cursor:pointer;
+                       font-size:.9rem;padding:0 2px;line-height:1"
+                title="Refresh">↻</button>
+    </div>
+    <div id="advanced-panel" style="padding:4px 0">
+        <span style="color:var(--muted);font-style:italic">loading…</span>
+    </div>
+</div>
+
+<!-- Top CPU processes panel -->
+<div class="card">
+    <div class="card-title title-row">
+        <span id="topcpu-title">Top CPU<span id="topcpu-threshold"></span> <span class="refresh-note" id="topcpu-refresh-label">refresh: {{ topcpu_interval }}s</span></span>
+        <button class="btn-refresh" id="topcpu-refresh-btn" title="Refresh">↻</button>
+    </div>
+    <div id="topcpu-panel" style="padding:4px 0">
+        <span style="color:var(--muted);font-style:italic">loading…</span>
+    </div>
+</div>
+
+<!-- System group (reboot / poweroff) at the bottom -->
+{% for group_name, group_label, cmds in groups if group_name == 'system' %}
+{{ render_group(group_name, group_label, cmds) }}
+{% endfor %}
+
+<!-- Qobuz Connect / upmpdcli renderer panel (bottom) -->
+<div class="card">
+    <div class="card-title qc-card-title">
+        <span>Renderer <span class="refresh-note" id="qc-refresh-label">refresh: 1s</span></span>
+        <div class="title-actions">
+            <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
+            <button class="btn-log" id="btn-restart" onclick="restartQc()" disabled>Restart</button>
+            <button class="btn-log" id="btn-log" onclick="toggleLog()">Log</button>
+        </div>
+    </div>
+    <!-- Mutually-exclusive renderer toggle -->
+    <div class="qc-switch" id="qc-switch">
+        <button class="qc-seg" data-target="qobuzconnect2mpd" onclick="switchRenderer('qobuzconnect2mpd')">qobuzconnect2mpd</button>
+        <button class="qc-seg" data-target="upmpdcli" onclick="switchRenderer('upmpdcli')">upmpdcli</button>
+    </div>
+    <div style="padding:12px 0">
+        <div id="qc-line1" class="idle">—</div>
+        <div id="qc-line2"></div>
+    </div>
+    <div id="qconnect-log-panel" style="display:none">
+        <pre id="qc-log-content" class="qc-log"></pre>
+    </div>
+</div>
+
+<footer><a href="/readme">README</a></footer>
+
+<div id="toast"></div>
+
+<script>
+const MONITOR_INTERVAL_MS = {{ monitor_interval }} * 1000;
+const TOPCPU_INTERVAL_MS  = {{ topcpu_interval }} * 1000;
+const SNDSTAT_INTERVAL_MS = {{ sndstat_interval }} * 1000;
+const BRUTEFIR_INTERVAL_MS = {{ brutefir_interval }} * 1000;
+const RAM_INTERVAL_MS = 10000;
+const TOPCPU_THRESHOLD    = {{ topcpu_threshold }};
+const SPECTRUM_ENABLED = {{ 'true' if spectrum.enabled else 'false' }};
+const SPECTRUM_VU_MODE = {{ spectrum.vu_mode | tojson }};
+
+// ── DRC geometry label ────────────────────────────────────────────────────
+(async () => {
+    try {
+        const d = await (await fetch('/drc/geometry')).json();
+        const el = document.getElementById('drc-geometry-label');
+        if (el && d.ok && d.geometry) el.textContent = d.geometry;
+    } catch {}
+})();
+
+// ── toast ──────────────────────────────────────────────────────────────────
+let _tt = null;
+function toast(msg, type = 'ok', ms = 2800) {
+    const el = document.getElementById('toast');
+    // Errors stay put until dismissed (they often carry diagnostic text the
+    // user needs to read); success messages auto-hide as before.
+    const sticky = (type === 'error');
+    el.textContent = '';
+    const span = document.createElement('span');
+    span.textContent = msg;
+    el.appendChild(span);
+    if (sticky) {
+        const x = document.createElement('button');
+        x.className = 'toast-close';
+        x.setAttribute('aria-label', 'Dismiss');
+        x.textContent = '×';
+        x.onclick = () => { el.className = 'toast'; };
+        el.appendChild(x);
+    }
+    el.className = 'toast show ' + type + (sticky ? ' sticky' : '');
+    clearTimeout(_tt);
+    if (!sticky) _tt = setTimeout(() => { el.className = 'toast'; }, ms);
+}
+
+function writeStatus(msg) {
+    const el = document.getElementById('write-status');
+    if (!msg) {
+        el.classList.remove('show');
+        el.textContent = '';
+        return;
+    }
+    el.textContent = msg;
+    el.classList.add('show');
+}
+
+// ── WRITE ──────────────────────────────────────────────────────────────────
+function handleWrite(id) {
+    const btn = document.getElementById('btn-' + id);
+    if (btn.dataset.confirm === 'yes') {
+        askConfirm(id, btn.dataset.what);
+    } else {
+        runWrite(id);
+    }
+}
+
+async function runWrite(id) {
+    const btn      = document.getElementById('btn-' + id);
+    const origText = btn.textContent.trim();
+    btn.disabled   = true;
+    btn.textContent = '…';
+
+    let ok = false, errMsg = '', output = '';
+    try {
+        const r = await fetch('/run/' + id, { method: 'POST' });
+        const d = await r.json();
+        ok     = d.ok;
+        errMsg = d.error || '';
+        output = d.output || errMsg;
+    } catch {
+        errMsg = 'Network error';
+        output = errMsg;
+    }
+
+    btn.classList.toggle('ok',    ok);
+    btn.classList.toggle('error', !ok);
+    if (ok) {
+        writeStatus('');
+    } else {
+        writeStatus(output || errMsg || 'command failed');
+        toast('command failed', 'error');
+    }
+
+    setTimeout(() => {
+        btn.classList.remove('ok', 'error');
+        btn.textContent = origText;
+        btn.disabled    = false;
+    }, ok ? 1600 : 2600);
+}
+
+// ── READ ───────────────────────────────────────────────────────────────────
+async function fetchRead(id) {
+    const out  = document.getElementById('out-'  + id);
+    const rbtn = document.getElementById('rbtn-' + id);
+    rbtn.classList.add('spinning');
+    if (!out.dataset.loaded) {
+        out.className = 'read-out';
+        out.innerHTML = '<span style="color:var(--muted)">…</span>';
+    }
+    try {
+        const r = await fetch('/read/' + id);
+        const d = await r.json();
+        const newText  = d.ok ? (d.output ?? '—') : (d.output || d.error || 'error');
+        const newError = !d.ok;
+        if (newText !== out.textContent || newError !== out.classList.contains('error')) {
+            out.className = 'read-out';
+            if (newError) out.classList.add('error');
+            out.textContent = newText;
+        }
+        out.dataset.loaded = '1';
+        const det = document.getElementById('det-' + id);
+        if (det && det.closest('.row-right')) {
+            if (d.details_url) {
+                det.href = d.details_url;
+                det.classList.add('active');
+            } else {
+                det.classList.remove('active');
+            }
+        }
+    } catch {
+        out.className = 'read-out error';
+        out.textContent = 'network error';
+    } finally {
+        rbtn.classList.remove('spinning');
+    }
+}
+
+// ── confirm dialog ─────────────────────────────────────────────────────────
+function askConfirm(id, what) {
+    document.getElementById('dlg-title').textContent = what;
+    document.getElementById('dlg-msg').textContent   = 'Are you sure?';
+    document.getElementById('dlg-ok').onclick = () => { hideConfirm(); runWrite(id); };
+    document.getElementById('overlay').classList.add('show');
+}
+function hideConfirm() { document.getElementById('overlay').classList.remove('show'); }
+document.getElementById('overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('overlay')) hideConfirm();
+});
+
+// ── status polling — server health + Details button visibility ─────────────
+const dot = document.getElementById('srv-dot');
+async function pollStatus() {
+    try {
+        const d = await (await fetch('/status')).json();
+        dot.classList.remove('offline');
+        // show/hide Details buttons based on systemctl unit state
+        if (d.units) {
+            for (const [id, state] of Object.entries(d.units)) {
+                const det = document.getElementById('det-' + id);
+                if (det) det.classList.toggle('active', state === 'active');
+            }
+        }
+    } catch {
+        dot.classList.add('offline');
+    }
+}
+pollStatus();
+setInterval(pollStatus, 5000);
+
+// fetch all READ widgets on load; set up auto-refresh intervals
+document.querySelectorAll('.read-out').forEach(el => {
+    const id      = el.id.replace('out-', '');
+    const refresh = parseInt(el.dataset.refresh, 10) || 0;
+    fetchRead(id);
+    if (refresh > 0) setInterval(() => fetchRead(id), refresh * 1000);
+});
+
+// ── Qobuz Connect panel ────────────────────────────────────────────────────
+function escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function setRefreshBusy(btn, busy) {
+    if (!btn) return;
+    btn.disabled = busy;
+    btn.classList.toggle('spinning', busy);
+}
+
+function setRefreshLabel(id, seconds) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = `refresh: ${seconds}s`;
+}
+
+// ── collapsible cards ──────────────────────────────────────────────────────
+// A collapsed card hides its body and pauses its auto-refresh so no polling
+// (and no server-side ps/sndstat work) happens while it is hidden.
+const collapsedCards = {};
+const autoRefreshControls = {};
+
+function toggleCard(name) {
+    const collapsed = !collapsedCards[name];
+    collapsedCards[name] = collapsed;
+    const panel = document.getElementById(`${name}-panel`);
+    if (panel) panel.style.display = collapsed ? 'none' : '';
+    const chev = document.getElementById(`${name}-chevron`);
+    if (chev) chev.textContent = collapsed ? '▸' : '▾';
+    const label = document.getElementById(`${name}-refresh-label`);
+    if (label) label.style.visibility = collapsed ? 'hidden' : '';
+    const rbtn = document.getElementById(`${name}-refresh-btn`);
+    if (rbtn) rbtn.style.visibility = collapsed ? 'hidden' : '';
+    // Refresh immediately on expand so the body isn't stale while the timer
+    // counts back down.
+    if (!collapsed && autoRefreshControls[name]) autoRefreshControls[name]();
+}
+
+function startAutoRefresh(name, intervalMs, fetchFn) {
+    const seconds = Math.max(1, Math.round(intervalMs / 1000));
+    const btn = document.getElementById(`${name}-refresh-btn`);
+    const labelId = `${name}-refresh-label`;
+    let remaining = seconds;
+    let running = false;
+
+    async function runNow() {
+        if (running) return;
+        running = true;
+        remaining = seconds;
+        setRefreshLabel(labelId, remaining);
+        setRefreshBusy(btn, true);
+        try {
+            await fetchFn(btn);
+        } finally {
+            setRefreshBusy(btn, false);
+            remaining = seconds;
+            setRefreshLabel(labelId, remaining);
+            running = false;
+        }
+    }
+
+    autoRefreshControls[name] = runNow;
+    if (btn) btn.onclick = runNow;
+    if (!collapsedCards[name]) runNow();
+    setInterval(() => {
+        if (running || collapsedCards[name]) return;   // paused while collapsed
+        remaining -= 1;
+        if (remaining <= 0) {
+            runNow();
+        } else {
+            setRefreshLabel(labelId, remaining);
+        }
+    }, 1000);
+}
+
+function fmtColor(line2) {
+    const m = line2.match(/(\d+)\s*bit.*?([\d.]+)\s*kHz/i);
+    if (!m) return '';
+    const bits = parseInt(m[1], 10);
+    const khz  = parseFloat(m[2]);
+    if (bits >= 24 && khz >= 176)  return 'var(--green)';   // 192 kHz+
+    if (bits >= 24 && khz >= 88)   return '#79c0ff';        // 96 / 88.2 kHz
+    if (bits >= 24)                return '#e3b341';        // 24-bit 44/48 kHz
+    if (bits < 24  && khz >= 48)   return '#d2a8ff';        // 16-bit 48 kHz
+    return '';                                               // 16-bit 44 kHz — default
+}
+
+async function fetchQcStatus() {
+    try {
+        const d = await (await fetch('/qconnect/status')).json();
+        const l1 = document.getElementById('qc-line1');
+        const l2 = document.getElementById('qc-line2');
+        if (d.line1) {
+            l1.textContent = d.line1;
+            l1.classList.remove('idle');
+        } else {
+            l1.textContent = '—';
+            l1.classList.add('idle');
+        }
+        l2.textContent  = d.line2 || '';
+        l2.style.color  = d.line2 ? fmtColor(d.line2) : '';
+    } catch { /* ignore — status dot already signals offline */ }
+}
+
+let qcLogVisible = false;
+let qcLogTimer   = null;
+
+async function fetchQcLog() {
+    const el = document.getElementById('qc-log-content');
+    try {
+        const d = await (await fetch('/qconnect/log')).json();
+        const text = d.content || '(empty)';
+        el.innerHTML = text.split('\n').map(line => {
+            const safe = escHtml(line);
+            if (line.includes('[ERR]')) return `<span class="qc-err">${safe}</span>`;
+            if (line.includes('[OUT]')) return `<span class="qc-out">${safe}</span>`;
+            return safe;
+        }).join('\n');
+        el.scrollTop = el.scrollHeight;
+    } catch {
+        el.textContent = 'network error';
+    }
+}
+
+function toggleLog() {
+    qcLogVisible = !qcLogVisible;
+    document.getElementById('qconnect-log-panel').style.display = qcLogVisible ? 'block' : 'none';
+    document.getElementById('btn-log').classList.toggle('active', qcLogVisible);
+    if (qcLogVisible) {
+        fetchQcLog();
+        qcLogTimer = setInterval(fetchQcLog, 5000);
+    } else {
+        clearInterval(qcLogTimer);
+        qcLogTimer = null;
+    }
+}
+
+let qcRestarting = false;
+
+async function restartQc() {
+    const btn = document.getElementById('btn-restart');
+    if (btn.disabled) return;
+    qcRestarting = true;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+        const d = await (await fetch('/qconnect/restart', { method: 'POST' })).json();
+        if (d.ok) {
+            toast('qobuzconnect2mpd restarted', 'ok');
+        } else {
+            toast(d.error || 'restart failed', 'error');
+        }
+    } catch {
+        toast('network error', 'error');
+    }
+    setTimeout(() => {
+        qcRestarting = false;
+        btn.textContent = 'Restart';
+        syncRenderers();   // re-evaluate enabled state from live status
+    }, 2000);
+}
+
+// ── Renderer toggle (qobuzconnect2mpd ⇄ upmpdcli) ──────────────────────────
+// The two services are mutually exclusive; the toggle reflects which one is
+// actually running and switching stops the active one before starting the
+// other.  Status is polled on a slow cadence to keep the UI in sync.
+let qcSwitching   = false;
+let activeRenderer = null;
+
+function paintRenderers(active) {
+    activeRenderer = active;
+    document.querySelectorAll('#qc-switch .qc-seg').forEach(seg => {
+        seg.classList.toggle('active', seg.dataset.target === active);
+    });
+    // Restart button is meaningful only for qobuzconnect2mpd.
+    const btn = document.getElementById('btn-restart');
+    if (!qcRestarting) {
+        btn.disabled = active !== 'qobuzconnect2mpd';
+    }
+}
+
+async function syncRenderers() {
+    if (qcSwitching) return;
+    try {
+        const d = await (await fetch('/qconnect/services')).json();
+        let active = null;
+        if (d.qobuzconnect2mpd) active = 'qobuzconnect2mpd';
+        else if (d.upmpdcli)    active = 'upmpdcli';
+        paintRenderers(active);
+    } catch { /* ignore — status dot already signals offline */ }
+}
+
+async function switchRenderer(target) {
+    if (qcSwitching || target === activeRenderer) return;
+    qcSwitching = true;
+    const sw = document.getElementById('qc-switch');
+    sw.classList.add('busy');
+    paintRenderers(target);   // optimistic
+    try {
+        const d = await (await fetch('/qconnect/switch', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ target }),
+        })).json();
+        if (d.ok) {
+            toast(`switched to ${target}`, 'ok');
+        } else {
+            toast(d.error || 'switch failed', 'error');
+        }
+    } catch {
+        toast('network error', 'error');
+    }
+    qcSwitching = false;
+    sw.classList.remove('busy');
+    syncRenderers();   // reconcile with reality
+}
+
+// ── Brutefir CPU panel ─────────────────────────────────────────────────────
+async function fetchBrutefirCpu() {
+    const el = document.getElementById('bf-panel');
+    try {
+        const d = await (await fetch('/brutefir/cpu')).json();
+        if (!d.ok) {
+            el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'error')}</span>`;
+            return;
+        }
+        if (d.procs.length === 0) {
+            el.innerHTML = '<span style="color:var(--muted);font-style:italic">not running</span>';
+            return;
+        }
+        let html = '';
+        for (const p of d.procs) {
+            html += `<div style="display:flex;justify-content:space-between;padding:3px 0">` +
+                    `<span style="color:var(--muted);font-size:.85rem">PID ${p.pid}</span>` +
+                    `<span style="font-family:ui-monospace,monospace;font-size:.85rem">${p.cpu.toFixed(1)}%</span>` +
+                    `</div>`;
+        }
+        if (d.procs.length > 1) {
+            html += `<div style="display:flex;justify-content:space-between;` +
+                    `padding:6px 0 0;border-top:1px solid var(--border);margin-top:5px">` +
+                    `<span style="color:var(--muted);font-size:.85rem">Total</span>` +
+                    `<span style="font-family:ui-monospace,monospace;font-size:.85rem;` +
+                    `color:var(--accent)">${d.total.toFixed(1)}%</span>` +
+                    `</div>`;
+        }
+        el.innerHTML = html;
+    } catch {
+        el.innerHTML = '<span style="color:var(--red)">network error</span>';
+    }
+}
+
+// ── MPD info panel ────────────────────────────────────────────────────────
+function monRow(label, value, valueColor) {
+    return `<div style="display:flex;justify-content:space-between;align-items:baseline;padding:3px 0">` +
+           `<span style="color:var(--muted);font-size:.82rem;flex-shrink:0;margin-right:12px">${label}</span>` +
+           `<span style="font-family:ui-monospace,monospace;font-size:.78rem;color:${valueColor||'var(--text)'};` +
+           `text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${escHtml(String(value))}</span>` +
+           `</div>`;
+}
+
+// Render a sample rate in Hz as the short "XXk" form (44100 -> 44.1k,
+// 88200 -> 88.2k, 96000 -> 96k, 192000 -> 192k).  Non-standard rates fall
+// back to "<n> Hz" so nothing is ever mislabelled.
+function fmtRate(hz) {
+    switch (Number(hz)) {
+        case 44100:  return '44.1k';
+        case 48000:  return '48k';
+        case 88200:  return '88.2k';
+        case 96000:  return '96k';
+        case 176400: return '176.4k';
+        case 192000: return '192k';
+        default:     return hz + ' Hz';
+    }
+}
+
+async function fetchMpdInfo() {
+    const el = document.getElementById('mpd-panel');
+    try {
+        const d = await (await fetch('/mpd/info')).json();
+        if (!d.ok) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error||'error')}</span>`; return; }
+        const verdict = d.rate_status || { kind: 'unknown', text: 'sample-rate comparison unavailable' };
+        const verdictColor = verdict.kind === 'match' ? 'var(--green)' :
+                             verdict.kind === 'mismatch' ? 'var(--red)' : 'var(--muted)';
+        let html =
+            monRow('Daemon', d.running ? 'running' : 'not running', d.running ? 'var(--green)' : 'var(--red)') +
+            monRow('Client', d.client, 'var(--muted)') +
+            monRow('State', d.state || 'unknown',
+                   d.state === 'playing' ? 'var(--green)' :
+                   d.state === 'paused' ? 'var(--yellow)' : 'var(--muted)');
+        if (d.song) html += monRow('Song', d.song);
+        if (d.audio) html += monRow('Audio', d.audio);
+        html +=
+            monRow('MPD rate', d.sample_rate ? fmtRate(d.sample_rate) : 'unknown',
+                   d.sample_rate ? 'var(--text)' : 'var(--muted)') +
+            monRow('Bit depth', d.bit_depth ? d.bit_depth + ' bit' : 'unknown',
+                   d.bit_depth ? 'var(--text)' : 'var(--muted)') +
+            monRow('Channels', d.channels || 'unknown',
+                   d.channels ? 'var(--text)' : 'var(--muted)') +
+            (!d.is_linux
+                ? monRow('virtual_oss', d.virtual_oss_rate ? fmtRate(d.virtual_oss_rate) : 'not running',
+                         d.virtual_oss_rate ? 'var(--text)' : 'var(--muted)')
+                : '') +
+            // What the DAC is actually being fed right now (ALSA hw_params).
+            (d.alsa
+                ? monRow('DAC feed',
+                         `${d.alsa.format||'?'} · ${d.alsa.channels!=null?d.alsa.channels+'ch':'?'}` +
+                         (d.alsa.card!=null?`  (hw:${d.alsa.card},${d.alsa.device})`:''),
+                         'var(--green)') +
+                  ((d.alsa.period_size!=null && d.alsa.buffer_size!=null)
+                      ? monRow('DAC buffer',
+                               `${d.alsa.period_size} / ${d.alsa.buffer_size} frames`, 'var(--muted)')
+                      : '')
+                : '') +
+            monRow('BruteFIR', d.brutefir_rate ? fmtRate(d.brutefir_rate) : 'not running',
+                   d.brutefir_rate ? 'var(--text)' : 'var(--muted)') +
+            monRow('Rate', verdict.text, verdictColor) +
+            monRow('Config', d.conf) +
+            monRow('Port',   d.port, 'var(--muted)') +
+            monRow('CPU',    d.cpu.toFixed(1) + '%',
+                   d.cpu > 10 ? 'var(--yellow)' : 'var(--green)');
+        if (d.mpc_error) html += monRow('Client error', d.mpc_error, 'var(--red)');
+
+        // Plain-language audio-path verdict (bit-perfect reassurance).
+        const ps = d.path_status || { kind: 'unknown', text: '', detail: '' };
+        const psColor = ps.kind === 'match' ? 'var(--green)' :
+                        ps.kind === 'drc'   ? 'var(--accent)' :
+                        ps.kind === 'mismatch' ? 'var(--red)' : 'var(--muted)';
+        const psBg = ps.kind === 'match' ? 'rgba(63,185,80,.10)' :
+                     ps.kind === 'drc'   ? 'rgba(56,139,253,.10)' :
+                     ps.kind === 'mismatch' ? 'rgba(248,81,73,.10)' : 'transparent';
+        if (ps.text) {
+            html += `<div style="margin-top:8px;padding:7px 9px;border-radius:6px;` +
+                    `border:1px solid ${psColor};background:${psBg}">` +
+                    `<div style="font-size:.82rem;font-weight:600;color:${psColor}">${escHtml(ps.text)}</div>` +
+                    (ps.detail ? `<div style="font-size:.72rem;color:var(--muted);margin-top:2px;line-height:1.4">${escHtml(ps.detail)}</div>` : '') +
+                    `</div>`;
+        }
+        html += `<div style="font-size:.7rem;color:var(--muted);margin-top:6px;line-height:1.45">` +
+                `Signal path: MPD → BruteFIR (64-bit float convolution) → ` +
+                `${d.is_linux ? 'ALSA' : 'virtual_oss'} → DAC. ` +
+                `No sample-rate conversion occurs while all rates match.</div>`;
+        el.innerHTML = html;
+    } catch {
+        el.innerHTML = '<span style="color:var(--red)">network error</span>';
+    }
+}
+
+// ── Live spectrum analyzer ────────────────────────────────────────────────
+let spectrumSource = null;
+let spectrumWanted = false;
+let spectrumCharts = { left: null, right: null };
+let spectrumFloorDb = {{ spectrum.floor_db }};
+let spectrumMode = 'music';
+let currentVuMode = SPECTRUM_VU_MODE;
+let lastVu = {};
+let lastSpectrumBands = [];
+let lastSpectrumLeft = [];
+let lastSpectrumRight = [];
+
+function spectrumStatus(text, color) {
+    const el = document.getElementById('spectrum-status');
+    el.textContent = text;
+    el.style.color = color || 'var(--muted)';
+}
+
+function setSpectrumButton(active) {
+    const btn = document.getElementById('spectrum-toggle');
+    btn.disabled = !SPECTRUM_ENABLED;
+    btn.classList.toggle('active', active);
+    btn.textContent = active ? 'Stop' : 'Start';
+}
+
+function clearSpectrum() {
+    drawBandSpectrum([], [], []);
+    updateVu({});
+}
+
+function bandColor(t) {
+    const stops = [
+        [0.00, [56, 139, 253]],
+        [0.38, [63, 185, 80]],
+        [0.70, [210, 153, 34]],
+        [1.00, [248, 81, 73]],
+    ];
+    for (let i = 0; i < stops.length - 1; i++) {
+        const [a, ca] = stops[i], [b, cb] = stops[i + 1];
+        if (t <= b) {
+            const k = (t - a) / (b - a);
+            const c = ca.map((v, j) => Math.round(v + (cb[j] - v) * k));
+            return `rgb(${c[0]},${c[1]},${c[2]})`;
+        }
+    }
+    return 'rgb(248,81,73)';
+}
+
+function resizeCanvas(canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(rect.width * dpr));
+    const h = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+    }
+    return { w, h, dpr };
+}
+
+function dbToChartValue(db) {
+    return Math.max(0, Math.min(-spectrumFloorDb, Number(db) - spectrumFloorDb));
+}
+
+function makeSpectrumChart(canvasId, label, alpha) {
+    const canvas = document.getElementById(canvasId);
+    const colors = Array.from({ length: 31 }, (_, i) => bandColor(i / 30));
+    return new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label,
+                    data: [],
+                    backgroundColor: colors.map(c => c.replace('rgb', 'rgba').replace(')', `,${alpha})`)),
+                    borderColor: colors,
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    barPercentage: .88,
+                    categoryPercentage: .86,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    labels: { color: '#8b949e', boxWidth: 10, boxHeight: 10, font: { size: 11 } },
+                },
+                tooltip: {
+                    backgroundColor: '#161b22',
+                    borderColor: '#30363d',
+                    borderWidth: 1,
+                    titleColor: '#e6edf3',
+                    bodyColor: '#e6edf3',
+                    callbacks: {
+                        title(items) {
+                            const item = items[0];
+                            const band = item.chart?.data?.bands?.[item.dataIndex];
+                            if (!band) return item.label;
+                            return `${band.label}  (${Math.round(band.lo)}-${Math.round(band.hi)} Hz)`;
+                        },
+                        label(ctx) {
+                            const db = Number(ctx.raw) + spectrumFloorDb;
+                            return `${ctx.dataset.label}: ${db.toFixed(1)} dBFS`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(48,54,61,.35)' },
+                    ticks: {
+                        color: '#8b949e',
+                        maxRotation: 62,
+                        minRotation: 62,
+                        autoSkip: false,
+                        font: { size: 9, family: 'ui-monospace, SFMono-Regular, monospace' },
+                    },
+                },
+                y: {
+                    // The top of the plot is always 0 dBFS; only the floor (the
+                    // bottom) moves with the slider.  Values are stored shifted
+                    // into [0, -floor] so the bars grow upward from the baseline,
+                    // and the ticks are anchored at 0 dB stepping down by 12 dB.
+                    min: 0,
+                    max: -spectrumFloorDb,
+                    grid: { color: 'rgba(48,54,61,.65)' },
+                    afterBuildTicks: axis => {
+                        const ticks = [];
+                        for (let db = 0; db >= spectrumFloorDb - 0.001; db -= 12) {
+                            ticks.push({ value: db - spectrumFloorDb });
+                        }
+                        axis.ticks = ticks;
+                    },
+                    ticks: {
+                        color: '#8b949e',
+                        callback: v => `${Math.round(Number(v) + spectrumFloorDb)}`,
+                        font: { size: 10, family: 'ui-monospace, SFMono-Regular, monospace' },
+                    },
+                    title: {
+                        display: true,
+                        text: 'dBFS',
+                        color: '#8b949e',
+                        font: { size: 10 },
+                    },
+                },
+            },
+        },
+    });
+}
+
+function spectrumBodyVisible() {
+    const body = document.getElementById('spectrum-body');
+    return body && body.style.display !== 'none';
+}
+
+function initSpectrumChart() {
+    if (spectrumCharts.left || typeof Chart === 'undefined') return;
+    // Don't build charts while the body is collapsed — a zero-size canvas would
+    // need a resize anyway once revealed.
+    if (!spectrumBodyVisible()) return;
+    spectrumCharts.left = makeSpectrumChart('spectrum-left', 'Left', 1);
+    spectrumCharts.right = makeSpectrumChart('spectrum-right', 'Right', .62);
+}
+
+function showSpectrumBody(show) {
+    const body = document.getElementById('spectrum-body');
+    if (!body) return;
+    body.style.display = show ? 'block' : 'none';
+    if (show) {
+        initSpectrumChart();
+        if (spectrumCharts.left) spectrumCharts.left.resize();
+        if (spectrumCharts.right) spectrumCharts.right.resize();
+        drawBandSpectrum(lastSpectrumBands, lastSpectrumLeft, lastSpectrumRight);
+        updateVu(lastVu);
+    }
+}
+
+function drawBandSpectrum(bands, left, right) {
+    lastSpectrumBands = bands || [];
+    lastSpectrumLeft = left || [];
+    lastSpectrumRight = right || [];
+    initSpectrumChart();
+    if (!spectrumCharts.left || !spectrumCharts.right) return;
+    const n = Math.min(bands.length, left.length, right.length);
+    const labels = bands.slice(0, n).map(b => b.label || '');
+    const colors = labels.map((_, i) => bandColor(labels.length <= 1 ? 0 : i / (labels.length - 1)));
+    const update = (chart, values, alpha) => {
+        chart.data.labels = labels;
+        chart.data.bands = bands.slice(0, n);
+        chart.data.datasets[0].data = values.slice(0, n).map(dbToChartValue);
+        chart.data.datasets[0].backgroundColor = colors.map(c => c.replace('rgb', 'rgba').replace(')', `,${alpha})`));
+        chart.data.datasets[0].borderColor = colors;
+        chart.update('none');
+    };
+    update(spectrumCharts.left, left, 1);
+    update(spectrumCharts.right, right, .62);
+}
+
+function setSpectrumFloor(value) {
+    spectrumFloorDb = Number(value);
+    const out = document.getElementById('spectrum-floor-value');
+    if (out) out.textContent = `${spectrumFloorDb} dB`;
+    // Keep the live axis range in step with the slider; the top stays pinned at
+    // 0 dBFS while the bottom follows the floor.
+    for (const ch of [spectrumCharts.left, spectrumCharts.right]) {
+        if (ch) ch.options.scales.y.max = -spectrumFloorDb;
+    }
+    drawBandSpectrum(lastSpectrumBands, lastSpectrumLeft, lastSpectrumRight);
+    updateVu(lastVu);   // VU bars + needles share the same floor scale
+}
+
+function dbToPct(db, floor = spectrumFloorDb) {
+    return Math.max(0, Math.min(100, (db - floor) / (0 - floor) * 100));
+}
+
+function fmtDb(db) {
+    return Number.isFinite(db) ? `${db.toFixed(1)}` : '-∞';
+}
+
+function updateVu(vu) {
+    lastVu = vu || {};
+    const l = Number(vu.left_rms ?? -120);
+    const r = Number(vu.right_rms ?? -120);
+    if (currentVuMode === 'bars') {
+        document.getElementById('vu-bar-l').style.width = `${dbToPct(l)}%`;
+        document.getElementById('vu-bar-r').style.width = `${dbToPct(r)}%`;
+        document.getElementById('vu-db-l').textContent = fmtDb(l);
+        document.getElementById('vu-db-r').textContent = fmtDb(r);
+    } else {
+        drawNeedleVu('vu-needle-l', 'L', l, vu.left_peak);
+        drawNeedleVu('vu-needle-r', 'R', r, vu.right_peak);
+    }
+}
+
+function setVuMode(mode) {
+    currentVuMode = mode === 'needles' ? 'needles' : 'bars';
+    document.getElementById('vu-bars').style.display = currentVuMode === 'bars' ? 'grid' : 'none';
+    document.getElementById('vu-needles').style.display = currentVuMode === 'needles' ? 'grid' : 'none';
+    document.querySelectorAll('#vu-switch .vu-seg').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === currentVuMode);
+    });
+    updateVu(lastVu);
+}
+
+// Needle gauge angular sweep: a wide arc so the needle travels a long way
+// between the floor (left) and 0 dBFS (right).
+const NEEDLE_A0 = -150;     // degrees, floor end
+const NEEDLE_SPAN = 120;    // degrees of total swing
+
+function drawNeedleVu(canvasId, label, rmsDb, peakDb) {
+    const canvas = document.getElementById(canvasId);
+    const { w, h, dpr } = resizeCanvas(canvas);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, '#2b271c');
+    grad.addColorStop(1, '#0f0e0b');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    const floor = spectrumFloorDb;
+    const angleFor = db => (NEEDLE_A0 + NEEDLE_SPAN * dbToPct(db, floor) / 100) * Math.PI / 180;
+
+    const cx = w / 2, cy = h * 0.90, radius = Math.min(w * 0.46, h * 0.74);
+    ctx.lineWidth = 1 * dpr;
+    ctx.font = `${10 * dpr}px ui-monospace, monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // Five ticks spread evenly across the floor→0 range so the dial scale
+    // tracks the floor slider.
+    const ticks = [0, .25, .5, .75, 1].map(f => Math.round(floor * f));
+    for (const db of ticks) {
+        const a = angleFor(db);
+        ctx.strokeStyle = '#8b949e';
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * radius * .86, cy + Math.sin(a) * radius * .86);
+        ctx.lineTo(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius);
+        ctx.stroke();
+        ctx.fillStyle = db >= Math.round(floor * 0.25) ? '#d29922' : '#8b949e';
+        ctx.fillText(String(db), cx + Math.cos(a) * radius * .68, cy + Math.sin(a) * radius * .68);
+    }
+    ctx.strokeStyle = '#30363d';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, angleFor(floor), angleFor(0));
+    ctx.stroke();
+
+    const angle = angleFor(Number(rmsDb));
+    ctx.strokeStyle = '#f85149';
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(angle) * radius * .9, cy + Math.sin(angle) * radius * .9);
+    ctx.stroke();
+    ctx.fillStyle = '#e6edf3';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4 * dpr, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = `${13 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+    ctx.fillText(label, cx, 16 * dpr);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = `${10 * dpr}px ui-monospace, monospace`;
+    ctx.fillText(`${fmtDb(Number(rmsDb))} dB`, cx, h - 11 * dpr);
+}
+
+function handleSpectrumFrame(d) {
+    if (!d.ok) {
+        spectrumStatus(d.error || d.state || 'not streaming',
+                       d.state === 'idle' ? 'var(--muted)' : 'var(--red)');
+        if (d.state !== 'idle') clearSpectrum();
+        return;
+    }
+    const modeText = d.mode ? ` · ${d.mode}` : '';
+    const drcText = d.drc_delay ? ` · DRC sync +${d.drc_delay.toFixed(2)}s` : '';
+    spectrumStatus(d.state === 'running' ? `running${modeText} · ${d.rate || ''} Hz${drcText}` : d.state,
+                   d.state === 'running' ? 'var(--green)' : 'var(--muted)');
+    if (d.bands && d.left && d.right) {
+        drawBandSpectrum(d.bands, d.left, d.right);
+        updateVu(d.vu || {});
+    }
+}
+
+function paintSpectrumMode() {
+    document.querySelectorAll('#spectrum-mode button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === spectrumMode);
+    });
+}
+
+function setSpectrumMode(mode) {
+    spectrumMode = mode === 'precision' ? 'precision' : 'music';
+    paintSpectrumMode();
+    if (spectrumSource) {
+        stopSpectrum(false);
+        spectrumWanted = true;
+        setTimeout(startSpectrum, 300);
+    }
+}
+
+function startSpectrum() {
+    if (!SPECTRUM_ENABLED || spectrumSource || document.hidden) return;
+    setSpectrumButton(true);
+    showSpectrumBody(true);
+    spectrumStatus('connecting...', 'var(--muted)');
+    spectrumSource = new EventSource('/spectrum/stream?mode=' + encodeURIComponent(spectrumMode));
+    spectrumSource.onmessage = ev => {
+        try { handleSpectrumFrame(JSON.parse(ev.data)); }
+        catch { spectrumStatus('bad spectrum frame', 'var(--red)'); }
+    };
+    spectrumSource.onerror = () => {
+        spectrumStatus('stream disconnected', 'var(--red)');
+        stopSpectrum(false);
+    };
+}
+
+function stopSpectrum(clearWanted = true) {
+    if (clearWanted) spectrumWanted = false;
+    if (spectrumSource) {
+        spectrumSource.close();
+        spectrumSource = null;
+    }
+    setSpectrumButton(false);
+    spectrumStatus(SPECTRUM_ENABLED ? 'idle' : 'disabled in commands.conf');
+    // Collapse only on an explicit user Stop; keep the body (and its status
+    // line) visible on transient disconnects so the message is readable.
+    if (clearWanted) showSpectrumBody(false);
+}
+
+function toggleSpectrum() {
+    if (!SPECTRUM_ENABLED) return;
+    if (spectrumSource) {
+        stopSpectrum(true);
+    } else {
+        spectrumWanted = true;
+        startSpectrum();
+    }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        if (spectrumSource) stopSpectrum(false);
+    } else if (spectrumWanted) {
+        startSpectrum();
+    }
+});
+window.addEventListener('pagehide', () => {
+    if (spectrumSource) stopSpectrum(false);
+});
+window.addEventListener('resize', () => {
+    clearSpectrum();
+    updateVu(lastVu);
+});
+setVuMode(currentVuMode);
+paintSpectrumMode();
+setSpectrumButton(false);
+clearSpectrum();
+
+// ── Audio devices panel ───────────────────────────────────────────────────
+async function fetchSndstat(btn) {
+    const el   = document.getElementById('sndstat-panel');
+    const btn_ = btn || document.getElementById('sndstat-refresh-btn');
+    if (btn_) { btn_.disabled = true; btn_.textContent = '…'; }
+    try {
+        const d = await (await fetch('/system/sndstat')).json();
+        if (!d.ok) {
+            el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error||'error')}</span>`;
+            return;
+        }
+        let html = '<div style="font-family:ui-monospace,monospace;font-size:.72rem;line-height:1.55;overflow-x:auto">';
+        for (const line of d.lines) {
+            // Highlight decoded fmt labels.
+            const safe = escHtml(line).replace(
+                /(\bfmt:\s+)([A-Z0-9_|]+)/,
+                '$1<span style="color:var(--accent)">$2</span>'
+            );
+            html += `<div style="white-space:pre">${safe}</div>`;
+        }
+        html += '</div>';
+        el.innerHTML = html;
+    } catch {
+        el.innerHTML = '<span style="color:var(--red)">error</span>';
+    } finally {
+        if (btn_) { btn_.disabled = false; btn_.textContent = '↻'; }
+    }
+}
+
+// ── Advanced diagnostics panel ─────────────────────────────────────────────
+async function fetchAdvancedInfo(btn) {
+    const el   = document.getElementById('advanced-panel');
+    const btn_ = btn || document.getElementById('advanced-refresh-btn');
+    if (btn_) { btn_.disabled = true; btn_.textContent = '…'; }
+    try {
+        const d = await (await fetch('/system/advanced')).json();
+        if (!d.ok) {
+            el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error||'error')}</span>`;
+            return;
+        }
+        let html = '<div style="font-family:ui-monospace,monospace;font-size:.72rem;line-height:1.55;overflow-x:auto">';
+        for (const section of d.sections) {
+            const color = section.ok ? 'var(--accent)' : 'var(--red)';
+            html += `<div style="color:${color};font-weight:600;margin:8px 0 3px">${escHtml(section.title)}</div>`;
+            html += `<pre style="margin:0 0 8px;white-space:pre;color:var(--muted)">${escHtml(section.output || '')}</pre>`;
+        }
+        html += '</div>';
+        el.innerHTML = html;
+    } catch {
+        el.innerHTML = '<span style="color:var(--red)">error</span>';
+    } finally {
+        if (btn_) { btn_.disabled = false; btn_.textContent = '↻'; }
+    }
+}
+fetchAdvancedInfo();
+
+// ── Top CPU processes panel ───────────────────────────────────────────────
+async function fetchTopCpu() {
+    const el    = document.getElementById('topcpu-panel');
+    try {
+        const d = await (await fetch('/system/topcpu')).json();
+        if (!d.ok) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error||'error')}</span>`; return; }
+        const thEl = document.getElementById('topcpu-threshold');
+        if (thEl) thEl.textContent = ` (> ${d.threshold}%)`;
+        if (d.procs.length === 0) {
+            el.innerHTML = '<span style="color:var(--muted);font-style:italic">idle — nothing above threshold</span>';
+            return;
+        }
+        let html = '';
+        for (const p of d.procs) {
+            const pct   = p.cpu.toFixed(1) + '%';
+            const color = p.cpu >= 50 ? 'var(--red)' : p.cpu >= 20 ? 'var(--yellow)' : 'var(--text)';
+            html += `<div style="display:flex;align-items:baseline;padding:2px 0;gap:6px">` +
+                    `<span style="flex:1;font-size:.83rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.name)}</span>` +
+                    `<span style="color:var(--muted);font-size:.75rem;white-space:nowrap">${escHtml(p.user)}</span>` +
+                    `<span style="font-family:ui-monospace,monospace;font-size:.83rem;color:${color};` +
+                    `width:42px;text-align:right;flex-shrink:0">${pct}</span>` +
+                    `</div>`;
+        }
+        el.innerHTML = html;
+    } catch {
+        el.innerHTML = '<span style="color:var(--red)">network error</span>';
+    }
+}
+
+// ── RAM panel ─────────────────────────────────────────────────────────────
+function fmtBytes(b) {
+    if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+    return (b / 1048576).toFixed(0) + ' MB';
+}
+
+async function fetchRam() {
+    const el = document.getElementById('ram-panel');
+    try {
+        const d = await (await fetch('/system/memory')).json();
+        if (!d.ok) {
+            el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'error')}</span>`;
+            return;
+        }
+        const pct   = Math.round(d.used / d.total * 100);
+        const color = pct >= 85 ? 'var(--red)' : pct >= 60 ? 'var(--yellow)' : 'var(--green)';
+        el.innerHTML =
+            `<div style="background:var(--border);border-radius:4px;height:6px;margin-bottom:8px">` +
+            `<div style="width:${pct}%;height:6px;border-radius:4px;background:${color};transition:width .4s"></div>` +
+            `</div>` +
+            monRow('Total',     fmtBytes(d.total)) +
+            monRow('Used',      `${fmtBytes(d.used)} (${pct}%)`,     color) +
+            monRow('Available', fmtBytes(d.available), 'var(--green)') +
+            monRow('Free',      fmtBytes(d.free),      'var(--muted)');
+    } catch {
+        el.innerHTML = '<span style="color:var(--red)">network error</span>';
+    }
+}
+startAutoRefresh('qc', 1000, fetchQcStatus);
+// Keep the renderer toggle in sync with actual service status on a slow cadence.
+syncRenderers();
+setInterval(syncRenderers, 7000);
+startAutoRefresh('bf', BRUTEFIR_INTERVAL_MS, fetchBrutefirCpu);
+startAutoRefresh('mpd', MONITOR_INTERVAL_MS, fetchMpdInfo);
+startAutoRefresh('sndstat', SNDSTAT_INTERVAL_MS, fetchSndstat);
+startAutoRefresh('topcpu', TOPCPU_INTERVAL_MS, fetchTopCpu);
+startAutoRefresh('ram', RAM_INTERVAL_MS, fetchRam);
+</script>
+</body>
+</html>

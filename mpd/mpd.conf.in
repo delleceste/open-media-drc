@@ -87,3 +87,17 @@ audio_output {
         enabled "no"
         mixer_type        "none"
 }
+
+# Optional analyzer output for omdrc-ctrl's live spectrum card.
+#
+# This is a secondary MPD output, disabled at rest.  omdrc-ctrl enables it only
+# while a browser is actively watching the spectrum stream, reads the raw
+# stereo S32_LE samples from the FIFO, and disables the output again on browser
+# disconnect / hidden tab.
+audio_output {
+        type "fifo"
+        name "OMDRC Spectrum"
+        path "/tmp/omdrc-spectrum.fifo"
+        format "48000:32:2"
+        enabled "no"
+}

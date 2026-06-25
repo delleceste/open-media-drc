@@ -12,6 +12,7 @@ never serve a path outside the configured roots (see lib/roots.py).
 """
 import configparser
 import os
+import platform
 import threading
 import time
 
@@ -65,6 +66,11 @@ def load_config(path: str | None) -> None:
         DISC_ENABLED = cfg.getboolean("disc", "enabled", fallback=DISC_ENABLED)
         DISC_DEV = cfg.get("disc", "device", fallback=DISC_DEV)
         DISC_CACHE = cfg.get("disc", "cache", fallback=DISC_CACHE)
+    # Physical Blu-ray disc playback uses FreeBSD-only plumbing (gcache/kldload,
+    # cd0); force it off everywhere else regardless of config so /api/roots
+    # reports disc:false and the UI hides the button.
+    if platform.system() != "FreeBSD":
+        DISC_ENABLED = False
     ROOTS = rootlib.load_roots(_RAW_ROOTS)
     thumbs.set_concurrency(THUMB_CONCURRENCY)
 

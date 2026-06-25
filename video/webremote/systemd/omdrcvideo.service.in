@@ -1,0 +1,21 @@
+[Unit]
+Description=OMDRC video web remote (Flask app, video/webremote, :9080)
+After=network-online.target sound.target
+Wants=network-online.target
+
+# Template — rendered to omdrcvideo.service by install.sh from config.env.
+# systemd --user unit: runs as the audio user (no User= line) so it can reach the
+# idle mpv's JSON IPC socket (/tmp/mpv-socket) and the user's ~/.cache. Like the
+# FreeBSD rc.d unit, this only serves the web UI / API; the persistent idle mpv it
+# drives is started by the KDE/Plasma session autostart (autostart/mpv-idle.desktop),
+# not here. Symlink into ~/.config/systemd/user/ and enable lingering so it
+# survives logout / starts at boot:  loginctl enable-linger @AUDIO_USER@
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @REPO_DIR@/video/webremote/src/app.py --config @REPO_DIR@/video/webremote/webremote.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

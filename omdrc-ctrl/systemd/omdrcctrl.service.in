@@ -1,0 +1,15 @@
+[Unit]
+Description=OMDRC Control – web remote-control interface
+After=network.target
+
+[Service]
+Type=simple
+User=@OMDRCCTRL_SERVICE_USER@
+Environment=DISPLAY=:0
+ExecStart=@CMAKE_INSTALL_PREFIX@/bin/omdrcctrl
+Restart=on-failure
+RestartSec=5
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

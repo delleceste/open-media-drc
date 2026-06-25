@@ -9,13 +9,22 @@
 # window hides, instead of freezing on the last frame.) See ../ARCHITECTURE.md.
 #
 # Audio routing is DRC-correct and set ONCE here, because video always runs in
-# resamp mode: virtual_oss/brutefir resample to 192 kHz (correct speed + room
-# correction) and the video is delayed to match the audio-path latency.
+# resamp mode: virtual_oss (FreeBSD) / brutefir+snd-aloop (Linux) resample to
+# 192 kHz (correct speed + room correction) and the video is delayed to match the
+# audio-path latency.
 
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:$PATH
 
 SELF=$(readlink -f "$0"); HERE=$(dirname "$SELF")
 SOCKET="${MPV_SOCKET:-/tmp/mpv-socket}"
+
+# mpv audio output API per OS: this box is ALSA-only (no Pulse/PipeWire/OSS);
+# FreeBSD uses OSS.  The --audio-device value itself comes from drc-audio.sh.
+if [ "$(uname)" = "Linux" ]; then
+    AO="alsa"; FALLBACK_DEVICE="alsa/hw:1,0"
+else
+    AO="oss"; FALLBACK_DEVICE="oss//dev/dsp.play"
+fi
 
 # Reuse the shared DRC-aware audio selection (sets AUDIO_DEVICE/DELAY/SUB_DELAY,
 # and switches the DRC chain into resamp mode if needed). It lives in ../lib.
@@ -24,7 +33,7 @@ if [ -r "$DRC_LIB" ]; then
     # drc-audio.sh expects HERE = the video/ dir (it sources ../drc.sh from there).
     HERE="$HERE/.." . "$DRC_LIB"
 else
-    AUDIO_DEVICE="oss//dev/dsp.play"; AUDIO_DELAY="-0.67"; SUB_DELAY="0"
+    AUDIO_DEVICE="$FALLBACK_DEVICE"; AUDIO_DELAY="-0.67"; SUB_DELAY="0"
 fi
 
 # Don't start a second one.
@@ -35,7 +44,7 @@ fi
 
 exec mpv --idle=yes --fs \
     --input-ipc-server="$SOCKET" \
-    --ao=oss --audio-device="$AUDIO_DEVICE" \
+    --ao="$AO" --audio-device="$AUDIO_DEVICE" \
     --audio-channels=stereo \
     --audio-delay="$AUDIO_DELAY" \
     --sub-delay="$SUB_DELAY"

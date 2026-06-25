@@ -53,7 +53,7 @@ render() {
 }
 
 echo "Rendering templates from config.env (AUDIO_USER=${AUDIO_USER}, AUDIO_HOME=${AUDIO_HOME}):"
-# Skip .git and the omdrc-ctrl submodule — it ships its own *.in templates that
+# Skip .git and the omdrc-ctrl subdirectory — it ships its own *.in templates that
 # are rendered by its CMake build (different @VARS@), not by this script.
 find "$REPO_DIR" -name '*.in' -not -path '*/.git/*' -not -path '*/omdrc-ctrl/*' | while read -r tpl; do
 	render "$tpl"
@@ -116,20 +116,53 @@ else
     # symlink into the checkout would be dangling and silently skipped.
     modules-load.d : sudo cp "${REPO_DIR}/etc/modules-load.d/snd-aloop.conf" /etc/modules-load.d/
                      sudo modprobe snd-aloop
-    systemd system : for s in drc-usb-audio upmpdcli; do
-                       sudo cp "${REPO_DIR}/etc/systemd/system/\$s.service" /etc/systemd/system/
-                     done
+    # Scope split: early-boot / hotplug audio infra stays in the SYSTEM scope
+    # (mpd, drc-usb-audio, brutefir-drc); the app/renderer layer runs as systemd
+    # --user units (upmpdcli, omdrcctrl, qobuzconnect2mpd, omdrcvideo, drc) so the
+    # omdrcctrl renderer toggle can drive them with \`systemctl --user\` (no sudo)
+    # and both renderers share one scope. Enable lingering so the user units start
+    # at boot and survive logout.
+    systemd system : sudo cp "${REPO_DIR}/etc/systemd/system/drc-usb-audio.service" /etc/systemd/system/
                      sudo mkdir -p /etc/systemd/system/mpd.service.d
                      sudo cp "${REPO_DIR}/etc/systemd/system/mpd.service.d/open-media-drc.conf" /etc/systemd/system/mpd.service.d/omdrc.conf
                      sudo systemctl disable --now mpd.socket  # not used: we bypass socket activation
+                     # Retire any system-scope renderer/UI units from earlier installs
+                     # so they don't double-instance the --user ones below.
+                     sudo systemctl disable --now upmpdcli.service omdrcctrl.service 2>/dev/null || true
                      sudo systemctl daemon-reload
-                     sudo systemctl enable --now upmpdcli.service
                      sudo systemctl restart mpd.service
+                     # drc-usb-audio probes the DAC at boot and is re-triggered by the
+                     # udev rule on hotplug; it runs 'drc.sh restore', which starts
+                     # BruteFIR — so do the 'brutefir' step below FIRST (its defaults
+                     # file must exist) before enabling this.
+                     sudo systemctl enable --now drc-usb-audio.service
+    systemd --user : loginctl enable-linger "${AUDIO_USER}"   # user units start at boot
+                     mkdir -p "${AUDIO_HOME}/.config/systemd/user"
+                     # upmpdcli renderer (toggled against qobuzconnect2mpd):
+                     ln -sf "${REPO_DIR}/etc/systemd/user/upmpdcli.service" \\
+                            "${AUDIO_HOME}/.config/systemd/user/upmpdcli.service"
+                     # drc.service: restores the last DRC profile on login (oneshot).
+                     ln -sf "${REPO_DIR}/drc.service" \\
+                            "${AUDIO_HOME}/.config/systemd/user/drc.service"
+                     systemctl --user daemon-reload
+                     systemctl --user enable --now upmpdcli.service drc.service
+                     # qobuzconnect2mpd is the other renderer; leave it as you have it
+                     # (the toggle starts/stops upmpdcli vs qobuzconnect2mpd at runtime).
+                     # NOTE: qobuzconnect2mpd is installed separately (not shipped here);
+                     # if used, it must also be a --user unit so the toggle can reach it.
+    omdrcctrl UI   : # audio web UI (:9090) — built and --user-installed by its own
+                     # CMake flow (renders its @VARS@, lands in ~/.local/share/systemd/user):
+                     ( cd "${REPO_DIR}/omdrc-ctrl" && cmake -S . -B build -DUSER_INSTALL=ON && \\
+                       cmake --build build && cmake --install build )
+                     systemctl --user daemon-reload
+                     systemctl --user enable --now omdrcctrl
     udev (USB DAC) : sudo cp "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
                      sudo udevadm control --reload-rules
-    webremote      : no systemd unit yet — run it directly (or add one):
-                     python3 "${REPO_DIR}/video/webremote/src/app.py" \\
-                       --config "${REPO_DIR}/video/webremote/webremote.conf"   # :9080
+    webremote      : ln -sf "${REPO_DIR}/video/webremote/systemd/omdrcvideo.service" \\
+                            "${AUDIO_HOME}/.config/systemd/user/omdrcvideo.service"
+                     systemctl --user daemon-reload
+                     systemctl --user enable --now omdrcvideo.service   # :9080
+                     # The idle mpv it drives autostarts in the KDE session (see above).
     brutefir       : mkdir -p "${AUDIO_HOME}/.config/BruteFIR"
                      cp "${REPO_DIR}/brutefir_defaults.linux.conf" "${AUDIO_HOME}/.config/BruteFIR/brutefir_defaults.conf"
                      # Required: BruteFIR inherits its I/O devices from this file. If

@@ -1,0 +1,24 @@
+[Unit]
+Description=OMDRC Control – web remote-control interface (:9090)
+After=network-online.target sound.target
+Wants=network-online.target
+
+# systemd --user unit (installed by `cmake -DUSER_INSTALL=ON`).  Running in the
+# user scope is what makes the renderer toggle work: qobuzconnect2mpd and
+# upmpdcli are themselves `--user` services, so this UI must share the same user
+# session to drive them with `systemctl --user` — XDG_RUNTIME_DIR and the
+# session bus are then present natively (a system-scope service, User=<user>,
+# would inherit neither and systemctl --user would fail to find the bus).
+# Enable lingering so it survives logout / starts at boot:
+#   loginctl enable-linger <user>
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+ExecStart=@CMAKE_INSTALL_PREFIX@/bin/omdrcctrl
+Restart=on-failure
+RestartSec=5
+KillMode=process
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,2093 @@
+#!/usr/bin/env python3
+import glob
+import json
+import math
+import os
+import platform
+import pwd
+import re
+import shutil
+import shlex
+import subprocess
+import configparser
+import threading
+import time
+import tempfile
+import markdown as md_lib
+from flask import Flask, Response, render_template, jsonify, request, send_from_directory
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Service control differs by OS: Linux drives systemd --user units, FreeBSD the
+# rc(8) services.  See _service_running / _service_action / _unit_active.
+_IS_LINUX = platform.system() == "Linux"
+
+# The live spectrum analyzer taps an MPD `fifo` output.  That path is POSIX
+# (os.mkfifo + non-blocking read) and works the same on Linux and FreeBSD; only
+# Windows (no os.mkfifo) is excluded.
+_SPECTRUM_OS_OK = platform.system() in ("Linux", "FreeBSD")
+
+# ── FreeBSD /dev/sndstat fmt bitmask (sys/soundcard.h) ───────────────────────
+_AFMT_BITS: list[tuple[int, str]] = [
+    (0x00100000, "PCM_CAP_ANALOGOUT"),
+    (0x00200000, "PCM_CAP_ANALOGIN"),
+    (0x00400000, "PCM_CAP_DIGITALOUT"),
+    (0x00800000, "PCM_CAP_DIGITALIN"),
+    (0x00000008, "AFMT_U8"),
+    (0x00000010, "AFMT_S16_LE"),
+    (0x00000020, "AFMT_S16_BE"),
+    (0x00000040, "AFMT_S8"),
+    (0x00001000, "AFMT_S32_LE"),
+    (0x00002000, "AFMT_S32_BE"),
+    (0x00004000, "AFMT_U32_LE"),
+]
+
+def _decode_afmt(val: int) -> str:
+    names, rest = [], val
+    for bit, name in _AFMT_BITS:
+        if val & bit:
+            names.append(name)
+            rest &= ~bit
+    if rest:
+        names.append(hex(rest))
+    return "|".join(names) if names else hex(val)
+
+
+def _decode_sndstat_fmt(line: str) -> str:
+    def repl(match: re.Match) -> str:
+        raw = match.group(1)
+        return f"fmt: {_decode_afmt(int(raw, 16))}"
+
+    return re.sub(r'\bfmt\s+(0x[0-9a-fA-F]+)', repl, line)
+
+app = Flask(__name__, template_folder=os.path.join(_HERE, "templates"))
+
+# Paths to qconnect2mpd output files.
+# Set by [qconnect] section in commands.conf; env vars are the fallback.
+QCONNECT_STATUS_FILE = os.environ.get("QCONNECT_STATUS_FILE", "/tmp/qconnect2mpd-status.txt")
+QCONNECT_LOG_FILE    = os.environ.get("QCONNECT_LOG_FILE",    "/tmp/qconnect2mpd.log")
+
+# qobuzconnect2mpd and upmpdcli are mutually exclusive renderers driving MPD;
+# only one may run at a time.  On Linux they are systemd --user services
+# (switched with `systemctl --user start|stop`, polled with `is-active`); on
+# FreeBSD they are rc services (`sudo service <name> onestart|onestop`, polled
+# with `service <name> onestatus`).  See _service_running / _service_action.
+QCONNECT_SERVICE   = "qobuzconnect2mpd"
+UPMPDCLI_SERVICE   = "upmpdcli"
+SWITCHABLE_SERVICES = (QCONNECT_SERVICE, UPMPDCLI_SERVICE)
+
+# [monitor] section defaults
+TOPCPU_THRESHOLD = 4.0   # minimum %CPU to include in the top-processes list
+MONITOR_INTERVAL = 5     # seconds between MPD refreshes
+TOPCPU_INTERVAL = 3      # seconds between top-CPU refreshes
+SNDSTAT_INTERVAL = 5     # seconds between audio-device refreshes
+BRUTEFIR_INTERVAL = 5    # seconds between brutefir CPU refreshes
+_TOPCPU_CACHE: dict | None = None
+_TOPCPU_CACHE_AT = 0.0
+
+# [spectrum] section defaults.  The source is an MPD FIFO output, disabled by
+# default in mpd.conf and enabled only while a browser is actively streaming.
+SPECTRUM_ENABLED = False
+SPECTRUM_OUTPUT_NAME = "OMDRC Spectrum"
+SPECTRUM_FIFO = "/tmp/omdrc-spectrum.fifo"
+SPECTRUM_RATE = 48000
+SPECTRUM_BITS = 32
+SPECTRUM_CHANNELS = 2
+SPECTRUM_REFRESH_HZ = 10.0
+SPECTRUM_FFT_SIZE = 16384
+SPECTRUM_PRECISION_FFT_SIZE = 65536
+SPECTRUM_BANDS = 24
+SPECTRUM_VU_MODE = "bars"
+SPECTRUM_FLOOR_DB = -40.0
+SPECTRUM_MIN_FREQ = 31.5
+# Manual fine-tune (ms) added to the auto-measured DRC filter delay used to keep
+# the FIFO-derived display in sync with the audible, post-BruteFIR signal.  The
+# bulk delay (filter group delay) is measured from the active filter; this trim
+# absorbs the smaller, constant BruteFIR block + ALSA loopback buffer latency.
+SPECTRUM_DRC_DELAY_TRIM_MS = 0.0
+
+GROUP_ORDER  = ["drc", "apps", "system"]
+GROUP_LABELS = {
+    "drc":    "Digital Room Correction",
+    "apps":   "Applications",
+    "system": "System",
+}
+
+COMMANDS: list[dict] = []
+CMD_MAP:  dict[str, dict] = {}
+
+
+def load_config(path: str) -> None:
+    global COMMANDS, CMD_MAP, QCONNECT_STATUS_FILE, QCONNECT_LOG_FILE
+    global TOPCPU_THRESHOLD, MONITOR_INTERVAL, TOPCPU_INTERVAL
+    global SNDSTAT_INTERVAL, BRUTEFIR_INTERVAL
+    global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
+    global SPECTRUM_RATE, SPECTRUM_BITS, SPECTRUM_CHANNELS
+    global SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
+    global SPECTRUM_VU_MODE, SPECTRUM_FLOOR_DB, SPECTRUM_MIN_FREQ
+    global SPECTRUM_DRC_DELAY_TRIM_MS
+    cfg = configparser.ConfigParser()
+    if not cfg.read(path):
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    # [qconnect] is a settings section, not a command — read and skip it.
+    if cfg.has_section("qconnect"):
+        QCONNECT_STATUS_FILE = cfg.get("qconnect", "status_file", fallback=QCONNECT_STATUS_FILE)
+        QCONNECT_LOG_FILE    = cfg.get("qconnect", "log_file",    fallback=QCONNECT_LOG_FILE)
+
+    # [monitor] is a settings section — read and skip it.
+    if cfg.has_section("monitor"):
+        TOPCPU_THRESHOLD = cfg.getfloat("monitor", "topcpu_threshold", fallback=TOPCPU_THRESHOLD)
+        MONITOR_INTERVAL = max(1, cfg.getint("monitor", "monitor_interval", fallback=MONITOR_INTERVAL))
+        TOPCPU_INTERVAL = max(1, cfg.getint("monitor", "topcpu_interval", fallback=TOPCPU_INTERVAL))
+        SNDSTAT_INTERVAL = max(1, cfg.getint("monitor", "sndstat_interval", fallback=SNDSTAT_INTERVAL))
+        BRUTEFIR_INTERVAL = max(1, cfg.getint("monitor", "brutefir_interval", fallback=BRUTEFIR_INTERVAL))
+
+    if cfg.has_section("spectrum"):
+        SPECTRUM_ENABLED = cfg.getboolean("spectrum", "enabled", fallback=SPECTRUM_ENABLED)
+        SPECTRUM_OUTPUT_NAME = cfg.get("spectrum", "mpd_output_name", fallback=SPECTRUM_OUTPUT_NAME)
+        SPECTRUM_FIFO = cfg.get("spectrum", "fifo_path", fallback=SPECTRUM_FIFO)
+        SPECTRUM_RATE = max(8000, cfg.getint("spectrum", "sample_rate", fallback=SPECTRUM_RATE))
+        SPECTRUM_BITS = cfg.getint("spectrum", "bits", fallback=SPECTRUM_BITS)
+        SPECTRUM_CHANNELS = max(1, cfg.getint("spectrum", "channels", fallback=SPECTRUM_CHANNELS))
+        SPECTRUM_REFRESH_HZ = max(1.0, cfg.getfloat("spectrum", "refresh_hz", fallback=SPECTRUM_REFRESH_HZ))
+        SPECTRUM_FFT_SIZE = max(4096, cfg.getint("spectrum", "fft_size", fallback=SPECTRUM_FFT_SIZE))
+        SPECTRUM_PRECISION_FFT_SIZE = max(
+            SPECTRUM_FFT_SIZE,
+            cfg.getint("spectrum", "precision_fft_size", fallback=SPECTRUM_PRECISION_FFT_SIZE),
+        )
+        SPECTRUM_BANDS = max(6, min(32, cfg.getint("spectrum", "bands", fallback=SPECTRUM_BANDS)))
+        SPECTRUM_VU_MODE = cfg.get("spectrum", "vu_mode", fallback=SPECTRUM_VU_MODE).strip().lower()
+        if SPECTRUM_VU_MODE not in ("bars", "needles"):
+            SPECTRUM_VU_MODE = "bars"
+        SPECTRUM_FLOOR_DB = max(-90.0, min(-24.0, cfg.getfloat("spectrum", "floor_db", fallback=SPECTRUM_FLOOR_DB)))
+        SPECTRUM_MIN_FREQ = max(5.0, min(200.0, cfg.getfloat("spectrum", "min_frequency", fallback=SPECTRUM_MIN_FREQ)))
+        SPECTRUM_DRC_DELAY_TRIM_MS = cfg.getfloat("spectrum", "drc_delay_trim_ms", fallback=SPECTRUM_DRC_DELAY_TRIM_MS)
+
+    _RESERVED = {"qconnect", "monitor", "spectrum"}
+    COMMANDS = []
+    for sid in cfg.sections():
+        if sid in _RESERVED:
+            continue
+        c = dict(cfg[sid])
+        c["id"] = sid
+        for key in ("what", "group", "type"):
+            if key not in c:
+                raise ValueError(f"[{sid}] missing required key: '{key}'")
+        if c["type"] not in ("READ", "WRITE", "LINK"):
+            raise ValueError(f"[{sid}] type must be READ, WRITE or LINK, got: '{c['type']}'")
+        if c["type"] in ("READ", "WRITE") and "cmd" not in c:
+            raise ValueError(f"[{sid}] missing required key: 'cmd'")
+        if c["type"] == "WRITE" and "button" not in c:
+            raise ValueError(f"[{sid}] WRITE command missing 'button' key")
+        if c["type"] == "LINK" and "url" not in c:
+            raise ValueError(f"[{sid}] LINK command missing 'url' key")
+        COMMANDS.append(c)
+    CMD_MAP = {c["id"]: c for c in COMMANDS}
+
+
+def _groups() -> list[tuple]:
+    d: dict[str, list] = {}
+    for c in COMMANDS:
+        d.setdefault(c["group"], []).append(c)
+    order = GROUP_ORDER + [g for g in d if g not in GROUP_ORDER]
+    return [
+        (g, GROUP_LABELS.get(g, g.replace("_", " ").title()), d[g])
+        for g in order if g in d
+    ]
+
+
+def _env() -> dict:
+    e = dict(os.environ)
+    if not e.get("HOME") or e["HOME"] == "/":
+        e["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
+    e.setdefault("XDG_CONFIG_HOME", os.path.join(e["HOME"], ".config"))
+    e.setdefault("DISPLAY", ":0")
+    # `systemctl --user` (renderer switching) needs the user session bus.
+    # omdrcctrl runs as a system-scope service (User=<user>), which inherits
+    # neither XDG_RUNTIME_DIR nor DBUS_SESSION_BUS_ADDRESS, so systemctl cannot
+    # find the bus ("$DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not
+    # defined").  Derive them from the uid when the runtime dir exists.
+    if _IS_LINUX:
+        run_dir = e.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        if os.path.isdir(run_dir):
+            e["XDG_RUNTIME_DIR"] = run_dir
+            e.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={run_dir}/bus")
+    # FreeBSD rc.d services start with a minimal PATH that omits /usr/local/{s,}bin
+    # where brutefir, mpc, virtual_oss, pgrep, … live.
+    path_dirs = e.get("PATH", "").split(":")
+    for d in ("/usr/local/sbin", "/usr/local/bin"):
+        if d not in path_dirs:
+            path_dirs.insert(0, d)
+    e["PATH"] = ":".join(path_dirs)
+    return e
+
+
+def _find_dyn_details(cmd: dict, config_name: str) -> str | None:
+    root = cmd.get("details_root")
+    if not root:
+        return None
+    for fname in ("README.md", "INDEX.md"):
+        path = os.path.join(root, config_name, fname)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _unit_active(unit: str) -> bool:
+    """True if a systemd unit is active.  Checks the --user scope first (the
+    renderers and web UIs run there after the Linux scope alignment) then the
+    system scope; on FreeBSD systemctl is absent, so both fail and this is False."""
+    for scope in (["--user"], []):
+        try:
+            r = subprocess.run(
+                ["systemctl", *scope, "is-active", "--quiet", unit],
+                timeout=3, capture_output=True, env=_env(),
+            )
+            if r.returncode == 0:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _process_running(process: str) -> bool:
+    try:
+        r = subprocess.run(
+            ["pgrep", "-x", process],
+            timeout=3, capture_output=True,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _process_name(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = command.split()
+    return os.path.basename(parts[0]) if parts else ""
+
+
+def _hide_from_topcpu(row: dict) -> bool:
+    name = _process_name(row["name"]).lower()
+    if row["pid"] == "0":
+        return True
+    if name in {"idle", "kernel", "ps", "pgrep"}:
+        return True
+    return name.startswith("[") and name.endswith("]")
+
+
+def _ps_processes() -> list[dict]:
+    candidates = [
+        ["ps", "axo", "user,pid,pcpu,comm"],
+        ["ps", "ax", "-o", "user", "-o", "pid", "-o", "pcpu", "-o", "comm"],
+        ["ps", "ax", "-o", "user=,pid=,pcpu=,comm="],
+    ]
+    errors = []
+    for cmd in candidates:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            errors.append((r.stderr or r.stdout).strip())
+            continue
+        rows = []
+        for line in r.stdout.splitlines():
+            parts = line.split(None, 3)
+            if len(parts) < 4:
+                continue
+            if parts[1].upper() == "PID" or parts[2].upper() in ("%CPU", "PCPU"):
+                continue
+            try:
+                rows.append({
+                    "user": parts[0],
+                    "pid": parts[1],
+                    "cpu": float(parts[2]),
+                    "name": parts[3].strip(),
+                })
+            except ValueError:
+                continue
+        if rows:
+            return rows
+    raise RuntimeError("; ".join(e for e in errors if e) or "could not parse ps output")
+
+
+def _tail_file(path: str, limit: int = 4000) -> str:
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - limit), os.SEEK_SET)
+            return f.read().decode(errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _read_text_quietly(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _command_failure_output(cmd: dict, log_path: str) -> str:
+    parts = []
+    out = _tail_file(log_path)
+    if out:
+        parts.append(out)
+
+    if "drc.sh" in cmd.get("cmd", ""):
+        brutefir_out = _tail_file("/tmp/brutefir.out")
+        if brutefir_out:
+            parts.append("--- /tmp/brutefir.out ---\n" + brutefir_out)
+
+    return "\n".join(parts).strip()
+
+
+def _unlink_quietly(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _wait_and_cleanup(proc: subprocess.Popen, path: str) -> None:
+    proc.wait()
+    _unlink_quietly(path)
+
+
+# ── MPD helpers ───────────────────────────────────────────────────────────────
+
+def _mpd_conf_from_cmdline(cmdline: str) -> str | None:
+    try:
+        tokens = shlex.split(cmdline)
+    except ValueError:
+        tokens = cmdline.split()
+    i = 1  # skip argv[0] (binary path)
+    while i < len(tokens):
+        t = tokens[i]
+        if t in ("--config", "-c") and i + 1 < len(tokens):
+            return tokens[i + 1]
+        if t.startswith("--config="):
+            return t.split("=", 1)[1]
+        if not t.startswith("-"):
+            return t   # first non-flag positional = config file
+        i += 1
+    return None
+
+
+def _mpd_port_from_conf(conf_path: str) -> str | None:
+    try:
+        with open(conf_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("#"):
+                    continue
+                m = re.match(r'^port\s+"(\d+)"', s)
+                if m:
+                    return m.group(1)
+                m = re.match(r'^bind_to_address\s+"[^"]*:(\d+)"', s)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def _mpc_client() -> list[str] | None:
+    preferred = ("musicpc", "mpc") if platform.system() == "FreeBSD" else ("mpc", "musicpc")
+    path = _env().get("PATH")
+    for name in preferred:
+        exe = shutil.which(name, path=path)
+        if exe:
+            return [exe]
+    return None
+
+
+def _parse_mpc_audio(audio: str) -> dict:
+    parsed = {"sample_rate": None, "bit_depth": None, "channels": None}
+    m = re.search(r'(\d+(?:\.\d+)?)\s*kHz\b', audio, re.I)
+    if m:
+        parsed["sample_rate"] = int(round(float(m.group(1)) * 1000))
+    else:
+        m = re.search(r'(\d+)\s*Hz\b', audio, re.I)
+        if m:
+            parsed["sample_rate"] = int(m.group(1))
+
+    m = re.search(r'(\d+)\s*bits?\b', audio, re.I)
+    if m:
+        parsed["bit_depth"] = int(m.group(1))
+
+    m = re.search(r'(\d+)\s*channels?\b', audio, re.I)
+    if m:
+        parsed["channels"] = int(m.group(1))
+    elif re.search(r'\bstereo\b', audio, re.I):
+        parsed["channels"] = 2
+    elif re.search(r'\bmono\b', audio, re.I):
+        parsed["channels"] = 1
+
+    if parsed["sample_rate"] is None:
+        m = re.search(r'\b(\d{4,6})\s*:\s*(\d+)\s*:\s*(\d+)\b', audio)
+        if m:
+            parsed["sample_rate"] = int(m.group(1))
+            parsed["bit_depth"] = int(m.group(2))
+            parsed["channels"] = int(m.group(3))
+    return parsed
+
+
+def _mpd_audio_via_protocol(port: str | None) -> str:
+    """Query MPD directly for the audio field.
+
+    Modern mpc (0.35+) dropped the 'audio:' line from its default status
+    output on Linux.  The MPD protocol always includes it when playing.
+    """
+    import socket
+    try:
+        p = int(port) if port else 6600
+        with socket.create_connection(("localhost", p), timeout=3) as sock:
+            with sock.makefile("r", encoding="utf-8", errors="replace") as f:
+                if not f.readline().startswith("OK"):
+                    return ""
+                sock.sendall(b"status\n")
+                for line in f:
+                    line = line.rstrip("\n")
+                    if line == "OK" or line.startswith("ACK"):
+                        break
+                    if line.lower().startswith("audio:"):
+                        return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _mpc_status(port: str | None = None) -> dict:
+    cmd = _mpc_client()
+    if not cmd:
+        return {"client": None, "state": "unknown", "error": "mpc/musicpc not found"}
+    if port:
+        cmd = cmd + ["-p", str(port)]
+    cmd.append("status")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=5, env=_env())
+    text = (r.stdout + r.stderr).strip()
+    info = {
+        "client": os.path.basename(cmd[0]),
+        "state": "stopped",
+        "song": "",
+        "audio": "",
+        "sample_rate": None,
+        "bit_depth": None,
+        "channels": None,
+        "error": "",
+    }
+    if r.returncode != 0:
+        info["state"] = "unknown"
+        info["error"] = text or f"exit {r.returncode}"
+        return info
+
+    lines = text.splitlines()
+    state_line = next((line for line in lines if re.search(r'\[(playing|paused|stopped)\]', line)), "")
+    if state_line:
+        m = re.search(r'\[(playing|paused|stopped)\]', state_line)
+        if m:
+            info["state"] = m.group(1)
+        state_idx = lines.index(state_line)
+        if state_idx > 0:
+            info["song"] = lines[state_idx - 1].strip()
+
+    for line in lines:
+        if re.search(r'^(audio|format)\s*:', line, re.I):
+            _, _, audio = line.partition(":")
+            info["audio"] = audio.strip()
+            info.update(_parse_mpc_audio(info["audio"]))
+            break
+
+    if not info["audio"] and info["state"] in ("playing", "paused"):
+        audio = _mpd_audio_via_protocol(port)
+        if audio:
+            info["audio"] = audio
+            info.update(_parse_mpc_audio(audio))
+
+    return info
+
+
+# ── Live spectrum analyzer ───────────────────────────────────────────────────
+
+def _mpd_output_id(name: str, port: str | None = None) -> str | None:
+    cmd = _mpc_client()
+    if not cmd:
+        return None
+    if port:
+        cmd = cmd + ["-p", str(port)]
+    try:
+        r = subprocess.run(cmd + ["outputs"], capture_output=True, text=True,
+                           timeout=5, env=_env())
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    for line in r.stdout.splitlines():
+        m = re.match(r'Output\s+(\d+)\s+\((.*)\)\s+is\s+(enabled|disabled)', line)
+        if m and m.group(2) == name:
+            return m.group(1)
+    return None
+
+
+def _mpd_output_action(name: str, action: str) -> tuple[bool, str]:
+    """Enable or disable an MPD output by name."""
+    port = _resolve_mpd_port()
+    out_id = _mpd_output_id(name, port)
+    if out_id is None:
+        return False, f'MPD output "{name}" not found'
+    cmd = _mpc_client()
+    if not cmd:
+        return False, "mpc/musicpc not found"
+    if port:
+        cmd = cmd + ["-p", str(port)]
+    try:
+        r = subprocess.run(cmd + [action, out_id], capture_output=True, text=True,
+                           timeout=5, env=_env())
+        if r.returncode == 0:
+            return True, ""
+        return False, (r.stderr or r.stdout).strip() or f"mpc {action} failed"
+    except subprocess.TimeoutExpired:
+        return False, "mpc timeout"
+    except OSError as e:
+        return False, str(e)
+
+
+def _spectrum_band_label(freq: float) -> str:
+    if freq >= 1000:
+        v = freq / 1000.0
+        return f"{v:.1f}k" if v < 10 and abs(v - round(v)) > 0.05 else f"{v:.0f}k"
+    return f"{freq:.1f}".rstrip("0").rstrip(".")
+
+
+def _spectrum_band_defs(bands: int, nyquist: float, min_freq: float | None = None) -> list[dict]:
+    import numpy as np
+    preferred = [
+        10.0, 12.5, 16.0, 20.0, 25.0, 31.5, 40.0, 50.0,
+        63.0, 80.0, 100.0, 125.0, 160.0, 250.0, 400.0, 630.0,
+        1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 10000.0,
+        16000.0, 20000.0,
+    ]
+    low = SPECTRUM_MIN_FREQ if min_freq is None else min_freq
+    centers = [f for f in preferred if low <= f < nyquist]
+    if not centers:
+        centers = [min(10.0, nyquist)]
+    if bands < len(centers):
+        idx = np.unique(np.round(np.linspace(0, len(centers) - 1, bands)).astype(int))
+        centers = [centers[int(i)] for i in idx]
+
+    edges = []
+    for i, center in enumerate(centers):
+        if i == 0:
+            lo = max(1.0, center / math.sqrt(centers[i + 1] / center)) if len(centers) > 1 else center / math.sqrt(2.0)
+        else:
+            lo = math.sqrt(centers[i - 1] * center)
+        if i == len(centers) - 1:
+            hi = min(nyquist, center * math.sqrt(center / centers[i - 1])) if i > 0 else min(nyquist, center * math.sqrt(2.0))
+        else:
+            hi = math.sqrt(center * centers[i + 1])
+        edges.append({
+            "freq": center,
+            "label": _spectrum_band_label(center),
+            "lo": max(0.0, lo),
+            "hi": min(float(nyquist), hi),
+        })
+    return edges
+
+
+def _spectrum_log_bins(freqs, magnitudes, bands: int) -> tuple[list[dict], list[float]]:
+    import numpy as np
+    band_defs = _spectrum_band_defs(bands, float(freqs[-1]), SPECTRUM_MIN_FREQ)
+    out_bands, out_v = [], []
+    for band in band_defs:
+        mask = (freqs >= band["lo"]) & (freqs < band["hi"])
+        if not mask.any():
+            continue
+        out_bands.append(band)
+        band_mag = float(np.sqrt(np.sum(np.square(magnitudes[mask]))))
+        out_v.append(20.0 * math.log10(max(min(band_mag, 1.0), 1e-9)))
+    return out_bands, out_v
+
+
+def _spectrum_level_db(samples) -> tuple[float, float]:
+    import numpy as np
+    if samples.size == 0:
+        return -120.0, -120.0
+    s = samples.astype(np.float64, copy=False)
+    rms = float(np.sqrt(np.mean(np.square(s))))
+    peak = float(np.max(np.abs(samples)))
+    rms_db = 20.0 * math.log10(max(rms, 1e-9))
+    peak_db = 20.0 * math.log10(max(peak, 1e-9))
+    return max(-120.0, min(0.0, rms_db)), max(-120.0, min(0.0, peak_db))
+
+
+class SpectrumAnalyzer:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.clients = 0
+        self.seq = 0
+        self.frame = {
+            "ok": False,
+            "state": "idle",
+            "error": "not started",
+            "left": [],
+            "right": [],
+            "bands": [],
+            "vu": {},
+        }
+        self.thread: threading.Thread | None = None
+        self.stop_event = threading.Event()
+        self.mode = "music"
+
+    def settings(self) -> dict:
+        return {
+            "enabled": SPECTRUM_ENABLED,
+            "output_name": SPECTRUM_OUTPUT_NAME,
+            "fifo": SPECTRUM_FIFO,
+            "sample_rate": SPECTRUM_RATE,
+            "bits": SPECTRUM_BITS,
+            "channels": SPECTRUM_CHANNELS,
+            "refresh_hz": SPECTRUM_REFRESH_HZ,
+            "fft_size": SPECTRUM_FFT_SIZE,
+            "precision_fft_size": SPECTRUM_PRECISION_FFT_SIZE,
+            "bands": SPECTRUM_BANDS,
+            "vu_mode": SPECTRUM_VU_MODE,
+            "floor_db": SPECTRUM_FLOOR_DB,
+            "min_frequency": SPECTRUM_MIN_FREQ,
+            "mode": self.mode,
+        }
+
+    def _start_thread_locked(self, mode: str) -> None:
+        # caller holds self.lock
+        self.clients += 1
+        self.mode = mode
+        self.stop_event.clear()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def acquire(self, mode: str = "music") -> None:
+        mode = "precision" if mode == "precision" else "music"
+        # If a previous analyzer thread is still unwinding (its finally-block is
+        # about to `mpc disable` the FIFO output), wait for it to finish before
+        # starting a fresh one.  This serialises the output enable/disable so a
+        # quick Stop→Start (e.g. a Music/Precision switch) can never leave the
+        # output enabled with no consumer, nor race an old thread's disable
+        # against a new thread's enable.  Additional clients on a healthy thread
+        # just join the existing SSE broadcast.
+        for _ in range(50):
+            old = None
+            with self.lock:
+                if self.thread is not None and not self.thread.is_alive():
+                    self.thread = None
+                if self.thread is not None and self.stop_event.is_set():
+                    old = self.thread          # shutting down — wait outside lock
+                elif self.thread is not None:
+                    self.clients += 1          # healthy thread — share it
+                    self.mode = mode
+                    return
+                else:
+                    self._start_thread_locked(mode)
+                    return
+            old.join(timeout=0.1)
+        # Fallback: the previous thread is wedged.  Start fresh so the UI gets a
+        # stream rather than hanging; the stale thread is a daemon and will exit.
+        with self.lock:
+            self._start_thread_locked(mode)
+
+    def release(self) -> None:
+        with self.lock:
+            self.clients = max(0, self.clients - 1)
+            if self.clients == 0:
+                self.stop_event.set()
+                self.cond.notify_all()
+
+    def ensure_disabled(self) -> None:
+        """Best-effort: force the MPD FIFO output off at startup so a crash
+        that left it enabled is recovered.  It stays disabled until Start."""
+        if not SPECTRUM_ENABLED or not _SPECTRUM_OS_OK:
+            return
+        try:
+            _mpd_output_action(SPECTRUM_OUTPUT_NAME, "disable")
+        except Exception:
+            pass
+
+    def snapshot(self) -> tuple[int, dict]:
+        with self.lock:
+            return self.seq, dict(self.frame)
+
+    def wait_next(self, last_seq: int, timeout: float = 5.0) -> tuple[int, dict]:
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq != last_seq or self.stop_event.is_set(),
+                               timeout=timeout)
+            return self.seq, dict(self.frame)
+
+    def _publish(self, frame: dict) -> None:
+        with self.cond:
+            self.seq += 1
+            self.frame = frame
+            self.cond.notify_all()
+
+    def _ensure_fifo(self) -> tuple[bool, str]:
+        parent = os.path.dirname(SPECTRUM_FIFO) or "."
+        try:
+            os.makedirs(parent, exist_ok=True)
+            if os.path.exists(SPECTRUM_FIFO):
+                if not os.path.exists(SPECTRUM_FIFO) or not stat_is_fifo(SPECTRUM_FIFO):
+                    return False, f"{SPECTRUM_FIFO} exists and is not a FIFO"
+            else:
+                os.mkfifo(SPECTRUM_FIFO, 0o600)
+            return True, ""
+        except OSError as e:
+            return False, str(e)
+
+    def _run(self) -> None:
+        if not SPECTRUM_ENABLED:
+            self._publish({"ok": False, "state": "disabled",
+                           "error": "spectrum analyzer disabled in commands.conf",
+                           "left": [], "right": [], "bands": [], "vu": {}})
+            return
+        if not _SPECTRUM_OS_OK:
+            self._publish({"ok": False, "state": "unsupported",
+                           "error": "MPD FIFO spectrum analyzer needs Linux or FreeBSD",
+                           "left": [], "right": [], "bands": [], "vu": {}})
+            return
+        if SPECTRUM_BITS != 32 or SPECTRUM_CHANNELS < 2:
+            self._publish({"ok": False, "state": "bad-config",
+                           "error": "only stereo S32_LE FIFO capture is implemented",
+                           "left": [], "right": [], "bands": [], "vu": {}})
+            return
+        try:
+            import numpy as np
+        except ImportError:
+            self._publish({"ok": False, "state": "missing-numpy",
+                           "error": "numpy is required for live spectrum analysis",
+                           "left": [], "right": [], "bands": [], "vu": {}})
+            return
+
+        ok, err = self._ensure_fifo()
+        if not ok:
+            self._publish({"ok": False, "state": "fifo-error", "error": err,
+                           "left": [], "right": [], "bands": [], "vu": {}})
+            return
+
+        fd = None
+        output_enabled = False
+        terminal_error = False
+        try:
+            fd = os.open(SPECTRUM_FIFO, os.O_RDONLY | os.O_NONBLOCK)
+            ok, err = _mpd_output_action(SPECTRUM_OUTPUT_NAME, "enable")
+            if not ok:
+                terminal_error = True
+                self._publish({"ok": False, "state": "mpd-error", "error": err,
+                               "left": [], "right": [], "bands": [], "vu": {}})
+                return
+            output_enabled = True
+            self._publish({"ok": True, "state": "waiting",
+                           "error": "", "left": [], "right": [], "bands": [], "vu": {},
+                           "rate": SPECTRUM_RATE, "mode": self.mode})
+
+            bytes_per_sample = 4
+            frame_bytes = bytes_per_sample * SPECTRUM_CHANNELS
+            fft_size = SPECTRUM_PRECISION_FFT_SIZE if self.mode == "precision" else SPECTRUM_FFT_SIZE
+            need_bytes = fft_size * frame_bytes
+            chunk_bytes = max(4096, int(SPECTRUM_RATE / SPECTRUM_REFRESH_HZ) * frame_bytes)
+            buf = bytearray()
+            interval = 1.0 / SPECTRUM_REFRESH_HZ
+            next_at = time.monotonic()
+            last_data_at = 0.0
+            window = np.hanning(fft_size).astype(np.float32)
+            # VU ballistics are computed over a short trailing slice (~50 ms) of
+            # the captured buffer rather than the whole FFT window so the meters
+            # track the music instead of lagging behind by the FFT length
+            # (341 ms music / 1.36 s precision).
+            vu_window = max(256, min(fft_size, int(SPECTRUM_RATE * 0.05)))
+            freqs_all = np.fft.rfftfreq(fft_size, 1.0 / SPECTRUM_RATE)
+            silence_bands = _spectrum_band_defs(SPECTRUM_BANDS, float(freqs_all[-1]), SPECTRUM_MIN_FREQ)
+
+            # DRC sync: the FIFO is pre-DRC, so slide the analysis window back by
+            # the BruteFIR path delay to match the audible signal.  Re-checked on
+            # a slow cadence (the heavy filter read is cached) so it tracks filter
+            # / preset / rate changes without per-frame cost.
+            delay_bytes = 0
+            delay_check_interval = 2.0
+            next_delay_check = 0.0
+
+            def keep_bytes() -> int:
+                # Hold enough history for the FFT window plus the sync delay.
+                return need_bytes + delay_bytes + chunk_bytes * 2
+
+            def publish_silence() -> None:
+                # Emit a level well below any reachable UI floor so the bars,
+                # VU bars and needles all bottom out (effectively -inf) when the
+                # music stops, independent of where the floor slider sits.
+                silent_db = -120.0
+                vals = [silent_db] * len(silence_bands)
+                self._publish({
+                    "ok": True,
+                    "state": "running",
+                    "error": "",
+                    "rate": SPECTRUM_RATE,
+                    "mode": self.mode,
+                    "fft_size": fft_size,
+                    "bands": [
+                        {
+                            "freq": round(b["freq"], 1),
+                            "label": b["label"],
+                            "lo": round(b["lo"], 1),
+                            "hi": round(b["hi"], 1),
+                        }
+                        for b in silence_bands
+                    ],
+                    "left": vals,
+                    "right": vals,
+                    "vu": {
+                        "left_rms": silent_db,
+                        "right_rms": silent_db,
+                        "left_peak": silent_db,
+                        "right_peak": silent_db,
+                    },
+                })
+
+            while not self.stop_event.is_set():
+                try:
+                    data = os.read(fd, chunk_bytes)
+                    if data:
+                        last_data_at = time.monotonic()
+                        buf.extend(data)
+                        max_keep = keep_bytes()
+                        if len(buf) > max_keep:
+                            del buf[:len(buf) - max_keep]
+                    else:
+                        time.sleep(0.02)
+                except BlockingIOError:
+                    time.sleep(0.02)
+                except OSError as e:
+                    terminal_error = True
+                    self._publish({"ok": False, "state": "read-error", "error": str(e),
+                                   "left": [], "right": [], "bands": [], "vu": {}})
+                    break
+
+                now = time.monotonic()
+                if now < next_at:
+                    continue
+                next_at = now + interval
+                if now >= next_delay_check:
+                    next_delay_check = now + delay_check_interval
+                    delay_frames = int(round(_drc_display_delay_seconds() * SPECTRUM_RATE))
+                    delay_bytes = delay_frames * frame_bytes
+                if last_data_at and now - last_data_at > 0.5:
+                    publish_silence()
+                    continue
+                # Window ends `delay_bytes` before the newest sample so the
+                # display matches the audible (post-DRC) signal.
+                end = len(buf) - delay_bytes
+                if end < need_bytes:
+                    self._publish({"ok": True, "state": "waiting",
+                                   "error": "", "left": [], "right": [], "bands": [], "vu": {},
+                                   "rate": SPECTRUM_RATE, "mode": self.mode, "fft_size": fft_size})
+                    continue
+
+                raw = bytes(buf[end - need_bytes:end])
+                pcm = np.frombuffer(raw, dtype="<i4").reshape(-1, SPECTRUM_CHANNELS)
+                left = pcm[:, 0].astype(np.float32) / 2147483648.0
+                right = pcm[:, 1].astype(np.float32) / 2147483648.0
+                l_mag = np.abs(np.fft.rfft(left * window))
+                r_mag = np.abs(np.fft.rfft(right * window))
+                scale = max(float(window.sum()) / 2.0, 1.0)
+                l_norm = l_mag / scale
+                r_norm = r_mag / scale
+                bands, l_bins = _spectrum_log_bins(freqs_all, l_norm, SPECTRUM_BANDS)
+                _, r_bins = _spectrum_log_bins(freqs_all, r_norm, SPECTRUM_BANDS)
+                l_rms, l_peak = _spectrum_level_db(left[-vu_window:])
+                r_rms, r_peak = _spectrum_level_db(right[-vu_window:])
+                self._publish({
+                    "ok": True,
+                    "state": "running",
+                    "error": "",
+                    "rate": SPECTRUM_RATE,
+                    "mode": self.mode,
+                    "fft_size": fft_size,
+                    "drc_delay": round(delay_bytes / frame_bytes / SPECTRUM_RATE, 3),
+                    "bands": [
+                        {
+                            "freq": round(b["freq"], 1),
+                            "label": b["label"],
+                            "lo": round(b["lo"], 1),
+                            "hi": round(b["hi"], 1),
+                        }
+                        for b in bands
+                    ],
+                    "left": [round(v, 1) for v in l_bins],
+                    "right": [round(v, 1) for v in r_bins],
+                    "vu": {
+                        "left_rms": round(l_rms, 1),
+                        "right_rms": round(r_rms, 1),
+                        "left_peak": round(l_peak, 1),
+                        "right_peak": round(r_peak, 1),
+                    },
+                })
+        finally:
+            if output_enabled:
+                _mpd_output_action(SPECTRUM_OUTPUT_NAME, "disable")
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if not terminal_error:
+                self._publish({"ok": False, "state": "idle", "error": "not streaming",
+                               "left": [], "right": [], "bands": [], "vu": {}})
+
+
+def stat_is_fifo(path: str) -> bool:
+    import stat
+    try:
+        return stat.S_ISFIFO(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+_SPECTRUM = SpectrumAnalyzer()
+
+
+def _ps_arg_lines() -> list[str]:
+    for cmd in (["ps", "axo", "args"], ["ps", "ax", "-o", "args="]):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            return [
+                line.strip() for line in r.stdout.splitlines()
+                if line.strip() and line.strip().lower() != "args"
+            ]
+    return []
+
+
+def _virtual_oss_rate() -> int | None:
+    for line in _ps_arg_lines():
+        try:
+            parts = shlex.split(line)
+        except ValueError:
+            parts = line.split()
+        if not parts:
+            continue
+        name = os.path.basename(parts[0])
+        if name == "sudo" and len(parts) > 1:
+            name = os.path.basename(parts[1])
+            args = parts[1:]
+        else:
+            args = parts
+        if name != "virtual_oss":
+            continue
+        for i, arg in enumerate(args):
+            if arg == "-r" and i + 1 < len(args):
+                try:
+                    return int(args[i + 1])
+                except ValueError:
+                    return None
+    return None
+
+
+def _alsa_hw_params() -> dict | None:
+    """hw_params of the first active ALSA playback stream (Linux only).
+
+    Reflects exactly what the DAC is being fed right now: format (bit depth),
+    rate, channels, and the period/buffer sizes.  Returns None when no stream
+    is open.
+    """
+    for path in sorted(glob.glob("/proc/asound/card*/pcm*p/sub*/hw_params")):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            continue
+        if content.strip() in ("", "closed"):
+            continue
+        fields: dict[str, str] = {}
+        for line in content.splitlines():
+            if ":" in line:
+                k, _, v = line.partition(":")
+                fields[k.strip()] = v.strip()
+        rate = None
+        m = re.match(r'(\d+)', fields.get("rate", ""))
+        if m:
+            rate = int(m.group(1))
+        # card/device id from the path: /proc/asound/card0/pcm0p/sub0/hw_params
+        cm = re.search(r'card(\d+)/pcm(\d+)', path)
+        return {
+            "card": int(cm.group(1)) if cm else None,
+            "device": int(cm.group(2)) if cm else None,
+            "format": fields.get("format"),
+            "rate": rate,
+            "channels": int(fields["channels"]) if fields.get("channels", "").isdigit() else None,
+            "period_size": int(fields["period_size"]) if fields.get("period_size", "").isdigit() else None,
+            "buffer_size": int(fields["buffer_size"]) if fields.get("buffer_size", "").isdigit() else None,
+        }
+    return None
+
+
+def _alsa_rate() -> int | None:
+    """Rate of the first active ALSA playback stream (Linux only)."""
+    hw = _alsa_hw_params()
+    return hw["rate"] if hw else None
+
+
+def _brutefir_rate() -> int | None:
+    for line in _ps_arg_lines():
+        if "brutefir" not in line:
+            continue
+        m = re.search(r'brutefir-(\d+)[^ /]*\.conf', line)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _rate_status(mpd_rate: int | None, virtual_rate: int | None, brutefir_rate: int | None) -> dict:
+    rates = [r for r in (virtual_rate, brutefir_rate) if r]
+    if not mpd_rate or not rates:
+        return {"kind": "unknown", "text": "sample-rate comparison unavailable"}
+    if all(mpd_rate == r for r in rates):
+        return {"kind": "match", "text": "SAMPLE RATE MATCH"}
+    return {"kind": "mismatch", "text": "RESAMPLING"}
+
+
+def _path_status(rate_status: dict, brutefir_running: bool) -> dict:
+    """Plain-language verdict on the audio path, for the bit-perfect hint.
+
+    Honest framing: only the DRC-off + rates-matched case is truly
+    bit-transparent.  With DRC engaged the signal is intentionally modified,
+    but still at native rate in 64-bit float with no resampling stage.
+    """
+    kind = rate_status.get("kind")
+    if kind == "mismatch":
+        return {
+            "kind": "mismatch",
+            "text": "Resampling active",
+            "detail": "Sample-rate conversion is in the chain — the stream is not bit-transparent.",
+        }
+    if kind == "match":
+        if brutefir_running:
+            return {
+                "kind": "drc",
+                "text": "Full-resolution DRC · no resampling",
+                "detail": "BruteFIR applies room correction at the native rate in 64-bit float. "
+                          "No sample-rate conversion and no lossy stage between MPD and the DAC.",
+            }
+        return {
+            "kind": "match",
+            "text": "Bit-perfect passthrough",
+            "detail": "DRC is off and every stage runs at the same rate — samples reach the DAC unaltered.",
+        }
+    return {"kind": "unknown", "text": "Path status unavailable", "detail": ""}
+
+
+# ── BruteFIR filter (FIR coefficient) inspection ───────────────────────────────
+
+# numpy dtype for each BruteFIR coeff `format:` string.
+_RAW_DTYPES: dict[str, str] = {
+    "FLOAT64_LE": "<f8", "FLOAT64_BE": ">f8",
+    "FLOAT_LE":   "<f4", "FLOAT_BE":   ">f4",
+    "FLOAT32_LE": "<f4", "FLOAT32_BE": ">f4",
+    "S32_LE": "<i4", "S32_BE": ">i4",
+    "S16_LE": "<i2", "S16_BE": ">i2",
+}
+
+
+def _active_brutefir_conf() -> str | None:
+    """Absolute path of the .conf the running BruteFIR was started with.
+
+    Match the real brutefir process by argv[0] (handling a sudo prefix) rather
+    than any command line that merely mentions "brutefir" — otherwise an editor
+    open on a brutefir*.conf, or a grep, would be mistaken for the engine."""
+    for line in _ps_arg_lines():
+        try:
+            parts = shlex.split(line)
+        except ValueError:
+            parts = line.split()
+        if not parts:
+            continue
+        if os.path.basename(parts[0]) == "sudo" and len(parts) > 1:
+            parts = parts[1:]
+        if os.path.basename(parts[0]) != "brutefir":
+            continue
+        for p in parts[1:]:
+            if p.endswith(".conf"):
+                return p
+    return None
+
+
+def _parse_brutefir_conf(path: str) -> dict:
+    """Extract sampling_rate and coeff (filename/format/attenuation) blocks."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    m = re.search(r'sampling_rate:\s*(\d+)', text)
+    rate = int(m.group(1)) if m else None
+    coeffs = []
+    for cm in re.finditer(r'coeff\s+"([^"]+)"\s*\{([^}]*)\}', text):
+        label, body = cm.group(1), cm.group(2)
+        fn  = re.search(r'filename:\s*"([^"]+)"', body)
+        fmt = re.search(r'format:\s*"([^"]+)"', body)
+        att = re.search(r'attenuation:\s*([-\d.]+)', body)
+        if not fn:
+            continue
+        coeffs.append({
+            "label":       label,
+            "filename":    fn.group(1),
+            "format":      fmt.group(1) if fmt else "FLOAT64_LE",
+            "attenuation": float(att.group(1)) if att else 0.0,
+        })
+    return {"rate": rate, "coeffs": coeffs}
+
+
+# ── DRC display-sync delay ────────────────────────────────────────────────────
+# The spectrum/VU tap is the pre-DRC MPD FIFO; the audible signal is delayed by
+# the BruteFIR path, so the browser must hold the FIFO-derived display back by
+# that much to stay in sync with what is heard.  The delay has two exactly
+# computable parts (see video/AV-SYNC-DELAY.md for the full derivation):
+#
+#   filter group delay = argmax(|h|) / rate   — impulse-response peak, ~0.5 s,
+#                                                rate-independent in time
+# + partition latency  = filter_length / rate — one BruteFIR block; rate-DEPENDENT
+#
+# plus a small, runtime BruteFIR/loopback buffering term left to the configurable
+# `drc_delay_trim_ms`.  Computed from the *active* filter and cached, recomputed
+# only when the active conf / filter / defaults change — not per frame.
+
+_BRUTEFIR_DEFAULTS = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+    "BruteFIR", "brutefir_defaults.conf",
+)
+
+_drc_delay_cache: dict = {"key": None, "seconds": 0.0}
+_drc_delay_lock = threading.Lock()
+
+
+def _brutefir_partition_size(conf_text: str) -> int | None:
+    """partition_size from `filter_length: P[,n];`.  Lives in the runtime
+    defaults (~/.config/BruteFIR/brutefir_defaults.conf), but honour a per-conf
+    override if one is ever added."""
+    for text in (conf_text, _read_text_quietly(_BRUTEFIR_DEFAULTS)):
+        if not text:
+            continue
+        m = re.search(r'filter_length:\s*(\d+)', text)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _fir_peak_delay_seconds(filename: str, fmt: str, rate: int) -> float:
+    """Bulk (group) delay of a raw FIR = impulse-response peak index / rate."""
+    import numpy as np
+    if not rate:
+        return 0.0
+    dtype = _RAW_DTYPES.get(fmt.upper(), "<f8")
+    data = np.fromfile(filename, dtype=dtype)
+    if data.size == 0:
+        return 0.0
+    return int(np.argmax(np.abs(data))) / float(rate)
+
+
+def _drc_display_delay_seconds() -> float:
+    """Seconds to hold the FIFO-derived display back so it matches the audible,
+    post-BruteFIR signal.  0 when DRC is bypassed (BruteFIR not running).
+
+    Cached; recomputed only when the active conf, filter file, defaults file or
+    trim change."""
+    conf = _active_brutefir_conf()
+    if not conf:
+        return 0.0   # DRC off → no compensation
+    try:
+        conf_text = _read_text_quietly(conf)
+        parsed = _parse_brutefir_conf(conf)
+        coeffs = parsed.get("coeffs") or []
+        rate = parsed.get("rate")
+        if not coeffs or not rate:
+            return 0.0
+        coeff = coeffs[0]
+        fn = coeff["filename"]
+        fn_mtime = os.stat(fn).st_mtime
+        try:
+            defaults_mtime = os.stat(_BRUTEFIR_DEFAULTS).st_mtime
+        except OSError:
+            defaults_mtime = 0.0
+        key = (fn, fn_mtime, rate, defaults_mtime, SPECTRUM_DRC_DELAY_TRIM_MS)
+        with _drc_delay_lock:
+            if _drc_delay_cache["key"] == key:
+                return _drc_delay_cache["seconds"]
+        group = _fir_peak_delay_seconds(fn, coeff["format"], rate)
+        part = _brutefir_partition_size(conf_text)
+        partition = (part / rate) if part else 0.0
+        secs = max(0.0, group + partition + SPECTRUM_DRC_DELAY_TRIM_MS / 1000.0)
+        with _drc_delay_lock:
+            _drc_delay_cache["key"] = key
+            _drc_delay_cache["seconds"] = secs
+        return secs
+    except (OSError, ValueError, KeyError):
+        return 0.0
+
+
+def _coeff_channel(coeff: dict) -> str:
+    """Human channel name from coeff label / filename (Left / Right / fallback)."""
+    blob = (coeff["label"] + " " + os.path.basename(coeff["filename"])).lower()
+    if re.search(r'\b(l|left|fl)\b', blob) or blob.startswith("l") or "/l." in blob or "l.raw" in blob:
+        return "Left"
+    if re.search(r'\b(r|right|fr)\b', blob) or blob.startswith("r") or "r.raw" in blob:
+        return "Right"
+    return coeff["label"]
+
+
+def _fir_response(filename: str, fmt: str, rate: int,
+                  npoints: int = 700, fmin: float = 10.0,
+                  fmax: float = 20_000.0) -> dict:
+    """FFT of a raw FIR impulse response -> magnitude/phase/group-delay.
+
+    Correction FIRs include a large bulk delay because the impulse is placed
+    well inside the coefficient window.  Plotting wrapped raw FFT phase makes
+    that delay dominate the graph, so estimate it from passband group delay and
+    show the delay-compensated correction phase instead.
+    """
+    import numpy as np
+    dtype = _RAW_DTYPES.get(fmt.upper(), "<f8")
+    ir = np.fromfile(filename, dtype=dtype)
+    if ir.size == 0:
+        raise ValueError(f"empty or unreadable filter: {filename}")
+    if np.issubdtype(np.dtype(dtype), np.integer):
+        ir = ir.astype(np.float64) / np.iinfo(np.dtype(dtype)).max
+    else:
+        ir = ir.astype(np.float64)
+
+    n = ir.size
+    spec  = np.fft.rfft(ir)
+    freqs = np.fft.rfftfreq(n, d=1.0 / rate)
+    omega = 2.0 * np.pi * freqs
+    mag_abs = np.abs(spec)
+    mag = 20.0 * np.log10(mag_abs + 1e-12)
+    angle = np.angle(spec)
+
+    # Group delay (seconds) = -d(phase)/d(omega), using unwrapped raw phase.
+    raw_unwrapped = np.unwrap(angle)
+    gd = np.zeros_like(raw_unwrapped)
+    if n > 2:
+        gd[1:] = -np.gradient(raw_unwrapped, omega)[1:]
+
+    fmax = min(rate / 2.0, fmax)
+    delay_band = (
+        (freqs >= max(fmin, 20.0)) &
+        (freqs <= fmax) &
+        (mag_abs > (mag_abs.max() * 1e-6)) &
+        np.isfinite(gd)
+    )
+    if np.count_nonzero(delay_band) >= 3:
+        bulk_delay = float(np.median(gd[delay_band]))
+    else:
+        bulk_delay = float(np.argmax(np.abs(ir)) / rate)
+
+    compensated = spec * np.exp(1j * omega * bulk_delay)
+    phase = np.angle(compensated)
+    gd_ms = (gd - bulk_delay) * 1000.0
+
+    lo = max(1, int(np.searchsorted(freqs, fmin)))
+    hi = min(len(freqs) - 1, int(np.searchsorted(freqs, fmax)))
+    if hi <= lo:
+        hi = len(freqs) - 1
+    targets = np.logspace(np.log10(freqs[lo]), np.log10(fmax), npoints)
+    idx = np.unique(np.clip(np.searchsorted(freqs, targets), lo, hi))
+
+    return {
+        "taps":  int(n),
+        "delay_ms": round(bulk_delay * 1000.0, 4),
+        "fmax": round(float(fmax), 3),
+        "freqs": [round(float(freqs[i]), 3) for i in idx],
+        "mag":   [round(float(mag[i]),   3) for i in idx],
+        "phase": [round(float(np.degrees(phase[i])), 2) for i in idx],
+        "gd":    [round(float(gd_ms[i]), 4) for i in idx],
+    }
+
+
+def _format_read_output(cmd_id: str, output: str) -> str:
+    if cmd_id == "drc_status" and output:
+        parts = output.split()
+        if not parts:
+            return output
+        if parts[-1].lower() == "off":
+            return "Off"
+        if len(parts) > 1:
+            return " ".join(parts[1:])
+    return output
+
+
+def _control_title() -> str:
+    try:
+        r = subprocess.run(
+            ["uname", "-sr"], capture_output=True, text=True, timeout=3,
+        )
+        label = r.stdout.strip()
+        if r.returncode == 0 and label:
+            return f"{label} Control"
+    except Exception:
+        pass
+    return "System Control"
+
+
+# ── page routes ───────────────────────────────────────────────────────────────
+
+@app.route("/")
+def index():
+    return render_template(
+        "index.html",
+        control_title=_control_title(),
+        groups=_groups(),
+        topcpu_threshold=TOPCPU_THRESHOLD,
+        monitor_interval=MONITOR_INTERVAL,
+        topcpu_interval=TOPCPU_INTERVAL,
+        sndstat_interval=SNDSTAT_INTERVAL,
+        brutefir_interval=BRUTEFIR_INTERVAL,
+        spectrum=_SPECTRUM.settings(),
+    )
+
+
+@app.route("/details/<cmd_id>")
+def details_page(cmd_id):
+    if cmd_id not in CMD_MAP:
+        return "Unknown command", 404
+    cmd = CMD_MAP[cmd_id]
+    if "details" not in cmd:
+        return "No details file configured for this command", 404
+
+    path = cmd["details"]
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return f"Details file not found: {path}", 404
+    except OSError as e:
+        return f"Cannot read details file: {e}", 500
+
+    html = md_lib.markdown(
+        text,
+        extensions=["tables", "fenced_code", "extra"],
+    )
+    # rewrite relative asset paths (src="..." href="...") so the browser can
+    # fetch images and local links through /details-asset/<cmd_id>/...
+    html = re.sub(
+        r'(src|href)="(?!https?://|/)([^"]+)"',
+        lambda m: f'{m.group(1)}="/details-asset/{cmd_id}/{m.group(2)}"',
+        html,
+    )
+    return render_template("details.html", title=cmd["what"], content=html)
+
+
+@app.route("/details-asset/<cmd_id>/<path:filename>")
+def details_asset(cmd_id, filename):
+    """Serve images and other files relative to the details .md file."""
+    if cmd_id not in CMD_MAP:
+        return "Not found", 404
+    cmd = CMD_MAP[cmd_id]
+    if "details" not in cmd:
+        return "Not found", 404
+    base_dir = os.path.dirname(os.path.abspath(cmd["details"]))
+    return send_from_directory(base_dir, filename)
+
+
+@app.route("/details-dyn/<cmd_id>/<config_name>")
+def details_dyn_page(cmd_id, config_name):
+    if cmd_id not in CMD_MAP:
+        return "Unknown command", 404
+    cmd = CMD_MAP[cmd_id]
+    path = _find_dyn_details(cmd, config_name)
+    if not path:
+        return f"No README.md or INDEX.md found for: {config_name}", 404
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        return f"Cannot read file: {e}", 500
+    html = md_lib.markdown(text, extensions=["tables", "fenced_code", "extra"])
+    html = re.sub(
+        r'(src|href)="(?!https?://|/)([^"]+)"',
+        lambda m: f'{m.group(1)}="/details-dyn-asset/{cmd_id}/{config_name}/{m.group(2)}"',
+        html,
+    )
+    return render_template("details.html", title=config_name, content=html)
+
+
+@app.route("/details-dyn-asset/<cmd_id>/<config_name>/<path:filename>")
+def details_dyn_asset(cmd_id, config_name, filename):
+    if cmd_id not in CMD_MAP:
+        return "Not found", 404
+    cmd = CMD_MAP[cmd_id]
+    path = _find_dyn_details(cmd, config_name)
+    if not path:
+        return "Not found", 404
+    return send_from_directory(os.path.dirname(path), filename)
+
+
+@app.route("/readme")
+def readme_page():
+    # Installed layout keeps README.md next to app.py; the source tree keeps it
+    # one level up (repo root).  Try both so the link works either way.
+    text = None
+    for path in (os.path.join(_HERE, "README.md"),
+                 os.path.join(_HERE, os.pardir, "README.md")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+            break
+        except FileNotFoundError:
+            continue
+    if text is None:
+        return "README not found", 404
+    html = md_lib.markdown(text, extensions=["tables", "fenced_code", "extra"])
+    return render_template("details.html", title="omdrcctrl — README", content=html)
+
+
+@app.route("/details-spectrum")
+def spectrum_details_page():
+    text = None
+    for path in (os.path.join(_HERE, "SPECTRUM_ANALYZER.md"),
+                 os.path.join(_HERE, os.pardir, "SPECTRUM_ANALYZER.md")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+            break
+        except FileNotFoundError:
+            continue
+    if text is None:
+        return "Spectrum analyzer documentation not found", 404
+    html = md_lib.markdown(text, extensions=["tables", "fenced_code", "extra"])
+    return render_template("details.html", title="Live spectrum analyzer", content=html)
+
+
+# ── API routes ────────────────────────────────────────────────────────────────
+
+@app.route("/run/<cmd_id>", methods=["POST"])
+def run_command(cmd_id):
+    if cmd_id not in CMD_MAP:
+        return jsonify({"ok": False, "error": "Unknown command"}), 404
+    cmd = CMD_MAP[cmd_id]
+    if cmd["type"] != "WRITE":
+        return jsonify({"ok": False, "error": "Not a WRITE command"}), 400
+
+    log = tempfile.NamedTemporaryFile(
+        mode="w+b",
+        prefix=f"omdrcctrl-{cmd_id}-",
+        suffix=".log",
+        delete=False,
+    )
+    log_path = log.name
+    proc = subprocess.Popen(
+        cmd["cmd"], shell=True, env=_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=log, stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    log.close()
+    try:
+        rc = proc.wait(timeout=5)
+        if rc != 0:
+            err = _command_failure_output(cmd, log_path)
+            _unlink_quietly(log_path)
+            return jsonify({
+                "ok": False,
+                "error": err or f"exit code {rc}",
+                "output": err,
+            })
+        _unlink_quietly(log_path)
+        return jsonify({"ok": True})
+    except subprocess.TimeoutExpired:
+        # Keep waiting in the background so the child is reaped, but leave its
+        # stdio detached from the HTTP request.
+        threading.Thread(target=_wait_and_cleanup, args=(proc, log_path), daemon=True).start()
+        return jsonify({"ok": True})  # still running → launched successfully
+
+
+@app.route("/read/<cmd_id>")
+def read_command(cmd_id):
+    if cmd_id not in CMD_MAP:
+        return jsonify({"ok": False, "error": "Unknown command"}), 404
+    cmd = CMD_MAP[cmd_id]
+    if cmd["type"] != "READ":
+        return jsonify({"ok": False, "error": "Not a READ command"}), 400
+
+    try:
+        result = subprocess.run(
+            cmd["cmd"], shell=True, env=_env(),
+            capture_output=True, text=True, timeout=10,
+        )
+        ok     = result.returncode == 0
+        output = (result.stdout + result.stderr).strip()
+        if ok:
+            output = _format_read_output(cmd_id, output)
+        resp   = {"ok": ok, "output": output or (None if ok else f"exit {result.returncode}")}
+        if ok and output and "details_root" in cmd and _find_dyn_details(cmd, output):
+            resp["details_url"] = f"/details-dyn/{cmd_id}/{output}"
+        return jsonify(resp)
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "output": "timeout"})
+
+
+@app.route("/qconnect/status")
+def qconnect_status():
+    try:
+        with open(QCONNECT_STATUS_FILE, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        return jsonify({
+            "ok":    True,
+            "line1": lines[0] if len(lines) > 0 else "",
+            "line2": lines[1] if len(lines) > 1 else "",
+        })
+    except FileNotFoundError:
+        return jsonify({"ok": False, "line1": "", "line2": ""})
+    except OSError as e:
+        return jsonify({"ok": False, "line1": "", "line2": "", "error": str(e)})
+
+
+def _service_running(name: str) -> bool:
+    """True if renderer service `name` is currently running.  Linux: systemd
+    --user is-active.  FreeBSD: rc `onestatus` (works whether or not the service
+    is enabled in rc.conf)."""
+    if _IS_LINUX:
+        cmd = ["systemctl", "--user", "is-active", "--quiet", name]
+    else:
+        cmd = ["service", name, "onestatus"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
+                           env=_env())
+        return r.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _service_action(name: str, action: str):
+    """Start or stop renderer service `name`.  `action` is the FreeBSD verb
+    (onestart / onestop); on Linux it maps to `systemctl --user start|stop`
+    (user scope — no sudo needed)."""
+    if _IS_LINUX:
+        verb = "start" if action == "onestart" else "stop"
+        cmd = ["systemctl", "--user", verb, name]
+    else:
+        cmd = ["sudo", "service", name, action]
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                          env=_env())
+
+
+def _resolve_mpd_port() -> str | None:
+    """Best-effort MPD port from the common default config locations (Linux and
+    FreeBSD).  Returns None to let mpc fall back to its own default."""
+    for p in ("/usr/local/etc/musicpd.conf",
+              "/usr/local/etc/mpd.conf",
+              "/etc/mpd.conf",
+              os.path.expanduser("~/.config/mpd/mpd.conf"),
+              os.path.expanduser("~/.mpdconf")):
+        if os.path.isfile(p):
+            return _mpd_port_from_conf(p)
+    return None
+
+
+def _mpc_quiesce():
+    """Stop playback and clear the queue so the incoming renderer starts from a
+    clean MPD state.  Best-effort: failures are ignored (MPD may be down)."""
+    cmd = _mpc_client()
+    if not cmd:
+        return
+    port = _resolve_mpd_port()
+    base = cmd + (["-p", str(port)] if port else [])
+    for action in ("stop", "clear"):
+        try:
+            subprocess.run(base + [action],
+                           capture_output=True, text=True, timeout=5, env=_env())
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+
+@app.route("/qconnect/services")
+def qconnect_services():
+    """Running state of the two mutually-exclusive renderers — used to keep the
+    web UI toggle in sync with reality."""
+    return jsonify({
+        "ok":               True,
+        "qobuzconnect2mpd": _service_running(QCONNECT_SERVICE),
+        "upmpdcli":         _service_running(UPMPDCLI_SERVICE),
+    })
+
+
+@app.route("/qconnect/switch", methods=["POST"])
+def qconnect_switch():
+    """Switch the active renderer: stop the other service, then start the
+    target.  Body: {"target": "qobuzconnect2mpd"|"upmpdcli"}."""
+    data   = request.get_json(silent=True) or {}
+    target = data.get("target")
+    if target not in SWITCHABLE_SERVICES:
+        return jsonify({"ok": False, "error": "invalid target"}), 400
+    other = UPMPDCLI_SERVICE if target == QCONNECT_SERVICE else QCONNECT_SERVICE
+    try:
+        # Stop the active one before starting the next.
+        if _service_running(other):
+            r = _service_action(other, "onestop")
+            if r.returncode != 0:
+                return jsonify({"ok": False,
+                                "error": f"stopping {other}: {(r.stderr or r.stdout).strip()}"})
+        # Leave MPD in a clean state for the incoming renderer.
+        _mpc_quiesce()
+        if not _service_running(target):
+            r = _service_action(target, "onestart")
+            if r.returncode != 0:
+                return jsonify({"ok": False,
+                                "error": f"starting {target}: {(r.stderr or r.stdout).strip()}"})
+        return jsonify({"ok": True, "active": target})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/qconnect/restart", methods=["POST"])
+def qconnect_restart():
+    try:
+        r = _service_action(QCONNECT_SERVICE, "onestop")
+        if r.returncode != 0:
+            return jsonify({"ok": False, "error": (r.stderr or r.stdout).strip()})
+        r = _service_action(QCONNECT_SERVICE, "onestart")
+        if r.returncode != 0:
+            return jsonify({"ok": False, "error": (r.stderr or r.stdout).strip()})
+        return jsonify({"ok": True})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/qconnect/log")
+def qconnect_log():
+    try:
+        with open(QCONNECT_LOG_FILE, encoding="utf-8") as f:
+            content = f.read()
+        return jsonify({"ok": True, "content": content})
+    except FileNotFoundError:
+        return jsonify({"ok": True, "content": "(log file not found)"})
+    except OSError as e:
+        return jsonify({"ok": False, "content": str(e)})
+
+
+@app.route("/mpd/info")
+def mpd_info():
+    try:
+        # pgrep -x is reliable on both Linux and FreeBSD; avoids ps flag
+        # incompatibilities. musicpd is the FreeBSD port binary name.
+        pid = None
+        for name in ("musicpd", "mpd"):
+            r = subprocess.run(["pgrep", "-x", name],
+                               capture_output=True, text=True, timeout=3)
+            if r.returncode == 0:
+                pids = r.stdout.strip().split()
+                if pids:
+                    pid = pids[0]
+                    break
+
+        running = pid is not None
+        cpu_total = 0.0
+        conf = None
+
+        if running:
+            r2 = subprocess.run(["ps", "-p", pid, "-o", "pcpu=,args="],
+                                capture_output=True, text=True, timeout=3)
+            for line in r2.stdout.splitlines():
+                parts = line.split(None, 1)
+                if not parts:
+                    continue
+                try:
+                    cpu_total += float(parts[0])
+                except ValueError:
+                    pass
+                if conf is None and len(parts) > 1:
+                    conf = _mpd_conf_from_cmdline(parts[1].strip())
+
+        # Fallback: probe common default config paths (Linux and FreeBSD)
+        if not conf:
+            for p in ("/usr/local/etc/musicpd.conf",
+                      "/usr/local/etc/mpd.conf",
+                      "/etc/mpd.conf",
+                      os.path.expanduser("~/.config/mpd/mpd.conf"),
+                      os.path.expanduser("~/.mpdconf")):
+                if os.path.isfile(p):
+                    conf = p
+                    break
+
+        port = _mpd_port_from_conf(conf) if conf else None
+        mpc = _mpc_status(port)
+        is_linux = platform.system() == "Linux"
+        voss_rate = _virtual_oss_rate() if not is_linux else None
+        alsa_hw   = _alsa_hw_params()   if is_linux     else None
+        alsa_rate = alsa_hw["rate"] if alsa_hw else None
+        bf_rate = _brutefir_rate()
+        rate_status = _rate_status(mpc["sample_rate"], voss_rate, bf_rate)
+        path_status = _path_status(rate_status, bf_rate is not None)
+        return jsonify({
+            "ok":      True,
+            "running": running,
+            "cpu":     round(cpu_total, 1),
+            "conf":    conf  or "(unknown)",
+            "port":    port  or "6600",
+            "client":  mpc["client"] or "(not found)",
+            "state":   mpc["state"],
+            "song":    mpc["song"],
+            "audio":   mpc["audio"],
+            "sample_rate": mpc["sample_rate"],
+            "bit_depth": mpc["bit_depth"],
+            "channels": mpc["channels"],
+            "mpc_error": mpc["error"],
+            "is_linux": is_linux,
+            "virtual_oss_rate": voss_rate,
+            "alsa_rate": alsa_rate,
+            "alsa": alsa_hw,
+            "brutefir_rate": bf_rate,
+            "rate_status": rate_status,
+            "path_status": path_status,
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+def _read_memory() -> dict:
+    try:
+        system = platform.system()
+        if system == "Linux":
+            info: dict[str, int] = {}
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    k, v = line.split(":", 1)
+                    info[k.strip()] = int(v.strip().split()[0]) * 1024
+            total     = info["MemTotal"]
+            available = info["MemAvailable"]
+            free      = info["MemFree"]
+        elif system == "FreeBSD":
+            r = subprocess.run(
+                ["sysctl", "-n",
+                 "hw.physmem",
+                 "vm.stats.vm.v_page_size",
+                 "vm.stats.vm.v_free_count",
+                 "vm.stats.vm.v_inactive_count",
+                 "vm.stats.vm.v_cache_count"],
+                capture_output=True, text=True, timeout=5,
+            )
+            vals = [int(x) for x in r.stdout.split()]
+            physmem, psize, v_free, v_inactive, v_cache = vals
+            total     = physmem
+            free      = v_free * psize
+            available = (v_free + v_inactive + v_cache) * psize
+        else:
+            return {"ok": False, "error": f"unsupported platform: {system}"}
+        used = total - available
+        return {"ok": True, "total": total, "used": used, "free": free, "available": available}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.route("/system/sndstat")
+def system_sndstat():
+    try:
+        sys = platform.system()
+        if sys == "FreeBSD":
+            with open("/dev/sndstat", errors="replace") as f:
+                raw = f.read()
+            lines = []
+            for line in raw.splitlines():
+                lines.append(_decode_sndstat_fmt(line))
+            return jsonify({"ok": True, "lines": lines})
+        elif sys == "Linux":
+            r = subprocess.run(["aplay", "-l"],
+                               capture_output=True, text=True, timeout=5)
+            return jsonify({"ok": True, "lines": r.stdout.splitlines()})
+        else:
+            return jsonify({"ok": False, "error": f"unsupported platform: {sys}"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/system/advanced")
+def system_advanced():
+    if platform.system() != "FreeBSD":
+        return jsonify({"ok": False, "error": "FreeBSD only"})
+
+    sections = []
+    for cmd in (["sysctl", "dev.pcm.0"], ["sysctl", "hw.usb.uaudio"]):
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True, text=True, timeout=5, env=_env(),
+            )
+            output = (r.stdout + r.stderr).strip()
+            sections.append({
+                "title": " ".join(cmd),
+                "ok": r.returncode == 0,
+                "output": output or f"exit {r.returncode}",
+            })
+        except subprocess.TimeoutExpired:
+            sections.append({
+                "title": " ".join(cmd),
+                "ok": False,
+                "output": "timeout",
+            })
+
+    return jsonify({"ok": True, "sections": sections})
+
+
+@app.route("/system/memory")
+def system_memory():
+    return jsonify(_read_memory())
+
+
+@app.route("/system/topcpu")
+def system_topcpu():
+    global _TOPCPU_CACHE, _TOPCPU_CACHE_AT
+    now = time.monotonic()
+    if _TOPCPU_CACHE is not None and now - _TOPCPU_CACHE_AT < TOPCPU_INTERVAL:
+        return jsonify(_TOPCPU_CACHE)
+
+    try:
+        procs = []
+        for row in _ps_processes():
+            if _hide_from_topcpu(row):
+                continue
+            if row["cpu"] >= TOPCPU_THRESHOLD:
+                procs.append(row)
+        procs.sort(key=lambda p: p["cpu"], reverse=True)
+        _TOPCPU_CACHE = {
+            "ok": True,
+            "procs": procs,
+            "threshold": TOPCPU_THRESHOLD,
+            "interval": TOPCPU_INTERVAL,
+        }
+        _TOPCPU_CACHE_AT = now
+        return jsonify(_TOPCPU_CACHE)
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/spectrum/settings")
+def spectrum_settings():
+    seq, frame = _SPECTRUM.snapshot()
+    return jsonify({
+        "ok": True,
+        "seq": seq,
+        "frame": frame,
+        **_SPECTRUM.settings(),
+    })
+
+
+@app.route("/spectrum/stream")
+def spectrum_stream():
+    if not SPECTRUM_ENABLED:
+        return jsonify({"ok": False, "error": "spectrum analyzer disabled"}), 404
+    mode = "precision" if request.args.get("mode") == "precision" else "music"
+
+    def events():
+        _SPECTRUM.acquire(mode)
+        try:
+            seq, frame = _SPECTRUM.snapshot()
+            yield f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
+            while True:
+                seq, frame = _SPECTRUM.wait_next(seq)
+                yield f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
+                if _SPECTRUM.stop_event.is_set():
+                    break
+        except GeneratorExit:
+            pass
+        finally:
+            _SPECTRUM.release()
+
+    return Response(events(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/drc/status")
+def drc_status_api():
+    # drc.sh lives alongside drc-status.sh; derive its path from the
+    # already-configured drc_status command rather than a WRITE command.
+    drc_status_cmd = CMD_MAP.get("drc_status")
+    if not drc_status_cmd:
+        return jsonify({"ok": False, "error": "drc_status not configured"})
+    script = os.path.join(
+        os.path.dirname(drc_status_cmd["cmd"].strip()), "drc.sh"
+    )
+    try:
+        r = subprocess.run(
+            [script, "status"],
+            capture_output=True, text=True, timeout=10, env=_env(),
+        )
+        rows = []
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if not line or ':' not in line:
+                continue
+            k, _, v = line.partition(':')
+            rows.append({"key": k.strip(), "value": v.strip()})
+        return jsonify({"ok": True, "rows": rows})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/drc/geometry")
+def drc_geometry():
+    cmd = CMD_MAP.get("drc_status")
+    if not cmd:
+        return jsonify({"ok": False, "error": "drc_status not configured"})
+    try:
+        r = subprocess.run(
+            cmd["cmd"] + " --geometry",
+            shell=True, env=_env(),
+            capture_output=True, text=True, timeout=5,
+        )
+        geo = r.stdout.strip()
+        if r.returncode == 0 and geo:
+            return jsonify({"ok": True, "geometry": geo})
+        return jsonify({"ok": False, "error": r.stderr.strip() or "empty"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/filter-response")
+def filter_response_page():
+    return render_template("filter_response.html")
+
+
+@app.route("/drc/filter-response")
+def drc_filter_response():
+    """FFT analysis of the FIR filters loaded by the *running* BruteFIR.
+
+    The active .conf carries absolute paths to its coeff (.raw) files and the
+    sampling rate, so no extra configuration is needed.  When BruteFIR is not
+    running there is no active filter to analyse.
+    """
+    conf_path = _active_brutefir_conf()
+    if not conf_path:
+        return jsonify({
+            "ok": False, "running": False,
+            "error": "BruteFIR is not running — no active filter loaded.",
+        })
+    try:
+        parsed = _parse_brutefir_conf(conf_path)
+        rate = parsed["rate"]
+        if not rate or not parsed["coeffs"]:
+            return jsonify({"ok": False, "running": True,
+                            "error": f"no coeff/sampling_rate in {conf_path}"})
+        # geometry = the configs/<geometry>/ directory name, when present.
+        geometry = os.path.basename(os.path.dirname(conf_path))
+        channels = []
+        palette = {"Left": "#388bfd", "Right": "#d29922"}
+        for c in parsed["coeffs"]:
+            ch = _coeff_channel(c)
+            resp = _fir_response(c["filename"], c["format"], rate)
+            resp.update({
+                "name": ch,
+                "color": palette.get(ch, "#3fb950"),
+                "attenuation": c["attenuation"],
+                "format": c["format"],
+                "file": os.path.basename(c["filename"]),
+            })
+            channels.append(resp)
+        return jsonify({
+            "ok": True, "running": True,
+            "geometry": geometry,
+            "rate": rate,
+            "conf": os.path.basename(conf_path),
+            "channels": channels,
+        })
+    except FileNotFoundError as e:
+        return jsonify({"ok": False, "running": True, "error": f"filter file not found: {e}"})
+    except ImportError:
+        return jsonify({"ok": False, "running": True, "error": "numpy is required for filter analysis"})
+    except Exception as e:
+        return jsonify({"ok": False, "running": True, "error": str(e)})
+
+
+def _brutefir_procs() -> tuple[list[dict], float]:
+    """Find brutefir processes and their CPU% by argv[0] basename.
+
+    brutefir renames its main process `comm` to an internal thread name (on
+    Linux this shows up as e.g. "input"), so matching the `comm` column — as
+    the generic `_ps_processes()` does — misses it entirely.  Matching the real
+    binary name from the full argument list fixes Linux and is also correct on
+    FreeBSD, where `comm` already reads "brutefir".  Checking argv[0] (not the
+    whole line) avoids false positives from editors or greps that merely
+    reference a brutefir config path.
+    """
+    candidates = (
+        ["ps", "axo", "pid,pcpu,args"],
+        ["ps", "ax", "-o", "pid=", "-o", "pcpu=", "-o", "args="],
+    )
+    for cmd in candidates:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            continue
+        procs, total = [], 0.0
+        for line in r.stdout.splitlines():
+            parts = line.split(None, 2)
+            if len(parts) < 3:
+                continue
+            pid, cpu_s, args = parts
+            try:
+                cpu = float(cpu_s)
+            except ValueError:
+                continue   # header row or malformed line
+            try:
+                argv = shlex.split(args)
+            except ValueError:
+                argv = args.split()
+            if not argv:
+                continue
+            binname = os.path.basename(argv[0])
+            if binname == "sudo" and len(argv) > 1:
+                binname = os.path.basename(argv[1])
+            if binname != "brutefir":
+                continue
+            procs.append({"pid": pid, "cpu": cpu})
+            total += cpu
+        return procs, round(total, 1)
+    return [], 0.0
+
+
+@app.route("/brutefir/cpu")
+def brutefir_cpu():
+    try:
+        procs, total = _brutefir_procs()
+        return jsonify({"ok": True, "procs": procs, "total": total})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/status")
+def status():
+    units = {}
+    for c in COMMANDS:
+        if "details" not in c:
+            continue
+        if "process" in c:
+            units[c["id"]] = "active" if _process_running(c["process"]) else "inactive"
+        elif "unit" in c:
+            units[c["id"]] = "active" if _unit_active(c["unit"]) else "inactive"
+    return jsonify({"ok": True, "units": units})
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="OMDRC Control web interface")
+    parser.add_argument("--host",   default="0.0.0.0")
+    parser.add_argument("--port",   type=int, default=9090)
+    parser.add_argument("--config", default=os.path.join(_HERE, "commands.conf"))
+    args = parser.parse_args()
+    load_config(args.config)
+    # Make sure the spectrum FIFO output is off until Start is pressed, even if
+    # a previous run was killed mid-stream.
+    _SPECTRUM.ensure_disabled()
+    app.run(host=args.host, port=args.port, threaded=True)

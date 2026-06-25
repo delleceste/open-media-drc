@@ -94,7 +94,7 @@ speakers:
                 (snd-aloop / virtual_oss)   (delleceste fork)
         ▲
         └── open-media-drc (this repo: drc.sh, configs, filters, services)
-            + omdrc-ctrl (web control panel, git submodule)
+            + omdrc-ctrl (web control panel, in-tree)
 ```
 
 ## Dependencies

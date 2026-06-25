@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# PROVIDE: omdrcctrl
+# REQUIRE: NETWORKING LOGIN
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="omdrcctrl"
+rcvar="omdrcctrl_enable"
+
+load_rc_config "$name"
+
+: ${omdrcctrl_enable:="NO"}
+: ${omdrcctrl_user:="@OMDRCCTRL_SERVICE_USER@"}
+# ${name}_env is applied by rc.subr via env(1). rc runs with a minimal PATH
+# that omits /usr/local/{s,}bin, where python3 and the tools app.py shells out
+# to (pgrep, kdeconnect-cli, ...) live, so set it explicitly. DISPLAY lets the
+# app reach the local X session.
+: ${omdrcctrl_env:="PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin DISPLAY=:0"}
+
+command="/usr/sbin/daemon"
+
+if [ "$(id -u)" -eq 0 ]; then
+	# Started as root: rc.subr drops privileges to ${omdrcctrl_user} (the
+	# special ${name}_user variable) via su(1). Do NOT also pass daemon -u:
+	# using both runs setusercontext() a second time as the already-dropped
+	# user and fails with "daemon: failed to set user environment".
+	: ${omdrcctrl_pidfile:="/var/run/${name}/${name}.pid"}
+	: ${omdrcctrl_logfile:="/var/run/${name}/${name}.log"}
+else
+	# Started as an unprivileged user (e.g. service omdrcctrl onestart): there
+	# is nothing to drop to, so clear ${name}_user (otherwise rc.subr would
+	# su to it and prompt for a password) and use writable paths.
+	unset omdrcctrl_user
+	: ${omdrcctrl_pidfile:="${TMPDIR:-/tmp}/${name}-$(id -un).pid"}
+	: ${omdrcctrl_logfile:="${TMPDIR:-/tmp}/${name}-$(id -un).log"}
+fi
+
+pidfile="${omdrcctrl_pidfile}"
+command_args="-f -o ${omdrcctrl_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcctrl"
+
+start_precmd="omdrcctrl_precmd"
+
+omdrcctrl_precmd()
+{
+	# Ensure the pidfile/logfile directory exists and is writable by the user
+	# the daemon runs as (it writes them after rc.subr drops privileges).
+	# This runs as root, before the su(1) switch.
+	for d in "${omdrcctrl_pidfile%/*}" "${omdrcctrl_logfile%/*}"; do
+		if [ -n "${omdrcctrl_user}" ]; then
+			/usr/bin/install -d -o "${omdrcctrl_user}" -m 0755 "${d}"
+		else
+			/usr/bin/install -d -m 0755 "${d}"
+		fi
+	done
+}
+
+run_rc_command "$1"

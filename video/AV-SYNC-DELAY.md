@@ -226,3 +226,29 @@ small virtual_oss remainder left for eyeball fine-tuning.
   `N/2` for a sensibly-delayed mixed-phase filter. `96000 < 262144`. ✓
 - `peak / sample_rate` landing on a clean value (here exactly 0.5 s) is a hint the
   filter was designed to a target pre-ring budget — reassuring, not required.
+
+---
+
+## 7. Where else this delay is used: the omdrc-ctrl spectrum analyzer
+
+`play-bluray.sh` uses a **hardcoded** `DRC_VIDEO_DELAY=0.67` because the video
+path always runs brutefir at 192 kHz (resampled), so the number is fixed.
+
+The omdrc-ctrl live spectrum/VU analyzer faces the *same* problem from the other
+side: it taps the **pre-DRC** MPD FIFO, so its display would run *ahead* of the
+audible sound by exactly this delay. There it is **computed at runtime** rather
+than hardcoded, because music plays at the native rate (44.1–192 kHz) and the
+partition term is rate-dependent:
+
+```
+delay = argmax(|h|)/rate          (group delay, from the active L.raw — §2–3)
+      + filter_length/rate         (one brutefir partition — §4.2)
+      + drc_delay_trim_ms          (loopback/output buffering — §4.3)
+```
+
+It reads the **active** brutefir conf (sampling rate + coeff file) and
+`filter_length` from `~/.config/BruteFIR/brutefir_defaults.conf`, caches the
+result keyed on file path + mtime, and recomputes only when the filter / preset /
+rate / defaults change. At 192 kHz this reproduces the 0.67 s derived above; at
+48 kHz native it correctly grows to ~1.18 s. See
+[`omdrc-ctrl/SPECTRUM_ANALYZER.md` → DRC Sync](../omdrc-ctrl/SPECTRUM_ANALYZER.md#drc-sync).

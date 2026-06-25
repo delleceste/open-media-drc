@@ -1,0 +1,21 @@
+[Unit]
+Description=upmpdcli UPnP/OpenHome MPD renderer (user service)
+After=network-online.target sound.target
+Wants=network-online.target
+
+# Template — generated to upmpdcli.service by install.sh from config.env.
+# systemd --user unit: runs as the audio user (no User= line), reads its config
+# straight from the checkout.  This is the Linux scope-aligned renderer: both
+# upmpdcli and qobuzconnect2mpd run as --user services so omdrcctrl's renderer
+# toggle can drive them with `systemctl --user` (no sudo).  Symlink into
+# ~/.config/systemd/user/ and enable lingering so it survives logout / starts at
+# boot:  loginctl enable-linger @AUDIO_USER@
+
+[Service]
+Type=simple
+ExecStart=@PREFIX@/bin/upmpdcli -c @REPO_DIR@/upmpdcli/upmpdcli.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
