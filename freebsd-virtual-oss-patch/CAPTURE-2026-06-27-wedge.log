@@ -1,0 +1,10 @@
+### cuse teardown capture Sat Jun 27 19:43:18 CEST 2026 — refs progression (dedup) ###
+== cuse teardown tracer armed @ 2026 Jun 27 19:28:33 ==
+2026 Jun 27 19:37:23 FREE:entry   pcs=fffff800556fc900 pid=9885 refs=2 is_closing=1  (caller virtual_oss/9885 tid=100654)
+           >>> WEDGE CANDIDATE pcs=fffff800556fc900 — run: ./cuse_walk_pcs.sh fffff800556fc900
+2026 Jun 27 19:37:23 client_free  pcc=fffffe0087caf000 pcs=fffff800556fc900 refs(pre)=2  (by brutefir/9922)
+2026 Jun 27 19:37:23 unref        pcs=fffff800556fc900 refs(pre)=2  (by brutefir/9922)
+
+
+--- do_close refs progression (unique transitions) ---
+ 353 do_close

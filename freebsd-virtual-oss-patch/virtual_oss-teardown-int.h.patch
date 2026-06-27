@@ -1,0 +1,17 @@
+--- a/usr.sbin/virtual_oss/virtual_oss/int.h	2026-06-26 14:04:26.645151000 +0200
++++ b/usr.sbin/virtual_oss/virtual_oss/int.h	2026-06-26 14:04:43.674384000 +0200
+@@ -141,6 +141,14 @@
+ 	uint8_t synchronized;
+ 	uint32_t rec_delay;
+ 	int fd_sta;
++	/*
++	 * cuse device handles, kept so teardown can cuse_dev_destroy() them.
++	 * Without destroying these on exit the kernel cuse_server_free() hangs
++	 * forever waiting for client refs to drop.  See the virtual_oss/cuse
++	 * teardown-deadlock fix.
++	 */
++	struct cuse_dev *oss_dev;
++	struct cuse_dev *wav_dev;
+ 	struct {
+ 		const char * host;
+ 		const char * port;

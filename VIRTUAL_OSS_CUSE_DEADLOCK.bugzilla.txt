@@ -1,0 +1,253 @@
+================================================================================
+FreeBSD Bugzilla — ready-to-paste submission
+https://bugs.freebsd.org/bugzilla/enter_bug.cgi?product=Base%20System
+================================================================================
+
+FIELDS
+------
+Product:        Base System
+Component:      kern              (the unkillable hang is in sys/fs/cuse; the
+                                   userland contributor is usr.sbin/virtual_oss)
+Version:        15.1-RELEASE
+Hardware:       amd64
+OS:             FreeBSD
+Severity:       Affects Some People
+Assignee/CC:    hps@FreeBSD.org   (author of cuse(3) and virtual_oss)
+Keywords:       (optional) hang, deadlock
+
+SUMMARY (title)
+---------------
+cuse(3)/virtual_oss: virtual_oss hangs unkillable in D state on teardown,
+pins cuse.ko, reboot required (cuse_server_free() busy-waits forever)
+
+================================================================================
+DESCRIPTION (paste into the Description field)
+================================================================================
+
+Every time virtual_oss is stopped, its exit path busy-waits in the kernel for
+its cuse clients to release their references (a routine multi-second stall,
+instrumented below). INTERMITTENTLY a client reference is never released, so the
+wait never ends: the exiting process is left wedged forever in an
+uninterruptible, SIGKILL-immune state. cuse.ko is then pinned and cannot be
+unloaded, and no new virtual_oss can recreate the devices. Only a reboot recovers
+the machine. The proximate severity is that the kernel wait is unbounded and
+uninterruptible (a plain pause("W")), so any reference leak becomes permanent.
+
+ENVIRONMENT
+  FreeBSD 15.1-RELEASE releng/15.1-n283562-96841ea08dcf GENERIC amd64
+  virtual_oss from base:  /usr/sbin/virtual_oss  (src usr.sbin/virtual_oss)
+  cuse.ko from base:      sys/fs/cuse/cuse.c
+  Use case: a loopback audio chain. virtual_oss is started as
+    virtual_oss -i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 \
+                -d dsp.play -L dsp.loop
+  MPD opens /dev/dsp.play (cuse client); BruteFIR opens /dev/dsp.loop (cuse
+  client) and writes the USB DAC.
+
+OBSERVED BEHAVIOR
+  Stopping virtual_oss (SIGTERM or SIGKILL; via "killall virtual_oss", a
+  sample-rate change that restarts it, or stopping the consumers then
+  virtual_oss) intermittently never completes:
+
+    $ ps -o pid,ppid,stat,wchan,mwchan,command -p 5992
+     PID PPID STAT WCHAN MWCHAN COMMAND
+    5992 5988 D<E   W     W      virtual_oss ... -d dsp.play -L dsp.loop
+
+    D = uninterruptible kernel sleep, < = realtime prio (from -i 8),
+    E = process is exiting, MWCHAN = W.
+
+  - kill -TERM and kill -9 have NO effect (thread is past signal delivery,
+    blocked in the kernel).
+  - cuse.ko is pinned (kldstat shows a held refcount); "kldunload cuse" then
+    hangs in D as well.
+  - A fresh virtual_oss cannot recreate the still-registered devices and dies
+    with: "virtual_oss: Could not create CUSE DSP device".
+  - No userland process holds /dev/dsp.play or /dev/dsp.loop open at this point
+    (verified by a procstat -f sweep of all PIDs).
+  - Only a reboot clears it. This makes every virtual_oss stop/restart a reboot
+    risk.
+
+ROOT CAUSE — KERNEL (the actual wedge)
+  MWCHAN "W" pinpoints cuse_server_free(), the cdevpriv destructor for the
+  daemon's /dev/cuse fd, executed when the daemon exits (sys/fs/cuse/cuse.c:765):
+
+    static void
+    cuse_server_free(void *arg)
+    {
+        struct cuse_server *pcs = arg;
+        /* The final server unref should be done by the server thread
+         * to prevent deadlock in the client cdevpriv destructor,
+         * which cannot destroy itself. */
+        while (cuse_server_do_close(pcs) != 1)   /* returns pcs->refs */
+            pause("W", hz);                        /* <-- MWCHAN "W", spins */
+        cuse_server_unref(pcs);
+    }
+
+  cuse_server_do_close() returns pcs->refs (cuse.c:759). The loop busy-waits
+  (1s pause ticks) until pcs->refs == 1, i.e. until every client handle has been
+  released. pcs->refs is incremented per client open (cuse.c:1506 in
+  cuse_client_open) and dropped in the client cdevpriv destructor
+  cuse_client_free() -> cuse_server_unref() (cuse.c:1480). If a client ref is
+  never dropped, this loop NEVER terminates and is NOT interruptible (plain
+  pause(), no signal or timeout escape) -> the exiting process is stuck in D
+  forever.
+
+  There is a mitigation that should prevent this: cuse_server_do_close() sets
+  pcs->is_closing and wakes all clients (cuse.c:752-755), and a client blocked in
+  cuse_client_receive_command_locked() returns CUSE_ERR_OTHER when
+  pcs->is_closing is set (cuse.c:631). The observed hang means a server ref is
+  held by a path that ESCAPES this wakeup. The comment above the loop ("the
+  client cdevpriv destructor, which cannot destroy itself") points at the
+  self-referential case, which is exactly the loopback (-L/-l) device, where
+  virtual_oss is effectively both server and client of the same cuse server.
+
+EMPIRICAL EVIDENCE (instrumented kernel + DTrace)
+  A diagnostic build of cuse.ko was made that logs pcs->refs each iteration of
+  the cuse_server_free() wait loop:
+
+    while ((refs = cuse_server_do_close(pcs)) != 1) {
+        if ((spins++ % 5) == 0)
+            printf("cuse: server pid %d exit stuck: refs=%d (want 1) after %d s\n",
+                pcs->pid, refs, spins);
+        pause("W", hz);
+    }
+
+  Findings over many start/stop cycles of the real chain (MPD + BruteFIR clients):
+
+  1. EVERY virtual_oss teardown enters this loop with refs > 1 — i.e. the loop is
+     on the normal stop path, not an exceptional one. Observed:
+        cuse: server pid 11027 exit stuck: refs=3 (want 1) after 1 s
+        cuse: server pid 11036 exit stuck: refs=2 (want 1) after 1 s
+     refs=3 = server + 2 clients (BruteFIR on dsp.loop, MPD on dsp.play);
+     refs=2 = server + 1 client.
+
+  2. DTrace (fbt on cuse_client_open/cuse_client_free/cuse_server_free, keyed by
+     execname/pid) shows the lifecycle:
+        musicpd[2278]   OPEN
+        brutefir[9705]  OPEN  (x2)
+        virtual_oss[9697] *** SERVER_FREE begin (teardown wait) ***
+        ... loop spins ...
+        brutefir[9705]  FREE  cdevpriv->cuse_server_unref
+        musicpd[2278]   FREE  cdevpriv->cuse_server_unref
+        (then refs reaches 1 and the server exits)
+     So the loop drains as each client's cdevpriv destructor
+     (cuse_client_free -> cuse_server_unref, cuse.c:1480) runs.
+
+  3. USUAL outcome: the clients close within ~1-6 s and the server RECOVERS — but
+     this is a routine multi-second busy-wait on every stop. Example: pid 11036
+     logged "after 1 s" then "after 6 s" before recovering.
+
+  4. SEVERE (intermittent) outcome: a client ref never drops, so the loop spins
+     forever. The exiting virtual_oss is then stuck D<E, SIGKILL-immune, pins
+     cuse.ko (kldunload also hangs in D), and only a reboot recovers. This is the
+     reported deadlock (observed pre-instrumentation as pid 5992). At that point
+     NO userland process holds the devices open (procstat -f sweep) — the leaked
+     reference is purely kernel-side.
+
+  Interpretation: the is_closing wakeup DOES drive the clients to close in the
+  common case (hence recovery), so the permanent hang is a race where, on unlucky
+  timing, a client close cannot be serviced/completed — consistent with the
+  userland teardown defects below (worker threads cancelled-not-joined and the
+  DSP/loopback devices never cuse_dev_destroy()'d, so the close command for a
+  client may have no server thread left to process it). The kernel's unbounded,
+  uninterruptible pause("W") then turns that transient leak into a permanent,
+  reboot-only hang.
+
+ROOT CAUSE — USERLAND (virtual_oss teardown contributes)
+  usr.sbin/virtual_oss/virtual_oss/main.c
+
+  1) Worker threads are cancelled, never joined, and the DSP/loopback cuse
+     devices are never destroyed. main() (main.c:2625-2632):
+
+         virtual_oss_process(NULL);   /* returns when voss_exit == 1 */
+         destroy_threads();           /* main.c:2498 */
+         if (voss_ctl_device[0] != 0)
+             cuse_dev_destroy(pdev);  /* CTL device ONLY */
+         return (0);
+
+     destroy_threads() (main.c:2498):
+
+         for (idx = 0; idx < voss_ntds; idx++)
+             pthread_cancel(voss_tds[idx]);
+         free(voss_tds);              /* no pthread_join() */
+
+     The DSP devices created at main.c:1918 (vclient_oss_methods,
+     dsp.play/dsp.loop) and the WAV device (main.c:1935) are never
+     cuse_dev_destroy()'d -- only the CTL device is. Teardown relies entirely on
+     process exit closing /dev/cuse.
+
+  2) Worker threads block in a non-cancellable syscall. Each worker runs
+     (main.c:1990):
+
+         while (1) { if (cuse_wait_and_process() != 0) break; }
+
+     cuse_wait_and_process() blocks in an ioctl(2) on /dev/cuse. ioctl is NOT a
+     POSIX cancellation point, so pthread_cancel() does not reliably unblock
+     these threads; they are torn down only by process exit, possibly
+     mid-command. A thread cancelled between proc_refs++ and proc_refs--
+     (cuse.c:866/884, 961/979) also strands cuse.c:660
+     "while (pccmd->proc_refs != 0) cv_wait(...)", a second teardown hazard.
+
+  Combined: the server process exits while a loopback/self client ref is
+  outstanding, with no join and no ordered device destroy, so pcs->refs stays > 1
+  permanently and cuse_server_free() spins in pause("W", hz) forever.
+
+STEPS TO REPRODUCE
+  1. virtual_oss -i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 \
+                 -d dsp.play -L dsp.loop
+  2. Open a client on the loopback and keep it busy (e.g. BruteFIR reading
+     /dev/dsp.loop as S32_LE 2ch, and/or MPD playing to /dev/dsp.play).
+  3. Stop virtual_oss (kill, killall, or stop the consumer then virtual_oss).
+  4. Intermittently virtual_oss never exits: "ps -o pid,stat,mwchan" shows
+     "D<E  W"; kill -9 has no effect; cuse.ko can no longer be unloaded; a fresh
+     virtual_oss cannot recreate the devices. Reboot required.
+
+  Frequency increases with rapid start/stop churn and with a client still
+  attached at stop time.
+
+IMPACT
+  Unkillable process; pinned kernel module; reboot is the only recovery. Any
+  virtual_oss-based audio routing can be bricked until reboot by a normal
+  stop/restart (e.g. a sample-rate change).
+
+SUGGESTED FIXES
+  Kernel (sys/fs/cuse/cuse.c):
+    - cuse_server_free() must not busy-wait unboundedly/uninterruptibly. Bound
+      the wait (timeout + forced reclamation), or restructure teardown so a
+      closing server forcibly invalidates client refs that can no longer be
+      serviced. The current is_closing wakeup does not cover the stuck case,
+      notably the loopback / self-client.
+
+  virtual_oss (usr.sbin/virtual_oss/virtual_oss/main.c):
+    - On exit, cuse_dev_destroy() ALL created devices (DSP, WAV, loopback), not
+      just CTL, in an order that releases loopback self-references first.
+    - pthread_join() the worker threads after signalling exit, instead of
+      pthread_cancel() + immediate free(voss_tds); have the worker loop exit on
+      voss_exit cleanly rather than relying on cancellation of a thread blocked
+      in a non-cancellation-point ioctl().
+
+  A candidate userland patch (store each cuse_dev handle in the profile and
+  cuse_dev_destroy() all DSP/WAV/loopback devices before exit, ahead of thread
+  teardown) has been written and compile-tested; it makes the clients' refs drop
+  before process exit so cuse_server_free() finds refs==1 and never busy-waits.
+  This addresses the trigger; the kernel pause("W") hardening is still wanted so a
+  future ref leak cannot become an unrecoverable, reboot-only hang.
+
+DIAGNOSTICS CAPTURED
+  $ ps -o pid,ppid,stat,wchan,mwchan,command -p <pid>
+     PID PPID STAT WCHAN MWCHAN COMMAND
+    5992 5988 D<E   W     W      virtual_oss ... -d dsp.play -L dsp.loop
+  $ sudo kill -TERM <pid>; sudo kill -9 <pid>     # no effect, stays D<E
+  $ sudo procstat -kk <pid>                        # empty KSTACK
+  $ kldstat | grep cuse                            # cuse.ko refcount held (pinned)
+  $ sudo kldunload cuse                            # itself hangs in D
+  # no userland process holds /dev/dsp.play or /dev/dsp.loop open (procstat -f)
+
+  # client/server lifecycle during teardown (no struct deref needed):
+  $ sudo dtrace -n '
+      fbt:cuse:cuse_client_open:return  { printf("%s[%d] OPEN", execname, pid); }
+      fbt:cuse:cuse_client_free:entry   { printf("%s[%d] FREE", execname, pid); }
+      fbt:cuse:cuse_server_free:entry   { printf("%s[%d] SERVER_FREE", execname, pid); }'
+  # instrumented pause loop prints (diagnostic cuse.ko):
+  #   cuse: server pid 11036 exit stuck: refs=2 (want 1) after 1 s
+  #   cuse: server pid 11036 exit stuck: refs=2 (want 1) after 6 s   (then recovered)
+================================================================================

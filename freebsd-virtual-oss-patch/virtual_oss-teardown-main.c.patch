@@ -1,0 +1,83 @@
+--- a/usr.sbin/virtual_oss/virtual_oss/main.c	2026-06-26 14:04:26.648983000 +0200
++++ b/usr.sbin/virtual_oss/virtual_oss/main.c	2026-06-26 14:05:34.545966000 +0200
+@@ -1884,6 +1884,8 @@
+ 
+ 	ptr->synchronized = synchronized;
+ 	ptr->fd_sta = -1;
++	ptr->oss_dev = NULL;
++	ptr->wav_dev = NULL;
+ 	TAILQ_INIT(&ptr->head);
+ 
+ 	for (x = 0; x != ptr->channels; x++) {
+@@ -1921,6 +1923,7 @@
+ 			free(ptr);
+ 			return ("Could not create CUSE DSP device");
+ 		}
++		ptr->oss_dev = pdev;
+ 
+ 		/* register to sndstat */
+ 		ptr->fd_sta = open("/dev/sndstat", O_WRONLY);
+@@ -1938,6 +1941,7 @@
+ 			free(ptr);
+ 			return ("Could not create CUSE WAV device");
+ 		}
++		ptr->wav_dev = pdev;
+ 	}
+ 
+ 	atomic_lock();
+@@ -2502,6 +2506,41 @@
+ 	for (idx = 0; idx < voss_ntds; idx++)
+ 		pthread_cancel(voss_tds[idx]);
+ 	free(voss_tds);
++}
++
++static void
++destroy_devices(void)
++{
++	vprofile_t *ptr;
++
++	/*
++	 * Destroy all DSP/WAV/loopback cuse devices BEFORE the process exits.
++	 *
++	 * cuse_dev_destroy() runs cuse_server_free_dev() in the kernel
++	 * (sys/fs/cuse/cuse.c), which marks every client of the device as
++	 * closing so the clients drop their server references.  Without this,
++	 * the kernel's cuse_server_free() (the /dev/cuse cdevpriv destructor
++	 * run at process exit) busy-waits forever in pause("W", hz) for
++	 * pcs->refs to fall to 1, and the exiting virtual_oss hangs unkillable
++	 * in state D<E, pinning cuse.ko (reboot required).
++	 *
++	 * Previously only the CTL device was destroyed; the DSP/WAV/loopback
++	 * handles returned by cuse_dev_create() were discarded, so they were
++	 * never torn down explicitly.  We now keep them in the profile and
++	 * destroy them here.  WAV before OSS, and only non-NULL handles.
++	 */
++	TAILQ_FOREACH(ptr, &virtual_profile_client_head, entry) {
++		if (ptr->wav_dev != NULL)
++			cuse_dev_destroy(ptr->wav_dev);
++		if (ptr->oss_dev != NULL)
++			cuse_dev_destroy(ptr->oss_dev);
++	}
++	TAILQ_FOREACH(ptr, &virtual_profile_loopback_head, entry) {
++		if (ptr->wav_dev != NULL)
++			cuse_dev_destroy(ptr->wav_dev);
++		if (ptr->oss_dev != NULL)
++			cuse_dev_destroy(ptr->oss_dev);
++	}
+ }
+ 
+ void
+@@ -2624,6 +2663,13 @@
+ 
+ 	virtual_oss_process(NULL);
+ 
++	/*
++	 * Destroy the DSP/WAV/loopback devices first so their clients drop the
++	 * server references; otherwise the kernel cuse_server_free() hangs
++	 * forever at process exit (see destroy_devices()).
++	 */
++	destroy_devices();
++
+ 	destroy_threads();
+ 
+ 	if (voss_ctl_device[0] != 0)

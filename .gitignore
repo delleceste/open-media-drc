@@ -27,3 +27,6 @@ configs/*/*.conf
 # Python bytecode cache (video/webremote and omdrc-ctrl)
 __pycache__/
 *.pyc
+
+# Stale local backup of omdrc-ctrl (has its own nested .git + build artifacts)
+/omdrc-ctrl-backup/

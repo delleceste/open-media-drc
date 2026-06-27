@@ -1,0 +1,34 @@
+--- a/sys/fs/cuse/cuse.c	2026-06-26 14:04:26.652713000 +0200
++++ b/sys/fs/cuse/cuse.c	2026-06-26 14:05:48.685481000 +0200
+@@ -772,9 +772,29 @@
+ 	 * to prevent deadlock in the client cdevpriv destructor,
+ 	 * which cannot destroy itself.
+ 	 */
+-	while (cuse_server_do_close(pcs) != 1)
+-		pause("W", hz);
++	{
++		/*
++		 * DIAGNOSTIC (non-behavioral): this loop busy-waits for
++		 * pcs->refs to reach 1.  If a client ref is leaked it spins
++		 * here forever in an uninterruptible pause("W"), wedging the
++		 * exiting server process in state D<E and pinning cuse.ko.
++		 * Log the outstanding refs (and the server pid) periodically so
++		 * the leak can be characterized without a debugger.  Remove
++		 * once the underlying refcount leak is fixed.
++		 */
++		int cuse_diag_refs;
++		int cuse_diag_spins = 0;
+ 
++		while ((cuse_diag_refs = cuse_server_do_close(pcs)) != 1) {
++			if ((cuse_diag_spins++ % 5) == 0) {
++				printf("cuse: server pid %d exit stuck: "
++				    "refs=%d (want 1) after %d s\n",
++				    pcs->pid, cuse_diag_refs, cuse_diag_spins);
++			}
++			pause("W", hz);
++		}
++	}
++
+ 	/* drop final refcount */
+ 	cuse_server_unref(pcs);
+ }

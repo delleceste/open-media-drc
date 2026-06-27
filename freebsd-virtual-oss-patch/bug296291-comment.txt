@@ -1,0 +1,95 @@
+I reproduced the permanent unkillable D<E hang on a virtual_oss(8) DRC loopback
+(virtual_oss ... -d dsp.play -L dsp.loop, with brutefir as the dsp.loop client),
+instrumented it, and caught the exact mechanism. Short version: this is a
+refcount problem, exactly as comment #1 frames it -- the existing pcs->refs is
+the right mechanism and is almost correct, but cuse_client_open() *leaks* a ref
+(and a cuse_client) on the teardown race, so cuse_server_free()'s wait loop can
+never reach 1. It is not a case that needs other fds to be hunted down and
+revoked.
+
+Environment: FreeBSD 15.1-RELEASE (releng/15.1) -- i.e. stock cuse(4), without
+the main/stable-15 virtual_oss change from comment #2. The only local kernel
+change was a printf added inside the cuse_server_free() wait loop for
+diagnostics; cuse_client_open() and the refcount paths are unmodified.
+
+What I captured (dtrace on the teardown path + a live kgdb walk of the
+cuse_server at the moment of the hang):
+
+  - cuse_server_free() entry: refs=2, is_closing=1 (server + one live dsp.loop
+    client).
+  - the client's legitimate close ran: cuse_client_free -> cuse_server_unref
+    dropped refs 2 -> 1.  Correct so far.
+  - then refs climbed 1 -> 2 -> 3 -> 4 and froze there permanently
+    ("exit stuck: refs=4 (want 1)" every second, 190+ s and counting).
+  - kgdb walk of pcs->hcli at the hang: THREE cuse_client structs linked, all on
+    the dsp.loop server_dev, all with proc_refs == 0 (so this is NOT the
+    cuse.c:660 proc_refs wait). refs=4 = server(1) + 3 leaked clients.
+
+Root cause -- cuse_client_open() leaks a ref for every open() that races the
+is_closing window. releng/15.1 sys/fs/cuse/cuse.c:
+
+    cuse_server_lock(pcs);
+    pcs->refs++;                                  /* 1506 */
+    if (pcs->refs < 0 || pcs->pid == curproc->p_pid) {
+        pcs->refs--;                              /* only undone on this path */
+        cuse_server_unlock(pcs); return (EINVAL);
+    }
+    cuse_server_unlock(pcs);
+    ... malloc pcc ...
+    cuse_server_lock(pcs);
+    TAILQ_INSERT_TAIL(&pcs->hcli, pcc, entry);    /* 1539 */
+    if ((pcs->is_closing != 0) || (dev->si_drv1 == NULL))
+        error = EINVAL;                           /* 1542 */
+    else
+        error = 0;
+    cuse_server_unlock(pcs);
+    if (error != 0)
+        return (error);                           /* 1549  <-- leak */
+    if ((error = devfs_set_cdevpriv(pcc, &cuse_client_free)) != 0)  /* 1552 */
+        return (error);
+
+On the is_closing / si_drv1==NULL error path (1542 -> 1549) the function returns
+with refs already incremented (1506; the matching refs-- exists only on the
+pid/overflow path), with pcc still linked in pcs->hcli, and -- the key part --
+before devfs_set_cdevpriv() registers cuse_client_free() (1552). So the
+destructor that would TAILQ_REMOVE the client and cuse_server_unref() that ref is
+never installed, and the ref can never be dropped. Every open() that lands in
+this window bumps refs permanently, so
+
+    while (cuse_server_do_close(pcs) != 1)
+        pause("W", hz);
+
+in cuse_server_free() never terminates -> process stuck D<E, SIGKILL-immune;
+cuse.ko then pinned (cuse_kern_uninit() drains cuse_server_head forever, so
+kldunload cuse also hangs) -> reboot required.
+
+This explains the intermittency: it only bites when an open() arrives between
+is_closing being set and the device node going away. In my repro the dsp.loop
+client was busy-polling and was itself wedged (see below), so opens kept arriving
+right during teardown -- making it 100% reproducible.
+
+Suggested minimal kernel fix: on the error path in cuse_client_open(), undo the
+work before returning (TAILQ_REMOVE(pcc), cuse_server_unref(pcs), free pcc), or
+restructure so the refs++ / hcli insert happen only after the is_closing /
+si_drv1 check passes. With that, pcs->refs accounting is correct and the wait
+loop drains as intended. Orthogonally, and in agreement with comment #1, it would
+be more robust if cuse_server_free() did not block in the destructor at all -- a
+non-blocking teardown would turn any future refcount mistake into a leak rather
+than a reboot-required hang.
+
+Secondary issue, same file: cuse_client_receive_command_locked() waits in an
+uninterruptible cv_wait() at cuse.c:637 (the error != 0 branch) and cuse.c:660
+(the proc_refs drain). Once a client takes a signal it drops into that wait and
+becomes unkillable until the now-dead server services the command -- I saw both
+SIGKILL and SIGTERM pending and undeliverable on the client. Besides being a hang
+on its own, it widens the is_closing window the open-leak depends on.
+
+Re comment #2: I could not test that patch directly (no -CURRENT machine here;
+releng/15.1 does not carry it). From reading it, destroying the DSP/loopback
+devices on exit should mitigate the common case -- once the devfs nodes are gone,
+new opens fail before reaching cuse_client_open(), closing the race -- but it
+will not help "kill -9 virtual_oss" (no cleanup runs) or any other path that sets
+is_closing while the node still exists, and the kernel leak stays latent. So the
+cuse_client_open() fix looks worthwhile independently of the userland change.
+
+Happy to share the dtrace/kgdb capture scripts and the raw log if useful.
