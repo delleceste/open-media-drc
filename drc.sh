@@ -47,9 +47,11 @@ DAC_VERIFY_TOL=100      # Hz tolerance around the requested rate
 # a same-rate re-open is skipped.  This cannot be auto-verified — the silence is a
 # DAC-side routing quirk and the USB feedback / UAC2 clock-valid both look healthy
 # either way (see OKTO-DAC8-silent-first-open.md) — so it is a fixed recipe.
-# Env-overridable so kernel-side fixes can be listening-tested without the
-# prime masking them (e.g. DAC_PRIME_CYCLES=0 drc.sh 44100).
-DAC_PRIME_CYCLES=${DAC_PRIME_CYCLES:-2}
+# Default is 0: the kernel-side fix (uaudio clock-before-alt reorder, see
+# freebsd-uaudio-patch/uaudio-clock-before-alt.md) is installed and is meant to
+# make this prime unnecessary. Still env-overridable in case the fix proves
+# incomplete during testing (e.g. DAC_PRIME_CYCLES=2 drc.sh 44100).
+DAC_PRIME_CYCLES=${DAC_PRIME_CYCLES:-0}
 
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
 VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop"
