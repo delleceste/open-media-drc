@@ -18,8 +18,8 @@ GEOMETRY="120.blue"   # speaker geometry / filter set to use
 #  * post-lock dwell — DAC_SETTLE_SECS of extra silence *after* lock.  The clock
 #    being locked does not prove the OKTO is routing audio yet; this dwell guards
 #    that device-side quirk and is the knob to tune by ear if silence recurs.
-DAC_WARMUP_SECS=3
-DAC_SETTLE_SECS=1
+DAC_WARMUP_SECS=${DAC_WARMUP_SECS:-3}
+DAC_SETTLE_SECS=${DAC_SETTLE_SECS:-1}
 
 # Closed-loop verification (mitigation #3).  After warm-up, confirm the DAC is
 # actually streaming at the requested rate before trusting the chain; if not,
@@ -47,7 +47,9 @@ DAC_VERIFY_TOL=100      # Hz tolerance around the requested rate
 # a same-rate re-open is skipped.  This cannot be auto-verified — the silence is a
 # DAC-side routing quirk and the USB feedback / UAC2 clock-valid both look healthy
 # either way (see OKTO-DAC8-silent-first-open.md) — so it is a fixed recipe.
-DAC_PRIME_CYCLES=2
+# Env-overridable so kernel-side fixes can be listening-tested without the
+# prime masking them (e.g. DAC_PRIME_CYCLES=0 drc.sh 44100).
+DAC_PRIME_CYCLES=${DAC_PRIME_CYCLES:-2}
 
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
 VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop"

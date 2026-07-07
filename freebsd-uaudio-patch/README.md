@@ -17,9 +17,20 @@ There are two `uaudio(4)` source patches for this DAC:
    or heard; build and listen-test before trusting it.** Full analysis:
    [`uaudio-feedback-follow.md`](uaudio-feedback-follow.md).
 
-(The separate *cold-open silence* / "run drc.sh several times" bug on the
-44.1 kHz family is handled host-side by `DAC_PRIME_CYCLES` in `drc.sh`, not by
-`uaudio(4)`.)
+3. **`uaudio-clock-before-alt.c.patch`** — driver-level fix candidate for the
+   *rate-change cold-open silence* ("run drc.sh several times"; per the
+   2026-07-06 user report **any** rate change can trigger it, not only
+   44.1↔48 crystal crossings): program the UAC2 sample clock **before**
+   selecting the streaming alt-setting (with the interface parked at alt 0,
+   Linux's ordering) plus a tunable `hw.usb.uaudio.clock_settle_ms` pause on
+   any rate change. Would replace the host-side `DAC_PRIME_CYCLES` prime in
+   `drc.sh` (which only fires on crystal crossings, so it misses same-family
+   changes) for *all* clients. **Built, installed, and partially
+   listening-tested (2026-07-06): a cold 192k open and a 192k→44.1k crystal
+   switch were both audible with zero primes. The full test-plan matrix (other
+   crossings, same-family changes, virtual_oss, browser) is still pending —
+   it was cut short by an unrelated virtual_oss livelock.** Full analysis:
+   [`uaudio-clock-before-alt.md`](uaudio-clock-before-alt.md).
 
 ## What it fixes
 

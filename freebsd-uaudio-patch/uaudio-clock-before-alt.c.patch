@@ -1,0 +1,129 @@
+--- a/sys/dev/sound/usb/uaudio.c	2026-05-22 02:00:00.000000000 +0200
++++ b/sys/dev/sound/usb/uaudio.c	2026-07-06 19:50:00.000000000 +0200
+@@ -136,6 +136,13 @@
+     CTLTYPE_INT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, 0, sizeof(int),
+     uaudio_buffer_ms_sysctl, "I",
+     "uaudio buffering delay in milliseconds, from 1 to 8");
++
++#define	UAUDIO_CLOCK_SETTLE_MS_MAX	2000
++
++static unsigned uaudio_clock_settle_ms = 100;
++SYSCTL_UINT(_hw_usb_uaudio, OID_AUTO, clock_settle_ms, CTLFLAG_RWTUN,
++    &uaudio_clock_settle_ms, 0,
++    "delay after programming a new UAC2 sample-clock rate, in milliseconds");
+ 
+ #ifdef USB_DEBUG
+ static int uaudio_debug;
+@@ -384,6 +391,14 @@
+ 
+ 	uint16_t sc_audio_rev;
+ 	uint16_t sc_mixer_count;
++
++	/*
++	 * Last rate successfully programmed into the UAC2 sample
++	 * clock(s), or 0 if never programmed.  Used to detect a rate
++	 * change so the clock can be given time to settle before the
++	 * streaming alternate setting is selected.
++	 */
++	uint32_t sc_clock_rate;
+ 
+ 	uint8_t	sc_mixer_iface_index;
+ 	uint8_t	sc_mixer_iface_no;
+@@ -1433,24 +1448,36 @@
+ 
+ 	chan_alt = chan->usb_alt + next_alt;
+ 
+-	err = usbd_set_alt_interface_index(sc->sc_udev,
+-	    chan_alt->iface_index, chan_alt->iface_alt_index);
+-	if (err) {
+-		DPRINTF("setting of alternate index failed: %s!\n",
+-		    usbd_errstr(err));
+-		goto error;
+-	}
+-
+ 	/*
+-	 * Only set the sample rate if the channel reports that it
+-	 * supports the frequency control.
++	 * For UAC2 the sample clock lives on the AudioControl
++	 * interface and can be programmed at any time, so program it
++	 * BEFORE selecting the streaming alternate setting, with the
++	 * streaming interface parked at alternate setting zero.  Some
++	 * devices (e.g. Thesycon-based DACs such as the OKTO RESEARCH
++	 * DAC8 STEREO) latch their internal stream configuration when
++	 * SET_INTERFACE selects the streaming alternate setting;
++	 * changing the clock underneath an already-armed streaming
++	 * interface makes them render the whole stream silent until
++	 * the interface is bounced.  This is also the ordering Linux's
++	 * snd-usb-audio uses.  A rate *change* is additionally given
++	 * uaudio_clock_settle_ms to lock (a 44.1 kHz <-> 48 kHz family
++	 * switch changes the master crystal on many DACs) before the
++	 * streaming alternate setting arms the stream.
+ 	 */
+-
+ 	if (sc->sc_audio_rev >= UAUDIO_VERSION_30) {
+-		/* FALLTHROUGH */
++		/* No standard sample-rate control. */
+ 	} else if (sc->sc_audio_rev >= UAUDIO_VERSION_20) {
+ 		unsigned int x;
+-	  
++		uint8_t rate_changed = 0;
++
++		err = usbd_set_alt_interface_index(sc->sc_udev,
++		    chan_alt->iface_index, 0);
++		if (err) {
++			DPRINTF("parking interface at alternate index 0 "
++			    "failed: %s! (continuing anyway)\n",
++			    usbd_errstr(err));
++		}
++
+ 		for (x = 0; x != 256; x++) {
+ 			if (dir == PCMDIR_PLAY) {
+ 				if (!(sc->sc_mixer_clocks.bit_output[x / 8] &
+@@ -1472,8 +1499,47 @@
+ 				 */
+ 				DPRINTF("setting of sample rate failed! "
+ 				    "(continuing anyway)\n");
++			} else if (sc->sc_clock_rate !=
++			    chan_alt->sample_rate) {
++				rate_changed = 1;
+ 			}
+ 		}
++
++		if (rate_changed) {
++			unsigned settle_ms = uaudio_clock_settle_ms;
++
++			if (settle_ms > UAUDIO_CLOCK_SETTLE_MS_MAX)
++				settle_ms = UAUDIO_CLOCK_SETTLE_MS_MAX;
++
++			sc->sc_clock_rate = chan_alt->sample_rate;
++
++			DPRINTF("clock rate changed to %u Hz; settling "
++			    "%u ms\n", chan_alt->sample_rate, settle_ms);
++
++			if (settle_ms != 0) {
++				usb_pause_mtx(NULL,
++				    USB_MS_TO_TICKS(settle_ms));
++			}
++		}
++	}
++
++	err = usbd_set_alt_interface_index(sc->sc_udev,
++	    chan_alt->iface_index, chan_alt->iface_alt_index);
++	if (err) {
++		DPRINTF("setting of alternate index failed: %s!\n",
++		    usbd_errstr(err));
++		goto error;
++	}
++
++	/*
++	 * UAC1 only: the sample-frequency control lives on the
++	 * streaming endpoint, so the alternate setting had to be
++	 * selected first.  Only set the sample rate if the channel
++	 * reports that it supports the frequency control.
++	 */
++
++	if (sc->sc_audio_rev >= UAUDIO_VERSION_20) {
++		/* Sample clock already programmed above. */
+ 	} else if (chan_alt->p_sed.v1->bmAttributes & UA_SED_FREQ_CONTROL) {
+ 		if (uaudio_set_speed(sc->sc_udev,
+ 		    chan_alt->p_ed1->bEndpointAddress, chan_alt->sample_rate)) {

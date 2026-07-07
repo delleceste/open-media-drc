@@ -1,7 +1,17 @@
-# virtual_oss / cuse(3) teardown-deadlock — patches
+# virtual_oss / cuse(3) patches — runtime livelock + teardown deadlock
 
-Fixes (and instruments) the bug documented in
-[`../VIRTUAL_OSS_CUSE_DEADLOCK.md`](../VIRTUAL_OSS_CUSE_DEADLOCK.md)
+Two related bug clusters, both analysed live on this box:
+
+1. **Runtime engine deadlock / "155% CPU" livelock** (the chain freezes
+   mid-playback, virtual_oss spins, clients stuck in `cuse-cli`) — root cause
+   and fix:
+   [`ROOTCAUSE-settrigger-sync-engine-deadlock.md`](ROOTCAUSE-settrigger-sync-engine-deadlock.md),
+   patch `virtual_oss-settrigger-sync-deadlock.patch` (**built + installed
+   2026-07-06, pending post-reboot validation**). This livelock is what
+   creates the client population that makes the teardown deadlock below fire.
+2. **Teardown deadlock** (stopping virtual_oss wedges it `D<E`, pins
+   `cuse.ko`, reboot required) — documented in
+   [`../VIRTUAL_OSS_CUSE_DEADLOCK.md`](../VIRTUAL_OSS_CUSE_DEADLOCK.md)
 (Bugzilla-ready text: `../VIRTUAL_OSS_CUSE_DEADLOCK.bugzilla.txt`):
 
 > Stopping `virtual_oss` intermittently wedges it forever while exiting (state
@@ -14,7 +24,18 @@ All paths are relative to `/usr/src` and apply with `-p1`.
 
 ## Patches
 
-### 1. The fix — `virtual_oss` destroys all its devices on exit (userland)
+### 0. Runtime livelock fix — SETTRIGGER vs synchronized-loopback engine wait (userland)
+
+- `virtual_oss-settrigger-sync-deadlock.patch` — four changes in
+  `usr.sbin/virtual_oss` (`main.c`, `virtual_oss.c`, `int.h`):
+  `SNDCTL_DSP_SETTRIGGER` honours the fd open mode; trigger/halt ioctls
+  `atomic_wakeup()` the DSP engine; the synchronized wait loops re-check
+  `tx_enabled`/`rx_enabled`; new `tx_written` latch so the engine never
+  sleeps waiting for play data from a client that has never written.
+  Full analysis:
+  [`ROOTCAUSE-settrigger-sync-engine-deadlock.md`](ROOTCAUSE-settrigger-sync-engine-deadlock.md).
+
+### 1. Teardown fix — `virtual_oss` destroys all its devices on exit (userland)
 
 - `virtual_oss-teardown-int.h.patch` — adds `oss_dev` / `wav_dev`
   (`struct cuse_dev *`) to `struct virtual_profile` so the device handles are

@@ -1,0 +1,122 @@
+--- a/usr.sbin/virtual_oss/virtual_oss/int.h
++++ b/usr.sbin/virtual_oss/virtual_oss/int.h
+@@ -214,7 +214,8 @@
+ 	uint32_t buffer_frags_set:1;
+ 	uint32_t sync_busy:1;
+ 	uint32_t sync_wakeup:1;
+-	int	padding:28;
++	uint32_t tx_written:1;	/* client has written play data at least once */
++	int	padding:27;
+ };
+ 
+ struct virtual_monitor {
+--- a/usr.sbin/virtual_oss/virtual_oss/virtual_oss.c
++++ b/usr.sbin/virtual_oss/virtual_oss/virtual_oss.c
+@@ -90,7 +90,20 @@
+ 		dst += read;
+ 		total -= read;
+ 
++		/*
++		 * Only sleep waiting for more play data when the
++		 * synchronized client can actually provide it: its
++		 * output direction must still be enabled (the client
++		 * can clear it via SNDCTL_DSP_SETTRIGGER or
++		 * SNDCTL_DSP_HALT_OUTPUT while we sleep - those now
++		 * wake us so this is re-evaluated) and it must have
++		 * written at least once (a capture-only client that
++		 * merely armed the output trigger bit never writes,
++		 * and sleeping for it would park the whole DSP engine
++		 * forever).
++		 */
+ 		if (!pvc->profile->synchronized || pvc->sync_wakeup ||
++		    pvc->tx_enabled == 0 || pvc->tx_written == 0 ||
+ 		    total == 0) {
+ 			/* fill rest of buffer with silence, if any */
+ 			if (total_read != 0 && total != 0)
+@@ -124,8 +137,13 @@
+ 		src += written;
+ 		total -= written;
+ 
++		/*
++		 * Same rule as vclient_read_linear(): do not sleep
++		 * waiting for the client to drain the ring when its
++		 * input direction has been disabled under us.
++		 */
+ 		if (!pvc->profile->synchronized || pvc->sync_wakeup ||
+-		    total == 0)
++		    pvc->rx_enabled == 0 || total == 0)
+ 			break;
+ 		atomic_wait();
+ 	}
+--- a/usr.sbin/virtual_oss/virtual_oss/main.c
++++ b/usr.sbin/virtual_oss/virtual_oss/main.c
+@@ -1022,6 +1022,7 @@
+ 		return (CUSE_ERR_BUSY);
+ 	}
+ 	pvc->tx_enabled = 1;
++	pvc->tx_written = 1;
+ 
+ 	while (1) {
+ 		uint8_t *buf_ptr;
+@@ -1118,7 +1119,7 @@
+ }
+ 
+ static int
+-vclient_ioctl_oss(struct cuse_dev *pdev, int fflags __unused,
++vclient_ioctl_oss(struct cuse_dev *pdev, int fflags,
+     unsigned long cmd, void *peer_data)
+ {
+ 	union {
+@@ -1362,19 +1363,36 @@
+ 		data.val = vclient_sample_bytes(pvc) * 8;
+ 		break;
+ 	case SNDCTL_DSP_SETTRIGGER:
+-		if (data.val & PCM_ENABLE_INPUT) {
++		/*
++		 * Follow OSS semantics: a trigger can only enable a
++		 * direction the file handle was opened for.  Without
++		 * this, a capture-only (O_RDONLY) client setting
++		 * PCM_ENABLE_OUTPUT arms the synchronized-loopback
++		 * wait in vclient_read_linear() for play data that
++		 * can never arrive, parking the DSP engine.
++		 */
++		if ((data.val & PCM_ENABLE_INPUT) &&
++		    (fflags & CUSE_FFLAG_READ)) {
+ 			pvc->rx_enabled = 1;
+ 		} else {
+ 			pvc->rx_enabled = 0;
+ 			vring_reset(&pvc->rx_ring[1]);
+ 		}
+ 
+-		if (data.val & PCM_ENABLE_OUTPUT) {
++		if ((data.val & PCM_ENABLE_OUTPUT) &&
++		    (fflags & CUSE_FFLAG_WRITE)) {
+ 			pvc->tx_enabled = 1;
+ 		} else {
+ 			pvc->tx_enabled = 0;
+ 			vring_reset(&pvc->tx_ring[1]);
+ 		}
++		/*
++		 * The DSP engine may be sleeping in
++		 * vclient_read_linear()/vclient_write_linear() on the
++		 * previous trigger state; wake it up so the new
++		 * rx_enabled/tx_enabled values are re-evaluated.
++		 */
++		atomic_wakeup();
+ 		break;
+ 	case SNDCTL_DSP_GETTRIGGER:
+ 		data.val = 0;
+@@ -1446,9 +1464,13 @@
+ 		break;
+ 	case SNDCTL_DSP_HALT_OUTPUT:
+ 		pvc->tx_enabled = 0;
++		/* wake a DSP engine sleeping on the old trigger state */
++		atomic_wakeup();
+ 		break;
+ 	case SNDCTL_DSP_HALT_INPUT:
+ 		pvc->rx_enabled = 0;
++		/* wake a DSP engine sleeping on the old trigger state */
++		atomic_wakeup();
+ 		break;
+ 	case SNDCTL_DSP_LOW_WATER:
+ 		if (data.val > 0 && data.val <
