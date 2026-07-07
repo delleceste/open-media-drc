@@ -4,6 +4,13 @@
 reproducible `uaudio(4)` bug, the measured root cause, the relevant code paths,
 a proposed direction for a general fix, and full instructions for filing it.
 
+> **Status:** filed as **bug #295933**. A concrete general fix implementing
+> the direction below (plus the mandatory rate-alignment of the auto-started
+> jitter record stream, which the original sketch missed) is in
+> [`uaudio-shared-clock-fix.c.patch`](uaudio-shared-clock-fix.c.patch) /
+> [`uaudio-shared-clock-fix.md`](uaudio-shared-clock-fix.md); the
+> capture-disable diagnostic below has been retired from this host.
+
 ---
 
 ## TL;DR

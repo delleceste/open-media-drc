@@ -115,13 +115,14 @@ shape to propose upstream.
 
 ## Interaction with the other patches
 
-- **Independent of** `uaudio.c.patch` (capture-disable) — different regions;
-  the current build includes both. Note: on a *stock* (capture-enabled)
-  driver, async playback also starts the capture channel for jitter info, and
-  the capture channel's configure pass would still reprogram the shared clock
-  *after* playback's — this patch does not fix that (the flicker); the
-  capture-disable or shared-clock-guard patch does.
+- **2026-07-07 update:** the capture-disable workaround (`uaudio.c.patch`)
+  has been **retired** and replaced by
+  [`uaudio-shared-clock-fix.c.patch`](uaudio-shared-clock-fix.c.patch); the
+  current tree/build is stock + this patch + shared-clock-fix. On a
+  capture-enabled driver, async playback also starts the capture channel for
+  jitter info; the shared-clock fix rate-aligns that stream and guards the
+  shared clock — this patch does not address the flicker, only the ordering.
 - **Replaces the need for** the reverted `uaudio-clock-valid` approach.
-- **Complements** `uaudio-shared-clock-guard.c.patch` (not yet built): guard
-  stops a secondary stream from reprogramming a busy shared clock; this patch
-  fixes *when* the clock is programmed relative to `SET_INTERFACE`.
+- **Complements** the shared-clock fix: the fix stops a secondary stream from
+  reprogramming a busy shared clock; this patch fixes *when* the clock is
+  programmed relative to `SET_INTERFACE`.
