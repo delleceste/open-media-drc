@@ -1,0 +1,71 @@
+From 1aff7bfdc6893a9eb8e7182eccf59605cb0f9a44 Mon Sep 17 00:00:00 2001
+From: giacomo <delleceste@gmail.com>
+Date: Wed, 15 Jul 2026 14:10:54 +0200
+Subject: [PATCH] cuse: Fix server reference leak in cuse_client_open()
+
+If the server is closing (or the device node is going away), or if
+devfs_set_cdevpriv() fails, cuse_client_open() returns with the server
+reference taken at the top of the function still held and the newly
+allocated client still linked on pcs->hcli.  Since cuse_client_free()
+has not been registered as the cdevpriv destructor at that point,
+nothing ever undoes this work: every open() that races the is_closing
+window permanently leaks one server reference and one cuse_client.
+
+A leaked reference is fatal on server exit: cuse_server_free()
+busy-waits in an uninterruptible pause("W", hz) loop until pcs->refs
+drops to 1, which now never happens, so the exiting server process
+(e.g. virtual_oss(8)) is left wedged in state "D", immune to SIGKILL,
+cuse.ko is pinned (kldunload hangs too), and only a reboot recovers.
+
+Before 634e578ac7b0 the is_closing error path dropped the reference by
+calling devfs_clear_cdevpriv(), which ran the cuse_client_free()
+destructor.  That commit moved devfs_set_cdevpriv() after the
+is_closing check to fix the panic paths, but left both error returns
+without any cleanup.
+
+Fix by calling cuse_client_free() directly on both error paths.  The
+client is fully constructed and linked on pcs->hcli at these points,
+which is exactly the state cuse_client_free() expects.
+
+PR: 296291
+Fixes: 634e578ac7b0 ("cuse: Fix cdevpriv bugs in cuse_client_open()")
+Signed-off-by: giacomo <delleceste@gmail.com>
+---
+ sys/fs/cuse/cuse.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/sys/fs/cuse/cuse.c b/sys/fs/cuse/cuse.c
+index 8f67c4b5572..0e5c3eab7f1 100644
+--- a/sys/fs/cuse/cuse.c
++++ b/sys/fs/cuse/cuse.c
+@@ -1546,11 +1546,25 @@ cuse_client_open(struct cdev *dev, int fflags, int devtype, struct thread *td)
+ 	}
+ 	cuse_server_unlock(pcs);
+ 
+-	if (error != 0)
++	/*
++	 * The client is fully constructed and linked on pcs->hcli at this
++	 * point, but cuse_client_free() has not been registered as the
++	 * cdevpriv destructor yet.  On error, run it directly, so that the
++	 * client is unlinked and the server reference taken above is
++	 * dropped.  Otherwise every open() racing the is_closing window
++	 * leaks one server reference, and cuse_server_free() then waits
++	 * forever for pcs->refs to drop to 1, leaving the exiting server
++	 * process unkillable in state "D".
++	 */
++	if (error != 0) {
++		cuse_client_free(pcc);
+ 		return (error);
++	}
+ 
+-	if ((error = devfs_set_cdevpriv(pcc, &cuse_client_free)) != 0)
++	if ((error = devfs_set_cdevpriv(pcc, &cuse_client_free)) != 0) {
++		cuse_client_free(pcc);
+ 		return (error);
++	}
+ 
+ 	pccmd = &pcc->cmds[CUSE_CMD_OPEN];
+ 
+-- 
+2.54.0
+

@@ -81,12 +81,36 @@ Once a client (brutefir) takes a signal, it drops into that wait and becomes
 now-dead server services the command — which never happens. This both wedges the
 client and lengthens the server's `is_closing` window that the open-leak exploits.
 
+## Provenance: the leak is a regression from `634e578ac7b0` (Nov 2025, in 15.1)
+
+Christos's commit `634e578ac7b0` ("cuse: Fix cdevpriv bugs in cuse_client_open()",
+D53708, 2025-11-13) moved `devfs_set_cdevpriv()` from before the client/hcli
+setup to *after* the `is_closing` check, to fix real panic paths (destructor
+running on a half-constructed client). But the old `is_closing` error path did
+`devfs_clear_cdevpriv(); /* XXX bugfix */`, which synchronously ran the
+`cuse_client_free()` destructor — TAILQ_REMOVE + `cuse_server_unref()` — so the
+ref was NOT leaked before that commit. The new code returns on both error paths
+(`is_closing` and `devfs_set_cdevpriv` failure) with no cleanup at all. That is
+exactly the leak captured live above. 15.1-RELEASE carries this commit.
+
 ## Fixes
 **Kernel (the real fix):** in `cuse_client_open()`, on the `is_closing` /
 `si_drv1==NULL` error path, undo the work: `TAILQ_REMOVE` the client and
 `cuse_server_unref(pcs)` (or restructure so `refs++`/insert happen only after the
 `is_closing` check passes). Separately, bound/limit `cuse_server_free()`'s
 `pause("W")` and give the cuse.c:637/660 waits a signal/closing escape.
+
+**Written:** `cuse-client-open-refleak-fix.patch` (this directory) — calls
+`cuse_client_free(pcc)` directly on both error paths (the client is fully
+constructed and on `hcli` there, exactly the state the destructor expects; for a
+fresh client `cuse_client_is_closing()` is a flag-set no-op, no commands queued).
+Committed on branch `fix/cuse-client-open-refleak-296291` in `~/devel/freebsd-src`
+(commit `1aff7bfdc68`, DCO signed, `Fixes: 634e578ac7b0`, `PR: 296291`).
+Dry-run-applies cleanly to releng/15.1 `/usr/src`. Compile-tested 2026-07-15:
+`cuse.ko` builds `-Werror`-clean from the patched tree
+(`make -C sys/modules/cuse SYSDIR=.../sys` on the 15.1 box). Not pushed yet;
+runtime test pending on the audio machine (patch its `/usr/src`, rebuild the
+module, run `repro-deadlock.sh`).
 
 **Userland (Christos's committed `0bd5ef6b4363`) mitigates but does not cure:** by
 `cuse_dev_destroy()`-ing the devices on exit it removes the devfs nodes so new
