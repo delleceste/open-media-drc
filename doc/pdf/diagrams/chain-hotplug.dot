@@ -1,0 +1,30 @@
+// USB DAC hotplug automation, Linux (udev/systemd) and FreeBSD (devd/rc.d).
+digraph chain_hotplug {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    plug [label="USB DAC plugged in / powered on", fillcolor="#fdf3d8"];
+    boot [label="System boot\n(DAC may already be on)", fillcolor="#fdf3d8"];
+
+    subgraph cluster_linux {
+        label="Linux"; fontsize=11; style=dashed; color="#999999";
+        udev  [label="udev rule\n99-usb-audio-drc.rules\nSUBSYSTEM=sound, controlC*"];
+        svc   [label="systemd\ndrc-usb-audio.service\n(oneshot, RemainAfterExit)"];
+    }
+
+    subgraph cluster_fbsd {
+        label="FreeBSD"; fontsize=11; style=dashed; color="#999999";
+        devd  [label="devd rule\nusb-audio-drc.conf\n(USB intclass 0x01)"];
+        rcd   [label="rc.d: drc_usb_audio\n(probe /dev/dsp0, marker file)"];
+        wrk   [label="rc.d: brutefir_drc\n(worker, installed not enabled)"];
+    }
+
+    restore [label="drc.sh restore\nreads last_power + last_arg,\nrebuilds virtual_oss + BruteFIR,\nswitches MPD output", fillcolor="#dff0df"];
+
+    plug -> udev -> svc -> restore;
+    plug -> devd -> rcd -> wrk -> restore;
+    boot -> svc [label="udev synthesizes\nADD at boot"];
+    boot -> rcd [label="rc.conf:\ndrc_usb_audio_enable"];
+}

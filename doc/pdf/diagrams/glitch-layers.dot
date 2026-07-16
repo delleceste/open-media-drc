@@ -1,0 +1,25 @@
+// Glitch-detection taps along the FreeBSD chain.
+digraph glitch_layers {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    mpd  [label="MPD"];
+    voss [label="virtual_oss"];
+    bf   [label="BruteFIR"];
+    usb  [label="OKTO DAC\nUSB isoc OUT 0x01", fillcolor="#dff0df"];
+
+    mpd -> voss -> bf -> usb;
+
+    mon  [label="glitch-monitor.sh\n1 s poller: brutefir warnings,\ndmesg uaudio errors, MPD log,\ndev.pcm.* counters", shape=note, fillcolor="#fdf3d8"];
+    tap  [label="glitch-usbtap.sh\nusbdump header-only capture:\ntiming gaps + short frames,\nsub-second timestamps", shape=note, fillcolor="#fdf3d8"];
+    ana  [label="glitch-analyze.py\nCV = stddev/mean:\nPERIODIC / RANDOM / BURSTY\n+ autocorrelation", shape=note, fillcolor="#f3e6f5"];
+
+    mon -> mpd  [style=dashed, dir=back];
+    mon -> voss [style=dashed, dir=back];
+    mon -> bf   [style=dashed, dir=back];
+    tap -> usb  [style=dashed, dir=back];
+    mon -> ana  [label="glitch.log"];
+    tap -> ana;
+}

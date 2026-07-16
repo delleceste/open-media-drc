@@ -1,0 +1,29 @@
+// Full audio playback chain: control front-end down to the speakers.
+digraph chain_audio {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    cp      [label="UPnP / OpenHome control point\n(phone app, upplay, Qobuz Connect)", fillcolor="#fdf3d8"];
+    upmpdcli[label="upmpdcli\n(libupnpp / libnpupnp)"];
+    mpd     [label="MPD\n(pkg: mpd on Linux, musicpd on FreeBSD)"];
+    dacdir  [label="OKTO DAC8\n/dev/dsp0 (FreeBSD) - hw:0,0 (Linux)", fillcolor="#dff0df"];
+    loop    [label="Loopback\nsnd-aloop (Linux) / virtual_oss + cuse (FreeBSD)"];
+    bf      [label="BruteFIR (delleceste fork)\nFIR convolution, float64"];
+    dacdrc  [label="OKTO DAC8", fillcolor="#dff0df"];
+    ctrl    [label="omdrc-ctrl\nweb control panel :9090", fillcolor="#f3e6f5"];
+    drcsh   [label="drc.sh\norchestration + state", fillcolor="#f3e6f5"];
+
+    cp -> upmpdcli -> mpd;
+    mpd -> dacdir [label="direct output\n(OKTO-DAC, bit-perfect)"];
+    mpd -> loop   [label="DRC output\n(DRC-native / DRC-resamp)"];
+    loop -> bf -> dacdrc;
+
+    drcsh -> loop  [style=dashed, label="start/stop, rate"];
+    drcsh -> bf    [style=dashed];
+    drcsh -> mpd   [style=dashed, label="mpc enable"];
+    ctrl -> drcsh  [style=dashed];
+
+    { rank=same; dacdir; dacdrc; }
+}

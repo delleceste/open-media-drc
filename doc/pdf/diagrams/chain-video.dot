@@ -1,0 +1,25 @@
+// Video playback: phone web remote -> persistent mpv -> DRC chain + projector.
+digraph chain_video {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    phone [label="Android phone\n(browser, LAN only)", fillcolor="#fdf3d8"];
+    flask [label="video webremote (Flask, :9080)\nbrowse whitelisted roots, thumbnails,\nIMDb info, favourites, transport"];
+    mpv   [label="Persistent idle mpv\nJSON IPC /tmp/mpv-socket\nhidden until play, stereo downmix"];
+    disc  [label="Physical Blu-ray\n/dev/cd0 + gcache read-ahead\n(1 MB blocks)", fillcolor="#f3e6f5"];
+    files [label="Files / rips / streams\n/media/USBHD2/video", fillcolor="#f3e6f5"];
+    voss  [label="virtual_oss -> BruteFIR -> DAC\n(resamp mode, audio delayed;\nvideo shifted -0.67 s)"];
+    proj  [label="Projector (HDMI)", fillcolor="#dff0df"];
+    spk   [label="Speakers", fillcolor="#dff0df"];
+    kde   [label="KDE Connect\n(MPRIS via mpv-mpris)", fillcolor="#fdf3d8"];
+
+    phone -> flask [label="HTTP"];
+    flask -> mpv   [label="JSON IPC"];
+    disc  -> mpv;
+    files -> mpv;
+    mpv -> voss -> spk;
+    mpv -> proj;
+    kde -> mpv [style=dashed, label="controls whatever\nis playing"];
+}
