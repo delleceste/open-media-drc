@@ -1,0 +1,6 @@
+open-media-drc turns a FreeBSD machine with a USB DAC into a media box with
+digital room correction (DRC): MPD plays into a virtual_oss loopback, BruteFIR
+convolves the stream with per-sample-rate FIR room-correction filters and
+feeds the DAC.  drc.sh orchestrates the whole chain — per-rate switching,
+DAC warm-up/verification, hotplug via devd — and ships with flat (identity)
+filters; users generate real correction filters with DRC/REW and drop them in.

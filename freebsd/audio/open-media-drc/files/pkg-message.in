@@ -1,0 +1,46 @@
+[
+{ type: install
+  message: <<EOM
+open-media-drc — post-install checklist
+=======================================
+
+1. Configuration
+     cp %%PREFIX%%/etc/open-media-drc/omdrc.conf.sample \
+        %%PREFIX%%/etc/open-media-drc/omdrc.conf
+   and edit (GEOMETRY, state dir).  The stack ships with FLAT (identity)
+   filters — audio passes through unchanged until you install real room
+   correction filters; see FILTERS_AND_DRC.md in the docs.
+
+2. BruteFIR defaults (REQUIRED — brutefir fails to start without it):
+   as the audio user:
+     mkdir -p ~/.config/BruteFIR
+     cp %%PREFIX%%/etc/open-media-drc/brutefir_defaults.conf.sample \
+        ~/.config/BruteFIR/brutefir_defaults.conf
+   Adjust the OSS device paths inside if your DAC is not /dev/dsp0.
+
+3. Kernel modules (in /etc/rc.conf or kld_list):
+     kld_list="cuse"          # required by virtual_oss
+
+4. MPD outputs: merge the example MPD config
+   (%%PREFIX%%/share/examples/open-media-drc/musicpd.conf.in) into your mpd
+   config — the OKTO-DAC / DRC-native / DRC-resamp output names are what
+   drc.sh toggles with mpc.
+
+5. Services, in /etc/rc.conf:
+     musicpd_enable="YES"
+     drc_usb_audio_enable="YES"
+     brutefir_drc_user="<audio user>"
+   Do NOT set brutefir_drc_enable — brutefir_drc is the worker that
+   drc_usb_audio drives (boot probe + devd hotplug).
+
+6. devd hotplug (start/stop DRC on DAC plug/unplug):
+     cp %%PREFIX%%/etc/devd/usb-audio-drc.conf.sample \
+        %%PREFIX%%/etc/devd/usb-audio-drc.conf
+     service devd restart
+
+7. Run `omdrc 192000` (or omdrc resamp / off / status) to drive the chain
+   manually; state persists in /var/db/omdrc (root) — pin OMDRC_STATE_DIR in
+   omdrc.conf so services and interactive runs share it.
+EOM
+}
+]

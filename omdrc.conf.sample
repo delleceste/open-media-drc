@@ -1,0 +1,38 @@
+# open-media-drc configuration — INSTALLED mode sample.
+#
+# Copy to ${PREFIX}/etc/open-media-drc/omdrc.conf (usually
+# /usr/local/etc/open-media-drc/omdrc.conf) and edit.  Read (sourced as shell)
+# by drc.sh / drc-status.sh when no config.env sits beside them; a repo
+# checkout keeps using its own config.env instead and ignores this file.
+# $OMDRC_CONF overrides the location in both modes.
+
+# Speaker geometry / filter set: $OMDRC_SITE_DIR/configs/$GEOMETRY/
+# brutefir-<rate>.conf.  Default "flat" = identity dirac-pulse filters, no
+# correction.  To add real room correction see FILTERS_AND_DRC.md: put per-rate
+# filters + configs under $OMDRC_SITE_DIR/{filters,configs}/<name>/ and set
+# GEOMETRY=<name>.
+#GEOMETRY=flat
+
+# Where configs/ and filters/ live.  Default: ${PREFIX}/etc/open-media-drc.
+#OMDRC_SITE_DIR=/usr/local/etc/open-media-drc
+
+# Runtime state (last_arg, last_power, drc.log).  Default: /var/db/omdrc when
+# run as root, ~/.local/state/omdrc otherwise.  Interactive runs and the rc.d
+# service must share state — pin it here to be explicit.
+#OMDRC_STATE_DIR=/var/db/omdrc
+
+# The user that owns brutefir / the audio session (used by install.sh
+# templating in repo mode; informational here).
+#AUDIO_USER=media
+#AUDIO_HOME=/home/media
+
+# Music library location (for the mpd config templates).
+#MUSIC_DIR=/media/music
+
+# UPnP/OpenHome renderer friendly name (defaults to hostname).
+#FRIENDLY_NAME=
+
+# DAC warm-up knobs (see comments in drc.sh; env-overridable per run).
+#DAC_WARMUP_SECS=3
+#DAC_SETTLE_SECS=1
+#DAC_PRIME_CYCLES=0

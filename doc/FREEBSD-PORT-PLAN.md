@@ -1,7 +1,11 @@
 # Plan: from run-from-repo to a real FreeBSD port
 
-Status: plan only, nothing applied. Linux packaging is explicitly out of scope
-for now (one OS at a time).
+Status: Phases 1 and 2 are implemented on the `freebsd-port` branch (flat
+default geometry, runtime config/state resolution, install Makefile,
+`.gitattributes` tarball hygiene, draft port skeleton under
+`freebsd/audio/open-media-drc/` — see `freebsd/README.md` for its blockers).
+Phase 0 (upstreaming) proceeds independently. Linux packaging is explicitly
+out of scope for now (one OS at a time).
 
 ## Why the repo cannot be ported as-is
 

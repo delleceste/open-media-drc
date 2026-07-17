@@ -1,0 +1,24 @@
+bin/omdrc
+bin/omdrc-status
+libexec/omdrc/drc.sh
+libexec/omdrc/drc-status.sh
+libexec/omdrc/scripts/REW2raw.sh
+libexec/omdrc/scripts/REW2raw-all-rates.sh
+libexec/omdrc/scripts/verify-bitperfect.sh
+libexec/omdrc/scripts/headroom_calc.py
+@sample etc/open-media-drc/omdrc.conf.sample
+@sample etc/open-media-drc/brutefir_defaults.conf.sample
+@sample etc/devd/usb-audio-drc.conf.sample
+etc/open-media-drc/configs/flat/brutefir-44100.conf
+etc/open-media-drc/configs/flat/brutefir-48000.conf
+etc/open-media-drc/configs/flat/brutefir-88200.conf
+etc/open-media-drc/configs/flat/brutefir-96000.conf
+etc/open-media-drc/configs/flat/brutefir-192000.conf
+%%EXAMPLESDIR%%/mpd.conf.in
+%%EXAMPLESDIR%%/musicpd.conf.in
+%%EXAMPLESDIR%%/upmpdcli.conf.in
+%%PORTDOCS%%%%DOCSDIR%%/README.md
+%%PORTDOCS%%%%DOCSDIR%%/FILTERS_AND_DRC.md
+%%PORTDOCS%%%%DOCSDIR%%/BIT-PERFECT-VERIFICATION.md
+%%PORTDOCS%%%%DOCSDIR%%/GLITCH-DETECTION.md
+@dir /var/db/omdrc

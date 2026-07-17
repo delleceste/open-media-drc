@@ -11,6 +11,9 @@
 /etc/systemd/system/drc-usb-audio.service
 # brutefir per-rate configs are generated from configs/**/*.conf.in
 configs/*/*.conf
+# … except the shipped flat (dirac pulse) defaults, which have no host-specific
+# values and are committed as plain .conf (no .in / rendering step)
+!configs/flat/*.conf
 # No-DRC browser launchers are generated from browser-nodrc/*.desktop.in
 /browser-nodrc/*.desktop
 /upmpdcli/upmpdcli.conf
