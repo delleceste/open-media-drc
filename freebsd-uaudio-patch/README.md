@@ -138,10 +138,50 @@ it with the stock module** — rebuild + reinstall from these patches
 afterwards. Once the official fix lands upstream, this whole directory can
 be retired.
 
-## Known remaining limitation (separate bug)
+## Known remaining limitation (separate bug): DAC displays 24 bit for 16-bit material
 
-`uaudio` fixes **one wire format per attach** (s32le on the OKTO) and pads
-16-bit content to 32 on the wire, so the DAC front panel shows 24 bits on
-44.1 k/16-bit tracks. Bit-perfect (zero-padding is lossless) but unlike
-Linux's per-stream alt-switching. Knobs: `hw.usb.uaudio.default_bits` /
-`default_rate`. Not addressed by these patches.
+`uaudio` fixes **one wire format per attach** and pads 16-bit content into
+the 32-bit container, so the DAC front panel shows **24** on 44.1 k/16-bit
+tracks. **No effect on bit-perfectness or audio quality** — details below.
+Not addressed by these patches.
+
+**Why exactly 24 (and not 32) — confirmed in descriptors + source,
+2026-07-07.** The OKTO's playback interface exposes four alt-settings
+(FORMAT_TYPE_I `bSubslotSize`/`bBitResolution`): alt 1 = 24-in-32, alt 2 =
+**native 16-bit**, alt 3 = 32-bit PCM, alt 4 = 32-bit RAW/DSD (capture has
+the same 24/16/32 trio). Two `uaudio` behaviours combine:
+
+1. `uaudio_chan_fill_info_sub()` (UAC2 branch) computes bit depth as
+   `bSubslotSize * 8`, **ignoring `bBitResolution`** — so alts 1/3/4 all
+   count as "32-bit".
+2. The same function keeps only **one alt-setting per sample rate**
+   (later matches are dropped as "Duplicate sample rate detected"), so the
+   **first matching alt in descriptor order wins: alt 1**, whose declared
+   resolution is **24**.
+
+Result: FreeBSD streams 32-bit slots into the 24-valid-bit alt at every
+rate. The DAC panel reports the alt's declared `bBitResolution` (24);
+dmesg reports the container ("32-bit S-LE") — both describe the same alt.
+
+**Why quality is untouched:** 16-bit samples sit in the top 16 bits,
+LSBs zero-padded — the DAC converts exactly the original bits (no SRC, no
+dither, no volume with `bitperfect=1`; see
+`doc/BIT-PERFECT-VERIFICATION.md`). 24-bit material fits the alt exactly.
+Only a hypothetical *true* 32-bit source would lose bits 25–32 — content
+below the physical resolution of any DAC silicon.
+
+**Options:**
+- **Leave it (recommended).** The display shows the container's declared
+  word length, not the file's. Cosmetic only.
+- `hw.usb.uaudio.default_bits=16` would select the native 16-bit alt
+  (panel reads 16) but forces **every** stream to 16 bit, truncating
+  hi-res material. Note the knob is easy to apply wrong: it is `RWTUN`
+  and a **driver reload resets it** — set it in `/boot/loader.conf` or
+  set the sysctl *after* module load and re-attach via `usbconfig reset`
+  only (this is the likely reason it appeared "ignored" in the earlier
+  mitigation attempts logged in `../OKTO-DAC8-FreeBSD-44k1-flicker.md`).
+- The correct fix is Linux-style **per-stream alt switching** — an
+  architectural `uaudio` rework (format is fixed through the pcm feeder
+  chain at attach). A small separable upstream improvement: honour
+  `bBitResolution` when selecting/reporting formats instead of
+  `bSubslotSize*8`.
