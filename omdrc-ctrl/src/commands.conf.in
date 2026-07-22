@@ -89,6 +89,13 @@ vu_mode = bars
 # the active filter; this trim absorbs the small, runtime loopback/output
 # buffering on top.  Positive = delay the display more.
 drc_delay_trim_ms = 0
+# Bounds (ms) of the interactive "Sync" slider shown under the analyzer.  The
+# slider adds a live delta on top of the measured base delay so the listener can
+# nudge the display into sync with what they hear; its position is remembered
+# across restarts.  Defaults let it travel from -1 s (show sooner) to +2 s (hold
+# back more).
+drc_delay_delta_min_ms = -1000
+drc_delay_delta_max_ms = 2000
 
 # -- Qobuz Connect integration ---------------------------------------------
 # Paths to the files written by qobuzconnect2mpd.  Change these if you use

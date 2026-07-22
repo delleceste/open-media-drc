@@ -205,6 +205,20 @@
         }
         .btn-details:hover { border-color: var(--accent); color: var(--accent); }
         .btn-details.active { display: inline-block; }
+        #spectrum-controls-toggle { cursor: pointer; }
+        #spectrum-controls-toggle.on { border-color: var(--accent); color: var(--accent); }
+        .spectrum-title-btns { display: flex; align-items: center; gap: 8px; }
+        .detach-btn { cursor: pointer; padding: 5px 9px; font-size: .74rem; }
+        /* PiP button is revealed by JS only where the browser supports it. */
+        #spectrum-pip-btn { display: none; }
+        #spectrum-pip-btn.supported { display: inline-block; }
+        /* Spectrum-only popout view (?view=spectrum) and PiP: show just the card. */
+        body.spectrum-only > header,
+        body.spectrum-only > #write-status,
+        body.spectrum-only .card:not(#spectrum-card) { display: none !important; }
+        body.spectrum-only { padding: 10px; }
+        body.spectrum-only #spectrum-card { margin: 0; }
+        body.spectrum-only .detach-btn { display: none !important; }
 
         /* ── toast ───────────────────────────────────────────── */
         #toast {
@@ -460,6 +474,17 @@
             min-width: 46px;
             text-align: right;
         }
+        .spectrum-delay-readout {
+            padding: 4px 0 0;
+            color: var(--muted);
+            font-size: .72rem;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            text-align: right;
+        }
+        .spectrum-delay-readout strong {
+            color: var(--text);
+            font-weight: 600;
+        }
         @media (orientation: landscape) and (min-width: 700px) {
             body { max-width: 960px; }
             .spectrum-grid { grid-template-columns: 1fr 1fr; }
@@ -658,10 +683,16 @@
 </div>
 
 <!-- Live spectrum analyzer -->
-<div class="card">
+<div class="card" id="spectrum-card">
     <div class="card-title title-row">
         <span>Spectrum <span class="refresh-note">{{ spectrum.refresh_hz }} Hz</span></span>
-        <button class="spectrum-toggle" id="spectrum-toggle" onclick="toggleSpectrum()">Start</button>
+        <div class="spectrum-title-btns">
+            <button type="button" class="btn-details active detach-btn" id="spectrum-pip-btn"
+                    title="Open in a picture-in-picture window" onclick="pipSpectrum()">PiP</button>
+            <button type="button" class="btn-details active detach-btn" id="spectrum-popout-btn"
+                    title="Open in a separate window" onclick="popoutSpectrum()">⇗ Detach</button>
+            <button class="spectrum-toggle" id="spectrum-toggle" onclick="toggleSpectrum()">Start</button>
+        </div>
     </div>
     <!-- Collapsible body: revealed on Start, hidden again on Stop. -->
     <div id="spectrum-body" style="display:none">
@@ -673,6 +704,8 @@
             <button type="button" data-mode="music" onclick="setSpectrumMode('music')">Music</button>
             <button type="button" data-mode="precision" onclick="setSpectrumMode('precision')">Precision</button>
         </div>
+        <button type="button" id="spectrum-controls-toggle" class="btn-details active"
+                aria-expanded="false" onclick="toggleSpectrumControls()">Sliders</button>
         <a class="btn-details active" href="/details-spectrum">Details</a>
     </div>
     <div class="spectrum-plot">
@@ -691,6 +724,8 @@
                 </div>
             </div>
         </div>
+        <!-- Floor + Sync sliders: hidden until the "Sliders" toggle is pressed. -->
+        <div id="spectrum-controls" style="display:none">
         <label class="spectrum-floor">
             <span>Floor</span>
             <input id="spectrum-floor" type="range" min="-80" max="-24" step="1"
@@ -698,6 +733,21 @@
                    oninput="setSpectrumFloor(this.value)">
             <output id="spectrum-floor-value">{{ spectrum.floor_db }} dB</output>
         </label>
+        <label class="spectrum-floor spectrum-delay">
+            <span>Sync</span>
+            <input id="spectrum-delay" type="range"
+                   min="{{ spectrum.drc_delay_delta_min_ms | int }}"
+                   max="{{ spectrum.drc_delay_delta_max_ms | int }}"
+                   step="10" value="{{ spectrum.drc_delay_delta_ms | round | int }}"
+                   oninput="setSpectrumDelay(this.value)">
+            <output id="spectrum-delay-value"></output>
+        </label>
+        <div class="spectrum-delay-readout">
+            base <strong id="drc-base-ms">–</strong> ms
+            · delta <strong id="drc-delta-ms">–</strong> ms
+            · total <strong id="drc-total-ms">–</strong> ms
+        </div>
+        </div>
     </div>
     <div class="vu-wrap">
         <div class="vu-title-row">
@@ -1356,8 +1406,27 @@ let spectrumWanted = false;
 let spectrumCharts = { left: null, right: null };
 let spectrumFloorDb = {{ spectrum.floor_db }};
 let spectrumMode = 'music';
+// DRC-sync slider: measured base delay + a live listener delta (both ms).
+let spectrumDelayBaseMs = {{ spectrum.drc_delay_base_ms }};
+let spectrumDelayDeltaMs = {{ spectrum.drc_delay_delta_ms }};
+let spectrumDelayPost = null;   // debounce handle for POSTing the delta
+let spectrumFloorPost = null;   // debounce handle for POSTing the floor
 let currentVuMode = SPECTRUM_VU_MODE;
 let lastVu = {};
+// ── VU ballistics (analog-style needle/bar decay) ─────────────────────────────
+// Rises are shown instantly (transients must pop).  Falls are rate-limited so the
+// meters glide down like a weighted needle instead of snapping to zero when the
+// music stops.  The fall is level-dependent: small musical dips (≤ VU_KNEE_DB)
+// return fast so the meters stay lively, while a large abrupt drop (e.g. a stop)
+// glides down at the slower analog rate.  Constant dB/s gives a uniform,
+// needle-like travel speed (an exponential would snap down too fast at first).
+const VU_KNEE_DB   = 8;      // a fall this small or less returns at the fast rate
+const VU_FALL_FAST = 120;    // dB/s — return rate for small musical dips
+const VU_FALL_SLOW = 45;     // dB/s — return rate for large drops / music stop
+const VU_FLOOR_DB  = -120;
+let vuDisp   = { left_rms: VU_FLOOR_DB, right_rms: VU_FLOOR_DB, left_peak: VU_FLOOR_DB, right_peak: VU_FLOOR_DB };
+let vuTarget = { ...vuDisp };
+let vuRaf = null, vuLastTs = 0;
 let lastSpectrumBands = [];
 let lastSpectrumLeft = [];
 let lastSpectrumRight = [];
@@ -1377,7 +1446,7 @@ function setSpectrumButton(active) {
 
 function clearSpectrum() {
     drawBandSpectrum([], [], []);
-    updateVu({});
+    snapVu({});   // hard reset to floor (no analog glide) on clear/disconnect
 }
 
 function bandColor(t) {
@@ -1529,7 +1598,7 @@ function showSpectrumBody(show) {
         if (spectrumCharts.left) spectrumCharts.left.resize();
         if (spectrumCharts.right) spectrumCharts.right.resize();
         drawBandSpectrum(lastSpectrumBands, lastSpectrumLeft, lastSpectrumRight);
-        updateVu(lastVu);
+        renderVu();
     }
 }
 
@@ -1564,7 +1633,61 @@ function setSpectrumFloor(value) {
         if (ch) ch.options.scales.y.max = -spectrumFloorDb;
     }
     drawBandSpectrum(lastSpectrumBands, lastSpectrumLeft, lastSpectrumRight);
-    updateVu(lastVu);   // VU bars + needles share the same floor scale
+    renderVu();   // VU bars + needles share the same floor scale
+    // Remember the floor server-side (debounced) so it survives reload/restart
+    // and is shared like the Sync delta.
+    if (spectrumFloorPost) clearTimeout(spectrumFloorPost);
+    spectrumFloorPost = setTimeout(() => {
+        fetch('/spectrum/floor', {
+            method: 'POST',
+            body: new URLSearchParams({ floor_db: String(spectrumFloorDb) }),
+        }).catch(() => {});
+    }, 250);
+}
+
+// ── DRC-sync slider ───────────────────────────────────────────────────────────
+// The slider adds a live delta on top of the measured base delay so the listener
+// can line the display up with what they hear.  The applied total is floored at
+// 0 (the server cannot show samples that have not been played yet).
+function fmtSigned(ms) {
+    const n = Math.round(Number(ms) || 0);
+    return (n >= 0 ? '+' : '') + n;
+}
+
+function renderDelayReadout() {
+    const total = Math.max(0, spectrumDelayBaseMs + spectrumDelayDeltaMs);
+    const out = document.getElementById('spectrum-delay-value');
+    if (out) out.textContent = `${fmtSigned(spectrumDelayDeltaMs)} ms`;
+    const b = document.getElementById('drc-base-ms');
+    const d = document.getElementById('drc-delta-ms');
+    const t = document.getElementById('drc-total-ms');
+    if (b) b.textContent = Math.round(spectrumDelayBaseMs);
+    if (d) d.textContent = fmtSigned(spectrumDelayDeltaMs);
+    if (t) t.textContent = Math.round(total);
+}
+
+function setSpectrumDelay(value) {
+    spectrumDelayDeltaMs = Number(value);
+    renderDelayReadout();
+    // Debounce the POST so dragging the slider does not flood the server; the
+    // value is persisted server-side and applied to the shared capture thread.
+    if (spectrumDelayPost) clearTimeout(spectrumDelayPost);
+    spectrumDelayPost = setTimeout(() => {
+        const body = new URLSearchParams({ delta_ms: String(spectrumDelayDeltaMs) });
+        fetch('/spectrum/drc-delay', { method: 'POST', body })
+            .then(r => r.json())
+            .then(j => {
+                if (j && j.ok) {
+                    // Server clamps to the config bounds — reflect the truth back.
+                    spectrumDelayDeltaMs = j.drc_delay_delta_ms;
+                    spectrumDelayBaseMs = j.drc_delay_base_ms;
+                    const sl = document.getElementById('spectrum-delay');
+                    if (sl && Number(sl.value) !== spectrumDelayDeltaMs) sl.value = spectrumDelayDeltaMs;
+                    renderDelayReadout();
+                }
+            })
+            .catch(() => {});
+    }, 250);
 }
 
 function dbToPct(db, floor = spectrumFloorDb) {
@@ -1575,18 +1698,60 @@ function fmtDb(db) {
     return Number.isFinite(db) ? `${db.toFixed(1)}` : '-∞';
 }
 
+// Ease one channel level (dB) toward its target for a frame of `dt` seconds.
+// Instant on a rise; rate-limited, knee-gated fall on a decrease.
+function vuEase(disp, tgt, dt) {
+    if (tgt >= disp) return tgt;                 // attack: rises are immediate
+    const gap = disp - tgt;
+    const rate = gap <= VU_KNEE_DB ? VU_FALL_FAST : VU_FALL_SLOW;
+    return Math.max(tgt, disp - rate * dt);      // release: glide down at rate
+}
+
+// New frame → set the targets and make sure the animation loop is running.
 function updateVu(vu) {
     lastVu = vu || {};
-    const l = Number(vu.left_rms ?? -120);
-    const r = Number(vu.right_rms ?? -120);
+    vuTarget = {
+        left_rms:   Number(lastVu.left_rms   ?? VU_FLOOR_DB),
+        right_rms:  Number(lastVu.right_rms  ?? VU_FLOOR_DB),
+        left_peak:  Number(lastVu.left_peak  ?? VU_FLOOR_DB),
+        right_peak: Number(lastVu.right_peak ?? VU_FLOOR_DB),
+    };
+    if (!vuRaf) { vuLastTs = 0; vuRaf = requestAnimationFrame(vuStep); }
+}
+
+// Snap the meters to a value with no animation (init / resize / disconnect).
+function snapVu(vu) {
+    vu = vu || {};
+    for (const k of Object.keys(vuDisp)) {
+        vuDisp[k] = vuTarget[k] = Number(vu[k] ?? VU_FLOOR_DB);
+    }
+    if (vuRaf) { cancelAnimationFrame(vuRaf); vuRaf = null; }
+    renderVu();
+}
+
+function vuStep(ts) {
+    const dt = vuLastTs ? Math.min(0.1, (ts - vuLastTs) / 1000) : 0;
+    vuLastTs = ts;
+    let settled = true;
+    for (const k of Object.keys(vuDisp)) {
+        vuDisp[k] = vuEase(vuDisp[k], vuTarget[k], dt);
+        if (Math.abs(vuDisp[k] - vuTarget[k]) > 0.1) settled = false;
+    }
+    renderVu();
+    vuRaf = settled ? null : requestAnimationFrame(vuStep);
+}
+
+// Draw the current (eased) displayed levels in whichever VU style is active.
+function renderVu() {
+    const l = vuDisp.left_rms, r = vuDisp.right_rms;
     if (currentVuMode === 'bars') {
         document.getElementById('vu-bar-l').style.width = `${dbToPct(l)}%`;
         document.getElementById('vu-bar-r').style.width = `${dbToPct(r)}%`;
         document.getElementById('vu-db-l').textContent = fmtDb(l);
         document.getElementById('vu-db-r').textContent = fmtDb(r);
     } else {
-        drawNeedleVu('vu-needle-l', 'L', l, vu.left_peak);
-        drawNeedleVu('vu-needle-r', 'R', r, vu.right_peak);
+        drawNeedleVu('vu-needle-l', 'L', l, vuDisp.left_peak);
+        drawNeedleVu('vu-needle-r', 'R', r, vuDisp.right_peak);
     }
 }
 
@@ -1597,7 +1762,7 @@ function setVuMode(mode) {
     document.querySelectorAll('#vu-switch .vu-seg').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === currentVuMode);
     });
-    updateVu(lastVu);
+    renderVu();
 }
 
 // Needle gauge angular sweep: a wide arc so the needle travels a long way
@@ -1669,6 +1834,12 @@ function handleSpectrumFrame(d) {
         return;
     }
     const modeText = d.mode ? ` · ${d.mode}` : '';
+    // The live frame carries the freshly measured base delay (it tracks filter /
+    // rate / preset changes); keep the slider readout in step with it.
+    if (typeof d.drc_delay_base === 'number') {
+        spectrumDelayBaseMs = d.drc_delay_base * 1000;
+        renderDelayReadout();
+    }
     const drcText = d.drc_delay ? ` · DRC sync +${d.drc_delay.toFixed(2)}s` : '';
     spectrumStatus(d.state === 'running' ? `running${modeText} · ${d.rate || ''} Hz${drcText}` : d.state,
                    d.state === 'running' ? 'var(--green)' : 'var(--muted)');
@@ -1682,6 +1853,18 @@ function paintSpectrumMode() {
     document.querySelectorAll('#spectrum-mode button').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === spectrumMode);
     });
+}
+
+function toggleSpectrumControls() {
+    const box = document.getElementById('spectrum-controls');
+    const btn = document.getElementById('spectrum-controls-toggle');
+    if (!box) return;
+    const show = box.style.display === 'none';
+    box.style.display = show ? '' : 'none';
+    if (btn) {
+        btn.classList.toggle('on', show);
+        btn.setAttribute('aria-expanded', show ? 'true' : 'false');
+    }
 }
 
 function setSpectrumMode(mode) {
@@ -1733,6 +1916,45 @@ function toggleSpectrum() {
     }
 }
 
+// ── Detach: popout window + picture-in-picture ────────────────────────────────
+// Make sure the analyzer is streaming (used by both detach paths so the fresh
+// window / PiP is live immediately).
+function ensureSpectrumStarted() {
+    if (SPECTRUM_ENABLED && !spectrumSource) { spectrumWanted = true; startSpectrum(); }
+}
+
+// Popout: open the same page in spectrum-only mode in a separate browser window.
+// Reuses all of this page's code — it is literally the same page with every card
+// but the analyzer hidden (see body.spectrum-only) — so there is nothing to keep
+// in sync.  It joins the same server-side SSE broadcast.
+function popoutSpectrum() {
+    const url = location.pathname + '?view=spectrum';
+    const w = window.open(url, 'omdrc-spectrum',
+                          'width=820,height=760,menubar=no,toolbar=no,location=no');
+    if (!w) alert('Popup blocked — allow popups for this page to detach the analyzer.');
+}
+
+// Picture-in-Picture: an always-on-top mini window (Chromium's Document PiP).
+// Rather than relocating this page's DOM — whose inline handlers and getElementById
+// lookups are bound to THIS document and would break once moved — we host the
+// spectrum-only page in an <iframe> inside the PiP window.  The iframe is a full,
+// self-contained document: its own scripts, its own SSE, everything works, and it
+// joins the same server-side broadcast.
+let pipWindow = null;
+async function pipSpectrum() {
+    if (!('documentPictureInPicture' in window) || pipWindow) return;
+    try {
+        pipWindow = await documentPictureInPicture.requestWindow({ width: 820, height: 760 });
+    } catch (e) { pipWindow = null; return; }
+    pipWindow.document.title = 'OMDRC Spectrum';
+    pipWindow.document.body.style.margin = '0';
+    const frame = pipWindow.document.createElement('iframe');
+    frame.src = location.pathname + '?view=spectrum';
+    frame.style.cssText = 'border:0;width:100%;height:100%;display:block';
+    pipWindow.document.body.append(frame);
+    pipWindow.addEventListener('pagehide', () => { pipWindow = null; }, { once: true });
+}
+
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         if (spectrumSource) stopSpectrum(false);
@@ -1745,12 +1967,25 @@ window.addEventListener('pagehide', () => {
 });
 window.addEventListener('resize', () => {
     clearSpectrum();
-    updateVu(lastVu);
+    snapVu(lastVu);
 });
 setVuMode(currentVuMode);
 paintSpectrumMode();
+renderDelayReadout();
 setSpectrumButton(false);
 clearSpectrum();
+
+// Reveal the PiP button only where the browser supports Document PiP.
+if ('documentPictureInPicture' in window) {
+    const pb = document.getElementById('spectrum-pip-btn');
+    if (pb) pb.classList.add('supported');
+}
+// Spectrum-only popout (?view=spectrum): hide the rest of the page and auto-start.
+if (new URLSearchParams(location.search).get('view') === 'spectrum') {
+    document.body.classList.add('spectrum-only');
+    document.title = 'OMDRC Spectrum';
+    ensureSpectrumStarted();
+}
 
 // ── Audio devices panel ───────────────────────────────────────────────────
 async function fetchSndstat(btn) {
