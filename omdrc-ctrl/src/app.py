@@ -2281,12 +2281,32 @@ def status():
     return jsonify({"ok": True, "units": units})
 
 
+def _resolve_config_path() -> str:
+    """Default commands.conf location (see doc/FREEBSD-PORT-PLAN.md 1.3):
+
+        $OMDRCCTRL_CONF                              explicit override
+        ${PREFIX}/etc/open-media-drc/commands.conf   packaged install
+        <app dir>/commands.conf                      run-from-repo / CMake
+
+    An explicit --config always wins over all of these, so the run-from-repo
+    launcher (which passes --config) is unaffected.  Kept distinct from drc.sh's
+    $OMDRC_CONF, which names a different file (omdrc.conf)."""
+    env_conf = os.environ.get("OMDRCCTRL_CONF")
+    if env_conf:
+        return env_conf
+    packaged = os.path.join(os.environ.get("PREFIX", "/usr/local"),
+                            "etc", "open-media-drc", "commands.conf")
+    if os.path.isfile(packaged):
+        return packaged
+    return os.path.join(_HERE, "commands.conf")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="OMDRC Control web interface")
     parser.add_argument("--host",   default="0.0.0.0")
     parser.add_argument("--port",   type=int, default=9090)
-    parser.add_argument("--config", default=os.path.join(_HERE, "commands.conf"))
+    parser.add_argument("--config", default=_resolve_config_path())
     args = parser.parse_args()
     load_config(args.config)
     # Make sure the spectrum FIFO output is off until Start is pressed, even if

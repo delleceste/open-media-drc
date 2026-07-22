@@ -17,8 +17,17 @@ etc/open-media-drc/configs/flat/brutefir-192000.conf
 %%EXAMPLESDIR%%/mpd.conf.in
 %%EXAMPLESDIR%%/musicpd.conf.in
 %%EXAMPLESDIR%%/upmpdcli.conf.in
+%%CTRL%%bin/omdrcctrl
+%%CTRL%%@sample etc/open-media-drc/commands.conf.sample
+%%CTRL%%share/omdrc-ctrl/app.py
+%%CTRL%%share/omdrc-ctrl/templates/index.html
+%%CTRL%%share/omdrc-ctrl/templates/details.html
+%%CTRL%%share/omdrc-ctrl/templates/filter_response.html
+%%CTRL%%share/omdrc-ctrl/static/chart.umd.min.js
 %%PORTDOCS%%%%DOCSDIR%%/README.md
 %%PORTDOCS%%%%DOCSDIR%%/FILTERS_AND_DRC.md
 %%PORTDOCS%%%%DOCSDIR%%/BIT-PERFECT-VERIFICATION.md
 %%PORTDOCS%%%%DOCSDIR%%/GLITCH-DETECTION.md
+%%CTRL%%%%PORTDOCS%%%%DOCSDIR%%/SPECTRUM_ANALYZER.md
+%%CTRL%%%%PORTDOCS%%%%DOCSDIR%%/OMDRC-CTRL.md
 @dir /var/db/omdrc

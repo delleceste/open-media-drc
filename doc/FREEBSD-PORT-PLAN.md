@@ -4,6 +4,10 @@ Status: Phases 1 and 2 are implemented on the `freebsd-port` branch (flat
 default geometry, runtime config/state resolution, install Makefile,
 `.gitattributes` tarball hygiene, draft port skeleton under
 `freebsd/audio/open-media-drc/` — see `freebsd/README.md` for its blockers).
+The `CTRL` option (omdrc-ctrl web UI) is now wired up: `make install-ctrl`
+installs it under `share/omdrc-ctrl/` with an `@sample` config and no baked
+build-host path, and omdrc-ctrl resolves its config and runtime state the same
+way `drc.sh` does (§1.3/§1.4).  Run-from-repo keeps its CMake flow untouched.
 Phase 0 (upstreaming) proceeds independently. Linux packaging is explicitly
 out of scope for now (one OS at a time).
 

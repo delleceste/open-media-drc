@@ -15,8 +15,19 @@ Status / blockers before submission:
 2. A real release tag matching `DISTVERSION` must exist on GitHub.
 3. Untested: needs `portlint -AC`, `portclippy`, `poudriere testport`, and a
    `pkg check -s` after a service cycle on a FreeBSD box.
-4. OPTIONS for the optional layers (UPNP front-end, omdrc-ctrl web UI,
-   webremote) are deliberately deferred until the core port passes testing.
+4. The `CTRL` option (omdrc-ctrl web UI) is implemented and on by default: it
+   adds the Flask/Markdown/numpy run dependencies, the `omdrcctrl` rc script,
+   `share/omdrc-ctrl/` and an `@sample` `commands.conf`.  It is installed by
+   the top-level `Makefile`'s separate `install-ctrl` target, so the core
+   install stays free of any Python dependency.  Still untested under
+   poudriere (see 3).  The UPNP front-end and the video webremote remain
+   deferred until the core port passes testing.
+
+Note on layouts: the port installs omdrc-ctrl to `share/omdrc-ctrl/` with its
+config as `etc/open-media-drc/commands.conf.sample`, and bakes no build-host
+path into it.  Run-from-repo is untouched by this and keeps using the CMake
+flow (`lib/omdrcctrl`, `etc/omdrcctrl`) — the two installation modes coexist
+and neither is aware of the other.
 
 To try it on the FreeBSD box: copy `audio/open-media-drc` into a ports tree
 checkout, `make makesum`, then `make stage && make check-plist`.
