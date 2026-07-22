@@ -1,0 +1,61 @@
+Draft reply to Christos on bug 296291 (re: "Can you test on a machine that
+runs -CURRENT?")
+================================================================================
+
+I don't have a -CURRENT machine, but I can still answer with some confidence,
+because before your commit landed I had independently written the same fix and
+compared the two side by side.
+
+Your 0bd5ef6b4363 ("virtual_oss(8): Properly cleanup cuse(3)") and my local
+patch are functionally identical:
+
+  - same two fields added to struct virtual_profile in int.h
+    (struct cuse_dev *oss_dev / *wav_dev);
+  - same assignments in dup_profile() after cuse_dev_create();
+  - same teardown in main(): walk virtual_profile_client_head and
+    virtual_profile_loopback_head and cuse_dev_destroy() every DSP/WAV device,
+    instead of destroying only the CTL device.
+
+The only differences are cosmetic or extra hygiene on your side: you destroy
+the devices after destroy_threads() while I did it before (doesn't matter --
+cuse_dev_destroy() is an ioctl from the main thread, and the kernel's
+cuse_server_free_dev() marks the clients closing without needing a worker
+thread), you also call cuse_uninit(), and you fix the dup_profile() error-path
+memory leak.
+
+Since the change is userland-only and dup_profile()/main() are identical in
+releng/15.1, I can apply your commit onto a 15.1 build of /usr/sbin/virtual_oss
+and run it through the reproducer here (the DRC loopback chain with brutefir on
+dsp.loop, which made the hang ~100% reproducible). That exercises exactly the
+code you committed, just on a 15.1 kernel. I'll report back with the result.
+[ -- do this before posting, or reword as an offer -- ]
+
+Two follow-up points from the kernel-side capture (comment #N):
+
+1. Your patch mitigates the common trigger (once the devfs nodes are destroyed,
+   new opens fail before reaching cuse_client_open()), but the kernel ref leak
+   stays latent: it does nothing for "kill -9 virtual_oss" (no cleanup runs) or
+   any path that sets is_closing while a node still exists.
+
+2. The leak itself appears to be a regression from 634e578ac7b0 ("cuse: Fix
+   cdevpriv bugs in cuse_client_open()", D53708), which releng/15.1 carries.
+   Before it, the is_closing error path ran devfs_clear_cdevpriv(), which
+   synchronously executed the cuse_client_free() destructor (TAILQ_REMOVE +
+   cuse_server_unref), so the reference was released. Moving
+   devfs_set_cdevpriv() after the is_closing check fixed the half-constructed-
+   client panics, but left both error returns (is_closing and
+   devfs_set_cdevpriv failure) with no cleanup: the server ref taken at the top
+   and the client linked on pcs->hcli now leak on every open() that races the
+   teardown window, and cuse_server_free() spins in pause("W", hz) forever.
+
+   Proposed fix (patch attached): call cuse_client_free(pcc) directly on both
+   error paths. At those points the client is fully constructed and linked on
+   pcs->hcli -- exactly the state the destructor expects (and for a fresh
+   client cuse_client_is_closing() is a flag-set no-op, since no commands are
+   queued). This restores the pre-634e578ac7b0 semantics without reintroducing
+   the panic paths it fixed.
+
+================================================================================
+Attachment: cuse-client-open-refleak-fix.patch (applies to both main and
+releng/15.1; branch fix/cuse-client-open-refleak-296291 in the freebsd-src
+fork, not yet pushed).
