@@ -655,6 +655,12 @@ omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service qobuzconnect2mpd onestart, \
     /usr/sbin/service upmpdcli onestart, /usr/sbin/service upmpdcli onestop
 ```
 
+No entry is needed for `onestatus`: a renderer running under its own service
+account keeps its pidfile in a `0700` home directory (qobuzconnect2mpd uses
+`/var/db/qobuzconnect2mpd`), so the unprivileged `onestatus` reports "not
+running" for a service that is running.  omdrcctrl therefore falls back to
+matching the running binary by `argv[0]`, which needs no privilege.
+
 ---
 
 ### `GET /brutefir/cpu`

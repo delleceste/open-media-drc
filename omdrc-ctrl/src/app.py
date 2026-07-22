@@ -1709,17 +1709,52 @@ def qconnect_status():
 def _service_running(name: str) -> bool:
     """True if renderer service `name` is currently running.  Linux: systemd
     --user is-active.  FreeBSD: rc `onestatus` (works whether or not the service
-    is enabled in rc.conf)."""
+    is enabled in rc.conf), falling back to a process check.
+
+    `service <name> onestatus` is unreliable here when run unprivileged: rc.subr
+    reads the pidfile, and a renderer that runs under its own service account
+    keeps that pidfile inside a 0700 home directory the panel user cannot
+    traverse (qobuzconnect2mpd puts it under /var/db/qobuzconnect2mpd), so
+    onestatus reports "not running" for a service that is running.  Start/stop
+    go through sudo and do not have that blind spot, so believing onestatus
+    would let both mutually-exclusive renderers drive MPD at once.
+
+    Process visibility is not privileged, so fall back to matching the running
+    binary — both renderers install as <prefix>/bin/<service-name>, the same
+    argv[0] their rc scripts use as `procname`.  Matching argv[0] rather than
+    the whole line keeps daemon(8) wrappers and greps from counting as hits.
+    """
     if _IS_LINUX:
         cmd = ["systemctl", "--user", "is-active", "--quiet", name]
-    else:
-        cmd = ["service", name, "onestatus"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
+                               env=_env())
+            return r.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            return False
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
+        r = subprocess.run(["service", name, "onestatus"],
+                           capture_output=True, text=True, timeout=10,
                            env=_env())
-        return r.returncode == 0
+        if r.returncode == 0:
+            return True
     except (subprocess.TimeoutExpired, OSError):
-        return False
+        pass
+    return _proc_running(name)
+
+
+def _proc_running(binname: str) -> bool:
+    """True if a process whose argv[0] basename is `binname` is running.
+    Unprivileged and config-free — see _service_running for why the rc status
+    check alone is not trustworthy."""
+    for line in _ps_arg_lines():
+        try:
+            argv = shlex.split(line)
+        except ValueError:
+            argv = line.split()
+        if argv and os.path.basename(argv[0]) == binname:
+            return True
+    return False
 
 
 def _service_action(name: str, action: str):
@@ -1785,12 +1820,14 @@ def qconnect_switch():
         return jsonify({"ok": False, "error": "invalid target"}), 400
     other = UPMPDCLI_SERVICE if target == QCONNECT_SERVICE else QCONNECT_SERVICE
     try:
-        # Stop the active one before starting the next.
+        # Stop the active one before starting the next.  The stop is issued
+        # unconditionally rather than gated on _service_running(): a status
+        # check that wrongly reports "not running" would otherwise skip it and
+        # leave both renderers driving MPD.  onestop on an already-stopped
+        # service exits non-zero, so what counts is the state afterwards.
+        _service_action(other, "onestop")
         if _service_running(other):
-            r = _service_action(other, "onestop")
-            if r.returncode != 0:
-                return jsonify({"ok": False,
-                                "error": f"stopping {other}: {(r.stderr or r.stdout).strip()}"})
+            return jsonify({"ok": False, "error": f"could not stop {other}"})
         # Leave MPD in a clean state for the incoming renderer.
         _mpc_quiesce()
         if not _service_running(target):
