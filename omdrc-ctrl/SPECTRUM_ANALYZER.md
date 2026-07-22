@@ -196,11 +196,32 @@ maximum resolution everywhere, not fast transients.
 with the Floor slider.  A higher floor such as `-35` hides more low-level band
 energy; a lower floor such as `-70` reveals quiet detail.  The default `-40` is
 tuned for music rather than measurement work.  A change made with the slider is
-remembered across restarts (persisted in
-`$XDG_STATE_HOME/omdrc-ctrl/spectrum-floor-db`, falling back to
-`~/.local/state/…`), so `floor_db` in `commands.conf` is only the initial default
-until the slider is first moved.  The Floor and Sync sliders live behind the
-**Sliders** toggle in the Music/Precision row.
+remembered across restarts (persisted as `spectrum-floor-db` in the state
+directory — see [Runtime state](#runtime-state)), so `floor_db` in
+`commands.conf` is only the initial default until the slider is first moved.
+The Floor and Sync sliders live behind the **Sliders** toggle in the
+Music/Precision row.
+
+### Runtime state
+
+The slider positions are the only things the analyzer writes at runtime.  The
+state directory is resolved exactly as `drc.sh` resolves it, so the whole stack
+shares one location (see `doc/FREEBSD-PORT-PLAN.md` §1.4):
+
+| Condition | State directory |
+| --- | --- |
+| `$OMDRC_STATE_DIR` set | that path (services pin this) |
+| run-from-repo (`config.env` in the checkout) | beside the checkout |
+| running as root | `/var/db/omdrc` |
+| otherwise | `${XDG_STATE_HOME:-~/.local/state}/omdrc` |
+
+A packaged install must never write inside its own installed files — `pkg
+check -s` flags any modified packaged file.  Note that the `omdrcctrl` rc.d
+script drops privileges to a service user, so the root branch is *not* taken
+under `service(8)`: pin `OMDRC_STATE_DIR` (in `rc.conf` or `omdrc.conf`) to give
+the service a writable, shared state directory.  Writes are best-effort — if the
+directory is not writable the sliders simply stop being remembered rather than
+failing the request.
 
 ## Detached window
 
@@ -259,10 +280,10 @@ row beside it prints all three figures in milliseconds:
 
 The total applied hold-back is floored at 0 — you cannot show samples that have
 not been played yet — so a negative delta larger than the base has no further
-effect.  The slider position is remembered across restarts (persisted in
-`$XDG_STATE_HOME/omdrc-ctrl/spectrum-drc-delay-delta`, falling back to
-`~/.local/state/…`) and is applied to the shared capture thread, so every
-connected browser sees the same corrected display.
+effect.  The slider position is remembered across restarts (persisted as
+`spectrum-drc-delay-delta` in the state directory — see
+[Runtime state](#runtime-state)) and is applied to the shared capture thread, so
+every connected browser sees the same corrected display.
 
 The travel limits are the two config-editable keys `drc_delay_delta_min_ms` and
 `drc_delay_delta_max_ms` (default `-1000` … `2000`, i.e. −1 s … +2 s).  Unlike

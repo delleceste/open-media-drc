@@ -23,6 +23,11 @@ configs/*/*.conf
 /last_power
 /drc.log
 
+# Runtime state written by omdrc-ctrl (analyzer slider positions).  Repo mode
+# keeps state beside the checkout; installed mode uses /var/db/omdrc or XDG.
+/spectrum-drc-delay-delta
+/spectrum-floor-db
+
 # Runtime state written by the glitch-detection subsystem
 /glitch.log
 /.glitch-debug.enabled

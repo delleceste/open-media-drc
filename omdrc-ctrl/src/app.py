@@ -1263,14 +1263,39 @@ _drc_delay_cache: dict = {"key": None, "seconds": 0.0}
 _drc_delay_lock = threading.Lock()
 
 # The analyzer slider positions (Sync delta and Floor) are per-listener runtime
-# settings, remembered between runs in tiny state files under the user's XDG state
-# dir (falls back to ~/.local/state).  They are deliberately kept out of
-# commands.conf so the installed config stays declarative; only the *defaults* /
-# *bounds* live there.
-_STATE_DIR = os.path.join(
-    os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")),
-    "omdrc-ctrl",
-)
+# settings, remembered between runs in tiny state files.  They are deliberately
+# kept out of commands.conf so the installed config stays declarative; only the
+# *defaults* / *bounds* live there.
+
+
+def _resolve_state_dir() -> str:
+    """Runtime state directory, mirroring drc.sh's resolution so the whole stack
+    shares one location (see doc/FREEBSD-PORT-PLAN.md 1.4):
+
+        $OMDRC_STATE_DIR            explicit override — services pin this
+        run-from-repo (config.env)  beside the checkout, as drc.sh does
+        root                        /var/db/omdrc
+        otherwise                   ${XDG_STATE_HOME:-~/.local/state}/omdrc
+
+    A packaged install must never write inside its own installed files: pkg
+    check -s flags any modified packaged file.  Note the omdrcctrl rc.d script
+    drops privileges to a service user, so the root branch will not be taken
+    under service(8) — pin OMDRC_STATE_DIR (rc.conf/omdrc.conf) to share state
+    with drc.sh in that case."""
+    env_dir = os.environ.get("OMDRC_STATE_DIR")
+    if env_dir:
+        return env_dir
+    repo_root = os.path.abspath(os.path.join(_HERE, os.pardir, os.pardir))
+    if os.path.isfile(os.path.join(repo_root, "config.env")):
+        return repo_root
+    if os.geteuid() == 0:
+        return "/var/db/omdrc"
+    xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return os.path.join(xdg, "omdrc")
+
+
+_STATE_DIR = _resolve_state_dir()
 _DELTA_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-delta")
 _FLOOR_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-floor-db")
 
