@@ -1,8 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── local configuration ───────────────────────────────────────────────────────
-GEOMETRY="120.blue"   # speaker geometry / filter set to use
+# ── configuration ─────────────────────────────────────────────────────────────
+# Two ways to run, decided by where this script lives:
+#  * run-from-repo: a config.env sits next to the script (repo checkout).
+#    Site data (configs/, filters/) and state (last_arg, drc.log, …) live in
+#    the checkout, exactly as before.
+#  * installed (package/port): no config.env beside the script; settings come
+#    from ${PREFIX}/etc/open-media-drc/omdrc.conf, site data defaults to
+#    ${PREFIX}/etc/open-media-drc and state to /var/db/omdrc (root) or
+#    ~/.local/state/omdrc.
+# $OMDRC_CONF overrides the config file location in both modes.  The config
+# file may set GEOMETRY, OMDRC_SITE_DIR, OMDRC_STATE_DIR (and the DAC_* knobs
+# below, which stay env-overridable).
+base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PREFIX="${PREFIX:-/usr/local}"
+
+OMDRC_REPO_MODE=false
+OMDRC_CONF_FILE=""
+if [ -n "${OMDRC_CONF:-}" ] && [ -f "$OMDRC_CONF" ]; then
+  OMDRC_CONF_FILE="$OMDRC_CONF"
+elif [ -f "$base_dir/config.env" ]; then
+  OMDRC_CONF_FILE="$base_dir/config.env"
+  OMDRC_REPO_MODE=true
+elif [ -f "$PREFIX/etc/open-media-drc/omdrc.conf" ]; then
+  OMDRC_CONF_FILE="$PREFIX/etc/open-media-drc/omdrc.conf"
+fi
+if [ -n "$OMDRC_CONF_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$OMDRC_CONF_FILE"
+fi
+
+# Speaker geometry / filter set.  The repo ships "flat" (dirac-pulse identity
+# filters, no correction); set GEOMETRY in the config file to select a real
+# filter set under $SITE_DIR/configs/<GEOMETRY>/.
+GEOMETRY="${GEOMETRY:-flat}"
+
+# Where configs/<GEOMETRY>/ and filters/<GEOMETRY>/ live.
+if $OMDRC_REPO_MODE; then
+  SITE_DIR="${OMDRC_SITE_DIR:-$base_dir}"
+else
+  SITE_DIR="${OMDRC_SITE_DIR:-$PREFIX/etc/open-media-drc}"
+fi
 
 # DAC warm-up before the MPD output is enabled.  The OKTO routes silence on a
 # *cold* open until its clock relocks, and the host does not wait for that relock
@@ -59,23 +98,36 @@ VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L
 IS_LINUX=false
 [ "$(uname)" = "Linux" ] && IS_LINUX=true
 
-# ── paths ─────────────────────────────────────────────────────────────────────
-# Resolve the directory this script lives in, so the tool is portable: it works
-# from any checkout location and for any user, with no hardcoded $HOME or path.
-base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_FILE="$base_dir/last_arg"
+# ── paths / state ─────────────────────────────────────────────────────────────
+# Repo mode keeps state beside the script (as always).  Installed mode must not
+# write into packaged paths (pkg check -s flags modified files), so state goes
+# to /var/db/omdrc when root, else ~/.local/state/omdrc.  Services and
+# interactive runs that must share state should pin OMDRC_STATE_DIR in the
+# config file.
+if [ -n "${OMDRC_STATE_DIR:-}" ]; then
+  STATE_DIR="$OMDRC_STATE_DIR"
+elif $OMDRC_REPO_MODE; then
+  STATE_DIR="$base_dir"
+elif [ "$(id -u)" -eq 0 ]; then
+  STATE_DIR="/var/db/omdrc"
+else
+  STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omdrc"
+fi
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+
+STATE_FILE="$STATE_DIR/last_arg"
 # Power state (on/off) kept separately from the rate: `off` records "off" here
 # but leaves STATE_FILE (the remembered rate) intact, so `restore` stays off
 # across a reboot yet can bring DRC back at the last rate when turned on.
-POWER_FILE="$base_dir/last_power"
+POWER_FILE="$STATE_DIR/last_power"
 
 # Persistent operations log (survives reboots — lives beside last_arg, NOT in
 # /tmp).  Each run appends machine-parseable `key=value` lines so the cost and
 # necessity of each step can be mined later: how often brutefir needs attempt
 # 2/3, how often verification fails and a retry is needed, whether warm-up
 # correlates with fewer failures.  The goal is to drop steps that prove useless.
-# Mine it e.g. with:  grep 'event=run_result' "$base_dir/drc.log"
-LOG_FILE="$base_dir/drc.log"
+# Mine it e.g. with:  grep 'event=run_result' "$STATE_DIR/drc.log"
+LOG_FILE="$STATE_DIR/drc.log"
 RUN_ID="$$-$(date +%s 2>/dev/null || echo 0)"
 
 # Append one structured event line.  Best-effort: never let logging failure abort
@@ -219,8 +271,9 @@ usage() {
   echo "             (also the default when no argument is given)"
   echo "  variant  : optional filter variant, e.g. +2dB (default: none)"
   echo
-  echo "  Geometry is fixed to: $GEOMETRY"
-  echo "  Edit GEOMETRY at the top of this script to change it."
+  echo "  Geometry: $GEOMETRY  (config: ${OMDRC_CONF_FILE:-built-in defaults})"
+  echo "  Set GEOMETRY in the config file to change it; 'flat' (identity"
+  echo "  filters, no correction) is the shipped default."
   echo
   echo "Examples:"
   echo "  $0 192000"
@@ -643,7 +696,7 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
 fi
 
 # ── validate config ──────────────────────────────────────────────────────────
-conf_file="$base_dir/configs/$GEOMETRY/brutefir-${actual_rate}${variant}.conf"
+conf_file="$SITE_DIR/configs/$GEOMETRY/brutefir-${actual_rate}${variant}.conf"
 if [ ! -f "$conf_file" ]; then
   echo "config not found: $conf_file"
   exit 1

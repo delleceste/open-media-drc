@@ -105,6 +105,13 @@ SPECTRUM_MIN_FREQ = 31.5
 # bulk delay (filter group delay) is measured from the active filter; this trim
 # absorbs the smaller, constant BruteFIR block + ALSA loopback buffer latency.
 SPECTRUM_DRC_DELAY_TRIM_MS = 0.0
+# Interactive "sync" slider: a runtime delta (ms) the listener adds on top of the
+# auto-measured base delay to line the display up with what they actually hear.
+# Neutral at 0, bounded by the two config-editable limits below, and remembered
+# across restarts in a small state file (see _DELTA_STATE_FILE).
+SPECTRUM_DRC_DELAY_DELTA_MS = 0.0
+SPECTRUM_DRC_DELAY_DELTA_MIN_MS = -1000.0
+SPECTRUM_DRC_DELAY_DELTA_MAX_MS = 2000.0
 
 GROUP_ORDER  = ["drc", "apps", "system"]
 GROUP_LABELS = {
@@ -125,7 +132,8 @@ def load_config(path: str) -> None:
     global SPECTRUM_RATE, SPECTRUM_BITS, SPECTRUM_CHANNELS
     global SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
     global SPECTRUM_VU_MODE, SPECTRUM_FLOOR_DB, SPECTRUM_MIN_FREQ
-    global SPECTRUM_DRC_DELAY_TRIM_MS
+    global SPECTRUM_DRC_DELAY_TRIM_MS, SPECTRUM_DRC_DELAY_DELTA_MS
+    global SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS
     cfg = configparser.ConfigParser()
     if not cfg.read(path):
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -163,6 +171,23 @@ def load_config(path: str) -> None:
         SPECTRUM_FLOOR_DB = max(-90.0, min(-24.0, cfg.getfloat("spectrum", "floor_db", fallback=SPECTRUM_FLOOR_DB)))
         SPECTRUM_MIN_FREQ = max(5.0, min(200.0, cfg.getfloat("spectrum", "min_frequency", fallback=SPECTRUM_MIN_FREQ)))
         SPECTRUM_DRC_DELAY_TRIM_MS = cfg.getfloat("spectrum", "drc_delay_trim_ms", fallback=SPECTRUM_DRC_DELAY_TRIM_MS)
+        SPECTRUM_DRC_DELAY_DELTA_MIN_MS = cfg.getfloat(
+            "spectrum", "drc_delay_delta_min_ms", fallback=SPECTRUM_DRC_DELAY_DELTA_MIN_MS)
+        SPECTRUM_DRC_DELAY_DELTA_MAX_MS = cfg.getfloat(
+            "spectrum", "drc_delay_delta_max_ms", fallback=SPECTRUM_DRC_DELAY_DELTA_MAX_MS)
+        if SPECTRUM_DRC_DELAY_DELTA_MAX_MS < SPECTRUM_DRC_DELAY_DELTA_MIN_MS:
+            SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS = (
+                SPECTRUM_DRC_DELAY_DELTA_MAX_MS, SPECTRUM_DRC_DELAY_DELTA_MIN_MS)
+
+    # The slider positions are runtime settings, not config values: restore the
+    # last ones the listener dialled in (clamped to the config bounds/limits).
+    saved_delta = _read_state_float(_DELTA_STATE_FILE)
+    if saved_delta is not None:
+        SPECTRUM_DRC_DELAY_DELTA_MS = saved_delta
+    SPECTRUM_DRC_DELAY_DELTA_MS = _clamp_delta(SPECTRUM_DRC_DELAY_DELTA_MS)
+    saved_floor = _read_state_float(_FLOOR_STATE_FILE)
+    if saved_floor is not None:
+        SPECTRUM_FLOOR_DB = max(-90.0, min(-24.0, saved_floor))
 
     _RESERVED = {"qconnect", "monitor", "spectrum"}
     COMMANDS = []
@@ -598,18 +623,71 @@ def _spectrum_band_defs(bands: int, nyquist: float, min_freq: float | None = Non
     return edges
 
 
-def _spectrum_log_bins(freqs, magnitudes, bands: int) -> tuple[list[dict], list[float]]:
+def _spectrum_tiers(fft_size: int, rate: int, multi: bool) -> list[dict]:
+    """Analysis tiers for the multi-resolution band display.
+
+    Low frequencies use the full window (fine bin spacing needed for bass);
+    high frequencies use progressively shorter windows (fast transient response
+    for cymbals/drums).  Tier 0 is always the full window (longest).  A single
+    tier is returned when `multi` is False (precision/measurement mode) or the
+    window is already short."""
     import numpy as np
-    band_defs = _spectrum_band_defs(bands, float(freqs[-1]), SPECTRUM_MIN_FREQ)
-    out_bands, out_v = [], []
+    lengths = [fft_size]
+    if multi:
+        for L in (max(2048, fft_size // 4), max(1024, fft_size // 8)):
+            if L < lengths[-1]:
+                lengths.append(L)
+    tiers = []
+    for L in lengths:
+        w = np.hanning(L).astype(np.float32)
+        tiers.append({
+            "n": L,
+            "window": w,
+            "freqs": np.fft.rfftfreq(L, 1.0 / rate),
+            "scale": max(float(w.sum()) / 2.0, 1.0),
+        })
+    return tiers
+
+
+def _assign_band_tiers(band_defs: list[dict], tiers: list[dict], rate: int,
+                       min_bins: float = 3.0) -> list[int]:
+    """Pick, per display band, the shortest tier that still lands >= min_bins FFT
+    bins inside the band — the fastest window that keeps enough resolution.  Very
+    narrow low bands fall back to tier 0 (the full window)."""
+    short_to_long = sorted(range(len(tiers)), key=lambda i: tiers[i]["n"])
+    assign = []
     for band in band_defs:
+        width = max(1e-6, band["hi"] - band["lo"])
+        chosen = 0
+        for i in short_to_long:
+            if width * tiers[i]["n"] / rate >= min_bins:
+                chosen = i
+                break
+        assign.append(chosen)
+    return assign
+
+
+def _spectrum_multi_bins(chan, band_defs: list[dict], band_tier: list[int],
+                         tiers: list[dict]) -> list[float]:
+    """Per-band magnitudes (dBFS) using each band's assigned resolution tier.
+    `chan` is the analysis window (newest sample last); shorter tiers reuse its
+    most-recent samples so every tier is time-aligned to the same window end."""
+    import numpy as np
+    mags = []
+    for t in tiers:
+        seg = chan[-t["n"]:]
+        mags.append(np.abs(np.fft.rfft(seg * t["window"])) / t["scale"])
+    out = []
+    for b, band in enumerate(band_defs):
+        ti = band_tier[b]
+        freqs, mag = tiers[ti]["freqs"], mags[ti]
         mask = (freqs >= band["lo"]) & (freqs < band["hi"])
-        if not mask.any():
-            continue
-        out_bands.append(band)
-        band_mag = float(np.sqrt(np.sum(np.square(magnitudes[mask]))))
-        out_v.append(20.0 * math.log10(max(min(band_mag, 1.0), 1e-9)))
-    return out_bands, out_v
+        if mask.any():
+            m = float(np.sqrt(np.sum(np.square(mag[mask]))))
+        else:
+            m = float(mag[int(np.argmin(np.abs(freqs - band["freq"])))])
+        out.append(20.0 * math.log10(max(min(m, 1.0), 1e-9)))
+    return out
 
 
 def _spectrum_level_db(samples) -> tuple[float, float]:
@@ -659,6 +737,12 @@ class SpectrumAnalyzer:
             "floor_db": SPECTRUM_FLOOR_DB,
             "min_frequency": SPECTRUM_MIN_FREQ,
             "mode": self.mode,
+            # DRC-sync slider: measured base delay, the listener's live delta and
+            # the bounds it can travel between (all milliseconds).
+            "drc_delay_base_ms": round(_drc_display_delay_seconds() * 1000.0, 1),
+            "drc_delay_delta_ms": round(SPECTRUM_DRC_DELAY_DELTA_MS, 1),
+            "drc_delay_delta_min_ms": round(SPECTRUM_DRC_DELAY_DELTA_MIN_MS, 1),
+            "drc_delay_delta_max_ms": round(SPECTRUM_DRC_DELAY_DELTA_MAX_MS, 1),
         }
 
     def _start_thread_locked(self, mode: str) -> None:
@@ -799,22 +883,35 @@ class SpectrumAnalyzer:
             interval = 1.0 / SPECTRUM_REFRESH_HZ
             next_at = time.monotonic()
             last_data_at = 0.0
-            window = np.hanning(fft_size).astype(np.float32)
+            # Multi-resolution band analysis: bass keeps the full window for fine
+            # frequency resolution, treble uses short windows for snappy transient
+            # response (cymbals/drums).  Disabled in precision mode, which wants
+            # maximum resolution everywhere for test tones.
+            multi_res = self.mode != "precision" and fft_size >= 2048
+            tiers = _spectrum_tiers(fft_size, SPECTRUM_RATE, multi_res)
+            band_defs = _spectrum_band_defs(SPECTRUM_BANDS, SPECTRUM_RATE / 2.0, SPECTRUM_MIN_FREQ)
+            band_tier = _assign_band_tiers(band_defs, tiers, SPECTRUM_RATE)
             # VU ballistics are computed over a short trailing slice (~50 ms) of
             # the captured buffer rather than the whole FFT window so the meters
             # track the music instead of lagging behind by the FFT length
             # (341 ms music / 1.36 s precision).
             vu_window = max(256, min(fft_size, int(SPECTRUM_RATE * 0.05)))
-            freqs_all = np.fft.rfftfreq(fft_size, 1.0 / SPECTRUM_RATE)
-            silence_bands = _spectrum_band_defs(SPECTRUM_BANDS, float(freqs_all[-1]), SPECTRUM_MIN_FREQ)
+            silence_bands = band_defs
 
             # DRC sync: the FIFO is pre-DRC, so slide the analysis window back by
             # the BruteFIR path delay to match the audible signal.  Re-checked on
             # a slow cadence (the heavy filter read is cached) so it tracks filter
             # / preset / rate changes without per-frame cost.
             delay_bytes = 0
+            base_delay_s = 0.0
             delay_check_interval = 2.0
             next_delay_check = 0.0
+            # Declare silence quickly once the FIFO stops delivering, so the bars
+            # and VU meters drop the moment playback stops instead of freezing on
+            # the last delay-held window for half a second.  PCM flows continuously
+            # during playback and only a real stop/pause halts the writes, so this
+            # short timeout does not false-trigger on quiet musical passages.
+            silence_timeout = 0.15
 
             def keep_bytes() -> int:
                 # Hold enough history for the FFT window plus the sync delay.
@@ -877,9 +974,13 @@ class SpectrumAnalyzer:
                 next_at = now + interval
                 if now >= next_delay_check:
                     next_delay_check = now + delay_check_interval
-                    delay_frames = int(round(_drc_display_delay_seconds() * SPECTRUM_RATE))
+                    base_delay_s = _drc_display_delay_seconds()
+                    # Total hold-back = measured base + the listener's sync delta,
+                    # floored at 0 (cannot show samples not yet played).
+                    total_delay_s = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0)
+                    delay_frames = int(round(total_delay_s * SPECTRUM_RATE))
                     delay_bytes = delay_frames * frame_bytes
-                if last_data_at and now - last_data_at > 0.5:
+                if last_data_at and now - last_data_at > silence_timeout:
                     publish_silence()
                     continue
                 # Window ends `delay_bytes` before the newest sample so the
@@ -895,13 +996,9 @@ class SpectrumAnalyzer:
                 pcm = np.frombuffer(raw, dtype="<i4").reshape(-1, SPECTRUM_CHANNELS)
                 left = pcm[:, 0].astype(np.float32) / 2147483648.0
                 right = pcm[:, 1].astype(np.float32) / 2147483648.0
-                l_mag = np.abs(np.fft.rfft(left * window))
-                r_mag = np.abs(np.fft.rfft(right * window))
-                scale = max(float(window.sum()) / 2.0, 1.0)
-                l_norm = l_mag / scale
-                r_norm = r_mag / scale
-                bands, l_bins = _spectrum_log_bins(freqs_all, l_norm, SPECTRUM_BANDS)
-                _, r_bins = _spectrum_log_bins(freqs_all, r_norm, SPECTRUM_BANDS)
+                bands = band_defs
+                l_bins = _spectrum_multi_bins(left, band_defs, band_tier, tiers)
+                r_bins = _spectrum_multi_bins(right, band_defs, band_tier, tiers)
                 l_rms, l_peak = _spectrum_level_db(left[-vu_window:])
                 r_rms, r_peak = _spectrum_level_db(right[-vu_window:])
                 self._publish({
@@ -912,6 +1009,8 @@ class SpectrumAnalyzer:
                     "mode": self.mode,
                     "fft_size": fft_size,
                     "drc_delay": round(delay_bytes / frame_bytes / SPECTRUM_RATE, 3),
+                    "drc_delay_base": round(base_delay_s, 3),
+                    "drc_delay_delta": round(SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0, 3),
                     "bands": [
                         {
                             "freq": round(b["freq"], 1),
@@ -1162,6 +1261,69 @@ _BRUTEFIR_DEFAULTS = os.path.join(
 
 _drc_delay_cache: dict = {"key": None, "seconds": 0.0}
 _drc_delay_lock = threading.Lock()
+
+# The analyzer slider positions (Sync delta and Floor) are per-listener runtime
+# settings, remembered between runs in tiny state files.  They are deliberately
+# kept out of commands.conf so the installed config stays declarative; only the
+# *defaults* / *bounds* live there.
+
+
+def _resolve_state_dir() -> str:
+    """Runtime state directory, mirroring drc.sh's resolution so the whole stack
+    shares one location (see doc/FREEBSD-PORT-PLAN.md 1.4):
+
+        $OMDRC_STATE_DIR            explicit override — services pin this
+        run-from-repo (config.env)  beside the checkout, as drc.sh does
+        root                        /var/db/omdrc
+        otherwise                   ${XDG_STATE_HOME:-~/.local/state}/omdrc
+
+    A packaged install must never write inside its own installed files: pkg
+    check -s flags any modified packaged file.  Note the omdrcctrl rc.d script
+    drops privileges to a service user, so the root branch will not be taken
+    under service(8) — pin OMDRC_STATE_DIR (rc.conf/omdrc.conf) to share state
+    with drc.sh in that case."""
+    env_dir = os.environ.get("OMDRC_STATE_DIR")
+    if env_dir:
+        return env_dir
+    repo_root = os.path.abspath(os.path.join(_HERE, os.pardir, os.pardir))
+    if os.path.isfile(os.path.join(repo_root, "config.env")):
+        return repo_root
+    if os.geteuid() == 0:
+        return "/var/db/omdrc"
+    xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return os.path.join(xdg, "omdrc")
+
+
+_STATE_DIR = _resolve_state_dir()
+_DELTA_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-delta")
+_FLOOR_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-floor-db")
+
+
+def _clamp_delta(ms: float) -> float:
+    return max(SPECTRUM_DRC_DELAY_DELTA_MIN_MS,
+               min(SPECTRUM_DRC_DELAY_DELTA_MAX_MS, float(ms)))
+
+
+def _read_state_float(path: str) -> float | None:
+    """A single float saved by a previous run, or None if unset/unreadable."""
+    try:
+        with open(path) as fh:
+            return float(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_state_float(path: str, val: float) -> None:
+    """Persist a single float atomically; best-effort (never raises)."""
+    try:
+        os.makedirs(_STATE_DIR, exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as fh:
+            fh.write(f"{val:.1f}\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 def _brutefir_partition_size(conf_text: str) -> int | None:
@@ -1547,17 +1709,52 @@ def qconnect_status():
 def _service_running(name: str) -> bool:
     """True if renderer service `name` is currently running.  Linux: systemd
     --user is-active.  FreeBSD: rc `onestatus` (works whether or not the service
-    is enabled in rc.conf)."""
+    is enabled in rc.conf), falling back to a process check.
+
+    `service <name> onestatus` is unreliable here when run unprivileged: rc.subr
+    reads the pidfile, and a renderer that runs under its own service account
+    keeps that pidfile inside a 0700 home directory the panel user cannot
+    traverse (qobuzconnect2mpd puts it under /var/db/qobuzconnect2mpd), so
+    onestatus reports "not running" for a service that is running.  Start/stop
+    go through sudo and do not have that blind spot, so believing onestatus
+    would let both mutually-exclusive renderers drive MPD at once.
+
+    Process visibility is not privileged, so fall back to matching the running
+    binary — both renderers install as <prefix>/bin/<service-name>, the same
+    argv[0] their rc scripts use as `procname`.  Matching argv[0] rather than
+    the whole line keeps daemon(8) wrappers and greps from counting as hits.
+    """
     if _IS_LINUX:
         cmd = ["systemctl", "--user", "is-active", "--quiet", name]
-    else:
-        cmd = ["service", name, "onestatus"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
+                               env=_env())
+            return r.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            return False
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
+        r = subprocess.run(["service", name, "onestatus"],
+                           capture_output=True, text=True, timeout=10,
                            env=_env())
-        return r.returncode == 0
+        if r.returncode == 0:
+            return True
     except (subprocess.TimeoutExpired, OSError):
-        return False
+        pass
+    return _proc_running(name)
+
+
+def _proc_running(binname: str) -> bool:
+    """True if a process whose argv[0] basename is `binname` is running.
+    Unprivileged and config-free — see _service_running for why the rc status
+    check alone is not trustworthy."""
+    for line in _ps_arg_lines():
+        try:
+            argv = shlex.split(line)
+        except ValueError:
+            argv = line.split()
+        if argv and os.path.basename(argv[0]) == binname:
+            return True
+    return False
 
 
 def _service_action(name: str, action: str):
@@ -1623,12 +1820,14 @@ def qconnect_switch():
         return jsonify({"ok": False, "error": "invalid target"}), 400
     other = UPMPDCLI_SERVICE if target == QCONNECT_SERVICE else QCONNECT_SERVICE
     try:
-        # Stop the active one before starting the next.
+        # Stop the active one before starting the next.  The stop is issued
+        # unconditionally rather than gated on _service_running(): a status
+        # check that wrongly reports "not running" would otherwise skip it and
+        # leave both renderers driving MPD.  onestop on an already-stopped
+        # service exits non-zero, so what counts is the state afterwards.
+        _service_action(other, "onestop")
         if _service_running(other):
-            r = _service_action(other, "onestop")
-            if r.returncode != 0:
-                return jsonify({"ok": False,
-                                "error": f"stopping {other}: {(r.stderr or r.stdout).strip()}"})
+            return jsonify({"ok": False, "error": f"could not stop {other}"})
         # Leave MPD in a clean state for the incoming renderer.
         _mpc_quiesce()
         if not _service_running(target):
@@ -1881,6 +2080,46 @@ def spectrum_settings():
     })
 
 
+@app.route("/spectrum/drc-delay", methods=["POST"])
+def spectrum_drc_delay():
+    """Set (and remember) the DRC-sync slider delta in milliseconds."""
+    global SPECTRUM_DRC_DELAY_DELTA_MS
+    raw = request.form.get("delta_ms", request.args.get("delta_ms"))
+    if raw is None and request.is_json:
+        raw = (request.get_json(silent=True) or {}).get("delta_ms")
+    try:
+        delta = _clamp_delta(float(raw))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "delta_ms must be a number"}), 400
+    SPECTRUM_DRC_DELAY_DELTA_MS = delta
+    _write_state_float(_DELTA_STATE_FILE, delta)
+    base_ms = round(_drc_display_delay_seconds() * 1000.0, 1)
+    return jsonify({
+        "ok": True,
+        "drc_delay_delta_ms": round(delta, 1),
+        "drc_delay_base_ms": base_ms,
+        "drc_delay_total_ms": round(max(0.0, base_ms + delta), 1),
+        "drc_delay_delta_min_ms": round(SPECTRUM_DRC_DELAY_DELTA_MIN_MS, 1),
+        "drc_delay_delta_max_ms": round(SPECTRUM_DRC_DELAY_DELTA_MAX_MS, 1),
+    })
+
+
+@app.route("/spectrum/floor", methods=["POST"])
+def spectrum_floor():
+    """Set (and remember) the analyzer floor in dBFS."""
+    global SPECTRUM_FLOOR_DB
+    raw = request.form.get("floor_db", request.args.get("floor_db"))
+    if raw is None and request.is_json:
+        raw = (request.get_json(silent=True) or {}).get("floor_db")
+    try:
+        floor = max(-90.0, min(-24.0, float(raw)))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "floor_db must be a number"}), 400
+    SPECTRUM_FLOOR_DB = floor
+    _write_state_float(_FLOOR_STATE_FILE, floor)
+    return jsonify({"ok": True, "floor_db": round(floor, 1)})
+
+
 @app.route("/spectrum/stream")
 def spectrum_stream():
     if not SPECTRUM_ENABLED:
@@ -2079,12 +2318,32 @@ def status():
     return jsonify({"ok": True, "units": units})
 
 
+def _resolve_config_path() -> str:
+    """Default commands.conf location (see doc/FREEBSD-PORT-PLAN.md 1.3):
+
+        $OMDRCCTRL_CONF                              explicit override
+        ${PREFIX}/etc/open-media-drc/commands.conf   packaged install
+        <app dir>/commands.conf                      run-from-repo / CMake
+
+    An explicit --config always wins over all of these, so the run-from-repo
+    launcher (which passes --config) is unaffected.  Kept distinct from drc.sh's
+    $OMDRC_CONF, which names a different file (omdrc.conf)."""
+    env_conf = os.environ.get("OMDRCCTRL_CONF")
+    if env_conf:
+        return env_conf
+    packaged = os.path.join(os.environ.get("PREFIX", "/usr/local"),
+                            "etc", "open-media-drc", "commands.conf")
+    if os.path.isfile(packaged):
+        return packaged
+    return os.path.join(_HERE, "commands.conf")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="OMDRC Control web interface")
     parser.add_argument("--host",   default="0.0.0.0")
     parser.add_argument("--port",   type=int, default=9090)
-    parser.add_argument("--config", default=os.path.join(_HERE, "commands.conf"))
+    parser.add_argument("--config", default=_resolve_config_path())
     args = parser.parse_args()
     load_config(args.config)
     # Make sure the spectrum FIFO output is off until Start is pressed, even if

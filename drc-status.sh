@@ -2,10 +2,33 @@
 # Print the active DRC config label, or 'off'.
 # Exits 1 and prints 'inconsistent' if multiple different configs are running.
 
-GEOMETRY="120.blue"   # speaker geometry / filter set to use — keep in sync with drc.sh
-# Resolve this script's directory so the tool is portable (no hardcoded $HOME).
+# Config resolution — keep in sync with drc.sh: $OMDRC_CONF, else config.env
+# beside the script (run-from-repo mode), else ${PREFIX}/etc/open-media-drc/
+# omdrc.conf (installed mode).  Supplies GEOMETRY and OMDRC_STATE_DIR.
 base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_FILE="$base_dir/last_arg"
+PREFIX="${PREFIX:-/usr/local}"
+
+OMDRC_REPO_MODE=false
+if [ -n "${OMDRC_CONF:-}" ] && [ -f "$OMDRC_CONF" ]; then
+    . "$OMDRC_CONF"
+elif [ -f "$base_dir/config.env" ]; then
+    . "$base_dir/config.env"
+    OMDRC_REPO_MODE=true
+elif [ -f "$PREFIX/etc/open-media-drc/omdrc.conf" ]; then
+    . "$PREFIX/etc/open-media-drc/omdrc.conf"
+fi
+GEOMETRY="${GEOMETRY:-flat}"
+
+if [ -n "${OMDRC_STATE_DIR:-}" ]; then
+    STATE_DIR="$OMDRC_STATE_DIR"
+elif $OMDRC_REPO_MODE; then
+    STATE_DIR="$base_dir"
+elif [ "$(id -u)" -eq 0 ]; then
+    STATE_DIR="/var/db/omdrc"
+else
+    STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omdrc"
+fi
+STATE_FILE="$STATE_DIR/last_arg"
 
 if [ "${1:-}" = "--geometry" ]; then
     echo "$GEOMETRY"

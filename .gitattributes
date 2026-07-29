@@ -1,0 +1,38 @@
+# Release tarball hygiene: `git archive` (what GitHub release tarballs and the
+# FreeBSD port's USE_GITHUB fetch use) excludes everything marked
+# export-ignore.  The working checkout keeps all of it — run-from-repo mode is
+# unaffected.
+
+# Room-specific site data (this box's measured filters and configs — users
+# generate their own; the shipped default is configs/flat)
+/filters export-ignore
+/configs/120.blue export-ignore
+/configs/185 export-ignore
+/doc/current.amplitude.png export-ignore
+/doc/current.clarity.c80.png export-ignore
+/doc/current.etc.png export-ignore
+/doc/current.impulse.png export-ignore
+/doc/current.phase.png export-ignore
+
+# Kernel/userland patch work — belongs upstream (FreeBSD base, virtual_oss,
+# Kodi), not in a release of this stack
+/freebsd-uaudio-patch export-ignore
+/freebsd-virtual-oss-patch export-ignore
+/freebsd-coredump-kqueue export-ignore
+/kodi-virtual-oss-patch export-ignore
+
+# Debugging investigation journals (kept in-repo as history)
+/VIRTUAL_OSS_CUSE_DEADLOCK.md export-ignore
+/VIRTUAL_OSS_CUSE_DEADLOCK.bugzilla.txt export-ignore
+/OKTO-DAC8-FreeBSD-44k1-flicker.md export-ignore
+/OKTO-DAC8-silent-first-open.md export-ignore
+/MPD-CURL-CPU-SPIN-FreeBSD.md export-ignore
+
+# Host-personal values (this box's user/paths/account) — a tarball user
+# configures via omdrc.conf.sample instead; repo-mode needs a checkout anyway
+/config.env export-ignore
+
+# Tooling / local state
+/.claude export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore

@@ -51,6 +51,8 @@ min_frequency = 31.5
 floor_db = -40
 vu_mode = bars
 drc_delay_trim_ms = 0
+drc_delay_delta_min_ms = -1000
+drc_delay_delta_max_ms = 2000
 ```
 
 Then make sure the matching MPD output exists in the MPD config — `mpd/mpd.conf`
@@ -143,15 +145,103 @@ A Bars/Needles toggle below the equalizer switches the VU display;
   drawn tall with a wide angular sweep so the needle travels a long, readable
   distance.
 
+Both styles use **analog-style ballistics** so they do not snap to zero when the
+music stops.  A `requestAnimationFrame` loop eases the displayed level toward the
+latest measured value: *rises are instant* (transients pop immediately), while
+*falls are rate-limited* so the needle/bar glides down like a weighted meter.
+The fall is level-dependent — small musical dips (≤ 8 dB) return fast at
+`VU_FALL_FAST` so the meters stay lively, but a large abrupt drop (a stop) glides
+at the slower `VU_FALL_SLOW`, reaching the floor in roughly half a second to a
+second.  A constant dB/s rate (rather than an exponential) gives a uniform,
+needle-like travel speed; the three constants at the top of the VU-ballistics
+block in `index.html` tune the feel.
+
 The default FFT size is intentionally moderate: at 48 kHz, 16384 samples give
 about 2.9 Hz bin spacing and a much livelier display than long measurement
 windows.  The web UI's Music/Precision toggle switches the stream between this
 music window and `precision_fft_size` for narrow test-tone display.
 
+### Multi-resolution bands
+
+A single FFT window forces a bad compromise: bass needs a **long** window for
+frequency resolution, but a long window is **slow on transients** — with one
+8192-sample window every band is an average of 171 ms, so cymbals and drum
+attacks look smeared and late.
+
+Music mode therefore analyses in three resolution tiers and gives every display
+band the **shortest window that still resolves it**:
+
+| Tier | Window @ 48 kHz | Used for |
+| --- | --- | --- |
+| `fft_size` | 171 ms (at 8192) | bass, up to ~160 Hz |
+| `fft_size / 4` | 43 ms | lower mids (~250 Hz) |
+| `fft_size / 8` | 21 ms | ~400 Hz and up — cymbals, drum attacks |
+
+Assignment is automatic (`_assign_band_tiers`): a band takes the shortest tier
+that still lands at least ~3 FFT bins inside it, falling back to the full window
+for the narrow low bands.  All tiers end on the same sample, so they stay time
+aligned, and because the per-band value is `sqrt(Σ bin²)` of amplitude-normalised
+magnitudes, levels are window-length independent — measured systematic error
+across a crossover is **≤ 0.8 dB**, so there is no visible step.
+
+The payoff is large: after a 5 ms noise burst (a cymbal hit), the high bands read
+about **−29 dB with multi-resolution versus −74 dB with one 8192 window** — the
+transient actually registers instead of being diluted across 171 ms.  Cost is
+~7 % more FFT work, about **1 % of one core at 30 Hz refresh**.
+
+Precision mode keeps a **single full-length window** — measurement work wants
+maximum resolution everywhere, not fast transients.
+
 `floor_db` controls visual sensitivity and is also adjustable from the web UI
 with the Floor slider.  A higher floor such as `-35` hides more low-level band
 energy; a lower floor such as `-70` reveals quiet detail.  The default `-40` is
-tuned for music rather than measurement work.
+tuned for music rather than measurement work.  A change made with the slider is
+remembered across restarts (persisted as `spectrum-floor-db` in the state
+directory — see [Runtime state](#runtime-state)), so `floor_db` in
+`commands.conf` is only the initial default until the slider is first moved.
+The Floor and Sync sliders live behind the **Sliders** toggle in the
+Music/Precision row.
+
+### Runtime state
+
+The slider positions are the only things the analyzer writes at runtime.  The
+state directory is resolved exactly as `drc.sh` resolves it, so the whole stack
+shares one location (see `doc/FREEBSD-PORT-PLAN.md` §1.4):
+
+| Condition | State directory |
+| --- | --- |
+| `$OMDRC_STATE_DIR` set | that path (services pin this) |
+| run-from-repo (`config.env` in the checkout) | beside the checkout |
+| running as root | `/var/db/omdrc` |
+| otherwise | `${XDG_STATE_HOME:-~/.local/state}/omdrc` |
+
+A packaged install must never write inside its own installed files — `pkg
+check -s` flags any modified packaged file.  Note that the `omdrcctrl` rc.d
+script drops privileges to a service user, so the root branch is *not* taken
+under `service(8)`: pin `OMDRC_STATE_DIR` (in `rc.conf` or `omdrc.conf`) to give
+the service a writable, shared state directory.  Writes are best-effort — if the
+directory is not writable the sliders simply stop being remembered rather than
+failing the request.
+
+## Detached window
+
+The analyzer card can be popped out of the main page into its own window, so it
+can sit on a second monitor or stay visible while you use other apps.  Two buttons
+in the card's title row drive this:
+
+- **⇗ Detach** — opens the same page in *spectrum-only* mode in a separate browser
+  window (`window.open('?view=spectrum', …)`).  That mode simply hides every card
+  except the analyzer and auto-starts it, so it is the exact same code with
+  nothing to keep in sync.  Works in every browser.
+- **PiP** — opens an always-on-top **picture-in-picture** window (Chromium's
+  Document Picture-in-Picture).  The PiP window hosts the spectrum-only page in an
+  `<iframe>`, so it is fully interactive.  The button appears only where the
+  browser supports the API (Chrome/Edge; hidden in Firefox/Safari).
+
+Each detached view is just another analyzer client: it joins the same
+reference-counted, server-side SSE broadcast rather than starting a second
+capture.  The Sync delta and Floor are server-side settings, so every view — main
+page, popout and PiP — shows the same corrected, identically-scaled display.
 
 ## DRC Sync
 
@@ -177,6 +267,28 @@ The value is cached and recomputed only when the active config, filter file or
 defaults change, so it tracks preset / rate / filter edits with no per-frame
 cost.  When DRC is bypassed (BruteFIR not running) the delay is zero.  The live
 value is shown in the card status line as `DRC sync +Xs`.
+
+### Sync slider
+
+The measured delay is a good estimate, but the last few tens of milliseconds of
+runtime buffering vary between machines, and only the listener can judge when the
+bars line up with the sound.  A **Sync** slider under the analyzer adds a live
+**delta** on top of the measured **base** delay so it can be nudged by ear.  The
+row beside it prints all three figures in milliseconds:
+
+    base <measured> ms · delta <slider> ms · total <base+delta> ms
+
+The total applied hold-back is floored at 0 — you cannot show samples that have
+not been played yet — so a negative delta larger than the base has no further
+effect.  The slider position is remembered across restarts (persisted as
+`spectrum-drc-delay-delta` in the state directory — see
+[Runtime state](#runtime-state)) and is applied to the shared capture thread, so
+every connected browser sees the same corrected display.
+
+The travel limits are the two config-editable keys `drc_delay_delta_min_ms` and
+`drc_delay_delta_max_ms` (default `-1000` … `2000`, i.e. −1 s … +2 s).  Unlike
+`drc_delay_trim_ms`, which is a static fine-tune baked into the base, the slider
+delta is a runtime setting and is not written back to `commands.conf`.
 
 ## Host Load
 

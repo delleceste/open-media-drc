@@ -315,13 +315,15 @@ Signature: `drc.sh <rate>|resamp|restore|off|stop [variant]`
   clean reboot of a *running* system is restored rather than left off
 - `variant` — optional second argument, e.g. `+2dB`, selects an alternate filter set
 
-State is split across two files in the repo root so the on/off state and the
-remembered rate stay independent:
+State is split across two files (repo root in run-from-repo mode; `/var/db/omdrc`
+or `~/.local/state/omdrc` — override with `OMDRC_STATE_DIR` — when installed)
+so the on/off state and the remembered rate stay independent:
 
 - `last_arg` — the last *active rate* and optional variant (e.g. `192000`, `resamp`,
   `192000 +2dB`). Written on each successful rate/`resamp` run and **never erased by
   `off`**, so turning DRC back on restores the rate you last used. Geometry is not part
-  of it — it is hardcoded at the top of the script (`GEOMETRY="120.blue"`).
+  of it — it comes from `GEOMETRY` in the config file (`config.env` in this repo;
+  default `flat` = shipped identity filters, this box sets `120.blue`).
 - `last_power` — `on` or `off`. A rate/`resamp` run writes `on`; an explicit `off`
   writes `off`. The service teardown verb `stop` deliberately does **not** write it, so
   only a real user action changes it. `restore` reads `last_power` first and stays off

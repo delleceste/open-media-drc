@@ -1,0 +1,64 @@
+#!/bin/sh
+#
+# PROVIDE: omdrcctrl
+# REQUIRE: NETWORKING LOGIN
+# KEYWORD: shutdown
+#
+# Add to /etc/rc.conf:
+# omdrcctrl_enable="YES"
+# omdrcctrl_user="<audio user>"        # REQUIRED — the same login user as
+#                                      # brutefir_drc_user
+#
+# Web control panel (Flask) for the DRC stack.  It shells out to omdrc(1), so
+# it must run as the same audio user that owns brutefir: a root-owned panel
+# could not control a user-owned brutefir (and vice versa).  Started as root at
+# boot, rc.subr drops privileges with su(1) via the special ${name}_user.
+
+. /etc/rc.subr
+
+name="omdrcctrl"
+rcvar="omdrcctrl_enable"
+
+load_rc_config "$name"
+
+: ${omdrcctrl_enable:="NO"}
+: ${omdrcctrl_user:=""}
+: ${omdrcctrl_addr:="0.0.0.0"}
+: ${omdrcctrl_port:="9090"}
+: ${omdrcctrl_config:="%%PREFIX%%/etc/open-media-drc/commands.conf"}
+# Runtime state (the analyzer's Sync/Floor slider positions) must never land
+# inside packaged files — pkg check -s flags any modified packaged file.  Pin
+# the shared omdrc state directory explicitly: rc.subr drops privileges before
+# the app runs, so the app's own "running as root -> /var/db/omdrc" branch is
+# not taken here.
+: ${omdrcctrl_statedir:="/var/db/omdrc"}
+: ${omdrcctrl_pidfile:="/var/run/${name}/${name}.pid"}
+: ${omdrcctrl_logfile:="/var/log/${name}.log"}
+# rc(8) runs with a minimal PATH that omits %%PREFIX%%/{s,}bin, where python3
+# and the tools the app shells out to (omdrc, mpc, pgrep, ...) live.  DISPLAY
+# lets it reach the local X session for the browser/renderer actions.
+: ${omdrcctrl_env:="PATH=%%PREFIX%%/sbin:%%PREFIX%%/bin:/sbin:/bin:/usr/sbin:/usr/bin DISPLAY=:0 OMDRC_STATE_DIR=${omdrcctrl_statedir}"}
+
+pidfile="${omdrcctrl_pidfile}"
+command="/usr/sbin/daemon"
+# No `daemon -u`: rc.subr has already dropped privileges via ${name}_user, and
+# using both would run setusercontext() a second time as the already-dropped
+# user ("daemon: failed to set user environment").
+command_args="-f -o ${omdrcctrl_logfile} -P ${pidfile} \
+	%%PREFIX%%/bin/omdrcctrl --host ${omdrcctrl_addr} \
+	--port ${omdrcctrl_port} --config ${omdrcctrl_config}"
+
+start_precmd="omdrcctrl_precmd"
+
+omdrcctrl_precmd()
+{
+	if [ -z "${omdrcctrl_user}" ]; then
+		err 1 "set omdrcctrl_user in /etc/rc.conf (same user as brutefir_drc_user)"
+	fi
+	# Created here as root, before the su(1) switch: the daemon writes its
+	# pidfile and state after privileges are dropped.
+	/usr/bin/install -d -o "${omdrcctrl_user}" -m 0755 "${pidfile%/*}"
+	/usr/bin/install -d -o "${omdrcctrl_user}" -m 0755 "${omdrcctrl_statedir}"
+}
+
+run_rc_command "$1"

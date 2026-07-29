@@ -18,8 +18,8 @@ import time
 
 from flask import Flask, jsonify, render_template, request, send_file
 
-from lib import (classify, favorites, imdb, mpvipc, play, thumbs, titles,
-                 roots as rootlib)
+from lib import (avsync, classify, favorites, imdb, mpvipc, play, thumbs,
+                 titles, roots as rootlib)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,17 +39,23 @@ DISC_ENABLED = True
 DISC_DEV = "cd0"
 DISC_CACHE = "bd"
 DISC_SCRIPT = os.path.join(_HERE, os.pardir, "disc.sh")
+AVSYNC_RANGE = 1.0
+AVSYNC_STEP = 0.01
 
 
 def fav_file() -> str:
     return os.path.join(os.path.expanduser(CACHE_DIR), "favorites.json")
 
 
+def avsync_file() -> str:
+    return os.path.join(os.path.expanduser(CACHE_DIR), "avsync.json")
+
+
 def load_config(path: str | None) -> None:
     """Load config from an INI file; fall back to built-in defaults."""
     global HOST, PORT, ROOTS, _RAW_ROOTS, CACHE_DIR, SEEK_PCT, MAX_W, OMDB_KEY
     global MPV_SOCKET, PREWARM_INTERVAL, THUMB_CONCURRENCY
-    global DISC_ENABLED, DISC_DEV, DISC_CACHE
+    global DISC_ENABLED, DISC_DEV, DISC_CACHE, AVSYNC_RANGE, AVSYNC_STEP
     if path and os.path.isfile(path):
         cfg = configparser.ConfigParser()
         cfg.read(path)
@@ -66,6 +72,8 @@ def load_config(path: str | None) -> None:
         DISC_ENABLED = cfg.getboolean("disc", "enabled", fallback=DISC_ENABLED)
         DISC_DEV = cfg.get("disc", "device", fallback=DISC_DEV)
         DISC_CACHE = cfg.get("disc", "cache", fallback=DISC_CACHE)
+        AVSYNC_RANGE = abs(cfg.getfloat("avsync", "range", fallback=AVSYNC_RANGE))
+        AVSYNC_STEP = abs(cfg.getfloat("avsync", "step", fallback=AVSYNC_STEP)) or 0.01
     # Physical Blu-ray disc playback uses FreeBSD-only plumbing (gcache/kldload,
     # cd0); force it off everywhere else regardless of config so /api/roots
     # reports disc:false and the UI hides the button.
@@ -461,6 +469,32 @@ def api_status():
     })
 
 
+@app.route("/api/avsync", methods=["GET", "POST"])
+def api_avsync():
+    """A/V sync fine-tune around mpv's baseline audio-delay.
+
+    GET          -> {base, trim, delay, range, step}
+    POST {trim}  -> set the trim (seconds, clamped to ±range); + delays the audio.
+
+    The baseline comes from mpv-idle.sh (DRC audio-path latency, see
+    ../../AV-SYNC-DELAY.md); this only moves the leftover buffering term.
+    """
+    if request.method == "GET":
+        return jsonify({"ok": True,
+                        **avsync.state(MPV_SOCKET, avsync_file(), AVSYNC_RANGE, AVSYNC_STEP)})
+    body = request.get_json(silent=True) or {}
+    try:
+        st = avsync.set_trim(MPV_SOCKET, avsync_file(), AVSYNC_RANGE, AVSYNC_STEP,
+                             float(body.get("trim")))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "bad trim value"}), 400
+    except mpvipc.MpvNotRunning:
+        return jsonify({"ok": False, "error": "mpv is not running"}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, **st})
+
+
 @app.route("/api/tracks")
 def api_tracks():
     """Audio and subtitle tracks of the current item, for the track menus."""
@@ -487,6 +521,8 @@ def api_tracks():
 # IPC commands default to no on-screen feedback; the leading osd-* prefixes force
 # mpv to flash its OSD (osd-bar = the seek/progress bar, osd-msg = text) so changes
 # made from the remote are visible on the TV.
+# `set` parses its argument as option *text*, so its value must be a string (a JSON
+# number is rejected with "invalid parameter"); `seek` does take real numbers.
 _CMD_OPS = {
     "toggle": lambda v: ["osd-msg-bar", "cycle", "pause"],
     "pause":  lambda v: ["osd-msg-bar", "set", "pause", "yes"],
@@ -494,10 +530,10 @@ _CMD_OPS = {
     "stop":   lambda v: ["stop"],                       # back to idle -> window hides
     "seek":   lambda v: ["osd-bar", "seek", float(v), "relative"],
     "seekto": lambda v: ["osd-bar", "seek", float(v), "absolute"],
-    "volume": lambda v: ["osd-bar", "set", "volume", float(v)],
+    "volume": lambda v: ["osd-bar", "set", "volume", str(float(v))],
     "mute":   lambda v: ["osd-msg", "cycle", "mute"],
-    "audio":  lambda v: ["osd-msg", "set", "aid", v],
-    "sub":    lambda v: ["osd-msg", "set", "sid", v],
+    "audio":  lambda v: ["osd-msg", "set", "aid", str(v)],
+    "sub":    lambda v: ["osd-msg", "set", "sid", str(v)],
 }
 
 

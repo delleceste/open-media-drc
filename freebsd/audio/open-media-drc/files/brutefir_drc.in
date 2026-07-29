@@ -1,0 +1,73 @@
+#!/bin/sh
+#
+# PROVIDE: brutefir_drc
+# REQUIRE: musicpd
+# KEYWORD: shutdown
+#
+# Add to /etc/rc.conf:
+# brutefir_drc_enable="YES"
+# brutefir_drc_user="<audio user>"     # REQUIRED — the login user that owns
+#                                      # brutefir and ~/.config/BruteFIR
+#
+# Worker service invoked by drc_usb_audio (onestart/onestop) when the DAC is
+# present.  Do NOT enable it standalone alongside drc_usb_audio_enable.
+#
+# brutefir must run as the AUDIO USER, not root: both this service and an
+# interactive `omdrc` run have to own brutefir as the same user, otherwise a
+# user run cannot kill a root-owned brutefir.  Started as root at boot we drop
+# privileges with su(1); started by the user we run in place.  virtual_oss
+# still becomes root via drc.sh's internal sudo/root path.
+
+. /etc/rc.subr
+
+name="brutefir_drc"
+rcvar="brutefir_drc_enable"
+start_cmd="brutefir_drc_start"
+stop_cmd="brutefir_drc_stop"
+status_cmd="brutefir_drc_status"
+start_precmd="brutefir_drc_precmd"
+
+load_rc_config "$name"
+
+: ${brutefir_drc_enable:="NO"}
+: ${brutefir_drc_user:=""}
+: ${brutefir_drc_drcsh:="%%PREFIX%%/libexec/omdrc/drc.sh"}
+: ${brutefir_drc_statussh:="%%PREFIX%%/libexec/omdrc/drc-status.sh"}
+
+brutefir_drc_precmd()
+{
+	if [ -z "${brutefir_drc_user}" ]; then
+		err 1 "set brutefir_drc_user in /etc/rc.conf (the login user that owns brutefir)"
+	fi
+}
+
+# Run a command as the audio user.  Use a LOGIN shell (su -l) so HOME and the
+# full PATH (incl. %%PREFIX%%/bin, where brutefir/mpc live) come from the
+# user's login class — a boot service's PATH would otherwise miss them.
+_drc_as_user()
+{
+	if [ "$(id -u)" -eq 0 ]; then
+		su -l "${brutefir_drc_user}" -c "$*"
+	else
+		sh -c "$*"
+	fi
+}
+
+brutefir_drc_start()
+{
+	_drc_as_user "${brutefir_drc_drcsh} restore"
+}
+
+brutefir_drc_stop()
+{
+	# `stop` (not `off`): transient teardown at shutdown / USB detach that does
+	# not record the off state, so a reboot of a running system is restored.
+	_drc_as_user "${brutefir_drc_drcsh} stop"
+}
+
+brutefir_drc_status()
+{
+	_drc_as_user "${brutefir_drc_statussh}"
+}
+
+run_rc_command "$1"

@@ -1,11 +1,58 @@
+From d4b1920bd6f95d03c5f0991153e4a26b4572b0fe Mon Sep 17 00:00:00 2001
+From: giacomo <delleceste@gmail.com>
+Date: Wed, 15 Jul 2026 13:34:34 +0200
+Subject: [PATCH] sound: uaudio: don't let an idle stream reprogram a shared
+ UAC2 clock
+
+Some UAC2 devices expose a single Clock Source entity that is shared
+between their playback and capture interfaces (it appears in both the
+output and input clock bitmaps).  On such a device uaudio(4) programs
+the sample rate for both directions when a stream starts.  If playback
+runs at a 44.1 kHz-family rate while the idle capture channel is left
+at its 48 kHz-family default, the capture
+SET_CUR(UA20_CS_SAM_FREQ_CONTROL) is issued after the playback one and
+overwrites the rate on the shared clock.  The device then runs at
+~48 kHz while the playback stream carries 44.1 kHz data.  Consuming
+samples faster than they arrive, the device repeatedly runs out of
+data, loses sync with the playback stream, and re-locks onto it
+(audible dropouts, front-panel play/idle flicker).  The 48 kHz family
+is unaffected because both directions then agree on the rate.
+
+Fix it in three parts:
+
+- Add a shared-clock guard: before issuing SET_CUR to a clock id, if
+  that clock is shared between playback and capture and the other
+  direction is already streaming at a different rate, skip it.  The
+  first active stream owns the clock; a later one follows it.
+
+- When the recording channel is auto-started only as a source of jitter
+  information for asynchronous playback, align its nominal rate to the
+  playback rate before starting it, so it neither reprograms the shared
+  clock to a conflicting rate nor produces mismatched frame sizes.
+
+- Always submit the explicit-feedback SYNC transfer so
+  dev.pcm.%d.feedback_rate stays live as a diagnostic even when a
+  capture stream is present.
+
+Reproduced on an OKTO RESEARCH DAC8 STEREO (0x152a:0x88c5), whose
+vestigial capture interface never streams; the same device plays the
+44.1 kHz family correctly under Linux's snd-usb-audio.
+
+PR: 295933
+Assisted-By: Claude Opus 4.8 (claude-opus-4-8)
+Signed-off-by: giacomo <delleceste@gmail.com>
+---
+ sys/dev/sound/usb/uaudio.c | 103 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 95 insertions(+), 8 deletions(-)
+
+diff --git a/sys/dev/sound/usb/uaudio.c b/sys/dev/sound/usb/uaudio.c
+index 4cdd2031525..c2de07abf0a 100644
 --- a/sys/dev/sound/usb/uaudio.c
 +++ b/sys/dev/sound/usb/uaudio.c
-@@ -1347,8 +1347,48 @@
- 	buf_size = chan_alt->sample_size *
- 	    howmany(chan_alt->sample_rate * UAUDIO_BUFFER_MS_MAX, 1000);
+@@ -1358,6 +1358,46 @@ uaudio_max_buffer_size(struct uaudio_chan *ch, uint8_t alt)
  	return (buf_size);
-+}
-+
+ }
+ 
 +static bool
 +uaudio20_clock_is_shared(struct uaudio_softc *sc, unsigned int x)
 +{
@@ -30,8 +77,8 @@
 +			return (ch->usb_alt[ch->cur_alt].sample_rate);
 +	}
 +	return (0);		/* nothing streaming in this direction */
- }
- 
++}
++
 +static bool
 +uaudio_chan_match_rate(struct uaudio_chan *ch, uint32_t rate, uint8_t *p_alt)
 +{
@@ -49,7 +96,7 @@
  static void
  uaudio_configure_msg_sub(struct uaudio_softc *sc,
      struct uaudio_chan *chan, int dir)
-@@ -1446,6 +1486,35 @@
+@@ -1455,6 +1495,35 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
  				}
  			}
  
@@ -85,20 +132,16 @@
  			if (uaudio20_set_speed(sc->sc_udev,
  			    sc->sc_mixer_iface_no, x, chan_alt->sample_rate)) {
  				/*
-@@ -2325,13 +2394,14 @@
+@@ -2334,13 +2403,10 @@ uaudio_chan_play_sync_callback(struct usb_xfer *xfer, usb_error_t error)
  
  	case USB_ST_SETUP:
  		/*
 -		 * Check if the recording stream can be used as a
 -		 * source of jitter information to save some
 -		 * isochronous bandwidth:
-+		 * Always run the SYNC transfer.  When a recording
-+		 * stream exists it is used as the source of jitter
-+		 * information instead of the feedback value (see
-+		 * USB_ST_TRANSFERRED above), but the explicit feedback
-+		 * value is still tracked in ch->feedback_rate as a
-+		 * diagnostic (dev.pcm.%d.feedback_rate).  This costs
-+		 * one isochronous IN frame per second.
++		 * Submit the transfer even when the recording stream
++		 * provides the jitter information, so that the feedback
++		 * rate keeps being sampled for diagnostic purposes.
  		 */
 -		if (ch->priv_sc->sc_rec_chan[i].num_alt != 0 &&
 -		    uaudio_debug == 0)
@@ -106,7 +149,7 @@
  		usbd_xfer_set_frames(xfer, 1);
  		usbd_xfer_set_frame_len(xfer, 0, usbd_xfer_max_framelen(xfer));
  		usbd_transfer_submit(xfer);
-@@ -2875,12 +2945,33 @@
+@@ -2884,12 +2950,33 @@ uaudio_chan_start(struct uaudio_chan *ch)
  		if (uaudio_chan_need_both(
  		    &sc->sc_play_chan[i],
  		    &sc->sc_rec_chan[i])) {
@@ -115,7 +158,7 @@
 +			uint8_t rec_alt;
 +
 +			/*
-+			 * The record channel is only being started as a
++			 * The recording channel is only being started as a
 +			 * source of jitter information for the playback
 +			 * stream.  Align its nominal rate with the
 +			 * playback rate so that (a) it does not reprogram
@@ -142,3 +185,6 @@
  		} else {
  			uaudio_chan_reconfigure(ch, CHAN_OP_START);
  		}
+-- 
+2.54.0
+

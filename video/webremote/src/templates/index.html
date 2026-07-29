@@ -73,6 +73,15 @@
   .nowbar .trackbtns { display:flex; gap:6px; margin-top:6px; }
   .nowbar .trackbtns button { flex:1 1 auto; background:#21262d; color:var(--fg);
             border:1px solid var(--line); border-radius:8px; padding:8px; font-size:13px; cursor:pointer; }
+  /* A/V sync fine-tune sheet: slider centred on 0 + linked spin box */
+  .syncrow { display:flex; align-items:center; gap:10px; margin-top:12px; }
+  .syncrow input[type=range] { flex:1 1 auto; accent-color:var(--accent); min-width:0; }
+  .syncrow button.step { flex:0 0 auto; min-width:54px; font-size:20px; line-height:1; }
+  .syncrow input[type=number] { flex:0 0 auto; width:120px; background:#0d1117; color:var(--fg);
+            border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:16px; }
+  .syncscale { display:flex; justify-content:space-between; color:var(--muted);
+            font-size:11px; margin:2px 62px 0; }
+  .syncinfo { color:var(--muted); font-size:13px; }
   .tracks { margin-top:8px; }
   .trackrow { padding:11px 10px; border:1px solid var(--line); border-radius:8px;
             margin:6px 0; cursor:pointer; }
@@ -125,6 +134,7 @@
   <div class="trackbtns">
     <button onclick="showTracks('audio')">🔊 Audio</button>
     <button onclick="showTracks('sub')">💬 Subtitles</button>
+    <button id="npSync" onclick="showSync()">⏱ Sync</button>
   </div>
   <div class="ctrls">
     <button id="npRew" onclick="nudge(-1)">« 10</button>
@@ -425,6 +435,95 @@ async function selTrack(op, id) {
   showTracks(op === "audio" ? "audio" : "sub");   // refresh the highlighted row
 }
 
+// ---- A/V sync fine-tune --------------------------------------------------
+// mpv is launched with the DRC audio-path latency as its baseline audio-delay
+// (see ../../AV-SYNC-DELAY.md); this dials the leftover buffering term in by eye.
+// Slider and spin box are two views of the same value: whichever moves updates
+// the other, and the send is debounced so dragging doesn't flood the socket.
+let syncCfg = { range: 1.0, step: 0.01, trim: 0, base: null };
+let syncTimer = null;
+
+function syncDecimals() { return syncCfg.step < 0.01 ? 3 : 2; }
+function syncFmt(v) { return (v > 0 ? "+" : "") + v.toFixed(syncDecimals()); }
+
+function syncLabel() {
+  const b = document.getElementById("npSync");
+  if (b) b.textContent = syncCfg.trim ? "⏱ " + syncFmt(syncCfg.trim) + "s" : "⏱ Sync";
+}
+
+async function syncFetch() {
+  try {
+    const d = await (await fetch("/api/avsync")).json();
+    if (d.ok) { syncCfg = d; syncLabel(); }
+    return d;
+  } catch (e) { return { ok: false, error: "Network error" }; }
+}
+
+// Push a new trim (debounced while dragging), keeping both widgets in step.
+function syncSet(v, immediate) {
+  v = Math.max(-syncCfg.range, Math.min(syncCfg.range, Number(v) || 0));
+  v = Math.round(v * 10000) / 10000;      // kill step-accumulated float noise
+  syncCfg.trim = v;
+  const sl = document.getElementById("sySlider"), sp = document.getElementById("sySpin");
+  if (sl && document.activeElement !== sl) sl.value = v;
+  if (sp && document.activeElement !== sp) sp.value = v.toFixed(syncDecimals());
+  const info = document.getElementById("syInfo");
+  if (info && syncCfg.base != null)
+    info.textContent = `baseline ${syncCfg.base.toFixed(3)}s → ${(syncCfg.base + v).toFixed(3)}s`;
+  syncLabel();
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(async () => {
+    try {
+      const d = await (await fetch("/api/avsync", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trim: syncCfg.trim }),
+      })).json();
+      if (!d.ok) toast(d.error, true);
+      else { syncCfg.base = d.base; syncLabel(); }
+    } catch (e) { toast("Network error", true); }
+  }, immediate ? 0 : 200);
+}
+
+async function showSync() {
+  scrim.classList.add("show");
+  sheet.innerHTML = `<div class="msg">Loading…</div>`;
+  const d = await syncFetch();
+  if (!d.ok) { sheet.innerHTML = `<div class="msg err">${d.error || "unavailable"}</div>`; return; }
+
+  const dec = syncDecimals(), r = d.range;
+  sheet.innerHTML = `
+    <div><h2>⏱ A/V sync</h2></div>
+    <div class="plot">Fine-tune on top of the DRC baseline delay.
+      <b>+</b> delays the <b>audio</b>, <b>−</b> delays the <b>video</b>.
+      ${d.running ? "" : "<br><span class='err'>mpv is not running.</span>"}</div>
+    <div class="syncrow">
+      <button class="btn step" id="syDn">−</button>
+      <input type="range" id="sySlider" min="${-r}" max="${r}" step="${d.step}" value="${d.trim}">
+      <button class="btn step" id="syUp">+</button>
+    </div>
+    <div class="syncscale"><span>−${r}s</span><span>0</span><span>+${r}s</span></div>
+    <div class="syncrow">
+      <input type="number" id="sySpin" min="${-r}" max="${r}" step="${d.step}"
+             value="${d.trim.toFixed(dec)}" inputmode="decimal">
+      <span class="syncinfo" id="syInfo"></span>
+    </div>
+    <div class="links">
+      <button class="btn" id="syReset">Reset to 0</button>
+      <button class="btn" onclick="closeSheet()">Close</button>
+    </div>`;
+
+  const sl = document.getElementById("sySlider"), sp = document.getElementById("sySpin");
+  sl.oninput = () => syncSet(sl.value);
+  sl.onchange = () => syncSet(sl.value, true);
+  sp.onchange = () => syncSet(sp.value, true);
+  sp.oninput = () => { if (sp.value !== "" && sp.value !== "-") syncSet(sp.value); };
+  document.getElementById("syDn").onclick = () => syncSet(syncCfg.trim - d.step, true);
+  document.getElementById("syUp").onclick = () => syncSet(syncCfg.trim + d.step, true);
+  document.getElementById("syReset").onclick = () => syncSet(0, true);
+  syncSet(d.trim, false);          // paints the info line; no-op resend
+  clearTimeout(syncTimer);         // ...so don't actually resend it
+}
+
 // ---- transport bar -------------------------------------------------------
 const nowbar = document.getElementById("nowbar");
 const npTitle = document.getElementById("npTitle");
@@ -510,6 +609,7 @@ setInterval(updateStatus, 1000);
 
 setView(view);
 updateStatus();
+syncFetch();      // label the A/V sync button with a trim carried over from before
 </script>
 </body>
 </html>
