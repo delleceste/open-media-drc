@@ -40,6 +40,13 @@ the practical install / run / API reference.
   `audio-channels=stereo`; 5.1/7.1 sources are downmixed instead of failing to
   open a 6-channel output. (You can still select a multichannel track — it is
   downmixed for output.)
+- **A/V sync fine-tune** — an **⏱ A/V sync** button in the transport bar: a
+  slider centred on zero (±`avsync.range`, default ±1 s) with a linked spin box
+  for an exact figure, nudged live while you watch a lip-sync scene. It trims
+  mpv's **baseline** audio-delay — the DRC audio-path latency mpv was launched
+  with (see [`../AV-SYNC-DELAY.md`](../AV-SYNC-DELAY.md)) — so it only moves the
+  leftover buffering term. `+` delays the **audio**, `−` delays the **video**.
+  The trim is remembered across restarts of mpv *and* of this app.
 - **Favourites** — pin folders to the main page with a ★ toggle.
 
 > The disc button reuses the gcache lifecycle of
@@ -80,6 +87,10 @@ roots = /media/USBHD2/video   # comma-separated whitelist; nothing outside is re
 [mpv]
 socket = /tmp/mpv-socket      # matches mpv-idle.sh / ../mpv/mpv.conf
 
+[avsync]
+range = 1.0              # A/V sync slider span: ±range seconds around 0
+step  = 0.01             # slider / spin-box granularity
+
 [thumbs]
 cache_dir        = ~/.cache/omdrc-video
 seek_percent     = 10
@@ -96,7 +107,8 @@ cache   = bd             # gcache name (-> /dev/cache/bd)
 omdb_api_key =           # set to enable verified IMDb info (titles sent to omdbapi.com)
 ```
 
-Favourites persist in `<cache_dir>/favorites.json`.
+Favourites persist in `<cache_dir>/favorites.json`, the A/V sync trim in
+`<cache_dir>/avsync.json`.
 
 ---
 
@@ -153,6 +165,7 @@ app changes).
 | `POST /api/disc {op}` | play / eject the physical Blu-ray disc (`op` = `play`/`eject`) |
 | `GET /api/status` | live playback state (poll ~1 s) |
 | `GET /api/tracks` | audio + subtitle track lists (for the menus) |
+| `GET/POST /api/avsync` | A/V sync trim on mpv's baseline audio-delay (`POST {trim}`, clamped to ±`range`) |
 | `POST /api/cmd {op,value?}` | `toggle`/`pause`/`play`/`stop`/`seek`/`seekto`/`volume`/`mute`/`audio`/`sub` |
 | `GET /api/thumb?path=` | cached JPEG thumbnail (404 → UI shows a type icon) |
 | `GET /api/imdb?path=` | IMDb info (OMDb-enriched or search-link fallback) |
@@ -185,6 +198,7 @@ video/webremote/
     mpvipc.py                  JSON IPC client for the idle mpv
     play.py                    item -> mpv loadfile commands (BD longest-title probe)
     favorites.py               pinned-folder storage
+    avsync.py                  A/V sync trim on mpv's baseline audio-delay
   src/templates/index.html     mobile-first dark UI (grid/list, transport, IMDb sheet)
   webremote.conf               live configuration
   mpv-idle.sh                  starts the hidden persistent idle mpv

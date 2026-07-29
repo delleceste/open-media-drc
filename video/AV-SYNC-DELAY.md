@@ -199,6 +199,13 @@ small virtual_oss remainder left for eyeball fine-tuning.
 - Live fine-tune: mpv `z` / `Z` nudge subtitle timing; the audio/video offset is
   the `DRC_VIDEO_DELAY` knob (re-launch to change, or adjust live in mpv with the
   audio-delay bindings).
+- **From the phone:** the web remote's **⏱ A/V sync** control (slider centred on
+  zero + spin box, span `[avsync] range` in `webremote.conf`) is exactly this
+  last step made live. It never touches the derived terms — it sends
+  `audio-delay = baseline + trim`, where the baseline is what `mpv-idle.sh`
+  launched with (§4.4) and the trim is the §4.3 buffering remainder you dial in
+  by eye. See [`webremote/README.md`](webremote/README.md) and
+  `webremote/src/lib/avsync.py`.
 
 ---
 

@@ -17,6 +17,10 @@ configs/*/*.conf
 # No-DRC browser launchers are generated from browser-nodrc/*.desktop.in
 /browser-nodrc/*.desktop
 /upmpdcli/upmpdcli.conf
+# Port build artifacts: `make` in the port dir renders files/*.in (SUB_FILES)
+# into the same directory without the .in suffix.
+/freebsd/audio/open-media-drc/files/*
+!/freebsd/audio/open-media-drc/files/*.in
 
 # Runtime state written by drc.sh
 /last_arg
