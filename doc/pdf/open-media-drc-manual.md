@@ -1236,12 +1236,20 @@ mismatch-forensics path are in `scripts/README.md` and
 
 # Appendix D --- Source document index
 
-This manual is generated from the repository's Markdown files. For the full
+This manual is generated from the repository's source files --- the Markdown
+docs below plus the CMake build for the Installation chapter. For the full
 detail behind each section:
 
 | Topic | Source document |
 |---|---|
 | Chain overview, install, drc.sh, hotplug | `README.md` |
+| Install / build (CMake superproject, host values) | `CMakeLists.txt`, `host.cmake.sample` |
+| Build modules: DRC engine + site data | `cmake/core-drc.cmake` |
+| Build modules: DAC-hotplug + brutefir services | `cmake/hotplug.cmake` |
+| Build modules: MPD + upmpdcli renderers | `cmake/renderers.cmake` |
+| Build modules: runtime dependency audit | `cmake/dependencies.cmake` |
+| Build modules: per-user setup (`make user-install`) | `cmake/user-install.sh.in` |
+| Web-UI subproject builds | `omdrc-ctrl/CMakeLists.txt`, `video/webremote/CMakeLists.txt` |
 | Filter/config layout, drc.sh modes, agent rules | `FILTERS_AND_DRC.md` |
 | Helper scripts | `scripts/README.md`, `README.md` |
 | Web control panel | `omdrc-ctrl/README.md` |
