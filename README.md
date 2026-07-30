@@ -204,6 +204,17 @@ service), and the DAC-hotplug glue. The install prints the OS-specific enable
 steps and the one or two files to copy into `/etc` (the udev rule; the mpd
 drop-in).
 
+Then, **as the audio user** (not root), run the per-user setup:
+
+```sh
+make user-install     # or: cmake --build build --target user-install
+```
+
+It deploys the things a root install cannot: the omdrcvideo `--user` service,
+the mpv-idle desktop autostart, and the per-user BruteFIR defaults — and prints
+the two steps that still need root (`loginctl enable-linger`, joining the
+`audio` group).
+
 > **Transitional:** the older `./install.sh` (render `*.in` in place from
 > `config.env`, run straight from the checkout) still works and is superseded by
 > the CMake install, which now covers the whole DRC stack — engine, DAC-hotplug

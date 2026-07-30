@@ -47,6 +47,15 @@ include(cmake/renderers.cmake)         # mpd config/drop-in + upmpdcli config/se
 add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
 
+# ── `make user-install`: the per-user steps a root install cannot do ─────────
+# Run as the audio user after the system install: it deploys the --user service,
+# the desktop autostart, and the per-user BruteFIR defaults.
+configure_file(cmake/user-install.sh.in "${CMAKE_BINARY_DIR}/user-install.sh" @ONLY)
+add_custom_target(user-install
+    COMMAND /bin/sh "${CMAKE_BINARY_DIR}/user-install.sh"
+    USES_TERMINAL
+    COMMENT "open-media-drc: per-user setup (run as the audio user, after the system install)")
+
 # ── consolidated post-install checklist (printed last) ───────────────────────
 # make install is root/system-level, so it cannot enable per-user (--user)
 # services, symlink into a user's ~/.config, or add the user to a group; those
@@ -71,16 +80,11 @@ message(STATUS \"      sudo systemctl daemon-reload\")
 message(STATUS \"      sudo systemctl enable --now mpd upmpdcli omdrcctrl\")
 message(STATUS \"      (drc-usb-audio is pulled in by the udev rule on DAC plug)\")
 message(STATUS \"\")
-message(STATUS \" 3. omdrcvideo, as ${AUDIO_USER} in the desktop session (per-user):\")
-message(STATUS \"      mkdir -p ~/.config/systemd/user ~/.config/autostart\")
-message(STATUS \"      ln -sf ${CMAKE_INSTALL_PREFIX}/lib/systemd/user/omdrcvideo.service ~/.config/systemd/user/\")
-message(STATUS \"      ln -sf ${CMAKE_INSTALL_PREFIX}/share/omdrcvideo/autostart/mpv-idle.desktop ~/.config/autostart/\")
-message(STATUS \"      systemctl --user enable --now omdrcvideo\")
-message(STATUS \"      sudo loginctl enable-linger ${AUDIO_USER}\")
-message(STATUS \"\")
-message(STATUS \" 4. Once, as ${AUDIO_USER}: join the 'audio' group; BruteFIR defaults:\")
-message(STATUS \"      mkdir -p ~/.config/BruteFIR\")
-message(STATUS \"      cp <checkout>/brutefir_defaults.linux.conf ~/.config/BruteFIR/brutefir_defaults.conf\")
+message(STATUS \" 3. Per-user setup, as ${AUDIO_USER} in the desktop session:\")
+message(STATUS \"      make user-install          # (or: cmake --build build --target user-install)\")
+message(STATUS \"    Deploys the omdrcvideo --user service, the mpv-idle autostart\")
+message(STATUS \"    and the BruteFIR defaults; it prints the two steps that need\")
+message(STATUS \"    root (loginctl enable-linger, and joining the 'audio' group).\")
 message(STATUS \"============================================================\")
 ")
 else()

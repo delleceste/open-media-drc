@@ -31,6 +31,11 @@ install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/omdrc"
 #    a user-edited copy).  The EXISTS test needs DESTDIR; file(INSTALL) adds it. ─
 configure_file(omdrc.conf.in "${CMAKE_CURRENT_BINARY_DIR}/omdrc.conf" @ONLY)
 install(FILES omdrc.conf.sample DESTINATION ${_etc})
+
+# BruteFIR runtime defaults — deployed per-user (into ~/.config/BruteFIR) by
+# `make user-install`, so keep a stable copy under the prefix.
+install(FILES brutefir_defaults.conf brutefir_defaults.linux.conf
+        DESTINATION share/omdrc)
 install(CODE "
   set(_cfg \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/etc/open-media-drc/omdrc.conf\")
   if(EXISTS \"\${_cfg}\")
