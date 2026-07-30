@@ -62,4 +62,6 @@ doc/pdf/build/
 bp-results/*
 !bp-results/*.txt
 /tests/bitperfect-test-44100-s32-stereo-30s.wav
+/tests/bitperfect-test-44100-s24-stereo-30s.wav
+/tests/bitperfect-test-192000-s24-stereo-10s.wav
 

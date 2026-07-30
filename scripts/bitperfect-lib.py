@@ -39,7 +39,7 @@ decode-usbdump OUT.raw                 (FreeBSD)
     Parse `usbdump -r cap.pcap -vv` text on stdin and write the
     concatenated endpoint-0x01 OUT payloads to OUT.raw.
 
-finalize REF.raw CAP.raw RATE CH PREFIX OS INPUT_NAME
+finalize REF.raw CAP.raw RATE CH PREFIX OS INPUT_PATH
     Align the captured wire stream against the reference, write
     PREFIX.wav + PREFIX.txt, print the verdict.
     Exit 0 = bit-perfect, 1 = mismatch, 2 = capture unusable.
@@ -360,7 +360,7 @@ def walk(ref, cap):
     return matched, slips, -1, -1, False
 
 
-def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputname):
+def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputpath):
     """Compare the wire capture against the reference and emit artifacts.
 
     Alignment
@@ -385,7 +385,16 @@ def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputname):
                     bit-perfect this file is BYTE-IDENTICAL to the input
                     WAV (same sha256) — which is what makes the Linux and
                     FreeBSD outputs directly comparable.
-    PREFIX.txt      this report (also printed to stdout).
+    PREFIX.txt      this report (also printed to stdout).  It names and
+                    hashes every stage, so a run can be audited from the
+                    report alone:
+                      input file : the source WAV on disk, sha256 of the
+                                   FILE (header included) — matches what
+                                   gen-bitperfect-wav.py prints
+                      ref bytes  : the promoted S32_LE reference payload
+                      wire raw   : PREFIX.wire.raw, the untrimmed capture
+                      tap wav    : the aligned payload (what the verdict
+                                   is about, and what compare.py reads)
     PREFIX.wire.raw the full untrimmed stream — copied by the calling
                     script, mentioned here for completeness.
 
@@ -401,11 +410,22 @@ def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputname):
     """
     ref = open(refraw, "rb").read()
     cap = open(capraw, "rb").read()
-    lines = [f"input      : {inputname}",
+    # The report names BOTH ends of the chain with the sha256 of each, so a
+    # run is self-describing: the file that went in, and the bytes that came
+    # off the USB wire.  `input file` is hashed as it sits on disk (header
+    # included), which is exactly what gen-bitperfect-wav.py prints and what
+    # tests/README.md tabulates — so the asset can be identified from the
+    # report alone.  `wire raw` is the untrimmed capture, i.e. the content of
+    # the PREFIX.wire.raw artifact the calling script has just written.
+    indata = open(inputpath, "rb").read()
+    lines = [f"input      : {os.path.basename(inputpath)}",
+             f"input file : {inputpath}  ({len(indata)} bytes, "
+             f"sha256 {sha256(indata)})",
              f"os         : {osname}",
              f"format     : S32_LE wire container, {ch} ch, {rate} Hz",
              f"ref bytes  : {len(ref)}  sha256 {sha256(ref)}",
-             f"wire bytes : {len(cap)}"]
+             f"wire raw   : {prefix}.wire.raw  ({len(cap)} bytes, "
+             f"sha256 {sha256(cap)})"]
 
     def out(verdict, code):
         lines.append(f"verdict    : {verdict}")

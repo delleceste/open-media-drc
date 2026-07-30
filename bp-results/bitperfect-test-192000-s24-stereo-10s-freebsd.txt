@@ -1,0 +1,9 @@
+input      : bitperfect-test-192000-s24-stereo-10s.wav
+input file : tests/bitperfect-test-192000-s24-stereo-10s.wav  (11520044 bytes, sha256 01317af6523ec67f74834361ce47df63438f8892d5238f0b2c08239eec903320)
+os         : freebsd/15.1-RELEASE
+format     : S32_LE wire container, 2 ch, 192000 Hz
+ref bytes  : 15360000  sha256 7acfeed3f84614d1e88ecc015484a6621be5799072a6912d5c3a5c894685418c
+wire raw   : bp-results/bitperfect-test-192000-s24-stereo-10s-freebsd.wire.raw  (16182800 bytes, sha256 d64ef62532c93682caf4e8f8c3691fc2750ead2aae6a92f5d6d179a45e814ea7)
+tap wav    : bp-results/bitperfect-test-192000-s24-stereo-10s-freebsd.wav  (15360000 PCM bytes, sha256 7acfeed3f84614d1e88ecc015484a6621be5799072a6912d5c3a5c894685418c)
+tap wav sha256 (file) : d6f584ce60282d7653b68564abf6b2829a59a90dc4c23a559712e76d8f8b12f9
+verdict    : BIT-PERFECT — all 15360000 reference bytes identical on the USB wire

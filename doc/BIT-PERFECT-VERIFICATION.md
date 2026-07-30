@@ -338,11 +338,41 @@ captures every isochronous OUT transfer to endpoint `0x01`, concatenates the
 payloads, aligns them to the source and writes:
 
 - `PREFIX.wav` — the tapped wire bytes, source-aligned and source-length,
-  as a WAV. **If the chain is bit-perfect this file is byte-identical to the
-  input WAV** (same sha256), so two bit-perfect OSes trivially produce
-  identical outputs.
+  as a WAV. **For a 32-bit input, a bit-perfect chain makes this file
+  byte-identical to the input WAV** (same sha256), so two bit-perfect OSes
+  trivially produce identical outputs. For a **16/24-bit input the two
+  files necessarily differ**: `PREFIX.wav` holds the promoted 32-bit wire
+  container, so it is both longer and differently valued than the source
+  (e.g. the 44100/24-bit asset is 7938044 bytes, its tap WAV 10584044).
+  The invariant that always holds — and the one the comparator uses — is on
+  the *payload* sha256 reported as `tap wav`, not on the file sha256.
 - `PREFIX.wire.raw` — the full untrimmed wire stream (priming bytes and all).
-- `PREFIX.txt` — verdict + sha256 report.
+- `PREFIX.txt` — the report. It **names and hashes every stage**, so a run
+  can be audited from the report alone, without the payloads:
+
+  ```
+  input file : tests/bitperfect-test-44100-s32-stereo-30s.wav  (10584044 bytes, sha256 88d365ee…)
+  ref bytes  : 10584000  sha256 02905a1e…
+  wire raw   : bp-results/…-freebsd.wire.raw  (10772776 bytes, sha256 ee246f0d…)
+  tap wav    : bp-results/…-freebsd.wav  (10584000 PCM bytes, sha256 02905a1e…)
+  verdict    : BIT-PERFECT — all 10584000 reference bytes identical on the USB wire
+  ```
+
+  `input file` is the source hashed **as it sits on disk**, header included
+  — the same digest `gen-bitperfect-wav.py` prints and `tests/README.md`
+  tabulates, so the exact asset a run used is identifiable afterwards.
+
+  **Which of these are reproducible, and which are not:** `input file`,
+  `ref bytes` and `tap wav` are deterministic — two bit-perfect runs, on
+  either OS, reproduce them exactly. `wire raw` is **not**: it is the
+  untrimmed capture, so besides the audio it holds the priming zeros, the
+  silence pad and however many trailing packets the tap happened to record
+  before it was stopped. It is a provenance/debugging record, **never** a
+  cross-OS comparison key — Linux and FreeBSD captures of the same input
+  legitimately differ in length (10584816 vs 10772776 at 44100/32-bit).
+  The field the comparator uses is `tap wav`. What exactly surrounds the
+  audio, and why none of it is audible, is measured in
+  ["What surrounds the audio"](#what-surrounds-the-audio-priming-zeros-the-pad-and-where-the-boundaries-fall).
 
 **Comparing across machines without moving 10 MB files.** The big
 artifacts (`.wav`, `.wire.raw`) are gitignored; only the ~600-byte
@@ -395,7 +425,7 @@ Notes:
 |---|---|
 | `bitperfect-tap-linux.sh` | **Executed and passing** on the Linux host (DacMagic 100, kernel 7.1.5-arch1): 44100/32-bit × 30 s, 44100/24-bit × 30 s and 192000/24-bit × 10 s all **BIT-PERFECT**, 0 truncated events, 0 usbmon drops. Note a 16/24-bit input does not change the playback path — `prep` promotes to the 32-bit wire container first, so the player always emits S32_LE and only the sample *values* differ (`<<8` / `<<16`). |
 | `bitperfect-compare.py` | **Executed** on all comparison paths (wav↔wav, wav↔txt, txt↔txt, refusal of raw↔txt), including a deliberately bit-flipped payload to confirm MISMATCH is reported at the exact offset. |
-| `bitperfect-tap-freebsd.sh` | **Never executed yet** — written on the Linux host, so its first FreeBSD run is also its first test. Its tap/decode/writer code is a direct port of `verify-bitperfect.sh` (proven on the OKTO), and the shared alignment/verdict engine is the same file the Linux side exercises, so the untested surface is the shell glue: device discovery, argument passing, `fuser`/`sudo`/`cc` availability. Expect first-run friction there, not in the byte handling. |
+| `bitperfect-tap-freebsd.sh` | **Executed and passing** on the FreeBSD host (Cambridge Audio DacMagic 100, `usbus0` devaddr 2, FreeBSD 15.1-RELEASE): 44100/32-bit × 30 s, 44100/24-bit × 30 s and 192000/24-bit × 10 s all **BIT-PERFECT** (exit 0). For 44100/32-bit, `bitperfect-compare.py` also reports MATCH against the committed Linux report for the same input; the 24-bit pair has no committed Linux counterpart yet, so those two stand as local proofs only. The 192 kHz run confirms the DAC clock actually followed (`dev.pcm.0.feedback_rate` = 191994) and cost 23.7 s wall clock end to end. The first run exposed one real defect — a truncated capture, fixed by the trailing silence pad described in ["Anatomy of a tap run"](#anatomy-of-a-tap-run-refraw-the-pad-and-the-cut) below. |
 
 Preconditions for the FreeBSD run, beyond a free `/dev/dsp0`
 (`./drc.sh off` plus stopping any renderer): `dev.pcm.N.bitperfect=1` and
@@ -418,6 +448,288 @@ of text — slow, and it stresses the pcap capture too. Prove the path at
 44100 first, then use a shorter duration for the high-rate case
 (`--frames 1920000` = 10 s at 192 kHz). The Linux side reads usbmon's
 binary interface and has no such limit.
+
+### Anatomy of a tap run: `ref.raw`, the pad, and the cut
+
+This section walks the FreeBSD run end to end, because two of its steps are
+easy to misread: what exactly is being compared (`ref.raw`, *not* the input
+WAV), and why the player emits half a second of silence that the verdict
+never sees.
+
+#### Step 1 — `ref.raw`: the reference is the wire container, not the file
+
+`ref.raw` is the **byte stream the DAC is expected to receive**: the input
+WAV's PCM payload, header stripped, promoted to the S32_LE container the
+USB altsetting actually carries. It is produced by `bitperfect-lib.py prep`
+(`cmd_prep`, `bitperfect-lib.py:91`) and is the *only* thing the verdict
+ever compares against:
+
+```python
+pcm = w.readframes(n)               # raw interleaved PCM, header stripped
+if sw == 4:                         # already the wire container
+    out = pcm
+elif sw == 3:                       # S24_3LE -> 24-in-32 (value << 8)
+    s = len(pcm) // 3
+    out = bytearray(s * 4)          # zero-initialized -> pad bytes = 0x00
+    out[1::4] = pcm[0::3]; out[2::4] = pcm[1::3]; out[3::4] = pcm[2::3]
+elif sw == 2:                       # S16_LE -> 16-in-32 (value << 16)
+    ...
+print(rate, ch, sw * 8, n)          # parsed by the calling shell script
+```
+
+Three consequences worth internalising:
+
+- **The 44-byte RIFF header is not part of the reference.** For a 32-bit
+  input `ref.raw` is the WAV minus its header, which is why the canonical
+  30 s asset (10584044 bytes on disk) yields `ref bytes : 10584000`.
+- **Promotion is lossless and host-independent.** A 16- or 24-bit input is
+  left-shifted into the 32-bit container by the *same Python* on both OSes,
+  so the reference bytes are identical on Linux and FreeBSD by construction.
+  A 16/24-bit run therefore does not exercise a different playback path —
+  the player always emits S32_LE; only the sample values differ.
+- **`prep` also returns the format**, which the shell reads into `RATE CH
+  BITS FRAMES` (`bitperfect-tap-freebsd.sh:107`) and feeds to the writer's
+  ioctls — so the format the DAC is opened with is derived from the file,
+  never assumed.
+
+#### Step 2 — the tap: every isochronous OUT payload, concatenated
+
+`usbdump` captures the DAC's device address to a pcap, and the pcap is
+re-read as `-vv` text and decoded by `cmd_decode_usbdump`
+(`bitperfect-lib.py:267`). The filter is what makes the result a clean
+audio stream: only submissions to endpoint `0x01`, only the WRITE frames.
+
+```python
+if hdr.search(line):
+    in_out = "SUBM-ISOC-EP=00000001" in line
+    in_frame = False
+    continue
+if "WRITE" in line and "frame[" in line:
+    in_frame = True
+```
+
+Packet *boundaries* are discarded by concatenation. This is deliberate:
+under async feedback the DAC pulls a varying number of frames per USB
+microframe, so packet sizes differ from run to run and from host to host,
+while the concatenated payload does not. That is precisely why a Linux and
+a FreeBSD capture are byte-comparable at all.
+
+#### Step 3 — the pad: what is *played* is not what is *compared*
+
+The script plays `play.raw` = `ref.raw` + `PAD_MS` of digital silence, and
+hands `finalize` the unpadded `ref.raw`:
+
+```sh
+PAD_BYTES=$(( RATE * CH * 4 * PAD_MS / 1000 ))
+cp "$TMP/ref.raw" "$TMP/play.raw"
+dd if=/dev/zero bs="$PAD_BYTES" count=1 status=none >> "$TMP/play.raw"
+...
+"$TMP/bpwrite" "$PLAY_DEV" "$RATE" "$CH" "$TMP/play.raw"      # padded copy
+...
+python3 "$LIB" finalize "$TMP/ref.raw" "$TMP/cap.raw" ...      # unpadded ref
+```
+
+At 44100/2ch that is 176400 bytes = 500 ms of zeros appended to a 10584000
+byte reference.
+
+**Why it is needed.** `usbdump` writes the pcap through a buffer, and
+terminating it discards whatever has not been flushed — costing the last
+few milliseconds of the capture. The first FreeBSD run hit exactly that:
+
+```
+wire bytes : 10583688
+tap wav    : ... (10578040 PCM bytes, sha256 bce861c8…)
+verdict    : INCOMPLETE — first 10578040 bytes identical but the capture
+             ends 5960 bytes early (tap stopped before playback drained?)
+```
+
+5960 bytes = 745 frames = **16.9 ms** missing from the end. Note what the
+verdict already told us: *every captured byte matched*. The playback path
+was transparent; the capture simply stopped short. Padding moves that loss
+into the silence, where nothing depends on it. Belt-and-braces, the tap is
+now stopped with `SIGINT` rather than the default `SIGTERM` (giving
+`usbdump` the chance to flush), and the drain sleep went 0.6 s → 1 s.
+
+The Linux twin taps usbmon's *binary* interface, has never shown the loss —
+its capture ran only 816 bytes longer than the reference and still returned
+BIT-PERFECT, i.e. nothing was missing from the end — and is deliberately
+left unchanged.
+
+#### Step 4 — the cut: by length, never by silence detection
+
+The pad is removed by **arithmetic, not by looking for zeros**. `finalize`
+(`bitperfect-lib.py:420-431`) locates where the reference stream begins
+inside the capture by searching for a 4 KiB probe of the reference, then
+takes exactly `len(ref)` bytes from that point:
+
+```python
+po    = find_probe_offset(ref)
+pos   = cap.find(ref[po:po + 4096])
+start = pos - po
+...
+aligned = cap[start:start + len(ref) - refskip]
+```
+
+Everything before `start` (stream-priming zeros, capture lead-in) and
+everything after `start + len(ref)` (the pad, plus any trailing packets) is
+discarded by the same two lines. The pad needs no special handling and is
+not mentioned in the verdict at all.
+
+**This must not be done by detecting silence**, which is why it isn't: the
+test signal is itself near-silent (~ −90 dBFS, only the low 16 bits of each
+32-bit sample are ever non-zero), so a silence-seeking trim would cut into
+real payload. `find_probe_offset` (`bitperfect-lib.py:300`) exists for the
+mirror-image reason — it walks forward in 4 KiB steps until a window holds
+≥ 256 non-zero bytes, so the alignment probe can never be a run of zeros
+that would match the priming silence instead of the audio.
+
+Measured on the passing run, with the pad in place:
+
+| quantity | bytes | meaning |
+|---|---|---|
+| capture (`wire.raw`) | 10772776 | everything usbdump recorded |
+| lead-in before `start` | 5648 | OSS priming zeros — trimmed |
+| `aligned` = reference | 10584000 | compared byte-for-byte → **BIT-PERFECT** |
+| tail after the reference | 183128 | pad + post-close packets — trimmed |
+
+The 5648-byte lead-in was **identical in the failing and the passing run**:
+FreeBSD's OSS priming is deterministic, and the pad changed only the tail.
+The surviving tail (183128 B ≈ 519 ms) slightly exceeds the 176400 B pad
+because the kernel keeps the isochronous channel running briefly after the
+writer closes, and the tap is still recording during the 1 s drain sleep.
+
+#### What surrounds the audio: priming zeros, the pad, and where the boundaries fall
+
+`wire raw` is always longer than the reference. Decomposing two real
+captures at the alignment point shows what the extra material is — and,
+importantly, that **all of it is zero**:
+
+| | 44100/32-bit | 192000/24-bit |
+|---|---|---|
+| capture (`wire raw`) | 10772776 B | 16182800 B |
+| head, before the audio | 5648 B — **all zero** | 24576 B — **all zero** |
+| head as frames / time | 706 fr / **16.01 ms** | 3072 fr / **16.00 ms** |
+| audio (`= ref bytes`) | 10584000 B | 15360000 B |
+| tail, after the audio | 183128 B — **all zero** | 798224 B — **all zero** |
+| tail as time | 519 ms | 520 ms |
+
+**The head is the priming zeros.** An isochronous endpoint owns a fixed
+slot in every USB (micro)frame: it cannot wait for data, it transmits
+whatever the DMA ring holds when its slot comes up. At stream start the
+ring is zero-filled and transmission begins before the first `write()` has
+propagated through it, so the opening packets carry that zero fill. Note
+the measurement: **exactly 16 ms at both rates** — different byte counts,
+same duration. That is a fixed-duration buffer prime, not a timing
+accident, which is why the head is reproducible run to run (5648 B in every
+44100 run recorded here).
+
+**The tail is the silence pad** (500 ms, [Step 3](#step-3--the-pad-what-is-played-is-not-what-is-compared))
+**plus ~19 ms of packets the kernel keeps sending after the writer closes**,
+and *this* is the part that wobbles. The tap is stopped by a wall-clock
+`sleep`, which lands at an arbitrary point in the USB frame schedule, so
+the last few packets fall inside or outside the window:
+
+| run pair, same input | first | second | delta |
+|---|---|---|---|
+| 44100/24-bit | 10772744 | 10772824 | 80 B = 10 frames |
+| 192000/24-bit | 16182832 | 16182800 | 32 B = 4 frames |
+| 44100/32-bit | 10772776 | 10772776 | 0 — happened to reproduce |
+
+So identical inputs can yield different `wire raw` **without the audio
+differing at all**: the audio is bit-identical (that is what the verdict
+certifies); only the amount of trailing silence recorded changes.
+
+**Where the boundaries fall, and why they are inaudible.** Two distinct
+things are easy to conflate here:
+
+- A **capture boundary** is a property of the *observer*, not of the wire.
+  It decides what lands in the pcap; the DAC received the same stream
+  either way. Bytes the tap missed still reached the DAC — that was exactly
+  the earlier `INCOMPLETE` bug, real audio the DAC got and we failed to
+  record. Nothing about where the tap started or stopped is audible,
+  because it never touched the stream.
+- The **extra material inside the window** *is* genuine traffic the DAC
+  received. It is inaudible for a measured reason, not by assumption: it is
+  all-zero PCM (table above), so the DAC's output sits at its zero level.
+
+On a `BIT-PERFECT` verdict both boundaries necessarily fell **outside** the
+audio — head in the priming zeros, tail in the pad. They *can* fall inside,
+and the tool names it rather than hiding it: inside at the start is
+`HEAD LOST`, inside at the end is `INCOMPLETE`. The pad exists to make
+"outside" the reliable case at the tail instead of a matter of luck.
+
+One qualification on "inaudible": it describes the sample *values*, not the
+act of starting and stopping a stream. Opening or closing an isochronous
+stream, and any rate change around it, can produce a genuine audible
+artifact from the DAC's analogue side — mute relay, PLL relock, the
+cold-open silence documented in `OKTO-DAC8-FreeBSD-44k1-flicker.md`. That
+comes from stream start/stop and clock changes, not from the zeros and not
+from where the tap's window happened to fall.
+
+#### Step 5 — the comparison
+
+First, note what the comparison is **not**: it never involves the other OS.
+`finalize` compares the capture against `ref.raw`, which came from the input
+file on this machine —
+
+```python
+refcmp = ref[refskip:]
+if aligned == refcmp:
+    ...
+    return out(f"BIT-PERFECT — all {len(refcmp)} reference bytes identical "
+               "on the USB wire", 0)
+```
+
+— so **a single run is already a complete local file → USB proof**, and
+exits 0 on its own. `bitperfect-compare.py` is a separate, optional step
+that answers the *additional* question of whether two hosts agree.
+
+`finalize` writes `PREFIX.wav` by wrapping `aligned` in a WAV header built
+from the *reference's* format. For a 32-bit input that makes the tap WAV
+byte-identical to the input WAV; for a 16/24-bit input it cannot be, since
+the tap WAV carries the promoted 32-bit container (see the artifact list
+above). In the 44100/32-bit run all three digests line up:
+
+```
+input WAV file                          88d365ee…   (generator output)
+freebsd tap wav sha256 (file)           88d365ee…
+linux   tap wav sha256 (file)           88d365ee…
+
+reference payload (ref.raw)             02905a1e…
+freebsd tap payload (aligned)           02905a1e…
+linux   tap payload (aligned)           02905a1e…
+```
+
+and the cross-OS comparator reduces to a hash equality on equal-length
+payloads:
+
+```
+$ ./scripts/bitperfect-compare.py \
+      bp-results/…-30s-linux.txt bp-results/…-30s-freebsd.txt
+A: … linux/7.1.5-arch1-2   — verdict: BIT-PERFECT   sha256 02905a1e…
+B: … freebsd/15.1-RELEASE  — verdict: BIT-PERFECT   sha256 02905a1e…
+MATCH: payload sha256 identical over 10584000 bytes
+```
+
+#### Why the pad cannot hide a defect
+
+The obvious objection to padding is that it might absorb a real fault. It
+cannot, and this was verified by replaying the failing run's exact
+geometry (5648 B lead-in, 5960 B tail loss) through `finalize` with
+synthetic captures:
+
+| case | verdict | exit |
+|---|---|---|
+| pad + tail loss | BIT-PERFECT | 0 |
+| **no** pad + tail loss (old behaviour) | INCOMPLETE — ends 5960 bytes early | 1 |
+| pad + one flipped bit mid-stream | VALUE CORRUPTION at offset 176400 | 1 |
+
+The third row is the one that matters: the pad extends the capture window
+past the end of the reference, but the comparison window is still exactly
+`len(ref)` bytes, so every reference byte is still checked. A defect
+*inside* the reference is reported at its exact offset regardless of what
+follows it. What the pad removes is only the ability of a late capture cut
+to masquerade as a playback fault.
 
 ## Related
 
