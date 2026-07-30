@@ -193,6 +193,17 @@ sudo systemctl enable --now omdrcctrl
 sudo systemctl status omdrcctrl
 ```
 
+Renderer switching drives the `qobuzconnect2mpd` / `upmpdcli` `systemctl --user`
+services. The system service reaches that user bus by deriving
+`XDG_RUNTIME_DIR` from the service user's uid, which requires
+`/run/user/<uid>` to exist. If `OMDRCCTRL_SERVICE_USER` is not always logged
+in, enable lingering once so the runtime dir (and thus the toggle) survives
+logout:
+
+```bash
+sudo loginctl enable-linger "$OMDRCCTRL_SERVICE_USER"
+```
+
 ### Linux systemd user service (`-DUSER_INSTALL=ON`)
 
 No root required. The service runs as your own user automatically.
