@@ -38,9 +38,13 @@ message(STATUS "open-media-drc: service manager = ${OMDRC_SERVICE_MANAGER}, audi
 find_program(PYTHON3 python3 REQUIRED)
 
 # ── subprojects ──────────────────────────────────────────────────────────────
+add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
 
+# omdrcctrl's commands.conf still points at ${REPO_DIR}/drc.sh (the checkout).
+# When core-drc is folded in below it will switch to ${PREFIX}/bin/omdrc, since
+# that wrapper only exists once core-drc is installed.
+#
 # Pending migration from install.sh / root Makefile into this superproject:
-#   add_subdirectory(omdrc-ctrl)        # omdrcctrl — control panel (:9090), already CMake
 #   add_subdirectory(core-drc)          # drc.sh + configs/filters + DAC-hotplug glue
 #   add_subdirectory(renderers)         # mpd drop-in + upmpdcli

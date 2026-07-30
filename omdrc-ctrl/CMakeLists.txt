@@ -1,37 +1,52 @@
 cmake_minimum_required(VERSION 3.16)
-project(omdrcctrl VERSION 1.0.0 LANGUAGES NONE)
 
-# ── options ────────────────────────────────────────────────────────────────
-option(USER_INSTALL "Install as a systemd --user service on Linux (no root required)" OFF)
-set(OMDRCCTRL_SERVICE_USER "$ENV{USER}" CACHE STRING "User for the system service")
-get_filename_component(_OMDRC_REPO_DIR_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
-set(OMDRC_REPO_DIR "${_OMDRC_REPO_DIR_DEFAULT}" CACHE PATH "Path to the open-media-drc checkout used by the default commands.conf")
+# omdrcctrl — the web control panel (:9090).
+#
+# Builds standalone (cmake omdrc-ctrl) or as a subproject of the top-level
+# open-media-drc superproject, which supplies AUDIO_USER / REPO_DIR /
+# OMDRC_SERVICE_MANAGER / PYTHON3.  As a headless service it defaults to a
+# system unit running as the audio user (no desktop required); the --user mode
+# (USER_INSTALL) is a standalone-only, no-root convenience — a package cannot
+# enable a --user unit, so the superproject always uses the system unit.
 
-if(NOT OMDRCCTRL_SERVICE_USER)
-    set(OMDRCCTRL_SERVICE_USER "nobody")
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(omdrcctrl VERSION 1.0.0 LANGUAGES NONE)
+
+    option(USER_INSTALL "Install as a systemd --user service on Linux (no root required)" OFF)
+    set(OMDRCCTRL_SERVICE_USER "$ENV{USER}" CACHE STRING "User for the system service")
+    if(NOT OMDRCCTRL_SERVICE_USER)
+        set(OMDRCCTRL_SERVICE_USER "nobody")
+    endif()
+    get_filename_component(_OMDRC_REPO_DIR_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+    set(OMDRC_REPO_DIR "${_OMDRC_REPO_DIR_DEFAULT}" CACHE PATH "Path to the open-media-drc checkout used by the default commands.conf")
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(OMDRCCTRL_SERVICE_MANAGER "systemd")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+        set(OMDRCCTRL_SERVICE_MANAGER "rc.d")
+        if(USER_INSTALL)
+            message(FATAL_ERROR "USER_INSTALL is only supported on Linux with systemd --user services")
+        endif()
+    else()
+        message(FATAL_ERROR "Unsupported system: ${CMAKE_SYSTEM_NAME}. Supported systems: Linux, FreeBSD")
+    endif()
+
+    if(USER_INSTALL)
+        set(CMAKE_INSTALL_PREFIX "$ENV{HOME}/.local" CACHE PATH "Installation prefix" FORCE)
+    endif()
+
+    find_program(PYTHON3 python3 REQUIRED)
+else()
+    # Subproject of the superproject: inherit host values from the top level.
+    set(USER_INSTALL OFF)
+    set(OMDRCCTRL_SERVICE_USER    "${AUDIO_USER}")
+    set(OMDRC_REPO_DIR            "${REPO_DIR}")
+    set(OMDRCCTRL_SERVICE_MANAGER "${OMDRC_SERVICE_MANAGER}")
 endif()
 
 if(NOT EXISTS "${OMDRC_REPO_DIR}/drc.sh")
     message(WARNING "OMDRC_REPO_DIR does not contain drc.sh: ${OMDRC_REPO_DIR}")
 endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(OMDRCCTRL_SERVICE_MANAGER "systemd")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-    set(OMDRCCTRL_SERVICE_MANAGER "rc.d")
-    if(USER_INSTALL)
-        message(FATAL_ERROR "USER_INSTALL is only supported on Linux with systemd --user services")
-    endif()
-else()
-    message(FATAL_ERROR "Unsupported system: ${CMAKE_SYSTEM_NAME}. Supported systems: Linux, FreeBSD")
-endif()
-
-if(USER_INSTALL)
-    set(CMAKE_INSTALL_PREFIX "$ENV{HOME}/.local" CACHE PATH "Installation prefix" FORCE)
-endif()
-
-# ── check Python 3 ────────────────────────────────────────────────────────
-find_program(PYTHON3 python3 REQUIRED)
 
 execute_process(
     COMMAND ${PYTHON3} -c "import flask"
