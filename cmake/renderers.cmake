@@ -64,17 +64,7 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" "${_s}")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/system)
 
-    install(CODE "
-message(STATUS \"\")
-message(STATUS \"Renderers (Linux):\")
-message(STATUS \"  MPD config : ${CMAKE_INSTALL_PREFIX}/etc/open-media-drc/mpd.conf\")
-message(STATUS \"  The distro mpd unit runs User=mpd; install our drop-in (real\")
-message(STATUS \"  file in /etc) so mpd runs as ${AUDIO_USER} with our config:\")
-message(STATUS \"    sudo mkdir -p /etc/systemd/system/mpd.service.d\")
-message(STATUS \"    sudo cp ${CMAKE_INSTALL_PREFIX}/share/omdrc/mpd.service.d/open-media-drc.conf /etc/systemd/system/mpd.service.d/\")
-message(STATUS \"    sudo systemctl daemon-reload && sudo systemctl restart mpd\")
-message(STATUS \"  upmpdcli : sudo systemctl enable --now upmpdcli\")
-")
+    install(CODE "message(STATUS \"renderers: mpd.conf + upmpdcli.conf/.service + mpd /etc drop-in installed (see the final checklist)\")")
 else()  # FreeBSD
     # musicpd.conf (FreeBSD MPD package == musicpd)
     file(READ mpd/musicpd.conf.in _m)
@@ -89,12 +79,5 @@ else()  # FreeBSD
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.rc" "${_s}")
     install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.rc" DESTINATION etc/rc.d RENAME upmpdcli)
 
-    install(CODE "
-message(STATUS \"\")
-message(STATUS \"Renderers (FreeBSD):\")
-message(STATUS \"  MPD (musicpd) config: ${CMAKE_INSTALL_PREFIX}/etc/open-media-drc/musicpd.conf\")
-message(STATUS \"    sysrc musicpd_enable=YES musicpd_config=${CMAKE_INSTALL_PREFIX}/etc/open-media-drc/musicpd.conf\")
-message(STATUS \"    sysrc upmpdcli_enable=YES\")
-message(STATUS \"    service musicpd start && service upmpdcli start\")
-")
+    install(CODE "message(STATUS \"renderers: musicpd.conf + upmpdcli.conf/rc.d installed (see the final checklist to enable)\")")
 endif()

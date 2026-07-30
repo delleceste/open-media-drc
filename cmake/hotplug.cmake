@@ -28,16 +28,7 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     # udev rule — the one /etc seam (no @VARS@ to render).
     install(FILES 99-usb-audio-drc.rules DESTINATION lib/udev/rules.d)
 
-    install(CODE "
-message(STATUS \"\")
-message(STATUS \"DAC hotplug (Linux):\")
-message(STATUS \"  The DRC oneshot runs as ${AUDIO_USER}; brutefir is started by\")
-message(STATUS \"  'omdrc restore' on USB-DAC attach.  udev does not scan \\$PREFIX,\")
-message(STATUS \"  so copy the rule into /etc and reload:\")
-message(STATUS \"    sudo cp ${CMAKE_INSTALL_PREFIX}/lib/udev/rules.d/99-usb-audio-drc.rules /etc/udev/rules.d/\")
-message(STATUS \"    sudo udevadm control --reload\")
-message(STATUS \"  Ensure ${AUDIO_USER} is in the 'audio' group for ALSA hw access.\")
-")
+    install(CODE "message(STATUS \"hotplug: drc-usb-audio.service + udev rule installed (see the final checklist for the /etc copy)\")")
 else()  # FreeBSD rc.d
     foreach(_svc drc_usb_audio brutefir_drc)
         file(READ "${CMAKE_CURRENT_SOURCE_DIR}/freebsd/audio/open-media-drc/files/${_svc}.in" _s)
@@ -48,13 +39,5 @@ else()  # FreeBSD rc.d
 
     install(FILES etc/devd/usb-audio-drc.conf DESTINATION etc/devd)
 
-    install(CODE "
-message(STATUS \"\")
-message(STATUS \"DAC hotplug (FreeBSD):\")
-message(STATUS \"  sysrc drc_usb_audio_enable=YES\")
-message(STATUS \"  sysrc brutefir_drc_user=${AUDIO_USER}   # REQUIRED: owns brutefir\")
-message(STATUS \"  service devd restart                    # pick up the attach/detach rule\")
-message(STATUS \"  brutefir escalates virtual_oss via drc.sh's internal sudo;\")
-message(STATUS \"  give ${AUDIO_USER} passwordless sudo for that (see docs).\")
-")
+    install(CODE "message(STATUS \"hotplug: drc_usb_audio + brutefir_drc rc.d + devd rule installed (see the final checklist to enable)\")")
 endif()
