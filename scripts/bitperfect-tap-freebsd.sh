@@ -17,10 +17,18 @@ set -euo pipefail
 #
 # Outputs (same convention as the Linux twin):
 #   PREFIX.wav       tapped wire bytes, source-aligned and source-length,
-#                    as a WAV — byte-identical to INPUT.wav (same sha256)
-#                    when the chain is bit-perfect
+#                    as a WAV.  For a 32-bit INPUT.wav a bit-perfect chain
+#                    makes this byte-identical to it (same sha256); for a
+#                    16/24-bit input it cannot be, since this file carries
+#                    the promoted 32-bit container — compare the payload
+#                    sha256 reported on the `tap wav` line instead.
 #   PREFIX.wire.raw  full untrimmed wire stream
-#   PREFIX.txt       report: verdict, sizes, sha256 sums
+#   PREFIX.txt       report naming and hashing every stage — `input file`
+#                    (the source as it sits on disk), `ref bytes` (promoted
+#                    reference payload), `wire raw` (untrimmed capture),
+#                    `tap wav` (aligned payload) — plus the verdict.
+#                    `wire raw` varies run to run (priming, pad, capture
+#                    boundaries): provenance only, never a comparison key.
 #
 # Exit codes: 0 bit-perfect, 1 mismatch (see PREFIX.txt), 2 setup/capture
 # problem.
@@ -186,4 +194,4 @@ sudo usbdump -r "$TMP/cap.pcap" -vv 2>/dev/null | python3 "$LIB" decode-usbdump 
 # ── 4. VERDICT: align, verify, emit artifacts ────────────────────────────────
 cp "$TMP/cap.raw" "$PREFIX.wire.raw"
 python3 "$LIB" finalize "$TMP/ref.raw" "$TMP/cap.raw" "$RATE" "$CH" \
-        "$PREFIX" "freebsd/$(uname -r)" "$(basename "$INPUT")"
+        "$PREFIX" "freebsd/$(uname -r)" "$INPUT"

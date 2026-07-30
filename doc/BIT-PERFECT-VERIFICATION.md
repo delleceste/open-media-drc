@@ -347,7 +347,31 @@ payloads, aligns them to the source and writes:
   The invariant that always holds — and the one the comparator uses — is on
   the *payload* sha256 reported as `tap wav`, not on the file sha256.
 - `PREFIX.wire.raw` — the full untrimmed wire stream (priming bytes and all).
-- `PREFIX.txt` — verdict + sha256 report.
+- `PREFIX.txt` — the report. It **names and hashes every stage**, so a run
+  can be audited from the report alone, without the payloads:
+
+  ```
+  input file : tests/bitperfect-test-44100-s32-stereo-30s.wav  (10584044 bytes, sha256 88d365ee…)
+  ref bytes  : 10584000  sha256 02905a1e…
+  wire raw   : bp-results/…-freebsd.wire.raw  (10772776 bytes, sha256 ee246f0d…)
+  tap wav    : bp-results/…-freebsd.wav  (10584000 PCM bytes, sha256 02905a1e…)
+  verdict    : BIT-PERFECT — all 10584000 reference bytes identical on the USB wire
+  ```
+
+  `input file` is the source hashed **as it sits on disk**, header included
+  — the same digest `gen-bitperfect-wav.py` prints and `tests/README.md`
+  tabulates, so the exact asset a run used is identifiable afterwards.
+
+  **Which of these are reproducible, and which are not:** `input file`,
+  `ref bytes` and `tap wav` are deterministic — two bit-perfect runs, on
+  either OS, reproduce them exactly. `wire raw` is **not**: it is the
+  untrimmed capture, so it includes priming zeros, the silence pad and
+  whatever trailing packets the tap happened to record, and it varies
+  between otherwise identical runs (two 192 kHz runs here gave 16182800 and
+  16182832 bytes). It is a provenance/debugging record, **never** a
+  cross-OS comparison key — Linux and FreeBSD captures of the same input
+  legitimately differ in length (10584816 vs 10772776 at 44100/32-bit).
+  The field the comparator uses is `tap wav`.
 
 **Comparing across machines without moving 10 MB files.** The big
 artifacts (`.wav`, `.wire.raw`) are gitignored; only the ~600-byte
