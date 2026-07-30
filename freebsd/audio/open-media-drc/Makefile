@@ -1,6 +1,6 @@
 PORTNAME=	open-media-drc
 DISTVERSIONPREFIX=	v
-DISTVERSION=	0.90.0
+DISTVERSION=	0.91.0
 CATEGORIES=	audio
 
 MAINTAINER=	delleceste@gmail.com

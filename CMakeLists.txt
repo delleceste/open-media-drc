@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(open-media-drc VERSION 1.0.0 LANGUAGES NONE)
+project(open-media-drc VERSION 0.91.0 LANGUAGES NONE)
 
 # Top-level superproject.  Classical flow:
 #     cmake -B build -C host.cmake && cmake --build build && sudo cmake --install build

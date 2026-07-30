@@ -1072,8 +1072,8 @@ for a zero-config personal appliance:
 6. **Kernel/userland patches**: a port cannot patch the base system
    (uaudio, cuse) and should not carry patches for another port
    (virtual_oss) --- these must land upstream first.
-7. **Missing packaging basics**: no LICENSE, no tagged releases (the
-   `v0.90.0` tag this manual belongs to is the first step), and the tarball
+7. **Missing packaging basics**: no LICENSE, no tagged releases (the `v*`
+   tag series this manual belongs to is the first step), and the tarball
    would ship debugging journals and kernel patches.
 
 Run-from-repo does not have to die: the repo becomes a normal upstream that
