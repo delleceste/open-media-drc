@@ -338,9 +338,14 @@ captures every isochronous OUT transfer to endpoint `0x01`, concatenates the
 payloads, aligns them to the source and writes:
 
 - `PREFIX.wav` — the tapped wire bytes, source-aligned and source-length,
-  as a WAV. **If the chain is bit-perfect this file is byte-identical to the
-  input WAV** (same sha256), so two bit-perfect OSes trivially produce
-  identical outputs.
+  as a WAV. **For a 32-bit input, a bit-perfect chain makes this file
+  byte-identical to the input WAV** (same sha256), so two bit-perfect OSes
+  trivially produce identical outputs. For a **16/24-bit input the two
+  files necessarily differ**: `PREFIX.wav` holds the promoted 32-bit wire
+  container, so it is both longer and differently valued than the source
+  (e.g. the 44100/24-bit asset is 7938044 bytes, its tap WAV 10584044).
+  The invariant that always holds — and the one the comparator uses — is on
+  the *payload* sha256 reported as `tap wav`, not on the file sha256.
 - `PREFIX.wire.raw` — the full untrimmed wire stream (priming bytes and all).
 - `PREFIX.txt` — verdict + sha256 report.
 
@@ -395,7 +400,7 @@ Notes:
 |---|---|
 | `bitperfect-tap-linux.sh` | **Executed and passing** on the Linux host (DacMagic 100, kernel 7.1.5-arch1): 44100/32-bit × 30 s, 44100/24-bit × 30 s and 192000/24-bit × 10 s all **BIT-PERFECT**, 0 truncated events, 0 usbmon drops. Note a 16/24-bit input does not change the playback path — `prep` promotes to the 32-bit wire container first, so the player always emits S32_LE and only the sample *values* differ (`<<8` / `<<16`). |
 | `bitperfect-compare.py` | **Executed** on all comparison paths (wav↔wav, wav↔txt, txt↔txt, refusal of raw↔txt), including a deliberately bit-flipped payload to confirm MISMATCH is reported at the exact offset. |
-| `bitperfect-tap-freebsd.sh` | **Executed and passing** on the FreeBSD host (Cambridge Audio DacMagic 100, `usbus0` devaddr 2, FreeBSD 15.1-RELEASE): 44100/32-bit × 30 s **BIT-PERFECT**, all 10584000 reference bytes identical on the wire, and `bitperfect-compare.py` reports MATCH against the Linux report for the same input. The first run exposed one real defect — a truncated capture, fixed by the trailing silence pad described in ["Anatomy of a tap run"](#anatomy-of-a-tap-run-refraw-the-pad-and-the-cut) below. |
+| `bitperfect-tap-freebsd.sh` | **Executed and passing** on the FreeBSD host (Cambridge Audio DacMagic 100, `usbus0` devaddr 2, FreeBSD 15.1-RELEASE): 44100/32-bit × 30 s, 44100/24-bit × 30 s and 192000/24-bit × 10 s all **BIT-PERFECT** (exit 0). For 44100/32-bit, `bitperfect-compare.py` also reports MATCH against the committed Linux report for the same input; the 24-bit pair has no committed Linux counterpart yet, so those two stand as local proofs only. The 192 kHz run confirms the DAC clock actually followed (`dev.pcm.0.feedback_rate` = 191994) and cost 23.7 s wall clock end to end. The first run exposed one real defect — a truncated capture, fixed by the trailing silence pad described in ["Anatomy of a tap run"](#anatomy-of-a-tap-run-refraw-the-pad-and-the-cut) below. |
 
 Preconditions for the FreeBSD run, beyond a free `/dev/dsp0`
 (`./drc.sh off` plus stopping any renderer): `dev.pcm.N.bitperfect=1` and
@@ -570,10 +575,27 @@ writer closes, and the tap is still recording during the 1 s drain sleep.
 
 #### Step 5 — the comparison
 
+First, note what the comparison is **not**: it never involves the other OS.
+`finalize` compares the capture against `ref.raw`, which came from the input
+file on this machine —
+
+```python
+refcmp = ref[refskip:]
+if aligned == refcmp:
+    ...
+    return out(f"BIT-PERFECT — all {len(refcmp)} reference bytes identical "
+               "on the USB wire", 0)
+```
+
+— so **a single run is already a complete local file → USB proof**, and
+exits 0 on its own. `bitperfect-compare.py` is a separate, optional step
+that answers the *additional* question of whether two hosts agree.
+
 `finalize` writes `PREFIX.wav` by wrapping `aligned` in a WAV header built
-from the *reference's* format, which is what makes the headline identity
-hold: **on a bit-perfect chain the tap WAV is byte-identical to the input
-WAV**. In the passing run all three digests line up:
+from the *reference's* format. For a 32-bit input that makes the tap WAV
+byte-identical to the input WAV; for a 16/24-bit input it cannot be, since
+the tap WAV carries the promoted 32-bit container (see the artifact list
+above). In the 44100/32-bit run all three digests line up:
 
 ```
 input WAV file                          88d365ee…   (generator output)
