@@ -37,11 +37,12 @@ message(STATUS "open-media-drc: service manager = ${OMDRC_SERVICE_MANAGER}, audi
 
 find_program(PYTHON3 python3 REQUIRED)
 
+# ── runtime dependency audit (warns; never fatal) ────────────────────────────
+include(cmake/dependencies.cmake)
+
 # ── subprojects ──────────────────────────────────────────────────────────────
 include(cmake/core-drc.cmake)          # drc.sh + configs/filters + omdrc/omdrc-status wrappers
 include(cmake/hotplug.cmake)           # DAC-hotplug + brutefir services (udev/devd + rc.d/systemd)
+include(cmake/renderers.cmake)         # mpd config/drop-in + upmpdcli config/service
 add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
-
-# Pending migration from install.sh / root Makefile into this superproject:
-#   add_subdirectory(renderers)         # mpd drop-in + upmpdcli

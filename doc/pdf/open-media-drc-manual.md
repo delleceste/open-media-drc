@@ -240,9 +240,11 @@ and the one or two files that must be copied into `/etc` (next section).
 
 The older `./install.sh` rendered the `*.in` templates in place and ran
 everything straight from the checkout (`git pull` = update). That run-from-repo
-mode still works but is superseded by the CMake install for distribution. While
-the remaining subprojects are folded in, `install.sh` still renders the **MPD
-and upmpdcli service configs**; everything else now comes from CMake.
+mode still works but is superseded by the CMake install, which now covers the
+whole DRC stack --- engine, DAC-hotplug glue, both web UIs, and the MPD +
+upmpdcli renderer configs/units. `install.sh` remains only for the desktop
+glue not yet in CMake: the `browser-nodrc` and video `.desktop` launcher
+entries and the Linux `snd-aloop` module-load.
 
 **5. BruteFIR defaults** --- BruteFIR reads float precision, partition size
 and the I/O devices from `~/.config/BruteFIR/brutefir_defaults.conf`. The
