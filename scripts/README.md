@@ -66,6 +66,21 @@ git pull
 #    identity proven by hash          (exit 0; MISMATCH -> exit 1)
 ```
 
+**Other rates / widths.** Both tap scripts read rate and sample width from
+the WAV header, so testing 192k/24-bit is just a different input file — no
+flags to change:
+
+```sh
+python3 tests/gen-bitperfect-wav.py --rate 192000 --bits 24 --frames 5760000 \
+    tests/bitperfect-test-192000-s24-stereo-30s.wav      # --frames = s * rate
+./scripts/bitperfect-tap-linux.sh tests/bitperfect-test-192000-s24-stereo-30s.wav
+```
+
+Use the **same width on both machines** for a cross-OS comparison: 16/24-bit
+input is promoted losslessly to the 32-bit wire container (`<<16` / `<<8`),
+so captures of different widths carry differently shifted values and will
+not byte-match. Details in [`../tests/README.md`](../tests/README.md).
+
 Only the ~600-byte `.txt` reports travel through git: they record each tap
 payload's exact length and sha256, and hash equality on equal-length
 payloads proves byte-identity. The 10 MB `.wav` / `.wire.raw` artifacts

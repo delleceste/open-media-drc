@@ -25,6 +25,46 @@ index folded into R breaks the 65536-frame period), so capture alignment is
 unambiguous at any length and any dropped/duplicated/altered sample is
 detectable at any offset, while the signal stays near-silent (~ −90 dBFS).
 
+### Other rates and sample widths (192k/24-bit and friends)
+
+The generator takes `--rate`, `--bits` (16/24/32) and `--frames`
+(= seconds × rate), so any format the DAC advertises can be tested:
+
+```sh
+# 192 kHz / 24-bit, 30 s
+python3 tests/gen-bitperfect-wav.py --rate 192000 --bits 24 --frames 5760000 \
+    tests/bitperfect-test-192000-s24-stereo-30s.wav
+
+# 96 kHz / 24-bit, 10 s
+python3 tests/gen-bitperfect-wav.py --rate 96000 --bits 24 --frames 960000 \
+    tests/bitperfect-test-96000-s24-stereo-10s.wav
+```
+
+Then feed the file to either tap script exactly as the canonical asset —
+they read rate/width from the WAV header, nothing to configure:
+
+```sh
+./scripts/bitperfect-tap-linux.sh tests/bitperfect-test-192000-s24-stereo-30s.wav
+```
+
+The sample *values* are the same counter at every width (they never exceed
+`0xFFFF`), so only the container changes. A 16/24-bit file therefore also
+exercises the tap scripts' **lossless promotion to the 32-bit USB wire
+container** (`<<8` for 24-bit, `<<16` for 16-bit) — the promotion any
+bit-perfect player must perform for a DAC that only accepts 32-bit
+containers. Two consequences:
+
+- pick one width per cross-OS comparison — a 24-bit capture is not
+  byte-comparable with a 32-bit capture of the same counter, since the
+  wire values are shifted differently;
+- `.gitignore` only excludes the canonical 30 s asset by name, so add any
+  extra generated WAV you keep around (or drop it under `bp-results/`,
+  which is ignored except for `*.txt`).
+
+Verified on the Linux host with a generator-produced file: 192000 Hz /
+24-bit × 10 s → **BIT-PERFECT**, all 15,360,000 wire bytes identical,
+0 usbmon drops.
+
 ### Cross-OS workflow
 
 Each OS runs its tap script on the (locally regenerated) common WAV; only

@@ -42,6 +42,34 @@ tests/README.md:
 
 The canonical asset is the common input for the cross-OS USB tap suite
 (scripts/bitperfect-tap-linux.sh / -freebsd.sh / bitperfect-compare.py).
+
+Rate and sample width
+=====================
+`--rate` and `--bits` cover the high-rate / high-resolution cases the DAC
+supports (44100/48000/88200/96000/192000 Hz; 16, 24 or 32 bit).  Examples:
+
+    # canonical 44100 / 32-bit, 30 s
+    ./gen-bitperfect-wav.py bitperfect-test-44100-s32-stereo-30s.wav
+
+    # 192 kHz / 24-bit, 30 s  (--frames = seconds * rate)
+    ./gen-bitperfect-wav.py --rate 192000 --bits 24 --frames 5760000 \
+        bitperfect-test-192000-s24-stereo-30s.wav
+
+    # 96 kHz / 24-bit, 10 s
+    ./gen-bitperfect-wav.py --rate 96000 --bits 24 --frames 960000 \
+        bitperfect-test-96000-s24-stereo-10s.wav
+
+The sample VALUES are the same counter regardless of `--bits` (they never
+exceed 0xFFFF, so they fit even in 16-bit); only the container width
+changes.  A 16/24-bit file therefore additionally exercises the tap
+scripts' lossless promotion to the 32-bit USB wire container — the wire
+bytes then carry the value shifted left (<<8 for 24-bit, <<16 for 16-bit),
+which is what a bit-perfect player must send to a DAC that only accepts
+32-bit containers.
+
+Note that captures of DIFFERENT `--bits` are not byte-comparable with each
+other (the shift differs); compare a 24-bit run on one OS against a 24-bit
+run on the other.
 """
 import argparse
 import hashlib
@@ -53,20 +81,27 @@ p = argparse.ArgumentParser(description=__doc__,
 p.add_argument("wav", help="output WAV path")
 p.add_argument("--frames", type=int, default=1323000, help="frame count (default 30 s @ 44100)")
 p.add_argument("--rate", type=int, default=44100, help="sample rate (default 44100)")
+p.add_argument("--bits", type=int, default=32, choices=(16, 24, 32),
+               help="sample container width in bits (default 32)")
 a = p.parse_args()
 
+width = a.bits // 8
 buf = bytearray()
 for i in range(a.frames):
-    buf += struct.pack("<ii", i & 0xFFFF, (i * 40503 + (i >> 16)) & 0xFFFF)
+    l = i & 0xFFFF
+    r = (i * 40503 + (i >> 16)) & 0xFFFF
+    # little-endian: take the low `width` bytes of the 32-bit packing. The
+    # values are < 2**16, so nothing is lost at any of the three widths.
+    buf += struct.pack("<i", l)[:width] + struct.pack("<i", r)[:width]
 
 w = wave.open(a.wav, "wb")
 w.setnchannels(2)
-w.setsampwidth(4)       # 4 bytes -> S32_LE (the wire container of both DACs)
+w.setsampwidth(width)    # 4 -> S32_LE, 3 -> S24_3LE, 2 -> S16_LE
 w.setframerate(a.rate)
 w.writeframes(buf)
 w.close()
 
 digest = hashlib.sha256(open(a.wav, "rb").read()).hexdigest()
-print(f"{a.wav}: {a.frames} frames, S32_LE stereo @ {a.rate} Hz "
+print(f"{a.wav}: {a.frames} frames, S{a.bits}_LE stereo @ {a.rate} Hz "
       f"({a.frames / a.rate:.2f} s, {44 + len(buf)} bytes)")
 print(f"sha256 {digest}")
