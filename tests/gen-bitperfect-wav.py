@@ -43,10 +43,13 @@ tests/README.md:
 The canonical asset is the common input for the cross-OS USB tap suite
 (scripts/bitperfect-tap-linux.sh / -freebsd.sh / bitperfect-compare.py).
 
-Rate and sample width
-=====================
-`--rate` and `--bits` cover the high-rate / high-resolution cases the DAC
-supports (44100/48000/88200/96000/192000 Hz; 16, 24 or 32 bit).  Examples:
+Rate and sample size: --rate / --bits
+=====================================
+These two options cover the high-rate / high-resolution cases the DAC
+supports (44100/48000/88200/96000/192000 Hz; 16, 24 or 32 bit).  `--bits`
+is the only knob for sample size; internally it becomes `width` = bytes
+per sample (32->4, 24->3, 16->2), which is what wave.setsampwidth() takes.
+Examples:
 
     # canonical 44100 / 32-bit, 30 s
     ./gen-bitperfect-wav.py bitperfect-test-44100-s32-stereo-30s.wav
