@@ -47,6 +47,27 @@ they read rate/width from the WAV header, nothing to configure:
 ./scripts/bitperfect-tap-linux.sh tests/bitperfect-test-192000-s24-stereo-30s.wav
 ```
 
+**Each format has its own hash.** The sample *values* are the same counter
+at every width, but a 24-bit file stores each sample in 3 bytes instead of
+4, so it is a different file with a different size and sha256 — the
+canonical `88d365ee…` applies *only* to 44100/32-bit/1323000 frames. Check
+both machines against the row you are actually testing:
+
+| Rate | Bits | Frames | Size | sha256 |
+|---|---|---|---|---|
+| 44100 | 32 | 1323000 (30 s) | 10584044 | `88d365eeaccb1fa830bb1a2726b0f29bb545885824351080e0c5b4cbc9602348` |
+| 44100 | 24 | 1323000 (30 s) | 7938044 | `e2702c119606cdf83d1c41d7ece9e3b3be03af83eedfcf2404809f66b3bbaa55` |
+| 192000 | 24 | 5760000 (30 s) | 34560044 | `58dd87f3560334fb48a33afdca29e5743a72d64a87e6f58c1f093f59c45cf7d1` |
+| 96000 | 24 | 960000 (10 s) | 5760044 | `b572faabdee3b623b02fa5ae437967aa158e1b089880c714d398afd029ace764` |
+
+Any other combination is equally valid — the generator prints the sha256
+of whatever it writes, so generate once, note the hash, and match it on
+the other machine.
+
+The tap artifacts differ per format too: the report's `ref bytes` sha256
+is that of the *promoted* stream (`<<8` for 24-bit), so it never equals
+the 32-bit run's, even at the same rate.
+
 The sample *values* are the same counter at every width (they never exceed
 `0xFFFF`), so only the container changes. A 16/24-bit file therefore also
 exercises the tap scripts' **lossless promotion to the 32-bit USB wire
