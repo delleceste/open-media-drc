@@ -575,13 +575,130 @@ everything after `start + len(ref)` (the pad, plus any trailing packets) is
 discarded by the same two lines. The pad needs no special handling and is
 not mentioned in the verdict at all.
 
-**This must not be done by detecting silence**, which is why it isn't: the
-test signal is itself near-silent (~ −90 dBFS, only the low 16 bits of each
-32-bit sample are ever non-zero), so a silence-seeking trim would cut into
-real payload. `find_probe_offset` (`bitperfect-lib.py:300`) exists for the
-mirror-image reason — it walks forward in 4 KiB steps until a window holds
-≥ 256 non-zero bytes, so the alignment probe can never be a run of zeros
-that would match the priming silence instead of the audio.
+##### How the start of the audio is actually found
+
+In plain terms: **the tool does not look for where the padding ends. It
+looks for a piece of the reference it already knows, and works backwards
+from it.**
+
+The piece it looks for is called the *anchor* (`probe` in the code): 4096
+consecutive bytes copied out of the reference. Since the tool knows the
+anchor's offset *inside the reference* (`po`), finding the anchor inside
+the capture (`pos`) immediately gives the position of reference byte 0:
+
+```
+start = pos - po
+```
+
+Here it is on the real 44100/32-bit run. The reference begins with the
+counter signal, so the anchor is simply its first 4096 bytes (`po = 0`):
+
+```
+reference  ref.raw — 10584000 bytes, exactly what the DAC must receive
+           ┌──────────────────────────────────────────────────────────┐
+byte 0 ──► │ 00 00 00 00 00 00 00 00 │ 01 00 00 00 37 9e 00 00 │ 02 …  │
+           └──────────────────────────────────────────────────────────┘
+             frame 0: L=0  R=0         frame 1: L=1  R=40503
+           └──────────── anchor = ref[0 : 4096] ────────────┘   po = 0
+
+capture    wire.raw — 10772776 bytes, everything the tap recorded
+           0            5648                        10589648   10772776
+           ├─────────────┼───────────────────────────┼──────────┤
+           │priming zeros│   A U D I O = reference   │pad+trail │
+           │   5648 B    │        10584000 B         │ 183128 B │
+           │ all 00      │ 00 00 …  01 00 00 00 37 9e│ all 00   │
+           │ 16.01 ms    │                           │ 519 ms   │
+           └─────────────┴───────────────────────────┴──────────┘
+                         ▲
+                         └─ anchor found here:  pos = 5648
+                            start = pos − po  = 5648 − 0 = 5648
+                            aligned = cap[5648 : 5648 + 10584000]
+```
+
+**Why not simply "skip the leading zeros"?** Because zeros can be data. A
+reference may legitimately begin with silence — a quiet intro on real
+music — and those zeros are part of what the DAC must receive. On the wire
+they are byte-for-byte indistinguishable from the priming zeros in front of
+them:
+
+```
+reference        │◄──── 8192 B of REAL silence ────►│◄── signal ──…
+capture   │◄5648 B►│◄──── 8192 B of REAL silence ────►│◄── signal ──…
+           priming
+          └──────── 13840 consecutive 00 bytes ──────┘
+                                    ▲
+                    nothing in the bytes marks this boundary
+
+anchor:  po  = 8192   ← first window with ≥ 256 non-zero bytes
+found:   pos = 13840
+start    = 13840 − 8192 = 5648   ✓ intro preserved as data
+a "skip the zeros" rule would give   13840   ✗ intro eaten
+```
+
+That is what `find_probe_offset` (`bitperfect-lib.py:300`) is for: it steps
+forward through the reference in 4 KiB windows until one contains **≥ 256
+non-zero bytes**, i.e. is unmistakably signal, and takes the anchor there.
+An all-zero anchor would match at the start of the zero run and misalign
+the whole comparison — silently.
+
+The same reasoning rules out trimming by silence detection in general: this
+test signal is *itself* near-silent (~ −90 dBFS; only the low 16 bits of
+each 32-bit sample are ever non-zero, which is visible in the byte dump
+above — every fourth byte pair is `00 00`), so a silence-seeking rule would
+cut into real payload.
+
+**Why the anchor is unambiguous.** In the real capture the 4 KiB anchor
+occurs **exactly once** — not "probably once". That is a direct payoff of
+the generator's design: `R = (i*40503 + (i >> 16)) & 0xFFFF` folds the
+block index into the right channel, making every (L,R) pair unique over the
+whole file, so a 512-frame window cannot recur. The older 100000-frame
+asset repeated every 65536 frames and could in principle have matched at
+several offsets.
+
+##### What if the anchor is not found?
+
+Then the run is reported as an error and **no verdict is given**, because
+there is nothing trustworthy to compare:
+
+```python
+if not cap:
+    return out("NO CAPTURE — nothing seen on the USB wire", 2)
+po  = find_probe_offset(ref)
+pos = cap.find(ref[po:po + 4096])
+if pos < 0:
+    return out("ALIGNMENT FAILED — reference not found in the wire stream "
+               "(gross corruption, wrong device, or capture gap)", 2)
+```
+
+The exit code carries the distinction, which is worth respecting if these
+are ever wrapped in CI:
+
+| exit | meaning | verdicts |
+|---|---|---|
+| 0 | judged, and the chain is transparent | `BIT-PERFECT` |
+| 1 | judged, and something is wrong | `HEAD LOST`, `INCOMPLETE`, `VALUE CORRUPTION`, `TIMING SLIP(S)`, `UNDERRUN TAIL` |
+| 2 | **could not judge** — capture unusable | `NO CAPTURE`, `ALIGNMENT FAILED` |
+
+**A trap worth knowing.** Exit 2 does *not* guarantee the problem is your
+capture setup. Aligning needs 4096 **consecutive intact** bytes; a defect
+that alters *every* sample leaves no such run anywhere, so the search fails
+before any comparison happens. Feeding `finalize` a capture with every
+sample scaled by 0.5 — precisely what a volume feeder in the path would
+produce, a serious bit-perfection failure — yields:
+
+```
+ALIGNMENT FAILED — reference not found in the wire stream
+(gross corruption, wrong device, or capture gap)          exit 2
+```
+
+not `VALUE CORRUPTION`. At the alignment stage the tool genuinely cannot
+tell "you tapped the wrong USB device" from "every sample was altered",
+which is why the message names all three possibilities. **If you ever see
+exit 2, open `PREFIX.wire.raw`:** junk or zeros point at the tap, while
+plausible-looking audio points at a converting feeder in the playback path.
+The failures that *do* get classified (exit 1) are the ones where enough of
+the stream survives intact to anchor on: a bit flipped here and there, a
+dropped or duplicated packet, a truncated capture.
 
 Measured on the passing run, with the pad in place:
 
