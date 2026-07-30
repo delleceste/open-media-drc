@@ -393,7 +393,7 @@ Notes:
 
 | Script | Status |
 |---|---|
-| `bitperfect-tap-linux.sh` | **Executed and passing** on the Linux host (DacMagic 100, kernel 7.1.5-arch1): 44100/32-bit × 30 s and 192000/24-bit × 10 s both **BIT-PERFECT**, tap WAV sha256 equal to the source WAV, 0 truncated events, 0 usbmon drops. |
+| `bitperfect-tap-linux.sh` | **Executed and passing** on the Linux host (DacMagic 100, kernel 7.1.5-arch1): 44100/32-bit × 30 s, 44100/24-bit × 30 s and 192000/24-bit × 10 s all **BIT-PERFECT**, 0 truncated events, 0 usbmon drops. Note a 16/24-bit input does not change the playback path — `prep` promotes to the 32-bit wire container first, so the player always emits S32_LE and only the sample *values* differ (`<<8` / `<<16`). |
 | `bitperfect-compare.py` | **Executed** on all comparison paths (wav↔wav, wav↔txt, txt↔txt, refusal of raw↔txt), including a deliberately bit-flipped payload to confirm MISMATCH is reported at the exact offset. |
 | `bitperfect-tap-freebsd.sh` | **Never executed yet** — written on the Linux host, so its first FreeBSD run is also its first test. Its tap/decode/writer code is a direct port of `verify-bitperfect.sh` (proven on the OKTO), and the shared alignment/verdict engine is the same file the Linux side exercises, so the untested surface is the shell glue: device discovery, argument passing, `fuser`/`sudo`/`cc` availability. Expect first-run friction there, not in the byte handling. |
 
@@ -409,6 +409,15 @@ If the FreeBSD run does not print BIT-PERFECT, its `PREFIX.txt` carries the
 classified verdict (value corruption vs timing slip vs incomplete capture
 vs head lost) — commit that report; it is enough to diagnose from the other
 machine without moving any payload.
+
+**Start with the canonical 44100 Hz asset.** The FreeBSD tap decodes
+`usbdump -vv` *text*, so the parsing cost scales with the capture: 30 s at
+44100 Hz is ~10.5 MB of payload arriving as tens of MB of hex-dump text
+(fine), while 30 s at 192 kHz is ~46 MB of payload as several hundred MB
+of text — slow, and it stresses the pcap capture too. Prove the path at
+44100 first, then use a shorter duration for the high-rate case
+(`--frames 1920000` = 10 s at 192 kHz). The Linux side reads usbmon's
+binary interface and has no such limit.
 
 ## Related
 
