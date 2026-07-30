@@ -48,9 +48,25 @@ set -euo pipefail
 #            write()s the reference flat-out.  No pacing is needed: the
 #            kernel blocks the writes in lockstep with the DAC's own clock
 #            (async feedback), so the producer cannot over- or underrun.
+#            What is played is the reference plus a TRAILING SILENCE PAD
+#            (see PAD_MS below); the reference used for comparison is
+#            unchanged.
 # 4. VERDICT bitperfect-lib.py `finalize` aligns the capture to the
 #            reference (absorbing OSS stream-priming zeros and capture
 #            lead-in), writes the artifacts and classifies any difference.
+#
+# Why the trailing silence pad
+# ----------------------------
+# usbdump writes the pcap through a buffer, and terminating it drops
+# whatever has not been flushed — costing the LAST few ms of the capture.
+# Against an unpadded reference that lands as a bogus `INCOMPLETE` verdict
+# ("first N bytes identical but the capture ends X bytes early") even
+# though every byte that was captured matched.  Playing PAD_MS of silence
+# after the reference moves that loss into the pad, which `finalize`
+# discards anyway: it locates the stream start by content and then takes
+# exactly `len(ref)` bytes, so any padding beyond the reference is trimmed
+# the same way the stream-priming lead-in already is.  The Linux twin taps
+# usbmon's binary interface, does not exhibit the loss, and is unchanged.
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB="$HERE/bitperfect-lib.py"
@@ -58,6 +74,7 @@ LIB="$HERE/bitperfect-lib.py"
 PLAY_DEV="/dev/dsp0"
 PREFIX=""
 INPUT=""
+PAD_MS=500           # trailing silence played after the reference (see above)
 while [ $# -gt 0 ]; do
   case "$1" in
     --dev)  PLAY_DEV="$2"; shift 2;;
@@ -81,7 +98,7 @@ if fuser "$PLAY_DEV" 2>/dev/null | grep -q '[0-9]'; then
 fi
 
 TMP="$(mktemp -d /tmp/bptap.XXXXXX)"
-trap 'sudo kill "$TAPPID" 2>/dev/null || true; rm -rf "$TMP"' EXIT
+trap 'sudo kill -INT "$TAPPID" 2>/dev/null || true; rm -rf "$TMP"' EXIT
 TAPPID=""
 
 # ── 1. PREP: reference PCM in the S32_LE wire container ──────────────────────
@@ -89,6 +106,12 @@ TAPPID=""
 # promoted stream (identical to the WAV payload when it is already 32-bit).
 read -r RATE CH BITS FRAMES < <(python3 "$LIB" prep "$INPUT" "$TMP/ref.raw")
 say "Input: $FRAMES frames, ${BITS}-bit, ${CH}ch @ ${RATE} Hz -> S32_LE wire container"
+
+# play.raw = ref.raw + PAD_MS of silence.  ONLY this padded copy is played;
+# ref.raw stays the comparison reference, so the verdict is unaffected.
+PAD_BYTES=$(( RATE * CH * 4 * PAD_MS / 1000 ))
+cp "$TMP/ref.raw" "$TMP/play.raw"
+dd if=/dev/zero bs="$PAD_BYTES" count=1 status=none >> "$TMP/play.raw"
 
 # ── format-guarded OSS writer (same as in verify-bitperfect.sh) ──────────────
 # Each ioctl result is CHECKED: OSS reports back the format/channels/rate it
@@ -145,12 +168,15 @@ TAPPID=$!
 sleep 0.6            # let the tap attach so the stream head is captured
 
 # ── 3. PLAY: flat-out write, flow-controlled by the DAC's own clock ──────────
-say "Playing (flat-out, DAC-clocked) to $PLAY_DEV"
-"$TMP/bpwrite" "$PLAY_DEV" "$RATE" "$CH" "$TMP/ref.raw" || {
+say "Playing (flat-out, DAC-clocked) to $PLAY_DEV  [+${PAD_MS}ms silence pad]"
+"$TMP/bpwrite" "$PLAY_DEV" "$RATE" "$CH" "$TMP/play.raw" || {
   echo "writer aborted (see FAIL above)" >&2; exit 2; }
 
-sleep 0.6            # let the last queued URBs drain before stopping the tap
-sudo kill "$TAPPID" 2>/dev/null || true
+# SNDCTL_DSP_SYNC has returned, so the pad is already on the wire; the sleep
+# only covers URBs still queued in the controller.  SIGINT (not the default
+# SIGTERM) gives usbdump the chance to flush and close the pcap cleanly.
+sleep 1
+sudo kill -INT "$TAPPID" 2>/dev/null || true
 wait "$TAPPID" 2>/dev/null || true
 TAPPID=""
 
