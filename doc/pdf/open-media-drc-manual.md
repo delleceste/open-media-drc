@@ -1201,6 +1201,74 @@ swap shows up immediately.
   # sha256 88d365eeaccb1fa830bb1a2726b0f29bb545885824351080e0c5b4cbc9602348
   ```
 
+## Other rates and sample widths
+
+The generator takes `--rate`, `--bits` (16/24/32) and `--frames`
+(= seconds x rate), so any format the DAC advertises can be tested. Both tap
+scripts read rate and width from the WAV header --- feeding them a different
+file is the whole configuration:
+
+```sh
+python3 tests/gen-bitperfect-wav.py --rate 192000 --bits 24 --frames 5760000 \
+    tests/bitperfect-test-192000-s24-stereo-30s.wav
+./scripts/bitperfect-tap-linux.sh tests/bitperfect-test-192000-s24-stereo-30s.wav
+```
+
+The sample *values* are the same counter at every width (they never exceed
+`0xFFFF`), so only the container changes --- which means a 16/24-bit asset
+additionally exercises the **lossless promotion to the 32-bit USB wire
+container** (`<<8` for 24-bit, `<<16` for 16-bit) that any bit-perfect player
+must perform for a DAC accepting only 32-bit containers. A 16/24-bit input
+therefore does not change the playback path at all: `prep` promotes first and
+the player always emits S32_LE.
+
+Two consequences: **each format has its own sha256** (a 24-bit file stores 3
+bytes per sample, so it is a different file), and a cross-OS comparison must
+use the **same width on both machines** --- differently shifted wire values
+never byte-match. The report's `ref bytes` hash is that of the promoted
+stream, so it too differs per width at the same rate.
+
+| Rate | Bits | Frames | Size | sha256 (first 16) |
+|---|---|---|---|---|
+| 44100 | 32 | 1323000 (30 s) | 10584044 | `88d365eeaccb1fa8` |
+| 44100 | 24 | 1323000 (30 s) | 7938044 | `e2702c119606cdf8` |
+| 192000 | 24 | 5760000 (30 s) | 34560044 | `58dd87f3560334fb` |
+| 192000 | 24 | 1920000 (10 s) | 11520044 | `01317af6523ec67f` |
+| 96000 | 24 | 960000 (10 s) | 5760044 | `b572faabdee3b623` |
+
+Any other combination is equally valid: the generator prints the sha256 of
+whatever it writes --- generate once, note the hash, match it on the other
+machine (full hashes in `tests/README.md`). `.gitignore` excludes the
+generated assets by name (the 44100/32-bit and 44100/24-bit 30 s files and the
+192000/24-bit 10 s one), so add any further WAV you keep, or drop it under
+`bp-results/` (ignored except for `*.txt`).
+
+## Verification status
+
+Both taps are executed and passing --- the FreeBSD side is no longer a
+written-but-unrun script:
+
+| Host | Runs | Result |
+|---|---|---|
+| Linux (DacMagic 100, kernel 7.1.5-arch1) | 44100/32-bit x 30 s, 44100/24-bit x 30 s, 192000/24-bit x 10 s | all **BIT-PERFECT**, 0 truncated events, 0 usbmon drops |
+| FreeBSD 15.1-RELEASE (same DAC, `usbus0` devaddr 2) | same three | all **BIT-PERFECT** (exit 0); the 192 kHz run confirms the DAC clock followed (`dev.pcm.0.feedback_rate` = 191994) and costs ~24 s wall clock |
+
+`bitperfect-compare.py` reports **MATCH** across the two hosts for the
+44100/32-bit asset; the 24-bit pairs have no committed Linux counterpart yet,
+so those stand as local per-host proofs. The comparator itself has been
+exercised on every path (wav/wav, wav/txt, txt/txt, refusal of raw/txt) plus a
+deliberately bit-flipped payload, which it reports as MISMATCH at the exact
+offset.
+
+The FreeBSD tap's first run exposed a real defect --- a capture truncated by
+~17 ms because `usbdump` discards its unflushed buffer on exit. The fix is a
+500 ms **silence pad**: the player plays `ref.raw` plus half a second of
+zeros, while the verdict still compares the unpadded reference, so the loss
+lands in silence nothing depends on. The pad is removed by *arithmetic* (take
+`len(ref)` bytes from the alignment point), never by silence detection ---
+the test signal is itself near-silent, so a zero-seeking trim would eat real
+payload.
+
 ## Cross-OS byte comparison
 
 Each OS taps its own USB isochronous OUT endpoint while playing the (locally
@@ -1231,6 +1299,48 @@ Identical length and sha256 on both reports proves the two operating systems
 deliver bit-identical audio to the DAC. Step-by-step commands and the
 mismatch-forensics path are in `scripts/README.md` and
 `doc/BIT-PERFECT-VERIFICATION.md` (*Cross-OS comparison*).
+
+**A single run already proves the local path.** Each tap compares its capture
+against the reference derived from the input file *on that machine* and exits
+0 on **BIT-PERFECT** --- a complete file -> USB proof by itself.
+`bitperfect-compare.py` is a separate, optional step answering the further
+question of whether two hosts agree.
+
+**What the report records.** Each `PREFIX.txt` names and hashes every stage
+(`input file`, `ref bytes`, `wire raw`, `tap wav`, `verdict`), so a run is
+auditable from the ~600-byte report alone. Only three of those are
+reproducible: `input file`, `ref bytes` and `tap wav`. **`wire raw` is not**
+--- it is the untrimmed capture, so its length varies between otherwise
+identical runs (a few packets more or fewer recorded before the tap stops),
+and Linux and FreeBSD captures of the same input legitimately differ
+(10584816 vs 10772776 bytes at 44100/32-bit). It is provenance only; the
+field the comparator uses is `tap wav`. Note also that `PREFIX.wav` equals
+the input WAV only for a **32-bit** input: for 16/24-bit it carries the
+promoted 32-bit container, so it is longer and differently valued --- the
+invariant that always holds is the `tap wav` payload hash, not the file hash.
+
+**What surrounds the audio.** The capture is always longer than the
+reference, and everything outside is measurably all-zero: a head of
+stream-priming zeros --- **exactly 16 ms at both 44100 and 192000 Hz**, a
+fixed-duration buffer prime rather than a timing accident --- and a tail of
+the 500 ms pad plus ~19 ms the kernel keeps transmitting after the writer
+closes. On a **BIT-PERFECT** verdict both capture boundaries necessarily fell
+outside the audio; when they fall inside, the tool names it (`HEAD LOST` at
+the start, `INCOMPLETE` at the end) rather than hiding it. One qualification:
+"inaudible" describes the sample *values*. Opening or closing an isochronous
+stream, and any rate change around it, can still produce an audible artifact
+from the DAC's analogue side (mute relay, PLL relock --- see
+`OKTO-DAC8-FreeBSD-44k1-flicker.md`); that comes from stream start/stop, not
+from the zeros.
+
+**Start with the canonical 44100 Hz asset on FreeBSD.** The FreeBSD tap
+decodes `usbdump -vv` *text*, so parsing cost scales with the capture: 30 s
+at 44100 Hz is ~10.5 MB of payload arriving as tens of MB of hex-dump text
+(fine), while 30 s at 192 kHz is ~46 MB of payload as several hundred MB of
+text --- slow, and it stresses the pcap capture too. Prove the path at 44100
+first, then shorten the high-rate run (`--frames 1920000` = 10 s at
+192 kHz). The Linux side reads usbmon's binary interface and has no such
+limit.
 
 \newpage
 
