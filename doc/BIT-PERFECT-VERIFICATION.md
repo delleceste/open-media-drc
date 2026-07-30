@@ -365,13 +365,14 @@ payloads, aligns them to the source and writes:
   **Which of these are reproducible, and which are not:** `input file`,
   `ref bytes` and `tap wav` are deterministic — two bit-perfect runs, on
   either OS, reproduce them exactly. `wire raw` is **not**: it is the
-  untrimmed capture, so it includes priming zeros, the silence pad and
-  whatever trailing packets the tap happened to record, and it varies
-  between otherwise identical runs (two 192 kHz runs here gave 16182800 and
-  16182832 bytes). It is a provenance/debugging record, **never** a
+  untrimmed capture, so besides the audio it holds the priming zeros, the
+  silence pad and however many trailing packets the tap happened to record
+  before it was stopped. It is a provenance/debugging record, **never** a
   cross-OS comparison key — Linux and FreeBSD captures of the same input
   legitimately differ in length (10584816 vs 10772776 at 44100/32-bit).
-  The field the comparator uses is `tap wav`.
+  The field the comparator uses is `tap wav`. What exactly surrounds the
+  audio, and why none of it is audible, is measured in
+  ["What surrounds the audio"](#what-surrounds-the-audio-priming-zeros-the-pad-and-where-the-boundaries-fall).
 
 **Comparing across machines without moving 10 MB files.** The big
 artifacts (`.wav`, `.wire.raw`) are gitignored; only the ~600-byte
@@ -596,6 +597,74 @@ FreeBSD's OSS priming is deterministic, and the pad changed only the tail.
 The surviving tail (183128 B ≈ 519 ms) slightly exceeds the 176400 B pad
 because the kernel keeps the isochronous channel running briefly after the
 writer closes, and the tap is still recording during the 1 s drain sleep.
+
+#### What surrounds the audio: priming zeros, the pad, and where the boundaries fall
+
+`wire raw` is always longer than the reference. Decomposing two real
+captures at the alignment point shows what the extra material is — and,
+importantly, that **all of it is zero**:
+
+| | 44100/32-bit | 192000/24-bit |
+|---|---|---|
+| capture (`wire raw`) | 10772776 B | 16182800 B |
+| head, before the audio | 5648 B — **all zero** | 24576 B — **all zero** |
+| head as frames / time | 706 fr / **16.01 ms** | 3072 fr / **16.00 ms** |
+| audio (`= ref bytes`) | 10584000 B | 15360000 B |
+| tail, after the audio | 183128 B — **all zero** | 798224 B — **all zero** |
+| tail as time | 519 ms | 520 ms |
+
+**The head is the priming zeros.** An isochronous endpoint owns a fixed
+slot in every USB (micro)frame: it cannot wait for data, it transmits
+whatever the DMA ring holds when its slot comes up. At stream start the
+ring is zero-filled and transmission begins before the first `write()` has
+propagated through it, so the opening packets carry that zero fill. Note
+the measurement: **exactly 16 ms at both rates** — different byte counts,
+same duration. That is a fixed-duration buffer prime, not a timing
+accident, which is why the head is reproducible run to run (5648 B in every
+44100 run recorded here).
+
+**The tail is the silence pad** (500 ms, [Step 3](#step-3--the-pad-what-is-played-is-not-what-is-compared))
+**plus ~19 ms of packets the kernel keeps sending after the writer closes**,
+and *this* is the part that wobbles. The tap is stopped by a wall-clock
+`sleep`, which lands at an arbitrary point in the USB frame schedule, so
+the last few packets fall inside or outside the window:
+
+| run pair, same input | first | second | delta |
+|---|---|---|---|
+| 44100/24-bit | 10772744 | 10772824 | 80 B = 10 frames |
+| 192000/24-bit | 16182832 | 16182800 | 32 B = 4 frames |
+| 44100/32-bit | 10772776 | 10772776 | 0 — happened to reproduce |
+
+So identical inputs can yield different `wire raw` **without the audio
+differing at all**: the audio is bit-identical (that is what the verdict
+certifies); only the amount of trailing silence recorded changes.
+
+**Where the boundaries fall, and why they are inaudible.** Two distinct
+things are easy to conflate here:
+
+- A **capture boundary** is a property of the *observer*, not of the wire.
+  It decides what lands in the pcap; the DAC received the same stream
+  either way. Bytes the tap missed still reached the DAC — that was exactly
+  the earlier `INCOMPLETE` bug, real audio the DAC got and we failed to
+  record. Nothing about where the tap started or stopped is audible,
+  because it never touched the stream.
+- The **extra material inside the window** *is* genuine traffic the DAC
+  received. It is inaudible for a measured reason, not by assumption: it is
+  all-zero PCM (table above), so the DAC's output sits at its zero level.
+
+On a `BIT-PERFECT` verdict both boundaries necessarily fell **outside** the
+audio — head in the priming zeros, tail in the pad. They *can* fall inside,
+and the tool names it rather than hiding it: inside at the start is
+`HEAD LOST`, inside at the end is `INCOMPLETE`. The pad exists to make
+"outside" the reliable case at the tail instead of a matter of luck.
+
+One qualification on "inaudible": it describes the sample *values*, not the
+act of starting and stopping a stream. Opening or closing an isochronous
+stream, and any rate change around it, can produce a genuine audible
+artifact from the DAC's analogue side — mute relay, PLL relock, the
+cold-open silence documented in `OKTO-DAC8-FreeBSD-44k1-flicker.md`. That
+comes from stream start/stop and clock changes, not from the zeros and not
+from where the tap's window happened to fall.
 
 #### Step 5 — the comparison
 
