@@ -53,9 +53,11 @@ render() {
 }
 
 echo "Rendering templates from config.env (AUDIO_USER=${AUDIO_USER}, AUDIO_HOME=${AUDIO_HOME}):"
-# Skip .git and the omdrc-ctrl subdirectory — it ships its own *.in templates that
-# are rendered by its CMake build (different @VARS@), not by this script.
-find "$REPO_DIR" -name '*.in' -not -path '*/.git/*' -not -path '*/omdrc-ctrl/*' | while read -r tpl; do
+# Skip .git and the CMake-owned subprojects — they ship their own *.in templates
+# rendered by CMake (different @VARS@: @CMAKE_INSTALL_PREFIX@ etc.), not by this
+# script: omdrc-ctrl (omdrcctrl) and video/webremote (omdrcvideo).
+find "$REPO_DIR" -name '*.in' -not -path '*/.git/*' \
+     -not -path '*/omdrc-ctrl/*' -not -path '*/video/webremote/*' | while read -r tpl; do
 	render "$tpl"
 done
 

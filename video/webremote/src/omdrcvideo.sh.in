@@ -1,0 +1,4 @@
+#!/bin/sh
+exec "@PYTHON3@" "@CMAKE_INSTALL_PREFIX@/lib/omdrcvideo/src/app.py" \
+    --config "@CMAKE_INSTALL_PREFIX@/etc/omdrcvideo/webremote.conf" \
+    "$@"

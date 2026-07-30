@@ -7,7 +7,11 @@
 #   AUDIO_DELAY   -- mpv --audio-delay value (negative delays the VIDEO)
 #   SUB_DELAY     -- mpv --sub-delay value
 
-REPO="$HERE/.."   # open-media-drc repo root (drc.sh / drc-status.sh live here)
+REPO="$HERE/.."   # open-media-drc repo root (run-from-repo: drc.sh lives here)
+# Installed layouts expose drc.sh behind the `omdrc` / `omdrc-status` wrappers on
+# PATH; run-from-repo has neither on PATH, so fall back to $REPO.
+DRC_SH="$(command -v omdrc 2>/dev/null || echo "$REPO/drc.sh")"
+DRC_STATUS_SH="$(command -v omdrc-status 2>/dev/null || echo "$REPO/drc-status.sh")"
 
 # --- ensure the DRC chain is in resamp mode before playback ----------------
 # Movie audio is 48/96 kHz. The direct DAC runs bit-perfect (no resampling), so a
@@ -16,12 +20,12 @@ REPO="$HERE/.."   # open-media-drc repo root (drc.sh / drc-status.sh live here)
 # 192 kHz -- correct speed AND room correction. Idempotent: only switch if we're
 # not already auto-resampling. Export DRC_SKIP_RESAMP=1 to bypass (e.g. to watch
 # on the bare DAC anyway).
-if [ -z "${DRC_SKIP_RESAMP:-}" ] && [ -x "$REPO/drc.sh" ] && [ -x "$REPO/drc-status.sh" ]; then
-    if "$REPO/drc-status.sh" 2>/dev/null | grep -qi 'auto-resample'; then
+if [ -z "${DRC_SKIP_RESAMP:-}" ] && [ -x "$DRC_SH" ] && [ -x "$DRC_STATUS_SH" ]; then
+    if "$DRC_STATUS_SH" 2>/dev/null | grep -qi 'auto-resample'; then
         echo "DRC: already in resamp mode"
     else
-        echo "DRC: not auto-resampling -> switching ($REPO/drc.sh resamp) ..."
-        "$REPO/drc.sh" resamp || echo "DRC: 'resamp' failed; audio rate may be wrong"
+        echo "DRC: not auto-resampling -> switching ($DRC_SH resamp) ..."
+        "$DRC_SH" resamp || echo "DRC: 'resamp' failed; audio rate may be wrong"
     fi
 fi
 

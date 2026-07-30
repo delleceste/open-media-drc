@@ -5,12 +5,13 @@
 # KEYWORD: shutdown
 #
 # FreeBSD rc.d service for the video webremote (Flask app, video/webremote).
-# Rendered from this .in by ../../../install.sh (@REPO_DIR@, @AUDIO_USER@ come
-# from config.env). Run-from-repo: the app is executed straight from this
-# checkout, so a `git pull` is the whole update path.
+# Rendered by CMake (configure_file) into the build tree and installed to
+# %%PREFIX%%/etc/rc.d/omdrcvideo. It launches the installed wrapper
+# (@CMAKE_INSTALL_PREFIX@/bin/omdrcvideo), which points at the installed app +
+# config; @OMDRCVIDEO_SERVICE_USER@ comes from host.cmake.
 #
 # The persistent idle mpv this app drives is NOT started here — it autostarts in
-# the KDE/Plasma session so it owns the projector display (see
+# the desktop session so it owns the projector display (see
 # autostart/mpv-idle.desktop). This service only serves the web UI / API.
 
 . /etc/rc.subr
@@ -21,7 +22,7 @@ rcvar="omdrcvideo_enable"
 load_rc_config "$name"
 
 : ${omdrcvideo_enable:="NO"}
-: ${omdrcvideo_user:="@AUDIO_USER@"}
+: ${omdrcvideo_user:="@OMDRCVIDEO_SERVICE_USER@"}
 # rc starts with a minimal PATH; the app shells out to python3, ffmpeg, ffprobe,
 # bd_list_titles (all in /usr/local/bin), so set PATH explicitly via ${name}_env
 # (rc.subr applies it with env(1)). No DISPLAY needed: it talks to mpv over a
@@ -43,9 +44,8 @@ else
 fi
 
 pidfile="${omdrcvideo_pidfile}"
-_app="@REPO_DIR@/video/webremote/src/app.py"
-_conf="@REPO_DIR@/video/webremote/webremote.conf"
-command_args="-f -o ${omdrcvideo_logfile} -P ${pidfile} python3 ${_app} --config ${_conf}"
+# The installed wrapper bakes in the python3 interpreter, app path and --config.
+command_args="-f -o ${omdrcvideo_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcvideo"
 
 start_precmd="omdrcvideo_precmd"
 

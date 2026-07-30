@@ -1,0 +1,30 @@
+# Host-specific values for open-media-drc — the config.env successor.
+#
+# Copy to host.cmake, edit, then build the classical way:
+#     cmake -B build -C host.cmake
+#     cmake --build build
+#     sudo cmake --install build
+#
+# host.cmake itself is .gitignored (it may hold secrets like OMDB_API_KEY);
+# this .sample is tracked.  All values are CMake cache entries.
+
+set(CMAKE_INSTALL_PREFIX "/usr/local"      CACHE PATH   "Install prefix")
+
+set(AUDIO_USER   "giacomo"                 CACHE STRING "Login user that owns the services and brutefir")
+set(AUDIO_HOME   "/home/giacomo"           CACHE PATH   "Home directory of AUDIO_USER")
+
+# Speaker geometry: configs/<GEOMETRY>/ + filters/<GEOMETRY>/.  "flat" = identity
+# (no correction).  This box uses the 120.blue room set.
+set(GEOMETRY     "120.blue"                CACHE STRING "Speaker geometry / filter set")
+
+set(MUSIC_DIR    "/media/USBHD2/musica"    CACHE PATH   "Music library root (MPD / upmpdcli)")
+set(VIDEO_DIR    "/media/USBHD2/video"     CACHE PATH   "Video library root (omdrcvideo)")
+
+# upmpdcli / Qobuz.  The streaming password is NOT stored here.  Blank disables.
+set(QOBUZ_USER   ""                        CACHE STRING "Qobuz account username")
+set(FRIENDLY_NAME ""                       CACHE STRING "UPnP renderer name (blank = hostname)")
+
+# omdrcvideo IMDb lookups.  Free key at omdbapi.com/apikey.aspx.  Blank disables
+# all external calls.  Put a real key in host.cmake (gitignored), never here.
+set(OMDB_API_KEY ""                        CACHE STRING "OMDb API key")
+set(DISC_DEVICE  "cd0"                     CACHE STRING "Optical disc device (Blu-ray)")

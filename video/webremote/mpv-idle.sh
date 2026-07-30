@@ -28,10 +28,15 @@ fi
 
 # Reuse the shared DRC-aware audio selection (sets AUDIO_DEVICE/DELAY/SUB_DELAY,
 # and switches the DRC chain into resamp mode if needed). It lives in ../lib.
-DRC_LIB="$HERE/../lib/drc-audio.sh"
-if [ -r "$DRC_LIB" ]; then
-    # drc-audio.sh expects HERE = the video/ dir (it sources ../drc.sh from there).
-    HERE="$HERE/.." . "$DRC_LIB"
+# drc-audio.sh sits next to this script when installed, or in ../lib run-from-repo.
+DRC_LIB=""
+for _cand in "$HERE/drc-audio.sh" "$HERE/../lib/drc-audio.sh"; do
+    [ -r "$_cand" ] && { DRC_LIB="$_cand"; break; }
+done
+if [ -n "$DRC_LIB" ]; then
+    # drc-audio.sh derives REPO from HERE (= the dir above it) for its run-from-repo
+    # drc.sh fallback; when installed it prefers the omdrc wrapper on PATH.
+    HERE="$(dirname "$DRC_LIB")/.." . "$DRC_LIB"
 else
     AUDIO_DEVICE="$FALLBACK_DEVICE"; AUDIO_DELAY="-0.67"; SUB_DELAY="0"
 fi

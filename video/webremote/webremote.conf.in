@@ -1,5 +1,10 @@
 # video webremote configuration (INI; see ../ARCHITECTURE.md).
 # LAN-only service. Never bind to a public interface or expose to the internet.
+#
+# Rendered from this .in by CMake (configure_file) into the build tree and
+# installed to $PREFIX/etc/omdrcvideo/webremote.conf.  @VIDEO_DIR@,
+# @OMDB_API_KEY@, @DISC_DEVICE@ come from host.cmake.  Edit the installed copy
+# for anything else; a reinstall will not overwrite it.
 
 [server]
 host = 0.0.0.0
@@ -8,7 +13,7 @@ port = 9080
 [media]
 # Comma-separated whitelist of browsable media roots. Nothing outside these
 # directories can be listed or played. One root for now.
-roots = /media/USBHD2/video
+roots = @VIDEO_DIR@
 
 [mpv]
 # JSON IPC socket of the persistent idle mpv (matches mpv-idle.sh /
@@ -45,7 +50,7 @@ concurrency      = 2
 # and loads it into the idle mpv over IPC (needs passwordless sudo for
 # kldload/gcache, same as play-bluray.sh). Eject destroys the cache.
 enabled = yes
-device  = cd0
+device  = @DISC_DEVICE@
 cache   = bd
 
 [imdb]
@@ -53,4 +58,4 @@ cache   = bd
 # panel shows verified IMDb info (year, director, cast, plot, rating) and links
 # to the real title page; movie titles are then sent to omdbapi.com. Leave blank
 # to disable all external calls — the IMDb button then opens a plain search.
-omdb_api_key = df8a0fc6
+omdb_api_key = @OMDB_API_KEY@
