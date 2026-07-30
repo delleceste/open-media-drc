@@ -216,18 +216,33 @@ cmake -B build && cmake --build build
 sudo cmake --install build    # modules -> /usr/local/lib/brutefir
 ```
 
-**4. open-media-drc + omdrc-ctrl**:
+**4. open-media-drc (DRC engine + web UIs + DAC hotplug)** --- the classical
+CMake build:
 
 ```sh
 git clone --recursive https://github.com/delleceste/open-media-drc ~/DRC/open-media-drc
 cd ~/DRC/open-media-drc
-$EDITOR config.env    # AUDIO_USER, AUDIO_HOME, PREFIX, MUSIC_DIR, QOBUZ_USER
-./install.sh          # renders every *.in from config.env; prints deploy steps
+cp host.cmake.sample host.cmake   # AUDIO_USER (defaults to the invoking user),
+$EDITOR host.cmake                #   GEOMETRY, MUSIC_DIR, VIDEO_DIR, OMDB_API_KEY
+cmake -B build -C host.cmake
+cmake --build build
+sudo cmake --install build        # -> $PREFIX (default /usr/local)
 ```
 
-`install.sh` generates the live configs and service files (MPD, upmpdcli,
-BruteFIR, rc.d / systemd units) from the `*.in` templates and prints the
-OS-specific commands to link or copy them into place.
+`host.cmake` (the successor to the old `config.env`) is the single source of
+box-specific values; CMake renders every config from it and installs the DRC
+engine (`drc.sh` behind the `omdrc` / `omdrc-status` wrappers), the site data
+(brutefir configs + impulse-response filters for the selected `GEOMETRY`), both
+web UIs (omdrcctrl :9090 as a **system** service running as the audio user;
+omdrcvideo :9080 as a **`--user`** service, since it drives the desktop-session
+mpv), and the DAC-hotplug glue. The install prints the OS-specific enable steps
+and the one or two files that must be copied into `/etc` (next section).
+
+The older `./install.sh` rendered the `*.in` templates in place and ran
+everything straight from the checkout (`git pull` = update). That run-from-repo
+mode still works but is superseded by the CMake install for distribution. While
+the remaining subprojects are folded in, `install.sh` still renders the **MPD
+and upmpdcli service configs**; everything else now comes from CMake.
 
 **5. BruteFIR defaults** --- BruteFIR reads float precision, partition size
 and the I/O devices from `~/.config/BruteFIR/brutefir_defaults.conf`. The
@@ -245,19 +260,27 @@ fallback `~/.brutefir_defaults`, every start fails with *"Parse error: path
 not set ... module 'file'"*, and `drc.sh` rolls back to direct output --- so
 DRC never comes up at boot.
 
-## The copy-vs-symlink rule
+## Files that must live in /etc
 
-Whether a deployed file is copied or symlinked follows one rule --- *when it
-is read*:
+The CMake install copies everything into `$PREFIX` (default `/usr/local`); the
+update path is `git pull` followed by `cmake --build build && sudo cmake
+--install build`, not an in-place edit of the checkout. Two files are read
+*before* `$PREFIX` is in the relevant search path, so they are handled
+specially:
 
-* **Deploy glue parsed at early boot** --- systemd `.service` units, the MPD
-  drop-in, the udev rule, `modules-load.d`; on FreeBSD the rc.d scripts and
-  the devd rule --- is **copied** into the system path. systemd/udevd/rc parse
-  these *before* a separately mounted `/home` is available; a symlink into the
-  checkout would be dangling at parse time and silently skipped.
-* **Payload read at runtime** --- `mpd.conf`/`musicpd.conf`, `drc.sh`, the
-  filters, BruteFIR defaults --- stays symlinked into the checkout. Re-run the
-  deploy step after a `git pull` to refresh the copied glue.
+* **Linux udev rule** --- udev only scans `/etc/udev/rules.d` and
+  `/usr/lib/udev`, never `/usr/local/lib/udev`. The install places
+  `99-usb-audio-drc.rules` under `$PREFIX/lib/udev/rules.d` and prints the
+  one-line copy into `/etc/udev/rules.d` (then `udevadm control --reload`).
+* **MPD `/etc` drop-in** --- overriding the distro `mpd` unit's `User=mpd`
+  requires a real file in `/etc/systemd/system/mpd.service.d/` (a drop-in in
+  `/etc` beats one in `/usr/lib`; see the caveat below).
+
+Everything else stays under `$PREFIX` and needs no `/etc` copy: the systemd
+units (`$PREFIX/lib/systemd/{system,user}`, which systemd *does* scan), the
+FreeBSD rc.d scripts and devd rule (`$PREFIX/etc/{rc.d,devd}`, scanned
+natively), `drc.sh`, the filters and configs. The BruteFIR defaults still go to
+`~/.config/BruteFIR/` (below).
 
 ## Linux specifics
 
@@ -294,13 +317,15 @@ Manual control: `sudo systemctl start|stop drc-usb-audio.service`,
 
 ## FreeBSD specifics
 
-Install the FreeBSD service glue with `make install-freebsd`. The pieces:
+The CMake install (step 4) renders the FreeBSD service glue from the port's
+templates and places it under `$PREFIX`; devd and rc both scan those paths
+natively, so there is no `/etc` copy step:
 
 | File | Installed to | Purpose |
 |---|---|---|
-| `etc/rc.d/brutefir_drc` | `/usr/local/etc/rc.d/` | Worker: runs `drc.sh restore` / `stop` |
-| `etc/rc.d/drc_usb_audio` | `/usr/local/etc/rc.d/` | Entry point: probe at boot, devd target |
-| `etc/devd/usb-audio-drc.conf` | `/usr/local/etc/devd/` | Attach/detach triggers |
+| `etc/rc.d/brutefir_drc` | `$PREFIX/etc/rc.d/` | Worker: runs `omdrc restore` / `stop` as the audio user |
+| `etc/rc.d/drc_usb_audio` | `$PREFIX/etc/rc.d/` | Entry point: probe at boot, devd target |
+| `etc/devd/usb-audio-drc.conf` | `$PREFIX/etc/devd/` | Attach/detach triggers |
 
 Enable **only** the entry point in `/etc/rc.conf`:
 
@@ -1143,7 +1168,71 @@ musicpd/upmpdcli/virtual_oss updates.
 
 \newpage
 
-# Appendix C --- Source document index
+# Appendix C --- Bit-perfect test assets and cross-OS comparison {#sec:appendix-bitperfect}
+
+The Tools chapter (*Bit-perfect verification*) covers the single-host proof.
+This appendix documents the test assets and the cross-OS procedure that proves
+the Linux and FreeBSD boxes send the DAC the *very same bytes*.
+
+## Test assets (`tests/`)
+
+Two deterministic, near-silent (~ -90 dBFS) signals; every sample is uniquely
+determined, so any truncation, dither, volume change, resampling or channel
+swap shows up immediately.
+
+* **Short asset (committed)** --- `bitperfect-test-44100-s32-stereo.wav`:
+  S32_LE, 2 ch, 44100 Hz, 100000 frames (~2.27 s). Per-sample counter in the
+  low 16 bits, `L = i & 0xFFFF`, `R = (i*40503) & 0xFFFF`. Its PCM payload is
+  byte-identical to the reference `.raw` (the WAV is the same bytes plus a
+  44-byte header --- MPD cannot play headerless raw).
+
+* **Cross-OS asset (generated, not committed)** ---
+  `bitperfect-test-44100-s32-stereo-30s.wav`: S32_LE, 2 ch, 44100 Hz,
+  1323000 frames (30 s), 10.6 MB. Here *every* `(L,R)` pair is unique over the
+  whole file (`R = (i*40503 + (i >> 16)) & 0xFFFF` folds the block index in,
+  breaking the 65536-frame period), so capture alignment is unambiguous at any
+  length. It is too large to commit; regenerate it byte-identically on any OS:
+
+  ```sh
+  python3 tests/gen-bitperfect-wav.py \
+      tests/bitperfect-test-44100-s32-stereo-30s.wav
+  # sha256 88d365eeaccb1fa830bb1a2726b0f29bb545885824351080e0c5b4cbc9602348
+  ```
+
+## Cross-OS byte comparison
+
+Each OS taps its own USB isochronous OUT endpoint while playing the (locally
+regenerated) common WAV, then the reports are compared. Only the tiny
+`bp-results/*.txt` reports are committed --- they carry the tap payload's
+length and sha256, which proves byte-identity without moving the 10 MB streams
+through git.
+
+```sh
+# Linux box:
+./scripts/bitperfect-tap-linux.sh \
+    tests/bitperfect-test-44100-s32-stereo-30s.wav
+git add bp-results/*-linux.txt && git commit && git push
+
+# FreeBSD box (free the DAC first: ./drc.sh off):
+./scripts/bitperfect-tap-freebsd.sh \
+    tests/bitperfect-test-44100-s32-stereo-30s.wav
+git add bp-results/*-freebsd.txt && git commit && git push
+
+# then on either box:
+git pull
+./scripts/bitperfect-compare.py \
+    bp-results/bitperfect-test-44100-s32-stereo-30s-linux.txt \
+    bp-results/bitperfect-test-44100-s32-stereo-30s-freebsd.txt
+```
+
+Identical length and sha256 on both reports proves the two operating systems
+deliver bit-identical audio to the DAC. Step-by-step commands and the
+mismatch-forensics path are in `scripts/README.md` and
+`doc/BIT-PERFECT-VERIFICATION.md` (*Cross-OS comparison*).
+
+\newpage
+
+# Appendix D --- Source document index
 
 This manual is generated from the repository's Markdown files. For the full
 detail behind each section:

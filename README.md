@@ -183,20 +183,32 @@ cmake -B build && cmake --build build         # or: make -f Makefile.dist
 sudo cmake --install build                    # installs modules to /usr/local/lib/brutefir
 ```
 
-**4. open-media-drc (this repo) + omdrc-ctrl**:
+**4. open-media-drc (this repo)** — the classical CMake build:
 
 ```sh
 git clone --recursive https://github.com/delleceste/open-media-drc ~/DRC/open-media-drc
 cd ~/DRC/open-media-drc
-$EDITOR config.env        # set AUDIO_USER, AUDIO_HOME, PREFIX, MUSIC_DIR, QOBUZ_USER
-./install.sh              # renders every *.in from config.env; prints the deploy steps
+cp host.cmake.sample host.cmake   # AUDIO_USER (defaults to the invoking user),
+$EDITOR host.cmake                #   GEOMETRY, MUSIC_DIR, VIDEO_DIR, OMDB_API_KEY
+cmake -B build -C host.cmake
+cmake --build build
+sudo cmake --install build        # -> $PREFIX (default /usr/local)
 ```
 
-`install.sh` generates the live configs/service files (MPD, upmpdcli, BruteFIR,
-rc.d / systemd units) from the templates and prints the OS-specific commands to
-link them into place. omdrc-ctrl builds with cmake (`cmake -B build && cmake
---build build` from `omdrc-ctrl/`) and renders its own `commands.conf` with
-`OMDRC_REPO_DIR` defaulting to this checkout — see `omdrc-ctrl/README.md`.
+`host.cmake` (the successor to `config.env`) is the single source of
+box-specific values. The CMake superproject renders every config from it and
+installs the DRC engine (`drc.sh` behind the `omdrc` / `omdrc-status`
+wrappers), the site data (brutefir configs + filters for `GEOMETRY`), both web
+UIs (omdrcctrl :9090 as a system service; omdrcvideo :9080 as a `--user`
+service), and the DAC-hotplug glue. The install prints the OS-specific enable
+steps and the one or two files to copy into `/etc` (the udev rule; the mpd
+drop-in).
+
+> **Transitional:** the older `./install.sh` (render `*.in` in place from
+> `config.env`, run straight from the checkout) still works and is superseded by
+> the CMake install for distribution. While the last subprojects are folded in,
+> `install.sh` still renders the **MPD and upmpdcli service configs** — run it
+> once for those until they move into CMake.
 
 **5. BruteFIR defaults** — BruteFIR reads its general/I/O defaults (float precision,
 partition size, and the ALSA/OSS input+output devices) from

@@ -42,14 +42,16 @@ the PDF, then create the annotated `v*` tag on that commit.
    virtual_oss/cuse, Kodi): what it does, root cause, how to apply/build/
    install/verify/revert.
 8. **Appendix B** — the FreeBSD port plan (from `doc/FREEBSD-PORT-PLAN.md`).
-9. **Appendix C** — mapping of manual sections to the source `.md` files,
-   plus the update procedure for this manual.
+9. **Appendix C** — bit-perfect test assets and the cross-OS byte-comparison
+   procedure (from `tests/README.md`, `scripts/README.md`).
+10. **Appendix D** — mapping of manual sections to the source `.md` files,
+    plus the update procedure for this manual.
 
 ## Updating after documentation changes
 
 The master document does **not** transclude the source files — it
 summarizes them. When a source `.md` changes, update the corresponding
-section of `open-media-drc-manual.md` (Appendix B in the manual is the
+section of `open-media-drc-manual.md` (Appendix D in the manual is the
 section -> source mapping) and re-run `build-pdf.sh`.
 
 Constraints to respect when editing:
