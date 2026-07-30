@@ -1,25 +1,47 @@
 #!/usr/bin/env python3
 """Generate the deterministic bit-perfect test WAV (S32_LE, stereo).
 
-Signal: a near-silent (~ -90 dBFS) per-sample counter with DISTINCT L/R
-channels, and — unlike the original 100000-frame asset — every (L,R) pair
-is UNIQUE over the whole file:
+Signal design
+=============
+A near-silent (~ -90 dBFS) per-sample counter with DISTINCT L/R channels:
 
-    L = i & 0xFFFF
+    L = i & 0xFFFF                       (i = frame index)
     R = (i*40503 + (i >> 16)) & 0xFFFF
 
-The `i >> 16` term folds the 65536-frame block index into R, so the pair
-sequence never repeats (up to 2^32 frames).  This keeps USB-capture
-alignment unambiguous for arbitrarily long files and makes any dropped,
-duplicated, swapped or altered sample detectable at any offset, while the
-amplitude stays inaudible.
+Why these formulas:
 
-Output is byte-deterministic: the same command produces the identical file
-on any OS / Python version — verify with the printed SHA-256.
+* **Low 16 bits only** — the sample values never exceed 0xFFFF in a 32-bit
+  container, i.e. peak ~ -90 dBFS: inaudible through an amplifier, yet
+  maximally sensitive, since truncation, dithering, non-unity volume or
+  resampling all corrupt low bits deterministically.
+* **Distinct L and R** (40503 is odd, so i -> i*40503 mod 2^16 is a
+  bijection and R visits all 65536 values in a scrambled order) — catches
+  a channel swap or channel duplication, which identical channels would
+  miss.
+* **Every (L,R) pair is unique over the whole file** — this is what the
+  `i >> 16` term adds compared to the original 100000-frame asset
+  (`tests/bitperfect-test-44100-s32-stereo.wav`), whose pattern repeats
+  every 65536 frames (~1.5 s @ 44100).  Proof: if frames i and j collide,
+  L forces i ≡ j (mod 2^16), so j = i + 2^16·k; then
+  R_j − R_i ≡ 2^16·k·40503 + (j>>16) − (i>>16) ≡ 0 + k (mod 2^16),
+  which is non-zero for 0 < k < 2^16.  Hence pairs are unique for files up
+  to 2^32 frames.  Uniqueness makes USB-capture alignment unambiguous at
+  any file length and makes every dropped, duplicated, swapped or altered
+  sample detectable at any offset.
 
-Canonical cross-OS asset (referenced by scripts/bitperfect-usbtap.sh):
+Determinism
+===========
+The output depends only on the arguments: the same command produces the
+byte-identical file on any OS / architecture / Python version (the wave
+module always writes a canonical 44-byte RIFF header for these
+parameters).  That is why the canonical 30 s asset need not be committed —
+regenerate it anywhere and check the printed SHA-256 against
+tests/README.md:
 
     ./gen-bitperfect-wav.py bitperfect-test-44100-s32-stereo-30s.wav
+
+The canonical asset is the common input for the cross-OS USB tap suite
+(scripts/bitperfect-tap-linux.sh / -freebsd.sh / bitperfect-compare.py).
 """
 import argparse
 import hashlib
@@ -39,7 +61,7 @@ for i in range(a.frames):
 
 w = wave.open(a.wav, "wb")
 w.setnchannels(2)
-w.setsampwidth(4)
+w.setsampwidth(4)       # 4 bytes -> S32_LE (the wire container of both DACs)
 w.setframerate(a.rate)
 w.writeframes(buf)
 w.close()

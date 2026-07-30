@@ -53,3 +53,13 @@ doc/pdf/build/
 /host.cmake
 /build/
 
+# USB-tap bit-perfect test artifacts (scripts/bitperfect-tap-*.sh): the
+# 10 MB wav/raw streams stay local, but the tiny .txt reports ARE tracked —
+# they carry the payload sha256, which is all the cross-OS comparison needs
+# (bitperfect-compare.py accepts them directly).  The large generated 30 s
+# input WAV is also local-only (regenerate: tests/gen-bitperfect-wav.py,
+# byte-deterministic — sha256 in tests/README.md).
+bp-results/*
+!bp-results/*.txt
+/tests/bitperfect-test-44100-s32-stereo-30s.wav
+

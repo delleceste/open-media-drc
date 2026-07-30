@@ -310,6 +310,88 @@ playlists.
 
 ---
 
+## Cross-OS comparison: the same bytes on Linux and FreeBSD
+
+The suite `scripts/bitperfect-tap-linux.sh` / `scripts/bitperfect-tap-freebsd.sh` /
+`scripts/bitperfect-compare.py` answers a stronger question than the per-host
+proof above: **do Linux and FreeBSD send the *same* bytes to the DAC for the
+same input file?**
+
+Both tap scripts have the same CLI and produce the same artifacts:
+
+```sh
+# Linux (usbmon tap; sudo asked internally for the tap only)
+./scripts/bitperfect-tap-linux.sh tests/bitperfect-test-44100-s32-stereo-30s.wav
+
+# FreeBSD (usbdump tap; free the DAC first: ./drc.sh off)
+./scripts/bitperfect-tap-freebsd.sh tests/bitperfect-test-44100-s32-stereo-30s.wav
+
+# compare the two outputs (either machine)
+./scripts/bitperfect-compare.py \
+    bp-results/bitperfect-test-44100-s32-stereo-30s-linux.wav \
+    bp-results/bitperfect-test-44100-s32-stereo-30s-freebsd.wav
+```
+
+Each run plays the input flat-out to the DAC (aplay on a `hw:` device /
+the format-guarded OSS writer on `/dev/dsp0` — both refuse any conversion),
+captures every isochronous OUT transfer to endpoint `0x01`, concatenates the
+payloads, aligns them to the source and writes:
+
+- `PREFIX.wav` — the tapped wire bytes, source-aligned and source-length,
+  as a WAV. **If the chain is bit-perfect this file is byte-identical to the
+  input WAV** (same sha256), so two bit-perfect OSes trivially produce
+  identical outputs.
+- `PREFIX.wire.raw` — the full untrimmed wire stream (priming bytes and all).
+- `PREFIX.txt` — verdict + sha256 report.
+
+**Comparing across machines without moving 10 MB files.** The big
+artifacts (`.wav`, `.wire.raw`) are gitignored; only the ~600-byte
+`PREFIX.txt` reports are tracked. That is enough: the report records the
+tap payload's exact length and sha256, and sha256 equality on equal-length
+payloads proves byte-identity just as strongly as `cmp`. The comparator
+accepts reports directly, in any combination:
+
+```sh
+# on the FreeBSD box: run the tap, commit the report
+./scripts/bitperfect-tap-freebsd.sh tests/bitperfect-test-44100-s32-stereo-30s.wav
+git add bp-results/bitperfect-test-44100-s32-stereo-30s-freebsd.txt && git commit -m 'bp: freebsd tap report'
+
+# on the Linux box: pull, run the tap, compare local payload vs remote hash
+./scripts/bitperfect-tap-linux.sh tests/bitperfect-test-44100-s32-stereo-30s.wav
+./scripts/bitperfect-compare.py \
+    bp-results/bitperfect-test-44100-s32-stereo-30s-linux.wav \
+    bp-results/bitperfect-test-44100-s32-stereo-30s-freebsd.txt   # or .txt vs .txt
+```
+
+Only in the MISMATCH case — when you want the first differing offset and
+hex context — do the actual `.wav` payloads need to be brought onto one
+machine (scp, or a temporary `git add -f`).
+
+Notes:
+
+- **The common input** is the 30 s generated WAV (see `tests/README.md`);
+  its per-sample-unique signal keeps alignment unambiguous. Any 16/24/32-bit
+  PCM WAV works, though: 24-bit (e.g. 192k/24 material) is promoted
+  **losslessly** to the 32-bit wire container (low byte zeroed) inside the
+  script, identically on both OSes, because both DACs only expose S32_LE
+  USB altsettings.
+- **The result does not depend on the DAC model**, only on the negotiated
+  wire format. The isochronous payload is the raw interleaved PCM stream;
+  packet sizes/boundaries differ per DAC (async feedback pacing) but vanish
+  when the payloads are concatenated. Two DACs that both take S32_LE
+  containers (OKTO DAC8, DacMagic 100) yield directly comparable — and, if
+  both hosts are transparent, identical — byte streams.
+  The one thing that *would* break byte comparability is a DAC whose USB
+  descriptors declare a **3-byte sample container** (S24_3LE): a 24-bit
+  sample then travels as `b0 b1 b2` instead of `00 b0 b1 b2` — same audio
+  bits, different byte stream — so its capture would mismatch a 4-byte
+  capture on every sample until the pad bytes are stripped/inserted
+  (normalization). No such normalization is implemented, since both DACs
+  in use expose only 32-bit altsettings.
+- Verified on this Linux host (DacMagic 100, kernel 7.1.5-arch1):
+  44100/32-bit × 30 s and 192000/24-bit × 10 s both **BIT-PERFECT** —
+  tap WAV sha256 equal to the source WAV.
+
 ## Related
 
 - `freebsd-uaudio-patch/` — the play-only patch that disables the DAC's capture
