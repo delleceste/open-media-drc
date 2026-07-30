@@ -42,6 +42,7 @@ else()
     set(OMDRCCTRL_SERVICE_USER    "${AUDIO_USER}")
     set(OMDRC_REPO_DIR            "${REPO_DIR}")
     set(OMDRCCTRL_SERVICE_MANAGER "${OMDRC_SERVICE_MANAGER}")
+    set(_OMDRC_SUPERPROJECT TRUE)   # packaged install: point commands.conf at the wrappers
 endif()
 
 if(NOT EXISTS "${OMDRC_REPO_DIR}/drc.sh")
@@ -64,14 +65,18 @@ configure_file(
     @ONLY
 )
 
+# commands.conf: the panel's buttons shell out to drc.sh / drc-status.sh.
+#   standalone (run-from-repo): point at ${OMDRC_REPO_DIR}/drc.sh (the checkout).
+#   superproject (packaged):    point at the installed omdrc / omdrc-status
+#                               wrappers (core-drc installs them in ${PREFIX}/bin).
 message(STATUS "Rendering commands.conf from src/commands.conf.in")
-message(STATUS "  replacing @OMDRC_REPO_DIR@ with ${OMDRC_REPO_DIR}")
-message(STATUS "  output: ${CMAKE_CURRENT_BINARY_DIR}/commands.conf")
-configure_file(
-    src/commands.conf.in
-    ${CMAKE_CURRENT_BINARY_DIR}/commands.conf
-    @ONLY
-)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/commands.conf.in" _cc)
+if(_OMDRC_SUPERPROJECT)
+    string(REPLACE "@OMDRC_REPO_DIR@/drc-status.sh" "${CMAKE_INSTALL_PREFIX}/bin/omdrc-status" _cc "${_cc}")
+    string(REPLACE "@OMDRC_REPO_DIR@/drc.sh"        "${CMAKE_INSTALL_PREFIX}/bin/omdrc"        _cc "${_cc}")
+endif()
+string(REPLACE "@OMDRC_REPO_DIR@" "${OMDRC_REPO_DIR}" _cc "${_cc}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/commands.conf" "${_cc}")
 
 if(OMDRCCTRL_SERVICE_MANAGER STREQUAL "systemd")
     if(USER_INSTALL)

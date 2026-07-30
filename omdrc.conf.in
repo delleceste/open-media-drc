@@ -1,0 +1,22 @@
+# open-media-drc configuration (installed mode).
+# Rendered by CMake (configure_file) from host.cmake; sourced as shell by
+# drc.sh / drc-status.sh.  Edit the installed copy for anything not covered
+# here (e.g. the DAC_* warm-up knobs — see omdrc.conf.sample / drc.sh).
+
+# Speaker geometry / filter set under $OMDRC_SITE_DIR/{configs,filters}/<GEOMETRY>/.
+# "flat" = identity dirac-pulse filters, no correction.
+GEOMETRY=@GEOMETRY@
+
+# Where configs/ and filters/ live (installed layout).
+OMDRC_SITE_DIR=@CMAKE_INSTALL_PREFIX@/etc/open-media-drc
+
+# Runtime state (last_arg, last_power, drc.log).  Pinned so the services and
+# interactive `omdrc` runs share one location.
+OMDRC_STATE_DIR=@AUDIO_HOME@/.local/state/omdrc
+
+# The user that owns brutefir / the audio session.
+AUDIO_USER=@AUDIO_USER@
+AUDIO_HOME=@AUDIO_HOME@
+
+# Music library location (used by the mpd config templates).
+MUSIC_DIR=@MUSIC_DIR@
