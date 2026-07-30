@@ -39,9 +39,9 @@ find_program(PYTHON3 python3 REQUIRED)
 
 # ── subprojects ──────────────────────────────────────────────────────────────
 include(cmake/core-drc.cmake)          # drc.sh + configs/filters + omdrc/omdrc-status wrappers
+include(cmake/hotplug.cmake)           # DAC-hotplug + brutefir services (udev/devd + rc.d/systemd)
 add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
 
 # Pending migration from install.sh / root Makefile into this superproject:
-#   the DAC-hotplug + brutefir services (udev/devd + rc.d/systemd, the /etc seam)
 #   add_subdirectory(renderers)         # mpd drop-in + upmpdcli
