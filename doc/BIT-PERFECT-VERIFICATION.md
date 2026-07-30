@@ -388,9 +388,27 @@ Notes:
   capture on every sample until the pad bytes are stripped/inserted
   (normalization). No such normalization is implemented, since both DACs
   in use expose only 32-bit altsettings.
-- Verified on this Linux host (DacMagic 100, kernel 7.1.5-arch1):
-  44100/32-bit × 30 s and 192000/24-bit × 10 s both **BIT-PERFECT** —
-  tap WAV sha256 equal to the source WAV.
+**Validation status of the suite itself** (distinct from the older
+`verify-bitperfect.sh` results quoted earlier in this document):
+
+| Script | Status |
+|---|---|
+| `bitperfect-tap-linux.sh` | **Executed and passing** on the Linux host (DacMagic 100, kernel 7.1.5-arch1): 44100/32-bit × 30 s and 192000/24-bit × 10 s both **BIT-PERFECT**, tap WAV sha256 equal to the source WAV, 0 truncated events, 0 usbmon drops. |
+| `bitperfect-compare.py` | **Executed** on all comparison paths (wav↔wav, wav↔txt, txt↔txt, refusal of raw↔txt), including a deliberately bit-flipped payload to confirm MISMATCH is reported at the exact offset. |
+| `bitperfect-tap-freebsd.sh` | **Never executed yet** — written on the Linux host, so its first FreeBSD run is also its first test. Its tap/decode/writer code is a direct port of `verify-bitperfect.sh` (proven on the OKTO), and the shared alignment/verdict engine is the same file the Linux side exercises, so the untested surface is the shell glue: device discovery, argument passing, `fuser`/`sudo`/`cc` availability. Expect first-run friction there, not in the byte handling. |
+
+Preconditions for the FreeBSD run, beyond a free `/dev/dsp0`
+(`./drc.sh off` plus stopping any renderer): `dev.pcm.N.bitperfect=1` and
+`dev.pcm.N.play.vchans=0`, as in
+"[Structural check](#1-structural-check-fast-kernel-certified)" above. The
+embedded writer re-checks this at runtime and aborts rather than play
+converted audio, so a missing knob shows up as an explicit `FAIL:`, never
+as a silent mismatch.
+
+If the FreeBSD run does not print BIT-PERFECT, its `PREFIX.txt` carries the
+classified verdict (value corruption vs timing slip vs incomplete capture
+vs head lost) — commit that report; it is enough to diagnose from the other
+machine without moving any payload.
 
 ## Related
 

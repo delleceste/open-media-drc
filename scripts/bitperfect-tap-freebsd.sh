@@ -101,19 +101,29 @@ cc -O2 -o "$TMP/bpwrite" -x c - <<'C'
 #include <stdlib.h>
 #include <sys/soundcard.h>
 #include <sys/ioctl.h>
-/* usage: bpwrite /dev/dspN rate file.raw
- * Plays raw S32_LE stereo flat-out; the kernel's back-pressure paces the
- * writes at the DAC clock. SNDCTL_DSP_SYNC blocks until the last sample
- * has drained so the caller knows playback is complete on return. */
+/* usage: bpwrite /dev/dspN rate channels file.raw
+ * Plays raw S32_LE flat-out; the kernel's back-pressure paces the writes
+ * at the DAC clock. SNDCTL_DSP_SYNC blocks until the last sample has
+ * drained so the caller knows playback is complete on return. */
 int main(int argc, char **argv){
-    if(argc<4){fprintf(stderr,"usage: %s dsp rate raw\n",argv[0]);return 2;}
-    int rate=atoi(argv[2]);
+    if(argc<5){fprintf(stderr,"usage: %s dsp rate channels raw\n",argv[0]);return 2;}
+    int rate=atoi(argv[2]); int want_ch=atoi(argv[3]);
     int fd=open(argv[1],O_WRONLY); if(fd<0){perror("open dsp");return 1;}
+    /* Each ioctl is checked TWICE: did the call itself fail (perror -> the
+     * device/driver refused), and did OSS report back a DIFFERENT value
+     * (coercion -> a converting feeder would be inserted).  Keeping the two
+     * apart matters when diagnosing: "coerced 0x1000" would otherwise be
+     * printed for a plain ioctl failure, where 0x1000 IS what we asked. */
     int fmt=AFMT_S32_LE;
-    if(ioctl(fd,SNDCTL_DSP_SETFMT,&fmt)<0||fmt!=AFMT_S32_LE){fprintf(stderr,"FAIL: format coerced 0x%x -> NOT bit-perfect\n",fmt);return 3;}
-    int ch=2; if(ioctl(fd,SNDCTL_DSP_CHANNELS,&ch)<0||ch!=2){fprintf(stderr,"FAIL: channels coerced %d\n",ch);return 3;}
-    int sp=rate; if(ioctl(fd,SNDCTL_DSP_SPEED,&sp)<0||sp!=rate){fprintf(stderr,"FAIL: rate coerced %d (asked %d) -> resampling\n",sp,rate);return 3;}
-    int in=open(argv[3],O_RDONLY); if(in<0){perror("open raw");return 1;}
+    if(ioctl(fd,SNDCTL_DSP_SETFMT,&fmt)<0){perror("FAIL: SNDCTL_DSP_SETFMT");return 3;}
+    if(fmt!=AFMT_S32_LE){fprintf(stderr,"FAIL: format coerced to 0x%x (asked S32_LE 0x%x) -> NOT bit-perfect\n",fmt,AFMT_S32_LE);return 3;}
+    int ch=want_ch;
+    if(ioctl(fd,SNDCTL_DSP_CHANNELS,&ch)<0){perror("FAIL: SNDCTL_DSP_CHANNELS");return 3;}
+    if(ch!=want_ch){fprintf(stderr,"FAIL: channels coerced to %d (asked %d) -> NOT bit-perfect\n",ch,want_ch);return 3;}
+    int sp=rate;
+    if(ioctl(fd,SNDCTL_DSP_SPEED,&sp)<0){perror("FAIL: SNDCTL_DSP_SPEED");return 3;}
+    if(sp!=rate){fprintf(stderr,"FAIL: rate coerced to %d (asked %d) -> resampling -> NOT bit-perfect\n",sp,rate);return 3;}
+    int in=open(argv[4],O_RDONLY); if(in<0){perror("open raw");return 1;}
     char b[65536]; ssize_t n;
     while((n=read(in,b,sizeof b))>0){char*p=b;while(n>0){ssize_t w=write(fd,p,n);if(w<0){perror("write");return 1;}p+=w;n-=w;}}
     ioctl(fd,SNDCTL_DSP_SYNC,NULL); close(fd); return 0;
@@ -136,7 +146,7 @@ sleep 0.6            # let the tap attach so the stream head is captured
 
 # ── 3. PLAY: flat-out write, flow-controlled by the DAC's own clock ──────────
 say "Playing (flat-out, DAC-clocked) to $PLAY_DEV"
-"$TMP/bpwrite" "$PLAY_DEV" "$RATE" "$TMP/ref.raw" || {
+"$TMP/bpwrite" "$PLAY_DEV" "$RATE" "$CH" "$TMP/ref.raw" || {
   echo "writer aborted (see FAIL above)" >&2; exit 2; }
 
 sleep 0.6            # let the last queued URBs drain before stopping the tap

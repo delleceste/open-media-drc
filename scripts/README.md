@@ -50,6 +50,8 @@ git add bp-results/bitperfect-test-44100-s32-stereo-30s-linux.txt
 git commit -m 'bp: linux tap report' && git push
 
 # 2. FreeBSD box: free the DAC, play + tap (usbdump), commit its report
+#    (needs dev.pcm.N.bitperfect=1 and dev.pcm.N.play.vchans=0; the writer
+#     aborts with FAIL: rather than play converted audio if they are unset)
 ./drc.sh off        # and stop any renderer holding /dev/dsp0
 ./scripts/bitperfect-tap-freebsd.sh tests/bitperfect-test-44100-s32-stereo-30s.wav
 git add bp-results/bitperfect-test-44100-s32-stereo-30s-freebsd.txt
