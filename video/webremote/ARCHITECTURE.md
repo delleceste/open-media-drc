@@ -248,9 +248,10 @@ max_width    = 320
   pattern in `omdrc-ctrl/rc.d/omdrcctrl.in`.
 - The box logs into **KDE Plasma via SDDM** (autologin). The persistent idle mpv
   is started as a **Plasma session autostart** entry
-  (`~/.config/autostart/mpv-idle.desktop` → runs `mpv-idle.sh`), so it comes up
-  with the desktop, owns `DISPLAY=:0` / the projector, and the web app only talks
-  to its socket.
+  (`~/.config/autostart/mpv-idle.desktop` → symlink to the CMake-installed
+  `$PREFIX/share/omdrcvideo/autostart/mpv-idle.desktop` → runs `mpv-idle.sh`), so
+  it comes up with the desktop, owns `DISPLAY=:0` / the projector, and the web
+  app only talks to its socket.
 - Linked from the `omdrc-ctrl` panel (a `LINK` widget to `http://<host>:9080`),
   so the phone has one entry point for both audio DRC and video.
 - `git pull` is the whole update path, consistent with the rest of the repo.
@@ -282,9 +283,13 @@ max_width    = 320
    OMDb enrichment (year/director/cast/plot/rating + verified link, cached),
    `/api/imdb`, details sheet. Needs an OMDb key for rich info; falls back to a
    search link without one.
-4. ✅ **Packaging** — `rc.d/omdrcvideo.in` (FreeBSD service, rendered by
-   `../../install.sh`), `autostart/mpv-idle.desktop.in` (KDE/Plasma autostart for
-   `mpv-idle.sh`), `README.md`, and a chapter + links in the main project README.
+4. ✅ **Packaging** — CMake renders and installs everything here (`install.sh`
+   skips `video/webremote/`): `rc.d/omdrcvideo.in` (FreeBSD service) or the
+   `systemd --user` unit, and `autostart/mpv-idle.desktop.in` → the KDE/Plasma
+   autostart for `mpv-idle.sh`, installed on both OSes under
+   `$PREFIX/share/omdrcvideo/autostart/` and linked into `~/.config/autostart/`
+   by `make user-install`. Plus `README.md` and a chapter + links in the main
+   project README.
 
 ---
 

@@ -75,8 +75,11 @@ echo "    symlinked. Re-run this deploy step after a 'git pull' to refresh the c
 echo
 echo "Deploy reminder (needs root for the system paths):"
 echo "  state dirs : mkdir -p \"${AUDIO_HOME}/.local/share/mpd\" \"${AUDIO_HOME}/.cache/mpd\" \"${AUDIO_HOME}/.cache/upmpdcli\""
-echo "  video remote (idle mpv autostart, KDE/Plasma): mkdir -p \"${AUDIO_HOME}/.config/autostart\" &&"
-echo "                 ln -sf \"${REPO_DIR}/video/webremote/autostart/mpv-idle.desktop\" \"${AUDIO_HOME}/.config/autostart/mpv-idle.desktop\""
+echo "  video remote (idle mpv autostart, KDE/Plasma): CMake-owned, like the rest of"
+echo "                 video/webremote — 'sudo make install' renders and installs the"
+echo "                 entry, 'make user-install' links it. By hand, after the install:"
+echo "                 mkdir -p \"${AUDIO_HOME}/.config/autostart\" &&"
+echo "                 ln -sf \"${PREFIX}/share/omdrcvideo/autostart/mpv-idle.desktop\" \"${AUDIO_HOME}/.config/autostart/mpv-idle.desktop\""
 echo "  browser launchers (No-DRC Firefox/Chrome/Chromium in the KDE menu):"
 echo "                 mkdir -p \"${AUDIO_HOME}/.local/share/applications\" &&"
 echo "                 for b in firefox chromium chrome; do"

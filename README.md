@@ -210,17 +210,19 @@ Then, **as the audio user** (not root), run the per-user setup:
 make user-install     # or: cmake --build build --target user-install
 ```
 
-It deploys the things a root install cannot: the omdrcvideo `--user` service,
-the mpv-idle desktop autostart, and the per-user BruteFIR defaults — and prints
-the two steps that still need root (`loginctl enable-linger`, joining the
-`audio` group).
+It deploys the things a root install cannot: the mpv-idle desktop autostart
+(both OSes — it is a desktop-session entry, not an init-system one), the
+omdrcvideo `--user` service (Linux; FreeBSD serves :9080 from `rc.d`), and the
+per-user BruteFIR defaults — and prints the two steps that still need root
+(`loginctl enable-linger`, joining the `audio` group).
 
 > **Transitional:** the older `./install.sh` (render `*.in` in place from
 > `config.env`, run straight from the checkout) still works and is superseded by
 > the CMake install, which now covers the whole DRC stack — engine, DAC-hotplug
 > glue, both web UIs, and the MPD + upmpdcli renderer configs/units. `install.sh`
-> remains only for the desktop glue not yet in CMake: the `browser-nodrc` and
-> video `.desktop` launcher entries and the Linux `snd-aloop` module-load.
+> remains only for the desktop glue not yet in CMake: the `browser-nodrc`
+> `.desktop` launcher entries and the Linux `snd-aloop` module-load. (The video
+> mpv-idle autostart entry moved to CMake + `make user-install`.)
 
 **5. BruteFIR defaults** — BruteFIR reads its general/I/O defaults (float precision,
 partition size, and the ALSA/OSS input+output devices) from

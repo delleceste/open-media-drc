@@ -243,8 +243,10 @@ everything straight from the checkout (`git pull` = update). That run-from-repo
 mode still works but is superseded by the CMake install, which now covers the
 whole DRC stack --- engine, DAC-hotplug glue, both web UIs, and the MPD +
 upmpdcli renderer configs/units. `install.sh` remains only for the desktop
-glue not yet in CMake: the `browser-nodrc` and video `.desktop` launcher
-entries and the Linux `snd-aloop` module-load.
+glue not yet in CMake: the `browser-nodrc` `.desktop` launcher entries and the
+Linux `snd-aloop` module-load. (The video mpv-idle autostart entry moved to
+CMake: `make install` puts it under `$PREFIX/share/omdrcvideo/autostart/` on
+both OSes, `make user-install` links it into `~/.config/autostart/`.)
 
 **5. BruteFIR defaults** --- BruteFIR reads float precision, partition size
 and the I/O devices from `~/.config/BruteFIR/brutefir_defaults.conf`. The
@@ -637,9 +639,10 @@ KDE Connect controls what is *already playing*; the web remote is what
 * **Transport** --- seek, +-10/30 s, play/pause, mute, stop, audio and
   subtitle track menus; **favourites** pinned to the main page.
 
-The idle mpv is autostarted by the KDE/Plasma session
-(`autostart/mpv-idle.desktop`); a `git pull` + `service omdrcvideo restart`
-is the whole update path.
+The idle mpv is autostarted by the KDE/Plasma session, from
+`~/.config/autostart/mpv-idle.desktop` (linked to the installed entry by
+`make user-install`); a `git pull` + `service omdrcvideo restart` is the whole
+update path.
 
 ## Glitch detection {#sec:glitch}
 
