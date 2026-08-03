@@ -13,11 +13,26 @@ load_rc_config "$name"
 
 : ${omdrcctrl_enable:="NO"}
 : ${omdrcctrl_user:="@OMDRCCTRL_SERVICE_USER@"}
+# rc.subr's su -m does not update HOME: started at boot the app would inherit
+# root's "/" and resolve its state directory to /.local/state/omdrc, which is
+# not writable — and app.py's state writes are best-effort, so every remembered
+# setting (analyzer sliders, the renderer the toggle last selected) would be
+# silently dropped. Derive the run user's home and pass it in the env below.
+# Empty when started by an unprivileged user, whose HOME is already correct.
+if [ -n "${omdrcctrl_user}" ] && [ "$(id -u)" -eq 0 ]; then
+	omdrcctrl_home=$(getent passwd "${omdrcctrl_user}" | cut -d: -f6)
+	[ -n "${omdrcctrl_home}" ] && omdrcctrl_home="HOME=${omdrcctrl_home} "
+else
+	omdrcctrl_home=""
+fi
+
 # ${name}_env is applied by rc.subr via env(1). rc runs with a minimal PATH
 # that omits /usr/local/{s,}bin, where python3 and the tools app.py shells out
 # to (pgrep, kdeconnect-cli, ...) live, so set it explicitly. DISPLAY lets the
-# app reach the local X session.
-: ${omdrcctrl_env:="PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin DISPLAY=:0"}
+# app reach the local X session. Add OMDRC_STATE_DIR here if the panel must
+# share one state directory with drc.sh and the omdrc_renderer boot service
+# (see omdrc.conf) rather than use the run user's ~/.local/state/omdrc.
+: ${omdrcctrl_env:="${omdrcctrl_home}PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin DISPLAY=:0"}
 
 command="/usr/sbin/daemon"
 
