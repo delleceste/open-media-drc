@@ -5,7 +5,9 @@
 /etc/rc.d/musicpd
 /etc/rc.d/brutefir_drc
 /etc/rc.d/upmpdcli
+/etc/rc.d/omdrc_renderer
 /etc/systemd/user/upmpdcli.service
+/etc/systemd/user/omdrc-renderer.service
 /video/webremote/systemd/omdrcvideo.service
 /video/webremote/rc.d/omdrcvideo
 # Rendered by CMake from webremote.conf.in (holds the OMDb key); never tracked.
@@ -34,6 +36,9 @@ configs/*/*.conf
 # keeps state beside the checkout; installed mode uses /var/db/omdrc or XDG.
 /spectrum-drc-delay-delta
 /spectrum-floor-db
+# … and the renderer the toggle last selected, replayed at boot by
+# scripts/omdrc-renderer (etc/rc.d/omdrc_renderer / omdrc-renderer.service).
+/last_renderer
 
 # Runtime state written by the glitch-detection subsystem
 /glitch.log

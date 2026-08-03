@@ -629,8 +629,13 @@ Returns the running state of the two mutually-exclusive renderers, polled by the
 web UI to keep the toggle in sync with reality (Linux: `systemctl --user
 is-active <name>`; FreeBSD: `service <name> onestatus`).
 
+`remembered` is the renderer recorded by the last successful switch — the one
+the boot service restores after a reboot (see `POST /qconnect/switch`). It is
+`null` until the toggle has been used at least once.
+
 ```json
-{ "ok": true, "qobuzconnect2mpd": true, "upmpdcli": false }
+{ "ok": true, "qobuzconnect2mpd": true, "upmpdcli": false,
+  "remembered": "qobuzconnect2mpd" }
 ```
 
 ---
@@ -671,6 +676,39 @@ account keeps its pidfile in a `0700` home directory (qobuzconnect2mpd uses
 `/var/db/qobuzconnect2mpd`), so the unprivileged `onestatus` reports "not
 running" for a service that is running.  omdrcctrl therefore falls back to
 matching the running binary by `argv[0]`, which needs no privilege.
+
+**Remembered across reboots.** A successful switch writes the target name to
+`last_renderer` in the shared state directory (beside `drc.sh`'s `last_arg` —
+the repo checkout in run-from-repo mode, `/var/db/omdrc` or
+`$XDG_STATE_HOME/omdrc` when installed). At boot `scripts/omdrc-renderer start`
+reads it and brings that renderer up, so the box returns to the renderer it was
+left on:
+
+| | boot service | enable |
+|---|---|---|
+| FreeBSD | `etc/rc.d/omdrc_renderer` | `sysrc omdrc_renderer_enable=YES` |
+| Linux | `etc/systemd/user/omdrc-renderer.service` | `systemctl --user enable omdrc-renderer.service` |
+
+Both renderers must then be left **disabled** in `rc.conf` / the systemd user
+default target — one enabled there would start at boot behind the restore
+service, leaving two front-ends driving MPD at once. Switching uses the `one`
+verbs (`service upmpdcli onestart`), which ignore the rcvar, so disabling costs
+nothing.
+
+If omdrcctrl and the boot service resolve *different* state directories — an
+installed setup where the panel runs as an unprivileged service user
+(`~/.local/state/omdrc`) and the rc script runs as root (`/var/db/omdrc`) — pin
+`OMDRC_STATE_DIR` in `omdrc.conf` so both read the same file. Run-from-repo
+needs nothing: both land on the checkout.
+
+The helper is also usable by hand:
+
+```bash
+scripts/omdrc-renderer status          # remembered + what is running
+scripts/omdrc-renderer show            # just the remembered name
+scripts/omdrc-renderer set upmpdcli    # record without starting anything
+scripts/omdrc-renderer start           # start the remembered one
+```
 
 ---
 

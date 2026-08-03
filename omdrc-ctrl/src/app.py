@@ -1298,6 +1298,13 @@ def _resolve_state_dir() -> str:
 _STATE_DIR = _resolve_state_dir()
 _DELTA_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-delta")
 _FLOOR_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-floor-db")
+# Which renderer the toggle last selected.  Unlike the two sliders above this is
+# not read back by the panel to restore itself — the boot service reads it (see
+# scripts/omdrc-renderer, driven by etc/rc.d/omdrc_renderer or the systemd
+# --user omdrc-renderer.service) so the box comes back on the renderer it was
+# left on.  Name and format follow drc.sh's last_arg / last_power: one value,
+# one line, same state dir.
+_RENDERER_STATE_FILE = os.path.join(_STATE_DIR, "last_renderer")
 
 
 def _clamp_delta(ms: float) -> float:
@@ -1316,11 +1323,25 @@ def _read_state_float(path: str) -> float | None:
 
 def _write_state_float(path: str, val: float) -> None:
     """Persist a single float atomically; best-effort (never raises)."""
+    _write_state_str(path, f"{val:.1f}")
+
+
+def _read_state_str(path: str) -> str | None:
+    """A single string saved by a previous run, or None if unset/unreadable."""
+    try:
+        with open(path) as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None
+
+
+def _write_state_str(path: str, val: str) -> None:
+    """Persist a single line atomically; best-effort (never raises)."""
     try:
         os.makedirs(_STATE_DIR, exist_ok=True)
         tmp = f"{path}.tmp"
         with open(tmp, "w") as fh:
-            fh.write(f"{val:.1f}\n")
+            fh.write(f"{val}\n")
         os.replace(tmp, path)
     except OSError:
         pass
@@ -1802,11 +1823,14 @@ def _mpc_quiesce():
 @app.route("/qconnect/services")
 def qconnect_services():
     """Running state of the two mutually-exclusive renderers — used to keep the
-    web UI toggle in sync with reality."""
+    web UI toggle in sync with reality.  `remembered` is the one the boot
+    service will bring up after a reboot (None until the toggle is first used,
+    where the boot service falls back to its own default)."""
     return jsonify({
         "ok":               True,
         "qobuzconnect2mpd": _service_running(QCONNECT_SERVICE),
         "upmpdcli":         _service_running(UPMPDCLI_SERVICE),
+        "remembered":       _read_state_str(_RENDERER_STATE_FILE),
     })
 
 
@@ -1835,6 +1859,10 @@ def qconnect_switch():
             if r.returncode != 0:
                 return jsonify({"ok": False,
                                 "error": f"starting {target}: {(r.stderr or r.stdout).strip()}"})
+        # Remember the choice for the next boot.  Written only once the switch
+        # has actually succeeded, so a failed switch does not arm the boot
+        # service with a renderer that would not start.
+        _write_state_str(_RENDERER_STATE_FILE, target)
         return jsonify({"ok": True, "active": target})
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "timeout"})

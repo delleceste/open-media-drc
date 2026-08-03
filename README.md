@@ -578,7 +578,16 @@ rule under `etc/devd/`.  (The directory names — `rc.d`/`devd` vs the Linux
 |---|---|---|
 | `etc/rc.d/brutefir_drc` | `/usr/local/etc/rc.d/` | Manages the BruteFIR process |
 | `etc/rc.d/drc_usb_audio` | `/usr/local/etc/rc.d/` | Starts/stops BruteFIR and switches MPD outputs |
+| `etc/rc.d/upmpdcli` | `/usr/local/etc/rc.d/` | UPnP/OpenHome renderer (started by `omdrc_renderer`, not enabled itself) |
+| `etc/rc.d/omdrc_renderer` | `/usr/local/etc/rc.d/` | Restores the renderer last selected in the panel (`qobuzconnect2mpd` ⇄ `upmpdcli`) |
 | `etc/devd/usb-audio-drc.conf` | `/usr/local/etc/devd/` | Triggers routing on USB audio attach/detach |
+
+The two renderers are mutually exclusive and neither is enabled in `rc.conf`:
+`omdrc_renderer` decides which one comes up, reading the `last_renderer` state
+file that the omdrc-ctrl toggle writes on every switch (`scripts/omdrc-renderer`
+holds the logic and is shared with the Linux `omdrc-renderer.service`). A reboot
+therefore comes back on the renderer the box was left on — see
+[omdrc-ctrl/README.md](omdrc-ctrl/README.md) (`POST /qconnect/switch`).
 
 Install on FreeBSD with:
 
