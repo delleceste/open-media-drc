@@ -19,6 +19,14 @@ elif [ -f "$PREFIX/etc/open-media-drc/omdrc.conf" ]; then
 fi
 GEOMETRY="${GEOMETRY:-flat}"
 
+# Where configs/<GEOMETRY>/ lives — needed to validate the runtime geometry
+# override below.  Same resolution as drc.sh.
+if $OMDRC_REPO_MODE; then
+    SITE_DIR="${OMDRC_SITE_DIR:-$base_dir}"
+else
+    SITE_DIR="${OMDRC_SITE_DIR:-$PREFIX/etc/open-media-drc}"
+fi
+
 if [ -n "${OMDRC_STATE_DIR:-}" ]; then
     STATE_DIR="$OMDRC_STATE_DIR"
 elif $OMDRC_REPO_MODE; then
@@ -29,6 +37,18 @@ else
     STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omdrc"
 fi
 STATE_FILE="$STATE_DIR/last_arg"
+
+# Runtime filter-set override — keep in sync with drc.sh: the config file's
+# GEOMETRY is the default, last_geometry (written by `drc.sh geometry <name>`
+# and the web remote) is the current choice.  A stale name is ignored.
+GEOMETRY_FILE="$STATE_DIR/last_geometry"
+if [ -f "$GEOMETRY_FILE" ]; then
+    _geo=$(cat "$GEOMETRY_FILE" 2>/dev/null || true)
+    if [ -n "$_geo" ] && [ -d "$SITE_DIR/configs/$_geo" ]; then
+        GEOMETRY="$_geo"
+    fi
+    unset _geo
+fi
 
 if [ "${1:-}" = "--geometry" ]; then
     echo "$GEOMETRY"

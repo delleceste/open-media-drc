@@ -30,6 +30,9 @@ configs/*/*.conf
 # Runtime state written by drc.sh
 /last_arg
 /last_power
+# The filter set chosen at runtime (`drc.sh geometry <name>` / the web remote's
+# picker); overrides GEOMETRY from the config file.
+/last_geometry
 /drc.log
 
 # Runtime state written by omdrc-ctrl (analyzer slider positions).  Repo mode

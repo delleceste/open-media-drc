@@ -2173,16 +2173,40 @@ def spectrum_stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+def _drc_script() -> str | None:
+    """The drc.sh entry point, derived from the configured drc_status command —
+    its sibling in every supported layout:
+
+        run-from-repo  <repo>/drc-status.sh        -> <repo>/drc.sh
+        installed      ${PREFIX}/bin/omdrc-status  -> ${PREFIX}/bin/omdrc
+
+    In an installed tree drc.sh itself lives in libexec, not beside the status
+    command, so the plain `<dir>/drc.sh` guess resolves to a file that does not
+    exist; the PATH wrapper next to omdrc-status is the right target.  Each
+    candidate is checked for existence, and `omdrc` on PATH is the last resort,
+    so a wrong guess surfaces as "not configured" instead of a command that
+    silently fails to run.  Returns None when nothing runnable is found."""
+    cmd = CMD_MAP.get("drc_status")
+    if cmd:
+        try:
+            argv0 = shlex.split(cmd["cmd"])[0]
+        except (ValueError, IndexError):
+            argv0 = cmd["cmd"].strip()
+        directory, base = os.path.split(argv0)
+        candidates = [os.path.join(directory, "drc.sh")]
+        if base.endswith("-status"):
+            candidates.append(os.path.join(directory, base[:-len("-status")]))
+        for path in candidates:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+    return shutil.which("omdrc")
+
+
 @app.route("/drc/status")
 def drc_status_api():
-    # drc.sh lives alongside drc-status.sh; derive its path from the
-    # already-configured drc_status command rather than a WRITE command.
-    drc_status_cmd = CMD_MAP.get("drc_status")
-    if not drc_status_cmd:
+    script = _drc_script()
+    if not script:
         return jsonify({"ok": False, "error": "drc_status not configured"})
-    script = os.path.join(
-        os.path.dirname(drc_status_cmd["cmd"].strip()), "drc.sh"
-    )
     try:
         r = subprocess.run(
             [script, "status"],
@@ -2202,11 +2226,75 @@ def drc_status_api():
         return jsonify({"ok": False, "error": str(e)})
 
 
-@app.route("/drc/geometry")
+def _drc_geometries(script: str) -> list[str]:
+    """Filter sets installed under configs/, as reported by drc.sh."""
+    r = subprocess.run(
+        [script, "geometry", "--list"],
+        capture_output=True, text=True, timeout=5, env=_env(),
+    )
+    if r.returncode != 0:
+        return []
+    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+
+
+# Switching filter set restarts the whole chain (virtual_oss, brutefir, the MPD
+# output) and includes the DAC warm-up and its verify retries, so it can take
+# tens of seconds.  Wait it out rather than returning early: the outcome — which
+# set and which rate actually came up — is the whole point of the request.
+_GEOMETRY_SWITCH_TIMEOUT = 120
+
+
+@app.route("/drc/geometry", methods=["GET", "POST"])
 def drc_geometry():
     cmd = CMD_MAP.get("drc_status")
-    if not cmd:
+    script = _drc_script()
+    if not cmd or not script:
         return jsonify({"ok": False, "error": "drc_status not configured"})
+
+    if request.method == "POST":
+        want = (request.get_json(silent=True) or {}).get("geometry", "")
+        want = str(want).strip()
+        try:
+            available = _drc_geometries(script)
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)})
+        # Only ever pass back a name drc.sh itself listed: the request body must
+        # not be able to turn into an argument of its own.
+        if want not in available:
+            return jsonify({"ok": False, "error": f"unknown filter set: {want}"})
+        # Collect the output in a file and wait on the *process*, the way
+        # /run/<id> does — NOT with capture_output/pipes.  Rebuilding the chain
+        # leaves long-lived daemons behind (virtual_oss is started in the
+        # background and inherits drc.sh's stdout), so the pipes never reach EOF
+        # and a pipe-reading wait blocks for the full timeout even though the
+        # switch itself finished in a couple of seconds.
+        log = tempfile.NamedTemporaryFile(
+            mode="w+b", prefix="omdrcctrl-geometry-", suffix=".log", delete=False)
+        log_path = log.name
+        try:
+            proc = subprocess.Popen(
+                [script, "geometry", want], env=_env(),
+                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except Exception as e:
+            log.close()
+            _unlink_quietly(log_path)
+            return jsonify({"ok": False, "error": str(e)})
+        log.close()
+        try:
+            rc = proc.wait(timeout=_GEOMETRY_SWITCH_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            threading.Thread(target=_wait_and_cleanup, args=(proc, log_path),
+                             daemon=True).start()
+            return jsonify({"ok": False, "error": "timeout switching filter set"})
+        output = _read_text_quietly(log_path).strip()
+        _unlink_quietly(log_path)
+        if rc != 0:
+            return jsonify({"ok": False, "error": output or f"exit {rc}",
+                            "output": output})
+        return jsonify({"ok": True, "geometry": want, "output": output})
+
     try:
         r = subprocess.run(
             cmd["cmd"] + " --geometry",
@@ -2214,9 +2302,17 @@ def drc_geometry():
             capture_output=True, text=True, timeout=5,
         )
         geo = r.stdout.strip()
-        if r.returncode == 0 and geo:
-            return jsonify({"ok": True, "geometry": geo})
-        return jsonify({"ok": False, "error": r.stderr.strip() or "empty"})
+        if r.returncode != 0 or not geo:
+            return jsonify({"ok": False, "error": r.stderr.strip() or "empty"})
+        try:
+            available = _drc_geometries(script)
+        except Exception:
+            available = []
+        # The active set always appears in the list, even if it somehow is not
+        # on disk any more — the UI must be able to show what is running.
+        if geo not in available:
+            available.append(geo)
+        return jsonify({"ok": True, "geometry": geo, "available": available})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 

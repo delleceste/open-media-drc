@@ -15,7 +15,12 @@ if(NOT AUDIO_USER)
   set(AUDIO_USER "nobody")
 endif()
 set(AUDIO_HOME    "/home/${AUDIO_USER}" CACHE PATH   "Home directory of AUDIO_USER")
-set(GEOMETRY      "flat"                CACHE STRING "Speaker geometry (configs/<GEOMETRY>, filters/<GEOMETRY>)")
+set(GEOMETRY      "flat"                CACHE STRING "Default speaker geometry (configs/<GEOMETRY>, filters/<GEOMETRY>)")
+# Extra filter sets to install alongside GEOMETRY.  GEOMETRY stays the *default*
+# (it is what omdrc.conf records); every set listed here is installed too, so
+# `drc.sh geometry <name>` and the web remote's picker have something to switch
+# between at runtime.  Semicolon-separated, e.g. -DGEOMETRIES="120.blue;185;flat".
+set(GEOMETRIES    ""                    CACHE STRING "Extra filter sets to install besides GEOMETRY (semicolon-separated)")
 set(MUSIC_DIR     ""                    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR     ""                    CACHE PATH   "Video library root (omdrcvideo)")
 set(QOBUZ_USER    ""                    CACHE STRING "Qobuz account username for upmpdcli (blank disables)")
