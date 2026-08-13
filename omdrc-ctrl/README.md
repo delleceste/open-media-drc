@@ -33,6 +33,12 @@ provides no feedback. Every command here either shows its output directly
   channels, period/buffer), a sample-rate match check, and a plain-language
   **bit-perfect / no-resampling verdict** so you can confirm everything is
   correct without a screen attached.
+- **Filter-set switching** — the DRC card title carries a picker listing every
+  filter set installed under `configs/`. Choosing one switches to it: BruteFIR
+  is restarted on that set's config (it loads its coefficients once, at start,
+  so a reload is the only way), at the same sample rate, and the picker stays
+  busy until the new set is actually running. See
+  [`POST /drc/geometry`](#post-drcgeometry).
 - **DRC filter analysis** — a **Filter response** page renders the live
   frequency-magnitude, phase, and group-delay of the BruteFIR FIR filters
   (`L.raw` / `R.raw`), computed on demand by FFT. See
@@ -629,8 +635,13 @@ Returns the running state of the two mutually-exclusive renderers, polled by the
 web UI to keep the toggle in sync with reality (Linux: `systemctl --user
 is-active <name>`; FreeBSD: `service <name> onestatus`).
 
+`remembered` is the renderer recorded by the last successful switch — the one
+the boot service restores after a reboot (see `POST /qconnect/switch`). It is
+`null` until the toggle has been used at least once.
+
 ```json
-{ "ok": true, "qobuzconnect2mpd": true, "upmpdcli": false }
+{ "ok": true, "qobuzconnect2mpd": true, "upmpdcli": false,
+  "remembered": "qobuzconnect2mpd" }
 ```
 
 ---
@@ -671,6 +682,39 @@ account keeps its pidfile in a `0700` home directory (qobuzconnect2mpd uses
 `/var/db/qobuzconnect2mpd`), so the unprivileged `onestatus` reports "not
 running" for a service that is running.  omdrcctrl therefore falls back to
 matching the running binary by `argv[0]`, which needs no privilege.
+
+**Remembered across reboots.** A successful switch writes the target name to
+`last_renderer` in the shared state directory (beside `drc.sh`'s `last_arg` —
+the repo checkout in run-from-repo mode, `/var/db/omdrc` or
+`$XDG_STATE_HOME/omdrc` when installed). At boot `scripts/omdrc-renderer start`
+reads it and brings that renderer up, so the box returns to the renderer it was
+left on:
+
+| | boot service | enable |
+|---|---|---|
+| FreeBSD | `etc/rc.d/omdrc_renderer` | `sysrc omdrc_renderer_enable=YES` |
+| Linux | `etc/systemd/user/omdrc-renderer.service` | `systemctl --user enable omdrc-renderer.service` |
+
+Both renderers must then be left **disabled** in `rc.conf` / the systemd user
+default target — one enabled there would start at boot behind the restore
+service, leaving two front-ends driving MPD at once. Switching uses the `one`
+verbs (`service upmpdcli onestart`), which ignore the rcvar, so disabling costs
+nothing.
+
+If omdrcctrl and the boot service resolve *different* state directories — an
+installed setup where the panel runs as an unprivileged service user
+(`~/.local/state/omdrc`) and the rc script runs as root (`/var/db/omdrc`) — pin
+`OMDRC_STATE_DIR` in `omdrc.conf` so both read the same file. Run-from-repo
+needs nothing: both land on the checkout.
+
+The helper is also usable by hand:
+
+```bash
+scripts/omdrc-renderer status          # remembered + what is running
+scripts/omdrc-renderer show            # just the remembered name
+scripts/omdrc-renderer set upmpdcli    # record without starting anything
+scripts/omdrc-renderer start           # start the remembered one
+```
 
 ---
 
@@ -749,6 +793,47 @@ the playing stream, and inspects the downstream stages.
 
 Renders the **DRC filter response** HTML page (magnitude / phase / group-delay
 charts). Linked from the DRC card on the main page.
+
+---
+
+### `GET /drc/geometry`
+
+Returns the active filter set (geometry) and every set installed under
+`configs/`, as reported by `drc-status.sh --geometry` and `drc.sh geometry
+--list`. Feeds the picker in the DRC card title. The active set is always
+included in `available`, even if it is no longer on disk, so the UI can always
+show what is running.
+
+```json
+{ "ok": true, "geometry": "120.blue", "available": ["120.blue", "185", "flat"] }
+{ "ok": false, "error": "drc_status not configured" }
+```
+
+---
+
+### `POST /drc/geometry`
+
+Switches the active filter set: `{"geometry": "<name>"}`. The name must be one
+that `drc.sh geometry --list` reported — the request body never becomes an
+argument of its own — and the command is run as an argument vector, not through
+a shell.
+
+BruteFIR loads its coefficients from the `.conf` it was started with, so this is
+**not** a live operation: `drc.sh geometry <name>` records the choice and
+re-applies the current state, which stops BruteFIR and brings the chain back up
+on the new set's config. The sample rate does not change, so the DAC keeps its
+clock lock. The request therefore blocks until the new set is actually up (or
+has failed) — up to 120 s, since the restart includes the DAC warm-up and its
+verify retries — and `output` carries `drc.sh`'s report, including notes about
+any degradation (a set without the current variant falls back to its plain
+filter; a set without the current rate falls back to that set's highest rate).
+When DRC is off only the choice is recorded; it applies when DRC is next turned
+on.
+
+```json
+{ "ok": true,  "geometry": "185", "output": "filter set 185 has no 44100 Hz config — switching to 192k\n…" }
+{ "ok": false, "error": "unknown filter set: bogus" }
+```
 
 ---
 

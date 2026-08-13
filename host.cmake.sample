@@ -15,7 +15,13 @@ set(AUDIO_HOME   "/home/giacomo"           CACHE PATH   "Home directory of AUDIO
 
 # Speaker geometry: configs/<GEOMETRY>/ + filters/<GEOMETRY>/.  "flat" = identity
 # (no correction).  This box uses the 120.blue room set.
-set(GEOMETRY     "120.blue"                CACHE STRING "Speaker geometry / filter set")
+set(GEOMETRY     "120.blue"                CACHE STRING "Default speaker geometry / filter set")
+
+# Extra filter sets to install alongside GEOMETRY.  Only sets that are installed
+# can be picked at runtime (`drc.sh geometry <name>`, or the picker in the web
+# remote's DRC card), so list here anything you want to A/B against the default.
+# Leave empty to install GEOMETRY alone, as before.
+set(GEOMETRIES   "flat"                    CACHE STRING "Extra filter sets to install (semicolon-separated)")
 
 set(MUSIC_DIR    "/media/USBHD2/musica"    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR    "/media/USBHD2/video"     CACHE PATH   "Video library root (omdrcvideo)")

@@ -189,7 +189,8 @@ sudo cmake --install build                    # installs modules to /usr/local/l
 git clone --recursive https://github.com/delleceste/open-media-drc ~/DRC/open-media-drc
 cd ~/DRC/open-media-drc
 cp host.cmake.sample host.cmake   # AUDIO_USER (defaults to the invoking user),
-$EDITOR host.cmake                #   GEOMETRY, MUSIC_DIR, VIDEO_DIR, OMDB_API_KEY
+$EDITOR host.cmake                #   GEOMETRY, GEOMETRIES, MUSIC_DIR, VIDEO_DIR,
+                                  #   OMDB_API_KEY
 cmake -B build -C host.cmake
 cmake --build build
 sudo cmake --install build        # -> $PREFIX (default /usr/local)
@@ -198,7 +199,9 @@ sudo cmake --install build        # -> $PREFIX (default /usr/local)
 `host.cmake` (the successor to `config.env`) is the single source of
 box-specific values. The CMake superproject renders every config from it and
 installs the DRC engine (`drc.sh` behind the `omdrc` / `omdrc-status`
-wrappers), the site data (brutefir configs + filters for `GEOMETRY`), both web
+wrappers), the site data (brutefir configs + filters for `GEOMETRY` and for any
+extra sets listed in `GEOMETRIES` — only installed sets can be selected at
+runtime, see `drc.sh geometry` below), both web
 UIs (omdrcctrl :9090 as a system service; omdrcvideo :9080 as a `--user`
 service), and the DAC-hotplug glue. The install prints the OS-specific enable
 steps and the one or two files to copy into `/etc` (the udev rule; the mpd
@@ -210,17 +213,19 @@ Then, **as the audio user** (not root), run the per-user setup:
 make user-install     # or: cmake --build build --target user-install
 ```
 
-It deploys the things a root install cannot: the omdrcvideo `--user` service,
-the mpv-idle desktop autostart, and the per-user BruteFIR defaults — and prints
-the two steps that still need root (`loginctl enable-linger`, joining the
-`audio` group).
+It deploys the things a root install cannot: the mpv-idle desktop autostart
+(both OSes — it is a desktop-session entry, not an init-system one), the
+omdrcvideo `--user` service (Linux; FreeBSD serves :9080 from `rc.d`), and the
+per-user BruteFIR defaults — and prints the two steps that still need root
+(`loginctl enable-linger`, joining the `audio` group).
 
 > **Transitional:** the older `./install.sh` (render `*.in` in place from
 > `config.env`, run straight from the checkout) still works and is superseded by
 > the CMake install, which now covers the whole DRC stack — engine, DAC-hotplug
 > glue, both web UIs, and the MPD + upmpdcli renderer configs/units. `install.sh`
-> remains only for the desktop glue not yet in CMake: the `browser-nodrc` and
-> video `.desktop` launcher entries and the Linux `snd-aloop` module-load.
+> remains only for the desktop glue not yet in CMake: the `browser-nodrc`
+> `.desktop` launcher entries and the Linux `snd-aloop` module-load. (The video
+> mpv-idle autostart entry moved to CMake + `make user-install`.)
 
 **5. BruteFIR defaults** — BruteFIR reads its general/I/O defaults (float precision,
 partition size, and the ALSA/OSS input+output devices) from
@@ -322,7 +327,7 @@ The left channel limits in all pairs. Set `attenuation:` in the `.conf` file as 
 `drc.sh` is the single control point for the DRC pipeline. It uses `/usr/bin/env bash`
 so it works with Bash in `/usr/bin` on Linux and `/usr/local/bin` on FreeBSD.
 
-Signature: `drc.sh <rate>|resamp|restore|off|stop [variant]`
+Signature: `drc.sh <rate>|resamp|restore|off|stop|geometry [variant]`
 
 - `<rate>` — start brutefir at the given sample rate (44100, 48000, 88200, 96000, 192000);
   restarts virtual_oss at the same rate; switches MPD to `DRC-native`
@@ -337,17 +342,35 @@ Signature: `drc.sh <rate>|resamp|restore|off|stop [variant]`
 - `stop` — identical teardown to `off` but **does not record the off state**. Used by
   the service stop-paths (systemd `ExecStop`, FreeBSD rc.d stop, devd/udev unplug) so a
   clean reboot of a *running* system is restored rather than left off
+- `geometry` — filter-set control. Bare `drc.sh geometry` prints the active set,
+  `drc.sh geometry --list` lists the ones installed under `configs/`, and
+  `drc.sh geometry <name>` switches to one. Switching is not a live operation —
+  brutefir reads its `.conf` (and loads the coefficients it names) once, at start — so
+  the switch records the choice and then re-applies the current state, which stops
+  brutefir and brings the chain back up on the new set's config. The rate is unchanged,
+  so the DAC keeps its clock lock and no cold-open prime is needed. Two degradations
+  are possible and are printed when they happen: a set without the current variant
+  falls back to its plain filter, and a set without the current rate at all (a set
+  measured only at 192 kHz is normal) falls back to that set's highest rate. When DRC
+  is off only the choice is recorded — it applies the next time DRC is turned on
 - `variant` — optional second argument, e.g. `+2dB`, selects an alternate filter set
 
-State is split across two files (repo root in run-from-repo mode; `/var/db/omdrc`
+State is split across three files (repo root in run-from-repo mode; `/var/db/omdrc`
 or `~/.local/state/omdrc` — override with `OMDRC_STATE_DIR` — when installed)
 so the on/off state and the remembered rate stay independent:
 
 - `last_arg` — the last *active rate* and optional variant (e.g. `192000`, `resamp`,
   `192000 +2dB`). Written on each successful rate/`resamp` run and **never erased by
-  `off`**, so turning DRC back on restores the rate you last used. Geometry is not part
-  of it — it comes from `GEOMETRY` in the config file (`config.env` in this repo;
-  default `flat` = shipped identity filters, this box sets `120.blue`).
+  `off`**, so turning DRC back on restores the rate you last used. The geometry is not
+  part of it — it lives in `last_geometry` below.
+- `last_geometry` — the filter set chosen at runtime, written by `drc.sh geometry <name>`
+  and by the web remote's filter-set picker. `GEOMETRY` in the config file (`config.env`
+  in this repo; default `flat` = shipped identity filters, this box sets `120.blue`) is
+  the **default**; this file, when present and naming a set that still exists under
+  `configs/`, is the **current choice** and wins. A stale name (set removed since) is
+  ignored, so the config default takes over again instead of every run failing on a
+  missing config. Read by `drc-status.sh --geometry` too, so the status label and the
+  web UI agree with what brutefir actually loaded.
 - `last_power` — `on` or `off`. A rate/`resamp` run writes `on`; an explicit `off`
   writes `off`. The service teardown verb `stop` deliberately does **not** write it, so
   only a real user action changes it. `restore` reads `last_power` first and stays off
@@ -355,7 +378,7 @@ so the on/off state and the remembered rate stay independent:
 
 So `drc.sh off` followed by a reboot leaves DRC off (direct DAC); a reboot while DRC is
 running brings it back at the same rate (the shutdown teardown runs `stop`, which leaves
-`last_power` untouched). Both files are runtime state (git-ignored).
+`last_power` untouched). All three files are runtime state (git-ignored).
 
 ## MPD native DRC output format
 
@@ -576,7 +599,16 @@ rule under `etc/devd/`.  (The directory names — `rc.d`/`devd` vs the Linux
 |---|---|---|
 | `etc/rc.d/brutefir_drc` | `/usr/local/etc/rc.d/` | Manages the BruteFIR process |
 | `etc/rc.d/drc_usb_audio` | `/usr/local/etc/rc.d/` | Starts/stops BruteFIR and switches MPD outputs |
+| `etc/rc.d/upmpdcli` | `/usr/local/etc/rc.d/` | UPnP/OpenHome renderer (started by `omdrc_renderer`, not enabled itself) |
+| `etc/rc.d/omdrc_renderer` | `/usr/local/etc/rc.d/` | Restores the renderer last selected in the panel (`qobuzconnect2mpd` ⇄ `upmpdcli`) |
 | `etc/devd/usb-audio-drc.conf` | `/usr/local/etc/devd/` | Triggers routing on USB audio attach/detach |
+
+The two renderers are mutually exclusive and neither is enabled in `rc.conf`:
+`omdrc_renderer` decides which one comes up, reading the `last_renderer` state
+file that the omdrc-ctrl toggle writes on every switch (`scripts/omdrc-renderer`
+holds the logic and is shared with the Linux `omdrc-renderer.service`). A reboot
+therefore comes back on the renderer the box was left on — see
+[omdrc-ctrl/README.md](omdrc-ctrl/README.md) (`POST /qconnect/switch`).
 
 Install on FreeBSD with:
 

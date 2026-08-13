@@ -75,8 +75,11 @@ echo "    symlinked. Re-run this deploy step after a 'git pull' to refresh the c
 echo
 echo "Deploy reminder (needs root for the system paths):"
 echo "  state dirs : mkdir -p \"${AUDIO_HOME}/.local/share/mpd\" \"${AUDIO_HOME}/.cache/mpd\" \"${AUDIO_HOME}/.cache/upmpdcli\""
-echo "  video remote (idle mpv autostart, KDE/Plasma): mkdir -p \"${AUDIO_HOME}/.config/autostart\" &&"
-echo "                 ln -sf \"${REPO_DIR}/video/webremote/autostart/mpv-idle.desktop\" \"${AUDIO_HOME}/.config/autostart/mpv-idle.desktop\""
+echo "  video remote (idle mpv autostart, KDE/Plasma): CMake-owned, like the rest of"
+echo "                 video/webremote — 'sudo make install' renders and installs the"
+echo "                 entry, 'make user-install' links it. By hand, after the install:"
+echo "                 mkdir -p \"${AUDIO_HOME}/.config/autostart\" &&"
+echo "                 ln -sf \"${PREFIX}/share/omdrcvideo/autostart/mpv-idle.desktop\" \"${AUDIO_HOME}/.config/autostart/mpv-idle.desktop\""
 echo "  browser launchers (No-DRC Firefox/Chrome/Chromium in the KDE menu):"
 echo "                 mkdir -p \"${AUDIO_HOME}/.local/share/applications\" &&"
 echo "                 for b in firefox chromium chrome; do"
@@ -87,7 +90,7 @@ echo "                 update-desktop-database \"${AUDIO_HOME}/.local/share/appl
 if [ "$(uname)" = "FreeBSD" ]; then
 	cat <<EOF
   FreeBSD:
-    rc.d  : for s in musicpd brutefir_drc drc_usb_audio upmpdcli; do
+    rc.d  : for s in musicpd brutefir_drc drc_usb_audio upmpdcli omdrc_renderer; do
               cp "${REPO_DIR}/etc/rc.d/\$s" /usr/local/etc/rc.d/\$s   # COPY: read at early boot
             done
             # Copies (not symlinks): rc.d scripts are read by rc at early boot,
@@ -96,10 +99,19 @@ if [ "$(uname)" = "FreeBSD" ]; then
             # it must resolve, but is NOT enabled below.
     devd  : cp "${REPO_DIR}/etc/devd/usb-audio-drc.conf" /usr/local/etc/devd/usb-audio-drc.conf   # COPY
             service devd restart
-    enable: add to /etc/rc.conf — musicpd_enable=YES upmpdcli_enable=YES \\
+    enable: add to /etc/rc.conf — musicpd_enable=YES omdrc_renderer_enable=YES \\
             drc_usb_audio_enable=YES
             # Enable ONLY drc_usb_audio for DRC: it probes for the DAC at boot
             # and is driven by devd on hotplug. Do NOT enable brutefir_drc.
+    renderer: omdrc_renderer starts the renderer that was active last —
+            qobuzconnect2mpd or upmpdcli, whichever omdrcctrl's toggle recorded
+            in ${REPO_DIR}/last_renderer — so a reboot comes back as you left it.
+            Keep BOTH renderers' own rcvars off, or rc would start one behind
+            its back and two front-ends would drive MPD at once:
+              sysrc upmpdcli_enable=NO qobuzconnect2mpd_enable=NO
+              sysrc omdrc_renderer_enable=YES
+            # Query/override by hand:  ${REPO_DIR}/scripts/omdrc-renderer status
+            #                          ${REPO_DIR}/scripts/omdrc-renderer set upmpdcli
     webremote: ln -sf "${REPO_DIR}/video/webremote/rc.d/omdrcvideo" /usr/local/etc/rc.d/omdrcvideo
             sysrc omdrcvideo_enable=YES
             service omdrcvideo start          # phone video web remote on :9080
@@ -143,13 +155,21 @@ else
                      # upmpdcli renderer (toggled against qobuzconnect2mpd):
                      ln -sf "${REPO_DIR}/etc/systemd/user/upmpdcli.service" \\
                             "${AUDIO_HOME}/.config/systemd/user/upmpdcli.service"
+                     # omdrc-renderer.service: oneshot that starts whichever renderer
+                     # was active last (recorded in ${REPO_DIR}/last_renderer by the
+                     # omdrcctrl toggle), so a reboot comes back as you left it.
+                     ln -sf "${REPO_DIR}/etc/systemd/user/omdrc-renderer.service" \\
+                            "${AUDIO_HOME}/.config/systemd/user/omdrc-renderer.service"
                      # drc.service: restores the last DRC profile on login (oneshot).
                      ln -sf "${REPO_DIR}/drc.service" \\
                             "${AUDIO_HOME}/.config/systemd/user/drc.service"
                      systemctl --user daemon-reload
-                     systemctl --user enable --now upmpdcli.service drc.service
-                     # qobuzconnect2mpd is the other renderer; leave it as you have it
-                     # (the toggle starts/stops upmpdcli vs qobuzconnect2mpd at runtime).
+                     systemctl --user enable --now omdrc-renderer.service drc.service
+                     # Enable omdrc-renderer INSTEAD of the renderers themselves: a
+                     # renderer left enabled would start at boot behind it, and both
+                     # front-ends would drive MPD at once. The units still have to
+                     # exist (above) — the toggle and omdrc-renderer start them.
+                     systemctl --user disable upmpdcli.service qobuzconnect2mpd.service 2>/dev/null || true
                      # NOTE: qobuzconnect2mpd is installed separately (not shipped here);
                      # if used, it must also be a --user unit so the toggle can reach it.
     omdrcctrl UI   : # audio web UI (:9090) — built and --user-installed by its own

@@ -1,0 +1,79 @@
+#!/bin/sh
+
+# PROVIDE: omdrc_renderer
+# REQUIRE: NETWORKING FILESYSTEMS musicpd
+# KEYWORD: shutdown
+#
+# Template — generated to omdrc_renderer by install.sh from config.env.
+#
+# Starts the renderer that was active when the box went down: qobuzconnect2mpd
+# or upmpdcli, whichever omdrcctrl's toggle last recorded in the state file
+# (last_renderer, beside drc.sh's last_arg).  All the logic lives in
+# scripts/omdrc-renderer, shared with the Linux systemd --user unit.
+#
+# Add to /etc/rc.conf:
+#
+#	omdrc_renderer_enable="YES"
+#	upmpdcli_enable="NO"		# both renderers are started by THIS
+#	qobuzconnect2mpd_enable="NO"	# service, never directly by rc
+#
+# Leaving a renderer's own rcvar at YES would start it at boot behind this
+# script's back, and both front-ends would end up driving MPD at once.  The
+# switching itself uses the `one` verbs (service upmpdcli onestart), which
+# ignore the rcvar, so disabling them costs nothing.
+#
+# FILESYSTEMS is required because the state file lives in the checkout (or
+# /var/db/omdrc); musicpd because a renderer connecting to a not-yet-running
+# MPD is the one ordering mistake that makes this look flaky at boot.
+
+. /etc/rc.subr
+
+name="omdrc_renderer"
+rcvar="omdrc_renderer_enable"
+start_cmd="omdrc_renderer_start"
+stop_cmd="omdrc_renderer_stop"
+status_cmd="omdrc_renderer_status"
+
+load_rc_config "$name"
+
+: ${omdrc_renderer_enable:="NO"}
+: ${omdrc_renderer_script:="@REPO_DIR@/scripts/omdrc-renderer"}
+# State directory holding last_renderer.  Leave empty to let the helper resolve
+# it the way drc.sh does (checkout in run-from-repo mode, /var/db/omdrc as root
+# otherwise).  Set it when this service and omdrcctrl would resolve DIFFERENT
+# directories and the toggle's choice would never be seen here — a mixed box
+# where the panel is installed under ${PREFIX} (state: the service user's
+# ~/.local/state/omdrc, or whatever OMDRC_STATE_DIR in omdrc.conf pins) while
+# this script runs from the checkout.  It must match what omdrcctrl writes:
+#
+#	sysrc omdrc_renderer_statedir="/home/<audiouser>/.local/state/omdrc"
+: ${omdrc_renderer_statedir:=""}
+# The renderers are network daemons that must not run as root; each one's own
+# rc script (or service account) already handles that, so this wrapper only
+# dispatches and stays root.
+
+required_files="${omdrc_renderer_script}"
+
+if [ -n "${omdrc_renderer_statedir}" ]; then
+	export OMDRC_STATE_DIR="${omdrc_renderer_statedir}"
+fi
+
+omdrc_renderer_start()
+{
+	"${omdrc_renderer_script}" start
+}
+
+omdrc_renderer_stop()
+{
+	# `stop` does not clear the remembered choice: a shutdown of a running box
+	# must come back to the same renderer, exactly as brutefir_drc's stop keeps
+	# drc.sh's last_arg.
+	"${omdrc_renderer_script}" stop
+}
+
+omdrc_renderer_status()
+{
+	"${omdrc_renderer_script}" status
+}
+
+run_rc_command "$1"

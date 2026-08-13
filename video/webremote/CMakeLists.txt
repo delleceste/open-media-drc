@@ -44,10 +44,14 @@ configure_file(src/omdrcvideo.sh.in  ${CMAKE_CURRENT_BINARY_DIR}/omdrcvideo     
 
 if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     configure_file(systemd/omdrcvideo.service.in  ${CMAKE_CURRENT_BINARY_DIR}/omdrcvideo.service @ONLY)
-    configure_file(autostart/mpv-idle.desktop.in  ${CMAKE_CURRENT_BINARY_DIR}/mpv-idle.desktop   @ONLY)
 else()
     configure_file(rc.d/omdrcvideo.in             ${CMAKE_CURRENT_BINARY_DIR}/omdrcvideo.rc       @ONLY)
 endif()
+
+# The idle-mpv autostart entry is desktop-session scoped, not init-system scoped:
+# both OSes run the same KDE/GNOME session and both need it, so it is rendered
+# and installed unconditionally (make user-install links it into ~/.config).
+configure_file(autostart/mpv-idle.desktop.in  ${CMAKE_CURRENT_BINARY_DIR}/mpv-idle.desktop @ONLY)
 
 # ── install: application (preserve the src/ nesting app.py assumes) ───────────
 # app.py resolves ../disc.sh and templates/ relative to its own dir, so it must
@@ -81,10 +85,11 @@ install(CODE "
 # ── service integration ──────────────────────────────────────────────────────
 if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     install(FILES    ${CMAKE_CURRENT_BINARY_DIR}/omdrcvideo.service DESTINATION lib/systemd/user)
-    install(FILES    ${CMAKE_CURRENT_BINARY_DIR}/mpv-idle.desktop   DESTINATION share/omdrcvideo/autostart)
 else()
     install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/omdrcvideo.rc      DESTINATION etc/rc.d RENAME omdrcvideo)
 endif()
+
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mpv-idle.desktop DESTINATION share/omdrcvideo/autostart)
 
 # ── post-install hints ────────────────────────────────────────────────────────
 if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
@@ -112,6 +117,12 @@ message(STATUS \"Enable the rc.d service:\")
 message(STATUS \"  sysrc omdrcvideo_enable=YES\")
 message(STATUS \"  sysrc omdrcvideo_user=${OMDRCVIDEO_SERVICE_USER}\")
 message(STATUS \"  service omdrcvideo start          # :9080\")
-message(STATUS \"  (the idle mpv it drives autostarts in the desktop session)\")
+message(STATUS \"\")
+message(STATUS \"The idle mpv it drives autostarts in the desktop session — link it\")
+message(STATUS \"as ${OMDRCVIDEO_SERVICE_USER}, inside that session:\")
+message(STATUS \"  make user-install                 # or, by hand:\")
+message(STATUS \"  mkdir -p ~/.config/autostart\")
+message(STATUS \"  ln -sf ${CMAKE_INSTALL_PREFIX}/share/omdrcvideo/autostart/mpv-idle.desktop ~/.config/autostart/\")
+message(STATUS \"  Open: http://<hostname>:9080\")
 ")
 endif()

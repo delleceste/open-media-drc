@@ -34,6 +34,13 @@ endfunction()
 # radiolist (read-only data referenced by upmpdcli.conf)
 install(FILES upmpdcli/radio_scripts/radiolist.conf DESTINATION share/omdrc/upmpdcli)
 
+# Renderer restore helper — starts the renderer recorded in $STATE_DIR/
+# last_renderer by omdrcctrl's toggle.  Shared by both boot services below, and
+# usable by hand (omdrc-renderer status|set).  Config-free: it resolves the
+# state dir itself, the same way drc.sh does.
+install(PROGRAMS scripts/omdrc-renderer DESTINATION libexec/omdrc/scripts)
+set(_renderer_helper "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/scripts/omdrc-renderer")
+
 # ── upmpdcli.conf (both OSes) ────────────────────────────────────────────────
 file(READ upmpdcli/upmpdcli.conf.in _u)
 string(REPLACE "@REPO_DIR@/upmpdcli/radio_scripts/radiolist.conf"
@@ -64,7 +71,15 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" "${_s}")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/system)
 
-    install(CODE "message(STATUS \"renderers: mpd.conf + upmpdcli.conf/.service + mpd /etc drop-in installed (see the final checklist)\")")
+    # omdrc-renderer user unit: enable THIS instead of a renderer, so the box
+    # comes back on the renderer it was left on (see the unit's comment).
+    file(READ etc/systemd/user/omdrc-renderer.service.in _r)
+    string(REPLACE "@REPO_DIR@/scripts/omdrc-renderer" "${_renderer_helper}" _r "${_r}")
+    _omdrc_common(_r)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc-renderer.service" "${_r}")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omdrc-renderer.service" DESTINATION lib/systemd/user)
+
+    install(CODE "message(STATUS \"renderers: mpd.conf + upmpdcli.conf/.service + omdrc-renderer.service + mpd /etc drop-in installed (see the final checklist)\")")
 else()  # FreeBSD
     # musicpd.conf (FreeBSD MPD package == musicpd)
     file(READ mpd/musicpd.conf.in _m)
@@ -79,5 +94,15 @@ else()  # FreeBSD
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.rc" "${_s}")
     install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.rc" DESTINATION etc/rc.d RENAME upmpdcli)
 
-    install(CODE "message(STATUS \"renderers: musicpd.conf + upmpdcli.conf/rc.d installed (see the final checklist to enable)\")")
+    # omdrc_renderer rc.d: enable THIS instead of upmpdcli/qobuzconnect2mpd, so
+    # the box comes back on the renderer it was left on (see the script's
+    # comment for the rc.conf lines).
+    file(READ etc/rc.d/omdrc_renderer.in _r)
+    string(REPLACE "@REPO_DIR@/scripts/omdrc-renderer" "${_renderer_helper}" _r "${_r}")
+    _omdrc_common(_r)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc_renderer.rc" "${_r}")
+    install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/omdrc_renderer.rc"
+            DESTINATION etc/rc.d RENAME omdrc_renderer)
+
+    install(CODE "message(STATUS \"renderers: musicpd.conf + upmpdcli.conf/rc.d + omdrc_renderer rc.d installed (see the final checklist to enable)\")")
 endif()

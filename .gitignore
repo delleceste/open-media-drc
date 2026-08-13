@@ -5,7 +5,9 @@
 /etc/rc.d/musicpd
 /etc/rc.d/brutefir_drc
 /etc/rc.d/upmpdcli
+/etc/rc.d/omdrc_renderer
 /etc/systemd/user/upmpdcli.service
+/etc/systemd/user/omdrc-renderer.service
 /video/webremote/systemd/omdrcvideo.service
 /video/webremote/rc.d/omdrcvideo
 # Rendered by CMake from webremote.conf.in (holds the OMDb key); never tracked.
@@ -28,12 +30,18 @@ configs/*/*.conf
 # Runtime state written by drc.sh
 /last_arg
 /last_power
+# The filter set chosen at runtime (`drc.sh geometry <name>` / the web remote's
+# picker); overrides GEOMETRY from the config file.
+/last_geometry
 /drc.log
 
 # Runtime state written by omdrc-ctrl (analyzer slider positions).  Repo mode
 # keeps state beside the checkout; installed mode uses /var/db/omdrc or XDG.
 /spectrum-drc-delay-delta
 /spectrum-floor-db
+# … and the renderer the toggle last selected, replayed at boot by
+# scripts/omdrc-renderer (etc/rc.d/omdrc_renderer / omdrc-renderer.service).
+/last_renderer
 
 # Runtime state written by the glitch-detection subsystem
 /glitch.log

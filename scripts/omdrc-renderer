@@ -1,0 +1,202 @@
+#!/bin/sh
+#
+# omdrc-renderer — restore the renderer that was active when the box went down.
+#
+# qobuzconnect2mpd and upmpdcli are mutually exclusive front-ends driving MPD:
+# only one may run at a time.  omdrcctrl's toggle switches between them at
+# runtime and records the choice in $STATE_DIR/last_renderer (beside drc.sh's
+# last_arg / last_power — same state directory, same one-value-per-file style).
+# This script is the other half: `start` brings up whichever one is recorded
+# there, so a reboot comes back the way the box was left instead of always
+# landing on the one enabled in rc.conf.
+#
+# It is what the boot services run:
+#   FreeBSD  etc/rc.d/omdrc_renderer          (root, after musicpd)
+#   Linux    etc/systemd/user/omdrc-renderer.service  (--user, oneshot)
+# Both renderers must then be left DISABLED in rc.conf / the systemd user
+# default target, or rc/systemd would start one behind this script's back.
+#
+# usage: omdrc-renderer start|stop|status|show|set <renderer>
+#
+#   start          start the remembered renderer (stopping the other first)
+#   stop           stop both — the remembered choice is left untouched, so a
+#                  shutdown of a running box is restored on the next boot
+#   status         print what is running; exit 0 if a renderer is up
+#   show           print the remembered renderer name
+#   set <name>     record <name> without starting anything
+#
+set -eu
+
+# ── paths / state ─────────────────────────────────────────────────────────────
+# Mirrors drc.sh's resolution so the whole stack shares one state directory
+# (see drc.sh "paths / state" and doc/FREEBSD-PORT-PLAN.md 1.4).  In an
+# installed (non-repo) setup omdrcctrl runs as an unprivileged service user
+# while this script runs as root at boot, and the two defaults then differ
+# (~/.local/state/omdrc vs /var/db/omdrc) — pin OMDRC_STATE_DIR in omdrc.conf
+# there so the toggle and the boot restore read the same file.
+here=$(cd "$(dirname "$0")" && pwd)
+base_dir=$(cd "$here/.." && pwd)
+PREFIX="${PREFIX:-/usr/local}"
+
+OMDRC_REPO_MODE=false
+OMDRC_CONF_FILE=""
+if [ -n "${OMDRC_CONF:-}" ] && [ -f "$OMDRC_CONF" ]; then
+	OMDRC_CONF_FILE="$OMDRC_CONF"
+elif [ -f "$base_dir/config.env" ]; then
+	OMDRC_CONF_FILE="$base_dir/config.env"
+	OMDRC_REPO_MODE=true
+elif [ -f "$PREFIX/etc/open-media-drc/omdrc.conf" ]; then
+	OMDRC_CONF_FILE="$PREFIX/etc/open-media-drc/omdrc.conf"
+fi
+if [ -n "$OMDRC_CONF_FILE" ]; then
+	# shellcheck disable=SC1090
+	. "$OMDRC_CONF_FILE"
+fi
+
+if [ -n "${OMDRC_STATE_DIR:-}" ]; then
+	STATE_DIR="$OMDRC_STATE_DIR"
+elif $OMDRC_REPO_MODE; then
+	STATE_DIR="$base_dir"
+elif [ "$(id -u)" -eq 0 ]; then
+	STATE_DIR="/var/db/omdrc"
+elif [ -n "${XDG_STATE_HOME:-}" ]; then
+	STATE_DIR="$XDG_STATE_HOME/omdrc"
+elif [ -n "${HOME:-}" ]; then
+	STATE_DIR="$HOME/.local/state/omdrc"
+else
+	# No HOME at all (a bare service context): use the root location rather
+	# than aborting under `set -u`.
+	STATE_DIR="/var/db/omdrc"
+fi
+STATE_FILE="$STATE_DIR/last_renderer"
+
+# The two switchable renderers, and the one to use when nothing is recorded yet
+# (first boot after install, or a wiped state dir).  Override in the config file
+# with OMDRC_RENDERER_DEFAULT.
+RENDERERS="qobuzconnect2mpd upmpdcli"
+DEFAULT_RENDERER="${OMDRC_RENDERER_DEFAULT:-upmpdcli}"
+
+IS_LINUX=false
+[ "$(uname)" = "Linux" ] && IS_LINUX=true
+
+# ── state file ────────────────────────────────────────────────────────────────
+is_renderer() {
+	for r in $RENDERERS; do
+		[ "$1" = "$r" ] && return 0
+	done
+	return 1
+}
+
+other_renderer() {
+	for r in $RENDERERS; do
+		[ "$1" = "$r" ] || { echo "$r"; return; }
+	done
+}
+
+# The remembered renderer, or the default when the file is missing/garbage.
+read_remembered() {
+	_r=$(cat "$STATE_FILE" 2>/dev/null | tr -d ' \t\r\n') || _r=""
+	if is_renderer "$_r"; then
+		echo "$_r"
+	else
+		echo "$DEFAULT_RENDERER"
+	fi
+}
+
+write_remembered() {
+	mkdir -p "$STATE_DIR" 2>/dev/null || true
+	echo "$1" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
+}
+
+# ── service control ───────────────────────────────────────────────────────────
+# FreeBSD: rc services driven with the "one" verbs, which work regardless of the
+# service's own rcvar — that is deliberate, both renderers stay disabled in
+# rc.conf and only this script decides which one runs.  Linux: systemd --user
+# units (the renderer/app layer runs in user scope so the omdrcctrl toggle can
+# drive it without sudo).
+SUDO=""
+[ "$(id -u)" -eq 0 ] || SUDO="sudo"
+
+svc_start() {
+	if $IS_LINUX; then
+		systemctl --user start "$1"
+	else
+		$SUDO service "$1" onestart
+	fi
+}
+
+svc_stop() {
+	if $IS_LINUX; then
+		systemctl --user stop "$1"
+	else
+		$SUDO service "$1" onestop
+	fi
+}
+
+svc_running() {
+	if $IS_LINUX; then
+		systemctl --user is-active --quiet "$1" && return 0
+		return 1
+	fi
+	service "$1" onestatus >/dev/null 2>&1 && return 0
+	# onestatus reads a pidfile that may sit in a service account's 0700 home
+	# (qobuzconnect2mpd keeps its under /var/db/qobuzconnect2mpd), so it can
+	# report "not running" for a running daemon when we are not that user.
+	# Process visibility is not privileged — see app.py's _service_running.
+	pgrep -x "$1" >/dev/null 2>&1
+}
+
+# ── actions ───────────────────────────────────────────────────────────────────
+do_start() {
+	target=$(read_remembered)
+	other=$(other_renderer "$target")
+	# Stop the other one unconditionally rather than gating on svc_running():
+	# a status check that wrongly says "not running" would leave both driving
+	# MPD.  A stop of an already-stopped service just exits non-zero.
+	svc_stop "$other" >/dev/null 2>&1 || true
+	if svc_running "$target"; then
+		echo "omdrc-renderer: $target already running"
+		return 0
+	fi
+	echo "omdrc-renderer: starting $target (last active)"
+	svc_start "$target"
+}
+
+do_stop() {
+	# Transient teardown (shutdown / manual stop): the state file is NOT
+	# rewritten, so the remembered choice survives and the next boot restores it.
+	for r in $RENDERERS; do
+		svc_stop "$r" >/dev/null 2>&1 || true
+	done
+}
+
+do_status() {
+	running=""
+	for r in $RENDERERS; do
+		svc_running "$r" && running="$running $r"
+	done
+	echo "remembered: $(read_remembered)"
+	if [ -n "$running" ]; then
+		echo "running:   ${running# }"
+		return 0
+	fi
+	echo "running:   (none)"
+	return 1
+}
+
+case "${1:-status}" in
+start)   do_start ;;
+stop)    do_stop ;;
+restart) do_stop; do_start ;;
+status)  do_status ;;
+show)    read_remembered ;;
+set)
+	[ $# -ge 2 ] || { echo "usage: $0 set <renderer>   # one of: $RENDERERS" >&2; exit 2; }
+	is_renderer "$2" || { echo "$0: unknown renderer: $2" >&2; exit 2; }
+	write_remembered "$2"
+	;;
+*)
+	echo "usage: $0 start|stop|restart|status|show|set <renderer>" >&2
+	exit 2
+	;;
+esac

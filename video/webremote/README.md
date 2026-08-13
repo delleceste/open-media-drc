@@ -140,8 +140,12 @@ sudo service omdrcvideo start            # serves :9080
 
 **2. The persistent idle mpv (KDE/Plasma autostart):**
 
+The entry is rendered and installed by CMake (`sudo make install` →
+`$PREFIX/share/omdrcvideo/autostart/`), and `make user-install` links it for you.
+By hand:
+
 ```sh
-ln -sf <repo>/video/webremote/autostart/mpv-idle.desktop \
+ln -sf /usr/local/share/omdrcvideo/autostart/mpv-idle.desktop \
        ~/.config/autostart/mpv-idle.desktop
 ```
 
@@ -203,7 +207,8 @@ video/webremote/
   webremote.conf               live configuration
   mpv-idle.sh                  starts the hidden persistent idle mpv
   disc.sh                      gcache up/down for the physical Blu-ray drive
-  rc.d/omdrcvideo.in           FreeBSD service template (rendered by ../../install.sh)
+  rc.d/omdrcvideo.in           FreeBSD service template (rendered by CMake)
   autostart/mpv-idle.desktop.in  KDE/Plasma autostart template for mpv-idle.sh
+                               (installed on both OSes; linked by make user-install)
   ARCHITECTURE.md              design rationale
 ```

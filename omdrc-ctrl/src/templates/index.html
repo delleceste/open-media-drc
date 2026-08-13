@@ -205,6 +205,26 @@
         }
         .btn-details:hover { border-color: var(--accent); color: var(--accent); }
         .btn-details.active { display: inline-block; }
+        /* Filter-set (geometry) picker in the DRC card title.  Sized like a
+           .btn-details so the title row reads as one strip of controls. */
+        .geo-select {
+            padding: 5px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .74rem;
+            font-weight: 500;
+            letter-spacing: 0;
+            text-transform: none;
+            cursor: pointer;
+            max-width: 40vw;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .geo-select:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+        .geo-select:disabled { cursor: default; opacity: .65; }
+        .geo-select.busy { border-color: var(--accent); opacity: .55; }
         #spectrum-controls-toggle { cursor: pointer; }
         #spectrum-controls-toggle.on { border-color: var(--accent); color: var(--accent); }
         .spectrum-title-btns { display: flex; align-items: center; gap: 8px; }
@@ -617,7 +637,7 @@
 {% macro render_group(group_name, group_label, cmds) %}
 <div class="card">
     <div class="card-title"{% if group_name == 'drc' %} style="display:flex;justify-content:space-between;align-items:baseline"{% endif %}>
-        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:baseline;gap:10px"><span id="drc-geometry-label" style="font-size:.75rem;font-weight:400;color:var(--muted)"></span><a class="btn-details active" href="/filter-response">Filter response ↗</a></span>{% endif %}
+        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:10px"><select id="drc-geometry-select" class="geo-select" title="Filter set" disabled onchange="switchGeometry(this.value)"></select><a class="btn-details active" href="/filter-response">Filter response ↗</a></span>{% endif %}
     </div>
 
     {% for cmd in cmds %}
@@ -865,6 +885,8 @@
         <button class="qc-seg" data-target="qobuzconnect2mpd" onclick="switchRenderer('qobuzconnect2mpd')">qobuzconnect2mpd</button>
         <button class="qc-seg" data-target="upmpdcli" onclick="switchRenderer('upmpdcli')">upmpdcli</button>
     </div>
+    <!-- Which renderer the boot service will restore (last switched-to one) -->
+    <div class="refresh-note" id="qc-boot"></div>
     <div style="padding:12px 0">
         <div id="qc-line1" class="idle">—</div>
         <div id="qc-line2"></div>
@@ -888,14 +910,77 @@ const TOPCPU_THRESHOLD    = {{ topcpu_threshold }};
 const SPECTRUM_ENABLED = {{ 'true' if spectrum.enabled else 'false' }};
 const SPECTRUM_VU_MODE = {{ spectrum.vu_mode | tojson }};
 
-// ── DRC geometry label ────────────────────────────────────────────────────
-(async () => {
+// ── DRC filter set (geometry) picker ──────────────────────────────────────
+// brutefir loads its coefficients from the .conf it was started with, so
+// changing set is not a live operation — the chain has to come back up on the
+// new set's config.  The server does that and answers only once the new set is
+// actually running (or has failed), so there is no optimistic repaint here: the
+// picker stays busy until the truth comes back, then re-reads both the active
+// set and the Active config row (the rate can change with the set).
+let geoBusy    = false;
+let geoCurrent = '';
+
+async function loadGeometries() {
+    const sel = document.getElementById('drc-geometry-select');
+    if (!sel || geoBusy) return;
     try {
         const d = await (await fetch('/drc/geometry')).json();
-        const el = document.getElementById('drc-geometry-label');
-        if (el && d.ok && d.geometry) el.textContent = d.geometry;
-    } catch {}
-})();
+        if (!d.ok || !d.geometry) return;
+        geoCurrent = d.geometry;
+        const list = (d.available && d.available.length) ? d.available : [d.geometry];
+        sel.replaceChildren();
+        for (const g of list) {
+            const o = document.createElement('option');
+            o.value = g;
+            o.textContent = g;
+            o.selected = (g === d.geometry);
+            sel.appendChild(o);
+        }
+        // A single installed set is a label, not a choice.
+        sel.disabled = list.length < 2;
+        sel.title = list.length < 2 ? 'Filter set (only one installed)' : 'Filter set';
+    } catch { /* offline — the status dot already says so */ }
+}
+
+async function switchGeometry(target) {
+    const sel = document.getElementById('drc-geometry-select');
+    if (geoBusy || !target || target === geoCurrent) return;
+    geoBusy      = true;
+    sel.disabled = true;
+    sel.classList.add('busy');
+    writeStatus('');
+    toast(`loading ${target} — restarting brutefir…`, 'ok', 120000);
+    try {
+        const d = await (await fetch('/drc/geometry', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ geometry: target }),
+        })).json();
+        if (d.ok) {
+            toast(`filter set: ${target}`, 'ok');
+            // Surface only drc.sh's notes about the switch itself (e.g. "has no
+            // 44100 Hz config — switching to 192k"); the rest of its output is
+            // the ordinary chain-restart chatter.
+            const notes = (d.output || '').split('\n')
+                .filter(l => l.startsWith('filter set ')).join(' · ');
+            writeStatus(notes);
+        } else {
+            toast('filter set switch failed', 'error');
+            writeStatus(d.error || 'switch failed');
+        }
+    } catch {
+        toast('network error', 'error');
+    }
+    geoBusy = false;
+    sel.classList.remove('busy');
+    await loadGeometries();
+    // The Active config row can change with the set (a set without the current
+    // rate falls back to one it has), so refresh it now instead of waiting for
+    // its poll.  Guarded: the row only exists when drc_status is configured.
+    if (document.getElementById('out-drc_status')) fetchRead('drc_status');
+}
+
+loadGeometries();
 
 // ── toast ──────────────────────────────────────────────────────────────────
 let _tt = null;
@@ -1234,6 +1319,13 @@ function paintRenderers(active) {
     }
 }
 
+// The choice is recorded on every successful switch and replayed at boot by
+// the omdrc_renderer service, so say which one a reboot would come back on.
+function paintRemembered(name) {
+    document.getElementById('qc-boot').textContent =
+        name ? `restored at boot: ${name}` : '';
+}
+
 async function syncRenderers() {
     if (qcSwitching) return;
     try {
@@ -1242,6 +1334,7 @@ async function syncRenderers() {
         if (d.qobuzconnect2mpd) active = 'qobuzconnect2mpd';
         else if (d.upmpdcli)    active = 'upmpdcli';
         paintRenderers(active);
+        paintRemembered(d.remembered);
     } catch { /* ignore — status dot already signals offline */ }
 }
 

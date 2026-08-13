@@ -120,6 +120,21 @@ STATE_FILE="$STATE_DIR/last_arg"
 # but leaves STATE_FILE (the remembered rate) intact, so `restore` stays off
 # across a reboot yet can bring DRC back at the last rate when turned on.
 POWER_FILE="$STATE_DIR/last_power"
+# Runtime filter-set (geometry) override, written by `drc.sh geometry <name>`
+# and by the web remote.  The config file's GEOMETRY is the *default*; this file
+# is the *current choice*.  Kept in the state dir beside last_arg / last_power so
+# it survives a reboot and is honoured by restore and by the devd/udev
+# re-attach path, exactly like the remembered rate.  A stale name (filter set
+# removed since it was chosen) is ignored, so the config default wins again
+# rather than every run failing on a missing config.
+GEOMETRY_FILE="$STATE_DIR/last_geometry"
+if [ -f "$GEOMETRY_FILE" ]; then
+  _geo=$(cat "$GEOMETRY_FILE" 2>/dev/null || true)
+  if [ -n "$_geo" ] && [ -d "$SITE_DIR/configs/$_geo" ]; then
+    GEOMETRY="$_geo"
+  fi
+  unset _geo
+fi
 
 # Persistent operations log (survives reboots — lives beside last_arg, NOT in
 # /tmp).  Each run appends machine-parseable `key=value` lines so the cost and
@@ -236,6 +251,35 @@ state_label() {
   fi
 }
 
+# Filter sets installed under $SITE_DIR/configs/ — one line per name.  A
+# directory only counts as a filter set once it holds at least one brutefir
+# config, so a leftover/empty directory is never offered as a choice.
+list_geometries() {
+  local dir name conf
+  for dir in "$SITE_DIR"/configs/*; do
+    [ -d "$dir" ] || continue
+    name=${dir##*/}
+    for conf in "$dir"/brutefir-*.conf; do
+      [ -f "$conf" ] || continue
+      printf '%s\n' "$name"
+      break
+    done
+  done
+}
+
+# Sample rates a filter set can serve, ascending.  Variant configs
+# (brutefir-192000+2dB.conf) collapse onto their base rate.
+geometry_rates() {
+  local conf r
+  for conf in "$SITE_DIR/configs/$1"/brutefir-*.conf; do
+    [ -f "$conf" ] || continue
+    r=${conf##*/brutefir-}
+    r=${r%.conf}
+    r=${r%%[!0-9]*}
+    [ -n "$r" ] && printf '%s\n' "$r"
+  done | sort -un
+}
+
 stop_virtual_oss() {
   local pid
   pid=$(_sudo cat "$VIRTUAL_OSS_PID" 2>/dev/null) && _sudo kill "$pid" 2>/dev/null || true
@@ -254,7 +298,7 @@ stop_virtual_oss() {
 }
 
 usage() {
-  echo "Usage: $0 <rate>|resamp|restore|off|stop|status [variant]"
+  echo "Usage: $0 <rate>|resamp|restore|off|stop|status|geometry [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
   echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
@@ -269,11 +313,15 @@ usage() {
   echo "             reboot of a running system is restored, not left off"
   echo "  status   : show DRC state, virtual_oss rate, brutefir, and MPD output"
   echo "             (also the default when no argument is given)"
+  echo "  geometry : print the active filter set; 'geometry --list' lists the"
+  echo "             installed ones, 'geometry <name>' switches to one and"
+  echo "             reloads brutefir with that set's config"
   echo "  variant  : optional filter variant, e.g. +2dB (default: none)"
   echo
   echo "  Geometry: $GEOMETRY  (config: ${OMDRC_CONF_FILE:-built-in defaults})"
-  echo "  Set GEOMETRY in the config file to change it; 'flat' (identity"
-  echo "  filters, no correction) is the shipped default."
+  echo "  GEOMETRY in the config file is the default; 'geometry <name>' records"
+  echo "  a runtime choice that overrides it (see $GEOMETRY_FILE)."
+  echo "  'flat' (identity filters, no correction) is the shipped default."
   echo
   echo "Examples:"
   echo "  $0 192000"
@@ -281,6 +329,8 @@ usage() {
   echo "  $0 resamp"
   echo "  $0 restore"
   echo "  $0 status"
+  echo "  $0 geometry --list"
+  echo "  $0 geometry 120.blue"
   echo "  $0 off"
 }
 
@@ -312,6 +362,83 @@ if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
       exec "$0" $args
       ;;
   esac
+fi
+
+# ── geometry: show / list / switch the active filter set ─────────────────────
+# brutefir reads its .conf (and loads the coefficients it names) once, at start,
+# so switching filter sets is not a live operation: the chain has to come back
+# up on the new set's config.  Rather than duplicate that teardown here, record
+# the choice and re-exec the ordinary rate run, which already stops brutefir,
+# rebuilds the chain and re-enables the right MPD output.  The rate itself does
+# not change, so the DAC keeps its clock lock and no cold-open prime is needed.
+if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
+  case "${2:-}" in
+    "")
+      echo "$GEOMETRY"
+      exit 0
+      ;;
+    --list|-l)
+      list_geometries
+      exit 0
+      ;;
+    -*)
+      echo "unknown geometry option: $2" >&2
+      exit 1
+      ;;
+  esac
+
+  new_geo="$2"
+  if ! list_geometries | grep -qxF -- "$new_geo"; then
+    echo "unknown filter set: $new_geo" >&2
+    echo "installed: $(list_geometries | tr '\n' ' ')" >&2
+    exit 1
+  fi
+
+  echo "$new_geo" > "$GEOMETRY_FILE"
+  chmod 644 "$GEOMETRY_FILE" 2>/dev/null || true
+  GEOMETRY="$new_geo"
+  log_event "event=geometry set=${new_geo}"
+
+  # DRC off: record the choice only.  Turning DRC back on (or `restore`) picks
+  # the new set up from GEOMETRY_FILE, so there is nothing to reload now.
+  if [ -f "$POWER_FILE" ] && [ "$(cat "$POWER_FILE")" = "off" ]; then
+    echo "filter set: $new_geo (DRC is off — it applies when DRC is turned on)"
+    exit 0
+  fi
+
+  geo_state=""
+  [ -f "$STATE_FILE" ] && geo_state=$(state_to_args "$(cat "$STATE_FILE")")
+  case "$geo_state" in ""|off) geo_state="192000" ;; esac
+  # shellcheck disable=SC2086
+  set -- $geo_state
+  want_rate="$1"
+  want_variant="${2:-}"
+
+  # Filter sets are per-rate and not every set covers every rate (a set measured
+  # only at 192 kHz is normal), so the requested rate may simply not exist in the
+  # new set.  Degrade instead of failing: drop the variant first, then fall back
+  # to the set's highest rate — and say so, since the audible rate changes.
+  need_rate="$want_rate"
+  [ "$want_rate" = "resamp" ] && need_rate=192000
+  if [ ! -f "$SITE_DIR/configs/$new_geo/brutefir-${need_rate}${want_variant}.conf" ]; then
+    if [ -n "$want_variant" ] && \
+       [ -f "$SITE_DIR/configs/$new_geo/brutefir-${need_rate}.conf" ]; then
+      echo "filter set $new_geo has no ${want_variant} variant at ${need_rate} Hz — using the plain filter"
+      want_variant=""
+    else
+      fallback_rate=$(geometry_rates "$new_geo" | tail -n 1)
+      if [ -z "$fallback_rate" ]; then
+        echo "filter set $new_geo has no usable brutefir config" >&2
+        exit 1
+      fi
+      echo "filter set $new_geo has no ${need_rate} Hz config — switching to $(format_rate "$fallback_rate")"
+      want_rate="$fallback_rate"
+      want_variant=""
+    fi
+  fi
+
+  echo "switching to filter set $new_geo"
+  exec "$0" "$want_rate" ${want_variant:+"$want_variant"}
 fi
 
 # ── status: show DRC state, virtual_oss rate, brutefir, and MPD output ───────
@@ -473,6 +600,20 @@ elif [ $# -eq 1 ] || [ $# -eq 2 ]; then
 else
   usage
   exit 1
+fi
+
+# ── validate config ──────────────────────────────────────────────────────────
+# Before anything is torn down: a bad argument (a typo, `--help`, or a rate the
+# active filter set simply does not cover) must not cost the listener the chain
+# that is currently playing.  Validated here, the run aborts with the box still
+# making sound; validated after stop_brutefir — where this check used to live —
+# it left brutefir dead, MPD still pointed at the DRC output, and silence.
+if [ "$mode" != "off" ] && [ "$mode" != "stop" ]; then
+  conf_file="$SITE_DIR/configs/$GEOMETRY/brutefir-${actual_rate}${variant}.conf"
+  if [ ! -f "$conf_file" ]; then
+    echo "config not found: $conf_file" >&2
+    exit 1
+  fi
 fi
 
 # Detect a sample-rate change.  The OKTO DAC stays silent on the first stream
@@ -693,13 +834,6 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   fi
   echo "DRC stopped"
   exit 0
-fi
-
-# ── validate config ──────────────────────────────────────────────────────────
-conf_file="$SITE_DIR/configs/$GEOMETRY/brutefir-${actual_rate}${variant}.conf"
-if [ ! -f "$conf_file" ]; then
-  echo "config not found: $conf_file"
-  exit 1
 fi
 
 # ── free the audio devices before rebuilding the chain ───────────────────────
