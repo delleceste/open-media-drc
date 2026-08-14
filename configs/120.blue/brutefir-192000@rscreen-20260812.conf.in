@@ -1,0 +1,33 @@
+logic: "cli" { port: 3000; };
+
+sampling_rate: 192000;
+
+coeff "c-l" {
+	filename: "@REPO_DIR@/filters/120.blue/192000/@rscreen-20260812/L.raw";
+	format: "FLOAT64_LE";
+	attenuation: 0.0;
+};
+
+coeff "c-r" {
+	filename: "@REPO_DIR@/filters/120.blue/192000/@rscreen-20260812/R.raw";
+	format: "FLOAT64_LE";
+	attenuation: 0.0;
+};
+
+input "left_in", "right_in" {
+};
+
+output "left_out", "right_out" {
+};
+
+filter "drc_l" {
+	from_inputs: "left_in";
+	to_outputs: "left_out";
+	coeff: "c-l";
+};
+
+filter "drc_r" {
+	from_inputs: "right_in";
+	to_outputs: "right_out";
+	coeff: "c-r";
+};

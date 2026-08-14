@@ -1,0 +1,314 @@
+{
+  "schema": 1,
+  "bundle_id": "2c6e80ee278dad2706debda24c3ae8d3ba927c2274a8cf07b26664ff57fa8738",
+  "geometry": "120.blue",
+  "variant": "default",
+  "design_id": "default",
+  "verification": {
+    "status": "verified",
+    "audited_at": "2026-08-13",
+    "claims": [
+      "selected sources are tracked and clean at the recorded Git commit",
+      "filter TXT responses match the canonical WAV responses within declared limits",
+      "all runtime RAWs reproduce from the canonical WAVs",
+      "every BruteFIR config maps to the hashed RAW pair and has sufficient headroom",
+      "graph inputs and calculations are content-hash bound to this manifest",
+      "optional design-project archive is recorded by path, commit and SHA-256",
+      "historical REW trace audit evidence is retained as optional provenance"
+    ],
+    "prediction": "deterministic complex multiplication; no independent corrected export supplied"
+  },
+  "source": {
+    "repository": "https://github.com/delleceste/DRC-120.blue",
+    "repository_head": "d7a8e4dbf9418e43e2397bb140a8f81edcab1087",
+    "artifacts": {
+      "measurement_left": {
+        "role": "measurement_left",
+        "original_path": "txt/L.120.Blue.txt",
+        "bundle_path": "source/default/measurement-L.txt",
+        "sha256": "aa829ea8d0ef4ae97802f9c88fe7e53688c0b694f3c1bcf09816ce57331804f1",
+        "git_blob": "59f9d89e971d5e4bb84c43b7d511fa136bd74748",
+        "bytes": 31924,
+        "measurement": "L.120.Blue",
+        "smoothing": "Psychoacoustic"
+      },
+      "measurement_right": {
+        "role": "measurement_right",
+        "original_path": "txt/R.120.Blue.txt",
+        "bundle_path": "source/default/measurement-R.txt",
+        "sha256": "56e11fdb76bcc0f5d729fed3eb446fa6c2af3c29bee4c808d340b9fa928c8d58",
+        "git_blob": "98e8bc5696d8b59741d8ab3d788805cdb4bba01b",
+        "bytes": 31899,
+        "measurement": "R.120.Blue",
+        "smoothing": "Psychoacoustic"
+      },
+      "measurement_sum": {
+        "role": "measurement_sum",
+        "original_path": "txt/L+R.120.Blue.txt",
+        "bundle_path": "source/default/measurement-L+R.txt",
+        "sha256": "6555b6bfbad78c93b315b47861d8940b55feb47d38f5b48cce00a19a01301d56",
+        "git_blob": "edd6c0985d990a103614bd1173b645340acd0403",
+        "bytes": 31926,
+        "measurement": "L+R.120.Blue",
+        "smoothing": "Variable"
+      },
+      "filter_left_txt": {
+        "role": "filter_left_txt",
+        "original_path": "txt/FLX-trimmed.txt",
+        "bundle_path": "source/default/filter-L.txt",
+        "sha256": "69bfd876173f7bb5c39876d547da02d4132d819eb27aacc25cc6985ea95f640e",
+        "git_blob": "27e53227c08bdb42d2ab248d1af848ddc1a069fc",
+        "bytes": 1816322,
+        "measurement": "FLX-trimmed",
+        "smoothing": "None"
+      },
+      "filter_right_txt": {
+        "role": "filter_right_txt",
+        "original_path": "txt/FRX-trimmed.txt",
+        "bundle_path": "source/default/filter-R.txt",
+        "sha256": "da255d770d0c2b39257d3f14a6f1c9d8ecd4dd11d87b76159e50d8a0a174d2a8",
+        "git_blob": "8f8e23772026d9e2cb8f297b733fe5937b4d7903",
+        "bytes": 1863605,
+        "measurement": "FRX-trimmed",
+        "smoothing": "None"
+      },
+      "filter_left_wav": {
+        "role": "filter_left_wav",
+        "original_path": "FLX-trimmed-48k.wav",
+        "bundle_path": "rew/FLX-trimmed-48k.wav",
+        "sha256": "4116b567012c0fb857b9a7f1a5a70e5dca16188aa6ea6b189289c174f3ba7170",
+        "git_blob": "ccccf0de4bedf38f68fd04af3c20046acdd66f7d",
+        "bytes": 524332
+      },
+      "filter_right_wav": {
+        "role": "filter_right_wav",
+        "original_path": "FRX-trimmed-48k.wav",
+        "bundle_path": "rew/FRX-trimmed-48k.wav",
+        "sha256": "40a28cc294e94532b17edd5ab24a867c9a7cefb74af301e115fd6227fde547c6",
+        "git_blob": "32bb1a959bd747643e28618137d414da91a869a1",
+        "bytes": 524332
+      }
+    },
+    "traces": {
+      "measurement_left": {
+        "id": 24,
+        "uuid": "51ba95b5-1b8e-4303-8c8d-f1828cd75463",
+        "title": "L.120.Blue",
+        "date": "2025-Sep-21 14:29:46"
+      },
+      "measurement_right": {
+        "id": 25,
+        "uuid": "1f7ef644-083c-47c2-b65f-e116b89f3d50",
+        "title": "R.120.Blue",
+        "date": "2025-Sep-21 14:30:23"
+      },
+      "measurement_sum": {
+        "id": 1,
+        "uuid": "d0bbd016-69e2-43a8-9c92-822618602af7",
+        "title": "L+R.120.Blue",
+        "date": "2025-Sep-21 14:31:35"
+      },
+      "filter_left": {
+        "id": 43,
+        "uuid": "c2515dc4-51d7-4e96-9d3a-2be205738808",
+        "title": "FLX-trimmed",
+        "date": "2025-Sep-23 15:00:52"
+      },
+      "filter_right": {
+        "id": 44,
+        "uuid": "7815c6db-1e74-4957-8573-f0fa419e2b32",
+        "title": "FRX-trimmed",
+        "date": "2025-Sep-23 15:00:55"
+      }
+    },
+    "lineage": [
+      "LR120.blue = vector average(L.120.Blue, R.120.Blue)",
+      "LX = L.120.Blue * X801 (revised)",
+      "RX = R.120.Blue * X801 (revised)",
+      "LX-MP = minimum phase copy(LX, calibration included, no tails)",
+      "RX-MP = minimum phase copy(RX, calibration included, no tails)",
+      "Target RMS + phase average = target(RMS + phase average(LX, RX))",
+      "LX-MP-INV+0dB = Target / LX-MP, max gain 0 dB, 20-225 Hz",
+      "RX-MP-INV+0dB = Target / RX-MP, max gain 0 dB, 20-225 Hz",
+      "LFilter = minimum phase copy(LX-MP-INV+0dB, calibration excluded, no tails)",
+      "RFilter = minimum phase copy(RX-MP-INV+0dB, calibration excluded, no tails)",
+      "FLX = X801 (revised) * LFilter",
+      "FRX = X801 (revised) * RFilter",
+      "FLX-trimmed = 131072-sample trim(FLX)",
+      "FRX-trimmed = 131072-sample trim(FRX)"
+    ],
+    "attestation": {},
+    "project": {
+      "path": "120-blue-with-inversion.mdat",
+      "sha256": "b184b824236868a898c33877a56d0f1003a2e442922d8b4f9c05ef1a51b8d6c7",
+      "last_commit": "fa25964095e3b073cbc189900ac566aaff980e8c",
+      "bytes": 57685240,
+      "git_blob": "642a1b94dfdab901a7d7c2c93493d206b37e6b95"
+    },
+    "rew_audit": {
+      "rew_version": "V5.40 Beta 132",
+      "api_version": "0.9.6",
+      "launch_flags": [
+        "-nogui",
+        "-noaudio",
+        "-api",
+        "-host",
+        "localhost"
+      ],
+      "all_txt_exports_resolved_to_unique_project_traces": true,
+      "final_wav_matches_project_impulse": true,
+      "left_impulse_max_abs_error": 1.43e-08,
+      "right_impulse_max_abs_error": 2.15e-08,
+      "note": "Project impulse values returned as float32 percent; WAV is PCM S32. Errors are the expected conversion quantisation."
+    }
+  },
+  "filter_validation": {
+    "left": {
+      "rows": 65533,
+      "max_frequency_grid_error_hz": 5e-07,
+      "rms_magnitude_db": 0.012483,
+      "rms_phase_deg": 0.094594,
+      "above_100_hz_max_magnitude_db": 0.048968,
+      "above_100_hz_max_phase_deg": 0.453361,
+      "passed": true
+    },
+    "right": {
+      "rows": 65533,
+      "max_frequency_grid_error_hz": 5e-07,
+      "rms_magnitude_db": 0.0018,
+      "rms_phase_deg": 0.011857,
+      "above_100_hz_max_magnitude_db": 0.040124,
+      "above_100_hz_max_phase_deg": 0.399616,
+      "passed": true
+    }
+  },
+  "runtime": {
+    "rates": {
+      "44100": {
+        "config": "configs/120.blue/brutefir-44100.conf.in",
+        "config_sha256": "0f5d473e5c97fb3892bf638553c1ac86c8f173cc278e79c5fb6699f5bffffb22",
+        "format": "FLOAT64_LE",
+        "attenuation_db": 3.0,
+        "required_attenuation_db": 2.3,
+        "safety_margin_db": 1.0,
+        "channels": {
+          "left": {
+            "path": "44100/L.raw",
+            "sha256": "afcc63a4d856008b9c68739de60b14b6967e289a65b844c9e61ca687f4952db9",
+            "bytes": 963376,
+            "samples": 120422,
+            "peak_gain_db": 1.277036
+          },
+          "right": {
+            "path": "44100/R.raw",
+            "sha256": "d02dfed9f20fd4a07c5b0d5dfa9dead5ac7d9a8d4d660a9496413d93d5630459",
+            "bytes": 963376,
+            "samples": 120422,
+            "peak_gain_db": 0.182743
+          }
+        }
+      },
+      "48000": {
+        "config": "configs/120.blue/brutefir-48000.conf.in",
+        "config_sha256": "ddf30100f77722179da39f65259ca82b46d358e4e10247d1a3dab9f0abfbe2e0",
+        "format": "FLOAT64_LE",
+        "attenuation_db": 3.0,
+        "required_attenuation_db": 2.2,
+        "safety_margin_db": 1.0,
+        "channels": {
+          "left": {
+            "path": "48000/L.raw",
+            "sha256": "e0881d86077f25413c1c010968b0fa2840e5a1f169b91a131d60de18e79085d1",
+            "bytes": 1048576,
+            "samples": 131072,
+            "peak_gain_db": 1.193914
+          },
+          "right": {
+            "path": "48000/R.raw",
+            "sha256": "31a94f64585cdd398c2d3d3042b360bc2eeb7f8bfed2a6191b8f189752acfd30",
+            "bytes": 1048576,
+            "samples": 131072,
+            "peak_gain_db": 0.777778
+          }
+        }
+      },
+      "88200": {
+        "config": "configs/120.blue/brutefir-88200.conf.in",
+        "config_sha256": "d8e9b71345ccaf6a8a6b4b7e0583f45d9342006acfc5c975ca8687b19c415f73",
+        "format": "FLOAT64_LE",
+        "attenuation_db": 3.0,
+        "required_attenuation_db": 2.3,
+        "safety_margin_db": 1.0,
+        "channels": {
+          "left": {
+            "path": "88200/L.raw",
+            "sha256": "f5d7775909f6023708ba3c9ae00b8644c4d9db7d8e7f6969030d80c8866f4cb0",
+            "bytes": 1926760,
+            "samples": 240845,
+            "peak_gain_db": 1.276947
+          },
+          "right": {
+            "path": "88200/R.raw",
+            "sha256": "68cf38e37c46e43e6da955edaf934b439e04093caf8b916cfc143ddc756c7df7",
+            "bytes": 1926760,
+            "samples": 240845,
+            "peak_gain_db": 0.182763
+          }
+        }
+      },
+      "96000": {
+        "config": "configs/120.blue/brutefir-96000.conf.in",
+        "config_sha256": "15e25df0b97a3a3a1e60929cf6fb97af9d54f6c805c766a53fa407b7012f90d2",
+        "format": "FLOAT64_LE",
+        "attenuation_db": 3.0,
+        "required_attenuation_db": 2.2,
+        "safety_margin_db": 1.0,
+        "channels": {
+          "left": {
+            "path": "96000/L.raw",
+            "sha256": "986a7d4f5a72402c89a29ba1e32eedb3f480030b52971e0ac73c026265b68abd",
+            "bytes": 2097152,
+            "samples": 262144,
+            "peak_gain_db": 1.193798
+          },
+          "right": {
+            "path": "96000/R.raw",
+            "sha256": "5e076e36f1fe8b3b90ec3f806740c0f21e8fa50011fe62b052b5e2846c6d49f0",
+            "bytes": 2097152,
+            "samples": 262144,
+            "peak_gain_db": 0.07793
+          }
+        }
+      },
+      "192000": {
+        "config": "configs/120.blue/brutefir-192000.conf.in",
+        "config_sha256": "ad492756a633950dd118c6c2f0f63d6779d300b496199151cfcc98116b6f54ce",
+        "format": "FLOAT64_LE",
+        "attenuation_db": 3.0,
+        "required_attenuation_db": 2.2,
+        "safety_margin_db": 1.0,
+        "channels": {
+          "left": {
+            "path": "192000/L.raw",
+            "sha256": "d5eda1b8aca4247e74886424d1bc18b65cda0f8467d3ed0a7d2b28d1e9920bf7",
+            "bytes": 4194304,
+            "samples": 524288,
+            "peak_gain_db": 1.193727
+          },
+          "right": {
+            "path": "192000/R.raw",
+            "sha256": "79d63e8eb46fd533314a608e24497d0cb16ac3005b79f86fb32590e44cefb4df",
+            "bytes": 4194304,
+            "samples": 524288,
+            "peak_gain_db": 0.07792
+          }
+        }
+      }
+    }
+  },
+  "analysis": {
+    "path": "analysis/default.json",
+    "sha256": "b39e01ef0b0386ff394b191fe414f086f4b3e60d4ffddda60037837978c606d5",
+    "bytes": 355875
+  }
+}

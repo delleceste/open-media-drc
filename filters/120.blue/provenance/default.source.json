@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "geometry": "120.blue",
+  "variant": "default",
+  "audited_at": "2026-08-13",
+  "source": {
+    "repository": "https://github.com/delleceste/DRC-120.blue",
+    "project": {
+      "path": "120-blue-with-inversion.mdat",
+      "sha256": "b184b824236868a898c33877a56d0f1003a2e442922d8b4f9c05ef1a51b8d6c7",
+      "last_commit": "fa25964095e3b073cbc189900ac566aaff980e8c"
+    },
+    "artifacts": {
+      "measurement_left": {
+        "path": "txt/L.120.Blue.txt",
+        "bundle_path": "source/default/measurement-L.txt",
+        "sha256": "aa829ea8d0ef4ae97802f9c88fe7e53688c0b694f3c1bcf09816ce57331804f1",
+        "measurement": "L.120.Blue",
+        "smoothing": "Psychoacoustic"
+      },
+      "measurement_right": {
+        "path": "txt/R.120.Blue.txt",
+        "bundle_path": "source/default/measurement-R.txt",
+        "sha256": "56e11fdb76bcc0f5d729fed3eb446fa6c2af3c29bee4c808d340b9fa928c8d58",
+        "measurement": "R.120.Blue",
+        "smoothing": "Psychoacoustic"
+      },
+      "measurement_sum": {
+        "path": "txt/L+R.120.Blue.txt",
+        "bundle_path": "source/default/measurement-L+R.txt",
+        "sha256": "6555b6bfbad78c93b315b47861d8940b55feb47d38f5b48cce00a19a01301d56",
+        "measurement": "L+R.120.Blue",
+        "smoothing": "Variable"
+      },
+      "filter_left_txt": {
+        "path": "txt/FLX-trimmed.txt",
+        "bundle_path": "source/default/filter-L.txt",
+        "sha256": "69bfd876173f7bb5c39876d547da02d4132d819eb27aacc25cc6985ea95f640e",
+        "measurement": "FLX-trimmed",
+        "smoothing": "None"
+      },
+      "filter_right_txt": {
+        "path": "txt/FRX-trimmed.txt",
+        "bundle_path": "source/default/filter-R.txt",
+        "sha256": "da255d770d0c2b39257d3f14a6f1c9d8ecd4dd11d87b76159e50d8a0a174d2a8",
+        "measurement": "FRX-trimmed",
+        "smoothing": "None"
+      },
+      "filter_left_wav": {
+        "path": "FLX-trimmed-48k.wav",
+        "bundle_path": "rew/FLX-trimmed-48k.wav",
+        "sha256": "4116b567012c0fb857b9a7f1a5a70e5dca16188aa6ea6b189289c174f3ba7170"
+      },
+      "filter_right_wav": {
+        "path": "FRX-trimmed-48k.wav",
+        "bundle_path": "rew/FRX-trimmed-48k.wav",
+        "sha256": "40a28cc294e94532b17edd5ab24a867c9a7cefb74af301e115fd6227fde547c6"
+      }
+    },
+    "traces": {
+      "measurement_left": {
+        "id": 24,
+        "uuid": "51ba95b5-1b8e-4303-8c8d-f1828cd75463",
+        "title": "L.120.Blue",
+        "date": "2025-Sep-21 14:29:46"
+      },
+      "measurement_right": {
+        "id": 25,
+        "uuid": "1f7ef644-083c-47c2-b65f-e116b89f3d50",
+        "title": "R.120.Blue",
+        "date": "2025-Sep-21 14:30:23"
+      },
+      "measurement_sum": {
+        "id": 1,
+        "uuid": "d0bbd016-69e2-43a8-9c92-822618602af7",
+        "title": "L+R.120.Blue",
+        "date": "2025-Sep-21 14:31:35"
+      },
+      "filter_left": {
+        "id": 43,
+        "uuid": "c2515dc4-51d7-4e96-9d3a-2be205738808",
+        "title": "FLX-trimmed",
+        "date": "2025-Sep-23 15:00:52"
+      },
+      "filter_right": {
+        "id": 44,
+        "uuid": "7815c6db-1e74-4957-8573-f0fa419e2b32",
+        "title": "FRX-trimmed",
+        "date": "2025-Sep-23 15:00:55"
+      }
+    },
+    "lineage": [
+      "LR120.blue = vector average(L.120.Blue, R.120.Blue)",
+      "LX = L.120.Blue * X801 (revised)",
+      "RX = R.120.Blue * X801 (revised)",
+      "LX-MP = minimum phase copy(LX, calibration included, no tails)",
+      "RX-MP = minimum phase copy(RX, calibration included, no tails)",
+      "Target RMS + phase average = target(RMS + phase average(LX, RX))",
+      "LX-MP-INV+0dB = Target / LX-MP, max gain 0 dB, 20-225 Hz",
+      "RX-MP-INV+0dB = Target / RX-MP, max gain 0 dB, 20-225 Hz",
+      "LFilter = minimum phase copy(LX-MP-INV+0dB, calibration excluded, no tails)",
+      "RFilter = minimum phase copy(RX-MP-INV+0dB, calibration excluded, no tails)",
+      "FLX = X801 (revised) * LFilter",
+      "FRX = X801 (revised) * RFilter",
+      "FLX-trimmed = 131072-sample trim(FLX)",
+      "FRX-trimmed = 131072-sample trim(FRX)"
+    ],
+    "rew_audit": {
+      "rew_version": "V5.40 Beta 132",
+      "api_version": "0.9.6",
+      "launch_flags": ["-nogui", "-noaudio", "-api", "-host", "localhost"],
+      "all_txt_exports_resolved_to_unique_project_traces": true,
+      "final_wav_matches_project_impulse": true,
+      "left_impulse_max_abs_error": 1.43e-8,
+      "right_impulse_max_abs_error": 2.15e-8,
+      "note": "Project impulse values returned as float32 percent; WAV is PCM S32. Errors are the expected conversion quantisation."
+    }
+  },
+  "filter": {
+    "sample_rate": 48000,
+    "delay_samples": 24000,
+    "txt_wav_limits": {
+      "max_rms_magnitude_db": 0.02,
+      "max_rms_phase_deg": 0.2,
+      "above_100_hz_max_magnitude_db": 0.1,
+      "above_100_hz_max_phase_deg": 1.0
+    }
+  },
+  "runtime": {
+    "format": "FLOAT64_LE",
+    "safety_margin_db": 1.0,
+    "rates": {
+      "44100": "configs/120.blue/brutefir-44100.conf.in",
+      "48000": "configs/120.blue/brutefir-48000.conf.in",
+      "88200": "configs/120.blue/brutefir-88200.conf.in",
+      "96000": "configs/120.blue/brutefir-96000.conf.in",
+      "192000": "configs/120.blue/brutefir-192000.conf.in"
+    }
+  }
+}

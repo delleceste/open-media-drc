@@ -1,0 +1,139 @@
+{
+  "schema": 1,
+  "geometry": "120.blue",
+  "design_id": "rscreen-20260812",
+  "variant": "rscreen-20260812",
+  "description": "120.blue rscreen-20260812 correction",
+  "audited_at": "2026-08-14",
+  "measurement": {
+    "required_note_fragments": []
+  },
+  "prediction": {
+    "sum_mode": "vector_average",
+    "limits": {
+      "max_rms_magnitude_db": 0.1,
+      "max_rms_phase_deg": 1.0
+    }
+  },
+  "source": {
+    "repository": "https://github.com/delleceste/DRC-120.blue",
+    "source_ref": "120.blue-rscreen-20260812",
+    "repository_head": "4c5155ff458676e02e689d44b492d72974dbcb19",
+    "release": {
+      "kind": "annotated_tag",
+      "name": "120.blue-rscreen-20260812",
+      "tag_object": "200c85aa1dfc15849d676798a3376c7471650bda",
+      "commit": "4c5155ff458676e02e689d44b492d72974dbcb19",
+      "subject": "room correction 120.blue/rscreen-20260812: AI assisted re-design",
+      "tagger": "giacomo <giacomo.strangolino@elettra.eu>"
+    },
+    "declaration": {
+      "path": "omdrc-designs/120.blue/rscreen-20260812/design.json",
+      "sha256": "9f85d78b757da66663136d98b992bddf3b9842940b9e1fc03ce8f442ac272354",
+      "git_blob": "20c33806b79843f7b238f59ea828279f474f0a9b",
+      "last_commit": "4c5155ff458676e02e689d44b492d72974dbcb19"
+    },
+    "artifacts": {
+      "measurement_left": {
+        "path": "120.blue.Rscreen.txts/L.120.Rscreen.orig.txt",
+        "bundle_path": "source/rscreen-20260812/measurement-L.txt",
+        "sha256": "c8dc26dde5622e7f6ed24b2e3376aa4c6adeb50e8fc7532088229ed8d11e448c",
+        "measurement": "L.120.Rscreen.orig",
+        "smoothing": "None"
+      },
+      "measurement_right": {
+        "path": "120.blue.Rscreen.txts/R.120.Rscreen.orig.txt",
+        "bundle_path": "source/rscreen-20260812/measurement-R.txt",
+        "sha256": "09455dae722c0eec64871d1714690d0bb8dd772167d56846d7f5e997e12bd5a9",
+        "measurement": "R.120.Rscreen.orig",
+        "smoothing": "None"
+      },
+      "measurement_sum": {
+        "path": "120.blue.Rscreen.txts/LR.orig.txt",
+        "bundle_path": "source/rscreen-20260812/measurement-L+R.txt",
+        "sha256": "ce3efbb9dcf8836b6c4378198cf0bbc5b2b8b1924f5d50ca747c1508222ccd28",
+        "measurement": "LR.orig",
+        "smoothing": "None"
+      },
+      "filter_left_txt": {
+        "path": "120.blue.Rscreen.txts/FLX.txt",
+        "bundle_path": "source/rscreen-20260812/filter-L.txt",
+        "sha256": "178761b6869c1f4aaf0f03e7067aa8867b1beeb6030151e3d8faac344076ff23",
+        "measurement": "FLX",
+        "smoothing": "None"
+      },
+      "filter_right_txt": {
+        "path": "120.blue.Rscreen.txts/FRX.txt",
+        "bundle_path": "source/rscreen-20260812/filter-R.txt",
+        "sha256": "8545f637b793a6ce64cca1e5df7cb0b755f4c4f82a643f20ee95a4e0430d306f",
+        "measurement": "FRX",
+        "smoothing": "None"
+      },
+      "filter_left_wav": {
+        "path": "FLX-trimmed-48k.wav",
+        "bundle_path": "source/rscreen-20260812/filter-L.wav",
+        "sha256": "b0f46f52faebf2f11520b66544e51b2bc86151f4e6948b27c705c5185644a872"
+      },
+      "filter_right_wav": {
+        "path": "FRX-trimmed-48k.wav",
+        "bundle_path": "source/rscreen-20260812/filter-R.wav",
+        "sha256": "aaa16f933a941ac31d800e06108e564de58e816341ac5edd300d134f55369a01"
+      },
+      "corrected_left_txt": {
+        "path": "120.blue.Rscreen.txts/L.Filtered.txt",
+        "bundle_path": "source/rscreen-20260812/corrected-L-independent.txt",
+        "sha256": "7404264e766df75c5f0cf2c4127b7816039ca460916b1ac3ff239ddc76e4b3ad",
+        "measurement": "L.Filtered",
+        "smoothing": "None"
+      },
+      "corrected_right_txt": {
+        "path": "120.blue.Rscreen.txts/R.Filtered.txt",
+        "bundle_path": "source/rscreen-20260812/corrected-R-independent.txt",
+        "sha256": "b7c268b6976ced91b84be9a51372e2efab9f808852374485592648dadef8f06c",
+        "measurement": "R.Filtered",
+        "smoothing": "None"
+      },
+      "corrected_sum_txt": {
+        "path": "120.blue.Rscreen.txts/LR.Filtered.txt",
+        "bundle_path": "source/rscreen-20260812/corrected-L+R-independent.txt",
+        "sha256": "dc879226d98a436940ca991f57fd70bdf9efd3edd7df430ceba881c790327c48",
+        "measurement": "LR.Filtered",
+        "smoothing": "None"
+      }
+    },
+    "traces": {},
+    "lineage": [],
+    "attestation": {
+      "statement": "The designer declares that the named measurement exports, filter-response exports and filter impulse WAVs are the inputs and outputs of this design.",
+      "source_head_before_declaration_commit": "d6aa74b128e0da9aa67d6d49bac37a2acd6f6d66"
+    }
+  },
+  "filter": {
+    "sample_rate": 48000,
+    "delay_samples": 8192,
+    "txt_to_wav_gain_db": {
+      "left": -3.000297,
+      "right": -3.000299
+    },
+    "txt_wav_limits": {
+      "max_rms_magnitude_db": 0.02,
+      "max_rms_phase_deg": 0.2,
+      "above_100_hz_max_magnitude_db": 0.1,
+      "above_100_hz_max_phase_deg": 1.0
+    }
+  },
+  "runtime": {
+    "selector": "@rscreen-20260812",
+    "generate_configs": true,
+    "format": "FLOAT64_LE",
+    "attenuation_db": "auto",
+    "safety_margin_db": 1.0,
+    "rates": {
+      "44100": "configs/120.blue/brutefir-44100@rscreen-20260812.conf.in",
+      "48000": "configs/120.blue/brutefir-48000@rscreen-20260812.conf.in",
+      "88200": "configs/120.blue/brutefir-88200@rscreen-20260812.conf.in",
+      "96000": "configs/120.blue/brutefir-96000@rscreen-20260812.conf.in",
+      "192000": "configs/120.blue/brutefir-192000@rscreen-20260812.conf.in"
+    }
+  }
+}
