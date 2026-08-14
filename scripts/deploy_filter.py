@@ -42,7 +42,13 @@ def progress_ok(message: str, color: str = "1;32", label: str = "OK") -> None:
     print(f"  {_styled(label, color)}  {message}", flush=True)
 
 
+# The engine checkout: helper scripts, CMake, the shipped `flat` set.
 ROOT = Path(__file__).resolve().parents[1]
+# Where the room-specific data lives — configs/<geometry> and filters/<geometry>.
+# It defaults to the engine checkout, so an unconfigured tree behaves exactly as
+# it always has.  Point OMDRC_SITE_ROOT (or --site-root) at a second checkout to
+# keep personal measurements and filters out of a public engine repository.
+SITE_ROOT_ENV = "OMDRC_SITE_ROOT"
 REQUIRED_ROLES = (
     "measurement_left", "measurement_right", "measurement_sum",
     "filter_left_txt", "filter_right_txt", "filter_left_wav", "filter_right_wav",
@@ -68,6 +74,29 @@ def artifact_roles(recipe: dict) -> tuple[str, ...]:
 
 class AuditError(RuntimeError):
     pass
+
+
+def resolve_site_root(explicit: Path | None = None) -> Path:
+    """Resolve the root holding configs/<geometry> and filters/<geometry>.
+
+    Precedence: an explicit --site-root, then $OMDRC_SITE_ROOT, then the engine
+    checkout itself.  The last case is the historical single-repository layout.
+    """
+    value = explicit if explicit is not None else os.environ.get(SITE_ROOT_ENV)
+    if not value:
+        return ROOT
+    root = Path(value).expanduser().resolve()
+    if not root.is_dir():
+        raise AuditError(f"site root is not a directory: {root}")
+    return root
+
+
+def add_site_root_argument(parser: argparse.ArgumentParser) -> None:
+    """Register the common --site-root option on a workflow command."""
+    parser.add_argument(
+        "--site-root", type=Path, default=None, metavar="DIR",
+        help="root holding configs/<geometry> and filters/<geometry> "
+             f"(default: ${SITE_ROOT_ENV}, else this checkout)")
 
 
 def sha256_file(path: Path) -> str:
@@ -625,7 +654,7 @@ filter "drc_r" {{
 
 
 def generate_runtime(recipe: dict, source_paths: dict[str, Path],
-                     staging: Path) -> tuple[dict, dict[str, Path]]:
+                     staging: Path, site_root: Path) -> tuple[dict, dict[str, Path]]:
     tool = ROOT / "scripts/REW2raw.sh"
     runtime: dict[str, dict] = {}
     staged_configs: dict[str, Path] = {}
@@ -653,7 +682,7 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
         rate = int(rate_text)
         fir_scale = source_rate / rate
         fir_gain_db = 20.0 * math.log10(fir_scale)
-        config_path = ROOT / config_relative
+        config_path = site_root / config_relative
         rate_dir = staging / rate_text / selector if selector else staging / rate_text
         rate_dir.mkdir(parents=True)
         channels: dict[str, dict] = {}
@@ -808,6 +837,7 @@ def main() -> int:
     parser.add_argument("--write", action="store_true", help="publish the verified bundle")
     parser.add_argument("--replace-runtime", action="store_true",
                         help="allow --write to replace runtime RAW bytes that differ")
+    add_site_root_argument(parser)
     args = parser.parse_args()
     recipe_path = args.recipe.resolve()
     recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
@@ -815,7 +845,10 @@ def main() -> int:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", design_id):
         raise AuditError("design_id must contain only letters, numbers, dot, underscore and hyphen")
     source_root = args.source_root.resolve()
-    geometry_root = ROOT / "filters" / recipe["geometry"]
+    site_root = resolve_site_root(args.site_root)
+    geometry_root = site_root / "filters" / recipe["geometry"]
+    if site_root != ROOT:
+        progress("[SITE]", f"configs and filters resolve under {site_root}", "1;34")
 
     progress(
         "[DEPLOY 1/4]",
@@ -904,7 +937,7 @@ def main() -> int:
         progress(
             "[DEPLOY 3/4]",
             "Run SoX conversion for every declared rate/channel in private staging")
-        runtime, staged_configs = generate_runtime(recipe, source_paths, staging)
+        runtime, staged_configs = generate_runtime(recipe, source_paths, staging, site_root)
         progress_ok(f"generated and checked {len(runtime)} complete runtime rate pairs")
         differing_runtime: list[str] = []
         for rate, item in runtime.items():
@@ -915,8 +948,8 @@ def main() -> int:
                 if live.exists() and sha256_file(live) != sha256_file(staged):
                     differing_runtime.append(relative)
         differing_configs = [relative for relative, staged in staged_configs.items()
-                             if (ROOT / relative).exists() and
-                             sha256_file(ROOT / relative) != sha256_file(staged)]
+                             if (site_root / relative).exists() and
+                             sha256_file(site_root / relative) != sha256_file(staged)]
 
         progress(
             "[DEPLOY 4/4]",
@@ -1032,7 +1065,7 @@ def main() -> int:
             else:
                 print("DRY RUN: all existing runtime RAWs are already byte-identical")
             if staged_configs:
-                creating = [path for path in staged_configs if not (ROOT / path).exists()]
+                creating = [path for path in staged_configs if not (site_root / path).exists()]
                 print("DRY RUN: configs to create: " + (", ".join(creating) if creating else "none"))
             if differing_configs:
                 print("DRY RUN: configs that would change: " + ", ".join(differing_configs))
@@ -1053,7 +1086,7 @@ def main() -> int:
                 relative = item["channels"][channel]["path"]
                 atomic_copy(staging / relative, geometry_root / relative)
         for relative, staged in staged_configs.items():
-            atomic_copy(staged, ROOT / relative)
+            atomic_copy(staged, site_root / relative)
             progress(
                 "[CONFIG PUBLISHED]",
                 f"installed verified BruteFIR template {relative}",

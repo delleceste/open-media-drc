@@ -150,6 +150,84 @@ explicit lower-assurance exception. Neither command launches REW.
 The lower-level `REW2raw-all-rates.sh` remains useful for experiments, but it
 does not create the provenance and graph bundle required for a verified UI.
 
+### Keeping room data out of the engine repository
+
+A room's measurements and impulse responses are personal to one listening room
+and useless to anyone else, so they do not have to live in the engine checkout.
+`configs/<geometry>` and `filters/<geometry>` are read and written through a
+*site root*, resolved in this order:
+
+1. `--site-root DIR`, accepted by `new_filter_design.py`, `deploy_filter.py`
+   and `verify_filter_bundle.py`;
+2. the `OMDRC_SITE_ROOT` environment variable;
+3. this checkout — the single-repository layout, and still the default.
+
+The second checkout mirrors the layout exactly, so only the root changes:
+
+```
+omdrc-site/
+├── configs/120.blue/…
+└── filters/120.blue/…
+```
+
+Designing on one machine and playing back on another then works through that
+repository: publish and commit on the design box, pull on the playback box.
+
+```sh
+# design box
+export OMDRC_SITE_ROOT=~/devel/omdrc-site
+python3 scripts/new_filter_design.py … --write     # writes into the site repo
+git -C ~/devel/omdrc-site add -A && git -C ~/devel/omdrc-site commit -m 'Deploy …'
+git -C ~/devel/omdrc-site push
+
+# playback box
+git -C ~/devel/omdrc-site pull
+mkdir -p build
+cd build
+cmake .. -C ../host.cmake
+make
+sudo make install
+```
+
+Each command's `NEXT` handoff detects the split and names the working directory
+per step, because the commit belongs to the site repository and the build to the
+engine one.
+
+CMake has the matching seam: `OMDRC_SITE_DATA_DIRS` is a semicolon-separated
+search path (first match wins) for `configs/<geo>` and `filters/<geo>`, so the
+engine repo can keep shipping the generic `flat` set while a private repo
+supplies the room sets. Set it in `host.cmake`:
+
+```cmake
+set(OMDRC_SITE_DATA_DIRS "${CMAKE_SOURCE_DIR};$ENV{HOME}/devel/omdrc-site"
+    CACHE STRING "Search path for configs/<geo> + filters/<geo>")
+```
+
+A geometry that no search directory defines is skipped with a warning rather
+than failing the configure, so one missing set never blocks the others.
+
+Three variables are involved, and they are not the same thing:
+
+| Variable | Used by | Means |
+|---|---|---|
+| `OMDRC_SITE_DATA_DIRS` | CMake | search path for the *sources* of `configs/<geo>` + `filters/<geo>` |
+| `OMDRC_SITE_ROOT` | the design scripts | the one checkout they read and write room data in |
+| `OMDRC_SITE_DIR` | `drc.sh` at runtime | the *installed* `etc/open-media-drc` |
+
+`OMDRC_SITE_DIR` predates the split and is unrelated to it — except when running
+`drc.sh` uninstalled from the checkout, where it defaults to the checkout itself
+and so no longer finds room sets that moved out. Point it at the site repo:
+
+```sh
+OMDRC_SITE_DIR=~/devel/omdrc-801N ./drc.sh 120.blue 48000
+```
+
+It takes a single directory, not a search path, so uninstalled `drc.sh` sees
+either the engine repo's `flat` or the site repo's room sets — not both at once.
+
+An installed system is unaffected: `make install` merges both halves into
+`$PREFIX/etc/open-media-drc`, and `drc.sh` reads only that.
+
 **Prove the direct path is untouched** (FreeBSD, DAC free):
 
 ```sh

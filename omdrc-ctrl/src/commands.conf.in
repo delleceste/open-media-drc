@@ -168,14 +168,6 @@ button  = Apply
 cmd     = @OMDRC_REPO_DIR@/drc.sh 44100
 process = brutefir
 
-[drc_192000_2dB]
-what    = DRC +2 dB / 192 kHz
-group   = drc
-type    = WRITE
-button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh 192000 +2dB
-process = brutefir
-
 [chrome]
 what   = Google Chrome
 group  = apps

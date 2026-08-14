@@ -30,6 +30,7 @@ brutefir `attenuation:` value is then rounded up to one decimal place.
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 
@@ -136,11 +137,15 @@ def config_attenuation(config: Path) -> float | None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    default_root = Path(__file__).resolve().parents[1] / 'filters/120.blue'
+    # This tool is also installed standalone under libexec, so it reads
+    # OMDRC_SITE_ROOT directly rather than importing the workflow helpers.
+    site_root = Path(os.environ.get('OMDRC_SITE_ROOT') or
+                     Path(__file__).resolve().parents[1]).expanduser()
+    default_root = site_root / 'filters/120.blue'
     parser.add_argument('filter_root', nargs='?', type=Path, default=default_root,
-                        help='geometry filter root (default: filters/120.blue)')
+                        help=f'geometry filter root (default: {default_root})')
     parser.add_argument('--variant', default='',
-                        help='subdirectory below each rate, for example +2dB')
+                        help='subdirectory below each rate, e.g. a legacy <variant> name')
     parser.add_argument('--format', default='FLOAT64_LE', choices=sorted(FORMAT_DTYPES))
     parser.add_argument('--margin', type=float, default=SAFETY_MARGIN_DB)
     parser.add_argument('--json', action='store_true', dest='as_json')
@@ -154,7 +159,11 @@ def main():
     if not rate_dirs:
         parser.error(f'no numeric sample-rate directories under {root}')
 
-    repo_root = Path(__file__).resolve().parents[1]
+    # configs/<geometry>/ is the sibling of filters/<geometry>/, so derive it
+    # from the filter root actually given rather than from this script's
+    # location: the two live in different checkouts once the room data is split
+    # out (see OMDRC_SITE_ROOT above).
+    data_root = root.parents[1] if len(root.parents) > 1 else site_root
     geometry = root.name
     results = []
     failed = False
@@ -172,7 +181,7 @@ def main():
         limiting = max(peaks, key=peaks.get)
         required = suggested_attenuation(peaks[limiting], args.margin)
         suffix = args.variant if args.variant else ''
-        config = repo_root / 'configs' / geometry / f'brutefir-{rate_dir.name}{suffix}.conf.in'
+        config = data_root / 'configs' / geometry / f'brutefir-{rate_dir.name}{suffix}.conf.in'
         configured = config_attenuation(config)
         passed = configured is None or configured >= required
         failed |= not passed

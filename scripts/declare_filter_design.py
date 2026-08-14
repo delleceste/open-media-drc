@@ -23,7 +23,7 @@ import numpy as np
 
 from deploy_filter import (
     AuditError, DEFAULT_LIMITS, atomic_json, build_analysis, detect_filter_alignment,
-    load_filter_wav, parse_rew_txt, run, safe_source, sha256_file,
+    load_filter_wav, parse_rew_txt, resolve_site_root, run, safe_source, sha256_file,
 )
 from filter_design_suggest import suggest as suggest_design_command
 
@@ -118,10 +118,12 @@ def _write_invocation() -> list[str]:
     return command
 
 
-def _cmake_configure_command(open_media_root: Path, geometry: str) -> list[str]:
+def _cmake_configure_command(
+        open_media_root: Path, geometry: str, site_root: Path | None = None) -> list[str]:
     """Preserve cached geometry sets while ensuring this one is installed."""
     default_geometry = "flat"
     extra_geometries: list[str] = []
+    site_dirs: list[str] = []
     cache = open_media_root / "build/CMakeCache.txt"
     if cache.is_file():
         for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -131,10 +133,18 @@ def _cmake_configure_command(open_media_root: Path, geometry: str) -> list[str]:
                 extra_geometries = [
                     item for item in line.partition("=")[2].split(";") if item
                 ]
+            elif line.startswith("OMDRC_SITE_DATA_DIRS:STRING="):
+                site_dirs = [
+                    item for item in line.partition("=")[2].split(";") if item
+                ]
     command = ["cmake", "-S", ".", "-B", "build"]
     if geometry != default_geometry and geometry not in extra_geometries:
         extra_geometries.append(geometry)
         command.append(f"-DGEOMETRIES={';'.join(extra_geometries)}")
+    if (site_root is not None and site_root != open_media_root and
+            str(site_root) not in site_dirs):
+        search = site_dirs or [str(open_media_root)]
+        command.append(f"-DOMDRC_SITE_DATA_DIRS={';'.join([*search, str(site_root)])}")
     return command
 
 
@@ -155,6 +165,7 @@ def print_next_steps(
         geometry: str, design_id: str, wrote: bool) -> None:
     """Print a complete source-tag -> repository -> installed-system handoff."""
     open_media_root = Path(__file__).resolve().parents[1]
+    site_root = resolve_site_root()
     tag = f"{geometry}-{design_id}"
     source_commit_message = f"Declare {geometry}/{design_id} filter design"
     deploy_commit_message = f"Deploy {geometry}/{design_id} filter design"
@@ -191,10 +202,18 @@ def print_next_steps(
         "--source-ref", tag,
         "--declaration", str(relative_destination),
     ]
+    if site_root != open_media_root:
+        deployment.extend(["--site-root", str(site_root)])
     CONSOLE.command(deployment)
     CONSOLE.note("Review that command's dry-run audit, then publish the immutable bundle:")
     CONSOLE.command([*deployment, "--write"])
     CONSOLE.command(["python3", "scripts/verify_filter_bundle.py", "--all", "--require-sources"])
+    # configs/ and filters/ are committed wherever the site data lives, which is
+    # a second checkout once OMDRC_SITE_ROOT splits the personal data out.
+    if site_root != open_media_root:
+        CONSOLE.line()
+        CONSOLE.directory(site_root)
+        CONSOLE.command(["cd", str(site_root)])
     CONSOLE.command(["git", "status", "--short", "--", f"configs/{geometry}", f"filters/{geometry}"])
     CONSOLE.note("Confirm the listed changes belong only to this deployment before staging them.")
     CONSOLE.command(["git", "add", "--", f"configs/{geometry}", f"filters/{geometry}"])
@@ -203,9 +222,12 @@ def print_next_steps(
     CONSOLE.line()
     CONSOLE.line(f"{step + 2}. Install and select it (after reviewing the open-media-drc commit)")
     CONSOLE.directory(open_media_root)
-    CONSOLE.command(_cmake_configure_command(open_media_root, geometry))
-    CONSOLE.command(["cmake", "--build", "build"])
-    CONSOLE.command("sudo cmake --install build")
+    if site_root != open_media_root:
+        CONSOLE.command(["cd", str(open_media_root)])
+    CONSOLE.command(_cmake_configure_command(open_media_root, geometry, site_root))
+    CONSOLE.directory(open_media_root / "build")
+    CONSOLE.command(["make"])
+    CONSOLE.command("sudo make install")
     if platform.system() == "FreeBSD":
         CONSOLE.command("sudo service omdrcctrl restart")
     elif platform.system() == "Linux":

@@ -4,7 +4,7 @@
 #     sudo cmake --install build      # (or sudo make install)
 #     cmake --build build --target user-install   # (or: make user-install)
 #
-# It does only what a root/system install cannot: the systemd --user service,
+# It does only what a root/system install cannot: the systemd --user services,
 # the desktop autostart symlink, and the per-user BruteFIR defaults.  Idempotent,
 # and it never uses sudo itself — the two steps that need root (linger, the
 # audio group) are printed for you to run.  Rendered by CMake from host.cmake.
@@ -53,6 +53,27 @@ if [ "$(uname)" = "Linux" ] && [ -f "$PREFIX/lib/systemd/user/omdrcvideo.service
     fi
     loginctl enable-linger "$(id -un)" 2>/dev/null \
         || echo "user-install: to survive logout, run: sudo loginctl enable-linger $(id -un)"
+fi
+
+# --- remembered renderer restore (Linux user scope) --------------------------
+# Both switchable renderers must be in the same --user scope.  Enable the
+# restore unit, never one renderer directly, or two front-ends can drive MPD.
+if [ "$(uname)" = "Linux" ] && \
+        [ -f "$PREFIX/lib/systemd/user/upmpdcli.service" ] && \
+        [ -f "$PREFIX/lib/systemd/user/omdrc-renderer.service" ]; then
+    mkdir -p "$CFG/systemd/user"
+    ln -sf "$PREFIX/lib/systemd/user/upmpdcli.service" \
+           "$CFG/systemd/user/upmpdcli.service"
+    ln -sf "$PREFIX/lib/systemd/user/omdrc-renderer.service" \
+           "$CFG/systemd/user/omdrc-renderer.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user disable upmpdcli.service qobuzconnect2mpd.service \
+        2>/dev/null || true
+    if systemctl --user enable --now omdrc-renderer.service 2>/dev/null; then
+        echo "user-install: enabled remembered renderer restore"
+    else
+        echo "user-install: enable renderer later: systemctl --user enable --now omdrc-renderer"
+    fi
 fi
 
 # --- ALSA hw access needs the 'audio' group (root; advise only) ---

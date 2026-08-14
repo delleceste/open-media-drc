@@ -3,7 +3,7 @@ Description=Start the last active MPD renderer (qobuzconnect2mpd or upmpdcli)
 After=network-online.target sound.target
 Wants=network-online.target
 
-# Template — generated to omdrc-renderer.service by install.sh from config.env.
+# Template — rendered to omdrc-renderer.service by CMake from host.cmake.
 # Linux counterpart of etc/rc.d/omdrc_renderer: a oneshot that starts whichever
 # renderer omdrcctrl's toggle last recorded in the state file (last_renderer),
 # so a reboot comes back the way the box was left.
@@ -22,6 +22,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+Environment=PREFIX=@PREFIX@
 # Uncomment (and match what omdrcctrl writes) if this unit and the panel would
 # resolve different state directories — e.g. an installed panel using
 # ~/.local/state/omdrc while the helper below runs from the checkout:

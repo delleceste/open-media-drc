@@ -51,20 +51,9 @@ filters/
     192000/
       L.raw
       R.raw
-      +2dB/
-        L.raw
-        R.raw
     rew/
       FLX-trimmed-48k.wav
       FRX-trimmed-48k.wav
-      +2dB/
-  185-green/
-    FL_EQ1-192k.raw
-    FL_EQ2-192k.raw
-    FR_EQ1-192k.raw
-    FR_EQ2-192k.raw
-    Fr36HzQ3_flat_X801-192k.raw
-    Xo801-192k.raw
 ```
 
 ### `filters/120.blue`
@@ -94,13 +83,6 @@ filters/120.blue/192000/L.raw
 filters/120.blue/192000/R.raw
 ```
 
-`filters/120.blue/192000/+2dB` contains the 192 kHz `+2dB` variant:
-
-```text
-filters/120.blue/192000/+2dB/L.raw
-filters/120.blue/192000/+2dB/R.raw
-```
-
 New immutable designs use an `@design-id` subdirectory so the physical geometry
 and filter revision remain separate concepts:
 
@@ -120,50 +102,6 @@ The `rew/` directory contains original or source files exported by Room EQ
 Wizard (REW), plus variant-specific source material. These files are not read by
 BruteFIR directly.
 
-### `filters/185-green`
-
-`filters/185-green` is a candidate/source filter library for the 185 cm speaker
-position. It currently contains named 192 kHz raw files rather than the
-normalized runtime layout:
-
-```text
-filters/185/192000/L.raw
-filters/185/192000/R.raw
-```
-
-The current BruteFIR config for that position is:
-
-```text
-configs/185/brutefir-192000.conf
-```
-
-That config currently references:
-
-```text
-filters/185/192000/L.raw
-filters/185/192000/R.raw
-```
-
-Those runtime files/directories are not present in the current tree. The files
-under `filters/185-green/` are candidates that must be selected/copied/converted
-into the runtime paths referenced by `configs/185/brutefir-192000.conf`, or the
-config must be changed to point at the chosen files.
-
-Important naming distinction:
-
-- `185-green` is the filter-set/source directory name.
-- `185` is the current `drc.sh` position token because the config directory is
-  `configs/185`.
-
-If the intended runtime command is `./drc.sh 185-green 192000`, then there must
-be a matching config file under:
-
-```text
-configs/185-green/brutefir-192000.conf
-```
-
-That directory does not currently exist.
-
 ## BruteFIR Config Directory Structure
 
 `drc.sh` constructs the BruteFIR config path as:
@@ -177,7 +115,9 @@ Where:
 - `<position>` is the first positional argument passed to `drc.sh`.
 - `<actual_rate>` is the requested rate, except for `resamp`, where it becomes
   `192000`.
-- `<variant>` is optional and is appended directly to the filename, e.g. `+2dB`.
+- `<variant>` is optional and is appended directly to the filename. No variant
+  is currently shipped; `@design-id` selectors are the supported way to carry
+  more than one filter revision per geometry.
 
 Examples (POSITION="120.blue"):
 
@@ -188,15 +128,8 @@ Examples (POSITION="120.blue"):
 ./drc.sh 192000
   -> configs/120.blue/brutefir-192000.conf
 
-./drc.sh 192000 +2dB
-  -> configs/120.blue/brutefir-192000+2dB.conf
-
 ./drc.sh resamp
   -> configs/120.blue/brutefir-192000.conf
-
-# To use the 185 position, set POSITION="185" in drc.sh; then:
-./drc.sh 192000
-  -> configs/185/brutefir-192000.conf
 ```
 
 The config file then declares:
@@ -327,29 +260,20 @@ playlists, but it is not native-rate playback.
 ### Variant Mode
 
 The optional second argument selects a filter/config variant by appending the
-variant string to the BruteFIR config filename.
-
-Example:
+variant string to the BruteFIR config filename:
 
 ```sh
-./drc.sh 192000 +2dB
+./drc.sh 192000 <variant>
 ```
 
-This selects:
-
-```text
-configs/120.blue/brutefir-192000+2dB.conf
-```
-
-That config points to:
-
-```text
-filters/120.blue/192000/+2dB/L.raw
-filters/120.blue/192000/+2dB/R.raw
-```
+selects `configs/120.blue/brutefir-192000<variant>.conf`, and that config points
+at whatever raw pair it names, by convention
+`filters/120.blue/192000/<variant>/{L,R}.raw`.
 
 Variant names are not discovered automatically. A variant works only if the
-matching config file exists.
+matching config file exists, and none is currently shipped: this mechanism
+predates the `@design-id` selectors, which carry a provenance manifest and are
+the supported way to keep several filter revisions per geometry.
 
 ### `off` Mode
 
@@ -451,8 +375,8 @@ When changing this repository:
 1. Do not assume a `filters/<position>` directory exists just because
    `configs/<position>` exists. Read the BruteFIR config to find the actual raw
    file paths.
-2. Do not assume `185-green` is a valid `drc.sh` position argument. Currently
-   `configs/185` exists, so the current command token is `185`.
+2. Do not assume `185-green` is a valid `drc.sh` position argument. It has no
+   `configs/` directory at all, so there is no command token for it.
 3. Do not generate or overwrite `filters/120.blue/192000/L.raw` or `R.raw`
    unless explicitly asked. These are the current 192 kHz default filters.
 4. In native playback, do not add fixed MPD output formats such as

@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(open-media-drc VERSION 0.91.0 LANGUAGES NONE)
 
-# Top-level superproject.  Classical flow:
-#     cmake -B build -C host.cmake && cmake --build build && sudo cmake --install build
+# Top-level superproject.  Classical Unix Makefiles flow:
+#     mkdir -p build && cd build
+#     cmake .. -C ../host.cmake && make && sudo make install
 #
 # Host values live in host.cmake (copied from host.cmake.sample) and are the
 # single source of box-specific config, rendered into each subproject via
@@ -21,6 +22,14 @@ set(GEOMETRY      "flat"                CACHE STRING "Default speaker geometry (
 # `drc.sh geometry <name>` and the web remote's picker have something to switch
 # between at runtime.  Semicolon-separated, e.g. -DGEOMETRIES="120.blue;185;flat".
 set(GEOMETRIES    ""                    CACHE STRING "Extra filter sets to install besides GEOMETRY (semicolon-separated)")
+# Where configs/<geo> and filters/<geo> are looked up, in order; first match wins.
+# The default is this checkout, i.e. the historical single-repository layout.
+# Room measurements and filters are personal data with no value to anyone else,
+# so they can live in a separate (private) checkout instead — list it here and
+# the public repo keeps shipping only the generic `flat` set:
+#     -DOMDRC_SITE_DATA_DIRS="${CMAKE_SOURCE_DIR};/home/me/devel/omdrc-site"
+set(OMDRC_SITE_DATA_DIRS "${CMAKE_CURRENT_SOURCE_DIR}" CACHE STRING
+    "Search path for configs/<geo> + filters/<geo> (semicolon-separated, first match wins)")
 set(MUSIC_DIR     ""                    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR     ""                    CACHE PATH   "Video library root (omdrcvideo)")
 set(QOBUZ_USER    ""                    CACHE STRING "Qobuz account username for upmpdcli (blank disables)")
@@ -29,6 +38,21 @@ set(OMDB_API_KEY  ""                    CACHE STRING "OMDb API key for omdrcvide
 set(DISC_DEVICE   "cd0"                 CACHE STRING "Optical disc device for omdrcvideo Blu-ray support")
 
 get_filename_component(REPO_DIR "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
+
+include(cmake/console.cmake)          # OMDRC_* ANSI colours for our own output
+
+# ── host.cmake sanity ────────────────────────────────────────────────────────
+# host.cmake is read only by `cmake -C host.cmake ..`, and CMake skips it for
+# cache entries that already exist — so a plain `cmake ..` silently configures
+# everything from the built-in defaults, and a later -C cannot repair it.
+# host.cmake sets OMDRC_HOST_CMAKE; its absence is the whole detection.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/host.cmake" AND NOT OMDRC_HOST_CMAKE)
+    message(WARNING
+        "host.cmake exists but this build directory was not initialised from it, "
+        "so the built-in defaults are in effect.  Adding -C now will not help; "
+        "start a fresh build directory:\n"
+        "    rm -rf build && mkdir build && cd build && cmake -C ../host.cmake ..")
+endif()
 
 # ── service manager per OS ───────────────────────────────────────────────────
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -53,7 +77,7 @@ add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
 
 # ── `make user-install`: the per-user steps a root install cannot do ─────────
-# Run as the audio user after the system install: it deploys the --user service,
+# Run as the audio user after the system install: it deploys the --user services,
 # the desktop autostart, and the per-user BruteFIR defaults.
 configure_file(cmake/user-install.sh.in "${CMAKE_BINARY_DIR}/user-install.sh" @ONLY)
 add_custom_target(user-install
@@ -61,59 +85,12 @@ add_custom_target(user-install
     USES_TERMINAL
     COMMENT "open-media-drc: per-user setup (run as the audio user, after the system install)")
 
-# ── consolidated post-install checklist (printed last) ───────────────────────
-# make install is root/system-level, so it cannot enable per-user (--user)
-# services, symlink into a user's ~/.config, or add the user to a group; those
-# steps are listed here so the operator is aware.  The /etc copies exist because
-# udev / systemd-modules-load / the mpd drop-in are read from /etc, not $PREFIX.
-if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
-    install(CODE "
-message(STATUS \"\")
-message(STATUS \"============================================================\")
-message(STATUS \" open-media-drc installed to ${CMAKE_INSTALL_PREFIX}\")
-message(STATUS \" Remaining manual steps (per-user ones run as ${AUDIO_USER}):\")
-message(STATUS \"\")
-message(STATUS \" 1. Copy the files read from /etc (not scanned under the prefix):\")
-message(STATUS \"      sudo cp ${CMAKE_INSTALL_PREFIX}/lib/udev/rules.d/99-usb-audio-drc.rules /etc/udev/rules.d/\")
-message(STATUS \"      sudo udevadm control --reload\")
-message(STATUS \"      sudo mkdir -p /etc/systemd/system/mpd.service.d\")
-message(STATUS \"      sudo cp ${CMAKE_INSTALL_PREFIX}/share/omdrc/mpd.service.d/open-media-drc.conf /etc/systemd/system/mpd.service.d/\")
-message(STATUS \"      echo snd-aloop | sudo tee /etc/modules-load.d/snd-aloop.conf\")
-message(STATUS \"\")
-message(STATUS \" 2. Enable the system services:\")
-message(STATUS \"      sudo systemctl daemon-reload\")
-message(STATUS \"      sudo systemctl enable --now mpd upmpdcli omdrcctrl\")
-message(STATUS \"      (drc-usb-audio is pulled in by the udev rule on DAC plug)\")
-message(STATUS \"\")
-message(STATUS \" 3. Per-user setup, as ${AUDIO_USER} in the desktop session:\")
-message(STATUS \"      make user-install          # (or: cmake --build build --target user-install)\")
-message(STATUS \"    Deploys the omdrcvideo --user service, the mpv-idle autostart\")
-message(STATUS \"    and the BruteFIR defaults; it prints the two steps that need\")
-message(STATUS \"    root (loginctl enable-linger, and joining the 'audio' group).\")
-message(STATUS \"============================================================\")
-")
-else()
-    install(CODE "
-message(STATUS \"\")
-message(STATUS \"============================================================\")
-message(STATUS \" open-media-drc installed to ${CMAKE_INSTALL_PREFIX}\")
-message(STATUS \" Remaining manual steps:\")
-message(STATUS \"\")
-message(STATUS \" 1. Enable the services (rc):\")
-message(STATUS \"      sysrc musicpd_enable=YES musicpd_config=${CMAKE_INSTALL_PREFIX}/etc/open-media-drc/musicpd.conf\")
-message(STATUS \"      sysrc omdrc_renderer_enable=YES omdrcctrl_enable=YES\")
-message(STATUS \"      sysrc upmpdcli_enable=NO qobuzconnect2mpd_enable=NO\")
-message(STATUS \"      # omdrc_renderer starts the renderer last selected in the panel;\")
-message(STATUS \"      # leaving a renderer enabled too would start both against MPD.\")
-message(STATUS \"      sysrc drc_usb_audio_enable=YES brutefir_drc_user=${AUDIO_USER}\")
-message(STATUS \"      service devd restart   # pick up the DAC attach/detach rule\")
-message(STATUS \"\")
-message(STATUS \" 2. Per-user setup, as ${AUDIO_USER} in the desktop session:\")
-message(STATUS \"      make user-install          # (or: cmake --build build --target user-install)\")
-message(STATUS \"    Deploys the BruteFIR defaults (~/.config/BruteFIR) and links the\")
-message(STATUS \"    mpv-idle autostart entry into ~/.config/autostart.\")
-message(STATUS \"\")
-message(STATUS \" 3. Once, as ${AUDIO_USER}: passwordless sudo for virtual_oss.\")
-message(STATUS \"============================================================\")
-")
-endif()
+# ── consolidated post-install checklist (guaranteed to print last) ───────────
+# Subprojects have their own local hints.  This generated script is registered
+# after every add_subdirectory(), so `make install` finishes with one coherent
+# host checklist plus the exact geometry/design/rate and provenance inventory.
+configure_file(
+    cmake/install-summary.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/install-summary.cmake"
+    @ONLY)
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/install-summary.cmake")

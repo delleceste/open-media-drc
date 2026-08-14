@@ -24,8 +24,8 @@ import tempfile
 
 from deploy_filter import (
     AuditError, DEFAULT_LIMITS, OPTIONAL_PREDICTION_ROLES, REQUIRED_ROLES,
-    ROOT, atomic_json, git_blob, parse_rew_txt, run, safe_source,
-    sha256_file, verify_git_sources,
+    ROOT, add_site_root_argument, atomic_json, git_blob, parse_rew_txt,
+    resolve_site_root, run, safe_source, sha256_file, verify_git_sources,
 )
 from filter_workflow_next import print_deployed_next, print_dry_run_next
 
@@ -106,7 +106,9 @@ def main() -> int:
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--replace-design", action="store_true",
                         help="explicitly replace an existing design ID")
+    add_site_root_argument(parser)
     args = parser.parse_args()
+    site_root = resolve_site_root(args.site_root)
 
     try:
         rates = sorted({int(value.strip()) for value in args.rates.split(",")})
@@ -260,7 +262,7 @@ def main() -> int:
         },
     }
 
-    recipe_path = ROOT / "filters" / geometry / "provenance" / f"{design_id}.source.json"
+    recipe_path = site_root / "filters" / geometry / "provenance" / f"{design_id}.source.json"
     existing_manifest = recipe_path.with_name(f"{design_id}.json")
     if args.write and recipe_path.exists():
         existing = json.loads(recipe_path.read_text(encoding="utf-8"))
@@ -275,8 +277,11 @@ def main() -> int:
         deploy_recipe = Path(temp.name)
     atomic_json(recipe, deploy_recipe)
 
+    # Pass the resolved site root down rather than relying on the child
+    # inheriting $OMDRC_SITE_ROOT: --site-root here must win there too.
     command = [sys.executable, str(ROOT / "scripts/deploy_filter.py"),
-               "--recipe", str(deploy_recipe), "--source-root", str(source_root)]
+               "--recipe", str(deploy_recipe), "--source-root", str(source_root),
+               "--site-root", str(site_root)]
     if args.write:
         command.append("--write")
     if args.replace_design:
@@ -301,10 +306,10 @@ def main() -> int:
             "geometry": manifest["geometry"],
             "design_id": manifest.get("design_id", manifest["variant"]),
             "bundle_id": manifest["bundle_id"],
-            "manifest": existing_manifest.relative_to(ROOT),
+            "manifest": existing_manifest.relative_to(site_root),
             "release": manifest["source"].get("release", {}),
             "source_commit": manifest["source"]["repository_head"],
-        }], include_verification=True)
+        }], include_verification=True, site_root=site_root)
     else:
         print("No repository files written. Add --write after reviewing the audit.")
         write_command = [
@@ -320,6 +325,8 @@ def main() -> int:
             write_command.append("--allow-commit-ref")
         if args.replace_design:
             write_command.append("--replace-design")
+        if site_root != ROOT:
+            write_command.extend(["--site-root", str(site_root)])
         write_command.append("--write")
         print_dry_run_next(ROOT, write_command)
     return 0

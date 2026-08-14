@@ -4,6 +4,7 @@ import importlib.util
 import copy
 import json
 from pathlib import Path
+import sys
 import unittest
 from unittest import mock
 
@@ -14,18 +15,31 @@ APP = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(APP)
 
+# This is an integration test against a real published bundle, and room data
+# does not have to live in this checkout: it is resolved through the site root
+# (OMDRC_SITE_ROOT, else here).  A clone without any room set skips rather than
+# fails — the engine repository ships only the generic `flat` set.
+sys.path.insert(0, str(ROOT / "scripts"))
+from deploy_filter import resolve_site_root  # noqa: E402
 
+SITE = resolve_site_root()
+BUNDLE = SITE / "filters/120.blue"
+
+
+@unittest.skipUnless(
+    (BUNDLE / "provenance/default.json").is_file(),
+    f"no 120.blue bundle under {SITE}; set OMDRC_SITE_ROOT to the site checkout")
 class FilterBundleTest(unittest.TestCase):
     def setUp(self):
         self.manifest = json.loads(
-            (ROOT / "filters/120.blue/provenance/default.json").read_text(encoding="utf-8")
+            (BUNDLE / "provenance/default.json").read_text(encoding="utf-8")
         )
         self.analysis = json.loads(
-            (ROOT / "filters/120.blue/analysis/default.json").read_text(encoding="utf-8")
+            (BUNDLE / "analysis/default.json").read_text(encoding="utf-8")
         )
 
     def parsed(self, rate=48000, attenuation=3.0):
-        base = ROOT / "filters/120.blue" / str(rate)
+        base = BUNDLE / str(rate)
         return {
             "rate": rate,
             "coeffs": [
@@ -147,7 +161,6 @@ class FilterBundleTest(unittest.TestCase):
             if trace.get("default_visible")
         }
         self.assertEqual(defaults, {"original-sum-measured", "corrected-sum"})
-
 
 if __name__ == "__main__":
     unittest.main()

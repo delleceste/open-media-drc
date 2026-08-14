@@ -111,6 +111,7 @@ class FilterAlignmentTest(unittest.TestCase):
                         "filter_right_wav": Path("FRX-trimmed-48k.wav"),
                     },
                     Path(name),
+                    deploy_filter.ROOT,
                 )
         rendered = output.getvalue()
         self.assertIn("\x1b[1;35m[SoX 1/2]", rendered)
@@ -206,7 +207,8 @@ class CommandHelpTest(unittest.TestCase):
             self.assertIn("verify_filter_bundle.py", output)
             self.assertIn("--no-next", output)
             self.assertIn("-DGEOMETRIES=185;120.blue", output)
-            self.assertIn("sudo cmake --install build", output)
+            self.assertIn(f"Run from: {root / 'build'}", output)
+            self.assertIn("sudo make install", output)
             self.assertIn("/opt/omdrc/bin/omdrc design @test-design", output)
             self.assertIn("tag 120.blue-test-design", output)
             self.assertIn("source commit deadbeef", output)
@@ -319,7 +321,8 @@ class CommandHelpTest(unittest.TestCase):
         self.assertIn("Run from:", output)
         self.assertIn("scripts/new_filter_design.py", output)
         self.assertIn("scripts/verify_filter_bundle.py", output)
-        self.assertIn("sudo cmake --install build", output)
+        self.assertIn(f"Run from: {ROOT / 'build'}", output)
+        self.assertIn("sudo make install", output)
         self.assertIn("design @test", output)
 
     def test_declaration_help_lists_every_required_role(self):

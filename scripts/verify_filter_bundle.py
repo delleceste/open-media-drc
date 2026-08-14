@@ -11,13 +11,11 @@ import sys
 import numpy as np
 
 from deploy_filter import (
-    AuditError, bundle_identity_from_manifest, canonical_hash, parse_config,
-    peak_gain_db, required_attenuation, sha256_file,
+    ROOT, AuditError, add_site_root_argument, bundle_identity_from_manifest,
+    canonical_hash, parse_config, peak_gain_db, required_attenuation,
+    resolve_site_root, sha256_file,
 )
 from filter_workflow_next import print_deployed_next
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def inside(root: Path, relative: str) -> Path:
@@ -32,7 +30,7 @@ def inside(root: Path, relative: str) -> Path:
     return result
 
 
-def verify_manifest(path: Path, require_sources: bool) -> dict:
+def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     geometry_root = path.parent.parent
     expected_id = canonical_hash(bundle_identity_from_manifest(manifest))
@@ -65,7 +63,7 @@ def verify_manifest(path: Path, require_sources: bool) -> dict:
 
     for rate_text, runtime in manifest["runtime"]["rates"].items():
         rate = int(rate_text)
-        config_path = inside(ROOT, runtime["config"])
+        config_path = inside(site_root, runtime["config"])
         if sha256_file(config_path) != runtime["config_sha256"]:
             raise AuditError(f"{path}: config hash mismatch at {rate} Hz")
         config = parse_config(config_path, rate)
@@ -90,7 +88,7 @@ def verify_manifest(path: Path, require_sources: bool) -> dict:
             raise AuditError(f"{path}: insufficient attenuation at {rate} Hz")
     print(f"PASS {manifest['geometry']}/{manifest['variant']} {manifest['bundle_id']}")
     try:
-        manifest_path = path.relative_to(ROOT)
+        manifest_path = path.relative_to(site_root)
     except ValueError:
         manifest_path = path
     return {
@@ -112,19 +110,21 @@ def main() -> int:
     parser.add_argument(
         "--no-next", action="store_true",
         help="suppress operator handoff (for CMake/CI/internal invocation)")
+    add_site_root_argument(parser)
     args = parser.parse_args()
+    site_root = resolve_site_root(args.site_root)
     manifests = args.manifests
     if args.all or not manifests:
-        manifests = sorted(ROOT.glob("filters/*/provenance/*.json"))
+        manifests = sorted(site_root.glob("filters/*/provenance/*.json"))
         manifests = [path for path in manifests if not path.name.endswith(".source.json")]
     if not manifests:
         raise AuditError("no filter provenance manifests found")
     verified = [
-        verify_manifest(manifest.resolve(), args.require_sources)
+        verify_manifest(manifest.resolve(), args.require_sources, site_root)
         for manifest in manifests
     ]
     if not args.no_next:
-        print_deployed_next(ROOT, verified, include_verification=False)
+        print_deployed_next(ROOT, verified, include_verification=False, site_root=site_root)
     return 0
 
 

@@ -1,9 +1,9 @@
 # renderers.cmake — MPD + upmpdcli config and service integration.
 #
-# Per the scope model these are headless system services running as the audio
-# user: Linux ships a system upmpdcli unit and an mpd /etc drop-in (the second
-# /etc seam, alongside the udev rule); FreeBSD ships the upmpdcli rc.d script and
-# the musicpd config.  Configs are rendered from host.cmake and install-guarded.
+# MPD is a headless system service.  The switchable renderer layer is user scope
+# on Linux (upmpdcli and external qobuzconnect2mpd must share the scope driven by
+# omdrcctrl/omdrc-renderer) and rc.d on FreeBSD.  Configs are rendered from
+# host.cmake and install-guarded.
 
 set(_etc     "etc/open-media-drc")
 set(_siteetc "${CMAKE_INSTALL_PREFIX}/etc/open-media-drc")
@@ -64,12 +64,13 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/mpd-omdrc-dropin.conf"
             DESTINATION share/omdrc/mpd.service.d RENAME open-media-drc.conf)
 
-    # upmpdcli system unit (User=<audiouser>)
-    file(READ etc/systemd/system/upmpdcli.service.in _s)
+    # upmpdcli user unit.  It must share scope with qobuzconnect2mpd because
+    # omdrc-renderer and the web UI switch both through `systemctl --user`.
+    file(READ etc/systemd/user/upmpdcli.service.in _s)
     string(REPLACE "@REPO_DIR@/upmpdcli/upmpdcli.conf" "${_siteetc}/upmpdcli.conf" _s "${_s}")
     _omdrc_common(_s)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" "${_s}")
-    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/system)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/user)
 
     # omdrc-renderer user unit: enable THIS instead of a renderer, so the box
     # comes back on the renderer it was left on (see the unit's comment).
@@ -79,7 +80,7 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc-renderer.service" "${_r}")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omdrc-renderer.service" DESTINATION lib/systemd/user)
 
-    install(CODE "message(STATUS \"renderers: mpd.conf + upmpdcli.conf/.service + omdrc-renderer.service + mpd /etc drop-in installed (see the final checklist)\")")
+    install(CODE "message(STATUS \"renderers: mpd.conf + user-scope upmpdcli/omdrc-renderer units + mpd /etc drop-in installed (see the final checklist)\")")
 else()  # FreeBSD
     # musicpd.conf (FreeBSD MPD package == musicpd)
     file(READ mpd/musicpd.conf.in _m)

@@ -269,7 +269,7 @@ list_geometries() {
 }
 
 # Sample rates a filter set can serve, ascending.  Variant configs
-# (brutefir-192000+2dB.conf) collapse onto their base rate.
+# (brutefir-192000<variant>.conf) collapse onto their base rate.
 geometry_rates() {
   local conf r
   for conf in "$SITE_DIR/configs/$1"/brutefir-*.conf; do
@@ -283,7 +283,7 @@ geometry_rates() {
 
 # Runtime filter designs available for one geometry/rate. The empty config
 # suffix is the geometry's default design; @name is an immutable audited design
-# deployed by new_filter_design.py. Legacy selectors such as +2dB remain valid.
+# deployed by new_filter_design.py. Legacy <variant> suffixes remain valid.
 geometry_designs() {
   local geo="$1" rate="$2" conf key suffix
   for conf in "$SITE_DIR/configs/$geo"/brutefir-"$rate"*.conf; do
@@ -345,7 +345,7 @@ usage() {
   echo "             reloads brutefir with that set's config"
   echo "  design   : print/list/switch designs within the active geometry;"
   echo "             deployed designs use @name, default selects the base config"
-  echo "  variant  : optional runtime selector, e.g. @flx8-2026-08 or +2dB"
+  echo "  variant  : optional runtime selector, e.g. @flx8-2026-08"
   echo
   echo "  Geometry: $GEOMETRY  (config: ${OMDRC_CONF_FILE:-built-in defaults})"
   echo "  GEOMETRY in the config file is the default; 'geometry <name>' records"
@@ -354,7 +354,6 @@ usage() {
   echo
   echo "Examples:"
   echo "  $0 192000"
-  echo "  $0 192000 +2dB"
   echo "  $0 resamp"
   echo "  $0 restore"
   echo "  $0 status"

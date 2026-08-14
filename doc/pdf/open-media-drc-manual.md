@@ -375,7 +375,7 @@ drc.sh <rate>|resamp|restore|off|stop [variant]
 | `restore` | Re-apply the state at shutdown: stays off if `last_power` is `off`, else replays `last_arg` (falls back to 192000) |
 | `off` | Stop BruteFIR + loopback; MPD back to direct output; **records the off state**. The user-facing disable |
 | `stop` | Same teardown as `off` but does **not** record off. Used by service stop paths so a reboot of a *running* system is restored |
-| `variant` | Optional second argument (e.g. `+2dB`): selects an alternate filter set |
+| `variant` | Optional second argument (a config-filename suffix): selects an alternate filter set; superseded by `design` |
 
 ![drc.sh verbs and the two persistent state files.](build/drc-states.pdf){width=95%}
 
@@ -383,7 +383,7 @@ State lives in two files in the repo root (git-ignored), so the on/off state
 and the remembered rate stay independent:
 
 * **`last_arg`** --- the last *active* rate and optional variant
-  (`192000`, `resamp`, `192000 +2dB`). Written on each successful run,
+  (`192000`, `resamp`, `192000 <variant>`). Written on each successful run,
   **never erased by `off`** --- turning DRC back on restores the last rate.
   It records the *desired* state: a failed start never rewrites it, so the
   next trigger retries the same configuration.
@@ -432,7 +432,7 @@ processes in floating point.
 ```
 filters/<geometry>/<rate>/L.raw          raw FLOAT64_LE FIR coefficients
 filters/<geometry>/<rate>/R.raw
-filters/<geometry>/<rate>/<variant>/     e.g. +2dB/L.raw, +2dB/R.raw
+filters/<geometry>/<rate>/<variant>/     <variant>/L.raw, <variant>/R.raw
 filters/<geometry>/rew/                  REW-exported source WAVs
 configs/<geometry>/brutefir-<rate><variant>.conf
 ```
@@ -1065,8 +1065,9 @@ for a zero-config personal appliance:
    `last_power`, `drc.log` beside itself; `pkg check -s` flags modified
    packaged files --- state must live in `/var/db/`.
 3. **Room-specific data is mixed with software**: `configs/120.blue`,
-   `configs/185`, `filters/*` (~18 MB) are personal measurement products; a
-   port must ship neutral defaults.
+   `filters/*` (~50 MB) are personal measurement products; a port must ship
+   neutral defaults. `OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT` now resolve
+   these in a separate checkout beside the engine.
 4. **rc.d scripts shadow other ports**: `etc/rc.d/musicpd` and `upmpdcli`
    would replace scripts owned by `audio/musicpd` / `net/upmpdcli`; the
    stock scripts' rc.conf knobs must be used instead.

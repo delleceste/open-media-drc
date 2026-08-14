@@ -1,12 +1,16 @@
 # Host-specific values for open-media-drc — the config.env successor.
 #
 # Copy to host.cmake, edit, then build the classical way:
-#     cmake -B build -C host.cmake
-#     cmake --build build
-#     sudo cmake --install build
+#     mkdir build && cd build
+#     cmake .. -C ../host.cmake
+#     make
+#     sudo make install
 #
 # host.cmake itself is .gitignored (it may hold secrets like OMDB_API_KEY);
 # this .sample is tracked.  All values are CMake cache entries.
+
+# Lets the project detect a build directory configured without -C (see below).
+set(OMDRC_HOST_CMAKE ON CACHE INTERNAL "cache was initialised from host.cmake")
 
 set(CMAKE_INSTALL_PREFIX "/usr/local"      CACHE PATH   "Install prefix")
 
@@ -22,6 +26,17 @@ set(GEOMETRY     "120.blue"                CACHE STRING "Default speaker geometr
 # remote's DRC card), so list here anything you want to A/B against the default.
 # Leave empty to install GEOMETRY alone, as before.
 set(GEOMETRIES   "flat"                    CACHE STRING "Extra filter sets to install (semicolon-separated)")
+
+# Where configs/<geo> and filters/<geo> are searched for, in order; first match
+# wins.  Unset, it is this checkout alone — every set lives in the source tree.
+# Room measurements and impulse responses are personal to one listening room and
+# useless to anyone else, so they are better kept in a second (private) checkout:
+# add it here and the engine repository keeps shipping only the generic `flat`.
+# Design box and playback box then share it through that repo — push after a
+# deploy, pull before an install.  The same OMDRC_SITE_ROOT env var (or
+# --site-root) points scripts/{new,declare}_filter_design.py at it.
+# set(OMDRC_SITE_DATA_DIRS "${CMAKE_SOURCE_DIR};$ENV{HOME}/devel/omdrc-site"
+#     CACHE STRING "Search path for configs/<geo> + filters/<geo>")
 
 set(MUSIC_DIR    "/media/USBHD2/musica"    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR    "/media/USBHD2/video"     CACHE PATH   "Video library root (omdrcvideo)")

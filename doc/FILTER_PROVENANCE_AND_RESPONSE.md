@@ -124,21 +124,17 @@ omits it: neither declaration, deployment nor plotting opens an `.mdat`, and no
 project hash is required when the exported artifacts, declaration and annotated
 tag are the chosen trust boundary.
 
-### Known failures that must not receive a green status
+### What must not receive a green status
 
 1. The base pair needs at most 2.3 dB attenuation (including the 1 dB safety
-   margin); all base configurations specify 3.0 dB and pass. The repaired
+   margin); all base configurations specify 3.0 dB and pass.
    `scripts/headroom_calc.py filters/120.blue` discovers the real rate pairs.
-2. The committed `+2dB` 192 kHz RAW pair is not byte-reproducible from the two
-   currently committed `filters/120.blue/rew/+2dB` WAVs. Apart from tiny sample
-   differences, each channel has a constant gain discrepancy: approximately
-   -0.12996 dB left and -0.11876 dB right. The adjacent DRC repository has a
-   tracked left +2 dB WAV but no matching tracked right WAV, and the left file
-   uses a different WAV encoding. This variant needs to be re-exported and
-   redeployed as a new bundle; until then it is **unverified**.
-3. No manifest is intentionally supplied for `+2dB`. The web UI therefore
-   reports it as unverified and withholds stored measurements, while retaining
-   only a live active-filter diagnostic.
+2. Any selector without a manifest is **unverified**, whatever its audio
+   quality. The web UI reports it as such and withholds the stored
+   measurements, retaining only a live active-filter diagnostic. A RAW pair
+   that cannot be reproduced byte-for-byte from its recorded source exports is
+   the usual cause: it must be re-exported and redeployed as a new bundle
+   before it can be trusted.
 
 ## Provenance bundle
 

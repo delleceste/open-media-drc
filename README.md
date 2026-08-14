@@ -7,11 +7,8 @@
 
 ## Filters
 
-v.1.5.0 with two flavours
-
-1. with max +2dB boost, peak correction with inversion, crossover correction (DRC-120.blue/120-blue-with-inversion+2dB.mdat)
-
-2. with no boost, peak correction with inversion, crossover correction (DRC-120.blue/120-blue-with-inversion.mdat)
+v.1.5.0, with no boost, peak correction with inversion, crossover correction
+(DRC-120.blue/120-blue-with-inversion.mdat)
 
 Revised crossover files (used in rephase): DRC-120.blue/ LR-EP-psy.txt , LR-EP-unsmoothed.txt, X801.rephase, X801.wav
 
@@ -20,8 +17,6 @@ Revised crossover files (used in rephase): DRC-120.blue/ LR-EP-psy.txt , LR-EP-u
 
 LF.0.raw -> 120.blue/FLX+0dB-192k.raw
 RF.0.raw -> 120.blue/FRX+0dB-192k.raw
-LF.1.raw -> 120.blue/FLX+2dB-192k.raw
-RF.1.raw -> 120.blue/FRX+2dB-192k.raw
 
 
 
@@ -252,8 +247,9 @@ Per-geometry, per-rate brutefir configuration files live under `configs/<geometr
 Each file sets `sampling_rate`, points to the matching filter files in `filters/<geometry>/<rate>/`,
 and is selected automatically by `drc.sh` based on the active geometry and rate.
 
-Variant/design configs (e.g. legacy `+2dB` or immutable `@design-id`) live alongside the default:
-`configs/120.blue/brutefir-192000.conf` (default), `configs/120.blue/brutefir-192000+2dB.conf`, etc.
+Design configs (immutable `@design-id`, and legacy `<variant>` suffixes) live alongside the default:
+`configs/120.blue/brutefir-192000.conf` (default),
+`configs/120.blue/brutefir-192000@rscreen-20260812.conf`, etc.
 
 # The filters/ directory
 
@@ -297,7 +293,7 @@ Note: minimising attenuation does **not** improve audio quality. In float64 atte
 
 ```bash
 python3 scripts/headroom_calc.py filters/120.blue
-python3 scripts/headroom_calc.py filters/120.blue --variant +2dB
+python3 scripts/headroom_calc.py filters/120.blue --variant <variant>
 ```
 
 The script discovers complete `rate[/variant]/L.raw,R.raw` pairs. Use
@@ -324,8 +320,7 @@ Pair                 Channel file                                      Peak gain
 Safety margin applied: 1.0 dB
 ```
 
-The configured 3.0 dB base attenuation passes every rate. The unverified
-192 kHz `+2dB` pair needs 4.1 dB and is conservatively configured at 8.0 dB.
+The configured 3.0 dB base attenuation passes every rate.
 
 # The drc.sh script
 
@@ -365,14 +360,15 @@ Signature: `drc.sh <rate>|resamp|restore|off|stop|status|session|geometry|design
   geometry/rate, and `drc.sh design @design-id` performs an A/B switch. The
   control page reports `from -> to`, then independently checks the config and
   RAW hashes actually loaded before marking an immutable design verified.
-- `variant` — optional second argument, e.g. `+2dB`, selects an alternate filter set
+- `variant` — optional second argument (a config-filename suffix) selects an alternate
+  filter set; superseded by `design`, and none is currently shipped
 
 State is split across three files (repo root in run-from-repo mode; `/var/db/omdrc`
 or `~/.local/state/omdrc` — override with `OMDRC_STATE_DIR` — when installed)
 so the on/off state and the remembered rate stay independent:
 
 - `last_arg` — the last *active rate* and optional variant (e.g. `192000`, `resamp`,
-  `192000 +2dB`). Written on each successful rate/`resamp` run and **never erased by
+  `192000 <variant>`). Written on each successful rate/`resamp` run and **never erased by
   `off`**, so turning DRC back on restores the rate you last used. The geometry is not
   part of it — it lives in `last_geometry` below.
 - `last_geometry` — the filter set chosen at runtime, written by `drc.sh geometry <name>`
@@ -598,7 +594,7 @@ journalctl -fu drc-usb-audio.service
 ```
 
 `drc.sh` continues to work for manual invocation outside of systemd, including direct
-rate/variant selection: `drc.sh 192000`, `drc.sh 192000 +2dB`, `drc.sh resamp`, `drc.sh off`.
+rate/variant selection: `drc.sh 192000`, `drc.sh resamp`, `drc.sh off`.
 
 ## FreeBSD rc.d scripts
 
@@ -744,7 +740,7 @@ USB device detached               → service drc_usb_audio onestop
 `restore` brings the system back to the state it was in at shutdown. It first reads
 `last_power`: if that is `off`, it re-execs `drc.sh off` and stops there — DRC stays
 disabled across the reboot. Otherwise it replays the **desired** state recorded in
-`last_arg` (e.g. `resamp`, `192000`, `192000 +2dB`). It re-execs `drc.sh` with those
+`last_arg` (e.g. `resamp`, `192000`). It re-execs `drc.sh` with those
 arguments, and that run rebuilds the chain:
 
 1. Stop any running BruteFIR and wait for it to release the DAC.

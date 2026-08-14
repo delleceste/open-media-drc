@@ -4,7 +4,7 @@
 # REQUIRE: NETWORKING FILESYSTEMS musicpd
 # KEYWORD: shutdown
 #
-# Template — generated to omdrc_renderer by install.sh from config.env.
+# Template — rendered to omdrc_renderer by CMake from host.cmake.
 #
 # Starts the renderer that was active when the box went down: qobuzconnect2mpd
 # or upmpdcli, whichever omdrcctrl's toggle last recorded in the state file
@@ -37,6 +37,7 @@ status_cmd="omdrc_renderer_status"
 load_rc_config "$name"
 
 : ${omdrc_renderer_enable:="NO"}
+: ${omdrc_renderer_prefix:="@PREFIX@"}
 : ${omdrc_renderer_script:="@REPO_DIR@/scripts/omdrc-renderer"}
 # State directory holding last_renderer.  Leave empty to let the helper resolve
 # it the way drc.sh does (checkout in run-from-repo mode, /var/db/omdrc as root
@@ -53,6 +54,11 @@ load_rc_config "$name"
 # dispatches and stays root.
 
 required_files="${omdrc_renderer_script}"
+
+# The shared renderer helper resolves installed rc scripts below PREFIX.
+# Export the configured installation prefix so non-/usr/local installs do not
+# silently dispatch to a different set of services.
+export PREFIX="${omdrc_renderer_prefix}"
 
 if [ -n "${omdrc_renderer_statedir}" ]; then
 	export OMDRC_STATE_DIR="${omdrc_renderer_statedir}"

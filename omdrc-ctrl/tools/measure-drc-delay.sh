@@ -42,7 +42,7 @@ BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # omdrc-ctrl/
 REPO="$(cd "$BASE/.." && pwd)"                            # open-media-drc/
 GEOMETRY="${GEOMETRY:-120.blue}"
 MODE="${MODE:-resamp}"            # resamp -> 192k via DRC-resamp; native -> RATE via DRC-native
-VARIANT="${VARIANT:-}"           # e.g. +2dB (matches configs/<geom>/brutefir-<rate><variant>.conf)
+VARIANT="${VARIANT:-}"           # matches configs/<geom>/brutefir-<rate><variant>.conf
 case "$MODE" in
   resamp) RATE="${RATE:-192000}"; MPD_DRC_OUT="DRC-resamp" ;;
   native) RATE="${RATE:-48000}";  MPD_DRC_OUT="DRC-native" ;;

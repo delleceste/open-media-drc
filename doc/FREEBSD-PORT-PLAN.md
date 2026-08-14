@@ -26,8 +26,8 @@ optimizes for a different thing (zero-config personal appliance):
    `drc.log` beside itself. `pkg check -s` flags any modified packaged file;
    state must live in `/var/db/` (or XDG state for user mode).
 3. **Room-specific data is mixed with software.** `configs/120.blue`,
-   `configs/185`, `filters/*` (~18 MB) are personal measurement products, not
-   software. A port must ship neutral defaults.
+   `filters/*` (~50 MB) are personal measurement products, not software. A port
+   must ship neutral defaults.
 4. **rc.d scripts shadow other ports.** `etc/rc.d/musicpd` and `upmpdcli`
    replace scripts owned by audio/musicpd and net/upmpdcli. A port may not
    override another port's rc script — the stock scripts' rc.conf knobs
@@ -74,11 +74,14 @@ usable by anyone, not just this box/room.
 - **Engine** (shipped): drc.sh, drc-status.sh, omdrc-ctrl, video/webremote,
   browser-nodrc, rc.d/devd for *our own* services, mpd/upmpdcli *sample
   snippets*, docs.
-- **Site data** (not shipped): `configs/120.blue`, `configs/185`,
-  `filters/120.blue`, `filters/185-green`, the room README sections, the
-  `doc/current.*.png` measurement plots. Move to `examples/rooms/` in-repo or,
-  better, to a separate private repo/overlay checked out beside the engine
-  (`OMDRC_SITE_DIR`). Git history keeps them either way.
+- **Site data** (not shipped): `configs/120.blue`, `filters/120.blue`,
+  `filters/185-green`, the room README sections, the `doc/current.*.png`
+  measurement plots. The seam for this now exists: `OMDRC_SITE_DATA_DIRS`
+  (CMake) and `OMDRC_SITE_ROOT` (the design scripts) resolve
+  `configs/<geo>` + `filters/<geo>` in a separate checkout beside the engine —
+  see *Keeping room data out of the engine repository* in `scripts/README.md`.
+  The name is deliberately not `OMDRC_SITE_DIR`, which drc.sh already uses at
+  runtime for the installed `etc/open-media-drc`. Git history keeps them either way.
 
 ### 1.2 FLAT default filters (do this first — it is independent and small)
 
