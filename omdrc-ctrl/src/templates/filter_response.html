@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Verified DRC response</title>
     <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='filter-response-smoothing.js') }}"></script>
     <style>
         :root {
             --bg:#0d1117; --panel:#161b22; --border:#30363d;
@@ -27,6 +28,12 @@
             border-radius:6px; padding:6px 11px; font-size:.8rem; cursor:pointer;
         }
         button:hover, button.active { border-color:var(--accent); color:#fff; background:#1f6feb33; }
+        .smoothing-control { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:.8rem; }
+        select {
+            background:var(--panel); color:var(--text); border:1px solid var(--border);
+            border-radius:6px; padding:6px 25px 6px 9px; font-size:.8rem; cursor:pointer;
+        }
+        select:hover, select:focus { border-color:var(--accent); outline:none; }
         #status { color:var(--muted); font-size:.9rem; padding:26px 4px; line-height:1.5; }
         #status.error { color:var(--bad); }
         .verification {
@@ -89,6 +96,15 @@
         <div class="controls">
             <button id="mode-mag" class="active" onclick="setMode('magnitude_db')">Magnitude</button>
             <button id="mode-phase" onclick="setMode('phase_deg')">Phase</button>
+            <label class="smoothing-control" for="smoothing-select">Smoothing
+                <select id="smoothing-select" title="Display-only smoothing; verified source data is unchanged" onchange="setSmoothing(this.value)">
+                    <option value="none">Unsmoothed</option>
+                    <option value="variable">Variable</option>
+                    <option value="psychoacoustic">Psychoacoustic</option>
+                    <option value="octave-3">1/3 octave</option>
+                    <option value="octave-6">1/6 octave</option>
+                </select>
+            </label>
         </div>
         <div id="legend" class="legend"></div>
         <section class="chart-card">
@@ -108,7 +124,14 @@ const FREQ_TICKS = [10,20,50,100,200,500,1000,2000,5000,10000,20000];
 let responseData = null;
 let responseChart = null;
 let mode = 'magnitude_db';
+let smoothing = 'none';
 let traces = [];
+let responseNote = '';
+
+const SMOOTHING_LABELS = {
+    none:'Unsmoothed', variable:'Variable', psychoacoustic:'Psychoacoustic',
+    'octave-6':'1/6 octave', 'octave-3':'1/3 octave',
+};
 
 function el(name, text) {
     const node = document.createElement(name);
@@ -156,17 +179,43 @@ function setMode(next) {
     draw();
 }
 
+function setSmoothing(next) {
+    smoothing = next;
+    draw();
+}
+
+function displaySeries(trace) {
+    if (!trace.displayCache) trace.displayCache = {};
+    const key = `${mode}:${smoothing}`;
+    if (!trace.displayCache[key]) {
+        trace.displayCache[key] = FilterResponseSmoothing.smoothTrace(
+            trace.freqs, trace[mode], mode, smoothing);
+    }
+    return trace.displayCache[key];
+}
+
+function updateNote() {
+    const visual = smoothing === 'none'
+        ? 'Visual smoothing is off.'
+        : `${SMOOTHING_LABELS[smoothing]} visual smoothing is active.`;
+    document.getElementById('note').textContent =
+        `${responseNote} ${visual} Smoothing changes only the browser rendering; verified source arrays and hashes remain unchanged.`;
+}
+
 function draw() {
     if (!responseData) return;
     const phase = mode === 'phase_deg';
     document.getElementById('chart-title').innerHTML = phase
-        ? 'Phase <span class="sub">— wrapped degrees vs frequency</span>'
-        : 'Magnitude <span class="sub">— room curves are SPL; filter curves are effective runtime gain</span>';
-    const datasets = traces.filter(t => t.selected).map(t => ({
-        label:t.label, borderColor:t.color, backgroundColor:t.color,
-        borderDash:t.dash || [],
-        data:t.freqs.map((f, i) => ({x:f, y:t[mode][i]})),
-    }));
+        ? `Phase <span class="sub">— wrapped degrees vs frequency · ${SMOOTHING_LABELS[smoothing]}</span>`
+        : `Magnitude <span class="sub">— room curves are SPL; filter curves are effective runtime gain · ${SMOOTHING_LABELS[smoothing]}</span>`;
+    const datasets = traces.filter(t => t.selected).map(t => {
+        const series = displaySeries(t);
+        return {
+            label:t.label, borderColor:t.color, backgroundColor:t.color,
+            borderDash:t.dash || [],
+            data:series.frequencies.map((frequency, index) => ({x:frequency, y:series.values[index]})),
+        };
+    });
     if (responseChart) responseChart.destroy();
     responseChart = new Chart(document.getElementById('response-chart'), {
         type:'line', data:{datasets}, options:{
@@ -189,6 +238,7 @@ function draw() {
             elements:{point:{radius:0},line:{borderWidth:1.55,tension:0}},
         }
     });
+    updateNote();
 }
 
 function addDetail(term, description) {
@@ -249,7 +299,7 @@ async function load() {
         verdict.replaceChildren();
         const badge = el('span', verified?'✓ Verified':'✕ Unverified'); badge.className = 'badge';
         verdict.append(badge, el('span', data.verification?.message || 'No verification result.'));
-        document.getElementById('note').textContent = verified
+        responseNote = verified
             ? `The default original curve is the hash-pinned independent L+R measurement; the corrected curve is L × FLX + R × FRX through the exact active filters. The calculated original L+R is also selectable. BruteFIR's ${data.channels[0].attenuation} dB coefficient attenuation is included. The source commit/tag constraint is shown in the green verification banner; full hashes are below.`
             : `Stored measurements and predicted room curves are withheld. The displayed fallback is an FFT of the coefficient bytes currently loaded by BruteFIR, including configured attenuation.`;
         renderLegend(); renderDetails(data); draw();

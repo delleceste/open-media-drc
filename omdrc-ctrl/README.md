@@ -39,9 +39,9 @@ provides no feedback. Every command here either shows its output directly
   so a reload is the only way), at the same sample rate, and the picker stays
   busy until the new set is actually running. See
   [`POST /drc/geometry`](#post-drcgeometry).
-- **DRC filter analysis** — a **Filter response** page renders the live
-  frequency-magnitude, phase, and group-delay of the BruteFIR FIR filters
-  (`L.raw` / `R.raw`), computed on demand by FFT. See
+- **DRC filter analysis** — a **Filter response** page renders magnitude and
+  wrapped phase for the hash-bound measurements, FIR filters and predicted
+  corrected responses, with display-only smoothing. See
   [DRC filter response](#drc-filter-response).
 - **Live spectrum analyzer** — optional MPD FIFO tap (Linux and FreeBSD) with
   left/right FFT graphs and VU bars/needles. The card is collapsible (revealed on
@@ -452,7 +452,7 @@ from the same directory as the `.md` file via
 │   ├── README.md
 │   └── img/
 │       └── freq_response.png
-└── 120.blue+2dB/
+└── 120.blue@rscreen-20260812/
     ├── README.md
     └── img/
         └── freq_response.png
@@ -1007,7 +1007,10 @@ dedicated page ([`GET /filter-response`](#get-filter-response)). A single
 log-frequency Chart.js plot toggles between magnitude and wrapped phase. Its
 checkbox legend offers original L/R, independently measured L+R, coherent
 calculated L+R, FLX/FRX, corrected L/R and corrected L+R. The coherent original
-and corrected sums are selected by default.
+and corrected sums are selected by default. A smoothing dropdown offers
+**Unsmoothed**, **Variable**, **Psychoacoustic**, **1/3 octave** and
+**1/6 octave** views. Smoothing is calculated only in the browser; it neither
+rewrites the verified response arrays nor changes any provenance hash.
 
 The green **Verified** badge means the current coefficient bytes match the
 hash-bound bundle. For newly declared designs its always-visible text includes
