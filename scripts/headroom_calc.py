@@ -16,9 +16,9 @@ given frequency f is:
 where H(f) is the filter's complex frequency response.  For a full-scale
 sine at the frequency of maximum gain the output would clip if |H(f)| > 1.
 
-The required headroom in dB is therefore:
+For a requested safety margin, the required BruteFIR attenuation is therefore:
 
-    headroom_dB = 20 × log10( max_f |H(f)| )   [only positive values matter]
+    attenuation_dB = max(0, peak_gain_dB + safety_margin_dB)
 
 We obtain H(f) by taking the FFT of the impulse response:
 the FFT output at each bin IS H(f) evaluated at that bin's frequency,
@@ -28,12 +28,15 @@ A practical safety margin of +1 dB is added on top.  The suggested
 brutefir `attenuation:` value is then rounded up to one decimal place.
 """
 
+import argparse
+import json
+from pathlib import Path
+import re
+
 import numpy as np
-import os
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-FILTER_DIR = os.path.join(os.path.dirname(__file__), '..', 'filters', '120.blue')
 SAFETY_MARGIN_DB = 1.0   # extra dB added on top of the theoretical minimum
 
 # Map each .raw file to its sample format.
@@ -43,24 +46,13 @@ SAFETY_MARGIN_DB = 1.0   # extra dB added on top of the theoretical minimum
 # Filters are grouped into L/R pairs: brutefir uses a single `attenuation:` value
 # per coeff block, and both channels must share the same value to preserve balance.
 # The pair's attenuation is therefore driven by whichever channel needs more headroom.
-FILTER_PAIRS = [
-    # (left_file, left_dtype, right_file, right_dtype, pair_label)
-    (
-        'FLX+0dB-192k_sox_upsample_float64.raw', '<f8',
-        'FRX+0dB-192k_sox_upsample_float64.raw', '<f8',
-        '+0dB float64',
-    ),
-    (
-        'FLX+2dB-192k_sox_upsample_float64.raw', '<f8',
-        'FRX+2dB-192k_sox_upsample_float64.raw', '<f8',
-        '+2dB float64',
-    ),
-    (
-        'FLX+2dB-trimmed-192k.raw', '<i4',
-        'FRX+2dB-trimmed-192k.raw', '<i4',
-        '+2dB trimmed S32',
-    ),
-]
+FORMAT_DTYPES = {
+    'FLOAT64_LE': '<f8', 'FLOAT64_BE': '>f8',
+    'FLOAT32_LE': '<f4', 'FLOAT32_BE': '>f4',
+    'FLOAT_LE': '<f4', 'FLOAT_BE': '>f4',
+    'S32_LE': '<i4', 'S32_BE': '>i4',
+    'S16_LE': '<i2', 'S16_BE': '>i2',
+}
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -73,10 +65,9 @@ def load_filter(path: str, dtype: str) -> np.ndarray:
     # Parse the bytes into the declared sample type
     samples = np.frombuffer(raw, dtype=dtype)
 
-    if dtype == '<i4':
-        # S32_LE: full scale is 2^31.  Divide to bring into the ±1 range
-        # that matches the floating-point world brutefir works in.
-        samples = samples.astype(np.float64) / (2 ** 31)
+    if np.issubdtype(samples.dtype, np.integer):
+        # Signed integer PCM: divide by 2^(bits-1), matching the [-1, 1) scale.
+        samples = samples.astype(np.float64) / (2 ** (samples.dtype.itemsize * 8 - 1))
 
     # dtype '<f8' is already in ±1 range (by construction from sox)
     return samples.astype(np.float64)
@@ -120,18 +111,85 @@ def suggested_attenuation(peak_db: float, margin_db: float) -> float:
     """
     Return the brutefir `attenuation:` value to use.
 
-    brutefir's attenuation is a *positive* number of dB of reduction.
-    We only need attenuation when the filter has gain > 0 dB.
-    We round up to one decimal place to keep the conf file tidy.
+    brutefir's attenuation is a non-negative number of dB of reduction.
+    Existing attenuation in the filter contributes to the requested safety
+    margin.  We round up to one decimal place to keep the conf file tidy.
     """
-    raw = max(peak_db, 0.0) + margin_db
-    # Ceiling to one decimal place
-    return round(np.ceil(raw * 10) / 10, 1)
+    raw = peak_db + margin_db
+    # Ceiling to one decimal place, with no runtime gain above unity.
+    return max(0.0, round(np.ceil(raw * 10) / 10, 1))
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def config_attenuation(config: Path) -> float | None:
+    if not config.is_file():
+        return None
+    values = [float(value) for value in re.findall(
+        r'attenuation:\s*([-\d.]+)', config.read_text(encoding='utf-8'))]
+    if not values:
+        return None
+    if any(value != values[0] for value in values[1:]):
+        raise ValueError(f'left/right attenuation differs in {config}')
+    return values[0]
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    default_root = Path(__file__).resolve().parents[1] / 'filters/120.blue'
+    parser.add_argument('filter_root', nargs='?', type=Path, default=default_root,
+                        help='geometry filter root (default: filters/120.blue)')
+    parser.add_argument('--variant', default='',
+                        help='subdirectory below each rate, for example +2dB')
+    parser.add_argument('--format', default='FLOAT64_LE', choices=sorted(FORMAT_DTYPES))
+    parser.add_argument('--margin', type=float, default=SAFETY_MARGIN_DB)
+    parser.add_argument('--json', action='store_true', dest='as_json')
+    args = parser.parse_args()
+    root = args.filter_root.resolve()
+    dtype = FORMAT_DTYPES[args.format]
+    rate_dirs = sorted(
+        (path for path in root.iterdir() if path.is_dir() and path.name.isdigit()),
+        key=lambda path: int(path.name),
+    ) if root.is_dir() else []
+    if not rate_dirs:
+        parser.error(f'no numeric sample-rate directories under {root}')
+
+    repo_root = Path(__file__).resolve().parents[1]
+    geometry = root.name
+    results = []
+    failed = False
+    for rate_dir in rate_dirs:
+        pair_dir = rate_dir / args.variant if args.variant else rate_dir
+        left, right = pair_dir / 'L.raw', pair_dir / 'R.raw'
+        if not left.is_file() and not right.is_file():
+            continue
+        if not left.is_file() or not right.is_file():
+            raise FileNotFoundError(f'incomplete filter pair in {pair_dir}')
+        peaks = {
+            'left': peak_gain_db(load_filter(str(left), dtype)),
+            'right': peak_gain_db(load_filter(str(right), dtype)),
+        }
+        limiting = max(peaks, key=peaks.get)
+        required = suggested_attenuation(peaks[limiting], args.margin)
+        suffix = args.variant if args.variant else ''
+        config = repo_root / 'configs' / geometry / f'brutefir-{rate_dir.name}{suffix}.conf.in'
+        configured = config_attenuation(config)
+        passed = configured is None or configured >= required
+        failed |= not passed
+        results.append({
+            'rate': int(rate_dir.name), 'variant': args.variant or 'default',
+            'format': args.format, 'left_peak_db': round(peaks['left'], 6),
+            'right_peak_db': round(peaks['right'], 6), 'limiting_channel': limiting,
+            'safety_margin_db': args.margin, 'required_attenuation_db': required,
+            'configured_attenuation_db': configured, 'passed': bool(passed),
+        })
+
+    if not results:
+        parser.error(f'no complete L.raw/R.raw pairs for variant {args.variant or "default"}')
+    if args.as_json:
+        print(json.dumps(results, indent=2))
+        return 1 if failed else 0
+
     col_pair  = 20
     col_ch    = 48
     col_num   = 10
@@ -141,41 +199,26 @@ def main():
     print(header)
     print(f"{'':─<{col_pair}} {'':─<{col_ch}} {'(dB)':>{col_num}} {'':>{col_num}} {'atten (dB)':>{col_num}}")
 
-    for l_file, l_dtype, r_file, r_dtype, label in FILTER_PAIRS:
-
-        results = {}
-        for ch, filename, dtype in [('L', l_file, l_dtype), ('R', r_file, r_dtype)]:
-            path = os.path.join(FILTER_DIR, filename)
-            if not os.path.exists(path):
-                print(f"  {'FILE NOT FOUND: ' + filename}")
-                results[ch] = None
-                continue
-            h = load_filter(path, dtype)
-            results[ch] = peak_gain_db(h)
-
-        if None in results.values():
-            continue
-
-        peak_l, peak_r = results['L'], results['R']
-
-        # The channel with the higher peak gain determines the attenuation for the pair.
-        # Using the other channel's (lower) value would leave the louder one clipping.
-        limiting_ch = 'L' if peak_l >= peak_r else 'R'
-        peak_pair   = max(peak_l, peak_r)
-        suggested   = suggested_attenuation(peak_pair, SAFETY_MARGIN_DB)
-
-        # Print one row per channel, with pair label and suggestion only on first row
-        print(f"{label:<{col_pair}} {l_file:<{col_ch}} {peak_l:>+{col_num}.3f}"
-              f" {'← limits' if limiting_ch == 'L' else '':>{col_num}} {suggested:>{col_num}.1f}")
-        print(f"{'': <{col_pair}} {r_file:<{col_ch}} {peak_r:>+{col_num}.3f}"
-              f" {'← limits' if limiting_ch == 'R' else '':>{col_num}}")
+    for item in results:
+        label = f"{item['rate']} {item['variant']}"
+        limiting = item['limiting_channel']
+        print(f"{label:<{col_pair}} {'L.raw':<{col_ch}} {item['left_peak_db']:>+{col_num}.3f}"
+              f" {'← limits' if limiting == 'left' else '':>{col_num}} {item['required_attenuation_db']:>{col_num}.1f}")
+        print(f"{'': <{col_pair}} {'R.raw':<{col_ch}} {item['right_peak_db']:>+{col_num}.3f}"
+              f" {'← limits' if limiting == 'right' else '':>{col_num}}")
+        configured = item['configured_attenuation_db']
+        if configured is not None:
+            verdict = 'PASS' if item['passed'] else 'FAIL'
+            print(f"{'': <{col_pair}} {'configured':<{col_ch}} {configured:>{col_num}.1f}"
+                  f" {verdict:>{col_num}}")
         print()
 
-    print(f"Safety margin applied: {SAFETY_MARGIN_DB} dB")
+    print(f"Safety margin applied: {args.margin} dB")
     print("'Suggested atten (dB)' → use this for BOTH channels in brutefir.conf `attenuation:`")
     print("Note: attenuation in brutefir is a gain reduction applied before convolution output;"
           "\n      it is lossless in float64 — only clipping prevention matters, not level optimisation.")
+    return 1 if failed else 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

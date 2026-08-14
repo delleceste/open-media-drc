@@ -3,6 +3,10 @@
 This document describes how filter files are organized and how `drc.sh` selects
 geometry, sample rate, MPD output mode, and filter variants.
 
+For the checksum-backed source manifest, atomic deployment workflow, predicted
+measurement response, and runtime web-UI verification design, see
+[`doc/FILTER_PROVENANCE_AND_RESPONSE.md`](doc/FILTER_PROVENANCE_AND_RESPONSE.md).
+
 It is intentionally explicit so an AI agent can reason about the repository
 without guessing path conventions.
 
@@ -96,6 +100,21 @@ filters/120.blue/192000/R.raw
 filters/120.blue/192000/+2dB/L.raw
 filters/120.blue/192000/+2dB/R.raw
 ```
+
+New immutable designs use an `@design-id` subdirectory so the physical geometry
+and filter revision remain separate concepts:
+
+```text
+filters/120.blue/192000/@2026-08-target-a/L.raw
+filters/120.blue/192000/@2026-08-target-a/R.raw
+configs/120.blue/brutefir-192000@2026-08-target-a.conf.in
+```
+
+List or select them with `./drc.sh design --list` and
+`./drc.sh design @2026-08-target-a`. The web control exposes the same selector.
+Each design has a hash-bound file under `provenance/` and plot data under
+`analysis/`; the response page releases the stored room curves only when the
+active RAW pair matches that manifest exactly.
 
 The `rew/` directory contains original or source files exported by Room EQ
 Wizard (REW), plus variant-specific source material. These files are not read by
@@ -379,6 +398,13 @@ mpc enable DRC-resamp
 
 ## Filter Generation
 
+For committed designs, use the declaration/tag workflow documented in
+[`doc/FILTER_PROVENANCE_AND_RESPONSE.md`](doc/FILTER_PROVENANCE_AND_RESPONSE.md).
+It binds explicitly selected files to a committed source declaration and an
+annotated Git tag, performs the TXT/WAV and headroom checks offline, generates
+all requested rate flavours and configs, and publishes the graph bundle. REW is
+not launched. The commands below are lower-level tools for experiments.
+
 For the `120.blue` layout, source REW WAV files are stored under:
 
 ```text
@@ -451,4 +477,3 @@ When changing this repository:
    and point it to the variant raw files.
 8. After generating or changing filters, run `scripts/headroom_calc.py` or
    otherwise verify the required BruteFIR `attenuation`.
-

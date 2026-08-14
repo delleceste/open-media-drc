@@ -225,6 +225,38 @@
         .geo-select:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
         .geo-select:disabled { cursor: default; opacity: .65; }
         .geo-select.busy { border-color: var(--accent); opacity: .55; }
+        .drc-session-panel {
+            padding: 10px 0 11px;
+            border-bottom: 1px solid var(--border);
+            font-size: .72rem;
+            line-height: 1.45;
+        }
+        .drc-feedback-line {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
+        }
+        .drc-feedback-line + .drc-feedback-line { margin-top: 5px; }
+        .drc-feedback-text { min-width: 0; overflow-wrap: anywhere; }
+        .drc-feedback-meta { color: var(--muted); }
+        .drc-state-dot {
+            width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+            background: var(--muted);
+        }
+        .drc-session-panel.verified .drc-state-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+        .drc-session-panel.mismatch .drc-state-dot { background: var(--red); box-shadow: 0 0 6px var(--red); }
+        .drc-session-panel.busy .drc-state-dot { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+        .drc-session-panel.warning .drc-state-dot { background: var(--yellow); }
+        @keyframes pulse { 50% { opacity: .3; } }
+        .drc-session-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+        .btn-session {
+            padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px;
+            background: var(--bg); color: var(--accent); font-size: .68rem;
+            cursor: pointer; white-space: nowrap;
+        }
+        .btn-session:hover:not(:disabled) { border-color: var(--accent); }
+        .btn-session:disabled { color: var(--muted); cursor: default; opacity: .6; }
         #spectrum-controls-toggle { cursor: pointer; }
         #spectrum-controls-toggle.on { border-color: var(--accent); color: var(--accent); }
         .spectrum-title-btns { display: flex; align-items: center; gap: 8px; }
@@ -637,8 +669,23 @@
 {% macro render_group(group_name, group_label, cmds) %}
 <div class="card">
     <div class="card-title"{% if group_name == 'drc' %} style="display:flex;justify-content:space-between;align-items:baseline"{% endif %}>
-        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:10px"><select id="drc-geometry-select" class="geo-select" title="Filter set" disabled onchange="switchGeometry(this.value)"></select><a class="btn-details active" href="/filter-response">Filter response ↗</a></span>{% endif %}
+        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/filter-response">Filter response ↗</a></span>{% endif %}
     </div>
+    {% if group_name == 'drc' %}
+    <div id="drc-session-panel" class="drc-session-panel" aria-live="polite">
+        <div class="drc-feedback-line">
+            <span class="drc-state-dot"></span>
+            <span id="drc-active-feedback" class="drc-feedback-text">Checking active filter identity…</span>
+        </div>
+        <div class="drc-feedback-line drc-feedback-meta">
+            <span id="drc-saved-feedback" class="drc-feedback-text">Reading saved restore session…</span>
+            <span class="drc-session-actions">
+                <button id="drc-session-restore" class="btn-session" disabled onclick="restoreDrcSession()">Restore saved</button>
+            </span>
+        </div>
+        <div id="drc-transition-feedback" class="drc-feedback-line drc-feedback-meta" hidden></div>
+    </div>
+    {% endif %}
 
     {% for cmd in cmds %}
     <div class="row">
@@ -919,6 +966,78 @@ const SPECTRUM_VU_MODE = {{ spectrum.vu_mode | tojson }};
 // set and the Active config row (the rate can change with the set).
 let geoBusy    = false;
 let geoCurrent = '';
+let designBusy = false;
+let designCurrent = '';
+let drcSessionBusy = false;
+let drcLastState = null;
+
+function designLabel(value) {
+    if (!value || value === 'default') return 'default';
+    return value.startsWith('@') ? value.slice(1) : value;
+}
+
+function shortIdentity(value, length = 12) {
+    return value ? String(value).slice(0, length) : '';
+}
+
+function setDrcTransition(message = '') {
+    const line = document.getElementById('drc-transition-feedback');
+    if (!line) return;
+    line.textContent = message;
+    line.hidden = !message;
+}
+
+function renderDrcFeedback(data) {
+    const panel = document.getElementById('drc-session-panel');
+    const activeLine = document.getElementById('drc-active-feedback');
+    const savedLine = document.getElementById('drc-saved-feedback');
+    const restore = document.getElementById('drc-session-restore');
+    if (!panel || !activeLine || !savedLine || !restore) return;
+    drcLastState = data;
+    const active = data.active || {};
+    const session = data.session || {};
+    const verification = active.verification || {};
+    panel.classList.remove('verified', 'mismatch', 'warning', 'busy');
+    if (designBusy || geoBusy || drcSessionBusy) panel.classList.add('busy');
+    else if (active.running && verification.status === 'verified') panel.classList.add('verified');
+    else if (active.running && verification.status === 'mismatch') panel.classList.add('mismatch');
+    else panel.classList.add('warning');
+
+    if (active.running) {
+        const selector = designLabel(active.design);
+        const named = active.description && active.description !== active.design_id
+            ? `${active.description} (${selector})` : selector;
+        const rate = active.rate ? `${Number(active.rate).toLocaleString()} Hz` : 'unknown rate';
+        activeLine.textContent = `Active: ${named} · ${rate} · ${active.config || 'unknown config'}`;
+        const facts = [];
+        if (verification.status === 'verified') facts.push('verified');
+        else facts.push(`NOT VERIFIED: ${verification.message || verification.status || 'unknown'}`);
+        if (active.bundle_id) facts.push(`bundle ${shortIdentity(active.bundle_id)}`);
+        if (active.release && active.release.kind === 'annotated_tag') {
+            facts.push(`tag ${active.release.name}`);
+        }
+        if (active.source_commit) facts.push(`commit ${shortIdentity(active.source_commit)}`);
+        activeLine.textContent += ` · ${facts.join(' · ')}`;
+        activeLine.title = verification.message || '';
+    } else {
+        activeLine.textContent = 'Active: DRC off · BruteFIR has no loaded filter';
+        activeLine.title = verification.message || '';
+    }
+
+    if (session.geometry) {
+        const savedRate = session.mode === 'resamp'
+            ? 'auto-resample at 192,000 Hz'
+            : `${Number(session.rate).toLocaleString()} Hz`;
+        savedLine.textContent = `Auto-saved session: ${session.power} · ${session.geometry} · ${designLabel(session.design)} · ${savedRate}`;
+        if (session.power === 'off') savedLine.textContent += ' (restore keeps DRC off)';
+    } else {
+        savedLine.textContent = 'Saved session unavailable';
+    }
+    restore.disabled = drcSessionBusy || !!session.matches_active;
+    restore.title = session.matches_active
+        ? 'The running chain already matches the saved session'
+        : 'Re-apply the exact saved power, geometry, rate and design';
+}
 
 async function loadGeometries() {
     const sel = document.getElementById('drc-geometry-select');
@@ -938,7 +1057,7 @@ async function loadGeometries() {
         }
         // A single installed set is a label, not a choice.
         sel.disabled = list.length < 2;
-        sel.title = list.length < 2 ? 'Filter set (only one installed)' : 'Filter set';
+        sel.title = list.length < 2 ? 'Room geometry (only one installed)' : 'Room geometry';
     } catch { /* offline — the status dot already says so */ }
 }
 
@@ -974,6 +1093,7 @@ async function switchGeometry(target) {
     geoBusy = false;
     sel.classList.remove('busy');
     await loadGeometries();
+    await loadDesigns();
     // The Active config row can change with the set (a set without the current
     // rate falls back to one it has), so refresh it now instead of waiting for
     // its poll.  Guarded: the row only exists when drc_status is configured.
@@ -981,6 +1101,124 @@ async function switchGeometry(target) {
 }
 
 loadGeometries();
+
+async function loadDesigns() {
+    const sel = document.getElementById('drc-design-select');
+    if (!sel || designBusy) return;
+    try {
+        const d = await (await fetch('/drc/design')).json();
+        if (!d.ok || !d.design) return;
+        designCurrent = d.design;
+        const list = (d.available && d.available.length) ? d.available : [d.design];
+        sel.replaceChildren();
+        for (const design of list) {
+            const option = document.createElement('option');
+            option.value = design;
+            option.textContent = designLabel(design);
+            if (d.active && d.active.design === design && d.active.description &&
+                    d.active.description !== d.active.design_id) {
+                option.textContent = `${d.active.description} · ${designLabel(design)}`;
+            }
+            option.selected = design === d.design;
+            sel.appendChild(option);
+        }
+        sel.disabled = list.length < 2;
+        sel.title = list.length < 2 ? 'Filter design (only one at this rate)' : 'Filter design (A/B)';
+        renderDrcFeedback(d);
+    } catch { /* offline */ }
+}
+
+async function switchDesign(target) {
+    const sel = document.getElementById('drc-design-select');
+    if (designBusy || !target || target === designCurrent) return;
+    designBusy = true;
+    sel.disabled = true;
+    sel.classList.add('busy');
+    writeStatus('');
+    const label = target.startsWith('@') ? target.slice(1) : target;
+    const previous = designLabel(designCurrent);
+    setDrcTransition(`Switching: ${previous} → ${label} · restarting the DRC chain…`);
+    if (drcLastState) renderDrcFeedback(drcLastState);
+    toast(`switching ${previous} → ${label} — restarting brutefir…`, 'ok', 120000);
+    try {
+        const d = await (await fetch('/drc/design', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({design:target}),
+        })).json();
+        if (d.active || d.session) renderDrcFeedback(d);
+        if (d.ok) {
+            const from = designLabel((d.transition || {}).from || designCurrent);
+            if (d.state === 'saved') {
+                toast(`saved ${from} → ${label}; DRC remains off`, 'ok');
+                setDrcTransition(`Saved: ${from} → ${label} · applies on the next activation`);
+            } else if (d.assurance === 'verified') {
+                const bundle = d.active && d.active.bundle_id
+                    ? ` · bundle ${shortIdentity(d.active.bundle_id)}` : '';
+                toast(`verified active: ${from} → ${label}${bundle}`, 'ok', 5200);
+                setDrcTransition(`Completed and verified: ${from} → ${label}${bundle}`);
+            } else {
+                toast(`active ${label}, but provenance is not verified`, 'error');
+                setDrcTransition(`Completed with warning: ${from} → ${label} · provenance unverified`);
+            }
+        } else {
+            toast('filter design switch failed', 'error');
+            writeStatus(d.error || 'switch failed');
+            setDrcTransition(`Switch assurance failed: ${d.error || 'unknown error'}`);
+        }
+    } catch {
+        toast('network error', 'error');
+        setDrcTransition('Switch result unknown: network error; re-reading the active config…');
+    }
+    designBusy = false;
+    sel.classList.remove('busy');
+    await loadDesigns();
+    if (document.getElementById('out-drc_status')) fetchRead('drc_status');
+}
+
+async function restoreDrcSession() {
+    if (drcSessionBusy || !drcLastState || !drcLastState.session) return;
+    const saved = drcLastState.session;
+    const summary = `${saved.power}, ${saved.geometry}, ${designLabel(saved.design)}, ${saved.label || saved.rate + ' Hz'}`;
+    if (!window.confirm(`Restore the saved DRC session?\n\n${summary}`)) return;
+    drcSessionBusy = true;
+    setDrcTransition(`Restoring saved session: ${summary}…`);
+    renderDrcFeedback(drcLastState);
+    const geo = document.getElementById('drc-geometry-select');
+    const design = document.getElementById('drc-design-select');
+    if (geo) geo.disabled = true;
+    if (design) design.disabled = true;
+    toast('restoring saved DRC session…', 'ok', 120000);
+    try {
+        const d = await (await fetch('/drc/session', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({action:'restore'}),
+        })).json();
+        if (d.active || d.session) renderDrcFeedback(d);
+        if (d.ok && d.assurance === 'verified') {
+            toast('saved DRC session restored and verified', 'ok', 5200);
+            setDrcTransition('Saved session restored; active config and filter hashes are verified.');
+        } else if (d.ok && d.assurance === 'off') {
+            toast('saved session restored: DRC remains off', 'ok', 5200);
+            setDrcTransition('Saved off state restored; BruteFIR is stopped as requested.');
+        } else if (d.ok) {
+            toast('saved session restored, but provenance is unverified', 'error');
+            setDrcTransition('Saved session matches the active config, but provenance is unverified.');
+        } else {
+            toast('saved session restore failed', 'error');
+            writeStatus(d.error || 'restore failed');
+            setDrcTransition(`Restore assurance failed: ${d.error || 'unknown error'}`);
+        }
+    } catch {
+        toast('network error', 'error');
+        setDrcTransition('Restore result unknown: network error; re-reading state…');
+    }
+    drcSessionBusy = false;
+    await loadGeometries();
+    await loadDesigns();
+    if (document.getElementById('out-drc_status')) fetchRead('drc_status');
+}
+
+loadDesigns();
 
 // ── toast ──────────────────────────────────────────────────────────────────
 let _tt = null;

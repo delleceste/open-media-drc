@@ -107,7 +107,8 @@ state_label() {
     set -- $state
     mode="${1:-}"
     variant="${2:-}"
-    profile="${variant:-Flat}"
+    profile="${variant#@}"
+    profile="${profile:-Flat}"
 
     if [ "$mode" = "resamp" ]; then
         printf '%s auto-resample\n' "$profile"
@@ -155,7 +156,7 @@ running_config_to_state() {
 # avoids matching the grep process itself.
 configs=$(ps -ax -o args= 2>/dev/null \
     | grep -E '[b]rutefir.*\.conf' \
-    | sed -n 's|.*configs/\([^/]*\)/brutefir-\([^. ]*\)\.conf.*|\2|p' \
+    | sed -n 's|.*configs/\([^/]*\)/brutefir-\([^/ ]*\)\.conf.*|\2|p' \
     | sort -u)
 
 if [ -z "$configs" ]; then

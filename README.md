@@ -252,16 +252,23 @@ Per-geometry, per-rate brutefir configuration files live under `configs/<geometr
 Each file sets `sampling_rate`, points to the matching filter files in `filters/<geometry>/<rate>/`,
 and is selected automatically by `drc.sh` based on the active geometry and rate.
 
-Variant configs (e.g. `+2dB`) live alongside the default:
+Variant/design configs (e.g. legacy `+2dB` or immutable `@design-id`) live alongside the default:
 `configs/120.blue/brutefir-192000.conf` (default), `configs/120.blue/brutefir-192000+2dB.conf`, etc.
 
 # The filters/ directory
 
 Contains filter raw files under `filters/<geometry>/<rate>/L.raw` and `R.raw`.
 Variants live one level deeper: `filters/<geometry>/<rate>/<variant>/L.raw`.
+New A/B designs use `@design-id`, for example
+`filters/120.blue/192000/@2026-08-target-a/L.raw`; select one with
+`./drc.sh design @2026-08-target-a`.
 
 See `FILTERS_AND_DRC.md` for full documentation of the filter layout, REW2raw conversion,
 and how to add new rates or geometries.
+The safe source-declaration, annotated-tag, deployment and response-plot
+contract is documented in
+[`doc/FILTER_PROVENANCE_AND_RESPONSE.md`](doc/FILTER_PROVENANCE_AND_RESPONSE.md)
+([printable PDF](doc/FILTER_PROVENANCE_AND_RESPONSE.pdf)).
 
 #  The old.pos/ directory
 Configuration files referring to older speaker / listening positions shall be moved here to avoid cluttering the main directory
@@ -289,45 +296,43 @@ Note: minimising attenuation does **not** improve audio quality. In float64 atte
 ## Usage
 
 ```bash
-python3 scripts/headroom_calc.py
+python3 scripts/headroom_calc.py filters/120.blue
+python3 scripts/headroom_calc.py filters/120.blue --variant +2dB
 ```
 
-Edit the `FILTER_PAIRS` list at the top of the script to add or change filter files and their formats.
-Edit `SAFETY_MARGIN_DB` to adjust the margin (default: 1.0 dB).
+The script discovers complete `rate[/variant]/L.raw,R.raw` pairs. Use
+`--format`, `--margin`, or `--json` when the defaults are not appropriate.
 
 ## Results for filters/120.blue
 
-Output of `headroom_calc.py` as of v1.5.0:
+Current verified base bundle (1 dB margin):
 
 ```
 Pair                 Channel file                                      Peak gain Limiting ch  Suggested
 ──────────────────── ────────────────────────────────────────────────       (dB)            atten (dB)
-+0dB float64         FLX+0dB-192k_sox_upsample_float64.raw                +1.071   ← limits        2.1
-                     FRX+0dB-192k_sox_upsample_float64.raw                -0.038
-
-+2dB float64         FLX+2dB-192k_sox_upsample_float64.raw                +3.060   ← limits        4.1
-                     FRX+2dB-192k_sox_upsample_float64.raw                +1.954
-
-+2dB trimmed S32     FLX+2dB-trimmed-192k.raw                             +3.191   ← limits        4.2
-                     FRX+2dB-trimmed-192k.raw                             +2.137
+44100 default        L.raw                                                +1.277   ← limits        2.3
+                     R.raw                                                +0.183
+48000 default        L.raw                                                +1.194   ← limits        2.2
+                     R.raw                                                +0.778
+88200 default        L.raw                                                +1.277   ← limits        2.3
+                     R.raw                                                +0.183
+96000 default        L.raw                                                +1.194   ← limits        2.2
+                     R.raw                                                +0.078
+192000 default       L.raw                                                +1.194   ← limits        2.2
+                     R.raw                                                +0.078
 
 Safety margin applied: 1.0 dB
 ```
 
-The left channel limits in all pairs. Set `attenuation:` in the `.conf` file as follows:
-
-| Filter pair | `attenuation:` (both channels) |
-|---|---|
-| `+0dB` float64 | **2.1** |
-| `+2dB` float64 | **4.1** |
-| `+2dB` trimmed S32 | **4.2** |
+The configured 3.0 dB base attenuation passes every rate. The unverified
+192 kHz `+2dB` pair needs 4.1 dB and is conservatively configured at 8.0 dB.
 
 # The drc.sh script
 
 `drc.sh` is the single control point for the DRC pipeline. It uses `/usr/bin/env bash`
 so it works with Bash in `/usr/bin` on Linux and `/usr/local/bin` on FreeBSD.
 
-Signature: `drc.sh <rate>|resamp|restore|off|stop|geometry [variant]`
+Signature: `drc.sh <rate>|resamp|restore|off|stop|status|session|geometry|design [variant]`
 
 - `<rate>` — start brutefir at the given sample rate (44100, 48000, 88200, 96000, 192000);
   restarts virtual_oss at the same rate; switches MPD to `DRC-native`
@@ -342,6 +347,8 @@ Signature: `drc.sh <rate>|resamp|restore|off|stop|geometry [variant]`
 - `stop` — identical teardown to `off` but **does not record the off state**. Used by
   the service stop-paths (systemd `ExecStop`, FreeBSD rc.d stop, devd/udev unplug) so a
   clean reboot of a *running* system is restored rather than left off
+- `session` — read-only, machine-friendly view of the exact persistent tuple used
+  by `restore`: geometry, power, mode/rate, design selector and display label
 - `geometry` — filter-set control. Bare `drc.sh geometry` prints the active set,
   `drc.sh geometry --list` lists the ones installed under `configs/`, and
   `drc.sh geometry <name>` switches to one. Switching is not a live operation —
@@ -353,6 +360,11 @@ Signature: `drc.sh <rate>|resamp|restore|off|stop|geometry [variant]`
   falls back to its plain filter, and a set without the current rate at all (a set
   measured only at 192 kHz is normal) falls back to that set's highest rate. When DRC
   is off only the choice is recorded — it applies the next time DRC is turned on
+- `design` — bare `drc.sh design` prints the remembered selector,
+  `drc.sh design --list` lists the selectors available for the current
+  geometry/rate, and `drc.sh design @design-id` performs an A/B switch. The
+  control page reports `from -> to`, then independently checks the config and
+  RAW hashes actually loaded before marking an immutable design verified.
 - `variant` — optional second argument, e.g. `+2dB`, selects an alternate filter set
 
 State is split across three files (repo root in run-from-repo mode; `/var/db/omdrc`

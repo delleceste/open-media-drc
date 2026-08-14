@@ -240,7 +240,8 @@ state_label() {
   set -- $state
   mode="${1:-}"
   variant="${2:-}"
-  profile="${variant:-Flat}"
+  profile="${variant#@}"
+  profile="${profile:-Flat}"
 
   if [ "$mode" = "resamp" ]; then
     printf '%s auto-resample\n' "$profile"
@@ -280,6 +281,30 @@ geometry_rates() {
   done | sort -un
 }
 
+# Runtime filter designs available for one geometry/rate. The empty config
+# suffix is the geometry's default design; @name is an immutable audited design
+# deployed by new_filter_design.py. Legacy selectors such as +2dB remain valid.
+geometry_designs() {
+  local geo="$1" rate="$2" conf key suffix
+  for conf in "$SITE_DIR/configs/$geo"/brutefir-"$rate"*.conf; do
+    [ -f "$conf" ] || continue
+    key=${conf##*/brutefir-}
+    key=${key%.conf}
+    suffix=${key#"$rate"}
+    [ -n "$suffix" ] && printf '%s\n' "$suffix" || printf 'default\n'
+  done | sort -u
+}
+
+valid_variant() {
+  case "$1" in
+    "") return 0 ;;
+    +[A-Za-z0-9]*|@[A-Za-z0-9]*)
+      [[ "$1" =~ ^[+@][A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 stop_virtual_oss() {
   local pid
   pid=$(_sudo cat "$VIRTUAL_OSS_PID" 2>/dev/null) && _sudo kill "$pid" 2>/dev/null || true
@@ -298,7 +323,7 @@ stop_virtual_oss() {
 }
 
 usage() {
-  echo "Usage: $0 <rate>|resamp|restore|off|stop|status|geometry [variant]"
+  echo "Usage: $0 <rate>|resamp|restore|off|stop|status|session|geometry|design [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
   echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
@@ -313,10 +338,14 @@ usage() {
   echo "             reboot of a running system is restored, not left off"
   echo "  status   : show DRC state, virtual_oss rate, brutefir, and MPD output"
   echo "             (also the default when no argument is given)"
+  echo "  session  : print the exact persistent state used by restore as key=value"
+  echo "             lines (geometry, power, mode/rate, design and label)"
   echo "  geometry : print the active filter set; 'geometry --list' lists the"
   echo "             installed ones, 'geometry <name>' switches to one and"
   echo "             reloads brutefir with that set's config"
-  echo "  variant  : optional filter variant, e.g. +2dB (default: none)"
+  echo "  design   : print/list/switch designs within the active geometry;"
+  echo "             deployed designs use @name, default selects the base config"
+  echo "  variant  : optional runtime selector, e.g. @flx8-2026-08 or +2dB"
   echo
   echo "  Geometry: $GEOMETRY  (config: ${OMDRC_CONF_FILE:-built-in defaults})"
   echo "  GEOMETRY in the config file is the default; 'geometry <name>' records"
@@ -329,8 +358,11 @@ usage() {
   echo "  $0 resamp"
   echo "  $0 restore"
   echo "  $0 status"
+  echo "  $0 session"
   echo "  $0 geometry --list"
   echo "  $0 geometry 120.blue"
+  echo "  $0 design --list"
+  echo "  $0 design @flx8-2026-08"
   echo "  $0 off"
 }
 
@@ -362,6 +394,86 @@ if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
       exec "$0" $args
       ;;
   esac
+fi
+
+# ── session: expose the exact persistent restore state, without mutation ───────
+# This is deliberately a view over last_arg / last_power / last_geometry, not a
+# second session store. The web remote consumes these stable key=value lines.
+if [ $# -eq 1 ] && [ "$1" = "session" ]; then
+  session_state=""
+  [ -f "$STATE_FILE" ] && session_state=$(state_to_args "$(cat "$STATE_FILE")")
+  case "$session_state" in ""|off) session_state="192000" ;; esac
+  # shellcheck disable=SC2086
+  set -- $session_state
+  session_mode="${1:-192000}"
+  session_design="${2:-default}"
+  session_rate="$session_mode"
+  [ "$session_rate" = "resamp" ] && session_rate=192000
+  session_power="on"
+  [ -f "$POWER_FILE" ] && session_power=$(cat "$POWER_FILE")
+  case "$session_power" in on|off) ;; *) session_power="on" ;; esac
+  printf 'geometry=%s\n' "$GEOMETRY"
+  printf 'power=%s\n' "$session_power"
+  printf 'mode=%s\n' "$session_mode"
+  printf 'rate=%s\n' "$session_rate"
+  printf 'design=%s\n' "$session_design"
+  printf 'label=%s\n' "$(state_label "$session_state")"
+  exit 0
+fi
+
+# ── design: show / list / switch within the active physical geometry ─────────
+if [ $# -ge 1 ] && [ "$1" = "design" ]; then
+  design_request="${2:-}"
+  design_state=""
+  [ -f "$STATE_FILE" ] && design_state=$(state_to_args "$(cat "$STATE_FILE")")
+  case "$design_state" in ""|off) design_state="192000" ;; esac
+  # shellcheck disable=SC2086
+  set -- $design_state
+  design_mode="$1"
+  design_selector="${2:-}"
+  design_rate="$design_mode"
+  [ "$design_rate" = "resamp" ] && design_rate=192000
+
+  case "$design_request" in
+    "")
+      [ -n "$design_selector" ] && echo "$design_selector" || echo "default"
+      exit 0
+      ;;
+    --list|-l)
+      geometry_designs "$GEOMETRY" "$design_rate"
+      exit 0
+      ;;
+  esac
+
+  wanted="$design_request"
+  [ "$wanted" = "default" ] && wanted=""
+  if ! valid_variant "$wanted"; then
+    echo "invalid design selector: $design_request" >&2
+    exit 1
+  fi
+  listed="${wanted:-default}"
+  if ! geometry_designs "$GEOMETRY" "$design_rate" | grep -qxF -- "$listed"; then
+    echo "design not available for $GEOMETRY at ${design_rate} Hz: $design_request" >&2
+    echo "available: $(geometry_designs "$GEOMETRY" "$design_rate" | tr '\n' ' ')" >&2
+    exit 1
+  fi
+
+  previous="${design_selector:-default}"
+  if [ "$previous" = "$listed" ]; then
+    echo "design already selected: $listed"
+    exit 0
+  fi
+  log_event "event=design_switch_request geometry=${GEOMETRY} rate=${design_rate} from=${previous} to=${listed}"
+  if [ -f "$POWER_FILE" ] && [ "$(cat "$POWER_FILE")" = "off" ]; then
+    printf '%s%s\n' "$design_mode" "${wanted:+ $wanted}" > "$STATE_FILE"
+    chmod 644 "$STATE_FILE" 2>/dev/null || true
+    log_event "event=design_switch_saved geometry=${GEOMETRY} rate=${design_rate} from=${previous} to=${listed} power=off"
+    echo "saved filter design: $previous -> $listed (DRC is off; restore respects off, so it applies on the next activation)"
+    exit 0
+  fi
+  echo "switching filter design: $previous -> $listed in geometry $GEOMETRY at ${design_rate} Hz"
+  export OMDRC_SWITCH_FROM="$previous" OMDRC_SWITCH_TO="$listed"
+  exec "$0" "$design_mode" ${wanted:+"$wanted"}
 fi
 
 # ── geometry: show / list / switch the active filter set ─────────────────────
@@ -587,6 +699,10 @@ if [ $# -eq 1 ] && { [ "$1" = "off" ] || [ "$1" = "stop" ]; }; then
 elif [ $# -eq 1 ] || [ $# -eq 2 ]; then
   rate="$1"
   variant="${2:-}"
+  if ! valid_variant "$variant"; then
+    echo "invalid filter variant: $variant" >&2
+    exit 1
+  fi
   if [ "$rate" = "resamp" ]; then
     mode="resamp"
     actual_rate=192000
@@ -946,7 +1062,7 @@ done
 if [ -z "$chain_ok" ]; then
   echo "ERROR: chain did not come up after ${total_attempts} attempts (see /tmp/brutefir.out)" >&2
   rollback_to_direct
-  log_event "event=run_result mode=${mode} rate=${actual_rate} result=rolled_back attempts=${vattempt} bf_attempts=${BF_ATTEMPTS}"
+  log_event "event=run_result mode=${mode} rate=${actual_rate} result=rolled_back attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} switch_from=${OMDRC_SWITCH_FROM:-} switch_to=${OMDRC_SWITCH_TO:-}"
   # last_arg is left unchanged on purpose: it records the *desired* state, so the
   # next trigger (devd ATTACH / drc.sh restore) retries this config rather than
   # silently staying off after a transient failure.
@@ -972,5 +1088,5 @@ chmod 644 "$STATE_FILE" 2>/dev/null || true
 echo "on" > "$POWER_FILE"
 chmod 644 "$POWER_FILE" 2>/dev/null || true
 
-log_event "event=run_result mode=${mode} rate=${actual_rate} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} warm_ms=${WARM_MS} observed=${VERIFY_OBSERVED} output=${mpd_output}"
+log_event "event=run_result mode=${mode} rate=${actual_rate} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} warm_ms=${WARM_MS} observed=${VERIFY_OBSERVED} output=${mpd_output} switch_from=${OMDRC_SWITCH_FROM:-} switch_to=${OMDRC_SWITCH_TO:-}"
 echo "DRC active: $(state_label "$state_args") (MPD output: ${mpd_output})"

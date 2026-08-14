@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import glob
+import hashlib
 import json
 import math
 import os
@@ -1194,6 +1195,203 @@ _RAW_DTYPES: dict[str, str] = {
 }
 
 
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _canonical_hash(value: object) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _bundle_identity(manifest: dict) -> dict:
+    """Reconstruct the content identity used by scripts/deploy_filter.py."""
+    identity = {
+        "schema": manifest["schema"],
+        "geometry": manifest["geometry"],
+        "variant": manifest["variant"],
+        "design_id": manifest.get("design_id", manifest["variant"]),
+        "source_repository": manifest["source"]["repository"],
+        "source_commit": manifest["source"]["repository_head"],
+        "source_release": manifest["source"].get("release", {}),
+        "source_provenance_sha256": _canonical_hash(manifest["source"]),
+        "project_sha256": manifest["source"].get("project", {}).get("sha256", ""),
+        "source_declaration_sha256": manifest["source"].get("declaration", {}).get("sha256", ""),
+        "source_artifacts": {
+            role: item["sha256"]
+            for role, item in manifest["source"]["artifacts"].items()
+        },
+        "runtime": {
+            rate: {
+                "config": item["config"],
+                "config_sha256": item["config_sha256"],
+                "format": item["format"],
+                "attenuation_db": item["attenuation_db"],
+                "channels": {
+                    channel: data["sha256"]
+                    for channel, data in item["channels"].items()
+                },
+            }
+            for rate, item in manifest["runtime"]["rates"].items()
+        },
+        "analysis_sha256": manifest["analysis"]["sha256"],
+    }
+    if "description" in manifest:
+        identity["description"] = manifest["description"]
+    return identity
+
+
+def _bundle_roots(coeffs: list[dict]) -> list[str]:
+    """Candidate geometry roots, derived only from the active coeff paths."""
+    paths = [os.path.realpath(item["filename"]) for item in coeffs]
+    if not paths:
+        return []
+    try:
+        current = os.path.commonpath(paths)
+    except ValueError:
+        return []
+    if not os.path.isdir(current):
+        current = os.path.dirname(current)
+    roots = []
+    for _ in range(5):
+        if os.path.isdir(os.path.join(current, "provenance")):
+            roots.append(current)
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return roots
+
+
+def _safe_bundle_path(root: str, relative: str) -> str:
+    if os.path.isabs(relative):
+        raise ValueError(f"bundle path is absolute: {relative}")
+    root_real = os.path.realpath(root)
+    result = os.path.realpath(os.path.join(root_real, relative))
+    if os.path.commonpath((root_real, result)) != root_real:
+        raise ValueError(f"bundle path escapes geometry root: {relative}")
+    return result
+
+
+def _verified_filter_bundle(parsed: dict) -> tuple[dict | None, dict]:
+    """Match audited graph data to the exact coefficient bytes in use.
+
+    Room measurements are returned only when a single manifest matches the
+    active L/R paths, hashes, formats, rate and attenuations.
+    """
+    coeffs = parsed.get("coeffs") or []
+    rate = parsed.get("rate")
+    active: dict[str, dict] = {}
+    for coeff in coeffs:
+        name = _coeff_channel(coeff).lower()
+        channel = "left" if name == "left" else "right" if name == "right" else ""
+        if not channel or channel in active:
+            continue
+        active[channel] = {
+            "path": os.path.realpath(coeff["filename"]),
+            "sha256": _sha256_file(coeff["filename"]),
+            "format": coeff["format"].upper(),
+            "attenuation_db": float(coeff["attenuation"]),
+        }
+    if set(active) != {"left", "right"}:
+        return None, {"status": "mismatch", "message": "active config has no unique L/R coefficient pair"}
+
+    failures: list[str] = []
+    matches: list[tuple[dict, dict, str]] = []
+    for root in _bundle_roots(coeffs):
+        for manifest_path in sorted(glob.glob(os.path.join(root, "provenance", "*.json"))):
+            if manifest_path.endswith(".source.json"):
+                continue
+            try:
+                with open(manifest_path, encoding="utf-8") as stream:
+                    manifest = json.load(stream)
+                if not manifest.get("bundle_id") or manifest.get("schema") != 1:
+                    continue
+                if manifest.get("verification", {}).get("status") != "verified":
+                    raise ValueError("manifest status is not verified")
+                if _canonical_hash(_bundle_identity(manifest)) != manifest["bundle_id"]:
+                    raise ValueError("bundle ID does not match manifest content")
+                runtime = manifest["runtime"]["rates"][str(rate)]
+                for channel in ("left", "right"):
+                    expected = runtime["channels"][channel]
+                    relative = os.path.relpath(active[channel]["path"], os.path.realpath(root))
+                    if relative != expected["path"]:
+                        raise ValueError(f"{channel} active path differs")
+                    if active[channel]["sha256"] != expected["sha256"]:
+                        raise ValueError(f"{channel} active SHA-256 differs")
+                    if active[channel]["format"] != runtime["format"].upper():
+                        raise ValueError(f"{channel} active format differs")
+                    if abs(active[channel]["attenuation_db"] - float(runtime["attenuation_db"])) > 1e-9:
+                        raise ValueError(f"{channel} active attenuation differs")
+                analysis_path = _safe_bundle_path(root, manifest["analysis"]["path"])
+                if _sha256_file(analysis_path) != manifest["analysis"]["sha256"]:
+                    raise ValueError("analysis SHA-256 differs")
+                with open(analysis_path, encoding="utf-8") as stream:
+                    analysis = json.load(stream)
+                if (analysis.get("geometry") != manifest["geometry"] or
+                        analysis.get("variant") != manifest["variant"] or
+                        analysis.get("design_id", analysis.get("variant")) !=
+                        manifest.get("design_id", manifest["variant"])):
+                    raise ValueError("analysis identity differs")
+                if ("description" in manifest and
+                        analysis.get("description") != manifest["description"]):
+                    raise ValueError("analysis description differs")
+                inputs = analysis.get("inputs", {})
+                for role, expected in manifest["source"]["artifacts"].items():
+                    if inputs.get(role) != expected["sha256"]:
+                        raise ValueError(f"analysis input hash differs for {role}")
+                matches.append((manifest, analysis, manifest_path))
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+                failures.append(f"{os.path.basename(manifest_path)}: {error}")
+
+    if len(matches) != 1:
+        if len(matches) > 1:
+            message = "more than one provenance manifest matches the active coefficient pair"
+        elif failures:
+            message = "; ".join(failures[:3])
+        else:
+            message = "no provenance manifest matches the active coefficient hashes"
+        return None, {
+            "status": "mismatch",
+            "message": message,
+            "active_hashes": {channel: item["sha256"] for channel, item in active.items()},
+        }
+
+    manifest, analysis, manifest_path = matches[0]
+    attenuation = float(manifest["runtime"]["rates"][str(rate)]["attenuation_db"])
+    traces = []
+    for stored in analysis["traces"]:
+        item = dict(stored)
+        if item.get("group") in ("Filter", "Predicted"):
+            item["magnitude_db"] = [round(float(value) - attenuation, 3)
+                                    for value in item["magnitude_db"]]
+        traces.append(item)
+    analysis = dict(analysis)
+    analysis["traces"] = traces
+    release = manifest["source"].get("release", {})
+    if release.get("kind") == "annotated_tag":
+        anchor = (f"annotated source tag {release['name']} "
+                  f"(tag object {release['tag_object']}) -> commit {release['commit']}")
+    else:
+        anchor = f"source commit {manifest['source']['repository_head']}"
+    return {
+        "manifest": manifest,
+        "analysis": analysis,
+        "manifest_file": os.path.basename(manifest_path),
+        "active": active,
+    }, {
+        "status": manifest["verification"]["status"],
+        "message": (
+            "Active L/R bytes, config and graph dependencies match the manifest; " + anchor),
+        "bundle_id": manifest["bundle_id"],
+        "active_hashes": {channel: item["sha256"] for channel, item in active.items()},
+    }
+
+
 def _active_brutefir_conf() -> str | None:
     """Absolute path of the .conf the running BruteFIR was started with.
 
@@ -1215,6 +1413,14 @@ def _active_brutefir_conf() -> str | None:
             if p.endswith(".conf"):
                 return p
     return None
+
+
+def _design_selector_from_conf(path: str) -> tuple[int | None, str]:
+    """Return the rate and selector encoded by a BruteFIR config basename."""
+    match = re.fullmatch(r"brutefir-(\d+)(.*)\.conf", os.path.basename(path))
+    if not match:
+        return None, "unknown"
+    return int(match.group(1)), match.group(2) or "default"
 
 
 def _parse_brutefir_conf(path: str) -> dict:
@@ -2244,6 +2450,33 @@ def _drc_geometries(script: str) -> list[str]:
 _GEOMETRY_SWITCH_TIMEOUT = 120
 
 
+def _run_drc_switch(script: str, arguments: list[str], action: str):
+    """Run a chain-rebuilding drc.sh command without daemon pipe hangs."""
+    log = tempfile.NamedTemporaryFile(
+        mode="w+b", prefix=f"omdrcctrl-{action}-", suffix=".log", delete=False)
+    log_path = log.name
+    try:
+        proc = subprocess.Popen(
+            [script, *arguments], env=_env(), stdin=subprocess.DEVNULL,
+            stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+    except Exception as error:
+        log.close()
+        _unlink_quietly(log_path)
+        return {"ok": False, "error": str(error)}
+    log.close()
+    try:
+        rc = proc.wait(timeout=_GEOMETRY_SWITCH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        threading.Thread(target=_wait_and_cleanup, args=(proc, log_path), daemon=True).start()
+        return {"ok": False, "error": f"timeout switching {action}"}
+    output = _read_text_quietly(log_path).strip()
+    _unlink_quietly(log_path)
+    if rc != 0:
+        return {"ok": False, "error": output or f"exit {rc}", "output": output}
+    return {"ok": True, "output": output}
+
+
 @app.route("/drc/geometry", methods=["GET", "POST"])
 def drc_geometry():
     cmd = CMD_MAP.get("drc_status")
@@ -2262,38 +2495,10 @@ def drc_geometry():
         # not be able to turn into an argument of its own.
         if want not in available:
             return jsonify({"ok": False, "error": f"unknown filter set: {want}"})
-        # Collect the output in a file and wait on the *process*, the way
-        # /run/<id> does — NOT with capture_output/pipes.  Rebuilding the chain
-        # leaves long-lived daemons behind (virtual_oss is started in the
-        # background and inherits drc.sh's stdout), so the pipes never reach EOF
-        # and a pipe-reading wait blocks for the full timeout even though the
-        # switch itself finished in a couple of seconds.
-        log = tempfile.NamedTemporaryFile(
-            mode="w+b", prefix="omdrcctrl-geometry-", suffix=".log", delete=False)
-        log_path = log.name
-        try:
-            proc = subprocess.Popen(
-                [script, "geometry", want], env=_env(),
-                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-        except Exception as e:
-            log.close()
-            _unlink_quietly(log_path)
-            return jsonify({"ok": False, "error": str(e)})
-        log.close()
-        try:
-            rc = proc.wait(timeout=_GEOMETRY_SWITCH_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            threading.Thread(target=_wait_and_cleanup, args=(proc, log_path),
-                             daemon=True).start()
-            return jsonify({"ok": False, "error": "timeout switching filter set"})
-        output = _read_text_quietly(log_path).strip()
-        _unlink_quietly(log_path)
-        if rc != 0:
-            return jsonify({"ok": False, "error": output or f"exit {rc}",
-                            "output": output})
-        return jsonify({"ok": True, "geometry": want, "output": output})
+        result = _run_drc_switch(script, ["geometry", want], "filter set")
+        if result["ok"]:
+            result["geometry"] = want
+        return jsonify(result)
 
     try:
         r = subprocess.run(
@@ -2317,6 +2522,208 @@ def drc_geometry():
         return jsonify({"ok": False, "error": str(e)})
 
 
+def _drc_designs(script: str) -> list[str]:
+    result = subprocess.run(
+        [script, "design", "--list"], capture_output=True, text=True,
+        timeout=5, env=_env(),
+    )
+    if result.returncode:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _drc_saved_session(script: str) -> dict:
+    """Read the one authoritative restore session maintained by drc.sh."""
+    result = subprocess.run(
+        [script, "session"], capture_output=True, text=True,
+        timeout=5, env=_env(),
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or "cannot read saved DRC session")
+    session: dict[str, object] = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in {"geometry", "power", "mode", "rate", "design", "label"}:
+            session[key] = value.strip()
+    missing = {"geometry", "power", "mode", "rate", "design"} - session.keys()
+    if missing:
+        raise RuntimeError(f"incomplete saved DRC session: {', '.join(sorted(missing))}")
+    try:
+        session["rate"] = int(str(session["rate"]))
+    except ValueError as error:
+        raise RuntimeError("invalid rate in saved DRC session") from error
+    session["auto_saved"] = True
+    return session
+
+
+def _active_design_identity() -> dict:
+    """Describe and provenance-check the config actually loaded by BruteFIR."""
+    conf_path = _active_brutefir_conf()
+    if not conf_path:
+        return {
+            "running": False,
+            "verification": {"status": "stopped", "message": "BruteFIR is not running"},
+        }
+    rate_from_name, selector = _design_selector_from_conf(conf_path)
+    identity: dict[str, object] = {
+        "running": True,
+        "geometry": os.path.basename(os.path.dirname(conf_path)),
+        "rate": rate_from_name,
+        "design": selector,
+        "config": os.path.basename(conf_path),
+    }
+    try:
+        parsed = _parse_brutefir_conf(conf_path)
+        if parsed.get("rate"):
+            identity["rate"] = parsed["rate"]
+        bundle, verification = _verified_filter_bundle(parsed)
+        identity["verification"] = verification
+        if bundle:
+            manifest = bundle["manifest"]
+            identity.update({
+                "bundle_id": manifest["bundle_id"],
+                "design_id": manifest.get("design_id", manifest["variant"]),
+                "description": manifest.get(
+                    "description", manifest.get("design_id", manifest["variant"])),
+                "source_commit": manifest["source"]["repository_head"],
+                "release": manifest["source"].get("release"),
+            })
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+        identity["verification"] = {"status": "mismatch", "message": str(error)}
+    return identity
+
+
+def _session_matches_active(session: dict, active: dict) -> bool:
+    if session.get("power") == "off":
+        return not active.get("running")
+    return bool(
+        active.get("running") and
+        active.get("geometry") == session.get("geometry") and
+        active.get("rate") == session.get("rate") and
+        active.get("design") == session.get("design")
+    )
+
+
+@app.route("/drc/design", methods=["GET", "POST"])
+def drc_design():
+    """List or switch immutable filter designs within the active geometry."""
+    script = _drc_script()
+    if not script:
+        return jsonify({"ok": False, "error": "drc_status not configured"})
+    try:
+        available = _drc_designs(script)
+        if request.method == "POST":
+            want = str((request.get_json(silent=True) or {}).get("design", "")).strip()
+            if want not in available:
+                return jsonify({"ok": False, "error": f"unknown filter design: {want}"})
+            before_session = _drc_saved_session(script)
+            before = _active_design_identity()
+            result = _run_drc_switch(script, ["design", want], "filter design")
+            after_session = _drc_saved_session(script)
+            after = _active_design_identity()
+            result.update({
+                "requested": want,
+                "transition": {
+                    "from": before.get("design", before_session.get("design")),
+                    "to": want,
+                },
+                "active": after,
+                "session": after_session,
+            })
+            if not result["ok"]:
+                return jsonify(result)
+            if after_session.get("power") == "off":
+                if after_session.get("design") != want:
+                    result.update(ok=False, error="requested design was not saved for restore")
+                else:
+                    result.update(design=want, state="saved")
+                return jsonify(result)
+            if not after.get("running") or after.get("design") != want:
+                result.update(
+                    ok=False,
+                    error=(f"switch command completed, but active config is "
+                           f"{after.get('design', 'not running')} instead of {want}"),
+                )
+                return jsonify(result)
+            verification = after.get("verification", {})
+            if want.startswith("@") and verification.get("status") != "verified":
+                result.update(
+                    ok=False,
+                    error=("design is active, but its config/filter provenance could not be verified: "
+                           f"{verification.get('message', 'unknown mismatch')}"),
+                )
+                return jsonify(result)
+            result.update(
+                design=want,
+                state="active",
+                assurance=verification.get("status", "unknown"),
+            )
+            return jsonify(result)
+
+        session = _drc_saved_session(script)
+        active = _active_design_identity()
+        current = str(active.get("design") if active.get("running") else session["design"])
+        if current not in available:
+            available.append(current)
+        session["matches_active"] = _session_matches_active(session, active)
+        return jsonify({
+            "ok": True,
+            "design": current,
+            "available": available,
+            "active": active,
+            "session": session,
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)})
+
+
+@app.route("/drc/session", methods=["GET", "POST"])
+def drc_session():
+    """Show or restore the persistent DRC session used at boot/hotplug."""
+    script = _drc_script()
+    if not script:
+        return jsonify({"ok": False, "error": "drc_status not configured"})
+    try:
+        if request.method == "GET":
+            session = _drc_saved_session(script)
+            active = _active_design_identity()
+            session["matches_active"] = _session_matches_active(session, active)
+            return jsonify({"ok": True, "session": session, "active": active})
+        action = str((request.get_json(silent=True) or {}).get("action", "")).strip()
+        if action != "restore":
+            return jsonify({"ok": False, "error": "unknown session action"}), 400
+        before = _active_design_identity()
+        result = _run_drc_switch(script, ["restore"], "saved session")
+        session = _drc_saved_session(script)
+        active = _active_design_identity()
+        matches = _session_matches_active(session, active)
+        session["matches_active"] = matches
+        assurance = (
+            "off" if session.get("power") == "off" else
+            active.get("verification", {}).get("status", "unknown")
+        )
+        result.update({
+            "session": session, "active": active, "before": before,
+            "assurance": assurance,
+        })
+        if result["ok"] and not matches:
+            result.update(ok=False, error="restore completed, but the active chain does not match the saved session")
+        if (result["ok"] and session.get("power") == "on" and
+                str(session.get("design", "")).startswith("@") and
+                active.get("verification", {}).get("status") != "verified"):
+            result.update(
+                ok=False,
+                error="saved design is active, but its config/filter provenance is not verified",
+            )
+        return jsonify(result)
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)})
+
+
 @app.route("/filter-response")
 def filter_response_page():
     return render_template("filter_response.html")
@@ -2324,11 +2731,11 @@ def filter_response_page():
 
 @app.route("/drc/filter-response")
 def drc_filter_response():
-    """FFT analysis of the FIR filters loaded by the *running* BruteFIR.
+    """Verified room/filter/prediction data for the *running* BruteFIR.
 
     The active .conf carries absolute paths to its coeff (.raw) files and the
-    sampling rate, so no extra configuration is needed.  When BruteFIR is not
-    running there is no active filter to analyse.
+    sampling rate. Stored measurements are released only when their manifest
+    matches the SHA-256 of both exact coefficient files in that config.
     """
     conf_path = _active_brutefir_conf()
     if not conf_path:
@@ -2344,26 +2751,62 @@ def drc_filter_response():
                             "error": f"no coeff/sampling_rate in {conf_path}"})
         # geometry = the configs/<geometry>/ directory name, when present.
         geometry = os.path.basename(os.path.dirname(conf_path))
+        bundle, verification = _verified_filter_bundle(parsed)
         channels = []
         palette = {"Left": "#388bfd", "Right": "#d29922"}
         for c in parsed["coeffs"]:
             ch = _coeff_channel(c)
             resp = _fir_response(c["filename"], c["format"], rate)
+            # BruteFIR attenuation is part of the audible transfer function.
+            # Phase/group delay are unaffected; magnitude is reduced in dB.
+            resp["mag"] = [round(value - c["attenuation"], 3) for value in resp["mag"]]
             resp.update({
                 "name": ch,
                 "color": palette.get(ch, "#3fb950"),
                 "attenuation": c["attenuation"],
                 "format": c["format"],
                 "file": os.path.basename(c["filename"]),
+                "sha256": _sha256_file(c["filename"]),
             })
             channels.append(resp)
-        return jsonify({
+        result = {
             "ok": True, "running": True,
             "geometry": geometry,
             "rate": rate,
             "conf": os.path.basename(conf_path),
             "channels": channels,
-        })
+            "verification": verification,
+        }
+        if bundle:
+            manifest = bundle["manifest"]
+            analysis = bundle["analysis"]
+            result.update({
+                "frequencies_hz": analysis["frequencies_hz"],
+                "traces": analysis["traces"],
+                "details": {
+                    "bundle_id": manifest["bundle_id"],
+                    "variant": manifest["variant"],
+                    "design_id": manifest.get("design_id", manifest["variant"]),
+                    "description": manifest.get(
+                        "description", manifest.get("design_id", manifest["variant"])),
+                    "manifest": bundle["manifest_file"],
+                    "audited_at": manifest["verification"]["audited_at"],
+                    "claims": manifest["verification"]["claims"],
+                    "prediction": manifest["verification"]["prediction"],
+                    "source_repository": manifest["source"]["repository"],
+                    "source_commit": manifest["source"]["repository_head"],
+                    "source_ref": manifest["source"].get("source_ref"),
+                    "release": manifest["source"].get("release"),
+                    "source_declaration": manifest["source"].get("declaration"),
+                    "project": manifest["source"].get("project"),
+                    "measurements": analysis["source_headers"],
+                    "lineage": manifest["source"]["lineage"],
+                    "validation": analysis["validation"],
+                    "calculation": analysis["calculation"],
+                    "runtime": manifest["runtime"]["rates"][str(rate)],
+                },
+            })
+        return jsonify(result)
     except FileNotFoundError as e:
         return jsonify({"ok": False, "running": True, "error": f"filter file not found: {e}"})
     except ImportError:

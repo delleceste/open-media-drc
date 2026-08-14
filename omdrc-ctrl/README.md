@@ -791,8 +791,9 @@ the playing stream, and inspects the downstream stages.
 
 ### `GET /filter-response`
 
-Renders the **DRC filter response** HTML page (magnitude / phase / group-delay
-charts). Linked from the DRC card on the main page.
+Renders the verified **DRC response** page: one selectable magnitude/phase
+chart, checksum verdict, curve checkboxes, and provenance details. Linked from
+the DRC card on the main page.
 
 ---
 
@@ -839,7 +840,8 @@ on.
 
 ### `GET /drc/filter-response`
 
-Returns the FFT analysis of the FIR filters loaded by the **running** BruteFIR.
+Returns the FFT analysis of the FIR filters loaded by the **running** BruteFIR
+and, only after provenance verification, measured and predicted room curves.
 The active `.conf` is located from BruteFIR's command line; it carries the
 absolute paths to its coeff (`.raw`) files, their sample format, and the
 sampling rate — so no extra configuration is required. When BruteFIR is not
@@ -849,6 +851,7 @@ running there is no active filter and the endpoint says so.
 {
   "ok": true, "running": true,
   "geometry": "120.blue", "rate": 192000, "conf": "brutefir-192000.conf",
+  "verification": {"status": "verified", "bundle_id": "6e84c487…"},
   "channels": [
     { "name": "Left", "color": "#388bfd", "file": "L.raw", "format": "FLOAT64_LE",
       "attenuation": 3.0, "taps": 524288,
@@ -866,6 +869,13 @@ the magnitude in dB (the raw filter transfer function, including its
 FIR delay, and `gd` is residual group delay in milliseconds. **The filter files
 are never modified** — they are generated externally with REW + SoX and only
 read here.
+
+The endpoint hashes the exact active L/R files and matches path, SHA-256,
+format, rate and attenuation against a manifest. It then verifies the manifest
+bundle ID, analysis SHA-256, and every analysis input hash. A match adds
+`frequencies_hz`, selectable `traces`, and `details`. On any mismatch, those
+stored measurement/prediction fields are withheld and `channels` remains only
+as a live diagnostic.
 
 ---
 
@@ -993,19 +1003,20 @@ A small **DRC status** sub-section (refreshed manually) lists the BruteFIR
 ### DRC filter response
 
 The DRC card header carries a **Filter response ↗** button that opens a
-dedicated page ([`GET /filter-response`](#get-filter-response)) charting the
-loaded room-correction FIR filters. Three stacked, log-frequency Chart.js plots
-show **magnitude (dB)**, **wrapped delay-compensated phase (°)**, and
-**residual group delay (ms)**, with the Left and Right channels overlaid. The data comes from
-[`GET /drc/filter-response`](#get-drcfilter-response), which FFTs the live
-`L.raw` / `R.raw` impulse responses on demand.
+dedicated page ([`GET /filter-response`](#get-filter-response)). A single
+log-frequency Chart.js plot toggles between magnitude and wrapped phase. Its
+checkbox legend offers original L/R, independently measured L+R, coherent
+calculated L+R, FLX/FRX, corrected L/R and corrected L+R. The coherent original
+and corrected sums are selected by default.
 
-The page only has something to show while BruteFIR is running (that is when a
-filter is loaded); otherwise it explains that no filter is active. The
-magnitude axis is clamped for readability, but the filters themselves — built
-externally with REW + SoX — are read and displayed unaltered. Chart.js is
-vendored locally (`static/chart.umd.min.js`), so the page works on an offline
-machine.
+The green **Verified** badge means the current coefficient bytes match the
+hash-bound bundle. For newly declared designs its always-visible text includes
+the annotated source tag, immutable tag-object ID and exact source commit.
+Runtime attenuation is included in filter and predicted curves.
+A mismatch produces a red badge and withholds stored room data instead of
+guessing from a geometry name. An expandable panel reports the bundle, hashes,
+source declaration, optional project archive, measurement headers, lineage,
+validation and headroom. Chart.js is vendored locally, so the page works offline.
 
 ### Spectrum
 

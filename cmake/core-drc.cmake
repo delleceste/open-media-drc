@@ -63,9 +63,46 @@ foreach(_geo ${_geos})
         # installed filters ($SITE_DIR/filters/<geo>/<rate>/*.raw): @REPO_DIR@ ->
         # $SITE_DIR.  The rendered files go to a per-set build subdirectory:
         # the basenames (brutefir-192000.conf) repeat across sets.
-        file(GLOB _geo_ins "${CMAKE_CURRENT_SOURCE_DIR}/configs/${_geo}/brutefir-*.conf.in")
+        file(GLOB _geo_ins CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/configs/${_geo}/brutefir-*.conf.in")
         if(NOT _geo_ins)
             message(WARNING "core-drc: no brutefir-*.conf.in under configs/${_geo}")
+        endif()
+        # Immutable @design configs are deployable only with their matching
+        # provenance manifest. Legacy suffixes such as +2dB remain supported,
+        # but the web UI deliberately treats them as unverified.
+        foreach(_in ${_geo_ins})
+            get_filename_component(_design_conf "${_in}" NAME)
+            if(_design_conf MATCHES "@(.+)\\.conf\\.in$")
+                set(_design_manifest
+                    "${CMAKE_CURRENT_SOURCE_DIR}/filters/${_geo}/provenance/${CMAKE_MATCH_1}.json")
+                if(NOT EXISTS "${_design_manifest}")
+                    message(FATAL_ERROR
+                        "core-drc: ${_design_conf} has no matching verified manifest: ${_design_manifest}")
+                endif()
+            endif()
+        endforeach()
+
+        file(GLOB _geo_manifests CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/filters/${_geo}/provenance/*.json")
+        list(FILTER _geo_manifests EXCLUDE REGEX "\\.source\\.json$")
+        if(_geo_manifests)
+            execute_process(
+                COMMAND "${PYTHON3}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_filter_bundle.py"
+                        --require-sources --no-next ${_geo_manifests}
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                RESULT_VARIABLE _verify_result
+                OUTPUT_VARIABLE _verify_output
+                ERROR_VARIABLE _verify_error)
+            if(NOT _verify_result EQUAL 0)
+                message(FATAL_ERROR
+                    "core-drc: filter bundle verification failed for ${_geo}: ${_verify_error}")
+            endif()
+            string(STRIP "${_verify_output}" _verify_output)
+            message(STATUS "core-drc: ${_verify_output}")
+        else()
+            message(WARNING
+                "core-drc: ${_geo} has no provenance manifest; response plots will be unverified")
         endif()
         foreach(_in ${_geo_ins})
             get_filename_component(_name "${_in}" NAME)
@@ -86,7 +123,24 @@ foreach(_geo ${_geos})
                     DESTINATION ${_etc}/filters/${_geo}
                     FILES_MATCHING
                     PATTERN "rew" EXCLUDE
+                    PATTERN "source" EXCLUDE
+                    PATTERN "analysis" EXCLUDE
+                    PATTERN "provenance" EXCLUDE
                     PATTERN "*.raw")
+            # Runtime trust metadata and precomputed graph data. Development
+            # sources and the source-repository recipe stay out of packages.
+            if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/filters/${_geo}/provenance")
+                install(DIRECTORY filters/${_geo}/provenance/
+                        DESTINATION ${_etc}/filters/${_geo}/provenance
+                        FILES_MATCHING
+                        PATTERN "*.json"
+                        PATTERN "*.source.json" EXCLUDE)
+            endif()
+            if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/filters/${_geo}/analysis")
+                install(DIRECTORY filters/${_geo}/analysis/
+                        DESTINATION ${_etc}/filters/${_geo}/analysis
+                        FILES_MATCHING PATTERN "*.json")
+            endif()
         else()
             message(WARNING "core-drc: filter set '${_geo}' has configs but no filters/${_geo}/ — "
                             "its brutefir configs will not find their coefficients")

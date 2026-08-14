@@ -3,187 +3,259 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>DRC filter response</title>
+    <title>Verified DRC response</title>
     <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
     <style>
         :root {
-            --bg:     #0d1117;
-            --panel:  #161b22;
-            --border: #30363d;
-            --text:   #e6edf3;
-            --muted:  #8b949e;
-            --accent: #388bfd;
+            --bg:#0d1117; --panel:#161b22; --border:#30363d;
+            --text:#e6edf3; --muted:#8b949e; --accent:#388bfd;
+            --good:#3fb950; --bad:#f85149; --warn:#d29922;
         }
-        * { box-sizing: border-box; }
+        * { box-sizing:border-box; }
         body {
-            margin: 0; padding: 18px;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--bg); color: var(--text);
+            margin:0; padding:18px; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+            background:var(--bg); color:var(--text);
         }
-        .topbar {
-            display: flex; align-items: baseline; gap: 14px;
-            flex-wrap: wrap; margin-bottom: 14px;
+        .topbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+        h1 { font-size:1.25rem; margin:0; }
+        a.back { color:var(--accent); text-decoration:none; font-size:.85rem; }
+        a.back:hover { text-decoration:underline; }
+        .meta { color:var(--muted); font-size:.8rem; }
+        .spacer { flex:1; }
+        button {
+            background:var(--panel); color:var(--text); border:1px solid var(--border);
+            border-radius:6px; padding:6px 11px; font-size:.8rem; cursor:pointer;
         }
-        h1 { font-size: 1.25rem; margin: 0; }
-        a.back { color: var(--accent); text-decoration: none; font-size: .85rem; }
-        a.back:hover { text-decoration: underline; }
-        .meta { color: var(--muted); font-size: .8rem; }
-        .chart-card {
-            background: var(--panel); border: 1px solid var(--border);
-            border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+        button:hover, button.active { border-color:var(--accent); color:#fff; background:#1f6feb33; }
+        #status { color:var(--muted); font-size:.9rem; padding:26px 4px; line-height:1.5; }
+        #status.error { color:var(--bad); }
+        .verification {
+            display:flex; align-items:flex-start; gap:10px; padding:10px 12px; margin-bottom:14px;
+            border:1px solid var(--border); border-radius:8px; background:var(--panel); font-size:.82rem;
         }
-        .chart-card h2 {
-            font-size: .9rem; font-weight: 600; margin: 0 0 8px;
-            color: var(--text);
+        .verification.verified { border-color:#238636; background:#14261a; }
+        .verification.mismatch { border-color:#da3633; background:#2d1619; }
+        .badge { font-weight:700; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
+        .verified .badge { color:var(--good); }
+        .mismatch .badge { color:var(--bad); }
+        .controls, .legend { display:flex; align-items:center; flex-wrap:wrap; gap:8px 14px; }
+        .controls { margin:0 0 10px; }
+        .legend {
+            padding:10px 12px; background:var(--panel); border:1px solid var(--border);
+            border-radius:8px; margin-bottom:14px; font-size:.78rem;
         }
-        .chart-card .sub { font-size: .72rem; color: var(--muted); font-weight: 400; }
-        .wrap { position: relative; height: 260px; }
-        #status { color: var(--muted); font-size: .9rem; padding: 26px 4px; line-height: 1.5; }
-        #status.error { color: #f85149; }
-        .refresh {
-            background: var(--panel); color: var(--text);
-            border: 1px solid var(--border); border-radius: 6px;
-            padding: 5px 10px; font-size: .8rem; cursor: pointer;
+        .legend-group { color:var(--muted); font-weight:600; margin-left:4px; }
+        .legend label { display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
+        .legend input { accent-color:var(--accent); }
+        .swatch { width:15px; height:3px; border-radius:2px; display:inline-block; }
+        .chart-card, details {
+            background:var(--panel); border:1px solid var(--border); border-radius:10px;
+            padding:12px 14px; margin-bottom:14px;
         }
-        .refresh:hover { border-color: var(--accent); color: var(--accent); }
-        .note {
-            color: var(--muted); font-size: .72rem; line-height: 1.5;
-            border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px;
+        .chart-card h2 { font-size:.9rem; margin:0 0 8px; }
+        .sub { font-size:.72rem; color:var(--muted); font-weight:400; }
+        .wrap { position:relative; height:min(62vh,540px); min-height:330px; }
+        .note { color:var(--muted); font-size:.74rem; line-height:1.55; margin-top:9px; }
+        details summary { cursor:pointer; font-size:.86rem; font-weight:600; }
+        .detail-grid {
+            display:grid; grid-template-columns:max-content 1fr; gap:5px 12px;
+            margin:12px 0; font-size:.76rem; line-height:1.45;
+        }
+        .detail-grid dt { color:var(--muted); }
+        .detail-grid dd { margin:0; overflow-wrap:anywhere; }
+        pre {
+            white-space:pre-wrap; overflow-wrap:anywhere; color:var(--muted); font-size:.7rem;
+            border-top:1px solid var(--border); padding-top:10px; max-height:420px; overflow:auto;
+        }
+        @media (max-width:620px) {
+            body { padding:12px; }
+            .detail-grid { grid-template-columns:1fr; gap:2px; }
+            .detail-grid dd { margin-bottom:7px; }
         }
     </style>
 </head>
 <body>
     <div class="topbar">
         <a class="back" href="/">← Back</a>
-        <h1>DRC filter response</h1>
+        <h1>Verified DRC response</h1>
         <span class="meta" id="meta"></span>
-        <span style="flex:1"></span>
-        <button class="refresh" onclick="load()">↻ Refresh</button>
+        <span class="spacer"></span>
+        <button onclick="load()">↻ Refresh</button>
     </div>
 
-    <div id="status">Loading filter analysis…</div>
-
-    <div id="charts" style="display:none">
-        <div class="chart-card">
-            <h2>Magnitude <span class="sub">— FFT of the FIR impulse response, dB vs frequency (log)</span></h2>
-            <div class="wrap"><canvas id="chart-mag"></canvas></div>
+    <div id="status">Loading active filter and provenance…</div>
+    <main id="content" hidden>
+        <div id="verification" class="verification"></div>
+        <div class="controls">
+            <button id="mode-mag" class="active" onclick="setMode('magnitude_db')">Magnitude</button>
+            <button id="mode-phase" onclick="setMode('phase_deg')">Phase</button>
         </div>
-        <div class="chart-card">
-            <h2>Phase <span class="sub">— wrapped, delay-compensated correction phase vs frequency (log)</span></h2>
-            <div class="wrap"><canvas id="chart-phase"></canvas></div>
-        </div>
-        <div class="chart-card">
-            <h2>Group delay <span class="sub">— residual after bulk FIR delay removal, milliseconds vs frequency (log)</span></h2>
-            <div class="wrap"><canvas id="chart-gd"></canvas></div>
-        </div>
-        <div class="note" id="note"></div>
-    </div>
+        <div id="legend" class="legend"></div>
+        <section class="chart-card">
+            <h2 id="chart-title">Magnitude <span class="sub">— dB vs frequency</span></h2>
+            <div class="wrap"><canvas id="response-chart"></canvas></div>
+            <div class="note" id="note"></div>
+        </section>
+        <details id="details-card" hidden>
+            <summary>Provenance and audit details</summary>
+            <dl class="detail-grid" id="detail-grid"></dl>
+            <pre id="detail-json"></pre>
+        </details>
+    </main>
 
 <script>
-const charts = {};
-const FREQ_TICKS = [10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000];
+const FREQ_TICKS = [10,20,50,100,200,500,1000,2000,5000,10000,20000];
+let responseData = null;
+let responseChart = null;
+let mode = 'magnitude_db';
+let traces = [];
 
-function baseOptions(yTitle, yExtra) {
-    return {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        parsing: false,
-        interaction: { mode: 'index', intersect: false },
-        scales: {
-            x: {
-                type: 'logarithmic',
-                title: { display: true, text: 'Frequency (Hz)', color: '#8b949e' },
-                min: 10,
-                ticks: {
-                    color: '#8b949e', autoSkip: false, maxRotation: 0,
-                    callback: v => FREQ_TICKS.includes(v) ? (v >= 1000 ? (v/1000)+'k' : v) : '',
-                },
-                grid: { color: 'rgba(139,148,158,.15)' },
-            },
-            y: Object.assign({
-                title: { display: true, text: yTitle, color: '#8b949e' },
-                ticks: { color: '#8b949e' },
-                grid: { color: 'rgba(139,148,158,.15)' },
-            }, yExtra || {}),
-        },
-        plugins: {
-            legend: { labels: { color: '#e6edf3', boxWidth: 14 } },
-            tooltip: { callbacks: {
-                title: items => items.length ? Math.round(items[0].parsed.x) + ' Hz' : '',
-            } },
-        },
-        elements: { point: { radius: 0 }, line: { borderWidth: 1.5, tension: 0 } },
-    };
+function el(name, text) {
+    const node = document.createElement(name);
+    if (text !== undefined) node.textContent = text;
+    return node;
 }
 
-function makeDatasets(channels, key) {
-    return channels.map(ch => ({
-        label: ch.name,
-        borderColor: ch.color,
-        backgroundColor: ch.color,
-        data: ch.freqs.map((f, i) => ({ x: f, y: ch[key][i] })),
+function buildTraceList(data) {
+    if (Array.isArray(data.traces)) {
+        return data.traces.map(t => ({...t, freqs:data.frequencies_hz, selected:!!t.default_visible}));
+    }
+    // Safe diagnostic fallback: these curves were calculated directly from
+    // the active bytes. No stored measurement is associated with them.
+    return data.channels.map(ch => ({
+        id:`live-${ch.name.toLowerCase()}`, label:`Active filter ${ch.name}`,
+        color:ch.color, group:'Live diagnostic', freqs:ch.freqs,
+        magnitude_db:ch.mag, phase_deg:ch.phase, selected:true,
     }));
 }
 
-function draw(id, channels, key, yTitle, yExtra) {
-    const ctx = document.getElementById(id);
-    if (charts[id]) charts[id].destroy();
-    charts[id] = new Chart(ctx, {
-        type: 'line',
-        data: { datasets: makeDatasets(channels, key) },
-        options: baseOptions(yTitle, yExtra),
+function renderLegend() {
+    const legend = document.getElementById('legend');
+    legend.replaceChildren();
+    let lastGroup = '';
+    traces.forEach((trace, index) => {
+        if (trace.group !== lastGroup) {
+            legend.appendChild(el('span', trace.group));
+            legend.lastChild.className = 'legend-group';
+            lastGroup = trace.group;
+        }
+        const label = el('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox'; input.checked = trace.selected;
+        input.addEventListener('change', () => { traces[index].selected = input.checked; draw(); });
+        const swatch = el('span'); swatch.className = 'swatch'; swatch.style.background = trace.color;
+        label.append(input, swatch, document.createTextNode(trace.label));
+        legend.appendChild(label);
     });
 }
 
+function setMode(next) {
+    mode = next;
+    document.getElementById('mode-mag').classList.toggle('active', mode === 'magnitude_db');
+    document.getElementById('mode-phase').classList.toggle('active', mode === 'phase_deg');
+    draw();
+}
+
+function draw() {
+    if (!responseData) return;
+    const phase = mode === 'phase_deg';
+    document.getElementById('chart-title').innerHTML = phase
+        ? 'Phase <span class="sub">— wrapped degrees vs frequency</span>'
+        : 'Magnitude <span class="sub">— room curves are SPL; filter curves are effective runtime gain</span>';
+    const datasets = traces.filter(t => t.selected).map(t => ({
+        label:t.label, borderColor:t.color, backgroundColor:t.color,
+        borderDash:t.dash || [],
+        data:t.freqs.map((f, i) => ({x:f, y:t[mode][i]})),
+    }));
+    if (responseChart) responseChart.destroy();
+    responseChart = new Chart(document.getElementById('response-chart'), {
+        type:'line', data:{datasets}, options:{
+            responsive:true, maintainAspectRatio:false, animation:false, parsing:false,
+            interaction:{mode:'nearest', intersect:false},
+            scales:{
+                x:{type:'logarithmic', min:10, max:20000,
+                   title:{display:true,text:'Frequency (Hz)',color:'#8b949e'},
+                   ticks:{color:'#8b949e',autoSkip:false,maxRotation:0,
+                          callback:v=>FREQ_TICKS.includes(v)?(v>=1000?(v/1000)+'k':v):''},
+                   grid:{color:'rgba(139,148,158,.15)'}},
+                y:{min:phase?-180:undefined,max:phase?180:undefined,
+                   title:{display:true,text:phase?'Phase (°)':'Level / gain (dB)',color:'#8b949e'},
+                   ticks:{color:'#8b949e',stepSize:phase?90:undefined},
+                   grid:{color:'rgba(139,148,158,.15)'}},
+            },
+            plugins:{legend:{display:false},tooltip:{callbacks:{
+                title:items=>items.length?Math.round(items[0].parsed.x)+' Hz':'',
+            }}},
+            elements:{point:{radius:0},line:{borderWidth:1.55,tension:0}},
+        }
+    });
+}
+
+function addDetail(term, description) {
+    const grid = document.getElementById('detail-grid');
+    grid.append(el('dt', term), el('dd', description));
+}
+
+function renderDetails(data) {
+    const card = document.getElementById('details-card');
+    const grid = document.getElementById('detail-grid');
+    grid.replaceChildren();
+    if (!data.details) { card.hidden = true; return; }
+    const d = data.details;
+    addDetail('Bundle', d.bundle_id);
+    addDetail('Active', `${data.conf} · ${data.rate.toLocaleString()} Hz · ${d.design_id || d.variant}`);
+    addDetail('Design description', d.description || d.design_id || d.variant);
+    addDetail('Runtime hashes', `L ${data.verification.active_hashes.left} · R ${data.verification.active_hashes.right}`);
+    addDetail('Source repository', d.source_repository);
+    if (d.release && d.release.kind === 'annotated_tag') {
+        addDetail('Annotated source tag', `${d.release.name} · tag object ${d.release.tag_object}`);
+    } else {
+        addDetail('Source reference', d.source_ref || 'raw commit (no annotated tag recorded)');
+    }
+    addDetail('Source commit', d.source_commit);
+    if (d.source_declaration) {
+        addDetail('Source declaration', `${d.source_declaration.path} · SHA-256 ${d.source_declaration.sha256}`);
+    }
+    if (d.project) addDetail('Optional project archive', `${d.project.path} · SHA-256 ${d.project.sha256}`);
+    addDetail('Measurements', Object.values(d.measurements).map(m => `${m.measurement} (${m.dated}, ${m.smoothing})`).join(' · '));
+    addDetail('Prediction', d.prediction);
+    document.getElementById('detail-json').textContent = JSON.stringify(d, null, 2);
+    card.hidden = false;
+}
+
 async function load() {
-    const statusEl = document.getElementById('status');
-    const chartsEl = document.getElementById('charts');
-    statusEl.className = '';
-    statusEl.style.display = '';
-    statusEl.textContent = 'Loading filter analysis…';
-    document.getElementById('meta').textContent = '';
+    const status = document.getElementById('status');
+    const content = document.getElementById('content');
+    status.className = ''; status.hidden = false; status.textContent = 'Loading active filter and provenance…';
+    content.hidden = true;
     try {
-        const d = await (await fetch('/drc/filter-response')).json();
-        if (!d.ok) {
-            statusEl.className = d.running === false ? '' : 'error';
-            statusEl.textContent = d.running === false
-                ? 'BruteFIR is not running, so no room-correction filter is loaded. ' +
-                  'Apply a DRC configuration on the main page, then refresh this page.'
-                : (d.error || 'error');
-            chartsEl.style.display = 'none';
+        const response = await fetch('/drc/filter-response', {cache:'no-store'});
+        const data = await response.json();
+        if (!data.ok) {
+            status.className = data.running === false ? '' : 'error';
+            status.textContent = data.running === false
+                ? 'BruteFIR is not running, so no room-correction filter is loaded.'
+                : (data.error || 'Filter analysis failed.');
             return;
         }
-
-        const taps = d.channels.length ? d.channels[0].taps : 0;
+        responseData = data;
+        traces = buildTraceList(data);
+        const taps = data.channels.length ? data.channels[0].taps : 0;
         document.getElementById('meta').textContent =
-            `${d.geometry} · ${d.rate.toLocaleString()} Hz · ${taps.toLocaleString()} taps`;
-
-        // Readability: clamp the magnitude view to a sensible window so deep
-        // correction notches don't flatten the whole plot. Data is untouched.
-        let lo = Infinity, hi = -Infinity;
-        for (const ch of d.channels) for (const v of ch.mag) { if (v < lo) lo = v; if (v > hi) hi = v; }
-        const magY = { min: Math.max(lo - 3, -42), max: hi + 3 };
-
-        draw('chart-mag',   d.channels, 'mag',   'Magnitude (dB)', magY);
-        draw('chart-phase', d.channels, 'phase', 'Delay-compensated phase (°)',
-             { min: -180, max: 180, ticks: { color: '#8b949e', stepSize: 90 } });
-        draw('chart-gd',    d.channels, 'gd',    'Group delay (ms)');
-
-        const att = d.channels.map(c => `${c.name} ${c.attenuation} dB`).join(', ');
-        const delays = d.channels.map(c => `${c.name} ${c.delay_ms} ms`).join(', ');
-        const fmax = d.channels.length ? Math.round(d.channels[0].fmax).toLocaleString() : '20,000';
-        document.getElementById('note').textContent =
-            `Computed live by FFT of the loaded ${d.channels[0].format} impulse responses ` +
-            `(${d.channels.map(c => c.file).join(', ')}), generated with REW + SoX. ` +
-            `Coeff attenuation: ${att}. Bulk delay removed for phase/group-delay: ${delays}. ` +
-            `Curves are log-spaced to ${fmax} Hz; the magnitude axis is clamped for readability.`;
-
-        statusEl.style.display = 'none';
-        chartsEl.style.display = '';
-    } catch (e) {
-        statusEl.className = 'error';
-        statusEl.textContent = 'network error';
+            `${data.geometry} · ${data.rate.toLocaleString()} Hz · ${taps.toLocaleString()} taps`;
+        const verdict = document.getElementById('verification');
+        const verified = data.verification && data.verification.status === 'verified';
+        verdict.className = `verification ${verified?'verified':'mismatch'}`;
+        verdict.replaceChildren();
+        const badge = el('span', verified?'✓ Verified':'✕ Unverified'); badge.className = 'badge';
+        verdict.append(badge, el('span', data.verification?.message || 'No verification result.'));
+        document.getElementById('note').textContent = verified
+            ? `The default original curve is the hash-pinned independent L+R measurement; the corrected curve is L × FLX + R × FRX through the exact active filters. The calculated original L+R is also selectable. BruteFIR's ${data.channels[0].attenuation} dB coefficient attenuation is included. The source commit/tag constraint is shown in the green verification banner; full hashes are below.`
+            : `Stored measurements and predicted room curves are withheld. The displayed fallback is an FFT of the coefficient bytes currently loaded by BruteFIR, including configured attenuation.`;
+        renderLegend(); renderDetails(data); draw();
+        status.hidden = true; content.hidden = false;
+    } catch (error) {
+        status.className = 'error'; status.textContent = `Network or data error: ${error.message}`;
     }
 }
 

@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Read-only verification of committed filter provenance bundles."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+import numpy as np
+
+from deploy_filter import (
+    AuditError, bundle_identity_from_manifest, canonical_hash, parse_config,
+    peak_gain_db, required_attenuation, sha256_file,
+)
+from filter_workflow_next import print_deployed_next
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def inside(root: Path, relative: str) -> Path:
+    if Path(relative).is_absolute():
+        raise AuditError(f"absolute bundle path: {relative}")
+    root = root.resolve()
+    result = (root / relative).resolve()
+    try:
+        result.relative_to(root)
+    except ValueError as exc:
+        raise AuditError(f"bundle path escapes root: {relative}") from exc
+    return result
+
+
+def verify_manifest(path: Path, require_sources: bool) -> dict:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    geometry_root = path.parent.parent
+    expected_id = canonical_hash(bundle_identity_from_manifest(manifest))
+    if expected_id != manifest["bundle_id"]:
+        raise AuditError(f"{path}: bundle ID mismatch")
+    if manifest.get("verification", {}).get("status") != "verified":
+        raise AuditError(f"{path}: manifest status is not verified")
+
+    analysis_path = inside(geometry_root, manifest["analysis"]["path"])
+    if sha256_file(analysis_path) != manifest["analysis"]["sha256"]:
+        raise AuditError(f"{path}: analysis hash mismatch")
+    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    if (analysis.get("geometry") != manifest["geometry"] or
+            analysis.get("variant") != manifest["variant"] or
+            analysis.get("design_id", analysis.get("variant")) !=
+            manifest.get("design_id", manifest["variant"])):
+        raise AuditError(f"{path}: analysis identity mismatch")
+    if ("description" in manifest and
+            analysis.get("description") != manifest["description"]):
+        raise AuditError(f"{path}: analysis description mismatch")
+    for role, item in manifest["source"]["artifacts"].items():
+        if analysis["inputs"].get(role) != item["sha256"]:
+            raise AuditError(f"{path}: analysis dependency mismatch for {role}")
+        source_copy = inside(geometry_root, item["bundle_path"])
+        if source_copy.exists():
+            if sha256_file(source_copy) != item["sha256"]:
+                raise AuditError(f"{path}: source copy mismatch for {role}")
+        elif require_sources:
+            raise AuditError(f"{path}: source copy missing for {role}")
+
+    for rate_text, runtime in manifest["runtime"]["rates"].items():
+        rate = int(rate_text)
+        config_path = inside(ROOT, runtime["config"])
+        if sha256_file(config_path) != runtime["config_sha256"]:
+            raise AuditError(f"{path}: config hash mismatch at {rate} Hz")
+        config = parse_config(config_path, rate)
+        if config["attenuation_db"] != runtime["attenuation_db"]:
+            raise AuditError(f"{path}: config attenuation mismatch at {rate} Hz")
+        peaks = []
+        for channel in ("left", "right"):
+            item = runtime["channels"][channel]
+            raw_path = inside(geometry_root, item["path"])
+            if sha256_file(raw_path) != item["sha256"]:
+                raise AuditError(f"{path}: {rate} Hz {channel} RAW hash mismatch")
+            if raw_path.stat().st_size != item["bytes"]:
+                raise AuditError(f"{path}: {rate} Hz {channel} RAW size mismatch")
+            values = np.fromfile(raw_path, dtype="<f8")
+            if values.size != item["samples"]:
+                raise AuditError(f"{path}: {rate} Hz {channel} sample count mismatch")
+            peaks.append(peak_gain_db(values))
+        needed = required_attenuation(max(peaks), runtime["safety_margin_db"])
+        if needed != runtime["required_attenuation_db"]:
+            raise AuditError(f"{path}: recorded headroom mismatch at {rate} Hz")
+        if runtime["attenuation_db"] < needed:
+            raise AuditError(f"{path}: insufficient attenuation at {rate} Hz")
+    print(f"PASS {manifest['geometry']}/{manifest['variant']} {manifest['bundle_id']}")
+    try:
+        manifest_path = path.relative_to(ROOT)
+    except ValueError:
+        manifest_path = path
+    return {
+        "geometry": manifest["geometry"],
+        "design_id": manifest.get("design_id", manifest["variant"]),
+        "bundle_id": manifest["bundle_id"],
+        "manifest": manifest_path,
+        "release": manifest["source"].get("release", {}),
+        "source_commit": manifest["source"]["repository_head"],
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("manifests", nargs="*", type=Path)
+    parser.add_argument("--all", action="store_true", help="verify every committed bundle")
+    parser.add_argument("--require-sources", action="store_true",
+                        help="fail if development-only source copies are absent")
+    parser.add_argument(
+        "--no-next", action="store_true",
+        help="suppress operator handoff (for CMake/CI/internal invocation)")
+    args = parser.parse_args()
+    manifests = args.manifests
+    if args.all or not manifests:
+        manifests = sorted(ROOT.glob("filters/*/provenance/*.json"))
+        manifests = [path for path in manifests if not path.name.endswith(".source.json")]
+    if not manifests:
+        raise AuditError("no filter provenance manifests found")
+    verified = [
+        verify_manifest(manifest.resolve(), args.require_sources)
+        for manifest in manifests
+    ]
+    if not args.no_next:
+        print_deployed_next(ROOT, verified, include_verification=False)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (AuditError, OSError, KeyError, ValueError, json.JSONDecodeError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        raise SystemExit(1)
