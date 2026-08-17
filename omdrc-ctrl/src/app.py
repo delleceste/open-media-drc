@@ -1194,6 +1194,11 @@ _RAW_DTYPES: dict[str, str] = {
     "S16_LE": "<i2", "S16_BE": ">i2",
 }
 
+# Match scripts/headroom_calc.py and the publication audit: the live page adds
+# one dB above the worst raw-filter FFT gain, then rounds the required BruteFIR
+# attenuation upward to one decimal place.
+_HEADROOM_SAFETY_MARGIN_DB = 1.0
+
 
 def _sha256_file(path: str) -> str:
     digest = hashlib.sha256()
@@ -1392,8 +1397,8 @@ def _verified_filter_bundle(parsed: dict) -> tuple[dict | None, dict]:
     }
 
 
-def _active_brutefir_conf() -> str | None:
-    """Absolute path of the .conf the running BruteFIR was started with.
+def _active_brutefir_process() -> dict | None:
+    """Command line and config path of the running BruteFIR process.
 
     Match the real brutefir process by argv[0] (handling a sudo prefix) rather
     than any command line that merely mentions "brutefir" — otherwise an editor
@@ -1411,8 +1416,14 @@ def _active_brutefir_conf() -> str | None:
             continue
         for p in parts[1:]:
             if p.endswith(".conf"):
-                return p
+                return {"command_line": line, "argv": parts, "config": p}
     return None
+
+
+def _active_brutefir_conf() -> str | None:
+    """Path of the .conf the running BruteFIR was started with."""
+    process = _active_brutefir_process()
+    return process["config"] if process else None
 
 
 def _design_selector_from_conf(path: str) -> tuple[int | None, str]:
@@ -1444,6 +1455,137 @@ def _parse_brutefir_conf(path: str) -> dict:
             "attenuation": float(att.group(1)) if att else 0.0,
         })
     return {"rate": rate, "coeffs": coeffs}
+
+
+def _raw_filter_headroom(filename: str, fmt: str,
+                         margin_db: float = _HEADROOM_SAFETY_MARGIN_DB) -> dict:
+    """Calculate clipping-safe attenuation directly from one active RAW FIR.
+
+    The calculation deliberately does not trust provenance metadata: it reads
+    the bytes named by the running config, finds the filter's peak FFT gain and
+    adds the requested safety margin.  Attenuation is a positive BruteFIR gain
+    reduction, rounded upward to the one-decimal precision used by our configs.
+    """
+    import numpy as np
+
+    dtype_name = _RAW_DTYPES.get(fmt.upper())
+    if not dtype_name:
+        raise ValueError(f"unsupported BruteFIR coefficient format: {fmt}")
+    samples = np.fromfile(filename, dtype=dtype_name)
+    if samples.size == 0:
+        raise ValueError(f"empty filter: {filename}")
+    dtype = np.dtype(dtype_name)
+    if np.issubdtype(dtype, np.integer):
+        samples = samples.astype(np.float64) / (2 ** (dtype.itemsize * 8 - 1))
+    else:
+        samples = samples.astype(np.float64)
+    if not np.all(np.isfinite(samples)):
+        raise ValueError(f"filter contains non-finite coefficients: {filename}")
+
+    fft_size = 1 << (max(1, int(samples.size)) - 1).bit_length()
+    peak_linear = float(np.max(np.abs(np.fft.rfft(samples, n=fft_size))))
+    peak_db = 20.0 * math.log10(peak_linear) if peak_linear > 0.0 else None
+    required = 0.0 if peak_db is None else max(
+        0.0, math.ceil((peak_db + margin_db) * 10.0) / 10.0)
+    return {
+        "taps": int(samples.size),
+        "peak_gain_db": round(peak_db, 6) if peak_db is not None else None,
+        "safety_margin_db": float(margin_db),
+        "safe_attenuation_db": round(required, 1),
+    }
+
+
+def _active_brutefir_configuration() -> dict:
+    """Inspect the exact config and RAW filters loaded by BruteFIR right now."""
+    process = _active_brutefir_process()
+    if not process:
+        return {
+            "ok": False, "running": False,
+            "error": "BruteFIR is not running — no active configuration loaded.",
+        }
+
+    conf_path = process["config"]
+    parsed = _parse_brutefir_conf(conf_path)
+    rate_from_name, selector = _design_selector_from_conf(conf_path)
+    rate = parsed.get("rate") or rate_from_name
+    geometry = os.path.basename(os.path.dirname(conf_path))
+    design_id = selector[1:] if selector.startswith("@") else selector
+    description = design_id
+    verification = None
+
+    # A verified manifest supplies the human-readable design name, but the
+    # page remains useful for legacy/unpublished configs and never relies on a
+    # manifest for its live headroom figures.
+    if parsed["coeffs"] and all(os.path.isfile(c["filename"]) for c in parsed["coeffs"]):
+        try:
+            bundle, verification = _verified_filter_bundle(parsed)
+            if bundle:
+                manifest = bundle["manifest"]
+                design_id = manifest.get("design_id", manifest["variant"])
+                description = manifest.get("description", design_id)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            pass
+
+    filters = []
+    for coeff in parsed["coeffs"]:
+        filename = coeff["filename"]
+        item = {
+            "label": coeff["label"],
+            "channel": _coeff_channel(coeff),
+            "filename": filename,
+            "file": os.path.basename(filename),
+            "format": coeff["format"],
+            "is_raw": filename.lower().endswith(".raw"),
+            "exists": os.path.isfile(filename),
+            "configured_attenuation_db": float(coeff["attenuation"]),
+        }
+        if not item["is_raw"]:
+            item["analysis_error"] = "coefficient is not a .raw filter file"
+        elif not item["exists"]:
+            item["analysis_error"] = "filter file does not exist or is not readable"
+        else:
+            try:
+                headroom = _raw_filter_headroom(filename, coeff["format"])
+                item.update(headroom)
+                item["safe"] = (
+                    item["configured_attenuation_db"] + 1e-9 >=
+                    item["safe_attenuation_db"]
+                )
+            except (OSError, ValueError) as error:
+                item["analysis_error"] = str(error)
+        filters.append(item)
+
+    analysed = [item for item in filters if "safe_attenuation_db" in item]
+    headroom_complete = bool(analysed) and len(analysed) == len(filters)
+    safe_attenuation = (
+        max(item["safe_attenuation_db"] for item in analysed)
+        if headroom_complete else None)
+    configured_values = sorted({item["configured_attenuation_db"] for item in filters})
+    configured_attenuation = (
+        configured_values[0] if len(configured_values) == 1 else None)
+    headroom_safe = headroom_complete and all(item.get("safe") for item in analysed)
+
+    result = {
+        "ok": True,
+        "running": True,
+        "command_line": process["command_line"],
+        "config_path": conf_path,
+        "config": os.path.basename(conf_path),
+        "geometry": geometry,
+        "rate": rate,
+        "design": selector,
+        "design_id": design_id,
+        "description": description,
+        "safety_margin_db": _HEADROOM_SAFETY_MARGIN_DB,
+        "configured_attenuation_db": configured_attenuation,
+        "configured_attenuations_db": configured_values,
+        "safe_attenuation_db": safe_attenuation,
+        "headroom_safe": headroom_safe,
+        "filters": filters,
+    }
+    if verification:
+        result["verification"] = verification
+    return result
 
 
 # ── DRC display-sync delay ────────────────────────────────────────────────────
@@ -2727,6 +2869,30 @@ def drc_session():
 @app.route("/filter-response")
 def filter_response_page():
     return render_template("filter_response.html")
+
+
+@app.route("/brutefir-config")
+def brutefir_config_page():
+    return render_template("brutefir_config.html")
+
+
+@app.route("/drc/brutefir-config")
+def drc_brutefir_config():
+    """Live BruteFIR command, config identity and RAW-filter headroom."""
+    try:
+        return jsonify(_active_brutefir_configuration())
+    except FileNotFoundError as error:
+        return jsonify({
+            "ok": False, "running": True,
+            "error": f"active BruteFIR configuration not found: {error}",
+        })
+    except ImportError:
+        return jsonify({
+            "ok": False, "running": True,
+            "error": "numpy is required for live filter headroom analysis",
+        })
+    except Exception as error:
+        return jsonify({"ok": False, "running": True, "error": str(error)})
 
 
 @app.route("/drc/filter-response")

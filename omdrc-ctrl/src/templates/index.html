@@ -669,7 +669,7 @@
 {% macro render_group(group_name, group_label, cmds) %}
 <div class="card">
     <div class="card-title"{% if group_name == 'drc' %} style="display:flex;justify-content:space-between;align-items:baseline"{% endif %}>
-        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/filter-response">Filter response ↗</a></span>{% endif %}
+        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/brutefir-config" target="_blank" rel="noopener noreferrer">Configuration ↗</a><a class="btn-details active" href="/filter-response">Filter response ↗</a></span>{% endif %}
     </div>
     {% if group_name == 'drc' %}
     <div id="drc-session-panel" class="drc-session-panel" aria-live="polite">

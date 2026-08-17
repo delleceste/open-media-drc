@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Current BruteFIR configuration</title>
+    <style>
+        :root {
+            --bg:#0d1117; --panel:#161b22; --border:#30363d;
+            --text:#e6edf3; --muted:#8b949e; --accent:#388bfd;
+            --good:#3fb950; --bad:#f85149; --warn:#d29922;
+        }
+        * { box-sizing:border-box; }
+        body {
+            margin:0; padding:18px; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+            background:var(--bg); color:var(--text); line-height:1.45;
+        }
+        .topbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:16px; }
+        h1 { font-size:1.2rem; margin:0; }
+        h2 { margin:0 0 11px; font-size:.9rem; }
+        a.back { color:var(--accent); text-decoration:none; font-size:.85rem; }
+        a.back:hover { text-decoration:underline; }
+        .spacer { flex:1; }
+        button {
+            background:var(--panel); color:var(--text); border:1px solid var(--border);
+            border-radius:6px; padding:6px 11px; font-size:.8rem; cursor:pointer;
+        }
+        button:hover { border-color:var(--accent); }
+        #status { color:var(--muted); padding:26px 4px; }
+        #status.error { color:var(--bad); }
+        main { max-width:1100px; margin:0 auto; }
+        .card {
+            background:var(--panel); border:1px solid var(--border); border-radius:10px;
+            padding:14px 16px; margin-bottom:14px;
+        }
+        .identity {
+            display:grid; grid-template-columns:max-content minmax(0,1fr);
+            gap:6px 14px; margin:0; font-size:.82rem;
+        }
+        dt { color:var(--muted); }
+        dd { margin:0; overflow-wrap:anywhere; }
+        .summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+        .metric {
+            min-height:112px; background:var(--panel); border:1px solid var(--border);
+            border-radius:10px; padding:14px 16px;
+        }
+        .metric.configured { border-color:#1f6feb; }
+        .metric.safe.good { border-color:#238636; background:#14261a; }
+        .metric.safe.bad { border-color:#da3633; background:#2d1619; }
+        .metric.safe.unknown { border-color:#9e6a03; background:#2b2111; }
+        .metric-label { color:var(--muted); font-size:.76rem; text-transform:uppercase; letter-spacing:.06em; }
+        .metric-value { font-size:2rem; font-weight:700; margin:5px 0 2px; }
+        .metric-note { color:var(--muted); font-size:.75rem; }
+        .good-text { color:var(--good); }
+        .bad-text { color:var(--bad); }
+        .warn-text { color:var(--warn); }
+        code, pre { font-family:ui-monospace,"SFMono-Regular","Cascadia Code",monospace; }
+        pre {
+            margin:0; color:var(--text); font-size:.76rem; white-space:pre-wrap;
+            overflow-wrap:anywhere; background:var(--bg); border:1px solid var(--border);
+            border-radius:7px; padding:11px 12px;
+        }
+        .table-wrap { overflow-x:auto; }
+        table { width:100%; border-collapse:collapse; font-size:.78rem; }
+        th { color:var(--muted); font-weight:600; text-align:left; white-space:nowrap; }
+        th, td { padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+        tbody tr:last-child td { border-bottom:0; }
+        td.number, th.number { text-align:right; white-space:nowrap; }
+        .filename { min-width:260px; overflow-wrap:anywhere; font-family:ui-monospace,"SFMono-Regular",monospace; }
+        .file-meta { margin-top:4px; color:var(--muted); font-family:inherit; }
+        .badge {
+            display:inline-block; margin-left:6px; padding:1px 5px; border-radius:9px;
+            border:1px solid var(--border); font-size:.62rem; font-weight:700;
+            vertical-align:1px; white-space:nowrap;
+        }
+        .badge.raw { color:var(--good); border-color:#238636; }
+        .badge.expected { color:var(--warn); border-color:#9e6a03; }
+        .analysis-error { color:var(--warn); font-size:.72rem; margin-top:4px; }
+        .explanation { color:var(--muted); font-size:.76rem; line-height:1.55; }
+        .explanation strong { color:var(--text); }
+        @media (max-width:650px) {
+            body { padding:12px; }
+            .summary { grid-template-columns:1fr; }
+            .identity { grid-template-columns:1fr; gap:2px; }
+            .identity dd { margin-bottom:7px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <a class="back" href="/">← Control</a>
+        <h1 id="page-title">Current BruteFIR configuration</h1>
+        <span class="spacer"></span>
+        <button onclick="load()">↻ Refresh</button>
+    </div>
+
+    <div id="status">Reading the running BruteFIR process and active RAW filters…</div>
+    <main id="content" hidden>
+        <section class="card">
+            <dl class="identity" id="identity"></dl>
+        </section>
+
+        <section class="summary">
+            <div class="metric configured">
+                <div class="metric-label">1 · Attenuation set in BruteFIR</div>
+                <div class="metric-value" id="configured-att">—</div>
+                <div class="metric-note" id="configured-note"></div>
+            </div>
+            <div class="metric safe unknown" id="safe-card">
+                <div class="metric-label">2 · Safe attenuation, calculated now</div>
+                <div class="metric-value" id="safe-att">—</div>
+                <div class="metric-note" id="safe-note"></div>
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>BruteFIR command line</h2>
+            <pre id="command-line"></pre>
+        </section>
+
+        <section class="card">
+            <h2>Filters named by the active configuration</h2>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr>
+                        <th>Coefficient</th><th>Filename</th><th>Format</th>
+                        <th class="number">Taps</th><th class="number">Peak gain</th>
+                        <th class="number">Configured</th><th class="number">Safe</th><th>Result</th>
+                    </tr></thead>
+                    <tbody id="filters"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="card explanation" id="calculation-note"></section>
+    </main>
+
+<script>
+function node(name, text, className) {
+    const result = document.createElement(name);
+    if (text !== undefined) result.textContent = text;
+    if (className) result.className = className;
+    return result;
+}
+
+function db(value, signed = false) {
+    if (value === null || value === undefined) return '—';
+    const number = Number(value);
+    return `${signed && number >= 0 ? '+' : ''}${number.toFixed(1)} dB`;
+}
+
+function addIdentity(term, value) {
+    const list = document.getElementById('identity');
+    list.append(node('dt', term), node('dd', value));
+}
+
+function designLabel(data) {
+    const id = data.design_id || (data.design === 'default' ? 'default' : String(data.design || '').replace(/^@/, ''));
+    return data.description && data.description !== id ? `${data.description} (${id})` : id;
+}
+
+function renderFilter(filter) {
+    const row = document.createElement('tr');
+    const coefficient = node('td', `${filter.channel} · ${filter.label}`);
+    const filename = node('td', undefined, 'filename');
+    filename.append(document.createTextNode(filter.filename));
+    filename.append(node('span', filter.is_raw ? 'RAW' : 'EXPECTED .raw', `badge ${filter.is_raw ? 'raw' : 'expected'}`));
+    const fileMeta = node('div', filter.exists ? 'file is readable' : 'file is not readable', 'file-meta');
+    filename.append(fileMeta);
+    if (filter.analysis_error) filename.append(node('div', filter.analysis_error, 'analysis-error'));
+
+    row.append(
+        coefficient,
+        filename,
+        node('td', filter.format),
+        node('td', filter.taps === undefined ? '—' : Number(filter.taps).toLocaleString(), 'number'),
+        node('td', db(filter.peak_gain_db, true), 'number'),
+        node('td', db(filter.configured_attenuation_db), 'number'),
+        node('td', db(filter.safe_attenuation_db), 'number')
+    );
+    const result = filter.safe === true ? node('td', '✓ safe', 'good-text')
+        : filter.safe === false ? node('td', '✕ too low', 'bad-text')
+        : node('td', 'not calculated', 'warn-text');
+    row.append(result);
+    document.getElementById('filters').append(row);
+}
+
+function render(data) {
+    const design = designLabel(data);
+    const title = `Geometry: ${data.geometry} · Filter design: ${design}`;
+    document.title = `${title} — BruteFIR configuration`;
+    document.getElementById('page-title').textContent = title;
+
+    const identity = document.getElementById('identity');
+    identity.replaceChildren();
+    addIdentity('Geometry in use', data.geometry);
+    addIdentity('Filter design loaded', design);
+    addIdentity('Sample rate', data.rate ? `${Number(data.rate).toLocaleString()} Hz` : 'not declared');
+    addIdentity('Configuration file', data.config_path);
+
+    const configured = document.getElementById('configured-att');
+    const configuredNote = document.getElementById('configured-note');
+    if (data.configured_attenuation_db !== null) {
+        configured.textContent = db(data.configured_attenuation_db);
+        configuredNote.textContent = 'The common attenuation value read from the active coefficient blocks.';
+    } else {
+        configured.textContent = 'mixed';
+        configuredNote.textContent = `Values in use: ${(data.configured_attenuations_db || []).map(v => db(v)).join(' · ')}`;
+    }
+
+    const safeCard = document.getElementById('safe-card');
+    const safeValue = document.getElementById('safe-att');
+    const safeNote = document.getElementById('safe-note');
+    safeCard.className = 'metric safe';
+    if (data.safe_attenuation_db === null) {
+        safeCard.classList.add('unknown');
+        safeValue.textContent = 'unavailable';
+        safeNote.textContent = 'One or more active coefficients could not be analysed as RAW files.';
+    } else if (data.headroom_safe) {
+        safeCard.classList.add('good');
+        safeValue.textContent = db(data.safe_attenuation_db);
+        safeNote.textContent = '✓ Every configured attenuation meets its live calculated requirement.';
+    } else {
+        safeCard.classList.add('bad');
+        safeValue.textContent = db(data.safe_attenuation_db);
+        safeNote.textContent = '✕ At least one configured attenuation is below its live calculated requirement.';
+    }
+
+    document.getElementById('command-line').textContent = data.command_line;
+    const filters = document.getElementById('filters');
+    filters.replaceChildren();
+    data.filters.forEach(renderFilter);
+    document.getElementById('calculation-note').innerHTML =
+        `<strong>How “safe” is calculated:</strong> each readable .raw file named by the running config is decoded as its declared BruteFIR format. Its worst FFT gain is measured from the current bytes, ${Number(data.safety_margin_db).toFixed(1)} dB is added, and the result is rounded upward to 0.1 dB. The headline safe attenuation is the worst requirement across the loaded filters. This is a live calculation; stored manifests are not used.`;
+}
+
+async function load() {
+    const status = document.getElementById('status');
+    const content = document.getElementById('content');
+    status.hidden = false; status.className = '';
+    status.textContent = 'Reading the running BruteFIR process and active RAW filters…';
+    content.hidden = true;
+    try {
+        const response = await fetch('/drc/brutefir-config', {cache:'no-store'});
+        const data = await response.json();
+        if (!data.ok) {
+            status.className = data.running === false ? '' : 'error';
+            status.textContent = data.error || 'Configuration inspection failed.';
+            return;
+        }
+        render(data);
+        status.hidden = true; content.hidden = false;
+    } catch (error) {
+        status.className = 'error';
+        status.textContent = `Network or data error: ${error.message}`;
+    }
+}
+
+load();
+</script>
+</body>
+</html>

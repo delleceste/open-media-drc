@@ -43,6 +43,10 @@ provides no feedback. Every command here either shows its output directly
   wrapped phase for the hash-bound measurements, FIR filters and predicted
   corrected responses, with display-only smoothing. See
   [DRC filter response](#drc-filter-response).
+- **Live BruteFIR configuration** — a **Configuration ↗** button opens the
+  exact running command line and config, identifies the loaded geometry/design
+  and lists every coefficient file. Configured attenuation is shown beside a
+  clipping-safe value recalculated from the current RAW bytes on every refresh.
 - **Live spectrum analyzer** — optional MPD FIFO tap (Linux and FreeBSD) with
   left/right FFT graphs and VU bars/needles. The card is collapsible (revealed on
   Start), the Floor slider drives graphs and meters together, and because the tap
@@ -64,7 +68,7 @@ provides no feedback. Every command here either shows its output directly
 | Python ≥ 3.9 | `list[dict]` type hints |
 | Flask ≥ 2.3 | `pip install flask` |
 | Markdown ≥ 3.5 | `pip install markdown` — renders details pages |
-| NumPy ≥ 1.21 | `pip install numpy` — FFT for the filter-response page and optional live spectrum analyzer. *Optional:* if absent, every other feature works and FFT pages report that NumPy is required. |
+| NumPy ≥ 1.21 | `pip install numpy` — FFT for live filter headroom, the filter-response page and optional spectrum analyzer. *Optional:* if absent, every other feature works and FFT pages report that NumPy is required. |
 | CMake ≥ 3.16 | build / install only |
 | systemd or rc.d | service management: systemd on Linux, rc.d on FreeBSD |
 
@@ -85,6 +89,7 @@ omdrcctrl/
 │   ├── templates/
 │   │   ├── index.html            # Jinja2 + vanilla-JS control panel
 │   │   ├── details.html          # markdown details page
+│   │   ├── brutefir_config.html  # live config and filter headroom page
 │   │   └── filter_response.html  # DRC filter-response charts page
 │   └── static/
 │       └── chart.umd.min.js # vendored Chart.js (filter-response charts)
@@ -797,6 +802,44 @@ the DRC card on the main page.
 
 ---
 
+### `GET /brutefir-config`
+
+Renders the live **BruteFIR configuration** page, opened in a new tab by the
+DRC card's **Configuration ↗** button. Its browser and visible page titles name
+the geometry and filter design actually loaded.
+
+### `GET /drc/brutefir-config`
+
+Finds the real running BruteFIR process by `argv[0]`, reports its complete
+command line, follows the `.conf` argument, and lists the coefficient filenames,
+formats and `attenuation:` values declared there. Every readable `.raw` is
+decoded in its declared format and FFT-analysed on demand. The safe attenuation
+is the worst filter peak gain plus a 1 dB margin, rounded upward to 0.1 dB; it is
+not read from a stored manifest.
+
+```json
+{
+  "ok": true, "running": true,
+  "geometry": "120.blue", "design_id": "rscreen.v2",
+  "command_line": "brutefir /.../brutefir-192000@rscreen.v2.conf -daemon",
+  "config_path": "/.../brutefir-192000@rscreen.v2.conf",
+  "configured_attenuation_db": 3.0,
+  "safe_attenuation_db": 2.7,
+  "headroom_safe": true,
+  "filters": [
+    {"channel": "Left", "filename": "/.../L.raw", "format": "FLOAT64_LE",
+     "peak_gain_db": 1.62, "configured_attenuation_db": 3.0,
+     "safe_attenuation_db": 2.7, "safe": true}
+  ]
+}
+```
+
+When BruteFIR is stopped, `running` is false and no saved or guessed config is
+substituted. Built-in coefficients such as `dirac pulse`, missing files and
+non-RAW filenames remain visible but are explicitly marked as not analysable.
+
+---
+
 ### `GET /drc/geometry`
 
 Returns the active filter set (geometry) and every set installed under
@@ -999,6 +1042,20 @@ The central audio-health panel for a headless server. Backed by
 
 A small **DRC status** sub-section (refreshed manually) lists the BruteFIR
 `drc.sh status` rows beneath the panel.
+
+### Live BruteFIR configuration
+
+The DRC card header's **Configuration ↗** button opens a separate tab tied only
+to the running process. The title reports **Geometry** and **Filter design**;
+the page then shows the full command line, the configuration path it points to,
+and the exact coefficient filenames (expected `.raw`) found in that file.
+
+Two large values deliberately distinguish the `attenuation:` configured in
+BruteFIR from the safe attenuation calculated at refresh time. For each active
+RAW filter the server measures the worst FFT gain of its current bytes, adds a
+1 dB clipping margin, and rounds upward to 0.1 dB. The table exposes the
+per-filter peak, configured/safe values and pass/fail result, while the headline
+safe value is the worst requirement across all loaded filters.
 
 ### DRC filter response
 
