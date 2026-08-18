@@ -106,6 +106,13 @@ if [ "$(uname)" = "FreeBSD" ]; then
     renderer: omdrc_renderer starts the renderer that was active last —
             qobuzconnect2mpd or upmpdcli, whichever omdrcctrl's toggle recorded
             in ${REPO_DIR}/last_renderer — so a reboot comes back as you left it.
+            Run both renderers and omdrcctrl as the same AUDIO_USER on FreeBSD,
+            matching the Linux user-service model:
+              sysrc qobuzconnect2mpd_user=${AUDIO_USER} qobuzconnect2mpd_group=$(id -gn "${AUDIO_USER}")
+              sysrc qobuzconnect2mpd_homedir=/var/db/qobuzconnect2mpd
+            Keep qconnectstatedir=/var/db/qobuzconnect2mpd in its config. For an
+            existing dedicated-user installation, migrate that private state once:
+              chown -R ${AUDIO_USER}:$(id -gn "${AUDIO_USER}") /var/db/qobuzconnect2mpd
             Keep BOTH renderers' own rcvars off, or rc would start one behind
             its back and two front-ends would drive MPD at once:
               sysrc upmpdcli_enable=NO qobuzconnect2mpd_enable=NO

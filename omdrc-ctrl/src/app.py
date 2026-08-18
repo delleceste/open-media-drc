@@ -14,6 +14,7 @@ import configparser
 import threading
 import time
 import tempfile
+from urllib.parse import quote, unquote, urlsplit
 import markdown as md_lib
 from flask import Flask, Response, render_template, jsonify, request, send_from_directory
 
@@ -132,15 +133,17 @@ _QOBUZ_GOOD = (r"(qobuz.*running|got\s+auth_code|init_oauth:\s*auth_code"
                r"|trackuri.*oauth\s+initiali)")
 
 # qobuzconnect2mpd's own signals.  It is a different program with a different
-# login: its own OAuth flow (`-L`), its own token under qconnectstatedir.  No
-# clears_file for it — that token is mode 0600 under its own service account, so
-# the panel cannot read it, and guessing would be worse than reading the log.
+# login: its own OAuth flow (`-L`) and its own token under qconnectstatedir.  It
+# shares AUDIO_USER with the controller on both OSes, but not a token format or
+# path with upmpdcli, so its post-authentication startup log remains the clean
+# source of truth instead of teaching the generic alert scanner another file.
 _QCONNECT_BAD = (r"(not authenticated|no auth token"
                  r"|cannot stream until it is authenticated"
                  r"|waiting for .*oauth login|login not completed within the timeout"
                  r"|oauth (code exchange|token exchange|callback) failed"
                  r"|token could not be persisted)")
-_QCONNECT_GOOD = r"(oauth complete|token loaded from|oauth code received)"
+_QCONNECT_GOOD = (r"(oauth complete|token loaded from|oauth code received"
+                  r"|qconnect2mpd:\s*mpd connected ok)")
 
 DEFAULT_LOG_ALERTS: list[dict] = [
     {
@@ -188,19 +191,19 @@ DEFAULT_LOG_ALERTS: list[dict] = [
         "pattern":  f"(?i){_QCONNECT_BAD}",
         "clears":   f"(?i){_QCONNECT_GOOD}",
         "message":  "qobuzconnect2mpd is not signed in to Qobuz",
-        "hint":     "Its login is its own, separate from upmpdcli's — the Qobuz "
-                    "sign-in button does not apply.  Bootstrap it once with: "
-                    "qobuzconnect2mpd -c /usr/local/etc/qobuzconnect2mpd.conf -L",
+        "hint":     "Press sign in: the panel starts qobuzconnect2mpd's own "
+                    "OAuth bootstrap and opens its remote-browser redirect flow.",
         "severity": "warn",
         "sources":  ["qobuzconnect2mpd"],
         "service":  "qobuzconnect2mpd",
+        "action":   "qconnect-oauth",
     },
     {
         "id":       "qconnect_ok",
         "pattern":  f"(?i){_QCONNECT_GOOD}",
         "clears":   f"(?i){_QCONNECT_BAD}",
-        "message":  "qobuzconnect2mpd signed in to Qobuz",
-        "hint":     "Its token was loaded or a sign-in completed.",
+        "message":  "qobuzconnect2mpd: Qobuz plugin connected",
+        "hint":     "Its token was loaded and the renderer completed startup.",
         "severity": "ok",
         "sources":  ["qobuzconnect2mpd"],
         "service":  "qobuzconnect2mpd",
@@ -225,6 +228,23 @@ QOBUZ_OAUTH_TIMEOUT = 45      # the script fetches the Qobuz app id over the net
 # `clears_file = @qobuz_token@` in an alert rule means the token file above,
 # wherever it turns out to live, so a rule stays host-independent.
 _QOBUZ_TOKEN_PLACEHOLDER = "@qobuz_token@"
+
+# qobuzconnect2mpd has a separate OAuth token and a different bootstrap.  Its
+# `-L` process prints one sign-in URL, keeps its HTTP callback alive for up to
+# five minutes, writes the token, and exits.  The panel tracks that process in
+# the background, then starts the normal service so the renderer is immediately
+# usable (and its normal startup log can report the green connected state).
+QCONNECT_OAUTH_BINARY = "qobuzconnect2mpd"
+QCONNECT_OAUTH_CONFIG = ""       # empty: search the service's standard paths
+QCONNECT_OAUTH_USER = ""        # same AUDIO_USER as omdrcctrl on both OSes
+QCONNECT_OAUTH_URL_TIMEOUT = 45   # time allowed for app-id lookup / URL output
+
+_QCONNECT_OAUTH_LOCK = threading.Condition()
+_QCONNECT_OAUTH_PROCESS: subprocess.Popen | None = None
+_QCONNECT_OAUTH_SESSION: dict = {
+    "phase": "idle", "output": "", "error": "", "returncode": None,
+    "started_at": None,
+}
 
 # Set to the defaults just below the parsers, then replaced by load_config().
 LOG_SOURCES: list[dict] = []
@@ -364,6 +384,8 @@ def load_config(path: str) -> None:
     global COMMANDS, CMD_MAP, QCONNECT_STATUS_FILE, QCONNECT_LOG_FILE
     global LOG_SOURCES, LOG_ALERTS, LOG_TAIL_BYTES, LOG_SCAN_BYTES, LOG_ALERT_INTERVAL
     global QOBUZ_OAUTH_SCRIPT, QOBUZ_UPMPDCLI_CONF, QOBUZ_CACHE_CONFIG, QOBUZ_OAUTH_TIMEOUT
+    global QCONNECT_OAUTH_BINARY, QCONNECT_OAUTH_CONFIG, QCONNECT_OAUTH_USER
+    global QCONNECT_OAUTH_URL_TIMEOUT
     global TOPCPU_THRESHOLD, MONITOR_INTERVAL, TOPCPU_INTERVAL
     global SNDSTAT_INTERVAL, BRUTEFIR_INTERVAL
     global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
@@ -442,7 +464,19 @@ def load_config(path: str) -> None:
         QOBUZ_CACHE_CONFIG = cfg.get("qobuz_oauth", "cache_config", fallback=QOBUZ_CACHE_CONFIG)
         QOBUZ_OAUTH_TIMEOUT = max(5, cfg.getint("qobuz_oauth", "timeout", fallback=QOBUZ_OAUTH_TIMEOUT))
 
-    _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth"}
+    if cfg.has_section("qconnect_oauth"):
+        QCONNECT_OAUTH_BINARY = cfg.get(
+            "qconnect_oauth", "binary", fallback=QCONNECT_OAUTH_BINARY).strip()
+        QCONNECT_OAUTH_CONFIG = cfg.get(
+            "qconnect_oauth", "config", fallback=QCONNECT_OAUTH_CONFIG).strip()
+        QCONNECT_OAUTH_USER = cfg.get(
+            "qconnect_oauth", "run_user", fallback=QCONNECT_OAUTH_USER).strip()
+        QCONNECT_OAUTH_URL_TIMEOUT = max(
+            5, cfg.getint("qconnect_oauth", "url_timeout",
+                          fallback=QCONNECT_OAUTH_URL_TIMEOUT))
+
+    _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth",
+                 "qconnect_oauth"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
@@ -2349,13 +2383,12 @@ def _service_running(name: str) -> bool:
     --user is-active.  FreeBSD: rc `onestatus` (works whether or not the service
     is enabled in rc.conf), falling back to a process check.
 
-    `service <name> onestatus` is unreliable here when run unprivileged: rc.subr
-    reads the pidfile, and a renderer that runs under its own service account
-    keeps that pidfile inside a 0700 home directory the panel user cannot
-    traverse (qobuzconnect2mpd puts it under /var/db/qobuzconnect2mpd), so
-    onestatus reports "not running" for a service that is running.  Start/stop
-    go through sudo and do not have that blind spot, so believing onestatus
-    would let both mutually-exclusive renderers drive MPD at once.
+    `service <name> onestatus` was unreliable with older qobuzconnect2mpd rc
+    scripts: their pidfile lived below a dedicated account's 0700 state dir and
+    the panel could not traverse it.  Current installs run every renderer as
+    AUDIO_USER and keep qobuzconnect2mpd's pidfiles under /var/run, but retain
+    the process fallback so an upgrade cannot briefly mis-detect the old layout
+    and let both mutually-exclusive renderers drive MPD at once.
 
     Process visibility is not privileged, so fall back to matching the running
     binary — both renderers install as <prefix>/bin/<service-name>, the same
@@ -2451,9 +2484,14 @@ def qconnect_services():
     remembered = _read_state_str(_RENDERER_STATE_FILE)
     if remembered not in SWITCHABLE_SERVICES:
         remembered = None       # unset, or a stale name the helper would ignore
+    # The temporary `-L` callback receiver has the same argv[0] as the normal
+    # daemon, so the process fallback in _service_running() can see it.  It is
+    # not an active renderer and must not light the qobuzconnect2mpd toggle.
+    qconnect_running = (_service_running(QCONNECT_SERVICE) and
+                        not _qconnect_oauth_active())
     return jsonify({
         "ok":               True,
-        "qobuzconnect2mpd": _service_running(QCONNECT_SERVICE),
+        "qobuzconnect2mpd": qconnect_running,
         "upmpdcli":         _service_running(UPMPDCLI_SERVICE),
         "remembered":       remembered,
         "boot":             remembered or RENDERER_BOOT_DEFAULT,
@@ -2469,6 +2507,20 @@ def qconnect_switch():
     target = data.get("target")
     if target not in SWITCHABLE_SERVICES:
         return jsonify({"ok": False, "error": "invalid target"}), 400
+    if target == QCONNECT_SERVICE and _qconnect_oauth_active():
+        return jsonify({"ok": False,
+                        "error": "qobuzconnect2mpd sign-in is still in progress"}), 409
+    ok, error = _activate_renderer(target)
+    return jsonify({"ok": ok, **({"active": target} if ok else {"error": error})})
+
+
+def _activate_renderer(target: str) -> tuple[bool, str]:
+    """Stop the other renderer, start `target`, and remember it for boot.
+
+    Shared by the ordinary renderer toggle and qobuzconnect2mpd's OAuth worker:
+    after `-L` caches the token, the background worker completes the same safe
+    switch the listener would otherwise have to perform by hand.
+    """
     other = UPMPDCLI_SERVICE if target == QCONNECT_SERVICE else QCONNECT_SERVICE
     try:
         # Stop the active one before starting the next.  The stop is issued
@@ -2478,23 +2530,22 @@ def qconnect_switch():
         # service exits non-zero, so what counts is the state afterwards.
         _service_action(other, "onestop")
         if _service_running(other):
-            return jsonify({"ok": False, "error": f"could not stop {other}"})
+            return False, f"could not stop {other}"
         # Leave MPD in a clean state for the incoming renderer.
         _mpc_quiesce()
         if not _service_running(target):
             r = _service_action(target, "onestart")
             if r.returncode != 0:
-                return jsonify({"ok": False,
-                                "error": f"starting {target}: {(r.stderr or r.stdout).strip()}"})
+                return False, f"starting {target}: {(r.stderr or r.stdout).strip()}"
         # Remember the choice for the next boot.  Written only once the switch
         # has actually succeeded, so a failed switch does not arm the boot
         # service with a renderer that would not start.
         _write_state_str(_RENDERER_STATE_FILE, target)
-        return jsonify({"ok": True, "active": target})
+        return True, ""
     except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "timeout"})
+        return False, "timeout"
     except OSError as e:
-        return jsonify({"ok": False, "error": str(e)})
+        return False, str(e)
 
 
 @app.route("/qconnect/restart", methods=["POST"])
@@ -2592,6 +2643,8 @@ def _scan_log_alerts() -> list[dict]:
         service = rule.get("service", "")
         if service and service not in running:
             running[service] = _service_running(service)
+            if service == QCONNECT_SERVICE and _qconnect_oauth_active():
+                running[service] = False
         idle = bool(service) and not running[service]
         if idle and rule["severity"] == "ok":
             continue
@@ -2743,6 +2796,39 @@ def _qobuz_token_state() -> dict:
     }
 
 
+def _oauth_redirect(url: str) -> tuple[str, int | None, str, tuple[int, int]]:
+    """Return host, port and decoded redirect URL plus its value span.
+
+    upmpdcli currently prints `redirect_url=http://...`, while
+    qobuzconnect2mpd percent-encodes that value.  Treat both forms alike so the
+    remote-browser address can be substituted without changing either daemon.
+    """
+    match = re.search(r"(?:[?&])redirect_url=([^&\s]+)", url)
+    if not match:
+        return "", None, "", (0, 0)
+    redirect = unquote(match.group(1))
+    try:
+        parsed = urlsplit(redirect)
+        return (parsed.hostname or "", parsed.port, redirect, match.span(1))
+    except ValueError:
+        return "", None, redirect, match.span(1)
+
+
+def _rewrite_oauth_redirect(url: str, request_host: str) -> str:
+    host, port, redirect, span = _oauth_redirect(url)
+    if not host or not request_host or not redirect:
+        return url
+    parsed = urlsplit(redirect)
+    shown_host = f"[{request_host}]" if ":" in request_host else request_host
+    netloc = shown_host + (f":{port}" if port is not None else "")
+    replacement = parsed._replace(netloc=netloc).geturl()
+    old_value = url[span[0]:span[1]]
+    # Preserve the style the producer used: upmpdcli leaves the URL readable;
+    # qobuzconnect2mpd percent-encodes it.
+    encoded = quote(replacement, safe="" if "%" in old_value else ":/")
+    return url[:span[0]] + encoded + url[span[1]:]
+
+
 def _oauth_candidates(output: str, request_host: str) -> list[dict]:
     """The sign-in URLs the script printed, plus — when the browser reached this
     panel on some other address — the same URL rewritten to that address.
@@ -2751,9 +2837,9 @@ def _oauth_candidates(output: str, request_host: str) -> list[dict]:
     only guess it from the box's default route.  The host this request arrived
     on is known-reachable, so it is offered first when it differs."""
     urls, seen = [], set()
-    for url in re.findall(r"https://\S*qobuz\.com/signin/oauth\S*", output):
-        match = re.search(r"redirect_url=https?://([^:/]+):(\d+)", url)
-        host = match.group(1) if match else ""
+    url_pattern = r"https://(?:www\.)?qobuz\.com/signin/oauth[^\s\x1b\"'<>]*"
+    for url in re.findall(url_pattern, output):
+        host, port, _, _ = _oauth_redirect(url)
         if host in seen:
             continue
         seen.add(host)
@@ -2761,14 +2847,14 @@ def _oauth_candidates(output: str, request_host: str) -> list[dict]:
         urls.append({
             "url":   url,
             "host":  host,
-            "port":  int(match.group(2)) if match else None,
+            "port":  port,
             "label": "browser running on this host" if local
                      else f"browser on another device ({host})",
             "local": local,
         })
     network = next((u for u in urls if not u["local"]), None)
     if network and request_host and request_host not in seen:
-        rewritten = network["url"].replace(f"//{network['host']}:", f"//{request_host}:")
+        rewritten = _rewrite_oauth_redirect(network["url"], request_host)
         urls.insert(0, {
             "url":   rewritten,
             "host":  request_host,
@@ -2782,6 +2868,207 @@ def _oauth_candidates(output: str, request_host: str) -> list[dict]:
     if primary:
         primary["primary"] = True
     return urls
+
+
+def _browser_request_host() -> str:
+    """Hostname (without the panel port) that this browser used."""
+    try:
+        return urlsplit(f"//{request.host}").hostname or ""
+    except ValueError:
+        return request.host.split(":", 1)[0]
+
+
+# ── qobuzconnect2mpd OAuth bootstrap ────────────────────────────────────────
+
+def _qconnect_oauth_binary_path() -> str | None:
+    if os.path.isabs(QCONNECT_OAUTH_BINARY):
+        return QCONNECT_OAUTH_BINARY if os.path.isfile(QCONNECT_OAUTH_BINARY) else None
+    return shutil.which(QCONNECT_OAUTH_BINARY)
+
+
+def _qconnect_oauth_config_path() -> str | None:
+    if QCONNECT_OAUTH_CONFIG:
+        return QCONNECT_OAUTH_CONFIG if os.path.isfile(QCONNECT_OAUTH_CONFIG) else None
+    prefix = os.environ.get("PREFIX", "/usr/local")
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config")
+    for path in (os.path.join(config_home, "qobuzconnect2mpd", "qobuzconnect2mpd.conf"),
+                 os.path.join(prefix, "etc", "qobuzconnect2mpd.conf"),
+                 "/etc/qobuzconnect2mpd.conf"):
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _qconnect_oauth_command(binary: str, config: str) -> list[str]:
+    command = [binary, "-c", config, "-L"]
+    try:
+        current_user = pwd.getpwuid(os.geteuid()).pw_name
+    except KeyError:
+        current_user = ""
+    if QCONNECT_OAUTH_USER and QCONNECT_OAUTH_USER != current_user:
+        # -n makes a missing sudoers grant fail immediately instead of leaving a
+        # password prompt attached to a web request that nobody can answer.
+        command = ["sudo", "-n", "-u", QCONNECT_OAUTH_USER, *command]
+    return command
+
+
+def _qconnect_oauth_active() -> bool:
+    with _QCONNECT_OAUTH_LOCK:
+        return (_QCONNECT_OAUTH_SESSION.get("phase") == "starting" or
+                (_QCONNECT_OAUTH_PROCESS is not None and
+                 _QCONNECT_OAUTH_PROCESS.poll() is None))
+
+
+def _qconnect_oauth_snapshot(request_host: str) -> dict:
+    with _QCONNECT_OAUTH_LOCK:
+        state = dict(_QCONNECT_OAUTH_SESSION)
+        process = _QCONNECT_OAUTH_PROCESS
+    urls = _oauth_candidates(state.get("output", ""), request_host)
+    phase = state.get("phase", "idle")
+    oauth_running = process is not None and process.poll() is None
+    return {
+        "ok": phase != "error",
+        "phase": phase,
+        "running": oauth_running,
+        "connected": phase == "connected",
+        "urls": urls,
+        "error": state.get("error", ""),
+        "output": state.get("output", ""),
+        "returncode": state.get("returncode"),
+        "started_at": state.get("started_at"),
+        "binary": _qconnect_oauth_binary_path(),
+        "config": _qconnect_oauth_config_path(),
+        "run_user": QCONNECT_OAUTH_USER,
+        "qobuzconnect2mpd_running": (
+            not oauth_running and _service_running(QCONNECT_SERVICE)),
+    }
+
+
+def _qconnect_oauth_worker(process: subprocess.Popen) -> None:
+    """Collect bootstrap output, then activate the renderer on OAuth success."""
+    read_error = ""
+    try:
+        if process.stdout is not None:
+            for line in process.stdout:
+                with _QCONNECT_OAUTH_LOCK:
+                    output = (_QCONNECT_OAUTH_SESSION.get("output", "") + line)
+                    _QCONNECT_OAUTH_SESSION["output"] = output[-65_536:]
+                    if _oauth_candidates(output, ""):
+                        _QCONNECT_OAUTH_SESSION["phase"] = "waiting"
+                    _QCONNECT_OAUTH_LOCK.notify_all()
+    except (OSError, ValueError) as error:
+        read_error = str(error)
+
+    returncode = process.wait()
+    with _QCONNECT_OAUTH_LOCK:
+        output = _QCONNECT_OAUTH_SESSION.get("output", "")
+        _QCONNECT_OAUTH_SESSION["returncode"] = returncode
+        if returncode == 0:
+            _QCONNECT_OAUTH_SESSION["phase"] = "activating"
+        else:
+            _QCONNECT_OAUTH_SESSION["phase"] = "error"
+            detail = read_error or next(
+                (line.strip() for line in reversed(output.splitlines()) if line.strip()), "")
+            if not _QCONNECT_OAUTH_SESSION.get("error"):
+                _QCONNECT_OAUTH_SESSION["error"] = (
+                    detail or f"qobuzconnect2mpd login exited with status {returncode}")
+        _QCONNECT_OAUTH_LOCK.notify_all()
+
+    if returncode != 0:
+        return
+    ok, error = _activate_renderer(QCONNECT_SERVICE)
+    with _QCONNECT_OAUTH_LOCK:
+        _QCONNECT_OAUTH_SESSION["phase"] = "connected" if ok else "error"
+        _QCONNECT_OAUTH_SESSION["error"] = "" if ok else error
+        _QCONNECT_OAUTH_LOCK.notify_all()
+
+
+@app.route("/qconnect/oauth/status")
+def qconnect_oauth_status():
+    return jsonify(_qconnect_oauth_snapshot(_browser_request_host()))
+
+
+@app.route("/qconnect/oauth/start", methods=["POST"])
+def qconnect_oauth_start():
+    """Run qobuzconnect2mpd's long-lived `-L` browser OAuth bootstrap.
+
+    Unlike upmpdcli's URL-printing helper, this process is itself the callback
+    receiver, so it stays in a background thread until the browser redirects
+    back.  A successful exit means the token was persisted; the worker then
+    switches to the normal renderer service automatically.
+    """
+    global _QCONNECT_OAUTH_PROCESS, _QCONNECT_OAUTH_SESSION
+
+    binary = _qconnect_oauth_binary_path()
+    if not binary:
+        return jsonify({"ok": False, "phase": "error",
+                        "error": f"OAuth program not found: {QCONNECT_OAUTH_BINARY}"})
+    config = _qconnect_oauth_config_path()
+    if not config:
+        return jsonify({"ok": False, "phase": "error",
+                        "error": "qobuzconnect2mpd.conf not found; set config in "
+                                 "[qconnect_oauth]"})
+
+    # Reserve the one callback receiver before service control/Popen. Flask may
+    # serve two browsers concurrently, and both processes would bind the same
+    # qconnectport if the check and spawn were not one atomic decision.
+    with _QCONNECT_OAUTH_LOCK:
+        if (_QCONNECT_OAUTH_SESSION.get("phase") == "starting" or
+                (_QCONNECT_OAUTH_PROCESS is not None and
+                 _QCONNECT_OAUTH_PROCESS.poll() is None)):
+            already_running = True
+        else:
+            already_running = False
+            _QCONNECT_OAUTH_PROCESS = None
+            _QCONNECT_OAUTH_SESSION = {
+                "phase": "starting", "output": "", "error": "",
+                "returncode": None, "started_at": int(time.time()),
+            }
+    if already_running:
+        return jsonify(_qconnect_oauth_snapshot(_browser_request_host()))
+
+    try:
+        # The normal daemon and -L callback receiver bind the same qconnectport.
+        # Stop unconditionally: a failed authentication may be in a supervised
+        # restart loop even when a point-in-time status check misses its child.
+        _service_action(QCONNECT_SERVICE, "onestop")
+        if _service_running(QCONNECT_SERVICE):
+            raise OSError("could not stop qobuzconnect2mpd before sign-in")
+        process = subprocess.Popen(
+            _qconnect_oauth_command(binary, config),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, env=_env())
+    except (OSError, subprocess.SubprocessError) as error:
+        with _QCONNECT_OAUTH_LOCK:
+            _QCONNECT_OAUTH_SESSION["phase"] = "error"
+            _QCONNECT_OAUTH_SESSION["error"] = str(error)
+            _QCONNECT_OAUTH_LOCK.notify_all()
+        return jsonify(_qconnect_oauth_snapshot(_browser_request_host()))
+
+    with _QCONNECT_OAUTH_LOCK:
+        _QCONNECT_OAUTH_PROCESS = process
+    threading.Thread(target=_qconnect_oauth_worker, args=(process,),
+                     name="qconnect-oauth", daemon=True).start()
+
+    # App-id discovery normally takes only a moment.  Wait here, just as the
+    # upmpdcli endpoint waits for its helper, so the button can return a usable
+    # URL directly; status polling still restores/finishes the long callback.
+    deadline = time.monotonic() + QCONNECT_OAUTH_URL_TIMEOUT
+    with _QCONNECT_OAUTH_LOCK:
+        while (_QCONNECT_OAUTH_SESSION["phase"] == "starting" and
+               time.monotonic() < deadline):
+            remaining = max(0.0, deadline - time.monotonic())
+            _QCONNECT_OAUTH_LOCK.wait(timeout=min(0.5, remaining))
+        timed_out = _QCONNECT_OAUTH_SESSION["phase"] == "starting"
+        if timed_out:
+            _QCONNECT_OAUTH_SESSION["phase"] = "error"
+            _QCONNECT_OAUTH_SESSION["error"] = (
+                f"qobuzconnect2mpd produced no sign-in URL within "
+                f"{QCONNECT_OAUTH_URL_TIMEOUT}s")
+    if timed_out and process.poll() is None:
+        process.terminate()
+    return jsonify(_qconnect_oauth_snapshot(_browser_request_host()))
 
 
 @app.route("/qobuz/oauth/status")
@@ -2823,7 +3110,7 @@ def qobuz_oauth_start():
         return jsonify({"ok": False, "error": str(e)})
 
     output = (r.stdout or "") + (r.stderr or "")
-    urls = _oauth_candidates(output, request.host.split(":")[0])
+    urls = _oauth_candidates(output, _browser_request_host())
     if not urls:
         return jsonify({"ok": False, "error": output.strip() or "no sign-in URL in output"})
     return jsonify({

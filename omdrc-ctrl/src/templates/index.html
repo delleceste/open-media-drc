@@ -1701,6 +1701,7 @@ async function restartQc() {
 // other.  Status is polled on a slow cadence to keep the UI in sync.
 let qcSwitching   = false;
 let activeRenderer = null;
+let bootRenderer   = null;
 
 function paintRenderers(active) {
     activeRenderer = active;
@@ -1721,6 +1722,7 @@ function paintRenderers(active) {
 // empty state was misleading too: with nothing recorded the boot service still
 // starts its default, so name that instead of saying nothing.
 function paintBootRenderer(boot, isDefault) {
+    bootRenderer = boot || null;
     const el = document.getElementById('qc-boot');
     if (!boot) { el.textContent = ''; el.title = ''; return; }
     el.textContent = `next boot starts: ${boot}` + (isDefault ? ' (default)' : '');
@@ -1821,7 +1823,14 @@ function renderLogAlerts(alerts) {
             act.className = 'log-alert-open';
             act.textContent = 'sign in';
             act.title = "Run upmpdcli's Qobuz OAuth sign-in from here";
-            act.onclick = () => openOauthPanel();
+            act.onclick = () => openOauthPanel('upmpdcli');
+            actions.appendChild(act);
+        } else if (a.action === 'qconnect-oauth') {
+            const act = document.createElement('button');
+            act.className = 'log-alert-open';
+            act.textContent = 'sign in';
+            act.title = "Run qobuzconnect2mpd's Qobuz OAuth sign-in from here";
+            act.onclick = () => openOauthPanel('qobuzconnect2mpd');
             actions.appendChild(act);
         }
         const openBtn = document.createElement('button');
@@ -1877,16 +1886,15 @@ async function fetchLogAlerts() {
 }
 
 // ── Qobuz OAuth sign-in ────────────────────────────────────────────────────
-// The box is headless, so the whole flow is driven from here: the server runs
-// upmpdcli's qobuz-init-oauth.py, which only prints the sign-in URLs; the
-// browser doing the signing in can be anywhere.  Qobuz redirects to upmpdcli's
-// own media-server port, which stores the token — so upmpdcli has to be running
-// to catch it, and the redirect host has to be reachable from this browser.
-// After that we watch the token file rather than the log: it is the fact.
+// The box is headless, so both renderer-specific flows are driven from here.
+// upmpdcli's helper only prints URLs; upmpdcli catches the redirect and we
+// watch its token file. qobuzconnect2mpd's `-L` process is itself the callback
+// receiver; the server keeps it alive, then starts the renderer after success.
 let oauthVisible = false;
 let oauthTimer   = null;
 let oauthBusy    = false;
 let oauthTokenAtStart = null;
+let oauthTarget  = null;
 
 function oauthPanel() { return document.getElementById('qobuz-oauth-panel'); }
 
@@ -2050,22 +2058,135 @@ async function startOauth() {
     oauthBusy = false;
 }
 
-function toggleOauth() {
-    oauthVisible = !oauthVisible;
-    oauthPanel().style.display = oauthVisible ? 'block' : 'none';
-    document.getElementById('btn-oauth').classList.toggle('active', oauthVisible);
-    if (oauthVisible) {
-        startOauth();
-    } else {
+function renderQconnectOauth(d) {
+    const box = oauthPanel();
+    box.innerHTML = '';
+    if (!d.ok || d.phase === 'error') {
+        box.appendChild(oauthStep(d.error || 'could not start the sign-in', 'oauth-warn'));
+        return;
+    }
+    if (d.phase === 'connected') {
+        const done = document.createElement('div');
+        done.className = 'oauth-done';
+        done.textContent = '✓ qobuzconnect2mpd: Qobuz plugin connected';
+        box.appendChild(done);
+        box.appendChild(oauthStep(
+            'The token was cached, the normal renderer was started, and it will be restored on the next boot.'));
+        return;
+    }
+    if (d.phase === 'activating') {
+        box.appendChild(oauthStep('✓ Qobuz token stored — starting qobuzconnect2mpd…', 'oauth-done'));
+        return;
+    }
+
+    const primary = (d.urls || []).find(u => u.primary) || (d.urls || [])[0];
+    if (!primary) {
+        box.appendChild(oauthStep('Preparing qobuzconnect2mpd’s sign-in URL…'));
+        return;
+    }
+    box.appendChild(oauthStep(
+        '1. Open the Qobuz sign-in below and log in. 2. Qobuz redirects this browser ' +
+        'to qobuzconnect2mpd, which caches its own token. The panel then starts that renderer.'));
+
+    const link = document.createElement('a');
+    link.className = 'oauth-link';
+    link.href = primary.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Open Qobuz sign-in ↗';
+    box.appendChild(link);
+
+    const url = document.createElement('div');
+    url.className = 'oauth-url';
+    url.textContent = primary.url;
+    url.title = `redirects to ${primary.host}:${primary.port} — ${primary.label}`;
+    box.appendChild(url);
+
+    const others = (d.urls || []).filter(u => u !== primary);
+    if (others.length) {
+        const alt = document.createElement('div');
+        alt.className = 'oauth-alt';
+        alt.appendChild(document.createTextNode(
+            'If that address is not reachable from this browser, try: '));
+        others.forEach((u, i) => {
+            if (i) alt.appendChild(document.createTextNode(' · '));
+            const a = document.createElement('a');
+            a.href = u.url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = u.label;
+            alt.appendChild(a);
+        });
+        box.appendChild(alt);
+    }
+    box.appendChild(oauthStep('Waiting for the Qobuz redirect…'));
+}
+
+async function pollQconnectOauth() {
+    try {
+        const d = await (await fetch('/qconnect/oauth/status')).json();
+        if (oauthTarget !== 'qobuzconnect2mpd') return;
+        renderQconnectOauth(d);
+        if (d.phase === 'connected' || d.phase === 'error') {
+            clearInterval(oauthTimer);
+            oauthTimer = null;
+            syncRenderers();
+            fetchLogAlerts();
+            if (d.phase === 'connected') setTimeout(fetchLogAlerts, 1000);
+        }
+    } catch { /* keep waiting — the poll retries */ }
+}
+
+async function startQconnectOauth() {
+    if (oauthBusy) return;
+    oauthBusy = true;
+    const btn = document.getElementById('btn-oauth');
+    btn.disabled = true;
+    oauthPanel().innerHTML = '';
+    oauthPanel().appendChild(oauthStep('starting qobuzconnect2mpd OAuth…'));
+    try {
+        const d = await (await fetch('/qconnect/oauth/start', { method: 'POST' })).json();
+        renderQconnectOauth(d);
+        clearInterval(oauthTimer);
+        if (d.phase !== 'connected' && d.phase !== 'error') {
+            oauthTimer = setInterval(pollQconnectOauth, 1000);
+        } else {
+            syncRenderers();
+            fetchLogAlerts();
+        }
+    } catch {
+        oauthPanel().innerHTML = '';
+        oauthPanel().appendChild(oauthStep('network error', 'oauth-warn'));
+    }
+    btn.disabled = false;
+    oauthBusy = false;
+}
+
+function toggleOauth(target = null) {
+    const desired = target || activeRenderer || bootRenderer || 'upmpdcli';
+    if (oauthVisible && oauthTarget === desired) {
+        oauthVisible = false;
+        oauthPanel().style.display = 'none';
+        document.getElementById('btn-oauth').classList.remove('active');
         clearInterval(oauthTimer);
         oauthTimer = null;
+        return;
     }
+
+    oauthTarget = desired;
+    oauthVisible = true;
+    oauthPanel().style.display = 'block';
+    document.getElementById('btn-oauth').classList.add('active');
+    clearInterval(oauthTimer);
+    oauthTimer = null;
+    if (desired === 'qobuzconnect2mpd') startQconnectOauth();
+    else startOauth();
 }
 
 // Opened from the alert banner's action button.
-function openOauthPanel() {
-    if (!oauthVisible) {
-        toggleOauth();
+function openOauthPanel(target) {
+    if (!oauthVisible || oauthTarget !== target) {
+        toggleOauth(target);
     }
     oauthPanel().closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }

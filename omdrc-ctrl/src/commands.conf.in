@@ -139,7 +139,8 @@ alert_interval = 20
 #   sources  - comma-separated source ids to watch (default: all of them)
 #   service  - the program the rule speaks for; while it is not running the
 #              alert is reported as info and `ok` rules stay silent
-#   action   - optional UI action button on the banner (only: qobuz-oauth)
+#   action   - optional UI action button on the banner: qobuz-oauth (upmpdcli)
+#              or qconnect-oauth (qobuzconnect2mpd)
 #   clears_file / clears_file_pattern - the rule is not raised while that file
 #              matches that regex (a fact on disk beating a stale log tail);
 #              @qobuz_token@ stands for the Qobuz token file
@@ -198,25 +199,28 @@ message  = upmpdcli: Qobuz plugin connected
 hint     = Started or signed in, and reported no login failure afterwards.
 
 # qobuzconnect2mpd is a different program with a different login and its own
-# OAuth flow; the Qobuz sign-in button does not apply to it.  No clears_file:
-# its token is mode 0600 under its own service account, unreadable here.
+# OAuth flow.  Its action starts `-L` as AUDIO_USER, keeps that process
+# alive for the browser redirect, then starts the normal renderer after the
+# token is cached.  No clears_file: its token and upmpdcli's have different
+# formats/paths, so the authenticated service startup is the source of truth.
 [alert:qconnect_auth]
 severity = warn
 service  = qobuzconnect2mpd
 sources  = qobuzconnect2mpd
+action   = qconnect-oauth
 pattern  = (?i)(not authenticated|no auth token|cannot stream until it is authenticated|waiting for .*oauth login|login not completed within the timeout|oauth (code exchange|token exchange|callback) failed|token could not be persisted)
-clears   = (?i)(oauth complete|token loaded from|oauth code received)
+clears   = (?i)(oauth complete|token loaded from|oauth code received|qconnect2mpd:\s*mpd connected ok)
 message  = qobuzconnect2mpd is not signed in to Qobuz
-hint     = Its login is its own, separate from upmpdcli's — the Qobuz sign-in button does not apply.  Bootstrap it once with: qobuzconnect2mpd -c /usr/local/etc/qobuzconnect2mpd.conf -L
+hint     = Press sign in: the panel starts qobuzconnect2mpd's own OAuth bootstrap and opens its remote-browser redirect flow.
 
 [alert:qconnect_ok]
 severity = ok
 service  = qobuzconnect2mpd
 sources  = qobuzconnect2mpd
-pattern  = (?i)(oauth complete|token loaded from|oauth code received)
+pattern  = (?i)(oauth complete|token loaded from|oauth code received|qconnect2mpd:\s*mpd connected ok)
 clears   = (?i)(not authenticated|no auth token|cannot stream until it is authenticated|waiting for .*oauth login|login not completed within the timeout|oauth (code exchange|token exchange|callback) failed|token could not be persisted)
-message  = qobuzconnect2mpd signed in to Qobuz
-hint     = Its token was loaded or a sign-in completed.
+message  = qobuzconnect2mpd: Qobuz plugin connected
+hint     = Its token was loaded and the renderer completed startup.
 
 # -- Qobuz OAuth sign-in ----------------------------------------------------
 # Drives upmpdcli's qobuz-init-oauth.py from the panel, so a headless box needs
@@ -234,6 +238,23 @@ upmpdcli_config =
 cache_config =
 # Seconds to wait for the script (it fetches the Qobuz app id over the net).
 timeout = 45
+
+# qobuzconnect2mpd has its own token and a long-lived `-L` bootstrap.  The
+# panel stops its normal service, starts this process, shows the URL it prints,
+# leaves it alive to receive the browser redirect, then starts and remembers
+# qobuzconnect2mpd after the token is cached.
+[qconnect_oauth]
+binary = qobuzconnect2mpd
+# Empty searches ~/.config/qobuzconnect2mpd/qobuzconnect2mpd.conf,
+# ${PREFIX}/etc/qobuzconnect2mpd.conf, then /etc/qobuzconnect2mpd.conf.
+config =
+# Empty on both OSes: omdrcctrl and both renderers all run as AUDIO_USER.  A
+# non-empty override remains available for non-standard installations and uses
+# non-interactive sudo when it differs from the controller's user.
+run_user =
+# Seconds to wait for app-id discovery and the sign-in URL.  The callback itself
+# stays alive for qobuzconnect2mpd's own five-minute timeout.
+url_timeout = 45
 
 [drc_status]
 what    = Active config

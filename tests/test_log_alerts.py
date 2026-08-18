@@ -4,8 +4,10 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest import mock
+from urllib.parse import quote, unquote
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +37,7 @@ def _config(directory: Path, console: Path, token: str = "") -> Path:
     text = (ROOT / "omdrc-ctrl/src/commands.conf.in").read_text(encoding="utf-8")
     text = text.replace("@OMDRC_REPO_DIR@", str(directory))
     text = text.replace("/tmp/upmpdcli-console.log", str(console))
+    text = text.replace("/tmp/qconnect2mpd.log", str(directory / "qconnect.log"))
     cache = directory / "qobuz-config"
     cache.write_text(token, encoding="utf-8")
     text = text.replace("cache_config =", f"cache_config = {cache}")
@@ -64,6 +67,20 @@ def _alerts(console_text: str, running: bool = True) -> list[dict]:
         console.write_text(console_text, encoding="utf-8")
         APP.load_config(str(_config(root, console)))
         with mock.patch.object(APP, "_service_running", return_value=running):
+            response = APP.app.test_client().get("/logs/alerts")
+    return response.get_json()["alerts"]
+
+
+def _qconnect_alerts(log_text: str, running: bool = True) -> list[dict]:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        console = root / "console.log"
+        console.write_text("", encoding="utf-8")
+        (root / "qconnect.log").write_text(log_text, encoding="utf-8")
+        APP.load_config(str(_config(root, console)))
+        service_state = lambda name: running if name == "qobuzconnect2mpd" else False
+        with (mock.patch.object(APP, "_service_running", side_effect=service_state),
+              mock.patch.object(APP, "_qconnect_oauth_active", return_value=False)):
             response = APP.app.test_client().get("/logs/alerts")
     return response.get_json()["alerts"]
 
@@ -158,14 +175,31 @@ class LogAlertTest(unittest.TestCase):
 
     def test_each_renderer_speaks_for_its_own_login(self):
         """upmpdcli's rules name upmpdcli; qobuzconnect2mpd's name its own —
-        and only the upmpdcli ones offer the sign-in button, because the two
-        keep separate Qobuz tokens."""
+        and each renderer's warning starts its own, separate OAuth flow."""
         for rule in APP.LOG_ALERTS:
             with self.subTest(rule=rule["id"]):
                 self.assertIn(rule["service"], ("upmpdcli", "qobuzconnect2mpd"))
                 if rule["service"] == "qobuzconnect2mpd":
-                    self.assertFalse(rule.get("action"))
                     self.assertFalse(rule.get("clears_file"))
+        actions = {r["id"]: r.get("action") for r in APP.LOG_ALERTS}
+        self.assertEqual(actions["qobuz_oauth"], "qobuz-oauth")
+        self.assertEqual(actions["qconnect_auth"], "qconnect-oauth")
+
+    def test_qconnect_missing_oauth_has_its_own_sign_in_action(self):
+        alerts = _qconnect_alerts(
+            "QcManager: not authenticated and no cached Qobuz token\n"
+            "This service cannot stream until it is authenticated.\n")
+        self.assertEqual([a["id"] for a in alerts], ["qconnect_auth"])
+        self.assertEqual(alerts[0]["action"], "qconnect-oauth")
+
+    def test_qconnect_boot_start_reports_the_plugin_connected(self):
+        """MPD connected OK is emitted after the cached-token gate even at the
+        default error log level, so it is the reliable restored-at-boot signal."""
+        alerts = _qconnect_alerts("qconnect2mpd: MPD connected OK (localhost:6600)\n")
+        self.assertEqual([(a["id"], a["severity"]) for a in alerts],
+                         [("qconnect_ok", "ok")])
+        self.assertEqual(alerts[0]["message"],
+                         "qobuzconnect2mpd: Qobuz plugin connected")
 
     def test_a_log_with_nothing_to_say_raises_nothing(self):
         self.assertEqual(_alerts("mpd_run_idle_mask returned 0\n"), [])
@@ -329,6 +363,96 @@ class QobuzOauthTest(unittest.TestCase):
             response = APP.app.test_client().post(
                 "/renderer/restart", json={"target": "rm -rf"})
         self.assertEqual(response.status_code, 400)
+
+
+class QconnectOauthTest(unittest.TestCase):
+    """qobuzconnect2mpd's -L process owns the callback and stays alive until
+    the remote browser returns, unlike upmpdcli's short URL-printing helper."""
+
+    def setUp(self):
+        with APP._QCONNECT_OAUTH_LOCK:
+            APP._QCONNECT_OAUTH_PROCESS = None
+            APP._QCONNECT_OAUTH_SESSION = {
+                "phase": "idle", "output": "", "error": "",
+                "returncode": None, "started_at": None,
+            }
+
+    def test_encoded_redirect_and_ansi_output_are_rewritten_for_the_browser(self):
+        redirect = "http://172.19.180.123:9093/oauth/callback/abc123"
+        login = ("https://www.qobuz.com/signin/oauth?ext_app_id=798273057"
+                 f"&redirect_url={quote(redirect, safe='')}")
+        urls = APP._oauth_candidates(f"\x1b[1;33m{login}\x1b[0m\n", "omdrc.local")
+        self.assertTrue(urls[0]["primary"])
+        self.assertEqual(urls[0]["host"], "omdrc.local")
+        self.assertIn("redirect_url=http://omdrc.local:9093/oauth/callback/abc123",
+                      unquote(urls[0]["url"]))
+        self.assertNotIn("\x1b", urls[0]["url"])
+
+    def test_nonstandard_distinct_user_command_is_noninteractive(self):
+        passwd = mock.Mock(pw_name="omdrcctrl")
+        with (mock.patch.object(APP, "QCONNECT_OAUTH_USER", "qobuzconnect2mpd"),
+              mock.patch.object(APP.pwd, "getpwuid", return_value=passwd)):
+            command = APP._qconnect_oauth_command(
+                "/usr/local/bin/qobuzconnect2mpd",
+                "/usr/local/etc/qobuzconnect2mpd.conf")
+        self.assertEqual(command[:4], ["sudo", "-n", "-u", "qobuzconnect2mpd"])
+        self.assertEqual(command[-4:], ["/usr/local/bin/qobuzconnect2mpd", "-c",
+                                        "/usr/local/etc/qobuzconnect2mpd.conf", "-L"])
+
+    def test_successful_bootstrap_activates_the_normal_renderer(self):
+        redirect = "http://172.19.180.123:9093/oauth/callback/abc123"
+        login = ("https://www.qobuz.com/signin/oauth?ext_app_id=798273057"
+                 f"&redirect_url={quote(redirect, safe='')}")
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdout = iter([login + "\n",
+                                    "qobuzconnect2mpd: authenticated — token cached\n"])
+                self.returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self):
+                self.returncode = 0
+                return 0
+
+            def terminate(self):
+                self.returncode = -15
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "qobuzconnect2mpd"
+            config = root / "qobuzconnect2mpd.conf"
+            binary.write_text("fake", encoding="utf-8")
+            config.write_text("qconnectstatedir = /tmp/fake\n", encoding="utf-8")
+            settings = root / "commands.conf"
+            settings.write_text(
+                "[qconnect_oauth]\n"
+                f"binary = {binary}\nconfig = {config}\nrun_user =\nurl_timeout = 5\n",
+                encoding="utf-8")
+            APP.load_config(str(settings))
+            fake = FakeProcess()
+            with (mock.patch.object(APP.subprocess, "Popen", return_value=fake) as popen,
+                  mock.patch.object(APP, "_service_action"),
+                  mock.patch.object(APP, "_service_running", return_value=False),
+                  mock.patch.object(APP, "_activate_renderer",
+                                    return_value=(True, "")) as activate):
+                response = APP.app.test_client().post("/qconnect/oauth/start")
+                data = response.get_json()
+                deadline = time.monotonic() + 1
+                while data["phase"] != "connected" and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                    data = APP.app.test_client().get(
+                        "/qconnect/oauth/status").get_json()
+
+        self.assertTrue(data["connected"])
+        self.assertEqual(data["phase"], "connected")
+        self.assertEqual(data["urls"][0]["port"], 9093)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0],
+                         [str(binary), "-c", str(config), "-L"])
+        activate.assert_called_once_with("qobuzconnect2mpd")
 
 
 if __name__ == "__main__":

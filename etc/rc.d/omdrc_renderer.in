@@ -16,6 +16,9 @@
 #	omdrc_renderer_enable="YES"
 #	upmpdcli_enable="NO"		# both renderers are started by THIS
 #	qobuzconnect2mpd_enable="NO"	# service, never directly by rc
+#	qobuzconnect2mpd_user="@AUDIO_USER@"
+#	qobuzconnect2mpd_group="<primary group of @AUDIO_USER@>"
+#	qobuzconnect2mpd_homedir="/var/db/qobuzconnect2mpd"
 #
 # Leaving a renderer's own rcvar at YES would start it at boot behind this
 # script's back, and both front-ends would end up driving MPD at once.  The
@@ -49,9 +52,9 @@ load_rc_config "$name"
 #
 #	sysrc omdrc_renderer_statedir="/home/<audiouser>/.local/state/omdrc"
 : ${omdrc_renderer_statedir:=""}
-# The renderers are network daemons that must not run as root; each one's own
-# rc script (or service account) already handles that, so this wrapper only
-# dispatches and stays root.
+# The renderers are network daemons that must not run as root.  Their rc scripts
+# both drop privileges to @AUDIO_USER@; this wrapper only dispatches and stays
+# root.  qobuzconnect2mpd keeps its non-login state under its homedir above.
 
 required_files="${omdrc_renderer_script}"
 

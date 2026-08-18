@@ -139,7 +139,7 @@ svc_running() {
 		return 1
 	fi
 	service "$1" onestatus >/dev/null 2>&1 && return 0
-	# onestatus reads a pidfile that may sit in a service account's 0700 home
+	# onestatus may read a pidfile under a protected service state directory
 	# (qobuzconnect2mpd keeps its under /var/db/qobuzconnect2mpd), so it can
 	# report "not running" for a running daemon when we are not that user.
 	# Process visibility is not privileged — see app.py's _service_running.

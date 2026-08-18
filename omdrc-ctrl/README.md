@@ -61,12 +61,14 @@ provides no feedback. Every command here either shows its output directly
   Qobuz losing its OAuth token being the case shipped by default — while `ok`
   rules report the good outcome as a quiet line under the renderer buttons. See
   [Reserved section: `[logs]`](#reserved-section-logs).
-- **Qobuz OAuth sign-in from the panel** — a **Qobuz sign-in** button (and a
-  *sign in* action on the OAuth alert) runs upmpdcli's `qobuz-init-oauth.py` on
-  the box and shows the sign-in URL, so a headless server needs no keyboard: open
-  the link on the phone you are already holding, sign in, and the panel notices
-  the token arriving and offers the upmpdcli restart. See
-  [Reserved section: `[qobuz_oauth]`](#reserved-section-qobuz_oauth).
+- **Qobuz OAuth sign-in from the panel** — the **Qobuz sign-in** button and the
+  alert's *sign in* action drive the active renderer's own OAuth flow, so a
+  headless server needs no keyboard. For upmpdcli the panel runs
+  `qobuz-init-oauth.py` and offers a restart after the token arrives. For
+  qobuzconnect2mpd it keeps `-L` alive to receive the remote-browser redirect,
+  then starts and remembers the authenticated renderer automatically. See
+  [Reserved section: `[qobuz_oauth]`](#reserved-section-qobuz_oauth) and
+  [Reserved section: `[qconnect_oauth]`](#reserved-section-qconnect_oauth).
 - **No hard-coded commands** — everything lives in `commands.conf`; restart
   the service to pick up changes.
 - **CMake install** — single `cmake --install` copies all files and installs
@@ -400,7 +402,7 @@ page, `ok` as a status line under the renderer buttons.
 | `service` | no | The program the rule speaks for; while it is stopped the alert drops to `info` and `ok` rules stay silent |
 | `clears_file` | no | Path whose contents can settle the rule; `@qobuz_token@` = the Qobuz token file |
 | `clears_file_pattern` | no | Regex the `clears_file` must match for the rule to stay down |
-| `action` | no | UI action button on the banner; only `qobuz-oauth` is known |
+| `action` | no | UI action button: `qobuz-oauth` for upmpdcli or `qconnect-oauth` for qobuzconnect2mpd |
 
 A rule is active when the last line matching `pattern` is newer than the last
 line matching `clears`, so a failure a later restart fixed stops being reported
@@ -469,25 +471,26 @@ message  = upmpdcli: Qobuz plugin connected
 hint     = Started or signed in, and reported no login failure afterwards.
 
 # qobuzconnect2mpd is a different program with a different login and its own
-# OAuth flow; the Qobuz sign-in button does not apply to it.  No clears_file:
-# its token is mode 0600 under its own service account, unreadable here.
+# OAuth flow. Its action runs `-L` as AUDIO_USER and starts the normal renderer
+# after the token is cached. No clears_file: its separate startup proves auth.
 [alert:qconnect_auth]
 severity = warn
 service  = qobuzconnect2mpd
 sources  = qobuzconnect2mpd
+action   = qconnect-oauth
 pattern  = (?i)(not authenticated|no auth token|cannot stream until it is authenticated|waiting for .*oauth login|login not completed within the timeout|oauth (code exchange|token exchange|callback) failed|token could not be persisted)
-clears   = (?i)(oauth complete|token loaded from|oauth code received)
+clears   = (?i)(oauth complete|token loaded from|oauth code received|qconnect2mpd:\s*mpd connected ok)
 message  = qobuzconnect2mpd is not signed in to Qobuz
-hint     = Its login is its own, separate from upmpdcli's — the Qobuz sign-in button does not apply.  Bootstrap it once with: qobuzconnect2mpd -c /usr/local/etc/qobuzconnect2mpd.conf -L
+hint     = Press sign in: the panel starts qobuzconnect2mpd's own OAuth bootstrap and opens its remote-browser redirect flow.
 
 [alert:qconnect_ok]
 severity = ok
 service  = qobuzconnect2mpd
 sources  = qobuzconnect2mpd
-pattern  = (?i)(oauth complete|token loaded from|oauth code received)
+pattern  = (?i)(oauth complete|token loaded from|oauth code received|qconnect2mpd:\s*mpd connected ok)
 clears   = (?i)(not authenticated|no auth token|cannot stream until it is authenticated|waiting for .*oauth login|login not completed within the timeout|oauth (code exchange|token exchange|callback) failed|token could not be persisted)
-message  = qobuzconnect2mpd signed in to Qobuz
-hint     = Its token was loaded or a sign-in completed.
+message  = qobuzconnect2mpd: Qobuz plugin connected
+hint     = Its token was loaded and the renderer completed startup.
 ```
 
 The patterns match the sense rather than the exact upmpdcli 1.9 wording, so a
@@ -522,19 +525,6 @@ Two consequences the panel surfaces for you:
   re-runs the script once the port is listening. Switching back afterwards costs
   nothing: the token is on disk, and it is upmpdcli's alone.
 
-Note the last two rules: **qobuzconnect2mpd has its own Qobuz login**, with its
-own failure vocabulary (`not authenticated`, `no auth token`, `waiting for …
-OAuth login`) and its own remedy — `qobuzconnect2mpd -c <conf> -L`, a flow the
-Qobuz sign-in button does not drive. Its rules therefore carry no `action` and no
-`clears_file`: that token is mode 0600 under its own service account, unreadable
-by the panel.
-
-> **The two renderers do not share Qobuz credentials.** upmpdcli's token lives in
-> `<cachedir>/qobuz/config` as `user_auth_token` / `user_id`, owned by the audio
-> user. qobuzconnect2mpd authenticates separately and keeps its own token under
-> its `qconnectstatedir` (`/var/db/qobuzconnect2mpd/user_token`), owned by its own
-> service account and mode 0600. This button signs in **upmpdcli's Qobuz plugin
-> only**; qobuzconnect2mpd is untouched by it, and unaffected when it expires.
 - **the redirect host must be reachable from the browser.** The script can only
   guess it from the box's default route, so the panel also offers the address
   this page was reached on — which is provably reachable — and puts it first.
@@ -544,6 +534,45 @@ The panel then polls [`GET /qobuz/oauth/status`](#get-qobuzoauthstatus) and, whe
 the token file changes, offers the upmpdcli restart that makes the plugin pick it
 up. Nothing is stored by omdrcctrl itself: the token file is written by upmpdcli,
 and the panel only reads whether it is there.
+
+### Reserved section: `[qconnect_oauth]`
+
+`[qconnect_oauth]` configures qobuzconnect2mpd's separate sign-in action:
+
+```ini
+[qconnect_oauth]
+binary = qobuzconnect2mpd
+config =             ; empty: ~/.config/qobuzconnect2mpd, ${PREFIX}/etc, /etc
+run_user =           ; empty: same AUDIO_USER as omdrcctrl, on both OSes
+url_timeout = 45     ; app-id discovery / URL only; callback lives for 5 minutes
+```
+
+Here `-L` is both URL producer and callback receiver. The panel stops the normal
+qobuzconnect2mpd service so the bootstrap can bind `qconnectport`, starts
+`<binary> -c <config> -L`, captures its stdout URL (including its percent-encoded
+redirect), and substitutes the hostname this browser used. The process remains
+alive while the browser signs in. A zero exit means the mode-0600 token was
+persisted; omdrcctrl then performs a normal renderer switch to
+qobuzconnect2mpd, records it for the next boot, and shows
+**qobuzconnect2mpd: Qobuz plugin connected**.
+
+The same green status appears when the remembered renderer is restored at boot.
+The default log level always emits `qconnect2mpd: MPD connected OK` only after
+the cached-token gate has passed, so the `qconnect_ok` rule does not depend on
+optional info logging.
+
+`run_user` is empty by default on both OSes because omdrcctrl, upmpdcli and
+qobuzconnect2mpd all run as `AUDIO_USER`. The OAuth child therefore writes the
+token with exactly the identity the normal renderer uses, with no impersonation
+or extra sudo rule. A non-empty override remains available for non-standard
+installations and uses non-interactive `sudo -u` when it differs from the
+controller's user.
+
+> **The two renderers do not share Qobuz credentials.** upmpdcli's token lives
+> in `<cachedir>/qobuz/config` as `user_auth_token` / `user_id`.
+> qobuzconnect2mpd keeps its own token under `qconnectstatedir` (normally
+> `/var/db/qobuzconnect2mpd/user_token`). Each alert action selects the matching
+> flow; signing into one renderer does not alter the other's credential.
 
 ### Reserved section: `[spectrum]`
 
@@ -927,6 +956,46 @@ primary while a network URL exists.
 
 ---
 
+### `GET /qconnect/oauth/status`
+
+Returns the tracked qobuzconnect2mpd bootstrap session. `phase` is `idle`,
+`starting`, `waiting`, `activating`, `connected`, or `error`; a page reload can
+therefore restore a sign-in that is still waiting for its redirect.
+
+```json
+{ "ok": true, "phase": "waiting", "running": true, "connected": false,
+  "binary": "/usr/local/bin/qobuzconnect2mpd",
+  "config": "/usr/local/etc/qobuzconnect2mpd.conf",
+  "run_user": "",
+  "urls": [ { "url": "https://www.qobuz.com/signin/oauth?ext_app_id=…&redirect_url=http%3A%2F%2F192.168.1.9%3A9093%2Foauth%2Fcallback%2F…",
+              "host": "192.168.1.9", "port": 9093, "primary": true } ] }
+```
+
+---
+
+### `POST /qconnect/oauth/start`
+
+Stops the normal qobuzconnect2mpd service, starts its configured `-L` bootstrap
+as `AUDIO_USER`, and waits up to `url_timeout` for the URL. The callback
+process continues in the background. When it exits successfully the endpoint's
+worker switches to qobuzconnect2mpd and records that renderer for boot; poll the
+status endpoint for `phase: connected`.
+
+Calling start while the same bootstrap is active returns its existing session
+instead of starting a second callback receiver.
+
+```json
+{ "ok": true, "phase": "waiting", "running": true,
+  "urls": [ { "url": "https://www.qobuz.com/signin/oauth?…",
+              "primary": true } ] }
+{ "ok": true, "phase": "connected", "running": false, "connected": true,
+  "qobuzconnect2mpd_running": true }
+{ "ok": false, "phase": "error",
+  "error": "qobuzconnect2mpd.conf not found; set config in [qconnect_oauth]" }
+```
+
+---
+
 ### `POST /renderer/restart`
 
 Restarts one renderer in place, without switching to the other. Body:
@@ -993,7 +1062,26 @@ FreeBSD with `sudo service <name> onestart|onestop`.
 no `sudoers` entry is required.
 
 **FreeBSD:** the service user must be able to run, password-free, the relevant
-commands — for example in `sudoers`:
+commands. First align qobuzconnect2mpd with the same `AUDIO_USER` used by
+upmpdcli and omdrcctrl:
+
+```sh
+sudo sysrc qobuzconnect2mpd_user=AUDIO_USER
+sudo sysrc qobuzconnect2mpd_group=AUDIO_USER_PRIMARY_GROUP
+sudo sysrc qobuzconnect2mpd_homedir=/var/db/qobuzconnect2mpd
+```
+
+Keep `qconnectstatedir = /var/db/qobuzconnect2mpd` in
+`/usr/local/etc/qobuzconnect2mpd.conf`. When migrating an existing installation,
+stop that renderer and transfer its private state once before restarting it:
+
+```sh
+sudo service qobuzconnect2mpd onestop
+sudo chown -R AUDIO_USER:AUDIO_USER_PRIMARY_GROUP /var/db/qobuzconnect2mpd
+```
+
+The dedicated `qobuzconnect2mpd` account can remain present but is no longer
+used. Renderer start/stop still needs the following rc.d grant in `sudoers`:
 
 ```
 omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service qobuzconnect2mpd onestart, \
@@ -1001,11 +1089,13 @@ omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service qobuzconnect2mpd onestart, \
     /usr/sbin/service upmpdcli onestart, /usr/sbin/service upmpdcli onestop
 ```
 
-No entry is needed for `onestatus`: a renderer running under its own service
-account keeps its pidfile in a `0700` home directory (qobuzconnect2mpd uses
-`/var/db/qobuzconnect2mpd`), so the unprivileged `onestatus` reports "not
-running" for a service that is running.  omdrcctrl therefore falls back to
-matching the running binary by `argv[0]`, which needs no privilege.
+The qobuzconnect2mpd **sign in** action needs no additional grant: its OAuth
+bootstrap runs directly as the same `AUDIO_USER` as omdrcctrl and both
+renderers.
+
+No entry is needed for `onestatus`. omdrcctrl also retains its unprivileged
+process check as a compatibility fallback for older rc scripts whose pidfiles
+were not traversable.
 
 **Remembered across reboots.** A successful switch writes the target name to
 `last_renderer` in the shared state directory (beside `drc.sh`'s `last_arg` —
@@ -1333,10 +1423,12 @@ Shows the track currently playing via qobuzconnect2mpd, updated every second:
   (`[playing] Artist - Title  [1:23 / 4:56]`)
 - Line 2: audio format (`FLAC 24 bit, stereo, 96.0 kHz`)
 
-Two buttons in the panel header:
+Three buttons in the panel header:
 - **Restart** — calls `POST /qconnect/restart`; shows a toast on success/failure
 - **Log** — toggles a scrollable log viewer (auto-refreshed every 5 s while
   open) with colour-coded lines: red for `[ERR]`, green for `[OUT]`
+- **Qobuz sign-in** — opens the OAuth flow for the active renderer (or the one
+  recorded for boot when authentication failure left no renderer running)
 
 File paths are configured via the `[qconnect]` section in `commands.conf`.
 
