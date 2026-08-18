@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(open-media-drc VERSION 0.91.0 LANGUAGES NONE)
+project(open-media-drc VERSION 0.92.0 LANGUAGES NONE)
 
 # Top-level superproject.  Classical Unix Makefiles flow:
 #     mkdir -p build && cd build
