@@ -1,0 +1,42 @@
+// Filter provenance: from REW exports to a green "verified" badge.
+// Every arrow labelled with a hash is a content check that must pass.
+digraph provenance_chain {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled",
+          fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=8, color="#555555"];
+
+    subgraph cluster_source {
+        label="Source repository (DRC-<room>, separate checkout)";
+        fontname="Helvetica"; fontsize=10; color="#bbbbbb"; style=dashed;
+        rew    [label="REW exports\nmeasurement/filter TXT + WAV", fillcolor="#fdf3d8"];
+        decl   [label="design.json\nrole -> file + SHA-256", fillcolor="#fdf3d8"];
+        tag    [label="annotated git tag\n<geometry>-<design-id>", fillcolor="#fdf3d8"];
+        rew -> decl [label="declare_filter_design.py"];
+        decl -> tag [label="commit + tag -a"];
+    }
+
+    subgraph cluster_site {
+        label="Site repository (configs/ + filters/, e.g. omdrc-801N)";
+        fontname="Helvetica"; fontsize=10; color="#bbbbbb"; style=dashed;
+        copies [label="source/<design>/\nverbatim copies of the exports"];
+        raws   [label="<rate>/[@<design>/]{L,R}.raw\nFLOAT64_LE coefficients"];
+        conf   [label="configs/<geo>/brutefir-<rate>[@<design>].conf.in\ntemplate"];
+        ana    [label="analysis/<design>.json\nprecomputed response traces"];
+        man    [label="provenance/<design>.json\nMANIFEST: bundle_id binds all of it",
+                 fillcolor="#dff0df"];
+        copies -> man; raws -> man; conf -> man; ana -> man;
+    }
+
+    tag -> copies [label="new_filter_design.py -> deploy_filter.py\nverifies tag object, commit,\nclean tree, every input hash"];
+    raws -> ana   [style=invis];
+
+    inst  [label="make install\n$PREFIX/etc/open-media-drc/", fillcolor="#f3e6f5"];
+    bf    [label="BruteFIR\nloads the rendered .conf"];
+    ui    [label="omdrc-ctrl Filter response\nverified (green) / mismatch (red)", fillcolor="#f3e6f5"];
+
+    man -> inst [label="CMake runs verify_filter_bundle.py first;\n@design without a manifest is fatal"];
+    inst -> bf;
+    bf -> ui    [label="hash the RAWs actually loaded;\nrelease stored curves only on\na single exact manifest match"];
+}

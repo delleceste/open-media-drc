@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
-# build-pdf.sh [version] — regenerate doc/open-media-drc-manual.pdf from
-# doc/pdf/open-media-drc-manual.md + the graphviz diagrams.
+# build-pdf.sh [version] — regenerate every tracked PDF in doc/:
+#   doc/open-media-drc-manual.pdf          <- doc/pdf/open-media-drc-manual.md
+#                                             + the graphviz diagrams
+#   doc/FILTER_PROVENANCE_AND_RESPONSE.pdf <- doc/FILTER_PROVENANCE_AND_RESPONSE.md
 #
 # Requirements: pandoc, pdflatex (texlive), graphviz (dot).
 #
@@ -48,4 +50,24 @@ pandoc open-media-drc-manual.md \
     -M date="$VERSION ($DATE)" \
     -o "$OUT"
 
+# 4. The standalone provenance document.  It is not part of the manual (it is a
+#    specification, not a synthesis), but it is tracked as a PDF too, so build
+#    it here rather than by hand -- that is how it silently went stale before.
+#    --shift-heading-level-by=-1 turns its single H1 into the title page instead
+#    of a duplicated section 1.
+PROV="../FILTER_PROVENANCE_AND_RESPONSE.pdf"
+echo "pandoc: FILTER_PROVENANCE_AND_RESPONSE.md -> doc/FILTER_PROVENANCE_AND_RESPONSE.pdf"
+pandoc ../FILTER_PROVENANCE_AND_RESPONSE.md \
+    --from markdown+smart \
+    --pdf-engine=pdflatex \
+    --shift-heading-level-by=-1 \
+    --toc --toc-depth=3 \
+    --number-sections \
+    --highlight-style=tango \
+    -V documentclass=article \
+    -M title="Filter provenance and predicted-response strategy" \
+    -M date="$VERSION ($DATE)" \
+    -o "$PROV"
+
 echo "OK: $(cd .. && pwd)/open-media-drc-manual.pdf"
+echo "OK: $(cd .. && pwd)/FILTER_PROVENANCE_AND_RESPONSE.pdf"

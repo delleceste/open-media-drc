@@ -33,7 +33,7 @@ tag before running `new_filter_design.py`.
 
 ### Base filter: verified deployment lineage
 
-The source WAVs copied into this repository are byte-identical:
+The source WAVs copied into the site repository are byte-identical:
 
 | Channel | Source and repository copy | SHA-256 |
 |---|---|---|
@@ -169,9 +169,10 @@ configs/<geometry>/
 ```
 
 Source filenames inside a bundle use stable logical roles. The original REW
-names remain metadata in the manifest. Copying the selected sources into this
-repository is intentional: a deployment must not depend on a mutable sibling
-checkout or an absolute path that will not exist on the installed machine.
+names remain metadata in the manifest. Copying the selected sources into the
+site repository is intentional: a deployment must not depend on a mutable
+sibling checkout or an absolute path that will not exist on the installed
+machine.
 
 The manifest should contain at least:
 
@@ -261,7 +262,8 @@ those two fixed transformations are fitted; the remaining complex-response
 error must pass the strict limits. The output path is not user-selectable:
 `omdrc-designs/<geometry>/<design-id>/design.json`.
 
-Then run the complete build from `open-media-drc`, first without `--write`:
+Then run the complete build from the engine checkout (`open-media-drc`), first
+without `--write`:
 
 ```sh
 python3 scripts/new_filter_design.py \
@@ -344,7 +346,7 @@ read-only preview is derived from validated identifiers:
 # In the source repository
 omdrc-designs/<geometry>/<design-id>/design.json
 
-# In open-media-drc
+# In the site repository (see "Where the site data lives" below)
 filters/<geometry>/source/<design-id>/measurement-L.txt
 filters/<geometry>/source/<design-id>/measurement-R.txt
 filters/<geometry>/source/<design-id>/measurement-L+R.txt
@@ -377,7 +379,7 @@ or DSP implementation.
 `headroom_calc.py` is also a reusable CLI accepting a filter root, variant,
 format and safety margin. The obsolete list of root-level filenames is gone.
 
-The intended two-repository commit order is:
+The intended commit order across the three repositories is:
 
 1. Generate and review the source declaration, which explicitly assigns the
    measurement/filter roles. Commit it with the selected exports and WAVs.
@@ -385,9 +387,10 @@ The intended two-repository commit order is:
 3. Run deployment from that tag. The script verifies and records both the tag
    object and commit, then copies the selected sources.
 4. Commit the manifest, sources, analysis, every rate pair, and config changes
-   together in `open-media-drc`.
-5. Optionally tag the `open-media-drc` commit with the geometry and short bundle
-   ID as the deployment-side release anchor.
+   together in the *site* repository -- the one holding `configs/<geometry>` and
+   `filters/<geometry>`, which need not be the engine checkout.
+5. Optionally tag that site commit with the geometry and short bundle ID as the
+   deployment-side release anchor.
 
 ## Offline response calculation
 
@@ -496,6 +499,29 @@ commit, annotated tag object, human design description, declaration hash,
 optional `.mdat` archive hash,
 exported measurement headers/notes, smoothing and timing reference, prediction
 cross-check errors and headroom.
+
+## Where the site data lives
+
+`configs/<geometry>` and `filters/<geometry>` are site data: one physical room's
+measurements, of no use to anyone else. They are resolved through a *site root*
+rather than assumed to sit in the engine checkout, so a room can be its own
+repository while the engine ships only the generic `flat` set:
+
+| Setting | Read by | Meaning |
+|---|---|---|
+| `OMDRC_SITE_DATA_DIRS` | CMake | semicolon-separated search path for `configs/<geo>` + `filters/<geo>`; first match wins |
+| `OMDRC_SITE_ROOT` | the design scripts | the checkout they read and write room data in; also `--site-root` |
+
+Both default to the engine checkout, which is the historical single-repository
+layout. Everything in this document is unchanged by the split: the manifest
+records paths relative to the geometry root, so a bundle verifies identically
+wherever that root happens to be. What does change is *which* repository the
+deployment commit belongs to, and which working directory each handoff step
+names -- the tooling prints both.
+
+`verify_filter_bundle.py --site-root DIR` is what makes a manifest's recorded
+`configs/<geometry>/...` template path resolve in the checkout the set came
+from; CMake passes it automatically.
 
 ## Installation requirement
 

@@ -223,16 +223,39 @@ CMake build:
 git clone --recursive https://github.com/delleceste/open-media-drc ~/DRC/open-media-drc
 cd ~/DRC/open-media-drc
 cp host.cmake.sample host.cmake   # AUDIO_USER (defaults to the invoking user),
-$EDITOR host.cmake                #   GEOMETRY, MUSIC_DIR, VIDEO_DIR, OMDB_API_KEY
-cmake -B build -C host.cmake
-cmake --build build
-sudo cmake --install build        # -> $PREFIX (default /usr/local)
+$EDITOR host.cmake                #   GEOMETRY, GEOMETRIES, OMDRC_SITE_DATA_DIRS,
+                                  #   MUSIC_DIR, VIDEO_DIR, OMDB_API_KEY
+mkdir build && cd build
+cmake .. -C ../host.cmake
+make
+sudo make install                 # -> $PREFIX (default /usr/local)
 ```
+
+**`host.cmake` is read only by `-C`, and only for cache entries that do not
+exist yet.** A plain `cmake ..` configures the whole project from the built-in
+defaults, and adding `-C` afterwards cannot repair that build directory --- CMake
+skips an initial-cache assignment whose entry is already set. The symptom is
+silent: everything configures, with the wrong values. The project therefore
+detects it, because `host.cmake` sets a marker the check looks for:
+
+```text
+CMake Warning at CMakeLists.txt:50 (message):
+  host.cmake exists but this build directory was not initialised from it, so
+  the built-in defaults are in effect.  Adding -C now will not help; start a
+  fresh build directory:
+
+      rm -rf build && mkdir build && cd build && cmake -C ../host.cmake ..
+```
+
+A `host.cmake` copied from a version of the sample that predates the marker
+will trip this warning; add the one line the sample carries near the top.
 
 `host.cmake` (the successor to the old `config.env`) is the single source of
 box-specific values; CMake renders every config from it and installs the DRC
 engine (`drc.sh` behind the `omdrc` / `omdrc-status` wrappers), the site data
-(brutefir configs + impulse-response filters for the selected `GEOMETRY`), both
+(brutefir configs + impulse-response filters for `GEOMETRY` and every set listed
+in `GEOMETRIES`, each looked up along `OMDRC_SITE_DATA_DIRS` and reported at
+configure time), both
 web UIs (omdrcctrl :9090 as a **system** service running as the audio user;
 omdrcvideo :9080 as a **`--user`** service, since it drives the desktop-session
 mpv), and the DAC-hotplug glue. The install prints the OS-specific enable steps
@@ -430,12 +453,19 @@ processes in floating point.
 ## The filters/ and configs/ trees
 
 ```
-filters/<geometry>/<rate>/L.raw          raw FLOAT64_LE FIR coefficients
-filters/<geometry>/<rate>/R.raw
-filters/<geometry>/<rate>/<variant>/     <variant>/L.raw, <variant>/R.raw
-filters/<geometry>/rew/                  REW-exported source WAVs
-configs/<geometry>/brutefir-<rate><variant>.conf
+filters/<geometry>/<rate>/{L,R}.raw          raw FLOAT64_LE FIR coefficients
+filters/<geometry>/<rate>/@<design>/{L,R}.raw   an immutable A/B design
+filters/<geometry>/provenance/<design>.json  hash-bound manifest
+filters/<geometry>/analysis/<design>.json    precomputed response traces
+filters/<geometry>/rew/                      REW-exported source WAVs
+configs/<geometry>/brutefir-<rate>[@<design>].conf.in
 ```
+
+These two trees are the *site data*. They need not live in this checkout: CMake
+resolves them along `OMDRC_SITE_DATA_DIRS` and the design scripts along
+`OMDRC_SITE_ROOT`, so one room's measurements can be a separate repository while
+the engine ships only the generic `flat` set. See
+[Filter provenance and verification](#sec:provenance).
 
 `drc.sh` builds the config path as
 `configs/<geometry>/brutefir-<actual_rate><variant>.conf` (for `resamp`,
@@ -447,6 +477,12 @@ For a new rate or variant, create all the pieces: the `L.raw`/`R.raw` pair,
 the config pointing at them, and verify the `attenuation:` (below).
 
 ## Filter generation workflow
+
+This is the low-level route: it produces coefficients but no provenance bundle,
+so the web UI cannot verify the result and will not show stored measurements
+beside it. For deployable work use the audited workflow in
+[Filter provenance and verification](#sec:provenance); what follows is still
+useful for experiments and is what the audited path drives underneath.
 
 1. Export the corrected impulse responses from REW as WAV (typically 48 kHz).
 2. Convert for every rate directory:
@@ -496,6 +532,243 @@ It deliberately does *not* use `drc.sh restore` (which would honour the
 Chrome/Chromium detect an already-running instance with `pgrep` and then
 just hand over the URL without touching DRC. The rendered `.desktop`
 launchers are symlinked into `~/.local/share/applications/`.
+
+\newpage
+
+# Filter provenance and verification {#sec:provenance}
+
+A room-correction filter is an empirical artifact: it is only as good as the
+measurement session it came from, and it is indistinguishable, once converted to
+a `.raw` blob of float64 coefficients, from any other blob of the same length.
+The response page in the web UI shows *stored* room measurements --- curves that
+were computed offline, months earlier, from the original REW exports. Showing
+them beside a filter that is not the one they describe would be worse than
+showing nothing, because it looks authoritative.
+
+This chapter describes the machinery that prevents that: a chain of content
+hashes running from the REW exports in the source repository to the coefficient
+bytes BruteFIR has actually loaded, with a refusal at every link that cannot be
+checked.
+
+![Provenance chain: each labelled arrow is a content check that must pass before a design is deployable, installable, or shown as verified.](build/provenance-chain.pdf){width=95%}
+
+## The three repositories
+
+The workflow spans three trees, deliberately kept apart:
+
+| Tree | Holds | Example |
+|---|---|---|
+| Source repository | REW projects and exports, the role declaration, annotated tags | `../DRC/DRC-120.blue` |
+| Site repository | `configs/<geometry>/`, `filters/<geometry>/` --- one physical room | `omdrc-801N` |
+| Engine repository | `drc.sh`, the scripts, CMake, and the generic `flat` set | `open-media-drc` |
+
+The site data used to live inside the engine checkout. It no longer has to:
+`configs/<geo>` and `filters/<geo>` are resolved through a *site root*, so
+personal room measurements can be versioned and deployed independently of the
+software. Two settings control it, and they are not the same thing as the
+runtime `OMDRC_SITE_DIR`:
+
+| Setting | Read by | Meaning |
+|---|---|---|
+| `OMDRC_SITE_DATA_DIRS` | CMake | semicolon-separated *search path* for `configs/<geo>` + `filters/<geo>`; first match wins |
+| `OMDRC_SITE_ROOT` | the design scripts | the one checkout they read and write room data in (also `--site-root`) |
+| `OMDRC_SITE_DIR` | `drc.sh` at runtime | the *installed* `$PREFIX/etc/open-media-drc` |
+
+Both default to the engine checkout, which is exactly the historical
+single-repository layout. Set the search path in `host.cmake`:
+
+```cmake
+set(OMDRC_SITE_DATA_DIRS "${CMAKE_SOURCE_DIR};$ENV{HOME}/devel/omdrc-801N"
+    CACHE STRING "Search path for configs/<geo> + filters/<geo>")
+```
+
+At configure time CMake prints which directory supplied each set, so the
+substitution is never silent:
+
+```text
+-- core-drc: filter set search path
+--     /home/giacomo/devel/open-media-drc (this checkout)
+--     /home/giacomo/devel/omdrc-801N
+--   120.blue (default) <- /home/giacomo/devel/omdrc-801N
+--   flat <- /home/giacomo/devel/open-media-drc
+```
+
+A missing *extra* set is a warning and is skipped; a missing default `GEOMETRY`
+is a fatal error, because installing it would record a geometry in `omdrc.conf`
+with no configs behind it.
+
+## Geometry, design, variant
+
+Three words that are easy to confuse:
+
+- a **geometry** is a physical setup --- speaker and listening position, e.g.
+  `120.blue`. It is a directory under `configs/` and `filters/`.
+- a **design** is one immutable filter revision inside a geometry, addressed as
+  `@design-id` (e.g. `@rscreen-20260812`) and carrying a provenance manifest.
+  The historical revision has the reserved id `default` and keeps the
+  un-suffixed paths.
+- a **variant** is the older mechanism: an arbitrary suffix appended to the
+  config filename. It survives for compatibility, has no manifest, and is
+  therefore always displayed as unverified. New work should use designs.
+
+## The bundle
+
+Everything belonging to one design lives in the site repository under the
+geometry:
+
+```text
+filters/<geometry>/
+  provenance/<design>.json          the manifest (the commit marker)
+  provenance/<design>.source.json   the build recipe (development input)
+  analysis/<design>.json            precomputed response traces
+  source/<design>/                  verbatim copies of the REW exports used
+    measurement-L.txt  measurement-R.txt  measurement-L+R.txt
+    filter-L.txt  filter-R.txt  filter-L.wav  filter-R.wav
+    corrected-*-independent.txt     optional REW cross-check exports
+  <rate>/{L,R}.raw                  runtime coefficients (design `default`)
+  <rate>/@<design>/{L,R}.raw        runtime coefficients (immutable design)
+configs/<geometry>/
+  brutefir-<rate>.conf.in           template; @REPO_DIR@ -> $SITE_DIR at install
+  brutefir-<rate>@<design>.conf.in
+```
+
+Sources are copied in under stable logical role names --- the original REW
+filenames survive as manifest metadata. The copy is deliberate: a deployment
+must never depend on a mutable sibling checkout or on an absolute path that
+will not exist on the playback machine.
+
+## What is hashed
+
+The manifest records, for every source export, RAW file, config template and the
+analysis file: the logical role, relative path, byte size, format, sample
+rate/count where applicable, and SHA-256. Around that it records the source
+repository URL and exact commit, the annotated tag name and immutable tag object
+id, the declaration's Git blob and SHA-256, parsed REW header metadata
+(measurement name, date, notes, smoothing, frequency step, timing reference, REW
+version), the derivation commands and tool versions (deployment script, Python,
+NumPy, SoX and the resampling flags), the TXT-versus-WAV validation results,
+per-channel headroom with safety margin and required attenuation, and the exact
+rate-to-config mapping with the expected BruteFIR format and attenuation.
+
+The `bundle_id` on top is the SHA-256 of a canonical identity object containing
+a hash of the complete source-provenance block, every source artifact hash, the
+runtime config and RAW hashes and settings, and the analysis hash. Editing any
+provenance value the UI displays therefore invalidates the bundle rather than
+quietly changing a label. An annotated tag makes the source state an immutable
+named Git object; signing that tag additionally establishes authorship.
+
+## The scripts
+
+All of them are offline. None starts REW, and none opens a `.mdat` project
+except the optional auditor below.
+
+| Script | Role |
+|---|---|
+| `filter_design_suggest.py` | read-only discovery: from a source checkout, finds the newest `.mdat` by mtime, locates its sibling `<stem>.txts`, ranks compatible L/R exports and prints a candidate declaration command. A suggestion, never an attestation |
+| `declare_filter_design.py` | writes the source-side `design.json`: binds each semantic role to an exact file, records SHA-256 values and parsed TXT headers. Run in the source repository, then commit and tag |
+| `new_filter_design.py` | consumes a committed declaration *at an annotated tag*: verifies the tag object, the commit, a clean tree and every input hash, then drives a dry run or a publication |
+| `deploy_filter.py` | the engine underneath: regenerates every declared rate in a temporary directory, validates TXT against WAV, checks optional corrected exports, computes headroom, bakes and reads back each config, computes the analysis traces, and writes the bundle |
+| `verify_filter_bundle.py` | read-only re-verification of committed bundles: bundle id, source copies, analysis dependencies, configs, exact RAW hashes and headroom. `--no-next` for CMake and CI |
+| `filter_workflow_next.py` | shared operator handoff --- prints the exact commit/install/select/verify commands, and names a working directory per step when the site data lives in its own repository |
+| `headroom_calc.py` | minimum `attenuation:` per pair from the worst-case FFT gain plus a safety margin; also reports what each config currently specifies |
+| `rew_mdat_audit.py` | optional archival evidence: audits selected REW project traces via the REW API, comparing TXT responses numerically and final WAV impulses sample-by-sample against the project. Not a deployment dependency |
+| `REW2raw.sh`, `REW2raw-all-rates.sh` | the low-level SoX conversion underneath, usable directly for experiments; they produce no provenance bundle |
+
+## The workflow
+
+```sh
+# 1. In the source repository: suggest, review, declare, tag.
+python3 scripts/declare_filter_design.py --suggest-from-source-root ../DRC/DRC-120.blue
+python3 scripts/declare_filter_design.py --geometry 120.blue --design-id rscreen-20260812 ...
+git -C ../DRC/DRC-120.blue add ... && git -C ../DRC/DRC-120.blue commit -m 'Declare ...'
+git -C ../DRC/DRC-120.blue tag -a 120.blue-rscreen-20260812 -m 'room correction ...'
+
+# 2. In the engine repository: audit as a dry run, read every PASS line.
+export OMDRC_SITE_ROOT=~/devel/omdrc-801N
+python3 scripts/new_filter_design.py --source-root ../DRC/DRC-120.blue \
+        --source-ref 120.blue-rscreen-20260812 --declaration <path>
+
+# 3. Publish only after reading the audit.
+python3 scripts/new_filter_design.py ... --write
+
+# 4. Re-verify independently, then commit in the SITE repository.
+python3 scripts/verify_filter_bundle.py --all --require-sources
+git -C ~/devel/omdrc-801N add -- configs/120.blue filters/120.blue
+git -C ~/devel/omdrc-801N commit -m 'Deploy verified filter design: ...' && git -C ~/devel/omdrc-801N push
+```
+
+An annotated tag is required. `--allow-commit-ref` exists as an explicit
+lower-assurance exception and is recorded as such.
+
+Publication is a transaction. Without `--write` every check runs in temporary
+storage and nothing is touched; the dry run also reports which runtime files
+*would* change. With `--write` the order is fixed: source copies first, then the
+analysis, then the runtime RAW pairs, and the manifest **last**. The manifest is
+the commit marker --- readers ignore an incomplete deployment until it exists and
+verifies every preceding hash. Replacing bytes that already exist additionally
+requires `--replace-runtime`, so an accidental overwrite of a deployed design
+cannot happen silently.
+
+## Verification at install time
+
+`cmake/core-drc.cmake` runs `verify_filter_bundle.py --require-sources` over
+every manifest of a geometry *before* installing it, and fails the configure step
+if a bundle does not verify. It also rejects any `@design` config that has no
+same-named manifest. A broken bundle therefore stops the build rather than
+producing an installed system that looks authoritative.
+
+The install copies the manifests and analysis JSON beside the RAWs, and
+deliberately excludes `rew/`, `source/` and the `.source.json` recipes: their
+hashes and parsed metadata are already embedded in the installed manifest, so
+the playback machine needs none of the development material.
+
+## Verification at runtime
+
+The response page never trusts the geometry name or the rate. For every request
+`omdrc-ctrl`:
+
+1. finds the `.conf` of the **running** BruteFIR process from its argv;
+2. parses the coefficient blocks and hashes the exact `.raw` files named there;
+3. requires exactly one manifest matching that `(relative path, SHA-256, format,
+   attenuation, rate)` tuple;
+4. verifies the analysis file's own hash and that its recorded input hashes
+   equal the manifest's source artifact hashes;
+5. computes the displayed active-filter curve from the bytes just read, applying
+   the configured attenuation, since that attenuation is part of the audible
+   transfer function.
+
+Only then are the stored room measurements released, with the green banner
+carrying the annotated tag, tag-object SHA and source commit; the details panel
+adds the declaration hash, bundle id and the active L/R RAW hashes.
+
+Anything else is **mismatch** (red): no manifest matches the active bytes, a
+hash differs, the config attenuation or format differs, or an analysis
+dependency fails. The page may still show a live FFT of the active coefficients
+as a diagnostic, but it must not present stored measurements as if they belonged
+to it. A legacy variant, having no manifest, always lands here.
+
+A/B switching obeys the same rule. After `drc.sh` returns, the server re-reads
+the running process, parses the config actually in use, hashes its RAWs, and
+reports the new selector as verified only if that runtime identity matches one
+manifest. A design that starts but fails this check is an assurance failure, not
+a successful switch.
+
+## What deliberately cannot go green
+
+- A pair whose bytes do not reproduce from the recorded source exports. It must
+  be re-exported and redeployed as a new bundle.
+- Any selector without a manifest, whatever its audio quality.
+- A design whose configured attenuation is below the computed requirement: the
+  base `120.blue` pairs peak at about +1.28 dB and need 2.3 dB including the
+  1 dB margin, and are configured at 3.0 dB. A design whose filters never exceed
+  unity gain legitimately requires 0.0 dB.
+
+One gap is worth naming explicitly: the manifest pins the config *template*, not
+the rendered `.conf` that BruteFIR loads, because `@REPO_DIR@` is only
+substituted at install time. Runtime verification closes this for everything
+that matters --- coefficients, format, attenuation and rate are all re-checked
+against the bytes in use --- but a post-install hand-edit to a rendered config's
+routing or device settings is outside the chain.
 
 \newpage
 
@@ -713,6 +986,13 @@ byte-identical to the reference raw --- MPD cannot play headerless raw.
 | `REW2raw.sh` | REW WAV -> brutefir raw FLOAT64_LE at a target rate, with the theoretically correct `Fs_source/Fs_target` coefficient scale (no peak normalisation) |
 | `REW2raw-all-rates.sh` | Batch: `L.raw`/`R.raw`/`sox.txt` for every numeric rate directory under a filter root; prompts before overwriting unless `-y` |
 | `headroom_calc.py` | Minimum `attenuation:` per config from worst-case FFT gain + safety margin |
+| `filter_design_suggest.py` | Read-only discovery of a candidate declaration command from a source checkout |
+| `declare_filter_design.py` | Writes the source-side role declaration with hashes and parsed TXT headers |
+| `new_filter_design.py` | Publishes a design from a committed declaration at an annotated tag |
+| `deploy_filter.py` | The offline audit/build engine underneath: rates, validation, analysis, manifest |
+| `verify_filter_bundle.py` | Read-only re-verification of committed bundles (used by CMake and CI) |
+| `filter_workflow_next.py` | Shared operator handoff printed by the commands above |
+| `rew_mdat_audit.py` | Optional archival audit of REW project traces against exports |
 | `verify-bitperfect.sh` | The bit-perfect proof tool (above); sources: built-in writer or `mpd:OUTPUT`; taps: `usb` or `loop:/dev/dsp.X` |
 | `systemd-user-install.sh` | Legacy: link + enable a `systemd --user` drc.service (Linux) |
 
@@ -1365,6 +1645,8 @@ detail behind each section:
 | Build modules: per-user setup (`make user-install`) | `cmake/user-install.sh.in` |
 | Web-UI subproject builds | `omdrc-ctrl/CMakeLists.txt`, `video/webremote/CMakeLists.txt` |
 | Filter/config layout, drc.sh modes, agent rules | `FILTERS_AND_DRC.md` |
+| Filter provenance, hashes, verification, the design scripts | `doc/FILTER_PROVENANCE_AND_RESPONSE.md` |
+| Site-data split (`OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT`) | `scripts/README.md`, `host.cmake.sample`, `cmake/core-drc.cmake` |
 | Helper scripts | `scripts/README.md`, `README.md` |
 | Web control panel | `omdrc-ctrl/README.md` |
 | Spectrum analyzer | `omdrc-ctrl/SPECTRUM_ANALYZER.md` |

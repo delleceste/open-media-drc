@@ -33,18 +33,23 @@ the PDF, then create the annotated `v*` tag on that commit.
    (systemd/udev vs rc.d/devd, copy-vs-symlink rule, MPD drop-in caveat).
 4. **Usage** — drc.sh verbs/options/state, MPD outputs, filters/configs
    layout, filter-generation workflow, browser-nodrc.
-5. **Tools** — omdrc-ctrl (web UI, spectrum analyzer, filter response),
+5. **Filter provenance and verification** — the three repositories and
+   the site-data split (`OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT`),
+   geometry/design/variant, the bundle layout, what is hashed and how
+   `bundle_id` is derived, the design scripts, the publication
+   transaction, and verification at install time and at runtime.
+6. **Tools** — omdrc-ctrl (web UI, spectrum analyzer, filter response),
    video (launchers + webremote), glitch detection, bit-perfect
    verification, scripts/.
-6. **FreeBSD peculiarities** — one-place summary of everything
+7. **FreeBSD peculiarities** — one-place summary of everything
    FreeBSD-specific, including known bugs and the port plan.
-7. **Appendix A** — detailed description of every FreeBSD patch (uaudio,
+8. **Appendix A** — detailed description of every FreeBSD patch (uaudio,
    virtual_oss/cuse, Kodi): what it does, root cause, how to apply/build/
    install/verify/revert.
-8. **Appendix B** — the FreeBSD port plan (from `doc/FREEBSD-PORT-PLAN.md`).
-9. **Appendix C** — bit-perfect test assets and the cross-OS byte-comparison
+9. **Appendix B** — the FreeBSD port plan (from `doc/FREEBSD-PORT-PLAN.md`).
+10. **Appendix C** — bit-perfect test assets and the cross-OS byte-comparison
    procedure (from `tests/README.md`, `scripts/README.md`).
-10. **Appendix D** — mapping of manual sections to the source `.md` files,
+11. **Appendix D** — mapping of manual sections to the source `.md` files,
     plus the update procedure for this manual.
 
 ## Updating after documentation changes

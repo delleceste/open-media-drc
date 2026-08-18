@@ -184,12 +184,51 @@ sudo cmake --install build                    # installs modules to /usr/local/l
 git clone --recursive https://github.com/delleceste/open-media-drc ~/DRC/open-media-drc
 cd ~/DRC/open-media-drc
 cp host.cmake.sample host.cmake   # AUDIO_USER (defaults to the invoking user),
-$EDITOR host.cmake                #   GEOMETRY, GEOMETRIES, MUSIC_DIR, VIDEO_DIR,
-                                  #   OMDB_API_KEY
-cmake -B build -C host.cmake
-cmake --build build
-sudo cmake --install build        # -> $PREFIX (default /usr/local)
+$EDITOR host.cmake                #   GEOMETRY, GEOMETRIES, OMDRC_SITE_DATA_DIRS,
+                                  #   MUSIC_DIR, VIDEO_DIR, OMDB_API_KEY
+mkdir build && cd build
+cmake .. -C ../host.cmake
+make
+sudo make install                 # -> $PREFIX (default /usr/local)
 ```
+
+> **`host.cmake` is read only by `-C`.** A plain `cmake ..` silently configures
+> from the built-in defaults, and adding `-C` to that build directory afterwards
+> does **not** fix it: CMake skips an initial-cache assignment whose entry
+> already exists. The project warns when it detects this; the cure is always a
+> fresh build directory —
+> `rm -rf build && mkdir build && cd build && cmake -C ../host.cmake ..`
+
+### Where the filters live
+
+`configs/<geometry>/` and `filters/<geometry>/` are *site data* — one physical
+room's measurements — and do not have to sit in this checkout. CMake resolves
+each set along `OMDRC_SITE_DATA_DIRS` (a semicolon-separated search path, first
+match wins), so a room can be its own repository while this one ships only the
+generic `flat` set:
+
+```cmake
+set(OMDRC_SITE_DATA_DIRS "${CMAKE_SOURCE_DIR};$ENV{HOME}/devel/omdrc-801N"
+    CACHE STRING "Search path for configs/<geo> + filters/<geo>")
+```
+
+Configure then reports exactly which directory supplied each set:
+
+```text
+-- core-drc: filter set search path
+--     /home/giacomo/devel/open-media-drc (this checkout)
+--     /home/giacomo/devel/omdrc-801N
+--   120.blue (default) <- /home/giacomo/devel/omdrc-801N
+--   flat <- /home/giacomo/devel/open-media-drc
+```
+
+A missing extra set warns and is skipped; a missing default `GEOMETRY` is fatal.
+The design scripts use the matching `OMDRC_SITE_ROOT` (or `--site-root`) — see
+*Keeping room data out of the engine repository* in
+[`scripts/README.md`](scripts/README.md) and
+[`doc/FILTER_PROVENANCE_AND_RESPONSE.md`](doc/FILTER_PROVENANCE_AND_RESPONSE.md).
+This box's room data lives in
+[omdrc-801N](https://github.com/delleceste/omdrc-801N).
 
 `host.cmake` (the successor to `config.env`) is the single source of
 box-specific values. The CMake superproject renders every config from it and
