@@ -61,6 +61,12 @@ provides no feedback. Every command here either shows its output directly
   Qobuz losing its OAuth token being the case shipped by default — while `ok`
   rules report the good outcome as a quiet line under the renderer buttons. See
   [Reserved section: `[logs]`](#reserved-section-logs).
+- **Qobuz OAuth sign-in from the panel** — a **Qobuz sign-in** button (and a
+  *sign in* action on the OAuth alert) runs upmpdcli's `qobuz-init-oauth.py` on
+  the box and shows the sign-in URL, so a headless server needs no keyboard: open
+  the link on the phone you are already holding, sign in, and the panel notices
+  the token arriving and offers the upmpdcli restart. See
+  [Reserved section: `[qobuz_oauth]`](#reserved-section-qobuz_oauth).
 - **No hard-coded commands** — everything lives in `commands.conf`; restart
   the service to pick up changes.
 - **CMake install** — single `cmake --install` copies all files and installs
@@ -391,6 +397,7 @@ page, `ok` as a status line under the renderer buttons.
 | `hint` | no | Second line: what to do about it |
 | `severity` | no | `error`, `warn`, `info` or `ok` (default `warn`) |
 | `sources` | no | Comma-separated source ids (default: all of them) |
+| `action` | no | UI action button on the banner; only `qobuz-oauth` is known |
 
 A rule is active when the last line matching `pattern` is newer than the last
 line matching `clears`, so a failure a later restart fixed stops being reported
@@ -425,6 +432,38 @@ message  = Qobuz plugin connected
 The patterns match the sense rather than the exact upmpdcli 1.9 wording, so a
 reworded message in a later release still trips them. Dismissing a banner hides
 that exact line and repeat count; a fresh occurrence raises it again.
+
+### Reserved section: `[qobuz_oauth]`
+
+`[qobuz_oauth]` configures the **Qobuz sign-in** button. All keys are optional:
+
+```ini
+[qobuz_oauth]
+script = /usr/local/share/upmpdcli/cdplugins/qobuz/qobuz-init-oauth.py
+upmpdcli_config =   ; empty: search ${PREFIX}/etc/open-media-drc, ${PREFIX}/etc, /etc
+cache_config =      ; empty: <cachedir>/qobuz/config, cachedir from upmpdcli.conf
+timeout = 45        ; the script fetches the Qobuz app id over the network
+```
+
+**How the flow works.** upmpdcli's `qobuz-init-oauth.py` does not serve
+anything: it prints two sign-in URLs and exits. Signing in at qobuz.com
+redirects the browser to `http://<host>:<plgmicrohttpport>/qobuz/oauth/?code=…`,
+which is **upmpdcli's own media-server port**; its Qobuz plugin exchanges the
+code and writes `user_auth_token` / `user_id` into `<cachedir>/qobuz/config`.
+
+Two consequences the panel surfaces for you:
+
+- **upmpdcli must be running** to catch the redirect. If it is not, the panel
+  says so instead of handing you a link that would fail.
+- **the redirect host must be reachable from the browser.** The script can only
+  guess it from the box's default route, so the panel also offers the address
+  this page was reached on — which is provably reachable — and puts it first.
+  The `localhost` variant is kept for a browser running on the box itself.
+
+The panel then polls [`GET /qobuz/oauth/status`](#get-qobuzoauthstatus) and, when
+the token file changes, offers the upmpdcli restart that makes the plugin pick it
+up. Nothing is stored by omdrcctrl itself: the token file is written by upmpdcli,
+and the panel only reads whether it is there.
 
 ### Reserved section: `[spectrum]`
 
@@ -767,6 +806,57 @@ repeat count does, so a dismissed alert reappears on a fresh occurrence.
 `status_sources` is the subset of `sources` that `ok` rules read. With no `ok`
 alert active, the UI uses it to say whether the connection status is merely
 quiet or the log it would come from has not been written yet.
+
+---
+
+### `GET /qobuz/oauth/status`
+
+Whether the Qobuz plugin holds a token, plus the two preconditions for a sign-in
+to succeed. `token` is true only when both `user_auth_token` and `user_id` are
+present; `token_mtime` is what the UI watches to detect the redirect landing.
+
+```json
+{ "ok": true, "token": false, "user_id": "", "token_mtime": 1786979798,
+  "cache_config": "/home/giacomo/.cache/upmpdcli/qobuz/config",
+  "upmpdcli_running": true, "script_present": true,
+  "script": "/usr/local/share/upmpdcli/cdplugins/qobuz/qobuz-init-oauth.py",
+  "upmpdcli_config": "/usr/local/etc/open-media-drc/upmpdcli.conf" }
+```
+
+---
+
+### `POST /qobuz/oauth/start`
+
+Runs `qobuz-init-oauth.py` (a few seconds — it fetches the Qobuz app id) and
+returns the sign-in URLs it printed. The script exits immediately; the redirect
+is caught by upmpdcli, so there is no session to keep alive here.
+
+`urls` is ordered best-first, with exactly one `primary`: the address this
+request arrived on when it differs from the script's guess, otherwise the
+script's network URL. `local` marks the `localhost` variant, which is never
+primary while a network URL exists.
+
+```json
+{ "ok": true, "upmpdcli_running": true, "token": false,
+  "urls": [ { "url": "https://www.qobuz.com/signin/oauth?ext_app_id=…&redirect_url=http://192.168.1.9:49149/qobuz/oauth/",
+              "host": "192.168.1.9", "port": 49149, "local": false, "primary": true,
+              "label": "the address you are using now (192.168.1.9)" } ],
+  "output": "This script must run on the same machine as upmpdcli\n…" }
+{ "ok": false, "error": "upmpdcli.conf not found; set upmpdcli_config in [qobuz_oauth]" }
+```
+
+---
+
+### `POST /renderer/restart`
+
+Restarts one renderer in place, without switching to the other. Body:
+`{"target": "upmpdcli"|"qobuzconnect2mpd"}`; anything else is a 400. Used by the
+OAuth panel so upmpdcli picks up a freshly stored token.
+
+```json
+{ "ok": true, "running": true }
+{ "ok": false, "error": "could not stop upmpdcli" }
+```
 
 ---
 

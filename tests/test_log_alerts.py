@@ -47,7 +47,7 @@ class LogAlertTest(unittest.TestCase):
                          [("qobuz_oauth", "warn")])
         self.assertEqual(alerts[0]["line"], FAILURE)
         self.assertEqual(alerts[0]["source"], "upmpdcli-console")
-        self.assertIn("qobuz-init-oauth.py", alerts[0]["hint"])
+        self.assertIn("Qobuz sign-in", alerts[0]["hint"])
 
     def test_a_reworded_oauth_failure_still_matches(self):
         for line in ("0$qobuz$: oauth not done",
@@ -147,6 +147,87 @@ class LogConfigTest(unittest.TestCase):
                             encoding="utf-8")
             with self.assertRaises(ValueError):
                 APP.load_config(str(path))
+
+
+
+class QobuzOauthTest(unittest.TestCase):
+    """The panel drives upmpdcli's qobuz-init-oauth.py, which only prints the
+    sign-in URLs — upmpdcli itself catches the redirect and stores the token."""
+
+    SCRIPT_OUTPUT = (
+        "This script must run on the same machine as upmpdcli\n"
+        "- If upmpdcli and the script run on the same machine as the WEB browser, use:\n"
+        "https://www.qobuz.com/signin/oauth?ext_app_id=798273057"
+        "&redirect_url=http://localhost:49149/qobuz/oauth/\n"
+        "- If the upmpdcli and the script run on a different machine, use:\n"
+        "https://www.qobuz.com/signin/oauth?ext_app_id=798273057"
+        "&redirect_url=http://172.19.180.123:49149/qobuz/oauth/\n"
+    )
+
+    def test_the_reachable_network_url_is_offered_first(self):
+        urls = APP._oauth_candidates(self.SCRIPT_OUTPUT, "172.19.180.123")
+        primary = next(u for u in urls if u["primary"])
+        self.assertEqual(primary["host"], "172.19.180.123")
+        self.assertEqual(primary["port"], 49149)
+        self.assertFalse(any(u["primary"] for u in urls if u["local"]))
+
+    def test_the_address_the_browser_used_is_added_and_preferred(self):
+        urls = APP._oauth_candidates(self.SCRIPT_OUTPUT, "omdrc.local")
+        self.assertTrue(urls[0]["primary"])
+        self.assertEqual(urls[0]["host"], "omdrc.local")
+        self.assertIn("redirect_url=http://omdrc.local:49149/qobuz/oauth/", urls[0]["url"])
+        # the script's own two URLs are kept as fallbacks
+        self.assertEqual([u["host"] for u in urls[1:]], ["localhost", "172.19.180.123"])
+
+    def test_output_without_a_url_yields_no_candidates(self):
+        self.assertEqual(APP._oauth_candidates("config file not found\n", "host"), [])
+
+    def _status(self, directory: Path, cache_text: str | None) -> dict:
+        cache = directory / "qobuz-config"
+        if cache_text is not None:
+            cache.write_text(cache_text, encoding="utf-8")
+        config = directory / "commands.conf"
+        config.write_text(
+            f"[qobuz_oauth]\nscript = {directory}/init.py\n"
+            f"cache_config = {cache}\ntimeout = 9\n", encoding="utf-8")
+        APP.load_config(str(config))
+        return APP.app.test_client().get("/qobuz/oauth/status").get_json()
+
+    def test_status_reports_a_stored_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = self._status(Path(directory),
+                                "user_auth_token = abc123\nuser_id = 42\n")
+        self.assertTrue(data["token"])
+        self.assertEqual(data["user_id"], "42")
+
+    def test_status_reports_the_empty_token_file_of_a_fresh_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = self._status(Path(directory), "")
+        self.assertFalse(data["token"])
+        self.assertFalse(data["script_present"])
+
+    def test_a_token_needs_both_the_id_and_the_auth_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = self._status(Path(directory), "user_auth_token = abc123\n")
+        self.assertFalse(data["token"])
+
+    def test_the_qobuz_oauth_settings_are_read_from_the_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._status(Path(directory), "")
+        self.assertEqual(APP.QOBUZ_OAUTH_TIMEOUT, 9)
+        self.assertTrue(APP.QOBUZ_OAUTH_SCRIPT.endswith("init.py"))
+
+    def test_the_alert_rule_carries_its_ui_action(self):
+        alerts = _alerts(f"{STARTUP}\n{FAILURE}\n")
+        self.assertEqual(alerts[0]["action"], "qobuz-oauth")
+
+    def test_restarting_an_unknown_renderer_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            APP.load_config(str(_config(root, root / "console.log")))
+            response = APP.app.test_client().post(
+                "/renderer/restart", json={"target": "rm -rf"})
+        self.assertEqual(response.status_code, 400)
 
 
 if __name__ == "__main__":

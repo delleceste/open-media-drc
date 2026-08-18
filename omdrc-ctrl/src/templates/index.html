@@ -493,6 +493,52 @@
         }
         .log-hit { color: var(--yellow); }
 
+        /* ── Qobuz OAuth sign-in ─────────────────────────────── */
+        #qobuz-oauth-panel {
+            border-top: 1px solid var(--border);
+            padding: 12px 0 4px;
+        }
+        .oauth-step {
+            font-size: .78rem;
+            color: var(--muted);
+            line-height: 1.5;
+            margin-bottom: 8px;
+        }
+        .oauth-warn { color: var(--yellow); }
+        .oauth-link {
+            display: block;
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            background: rgba(56,139,253,.1);
+            color: var(--accent);
+            text-align: center;
+            padding: 11px 12px;
+            font-size: .88rem;
+            font-weight: 600;
+            text-decoration: none;
+            margin-bottom: 8px;
+        }
+        .oauth-link:hover { background: rgba(56,139,253,.2); }
+        .oauth-url {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .66rem;
+            color: var(--muted);
+            word-break: break-all;
+            line-height: 1.5;
+            margin-bottom: 8px;
+            -webkit-user-select: all;
+            user-select: all;
+        }
+        .oauth-alt {
+            font-size: .72rem;
+            color: var(--muted);
+            border-top: 1px solid var(--border);
+            padding-top: 8px;
+        }
+        .oauth-alt a { color: var(--muted); word-break: break-all; }
+        .oauth-alt a:hover { color: var(--accent); }
+        .oauth-done { color: var(--green); font-size: .82rem; font-weight: 600; }
+
         /* ── live spectrum ──────────────────────────────────── */
         .spectrum-head {
             display: flex;
@@ -1010,6 +1056,7 @@
             <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
             <button class="btn-log" id="btn-restart" onclick="restartQc()" disabled>Restart</button>
             <button class="btn-log" id="btn-log" onclick="toggleLog()">Log</button>
+            <button class="btn-log" id="btn-oauth" onclick="toggleOauth()">Qobuz sign-in</button>
         </div>
     </div>
     <!-- Mutually-exclusive renderer toggle -->
@@ -1017,7 +1064,7 @@
         <button class="qc-seg" data-target="qobuzconnect2mpd" onclick="switchRenderer('qobuzconnect2mpd')">qobuzconnect2mpd</button>
         <button class="qc-seg" data-target="upmpdcli" onclick="switchRenderer('upmpdcli')">upmpdcli</button>
     </div>
-    <!-- Which renderer the boot service will restore (last switched-to one) -->
+    <!-- Which renderer the boot service would start on the NEXT reboot -->
     <div class="refresh-note" id="qc-boot"></div>
     <!-- Streaming-service connection status read out of the logs (ok rules) -->
     <div id="renderer-status" class="log-status" aria-live="polite"></div>
@@ -1028,6 +1075,8 @@
     <div id="qconnect-log-panel" style="display:none">
         <pre id="qc-log-content" class="qc-log"></pre>
     </div>
+    <!-- Qobuz OAuth sign-in, driven from here so the box needs no keyboard -->
+    <div id="qobuz-oauth-panel" style="display:none" aria-live="polite"></div>
 </div>
 
 <!-- Log viewer: any log listed in [logs] in commands.conf -->
@@ -1665,11 +1714,19 @@ function paintRenderers(active) {
     }
 }
 
-// The choice is recorded on every successful switch and replayed at boot by
-// the omdrc_renderer service, so say which one a reboot would come back on.
-function paintRemembered(name) {
-    document.getElementById('qc-boot').textContent =
-        name ? `restored at boot: ${name}` : '';
+// The choice is recorded on every successful switch and replayed by the
+// omdrc_renderer boot service.  This is a statement about the NEXT boot, never
+// a report of what the last one started — the old "restored at boot: X" read as
+// history and so claimed the wrong thing the moment you switched renderer.  The
+// empty state was misleading too: with nothing recorded the boot service still
+// starts its default, so name that instead of saying nothing.
+function paintBootRenderer(boot, isDefault) {
+    const el = document.getElementById('qc-boot');
+    if (!boot) { el.textContent = ''; el.title = ''; return; }
+    el.textContent = `next boot starts: ${boot}` + (isDefault ? ' (default)' : '');
+    el.title = isDefault
+        ? `No renderer recorded yet — the omdrc_renderer boot service falls back to ${boot}. Switching renderer records the choice.`
+        : `The omdrc_renderer boot service starts ${boot} after a reboot, because that is what the toggle last switched to.`;
 }
 
 async function syncRenderers() {
@@ -1680,7 +1737,7 @@ async function syncRenderers() {
         if (d.qobuzconnect2mpd) active = 'qobuzconnect2mpd';
         else if (d.upmpdcli)    active = 'upmpdcli';
         paintRenderers(active);
-        paintRemembered(d.remembered);
+        paintBootRenderer(d.boot, d.boot_is_default);
     } catch { /* ignore — status dot already signals offline */ }
 }
 
@@ -1753,6 +1810,14 @@ function renderLogAlerts(alerts) {
 
         const actions = document.createElement('div');
         actions.className = 'log-alert-actions';
+        if (a.action === 'qobuz-oauth') {
+            const act = document.createElement('button');
+            act.className = 'log-alert-open';
+            act.textContent = 'sign in';
+            act.title = 'Run the Qobuz OAuth sign-in from here';
+            act.onclick = () => openOauthPanel();
+            actions.appendChild(act);
+        }
         const openBtn = document.createElement('button');
         openBtn.className = 'log-alert-open';
         openBtn.textContent = 'log';
@@ -1803,6 +1868,177 @@ async function fetchLogAlerts() {
         renderRendererStatus(d.alerts.filter(a => a.severity === 'ok'),
                              d.status_sources || d.sources || []);
     } catch { /* ignore — status dot already signals offline */ }
+}
+
+// ── Qobuz OAuth sign-in ────────────────────────────────────────────────────
+// The box is headless, so the whole flow is driven from here: the server runs
+// upmpdcli's qobuz-init-oauth.py, which only prints the sign-in URLs; the
+// browser doing the signing in can be anywhere.  Qobuz redirects to upmpdcli's
+// own media-server port, which stores the token — so upmpdcli has to be running
+// to catch it, and the redirect host has to be reachable from this browser.
+// After that we watch the token file rather than the log: it is the fact.
+let oauthVisible = false;
+let oauthTimer   = null;
+let oauthBusy    = false;
+let oauthTokenAtStart = null;
+
+function oauthPanel() { return document.getElementById('qobuz-oauth-panel'); }
+
+function oauthStep(text, cls = '') {
+    const el = document.createElement('div');
+    el.className = 'oauth-step' + (cls ? ' ' + cls : '');
+    el.textContent = text;
+    return el;
+}
+
+function renderOauth(d) {
+    const box = oauthPanel();
+    box.innerHTML = '';
+    if (!d.ok) {
+        box.appendChild(oauthStep(d.error || 'could not start the sign-in', 'oauth-warn'));
+        return;
+    }
+    if (!d.upmpdcli_running) {
+        box.appendChild(oauthStep(
+            'upmpdcli is not running — it is what receives the Qobuz redirect. ' +
+            'Switch the renderer to upmpdcli first, then press Qobuz sign-in again.',
+            'oauth-warn'));
+    }
+    const primary = (d.urls || []).find(u => u.primary) || (d.urls || [])[0];
+    if (!primary) {
+        box.appendChild(oauthStep('no sign-in URL was produced', 'oauth-warn'));
+        return;
+    }
+    box.appendChild(oauthStep(
+        '1. Open the Qobuz sign-in below and log in. 2. Qobuz sends you back to ' +
+        'upmpdcli, which stores the token. This panel notices and offers the restart.'));
+
+    const link = document.createElement('a');
+    link.className = 'oauth-link';
+    link.href = primary.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Open Qobuz sign-in ↗';
+    box.appendChild(link);
+
+    const url = document.createElement('div');
+    url.className = 'oauth-url';
+    url.textContent = primary.url;
+    url.title = `redirects to ${primary.host}:${primary.port} — ${primary.label}`;
+    box.appendChild(url);
+
+    const others = (d.urls || []).filter(u => u !== primary);
+    if (others.length) {
+        const alt = document.createElement('div');
+        alt.className = 'oauth-alt';
+        alt.appendChild(document.createTextNode(
+            'If that address is not reachable from this browser, try: '));
+        others.forEach((u, i) => {
+            if (i) alt.appendChild(document.createTextNode(' · '));
+            const a = document.createElement('a');
+            a.href = u.url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = u.label;
+            alt.appendChild(a);
+        });
+        box.appendChild(alt);
+    }
+    const waiting = oauthStep('Waiting for the Qobuz redirect…');
+    waiting.id = 'oauth-waiting';
+    box.appendChild(waiting);
+}
+
+function oauthSucceeded() {
+    const box = oauthPanel();
+    box.innerHTML = '';
+    const done = document.createElement('div');
+    done.className = 'oauth-done';
+    done.textContent = '✓ Qobuz token stored';
+    box.appendChild(done);
+    box.appendChild(oauthStep(
+        'Restart upmpdcli so its Qobuz plugin picks the new token up.'));
+    const btn = document.createElement('button');
+    btn.className = 'btn-log';
+    btn.textContent = 'Restart upmpdcli';
+    btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = '…';
+        try {
+            const r = await (await fetch('/renderer/restart', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ target: 'upmpdcli' }),
+            })).json();
+            toast(r.ok ? 'upmpdcli restarted' : (r.error || 'restart failed'),
+                  r.ok ? 'ok' : 'error');
+        } catch {
+            toast('network error', 'error');
+        }
+        btn.disabled = false;
+        btn.textContent = 'Restart upmpdcli';
+        syncRenderers();
+        fetchLogAlerts();
+    };
+    box.appendChild(btn);
+}
+
+async function pollOauthToken() {
+    try {
+        const d = await (await fetch('/qobuz/oauth/status')).json();
+        if (d.ok && d.token && d.token_mtime !== oauthTokenAtStart) {
+            clearInterval(oauthTimer);
+            oauthTimer = null;
+            oauthSucceeded();
+            fetchLogAlerts();
+        }
+    } catch { /* keep waiting — the poll retries */ }
+}
+
+async function startOauth() {
+    if (oauthBusy) return;
+    oauthBusy = true;
+    const btn = document.getElementById('btn-oauth');
+    btn.disabled = true;
+    oauthPanel().innerHTML = '';
+    oauthPanel().appendChild(oauthStep('running qobuz-init-oauth.py…'));
+    try {
+        const before = await (await fetch('/qobuz/oauth/status')).json();
+        // Remember the token file as it is now: a token that is already there
+        // must not be mistaken for the one this sign-in is about to fetch.
+        oauthTokenAtStart = before.ok ? before.token_mtime : null;
+        const d = await (await fetch('/qobuz/oauth/start', { method: 'POST' })).json();
+        renderOauth(d);
+        if (d.ok) {
+            clearInterval(oauthTimer);
+            oauthTimer = setInterval(pollOauthToken, 3000);
+        }
+    } catch {
+        oauthPanel().innerHTML = '';
+        oauthPanel().appendChild(oauthStep('network error', 'oauth-warn'));
+    }
+    btn.disabled = false;
+    oauthBusy = false;
+}
+
+function toggleOauth() {
+    oauthVisible = !oauthVisible;
+    oauthPanel().style.display = oauthVisible ? 'block' : 'none';
+    document.getElementById('btn-oauth').classList.toggle('active', oauthVisible);
+    if (oauthVisible) {
+        startOauth();
+    } else {
+        clearInterval(oauthTimer);
+        oauthTimer = null;
+    }
+}
+
+// Opened from the alert banner's action button.
+function openOauthPanel() {
+    if (!oauthVisible) {
+        toggleOauth();
+    }
+    oauthPanel().closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ── Log viewer ─────────────────────────────────────────────────────────────

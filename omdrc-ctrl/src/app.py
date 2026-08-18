@@ -77,6 +77,15 @@ QCONNECT_SERVICE   = "qobuzconnect2mpd"
 UPMPDCLI_SERVICE   = "upmpdcli"
 SWITCHABLE_SERVICES = (QCONNECT_SERVICE, UPMPDCLI_SERVICE)
 
+# Which renderer the boot service starts when the toggle has never recorded a
+# choice (first boot after an install, or a wiped state dir).  Mirrors
+# scripts/omdrc-renderer's DEFAULT_RENDERER / $OMDRC_RENDERER_DEFAULT, which is
+# what actually decides it — keep the two in step so the panel does not promise
+# a different renderer than the one that comes up.
+_renderer_default   = os.environ.get("OMDRC_RENDERER_DEFAULT", UPMPDCLI_SERVICE)
+RENDERER_BOOT_DEFAULT = (_renderer_default if _renderer_default in SWITCHABLE_SERVICES
+                         else UPMPDCLI_SERVICE)
+
 # ── log viewer and log alerts ────────────────────────────────────────────────
 # The Logs card shows any log file the box writes; the alert rules watch those
 # same files for lines that mean something is wrong but that nothing else in the
@@ -117,10 +126,13 @@ DEFAULT_LOG_ALERTS: list[dict] = [
                     r"|/user/login\s+returns|tried login but failed)",
         "clears":   r"(?i)(qobuz.*running|init_oauth)",
         "message":  "Qobuz login: OAuth initialisation not done",
-        "hint":     "Run qobuz-init-oauth.py as the audio user, open the Qobuz "
-                    "sign-in URL it prints, then restart upmpdcli.",
+        "hint":     "Press Qobuz sign-in: the panel runs the OAuth script and "
+                    "shows the URL to open in this browser.  upmpdcli must be "
+                    "running to receive the redirect.",
         "severity": "warn",
         "sources":  ["upmpdcli-console"],
+        # Offers the sign-in button on the banner (see /qobuz/oauth/start).
+        "action":   "qobuz-oauth",
     },
     {
         "id":       "qobuz_ok",
@@ -133,6 +145,21 @@ DEFAULT_LOG_ALERTS: list[dict] = [
         "sources":  ["upmpdcli-console"],
     },
 ]
+
+# ── Qobuz OAuth initialisation ───────────────────────────────────────────────
+# The token upmpdcli's Qobuz plugin needs is obtained by signing in at qobuz.com
+# and letting it redirect back to upmpdcli's own media-server HTTP port, which
+# hands the code to the plugin (qobuz-app.py `trackuri`, path /qobuz/oauth/).
+# upmpdcli's qobuz-init-oauth.py does not serve anything itself: it only prints
+# the two sign-in URLs and exits, which is why this can be driven from a phone —
+# the panel runs the script, shows the URL, and watches the token file.
+#
+# Consequences worth knowing: upmpdcli must be RUNNING to catch the redirect,
+# and the browser must be able to reach the host in the redirect URL.
+QOBUZ_OAUTH_SCRIPT = "/usr/local/share/upmpdcli/cdplugins/qobuz/qobuz-init-oauth.py"
+QOBUZ_UPMPDCLI_CONF = ""      # empty: search the usual locations
+QOBUZ_CACHE_CONFIG = ""       # empty: derive from upmpdcli.conf's cachedir
+QOBUZ_OAUTH_TIMEOUT = 45      # the script fetches the Qobuz app id over the net
 
 # Set to the defaults just below the parsers, then replaced by load_config().
 LOG_SOURCES: list[dict] = []
@@ -248,6 +275,7 @@ def _parse_log_alerts(cfg: configparser.ConfigParser) -> list[dict]:
             "hint":     sec.get("hint", "").strip(),
             "severity": severity,
             "sources":  [s.strip() for s in sec.get("sources", "").split(",") if s.strip()],
+            "action":   sec.get("action", "").strip(),
         }
         try:
             rules.append(_compile_alert(rule))
@@ -265,6 +293,7 @@ LOG_ALERTS = [_compile_alert(r) for r in DEFAULT_LOG_ALERTS]
 def load_config(path: str) -> None:
     global COMMANDS, CMD_MAP, QCONNECT_STATUS_FILE, QCONNECT_LOG_FILE
     global LOG_SOURCES, LOG_ALERTS, LOG_TAIL_BYTES, LOG_SCAN_BYTES, LOG_ALERT_INTERVAL
+    global QOBUZ_OAUTH_SCRIPT, QOBUZ_UPMPDCLI_CONF, QOBUZ_CACHE_CONFIG, QOBUZ_OAUTH_TIMEOUT
     global TOPCPU_THRESHOLD, MONITOR_INTERVAL, TOPCPU_INTERVAL
     global SNDSTAT_INTERVAL, BRUTEFIR_INTERVAL
     global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
@@ -337,7 +366,13 @@ def load_config(path: str) -> None:
     LOG_SOURCES = _parse_log_sources(cfg)
     LOG_ALERTS = _parse_log_alerts(cfg)
 
-    _RESERVED = {"qconnect", "monitor", "spectrum", "logs"}
+    if cfg.has_section("qobuz_oauth"):
+        QOBUZ_OAUTH_SCRIPT = cfg.get("qobuz_oauth", "script", fallback=QOBUZ_OAUTH_SCRIPT)
+        QOBUZ_UPMPDCLI_CONF = cfg.get("qobuz_oauth", "upmpdcli_config", fallback=QOBUZ_UPMPDCLI_CONF)
+        QOBUZ_CACHE_CONFIG = cfg.get("qobuz_oauth", "cache_config", fallback=QOBUZ_CACHE_CONFIG)
+        QOBUZ_OAUTH_TIMEOUT = max(5, cfg.getint("qobuz_oauth", "timeout", fallback=QOBUZ_OAUTH_TIMEOUT))
+
+    _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
@@ -2335,14 +2370,24 @@ def _mpc_quiesce():
 @app.route("/qconnect/services")
 def qconnect_services():
     """Running state of the two mutually-exclusive renderers — used to keep the
-    web UI toggle in sync with reality.  `remembered` is the one the boot
-    service will bring up after a reboot (None until the toggle is first used,
-    where the boot service falls back to its own default)."""
+    web UI toggle in sync with reality.
+
+    `remembered` is what the toggle last recorded (None until it is first used);
+    `boot` is the renderer the boot service would actually bring up on the NEXT
+    reboot, which is the remembered one or, when nothing is recorded yet, the
+    default the helper falls back to — `boot_is_default` says which of the two
+    it is.  Neither field says anything about what the *last* boot started: the
+    panel must word it as a statement about the next one."""
+    remembered = _read_state_str(_RENDERER_STATE_FILE)
+    if remembered not in SWITCHABLE_SERVICES:
+        remembered = None       # unset, or a stale name the helper would ignore
     return jsonify({
         "ok":               True,
         "qobuzconnect2mpd": _service_running(QCONNECT_SERVICE),
         "upmpdcli":         _service_running(UPMPDCLI_SERVICE),
-        "remembered":       _read_state_str(_RENDERER_STATE_FILE),
+        "remembered":       remembered,
+        "boot":             remembered or RENDERER_BOOT_DEFAULT,
+        "boot_is_default":  remembered is None,
     })
 
 
@@ -2470,6 +2515,7 @@ def _scan_log_alerts() -> list[dict]:
                 "source":       source["id"],
                 "source_label": source["label"],
                 "line":         line[:400],
+                "action":       rule.get("action", ""),
                 "count":        len(hits),
                 "at":           stat["mtime"],
                 # Changes whenever the matched line or its repeat count does, so
@@ -2535,6 +2581,174 @@ def logs_alerts():
         "sources": summary,
         "status_sources": [s for s in summary if not watched or s["id"] in watched],
     })
+
+
+# ── Qobuz OAuth initialisation ───────────────────────────────────────────────
+
+def _upmpdcli_conf_path() -> str | None:
+    """The upmpdcli.conf the OAuth script must be pointed at: it reads the
+    media-server host/port from it, and they have to be the ones the running
+    upmpdcli is listening on."""
+    if QOBUZ_UPMPDCLI_CONF:
+        return QOBUZ_UPMPDCLI_CONF if os.path.isfile(QOBUZ_UPMPDCLI_CONF) else None
+    prefix = os.environ.get("PREFIX", "/usr/local")
+    for path in (os.path.join(prefix, "etc", "open-media-drc", "upmpdcli.conf"),
+                 os.path.join(prefix, "etc", "upmpdcli.conf"),
+                 "/etc/upmpdcli.conf"):
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _upmpdcli_options(path: str) -> dict[str, str]:
+    """upmpdcli.conf is flat `key = value` with # comments."""
+    out = {}
+    for line in _read_text_quietly(path).splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip()
+    return out
+
+
+def _qobuz_cache_config() -> str:
+    """Where the plugin stores the token it gets from the OAuth redirect."""
+    if QOBUZ_CACHE_CONFIG:
+        return QOBUZ_CACHE_CONFIG
+    conf = _upmpdcli_conf_path()
+    cachedir = _upmpdcli_options(conf).get("cachedir", "") if conf else ""
+    if not cachedir:
+        cachedir = os.path.join(_env()["HOME"], ".cache", "upmpdcli")
+    return os.path.join(cachedir, "qobuz", "config")
+
+
+def _qobuz_token_state() -> dict:
+    """Whether the plugin currently holds a usable Qobuz token.  This is the
+    authoritative answer — the log only says what happened at the last login."""
+    path = _qobuz_cache_config()
+    values = _upmpdcli_options(path)
+    user_id = values.get("user_id", "")
+    return {
+        "cache_config": path,
+        "token":        bool(values.get("user_auth_token") and user_id),
+        "user_id":      user_id,
+        "token_mtime":  _log_stat(path)["mtime"],
+    }
+
+
+def _oauth_candidates(output: str, request_host: str) -> list[dict]:
+    """The sign-in URLs the script printed, plus — when the browser reached this
+    panel on some other address — the same URL rewritten to that address.
+
+    The redirect host must be reachable *from the browser*, and the script can
+    only guess it from the box's default route.  The host this request arrived
+    on is known-reachable, so it is offered first when it differs."""
+    urls, seen = [], set()
+    for url in re.findall(r"https://\S*qobuz\.com/signin/oauth\S*", output):
+        match = re.search(r"redirect_url=https?://([^:/]+):(\d+)", url)
+        host = match.group(1) if match else ""
+        if host in seen:
+            continue
+        seen.add(host)
+        local = host in ("localhost", "127.0.0.1", "::1")
+        urls.append({
+            "url":   url,
+            "host":  host,
+            "port":  int(match.group(2)) if match else None,
+            "label": "browser running on this host" if local
+                     else f"browser on another device ({host})",
+            "local": local,
+        })
+    network = next((u for u in urls if not u["local"]), None)
+    if network and request_host and request_host not in seen:
+        rewritten = network["url"].replace(f"//{network['host']}:", f"//{request_host}:")
+        urls.insert(0, {
+            "url":   rewritten,
+            "host":  request_host,
+            "port":  network["port"],
+            "label": f"the address you are using now ({request_host})",
+            "local": False,
+        })
+    for url in urls:
+        url["primary"] = False
+    primary = next((u for u in urls if not u["local"]), urls[0] if urls else None)
+    if primary:
+        primary["primary"] = True
+    return urls
+
+
+@app.route("/qobuz/oauth/status")
+def qobuz_oauth_status():
+    """Token state plus the two preconditions for the redirect to be caught."""
+    return jsonify({
+        "ok":               True,
+        "upmpdcli_running": _service_running(UPMPDCLI_SERVICE),
+        "script":           QOBUZ_OAUTH_SCRIPT,
+        "script_present":   os.path.isfile(QOBUZ_OAUTH_SCRIPT),
+        "upmpdcli_config":  _upmpdcli_conf_path(),
+        **_qobuz_token_state(),
+    })
+
+
+@app.route("/qobuz/oauth/start", methods=["POST"])
+def qobuz_oauth_start():
+    """Run upmpdcli's qobuz-init-oauth.py and hand back the sign-in URLs.
+
+    The script only prints them and exits, so there is nothing to keep alive
+    here: the redirect is caught by upmpdcli itself, and the browser doing the
+    signing in can be anywhere — which is the point of driving this from the
+    panel on a headless box."""
+    if not os.path.isfile(QOBUZ_OAUTH_SCRIPT):
+        return jsonify({"ok": False,
+                        "error": f"OAuth script not found: {QOBUZ_OAUTH_SCRIPT}"})
+    conf = _upmpdcli_conf_path()
+    if not conf:
+        return jsonify({"ok": False, "error": "upmpdcli.conf not found; set "
+                                              "upmpdcli_config in [qobuz_oauth]"})
+    try:
+        r = subprocess.run(["python3", QOBUZ_OAUTH_SCRIPT, "-c", conf],
+                           capture_output=True, text=True,
+                           timeout=QOBUZ_OAUTH_TIMEOUT, env=_env())
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": f"{os.path.basename(QOBUZ_OAUTH_SCRIPT)} "
+                                              f"timed out after {QOBUZ_OAUTH_TIMEOUT}s"})
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+    output = (r.stdout or "") + (r.stderr or "")
+    urls = _oauth_candidates(output, request.host.split(":")[0])
+    if not urls:
+        return jsonify({"ok": False, "error": output.strip() or "no sign-in URL in output"})
+    return jsonify({
+        "ok":               True,
+        "urls":             urls,
+        "output":           output.strip(),
+        "upmpdcli_running": _service_running(UPMPDCLI_SERVICE),
+        **_qobuz_token_state(),
+    })
+
+
+@app.route("/renderer/restart", methods=["POST"])
+def renderer_restart():
+    """Restart one renderer in place, without switching to the other.  Used
+    after an OAuth sign-in so upmpdcli picks the new token up."""
+    target = (request.get_json(silent=True) or {}).get("target")
+    if target not in SWITCHABLE_SERVICES:
+        return jsonify({"ok": False, "error": "invalid target"}), 400
+    try:
+        _service_action(target, "onestop")
+        if _service_running(target):
+            return jsonify({"ok": False, "error": f"could not stop {target}"})
+        r = _service_action(target, "onestart")
+        if r.returncode != 0 and not _service_running(target):
+            return jsonify({"ok": False,
+                            "error": f"starting {target}: {(r.stderr or r.stdout).strip()}"})
+        return jsonify({"ok": True, "running": _service_running(target)})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 
 @app.route("/mpd/info")

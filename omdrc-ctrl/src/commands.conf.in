@@ -137,6 +137,7 @@ alert_interval = 20
 #   hint     - optional second line, what to do about it
 #   severity - error | warn | info | ok   (default warn)
 #   sources  - comma-separated source ids to watch (default: all of them)
+#   action   - optional UI action button on the banner (only: qobuz-oauth)
 #
 # Keep a rule and its `clears` on the same source: "newer than" is only
 # meaningful within one log.  A literal % must be written %% (configparser).
@@ -149,10 +150,12 @@ alert_interval = 20
 [alert:qobuz_oauth]
 severity = warn
 sources  = upmpdcli-console
+# Puts the "Qobuz sign-in" button on the banner (see [qobuz_oauth] below).
+action   = qobuz-oauth
 pattern  = (?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done|/user/login\s+returns|tried login but failed)
 clears   = (?i)(qobuz.*running|init_oauth)
 message  = Qobuz login: OAuth initialisation not done
-hint     = Run /usr/local/share/upmpdcli/cdplugins/qobuz/qobuz-init-oauth.py as the audio user, open the Qobuz sign-in URL it prints, then restart upmpdcli.
+hint     = Press Qobuz sign-in: the panel runs the OAuth script and shows the URL to open in this browser. upmpdcli must be running to receive the redirect.
 
 [alert:qobuz_ok]
 severity = ok
@@ -161,6 +164,23 @@ pattern  = (?i)qobuz.*running
 clears   = (?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done|/user/login\s+returns|tried login but failed)
 message  = Qobuz plugin connected
 hint     = Plugin started and reported no login failure afterwards.
+
+# -- Qobuz OAuth sign-in ----------------------------------------------------
+# Drives upmpdcli's qobuz-init-oauth.py from the panel, so a headless box needs
+# no keyboard: the script prints the sign-in URLs and the web UI shows them.
+# Signing in redirects to upmpdcli's own media-server port, which stores the
+# token — so upmpdcli must be RUNNING, and the browser must be able to reach the
+# host in the redirect URL (the panel offers the address you are using).
+[qobuz_oauth]
+script = /usr/local/share/upmpdcli/cdplugins/qobuz/qobuz-init-oauth.py
+# upmpdcli.conf the script reads the media-server host/port from.  Leave empty
+# to search ${PREFIX}/etc/open-media-drc/, ${PREFIX}/etc/ and /etc/.
+upmpdcli_config =
+# Token file written by the plugin.  Empty: <cachedir>/qobuz/config, with
+# cachedir taken from upmpdcli.conf.
+cache_config =
+# Seconds to wait for the script (it fetches the Qobuz app id over the net).
+timeout = 45
 
 [drc_status]
 what    = Active config
