@@ -54,6 +54,13 @@ provides no feedback. Every command here either shows its output directly
   audible, post-BruteFIR sound. It starts only while the browser stream is
   visible, shares one capture across clients, and stops when the page is hidden or
   closed. See [Live Spectrum Analyzer](SPECTRUM_ANALYZER.md).
+- **Log viewer and log alerts** — a **Logs** card shows any log listed in
+  `[logs]` (the two upmpdcli logs, qobuzconnect2mpd, BruteFIR by default), and
+  `[alert:*]` rules watch those same logs for things nothing else in the UI
+  would surface. A match raises a dismissible banner at the top of the page —
+  Qobuz losing its OAuth token being the case shipped by default — while `ok`
+  rules report the good outcome as a quiet line under the renderer buttons. See
+  [Reserved section: `[logs]`](#reserved-section-logs).
 - **No hard-coded commands** — everything lives in `commands.conf`; restart
   the service to pick up changes.
 - **CMake install** — single `cmake --install` copies all files and installs
@@ -337,6 +344,88 @@ These paths are consumed by the `/qconnect/status` and `/qconnect/log` API
 endpoints.  Change them only if you set non-default paths in qobuzconnect2mpd's
 config (`qconnectstatusfile` / `qconnectlogfile`).
 
+### Reserved section: `[logs]`
+
+`[logs]` lists the logs the **Logs** card can show, one `<id> = <path>` per
+line, in display order. `<id>.label` renames a source in the picker;
+`tail_bytes`, `scan_bytes` and `alert_interval` are reserved key names rather
+than sources:
+
+```ini
+[logs]
+upmpdcli               = /tmp/upmpdcli.log
+upmpdcli-console       = /tmp/upmpdcli-console.log
+upmpdcli-console.label = upmpdcli (plugins)
+qobuzconnect2mpd       = /tmp/qconnect2mpd.log
+brutefir               = /tmp/brutefir.out
+brutefir.label         = BruteFIR
+tail_bytes     = 200000   ; most a single log view reads back
+scan_bytes     = 65536    ; tail of each source the alert rules see
+alert_interval = 20       ; seconds between browser alert polls
+```
+
+Omit the section entirely and these same four sources are used. Only files
+readable by the service user can be shown; a missing file is reported as "not
+written yet" rather than as an error.
+
+**upmpdcli writes two logs.** Its own goes to `logfilename` in `upmpdcli.conf`;
+its cdplugin subprocesses (Qobuz among them) log to the stderr they inherit,
+which is where the Qobuz login verdict appears. The upmpdcli service scripts
+installed by the superproject redirect that stderr to
+`/tmp/upmpdcli-console.log` — on FreeBSD with `daemon -o` (override with
+`upmpdcli_logfile` in `/etc/rc.conf.d/upmpdcli`), on Linux with
+`StandardError=append:`. Without that redirection the plugin output goes to
+`/dev/null` and the Qobuz rules below have nothing to match.
+
+### Reserved sections: `[alert:<id>]`
+
+Each `[alert:<id>]` section watches the logs for one condition and reports it in
+the web UI: `error` / `warn` / `info` as a dismissible banner at the top of the
+page, `ok` as a status line under the renderer buttons.
+
+| Key | Required | Description |
+|---|---|---|
+| `pattern` | yes | Python regex; a matching line raises the alert |
+| `clears` | no | Regex whose match *newer* than the pattern's cancels it |
+| `message` | no | What the UI shows (defaults to the rule id) |
+| `hint` | no | Second line: what to do about it |
+| `severity` | no | `error`, `warn`, `info` or `ok` (default `warn`) |
+| `sources` | no | Comma-separated source ids (default: all of them) |
+
+A rule is active when the last line matching `pattern` is newer than the last
+line matching `clears`, so a failure a later restart fixed stops being reported
+without the app storing any state. Keep a rule and its `clears` on one source —
+"newer than" is only meaningful within a single log. A literal `%` must be
+written `%%` (configparser interpolation).
+
+The two rules shipped by default are each other's inverse, because upmpdcli's
+Qobuz plugin has no success line to match: `qobuz-app.py` logs `Qobuz running`
+and then logs in silently, printing `oauth initialisation not done` (no token)
+or `/user/login returns …` (token refused) only on failure. So a startup with no
+failure after it is reported as connected, and a failure line after it as
+needing OAuth:
+
+```ini
+[alert:qobuz_oauth]
+severity = warn
+sources  = upmpdcli-console
+pattern  = (?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done|/user/login\s+returns|tried login but failed)
+clears   = (?i)(qobuz.*running|init_oauth)
+message  = Qobuz login: OAuth initialisation not done
+hint     = Run /usr/local/share/upmpdcli/cdplugins/qobuz/qobuz-init-oauth.py as the audio user, open the Qobuz sign-in URL it prints, then restart upmpdcli.
+
+[alert:qobuz_ok]
+severity = ok
+sources  = upmpdcli-console
+pattern  = (?i)qobuz.*running
+clears   = (?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done|/user/login\s+returns|tried login but failed)
+message  = Qobuz plugin connected
+```
+
+The patterns match the sense rather than the exact upmpdcli 1.9 wording, so a
+reworded message in a later release still trips them. Dismissing a banner hides
+that exact line and repeat count; a fresh occurrence raises it again.
+
 ### Reserved section: `[spectrum]`
 
 `[spectrum]` configures the optional live analyzer card. It is disabled by
@@ -618,6 +707,66 @@ Returns the full content of the qobuzconnect2mpd log file as a string.
 ```json
 { "ok": true, "content": "2026-05-15 14:32:01 [OUT] ..." }
 ```
+
+---
+
+### `GET /logs/sources`
+
+Lists the logs configured in `[logs]`, with the state of each file.
+
+```json
+{ "ok": true, "sources": [
+  { "id": "upmpdcli-console", "label": "upmpdcli (plugins)",
+    "path": "/tmp/upmpdcli-console.log", "exists": true,
+    "size": 4213, "mtime": 1787035072 } ] }
+```
+
+---
+
+### `GET /logs/tail`
+
+Tail of one configured log. `source` is a source id from `[logs]` (an unknown
+id is a 404 — arbitrary paths cannot be read). `bytes` overrides how much is
+read, clamped to `[4096, tail_bytes]`.
+
+`truncated` says the tail starts mid-file (the partial first line is dropped);
+`matches` holds the indices of the returned lines that trip a non-`ok` alert
+rule, which the viewer marks.
+
+```
+GET /logs/tail?source=upmpdcli-console&bytes=65536
+```
+
+```json
+{ "ok": true, "id": "upmpdcli-console", "label": "upmpdcli (plugins)",
+  "path": "/tmp/upmpdcli-console.log", "content": "…", "truncated": false,
+  "matches": [2], "exists": true, "size": 4213, "mtime": 1787035072 }
+```
+
+---
+
+### `GET /logs/alerts`
+
+Evaluates every `[alert:<id>]` rule against the tail of each source it applies
+to and returns what is currently true, most severe first. Polled by the web UI
+every `alert_interval` seconds. `key` changes whenever the matched line or its
+repeat count does, so a dismissed alert reappears on a fresh occurrence.
+
+```json
+{ "ok": true,
+  "alerts": [ { "id": "qobuz_oauth", "severity": "warn",
+                "message": "Qobuz login: OAuth initialisation not done",
+                "hint": "Run …/qobuz-init-oauth.py as the audio user, …",
+                "source": "upmpdcli-console", "source_label": "upmpdcli (plugins)",
+                "line": "0$qobuz$: Qobuz login: oauth initialisation not done",
+                "count": 1, "at": 1787035072, "key": "8f1c2ad0b3e4f567" } ],
+  "sources": [ { "id": "upmpdcli-console", "…": "as in /logs/sources" } ],
+  "status_sources": [ { "id": "upmpdcli-console", "…": "watched by ok rules" } ] }
+```
+
+`status_sources` is the subset of `sources` that `ok` rules read. With no `ok`
+alert active, the UI uses it to say whether the connection status is merely
+quiet or the log it would come from has not been written yet.
 
 ---
 

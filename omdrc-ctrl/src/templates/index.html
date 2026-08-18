@@ -411,6 +411,88 @@
         .qc-log .qc-err { color: var(--red); }
         .qc-log .qc-out { color: var(--green); }
 
+        /* ── log alerts + log viewer ─────────────────────────── */
+        /* Conditions found in the logs that nothing else in the UI would show.
+           warn/error/info surface here, at the top of the page; `ok` rules are
+           painted as .log-status under the renderer buttons instead. */
+        .log-alert {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            border: 1px solid var(--yellow);
+            border-left-width: 3px;
+            border-radius: 8px;
+            background: rgba(210,153,34,.08);
+            padding: 10px 12px;
+            margin-bottom: 10px;
+        }
+        .log-alert.error { border-color: var(--red);    background: rgba(248,81,73,.08); }
+        .log-alert.info  { border-color: var(--accent); background: rgba(56,139,253,.08); }
+        .log-alert-body { flex: 1; min-width: 0; }
+        .log-alert-msg {
+            font-size: .85rem;
+            font-weight: 600;
+            color: var(--yellow);
+        }
+        .log-alert.error .log-alert-msg { color: var(--red); }
+        .log-alert.info  .log-alert-msg { color: var(--accent); }
+        .log-alert-hint {
+            font-size: .75rem;
+            color: var(--muted);
+            line-height: 1.45;
+            margin-top: 3px;
+        }
+        .log-alert-line {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .7rem;
+            color: var(--muted);
+            margin-top: 5px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-alert-actions { display: flex; gap: 6px; flex: none; }
+        .log-alert-open, .log-alert-close {
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            padding: 0 2px;
+            line-height: 1;
+        }
+        .log-alert-open { font-size: .7rem; text-decoration: underline; }
+        .log-alert-close { font-size: 1.1rem; }
+        .log-alert-open:hover, .log-alert-close:hover { color: var(--text); }
+
+        /* `ok` rules: a quiet one-liner under the renderer buttons. */
+        .log-status {
+            font-size: .74rem;
+            line-height: 1.5;
+            color: var(--muted);
+            padding-top: 2px;
+        }
+        .log-status.good { color: var(--green); }
+        .log-status-note { color: var(--muted); }
+
+        .log-picker {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .72rem;
+            padding: 3px 6px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--text);
+            max-width: 190px;
+        }
+        .log-picker:hover { border-color: var(--accent); }
+        #log-panel { border-top: 1px solid var(--border); padding: 10px 0 4px; }
+        #log-meta {
+            font-size: .68rem;
+            color: var(--muted);
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            margin-bottom: 6px;
+        }
+        .log-hit { color: var(--yellow); }
+
         /* ── live spectrum ──────────────────────────────────── */
         .spectrum-head {
             display: flex;
@@ -665,6 +747,9 @@
 </header>
 
 <div id="write-status"></div>
+
+<!-- Conditions the log alert rules found (see [alert:*] in commands.conf) -->
+<div id="log-alerts"></div>
 
 {% macro render_group(group_name, group_label, cmds) %}
 <div class="card">
@@ -934,12 +1019,34 @@
     </div>
     <!-- Which renderer the boot service will restore (last switched-to one) -->
     <div class="refresh-note" id="qc-boot"></div>
+    <!-- Streaming-service connection status read out of the logs (ok rules) -->
+    <div id="renderer-status" class="log-status" aria-live="polite"></div>
     <div style="padding:12px 0">
         <div id="qc-line1" class="idle">—</div>
         <div id="qc-line2"></div>
     </div>
     <div id="qconnect-log-panel" style="display:none">
         <pre id="qc-log-content" class="qc-log"></pre>
+    </div>
+</div>
+
+<!-- Log viewer: any log listed in [logs] in commands.conf -->
+<div class="card">
+    <div class="card-title qc-card-title">
+        <span>Logs</span>
+        <div class="title-actions">
+            <select class="log-picker" id="log-source" onchange="onLogSourceChange()">
+                {% for src in log_sources %}
+                <option value="{{ src.id }}">{{ src.label }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn-refresh" id="log-refresh-btn" title="Refresh" onclick="fetchLog()">↻</button>
+            <button class="btn-log" id="btn-logs" onclick="toggleLogs()">Show</button>
+        </div>
+    </div>
+    <div id="log-panel" style="display:none">
+        <div id="log-meta"></div>
+        <pre id="log-content" class="qc-log"></pre>
     </div>
 </div>
 
@@ -954,6 +1061,7 @@ const SNDSTAT_INTERVAL_MS = {{ sndstat_interval }} * 1000;
 const BRUTEFIR_INTERVAL_MS = {{ brutefir_interval }} * 1000;
 const RAM_INTERVAL_MS = 10000;
 const TOPCPU_THRESHOLD    = {{ topcpu_threshold }};
+const LOG_ALERT_INTERVAL_MS = {{ log_alert_interval }} * 1000;
 const SPECTRUM_ENABLED = {{ 'true' if spectrum.enabled else 'false' }};
 const SPECTRUM_VU_MODE = {{ spectrum.vu_mode | tojson }};
 
@@ -1599,6 +1707,165 @@ async function switchRenderer(target) {
     qcSwitching = false;
     sw.classList.remove('busy');
     syncRenderers();   // reconcile with reality
+}
+
+// ── Log alerts ─────────────────────────────────────────────────────────────
+// The server matches the [alert:*] rules against the tail of each configured
+// log and answers with whatever is currently true.  error/warn/info are shown
+// as a banner at the top of the page; `ok` rules (the Qobuz connection being
+// live, say) are a quiet line under the renderer buttons instead — the server
+// re-derives both every poll, so nothing here has to remember state.
+const dismissedAlerts = new Set();
+
+function fmtLogTime(epoch) {
+    if (!epoch) return '';
+    const d = new Date(epoch * 1000);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderLogAlerts(alerts) {
+    const box = document.getElementById('log-alerts');
+    box.innerHTML = '';
+    for (const a of alerts) {
+        if (dismissedAlerts.has(a.key)) continue;
+        const el = document.createElement('div');
+        el.className = 'log-alert ' + a.severity;
+
+        const body = document.createElement('div');
+        body.className = 'log-alert-body';
+        const msg = document.createElement('div');
+        msg.className = 'log-alert-msg';
+        msg.textContent = a.message;
+        body.appendChild(msg);
+        if (a.hint) {
+            const hint = document.createElement('div');
+            hint.className = 'log-alert-hint';
+            hint.textContent = a.hint;
+            body.appendChild(hint);
+        }
+        const line = document.createElement('div');
+        line.className = 'log-alert-line';
+        const when = fmtLogTime(a.at);
+        const times = a.count > 1 ? ` ×${a.count}` : '';
+        line.textContent = `${a.source_label}${when ? ' · ' + when : ''}${times}: ${a.line}`;
+        body.appendChild(line);
+        el.appendChild(body);
+
+        const actions = document.createElement('div');
+        actions.className = 'log-alert-actions';
+        const openBtn = document.createElement('button');
+        openBtn.className = 'log-alert-open';
+        openBtn.textContent = 'log';
+        openBtn.title = `Open ${a.source_label} in the Logs card`;
+        openBtn.onclick = () => openLogSource(a.source);
+        actions.appendChild(openBtn);
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'log-alert-close';
+        closeBtn.setAttribute('aria-label', 'Dismiss');
+        closeBtn.textContent = '×';
+        // Dismissal is keyed on the matched line and its repeat count, so a
+        // fresh occurrence raises the alert again.
+        closeBtn.onclick = () => { dismissedAlerts.add(a.key); el.remove(); };
+        actions.appendChild(closeBtn);
+        el.appendChild(actions);
+
+        box.appendChild(el);
+    }
+}
+
+// `sources` here are only the logs the ok rules read (status_sources), so the
+// fallback text names the log the status would have come from.
+function renderRendererStatus(oks, sources) {
+    const el = document.getElementById('renderer-status');
+    if (oks.length) {
+        el.className = 'log-status good';
+        el.textContent = oks.map(a => {
+            const when = fmtLogTime(a.at);
+            return `✓ ${a.message}${when ? ` (${a.source_label}, ${when})` : ''}`;
+        }).join(' · ');
+        el.title = oks.map(a => a.line).join('\n');
+        return;
+    }
+    // Nothing matched: say whether that is "no news" or "no log to read".
+    const missing = sources.filter(s => !s.exists).map(s => s.label);
+    el.className = 'log-status';
+    el.textContent = missing.length
+        ? `no service connection status yet — ${missing.join(', ')} not written yet`
+        : 'no service connection status in the logs';
+    el.title = '';
+}
+
+async function fetchLogAlerts() {
+    try {
+        const d = await (await fetch('/logs/alerts')).json();
+        if (!d.ok) return;
+        renderLogAlerts(d.alerts.filter(a => a.severity !== 'ok'));
+        renderRendererStatus(d.alerts.filter(a => a.severity === 'ok'),
+                             d.status_sources || d.sources || []);
+    } catch { /* ignore — status dot already signals offline */ }
+}
+
+// ── Log viewer ─────────────────────────────────────────────────────────────
+let logsVisible = false;
+let logTimer    = null;
+
+async function fetchLog() {
+    const el  = document.getElementById('log-content');
+    const met = document.getElementById('log-meta');
+    const src = document.getElementById('log-source').value;
+    if (!src) return;
+    try {
+        const d = await (await fetch(`/logs/tail?source=${encodeURIComponent(src)}`)).json();
+        if (!d.ok) {
+            met.textContent = d.path || '';
+            el.innerHTML = `<span class="qc-err">${escHtml(d.error || 'error')}</span>`;
+            return;
+        }
+        met.textContent = d.exists
+            ? `${d.path} · ${fmtBytes(d.size)}${d.truncated ? ' · showing tail' : ''}`
+            : `${d.path} · not written yet`;
+        if (!d.content) {
+            el.innerHTML = '<span style="color:var(--muted);font-style:italic">(empty)</span>';
+            return;
+        }
+        // Lines the alert rules match are marked, so the reason for a banner is
+        // easy to find in a long log.
+        const hits = new Set(d.matches || []);
+        el.innerHTML = d.content.split('\n').map((line, i) => {
+            const safe = escHtml(line);
+            if (hits.has(i))          return `<span class="log-hit">${safe}</span>`;
+            if (line.includes('[ERR]')) return `<span class="qc-err">${safe}</span>`;
+            if (line.includes('[OUT]')) return `<span class="qc-out">${safe}</span>`;
+            return safe;
+        }).join('\n');
+        el.scrollTop = el.scrollHeight;
+    } catch {
+        el.textContent = 'network error';
+    }
+}
+
+function setLogsVisible(visible) {
+    logsVisible = visible;
+    document.getElementById('log-panel').style.display = visible ? 'block' : 'none';
+    const btn = document.getElementById('btn-logs');
+    btn.classList.toggle('active', visible);
+    btn.textContent = visible ? 'Hide' : 'Show';
+    clearInterval(logTimer);
+    logTimer = null;
+    if (visible) {
+        fetchLog();
+        logTimer = setInterval(fetchLog, 5000);
+    }
+}
+
+function toggleLogs()        { setLogsVisible(!logsVisible); }
+function onLogSourceChange() { if (logsVisible) fetchLog(); }
+
+function openLogSource(id) {
+    const picker = document.getElementById('log-source');
+    if ([...picker.options].some(o => o.value === id)) picker.value = id;
+    setLogsVisible(true);
+    picker.closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ── Brutefir CPU panel ─────────────────────────────────────────────────────
@@ -2435,6 +2702,10 @@ startAutoRefresh('qc', 1000, fetchQcStatus);
 // Keep the renderer toggle in sync with actual service status on a slow cadence.
 syncRenderers();
 setInterval(syncRenderers, 7000);
+// Log alerts: cheap (a tail read per source), so poll them on their own slow
+// cadence whether or not the Logs card is open.
+fetchLogAlerts();
+setInterval(fetchLogAlerts, LOG_ALERT_INTERVAL_MS);
 startAutoRefresh('bf', BRUTEFIR_INTERVAL_MS, fetchBrutefirCpu);
 startAutoRefresh('mpd', MONITOR_INTERVAL_MS, fetchMpdInfo);
 startAutoRefresh('sndstat', SNDSTAT_INTERVAL_MS, fetchSndstat);

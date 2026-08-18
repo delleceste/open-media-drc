@@ -104,6 +104,64 @@ drc_delay_delta_max_ms = 2000
 status_file = /tmp/qconnect2mpd-status.txt
 log_file    = /tmp/qconnect2mpd.log
 
+# -- Log viewer -------------------------------------------------------------
+# Sources for the Logs card: one "<id> = <path>" per log, in display order.
+# "<id>.label = <text>" renames a source in the picker.  The three settings
+# below are reserved key names, not sources.
+#
+# upmpdcli writes two logs: its own (logfilename in upmpdcli.conf) and the
+# stderr of its cdplugin subprocesses, which the upmpdcli service redirects to
+# upmpdcli-console.log — that second one carries the Qobuz login verdict.
+[logs]
+upmpdcli               = /tmp/upmpdcli.log
+upmpdcli-console       = /tmp/upmpdcli-console.log
+upmpdcli-console.label = upmpdcli (plugins)
+qobuzconnect2mpd       = /tmp/qconnect2mpd.log
+brutefir               = /tmp/brutefir.out
+brutefir.label         = BruteFIR
+# Most a single log view reads back, in bytes.
+tail_bytes = 200000
+# Tail of each source the alert rules below are matched against, in bytes.
+scan_bytes = 65536
+# Seconds between browser polls for active alerts.
+alert_interval = 20
+
+# -- Log alerts -------------------------------------------------------------
+# Each [alert:<id>] section watches the logs for one condition and reports it in
+# the web UI: error/warn/info show as a banner at the top of the page, ok as a
+# status line under the renderer buttons.
+#
+#   pattern  - regex (Python syntax); a matching line raises the alert
+#   clears   - optional regex; a match NEWER than the pattern's cancels it
+#   message  - what the UI shows
+#   hint     - optional second line, what to do about it
+#   severity - error | warn | info | ok   (default warn)
+#   sources  - comma-separated source ids to watch (default: all of them)
+#
+# Keep a rule and its `clears` on the same source: "newer than" is only
+# meaningful within one log.  A literal % must be written %% (configparser).
+#
+# Qobuz has no success line to match: qobuz-app.py logs "Qobuz running" and then
+# logs in silently, printing "oauth initialisation not done" (no token) or
+# "/user/login returns ..." (token refused) only on failure.  So the two rules
+# below are each other's inverse — startup with no failure after it is reported
+# as connected, a failure line after it as needing OAuth.
+[alert:qobuz_oauth]
+severity = warn
+sources  = upmpdcli-console
+pattern  = (?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done|/user/login\s+returns|tried login but failed)
+clears   = (?i)(qobuz.*running|init_oauth)
+message  = Qobuz login: OAuth initialisation not done
+hint     = Run /usr/local/share/upmpdcli/cdplugins/qobuz/qobuz-init-oauth.py as the audio user, open the Qobuz sign-in URL it prints, then restart upmpdcli.
+
+[alert:qobuz_ok]
+severity = ok
+sources  = upmpdcli-console
+pattern  = (?i)qobuz.*running
+clears   = (?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done|/user/login\s+returns|tried login but failed)
+message  = Qobuz plugin connected
+hint     = Plugin started and reported no login failure afterwards.
+
 [drc_status]
 what    = Active config
 group   = drc

@@ -77,6 +77,67 @@ QCONNECT_SERVICE   = "qobuzconnect2mpd"
 UPMPDCLI_SERVICE   = "upmpdcli"
 SWITCHABLE_SERVICES = (QCONNECT_SERVICE, UPMPDCLI_SERVICE)
 
+# ── log viewer and log alerts ────────────────────────────────────────────────
+# The Logs card shows any log file the box writes; the alert rules watch those
+# same files for lines that mean something is wrong but that nothing else in the
+# UI would surface — the Qobuz OAuth token going missing being the case that
+# prompted this (upmpdcli keeps serving, it just cannot log in).
+#
+# Sources come from [logs] in commands.conf, rules from [alert:<id>] sections.
+# Both fall back to the defaults below so an install whose commands.conf predates
+# this still gets the renderer logs and the Qobuz warning.
+LOG_TAIL_BYTES = 200_000     # ceiling on what one /logs/tail read returns
+LOG_SCAN_BYTES = 65_536      # tail of each source the alert scan looks at
+LOG_ALERT_INTERVAL = 20      # seconds between browser /logs/alerts polls
+_LOG_SETTING_KEYS = frozenset({"tail_bytes", "scan_bytes", "alert_interval"})
+_ALERT_PREFIX = "alert:"
+_SEVERITIES = ("error", "warn", "info", "ok")
+
+# A rule fires when its `pattern` matches a line that is *newer* than the last
+# line matching `clears`, so the two Qobuz rules below are each other's inverse
+# and only the last outcome in the log is reported.
+#
+# Both read the plugin console log, because upmpdcli's Qobuz plugin writes every
+# line quoted here to the stderr it inherits from upmpdcli (upmplgutils.uplog /
+# cmdtalkplugin.log), not to upmpdcli's own logfilename.  Keeping a rule and its
+# `clears` on one stream is what makes "newer than" meaningful.
+#
+# There is no explicit success line to look for: qobuz-app.py logs "Qobuz
+# running" and then calls session.login(), which is silent when it works and
+# prints "Qobuz login: oauth initialisation not done" (no token) or
+# "/user/login returns …" (token refused) when it does not.  So a connection is
+# reported as good when a startup line is followed by no failure line — that is
+# the strongest statement the log actually supports, and the UI says as much.
+# The patterns match the sense rather than the exact 1.9 wording, so a reworded
+# message in a later upmpdcli still trips them.
+DEFAULT_LOG_ALERTS: list[dict] = [
+    {
+        "id":       "qobuz_oauth",
+        "pattern":  r"(?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done"
+                    r"|/user/login\s+returns|tried login but failed)",
+        "clears":   r"(?i)(qobuz.*running|init_oauth)",
+        "message":  "Qobuz login: OAuth initialisation not done",
+        "hint":     "Run qobuz-init-oauth.py as the audio user, open the Qobuz "
+                    "sign-in URL it prints, then restart upmpdcli.",
+        "severity": "warn",
+        "sources":  ["upmpdcli-console"],
+    },
+    {
+        "id":       "qobuz_ok",
+        "pattern":  r"(?i)qobuz.*running",
+        "clears":   r"(?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done"
+                    r"|/user/login\s+returns|tried login but failed)",
+        "message":  "Qobuz plugin connected",
+        "hint":     "Plugin started and reported no login failure afterwards.",
+        "severity": "ok",
+        "sources":  ["upmpdcli-console"],
+    },
+]
+
+# Set to the defaults just below the parsers, then replaced by load_config().
+LOG_SOURCES: list[dict] = []
+LOG_ALERTS:  list[dict] = []
+
 # [monitor] section defaults
 TOPCPU_THRESHOLD = 4.0   # minimum %CPU to include in the top-processes list
 MONITOR_INTERVAL = 5     # seconds between MPD refreshes
@@ -125,8 +186,85 @@ COMMANDS: list[dict] = []
 CMD_MAP:  dict[str, dict] = {}
 
 
+def _default_log_sources() -> list[dict]:
+    """Logs worth showing on a stock install.  upmpdcli writes its own log to
+    logfilename; its cdplugin subprocesses (Qobuz among them) write to the
+    inherited stderr instead, which the service scripts capture separately."""
+    return [
+        {"id": "upmpdcli",         "label": "upmpdcli",           "path": "/tmp/upmpdcli.log"},
+        {"id": "upmpdcli-console", "label": "upmpdcli (plugins)", "path": "/tmp/upmpdcli-console.log"},
+        {"id": "qobuzconnect2mpd", "label": "qobuzconnect2mpd",   "path": QCONNECT_LOG_FILE},
+        {"id": "brutefir",         "label": "BruteFIR",           "path": "/tmp/brutefir.out"},
+    ]
+
+
+def _parse_log_sources(cfg: configparser.ConfigParser) -> list[dict]:
+    """[logs] maps a source id to a path; `<id>.label` renames it in the UI."""
+    if not cfg.has_section("logs"):
+        return _default_log_sources()
+    labels, sources = {}, []
+    for key, value in cfg.items("logs"):
+        if key in _LOG_SETTING_KEYS:
+            continue
+        if key.endswith(".label"):
+            labels[key[:-len(".label")]] = value.strip()
+            continue
+        path = value.strip()
+        if path:
+            sources.append({"id": key, "label": key, "path": path})
+    for src in sources:
+        src["label"] = labels.get(src["id"], src["label"])
+    return sources
+
+
+def _compile_alert(rule: dict) -> dict:
+    """Attach the compiled `pattern` / `clears` regexes to a rule dict."""
+    clears = rule.get("clears", "")
+    return dict(rule,
+                regex=re.compile(rule["pattern"]),
+                clears_regex=re.compile(clears) if clears else None)
+
+
+def _parse_log_alerts(cfg: configparser.ConfigParser) -> list[dict]:
+    """Each [alert:<id>] section is one rule: a regex, an optional regex that
+    cancels it again, and what to tell the listener while it is matched."""
+    rules = []
+    for sid in cfg.sections():
+        if not sid.lower().startswith(_ALERT_PREFIX):
+            continue
+        sec = cfg[sid]
+        rid = sid[len(_ALERT_PREFIX):].strip() or sid
+        pattern = sec.get("pattern", "").strip()
+        if not pattern:
+            raise ValueError(f"[{sid}] missing required key: 'pattern'")
+        severity = sec.get("severity", "warn").strip().lower()
+        if severity not in _SEVERITIES:
+            severity = "warn"
+        rule = {
+            "id":       rid,
+            "pattern":  pattern,
+            "clears":   sec.get("clears", "").strip(),
+            "message":  sec.get("message", "").strip() or rid,
+            "hint":     sec.get("hint", "").strip(),
+            "severity": severity,
+            "sources":  [s.strip() for s in sec.get("sources", "").split(",") if s.strip()],
+        }
+        try:
+            rules.append(_compile_alert(rule))
+        except re.error as e:
+            raise ValueError(f"[{sid}] invalid pattern: {e}") from None
+    if rules:
+        return rules
+    return [_compile_alert(r) for r in DEFAULT_LOG_ALERTS]
+
+
+LOG_SOURCES = _default_log_sources()
+LOG_ALERTS = [_compile_alert(r) for r in DEFAULT_LOG_ALERTS]
+
+
 def load_config(path: str) -> None:
     global COMMANDS, CMD_MAP, QCONNECT_STATUS_FILE, QCONNECT_LOG_FILE
+    global LOG_SOURCES, LOG_ALERTS, LOG_TAIL_BYTES, LOG_SCAN_BYTES, LOG_ALERT_INTERVAL
     global TOPCPU_THRESHOLD, MONITOR_INTERVAL, TOPCPU_INTERVAL
     global SNDSTAT_INTERVAL, BRUTEFIR_INTERVAL
     global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
@@ -190,10 +328,19 @@ def load_config(path: str) -> None:
     if saved_floor is not None:
         SPECTRUM_FLOOR_DB = max(-90.0, min(-24.0, saved_floor))
 
-    _RESERVED = {"qconnect", "monitor", "spectrum"}
+    # [logs] and [alert:<id>] are settings sections — read them here, and skip
+    # them (like the other reserved ones) when collecting commands below.
+    if cfg.has_section("logs"):
+        LOG_TAIL_BYTES = max(4096, cfg.getint("logs", "tail_bytes", fallback=LOG_TAIL_BYTES))
+        LOG_SCAN_BYTES = max(1024, cfg.getint("logs", "scan_bytes", fallback=LOG_SCAN_BYTES))
+        LOG_ALERT_INTERVAL = max(5, cfg.getint("logs", "alert_interval", fallback=LOG_ALERT_INTERVAL))
+    LOG_SOURCES = _parse_log_sources(cfg)
+    LOG_ALERTS = _parse_log_alerts(cfg)
+
+    _RESERVED = {"qconnect", "monitor", "spectrum", "logs"}
     COMMANDS = []
     for sid in cfg.sections():
-        if sid in _RESERVED:
+        if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
             continue
         c = dict(cfg[sid])
         c["id"] = sid
@@ -347,6 +494,21 @@ def _tail_file(path: str, limit: int = 4000) -> str:
             return f.read().decode(errors="replace").strip()
     except OSError:
         return ""
+
+
+def _tail_text(path: str, limit: int) -> tuple[str, bool]:
+    """Last `limit` bytes of a file, plus whether the read started mid-file.  A
+    byte-bounded read can land inside a line, so the leading fragment is dropped
+    — the log viewer and the alert scanner both work line by line."""
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        start = max(0, f.tell() - limit)
+        f.seek(start, os.SEEK_SET)
+        data = f.read().decode("utf-8", errors="replace")
+    if start > 0:
+        _, sep, rest = data.partition("\n")
+        data = rest if sep else ""
+    return data, start > 0
 
 
 def _read_text_quietly(path: str) -> str:
@@ -1876,6 +2038,8 @@ def index():
         sndstat_interval=SNDSTAT_INTERVAL,
         brutefir_interval=BRUTEFIR_INTERVAL,
         spectrum=_SPECTRUM.settings(),
+        log_sources=[{"id": s["id"], "label": s["label"]} for s in LOG_SOURCES],
+        log_alert_interval=LOG_ALERT_INTERVAL,
     )
 
 
@@ -2244,6 +2408,133 @@ def qconnect_log():
         return jsonify({"ok": True, "content": "(log file not found)"})
     except OSError as e:
         return jsonify({"ok": False, "content": str(e)})
+
+
+# ── log viewer + log alerts ──────────────────────────────────────────────────
+
+def _log_source(source_id: str) -> dict | None:
+    return next((s for s in LOG_SOURCES if s["id"] == source_id), None)
+
+
+def _log_stat(path: str) -> dict:
+    try:
+        st = os.stat(path)
+        return {"exists": True, "size": st.st_size, "mtime": int(st.st_mtime)}
+    except OSError:
+        return {"exists": False, "size": 0, "mtime": None}
+
+
+def _source_lines(source: dict, cache: dict[str, list[str]]) -> list[str]:
+    if source["id"] not in cache:
+        try:
+            text, _ = _tail_text(source["path"], LOG_SCAN_BYTES)
+        except OSError:
+            text = ""
+        cache[source["id"]] = text.splitlines()
+    return cache[source["id"]]
+
+
+def _rule_applies(rule: dict, source_id: str) -> bool:
+    return not rule["sources"] or source_id in rule["sources"]
+
+
+def _scan_log_alerts() -> list[dict]:
+    """Evaluate every rule against every source it applies to.
+
+    A rule is active when the last line matching `pattern` is newer than the
+    last line matching `clears` — so a failure that a later restart fixed (and a
+    success that a later failure undid) both stop being reported, without the
+    app having to keep any state of its own."""
+    cache: dict[str, list[str]] = {}
+    active = []
+    for rule in LOG_ALERTS:
+        for source in LOG_SOURCES:
+            if not _rule_applies(rule, source["id"]):
+                continue
+            lines = _source_lines(source, cache)
+            hits = [i for i, line in enumerate(lines) if rule["regex"].search(line)]
+            if not hits:
+                continue
+            if rule["clears_regex"] is not None:
+                cleared = [i for i, line in enumerate(lines)
+                           if rule["clears_regex"].search(line)]
+                if cleared and cleared[-1] > hits[-1]:
+                    continue
+            line = lines[hits[-1]].strip()
+            stat = _log_stat(source["path"])
+            active.append({
+                "id":           rule["id"],
+                "severity":     rule["severity"],
+                "message":      rule["message"],
+                "hint":         rule["hint"],
+                "source":       source["id"],
+                "source_label": source["label"],
+                "line":         line[:400],
+                "count":        len(hits),
+                "at":           stat["mtime"],
+                # Changes whenever the matched line or its repeat count does, so
+                # the browser can re-raise a dismissed alert on a fresh hit.
+                "key": hashlib.sha1(
+                    f"{rule['id']}|{source['id']}|{line}|{len(hits)}".encode()
+                ).hexdigest()[:16],
+            })
+    order = {s: i for i, s in enumerate(("error", "warn", "info", "ok"))}
+    active.sort(key=lambda a: (order.get(a["severity"], 9), a["id"], a["source"]))
+    return active
+
+
+def _log_source_summary() -> list[dict]:
+    return [dict(s, **_log_stat(s["path"])) for s in LOG_SOURCES]
+
+
+@app.route("/logs/sources")
+def logs_sources():
+    return jsonify({"ok": True, "sources": _log_source_summary()})
+
+
+@app.route("/logs/tail")
+def logs_tail():
+    """Tail of one configured log, with the indices of the lines that trip an
+    alert rule so the viewer can mark them."""
+    source = _log_source(request.args.get("source", ""))
+    if source is None:
+        return jsonify({"ok": False, "error": "unknown log source"}), 404
+    try:
+        limit = int(request.args.get("bytes", LOG_TAIL_BYTES))
+    except ValueError:
+        limit = LOG_TAIL_BYTES
+    limit = max(4096, min(LOG_TAIL_BYTES, limit))
+    stat = _log_stat(source["path"])
+    try:
+        content, truncated = _tail_text(source["path"], limit)
+    except FileNotFoundError:
+        return jsonify({"ok": True, "id": source["id"], "path": source["path"],
+                        "content": "", "truncated": False, "matches": [], **stat})
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e), "id": source["id"],
+                        "path": source["path"]})
+    rules = [r for r in LOG_ALERTS
+             if _rule_applies(r, source["id"]) and r["severity"] != "ok"]
+    matches = [i for i, line in enumerate(content.splitlines())
+               if any(r["regex"].search(line) for r in rules)]
+    return jsonify({"ok": True, "id": source["id"], "label": source["label"],
+                    "path": source["path"], "content": content,
+                    "truncated": truncated, "matches": matches, **stat})
+
+
+@app.route("/logs/alerts")
+def logs_alerts():
+    # status_sources are the logs the `ok` rules read: when none of them has
+    # matched, the UI needs those to say whether the status is simply quiet or
+    # the log it would come from has not been written yet.
+    watched = {s for r in LOG_ALERTS if r["severity"] == "ok" for s in r["sources"]}
+    summary = _log_source_summary()
+    return jsonify({
+        "ok": True,
+        "alerts": _scan_log_alerts(),
+        "sources": summary,
+        "status_sources": [s for s in summary if not watched or s["id"] in watched],
+    })
 
 
 @app.route("/mpd/info")

@@ -33,6 +33,11 @@ load_rc_config "$name"
 # (/var/run is not writable by an unprivileged user).
 : ${upmpdcli_config:="@REPO_DIR@/upmpdcli/upmpdcli.conf"}
 : ${upmpdcli_pidfile:="${upmpdcli_homedir}/.cache/upmpdcli/upmpdcli.pid"}
+# Console log: upmpdcli's own log goes to logfilename in upmpdcli.conf, but its
+# cdplugin subprocesses (Qobuz among them) log to the stderr they inherit —
+# where the Qobuz login/OAuth verdict is reported.  Without this it lands in
+# /dev/null and omdrcctrl's Logs panel has nothing to show.
+: ${upmpdcli_logfile:="/tmp/upmpdcli-console.log"}
 
 # rc.subr's su -m does not update HOME; export it so upmpdcli finds its cachedir.
 export HOME="${upmpdcli_homedir}"
@@ -48,7 +53,9 @@ pidfile="${upmpdcli_pidfile}"
 
 required_files="${upmpdcli_config}"
 
-command_args="-f -p ${upmpdcli_pidfile} -t ${name} -- ${BINDIR}/upmpdcli -c ${upmpdcli_config} ${upmpdcli_flags}"
+# -o appends stdout+stderr to the console log, -H reopens it on SIGHUP so
+# newsyslog(8) can rotate it, -M makes it readable by omdrcctrl (default 0600).
+command_args="-f -o ${upmpdcli_logfile} -H -M 0644 -p ${upmpdcli_pidfile} -t ${name} -- ${BINDIR}/upmpdcli -c ${upmpdcli_config} ${upmpdcli_flags}"
 
 start_precmd="upmpdcli_precmd"
 

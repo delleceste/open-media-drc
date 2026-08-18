@@ -14,6 +14,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=@PREFIX@/bin/upmpdcli -c @REPO_DIR@/upmpdcli/upmpdcli.conf
+# upmpdcli's own log goes to logfilename in upmpdcli.conf; its cdplugin
+# subprocesses (Qobuz among them) log to the inherited stderr instead, which is
+# where the Qobuz login/OAuth verdict shows up.  Keep it in a file so
+# omdrcctrl's Logs panel and its alert rules can read it.
+StandardOutput=append:/tmp/upmpdcli-console.log
+StandardError=append:/tmp/upmpdcli-console.log
 Restart=on-failure
 RestartSec=5
 
