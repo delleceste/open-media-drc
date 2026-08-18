@@ -113,6 +113,8 @@ log_file    = /tmp/qconnect2mpd.log
 # stderr of its cdplugin subprocesses, which the upmpdcli service redirects to
 # upmpdcli-console.log — that second one carries the Qobuz login verdict.
 [logs]
+mpd                      = @AUDIO_HOME@/.local/share/mpd/mpd.log
+mpd.label                = MPD
 upmpdcli               = /tmp/upmpdcli.log
 upmpdcli-console       = /tmp/upmpdcli-console.log
 upmpdcli-console.label = upmpdcli (plugins)
@@ -198,6 +200,15 @@ clears   = (?i)((oauth\s+initiali\w*\s+not\s+done|oauth.*\bnot\s+done\b|\bnot\s+
 message  = upmpdcli: Qobuz plugin connected
 hint     = Started or signed in, and reported no login failure afterwards.
 
+[alert:upmpdcli_mpd_ok]
+severity = ok
+service  = upmpdcli
+sources  = upmpdcli
+pattern  = (?i)mpdcli::openconn:\s*mpd connected ok
+clears   = (?i)(mpd connection failed|mpdcli::openconn:.*failed|mpdcli::eventloop:\s*could not open connection)
+message  = upmpdcli: MPD connected
+hint     = The renderer established its local MPD control connection.
+
 # qobuzconnect2mpd is a different program with a different login and its own
 # OAuth flow.  Its action starts `-L` as AUDIO_USER, keeps that process
 # alive for the browser redirect, then starts the normal renderer after the
@@ -209,18 +220,27 @@ service  = qobuzconnect2mpd
 sources  = qobuzconnect2mpd
 action   = qconnect-oauth
 pattern  = (?i)(not authenticated|no auth token|cannot stream until it is authenticated|waiting for .*oauth login|login not completed within the timeout|oauth (code exchange|token exchange|callback) failed|token could not be persisted)
-clears   = (?i)(oauth complete|token loaded from|oauth code received|qconnect2mpd:\s*mpd connected ok)
+clears   = (?i)qobuzconnect2mpd:\s*qobuz plugin connected
 message  = qobuzconnect2mpd is not signed in to Qobuz
 hint     = Press sign in: the panel starts qobuzconnect2mpd's own OAuth bootstrap and opens its remote-browser redirect flow.
+
+[alert:qconnect_mpd_ok]
+severity = ok
+service  = qobuzconnect2mpd
+sources  = qobuzconnect2mpd
+pattern  = (?i)qconnect2mpd:\s*mpd connected ok
+clears   = (?i)qconnect2mpd:\s*mpd connect failed
+message  = qobuzconnect2mpd: MPD connected
+hint     = The renderer established its local MPD control connection.
 
 [alert:qconnect_ok]
 severity = ok
 service  = qobuzconnect2mpd
 sources  = qobuzconnect2mpd
-pattern  = (?i)(oauth complete|token loaded from|oauth code received|qconnect2mpd:\s*mpd connected ok)
+pattern  = (?i)qobuzconnect2mpd:\s*qobuz plugin connected
 clears   = (?i)(not authenticated|no auth token|cannot stream until it is authenticated|waiting for .*oauth login|login not completed within the timeout|oauth (code exchange|token exchange|callback) failed|token could not be persisted)
 message  = qobuzconnect2mpd: Qobuz plugin connected
-hint     = Its token was loaded and the renderer completed startup.
+hint     = Qobuz accepted its OAuth-backed cloud session.
 
 # -- Qobuz OAuth sign-in ----------------------------------------------------
 # Drives upmpdcli's qobuz-init-oauth.py from the panel, so a headless box needs

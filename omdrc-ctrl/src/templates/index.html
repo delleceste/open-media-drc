@@ -1056,7 +1056,7 @@
             <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
             <button class="btn-log" id="btn-restart" onclick="restartQc()" disabled>Restart</button>
             <button class="btn-log" id="btn-log" onclick="toggleLog()">Log</button>
-            <button class="btn-log" id="btn-oauth" onclick="toggleOauth()">Qobuz sign-in</button>
+            <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
         </div>
     </div>
     <!-- Mutually-exclusive renderer toggle -->
@@ -1775,6 +1775,7 @@ async function switchRenderer(target) {
 // live, say) are a quiet line under the renderer buttons instead — the server
 // re-derives both every poll, so nothing here has to remember state.
 const dismissedAlerts = new Set();
+let oauthAlertTarget = null;
 
 function fmtLogTime(epoch) {
     if (!epoch) return '';
@@ -1785,6 +1786,17 @@ function fmtLogTime(epoch) {
 function renderLogAlerts(alerts) {
     const box = document.getElementById('log-alerts');
     box.innerHTML = '';
+    // An OAuth action exists only while its failure rule is active. Keep the
+    // renderer-card shortcut in exact sync with that diagnosis; the action in
+    // the top-of-page message remains available as well.
+    const oauthAlerts = alerts.filter(a =>
+        a.action === 'qobuz-oauth' || a.action === 'qconnect-oauth');
+    const oauthButton = document.getElementById('btn-oauth');
+    oauthButton.hidden = oauthAlerts.length === 0;
+    oauthAlertTarget = oauthAlerts.length
+        ? (oauthAlerts[0].action === 'qconnect-oauth'
+            ? 'qobuzconnect2mpd' : 'upmpdcli')
+        : null;
     for (const a of alerts) {
         if (dismissedAlerts.has(a.key)) continue;
         const el = document.createElement('div');
@@ -2163,7 +2175,7 @@ async function startQconnectOauth() {
 }
 
 function toggleOauth(target = null) {
-    const desired = target || activeRenderer || bootRenderer || 'upmpdcli';
+    const desired = target || oauthAlertTarget || activeRenderer || bootRenderer || 'upmpdcli';
     if (oauthVisible && oauthTarget === desired) {
         oauthVisible = false;
         oauthPanel().style.display = 'none';

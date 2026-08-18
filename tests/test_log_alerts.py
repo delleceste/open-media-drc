@@ -71,6 +71,24 @@ def _alerts(console_text: str, running: bool = True) -> list[dict]:
     return response.get_json()["alerts"]
 
 
+def _upmpdcli_alerts(log_text: str, running: bool = True) -> list[dict]:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        console = root / "console.log"
+        console.write_text("", encoding="utf-8")
+        upmpdcli = root / "upmpdcli.log"
+        upmpdcli.write_text(log_text, encoding="utf-8")
+        config = _config(root, console)
+        config.write_text(
+            config.read_text(encoding="utf-8").replace(
+                "/tmp/upmpdcli.log", str(upmpdcli)), encoding="utf-8")
+        APP.load_config(str(config))
+        service_state = lambda name: running if name == "upmpdcli" else False
+        with mock.patch.object(APP, "_service_running", side_effect=service_state):
+            response = APP.app.test_client().get("/logs/alerts")
+    return response.get_json()["alerts"]
+
+
 def _qconnect_alerts(log_text: str, running: bool = True) -> list[dict]:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -192,14 +210,38 @@ class LogAlertTest(unittest.TestCase):
         self.assertEqual([a["id"] for a in alerts], ["qconnect_auth"])
         self.assertEqual(alerts[0]["action"], "qconnect-oauth")
 
-    def test_qconnect_boot_start_reports_the_plugin_connected(self):
-        """MPD connected OK is emitted after the cached-token gate even at the
-        default error log level, so it is the reliable restored-at-boot signal."""
-        alerts = _qconnect_alerts("qconnect2mpd: MPD connected OK (localhost:6600)\n")
+    def test_qconnect_cloud_session_reports_the_plugin_connected(self):
+        """The line is emitted only after Qobuz accepts the OAuth-backed cloud
+        session, so it is the reliable startup and post-login success signal."""
+        alerts = _qconnect_alerts(
+            "qobuzconnect2mpd: Qobuz plugin connected\n")
         self.assertEqual([(a["id"], a["severity"]) for a in alerts],
                          [("qconnect_ok", "ok")])
         self.assertEqual(alerts[0]["message"],
                          "qobuzconnect2mpd: Qobuz plugin connected")
+
+    def test_qconnect_mpd_connection_has_its_own_success_status(self):
+        alerts = _qconnect_alerts(
+            "qconnect2mpd: MPD connected OK (localhost:6600)\n")
+        self.assertEqual([(a["id"], a["severity"]) for a in alerts],
+                         [("qconnect_mpd_ok", "ok")])
+        self.assertEqual(alerts[0]["message"],
+                         "qobuzconnect2mpd: MPD connected")
+
+    def test_qconnect_reports_mpd_and_qobuz_connections_independently(self):
+        alerts = _qconnect_alerts(
+            "qconnect2mpd: MPD connected OK (localhost:6600)\n"
+            "qobuzconnect2mpd: Qobuz plugin connected\n")
+        self.assertEqual([(a["id"], a["severity"]) for a in alerts],
+                         [("qconnect_mpd_ok", "ok"),
+                          ("qconnect_ok", "ok")])
+
+    def test_upmpdcli_reports_its_mpd_connection_independently(self):
+        alerts = _upmpdcli_alerts(
+            "MPDCli::openconn: MPD connected OK (localhost:6600)\n")
+        self.assertEqual([(a["id"], a["severity"]) for a in alerts],
+                         [("upmpdcli_mpd_ok", "ok")])
+        self.assertEqual(alerts[0]["message"], "upmpdcli: MPD connected")
 
     def test_a_log_with_nothing_to_say_raises_nothing(self):
         self.assertEqual(_alerts("mpd_run_idle_mask returned 0\n"), [])
@@ -261,7 +303,8 @@ class LogConfigTest(unittest.TestCase):
         self.assertFalse([i for i in ids if i.startswith("alert:")])
         self.assertEqual([r["id"] for r in APP.LOG_ALERTS],
                          ["qobuz_oauth", "qobuz_login", "qobuz_ok",
-                          "qconnect_auth", "qconnect_ok"])
+                          "upmpdcli_mpd_ok", "qconnect_auth",
+                          "qconnect_mpd_ok", "qconnect_ok"])
 
     def test_a_config_without_a_logs_section_still_gets_the_renderer_logs(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -271,9 +314,11 @@ class LogConfigTest(unittest.TestCase):
                             encoding="utf-8")
             APP.load_config(str(path))
         self.assertIn("upmpdcli-console", [s["id"] for s in APP.LOG_SOURCES])
+        self.assertIn("mpd", [s["id"] for s in APP.LOG_SOURCES])
         self.assertEqual([r["id"] for r in APP.LOG_ALERTS],
                          ["qobuz_oauth", "qobuz_login", "qobuz_ok",
-                          "qconnect_auth", "qconnect_ok"])
+                          "upmpdcli_mpd_ok", "qconnect_auth",
+                          "qconnect_mpd_ok", "qconnect_ok"])
 
     def test_a_rule_without_a_pattern_is_a_config_error(self):
         with tempfile.TemporaryDirectory() as directory:

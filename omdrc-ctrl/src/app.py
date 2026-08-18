@@ -131,6 +131,9 @@ _QOBUZ_REFUSED = r"(/user/login\s+returns|tried login but failed|qobuz.*login.*f
 # Lines that mean the opposite: the plugin came up, or a sign-in completed.
 _QOBUZ_GOOD = (r"(qobuz.*running|got\s+auth_code|init_oauth:\s*auth_code"
                r"|trackuri.*oauth\s+initiali)")
+_UPMPDCLI_MPD_GOOD = r"mpdcli::openconn:\s*mpd connected ok"
+_UPMPDCLI_MPD_BAD = (r"(mpd connection failed|mpdcli::openconn:.*failed"
+                      r"|mpdcli::eventloop:\s*could not open connection)")
 
 # qobuzconnect2mpd's own signals.  It is a different program with a different
 # login: its own OAuth flow (`-L`) and its own token under qconnectstatedir.  It
@@ -142,8 +145,9 @@ _QCONNECT_BAD = (r"(not authenticated|no auth token"
                  r"|waiting for .*oauth login|login not completed within the timeout"
                  r"|oauth (code exchange|token exchange|callback) failed"
                  r"|token could not be persisted)")
-_QCONNECT_GOOD = (r"(oauth complete|token loaded from|oauth code received"
-                  r"|qconnect2mpd:\s*mpd connected ok)")
+_QCONNECT_GOOD = r"qobuzconnect2mpd:\s*qobuz plugin connected"
+_QCONNECT_MPD_GOOD = r"qconnect2mpd:\s*mpd connected ok"
+_QCONNECT_MPD_BAD = r"qconnect2mpd:\s*mpd connect failed"
 
 DEFAULT_LOG_ALERTS: list[dict] = [
     {
@@ -187,6 +191,16 @@ DEFAULT_LOG_ALERTS: list[dict] = [
         "service":  "upmpdcli",
     },
     {
+        "id":       "upmpdcli_mpd_ok",
+        "pattern":  f"(?i){_UPMPDCLI_MPD_GOOD}",
+        "clears":   f"(?i){_UPMPDCLI_MPD_BAD}",
+        "message":  "upmpdcli: MPD connected",
+        "hint":     "The renderer established its local MPD control connection.",
+        "severity": "ok",
+        "sources":  ["upmpdcli"],
+        "service":  "upmpdcli",
+    },
+    {
         "id":       "qconnect_auth",
         "pattern":  f"(?i){_QCONNECT_BAD}",
         "clears":   f"(?i){_QCONNECT_GOOD}",
@@ -199,11 +213,21 @@ DEFAULT_LOG_ALERTS: list[dict] = [
         "action":   "qconnect-oauth",
     },
     {
+        "id":       "qconnect_mpd_ok",
+        "pattern":  f"(?i){_QCONNECT_MPD_GOOD}",
+        "clears":   f"(?i){_QCONNECT_MPD_BAD}",
+        "message":  "qobuzconnect2mpd: MPD connected",
+        "hint":     "The renderer established its local MPD control connection.",
+        "severity": "ok",
+        "sources":  ["qobuzconnect2mpd"],
+        "service":  "qobuzconnect2mpd",
+    },
+    {
         "id":       "qconnect_ok",
         "pattern":  f"(?i){_QCONNECT_GOOD}",
         "clears":   f"(?i){_QCONNECT_BAD}",
         "message":  "qobuzconnect2mpd: Qobuz plugin connected",
-        "hint":     "Its token was loaded and the renderer completed startup.",
+        "hint":     "Qobuz accepted its OAuth-backed cloud session.",
         "severity": "ok",
         "sources":  ["qobuzconnect2mpd"],
         "service":  "qobuzconnect2mpd",
@@ -303,6 +327,7 @@ def _default_log_sources() -> list[dict]:
     logfilename; its cdplugin subprocesses (Qobuz among them) write to the
     inherited stderr instead, which the service scripts capture separately."""
     return [
+        {"id": "mpd",               "label": "MPD",                  "path": os.path.expanduser("~/.local/share/mpd/mpd.log")},
         {"id": "upmpdcli",         "label": "upmpdcli",           "path": "/tmp/upmpdcli.log"},
         {"id": "upmpdcli-console", "label": "upmpdcli (plugins)", "path": "/tmp/upmpdcli-console.log"},
         {"id": "qobuzconnect2mpd", "label": "qobuzconnect2mpd",   "path": QCONNECT_LOG_FILE},
