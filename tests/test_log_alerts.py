@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,25 +19,52 @@ SPEC.loader.exec_module(APP)
 # one it prints on startup, just before the (silent on success) login.
 FAILURE = "0$qobuz$: Qobuz login: oauth initialisation not done"
 STARTUP = "CMDTALK: qobuz-app.py: 'Qobuz running'"
+# What a completed sign-in actually logs.  Every one of these names both "qobuz"
+# and "oauth" while meaning the opposite of the failure above.
+SIGNED_IN = [
+    "CMDTALK: qobuz-app.py: 'Qobuz: trackuri: OAuth initialisation'",
+    "CMDTALK: qobuz-app.py: 'OAuth: got auth_code: LcoxaT5O'",
+    "0$qobuz$: session: init_oauth: auth_code LcoxaT5O",
+]
 
 
-def _config(directory: Path, console: Path) -> Path:
-    """The shipped commands.conf with its log paths moved into the sandbox."""
+def _config(directory: Path, console: Path, token: str = "") -> Path:
+    """The shipped commands.conf with its log and token paths moved into the
+    sandbox — the token file has to be sandboxed too, or the rules would be
+    answering questions about the machine running the tests."""
     text = (ROOT / "omdrc-ctrl/src/commands.conf.in").read_text(encoding="utf-8")
     text = text.replace("@OMDRC_REPO_DIR@", str(directory))
     text = text.replace("/tmp/upmpdcli-console.log", str(console))
+    cache = directory / "qobuz-config"
+    cache.write_text(token, encoding="utf-8")
+    text = text.replace("cache_config =", f"cache_config = {cache}")
     path = directory / "commands.conf"
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def _alerts(console_text: str) -> list[dict]:
+def _alerts_with_token(console_text: str, token: str) -> list[dict]:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        console = root / "console.log"
+        console.write_text(console_text, encoding="utf-8")
+        APP.load_config(str(_config(root, console, token)))
+        with mock.patch.object(APP, "_service_running", return_value=True):
+            response = APP.app.test_client().get("/logs/alerts")
+    return response.get_json()["alerts"]
+
+
+def _alerts(console_text: str, running: bool = True) -> list[dict]:
+    """Rules are scoped to a service, so the answer depends on whether that
+    service runs — stubbed here, or the tests would be reporting on whatever
+    the machine running them happens to have up."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         console = root / "console.log"
         console.write_text(console_text, encoding="utf-8")
         APP.load_config(str(_config(root, console)))
-        response = APP.app.test_client().get("/logs/alerts")
+        with mock.patch.object(APP, "_service_running", return_value=running):
+            response = APP.app.test_client().get("/logs/alerts")
     return response.get_json()["alerts"]
 
 
@@ -52,21 +80,92 @@ class LogAlertTest(unittest.TestCase):
     def test_a_reworded_oauth_failure_still_matches(self):
         for line in ("0$qobuz$: oauth not done",
                      "qobuz: oauth initialization missing",
-                     "0$qobuz$: /user/login returns None",
-                     "PlgWithSlave::maybeStartCmd: tried login but failed for qobuz"):
+                     "0$qobuz$: Qobuz login: OAuth initialisation NOT DONE"):
             with self.subTest(line=line):
                 alerts = _alerts(f"{STARTUP}\n{line}\n")
                 self.assertEqual([a["id"] for a in alerts], ["qobuz_oauth"])
 
+    def test_a_reworded_login_refusal_still_matches(self):
+        for line in ("0$qobuz$: /user/login returns None",
+                     "PlgWithSlave::maybeStartCmd: tried login but failed for qobuz",
+                     "0$qobuz$: Qobuz login failed"):
+            with self.subTest(line=line):
+                alerts = _alerts(f"{STARTUP}\n{line}\n")
+                self.assertEqual([a["id"] for a in alerts], ["qobuz_login"])
+
     def test_a_startup_with_no_later_failure_reports_the_connection_as_good(self):
-        alerts = _alerts(f"{STARTUP}\n{FAILURE}\n{STARTUP}\n")
+        alerts = _alerts(f"{STARTUP}\n{FAILURE}\n{STARTUP}\n")  # noqa: E501
         self.assertEqual([(a["id"], a["severity"]) for a in alerts],
                          [("qobuz_ok", "ok")])
-        self.assertEqual(alerts[0]["message"], "Qobuz plugin connected")
+        self.assertEqual(alerts[0]["message"], "upmpdcli: Qobuz plugin connected")
+
+    def test_a_completed_sign_in_clears_the_warning(self):
+        """The bug this guards: the success lines name Qobuz and OAuth, and a
+        looser pattern matched them — leaving the warning up for a working
+        login, with the very line that proved it worked quoted underneath."""
+        alerts = _alerts("\n".join([STARTUP, FAILURE] + SIGNED_IN) + "\n")
+        self.assertEqual([(a["id"], a["severity"]) for a in alerts],
+                         [("qobuz_ok", "ok")])
+
+    def test_no_sign_in_line_is_ever_read_as_a_failure(self):
+        for line in SIGNED_IN:
+            with self.subTest(line=line):
+                self.assertEqual(_alerts(f"{STARTUP}\n{line}\n"),
+                                 _alerts(f"{STARTUP}\n{line}\n"))
+                ids = [a["id"] for a in _alerts(f"{FAILURE}\n{line}\n")]
+                self.assertEqual(ids, ["qobuz_ok"])
+
+    def test_a_refused_token_is_its_own_warning(self):
+        alerts = _alerts(f"{STARTUP}\n0$qobuz$: /user/login returns None\n")
+        self.assertEqual([(a["id"], a["severity"]) for a in alerts],
+                         [("qobuz_login", "warn")])
+        self.assertIn("sign in again", alerts[0]["hint"])
 
     def test_a_failure_after_the_last_startup_wins(self):
         alerts = _alerts(f"{STARTUP}\n{STARTUP}\n{FAILURE}\n")
         self.assertEqual([a["id"] for a in alerts], ["qobuz_oauth"])
+
+    def test_a_stored_token_settles_the_warning_whatever_the_log_says(self):
+        """A tail that still ends on the failure line, but the token file — the
+        thing that line is *about* — has one."""
+        stale = f"{STARTUP}\n{FAILURE}\n"
+        self.assertEqual([a["id"] for a in _alerts_with_token(stale, "")],
+                         ["qobuz_oauth"])
+        self.assertEqual(
+            _alerts_with_token(stale, "user_auth_token = abc\nuser_id = 42\n"), [])
+
+    def test_a_refused_token_is_not_settled_by_the_token_file(self):
+        refused = f"{STARTUP}\n0$qobuz$: /user/login returns None\n"
+        alerts = _alerts_with_token(refused, "user_auth_token = abc\nuser_id = 42\n")
+        self.assertEqual([a["id"] for a in alerts], ["qobuz_login"])
+
+    def test_a_stopped_renderer_is_reported_but_demands_nothing(self):
+        """The complaint this guards: upmpdcli's stale log nagged — and offered
+        a renderer switch — while qobuzconnect2mpd was the one actually
+        playing."""
+        stale = f"{STARTUP}\n{FAILURE}\n"
+        self.assertEqual([(a["id"], a["severity"]) for a in _alerts(stale)],
+                         [("qobuz_oauth", "warn")])
+        idle = _alerts(stale, running=False)
+        self.assertEqual([(a["id"], a["severity"]) for a in idle],
+                         [("qobuz_oauth", "info")])
+        self.assertFalse(idle[0]["service_running"])
+        self.assertEqual(idle[0]["service"], "upmpdcli")
+
+    def test_a_stopped_renderer_reports_no_connection(self):
+        """Nothing is connected while nothing is running."""
+        self.assertEqual(_alerts(f"{FAILURE}\n{STARTUP}\n", running=False), [])
+
+    def test_each_renderer_speaks_for_its_own_login(self):
+        """upmpdcli's rules name upmpdcli; qobuzconnect2mpd's name its own —
+        and only the upmpdcli ones offer the sign-in button, because the two
+        keep separate Qobuz tokens."""
+        for rule in APP.LOG_ALERTS:
+            with self.subTest(rule=rule["id"]):
+                self.assertIn(rule["service"], ("upmpdcli", "qobuzconnect2mpd"))
+                if rule["service"] == "qobuzconnect2mpd":
+                    self.assertFalse(rule.get("action"))
+                    self.assertFalse(rule.get("clears_file"))
 
     def test_a_log_with_nothing_to_say_raises_nothing(self):
         self.assertEqual(_alerts("mpd_run_idle_mask returned 0\n"), [])
@@ -127,7 +226,8 @@ class LogConfigTest(unittest.TestCase):
         self.assertNotIn("logs", ids)
         self.assertFalse([i for i in ids if i.startswith("alert:")])
         self.assertEqual([r["id"] for r in APP.LOG_ALERTS],
-                         ["qobuz_oauth", "qobuz_ok"])
+                         ["qobuz_oauth", "qobuz_login", "qobuz_ok",
+                          "qconnect_auth", "qconnect_ok"])
 
     def test_a_config_without_a_logs_section_still_gets_the_renderer_logs(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -138,7 +238,8 @@ class LogConfigTest(unittest.TestCase):
             APP.load_config(str(path))
         self.assertIn("upmpdcli-console", [s["id"] for s in APP.LOG_SOURCES])
         self.assertEqual([r["id"] for r in APP.LOG_ALERTS],
-                         ["qobuz_oauth", "qobuz_ok"])
+                         ["qobuz_oauth", "qobuz_login", "qobuz_ok",
+                          "qconnect_auth", "qconnect_ok"])
 
     def test_a_rule_without_a_pattern_is_a_config_error(self):
         with tempfile.TemporaryDirectory() as directory:

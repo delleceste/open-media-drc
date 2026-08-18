@@ -137,33 +137,86 @@ alert_interval = 20
 #   hint     - optional second line, what to do about it
 #   severity - error | warn | info | ok   (default warn)
 #   sources  - comma-separated source ids to watch (default: all of them)
+#   service  - the program the rule speaks for; while it is not running the
+#              alert is reported as info and `ok` rules stay silent
 #   action   - optional UI action button on the banner (only: qobuz-oauth)
+#   clears_file / clears_file_pattern - the rule is not raised while that file
+#              matches that regex (a fact on disk beating a stale log tail);
+#              @qobuz_token@ stands for the Qobuz token file
 #
 # Keep a rule and its `clears` on the same source: "newer than" is only
 # meaningful within one log.  A literal % must be written %% (configparser).
 #
 # Qobuz has no success line to match: qobuz-app.py logs "Qobuz running" and then
 # logs in silently, printing "oauth initialisation not done" (no token) or
-# "/user/login returns ..." (token refused) only on failure.  So the two rules
-# below are each other's inverse — startup with no failure after it is reported
-# as connected, a failure line after it as needing OAuth.
+# "/user/login returns ..." (token refused) only on failure.  So the rules below
+# are each other's inverse — a startup or a completed sign-in with no failure
+# after it is reported as connected.
+#
+# Match a failure *sense*, not the co-occurrence of "qobuz" and "oauth": a
+# successful sign-in logs "session: init_oauth: auth_code ..." and "Qobuz:
+# trackuri: OAuth initialisation", which name both words while meaning the
+# opposite.  A looser pattern reports a working login as broken.
+#
+# `service` matters as much as `sources` here.  Each renderer has its OWN Qobuz
+# login — upmpdcli's plugin token under cachedir, qobuzconnect2mpd's under its
+# qconnectstatedir — and each log outlives the program that wrote it.  Naming the
+# service keeps a stopped renderer's stale log from demanding anything: it is
+# reported as info, and its `ok` rules go quiet entirely.
+
 [alert:qobuz_oauth]
 severity = warn
+service  = upmpdcli
 sources  = upmpdcli-console
-# Puts the "Qobuz sign-in" button on the banner (see [qobuz_oauth] below).
 action   = qobuz-oauth
-pattern  = (?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done|/user/login\s+returns|tried login but failed)
-clears   = (?i)(qobuz.*running|init_oauth)
-message  = Qobuz login: OAuth initialisation not done
-hint     = Press Qobuz sign-in: the panel runs the OAuth script and shows the URL to open in this browser. upmpdcli must be running to receive the redirect.
+pattern  = (?i)(oauth\s+initiali\w*\s+not\s+done|oauth.*\bnot\s+done\b|\bnot\s+done\b.*oauth|oauth\s+initiali\w*\s+missing|(qobuz|oauth).*\bno\s+token\b)
+clears   = (?i)(qobuz.*running|got\s+auth_code|init_oauth:\s*auth_code|trackuri.*oauth\s+initiali)
+clears_file         = @qobuz_token@
+clears_file_pattern = user_auth_token\s*=\s*\S
+message  = upmpdcli: Qobuz OAuth initialisation not done
+hint     = Press Qobuz sign-in: the panel runs the OAuth script and shows the URL to open in this browser.  upmpdcli must be running to receive the redirect.
+
+# A token exists but Qobuz would not take it — deliberately no clears_file:
+# this is exactly the case a stored token does not settle.
+[alert:qobuz_login]
+severity = warn
+service  = upmpdcli
+sources  = upmpdcli-console
+action   = qobuz-oauth
+pattern  = (?i)(/user/login\s+returns|tried login but failed|qobuz.*login.*fail)
+clears   = (?i)(qobuz.*running|got\s+auth_code|init_oauth:\s*auth_code|trackuri.*oauth\s+initiali)
+message  = upmpdcli: Qobuz refused the stored login
+hint     = The token is there but was not accepted — sign in again.
 
 [alert:qobuz_ok]
 severity = ok
+service  = upmpdcli
 sources  = upmpdcli-console
-pattern  = (?i)qobuz.*running
-clears   = (?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done|/user/login\s+returns|tried login but failed)
-message  = Qobuz plugin connected
-hint     = Plugin started and reported no login failure afterwards.
+pattern  = (?i)(qobuz.*running|got\s+auth_code|init_oauth:\s*auth_code|trackuri.*oauth\s+initiali)
+clears   = (?i)((oauth\s+initiali\w*\s+not\s+done|oauth.*\bnot\s+done\b|\bnot\s+done\b.*oauth|oauth\s+initiali\w*\s+missing|(qobuz|oauth).*\bno\s+token\b)|(/user/login\s+returns|tried login but failed|qobuz.*login.*fail))
+message  = upmpdcli: Qobuz plugin connected
+hint     = Started or signed in, and reported no login failure afterwards.
+
+# qobuzconnect2mpd is a different program with a different login and its own
+# OAuth flow; the Qobuz sign-in button does not apply to it.  No clears_file:
+# its token is mode 0600 under its own service account, unreadable here.
+[alert:qconnect_auth]
+severity = warn
+service  = qobuzconnect2mpd
+sources  = qobuzconnect2mpd
+pattern  = (?i)(not authenticated|no auth token|cannot stream until it is authenticated|waiting for .*oauth login|login not completed within the timeout|oauth (code exchange|token exchange|callback) failed|token could not be persisted)
+clears   = (?i)(oauth complete|token loaded from|oauth code received)
+message  = qobuzconnect2mpd is not signed in to Qobuz
+hint     = Its login is its own, separate from upmpdcli's — the Qobuz sign-in button does not apply.  Bootstrap it once with: qobuzconnect2mpd -c /usr/local/etc/qobuzconnect2mpd.conf -L
+
+[alert:qconnect_ok]
+severity = ok
+service  = qobuzconnect2mpd
+sources  = qobuzconnect2mpd
+pattern  = (?i)(oauth complete|token loaded from|oauth code received)
+clears   = (?i)(not authenticated|no auth token|cannot stream until it is authenticated|waiting for .*oauth login|login not completed within the timeout|oauth (code exchange|token exchange|callback) failed|token could not be persisted)
+message  = qobuzconnect2mpd signed in to Qobuz
+hint     = Its token was loaded or a sign-in completed.
 
 # -- Qobuz OAuth sign-in ----------------------------------------------------
 # Drives upmpdcli's qobuz-init-oauth.py from the panel, so a headless box needs

@@ -103,46 +103,107 @@ _ALERT_PREFIX = "alert:"
 _SEVERITIES = ("error", "warn", "info", "ok")
 
 # A rule fires when its `pattern` matches a line that is *newer* than the last
-# line matching `clears`, so the two Qobuz rules below are each other's inverse
-# and only the last outcome in the log is reported.
+# line matching `clears`, so only the last outcome in the log is reported.
 #
-# Both read the plugin console log, because upmpdcli's Qobuz plugin writes every
-# line quoted here to the stderr it inherits from upmpdcli (upmplgutils.uplog /
-# cmdtalkplugin.log), not to upmpdcli's own logfilename.  Keeping a rule and its
+# All three read the plugin console log, because upmpdcli's Qobuz plugin writes
+# every line quoted here to the stderr it inherits from upmpdcli (upmplgutils.uplog
+# / cmdtalkplugin.log), not to upmpdcli's own logfilename.  Keeping a rule and its
 # `clears` on one stream is what makes "newer than" meaningful.
+#
+# The patterns match a failure *sense* — "not done", "returns", "failed" — rather
+# than the mere co-occurrence of "qobuz" and "oauth".  A successful sign-in logs
+# `session: init_oauth: auth_code ...` and `Qobuz: trackuri: OAuth initialisation`,
+# both of which name Qobuz and OAuth while meaning the opposite, and a looser
+# pattern reports a working login as broken.
 #
 # There is no explicit success line to look for: qobuz-app.py logs "Qobuz
 # running" and then calls session.login(), which is silent when it works and
 # prints "Qobuz login: oauth initialisation not done" (no token) or
-# "/user/login returns …" (token refused) when it does not.  So a connection is
-# reported as good when a startup line is followed by no failure line — that is
-# the strongest statement the log actually supports, and the UI says as much.
-# The patterns match the sense rather than the exact 1.9 wording, so a reworded
-# message in a later upmpdcli still trips them.
+# "/user/login returns ..." (token refused) when it does not.  So a connection is
+# reported as good when a startup or a completed sign-in is followed by no
+# failure line — the strongest statement the log actually supports.
+# Written without the (?i) flag so they can be composed; the rules add it.
+_QOBUZ_NO_TOKEN = (r"(oauth\s+initiali\w*\s+not\s+done|oauth.*\bnot\s+done\b"
+                   r"|\bnot\s+done\b.*oauth|oauth\s+initiali\w*\s+missing"
+                   r"|(qobuz|oauth).*\bno\s+token\b)")
+_QOBUZ_REFUSED = r"(/user/login\s+returns|tried login but failed|qobuz.*login.*fail)"
+# Lines that mean the opposite: the plugin came up, or a sign-in completed.
+_QOBUZ_GOOD = (r"(qobuz.*running|got\s+auth_code|init_oauth:\s*auth_code"
+               r"|trackuri.*oauth\s+initiali)")
+
+# qobuzconnect2mpd's own signals.  It is a different program with a different
+# login: its own OAuth flow (`-L`), its own token under qconnectstatedir.  No
+# clears_file for it — that token is mode 0600 under its own service account, so
+# the panel cannot read it, and guessing would be worse than reading the log.
+_QCONNECT_BAD = (r"(not authenticated|no auth token"
+                 r"|cannot stream until it is authenticated"
+                 r"|waiting for .*oauth login|login not completed within the timeout"
+                 r"|oauth (code exchange|token exchange|callback) failed"
+                 r"|token could not be persisted)")
+_QCONNECT_GOOD = r"(oauth complete|token loaded from|oauth code received)"
+
 DEFAULT_LOG_ALERTS: list[dict] = [
     {
         "id":       "qobuz_oauth",
-        "pattern":  r"(?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done"
-                    r"|/user/login\s+returns|tried login but failed)",
-        "clears":   r"(?i)(qobuz.*running|init_oauth)",
-        "message":  "Qobuz login: OAuth initialisation not done",
+        "pattern":  f"(?i){_QOBUZ_NO_TOKEN}",
+        "clears":   f"(?i){_QOBUZ_GOOD}",
+        # The token file is what the log line is *about*, so a stored token
+        # settles it whatever a stale tail still says.
+        "clears_file":         "@qobuz_token@",
+        "clears_file_pattern": r"user_auth_token\s*=\s*\S",
+        "message":  "upmpdcli: Qobuz OAuth initialisation not done",
         "hint":     "Press Qobuz sign-in: the panel runs the OAuth script and "
                     "shows the URL to open in this browser.  upmpdcli must be "
                     "running to receive the redirect.",
         "severity": "warn",
         "sources":  ["upmpdcli-console"],
-        # Offers the sign-in button on the banner (see /qobuz/oauth/start).
+        "service":  "upmpdcli",
+        "action":   "qobuz-oauth",
+    },
+    {
+        # A token exists but Qobuz would not take it, so no file check here:
+        # this is precisely the case a stored token does not settle.
+        "id":       "qobuz_login",
+        "pattern":  f"(?i){_QOBUZ_REFUSED}",
+        "clears":   f"(?i){_QOBUZ_GOOD}",
+        "message":  "upmpdcli: Qobuz refused the stored login",
+        "hint":     "The token is there but was not accepted — sign in again.",
+        "severity": "warn",
+        "sources":  ["upmpdcli-console"],
+        "service":  "upmpdcli",
         "action":   "qobuz-oauth",
     },
     {
         "id":       "qobuz_ok",
-        "pattern":  r"(?i)qobuz.*running",
-        "clears":   r"(?i)(qobuz.*oauth|oauth.*qobuz|oauth\s+\S*\s*not\s+done"
-                    r"|/user/login\s+returns|tried login but failed)",
-        "message":  "Qobuz plugin connected",
-        "hint":     "Plugin started and reported no login failure afterwards.",
+        "pattern":  f"(?i){_QOBUZ_GOOD}",
+        "clears":   f"(?i)({_QOBUZ_NO_TOKEN}|{_QOBUZ_REFUSED})",
+        "message":  "upmpdcli: Qobuz plugin connected",
+        "hint":     "Started or signed in, and reported no login failure afterwards.",
         "severity": "ok",
         "sources":  ["upmpdcli-console"],
+        "service":  "upmpdcli",
+    },
+    {
+        "id":       "qconnect_auth",
+        "pattern":  f"(?i){_QCONNECT_BAD}",
+        "clears":   f"(?i){_QCONNECT_GOOD}",
+        "message":  "qobuzconnect2mpd is not signed in to Qobuz",
+        "hint":     "Its login is its own, separate from upmpdcli's — the Qobuz "
+                    "sign-in button does not apply.  Bootstrap it once with: "
+                    "qobuzconnect2mpd -c /usr/local/etc/qobuzconnect2mpd.conf -L",
+        "severity": "warn",
+        "sources":  ["qobuzconnect2mpd"],
+        "service":  "qobuzconnect2mpd",
+    },
+    {
+        "id":       "qconnect_ok",
+        "pattern":  f"(?i){_QCONNECT_GOOD}",
+        "clears":   f"(?i){_QCONNECT_BAD}",
+        "message":  "qobuzconnect2mpd signed in to Qobuz",
+        "hint":     "Its token was loaded or a sign-in completed.",
+        "severity": "ok",
+        "sources":  ["qobuzconnect2mpd"],
+        "service":  "qobuzconnect2mpd",
     },
 ]
 
@@ -154,12 +215,16 @@ DEFAULT_LOG_ALERTS: list[dict] = [
 # the two sign-in URLs and exits, which is why this can be driven from a phone —
 # the panel runs the script, shows the URL, and watches the token file.
 #
-# Consequences worth knowing: upmpdcli must be RUNNING to catch the redirect,
+# Consequences worth knowing: upmpdcli must be RUNNING to catch the redirect
+# (its port, not qobuzconnect2mpd's — the two renderers are unrelated programs),
 # and the browser must be able to reach the host in the redirect URL.
 QOBUZ_OAUTH_SCRIPT = "/usr/local/share/upmpdcli/cdplugins/qobuz/qobuz-init-oauth.py"
 QOBUZ_UPMPDCLI_CONF = ""      # empty: search the usual locations
 QOBUZ_CACHE_CONFIG = ""       # empty: derive from upmpdcli.conf's cachedir
 QOBUZ_OAUTH_TIMEOUT = 45      # the script fetches the Qobuz app id over the net
+# `clears_file = @qobuz_token@` in an alert rule means the token file above,
+# wherever it turns out to live, so a rule stays host-independent.
+_QOBUZ_TOKEN_PLACEHOLDER = "@qobuz_token@"
 
 # Set to the defaults just below the parsers, then replaced by load_config().
 LOG_SOURCES: list[dict] = []
@@ -245,11 +310,13 @@ def _parse_log_sources(cfg: configparser.ConfigParser) -> list[dict]:
 
 
 def _compile_alert(rule: dict) -> dict:
-    """Attach the compiled `pattern` / `clears` regexes to a rule dict."""
+    """Attach the compiled `pattern` / `clears` / `clears_file_pattern` regexes."""
     clears = rule.get("clears", "")
+    file_pattern = rule.get("clears_file_pattern", "")
     return dict(rule,
                 regex=re.compile(rule["pattern"]),
-                clears_regex=re.compile(clears) if clears else None)
+                clears_regex=re.compile(clears) if clears else None,
+                clears_file_regex=re.compile(file_pattern) if file_pattern else None)
 
 
 def _parse_log_alerts(cfg: configparser.ConfigParser) -> list[dict]:
@@ -276,6 +343,9 @@ def _parse_log_alerts(cfg: configparser.ConfigParser) -> list[dict]:
             "severity": severity,
             "sources":  [s.strip() for s in sec.get("sources", "").split(",") if s.strip()],
             "action":   sec.get("action", "").strip(),
+            "service":  sec.get("service", "").strip(),
+            "clears_file":         sec.get("clears_file", "").strip(),
+            "clears_file_pattern": sec.get("clears_file_pattern", "").strip(),
         }
         try:
             rules.append(_compile_alert(rule))
@@ -2483,6 +2553,24 @@ def _rule_applies(rule: dict, source_id: str) -> bool:
     return not rule["sources"] or source_id in rule["sources"]
 
 
+def _rule_settled_by_file(rule: dict) -> bool:
+    """True when a file on disk contradicts the rule outright.
+
+    Ordering in a log is a proxy; some conditions have a fact behind them.  A
+    rule that names `clears_file` is not raised while that file matches
+    `clears_file_pattern`, whatever a stale tail still says — which is how a
+    stored Qobuz token silences "OAuth initialisation not done" without waiting
+    for the log to be rewritten.  Use it only where the file *is* the subject of
+    the log line: a token Qobuz refuses is a different condition, and the rule
+    for that one deliberately has no file check."""
+    if rule.get("clears_file_regex") is None:
+        return False
+    path = rule.get("clears_file", "")
+    if path == _QOBUZ_TOKEN_PLACEHOLDER:
+        path = _qobuz_cache_config()
+    return bool(path) and bool(rule["clears_file_regex"].search(_read_text_quietly(path)))
+
+
 def _scan_log_alerts() -> list[dict]:
     """Evaluate every rule against every source it applies to.
 
@@ -2491,8 +2579,23 @@ def _scan_log_alerts() -> list[dict]:
     success that a later failure undid) both stop being reported, without the
     app having to keep any state of its own."""
     cache: dict[str, list[str]] = {}
+    running: dict[str, bool] = {}
     active = []
     for rule in LOG_ALERTS:
+        if _rule_settled_by_file(rule):
+            continue
+        # A rule that names a `service` is speaking for that program, and its
+        # log outlives it.  With the service stopped the log is last week's
+        # news: worth showing, not worth demanding anything about — so a
+        # failure is reported as info, and a success is not reported at all
+        # (nothing is connected while nothing is running).
+        service = rule.get("service", "")
+        if service and service not in running:
+            running[service] = _service_running(service)
+        idle = bool(service) and not running[service]
+        if idle and rule["severity"] == "ok":
+            continue
+        severity = "info" if idle else rule["severity"]
         for source in LOG_SOURCES:
             if not _rule_applies(rule, source["id"]):
                 continue
@@ -2509,7 +2612,9 @@ def _scan_log_alerts() -> list[dict]:
             stat = _log_stat(source["path"])
             active.append({
                 "id":           rule["id"],
-                "severity":     rule["severity"],
+                "severity":     severity,
+                "service":      service,
+                "service_running": running.get(service, True) if service else True,
                 "message":      rule["message"],
                 "hint":         rule["hint"],
                 "source":       source["id"],
@@ -2574,6 +2679,7 @@ def logs_alerts():
     # matched, the UI needs those to say whether the status is simply quiet or
     # the log it would come from has not been written yet.
     watched = {s for r in LOG_ALERTS if r["severity"] == "ok" for s in r["sources"]}
+
     summary = _log_source_summary()
     return jsonify({
         "ok": True,

@@ -1804,7 +1804,13 @@ function renderLogAlerts(alerts) {
         line.className = 'log-alert-line';
         const when = fmtLogTime(a.at);
         const times = a.count > 1 ? ` ×${a.count}` : '';
-        line.textContent = `${a.source_label}${when ? ' · ' + when : ''}${times}: ${a.line}`;
+        // A rule speaks for one program; say so when that program is stopped,
+        // or the reader takes it as news about whatever is playing now.
+        const idle = a.service && !a.service_running
+            ? ` — ${a.service} is not running, so this is what its log last said`
+            : '';
+        line.textContent =
+            `${a.source_label}${when ? ' · ' + when : ''}${times}: ${a.line}${idle}`;
         body.appendChild(line);
         el.appendChild(body);
 
@@ -1814,7 +1820,7 @@ function renderLogAlerts(alerts) {
             const act = document.createElement('button');
             act.className = 'log-alert-open';
             act.textContent = 'sign in';
-            act.title = 'Run the Qobuz OAuth sign-in from here';
+            act.title = "Run upmpdcli's Qobuz OAuth sign-in from here";
             act.onclick = () => openOauthPanel();
             actions.appendChild(act);
         }
@@ -1899,10 +1905,33 @@ function renderOauth(d) {
         return;
     }
     if (!d.upmpdcli_running) {
+        // The redirect lands on upmpdcli's own media-server port, so upmpdcli
+        // has to be the running renderer to catch it.  qobuzconnect2mpd is an
+        // unrelated program and cannot receive it — the switch is only needed
+        // because the two renderers are mutually exclusive.
         box.appendChild(oauthStep(
-            'upmpdcli is not running — it is what receives the Qobuz redirect. ' +
-            'Switch the renderer to upmpdcli first, then press Qobuz sign-in again.',
+            'The Qobuz redirect lands on upmpdcli\u2019s own port, and upmpdcli is ' +
+            'not running. Switch to it to sign in. This token is upmpdcli\u2019s ' +
+            'alone — qobuzconnect2mpd keeps its own, separate one — and it lives ' +
+            'on disk, so switching back later costs you nothing.',
             'oauth-warn'));
+        const sw = document.createElement('button');
+        sw.className = 'btn-log';
+        sw.textContent = 'Switch to upmpdcli and sign in';
+        sw.onclick = async () => {
+            sw.disabled = true;
+            sw.textContent = '…';
+            await switchRenderer('upmpdcli');
+            await syncRenderers();     // switchRenderer reconciles without awaiting
+            if (activeRenderer === 'upmpdcli') {
+                startOauth();          // re-run: the URL is the same, the port is now listening
+            } else {
+                sw.disabled = false;
+                sw.textContent = 'Switch to upmpdcli and sign in';
+            }
+        };
+        box.appendChild(sw);
+        return;                        // no link yet: it would dead-end
     }
     const primary = (d.urls || []).find(u => u.primary) || (d.urls || [])[0];
     if (!primary) {
