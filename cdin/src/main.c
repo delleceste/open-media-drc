@@ -48,6 +48,8 @@ struct config {
 	int    retry_secs;
 	int    out_bits;	/* 0 = negotiate with the device */
 	double in_ppm;		/* file source only: simulated clock offset */
+	int    gap_ms;		/* file source only: silence between tracks */
+	const char *transport;	/* file source only: scripted transport events */
 	bool   loop;
 	bool   probe;
 	enum cdin_loglevel level;
@@ -195,8 +197,11 @@ capture_thread(void *arg)
 				}
 				atomic_store(&s->draining, 1);
 				atomic_store(&s->input_done, 1);
-				log_info("end of input file; draining %.0f ms "
-				    "of lead", bytes_to_ms(s, ring_fill(s->ring)));
+				log_info("%s; draining %.0f ms of lead",
+				    filesrc_carrier_lost(s->file)
+				    ? "the carrier dropped"
+				    : "end of the disc",
+				    bytes_to_ms(s, ring_fill(s->ring)));
 				while (!cdin_stop &&
 				    ring_fill(s->ring) >= s->period_bytes)
 					sleep_ms(20);
@@ -322,6 +327,9 @@ struct stats_state {
 	double   t_run;		/* when playback began writing */
 	uint64_t in_at_run;	/* counter snapshots at that instant */
 	uint64_t out_at_run;
+	double   t_rate;	/* rate window: re-based on every discontinuity */
+	uint64_t in_at_rate;
+	uint64_t out_at_rate;
 	bool     run_seen;
 	unsigned clean_intervals;	/* emitted intervals fully after t_run */
 	double   ref_t;		/* reference for the drift estimate */
@@ -350,7 +358,8 @@ stats_reset_interval(struct stats_state *st)
 static void
 stats_emit(struct session *s, struct stats_state *st)
 {
-	double now = now_monotonic(), mean, elapsed, in_hz, out_hz, step, step_ms;
+	double now = now_monotonic(), mean, elapsed, rate_elapsed;
+	double in_hz, out_hz, step, step_ms;
 	uint64_t fin, fout, periods, silent, starves, drops;
 	char drift[96], silencetxt[32], rig[64];
 	bool discontinuity;
@@ -366,13 +375,18 @@ stats_emit(struct session *s, struct stats_state *st)
 	 * Both rates are measured from the instant playback began, not from
 	 * session start: the pre-fill seconds carry input frames but no output
 	 * frames, and that one-off asymmetry biases the output rate low for
-	 * minutes (a 2 s pre-fill is still a 2% error at 100 s).
+	 * minutes (a 2 s pre-fill is still a 2% error at 100 s).  The window is
+	 * then re-based on every discontinuity below, for the same reason the
+	 * drift reference is: an 800 ms dropout leaves a cumulative average
+	 * reading low for the rest of the session, long after the event that
+	 * caused it has scrolled off.
 	 */
 	elapsed = st->run_seen ? now - st->t_run : now - st->t0;
-	if (elapsed <= 0)
+	rate_elapsed = st->run_seen ? now - st->t_rate : elapsed;
+	if (elapsed <= 0 || rate_elapsed <= 0)
 		return;
-	in_hz = (double)(fin - st->in_at_run) / elapsed;
-	out_hz = (double)(fout - st->out_at_run) / elapsed;
+	in_hz = (double)(fin - st->in_at_rate) / rate_elapsed;
+	out_hz = (double)(fout - st->out_at_rate) / rate_elapsed;
 
 	periods = atomic_load(&s->periods_total);
 	silent = atomic_load(&s->periods_silent);
@@ -426,6 +440,9 @@ stats_emit(struct session *s, struct stats_state *st)
 	if (discontinuity) {
 		st->ref_set = false;
 		st->clean_intervals = 0;
+		st->t_rate = now;		/* the rate window restarts too */
+		st->in_at_rate = fin;
+		st->out_at_rate = fout;
 		snprintf(drift, sizeof(drift), "drift ref dropped (lead jumped)");
 	} else if (!st->ref_set) {
 		/*
@@ -474,14 +491,27 @@ stats_emit(struct session *s, struct stats_state *st)
 		}
 	}
 
-	/* Test-rig health, reported only when it is not perfect: these say the
-	   WAV source could not be fed, which is not a fault of the daemon. */
+	/*
+	 * Simulated-transport accounting, reported only when there is something
+	 * to say.  dropouts are deliberate (the script asked for them); stalls
+	 * and slips are the rig failing to be fed, which is a fault of neither
+	 * the daemon nor the design and must not be read as one.
+	 */
 	rig[0] = '\0';
-	if (s->file != NULL &&
-	    (filesrc_stalls(s->file) > 0 || filesrc_slips(s->file) > 0)) {
-		snprintf(rig, sizeof(rig), "  rig stalls %llu slips %llu",
-		    (unsigned long long)filesrc_stalls(s->file),
-		    (unsigned long long)filesrc_slips(s->file));
+	if (s->file != NULL) {
+		uint64_t st_stalls = filesrc_stalls(s->file);
+		uint64_t st_slips = filesrc_slips(s->file);
+		uint64_t st_drops = filesrc_dropouts(s->file);
+
+		if (st_drops > 0 && st_stalls == 0 && st_slips == 0)
+			snprintf(rig, sizeof(rig), "  dropouts %llu",
+			    (unsigned long long)st_drops);
+		else if (st_stalls > 0 || st_slips > 0)
+			snprintf(rig, sizeof(rig), "  dropouts %llu  "
+			    "rig stalls %llu slips %llu",
+			    (unsigned long long)st_drops,
+			    (unsigned long long)st_stalls,
+			    (unsigned long long)st_slips);
 	}
 
 	if (s->measure_only) {
@@ -560,9 +590,9 @@ run_session(struct session *s)
 				continue;
 			}
 			st.run_seen = true;
-			st.t_run = now_monotonic();
-			st.in_at_run = atomic_load(&s->frames_in);
-			st.out_at_run = atomic_load(&s->frames_out);
+			st.t_run = st.t_rate = now_monotonic();
+			st.in_at_run = st.in_at_rate = atomic_load(&s->frames_in);
+			st.out_at_run = st.out_at_rate = atomic_load(&s->frames_out);
 			stats_reset_interval(&st);
 		}
 
@@ -686,14 +716,32 @@ usage(FILE *out)
 "  -v, --verbose      more verbose; repeat for debug\n"
 "  -P, --probe        open both devices, report, exit\n"
 "\n"
-" Testing without a capture device: pass a WAV file to --in and it is used as\n"
-" the source, paced on a monotonic deadline exactly as a real capture device\n"
-" would deliver it.  Its rate/width/channels are adopted for the whole chain.\n"
-"      --in-ppm n     offset the file's pace, in ppm.  This is the drift rig:\n"
-"                     +n grows the lead, -n drains it.  Real hardware differs\n"
-"                     by a few ppm and takes hours to show; --in-ppm -5000\n"
-"                     drains a 2000 ms lead in ~400 s.\n"
-"      --loop         restart the file at end of data\n"
+" Simulating a CD transport instead of a capture device: point --in at a WAV\n"
+" file, or at a DIRECTORY of them to play a whole disc in name order.  The\n"
+" source is paced on a monotonic deadline exactly as real hardware delivers,\n"
+" and its rate/width/channels are adopted for the whole chain.\n"
+"      --gap ms       exact digital silence between tracks (default 2000, the\n"
+"                     Red Book pause).  0 makes it a gapless disc.  This is\n"
+"                     what the silence detector sees and where Phase 2 will\n"
+"                     resync drift.\n"
+"      --in-ppm n     offset the source's pace, in ppm.  This is the drift\n"
+"                     rig: +n grows the lead, -n drains it.  Real hardware\n"
+"                     differs by a few ppm and takes hours to show;\n"
+"                     --in-ppm -5000 drains a 2000 ms lead in ~400 s.\n"
+"      --transport s  script the buttons, as AT:EVENT separated by commas,\n"
+"                     AT being seconds into the stream:\n"
+"                       skip / prev       change track, after the mute a real\n"
+"                                         sled makes\n"
+"                       seek=[+-]N        fast forward / rewind N seconds\n"
+"                       pause=N           N s of digital silence; the carrier\n"
+"                                         stays up and the position is held\n"
+"                       dropout=N         the carrier drops for N MS and no\n"
+"                                         frames arrive.  The one event that\n"
+"                                         eats the lead, and the hazard the\n"
+"                                         lead exists to absorb\n"
+"                       stop              the carrier drops for good\n"
+"                     e.g. --transport 30:skip,45:pause=4,60:dropout=800\n"
+"      --loop         restart the disc at the end\n"
 "  -h, --help         this help\n"
 "  -V, --version      version\n");
 }
@@ -712,6 +760,7 @@ main(int argc, char **argv)
 		.period_frames = 1024,
 		.stats_secs = 0,
 		.retry_secs = 2,
+		.gap_ms = 2000,
 		.level = CDL_INFO,
 	};
 	struct ossdev in, out;
@@ -739,6 +788,8 @@ main(int argc, char **argv)
 		{ "out-bits", required_argument, NULL, 1002 },
 		{ "in-ppm",   required_argument, NULL, 1000 },
 		{ "loop",     no_argument,       NULL, 1001 },
+		{ "gap",      required_argument, NULL, 1003 },
+		{ "transport", required_argument, NULL, 1004 },
 		{ "probe",    no_argument,       NULL, 'P' },
 		{ "help",     no_argument,       NULL, 'h' },
 		{ "version",  no_argument,       NULL, 'V' },
@@ -764,6 +815,8 @@ main(int argc, char **argv)
 		case 1002: cfg.out_bits = atoi(optarg); break;
 		case 1000: cfg.in_ppm = atof(optarg); break;
 		case 1001: cfg.loop = true; break;
+		case 1003: cfg.gap_ms = atoi(optarg); break;
+		case 1004: cfg.transport = optarg; break;
 		case 'P': cfg.probe = true; break;
 		case 'h': usage(stdout); return 0;
 		case 'V': printf("omdrc-cdin " CDIN_VERSION "\n"); return 0;
@@ -812,25 +865,30 @@ main(int argc, char **argv)
 	in.fd = out.fd = -1;
 
 	/*
-	 * A character device is an OSS capture device; anything else is a WAV
-	 * file standing in for one.  The file's own format wins, because the
-	 * output has to be opened to match whatever the source actually is.
+	 * A character device is an OSS capture device.  Anything else is the
+	 * simulated transport: a WAV file, or a directory of them standing in
+	 * for a disc.  Its own format wins, because the output has to be
+	 * opened to match whatever the source actually is.
 	 */
 	if (stat(cfg.in_path, &stbuf) == 0 && !S_ISCHR(stbuf.st_mode)) {
-		s.file = filesrc_open(cfg.in_path, cfg.loop, cfg.in_ppm, err,
-		    sizeof(err));
-		if (s.file == NULL) {
-			log_err("input file %s: %s", cfg.in_path, err);
+		struct filesrc_cfg fc = {
+			.path = cfg.in_path,
+			.loop = cfg.loop,
+			.ppm = cfg.in_ppm,
+			.gap_ms = cfg.gap_ms,
+			.transport = cfg.transport,
+		};
+
+		if ((s.file = filesrc_open(&fc, err, sizeof(err))) == NULL) {
+			log_err("input %s: %s", cfg.in_path, err);
 			cdin_log_close();
 			return 1;
 		}
 		cfg.rate = filesrc_rate(s.file);
 		cfg.channels = filesrc_channels(s.file);
 		cfg.bits = filesrc_bits(s.file);
-		log_info("input file %s: %d Hz %d-bit %dch, %.1f s%s%s",
-		    cfg.in_path, cfg.rate, cfg.bits, cfg.channels,
-		    filesrc_seconds(s.file), cfg.loop ? ", looping" : "",
-		    cfg.in_ppm != 0.0 ? " (paced off nominal)" : "");
+		if (cfg.loop)
+			log_info("the disc repeats at the end");
 		if (cfg.in_ppm != 0.0)
 			log_info("simulated source drift: %+.1f ppm", cfg.in_ppm);
 	}
@@ -846,7 +904,9 @@ main(int argc, char **argv)
 			ok = 1;
 		}
 		if (s.file != NULL) {
-			log_info("input file %s: readable", cfg.in_path);
+			log_info("input %s: readable, %d track%s", cfg.in_path,
+			    filesrc_tracks(s.file),
+			    filesrc_tracks(s.file) == 1 ? "" : "s");
 		} else if (ossdev_open(&in, cfg.in_path, true, cfg.rate,
 		    cfg.channels, cfg.bits, cfg.period_frames, err,
 		    sizeof(err)) == 0) {

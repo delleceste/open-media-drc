@@ -158,10 +158,6 @@ ring_read_some(struct ring *r, void *buf, size_t n)
 		pthread_cond_wait(&r->cv, &r->mu);
 	got = r->fill < n ? r->fill : n;
 	got -= got % r->frame_bytes;
-	if (r->down && got == 0) {
-		pthread_mutex_unlock(&r->mu);
-		return 0;
-	}
 	if (got > 0) {
 		copy_out(r, buf, got);
 		pthread_cond_broadcast(&r->cv);

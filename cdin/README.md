@@ -93,14 +93,23 @@ drift. Without it, every such seek would be an audible dropout.
 Unavoidable cost: **Stop is also heard `lead` late** — the music runs on for
 about two seconds after you press it.
 
+Every row of that table is reproducible without a CD player: `--transport`
+scripts them against a WAV disc, so the claims above are testable rather than
+merely asserted. See "Scripting the buttons" below.
+
 ## Status
 
 **Phase 1 (this code)** — capture → ring → playback, ratio 1.0, with device
 retry, periodic stats and file logging, lossless width negotiation for
-bit-perfect output devices, and a WAV source that stands in for the capture
-hardware. Exercised end to end on the dev box (`dal`, no capture device):
-a 127 s 16-bit CD rip played to a bit-perfect `/dev/dsp0` with `starves 0`,
-`drops 0`, and the lead held inside a one-period band for the whole track.
+bit-perfect output devices, and a simulated CD transport standing in for the
+capture hardware.
+
+Exercised end to end on the dev box (`dal`, which has no capture device):
+a 12-track 16-bit rip played to a bit-perfect `/dev/dsp0` with `starves 0`,
+`drops 0` and the lead inside a one-period band throughout, including across
+track gaps, skips, seeks and a 4 s pause; an 800 ms scripted carrier dropout
+cost exactly 800 ms of lead and starved nothing. What is *not* tested is
+everything on the far side of `/dev/dspN` — see Phase 0.
 
 **Phase 2 (next)** — the `NO_CARRIER → IDLE → PLAYING` state machine. Digital
 silence is an exact all-zero compare (a CD's silence is literally `0x0000`, so
@@ -117,7 +126,7 @@ and a panel tile in `omdrc-ctrl/src/commands.conf.in`.
 
 | Short | Long | Default | |
 |---|---|---|---|
-| `-i` | `--in` | `/dev/dsp1` | capture device |
+| `-i` | `--in` | `/dev/dsp1` | capture device, or a WAV file / a directory of them (a disc) |
 | `-o` | `--out` | `/dev/dsp.play` | playback device; `none` = capture-only measurement |
 | `-r` | `--rate` | `44100` | |
 | `-c` | `--channels` | `2` | |
@@ -132,27 +141,87 @@ and a panel tile in `omdrc-ctrl/src/commands.conf.in`.
 | `-d` | `--debug` | | emit periodic stats |
 | `-v` | `--verbose` | | more verbose; repeat (`-vv`) for debug lines |
 | `-P` | `--probe` | | open both devices, report, exit |
-| | `--in-ppm` | `0` | offset a file source's pace, in ppm (test rig) |
-| | `--loop` | | restart a file source at end of data |
+| | `--in-ppm` | `0` | offset the simulated source's pace, in ppm (drift rig) |
+| | `--gap` | `2000` | digital silence between tracks, ms (`0` = gapless disc) |
+| | `--transport` | | script the transport buttons — see below |
+| | `--loop` | | restart the disc at the end |
 
 Use `--out /dev/dsp0` to write the DAC directly, bypassing BruteFIR — useful to
 isolate whether a problem is in the chain or in the bridge.
 
-## Testing without a capture device
+## Simulating a CD transport instead of a capture device
 
-Pass a **WAV file** to `--in` and it stands in for the capture device. A file has
-no clock, so it is *paced* on a monotonic deadline at its own nominal rate —
-without that the ring would fill instantly and the drop-oldest policy would
-discard nearly everything. Its rate/width/channels are adopted for the whole
-chain, so the output opens to match.
+Point `--in` at a **directory** and its `*.wav` files become the tracks of a
+disc, played in name order — which is how every ripper numbers them. A single
+file is a one-track disc. The format is taken from the first track and all the
+others must match, because a disc has one format by definition and the output
+is opened once to suit it.
 
-**The medium is deliberately not part of the emulation.** The rig emulates the
-CD player's clock, not the disk's seek time, so the file is prefetched on its
-own thread (4 s deep) and the paced read is served from RAM. This is not
-incidental: with the read inline, one 3 s stall on an external USB drive drained
-a 2 s lead to 23 ms and starved playback — a property of the rig, not of the
-design under test. Two rules follow from the same principle, that a capture
-device cannot stall and cannot burst:
+```sh
+# insert the disc
+omdrc-cdin -i "/media/.../Mendelssohn - Orgelsonaten - Hurford" -o /dev/dsp0 -d
+```
+```
+[INF] disc: 12 tracks, 57:53, 44100 Hz 16-bit 2ch, 2000 ms between tracks
+[INF] transport: track 2/12 (split-track01.wav) begins at 0:00
+```
+
+Between tracks the rig emits `--gap` milliseconds of **exact digital silence**,
+default 2000 — Red Book's standard inter-track pause. That silence is not
+decoration. It is what the daemon's detector looks for (`silence %` in the
+stats), and it is where Phase 2 will resync drift, so a rig that could not
+produce it could not test the thing the design depends on. `--gap 0` gives a
+gapless disc, which is the harder case.
+
+Real rips already carry some of their own: on the disc above, track 1 is a
+0.43 s pregap of pure zeros and track 2 opens with 1.81 s of them, which is why
+`silence` reads non-zero at the start even with `--gap 0`.
+
+### Scripting the buttons
+
+`--transport` takes `AT:EVENT` pairs separated by commas, `AT` being seconds
+into the stream. Each event puts on the wire what the corresponding button puts
+on a real player, per the table further up:
+
+| Event | On the wire |
+|---|---|
+| `skip` / `prev` | 300 ms mute, then the next/previous track |
+| `seek=[+-]N` | 300 ms mute, then N seconds forward/back within the track |
+| `pause=N` | N seconds of digital silence; carrier up, position held |
+| `dropout=N` | the carrier drops for N **milliseconds** and no frames arrive |
+| `stop` | the carrier drops for good and the stream ends |
+
+```sh
+omdrc-cdin -i DISC -o /dev/dsp0 -d -s 5 \
+    --transport "20:skip,35:pause=4,55:dropout=800,70:seek=+30,85:prev,105:stop"
+```
+
+**`dropout` is the important one.** Everything else changes *what* is sent
+while both clocks keep running, so the lead is untouched — that is the whole
+content of "transport actions change what is sent, never how fast". A carrier
+dropout is the exception and the one real hazard: no frames arrive at all while
+the wall clock runs, so the lead drains by exactly the dropout's length and
+never recovers. That is what a seconds-scale lead is *for*, independently of
+drift, and it is directly visible:
+
+```
+[WRN] transport: carrier dropout of 800 ms — no frames on the wire; the lead absorbs it
+[stats] lead 1374 ms (min 836, max 1649)  drift ref dropped (lead jumped)  ...  dropouts 1
+[stats] lead  840 ms (min 836, max  859)  ...  starves 0  ...  dropouts 1
+```
+
+800 ms of lead gone, `starves 0` — absorbed, exactly as designed. Run the same
+script with `--lead 500` and it starves instead, which is how you find the
+floor for your own transport.
+
+### The medium is not part of the emulation
+
+The rig emulates the CD player's clock, not the disk's seek time, so the disc
+is prefetched on its own thread (4 s deep) and the paced read is served from
+RAM. This is not incidental: with the read inline, one 3 s stall on an external
+USB drive drained a 2 s lead to 23 ms and starved playback — a property of the
+rig, not of the design under test. Two rules follow from the same principle,
+that a capture device can neither stall nor burst:
 
 * if the medium genuinely cannot sustain realtime, the daemon says so
   (`the medium is not keeping up — prefetch buffer ran dry`) rather than
@@ -163,16 +232,8 @@ device cannot stall and cannot burst:
   stall and put a step change through the drift estimate.
 
 Both are counted and surface as `rig stalls N slips N` in the stats — shown only
-when non-zero, because both should be zero.
-
-```sh
-# play a known file through the bridge to the DAC
-omdrc-cdin -i ../tests/bitperfect-test-44100-s32-stereo.wav -o /dev/dsp0 -d -s 1
-```
-
-`tests/bitperfect-test-44100-s32-stereo.wav` is the natural input: 44.1 kHz /
-S32 / stereo (the chain's format), every frame uniquely identifiable, and about
--90 dBFS so it cannot blast out of the speakers.
+when non-zero, because both should be zero. A scripted `dropout` is deliberate
+and counted separately, as `dropouts`.
 
 ### Reading the stats
 
@@ -192,24 +253,31 @@ S32 / stereo (the chain's format), every frame uniquely identifiable, and about
   would swamp the figure, and which cancels in a difference. The `+/-` is the
   period quantisation over elapsed time — while it exceeds the estimate, the
   estimate means nothing. It needs minutes, and tightens for hours.
-* **`in` / `out` are measured from the instant playback began**, not from
+* **`in` / `out` are measured from the instant playback began** — not from
   startup, so the pre-fill seconds (input frames, no output frames) do not bias
-  them.
+  them — and the window restarts at every discontinuity, for the same reason
+  the drift reference does. An 800 ms dropout would otherwise leave the
+  cumulative average reading low for the rest of the session, long after the
+  event that caused it had scrolled off the screen.
 * **`starves`** counts events, not periods: one continuous starvation is 1.
 * **`drift ref dropped (lead jumped)`** means the estimate was thrown away and
   restarted, because the lead moved for a reason that is not the clocks — a
   starve, a ring overflow, or a step too large to be drift. Measuring across
   such an event reports the step: a 3.3 s jump inside a 60 s window once read
   as `+54361 ppm`, which is a stall wearing a drift figure's clothes.
-* **`rig stalls / slips`** appears only for a WAV source, and only when
-  non-zero. It is a statement about the *test rig* — the medium could not be
-  read fast enough — not about the daemon.
+* **`dropouts`** counts *scripted* carrier drops. They are deliberate, and the
+  lead they consume is the measurement.
+* **`rig stalls / slips`** appears only for the simulated source, and only when
+  non-zero. It is a statement about the *test rig* — the host could not read
+  the medium fast enough — not about the daemon or the design.
 
 ### The drift rig
 
-`--in-ppm` offsets the pace, which makes the design's central claim testable in
-seconds instead of hours — real hardware differs by a few ppm and takes a full
-day to show anything.
+`--in-ppm` offsets the simulated source's pace, which makes the design's central
+claim testable in seconds instead of hours — real hardware differs by a few ppm
+and takes a full day to show anything. Unlike `dropout`, this is not a
+transport event: it is the *clock* being wrong, which is the condition the
+whole daemon exists to survive.
 
 ```sh
 # source 10% slow: the lead drains and the DAC starves
