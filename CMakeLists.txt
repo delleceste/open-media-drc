@@ -75,6 +75,9 @@ include(cmake/hotplug.cmake)           # DAC-hotplug + brutefir services (udev/d
 include(cmake/renderers.cmake)         # mpd config/drop-in + upmpdcli config/service
 add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
+if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+  add_subdirectory(cdin)               # omdrc-cdin — CD/S-PDIF capture bridge (OSS only)
+endif()
 
 # ── `make user-install`: the per-user steps a root install cannot do ─────────
 # Run as the audio user after the system install: it deploys the --user services,
