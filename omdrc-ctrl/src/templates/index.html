@@ -898,15 +898,44 @@
 </div>
 {% endmacro %}
 
-<!-- MPD info panel -->
+<!-- Digital Room Correction first: it is what the box exists for -->
+{% for group_name, group_label, cmds in groups if group_name == 'drc' %}
+{{ render_group(group_name, group_label, cmds) }}
+{% endfor %}
+
+<!-- Qobuz Connect / upmpdcli renderer panel: the DRC card says what the
+     room correction is doing, this one says what is feeding it -->
 <div class="card">
-    <div class="card-title title-row">
-        <span>MPD <span class="refresh-note" id="mpd-refresh-label">refresh: {{ monitor_interval }}s</span></span>
-        <button class="btn-refresh" id="mpd-refresh-btn" title="Refresh">↻</button>
+    <div class="card-title qc-card-title">
+        <span>Renderer <span class="refresh-note" id="qc-refresh-label">refresh: 1s</span></span>
+        <div class="title-actions">
+            <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
+            <button class="btn-log" id="btn-restart" onclick="restartQc()" disabled>Restart</button>
+            <button class="btn-log" id="btn-log" onclick="toggleLog()">Log</button>
+            <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
+        </div>
     </div>
-    <div id="mpd-panel" style="padding:4px 0">
-        <span style="color:var(--muted);font-style:italic">loading…</span>
+    <!-- Mutually-exclusive renderer toggle -->
+    <div class="qc-switch" id="qc-switch">
+        <button class="qc-seg" data-target="qobuzconnect2mpd" onclick="switchRenderer('qobuzconnect2mpd')">qobuzconnect2mpd</button>
+        <button class="qc-seg" data-target="upmpdcli" onclick="switchRenderer('upmpdcli')">upmpdcli</button>
     </div>
+    <!-- Which renderer the boot service would start on the NEXT reboot -->
+    <div class="refresh-note" id="qc-boot"></div>
+    <!-- Streaming-service connection status read out of the logs (ok rules) -->
+    <div id="renderer-status" class="log-status" aria-live="polite"></div>
+    <div style="padding:12px 0">
+        <div id="qc-line1" class="idle">—</div>
+        <div id="qc-line2"></div>
+        <div id="qc-activity" aria-live="polite">
+            <span class="qc-act-dot"></span><span id="qc-activity-text"></span>
+        </div>
+    </div>
+    <div id="qconnect-log-panel" style="display:none">
+        <pre id="qc-log-content" class="qc-log"></pre>
+    </div>
+    <!-- Qobuz OAuth sign-in, driven from here so the box needs no keyboard -->
+    <div id="qobuz-oauth-panel" style="display:none" aria-live="polite"></div>
 </div>
 
 <!-- Live spectrum analyzer -->
@@ -996,8 +1025,20 @@
     </div>{# #spectrum-body #}
 </div>
 
-<!-- Command groups (all except system) -->
-{% for group_name, group_label, cmds in groups if group_name != 'system' %}
+<!-- MPD info panel -->
+<div class="card">
+    <div class="card-title title-row">
+        <span>MPD <span class="refresh-note" id="mpd-refresh-label">refresh: {{ monitor_interval }}s</span></span>
+        <button class="btn-refresh" id="mpd-refresh-btn" title="Refresh">↻</button>
+    </div>
+    <div id="mpd-panel" style="padding:4px 0">
+        <span style="color:var(--muted);font-style:italic">loading…</span>
+    </div>
+</div>
+
+<!-- The remaining command groups (Applications, plus any custom group) -->
+{% for group_name, group_label, cmds in groups
+   if group_name not in ('drc', 'system') %}
 {{ render_group(group_name, group_label, cmds) }}
 {% endfor %}
 
@@ -1076,40 +1117,6 @@
 {% for group_name, group_label, cmds in groups if group_name == 'system' %}
 {{ render_group(group_name, group_label, cmds) }}
 {% endfor %}
-
-<!-- Qobuz Connect / upmpdcli renderer panel (bottom) -->
-<div class="card">
-    <div class="card-title qc-card-title">
-        <span>Renderer <span class="refresh-note" id="qc-refresh-label">refresh: 1s</span></span>
-        <div class="title-actions">
-            <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
-            <button class="btn-log" id="btn-restart" onclick="restartQc()" disabled>Restart</button>
-            <button class="btn-log" id="btn-log" onclick="toggleLog()">Log</button>
-            <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
-        </div>
-    </div>
-    <!-- Mutually-exclusive renderer toggle -->
-    <div class="qc-switch" id="qc-switch">
-        <button class="qc-seg" data-target="qobuzconnect2mpd" onclick="switchRenderer('qobuzconnect2mpd')">qobuzconnect2mpd</button>
-        <button class="qc-seg" data-target="upmpdcli" onclick="switchRenderer('upmpdcli')">upmpdcli</button>
-    </div>
-    <!-- Which renderer the boot service would start on the NEXT reboot -->
-    <div class="refresh-note" id="qc-boot"></div>
-    <!-- Streaming-service connection status read out of the logs (ok rules) -->
-    <div id="renderer-status" class="log-status" aria-live="polite"></div>
-    <div style="padding:12px 0">
-        <div id="qc-line1" class="idle">—</div>
-        <div id="qc-line2"></div>
-        <div id="qc-activity" aria-live="polite">
-            <span class="qc-act-dot"></span><span id="qc-activity-text"></span>
-        </div>
-    </div>
-    <div id="qconnect-log-panel" style="display:none">
-        <pre id="qc-log-content" class="qc-log"></pre>
-    </div>
-    <!-- Qobuz OAuth sign-in, driven from here so the box needs no keyboard -->
-    <div id="qobuz-oauth-panel" style="display:none" aria-live="polite"></div>
-</div>
 
 <!-- Log viewer: any log listed in [logs] in commands.conf -->
 <div class="card">
