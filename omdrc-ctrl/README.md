@@ -1438,7 +1438,11 @@ sysctl hw.usb.uaudio
 ## Built-in monitoring panels
 
 In addition to the configurable command cards, fixed monitoring panels always
-appear at the bottom of the page.
+appear on the page. The order is by how often a panel is worth a look, not by
+kind: **Digital Room Correction** first, then **Renderer**, **Spectrum** and
+**MPD**, then the remaining command groups (**Applications**, plus any custom
+group), the diagnostic panels below them (Brutefir CPU, RAM, Audio devices,
+Advanced, Top CPU), and finally **System** and the **Logs** card.
 
 Auto-refreshing panels show a client-side countdown such as `refresh: 5s`.
 The circular arrow button in each panel header refreshes that panel immediately
