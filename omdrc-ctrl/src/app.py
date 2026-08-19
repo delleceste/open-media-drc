@@ -2396,11 +2396,17 @@ def qconnect_status():
             "ok":    True,
             "line1": lines[0] if len(lines) > 0 else "",
             "line2": lines[1] if len(lines) > 1 else "",
+            # Line 3 is qobuzconnect2mpd's activity line: what it is doing
+            # between the phone's play command and the first sound (resolving
+            # stream URLs, reconstructing segments, waiting on MPD), or the
+            # download error that stopped it.  Empty when it is just playing.
+            "line3": lines[2] if len(lines) > 2 else "",
         })
     except FileNotFoundError:
-        return jsonify({"ok": False, "line1": "", "line2": ""})
+        return jsonify({"ok": False, "line1": "", "line2": "", "line3": ""})
     except OSError as e:
-        return jsonify({"ok": False, "line1": "", "line2": "", "error": str(e)})
+        return jsonify({"ok": False, "line1": "", "line2": "", "line3": "",
+                        "error": str(e)})
 
 
 def _service_running(name: str) -> bool:

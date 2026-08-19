@@ -375,12 +375,18 @@ if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
   # Honour the on/off state recorded at shutdown.  If DRC was off, stay off;
   # otherwise fall through and restore the last sample rate.  Kept separate from
   # STATE_FILE so turning off never erases the remembered rate.
-  if [ -f "$POWER_FILE" ] && [ "$(cat "$POWER_FILE")" = "off" ]; then
+  restore_power="on"
+  [ -f "$POWER_FILE" ] && restore_power=$(cat "$POWER_FILE" 2>/dev/null || echo on)
+  restore_state=""
+  [ -f "$STATE_FILE" ] && restore_state=$(cat "$STATE_FILE" 2>/dev/null || true)
+  # Log what restore actually read, so a boot that ignores the saved state can
+  # be told apart from a saved state that was never written in the first place.
+  log_event "event=restore power=${restore_power:-unset} last_arg=${restore_state:-unset} state_dir=${STATE_DIR}"
+  if [ "$restore_power" = "off" ]; then
     echo "Last power state was off — leaving DRC disabled (direct DAC)"
     exec "$0" off
   fi
-  state=""
-  [ -f "$STATE_FILE" ] && state=$(cat "$STATE_FILE")
+  state="$restore_state"
   args=$(state_to_args "$state")
   case "$args" in
     off|"")
@@ -928,8 +934,31 @@ stop_brutefir
 
 # ── off / stop: re-enable direct DAC, stop virtual_oss ───────────────────────
 if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
-  # Tear down the DRC chain first so /dev/dsp0 is free before the direct
-  # output opens it (the DAC is single-open: vchans off / bit-perfect).
+  # Record the off INTENT first, before touching a single device.  `off` is a
+  # user decision, and the teardown below talks to MPD, sudo and a cuse device
+  # — any of which can fail or wedge.  Recording last after the teardown meant
+  # one failed `mpc` (a wedged MPD is exactly what a virtual_oss teardown can
+  # produce) aborted the run under `set -e` with the intent unrecorded, and the
+  # next boot's `restore` happily brought DRC back up.  Same rule the rate path
+  # already applies to last_arg: the file records what was *asked for*.
+  # `stop` is a transient teardown (service shutdown / USB unplug) and leaves
+  # last_power untouched, so a running system that simply reboots is restored
+  # rather than left off.  STATE_FILE (the rate) is never touched here.
+  if [ "$mode" = "off" ]; then
+    echo "off" > "$POWER_FILE"
+    chmod 644 "$POWER_FILE" 2>/dev/null || true
+    log_event "event=power_saved mode=off power=off"
+  fi
+  # Release MPD from the DRC outputs BEFORE the backend under them disappears.
+  # brutefir is already down at this point, but MPD may still hold /dev/dsp.play
+  # open through DRC-native/DRC-resamp; pulling virtual_oss out from under an
+  # open output is what wedges MPD (and then the "enable only" below hangs).
+  # This mirrors what the chain-rebuild path does a few lines further down.
+  mpc disable "DRC-native" >/dev/null 2>&1 || true
+  mpc disable "DRC-resamp" >/dev/null 2>&1 || true
+  sleep 0.5
+  # Now tear the chain down so /dev/dsp0 is free before the direct output opens
+  # it (the DAC is single-open: vchans off / bit-perfect).
   if ! $IS_LINUX; then
     echo "stopping virtual_oss"
     stop_virtual_oss
@@ -937,15 +966,14 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # Enable ONLY the direct DAC output — this disables every other output.
   # NB: mpc has no "disable all" keyword (it errors "all: no such output");
   # "enable only <name>" is the correct idiom: it enables the named output
-  # and disables all others atomically.
-  mpc enable only "OKTO-DAC"
-  # Only an explicit `off` records the off state (so a reboot/restore stays
-  # off).  `stop` is a transient teardown (service shutdown / USB unplug) and
-  # leaves last_power untouched, so a running system that simply reboots is
-  # restored rather than left off.  STATE_FILE (the rate) is never touched here.
-  if [ "$mode" = "off" ]; then
-    echo "off" > "$POWER_FILE"
-    chmod 644 "$POWER_FILE" 2>/dev/null || true
+  # and disables all others atomically.  A failure here is reported, not fatal:
+  # the DRC chain is already down and the state is already recorded, so aborting
+  # would only hide the problem.
+  if mpc enable only "OKTO-DAC"; then
+    log_event "event=run_result mode=${mode} result=stopped output=OKTO-DAC"
+  else
+    log_event "event=run_result mode=${mode} result=stopped output=fail"
+    echo "warning: could not switch MPD to the direct DAC output" >&2
   fi
   echo "DRC stopped"
   exit 0
@@ -1033,7 +1061,14 @@ while [ "$vattempt" -lt "$total_attempts" ]; do
   log_event "event=bf_start attempt=$vattempt bf_attempts=${BF_ATTEMPTS} result=ok"
 
   echo "warming up DAC at ${actual_rate} Hz (silent stream, up to ${DAC_WARMUP_SECS}s)"
-  warm_until_locked; warm_rc=$?
+  # `warm_until_locked; warm_rc=$?` would be killed by `set -e` the moment the
+  # function returns non-zero — i.e. on exactly the two outcomes the branches
+  # below exist to handle (2 = brutefir died, 1 = clock never locked).  The run
+  # then aborted silently: no verify event, no retry, no rollback, no state
+  # written, and the box was left with brutefir up and every MPD output still
+  # disabled (silence).  `|| warm_rc=$?` keeps the status without tripping -e.
+  warm_rc=0
+  warm_until_locked || warm_rc=$?
   if [ "$warm_rc" -eq 2 ]; then
     log_event "event=warmup attempt=$vattempt result=died warm_ms=${WARM_MS}"
     echo "brutefir exited during warm-up (attempt $vattempt/$total_attempts)" >&2

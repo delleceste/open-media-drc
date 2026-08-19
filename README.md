@@ -422,6 +422,14 @@ so the on/off state and the remembered rate stay independent:
   writes `off`. The service teardown verb `stop` deliberately does **not** write it, so
   only a real user action changes it. `restore` reads `last_power` first and stays off
   when it is `off`.
+  `off` writes the file **before** tearing anything down, and the teardown that follows
+  can no longer abort the run: the file records what was *asked for*, exactly as
+  `last_arg` does. It used to be written last, so a single failing `mpc` — which is
+  precisely what a wedged MPD produces when `virtual_oss` is pulled out from under an
+  open output — aborted the run under `set -e` with the user's choice unrecorded, and
+  the next boot cheerfully brought DRC back up. `drc.log` now records both halves:
+  `event=power_saved` when the intent is stored, and `event=restore` with the
+  `power` / `last_arg` / `state_dir` that a boot actually read.
 
 So `drc.sh off` followed by a reboot leaves DRC off (direct DAC); a reboot while DRC is
 running brings it back at the same rate (the shutdown teardown runs `stop`, which leaves

@@ -36,7 +36,32 @@ done
 if [ -n "$DRC_LIB" ]; then
     # drc-audio.sh derives REPO from HERE (= the dir above it) for its run-from-repo
     # drc.sh fallback; when installed it prefers the omdrc wrapper on PATH.
-    HERE="$(dirname "$DRC_LIB")/.." . "$DRC_LIB"
+    #
+    # DRC_SKIP_RESAMP: READ the DRC state here, never write it.  drc-audio.sh
+    # also switches the chain to resamp when it is not already auto-resampling,
+    # which is right for play-media.sh / play-bluray.sh -- those are starting a
+    # movie -- but wrong here: this script runs from the session autostart and
+    # plays nothing (--idle=yes, no window).  Letting it switch meant every
+    # login silently rewrote whatever the listener had chosen at the panel:
+    # `omdrc off` came back auto-resampling, and so did a deliberate 44.1/96 kHz
+    # native setting.  The saved DRC state must outlive a reboot, so the idle
+    # launcher only reads it and binds mpv to whatever device matches.
+    DRC_SKIP_RESAMP=1 HERE="$(dirname "$DRC_LIB")/.." . "$DRC_LIB"
+
+    # Bind the DRC path unconditionally, whatever the chain is doing right now.
+    # Video always plays through DRC (see the header), and the web remote puts
+    # the chain in resamp before it loads a file -- mpv opens the audio device
+    # lazily, at playback, so the device only has to exist by then, not now.
+    # Letting the *current* DRC state pick the device is what tied this launcher
+    # to the chain: it had to switch DRC on at login to be sure of binding
+    # /dev/dsp.play, and that is what overwrote the listener's saved setting.
+    # Fixed delay also keeps the A/V trim's baseline stable across logins (see
+    # src/lib/avsync.py, which anchors on mpv's launch --audio-delay).
+    AUDIO_DEVICE="$DRC_DEVICE"
+    AUDIO_DELAY="-$DRC_VIDEO_DELAY"
+    SUB_DELAY="$DRC_SUB_DELAY"
+    echo "idle mpv bound to $AUDIO_DEVICE (video delayed ${DRC_VIDEO_DELAY}s);" \
+         "the web remote switches DRC to resamp when it loads a file"
 else
     AUDIO_DEVICE="$FALLBACK_DEVICE"; AUDIO_DELAY="-0.67"; SUB_DELAY="0"
 fi

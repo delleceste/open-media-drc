@@ -393,6 +393,35 @@
             font-size: .78rem;
             color: var(--muted);
         }
+        /* Activity line: the only feedback there is for the gap between
+           pressing play on the phone and the first sound.  Hidden while
+           qobuzconnect2mpd has nothing to report, so a quiet, playing system
+           looks exactly as it did before. */
+        #qc-activity {
+            display: none;
+            align-items: center;
+            gap: 7px;
+            margin-top: 6px;
+            font-size: .8rem;
+            color: var(--accent);
+        }
+        #qc-activity.show { display: flex; }
+        #qc-activity .qc-act-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            flex: 0 0 auto;
+            animation: qc-act-pulse 1.2s ease-in-out infinite;
+        }
+        #qc-activity.error { color: var(--red, #f85149); }
+        #qc-activity.error .qc-act-dot { animation: none; }
+        @keyframes qc-act-pulse {
+            0%, 100% { opacity: 1; }
+            50%      { opacity: .25; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #qc-activity .qc-act-dot { animation: none; }
+        }
         #qconnect-log-panel {
             border-top: 1px solid var(--border);
             padding: 10px 0 4px;
@@ -1071,6 +1100,9 @@
     <div style="padding:12px 0">
         <div id="qc-line1" class="idle">—</div>
         <div id="qc-line2"></div>
+        <div id="qc-activity" aria-live="polite">
+            <span class="qc-act-dot"></span><span id="qc-activity-text"></span>
+        </div>
     </div>
     <div id="qconnect-log-panel" style="display:none">
         <pre id="qc-log-content" class="qc-log"></pre>
@@ -1608,6 +1640,16 @@ function startAutoRefresh(name, intervalMs, fetchFn) {
     }, 1000);
 }
 
+// Show what qobuzconnect2mpd is doing while nothing is audible yet, and get
+// out of the way once it is playing.
+function setQcActivity(text) {
+    const box = document.getElementById('qc-activity');
+    if (!box) return;
+    document.getElementById('qc-activity-text').textContent = text;
+    box.classList.toggle('show',  !!text);
+    box.classList.toggle('error', /fail|error/i.test(text));
+}
+
 function fmtColor(line2) {
     const m = line2.match(/(\d+)\s*bit.*?([\d.]+)\s*kHz/i);
     if (!m) return '';
@@ -1634,6 +1676,7 @@ async function fetchQcStatus() {
         }
         l2.textContent  = d.line2 || '';
         l2.style.color  = d.line2 ? fmtColor(d.line2) : '';
+        setQcActivity(d.line3 || '');
     } catch { /* ignore — status dot already signals offline */ }
 }
 

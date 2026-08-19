@@ -39,6 +39,13 @@ DISC_ENABLED = True
 DISC_DEV = "cd0"
 DISC_CACHE = "bd"
 DISC_SCRIPT = os.path.join(_HERE, os.pardir, "disc.sh")
+# The DRC audio library the desktop launchers source. Sourcing it puts the DRC
+# chain in resamp mode; mpv-idle.sh sources it with DRC_SKIP_RESAMP=1 and only
+# reads from it. Installed: beside disc.sh; run-from-repo: video/lib/.
+DRC_AUDIO_LIB = next(
+    (p for p in (os.path.join(_HERE, os.pardir, "drc-audio.sh"),
+                 os.path.join(_HERE, os.pardir, os.pardir, "lib", "drc-audio.sh"))
+     if os.path.isfile(p)), None)
 AVSYNC_RANGE = 1.0
 AVSYNC_STEP = 0.01
 
@@ -351,6 +358,59 @@ def _disc_env() -> dict:
     return e
 
 
+_drc_lock = threading.Lock()
+
+
+def _ensure_drc_resamp() -> str | None:
+    """Put the DRC chain in resamp mode before mpv opens the audio device.
+
+    mpv-idle.sh binds the DRC device unconditionally and mpv opens it lazily, so
+    the chain only has to be up by the time a file is loaded — which is here.
+
+    It has to be up, though. This DAC is bit-perfect with virtual channels off
+    (`dev.pcm.0.bitperfect=1`, `play.vchans=0`), so the kernel resamples
+    nothing: 48 kHz movie audio sent straight to a DAC clocked at some other
+    rate plays at hw_rate/48000 speed — the 2x that made this worth handling at
+    all. Routing through the resampling chain is what makes the speed right, and
+    /dev/dsp.play does not even exist while DRC is off.
+
+    Idempotent and quick when the chain is already resampling; a switch costs a
+    brutefir restart. Returns None on success, else a message — playback is
+    attempted either way, so a box with no DRC installed still works.
+    """
+    if not DRC_AUDIO_LIB:
+        return None
+    import subprocess
+    # Same PATH widening as the disc helper: drc-audio.sh looks up the `omdrc`
+    # and `omdrc-status` wrappers on PATH. HERE mirrors what mpv-idle.sh passes.
+    env = _disc_env()
+    env["HERE"] = os.path.join(os.path.dirname(os.path.abspath(DRC_AUDIO_LIB)),
+                               os.pardir)
+    env.pop("DRC_SKIP_RESAMP", None)   # this caller DOES want the switch
+    # Check the outcome, not the exit status: drc-audio.sh reports a failed
+    # switch with `|| echo ...` and still exits 0. Ask it instead which device
+    # the run ended up selecting, and require that to be the DRC one — that is
+    # the thing mpv is bound to. Its own chatter goes to stderr, out of the way.
+    probe = '. "$1" >&2; printf \'%s\\n%s\\n\' "$AUDIO_DEVICE" "$DRC_DEVICE"'
+    try:
+        with _drc_lock:
+            r = subprocess.run(["sh", "-c", probe, "sh", DRC_AUDIO_LIB],
+                               capture_output=True, text=True, timeout=120,
+                               env=env)
+    except Exception as e:                      # timeout, missing sh, ...
+        return f"could not switch DRC to resamp: {e}"
+    got = r.stdout.splitlines()
+    if r.returncode != 0 or len(got) < 2:
+        return ((r.stderr or "").strip().splitlines() or
+                ["could not switch DRC to resamp"])[-1]
+    if got[0] != got[1]:
+        detail = [ln for ln in (r.stderr or "").splitlines() if "fail" in ln.lower()]
+        return detail[-1] if detail else (
+            f"DRC is not resampling — audio goes to {got[0]}, "
+            "so playback speed may be wrong")
+    return None
+
+
 def _gcache_up() -> str:
     import subprocess
     r = subprocess.run([DISC_SCRIPT, "up"], capture_output=True, text=True,
@@ -416,6 +476,7 @@ def api_disc():
 
     with _disc_lock:
         try:
+            warning = _ensure_drc_resamp()
             cache_dev = f"/dev/cache/{DISC_CACHE}" if _disc_active else _gcache_up()
             n = play.bd_longest_mpls(cache_dev)
             target = f"bd://mpls/{n}" if n is not None else "bd://"
@@ -424,7 +485,10 @@ def api_disc():
             if not _disc_active:
                 _disc_active = True
                 threading.Thread(target=_disc_watch, name="disc-watch", daemon=True).start()
-            return jsonify({"ok": True, "target": target})
+            resp = {"ok": True, "target": target}
+            if warning:
+                resp["warning"] = warning
+            return jsonify(resp)
         except Exception as e:
             if not _disc_active:        # setup failed before activation → clean up
                 _gcache_down()
@@ -441,10 +505,12 @@ def api_play():
     realpath, kind = res
     if not mpvipc.is_running(MPV_SOCKET):
         return jsonify({"ok": False, "error": "mpv is not running (start mpv-idle.sh)"}), 503
+    warning = _ensure_drc_resamp()
     try:
         for args in play.play_actions(realpath, kind):
             mpvipc.command(MPV_SOCKET, args)
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "warning": warning} if warning
+                       else {"ok": True})
     except mpvipc.MpvNotRunning:
         return jsonify({"ok": False, "error": "mpv is not running"}), 503
     except Exception as e:

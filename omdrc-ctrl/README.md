@@ -868,11 +868,14 @@ Renders this README as an HTML page.
 
 ### `GET /qconnect/status`
 
-Reads the qobuzconnect2mpd status file and returns the two display lines.
+Reads the qobuzconnect2mpd status file and returns its display lines.  `line3`
+is the activity line — what the renderer is doing while nothing is audible yet,
+or the download error that stopped it — and is empty during ordinary playback.
 
 ```json
-{ "ok": true, "line1": "[playing] Artist - Title  [1:23 / 4:56]", "line2": "FLAC 16 bit 44.1 kHz" }
-{ "ok": false, "line1": "", "line2": "" }
+{ "ok": true, "line1": "[playing] Artist - Title  [1:23 / 4:56]", "line2": "FLAC 16 bit 44.1 kHz",
+  "line3": "buffering track — segment 4/122 (1.9 MB)" }
+{ "ok": false, "line1": "", "line2": "", "line3": "" }
 ```
 
 ---
@@ -1451,6 +1454,15 @@ Shows the track currently playing via qobuzconnect2mpd, updated every second:
 - Line 1: playback state + artist/title + position/duration
   (`[playing] Artist - Title  [1:23 / 4:56]`)
 - Line 2: audio format (`FLAC 24 bit, stereo, 96.0 kHz`)
+- Line 3: the **activity line**, shown with a pulsing dot only while there is
+  something to report — pressing play on the phone starts a sequence (Qobuz
+  URL resolution, then segment-by-segment reconstruction of the track, then
+  MusicPD opening its output) that can take several seconds and used to give
+  no sign of life at all.  It reads e.g. `resolving Qobuz stream URLs —
+  track 3/12`, `buffering track — segment 4/122 (1.9 MB)`, or `waiting for
+  MusicPD to start playing`, and turns red for `download failed: …`.  Empty —
+  and hidden — once the music is simply playing.  See the status-file section
+  of the qobuzconnect2mpd README for the full vocabulary.
 
 The panel header always has two buttons, plus a conditional third:
 - **Restart** — calls `POST /qconnect/restart`; shows a toast on success/failure
