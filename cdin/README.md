@@ -264,7 +264,7 @@ unavailable when nothing is trying to open it.
 | | `--out-bits` | | force the output width instead of negotiating it |
 | `-L` | `--lead` | `2000` | target lead in ms — see above |
 | `-B` | `--ring` | `8000` | ring capacity in ms |
-| `-p` | `--period` | `1024` | frames; the byte count must be a power of two |
+| `-p` | `--period` | `1024` | application transfer period in frames; OSS fragment sizing is separate, including for packed 24-bit audio |
 | `-s` | `--stats` | `5` | stats interval in seconds |
 | `-R` | `--retry` | `2` | device retry interval |
 | | `--idle-after` | `15000` | digital silence on the wire before the output device is released — see above; `0` disables the gate |
@@ -440,12 +440,13 @@ cmake --build build
 ctest --test-dir build
 ```
 
-Three suites, all covering places where a bug is silent rather than loud:
+Four suites, all covering places where a bug is silent rather than loud:
 `test_ring` (wrap-around, the drop-oldest policy, the back-pressured write and
 end-of-data read the WAV prefetch needs, every blocking path's wake-up, and the
 trim-to-the-lead that starts an episode), `test_convert` (the width widening —
 see the widening section below) and `test_gate` (the silence threshold, its
-edge behaviour, and the fact that one non-zero sample resets the whole run).
+edge behaviour, and the fact that one non-zero sample resets the whole run),
+and `test_ossdev` (OSS fragment sizing, including packed 24-bit stereo).
 
 The gate is worth the suite for the same reason as the others: both of its
 mistakes are quiet ones. Fire too early and a disc tears its own output down in

@@ -609,7 +609,7 @@ prefetch_thread(void *arg)
 		goto done;
 	}
 
-	while (!cdin_stop && !cdin_io_abort) {
+	while (!cdin_stop && !atomic_load(&cdin_io_abort)) {
 		struct track *t = &f->tracks[f->cur];
 		size_t want;
 		ssize_t rc;
@@ -892,7 +892,7 @@ sleep_until(double t)
 	due.tv_nsec = (long)((t - (double)due.tv_sec) * 1e9);
 	while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &due, NULL) ==
 	    EINTR) {
-		if (cdin_stop || cdin_io_abort)
+		if (cdin_stop || atomic_load(&cdin_io_abort))
 			return;
 	}
 }
@@ -979,7 +979,7 @@ filesrc_read(struct filesrc *f, void *buf, size_t n)
 
 	apply_due_dropout(f);
 	pace(f);
-	if (cdin_stop || cdin_io_abort)
+	if (cdin_stop || atomic_load(&cdin_io_abort))
 		return -1;
 
 	/*

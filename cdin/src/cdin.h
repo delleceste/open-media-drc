@@ -16,7 +16,9 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <signal.h>
+#include <stdatomic.h>
 
 #define CDIN_VERSION "0.1.0"
 
@@ -29,9 +31,11 @@
 extern volatile sig_atomic_t cdin_stop;
 
 /*
- * Set while a session is being torn down (a device error, or a reopen) without
- * the whole daemon stopping.  Transfers treat it exactly like cdin_stop: stop
- * retrying EINTR and return, so the worker threads can be joined before their
- * devices are closed under them.
+ * Set atomically while a session is being torn down (a device error, or a
+ * reopen) without the whole daemon stopping.  Transfers stop retrying EINTR
+ * and return, so worker threads can be joined before devices are closed.
  */
-extern volatile sig_atomic_t cdin_io_abort;
+extern _Atomic bool cdin_io_abort;
+
+/* SIGHUP interrupts playback without also aborting capture. */
+extern _Atomic bool cdin_output_abort;

@@ -150,6 +150,43 @@ test_shutdown_wakes_reader(void)
 	ring_free(r);
 }
 
+static void
+test_interrupt_wakes_one_reader_without_shutdown(void)
+{
+	struct ring *r = ring_new(16 * FRAME, FRAME);
+	struct waiter w = { .r = r };
+	unsigned char in[4 * FRAME], out[4 * FRAME];
+	pthread_t tid;
+
+	pthread_create(&tid, NULL, blocking_reader, &w);
+	usleep(50000);
+	ring_interrupt_reader(r);
+	pthread_join(tid, NULL);
+	CHECK(w.got == 0, "interrupted read returned %zu", w.got);
+
+	/* Interruption is one-shot: the ring remains usable for the next episode. */
+	fill_pattern(in, sizeof(in), 23);
+	ring_write(r, in, sizeof(in));
+	CHECK(ring_read(r, out, sizeof(out)) == sizeof(out),
+	    "ring remained interrupted");
+	CHECK(memcmp(in, out, sizeof(in)) == 0,
+	    "interrupt damaged buffered data");
+	ring_free(r);
+}
+
+static void
+test_impossible_read_fails_instead_of_deadlocking(void)
+{
+	struct ring *r = ring_new(4 * FRAME, FRAME);
+	unsigned char out[8 * FRAME];
+
+	CHECK(ring_read(r, out, sizeof(out)) == 0,
+	    "read larger than capacity did not fail");
+	CHECK(ring_read(r, out, FRAME + 1) == 0,
+	    "non-frame-aligned read did not fail");
+	ring_free(r);
+}
+
 static void *
 blocking_waiter(void *arg)
 {
@@ -446,6 +483,8 @@ main(void)
 	test_frame_alignment();
 	test_read_blocks_until_data();
 	test_shutdown_wakes_reader();
+	test_interrupt_wakes_one_reader_without_shutdown();
+	test_impossible_read_fails_instead_of_deadlocking();
 	test_wait_fill();
 	test_wait_fill_wakes_on_shutdown();
 	test_write_full_waits_for_space();

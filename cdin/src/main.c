@@ -22,6 +22,7 @@
  */
 #include <errno.h>
 #include <getopt.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -42,7 +43,8 @@
 #include "ring.h"
 
 volatile sig_atomic_t cdin_stop;
-volatile sig_atomic_t cdin_io_abort;
+_Atomic bool cdin_io_abort;
+_Atomic bool cdin_output_abort;
 volatile sig_atomic_t cdin_release;
 
 #define TICK_MS 100		/* stats sampling period */
@@ -113,6 +115,10 @@ struct session {
 	_Atomic int      draining;	/* end of input: an empty ring is expected */
 	_Atomic int      running;	/* playback has begun writing the device */
 	_Atomic int      input_done;	/* source ended; no more frames will arrive */
+	_Atomic int      terminal_done;	/* playback drained and released the output */
+	_Atomic int      reopen_input;	/* terminal capture fault wants a new session */
+	_Atomic int      output_held;	/* output is open, including the pre-fill wait */
+	_Atomic uint64_t release_generation; /* SIGHUP event observed by capture */
 	_Atomic int      state;		/* enum cdin_state */
 
 	pthread_t        cap_tid;
@@ -219,6 +225,38 @@ set_state(struct session *s, enum cdin_state to, const char *why)
 
 /* ── worker threads ────────────────────────────────────────────────────── */
 
+static size_t
+queue_capture_frames(struct session *s, const unsigned char *buf,
+    unsigned char *wide, bool widening, size_t frames)
+{
+	if (s->measure_only || frames == 0)
+		return 0;
+	if (widening) {
+		convert_widen(buf, s->in_bits, wide, s->out_bits,
+		    frames * (size_t)s->cfg->channels);
+		return ring_write(s->ring, wide, frames * s->frame_bytes);
+	}
+	return ring_write(s->ring, buf, frames * s->in_frame_bytes);
+}
+
+/* No more capture frames will arrive.  EOF is intentionally distinct from a
+   ring shutdown: playback must consume every complete frame already buffered,
+   including a final sub-period tail, before the output handle is released. */
+static void
+capture_terminal(struct session *s, bool reopen)
+{
+	atomic_store(&s->draining, 1);
+	atomic_store(&s->input_done, 1);
+	atomic_store(&s->reopen_input, reopen ? 1 : 0);
+	ring_set_eof(s->ring);
+
+	/* A real carrier fault moves the state out of PLAYING, so no new episode
+	   will be acquired.  Drain only one which already owns the output. */
+	if (s->measure_only || (!atomic_load(&s->output_held) &&
+	    atomic_load(&s->state) != CDIN_PLAYING))
+		atomic_store(&s->terminal_done, 1);
+}
+
 static void *
 capture_thread(void *arg)
 {
@@ -230,6 +268,7 @@ capture_thread(void *arg)
 	unsigned char *wide = NULL;
 	bool widening = s->in_bits != s->out_bits;
 	double hold_until = 0.0;
+	uint64_t release_seen = atomic_load(&s->release_generation);
 	/* Long enough to cover a drc.sh chain rebuild: it stops virtual_oss,
 	   restarts it at the new rate and waits up to 5 s for the loopback
 	   node to appear before brutefir is started on top. */
@@ -251,11 +290,12 @@ capture_thread(void *arg)
 		size_t frames;
 		bool silent;
 
-		if (cdin_release) {
-			cdin_release = 0;
+		uint64_t release_now = atomic_load(&s->release_generation);
+
+		if (release_now != release_seen) {
+			release_seen = release_now;
 			hold_until = now_monotonic() + (double)hold_secs;
 			gate_reset(&gate);
-			set_state(s, CDIN_IDLE, "release requested (SIGHUP)");
 			log_info("holding off the output for %d s", hold_secs);
 		}
 
@@ -263,44 +303,36 @@ capture_thread(void *arg)
 		    ? filesrc_read(s->file, buf, s->in_period_bytes)
 		    : ossdev_read_full(s->in, buf, s->in_period_bytes);
 		if (rc < 0) {
-			if (cdin_stop || cdin_io_abort)
+			if (cdin_stop || atomic_load(&cdin_io_abort))
 				break;
 			log_err("capture %s: read failed: %s", s->cfg->in_path,
 			    strerror(errno));
-			atomic_store(&s->failed, 1);
+			if (s->file == NULL) {
+				set_state(s, CDIN_NO_CARRIER,
+				    "the capture read failed — the carrier is gone");
+				capture_terminal(s, true);
+			} else {
+				capture_terminal(s, false);
+			}
 			break;
 		}
 		if ((size_t)rc < s->in_period_bytes) {
-			if (s->file != NULL) {
-				/* End of the test file: let the lead play out
-				   rather than cutting it off, then stop. */
-				if (rc > 0 && !s->measure_only) {
-					size_t fr = (size_t)rc / s->in_frame_bytes;
+			size_t tail_frames = rc > 0
+			    ? (size_t)rc / s->in_frame_bytes : 0;
+			size_t dropped = queue_capture_frames(s, buf, wide, widening,
+			    tail_frames);
 
-					if (widening) {
-						convert_widen(buf, s->in_bits,
-						    wide, s->out_bits,
-						    fr * (size_t)s->cfg->channels);
-						ring_write(s->ring, wide,
-						    fr * s->frame_bytes);
-					} else {
-						ring_write(s->ring, buf, (size_t)rc);
-					}
-				}
-				atomic_store(&s->draining, 1);
-				atomic_store(&s->input_done, 1);
+			atomic_fetch_add(&s->frames_in, (uint64_t)tail_frames);
+			if (dropped > 0 &&
+			    atomic_load(&s->state) == CDIN_PLAYING)
+				atomic_fetch_add(&s->drop_bytes, dropped);
+			if (s->file != NULL) {
+				capture_terminal(s, false);
 				log_info("%s; draining %.0f ms of lead",
 				    filesrc_carrier_lost(s->file)
 				    ? "the carrier dropped"
 				    : "end of the disc",
 				    bytes_to_ms(s, ring_fill(s->ring)));
-				/* Only an episode that is actually writing the
-				   device can drain the ring; a disc that ended
-				   while idle has nobody to hand it to. */
-				while (!cdin_stop && atomic_load(&s->running) &&
-				    ring_fill(s->ring) >= s->period_bytes)
-					sleep_ms(20);
-				cdin_stop = 1;
 				break;
 			}
 			/*
@@ -317,7 +349,7 @@ capture_thread(void *arg)
 			    "device — the carrier is gone");
 			log_warn("capture %s: short read (%zd of %zu bytes)",
 			    s->in->path, rc, s->in_period_bytes);
-			atomic_store(&s->failed, 1);
+			capture_terminal(s, true);
 			break;
 		}
 
@@ -336,16 +368,8 @@ capture_thread(void *arg)
 		 * very sample that started it.
 		 */
 		if (!s->measure_only) {
-			size_t dropped;
-
-			if (widening) {
-				convert_widen(buf, s->in_bits, wide, s->out_bits,
-				    frames * (size_t)s->cfg->channels);
-				dropped = ring_write(s->ring, wide,
-				    frames * s->frame_bytes);
-			} else {
-				dropped = ring_write(s->ring, buf, (size_t)rc);
-			}
+			size_t dropped = queue_capture_frames(s, buf, wide, widening,
+			    frames);
 			/* Dropping the oldest silence out of a rolling window
 			   is that window working, not audio being lost; only
 			   an overflow while playing is a discontinuity. */
@@ -396,7 +420,8 @@ capture_thread(void *arg)
 
 	free(buf);
 	free(wide);
-	ring_shutdown(s->ring);
+	if (!atomic_load(&s->input_done))
+		ring_shutdown(s->ring);
 	return NULL;
 }
 
@@ -417,14 +442,17 @@ play_episode(struct session *s, unsigned char *buf, size_t lead_bytes,
 	 * The capture thread already trimmed the ring to the lead when it made
 	 * the transition; this catches the other case, where opening the output
 	 * had to be retried for seconds and the ring filled again while we
-	 * waited.  Those seconds could not have been played, so they are not
-	 * audio being thrown away.  A no-op in the ordinary path.
+	 * waited.  This is unavoidable loss, but it must still be counted as a
+	 * discontinuity rather than hidden from the drop statistics.  A no-op in
+	 * the ordinary path.
 	 */
 	trimmed = ring_keep_last(s->ring, lead_bytes);
-	if (trimmed > 0)
-		log_debug("playback: trimmed %.0f ms while the output was "
+	if (trimmed > 0) {
+		atomic_fetch_add(&s->drop_bytes, trimmed);
+		log_warn("playback: dropped %.0f ms while the output was "
 		    "unavailable, lead now %.0f ms", bytes_to_ms(s, trimmed),
 		    bytes_to_ms(s, ring_fill(s->ring)));
+	}
 
 	while (!cdin_stop && !atomic_load(&s->failed) &&
 	    ring_fill(s->ring) < lead_bytes) {
@@ -447,6 +475,7 @@ play_episode(struct session *s, unsigned char *buf, size_t lead_bytes,
 
 	while (!cdin_stop && !atomic_load(&s->failed)) {
 		size_t fill = ring_fill(s->ring);
+		size_t got;
 
 		/*
 		 * Leaving PLAYING is a decision the capture side has already
@@ -454,7 +483,8 @@ play_episode(struct session *s, unsigned char *buf, size_t lead_bytes,
 		 * ring is that same silence: there is nothing to drain, and
 		 * writing it out would only hold the device longer.
 		 */
-		if (atomic_load(&s->state) != CDIN_PLAYING)
+		if (atomic_load(&s->state) != CDIN_PLAYING &&
+		    !atomic_load(&s->draining))
 			break;
 
 		/* Edge-triggered so one starvation event counts once. */
@@ -466,12 +496,21 @@ play_episode(struct session *s, unsigned char *buf, size_t lead_bytes,
 			starving = false;
 		}
 
-		if (ring_read(s->ring, buf, s->period_bytes) == 0)
+		got = atomic_load(&s->draining)
+		    ? ring_read_some(s->ring, buf, s->period_bytes)
+		    : ring_read(s->ring, buf, s->period_bytes);
+		if (got == 0)
 			break;		/* ring shut down */
+		/* OSS writes remain period-sized, but every source frame in a final
+		   short tail is preserved.  Padding happens strictly after EOF and is
+		   digital silence, so it cannot shift channel/frame alignment. */
+		if (got < s->period_bytes)
+			memset(buf + got, 0, s->period_bytes - got);
 
 		rc = ossdev_write_full(s->out, buf, s->period_bytes);
 		if (rc < 0) {
-			if (errno == EINTR && cdin_stop)
+			if (errno == EINTR && (cdin_stop ||
+			    atomic_load(&cdin_output_abort)))
 				break;
 			log_err("playback %s: write failed: %s", s->out->path,
 			    strerror(errno));
@@ -537,6 +576,7 @@ playback_thread(void *arg)
 			sleep_ms(s->cfg->retry_secs * 1000);
 			continue;
 		}
+		atomic_store(&s->output_held, 1);
 		if (warned) {
 			log_info("playback %s: available", s->cfg->out_path);
 			warned = false;
@@ -548,13 +588,21 @@ playback_thread(void *arg)
 
 		atomic_store(&s->running, 0);
 		ossdev_close(s->out);
+		atomic_store(&s->output_held, 0);
+		atomic_store(&cdin_output_abort, false);
 		log_info("playback %s: released", s->cfg->out_path);
+		if (atomic_load(&s->draining)) {
+			atomic_store(&s->terminal_done, 1);
+			break;
+		}
 	}
 
 	free(buf);
 	atomic_store(&s->running, 0);
 	if (s->out->fd != -1) {
 		ossdev_close(s->out);
+		atomic_store(&s->output_held, 0);
+		atomic_store(&cdin_output_abort, false);
 		log_info("playback %s: released", s->cfg->out_path);
 	}
 	return NULL;
@@ -773,6 +821,26 @@ stats_emit(struct session *s, struct stats_state *st)
 
 /* ── session ───────────────────────────────────────────────────────────── */
 
+static void
+dispatch_release(struct session *s)
+{
+	if (!cdin_release)
+		return;
+	cdin_release = 0;
+	atomic_fetch_add(&s->release_generation, 1);
+	set_state(s, CDIN_IDLE, "release requested (SIGHUP)");
+
+	/* Do not wait for capture to finish its current read: a stopped chain can
+	   leave the output write blocked forever, and that CUSE handle is precisely
+	   what SIGHUP promises to relinquish. */
+	if (atomic_load(&s->output_held)) {
+		atomic_store(&cdin_output_abort, true);
+		ring_interrupt_reader(s->ring);
+		if (s->play_running)
+			pthread_kill(s->play_tid, SIGUSR1);
+	}
+}
+
 /* Runs until shutdown or a device error.  Returns 0 on clean stop, -1 if the
    session failed and the devices should be reopened. */
 static int
@@ -792,12 +860,17 @@ run_session(struct session *s)
 	atomic_store(&s->draining, 0);
 	atomic_store(&s->running, 0);
 	atomic_store(&s->input_done, 0);
+	atomic_store(&s->terminal_done, 0);
+	atomic_store(&s->reopen_input, 0);
+	atomic_store(&s->output_held, 0);
+	atomic_store(&s->release_generation, 0);
 
 	memset(&st, 0, sizeof(st));
 	st.t0 = now_monotonic();
 	stats_reset_interval(&st);
 
-	cdin_io_abort = 0;
+	atomic_store(&cdin_io_abort, false);
+	atomic_store(&cdin_output_abort, false);
 	s->cap_running = s->play_running = false;
 
 	if (pthread_create(&s->cap_tid, NULL, capture_thread, s) != 0) {
@@ -821,6 +894,11 @@ run_session(struct session *s)
 
 	while (!cdin_stop && !atomic_load(&s->failed)) {
 		double lead = bytes_to_ms(s, ring_fill(s->ring));
+
+		dispatch_release(s);
+		if (atomic_load(&s->input_done) &&
+		    atomic_load(&s->terminal_done))
+			break;
 
 		/* Nothing before playback starts is a measurement: the lead is
 		   ramping from zero to the target by construction. */
@@ -868,7 +946,8 @@ run_session(struct session *s)
 	 * syscall they are parked in, then JOIN them.  Only after the join is
 	 * it safe for the caller to close the devices or free the ring.
 	 */
-	cdin_io_abort = 1;
+	atomic_store(&cdin_io_abort, true);
+	atomic_store(&cdin_output_abort, true);
 	ring_shutdown(s->ring);
 	if (s->cap_running)
 		pthread_kill(s->cap_tid, SIGUSR1);
@@ -879,9 +958,10 @@ run_session(struct session *s)
 	if (s->play_running)
 		pthread_join(s->play_tid, NULL);
 	s->cap_running = s->play_running = false;
-	cdin_io_abort = 0;
+	atomic_store(&cdin_io_abort, false);
+	atomic_store(&cdin_output_abort, false);
 
-	return atomic_load(&s->failed) ? -1 : 0;
+	return atomic_load(&s->failed) || atomic_load(&s->reopen_input) ? -1 : 0;
 }
 
 /* ── startup ───────────────────────────────────────────────────────────── */
@@ -912,7 +992,8 @@ open_playback_negotiated(struct ossdev *d, const struct config *cfg,
 	}
 
 	for (i = 0; i < n; i++) {
-		if (i > 0 && !convert_can_widen(in_bits, candidates[i]))
+		if (candidates[i] != in_bits &&
+		    !convert_can_widen(in_bits, candidates[i]))
 			continue;
 		if (ossdev_open(d, cfg->out_path, false, cfg->rate,
 		    cfg->channels, candidates[i], cfg->period_frames, err,
@@ -926,12 +1007,9 @@ open_playback_negotiated(struct ossdev *d, const struct config *cfg,
 		}
 		/*
 		 * Keep the FIRST failure to report.  The later candidates are
-		 * fallbacks, and their complaints are about themselves: a
-		 * 24-bit period is 6144 bytes, which the OSS fragment encoding
-		 * rejects as not a power of two before the device is even
-		 * touched.  Returning that one would answer "why can I not
-		 * reach /dev/dsp.play?" with an arithmetic remark about a
-		 * width nobody asked for.
+		 * fallbacks, and their complaints are about themselves.  Returning
+		 * a fallback failure would answer why the requested device could not
+		 * be reached with a complaint about a width nobody asked for.
 		 */
 		if (first_err[0] == '\0')
 			snprintf(first_err, sizeof(first_err), "%s", err);
@@ -974,8 +1052,7 @@ usage(FILE *out)
 "                     stalls, not by drift.  Tune down while watching\n"
 "                     'starves' in the stats — see README.md.\n"
 "  -B, --ring ms      ring capacity                        (default 8000 ms)\n"
-"  -p, --period n     period in frames; the byte count must be a power of\n"
-"                     two                                    (default 1024)\n"
+"  -p, --period n     application transfer period in frames    (default 1024)\n"
 "  -s, --stats secs   stats interval                              (default 5)\n"
 "  -R, --retry secs   device retry interval                       (default 2)\n"
 "      --idle-after ms  digital silence on the wire before the output device\n"
@@ -1113,8 +1190,24 @@ main(int argc, char **argv)
 		cfg.level = CDL_DEBUG;
 	cdin_log_init(cfg.log_path, cfg.level);
 
-	if (cfg.rate <= 0 || cfg.channels <= 0) {
-		log_err("rate and channel count must be positive");
+	if (cfg.rate <= 0 || cfg.channels <= 0 || cfg.period_frames == 0) {
+		log_err("rate, channel count and period must be positive");
+		return 2;
+	}
+	if ((cfg.bits != 16 && cfg.bits != 24 && cfg.bits != 32) ||
+	    (cfg.out_bits != 0 && cfg.out_bits != 16 && cfg.out_bits != 24 &&
+	    cfg.out_bits != 32)) {
+		log_err("sample widths must be 16, 24 or 32 bits");
+		return 2;
+	}
+	if (cfg.lead_ms < 0 || cfg.ring_ms <= 0 || cfg.retry_secs <= 0 ||
+	    cfg.stats_secs < 0 || cfg.idle_after_ms < 0 || cfg.gap_ms < 0) {
+		log_err("lead/gap/idle/stats must be non-negative; ring and retry "
+		    "must be positive");
+		return 2;
+	}
+	if (!isfinite(cfg.in_ppm) || cfg.in_ppm <= -1000000.0) {
+		log_err("--in-ppm must be finite and greater than -1000000");
 		return 2;
 	}
 	if (cfg.lead_ms < 250) {
@@ -1192,6 +1285,28 @@ main(int argc, char **argv)
 			log_info("simulated source drift: %+.1f ppm", cfg.in_ppm);
 	}
 
+	if (!s.measure_only && cfg.out_bits != 0 && cfg.out_bits != cfg.bits &&
+	    !convert_can_widen(cfg.bits, cfg.out_bits)) {
+		log_err("--out-bits %d would narrow a %d-bit source; narrowing is "
+		    "not lossless", cfg.out_bits, cfg.bits);
+		filesrc_close(s.file);
+		cdin_log_close();
+		return 2;
+	}
+	{
+		uint64_t period_ms_frames = (uint64_t)cfg.ring_ms *
+		    (uint64_t)cfg.rate / 1000u;
+
+		if (period_ms_frames < cfg.period_frames) {
+			log_err("ring capacity %d ms is smaller than one %zu-frame "
+			    "period at %d Hz", cfg.ring_ms, cfg.period_frames,
+			    cfg.rate);
+			filesrc_close(s.file);
+			cdin_log_close();
+			return 2;
+		}
+	}
+
 	if (cfg.probe) {
 		int ok = 0;
 
@@ -1236,7 +1351,6 @@ main(int argc, char **argv)
 			ossdev_close(&out);
 			log_info("playback %s: available, %d-bit", cfg.out_path,
 			    out_bits);
-			warned_out = false;
 			break;
 		}
 		if (!warned_out) {
@@ -1300,7 +1414,11 @@ main(int argc, char **argv)
 			    cfg.ring_ms, cfg.rate);
 		}
 
-		set_state(&s, CDIN_IDLE, "capture open, waiting for audio");
+		if (cfg.idle_after_ms == 0)
+			set_state(&s, CDIN_PLAYING,
+			    "silence gate disabled; holding the output for this run");
+		else
+			set_state(&s, CDIN_IDLE, "capture open, waiting for audio");
 
 		if (run_session(&s) != 0 && !cdin_stop) {
 			set_state(&s, CDIN_NO_CARRIER,
@@ -1309,6 +1427,8 @@ main(int argc, char **argv)
 			    cfg.retry_secs);
 			ossdev_close(&in);
 			sleep_ms(cfg.retry_secs * 1000);
+		} else if (s.file != NULL && atomic_load(&s.input_done)) {
+			break;
 		}
 	}
 

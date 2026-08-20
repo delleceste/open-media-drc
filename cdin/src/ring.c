@@ -13,6 +13,8 @@ struct ring {
 	size_t          fill;
 	bool            down;
 	bool            eof;		/* producer finished; buffered data still valid */
+	bool            read_interrupted;
+	bool            reader_waiting;
 	pthread_mutex_t mu;
 	pthread_cond_t  cv;		/* signalled on fill change and on shutdown */
 };
@@ -133,9 +135,19 @@ ring_write_full(struct ring *r, const void *buf, size_t n)
 size_t
 ring_read(struct ring *r, void *buf, size_t n)
 {
+	if (n > r->cap || n % r->frame_bytes != 0)
+		return 0;		/* never wait for an impossible request */
 	pthread_mutex_lock(&r->mu);
-	while (r->fill < n && !r->down)
+	while (r->fill < n && !r->down && !r->read_interrupted) {
+		r->reader_waiting = true;
 		pthread_cond_wait(&r->cv, &r->mu);
+		r->reader_waiting = false;
+	}
+	if (r->read_interrupted) {
+		r->read_interrupted = false;
+		pthread_mutex_unlock(&r->mu);
+		return 0;
+	}
 	if (r->down && r->fill < n) {
 		pthread_mutex_unlock(&r->mu);
 		return 0;
@@ -236,6 +248,17 @@ ring_capacity(struct ring *r)
 }
 
 void
+ring_interrupt_reader(struct ring *r)
+{
+	pthread_mutex_lock(&r->mu);
+	if (r->reader_waiting) {
+		r->read_interrupted = true;
+		pthread_cond_broadcast(&r->cv);
+	}
+	pthread_mutex_unlock(&r->mu);
+}
+
+void
 ring_shutdown(struct ring *r)
 {
 	pthread_mutex_lock(&r->mu);
@@ -249,7 +272,7 @@ ring_reset(struct ring *r)
 {
 	pthread_mutex_lock(&r->mu);
 	r->head = r->tail = r->fill = 0;
-	r->down = r->eof = false;
+	r->down = r->eof = r->read_interrupted = r->reader_waiting = false;
 	pthread_cond_broadcast(&r->cv);
 	pthread_mutex_unlock(&r->mu);
 }

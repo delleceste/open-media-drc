@@ -57,6 +57,11 @@ bool   ring_is_eof(struct ring *r);
 size_t ring_fill(struct ring *r);
 size_t ring_capacity(struct ring *r);
 
+/* Release one blocked read without discarding buffered data or shutting down
+   the ring.  Used by SIGHUP to give back an output device even during an input
+   stall. */
+void   ring_interrupt_reader(struct ring *r);
+
 /* Wake every blocked waiter and make all future waits fail. */
 void   ring_shutdown(struct ring *r);
 void   ring_reset(struct ring *r);

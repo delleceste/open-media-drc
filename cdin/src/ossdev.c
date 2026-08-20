@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/soundcard.h>
@@ -10,14 +11,24 @@
 #include "log.h"
 #include "ossdev.h"
 
-/* log2 of a power of two, or -1 if v is not one. */
+/* Round an application transfer up to an OSS fragment size.  Transfers may
+   span fragments; keeping these concepts separate is what makes packed S24
+   stereo (six-byte frames) possible. */
+size_t
+ossdev_fragment_bytes(size_t period_bytes)
+{
+	size_t v = 16;
+
+	while (v < period_bytes && v < 65536)
+		v <<= 1;
+	return v;
+}
+
 static int
-log2_exact(size_t v)
+log2_power(size_t v)
 {
 	int lg = 0;
 
-	if (v == 0 || (v & (v - 1)) != 0)
-		return -1;
 	while (v > 1) {
 		v >>= 1;
 		lg++;
@@ -65,13 +76,12 @@ ossdev_open(struct ossdev *d, const char *path, bool capture, int rate,
 		return -1;
 	}
 
-	period_bytes = period_frames * d->frame_bytes;
-	if ((lg = log2_exact(period_bytes)) == -1) {
-		snprintf(err, errsz,
-		    "period of %zu frames is %zu bytes, which is not a power of two",
-		    period_frames, period_bytes);
+	if (period_frames == 0 || period_frames > SIZE_MAX / d->frame_bytes) {
+		snprintf(err, errsz, "invalid period of %zu frames", period_frames);
 		return -1;
 	}
+	period_bytes = period_frames * d->frame_bytes;
+	lg = log2_power(ossdev_fragment_bytes(period_bytes));
 
 	/* O_NONBLOCK is deliberately NOT used: both threads want to be paced by
 	   the device, and blocking transfers are the pacing mechanism. */
@@ -82,7 +92,8 @@ ossdev_open(struct ossdev *d, const char *path, bool capture, int rate,
 	}
 
 	/* Fragment size first, as BruteFIR does: some drivers latch the buffer
-	   layout on the first format-setting ioctl. */
+	   layout on the first format-setting ioctl.  It is independent of the
+	   application transfer size; the latter need only stay frame-aligned. */
 	n = (0x7FFF << 16) | lg;
 	if (ioctl(d->fd, SNDCTL_DSP_SETFRAGMENT, &n) == -1) {
 		snprintf(err, errsz, "SNDCTL_DSP_SETFRAGMENT: %s", strerror(errno));
@@ -115,16 +126,12 @@ ossdev_open(struct ossdev *d, const char *path, bool capture, int rate,
 		snprintf(err, errsz, "SNDCTL_DSP_SPEED: %s", strerror(errno));
 		goto fail;
 	}
-	/* Accept the same 1% tolerance BruteFIR accepts: a device may report a
-	   nearby rate it will happily run at.  Anything wider is a real mismatch
-	   (and would look like enormous drift later). */
-	if (n != rate && !((int)(rate * 0.99) < n && (int)(rate / 0.99) > n)) {
+	/* The lead proof assumes nominally equal rates differing only by clock ppm.
+	   A percent-scale substitution drains the default lead inside one track. */
+	if (n != rate) {
 		snprintf(err, errsz, "device set %d Hz, not %d Hz", n, rate);
 		goto fail;
 	}
-	if (n != rate)
-		log_warn("%s: device reports %d Hz for a requested %d Hz",
-		    path, n, rate);
 
 	if (ioctl(d->fd, SNDCTL_DSP_GETBLKSIZE, &n) == -1) {
 		snprintf(err, errsz, "SNDCTL_DSP_GETBLKSIZE: %s", strerror(errno));
@@ -171,7 +178,7 @@ ossdev_read_full(struct ossdev *d, void *buf, size_t n)
 			/* Resume unless we are shutting down: abandoning a
 			   partial transfer would desynchronise the frame
 			   boundary for every later read. */
-			if (!cdin_stop && !cdin_io_abort)
+			if (!cdin_stop && !atomic_load(&cdin_io_abort))
 				continue;
 			return -1;
 		}
@@ -195,7 +202,8 @@ ossdev_write_full(struct ossdev *d, const void *buf, size_t n)
 		if (rc == 0)
 			return (ssize_t)done;
 		if (errno == EINTR) {
-			if (!cdin_stop && !cdin_io_abort)
+			if (!cdin_stop && !atomic_load(&cdin_io_abort) &&
+			    !atomic_load(&cdin_output_abort))
 				continue;
 			return -1;
 		}

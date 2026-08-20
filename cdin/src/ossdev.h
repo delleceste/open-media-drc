@@ -26,8 +26,10 @@ struct ossdev {
 };
 
 /*
- * Open and fully configure a device.  period_frames * frame_bytes must be a
- * power of two.  On failure returns -1, leaves d->fd == -1, and fills err.
+ * Open and fully configure a device.  OSS fragments are powers of two, but
+ * application periods need not be: packed 24-bit stereo has six-byte frames,
+ * so requiring both would make that advertised format impossible.
+ * On failure returns -1, leaves d->fd == -1, and fills err.
  */
 int  ossdev_open(struct ossdev *d, const char *path, bool capture, int rate,
 	    int channels, int bits, size_t period_frames, char *err,
@@ -42,3 +44,6 @@ void ossdev_close(struct ossdev *d);
  */
 ssize_t ossdev_read_full(struct ossdev *d, void *buf, size_t n);
 ssize_t ossdev_write_full(struct ossdev *d, const void *buf, size_t n);
+
+/* Pure helper exposed for fragment-size regression tests. */
+size_t ossdev_fragment_bytes(size_t period_bytes);

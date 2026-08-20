@@ -44,10 +44,10 @@ target_compile_options(omdrc-cdin PRIVATE
 )
 
 find_package(Threads REQUIRED)
-target_link_libraries(omdrc-cdin PRIVATE Threads::Threads)
+target_link_libraries(omdrc-cdin PRIVATE Threads::Threads m)
 
 install(TARGETS omdrc-cdin RUNTIME DESTINATION bin)
-install(FILES README.md DESTINATION share/doc/omdrc-cdin)
+install(FILES README.md AUDIT-FIXES.md DESTINATION share/doc/omdrc-cdin)
 
 # ── service integration ────────────────────────────────────────────────────
 # FreeBSD only, so rc.d is the only service manager there is here.  The daemon
@@ -75,4 +75,9 @@ if(BUILD_TESTING)
     add_executable(test_gate tests/test_gate.c src/gate.c)
     target_include_directories(test_gate PRIVATE src)
     add_test(NAME gate COMMAND test_gate)
+
+    add_executable(test_ossdev tests/test_ossdev.c src/ossdev.c src/log.c)
+    target_include_directories(test_ossdev PRIVATE src)
+    target_link_libraries(test_ossdev PRIVATE Threads::Threads)
+    add_test(NAME ossdev COMMAND test_ossdev)
 endif()
