@@ -38,11 +38,20 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
         raise AuditError(f"{path}: bundle ID mismatch")
     if manifest.get("verification", {}).get("status") != "verified":
         raise AuditError(f"{path}: manifest status is not verified")
+    # A bundle has to say which REW session it came out of, or the filters
+    # cannot be traced back to the sweeps that produced them.
+    session = manifest["source"].get("measurements") or {}
+    if not session.get("sha256"):
+        raise AuditError(
+            f"{path}: the manifest does not name the REW .mdat these exports were "
+            "taken from; redeploy this design with new_filter_design.py")
 
     analysis_path = inside(geometry_root, manifest["analysis"]["path"])
     if sha256_file(analysis_path) != manifest["analysis"]["sha256"]:
         raise AuditError(f"{path}: analysis hash mismatch")
     analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    if analysis.get("schema") != 2:
+        raise AuditError(f"{path}: unsupported analysis schema {analysis.get('schema')!r}")
     if (analysis.get("geometry") != manifest["geometry"] or
             analysis.get("variant") != manifest["variant"] or
             analysis.get("design_id", analysis.get("variant")) !=
@@ -87,6 +96,16 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
         if runtime["attenuation_db"] < needed:
             raise AuditError(f"{path}: insufficient attenuation at {rate} Hz")
     print(f"PASS {manifest['geometry']}/{manifest['variant']} {manifest['bundle_id']}")
+    project = manifest["source"].get("project") or {}
+    if project.get("commit"):
+        print(f"     source {project.get('name', '?')} @ {project['commit'][:12]}"
+              f" · session {session['file']} {session['sha256'][:12]}")
+    else:
+        print(f"     WARN: no source project commit; session {session['file']} "
+              f"{session['sha256'][:12]} is hashed but may not be retrievable")
+    if project and not project.get("clean", True):
+        print(f"     WARN: {len(project.get('uncommitted', []))} source file(s) were "
+              "not committed when this bundle was published")
     try:
         manifest_path = path.relative_to(site_root)
     except ValueError:
@@ -96,8 +115,6 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
         "design_id": manifest.get("design_id", manifest["variant"]),
         "bundle_id": manifest["bundle_id"],
         "manifest": manifest_path,
-        "release": manifest["source"].get("release", {}),
-        "source_commit": manifest["source"]["repository_head"],
     }
 
 

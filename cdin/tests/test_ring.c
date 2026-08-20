@@ -356,6 +356,87 @@ test_reset_clears_eof(void)
 	ring_free(r);
 }
 
+/*
+ * ring_keep_last() is what turns the idle silence into the pre-fill: when
+ * audio returns, the ring holds seconds of the zeros that preceded it, and the
+ * playback side trims to exactly one lead rather than clearing and waiting.
+ * The property that matters is WHICH bytes survive — the newest ones, ending
+ * at the sample that ended the silence.  Keeping the oldest instead would
+ * still produce a correctly-sized lead and would still play; it would just
+ * play the wrong seconds, and nothing downstream could tell.
+ */
+static void
+test_keep_last_keeps_the_newest(void)
+{
+	struct ring *r = ring_new(16 * FRAME, FRAME);
+	unsigned char in[12 * FRAME], out[4 * FRAME];
+
+	fill_pattern(in, sizeof(in), 0);
+	ring_write(r, in, sizeof(in));
+	CHECK(ring_keep_last(r, 4 * FRAME) == 8 * FRAME, "wrong drop count");
+	CHECK(ring_fill(r) == 4 * FRAME, "fill %zu", ring_fill(r));
+	CHECK(ring_read(r, out, sizeof(out)) == sizeof(out), "short read");
+	CHECK(memcmp(out, in + 8 * FRAME, sizeof(out)) == 0,
+	    "kept the oldest bytes instead of the newest");
+	ring_free(r);
+}
+
+static void
+test_keep_last_across_wraparound(void)
+{
+	struct ring *r = ring_new(16 * FRAME, FRAME);
+	unsigned char in[10 * FRAME], out[10 * FRAME], scratch[10 * FRAME];
+
+	/* Leave the head past the midpoint so the data to keep straddles the
+	   end of the buffer — the case a plain memmove would get wrong. */
+	fill_pattern(scratch, sizeof(scratch), 200);
+	ring_write(r, scratch, sizeof(scratch));
+	ring_read(r, out, sizeof(out));
+
+	fill_pattern(in, sizeof(in), 1);
+	ring_write(r, in, sizeof(in));
+	CHECK(ring_keep_last(r, 6 * FRAME) == 4 * FRAME, "wrong drop count");
+	CHECK(ring_read(r, out, 6 * FRAME) == 6 * FRAME, "short read");
+	CHECK(memcmp(out, in + 4 * FRAME, 6 * FRAME) == 0,
+	    "wrapped data came back wrong");
+	ring_free(r);
+}
+
+static void
+test_keep_last_shorter_ring_is_untouched(void)
+{
+	struct ring *r = ring_new(16 * FRAME, FRAME);
+	unsigned char in[3 * FRAME], out[3 * FRAME];
+
+	/* The first episode after startup has not captured a full lead yet;
+	   trimming must then be a no-op, not a truncation, so the caller's
+	   pre-fill wait still has something to wait for. */
+	fill_pattern(in, sizeof(in), 7);
+	ring_write(r, in, sizeof(in));
+	CHECK(ring_keep_last(r, 8 * FRAME) == 0, "dropped from a short ring");
+	CHECK(ring_fill(r) == sizeof(in), "fill %zu", ring_fill(r));
+	CHECK(ring_read(r, out, sizeof(out)) == sizeof(out), "short read");
+	CHECK(memcmp(in, out, sizeof(in)) == 0, "data mismatch");
+	ring_free(r);
+}
+
+static void
+test_keep_last_rounds_to_frames(void)
+{
+	struct ring *r = ring_new(16 * FRAME, FRAME);
+	unsigned char in[8 * FRAME];
+
+	/* A frame-straggling target would leave the reader one channel out of
+	   phase for the rest of the episode: left samples emerging as right. */
+	fill_pattern(in, sizeof(in), 3);
+	ring_write(r, in, sizeof(in));
+	ring_keep_last(r, 4 * FRAME + 3);
+	CHECK(ring_fill(r) % FRAME == 0, "fill %zu is not frame aligned",
+	    ring_fill(r));
+	CHECK(ring_fill(r) == 4 * FRAME, "fill %zu", ring_fill(r));
+	ring_free(r);
+}
+
 int
 main(void)
 {
@@ -373,6 +454,10 @@ main(void)
 	test_read_some_rounds_to_frames();
 	test_read_some_wakes_on_eof();
 	test_reset_clears_eof();
+	test_keep_last_keeps_the_newest();
+	test_keep_last_across_wraparound();
+	test_keep_last_shorter_ring_is_untouched();
+	test_keep_last_rounds_to_frames();
 
 	if (failures == 0)
 		printf("all ring tests passed\n");

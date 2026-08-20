@@ -440,6 +440,52 @@
         .qc-log .qc-err { color: var(--red); }
         .qc-log .qc-out { color: var(--green); }
 
+        /* ── CD input (omdrc-cdin) ───────────────────────────── */
+        /* The LED answers one question — can a disc play right now? — so it
+           follows device AVAILABILITY only.  Whether the output happens to be
+           open at this instant is normal operation swinging back and forth,
+           and is reported in words, never in colour. */
+        .cdin-status { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .cdin-dot {
+            width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto;
+            background: var(--muted);
+        }
+        .cdin-dot.green { background: var(--green); box-shadow: 0 0 7px var(--green); }
+        .cdin-dot.red   { background: var(--red);   box-shadow: 0 0 7px var(--red); }
+        .cdin-summary { font-size: .8rem; overflow-wrap: anywhere; }
+        .cdin-dot.red + .cdin-summary { color: var(--red); }
+        .cdin-ends {
+            margin-top: 6px; font-size: .7rem; color: var(--muted);
+            display: flex; flex-wrap: wrap; gap: 4px 14px;
+        }
+        .cdin-end { display: flex; align-items: baseline; gap: 5px; }
+        .cdin-end b { font-weight: 600; color: var(--text); font-size: .68rem; }
+        .cdin-end.down b, .cdin-end.down { color: var(--red); }
+        .cdin-path { font-family: ui-monospace, "SFMono-Regular", monospace; }
+        .cdin-held { color: var(--green); }
+        .cdin-stats {
+            margin-top: 8px; font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .68rem; color: var(--muted); line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+        /* Failures accumulate here and stay; the healthy line is replaced.  A
+           status line cannot say "the output was missing for ten minutes this
+           morning", and that is exactly what wants saying. */
+        .cdin-events {
+            margin-top: 8px; border-top: 1px solid var(--border); padding-top: 7px;
+            max-height: 150px; overflow-y: auto;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .68rem; line-height: 1.55;
+        }
+        .cdin-event { display: flex; gap: 7px; overflow-wrap: anywhere; }
+        .cdin-event + .cdin-event { margin-top: 2px; }
+        .cdin-event time { flex: 0 0 auto; color: var(--muted); opacity: .75; }
+        .cdin-event.error span { color: var(--red); }
+        .cdin-event.warn  span { color: var(--yellow); }
+        .cdin-event.ok    span { color: var(--green); }
+        .cdin-event.info  span { color: var(--muted); }
+        .cdin-more { color: var(--muted); font-style: italic; margin-bottom: 4px; }
+
         /* ── log alerts + log viewer ─────────────────────────── */
         /* Conditions found in the logs that nothing else in the UI would show.
            warn/error/info surface here, at the top of the page; `ok` rules are
@@ -939,6 +985,27 @@
 </div>
 
 <!-- Live spectrum analyzer -->
+<!-- CD input: omdrc-cdin, the S/PDIF capture bridge.  A daemon the panel
+     watches rather than drives — it runs continuously and gives the output
+     device back on its own whenever there is no disc. -->
+{% if cdin_enabled %}
+<div class="card" id="cdin-card" hidden>
+    <div class="card-title title-row">
+        <span>CD input <span class="refresh-note" id="cdin-refresh-label">refresh: {{ cdin_interval }}s</span></span>
+        <button class="btn-refresh" id="cdin-refresh-btn" title="Refresh">↻</button>
+    </div>
+    <div id="cdin-panel" style="padding:4px 0">
+        <div class="cdin-status">
+            <span class="cdin-dot" id="cdin-dot"></span>
+            <span class="cdin-summary" id="cdin-summary" aria-live="polite">loading…</span>
+        </div>
+        <div class="cdin-ends" id="cdin-ends"></div>
+        <div class="cdin-stats" id="cdin-stats" hidden></div>
+        <div class="cdin-events" id="cdin-events" hidden></div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card" id="spectrum-card">
     <div class="card-title title-row">
         <span>Spectrum <span class="refresh-note">{{ spectrum.refresh_hz }} Hz</span></span>
@@ -1209,10 +1276,12 @@ function renderDrcFeedback(data) {
         if (verification.status === 'verified') facts.push('verified');
         else facts.push(`NOT VERIFIED: ${verification.message || verification.status || 'unknown'}`);
         if (active.bundle_id) facts.push(`bundle ${shortIdentity(active.bundle_id)}`);
-        if (active.release && active.release.kind === 'annotated_tag') {
-            facts.push(`tag ${active.release.name}`);
+        const project = active.source_project || {};
+        if (project.name) {
+            facts.push(project.commit
+                ? `from ${project.name} @ ${project.commit.slice(0, 12)}`
+                : `from ${project.name} (uncommitted)`);
         }
-        if (active.source_commit) facts.push(`commit ${shortIdentity(active.source_commit)}`);
         activeLine.textContent += ` · ${facts.join(' · ')}`;
         activeLine.title = verification.message || '';
     } else {
@@ -3146,6 +3215,78 @@ async function fetchRam() {
         el.innerHTML = '<span style="color:var(--red)">network error</span>';
     }
 }
+// ── CD input (omdrc-cdin) ─────────────────────────────────────────────────
+// The bridge reports itself through its own log; this only paints what the
+// server read there.  Two things are deliberately kept apart:
+//
+//   the LED   follows device AVAILABILITY, because that is the question
+//             "can a disc play right now?" — nothing else belongs in a colour;
+//   the list  keeps every FAILURE and only the newest healthy line.  A live
+//             status line can never say "the output was missing for ten
+//             minutes this morning", which is the thing worth saying.
+//
+// The card hides itself entirely when the daemon has never run and has left no
+// log: on a box with no CD player there is nothing here to report.
+const CDIN_INTERVAL_MS = {{ cdin_interval }} * 1000;
+
+function cdinEnd(end) {
+    if (!end || !end.path) return '';
+    const down = end.available === false;
+    const bits = [`<b>${escHtml(end.label)}</b>`,
+                  `<span class="cdin-path">${escHtml(end.path)}</span>`];
+    if (down)               bits.push('unavailable');
+    else if (end.held)      bits.push('<span class="cdin-held">held</span>');
+    else if (end.available) bits.push('free');
+    return `<span class="cdin-end${down ? ' down' : ''}">${bits.join(' ')}</span>`;
+}
+
+async function fetchCdin(btn) {
+    const card = document.getElementById('cdin-card');
+    if (!card) return;
+    let d;
+    try {
+        d = await (await fetch('/cdin/status')).json();
+    } catch {
+        return;                 // a transient poll failure is not a CD fault
+    }
+    if (!d.ok || d.enabled === false) { card.hidden = true; return; }
+
+    // Nothing has ever run and nothing was ever logged: stay out of the way.
+    if (!d.running && !(d.log && d.log.exists)) { card.hidden = true; return; }
+    card.hidden = false;
+
+    const dot = document.getElementById('cdin-dot');
+    dot.className = 'cdin-dot' + (d.led === 'green' || d.led === 'red' ? ' ' + d.led : '');
+    dot.title = d.summary || '';
+    document.getElementById('cdin-summary').textContent = d.summary || '—';
+
+    document.getElementById('cdin-ends').innerHTML =
+        cdinEnd(d.capture) + cdinEnd(d.output);
+
+    // The stats line is the daemon's own measurement of the thing that can go
+    // wrong silently: `starves` above zero is an audible dropout that already
+    // happened, and the lead is the margin left before the next one.
+    const stats = document.getElementById('cdin-stats');
+    stats.hidden = !d.stats;
+    if (d.stats) stats.textContent = d.stats;
+
+    const box = document.getElementById('cdin-events');
+    const events = d.events || [];
+    box.hidden = events.length === 0;
+    if (events.length) {
+        const more = d.truncated
+            ? '<div class="cdin-more">older events have scrolled out of the log</div>' : '';
+        box.innerHTML = more + events.map(e =>
+            `<div class="cdin-event ${escHtml(e.severity)}">` +
+            `<time>${escHtml((e.at || '').slice(11))}</time>` +
+            `<span>${escHtml(e.text)}</span></div>`).join('');
+        box.scrollTop = box.scrollHeight;   // the newest line is the one to see
+    }
+}
+
+{% if cdin_enabled %}
+startAutoRefresh('cdin', CDIN_INTERVAL_MS, fetchCdin);
+{% endif %}
 startAutoRefresh('qc', 1000, fetchQcStatus);
 // Keep the renderer toggle in sync with actual service status on a slow cadence.
 syncRenderers();

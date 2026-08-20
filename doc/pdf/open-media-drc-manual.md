@@ -558,7 +558,7 @@ The workflow spans three trees, deliberately kept apart:
 
 | Tree | Holds | Example |
 |---|---|---|
-| Source repository | REW projects and exports, the role declaration, annotated tags | `../DRC/DRC-120.blue` |
+| Source repository | one geometry's REW projects (`.mdat`) and the sessions exported from them (`<session>.txts/`) | `../DRC/DRC-120.blue` |
 | Site repository | `configs/<geometry>/`, `filters/<geometry>/` --- one physical room | `omdrc-801N` |
 | Engine repository | `drc.sh`, the scripts, CMake, and the generic `flat` set | `open-media-drc` |
 
@@ -621,10 +621,11 @@ filters/<geometry>/
   provenance/<design>.json          the manifest (the commit marker)
   provenance/<design>.source.json   the build recipe (development input)
   analysis/<design>.json            precomputed response traces
-  source/<design>/                  verbatim copies of the REW exports used
-    measurement-L.txt  measurement-R.txt  measurement-L+R.txt
-    filter-L.txt  filter-R.txt  filter-L.wav  filter-R.wav
-    corrected-*-independent.txt     optional REW cross-check exports
+  source/<design>/                  verbatim copies of the ten inputs
+    L.txt  R.txt  LR.txt            measured, before correction
+    FLX-trimmed.txt  FRX-trimmed.txt          exported filter responses
+    FLX-trimmed-48k.wav  FRX-trimmed-48k.wav  deployable impulses
+    L.filtered.txt  R.filtered.txt  LR.filtered.txt   after correction
   <rate>/{L,R}.raw                  runtime coefficients (design `default`)
   <rate>/@<design>/{L,R}.raw        runtime coefficients (immutable design)
 configs/<geometry>/
@@ -632,30 +633,37 @@ configs/<geometry>/
   brutefir-<rate>@<design>.conf.in
 ```
 
-Sources are copied in under stable logical role names --- the original REW
-filenames survive as manifest metadata. The copy is deliberate: a deployment
-must never depend on a mutable sibling checkout or on an absolute path that
-will not exist on the playback machine.
+Sources keep the names they had in the export directory, because those names
+*are* the role assignment. The copy is deliberate: a deployment must never
+depend on a mutable sibling checkout or on an absolute path that will not exist
+on the playback machine.
 
 ## What is hashed
 
 The manifest records, for every source export, RAW file, config template and the
 analysis file: the logical role, relative path, byte size, format, sample
-rate/count where applicable, and SHA-256. Around that it records the source
-repository URL and exact commit, the annotated tag name and immutable tag object
-id, the declaration's Git blob and SHA-256, parsed REW header metadata
-(measurement name, date, notes, smoothing, frequency step, timing reference, REW
-version), the derivation commands and tool versions (deployment script, Python,
-NumPy, SoX and the resampling flags), the TXT-versus-WAV validation results,
+rate/count where applicable, and SHA-256. Around that it records where the
+design came from --- the source project's repository, remote, branch, HEAD
+commit and subject, the repository-relative path of the export directory, a Git
+blob id per input, and whether everything was committed --- together with the
+REW `.mdat` those exports were taken from, by name, size, SHA-256 and blob id.
+It then records the aggregate convention taken from the filenames, parsed REW
+header metadata (measurement name, date, notes, smoothing, frequency step,
+timing reference, REW version), the TXT-versus-WAV validation results,
 per-channel headroom with safety margin and required attenuation, and the exact
 rate-to-config mapping with the expected BruteFIR format and attenuation.
 
 The `bundle_id` on top is the SHA-256 of a canonical identity object containing
-a hash of the complete source-provenance block, every source artifact hash, the
-runtime config and RAW hashes and settings, and the analysis hash. Editing any
-provenance value the UI displays therefore invalidates the bundle rather than
-quietly changing a label. An annotated tag makes the source state an immutable
-named Git object; signing that tag additionally establishes authorship.
+a hash of the complete source block --- export directory, project, session and
+every artifact record --- plus every source artifact hash, the runtime config and
+RAW hashes and settings, and the analysis hash. Editing any provenance value the
+UI displays therefore invalidates the bundle rather than quietly changing a
+label; that includes the project commit and the `.mdat` hash.
+
+A hash proves bytes; it cannot say where they came from or bring them back. The
+commit id does that. It is the only part of the chain that is not
+self-verifying, which is why the deployment refuses to run until the exports and
+the `.mdat` are committed.
 
 ## The scripts
 
@@ -664,11 +672,11 @@ except the optional auditor below.
 
 | Script | Role |
 |---|---|
-| `filter_design_suggest.py` | read-only discovery: from a source checkout, finds the newest `.mdat` by mtime, locates its sibling `<stem>.txts`, ranks compatible L/R exports and prints a candidate declaration command. A suggestion, never an attestation |
-| `declare_filter_design.py` | writes the source-side `design.json`: binds each semantic role to an exact file, records SHA-256 values and parsed TXT headers. Run in the source repository, then commit and tag |
-| `new_filter_design.py` | consumes a committed declaration *at an annotated tag*: verifies the tag object, the commit, a clean tree and every input hash, then drives a dry run or a publication |
-| `deploy_filter.py` | the engine underneath: regenerates every declared rate in a temporary directory, validates TXT against WAV, checks optional corrected exports, computes headroom, bakes and reads back each config, computes the analysis traces, and writes the bundle |
+| `new_filter_design.py` | the one deployment command: reads one export directory, resolves every role from the file names, checks each filter TXT against its impulse WAV, hashes the `.mdat`, requires the project commit, reports, asks, publishes, and commits the room repository |
+| `remove_filter_design.py` | the exact inverse: removes one design completely --- manifest, analysis, source copies, every rate's coefficient pair and every config template --- manifest first, then records the removal in the room repository. Refuses the reserved `default` set |
+| `deploy_filter.py` | the engine underneath: regenerates every requested rate in a temporary directory, validates TXT against WAV, computes headroom, bakes and reads back each config, carries the exports into the analysis file unchanged, and writes the bundle |
 | `verify_filter_bundle.py` | read-only re-verification of committed bundles: bundle id, source copies, analysis dependencies, configs, exact RAW hashes and headroom. `--no-next` for CMake and CI |
+| `console_ui.py` | shared terminal contract for publication and removal: stages, colours, confirmation, warnings, and the uniform failure line |
 | `filter_workflow_next.py` | shared operator handoff --- prints the exact commit/install/select/verify commands, and names a working directory per step when the site data lives in its own repository |
 | `headroom_calc.py` | minimum `attenuation:` per pair from the worst-case FFT gain plus a safety margin; also reports what each config currently specifies |
 | `rew_mdat_audit.py` | optional archival evidence: audits selected REW project traces via the REW API, comparing TXT responses numerically and final WAV impulses sample-by-sample against the project. Not a deployment dependency |
@@ -677,37 +685,149 @@ except the optional auditor below.
 ## The workflow
 
 ```sh
-# 1. In the source repository: suggest, review, declare, tag.
-python3 scripts/declare_filter_design.py --suggest-from-source-root ../DRC/DRC-120.blue
-python3 scripts/declare_filter_design.py --geometry 120.blue --design-id rscreen-20260812 ...
-git -C ../DRC/DRC-120.blue add ... && git -C ../DRC/DRC-120.blue commit -m 'Declare ...'
-git -C ../DRC/DRC-120.blue tag -a 120.blue-rscreen-20260812 -m 'room correction ...'
+# 1. In the source repository: give the exports their imposed names, commit them
+#    together with the .mdat they came from.
+git -C ../DRC/DRC-120.blue add -- 120.blue.Rscreen.txts 120.blue.Rscreen.mdat
+git -C ../DRC/DRC-120.blue commit -m 'Rscreen measurement session'
 
-# 2. In the engine repository: audit as a dry run, read every PASS line.
+# 2. In the engine repository: one command, one directory.
 export OMDRC_SITE_ROOT=~/devel/omdrc-801N
-python3 scripts/new_filter_design.py --source-root ../DRC/DRC-120.blue \
-        --source-ref 120.blue-rscreen-20260812 --declaration <path>
+python3 scripts/new_filter_design.py ../DRC/DRC-120.blue/120.blue.Rscreen.txts
 
-# 3. Publish only after reading the audit.
-python3 scripts/new_filter_design.py ... --write
-
-# 4. Re-verify independently, then commit in the SITE repository.
+# 3. Re-verify independently, then push the room's history.
 python3 scripts/verify_filter_bundle.py --all --require-sources
-git -C ~/devel/omdrc-801N add -- configs/120.blue filters/120.blue
-git -C ~/devel/omdrc-801N commit -m 'Deploy verified filter design: ...' && git -C ~/devel/omdrc-801N push
+git -C ~/devel/omdrc-801N push
 ```
 
-An annotated tag is required. `--allow-commit-ref` exists as an explicit
-lower-assurance exception and is recorded as such.
+Nothing on the command line says what a file is: `L.txt`, `R.txt`, `LR.txt` (or
+`L+R.txt`), `FLX-trimmed.txt`, `FRX-trimmed.txt`, the two impulse WAVs, and
+`L.filtered.txt`, `R.filtered.txt`, `LR.filtered.txt` (or `L+R.filtered.txt`, or
+`L+R.remeasured.txt` when the room was measured again with the DRC running). A
+missing name, a duplicate spelling or a mismatched aggregate style stops the run
+in colour before anything is written.
 
-Publication is a transaction. Without `--write` every check runs in temporary
+Three checks run before anything is hashed or written, and none of them has an
+override. Every text export must be **unsmoothed** (`* Smoothing: None`; one
+that states no smoothing is refused too, since it cannot be shown to be
+unsmoothed) --- REW's smoothing is baked into the numbers and cannot be undone
+downstream, while the browser's Smoothing selector is a separate, reversible
+view. Every text export must come from a **measurement at 48 kHz or below**,
+checked as *it must not reach past 24 kHz*, because the runtime coefficients are
+all resampled from one 48 kHz impulse. And each **filter TXT must be the
+exported response of its WAV**: one integer causal delay and one constant export
+gain are detected, then the residual magnitude and phase errors must stay inside
+the declared limits --- the only DSP in the pipeline, and what makes the plotted
+FLX/FRX curve a statement about the bytes BruteFIR will load.
+
+The command reports the eight curves the web remote will plot, the project and
+session behind them, the two filters with their TXT/WAV residuals and every path
+it will write, and then asks. `--dry-run` runs every check, including the SoX
+conversions, and stops without asking.
+
+The safety controls are intentionally narrow. `--yes` supplies confirmation but
+skips no check. `--replace-design` permits differing bytes under an existing
+design id but does not permit partial publication. `--allow-uncommitted` records
+the source-recoverability gap as `clean: false`, which remains visible to the
+verifier and UI. `--no-commit` gives up the automatic room-history commit but
+does not alter bundle verification. `--site-root` selects the site checkout for
+the scripts; it is separate from CMake's `OMDRC_SITE_DATA_DIRS` search path.
+
+Publication is a transaction. Without confirmation every check runs in temporary
 storage and nothing is touched; the dry run also reports which runtime files
-*would* change. With `--write` the order is fixed: source copies first, then the
+*would* change. On confirmation the order is fixed: source copies first, then the
 analysis, then the runtime RAW pairs, and the manifest **last**. The manifest is
 the commit marker --- readers ignore an incomplete deployment until it exists and
 verifies every preceding hash. Replacing bytes that already exist additionally
-requires `--replace-runtime`, so an accidental overwrite of a deployed design
+requires `--replace-design`, so an accidental overwrite of a deployed design
 cannot happen silently.
+
+A design owns `filters/<geo>/source/<design>/` and every
+`filters/<geo>/<rate>/@<design>/`, so after publication those directories hold
+exactly what the new manifest names --- a redeployment that renames its inputs
+prunes what the previous one left there. Pruning runs after the manifest, so a
+failure leaves harmless leftovers rather than a manifest naming a deleted file.
+A bare `filters/<geo>/<rate>/` is shared with the `default` set and is never
+touched.
+
+Removal inverts all of this:
+
+```sh
+python3 scripts/remove_filter_design.py --list
+python3 scripts/remove_filter_design.py 120.blue@rscreen-20260812
+```
+
+It deletes the manifest, the recipe, the analysis file, the source copies, every
+`@design` coefficient directory and every `brutefir-<rate>@<design>.conf.in`,
+and nothing else. The manifest goes **first**: while it exists it is the claim
+that the rest is present, so removing it is what makes the design cease to exist
+for every reader. The reserved `default` set is refused, because a geometry
+falls back to it. The removal becomes one commit in the room repository, and the
+design stays recoverable from the deployment commit that introduced it.
+
+Step 2 ends with one commit in the room repository, staging
+`filters/<geometry>` and `configs/<geometry>` and naming the geometry, design,
+bundle id, project commit, session hash and rates. That commit is the deployment
+history: `git log` lists every filter set that was ever live, and
+`git checkout <commit> -- filters/<geo> configs/<geo>` brings any of them back
+byte for byte. `--no-commit` skips it. Verification never depends on it.
+
+## Deploying the verified identity
+
+Publication changes the site repository, not the installed playback tree. The
+handoff has four boundaries: the source-project commit makes every export and
+the `.mdat` retrievable; the site-repository commit records the published
+bundle; CMake verifies and copies that bundle; and the running BruteFIR config
+plus exact L/R RAW hashes determine whether the web UI can go green.
+
+On the design machine, `new_filter_design.py` makes the site commit by default.
+Re-verify those bytes and push the site repository:
+
+```sh
+export OMDRC_SITE_ROOT=~/devel/omdrc-801N
+python3 scripts/verify_filter_bundle.py --all --require-sources
+git -C "$OMDRC_SITE_ROOT" status --short
+git -C "$OMDRC_SITE_ROOT" push
+```
+
+On the playback machine, pull the site repository. `host.cmake` must include it
+in `OMDRC_SITE_DATA_DIRS`. Initialise a first build from that file; later
+deployments can reuse the correctly initialised cache:
+
+```sh
+git -C ~/devel/omdrc-801N pull
+
+# First build for this host
+cmake -C host.cmake -S . -B build
+
+# Later deployments may reconfigure the existing cache
+cmake -S . -B build
+
+cmake --build build
+sudo cmake --install build
+```
+
+Configure prints the checkout that supplied each geometry and runs the
+read-only verifier before anything can be installed. The install contains the
+RAWs, rendered configs, manifests and analysis JSON; source exports and recipes
+remain development-only in the site repository.
+
+Restart the panel, select the installed geometry and immutable design, and then
+verify what is actually running:
+
+```sh
+# FreeBSD; use systemctl restart omdrcctrl on Linux
+sudo service omdrcctrl restart
+/usr/local/bin/omdrc geometry 120.blue
+/usr/local/bin/omdrc design --list
+/usr/local/bin/omdrc design @rscreen-20260812
+```
+
+Open `http://<box>:9090`, enter **Filter response**, and require the green
+identity to show the selected geometry/design and the complete `bundle_id`
+printed during publication and verification. A missing or different identity
+means the curves must not be trusted. The scripts' **NEXT** block is the
+host-specific version of this sequence and names the correct working directory
+for each step in a split engine/site layout.
 
 ## Verification at install time
 
@@ -733,19 +853,20 @@ The response page never trusts the geometry name or the rate. For every request
    attenuation, rate)` tuple;
 4. verifies the analysis file's own hash and that its recorded input hashes
    equal the manifest's source artifact hashes;
-5. computes the displayed active-filter curve from the bytes just read, applying
-   the configured attenuation, since that attenuation is part of the audible
-   transfer function.
+5. releases the stored exports **unmodified** --- no scaling, offset, attenuation
+   subtraction or resampling stands between the analysis file and the browser.
 
 Only then are the stored room measurements released, with the green banner
-carrying the annotated tag, tag-object SHA and source commit; the details panel
-adds the declaration hash, bundle id and the active L/R RAW hashes.
+carrying the bundle id; the details panel adds the export directory, the source
+project and commit, the `.mdat` behind the measurements, every plotted export
+with its hash and the active L/R RAW hashes.
 
 Anything else is **mismatch** (red): no manifest matches the active bytes, a
 hash differs, the config attenuation or format differs, or an analysis
-dependency fails. The page may still show a live FFT of the active coefficients
-as a diagnostic, but it must not present stored measurements as if they belonged
-to it. A legacy variant, having no manifest, always lands here.
+dependency fails. **No graph is drawn** --- not even a diagnostic FFT of the live
+coefficients, because a calculated curve on a page whose whole promise is *these
+are REW's numbers* is worse than no curve. A legacy variant, having no manifest,
+always lands here.
 
 A/B switching obeys the same rule. After `drc.sh` returns, the server re-reads
 the running process, parses the config actually in use, hashes its RAWs, and
@@ -986,11 +1107,11 @@ byte-identical to the reference raw --- MPD cannot play headerless raw.
 | `REW2raw.sh` | REW WAV -> brutefir raw FLOAT64_LE at a target rate, with the theoretically correct `Fs_source/Fs_target` coefficient scale (no peak normalisation) |
 | `REW2raw-all-rates.sh` | Batch: `L.raw`/`R.raw`/`sox.txt` for every numeric rate directory under a filter root; prompts before overwriting unless `-y` |
 | `headroom_calc.py` | Minimum `attenuation:` per config from worst-case FFT gain + safety margin |
-| `filter_design_suggest.py` | Read-only discovery of a candidate declaration command from a source checkout |
-| `declare_filter_design.py` | Writes the source-side role declaration with hashes and parsed TXT headers |
-| `new_filter_design.py` | Publishes a design from a committed declaration at an annotated tag |
+| `new_filter_design.py` | Publishes a design from one directory of REW exports, and records it in the room's history |
+| `remove_filter_design.py` | Removes one deployed design completely and records that in the room's history |
 | `deploy_filter.py` | The offline audit/build engine underneath: rates, validation, analysis, manifest |
 | `verify_filter_bundle.py` | Read-only re-verification of committed bundles (used by CMake and CI) |
+| `console_ui.py` | Shared stages, colour, confirmation and failure formatting for design commands |
 | `filter_workflow_next.py` | Shared operator handoff printed by the commands above |
 | `rew_mdat_audit.py` | Optional archival audit of REW project traces against exports |
 | `verify-bitperfect.sh` | The bit-perfect proof tool (above); sources: built-in writer or `mpd:OUTPUT`; taps: `usb` or `loop:/dev/dsp.X` |

@@ -72,8 +72,8 @@ Designed and generated from one or more of the DRC-xxx github.com/delleceste fol
 
 # Installing the audio chain
 
-The full playback chain, from the UPnP/OpenHome control front-end down to the
-speakers:
+The playback paths, from the network renderer or physical CD transport down to
+the speakers:
 
 ```
  UPnP / OpenHome control point (phone app, upplay, …)
@@ -82,15 +82,19 @@ speakers:
  upmpdcli ──→ libupnpp ──→ libnpupnp      (built from source, this order)
         │
         ▼
- MPD (musicpd)                            (installed from the OS package)
-        │  direct  │ DRC
-        ▼          ▼
- OKTO DAC      loopback ──→ BruteFIR ──→ OKTO DAC
-                (snd-aloop / virtual_oss)   (delleceste fork)
-        ▲
-        └── open-media-drc (this repo: drc.sh, configs, filters, services)
-            + omdrc-ctrl (web control panel, in-tree)
+ MPD (musicpd) ───── direct ──────────────────→ OKTO DAC
+
+ DRC sources ──→ loopback ──→ BruteFIR ──→ OKTO DAC
+              (snd-aloop / virtual_oss)   (delleceste fork)
+   ├── MPD's DRC output
+   └── CD player ──S/PDIF──→ ESI U24 XL ──→ omdrc-cdin
 ```
+
+`omdrc-cdin` is the FreeBSD/OSS bridge for the second source. It shares the
+DRC loopback with MPD but holds it only while CD audio is present; see
+[CD / S/PDIF input](#cd--spdif-input-omdrc-cdin) below.
+The scripts, configs, filters, services and `omdrc-ctrl` panel that manage both
+paths are supplied by this repository.
 
 ## Dependencies
 
@@ -106,6 +110,7 @@ Build tools (all from-source components): a C/C++ compiler, **meson + ninja**
 | **MPD** | from package; needs **soxr** resampler + ALSA (Linux) / OSS (FreeBSD) output | `musicpd` | `mpd` |
 | **BruteFIR** (fork) | FFTW3 single+double (`-lfftw3 -lfftw3f`), ALSA (Linux); OSS built-in (FreeBSD) | `fftw3 fftw3-float` | `fftw alsa-lib` |
 | FreeBSD loopback | `virtual_oss` (+ `cuse`) — Linux uses the `snd-aloop` kernel module | `virtual_oss` | (kernel module) |
+| **omdrc-cdin** | C11 compiler, POSIX threads, FreeBSD OSS capture/playback | base system | — (FreeBSD only) |
 | **omdrc-ctrl** | python3, flask≥2.3, markdown≥3.5, numpy≥1.21 (optional) | `python3 py311-flask py311-Markdown py311-numpy` | `python python-flask python-markdown python-numpy` |
 
 Common build tools: `meson ninja pkgconf cmake git` (Arch) / `meson ninja
@@ -235,7 +240,8 @@ box-specific values. The CMake superproject renders every config from it and
 installs the DRC engine (`drc.sh` behind the `omdrc` / `omdrc-status`
 wrappers), the site data (brutefir configs + filters for `GEOMETRY` and for any
 extra sets listed in `GEOMETRIES` — only installed sets can be selected at
-runtime, see `drc.sh geometry` below), both web
+runtime, see `drc.sh geometry` below), the FreeBSD-only `omdrc-cdin` binary and
+`rc.d` service, both web
 UIs (omdrcctrl :9090 as a system service; omdrcvideo :9080 as a `--user`
 service), and the DAC-hotplug glue. The install prints the OS-specific enable
 steps and the one or two files to copy into `/etc` (the udev rule; the mpd
@@ -278,6 +284,69 @@ cp brutefir_defaults.linux.conf ~/.config/BruteFIR/brutefir_defaults.conf   # Li
 > fails with *"Parse error: path not set … module 'file'"*, and `drc.sh` rolls back to
 > direct DAC output — so DRC never comes up at boot. Deploying the file above (and
 > leaving the auto-generated `~/.brutefir_defaults`, if any, deleted) prevents this.
+
+# CD / S/PDIF input (`omdrc-cdin`)
+
+`omdrc-cdin` is the FreeBSD/OSS CD-input bridge under [`cdin/`](cdin/). It
+captures the ESI U24 XL's 44.1 kHz S/PDIF input and writes it to
+`/dev/dsp.play`, the same `virtual_oss` entry point BruteFIR reads for MPD. The
+path contains no resampler: captured samples are copied unchanged through a
+ring whose lead absorbs the independent CD and DAC clock drift.
+
+The daemon is intended to stay up continuously and has three states:
+
+| State | Input | Output tenancy |
+|---|---|---|
+| `NO_CARRIER` | no frames; capture is closed and retried | released |
+| `IDLE` | frames of exact digital zero | not held; a playing episode releases after `--idle-after` |
+| `PLAYING` | non-zero audio is on the wire | acquired |
+
+`--idle-after` defaults to 15000 ms; `0` disables the silence gate and keeps
+the output open. While idle, the ring continues rolling through the silence.
+When audio returns, `ring_keep_last()` trims it to one lead instead of clearing
+it and pre-filling again, so playback resumes with a full lead and does not lose
+the first note.
+
+At startup the daemon probes the playback widths once, immediately releases the
+device, and fixes the ring layout before any playing episode can hold it. Width
+negotiation preserves the first open error, so a missing or busy device is
+reported as such instead of being masked by a later sample-width candidate.
+
+On FreeBSD, enable the CMake-installed service and name the ESI capture device:
+
+```sh
+# /etc/rc.conf
+omdrc_cdin_enable="YES"
+omdrc_cdin_in="/dev/dsp1"       # check /dev/sndstat; this is not the DAC
+```
+
+`service omdrc_cdin release` (or `SIGHUP`) gives `/dev/dsp.play` back without
+stopping capture. The daemon then holds off reacquisition for at least six
+seconds (the default is 6 s) so `drc.sh` can safely stop and recreate
+`virtual_oss`. Both `drc.sh off` and its service-teardown `stop` path request
+this release before touching `virtual_oss`; otherwise an open cuse client can
+wedge teardown until reboot.
+
+The `omdrc-ctrl` page at port 9090 includes a **CD input** card backed by
+`GET /cdin/status`. Its LED represents device availability, not whether the
+output is currently held; ordinary `acquired`/`released` events do not turn it
+red. Current healthy state is replaced as it changes, while failures remain in
+the red event history. The `[cdin]` section of `commands.conf` must point at the
+same log as `omdrc_cdin_logfile`.
+
+The release/reacquire path has been exercised against `/dev/dsp0` with a full
+lead, `starves 0` and `drops 0`; `SIGHUP` released the output in about 0.4 s and
+held it off for 6 s while the simulated disc continued. The gate and ring
+behavior are covered by `test_gate` (8 cases) and four `ring_keep_last()` cases;
+all three `cdin` test suites pass.
+
+One hardware question remains: a stopped ESI source must still be observed on
+the real capture device. A short read/error enters `NO_CARRIER`, and continued
+zero frames enter `IDLE`; if the OSS `read()` instead blocks forever, the gate
+cannot run and the daemon will need a capture-read timeout. See
+[`cdin/README.md`](cdin/README.md) for lead calibration, the transport rig,
+complete options, log contract, bit-perfect verification, and the hardware
+test checklist.
 
 # configs/ directory
 
@@ -377,10 +446,12 @@ Signature: `drc.sh <rate>|resamp|restore|off|stop|status|session|geometry|design
   was ever saved)
 - `off` — stops brutefir and virtual_oss; switches MPD back to output 1; **records the
   off state** (but keeps the remembered rate), so a reboot stays off. This is the
-  user-facing disable (interactive and the web UI button)
+  user-facing disable (interactive and the web UI button). On FreeBSD it first asks
+  `omdrc-cdin` to release `/dev/dsp.play`
 - `stop` — identical teardown to `off` but **does not record the off state**. Used by
   the service stop-paths (systemd `ExecStop`, FreeBSD rc.d stop, devd/udev unplug) so a
-  clean reboot of a *running* system is restored rather than left off
+  clean reboot of a *running* system is restored rather than left off. It uses the
+  same CD-input release handshake before stopping `virtual_oss`
 - `session` — read-only, machine-friendly view of the exact persistent tuple used
   by `restore`: geometry, power, mode/rate, design selector and display label
 - `geometry` — filter-set control. Bare `drc.sh geometry` prints the active set,
@@ -656,6 +727,7 @@ rule under `etc/devd/`.  (The directory names — `rc.d`/`devd` vs the Linux
 | `etc/rc.d/drc_usb_audio` | `/usr/local/etc/rc.d/` | Starts/stops BruteFIR and switches MPD outputs |
 | `etc/rc.d/upmpdcli` | `/usr/local/etc/rc.d/` | UPnP/OpenHome renderer (started by `omdrc_renderer`, not enabled itself) |
 | `etc/rc.d/omdrc_renderer` | `/usr/local/etc/rc.d/` | Restores the renderer last selected in the panel (`qobuzconnect2mpd` ⇄ `upmpdcli`) |
+| `cdin/rc.d/omdrc_cdin.in` | `/usr/local/etc/rc.d/omdrc_cdin` | Runs the CD/S/PDIF bridge continuously; `release` gives the DRC loopback back without stopping it |
 | `etc/devd/usb-audio-drc.conf` | `/usr/local/etc/devd/` | Triggers routing on USB audio attach/detach |
 
 The two renderers are mutually exclusive and neither is enabled in `rc.conf`:
@@ -702,6 +774,7 @@ service drc_usb_audio onestart  # restore last DRC state + switch MPD
 service drc_usb_audio onestop   # stop BruteFIR + switch MPD to output 1
 service brutefir_drc onestart   # restore last DRC state (no USB settle delay)
 service brutefir_drc onestop    # stop BruteFIR + virtual_oss + switch MPD
+service omdrc_cdin release      # release /dev/dsp.play; daemon keeps capturing
 ```
 
 The `devd` attach rule matches USB audio interface class `0x01`. The detach rule
@@ -844,8 +917,10 @@ When the DAC is unplugged or powered off, `devd` detach (or a service stop) runs
 `drc.sh off`:
 
 1. Stop BruteFIR and wait for it to release `/dev/dsp0`.
-2. (FreeBSD) Stop `virtual_oss`.
-3. `mpc enable only OKTO-DAC` — switch MPD back to the direct output.
+2. (FreeBSD) send `SIGHUP` to `omdrc-cdin`, wait for `/dev/dsp.play` to be
+   released, and start its reacquisition hold-off.
+3. (FreeBSD) stop `virtual_oss`.
+4. `mpc enable only OKTO-DAC` — switch MPD back to the direct output.
 
 The chain comes down in the reverse order it went up, freeing the DAC before the
 direct output reopens it (the DAC is single-open).

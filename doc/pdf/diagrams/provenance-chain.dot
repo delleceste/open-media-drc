@@ -10,11 +10,12 @@ digraph provenance_chain {
     subgraph cluster_source {
         label="Source repository (DRC-<room>, separate checkout)";
         fontname="Helvetica"; fontsize=10; color="#bbbbbb"; style=dashed;
-        rew    [label="REW exports\nmeasurement/filter TXT + WAV", fillcolor="#fdf3d8"];
-        decl   [label="design.json\nrole -> file + SHA-256", fillcolor="#fdf3d8"];
-        tag    [label="annotated git tag\n<geometry>-<design-id>", fillcolor="#fdf3d8"];
-        rew -> decl [label="declare_filter_design.py"];
-        decl -> tag [label="commit + tag -a"];
+        mdat   [label="<session>.mdat\nthe REW measurement session", fillcolor="#fdf3d8"];
+        rew    [label="<session>.txts/\nL, R, LR | L+R, FLX/FRX,\n*.filtered | L+R.remeasured", fillcolor="#fdf3d8"];
+        head   [label="git commit in the project\nHEAD + one blob per input", fillcolor="#fdf3d8"];
+        mdat -> rew [label="exported by REW"];
+        rew -> head [label="git add + git commit\n(required: uncommitted stops the deploy)"];
+        mdat -> head [style=dashed, label="hashed into the manifest"];
     }
 
     subgraph cluster_site {
@@ -29,13 +30,15 @@ digraph provenance_chain {
         copies -> man; raws -> man; conf -> man; ana -> man;
     }
 
-    tag -> copies [label="new_filter_design.py -> deploy_filter.py\nverifies tag object, commit,\nclean tree, every input hash"];
+    head -> copies [label="new_filter_design.py -> deploy_filter.py\nnames every role from the filenames,\nchecks each filter TXT against its WAV,\nrecords the commit and the .mdat hash"];
     raws -> ana   [style=invis];
 
+    hist  [label="room history\ngit checkout <commit> -- filters/ configs/", fillcolor="#dff0df"];
     inst  [label="make install\n$PREFIX/etc/open-media-drc/", fillcolor="#f3e6f5"];
     bf    [label="BruteFIR\nloads the rendered .conf"];
     ui    [label="omdrc-ctrl Filter response\nverified (green) / mismatch (red)", fillcolor="#f3e6f5"];
 
+    man -> hist [label="one commit in the room repository:\ngit log = every filter set ever live"];
     man -> inst [label="CMake runs verify_filter_bundle.py first;\n@design without a manifest is fatal"];
     inst -> bf;
     bf -> ui    [label="hash the RAWs actually loaded;\nrelease stored curves only on\na single exact manifest match"];

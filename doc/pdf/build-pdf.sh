@@ -65,7 +65,7 @@ pandoc ../FILTER_PROVENANCE_AND_RESPONSE.md \
     --number-sections \
     --highlight-style=tango \
     -V documentclass=article \
-    -M title="Filter provenance and predicted-response strategy" \
+    -M title="Filter provenance, deployment, and response strategy" \
     -M date="$VERSION ($DATE)" \
     -o "$PROV"
 

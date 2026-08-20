@@ -19,7 +19,13 @@ class FilterResponseSmoothingTest(unittest.TestCase):
         page = TEMPLATE.read_text(encoding="utf-8")
         for value in ("none", "variable", "psychoacoustic", "octave-6", "octave-3"):
             self.assertIn(f'value="{value}"', page)
-        self.assertIn("verified source arrays and hashes remain unchanged", page)
+        self.assertIn("the stored REW exports are unchanged", page)
+
+    def test_unsmoothed_is_the_default_view(self):
+        page = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("let smoothing = 'none';", page)
+        # The exported numbers must be what loads first; smoothing is opt-in.
+        self.assertLess(page.index('value="none"'), page.index('value="variable"'))
 
     @unittest.skipUnless(NODE, "node is required for the JavaScript behavior test")
     def test_smoothing_math_and_phase_wrapping(self):

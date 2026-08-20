@@ -40,6 +40,12 @@ size_t ring_read(struct ring *r, void *buf, size_t n);
    or the ring was shut down. */
 size_t ring_read_some(struct ring *r, void *buf, size_t n);
 
+/* Discard everything but the newest n bytes; returns the number discarded.
+   The ring keeps rolling while the input is idle, so when audio returns its
+   contents are the silence that came just before — trimming to the lead makes
+   that history the pre-fill instead of throwing the first note away with it. */
+size_t ring_keep_last(struct ring *r, size_t n);
+
 /* Block until at least n bytes are buffered.  Returns false on shutdown. */
 bool   ring_wait_fill(struct ring *r, size_t n);
 

@@ -40,9 +40,9 @@ provides no feedback. Every command here either shows its output directly
   busy until the new set is actually running. See
   [`POST /drc/geometry`](#post-drcgeometry).
 - **DRC filter analysis** — a **Filter response** page renders magnitude and
-  wrapped phase for the hash-bound measurements, FIR filters and predicted
-  corrected responses, with display-only smoothing. See
-  [DRC filter response](#drc-filter-response).
+  phase for the hash-bound REW exports: the measured room, the FIR filters and
+  the corrected result, each drawn exactly as REW wrote it, with display-only
+  smoothing. See [DRC filter response](#drc-filter-response).
 - **Live BruteFIR configuration** — a **Configuration ↗** button opens the
   exact running command line and config, identifies the loaded geometry/design
   and lists every coefficient file. Configured attenuation is shown beside a
@@ -371,12 +371,14 @@ upmpdcli-console.label = upmpdcli (plugins)
 qobuzconnect2mpd       = /tmp/qconnect2mpd.log
 brutefir               = /tmp/brutefir.out
 brutefir.label         = BruteFIR
+omdrc-cdin             = /tmp/omdrc-cdin.log
+omdrc-cdin.label       = CD input
 tail_bytes     = 200000   ; most a single log view reads back
 scan_bytes     = 65536    ; tail of each source the alert rules see
 alert_interval = 20       ; seconds between browser alert polls
 ```
 
-Omit the section entirely and these same four sources are used. Only files
+Omit the section entirely and these same sources are used. Only files
 readable by the service user can be shown; a missing file is reported as "not
 written yet" rather than as an error.
 
@@ -602,6 +604,32 @@ controller's user.
 > qobuzconnect2mpd keeps its own token under `qconnectstatedir` (normally
 > `/var/db/qobuzconnect2mpd/user_token`). Each alert action selects the matching
 > flow; signing into one renderer does not alter the other's credential.
+
+### Reserved section: `[cdin]`
+
+`[cdin]` points the **CD input** card at `omdrc-cdin`, the S/PDIF capture
+bridge. It configures nothing about the daemon itself — the daemon is
+configured in `/etc/rc.conf` — only where to read it from:
+
+```ini
+[cdin]
+enabled = yes
+# Must match omdrc_cdin_logfile in /etc/rc.conf: this file IS the card.
+log_file = /tmp/omdrc-cdin.log
+# Checked with pgrep -x, to tell "stopped" from "broken".
+process = omdrc-cdin
+# The rc.d service name, for reference in the UI.
+service = omdrc_cdin
+refresh = 5
+# Past failures the card keeps.  Errors accumulate and stay; the healthy status
+# line is replaced, so a quiet week does not push last night's dropout out.
+max_events = 20
+```
+
+`enabled = no` removes the card entirely. `process` is what separates a daemon
+that is *stopped* from one that is *failing*: a log file outlives the program
+that wrote it, and without the process check a box whose CD bridge was switched
+off last month would show a red light for whatever that log happened to end on.
 
 ### Reserved section: `[spectrum]`
 
@@ -947,6 +975,49 @@ repeat count does, so a dismissed alert reappears on a fresh occurrence.
 `status_sources` is the subset of `sources` that `ok` rules read. With no `ok`
 alert active, the UI uses it to say whether the connection status is merely
 quiet or the log it would come from has not been written yet.
+
+---
+
+### `GET /cdin/status`
+
+What the CD input card paints: the reduction of `omdrc-cdin`'s log to a verdict,
+two device states, the latest stats line and the event list.
+
+```json
+{ "ok": true, "enabled": true, "running": true,
+  "process": "omdrc-cdin", "service": "omdrc_cdin",
+  "log": { "path": "/tmp/omdrc-cdin.log", "exists": true,
+           "size": 48213, "mtime": 1787035072 },
+  "led": "green", "summary": "idle — waiting for audio, output released",
+  "state": "idle", "state_why": "digital silence long enough to release the output",
+  "capture": { "kind": "capture", "label": "capture", "path": "/dev/dsp1",
+               "available": true, "error": "", "held": false,
+               "at": "2026-08-20 08:01:44" },
+  "output":  { "kind": "playback", "label": "output", "path": "/dev/dsp.play",
+               "available": true, "error": "", "held": false,
+               "at": "2026-08-20 08:59:31" },
+  "stats": "lead 1962 ms (min 1955, max 1972)  drift +1.2 ppm …  starves 0 …",
+  "stats_at": "2026-08-20 08:12:12",
+  "events": [ { "at": "2026-08-20 08:00:01", "severity": "error",
+                "text": "playback /dev/dsp.play: unavailable — No such file or directory (retrying every 2 s)" },
+              { "at": "2026-08-20 08:59:31", "severity": "ok",
+                "text": "state idle: digital silence long enough to release the output" } ],
+  "truncated": false }
+```
+
+`led` is one of `green`, `red`, `idle` and follows device **availability**
+only — never whether the output happens to be `held` at this instant, which
+swings back and forth all day in normal operation.
+
+`available` is `true`, `false`, or `null` for "not known yet": a daemon that has
+just started, or whose log was rotated out from under it, has said nothing about
+that end, and that is not the same answer as "broken". Only `false` is a red
+light.
+
+`events` keeps every `error`/`warn` in the scanned window (newest
+`max_events`, with `truncated` set when older ones were dropped) plus the single
+most recent healthy line, in log order. `running` is false whenever the process
+is absent, and `led` is then `idle` regardless of what the log says.
 
 ---
 
@@ -1442,14 +1513,55 @@ sysctl hw.usb.uaudio
 
 In addition to the configurable command cards, fixed monitoring panels always
 appear on the page. The order is by how often a panel is worth a look, not by
-kind: **Digital Room Correction** first, then **Renderer**, **Spectrum** and
-**MPD**, then the remaining command groups (**Applications**, plus any custom
+kind: **Digital Room Correction** first, then **Renderer**, **CD input**,
+**Spectrum** and **MPD**, then the remaining command groups (**Applications**, plus any custom
 group), the diagnostic panels below them (Brutefir CPU, RAM, Audio devices,
 Advanced, Top CPU), and finally **System** and the **Logs** card.
 
 Auto-refreshing panels show a client-side countdown such as `refresh: 5s`.
 The circular arrow button in each panel header refreshes that panel immediately
 and resets the countdown.
+
+### CD input
+
+Reports `omdrc-cdin`, the S/PDIF capture bridge that feeds a CD transport into
+the DRC chain. The panel **watches** it and does not drive it: the daemon runs
+continuously from boot (`omdrc_cdin_enable="YES"`) and manages its own devices,
+holding `/dev/dsp.play` only while audio is actually on the wire and releasing
+it after a run of digital silence. There is nothing to press.
+
+Everything shown is parsed from the daemon's log (`log_file` in `[cdin]`, which
+must match `omdrc_cdin_logfile` in `rc.conf`):
+
+- an **LED** and a one-line summary — `playing — audio on the wire`,
+  `idle — waiting for audio, output released`, `capture unavailable — No such
+  file or directory`;
+- both **device paths** with their state: `capture /dev/dsp1 free`,
+  `output /dev/dsp.play held`;
+- the most recent **`[stats]` line**, which is where `starves` lives — anything
+  above zero is a dropout that already happened;
+- a scrolling **event list**.
+
+Two rules decide what goes where, and they are the whole design of the card:
+
+- **The LED follows device availability only.** Red means an end could not be
+  opened, i.e. no disc could play right now. A *released* output device is the
+  daemon working correctly and never colours anything — a light that went amber
+  every time the music stopped would be a light nobody reads.
+- **Failures are kept; health is replaced.** Every error stays in the list, in
+  red, in chronological order, even after the condition clears. The healthy
+  status line is replaced rather than accumulated, so it is normally the last
+  line — but not when something has gone wrong since. A live status line can
+  never say "the output was missing for ten minutes this morning", and that is
+  exactly the thing worth saying.
+
+A daemon that is **not running** is reported as idle, not broken, however
+alarming the tail of its log is — the same rule the `[alert:*]` rules apply to a
+stopped renderer. Its log outlives it, and nothing is unavailable when nothing
+is trying to open it. If the daemon has never run *and* left no log, the card
+hides itself: on a box with no CD player there is nothing to report.
+
+The raw log is also available in the **Logs** card as `CD input`.
 
 ### Qobuz Connect
 
@@ -1517,22 +1629,31 @@ safe value is the worst requirement across all loaded filters.
 
 The DRC card header carries a **Filter response ↗** button that opens a
 dedicated page ([`GET /filter-response`](#get-filter-response)). A single
-log-frequency Chart.js plot toggles between magnitude and wrapped phase. Its
-checkbox legend offers original L/R, independently measured L+R, coherent
-calculated L+R, FLX/FRX, corrected L/R and corrected L+R. The coherent original
-and corrected sums are selected by default. A smoothing dropdown offers
-**Unsmoothed**, **Variable**, **Psychoacoustic**, **1/3 octave** and
-**1/6 octave** views. Smoothing is calculated only in the browser; it neither
-rewrites the verified response arrays nor changes any provenance hash.
+log-frequency Chart.js plot toggles between magnitude and phase. Its checkbox
+legend offers the eight stored exports: measured L/R, the measured aggregate,
+FLX/FRX, corrected L/R and the corrected aggregate. The two aggregates are
+selected by default. Every curve is one REW text export plotted as exported —
+nothing between REW and the browser averages, sums, convolves, interpolates or
+subtracts the runtime attenuation.
+
+A smoothing dropdown offers **Unsmoothed**, **Variable**, **Psychoacoustic**,
+**1/3 octave** and **1/6 octave** views and defaults to unsmoothed, so what
+loads is what REW exported. Smoothing is calculated in the browser on a copy,
+for viewing only; it neither rewrites the verified response arrays nor changes
+any provenance hash, and it is always named under the graph. It is also the only
+smoothing in the system: a bundle whose exports carried REW smoothing, or whose
+measurements reached past 24 kHz (a measurement above 48 kHz), cannot be
+deployed at all, so the arrays behind the selector are always unsmoothed
+in-band data.
 
 The green **Verified** badge means the current coefficient bytes match the
-hash-bound bundle. For newly declared designs its always-visible text includes
-the annotated source tag, immutable tag-object ID and exact source commit.
-Runtime attenuation is included in filter and predicted curves.
-A mismatch produces a red badge and withholds stored room data instead of
-guessing from a geometry name. An expandable panel reports the bundle, hashes,
-source declaration, optional project archive, measurement headers, lineage,
-validation and headroom. Chart.js is vendored locally, so the page works offline.
+hash-bound bundle. A mismatch produces a red badge, withholds stored room data
+instead of guessing from a geometry name, and draws no graph at all. An
+expandable panel reports the bundle, active hashes, the export directory, the
+source project and commit, the REW `.mdat` behind the measurements, the
+aggregate convention, every plotted export with its hash, measurement headers
+and REW smoothing, validation and headroom. Chart.js is vendored locally, so the
+page works offline.
 
 ### Spectrum
 

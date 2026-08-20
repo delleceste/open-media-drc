@@ -166,6 +166,23 @@ ring_read_some(struct ring *r, void *buf, size_t n)
 	return got;
 }
 
+size_t
+ring_keep_last(struct ring *r, size_t n)
+{
+	size_t dropped = 0;
+
+	n -= n % r->frame_bytes;
+	pthread_mutex_lock(&r->mu);
+	if (r->fill > n) {
+		dropped = r->fill - n;
+		r->tail = (r->tail + dropped) % r->cap;
+		r->fill = n;
+		pthread_cond_broadcast(&r->cv);
+	}
+	pthread_mutex_unlock(&r->mu);
+	return dropped;
+}
+
 void
 ring_set_eof(struct ring *r)
 {

@@ -7,10 +7,12 @@
  *
  * The two ends run on independent clocks: capture is slaved to the CD, the DAC
  * to its own crystal.  No resampler reconciles them.  Instead a lead of a few
- * seconds is held in the ring, and drift is absorbed during the digital
- * silence between tracks (Phase 2).  See doc/CD-INPUT.md for the arithmetic:
- * at 50 ppm a 2 s lead covers ~11 h of gapless audio, so drift cannot cause a
- * discontinuity inside a disc.
+ * seconds is held in the ring, and drift will eventually be absorbed during
+ * the digital silence between tracks (TODO(phase2b)).  See doc/CD-INPUT.md for
+ * the arithmetic: at 50 ppm a 2 s lead covers ~11 h of gapless audio, so drift
+ * cannot cause a discontinuity inside a disc — which is why that resync is not
+ * yet needed, and why the daemon can already be left running for weeks: the
+ * silence between discs releases the output device rather than resyncing it.
  */
 #pragma once
 

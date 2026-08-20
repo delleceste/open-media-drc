@@ -305,6 +305,30 @@ valid_variant() {
   esac
 }
 
+# Ask omdrc-cdin to hand /dev/dsp.play back before virtual_oss goes away.
+#
+# The CD bridge is meant to run continuously and normally holds nothing: it
+# releases the output after a run of digital silence.  But a disc that is
+# actually playing when the rate changes IS holding it, and an open cuse client
+# handle at virtual_oss teardown is what wedges the teardown for good
+# (VIRTUAL_OSS_CUSE_DEADLOCK.md — cuse_server_free() spins uninterruptibly
+# until every client handle is gone, and only a reboot recovers the machine).
+# So this is the same courtesy the MPD outputs get with `mpc disable` a few
+# lines up, for the same reason.  SIGHUP also holds the daemon off for a few
+# seconds, which covers the restart; nothing here fails if it is not running.
+release_cdin() {
+  pgrep -q -x omdrc-cdin 2>/dev/null || return 0
+  echo "asking omdrc-cdin to release the loopback"
+  pkill -HUP -x omdrc-cdin 2>/dev/null || true
+  # The daemon cannot drop the device instantly: its playback thread is parked
+  # in write(), and virtual_oss's -s 200ms buffer plus one period plus the
+  # close() drain put the measured latency around 0.4 s.  Wait several times
+  # that.  The thing on the other side of this sleep is a teardown that wedges
+  # the machine until it is rebooted if a client handle is still open, so a
+  # second of latency on a rate change is not a trade worth making.
+  sleep 1.5
+}
+
 stop_virtual_oss() {
   local pid
   pid=$(_sudo cat "$VIRTUAL_OSS_PID" 2>/dev/null) && _sudo kill "$pid" 2>/dev/null || true
@@ -957,6 +981,7 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   mpc disable "DRC-native" >/dev/null 2>&1 || true
   mpc disable "DRC-resamp" >/dev/null 2>&1 || true
   sleep 0.5
+  $IS_LINUX || release_cdin
   # Now tear the chain down so /dev/dsp0 is free before the direct output opens
   # it (the DAC is single-open: vchans off / bit-perfect).
   if ! $IS_LINUX; then
@@ -997,6 +1022,7 @@ mpc disable "DRC-resamp" >/dev/null 2>&1 || true
 # an open MPD output is what produced "exception: Failed to open audio output"
 # and forced a second run.
 sleep 0.5
+$IS_LINUX || release_cdin
 
 # ── restart virtual_oss at the required sample rate ──────────────────────────
 if ! $IS_LINUX; then

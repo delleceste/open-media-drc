@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Build and verify an auditable room-correction filter bundle offline.
+"""Builder library behind the single ``new_filter_design.py <dir>`` command.
 
-The source recipe pins a committed declaration and/or legacy provenance plus
-the selected exported files. This tool never starts REW. It verifies those
-inputs, regenerates every declared BruteFIR rate in a staging directory,
-calculates graph data, and writes only after all checks pass.
+Every plotted curve is one REW text export, carried into the bundle unchanged.
+This module never averages, sums, convolves, interpolates or smooths a response
+for display: the graph the web remote draws holds exactly the numbers REW
+wrote.  The only DSP left here proves that the deployable impulse WAV really is
+the filter whose exported response is plotted, and resamples that WAV into the
+per-rate BruteFIR coefficients.
 
-Run without --write first.  Existing runtime coefficients may be replaced only
-with the additional --replace-runtime acknowledgement.
+This tool never starts REW and does not parse ``.mdat``.
 """
 
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import hashlib
 import json
 import math
@@ -49,13 +49,36 @@ ROOT = Path(__file__).resolve().parents[1]
 # it always has.  Point OMDRC_SITE_ROOT (or --site-root) at a second checkout to
 # keep personal measurements and filters out of a public engine repository.
 SITE_ROOT_ENV = "OMDRC_SITE_ROOT"
-REQUIRED_ROLES = (
-    "measurement_left", "measurement_right", "measurement_sum",
-    "filter_left_txt", "filter_right_txt", "filter_left_wav", "filter_right_wav",
+
+# The eight exports that become the eight plotted curves, in legend order, plus
+# the two impulse WAVs that become the runtime coefficients.  Every role is
+# required: a design with a missing curve is a design the operator cannot read.
+TRACE_ROLES = (
+    "original_left", "original_right", "original_sum",
+    "filter_left", "filter_right",
+    "corrected_left", "corrected_right", "corrected_sum",
 )
-OPTIONAL_PREDICTION_ROLES = (
-    "corrected_left_txt", "corrected_right_txt", "corrected_sum_txt",
+WAV_ROLES = ("filter_left_wav", "filter_right_wav")
+ARTIFACT_ROLES = TRACE_ROLES + WAV_ROLES
+
+# id, label (None takes the aggregate wording), colour, legend group, visible
+TRACE_SPECS = (
+    ("original_left",   "original-left",   "Original L",  "#58a6ff", "Original",  False),
+    ("original_right",  "original-right",  "Original R",  "#d29922", "Original",  False),
+    ("original_sum",    "original-sum",    None,          "#a371f7", "Original",  True),
+    ("filter_left",     "filter-left",     "Filter FLX",  "#2f81f7", "Filter",    False),
+    ("filter_right",    "filter-right",    "Filter FRX",  "#e3b341", "Filter",    False),
+    ("corrected_left",  "corrected-left",  "Corrected L", "#3fb950", "Corrected", False),
+    ("corrected_right", "corrected-right", "Corrected R", "#f85149", "Corrected", False),
+    ("corrected_sum",   "corrected-sum",   None,          "#39d353", "Corrected", True),
 )
+
+# Two properties every plotted export must have, checked before anything is
+# written.  Neither can be repaired afterwards, and neither is visible in the
+# graph once the bundle exists.
+MAX_MEASUREMENT_RATE_HZ = 48000
+MAX_EXPORT_FREQUENCY_HZ = MAX_MEASUREMENT_RATE_HZ / 2.0
+
 DEFAULT_LIMITS = {
     "max_rms_magnitude_db": 0.02,
     "max_rms_phase_deg": 0.2,
@@ -66,10 +89,32 @@ DEFAULT_LIMITS = {
 
 def artifact_roles(recipe: dict) -> tuple[str, ...]:
     artifacts = recipe["source"]["artifacts"]
-    missing = [role for role in REQUIRED_ROLES if role not in artifacts]
+    missing = [role for role in ARTIFACT_ROLES if role not in artifacts]
     if missing:
         raise AuditError(f"recipe is missing required artifacts: {', '.join(missing)}")
-    return REQUIRED_ROLES + tuple(role for role in OPTIONAL_PREDICTION_ROLES if role in artifacts)
+    unknown = sorted(set(artifacts) - set(ARTIFACT_ROLES))
+    if unknown:
+        raise AuditError(f"recipe has unknown artifact roles: {', '.join(unknown)}")
+    return ARTIFACT_ROLES
+
+
+def aggregate_labels(aggregate: dict) -> tuple[str, str]:
+    """Legend wording for the two aggregate curves, from the chosen filenames.
+
+    The aggregate's meaning is carried by the name the operator gave the export
+    — ``LR`` is REW's vector average, ``L+R`` is the sum — so nothing has to be
+    asserted on a command line, and nothing is recalculated to match it.
+    """
+    style = aggregate.get("style", "L+R")
+    if style == "LR":
+        original, corrected = "Original L/R vector average", "Corrected L/R vector average"
+    elif style == "L+R":
+        original, corrected = "Original L+R", "Corrected L+R"
+    else:
+        raise AuditError(f"unknown aggregate style: {style!r}")
+    if aggregate.get("corrected") == "remeasured":
+        corrected += " (re-measured in the room)"
+    return original, corrected
 
 
 class AuditError(RuntimeError):
@@ -113,17 +158,23 @@ def canonical_hash(value: object) -> str:
 
 
 def bundle_identity_from_manifest(manifest: dict) -> dict:
-    identity = {
+    """Content identity of a bundle: what it claims, hashed into one ID.
+
+    Schema 2 dropped the Git anchor.  A bundle now stands on the hashes of the
+    exports it plots, the coefficients it deploys and the configs that load
+    them — no repository, commit or tag participates.
+    """
+    if manifest.get("schema") != 2:
+        raise AuditError(
+            f"unsupported bundle schema {manifest.get('schema')!r}; redeploy this "
+            "design with new_filter_design.py to publish a schema 2 bundle")
+    return {
         "schema": manifest["schema"],
         "geometry": manifest["geometry"],
         "variant": manifest["variant"],
         "design_id": manifest.get("design_id", manifest["variant"]),
-        "source_repository": manifest["source"]["repository"],
-        "source_commit": manifest["source"]["repository_head"],
-        "source_release": manifest["source"].get("release", {}),
+        "description": manifest["description"],
         "source_provenance_sha256": canonical_hash(manifest["source"]),
-        "project_sha256": manifest["source"].get("project", {}).get("sha256", ""),
-        "source_declaration_sha256": manifest["source"].get("declaration", {}).get("sha256", ""),
         "source_artifacts": {
             role: item["sha256"] for role, item in manifest["source"]["artifacts"].items()
         },
@@ -141,11 +192,6 @@ def bundle_identity_from_manifest(manifest: dict) -> dict:
         },
         "analysis_sha256": manifest["analysis"]["sha256"],
     }
-    # Added for new bundles without changing the identity of already deployed
-    # manifests that predate the human-readable description field.
-    if "description" in manifest:
-        identity["description"] = manifest["description"]
-    return identity
 
 
 def run(args: list[str], cwd: Path | None = None) -> str:
@@ -154,6 +200,103 @@ def run(args: list[str], cwd: Path | None = None) -> str:
         detail = proc.stderr.strip() or proc.stdout.strip()
         raise AuditError(f"command failed ({' '.join(args)}): {detail}")
     return proc.stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# Git answers two questions and no others: which project produced a design, and
+# how to get any deployed filter set back.  It never takes part in verifying a
+# bundle -- the content hashes do that -- so a checkout without Git still
+# deploys, it just cannot promise the exports stay retrievable.
+
+
+def git_toplevel(path: Path) -> Path | None:
+    """The work tree `path` belongs to, or None when it is not under Git."""
+    start = path if path.is_dir() else path.parent
+    proc = subprocess.run(
+        ["git", "-C", str(start), "rev-parse", "--show-toplevel"],
+        text=True, capture_output=True)
+    if proc.returncode:
+        return None
+    return Path(proc.stdout.strip()).resolve()
+
+
+def git_text(repo: Path, *args: str) -> str:
+    return run(["git", "-C", str(repo), *args])
+
+
+def git_raw(repo: Path, *args: str) -> str:
+    """Git output kept byte for byte -- NUL-separated formats do not survive strip."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args], text=True, capture_output=True)
+    if proc.returncode:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        raise AuditError(f"command failed (git {' '.join(args)}): {detail}")
+    return proc.stdout
+
+
+def git_maybe(repo: Path, *args: str) -> str:
+    """Run a Git query whose failure is an answer rather than an error."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args], text=True, capture_output=True)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def git_relative(repo: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo).as_posix()
+    except ValueError as exc:
+        raise AuditError(f"{path} is outside the work tree {repo}") from exc
+
+
+def git_uncommitted(repo: Path, relatives: list[str]) -> list[str]:
+    """Which of `relatives` differ from HEAD, staged or not, tracked or not.
+
+    Staged-but-uncommitted counts as uncommitted: a commit is what makes the
+    bytes retrievable later, and that is the only reason Git is consulted here.
+    """
+    fields = [item for item in
+              git_raw(repo, "status", "--porcelain=1", "-z", "--", *relatives).split("\0")
+              if item]
+    dirty: list[str] = []
+    index = 0
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
+        code, name = entry[:2], entry[3:]
+        dirty.append(name)
+        if code[0] in ("R", "C") and index < len(fields):
+            dirty.append(fields[index])
+            index += 1
+    return [item for item in relatives if item in set(dirty)]
+
+
+def git_blobs(repo: Path, relatives: list[str]) -> dict[str, str]:
+    """HEAD blob ID of each path, so `git cat-file blob <id>` restores it."""
+    blobs: dict[str, str] = {}
+    listing = ""
+    if git_maybe(repo, "rev-parse", "--verify", "--quiet", "HEAD"):
+        listing = git_raw(repo, "ls-tree", "-z", "HEAD", "--", *relatives)
+    for line in listing.split("\0"):
+        if not line:
+            continue
+        meta, _, name = line.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[1] == "blob":
+            blobs[name] = parts[2]
+    return blobs
+
+
+def git_project(repo: Path) -> dict:
+    """Identity of the repository a design was exported from."""
+    return {
+        "name": repo.name,
+        "repository": str(repo),
+        "remote": git_maybe(repo, "config", "--get", "remote.origin.url"),
+        "commit": git_maybe(repo, "rev-parse", "HEAD"),
+        "committed_at": git_maybe(repo, "log", "-1", "--format=%cI"),
+        "subject": git_maybe(repo, "log", "-1", "--format=%s"),
+        "branch": git_maybe(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+    }
 
 
 def safe_source(root: Path, relative: str) -> Path:
@@ -168,26 +311,6 @@ def safe_source(root: Path, relative: str) -> Path:
     if not candidate.is_file() or candidate.is_symlink():
         raise AuditError(f"source is not a regular, non-symlink file: {candidate}")
     return candidate
-
-
-def verify_git_sources(source_root: Path, paths: list[str]) -> dict:
-    top = Path(run(["git", "rev-parse", "--show-toplevel"], source_root)).resolve()
-    if top != source_root.resolve():
-        raise AuditError(f"source root is not the Git top level: {source_root} (top is {top})")
-    for relative in paths:
-        run(["git", "ls-files", "--error-unmatch", "--", relative], source_root)
-    dirty = run(["git", "status", "--porcelain", "--", *paths], source_root)
-    if dirty:
-        raise AuditError(f"selected source files are modified or untracked:\n{dirty}")
-    remote = run(["git", "config", "--get", "remote.origin.url"], source_root)
-    return {
-        "repository": remote,
-        "head": run(["git", "rev-parse", "HEAD"], source_root),
-    }
-
-
-def git_blob(source_root: Path, relative: str) -> str:
-    return run(["git", "rev-parse", f"HEAD:{relative}"], source_root)
 
 
 def parse_rew_txt(path: Path) -> tuple[dict[str, str], np.ndarray, np.ndarray, np.ndarray]:
@@ -254,10 +377,6 @@ def wrap_phase_deg(value: np.ndarray) -> np.ndarray:
     return (value + 180.0) % 360.0 - 180.0
 
 
-def complex_from_db_phase(magnitude: np.ndarray, phase: np.ndarray) -> np.ndarray:
-    return np.power(10.0, magnitude / 20.0) * np.exp(1j * np.radians(phase))
-
-
 def db_phase(value: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return 20.0 * np.log10(np.maximum(np.abs(value), 1e-12)), np.degrees(np.angle(value))
 
@@ -267,13 +386,6 @@ def filter_spectrum(ir: np.ndarray, rate: int, delay_samples: int) -> tuple[np.n
     freqs = np.fft.rfftfreq(ir.size, 1.0 / rate)
     spectrum *= np.exp(1j * 2.0 * np.pi * freqs * delay_samples / rate)
     return freqs, spectrum
-
-
-def interpolate_complex(freqs: np.ndarray, source_freqs: np.ndarray,
-                        values: np.ndarray) -> np.ndarray:
-    real = np.interp(freqs, source_freqs, values.real)
-    imag = np.interp(freqs, source_freqs, values.imag)
-    return real + 1j * imag
 
 
 def response_metrics(txt_freqs: np.ndarray, txt_mag: np.ndarray, txt_phase: np.ndarray,
@@ -343,29 +455,6 @@ def detect_filter_alignment(txt_freqs: np.ndarray, txt_mag: np.ndarray,
     return best
 
 
-def complex_response_metrics(expected_freqs: np.ndarray, expected: np.ndarray,
-                             actual_freqs: np.ndarray, actual_mag: np.ndarray,
-                             actual_phase: np.ndarray) -> dict:
-    within = ((actual_freqs >= expected_freqs[0]) &
-              (actual_freqs <= min(expected_freqs[-1], 20_000.0)))
-    if np.count_nonzero(within) < 3:
-        raise AuditError("independent corrected export has insufficient overlapping data")
-    actual_freqs = actual_freqs[within]
-    actual = complex_from_db_phase(actual_mag[within], actual_phase[within])
-    predicted = interpolate_complex(actual_freqs, expected_freqs, expected)
-    predicted_mag, predicted_phase = db_phase(predicted)
-    actual_db, actual_degrees = db_phase(actual)
-    mag_error = predicted_mag - actual_db
-    phase_error = wrap_phase_deg(predicted_phase - actual_degrees)
-    return {
-        "rows": int(actual_freqs.size),
-        "rms_magnitude_db": round(float(np.sqrt(np.mean(mag_error ** 2))), 6),
-        "max_magnitude_db": round(float(np.max(np.abs(mag_error))), 6),
-        "rms_phase_deg": round(float(np.sqrt(np.mean(phase_error ** 2))), 6),
-        "max_phase_deg": round(float(np.max(np.abs(phase_error))), 6),
-    }
-
-
 def parse_config(path: Path, expected_rate: int) -> dict:
     text = path.read_text(encoding="utf-8")
     match = re.search(r"sampling_rate:\s*(\d+)", text)
@@ -405,211 +494,149 @@ def required_attenuation(peak_db: float, margin_db: float) -> float:
     return max(0.0, math.ceil((peak_db + margin_db) * 10.0) / 10.0)
 
 
-def trace(identifier: str, label: str, color: str, group: str,
-          values: np.ndarray, visible: bool = False, dash: list[int] | None = None) -> dict:
-    magnitude, phase = db_phase(values)
-    result = {
-        "id": identifier,
-        "label": label,
-        "color": color,
-        "group": group,
-        "default_visible": visible,
-        "magnitude_db": np.round(magnitude, 3).tolist(),
-        "phase_deg": np.round(phase, 3).tolist(),
-    }
-    if dash:
-        result["dash"] = dash
-    return result
+def export_defects(parsed: dict) -> list[tuple[str, str]]:
+    """(role, reason) for every export that must not be deployed.
+
+    Two properties are required of all eight, and a bundle that lacks either is
+    refused rather than annotated.  A smoothed export is a decision REW already
+    baked into the numbers: it cannot be undone here, so the page would draw a
+    smoothed curve while promising a measurement.  An export reaching past
+    24 kHz came from a measurement above 48 kHz, and the deployed filters are
+    resampled from one 48 kHz impulse -- a corrected curve drawn beside it would
+    describe a system that was never built.
+    """
+    defects: list[tuple[str, str]] = []
+    for role in TRACE_ROLES:
+        headers, freqs, _, _ = parsed[role]
+        smoothing = headers.get("smoothing", "").strip()
+        if not smoothing:
+            defects.append((role, "states no smoothing, so it cannot be shown to be "
+                                  "unsmoothed; re-export it from REW"))
+        elif smoothing.lower() != "none":
+            defects.append((role, f"carries REW smoothing '{smoothing}'; re-export it "
+                                  "with smoothing set to None"))
+        top = float(freqs[-1]) if len(freqs) else 0.0
+        if top > MAX_EXPORT_FREQUENCY_HZ:
+            defects.append((
+                role,
+                f"reaches {top:,.1f} Hz, so it was measured at {2.0 * top:,.0f} Hz or "
+                f"more; {MAX_MEASUREMENT_RATE_HZ:,} Hz is the highest this pipeline "
+                "deploys"))
+    return defects
 
 
-def trace_from_arrays(identifier: str, label: str, color: str, group: str,
-                      magnitude: np.ndarray, phase: np.ndarray,
-                      visible: bool = False, dash: list[int] | None = None) -> dict:
-    result = {
-        "id": identifier,
-        "label": label,
-        "color": color,
-        "group": group,
-        "default_visible": visible,
-        "magnitude_db": np.round(magnitude, 3).tolist(),
-        "phase_deg": np.round(wrap_phase_deg(phase), 3).tolist(),
-    }
-    if dash:
-        result["dash"] = dash
-    return result
+def grid_key(freqs) -> str:
+    """Stable identity of one frequency grid, so identical grids are stored once.
+
+    Sharing a grid is purely an encoding choice: the numbers each trace plots
+    are the ones its own export contained, and two traces share an entry only
+    when their grids are bit-identical.
+    """
+    return hashlib.sha256(np.ascontiguousarray(freqs, dtype="<f8").tobytes()).hexdigest()[:16]
 
 
 def build_analysis(recipe: dict, source_paths: dict[str, Path]) -> tuple[dict, dict]:
-    parsed = {role: parse_rew_txt(path) for role, path in source_paths.items()
-              if role.endswith("_txt") or role.startswith("measurement_")}
-    lh, freqs, lmag, lphase = parsed["measurement_left"]
-    rh, rfreqs, rmag, rphase = parsed["measurement_right"]
-    sh, sfreqs, smag, sphase = parsed["measurement_sum"]
-    if not np.array_equal(freqs, rfreqs) or not np.array_equal(freqs, sfreqs):
-        raise AuditError("L, R and L+R response exports must have the same frequency grid")
-    sum_mode = recipe.get("prediction", {}).get("sum_mode", "independent")
-    if sum_mode not in {"independent", "coherent_sum", "vector_average"}:
-        raise AuditError(f"unknown prediction sum_mode: {sum_mode!r}")
-    if sum_mode == "vector_average":
-        aggregate_roles = ["measurement_sum"]
-        if "corrected_sum_txt" in parsed:
-            aggregate_roles.append("corrected_sum_txt")
-        for role in aggregate_roles:
-            headers = parsed[role][0]
-            kind = (headers.get("source", "") + " " + headers.get("format", "")).lower()
-            if "vector average" not in kind:
-                raise AuditError(
-                    f"sum_mode vector_average contradicts {role} TXT headers")
-    required_notes = recipe.get("measurement", {}).get("required_note_fragments", [])
-    timed_measurements = [("left", lh), ("right", rh)]
-    if sum_mode == "independent":
-        timed_measurements.append(("sum", sh))
-    for role, headers in timed_measurements:
-        if "acoustic timing reference" not in headers.get("format", "").lower():
-            raise AuditError(f"{role} measurement has no acoustic timing reference")
-        note = headers.get("note", "")
-        missing_notes = [fragment for fragment in required_notes if fragment not in note]
-        if missing_notes:
-            raise AuditError(f"{role} measurement note is missing: {', '.join(missing_notes)}")
+    """Graph data for one design: eight REW exports, carried through unchanged.
+
+    Nothing here derives a curve from another curve.  The magnitude and phase
+    columns of each export become one trace verbatim, so the web remote and REW
+    draw the same numbers.  The DSP that remains relates each filter TXT to the
+    impulse WAV that is about to become the runtime coefficients — without it
+    the plotted filter response would be an unverified claim about the bytes
+    BruteFIR actually loads.
+    """
+    parsed = {role: parse_rew_txt(source_paths[role]) for role in TRACE_ROLES}
+    defects = export_defects(parsed)
+    if defects:
+        raise AuditError(
+            "these exports cannot be deployed: "
+            + "; ".join(f"{source_paths[role].name} {reason}"
+                        for role, reason in defects))
 
     source_rate = int(recipe["filter"]["sample_rate"])
     delay_samples = int(recipe["filter"]["delay_samples"])
     txt_to_wav_gain = recipe["filter"].get(
         "txt_to_wav_gain_db", {"left": 0.0, "right": 0.0})
-    filter_values: dict[str, np.ndarray] = {}
     validation: dict[str, dict] = {}
     for channel in ("left", "right"):
         rate, impulse = load_filter_wav(source_paths[f"filter_{channel}_wav"])
         if rate != source_rate:
             raise AuditError(f"{channel} WAV rate {rate} != declared {source_rate}")
         fft_freqs, fft_values = filter_spectrum(impulse, rate, delay_samples)
-        _, tfreqs, tmag, tphase = parsed[f"filter_{channel}_txt"]
+        _, tfreqs, tmag, tphase = parsed[f"filter_{channel}"]
         metrics = response_metrics(
             tfreqs, tmag, tphase, fft_freqs, fft_values,
             float(txt_to_wav_gain.get(channel, 0.0)))
         limits = recipe["filter"]["txt_wav_limits"]
-        checks = (
-            metrics["rms_magnitude_db"] <= limits["max_rms_magnitude_db"],
-            metrics["rms_phase_deg"] <= limits["max_rms_phase_deg"],
-            metrics["above_100_hz_max_magnitude_db"] <= limits["above_100_hz_max_magnitude_db"],
-            metrics["above_100_hz_max_phase_deg"] <= limits["above_100_hz_max_phase_deg"],
+        metrics["passed"] = (
+            metrics["rms_magnitude_db"] <= limits["max_rms_magnitude_db"] and
+            metrics["rms_phase_deg"] <= limits["max_rms_phase_deg"] and
+            metrics["above_100_hz_max_magnitude_db"] <= limits["above_100_hz_max_magnitude_db"] and
+            metrics["above_100_hz_max_phase_deg"] <= limits["above_100_hz_max_phase_deg"]
         )
-        metrics["passed"] = all(checks)
         if not metrics["passed"]:
             raise AuditError(f"{channel} filter TXT/WAV response check failed: {metrics}")
         validation[channel] = metrics
-        filter_values[channel] = interpolate_complex(freqs, fft_freqs, fft_values)
 
-    measured_l = complex_from_db_phase(lmag, lphase)
-    measured_r = complex_from_db_phase(rmag, rphase)
-    measured_sum = complex_from_db_phase(smag, sphase)
-    sum_scale = 0.5 if sum_mode == "vector_average" else 1.0
-    calculated_sum = (measured_l + measured_r) * sum_scale
-    corrected_l = measured_l * filter_values["left"]
-    corrected_r = measured_r * filter_values["right"]
-    corrected_sum = (corrected_l + corrected_r) * sum_scale
-    calc_sum_mag, calc_sum_phase = db_phase(calculated_sum)
-    sum_mag_error = calc_sum_mag - smag
-    sum_phase_error = wrap_phase_deg(calc_sum_phase - sphase)
+    aggregate = recipe.get("aggregate", {"style": "L+R", "corrected": "filtered"})
+    original_sum_label, corrected_sum_label = aggregate_labels(aggregate)
+    grids: dict[str, list[float]] = {}
+    traces = []
+    for role, identifier, label, color, group, visible in TRACE_SPECS:
+        _, freqs, magnitude, phase = parsed[role]
+        key = grid_key(freqs)
+        if key not in grids:
+            grids[key] = np.round(freqs, 6).tolist()
+        item = {
+            "id": identifier,
+            "label": label or (original_sum_label if group == "Original"
+                               else corrected_sum_label),
+            "color": color,
+            "group": group,
+            "default_visible": visible,
+            "grid": key,
+            # REW writes magnitude to 3 decimals and phase to 4.  Round to the
+            # precision the export actually carries and no further, and never
+            # re-wrap the phase: a value REW wrote as +180.0000 stays +180.0000.
+            "magnitude_db": np.round(magnitude, 3).tolist(),
+            "phase_deg": np.round(phase, 4).tolist(),
+            "source_file": recipe["source"]["artifacts"][role]["path"],
+        }
+        if identifier == "original-sum":
+            item["dash"] = [3, 3]
+        traces.append(item)
 
-    cutoff = freqs <= 20_000.0
-    freqs = freqs[cutoff]
-    prediction_validation: dict[str, dict] = {}
-    if abs(float(txt_to_wav_gain.get("left", 0.0)) -
-           float(txt_to_wav_gain.get("right", 0.0))) > 0.01 and \
-            "corrected_sum_txt" in parsed:
-        raise AuditError(
-            "cannot gain-adjust a corrected aggregate export when left/right "
-            "TXT-to-WAV gains differ by more than 0.01 dB")
-    prediction_values = {
-        "corrected_left_txt": (
-            corrected_l[cutoff], float(txt_to_wav_gain.get("left", 0.0))),
-        "corrected_right_txt": (
-            corrected_r[cutoff], float(txt_to_wav_gain.get("right", 0.0))),
-        "corrected_sum_txt": (
-            corrected_sum[cutoff],
-            (float(txt_to_wav_gain.get("left", 0.0)) +
-             float(txt_to_wav_gain.get("right", 0.0))) / 2.0),
-    }
-    prediction_limits = recipe.get("prediction", {}).get("limits", {
-        "max_rms_magnitude_db": 0.1,
-        "max_rms_phase_deg": 1.0,
-    })
-    for role, (expected, source_gain_adjustment) in prediction_values.items():
-        if role not in parsed:
-            continue
-        _, pfreqs, pmag, pphase = parsed[role]
-        metrics = complex_response_metrics(
-            freqs, expected, pfreqs, pmag + source_gain_adjustment, pphase)
-        metrics["passed"] = (
-            metrics["rms_magnitude_db"] <= prediction_limits["max_rms_magnitude_db"] and
-            metrics["rms_phase_deg"] <= prediction_limits["max_rms_phase_deg"]
-        )
-        if not metrics["passed"]:
-            raise AuditError(f"independent {role} cross-check failed: {metrics}")
-        prediction_validation[role] = metrics
-
-    sum_description = (
-        "L/R vector average" if sum_mode == "vector_average" else "L+R")
-    traces = [
-        trace_from_arrays("original-left", "Original L", "#58a6ff", "Original",
-                          lmag[cutoff], lphase[cutoff]),
-        trace_from_arrays("original-right", "Original R", "#d29922", "Original",
-                          rmag[cutoff], rphase[cutoff]),
-        trace_from_arrays("original-sum-measured", f"Original {sum_description} (exported)", "#a371f7", "Original",
-                          smag[cutoff], sphase[cutoff], visible=True, dash=[3, 3]),
-        trace("original-sum-calculated", f"Original {sum_description} (calculated)", "#f0f6fc", "Original",
-              calculated_sum[cutoff]),
-        trace("filter-left", "Filter FLX", "#2f81f7", "Filter",
-              filter_values["left"][cutoff]),
-        trace("filter-right", "Filter FRX", "#e3b341", "Filter",
-              filter_values["right"][cutoff]),
-        trace("corrected-left", "Corrected L", "#3fb950", "Predicted",
-              corrected_l[cutoff]),
-        trace("corrected-right", "Corrected R", "#f85149", "Predicted",
-              corrected_r[cutoff]),
-        trace("corrected-sum", f"Corrected {sum_description}", "#39d353", "Predicted",
-              corrected_sum[cutoff], visible=True),
-    ]
-    inputs = {role: recipe["source"]["artifacts"][role]["sha256"]
-              for role in artifact_roles(recipe)}
     analysis = {
-        "schema": 1,
+        "schema": 2,
         "geometry": recipe["geometry"],
         "variant": recipe["variant"],
         "design_id": recipe.get("design_id", recipe["variant"]),
         "description": recipe.get("description", recipe.get("design_id", recipe["variant"])),
-        "frequencies_hz": np.round(freqs, 6).tolist(),
+        "frequency_grids": grids,
         "traces": traces,
         "calculation": {
-            "formula": (
-                "corrected_sum = (L * FLX + R * FRX) / 2"
-                if sum_mode == "vector_average"
-                else "corrected_sum = L * FLX + R * FRX"),
-            "sum_mode": sum_mode,
-            "txt_to_wav_gain_db": txt_to_wav_gain,
+            "note": ("None. Every trace is one REW text export, plotted as exported: "
+                     "no average, sum, convolution, interpolation or smoothing is "
+                     "applied at any stage between REW and the graph. Every export "
+                     "was verified unsmoothed and within the 48 kHz measurement "
+                     "limit before publication."),
+            "aggregate": aggregate,
+            "smoothing_applied": "none",
+            "exports_carrying_rew_smoothing": [],
+            "highest_exported_frequency_hz": round(
+                max(float(parsed[role][1][-1]) for role in TRACE_ROLES), 6),
+            "measurement_rate_limit_hz": MAX_MEASUREMENT_RATE_HZ,
             "filter_delay_removed_samples": delay_samples,
-            "runtime_attenuation_applied_by_web_endpoint": True,
-            "original_sum_default": (
-                f"exported {sum_description}; calculated {sum_description} is selectable"),
-            "measured_sum_is_independent": sum_mode == "independent",
         },
-        "inputs": inputs,
+        "inputs": {role: recipe["source"]["artifacts"][role]["sha256"]
+                   for role in artifact_roles(recipe)},
         "source_headers": {
             role: {key: parsed[role][0].get(key, "") for key in
                    ("rew_version", "source", "format", "dated",
                     "note", "measurement", "smoothing", "frequency step", "start frequency")}
-            for role in ("measurement_left", "measurement_right", "measurement_sum")
+            for role in TRACE_ROLES
         },
-        "validation": {
-            "filter_txt_to_wav": validation,
-            "calculated_vs_exported_aggregate": {
-                "rms_magnitude_db": round(float(np.sqrt(np.mean(sum_mag_error ** 2))), 4),
-                "rms_wrapped_phase_deg": round(float(np.sqrt(np.mean(sum_phase_error ** 2))), 4),
-                "note": f"Informational comparison using sum mode {sum_mode}."
-            },
-            "independent_corrected_exports": prediction_validation,
-        }
+        "validation": {"filter_txt_to_wav": validation},
     }
     return analysis, validation
 
@@ -775,12 +802,12 @@ def artifact_record(source_root: Path, recipe: dict, role: str) -> dict:
     source = safe_source(source_root, item["path"])
     return {
         "role": role,
-        "original_path": item["path"],
+        "path": item["path"],
         "bundle_path": item["bundle_path"],
         "sha256": sha256_file(source),
-        "git_blob": git_blob(source_root, item["path"]),
         "bytes": source.stat().st_size,
-        **{key: item[key] for key in ("measurement", "smoothing") if key in item},
+        **{key: item[key] for key in ("measurement", "smoothing", "git_blob")
+           if key in item},
     }
 
 
@@ -817,120 +844,72 @@ def atomic_json(value: object, destination: Path) -> None:
             temp_path.unlink()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        epilog=(
-            "This is the lower-level builder. Artifact role options such as "
-            "--measurement-left belong to declare_filter_design.py and are stored "
-            "in the recipe consumed here. For a new tagged design, normally run "
-            "new_filter_design.py instead."),
-    )
-    required = parser.add_argument_group(
-        "required inputs (artifact roles are contained in the recipe)")
-    required.add_argument(
-        "--recipe", type=Path, required=True,
-        help="source recipe JSON produced by the declaration/tag workflow")
-    required.add_argument(
-        "--source-root", type=Path, required=True,
-        help="clean Git checkout containing the pinned declaration and exports")
-    parser.add_argument("--write", action="store_true", help="publish the verified bundle")
-    parser.add_argument("--replace-runtime", action="store_true",
-                        help="allow --write to replace runtime RAW bytes that differ")
-    add_site_root_argument(parser)
-    args = parser.parse_args()
-    recipe_path = args.recipe.resolve()
-    recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+def unreferenced_files(geometry_root: Path, design_id: str,
+                       artifacts: dict, runtime: dict) -> list[Path]:
+    """Files inside the directories this design owns that it no longer names.
+
+    Only ``source/<design>/`` and ``<rate>/@<design>/`` are considered: those
+    belong to one design and nothing else.  A rate directory without a design
+    selector is shared with the historical ``default`` set and is never touched.
+    """
+    owned: dict[Path, set[str]] = {}
+    source_dir = geometry_root / "source" / design_id
+    owned[source_dir] = {Path(item["bundle_path"]).name for item in artifacts.values()}
+    for item in runtime.values():
+        for channel in ("left", "right"):
+            relative = Path(item["channels"][channel]["path"])
+            if len(relative.parts) < 3:
+                continue  # <rate>/L.raw: the shared default set
+            owned.setdefault(geometry_root / relative.parent, set()).add(relative.name)
+    stale: list[Path] = []
+    for directory, keep in owned.items():
+        if not directory.is_dir():
+            continue
+        stale.extend(
+            path for path in sorted(directory.iterdir())
+            if path.is_file() and not path.is_symlink() and path.name not in keep)
+    return stale
+
+
+def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
+                   *, apply: bool, replace: bool) -> dict:
+    """Verify the selected exports, regenerate every rate, and publish.
+
+    All work happens in private staging first.  Without ``apply`` the audit
+    runs to completion and reports what would change, touching nothing.
+    """
     design_id = recipe.get("design_id", recipe["variant"])
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", design_id):
-        raise AuditError("design_id must contain only letters, numbers, dot, underscore and hyphen")
-    source_root = args.source_root.resolve()
-    site_root = resolve_site_root(args.site_root)
     geometry_root = site_root / "filters" / recipe["geometry"]
     if site_root != ROOT:
         progress("[SITE]", f"configs and filters resolve under {site_root}", "1;34")
 
     progress(
         "[DEPLOY 1/4]",
-        f"Verify pinned source checkout and artifacts for "
-        f"{recipe['geometry']}/{design_id}")
+        f"Hash the selected exports for {recipe['geometry']}/{design_id}")
     roles = artifact_roles(recipe)
     source_items = recipe["source"]["artifacts"]
-    source_recipe = recipe["source"]
-    all_source_relatives = [source_items[role]["path"] for role in roles]
-    if source_recipe.get("project"):
-        all_source_relatives.append(source_recipe["project"]["path"])
-    if source_recipe.get("declaration"):
-        all_source_relatives.append(source_recipe["declaration"]["path"])
-    if len(all_source_relatives) != len(set(all_source_relatives)):
-        raise AuditError("one source path is assigned to multiple provenance roles")
-    git_info = verify_git_sources(source_root, all_source_relatives)
-    expected_repo = source_recipe["repository"]
-    if git_info["repository"].removesuffix(".git") != expected_repo.removesuffix(".git"):
-        raise AuditError(f"wrong source remote: {git_info['repository']}")
-    expected_head = source_recipe.get("repository_head")
-    if expected_head and git_info["head"] != expected_head:
-        raise AuditError(
-            f"source checkout HEAD {git_info['head']} differs from recipe {expected_head}")
-    release = source_recipe.get("release")
-    if release:
-        if run(["git", "rev-parse", f"{source_recipe['source_ref']}^{{commit}}"], source_root) != git_info["head"]:
-            raise AuditError("source release ref no longer resolves to the checked-out commit")
-        if release.get("kind") == "annotated_tag":
-            tag_ref = f"refs/tags/{release['name']}"
-            actual_tag_object = run(["git", "rev-parse", f"{tag_ref}^{{tag}}"], source_root)
-            if actual_tag_object != release.get("tag_object"):
-                raise AuditError("annotated source tag object differs from the pinned recipe")
-        if release.get("commit") != git_info["head"]:
-            raise AuditError("source release commit differs from the checked-out commit")
-
-    project_path: Path | None = None
-    project_hash = ""
-    if source_recipe.get("project"):
-        project_item = source_recipe["project"]
-        project_path = safe_source(source_root, project_item["path"])
-        project_hash = sha256_file(project_path)
-        if project_hash != project_item["sha256"]:
-            raise AuditError("optional archived project hash differs from recipe")
-        project_last_commit = run(
-            ["git", "log", "-1", "--format=%H", "--", project_item["path"]], source_root)
-        if project_last_commit != project_item["last_commit"]:
-            raise AuditError("optional archived project last commit differs from recipe")
-
-    declaration_record = None
-    if source_recipe.get("declaration"):
-        declaration_item = source_recipe["declaration"]
-        declaration_path = safe_source(source_root, declaration_item["path"])
-        if sha256_file(declaration_path) != declaration_item["sha256"]:
-            raise AuditError("source declaration hash differs from recipe")
-        if git_blob(source_root, declaration_item["path"]) != declaration_item["git_blob"]:
-            raise AuditError("source declaration Git blob differs from recipe")
-        declaration_last_commit = run(
-            ["git", "log", "-1", "--format=%H", "--", declaration_item["path"]], source_root)
-        if declaration_last_commit != declaration_item["last_commit"]:
-            raise AuditError("source declaration last commit differs from recipe")
-        declaration_record = {
-            **declaration_item,
-            "bytes": declaration_path.stat().st_size,
-        }
-
+    relatives = [source_items[role]["path"] for role in roles]
+    if len(relatives) != len(set(relatives)):
+        raise AuditError("one source file is assigned to more than one role")
     source_paths: dict[str, Path] = {}
     artifacts: dict[str, dict] = {}
     for role in roles:
         source_paths[role] = safe_source(source_root, source_items[role]["path"])
         artifacts[role] = artifact_record(source_root, recipe, role)
         if artifacts[role]["sha256"] != source_items[role]["sha256"]:
-            raise AuditError(f"{role} hash differs from audited recipe")
-    progress_ok(
-        f"{len(artifacts)} source artifacts match commit {git_info['head'][:12]}")
+            raise AuditError(f"{role} changed on disk since it was inspected")
+    progress_ok(f"{len(artifacts)} source exports hashed under {source_root}")
 
     progress(
         "[DEPLOY 2/4]",
-        "Calculate graph traces and validate TXT/WAV plus corrected exports")
+        "Read the eight REW exports and relate each filter TXT to its impulse WAV")
     analysis, response_validation = build_analysis(recipe, source_paths)
     analysis_bytes = (json.dumps(analysis, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     analysis_hash = hashlib.sha256(analysis_bytes).hexdigest()
-    progress_ok(f"analysis JSON sha256 {analysis_hash[:12]}")
+    points = sum(len(item["magnitude_db"]) for item in analysis["traces"])
+    progress_ok(
+        f"{len(analysis['traces'])} traces carried through unchanged, "
+        f"{points:,} plotted points, analysis sha256 {analysis_hash[:12]}")
 
     with tempfile.TemporaryDirectory(prefix="omdrc-filter-deploy-") as temp_name:
         staging = Path(temp_name)
@@ -940,53 +919,47 @@ def main() -> int:
         runtime, staged_configs = generate_runtime(recipe, source_paths, staging, site_root)
         progress_ok(f"generated and checked {len(runtime)} complete runtime rate pairs")
         differing_runtime: list[str] = []
+        deployed_runtime = 0
         for rate, item in runtime.items():
             for channel in ("left", "right"):
                 relative = item["channels"][channel]["path"]
                 live = geometry_root / relative
                 staged = staging / relative
-                if live.exists() and sha256_file(live) != sha256_file(staged):
+                if not live.exists():
+                    continue
+                deployed_runtime += 1
+                if sha256_file(live) != sha256_file(staged):
                     differing_runtime.append(relative)
         differing_configs = [relative for relative, staged in staged_configs.items()
                              if (site_root / relative).exists() and
                              sha256_file(site_root / relative) != sha256_file(staged)]
+        # A design owns source/<design>/ and every <rate>/@<design>/ outright, so
+        # after publication those directories must hold exactly what the new
+        # manifest names.  Anything else is a leftover of an earlier deployment
+        # under different filenames, and leaving it would put files beside the
+        # bundle that nothing references and nobody can account for.
+        unreferenced = unreferenced_files(
+            geometry_root, design_id, artifacts, runtime)
 
         progress(
             "[DEPLOY 4/4]",
-            "Bind runtime hashes, configs, analysis and source release into the bundle")
+            "Bind runtime hashes, configs and analysis into the bundle manifest")
+        # The source block is hashed whole into the bundle ID, so the project
+        # a design came from and the .mdat its exports were taken from are as
+        # binding as the exports themselves.
         source_manifest = {
-            "repository": source_recipe["repository"],
-            "repository_head": git_info["head"],
+            "directory": recipe["source"]["directory"],
+            "project": recipe["source"].get("project", {}),
+            "measurements": recipe["source"].get("measurements", {}),
             "artifacts": artifacts,
-            "traces": source_recipe.get("traces", {}),
-            "lineage": source_recipe.get("lineage", []),
-            "attestation": source_recipe.get("attestation", {}),
         }
-        for key in ("source_ref", "release"):
-            if key in source_recipe:
-                source_manifest[key] = source_recipe[key]
-        if declaration_record is not None:
-            source_manifest["declaration"] = declaration_record
-        if project_path is not None:
-            source_manifest["project"] = {
-                **source_recipe["project"],
-                "bytes": project_path.stat().st_size,
-                "git_blob": git_blob(source_root, source_recipe["project"]["path"]),
-            }
-        if source_recipe.get("rew_audit"):
-            source_manifest["rew_audit"] = source_recipe["rew_audit"]
         identity = {
-            "schema": 1,
+            "schema": 2,
             "geometry": recipe["geometry"],
             "variant": recipe["variant"],
             "design_id": design_id,
-            "source_repository": source_manifest["repository"],
-            "source_commit": source_manifest["repository_head"],
-            "source_release": source_manifest.get("release", {}),
+            "description": recipe["description"],
             "source_provenance_sha256": canonical_hash(source_manifest),
-            "project_sha256": project_hash,
-            "source_declaration_sha256": (
-                declaration_record["sha256"] if declaration_record is not None else ""),
             "source_artifacts": {role: item["sha256"] for role, item in artifacts.items()},
             "runtime": {rate: {
                 "config": item["config"],
@@ -997,41 +970,29 @@ def main() -> int:
             } for rate, item in runtime.items()},
             "analysis_sha256": analysis_hash,
         }
-        if "description" in recipe:
-            identity["description"] = recipe["description"]
-        claims = [
-            "selected sources are tracked and clean at the recorded Git commit",
-            "filter TXT responses match the canonical WAV responses within declared limits",
-            "all runtime RAWs reproduce from the canonical WAVs",
-            "every BruteFIR config maps to the hashed RAW pair and has sufficient headroom",
-            "graph inputs and calculations are content-hash bound to this manifest",
-        ]
-        if declaration_record is not None:
-            claims.insert(1, "semantic source roles are bound by the committed, hashed declaration")
-        if release and release.get("kind") == "annotated_tag":
-            claims.insert(1, "source commit is anchored by the recorded annotated Git tag object")
-        if project_path is not None:
-            claims.append("optional design-project archive is recorded by path, commit and SHA-256")
-        if source_recipe.get("rew_audit"):
-            claims.append("historical REW trace audit evidence is retained as optional provenance")
-
         manifest = {
-            "schema": 1,
+            "schema": 2,
             "bundle_id": canonical_hash(identity),
             "geometry": recipe["geometry"],
             "variant": recipe["variant"],
             "design_id": design_id,
+            "description": recipe["description"],
             "verification": {
                 "status": "verified",
                 "audited_at": recipe["audited_at"],
-                "claims": claims,
+                "claims": [
+                    "every plotted trace is one REW text export, stored and hashed verbatim",
+                    "no average, sum, convolution or smoothing stands between REW and the graph",
+                    "filter TXT responses match the canonical WAV responses within declared limits",
+                    "all runtime RAWs reproduce from those canonical WAVs",
+                    "every BruteFIR config maps to the hashed RAW pair and has sufficient headroom",
+                    "graph inputs are content-hash bound to this manifest",
+                ],
                 "prediction": (
-                    "deterministic complex multiplication; independent corrected export(s) passed"
-                    if analysis["validation"]["independent_corrected_exports"] else
-                    "deterministic complex multiplication; no independent corrected export supplied"
-                ),
+                    "none: the corrected curves are measured REW exports, not a prediction"),
             },
             "source": source_manifest,
+            "aggregate": recipe["aggregate"],
             "filter_validation": response_validation,
             "runtime": {"rates": runtime},
             "analysis": {
@@ -1040,16 +1001,8 @@ def main() -> int:
                 "bytes": len(analysis_bytes),
             },
         }
-        if "description" in recipe:
-            manifest["description"] = recipe["description"]
 
-        if project_path is not None:
-            print(f"PASS: optional source project {project_path.name} {project_hash}")
-        if declaration_record is not None:
-            print(f"PASS: source declaration {declaration_record['sha256']}")
-        if release:
-            print(f"PASS: source {release['kind']} {release['name']} -> {release['commit']}")
-        print(f"PASS: {len(artifacts)} pinned source exports are tracked, clean and hash-identical")
+        print(f"PASS: {len(artifacts)} selected exports hashed into the bundle")
         for channel, values in response_validation.items():
             print(f"PASS: {channel} TXT/WAV RMS {values['rms_magnitude_db']:.6f} dB, "
                   f"{values['rms_phase_deg']:.6f} deg")
@@ -1059,21 +1012,31 @@ def main() -> int:
                   f"required={item['required_attenuation_db']:.1f} configured={item['attenuation_db']:.1f} dB")
         print(f"Bundle ID: {manifest['bundle_id']}")
 
-        if not args.write:
+        if not apply:
             if differing_runtime:
                 print("DRY RUN: runtime files that would change: " + ", ".join(differing_runtime))
+            elif deployed_runtime:
+                print(f"DRY RUN: all {deployed_runtime} existing runtime RAWs are "
+                      "already byte-identical")
             else:
-                print("DRY RUN: all existing runtime RAWs are already byte-identical")
+                print("DRY RUN: no runtime RAW is deployed for this design yet")
             if staged_configs:
                 creating = [path for path in staged_configs if not (site_root / path).exists()]
                 print("DRY RUN: configs to create: " + (", ".join(creating) if creating else "none"))
             if differing_configs:
                 print("DRY RUN: configs that would change: " + ", ".join(differing_configs))
-            print("No files written. Re-run with --write after reviewing this audit.")
-            return 0
+            if unreferenced:
+                print(f"DRY RUN: {len(unreferenced)} unreferenced file(s) this design "
+                      "owns would be removed: "
+                      + ", ".join(sorted(str(item.relative_to(geometry_root))
+                                         for item in unreferenced)))
+            print("No files written.")
+            return manifest
 
-        if (differing_runtime or differing_configs) and not args.replace_runtime:
-            raise AuditError("design files differ; inspect a dry run, then add --replace-runtime explicitly")
+        if (differing_runtime or differing_configs) and not replace:
+            raise AuditError(
+                "this design ID already has different deployed files; re-run with "
+                "--replace-design to overwrite them")
 
         # Source copies first, analysis next, runtime pair members next, manifest
         # last. The manifest is the commit marker: readers ignore an incomplete
@@ -1092,13 +1055,86 @@ def main() -> int:
                 f"installed verified BruteFIR template {relative}",
                 "1;34")
         atomic_json(manifest, geometry_root / f"provenance/{design_id}.json")
+        # Last, so a failure here leaves harmless leftovers rather than a bundle
+        # whose manifest names a file that was already deleted.
+        for stale in unreferenced:
+            stale.unlink()
+            progress("[PRUNED]", f"removed unreferenced {stale.relative_to(geometry_root)}",
+                     "1;33")
         print(f"WROTE: verified bundle under {geometry_root}")
-    return 0
+    return manifest
 
 
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except AuditError as error:
-        print(f"FAIL: {error}", file=os.sys.stderr)
-        raise SystemExit(1)
+def commit_message(manifest: dict) -> str:
+    """One commit subject and body that names everything needed to come back."""
+    design_id = manifest.get("design_id", manifest["variant"])
+    source = manifest["source"]
+    project = source.get("project") or {}
+    measurements = source.get("measurements") or {}
+    rates = " ".join(sorted(manifest["runtime"]["rates"], key=int))
+    lines = [
+        f"Deploy {manifest['geometry']} @{design_id} "
+        f"(bundle {manifest['bundle_id'][:12]})",
+        "",
+        f"Geometry:     {manifest['geometry']}",
+        f"Design:       {design_id}",
+        f"Bundle:       {manifest['bundle_id']}",
+        f"Aggregate:    {manifest['aggregate']['style']} "
+        f"({manifest['aggregate']['corrected']} after correction)",
+        f"Rates:        {rates}",
+    ]
+    if project:
+        lines.append(
+            f"Project:      {project.get('name', '?')} "
+            f"@ {(project.get('commit') or 'uncommitted')[:12]}"
+            + ("" if project.get("clean", True) else "  [UNCOMMITTED SOURCES]"))
+        if project.get("path"):
+            lines.append(f"Exports:      {project['path']}")
+        if project.get("remote"):
+            lines.append(f"Remote:       {project['remote']}")
+    if measurements:
+        lines.append(
+            f"Measurements: {measurements.get('file', '?')} "
+            f"sha256 {measurements.get('sha256', '')[:16]}")
+        if measurements.get("git_blob"):
+            where = project.get("remote") or project.get("repository") or "<project>"
+            lines.append(f"  restore:    git -C {where} cat-file blob "
+                         f"{measurements['git_blob']} > {measurements.get('file', '')}")
+    return "\n".join(lines) + "\n"
+
+
+def git_commit_paths(repo: Path, paths: list[str], message: str) -> dict:
+    """Commit exactly `paths`, or say why there is nothing (or no way) to commit."""
+    git_text(repo, "add", "-A", "--", *paths)
+    born = bool(git_maybe(repo, "rev-parse", "--verify", "--quiet", "HEAD"))
+    if born and not git_maybe(repo, "diff", "--cached", "--name-only", "--", *paths):
+        return {"status": "unchanged", "repository": str(repo)}
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "commit", "--only", "-F", "-", "--", *paths],
+        input=message, text=True, capture_output=True)
+    if proc.returncode:
+        return {"status": "failed", "repository": str(repo),
+                "error": (proc.stderr.strip() or proc.stdout.strip())}
+    return {
+        "status": "committed",
+        "repository": str(repo),
+        "commit": git_maybe(repo, "rev-parse", "HEAD"),
+        "subject": message.splitlines()[0],
+    }
+
+
+def commit_site(site_root: Path, manifest: dict) -> dict:
+    """Record this deployment as one commit in the room's repository.
+
+    The room repository *is* the deployment history: ``git log`` lists every
+    filter set that was ever live and ``git checkout <commit>`` brings any of
+    them back byte for byte.  A room that is not a work tree still deploys;
+    it simply keeps no history, and the caller says so.
+    """
+    repo = git_toplevel(site_root)
+    if repo is None:
+        return {"status": "no-repo", "root": str(site_root)}
+    geometry = manifest["geometry"]
+    present = [item for item in (f"filters/{geometry}", f"configs/{geometry}")
+               if (repo / item).exists()]
+    return git_commit_paths(repo, present, commit_message(manifest))

@@ -111,16 +111,146 @@ track gaps, skips, seeks and a 4 s pause; an 800 ms scripted carrier dropout
 cost exactly 800 ms of lead and starved nothing. What is *not* tested is
 everything on the far side of `/dev/dspN` — see Phase 0.
 
-**Phase 2 (next)** — the `NO_CARRIER → IDLE → PLAYING` state machine. Digital
-silence is an exact all-zero compare (a CD's silence is literally `0x0000`, so
-there is no threshold to tune); the output device is opened lazily and closed
-when idle, so an idle CD input stops holding `/dev/dsp.play` against MPD and
-mpv; drift is resynced by padding or trimming during inter-track silence, with
-a zero-crossing / 10 ms crossfade splice as the fallback. Seams are marked
-`TODO(phase2)` in the source.
+**Phase 2, first half (this code)** — the `NO_CARRIER → IDLE → PLAYING` state
+machine and the lazy output open. This is what makes the daemon something you
+leave running: see "Running it continuously" below.
 
-**Phase 3** — `rc.d` service, a `drc.sh cd on|off` verb, a `drc-status.sh` line
-and a panel tile in `omdrc-ctrl/src/commands.conf.in`.
+**Phase 2, second half (next)** — drift resync during the inter-track silence,
+by padding or trimming, with a zero-crossing / 10 ms crossfade splice as the
+fallback. Not needed inside a disc (drift cannot cause a discontinuity in 80
+minutes) but needed for a session that never stops. Seams are marked
+`TODO(phase2b)`.
+
+**Phase 3** — an `rc.d` service (done, `rc.d/omdrc_cdin.in`) and the web panel
+integration (done, the CD input card — see below). Still open: a `drc.sh cd`
+verb and a `drc-status.sh` line.
+
+## Running it continuously
+
+The daemon is meant to be up all the time — CD player on or off, interface
+plugged in or not:
+
+```sh
+# /etc/rc.conf
+omdrc_cdin_enable="YES"
+omdrc_cdin_in="/dev/dsp1"        # the ESI, NOT the DAC; check /dev/sndstat
+```
+
+That is only safe because of what the state machine does with the *output*
+device, and the reason is sharper than "it would be rude to MPD":
+
+| | on the wire | the daemon | `/dev/dsp.play` |
+|---|---|---|---|
+| `NO_CARRIER` | no frames at all | retries the capture device | not held |
+| `IDLE` | frames, all exact zeros | counts the silence | **released** |
+| `PLAYING` | audio | ring → output | held |
+
+Two devices, two very different tenancies. The **capture** device is held for
+the life of a session: it is the interface's own node, nobody else wants it,
+and it is the only thing that can tell us whether a carrier exists. The
+**output** device is virtual_oss's client node, and it is taken only for the
+duration of actual music.
+
+That asymmetry is not politeness. `drc.sh` restarts virtual_oss on every rate
+change, and an open cuse client handle at that moment is what wedges the
+teardown *permanently* — `cuse_server_free()` spins uninterruptibly until every
+client handle is gone, SIGKILL does not touch it, and only a reboot recovers
+the machine (`../VIRTUAL_OSS_CUSE_DEADLOCK.md`). A daemon that held
+`/dev/dsp.play` around the clock would put a fresh instance of that hazard
+under every single rate change. Holding it only while a disc plays reduces the
+exposure to the times you asked for a rate change mid-disc — and for those,
+`drc.sh` sends `SIGHUP` first:
+
+```sh
+service omdrc_cdin release      # or: pkill -HUP -x omdrc-cdin
+```
+
+`SIGHUP` releases the output immediately and refuses to re-acquire it for a few
+seconds, which covers the stop/restart. Without that hold-off a spinning disc
+would grab the device again on the very next period — the same handle we just
+gave up.
+
+### Choosing `--idle-after`
+
+The threshold has one failure mode at each end, and the safe band between them
+is wide:
+
+* **too short** and Red Book's 2 s inter-track pause releases the device
+  mid-disc, so every track change costs a `lead` to resume;
+* **too long** and a stopped player keeps holding the chain.
+
+The default of 15 s is an order of magnitude above the inter-track gap and
+still frees the chain within seconds of the music ending. `--idle-after 0`
+disables the gate and restores Phase 1 behaviour (output held for the whole
+run), which is occasionally useful when measuring.
+
+Note this is silence *on the wire*. A player that drops carrier rather than
+sending zeros never reaches the gate at all: the read fails and it lands in
+`NO_CARRIER`, which is the state that reopens the device.
+
+### Resuming does not lose the first note
+
+When audio returns, the ring already holds the seconds of silence that came
+just before it, because it keeps rolling whether or not anything is playing.
+So an episode begins by *trimming* the ring to one lead rather than clearing it
+and waiting for a fresh pre-fill. The audible result is identical — the music
+still emerges one `lead` later — but the period that carried the first sample
+is still in the buffer instead of having been thrown away with the silence, and
+the device is opened when the music arrives rather than a `lead` ahead of it.
+
+### What it looks like in the log
+
+```
+[INF] playback /dev/dsp.play: available, 32-bit
+[INF] capture /dev/dsp1: available
+[INF] state idle: capture open, waiting for audio
+[INF] state playing: audio on the wire
+[INF] playback /dev/dsp.play: acquired
+[INF] playback: lead reached (1998 ms buffered), starting
+[INF] state idle: digital silence long enough to release the output
+[INF] playback /dev/dsp.play: released
+```
+
+Those lines are a contract, not just prose: the web panel parses them (see
+below), so `state <name>: <why>` and `<device> <path>: <available|unavailable|
+acquired|released>` keep their shape.
+
+Note that **availability and holding are separate axes**. `unavailable` means
+the device could not be opened and nothing can play — that is the red light.
+`acquired` / `released` is the ordinary rhythm of a daemon doing its job, and
+is never a fault.
+
+## The web panel
+
+`omdrc-ctrl` shows a **CD input** card driven entirely by this log — the daemon
+is watched, not driven, because there is nothing to drive: it starts at boot and
+manages its own devices. Configure it in `commands.conf`:
+
+```ini
+[cdin]
+enabled = yes
+log_file = /tmp/omdrc-cdin.log     # must match omdrc_cdin_logfile in rc.conf
+process = omdrc-cdin
+service = omdrc_cdin
+refresh = 5
+max_events = 20
+```
+
+The card shows one LED, one status line, both device paths, the latest `[stats]`
+line, and a scrolling event list. Two rules govern it:
+
+* **the LED follows availability only** — red when either end cannot be opened,
+  because that is the question "can a disc play right now?". A released output
+  device is normal operation and never colours anything;
+* **failures are kept, health is replaced.** Every error stays in the list, in
+  red, in chronological order, even after the condition clears; the healthy
+  status line is replaced rather than accumulated. A live status line can never
+  say "the output was missing for ten minutes this morning", and that is
+  precisely the thing worth saying.
+
+A daemon that is not running is reported as idle, not broken, however alarming
+the last lines of its log are — the log outlives the process, and nothing is
+unavailable when nothing is trying to open it.
 
 ## Options
 
@@ -137,12 +267,13 @@ and a panel tile in `omdrc-ctrl/src/commands.conf.in`.
 | `-p` | `--period` | `1024` | frames; the byte count must be a power of two |
 | `-s` | `--stats` | `5` | stats interval in seconds |
 | `-R` | `--retry` | `2` | device retry interval |
+| | `--idle-after` | `15000` | digital silence on the wire before the output device is released — see above; `0` disables the gate |
 | `-l` | `--log` | | also log to this file |
 | `-d` | `--debug` | | emit periodic stats |
 | `-v` | `--verbose` | | more verbose; repeat (`-vv`) for debug lines |
 | `-P` | `--probe` | | open both devices, report, exit |
 | | `--in-ppm` | `0` | offset the simulated source's pace, in ppm (drift rig) |
-| | `--gap` | `2000` | digital silence between tracks, ms (`0` = gapless disc) |
+| | `--gap` | `2000` | digital silence between tracks, ms (`0` = gapless disc).  Set it above `--idle-after` to test the release/re-acquire cycle |
 | | `--transport` | | script the transport buttons — see below |
 | | `--loop` | | restart the disc at the end |
 
@@ -168,10 +299,11 @@ omdrc-cdin -i "/media/.../Mendelssohn - Orgelsonaten - Hurford" -o /dev/dsp0 -d
 
 Between tracks the rig emits `--gap` milliseconds of **exact digital silence**,
 default 2000 — Red Book's standard inter-track pause. That silence is not
-decoration. It is what the daemon's detector looks for (`silence %` in the
-stats), and it is where Phase 2 will resync drift, so a rig that could not
-produce it could not test the thing the design depends on. `--gap 0` gives a
-gapless disc, which is the harder case.
+decoration. It is what the silence gate looks for (`silence %` in the stats),
+so a rig that could not produce it could not test the thing the design depends
+on — and a `--gap` longer than `--idle-after` is how the release/re-acquire
+cycle is exercised without a CD player. `--gap 0` gives a gapless disc, which
+is the harder case.
 
 Real rips already carry some of their own: on the disc above, track 1 is a
 0.43 s pregap of pure zeros and track 2 opens with 1.81 s of them, which is why
@@ -308,10 +440,17 @@ cmake --build build
 ctest --test-dir build
 ```
 
-Two suites, both covering places where a bug is silent rather than loud:
+Three suites, all covering places where a bug is silent rather than loud:
 `test_ring` (wrap-around, the drop-oldest policy, the back-pressured write and
-end-of-data read the WAV prefetch needs, and every blocking path's wake-up) and
-`test_convert` (the width widening — see the widening section below).
+end-of-data read the WAV prefetch needs, every blocking path's wake-up, and the
+trim-to-the-lead that starts an episode), `test_convert` (the width widening —
+see the widening section below) and `test_gate` (the silence threshold, its
+edge behaviour, and the fact that one non-zero sample resets the whole run).
+
+The gate is worth the suite for the same reason as the others: both of its
+mistakes are quiet ones. Fire too early and a disc tears its own output down in
+the Red Book pause; fire late, or twice, and the release either never happens or
+happens again every 23 ms. Neither is a crash.
 
 FreeBSD only — the daemon talks OSS directly. On Linux the equivalent job is
 already done by `alsaloop(1)`.
@@ -480,7 +619,11 @@ None of this can be verified on a box without the hardware.
   reports the capture rate against the host clock; compare with the Okto's
   `dev.pcm.<n>.feedback_rate`. Their difference is the drift the lead must cover.
 * **Carrier loss**: stop the CD, then unplug the coax. Does `read()` block,
-  short-read, or error? This defines the Phase 2 state machine's inputs.
+  short-read, or error? The state machine assumes a short read or an error
+  means `NO_CARRIER`, and that a player which merely *mutes* keeps delivering
+  frames of zeros and is caught by the silence gate instead. If a stopped
+  player blocks the read forever instead of doing either, the gate never runs
+  and the daemon needs a read timeout to notice.
 * **Loopback pacing**: virtual_oss runs with `-f /dev/null` (`drc.sh:96`), so it
   owns no hardware clock. Confirm a writer to `/dev/dsp.play` is throttled at
   the DAC rate via BruteFIR draining `/dev/dsp.loop`, and check what happens

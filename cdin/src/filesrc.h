@@ -15,8 +15,9 @@
  *   Disc.   Point --in at a directory and its WAVs become the tracks of a
  *           disc, played in order with Red Book's 2 s of exact digital silence
  *           between them.  That silence is not decoration: it is what the
- *           daemon's silence detector looks for, and where Phase 2 will resync
- *           drift.  A single file is simply a one-track disc.
+ *           silence gate looks for, so a --gap longer than --idle-after is how
+ *           the output release/re-acquire cycle is exercised without a CD
+ *           player.  A single file is simply a one-track disc.
  *
  *   Transport.  --transport scripts the buttons: skip, prev, seek, pause, stop,
  *           and the carrier dropout that README.md calls the real hazard.  Each
@@ -88,7 +89,7 @@ uint64_t filesrc_slips(struct filesrc *f);
 uint64_t filesrc_dropouts(struct filesrc *f);
 
 /* True when the stream ended because the simulated carrier dropped (a `stop`
-   event) rather than because the disc ran out.  Phase 2 has to tell these
-   apart — one reopens the device, the other does not — so the rig must be able
-   to produce both. */
+   event) rather than because the disc ran out.  The state machine has to tell
+   these apart — one reopens the device, the other does not — so the rig must
+   be able to produce both. */
 bool filesrc_carrier_lost(struct filesrc *f);

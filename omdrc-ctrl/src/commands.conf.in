@@ -121,12 +121,39 @@ upmpdcli-console.label = upmpdcli (plugins)
 qobuzconnect2mpd       = /tmp/qconnect2mpd.log
 brutefir               = /tmp/brutefir.out
 brutefir.label         = BruteFIR
+omdrc-cdin             = /tmp/omdrc-cdin.log
+omdrc-cdin.label       = CD input
 # Most a single log view reads back, in bytes.
 tail_bytes = 200000
 # Tail of each source the alert rules below are matched against, in bytes.
 scan_bytes = 65536
 # Seconds between browser polls for active alerts.
 alert_interval = 20
+
+# -- CD / S-PDIF input bridge (omdrc-cdin) ----------------------------------
+# omdrc-cdin captures the CD player's S/PDIF through the ESI U24 XL and feeds
+# it into the DRC chain.  It is a daemon the panel WATCHES, not a command it
+# runs: it is meant to be up continuously (omdrc_cdin_enable="YES" in
+# /etc/rc.conf) whether or not the player is on, because it holds
+# /dev/dsp.play only while audio is actually on the wire and releases it after
+# a run of digital silence.  Leaving it running therefore costs MPD and mpv
+# nothing.
+#
+# Everything the CD input card shows is read from this log, so log_file must
+# match omdrc_cdin_logfile in /etc/rc.conf.
+[cdin]
+enabled = yes
+log_file = /tmp/omdrc-cdin.log
+# Checked with pgrep -x to tell "stopped" from "broken": a stopped daemon's log
+# is last week's news, and the card says so instead of showing a red light.
+process = omdrc-cdin
+# rc.d service name, for reference in the UI.
+service = omdrc_cdin
+refresh = 5
+# Past failures the card keeps.  Failures accumulate and stay visible in red;
+# the healthy status line is replaced rather than accumulated, so a quiet week
+# does not push last night's dropout off the list.
+max_events = 20
 
 # -- Log alerts -------------------------------------------------------------
 # Each [alert:<id>] section watches the logs for one condition and reports it in

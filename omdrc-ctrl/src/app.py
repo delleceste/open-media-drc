@@ -312,6 +312,45 @@ SPECTRUM_DRC_DELAY_DELTA_MIN_MS = -1000.0
 SPECTRUM_DRC_DELAY_DELTA_MAX_MS = 2000.0
 
 GROUP_ORDER  = ["drc", "apps", "system"]
+# ── the CD / S-PDIF input bridge (omdrc-cdin) ────────────────────────────────
+# omdrc-cdin is a daemon, not a command.  It is meant to run continuously —
+# whether or not the CD player is on, whether or not the interface is plugged
+# in — because it holds the output device only while audio is actually on the
+# wire and releases it after a run of digital silence.  So the panel REPORTS it
+# rather than driving it, and everything reported comes out of the daemon's own
+# log, whose lines are a contract for this purpose (cdin/src/main.c).
+#
+# Two axes, kept deliberately apart:
+#
+#   availability  can each end be opened at all?  This is what the LED shows,
+#                 because when either end is unreachable no disc can play.
+#   holding       is the output device open at this instant?  Normal operation
+#                 swings that back and forth all day and it is never a fault —
+#                 showing it as one would train the eye to ignore the LED.
+CDIN_ENABLED = True
+CDIN_LOG_FILE = "/tmp/omdrc-cdin.log"
+CDIN_PROCESS = "omdrc-cdin"
+CDIN_SERVICE = "omdrc_cdin"
+CDIN_INTERVAL = 5        # seconds between browser /cdin/status polls
+CDIN_MAX_EVENTS = 20     # past error/warn events the card keeps
+CDIN_SCAN_BYTES = 65_536 # tail of the log the card reads
+
+_CDIN_LINE = re.compile(
+    r"^(?P<ts>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.\d+ \[(?P<lvl>ERR|WRN|INF|DBG)\] (?P<msg>.*)$")
+# "capture /dev/dsp1: available" / "playback /dev/dsp.play: unavailable — ..."
+_CDIN_DEVICE = re.compile(
+    r"^(?P<dev>capture|playback) (?P<path>\S+): "
+    r"(?P<what>available|unavailable|acquired|released)\b[ ,—-]*(?P<rest>.*)$")
+_CDIN_STATE = re.compile(r"^state (?P<state>[a-z-]+): (?P<why>.*)$")
+_CDIN_STATS = re.compile(r"^\[stats\] (?P<body>.*)$")
+# The input path may be a directory of WAVs (the test rig), so it can contain
+# spaces; the output is always a device node.
+_CDIN_START = re.compile(
+    r"^omdrc-cdin \S+ starting: in=(?P<inpath>.+?) out=(?P<outpath>\S+) \d+ Hz")
+
+_CDIN_DEVICE_LABEL = {"capture": "capture", "playback": "output"}
+
+
 GROUP_LABELS = {
     "drc":    "Digital Room Correction",
     "apps":   "Applications",
@@ -332,6 +371,7 @@ def _default_log_sources() -> list[dict]:
         {"id": "upmpdcli-console", "label": "upmpdcli (plugins)", "path": "/tmp/upmpdcli-console.log"},
         {"id": "qobuzconnect2mpd", "label": "qobuzconnect2mpd",   "path": QCONNECT_LOG_FILE},
         {"id": "brutefir",         "label": "BruteFIR",           "path": "/tmp/brutefir.out"},
+        {"id": "omdrc-cdin",       "label": "CD input",           "path": CDIN_LOG_FILE},
     ]
 
 
@@ -419,6 +459,8 @@ def load_config(path: str) -> None:
     global SPECTRUM_VU_MODE, SPECTRUM_FLOOR_DB, SPECTRUM_MIN_FREQ
     global SPECTRUM_DRC_DELAY_TRIM_MS, SPECTRUM_DRC_DELAY_DELTA_MS
     global SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS
+    global CDIN_ENABLED, CDIN_LOG_FILE, CDIN_PROCESS, CDIN_SERVICE
+    global CDIN_INTERVAL, CDIN_MAX_EVENTS
     cfg = configparser.ConfigParser()
     if not cfg.read(path):
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -483,6 +525,17 @@ def load_config(path: str) -> None:
     LOG_SOURCES = _parse_log_sources(cfg)
     LOG_ALERTS = _parse_log_alerts(cfg)
 
+    # [cdin] is a settings section — the CD bridge is a daemon the panel
+    # watches, not a command it runs, so it has no [section] of the command
+    # kind.  Its log path must match omdrc_cdin_logfile in rc.conf.
+    if cfg.has_section("cdin"):
+        CDIN_ENABLED = cfg.getboolean("cdin", "enabled", fallback=CDIN_ENABLED)
+        CDIN_LOG_FILE = cfg.get("cdin", "log_file", fallback=CDIN_LOG_FILE).strip()
+        CDIN_PROCESS = cfg.get("cdin", "process", fallback=CDIN_PROCESS).strip()
+        CDIN_SERVICE = cfg.get("cdin", "service", fallback=CDIN_SERVICE).strip()
+        CDIN_INTERVAL = max(1, cfg.getint("cdin", "refresh", fallback=CDIN_INTERVAL))
+        CDIN_MAX_EVENTS = max(1, cfg.getint("cdin", "max_events", fallback=CDIN_MAX_EVENTS))
+
     if cfg.has_section("qobuz_oauth"):
         QOBUZ_OAUTH_SCRIPT = cfg.get("qobuz_oauth", "script", fallback=QOBUZ_OAUTH_SCRIPT)
         QOBUZ_UPMPDCLI_CONF = cfg.get("qobuz_oauth", "upmpdcli_config", fallback=QOBUZ_UPMPDCLI_CONF)
@@ -501,7 +554,7 @@ def load_config(path: str) -> None:
                           fallback=QCONNECT_OAUTH_URL_TIMEOUT))
 
     _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth",
-                 "qconnect_oauth"}
+                 "qconnect_oauth", "cdin"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
@@ -1541,17 +1594,15 @@ def _canonical_hash(value: object) -> str:
 
 def _bundle_identity(manifest: dict) -> dict:
     """Reconstruct the content identity used by scripts/deploy_filter.py."""
-    identity = {
+    if manifest.get("schema") != 2:
+        raise ValueError(f"unsupported bundle schema {manifest.get('schema')!r}")
+    return {
         "schema": manifest["schema"],
         "geometry": manifest["geometry"],
         "variant": manifest["variant"],
         "design_id": manifest.get("design_id", manifest["variant"]),
-        "source_repository": manifest["source"]["repository"],
-        "source_commit": manifest["source"]["repository_head"],
-        "source_release": manifest["source"].get("release", {}),
+        "description": manifest["description"],
         "source_provenance_sha256": _canonical_hash(manifest["source"]),
-        "project_sha256": manifest["source"].get("project", {}).get("sha256", ""),
-        "source_declaration_sha256": manifest["source"].get("declaration", {}).get("sha256", ""),
         "source_artifacts": {
             role: item["sha256"]
             for role, item in manifest["source"]["artifacts"].items()
@@ -1571,9 +1622,6 @@ def _bundle_identity(manifest: dict) -> dict:
         },
         "analysis_sha256": manifest["analysis"]["sha256"],
     }
-    if "description" in manifest:
-        identity["description"] = manifest["description"]
-    return identity
 
 
 def _bundle_roots(coeffs: list[dict]) -> list[str]:
@@ -1640,7 +1688,7 @@ def _verified_filter_bundle(parsed: dict) -> tuple[dict | None, dict]:
             try:
                 with open(manifest_path, encoding="utf-8") as stream:
                     manifest = json.load(stream)
-                if not manifest.get("bundle_id") or manifest.get("schema") != 1:
+                if not manifest.get("bundle_id") or manifest.get("schema") != 2:
                     continue
                 if manifest.get("verification", {}).get("status") != "verified":
                     raise ValueError("manifest status is not verified")
@@ -1663,6 +1711,8 @@ def _verified_filter_bundle(parsed: dict) -> tuple[dict | None, dict]:
                     raise ValueError("analysis SHA-256 differs")
                 with open(analysis_path, encoding="utf-8") as stream:
                     analysis = json.load(stream)
+                if analysis.get("schema") != 2:
+                    raise ValueError(f"unsupported analysis schema {analysis.get('schema')!r}")
                 if (analysis.get("geometry") != manifest["geometry"] or
                         analysis.get("variant") != manifest["variant"] or
                         analysis.get("design_id", analysis.get("variant")) !=
@@ -1693,22 +1743,9 @@ def _verified_filter_bundle(parsed: dict) -> tuple[dict | None, dict]:
         }
 
     manifest, analysis, manifest_path = matches[0]
-    attenuation = float(manifest["runtime"]["rates"][str(rate)]["attenuation_db"])
-    traces = []
-    for stored in analysis["traces"]:
-        item = dict(stored)
-        if item.get("group") in ("Filter", "Predicted"):
-            item["magnitude_db"] = [round(float(value) - attenuation, 3)
-                                    for value in item["magnitude_db"]]
-        traces.append(item)
-    analysis = dict(analysis)
-    analysis["traces"] = traces
-    release = manifest["source"].get("release", {})
-    if release.get("kind") == "annotated_tag":
-        anchor = (f"annotated source tag {release['name']} "
-                  f"(tag object {release['tag_object']}) -> commit {release['commit']}")
-    else:
-        anchor = f"source commit {manifest['source']['repository_head']}"
+    # The stored traces are released exactly as deployed.  Nothing is scaled,
+    # offset or resampled on the way to the browser: the numbers the page draws
+    # are the ones REW exported.
     return {
         "manifest": manifest,
         "analysis": analysis,
@@ -1717,7 +1754,8 @@ def _verified_filter_bundle(parsed: dict) -> tuple[dict | None, dict]:
     }, {
         "status": manifest["verification"]["status"],
         "message": (
-            "Active L/R bytes, config and graph dependencies match the manifest; " + anchor),
+            "Active L/R bytes, config and graph dependencies match the manifest; "
+            f"bundle {manifest['bundle_id'][:16]}"),
         "bundle_id": manifest["bundle_id"],
         "active_hashes": {channel: item["sha256"] for channel, item in active.items()},
     }
@@ -2095,72 +2133,19 @@ def _coeff_channel(coeff: dict) -> str:
     return coeff["label"]
 
 
-def _fir_response(filename: str, fmt: str, rate: int,
-                  npoints: int = 700, fmin: float = 10.0,
-                  fmax: float = 20_000.0) -> dict:
-    """FFT of a raw FIR impulse response -> magnitude/phase/group-delay.
+def _fir_taps(filename: str, fmt: str) -> int:
+    """Coefficient count of a raw FIR, from its size alone.
 
-    Correction FIRs include a large bulk delay because the impulse is placed
-    well inside the coefficient window.  Plotting wrapped raw FFT phase makes
-    that delay dominate the graph, so estimate it from passband group delay and
-    show the delay-compensated correction phase instead.
+    No transform is taken here.  The response page plots REW's own exports, so
+    the only thing the live coefficients still have to report is how many taps
+    BruteFIR loaded.
     """
-    import numpy as np
-    dtype = _RAW_DTYPES.get(fmt.upper(), "<f8")
-    ir = np.fromfile(filename, dtype=dtype)
-    if ir.size == 0:
-        raise ValueError(f"empty or unreadable filter: {filename}")
-    if np.issubdtype(np.dtype(dtype), np.integer):
-        ir = ir.astype(np.float64) / np.iinfo(np.dtype(dtype)).max
-    else:
-        ir = ir.astype(np.float64)
-
-    n = ir.size
-    spec  = np.fft.rfft(ir)
-    freqs = np.fft.rfftfreq(n, d=1.0 / rate)
-    omega = 2.0 * np.pi * freqs
-    mag_abs = np.abs(spec)
-    mag = 20.0 * np.log10(mag_abs + 1e-12)
-    angle = np.angle(spec)
-
-    # Group delay (seconds) = -d(phase)/d(omega), using unwrapped raw phase.
-    raw_unwrapped = np.unwrap(angle)
-    gd = np.zeros_like(raw_unwrapped)
-    if n > 2:
-        gd[1:] = -np.gradient(raw_unwrapped, omega)[1:]
-
-    fmax = min(rate / 2.0, fmax)
-    delay_band = (
-        (freqs >= max(fmin, 20.0)) &
-        (freqs <= fmax) &
-        (mag_abs > (mag_abs.max() * 1e-6)) &
-        np.isfinite(gd)
-    )
-    if np.count_nonzero(delay_band) >= 3:
-        bulk_delay = float(np.median(gd[delay_band]))
-    else:
-        bulk_delay = float(np.argmax(np.abs(ir)) / rate)
-
-    compensated = spec * np.exp(1j * omega * bulk_delay)
-    phase = np.angle(compensated)
-    gd_ms = (gd - bulk_delay) * 1000.0
-
-    lo = max(1, int(np.searchsorted(freqs, fmin)))
-    hi = min(len(freqs) - 1, int(np.searchsorted(freqs, fmax)))
-    if hi <= lo:
-        hi = len(freqs) - 1
-    targets = np.logspace(np.log10(freqs[lo]), np.log10(fmax), npoints)
-    idx = np.unique(np.clip(np.searchsorted(freqs, targets), lo, hi))
-
-    return {
-        "taps":  int(n),
-        "delay_ms": round(bulk_delay * 1000.0, 4),
-        "fmax": round(float(fmax), 3),
-        "freqs": [round(float(freqs[i]), 3) for i in idx],
-        "mag":   [round(float(mag[i]),   3) for i in idx],
-        "phase": [round(float(np.degrees(phase[i])), 2) for i in idx],
-        "gd":    [round(float(gd_ms[i]), 4) for i in idx],
-    }
+    width = {"FLOAT64_LE": 8, "FLOAT32_LE": 4, "S32_LE": 4, "S16_LE": 2}.get(
+        fmt.upper(), 8)
+    try:
+        return os.path.getsize(filename) // width
+    except OSError:
+        return 0
 
 
 def _format_read_output(cmd_id: str, output: str) -> str:
@@ -2204,6 +2189,8 @@ def index():
         spectrum=_SPECTRUM.settings(),
         log_sources=[{"id": s["id"], "label": s["label"]} for s in LOG_SOURCES],
         log_alert_interval=LOG_ALERT_INTERVAL,
+        cdin_enabled=CDIN_ENABLED,
+        cdin_interval=CDIN_INTERVAL,
     )
 
 
@@ -2771,6 +2758,176 @@ def logs_alerts():
         "sources": summary,
         "status_sources": [s for s in summary if not watched or s["id"] in watched],
     })
+
+
+
+
+def _cdin_blank_end(kind: str) -> dict:
+    """An end of the bridge before the log has said anything about it.
+
+    `available` is None rather than False on purpose: "not known yet" and
+    "known to be broken" are different answers, and only the second one is a
+    red light.  A daemon that has just started, or one whose log was rotated
+    out from under it, is in the first."""
+    return {"kind": kind, "label": _CDIN_DEVICE_LABEL[kind], "path": "",
+            "available": None, "error": "", "held": False, "at": ""}
+
+
+def _cdin_status() -> dict:
+    """Read the daemon's log and reduce it to what the card shows.
+
+    Errors and the current status are treated differently on purpose.  A
+    failure is an EVENT — it happened, it is worth keeping, and it stays in the
+    list in red even after the condition clears, because "the output was
+    missing for ten minutes this morning" is exactly the thing a live status
+    line cannot tell you.  Everything healthy is a STATE, so only its most
+    recent line is kept: a hundred identical "state playing" lines say no more
+    than one, and would push the failures off the top."""
+    running = _process_running(CDIN_PROCESS)
+    stat = _log_stat(CDIN_LOG_FILE)
+    status = {
+        "ok": True,
+        "enabled": CDIN_ENABLED,
+        "running": running,
+        "process": CDIN_PROCESS,
+        "service": CDIN_SERVICE,
+        "log": dict(stat, path=CDIN_LOG_FILE),
+        "state": "",
+        "state_why": "",
+        "capture": _cdin_blank_end("capture"),
+        "output": _cdin_blank_end("playback"),
+        "stats": "",
+        "stats_at": "",
+        "events": [],
+        "truncated": False,
+        "led": "idle",
+        "summary": "",
+    }
+
+    try:
+        text, _ = _tail_text(CDIN_LOG_FILE, CDIN_SCAN_BYTES)
+    except OSError:
+        text = ""
+    if not text:
+        status["summary"] = ("no log yet at " + CDIN_LOG_FILE) if running \
+            else "not running"
+        return status
+
+    ends = {"capture": status["capture"], "playback": status["output"]}
+    errors: list[dict] = []       # kept: every failure in the window
+    current: dict | None = None   # replaced: the newest healthy line
+    dropped = 0
+
+    for index, raw in enumerate(text.splitlines()):
+        m = _CDIN_LINE.match(raw)
+        if m is None:
+            continue
+        ts, level, msg = m.group("ts"), m.group("lvl"), m.group("msg")
+        if level == "DBG":
+            continue
+
+        start = _CDIN_START.match(msg)
+        if start is not None:
+            # A restart: the ends are whatever the new run finds them to be,
+            # not what the old one left behind.
+            for kind, key in (("capture", "inpath"), ("playback", "outpath")):
+                ends[kind].update(_cdin_blank_end(kind))
+                ends[kind]["path"] = start.group(key)
+
+        stats = _CDIN_STATS.match(msg)
+        if stats is not None:
+            status["stats"] = stats.group("body")
+            status["stats_at"] = ts
+            continue
+
+        event = {"at": ts, "text": msg, "severity": "info", "index": index}
+
+        device = _CDIN_DEVICE.match(msg)
+        state = _CDIN_STATE.match(msg)
+        if device is not None:
+            end = ends[device.group("dev")]
+            what = device.group("what")
+            end["path"] = device.group("path")
+            end["at"] = ts
+            if what == "unavailable":
+                end["available"] = False
+                end["error"] = device.group("rest").strip()
+            elif what == "available":
+                end["available"] = True
+                end["error"] = ""
+            elif what == "acquired":
+                end["held"] = True
+                end["available"] = True
+            else:                       # released
+                end["held"] = False
+        elif state is not None:
+            status["state"] = state.group("state")
+            status["state_why"] = state.group("why")
+
+        if level == "ERR":
+            event["severity"] = "error"
+        elif level == "WRN":
+            event["severity"] = "warn"
+        elif device is not None or state is not None:
+            event["severity"] = "ok"
+
+        if event["severity"] in ("error", "warn"):
+            errors.append(event)
+            if len(errors) > CDIN_MAX_EVENTS:
+                errors.pop(0)
+                dropped += 1
+        elif event["severity"] == "ok":
+            current = event
+
+    # Chronological, with the healthy line wherever it actually belongs: it is
+    # last when nothing has gone wrong since, and not last when something has.
+    events = errors + ([current] if current is not None else [])
+    events.sort(key=lambda e: e["index"])
+    for e in events:
+        e.pop("index", None)
+    status["events"] = events
+    status["truncated"] = dropped > 0
+
+    status["led"], status["summary"] = _cdin_verdict(status)
+    return status
+
+
+def _cdin_verdict(status: dict) -> tuple[str, str]:
+    """The LED and the one line beside it.
+
+    The daemon's log outlives the daemon, so a stopped bridge is reported as
+    idle rather than broken however alarming its last lines are — the same rule
+    the [alert:*] rules apply to a stopped renderer.  Nothing is unavailable
+    when nothing is trying to open it."""
+    if not status["running"]:
+        return "idle", "not running"
+
+    down = [end for end in (status["capture"], status["output"])
+            if end["available"] is False]
+    if down:
+        which = " and ".join(e["label"] for e in down)
+        why = next((e["error"] for e in down if e["error"]), "")
+        # "(retrying every 2 s)" is true of every one of these and says nothing
+        # about this one; the full line is still in the event list below.
+        why = re.sub(r"\s*\([^()]*\)\s*$", "", why)
+        return "red", f"{which} unavailable" + (f" — {why}" if why else "")
+
+    if status["state"] == "playing":
+        return "green", "playing — audio on the wire"
+    if status["state"] == "idle":
+        return "green", "idle — waiting for audio, output released"
+    if status["state"] == "no-carrier":
+        return "red", "no carrier — " + (status["state_why"] or "no frames arriving")
+    if any(end["available"] is None for end in (status["capture"], status["output"])):
+        return "idle", "starting up"
+    return "green", "running"
+
+
+@app.route("/cdin/status")
+def cdin_status():
+    if not CDIN_ENABLED:
+        return jsonify({"ok": True, "enabled": False})
+    return jsonify(_cdin_status())
 
 
 # ── Qobuz OAuth initialisation ───────────────────────────────────────────────
@@ -3656,8 +3813,9 @@ def _active_design_identity() -> dict:
                 "design_id": manifest.get("design_id", manifest["variant"]),
                 "description": manifest.get(
                     "description", manifest.get("design_id", manifest["variant"])),
-                "source_commit": manifest["source"]["repository_head"],
-                "release": manifest["source"].get("release"),
+                "source_directory": manifest["source"]["directory"],
+                "source_project": manifest["source"].get("project", {}),
+                "session": manifest["source"].get("measurements", {}),
             })
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         identity["verification"] = {"status": "mismatch", "message": str(error)}
@@ -3826,11 +3984,13 @@ def drc_brutefir_config():
 
 @app.route("/drc/filter-response")
 def drc_filter_response():
-    """Verified room/filter/prediction data for the *running* BruteFIR.
+    """Verified room and filter curves for the *running* BruteFIR.
 
-    The active .conf carries absolute paths to its coeff (.raw) files and the
-    sampling rate. Stored measurements are released only when their manifest
-    matches the SHA-256 of both exact coefficient files in that config.
+    Every curve is one REW text export stored in the bundle; this endpoint
+    releases them only when a manifest matches the SHA-256 of both exact
+    coefficient files named by the active .conf.  Nothing is calculated here:
+    unverified coefficients get no graph at all, because an FFT of the live
+    bytes would be a different curve than the one REW drew.
     """
     conf_path = _active_brutefir_conf()
     if not conf_path:
@@ -3847,23 +4007,14 @@ def drc_filter_response():
         # geometry = the configs/<geometry>/ directory name, when present.
         geometry = os.path.basename(os.path.dirname(conf_path))
         bundle, verification = _verified_filter_bundle(parsed)
-        channels = []
-        palette = {"Left": "#388bfd", "Right": "#d29922"}
-        for c in parsed["coeffs"]:
-            ch = _coeff_channel(c)
-            resp = _fir_response(c["filename"], c["format"], rate)
-            # BruteFIR attenuation is part of the audible transfer function.
-            # Phase/group delay are unaffected; magnitude is reduced in dB.
-            resp["mag"] = [round(value - c["attenuation"], 3) for value in resp["mag"]]
-            resp.update({
-                "name": ch,
-                "color": palette.get(ch, "#3fb950"),
-                "attenuation": c["attenuation"],
-                "format": c["format"],
-                "file": os.path.basename(c["filename"]),
-                "sha256": _sha256_file(c["filename"]),
-            })
-            channels.append(resp)
+        channels = [{
+            "name": _coeff_channel(c),
+            "taps": _fir_taps(c["filename"], c["format"]),
+            "attenuation": c["attenuation"],
+            "format": c["format"],
+            "file": os.path.basename(c["filename"]),
+            "sha256": _sha256_file(c["filename"]),
+        } for c in parsed["coeffs"]]
         result = {
             "ok": True, "running": True,
             "geometry": geometry,
@@ -3876,7 +4027,7 @@ def drc_filter_response():
             manifest = bundle["manifest"]
             analysis = bundle["analysis"]
             result.update({
-                "frequencies_hz": analysis["frequencies_hz"],
+                "frequency_grids": analysis["frequency_grids"],
                 "traces": analysis["traces"],
                 "details": {
                     "bundle_id": manifest["bundle_id"],
@@ -3888,14 +4039,12 @@ def drc_filter_response():
                     "audited_at": manifest["verification"]["audited_at"],
                     "claims": manifest["verification"]["claims"],
                     "prediction": manifest["verification"]["prediction"],
-                    "source_repository": manifest["source"]["repository"],
-                    "source_commit": manifest["source"]["repository_head"],
-                    "source_ref": manifest["source"].get("source_ref"),
-                    "release": manifest["source"].get("release"),
-                    "source_declaration": manifest["source"].get("declaration"),
-                    "project": manifest["source"].get("project"),
+                    "source_directory": manifest["source"]["directory"],
+                    "project": manifest["source"].get("project", {}),
+                    "session": manifest["source"].get("measurements", {}),
+                    "aggregate": manifest["aggregate"],
+                    "artifacts": manifest["source"]["artifacts"],
                     "measurements": analysis["source_headers"],
-                    "lineage": manifest["source"]["lineage"],
                     "validation": analysis["validation"],
                     "calculation": analysis["calculation"],
                     "runtime": manifest["runtime"]["rates"][str(rate)],
@@ -3904,8 +4053,6 @@ def drc_filter_response():
         return jsonify(result)
     except FileNotFoundError as e:
         return jsonify({"ok": False, "running": True, "error": f"filter file not found: {e}"})
-    except ImportError:
-        return jsonify({"ok": False, "running": True, "error": "numpy is required for filter analysis"})
     except Exception as e:
         return jsonify({"ok": False, "running": True, "error": str(e)})
 

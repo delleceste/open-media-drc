@@ -9,11 +9,11 @@ main [README](../README.md) or in `doc/`; this file is the quick index.
 | `REW2raw.sh` | Convert one REW-exported WAV impulse response to a brutefir-ready raw `FLOAT64_LE` file, resampling to a target rate (default 192 kHz) with the theoretically correct FIR coefficient scale (`Fs_source / Fs_target`, no peak normalisation). | Linux + FreeBSD (needs `sox`) |
 | `REW2raw-all-rates.sh` | Batch wrapper around `REW2raw.sh`: generates the `L.raw` / `R.raw` pair (plus a `sox.txt` conversion log) for **every** numeric sample-rate directory under a filter root, e.g. `filters/120.blue/{44100,48000,88200,96000,192000}/`. Asks before overwriting unless `-y`. | Linux + FreeBSD |
 | `headroom_calc.py` | Computes the minimum `attenuation:` value for each brutefir `.conf` from the filters' worst-case FFT gain (+ safety margin, default 1 dB), so playback never clips while dynamics are maximised. Run it after every filter (re)generation. | Linux + FreeBSD (python3) |
-| `declare_filter_design.py` | Creates the source-repository declaration that assigns exact measurement/filter files to semantic roles and records their SHA-256 values and TXT headers. It never starts REW. Commit it with the inputs, then create an annotated tag. | Linux + FreeBSD (python3, NumPy, Git) |
-| `filter_design_suggest.py` | Read-only helper behind `declare_filter_design.py --suggest-from-source-root`: uses the newest `.mdat` filename to locate `<stem>.txts`, ranks compatible L/R exports, finds supporting aggregate/filter artifacts, and prints a complete candidate command without opening REW or the project. | Linux + FreeBSD (python3, NumPy) |
-| `new_filter_design.py` | Consumes a committed source declaration at an annotated tag, verifies its tag object, commit and every input hash, then drives a complete dry-run or publication for a new immutable A/B design. Its final `NEXT` handoff covers publication, verification, commit, install, selection and UI identity checks. It never starts REW. | Linux + FreeBSD (python3, NumPy, SoX, Git) |
-| `deploy_filter.py` | Lower-level offline builder: regenerates all declared rates in staging, validates TXT↔WAV response, optional corrected exports, config mapping and headroom, then publishes source copies, graph data and a hash-bound manifest. Dry-run unless `--write` is supplied. | Linux + FreeBSD (python3, NumPy, SoX, Git) |
+| `new_filter_design.py` | The one deployment command: takes the directory REW exported a session into, resolves every role from the file names, verifies each filter TXT against its impulse WAV, hashes the `.mdat` and requires the project commit, reports everything, asks, then publishes and commits the result in the room repository. It never starts REW. | Linux + FreeBSD (python3, NumPy, SoX, Git) |
+| `remove_filter_design.py` | Removes one deployed design completely — manifest, analysis, source copies, every rate's coefficient pair and every BruteFIR config template — in an order that never leaves a manifest naming a deleted file, then records the removal in the room repository. Refuses the reserved `default` set. | Linux + FreeBSD (python3, Git) |
+| `deploy_filter.py` | Builder library behind the command: regenerates all requested rates in staging, validates TXT↔WAV response, config mapping and headroom, then publishes source copies, graph data and a hash-bound manifest, and commits the room repository. Not called directly. | Linux + FreeBSD (python3, NumPy, SoX, Git) |
 | `verify_filter_bundle.py` | Read-only verification of bundle ID, source copies, graph dependencies, configs, exact runtime RAW hashes and headroom. A successful direct run repeats the install/select/UI handoff; use `--no-next` for CMake, CI or scripts. | Linux + FreeBSD (python3, NumPy) |
+| `console_ui.py` | Shared terminal formatting for the design commands: stages, colours, confirmation prompts and the uniform `FAIL` line. Not called directly. | Linux + FreeBSD (python3) |
 | `filter_workflow_next.py` | Shared operator handoff printed by the commands above: the exact verify/commit/configure/install/select sequence, with a per-step working directory when the site data lives in its own repository. Not called directly. | Linux + FreeBSD (python3) |
 | `rew_mdat_audit.py` | Optional archival evidence: audits selected REW project traces through the REW API without a GUI, comparing exported TXT responses numerically and final WAV impulses sample-by-sample against the project, and recording the trace inventory with exact UUIDs. Not a deployment dependency. | Linux + FreeBSD (python3, NumPy) |
 | `verify-bitperfect.sh` | End-to-end bit-perfectness proof: feeds a deterministic S32_LE signal through a chosen source (built-in OSS writer, or MPD by output name) and compares it byte-for-byte against a chosen tap (the OKTO's isochronous USB OUT endpoint via `usbdump`, or an OSS loopback node such as `/dev/dsp.loop`). See [`doc/BIT-PERFECT-VERIFICATION.md`](../doc/BIT-PERFECT-VERIFICATION.md). | FreeBSD (USB tap needs root) |
@@ -25,129 +25,141 @@ main [README](../README.md) or in `doc/`; this file is the quick index.
 
 ## Typical workflows
 
-**Suggest the declaration command from a source checkout** (read-only):
+**Deploy a design** — one command, one directory:
 
 ```sh
-python3 scripts/declare_filter_design.py \
-  --suggest-from-source-root ../DRC/DRC-120.blue
+python3 scripts/new_filter_design.py ../DRC/DRC-120.blue/120.blue.Rscreen.txts
 ```
 
-The newest root-level `.mdat` is selected by filesystem modification time only
-and is never opened. Its stem must name a sibling `<stem>.txts` directory. The
-tool selects the best compatible acoustic-timing L/R pair there, reports the
-alternatives, searches sibling `*.txts` directories and root WAVs for
-aggregate/filter/corrected candidates, and prints a complete dry-run command.
-This is a suggestion, not an attestation: review every role, then run the printed
-command without `--write` so the full DSP and provenance checks can accept or
-reject it.
-
-**Declare a new design in its source repository** (one-time semantic decision):
-
-```sh
-python3 scripts/declare_filter_design.py \
-  --source-root ../DRC/DRC-120.blue \
-  --geometry 120.blue --design-id rscreen-fdw8-20260813 \
-  --description "120.blue Rscreen, 8-cycle FDW correction" \
-  --measurement-left "new.filters.txts/L 120.Rscreen.orig.txt" \
-  --measurement-right "new.filters.txts/R 120.Rscreen.orig.txt" \
-  --measurement-sum new.filters.txts/LR.orig.txt \
-  --filter-left-txt new.filters.txts/FLX.txt \
-  --filter-right-txt new.filters.txts/FRX.txt \
-  --filter-left-wav FLX-trimmed-48k.wav \
-  --filter-right-wav FRX-trimmed-48k.wav \
-  --corrected-left-txt new.filters.txts/L.Filtered.txt \
-  --corrected-right-txt new.filters.txts/R.Filtered.txt \
-  --corrected-sum-txt new.filters.txts/LR.Filtered.txt \
-  --sum-mode vector_average
-# Review the JSON and PASS metrics, then repeat the same command with --write.
-git -C ../DRC/DRC-120.blue add -- \
-  omdrc-designs/120.blue/rscreen-fdw8-20260813/design.json \
-  "new.filters.txts/L 120.Rscreen.orig.txt" \
-  "new.filters.txts/R 120.Rscreen.orig.txt" \
-  new.filters.txts/LR.orig.txt \
-  new.filters.txts/FLX.txt new.filters.txts/FRX.txt \
-  FLX-trimmed-48k.wav FRX-trimmed-48k.wav \
-  new.filters.txts/L.Filtered.txt new.filters.txts/R.Filtered.txt \
-  new.filters.txts/LR.Filtered.txt
-git -C ../DRC/DRC-120.blue commit -m "Declare 120.blue Rscreen FDW8 filter"
-git -C ../DRC/DRC-120.blue tag -a 120.blue-rscreen-fdw8-20260813 \
-  -m "120.blue Rscreen FDW8 correction"
-```
-
-The role assignment is the designer's attestation. Hashes prove that those
-chosen files cannot later be substituted; they cannot infer the intended role
-from a filename. The `.mdat` is not used by this procedure. An optional
-`--project 120.blue.Rscreen.mdat` would only add its path and hash as archival
-evidence; omit it, as above, when the source declaration and annotated tag are
-the intended trust anchor.
-The command accepts REW's float WAVs, detects the common 8192-sample causal
-delay and the fixed -3.0003 dB TXT-to-WAV export gain, then checks the residual
-amplitude and phase errors. It derives, rather than accepts, the declaration
-destination:
+The directory is where REW exported the session, beside the `.mdat` it came
+from. Nothing on the command line says what a file is; the names do:
 
 ```text
-omdrc-designs/<geometry>/<design-id>/design.json
+L.txt  R.txt                    measured left/right, before correction
+LR.txt   or   L+R.txt           measured pair: REW's vector average, or the sum
+FLX-trimmed.txt  FRX-trimmed.txt        exported filter responses
+FLX-trimmed-48k.wav  FRX-trimmed-48k.wav   deployable impulses
+L.filtered.txt  R.filtered.txt          REW's filtered result per channel
+LR.filtered.txt  or  L+R.filtered.txt   the filtered pair
+   or  L+R.remeasured.txt               the room measured again, DRC running
 ```
 
-Run once without `--write` to review every selected header, hash and detected
-relationship. A dirty source checkout is allowed at declaration time so new
-exports and the declaration can be committed together; deployment still
-rejects any selected file that is untracked, dirty, absent from the annotated
-tag, or different from its declared hash.
+`.txt` is optional and case is ignored. Exactly one aggregate style: `LR.txt`
+with `LR.filtered.txt`, or `L+R.txt` with `L+R.filtered.txt` or
+`L+R.remeasured.txt`. A re-measurement is always a sum, never a vector average,
+so `LR.txt` beside `L+R.remeasured.txt` is refused. Missing, duplicate or
+mismatched names stop the run before anything is written, in colour, naming the
+offending files.
 
-On an interactive terminal, `declare_filter_design.py` presents the audit as
-eight coloured progress stages (argument roles, Git context, hashing/parsing,
-measurement consistency, TXT/WAV alignment, provenance assembly, prediction,
-and write/preview). Colour is automatically disabled for pipes/log files and
-can also be disabled with the standard `NO_COLOR=1` environment variable. Its
-final **NEXT** section prints underlined `Run from:` directories and complete
-copy/paste commands for all remaining phases: write, source commit plus
-annotated tag, `new_filter_design.py` dry-run/publication into
-`open-media-drc`, bundle verification and commit, CMake installation, web
-service restart, and selection of the new `@design-id`.
+Geometry and design ID come from the path —
+`DRC-120.blue/120.blue.Rscreen.txts` reads as `120.blue` / `Rscreen`. Use
+`--geometry` and `--design` to override, for instance to date the design as
+`rscreen-20260812`.
 
-The declaration preflight does **not** resample or write runtime filters; it
-prints that boundary explicitly. During the subsequent
-`new_filter_design.py` audit, `deploy_filter.py` runs `REW2raw.sh`/SoX for each
-left/right target-rate conversion. Those lines are magenta. For every rate it
-prints the exact FIR coefficient scale (`source_rate / target_rate`) and signed
-SoX gain in dB. It then prints the worst L/R FFT peak and safety-margin
-arithmetic in yellow, the required attenuation rounded upward to 0.1 dB, and
-the BruteFIR config bake and read-back verification in blue. A dry run bakes
-configs only in private staging; `--write` emits a separate blue
-`CONFIG PUBLISHED` line when each verified template is copied into
-`configs/<geometry>/`.
+**What every export must be.** Three checks run before anything is hashed or
+written, and none of them has an override:
 
-At the end of a successful `new_filter_design.py` dry run, **NEXT** gives a
-ready-to-copy command using an absolute source checkout and `--write`. After a
-successful publication it prints the standalone bundle verification, a Git
-status/add/commit limited to that geometry, CMake configuration that preserves
-the current geometry set, build/install and service restart, and the installed
-`omdrc` geometry/design selectors. The final lines state the annotated tag,
-source commit and bundle ID that the green **Filter response** identity must
-show. `verify_filter_bundle.py` repeats the post-publication portion when run
-directly. CMake invokes it with `--no-next` so configuration output stays
-compact.
+- every text export is **unsmoothed** (`* Smoothing: None`; an export that
+  states no smoothing is refused too, since it cannot be shown to be
+  unsmoothed). REW's smoothing is baked into the numbers and cannot be undone
+  later; the browser's Smoothing selector is a separate, reversible view;
+- every text export comes from a **measurement at 48 kHz or below**, checked as
+  *it must not reach past 24 kHz* — the runtime coefficients are all resampled
+  from one 48 kHz impulse;
+- each **filter TXT is the exported response of its WAV**: one integer causal
+  delay and one constant export gain are detected, then the residual magnitude
+  and phase errors must stay inside `DEFAULT_LIMITS`. This is what makes the
+  plotted FLX/FRX curve a statement about the bytes BruteFIR will load, and it
+  is the only DSP in the pipeline.
 
-**Build and publish from the annotated tag** (run in `open-media-drc`):
+The first two are reported together, so one message names every offending file.
+
+The run prints the eight curves the web remote will plot with their point counts
+and REW smoothing, the project and REW session behind them, the measurement
+headers, the two filters with their TXT/WAV residuals, and every path that will
+be written. Then it asks. `--dry-run` runs every check, including the SoX
+conversions, and stops without asking. `--yes` skips the prompt and refuses to
+assume consent when standard input is not a terminal.
+
+**What the run requires of Git.** The export directory must be in a work tree,
+and the ten inputs and the `.mdat` must be committed — the manifest records the
+commit and the blob IDs, which is what makes the measurements retrievable later.
+Uncommitted files stop the deployment and print the `git add` / `git commit`
+lines to run; `--allow-uncommitted` proceeds and records the gap in the
+manifest, where the verifier and the web UI both show it.
+
+After publication the command makes one commit in the room repository
+(`filters/<geometry>` and `configs/<geometry>`) naming the geometry, design,
+bundle ID, project commit, session hash and rates. `git log` there is the
+history of every filter set that was ever live:
 
 ```sh
-python3 scripts/new_filter_design.py \
-  --source-root ../DRC/DRC-120.blue \
-  --source-ref 120.blue-rscreen-fdw8-20260813 \
-  --declaration omdrc-designs/120.blue/rscreen-fdw8-20260813/design.json
-# Review the dry run, then publish atomically:
-python3 scripts/new_filter_design.py \
-  --source-root ../DRC/DRC-120.blue \
-  --source-ref 120.blue-rscreen-fdw8-20260813 \
-  --declaration omdrc-designs/120.blue/rscreen-fdw8-20260813/design.json --write
-python3 scripts/verify_filter_bundle.py --all --require-sources
-./drc.sh design --list
-./drc.sh design @rscreen-fdw8-20260813
+git -C ../omdrc-801N log --oneline -- filters/120.blue
+git -C ../omdrc-801N checkout <commit> -- filters/120.blue configs/120.blue
 ```
 
-An annotated tag is required by default. `--allow-commit-ref` exists for an
-explicit lower-assurance exception. Neither command launches REW.
+`--no-commit` skips it; a room that is not a work tree warns and deploys anyway.
+
+**Then verify, install and select:**
+
+```sh
+python3 scripts/verify_filter_bundle.py --all --require-sources
+./drc.sh design --list
+./drc.sh design @Rscreen
+```
+
+**Progress output.** `deploy_filter.py` runs `REW2raw.sh`/SoX for each
+left/right target-rate conversion; those lines are magenta and print the exact
+FIR coefficient scale (`source_rate / target_rate`) and signed SoX gain in dB.
+The worst L/R FFT peak and safety-margin arithmetic follow in yellow, with the
+required attenuation rounded upward to 0.1 dB, then the BruteFIR config bake and
+read-back verification in blue. A dry run bakes configs only in private staging;
+a real run adds a blue `CONFIG PUBLISHED` line per template copied into
+`configs/<geometry>/`. Colour turns itself off for pipes and log files and obeys
+`NO_COLOR=1`.
+
+At the end, **NEXT** prints underlined `Run from:` directories and copy/paste
+commands for bundle verification, CMake configuration that preserves the current
+geometry set, build/install, service restart and selection of the new
+`@design-id`, ending with the bundle ID the green **Filter response** identity
+must show. `verify_filter_bundle.py` repeats that handoff when run directly;
+CMake invokes it with `--no-next` so configuration output stays compact.
+
+**A design owns its directories.** `filters/<geo>/source/<design>/` and every
+`filters/<geo>/<rate>/@<design>/` end up holding exactly what the new manifest
+names: a redeployment that renames its inputs prunes the files the previous one
+left there, so nothing sits beside a bundle that the bundle does not account
+for. Pruning happens after the manifest is written, so a failure leaves harmless
+leftovers rather than a manifest naming a deleted file. A bare
+`filters/<geo>/<rate>/` is shared with the `default` set and is never touched.
+The dry run lists what would be pruned.
+
+**Remove a design** — the exact inverse, and just as complete:
+
+```sh
+python3 scripts/remove_filter_design.py --list          # what is deployed
+python3 scripts/remove_filter_design.py 120.blue@rscreen-20260812 --dry-run
+python3 scripts/remove_filter_design.py 120.blue@rscreen-20260812
+```
+
+The selector is the one the UI and `omdrc design --list` show. It deletes the
+manifest, the build recipe, the analysis file, `source/<design>/`, every
+`<rate>/@<design>/` pair and every `brutefir-<rate>@<design>.conf.in` (plus any
+rendered `.conf`), and nothing else — the shared default set and other designs
+are never touched. It reports what the design was (bundle, project, session,
+rates) and exactly which paths and how many bytes will go, then asks.
+
+The manifest is deleted first: while it exists it is the claim that everything
+else is present, so once it is gone the design is already invisible to the web
+remote, and no reader can meet a manifest that names a missing file. The
+removal is then one commit in the room repository, so the design remains
+recoverable from the deployment commit that introduced it. `--no-commit`,
+`--dry-run` and `--yes` behave as they do when deploying, and the reserved
+`default` set is refused — its un-suffixed configs and coefficients are what a
+geometry falls back to.
+
+Removing does not touch an installed machine: re-run CMake, `make install` and
+restart the service, exactly as the printed **NEXT** section says.
 
 The lower-level `REW2raw-all-rates.sh` remains useful for experiments, but it
 does not create the provenance and graph bundle required for a verified UI.
@@ -178,8 +190,7 @@ repository: publish and commit on the design box, pull on the playback box.
 ```sh
 # design box
 export OMDRC_SITE_ROOT=~/devel/omdrc-site
-python3 scripts/new_filter_design.py … --write     # writes into the site repo
-git -C ~/devel/omdrc-site add -A && git -C ~/devel/omdrc-site commit -m 'Deploy …'
+python3 scripts/new_filter_design.py …    # writes and commits in the site repo
 git -C ~/devel/omdrc-site push
 
 # playback box

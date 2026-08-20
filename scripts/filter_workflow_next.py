@@ -122,17 +122,6 @@ def _restart_command() -> str | None:
     return None
 
 
-def print_dry_run_next(root: Path, write_command: list[str]) -> None:
-    """Print the one safe next action after a successful unpublished dry run."""
-    CONSOLE.heading("NEXT")
-    CONSOLE.line("1. Publish the audited design")
-    CONSOLE.directory(root)
-    CONSOLE.command(write_command)
-    CONSOLE.note(
-        "That successful --write run will print the remaining verification, "
-        "commit, install, selection and UI identity checks.")
-
-
 def print_deployed_next(
         root: Path, bundles: list[dict], *, include_verification: bool,
         site_root: Path | None = None) -> None:
@@ -222,13 +211,9 @@ def print_deployed_next(
         CONSOLE.line()
     CONSOLE.line(f"{step}. Confirm the running identity in the web UI")
     for item in sorted(bundles, key=lambda value: (value["geometry"], value["design_id"])):
-        release = item.get("release", {})
-        tag = release.get("name", "<no annotated tag recorded>")
-        commit = item.get("source_commit", "<unknown>")
         CONSOLE.note(
-            f"{item['geometry']}/{item['design_id']}: tag {tag}; "
-            f"source commit {commit}; bundle {item['bundle_id']}")
+            f"{item['geometry']}/{item['design_id']}: bundle {item['bundle_id']}")
     CONSOLE.note(
         "Open Filter response and require its green verified identity to match "
-        "the selected geometry/design, annotated tag, source commit and bundle hash above.")
+        "the selected geometry/design and bundle hash above.")
     CONSOLE.note("A missing or different identity means the displayed curves must not be trusted.")

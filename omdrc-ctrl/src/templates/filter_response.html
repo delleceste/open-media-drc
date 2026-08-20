@@ -97,8 +97,8 @@
             <button id="mode-mag" class="active" onclick="setMode('magnitude_db')">Magnitude</button>
             <button id="mode-phase" onclick="setMode('phase_deg')">Phase</button>
             <label class="smoothing-control" for="smoothing-select">Smoothing
-                <select id="smoothing-select" title="Display-only smoothing; verified source data is unchanged" onchange="setSmoothing(this.value)">
-                    <option value="none">Unsmoothed</option>
+                <select id="smoothing-select" title="Display-only smoothing applied in the browser; the stored REW exports are unchanged" onchange="setSmoothing(this.value)">
+                    <option value="none">Unsmoothed (as exported)</option>
                     <option value="variable">Variable</option>
                     <option value="psychoacoustic">Psychoacoustic</option>
                     <option value="octave-3">1/3 octave</option>
@@ -139,16 +139,11 @@ function el(name, text) {
     return node;
 }
 
+// Each trace names the frequency grid its own export was written on. Traces
+// that share a bit-identical grid share one stored array; nothing is resampled.
 function buildTraceList(data) {
-    if (Array.isArray(data.traces)) {
-        return data.traces.map(t => ({...t, freqs:data.frequencies_hz, selected:!!t.default_visible}));
-    }
-    // Safe diagnostic fallback: these curves were calculated directly from
-    // the active bytes. No stored measurement is associated with them.
-    return data.channels.map(ch => ({
-        id:`live-${ch.name.toLowerCase()}`, label:`Active filter ${ch.name}`,
-        color:ch.color, group:'Live diagnostic', freqs:ch.freqs,
-        magnitude_db:ch.mag, phase_deg:ch.phase, selected:true,
+    return (data.traces || []).map(t => ({
+        ...t, freqs:data.frequency_grids[t.grid], selected:!!t.default_visible,
     }));
 }
 
@@ -184,6 +179,9 @@ function setSmoothing(next) {
     draw();
 }
 
+// Smoothing is a viewing aid computed here in the browser, on a copy. The
+// stored arrays, their hashes and the default view stay exactly as REW
+// exported them.
 function displaySeries(trace) {
     if (!trace.displayCache) trace.displayCache = {};
     const key = `${mode}:${smoothing}`;
@@ -196,10 +194,10 @@ function displaySeries(trace) {
 
 function updateNote() {
     const visual = smoothing === 'none'
-        ? 'Visual smoothing is off.'
-        : `${SMOOTHING_LABELS[smoothing]} visual smoothing is active.`;
-    document.getElementById('note').textContent =
-        `${responseNote} ${visual} Smoothing changes only the browser rendering; verified source arrays and hashes remain unchanged.`;
+        ? 'The view is unsmoothed, so the graph holds exactly the exported numbers.'
+        : `${SMOOTHING_LABELS[smoothing]} smoothing is applied to this view only; `
+          + 'switch to Unsmoothed to read the exported numbers again.';
+    document.getElementById('note').textContent = `${responseNote} ${visual}`;
 }
 
 function draw() {
@@ -207,7 +205,7 @@ function draw() {
     const phase = mode === 'phase_deg';
     document.getElementById('chart-title').innerHTML = phase
         ? `Phase <span class="sub">— wrapped degrees vs frequency · ${SMOOTHING_LABELS[smoothing]}</span>`
-        : `Magnitude <span class="sub">— room curves are SPL; filter curves are effective runtime gain · ${SMOOTHING_LABELS[smoothing]}</span>`;
+        : `Magnitude <span class="sub">— room curves are SPL, filter curves are gain · ${SMOOTHING_LABELS[smoothing]}</span>`;
     const datasets = traces.filter(t => t.selected).map(t => {
         const series = displaySeries(t);
         return {
@@ -256,19 +254,30 @@ function renderDetails(data) {
     addDetail('Active', `${data.conf} · ${data.rate.toLocaleString()} Hz · ${d.design_id || d.variant}`);
     addDetail('Design description', d.description || d.design_id || d.variant);
     addDetail('Runtime hashes', `L ${data.verification.active_hashes.left} · R ${data.verification.active_hashes.right}`);
-    addDetail('Source repository', d.source_repository);
-    if (d.release && d.release.kind === 'annotated_tag') {
-        addDetail('Annotated source tag', `${d.release.name} · tag object ${d.release.tag_object}`);
-    } else {
-        addDetail('Source reference', d.source_ref || 'raw commit (no annotated tag recorded)');
+    addDetail('Source directory', d.source_directory);
+    const project = d.project || {};
+    if (project.name) {
+        addDetail('Source project', project.commit
+            ? `${project.name} @ ${project.commit.slice(0, 12)}` +
+              (project.clean ? '' : ' — exports were NOT committed')
+            : `${project.name} — not under version control`);
     }
-    addDetail('Source commit', d.source_commit);
-    if (d.source_declaration) {
-        addDetail('Source declaration', `${d.source_declaration.path} · SHA-256 ${d.source_declaration.sha256}`);
+    const session = d.session || {};
+    if (session.file) {
+        addDetail('REW session', `${session.file} (sha256 ${session.sha256.slice(0, 16)})`);
     }
-    if (d.project) addDetail('Optional project archive', `${d.project.path} · SHA-256 ${d.project.sha256}`);
-    addDetail('Measurements', Object.values(d.measurements).map(m => `${m.measurement} (${m.dated}, ${m.smoothing})`).join(' · '));
-    addDetail('Prediction', d.prediction);
+    addDetail('Aggregate', (d.aggregate.style === 'LR'
+        ? 'REW vector average of L and R'
+        : 'L+R sum') + (d.aggregate.corrected === 'remeasured'
+            ? ' — corrected curve re-measured in the room'
+            : ' — corrected curve is REW\u2019s filtered result'));
+    addDetail('Exports plotted', Object.entries(d.artifacts)
+        .filter(([role]) => !role.endsWith('_wav'))
+        .map(([, item]) => `${item.path} (${item.sha256.slice(0, 12)})`).join(' · '));
+    addDetail('Measurements', Object.values(d.measurements)
+        .map(m => `${m.measurement} (${m.dated}, REW smoothing: ${m.smoothing || 'unstated'})`)
+        .join(' · '));
+    addDetail('Processing', d.calculation.note);
     document.getElementById('detail-json').textContent = JSON.stringify(d, null, 2);
     card.hidden = false;
 }
@@ -299,9 +308,20 @@ async function load() {
         verdict.replaceChildren();
         const badge = el('span', verified?'✓ Verified':'✕ Unverified'); badge.className = 'badge';
         verdict.append(badge, el('span', data.verification?.message || 'No verification result.'));
-        responseNote = verified
-            ? `The default original curve is the hash-pinned independent L+R measurement; the corrected curve is L × FLX + R × FRX through the exact active filters. The calculated original L+R is also selectable. BruteFIR's ${data.channels[0].attenuation} dB coefficient attenuation is included. The source commit/tag constraint is shown in the green verification banner; full hashes are below.`
-            : `Stored measurements and predicted room curves are withheld. The displayed fallback is an FFT of the coefficient bytes currently loaded by BruteFIR, including configured attenuation.`;
+        if (!verified) {
+            status.className = 'error';
+            status.textContent =
+                `${data.verification?.message || 'The active coefficients match no stored design.'} `
+                + 'No curve is drawn: the graph shows measurements exported from REW, and '
+                + 'there is no verified set of them for the coefficients BruteFIR has loaded.';
+            return;
+        }
+        responseNote =
+            'Every curve above is one REW text export: nothing is averaged, summed or '
+            + 'convolved between REW and this page, and the stored arrays and hashes are '
+            + `never modified. BruteFIR applies a further ${data.channels[0].attenuation} dB `
+            + 'of coefficient attenuation at runtime, deliberately not subtracted from the '
+            + 'filter curves so they keep matching REW. Full hashes are below.';
         renderLegend(); renderDetails(data); draw();
         status.hidden = true; content.hidden = false;
     } catch (error) {
