@@ -147,13 +147,56 @@ log_file = /tmp/omdrc-cdin.log
 # Checked with pgrep -x to tell "stopped" from "broken": a stopped daemon's log
 # is last week's news, and the card says so instead of showing a red light.
 process = omdrc-cdin
-# rc.d service name, for reference in the UI.
+# rc.d service name — shown in the UI, and what the card's Start/Stop button
+# runs (`service omdrc_cdin onestart|onestop`).
 service = omdrc_cdin
+# Whether that button exists.  Watching the daemon needs no privilege; starting
+# and stopping it needs the rc.d grant in sudoers (see the README), so a box
+# without that grant sets this to no rather than offering a button that can only
+# fail.  The daemon is designed to be left running — this is for the one case
+# watching cannot cover: handing /dev/dsp.play back by hand, from a box with no
+# keyboard.
+control = yes
 refresh = 5
 # Past failures the card keeps.  Failures accumulate and stay visible in red;
 # the healthy status line is replaced rather than accumulated, so a quiet week
 # does not push last night's dropout off the list.
 max_events = 20
+
+# -- Audio chain ------------------------------------------------------------
+# The block diagram of who currently holds the sound devices.  Unlike every
+# other card here it does not ask open-media-drc anything: it asks the kernel,
+# through fstat(1) on FreeBSD and fuser(1) on Linux, so a process from OUTSIDE
+# the chain squatting a device (a stray PulseAudio, a leftover mpv, a second
+# brutefir from a half-finished restart) is visible the moment it happens.
+[chain]
+enabled = yes
+# Seconds between polls.  Each one runs a single fstat/fuser over the device
+# list plus, at most, one `mpc status`.
+refresh = 4
+# Re-ask through `sudo -n` when omdrcctrl is not root.  fstat/fuser can only
+# report descriptors of processes the caller may debug, so without this the card
+# sees the chain (brutefir, MPD, omdrc-cdin all run as the panel's own user) but
+# NOT a root process holding a device.  With no sudoers grant the first attempt
+# fails, is never retried, and the card says the listing is incomplete.
+privileged = yes
+# The four device roles, in flow order.  Leave a role empty to drop it from the
+# diagram — a box with no CD input sets `capture =` and the input block, and its
+# LED, disappear instead of sitting there permanently grey.
+#
+# FreeBSD defaults (the role symlinks omdrc_sndlink maintains, plus the two cuse
+# nodes virtual_oss creates):
+#   capture = /dev/dsp.capture
+#   bridge  = /dev/dsp.play
+#   loop    = /dev/dsp.loop
+#   dac     = /dev/dsp.dac
+#
+# Linux defaults (ALSA, named the way brutefir names them and translated to the
+# /dev/snd node; card may be a number or an id, "hw:Loopback,1" works):
+#   capture =                 ; no conventional number - name yours here
+#   bridge  = hw:1,0          ; snd-aloop playback side, MPD writes into it
+#   loop    = hw:1,1          ; snd-aloop capture side, brutefir reads it
+#   dac     = hw:0,0
 
 # -- Log alerts -------------------------------------------------------------
 # Each [alert:<id>] section watches the logs for one condition and reports it in

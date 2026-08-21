@@ -1,6 +1,6 @@
 ###################################
 #
-#  FreeBSD specific musicpd.conf (uses /dev/dsp0)
+#  FreeBSD specific musicpd.conf (uses /dev/dsp.dac)
 #
 #  Template — generated to musicpd.conf by ../install.sh from ../config.env.
 #  Do not edit the generated file; edit this .in or config.env.
@@ -38,7 +38,7 @@ resampler {
 audio_output {
         type "oss"
         name "OKTO-DAC"
-        device "/dev/dsp0"
+        device "/dev/dsp.dac"
         mixer_type        "none"
 }
 

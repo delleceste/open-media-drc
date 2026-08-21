@@ -63,7 +63,7 @@ DAC_SETTLE_SECS=${DAC_SETTLE_SECS:-1}
 # Closed-loop verification (mitigation #3).  After warm-up, confirm the DAC is
 # actually streaming at the requested rate before trusting the chain; if not,
 # tear down and retry up to DAC_VERIFY_RETRIES extra times.  On FreeBSD the
-# check reads the DAC's USB async feedback (dev.pcm.0.feedback_rate), which
+# check reads the DAC's USB async feedback (dev.pcm.<unit>.feedback_rate), which
 # tracks the live stream rate (~96002 while playing 96 kHz, ~48001 idle); on
 # Linux it reads the ALSA hw_params rate.  Note: this verifies the *clock locked
 # at the right rate*, not that audio is audible — the OKTO can still route
@@ -81,7 +81,7 @@ DAC_VERIFY_TOL=100      # Hz tolerance around the requested rate
 # rate *change* of any kind — NOT just a crystal switch, and NOT 44.1k-only.
 # Confirmed empirically: 1 cold open at a changed rate = silent, ~3 opens =
 # audible.  So on any rate change (see the prime block below, which reads the
-# current rate from dev.pcm.0.feedback_rate) we "prime" with DAC_PRIME_CYCLES
+# current rate from dev.pcm.<unit>.feedback_rate) we "prime" with DAC_PRIME_CYCLES
 # extra open/close bounces before the real open (total opens = cycles + 1); only
 # a same-rate re-open is skipped.  This cannot be auto-verified — the silence is a
 # DAC-side routing quirk and the USB feedback / UAC2 clock-valid both look healthy
@@ -97,6 +97,31 @@ VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L
 
 IS_LINUX=false
 [ "$(uname)" = "Linux" ] && IS_LINUX=true
+
+# ── which card is the DAC ─────────────────────────────────────────────────────
+# FreeBSD hands out pcm unit numbers in attach order, and USB attach order is
+# port order, so /dev/dsp0 is not reliably the DAC on a box with more than one
+# card.  /dev/dsp.dac is a symlink the omdrc_sndlink service keeps pointed at the
+# right one (etc/rc.d/omdrc_sndlink, plus a devd rule for hotplug); brutefir and
+# MPD open it by name.  Fall back to unit 0 when there is no link: a single-DAC
+# box that never enabled the service, and Linux, where the chain is ALSA and none
+# of this applies.
+DAC_DEV_LINK=/dev/dsp.dac
+dac_dev() {
+  [ -e "$DAC_DEV_LINK" ] && { echo "$DAC_DEV_LINK"; return; }
+  echo /dev/dsp0
+}
+# The pcm unit behind that link ("dsp0" -> 0).  A symlink covers a device node
+# but not a sysctl OID, and dev.pcm.<unit>.* is keyed by the number we are trying
+# to forget, so anything reading those resolves it here.
+dac_unit() {
+  local t
+  t=$(readlink "$DAC_DEV_LINK" 2>/dev/null) || t=""
+  case "$t" in
+    dsp[0-9]*) echo "${t#dsp}" ;;
+    *)         echo 0 ;;
+  esac
+}
 
 # ── paths / state ─────────────────────────────────────────────────────────────
 # Repo mode keeps state beside the script (as always).  Installed mode must not
@@ -327,6 +352,33 @@ release_cdin() {
   # the machine until it is rebooted if a client handle is still open, so a
   # second of latency on a rate change is not a trade worth making.
   sleep 1.5
+}
+
+# Restart omdrc-cdin so it re-picks where to write the disc.
+#
+# The CD bridge settles its output ONCE, at startup: /dev/dsp.play when the DRC
+# chain is up, /dev/dsp.dac straight when it is not (see the preference list in
+# cdin/src/outsel.h).  That is not a shortcut — the daemon's ring is laid out in
+# the width the chosen device negotiated, so the answer cannot be re-taken while
+# it runs.  Restarting it is how the answer changes, and the chain just moved.
+#
+# This is the exact counterpart of the `mpc enable only` lines: both consumers
+# have to be told where to write now, and neither can work it out for itself
+# once it is running.
+#
+# Two rules:
+#   * only ever restart a daemon that is ALREADY running.  An operator who
+#     stopped the CD bridge does not want a rate change to start it again.
+#   * never fatal.  The chain is up and the state is recorded by the time this
+#     runs; a missing sudoers grant is worth a line on stderr, not a rollback.
+restart_cdin() {
+  $IS_LINUX && return 0
+  pgrep -q -x omdrc-cdin 2>/dev/null || return 0
+  command -v service >/dev/null 2>&1 || return 0
+  echo "restarting omdrc-cdin so it re-picks its output device"
+  _sudo service omdrc_cdin onerestart >/dev/null 2>&1 ||
+    echo "warning: could not restart omdrc_cdin — the CD input is still" \
+         "pointed at the previous output (needs the rc.d sudoers grant)" >&2
 }
 
 stop_virtual_oss() {
@@ -785,7 +837,7 @@ stop_brutefir() {
     echo "stopping brutefir"
     pkill -f "$bf_pattern" 2>/dev/null || true
     # Wait for the process to actually exit so it releases the DAC
-    # (/dev/dsp0) and the loopback before we restart.  A bare "sleep 1"
+    # (the DAC) and the loopback before we restart.  A bare "sleep 1"
     # is not enough when the (USB) DAC is slow to release — that race is
     # what made the new brutefir silently fail to open the device on the
     # first run.  Escalate to SIGKILL after ~5 s.
@@ -808,6 +860,13 @@ stop_brutefir() {
 BF_ATTEMPTS=0
 start_brutefir() {
   local attempt i
+  # brutefir opens the DAC by the name in ~/.config/BruteFIR/brutefir_defaults
+  # (/dev/dsp.dac).  If the link is missing the open fails for a reason that has
+  # nothing to do with brutefir, so say so before it does.
+  if ! $IS_LINUX && [ ! -e "$DAC_DEV_LINK" ]; then
+    echo "warning: $DAC_DEV_LINK is missing — is omdrc_sndlink enabled?" >&2
+    echo "         (service omdrc_sndlink status)" >&2
+  fi
   for attempt in 1 2 3; do
     BF_ATTEMPTS="$attempt"
     echo "starting brutefir (attempt $attempt): $conf_file"
@@ -853,7 +912,8 @@ rates_equal() {
 
 # Best-effort read of the DAC's *currently programmed* rate, to tell whether a
 # requested rate crosses crystal families.  FreeBSD: the USB async feedback
-# (dev.pcm.0.feedback_rate) holds the live/last rate and persists while idle;
+# (dev.pcm.<unit>.feedback_rate, the unit behind /dev/dsp.dac) holds the live/last
+# rate and persists while idle;
 # Linux: the active ALSA hw_params rate.  Prints empty when unknown.
 current_dac_rate() {
   if $IS_LINUX; then
@@ -865,12 +925,12 @@ current_dac_rate() {
       awk '/^rate:/{print $2; exit}' "$f"; return
     done
   else
-    sysctl -n dev.pcm.0.feedback_rate 2>/dev/null
+    sysctl -n "dev.pcm.$(dac_unit).feedback_rate" 2>/dev/null
   fi
 }
 
 # Prime the OKTO across a rate change: open brutefir at $conf_file, let it
-# briefly hold /dev/dsp0, then tear it down — repeated $1 times.  Each bounce is
+# briefly hold the DAC, then tear it down — repeated $1 times.  Each bounce is
 # one cold open at the target rate; the real open follows in the main loop, so
 # the DAC sees (cycles + 1) opens, which is what gets the freshly-relocked clock
 # to start routing audio.  Requires virtual_oss already up
@@ -908,7 +968,7 @@ verify_streaming() {
     [ -z "$obs" ] && obs="closed"
   else
     # FreeBSD: the DAC's USB async feedback tracks the live stream rate.
-    obs=$(sysctl -n dev.pcm.0.feedback_rate 2>/dev/null || echo "")
+    obs=$(sysctl -n "dev.pcm.$(dac_unit).feedback_rate" 2>/dev/null || echo "")
   fi
   VERIFY_OBSERVED="$obs"
   case "$obs" in
@@ -982,7 +1042,7 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   mpc disable "DRC-resamp" >/dev/null 2>&1 || true
   sleep 0.5
   $IS_LINUX || release_cdin
-  # Now tear the chain down so /dev/dsp0 is free before the direct output opens
+  # Now tear the chain down so the DAC is free before the direct output opens
   # it (the DAC is single-open: vchans off / bit-perfect).
   if ! $IS_LINUX; then
     echo "stopping virtual_oss"
@@ -1000,12 +1060,15 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
     log_event "event=run_result mode=${mode} result=stopped output=fail"
     echo "warning: could not switch MPD to the direct DAC output" >&2
   fi
+  # The loopback is gone with virtual_oss, so the bridge has to be moved to
+  # the DAC — the same move `mpc enable only "OKTO-DAC"` just made for MPD.
+  restart_cdin
   echo "DRC stopped"
   exit 0
 fi
 
 # ── free the audio devices before rebuilding the chain ───────────────────────
-# brutefir opens /dev/dsp0 (the single-open DAC); MPD's direct output holds it
+# brutefir opens the DAC (/dev/dsp.dac, single-open); MPD's direct output holds it
 # while playing, and the DRC outputs hold /dev/dsp.play.  Disable all MPD
 # outputs now so brutefir is guaranteed a free DAC and virtual_oss a free
 # loopback — then re-enable the right one once the chain is confirmed up.
@@ -1051,7 +1114,7 @@ fi
 # also happens WITHIN a family (observed: 48k→192k silent), so the trigger is a
 # rate *change* of any kind, not just a crystal switch.  Safe rule: prime on any
 # change; skip only a confirmed same-rate re-open (off→on at the same rate keeps
-# its lock).  The current rate is read from dev.pcm.0.feedback_rate; when it is
+# its lock).  The current rate is read from dev.pcm.<unit>.feedback_rate; when it is
 # unknown (fresh boot / unreadable) we prime, since that is the coldest open.
 do_prime=true
 if [ -n "${prev_rate:-}" ] && [ "$prev_rate" != "0" ] && [ "$prev_rate" != "closed" ] \
@@ -1147,6 +1210,12 @@ chmod 644 "$STATE_FILE" 2>/dev/null || true
 # brings it back (the off path above writes "off" here instead).
 echo "on" > "$POWER_FILE"
 chmod 644 "$POWER_FILE" 2>/dev/null || true
+
+# Last, and only now: the chain is verified up, so /dev/dsp.play exists and is
+# at the new rate.  Restarting the bridge any earlier would have it re-pick
+# while virtual_oss was still being replaced, and land back on the DAC that
+# brutefir is about to open.
+restart_cdin
 
 log_event "event=run_result mode=${mode} rate=${actual_rate} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} warm_ms=${WARM_MS} observed=${VERIFY_OBSERVED} output=${mpd_output} switch_from=${OMDRC_SWITCH_FROM:-} switch_to=${OMDRC_SWITCH_TO:-}"
 echo "DRC active: $(state_label "$state_args") (MPD output: ${mpd_output})"

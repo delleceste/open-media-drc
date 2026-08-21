@@ -440,6 +440,10 @@
         .qc-log .qc-err { color: var(--red); }
         .qc-log .qc-out { color: var(--green); }
 
+        /* The `hidden` attribute has to beat the display: flex rules below —
+           the UA's own [hidden] rule loses to any author display. */
+        [hidden] { display: none !important; }
+
         /* ── CD input (omdrc-cdin) ───────────────────────────── */
         /* The LED answers one question — can a disc play right now? — so it
            follows device AVAILABILITY only.  Whether the output happens to be
@@ -452,8 +456,12 @@
         }
         .cdin-dot.green { background: var(--green); box-shadow: 0 0 7px var(--green); }
         .cdin-dot.red   { background: var(--red);   box-shadow: 0 0 7px var(--red); }
-        .cdin-summary { font-size: .8rem; overflow-wrap: anywhere; }
-        .cdin-dot.red + .cdin-summary { color: var(--red); }
+        /* The state line: green while the bridge is doing its job, red when
+           an end cannot be opened, muted when nothing is running.  It is the
+           one line the card is allowed to shrink down to. */
+        .cdin-summary { font-size: .8rem; overflow-wrap: anywhere; color: var(--muted); }
+        .cdin-dot.green + .cdin-summary { color: var(--green); }
+        .cdin-dot.red   + .cdin-summary { color: var(--red); }
         .cdin-ends {
             margin-top: 6px; font-size: .7rem; color: var(--muted);
             display: flex; flex-wrap: wrap; gap: 4px 14px;
@@ -485,6 +493,171 @@
         .cdin-event.ok    span { color: var(--green); }
         .cdin-event.info  span { color: var(--muted); }
         .cdin-more { color: var(--muted); font-style: italic; margin-bottom: 4px; }
+        /* The newest failure, on its own red line above the fold — kept there
+           after the condition clears, because a live status line can never say
+           "the output was missing for ten minutes this morning".  Hidden while
+           the daemon is stopped: nothing is failing when nothing is trying. */
+        .cdin-error {
+            display: flex; gap: 7px; margin-top: 5px;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .7rem; color: var(--red); overflow-wrap: anywhere;
+        }
+        .cdin-error time { flex: 0 0 auto; opacity: .75; }
+        .cdin-error span { flex: 1 1 auto; }
+        /* Quiet on purpose: dismissing is housekeeping, and it must not read
+           as the way to deal with a failure that is still happening. */
+        .cdin-error button {
+            flex: 0 0 auto; align-self: flex-start;
+            background: none; border: 1px solid currentColor; border-radius: 4px;
+            color: inherit; opacity: .6; cursor: pointer;
+            font: inherit; font-size: .65rem; line-height: 1; padding: 3px 6px;
+        }
+        .cdin-error button:hover:not(:disabled) { opacity: 1; }
+        .cdin-error button:disabled { cursor: default; opacity: .35; }
+        /* Measurements as chips, so the 200-character [stats] line does not
+           have to be read to see the two numbers that matter. */
+        .cdin-metrics {
+            margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px 6px;
+        }
+        .cdin-chip {
+            display: inline-flex; align-items: baseline; gap: 5px;
+            border: 1px solid var(--border); border-radius: 6px;
+            padding: 2px 7px;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .68rem; color: var(--text);
+        }
+        .cdin-chip b { font-weight: 600; color: var(--muted); font-size: .64rem;
+                       text-transform: uppercase; letter-spacing: .04em; }
+        .cdin-chip.error  { border-color: var(--red);    color: var(--red); }
+        .cdin-chip.warn   { border-color: var(--yellow); color: var(--yellow); }
+        .cdin-chip.muted  { color: var(--muted); }
+        /* One sentence per thing that has already cost something audible. */
+        .cdin-problems { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+        .cdin-problem { font-size: .74rem; line-height: 1.45; color: var(--muted); }
+        .cdin-problem.error { color: var(--red); }
+        .cdin-problem.warn  { color: var(--yellow); }
+        /* The expand control.  The card spends most of its life collapsed —
+           a bridge with no disc in the player has one line worth of news. */
+        .cdin-chevron, .chain-chevron {
+            background: none; border: none; padding: 0; margin-right: 2px;
+            width: 1em; color: var(--muted); cursor: pointer;
+            font-size: .9rem; line-height: 1;
+        }
+        .cdin-chevron:hover, .chain-chevron:hover { color: var(--accent); }
+        .btn-log.cdin-start { border-color: var(--green); color: var(--green); }
+
+        /* ── audio chain diagram ─────────────────────────────── */
+        /* Two LEDs and a block diagram of who currently holds the sound
+           devices.  The LED brightness is one axis and one axis only: how open
+           the device is.  Unlit = nothing has it (free to acquire), lit = a
+           process holds it, lit and breathing = audio is actually going
+           through.  Grey means the node is not there at all. */
+        .chain-status { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .chain-summary {
+            font-size: .8rem; color: var(--muted); overflow-wrap: anywhere;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+        }
+        .chain-summary.live { color: var(--green); }
+        .chain-leds { display: flex; gap: 5px; flex: 0 0 auto; }
+
+        .led {
+            width: 11px; height: 11px; border-radius: 50%;
+            flex: 0 0 auto; display: inline-block; background: #30363d;
+            border: 1px solid rgba(0,0,0,.4);
+            transition: background .35s, box-shadow .35s;
+        }
+        .led.absent        { background: #30363d; }
+        .led.red.free      { background: #6e332f; }
+        .led.red.held      { background: var(--red); box-shadow: 0 0 6px rgba(248,81,73,.7); }
+        .led.red.active    { background: #ff6a60; box-shadow: 0 0 9px var(--red);
+                             animation: led-breathe 1.7s ease-in-out infinite; }
+        .led.green.free    { background: #24552f; }
+        .led.green.held    { background: var(--green); box-shadow: 0 0 6px rgba(63,185,80,.7); }
+        .led.green.active  { background: #56d96a; box-shadow: 0 0 9px var(--green);
+                             animation: led-breathe 1.7s ease-in-out infinite; }
+        @keyframes led-breathe { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+
+        .chain-graph { position: relative; padding: 10px 0 2px; }
+        .chain-arcs {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            pointer-events: none; overflow: visible;
+        }
+        .chain-rows {
+            position: relative; z-index: 1;
+            display: flex; flex-direction: column; gap: 30px;
+        }
+        .chain-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+        .chain-node {
+            display: flex; align-items: center; gap: 7px;
+            border: 1px solid var(--border); border-radius: 8px;
+            background: var(--bg);
+            padding: 5px 9px; min-width: 0; max-width: 230px;
+        }
+        .chain-node-title {
+            font-size: .76rem; font-weight: 600; color: var(--text);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .chain-node-sub {
+            font-size: .63rem; color: var(--muted); line-height: 1.35;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .chain-node-body { min-width: 0; }
+        .chain-node.device  { border-color: #3d4650; }
+        .chain-node.bridge  { border-style: dashed; }
+        .chain-node.idle    { opacity: .55; }
+        .chain-node.absent  { opacity: .5; border-style: dashed; }
+        .chain-node.live    { border-color: var(--green); }
+        /* An unexpected holder is the whole reason this card exists: a stray
+           PulseAudio or a leftover mpv sitting on a device is drawn in red
+           wherever it turns up, never quietly folded into the chain. */
+        .chain-node.intruder { border-color: var(--red); background: rgba(248,81,73,.09); }
+        .chain-node.intruder .chain-node-title { color: var(--red); }
+        .chain-pid {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .58rem; color: var(--muted); opacity: .8;
+        }
+
+        .chain-arcs .arc { fill: none; stroke: #4b545f; stroke-width: 1.5; }
+        .chain-arcs .arc.active {
+            stroke: var(--green); stroke-dasharray: 5 5;
+            animation: arc-flow .7s linear infinite;
+        }
+        @keyframes arc-flow { to { stroke-dashoffset: -10; } }
+        .chain-arcs .arc.warn { stroke: var(--yellow); stroke-dasharray: 3 4; }
+        .chain-arcs .arc-head { fill: #4b545f; }
+        .chain-arcs .arc-head.active { fill: var(--green); }
+        .chain-arcs .arc-head.warn { fill: var(--yellow); }
+        /* Labels sit on top of the arc they belong to, so they are painted
+           with a fat stroke of the card colour underneath the fill — the text
+           punches a hole in the line instead of being crossed out by it. */
+        .chain-arcs text {
+            fill: var(--muted); font-size: 9px;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round;
+            paint-order: stroke fill;
+        }
+
+        .chain-problems { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+        .chain-problem { font-size: .74rem; line-height: 1.45; color: var(--muted); }
+        .chain-problem.error { color: var(--red); }
+        .chain-problem.warn  { color: var(--yellow); }
+        .chain-legend {
+            font-size: .66rem; color: var(--muted); line-height: 1.6;
+            display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 8px 0 2px;
+        }
+        .chain-legend span { display: inline-flex; align-items: center; gap: 4px; }
+        .chain-devices {
+            font-size: .68rem; font-family: ui-monospace, "SFMono-Regular", monospace;
+            color: var(--muted); border-top: 1px solid var(--border);
+            margin-top: 8px; padding-top: 8px;
+            display: flex; flex-direction: column; gap: 5px;
+        }
+        .chain-dev-line { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+        .chain-dev-role { color: var(--text); font-weight: 600; min-width: 56px; }
+        .chain-dev-holder { color: var(--text); }
+        .chain-dev-holder.warn { color: var(--red); }
+        .chain-dev-none { font-style: italic; opacity: .75; }
 
         /* ── log alerts + log viewer ─────────────────────────── */
         /* Conditions found in the logs that nothing else in the UI would show.
@@ -985,24 +1158,86 @@
 </div>
 
 <!-- Live spectrum analyzer -->
-<!-- CD input: omdrc-cdin, the S/PDIF capture bridge.  A daemon the panel
-     watches rather than drives — it runs continuously and gives the output
-     device back on its own whenever there is no disc. -->
+<!-- CD input: omdrc-cdin, the S/PDIF capture bridge.  The panel watches it
+     rather than driving it — it runs continuously and gives the output device
+     back on its own whenever there is no disc — so the card is normally one
+     line, and grows to full size only while a disc is actually playing.  The
+     Stop button is there for the one case watching cannot cover: taking the
+     bridge out of the chain by hand, from a box with no keyboard. -->
 {% if cdin_enabled %}
 <div class="card" id="cdin-card" hidden>
     <div class="card-title title-row">
-        <span>CD input <span class="refresh-note" id="cdin-refresh-label">refresh: {{ cdin_interval }}s</span></span>
-        <button class="btn-refresh" id="cdin-refresh-btn" title="Refresh">↻</button>
-    </div>
-    <div id="cdin-panel" style="padding:4px 0">
-        <div class="cdin-status">
-            <span class="cdin-dot" id="cdin-dot"></span>
-            <span class="cdin-summary" id="cdin-summary" aria-live="polite">loading…</span>
+        <span><button type="button" class="cdin-chevron" id="cdin-chevron"
+                      onclick="toggleCdin()" aria-expanded="false"
+                      aria-controls="cdin-panel"
+                      title="Show the CD input detail" hidden>▸</button>CD input
+              <span class="refresh-note" id="cdin-refresh-label">refresh: {{ cdin_interval }}s</span></span>
+        <div class="title-actions">
+            <button class="btn-refresh" id="cdin-refresh-btn" title="Refresh">↻</button>
+            {% if cdin_log_id %}
+            <button class="btn-log" id="cdin-log-btn"
+                    title="Open the whole omdrc-cdin log"
+                    onclick="openLogSource('{{ cdin_log_id }}')">Log</button>
+            {% endif %}
+            {% if cdin_control %}
+            <button class="btn-log" id="cdin-power-btn" data-action="stop"
+                    onclick="cdinPower()">Stop</button>
+            {% endif %}
         </div>
+    </div>
+    <!-- Above the fold, collapsed or not: the state in one line, and the last
+         failure in another.  Everything else is detail and folds away. -->
+    <div class="cdin-status">
+        <span class="cdin-dot" id="cdin-dot"></span>
+        <span class="cdin-summary" id="cdin-summary" aria-live="polite">loading…</span>
+    </div>
+    <div class="cdin-error" id="cdin-error" hidden></div>
+    <div id="cdin-panel" style="display:none;padding:4px 0">
         <div class="cdin-ends" id="cdin-ends"></div>
+        <div class="cdin-metrics" id="cdin-metrics" hidden></div>
+        <div class="cdin-problems" id="cdin-problems" hidden></div>
         <div class="cdin-stats" id="cdin-stats" hidden></div>
         <div class="cdin-events" id="cdin-events" hidden></div>
     </div>
+</div>
+{% endif %}
+
+{% if chain_enabled %}
+<!-- The audio chain, as the operating system sees it.
+     Every other card here reports what open-media-drc believes about itself;
+     this one asks fstat(1)/fuser(1) who is holding the sound devices, which is
+     the only way a process from outside the chain (a stray PulseAudio, a
+     leftover mpv, a second brutefir) can ever be seen. -->
+<div class="card" id="chain-card">
+    <div class="card-title title-row">
+        <span><button type="button" class="chain-chevron" id="chain-chevron"
+                      onclick="toggleChain()" aria-expanded="false"
+                      aria-controls="chain-detail"
+                      title="Show every device and who holds it">▸</button>Audio chain
+              <span class="refresh-note" id="chain-refresh-label">refresh: {{ chain_interval }}s</span></span>
+        <div class="title-actions">
+            <button class="btn-refresh" id="chain-refresh-btn" title="Refresh">↻</button>
+        </div>
+    </div>
+    <div class="chain-status">
+        <span class="chain-leds">
+            <span class="led red absent" id="chain-in-led" title="capture input"></span>
+            <span class="led green absent" id="chain-out-led" title="DAC output"></span>
+        </span>
+        <span class="chain-summary" id="chain-summary" aria-live="polite">loading…</span>
+    </div>
+    <div class="chain-graph" id="chain-graph">
+        <svg class="chain-arcs" id="chain-arcs" aria-hidden="true"></svg>
+        <div class="chain-rows" id="chain-rows"></div>
+    </div>
+    <div class="chain-problems" id="chain-problems" hidden></div>
+    <div class="chain-legend">
+        <span><i class="led red free"></i>free</span>
+        <span><i class="led red held"></i>held</span>
+        <span><i class="led red active"></i>audio</span>
+        <span><i class="led absent"></i>not attached</span>
+    </div>
+    <div class="chain-devices" id="chain-detail" hidden></div>
 </div>
 {% endif %}
 
@@ -1217,6 +1452,7 @@ const BRUTEFIR_INTERVAL_MS = {{ brutefir_interval }} * 1000;
 const RAM_INTERVAL_MS = 10000;
 const TOPCPU_THRESHOLD    = {{ topcpu_threshold }};
 const LOG_ALERT_INTERVAL_MS = {{ log_alert_interval }} * 1000;
+const CHAIN_INTERVAL_MS = {{ chain_interval }} * 1000;
 const SPECTRUM_ENABLED = {{ 'true' if spectrum.enabled else 'false' }};
 const SPECTRUM_VU_MODE = {{ spectrum.vu_mode | tojson }};
 
@@ -1602,11 +1838,16 @@ async function fetchRead(id) {
 }
 
 // ── confirm dialog ─────────────────────────────────────────────────────────
-function askConfirm(id, what) {
-    document.getElementById('dlg-title').textContent = what;
-    document.getElementById('dlg-msg').textContent   = 'Are you sure?';
-    document.getElementById('dlg-ok').onclick = () => { hideConfirm(); runWrite(id); };
+// The overlay confirm, for any action rather than only a WRITE command.
+function confirmAction(title, message, onOk) {
+    document.getElementById('dlg-title').textContent = title;
+    document.getElementById('dlg-msg').textContent   = message;
+    document.getElementById('dlg-ok').onclick = () => { hideConfirm(); onOk(); };
     document.getElementById('overlay').classList.add('show');
+}
+
+function askConfirm(id, what) {
+    confirmAction(what, 'Are you sure?', () => runWrite(id));
 }
 function hideConfirm() { document.getElementById('overlay').classList.remove('show'); }
 document.getElementById('overlay').addEventListener('click', e => {
@@ -3227,7 +3468,39 @@ async function fetchRam() {
 //
 // The card hides itself entirely when the daemon has never run and has left no
 // log: on a box with no CD player there is nothing here to report.
+//
+// Size follows the daemon, because a panel is a scarce resource and the bridge
+// has news for about eighty minutes at a time:
+//
+//   playing   full card — this is the only state with anything to watch;
+//   idle      one line and a chevron, still polling, so the moment a disc
+//             starts the card opens itself;
+//   stopped   one line and a Start button.
+//
+// A manual expand/collapse outlives the poll that follows it but not the next
+// state change: the daemon deciding something is more interesting than the
+// click that came before it.
 const CDIN_INTERVAL_MS = {{ cdin_interval }} * 1000;
+let cdinExpandOverride = null;   // the reader's choice, or null to follow the daemon
+let cdinAutoExpand     = null;   // what the daemon's own state last asked for
+let cdinBusy           = false;  // a start/stop is in flight
+
+function cdinExpanded() {
+    return document.getElementById('cdin-panel').style.display !== 'none';
+}
+
+function setCdinExpanded(expanded) {
+    document.getElementById('cdin-panel').style.display = expanded ? '' : 'none';
+    const chev = document.getElementById('cdin-chevron');
+    chev.textContent = expanded ? '▾' : '▸';
+    chev.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    chev.title = expanded ? 'Hide the CD input detail' : 'Show the CD input detail';
+}
+
+function toggleCdin() {
+    cdinExpandOverride = !cdinExpanded();
+    setCdinExpanded(cdinExpandOverride);
+}
 
 function cdinEnd(end) {
     if (!end || !end.path) return '';
@@ -3254,18 +3527,79 @@ async function fetchCdin(btn) {
     // Nothing has ever run and nothing was ever logged: stay out of the way.
     if (!d.running && !(d.log && d.log.exists)) { card.hidden = true; return; }
     card.hidden = false;
+    paintCdin(d);
+}
+
+function paintCdin(d) {
+    // Start/Stop.  The label is the action, not the state, and it is left alone
+    // while a start or stop is in flight so it cannot flip under the finger.
+    const power = document.getElementById('cdin-power-btn');
+    if (power && !cdinBusy) {
+        power.dataset.action = d.running ? 'stop' : 'start';
+        power.textContent    = d.running ? 'Stop' : 'Start';
+        power.title = d.running ? 'Stop the CD input bridge'
+                                : 'Start the CD input bridge';
+        power.classList.toggle('cdin-start', !d.running);
+        power.disabled = false;
+    }
+
+    // Expansion.  `active` is narrower than `running`: a bridge waiting for a
+    // disc has one line of news, and a card that stayed open for it would be
+    // a card nobody reads.  A state change overrides an earlier manual choice.
+    const auto = !!d.active;
+    if (cdinAutoExpand !== null && auto !== cdinAutoExpand) cdinExpandOverride = null;
+    cdinAutoExpand = auto;
+    document.getElementById('cdin-chevron').hidden = !d.running;
+    setCdinExpanded(d.running &&
+        (cdinExpandOverride === null ? auto : cdinExpandOverride));
 
     const dot = document.getElementById('cdin-dot');
     dot.className = 'cdin-dot' + (d.led === 'green' || d.led === 'red' ? ' ' + d.led : '');
     dot.title = d.summary || '';
     document.getElementById('cdin-summary').textContent = d.summary || '—';
 
+    // The newest failure, on its own line.  Not while the daemon is stopped:
+    // its log outlives it, and nothing is failing when nothing is trying.
+    const err = document.getElementById('cdin-error');
+    const lastError = d.running ? d.last_error : null;
+    err.hidden = !lastError;
+    if (lastError) {
+        err.innerHTML = `<time>${escHtml((lastError.at || '').slice(11))}</time>` +
+                        `<span>${escHtml(lastError.text)}</span>` +
+                        `<button type="button" title="Stop showing this one. ` +
+                        `It stays in the event list, and anything newer still ` +
+                        `appears here.">dismiss</button>`;
+        // The timestamp the reader is actually looking at travels with the
+        // click, so a failure arriving in the meantime is not swept up too.
+        err.querySelector('button').onclick =
+            () => cdinDismiss(lastError.at, err.querySelector('button'));
+    }
+
     document.getElementById('cdin-ends').innerHTML =
         cdinEnd(d.capture) + cdinEnd(d.output);
 
-    // The stats line is the daemon's own measurement of the thing that can go
-    // wrong silently: `starves` above zero is an audible dropout that already
-    // happened, and the lead is the margin left before the next one.
+    // The stats line reduced to chips: the buffer lead is the margin before the
+    // next dropout, `underruns` counts the ones that already happened.
+    const metrics = d.metrics || [];
+    const met = document.getElementById('cdin-metrics');
+    met.hidden = metrics.length === 0;
+    if (metrics.length) {
+        met.innerHTML = metrics.map(m =>
+            `<span class="cdin-chip ${escHtml(m.level || 'ok')}">` +
+            `<b>${escHtml(m.label)}</b>${escHtml(m.value)}</span>`).join('');
+    }
+
+    // Everything that has already cost something audible, in a sentence each.
+    const problems = d.problems || [];
+    const prob = document.getElementById('cdin-problems');
+    prob.hidden = problems.length === 0;
+    if (problems.length) {
+        prob.innerHTML = problems.map(p =>
+            `<div class="cdin-problem ${escHtml(p.level || 'info')}">` +
+            `${escHtml(p.text)}</div>`).join('');
+    }
+
+    // The raw line as the daemon wrote it, under the summary of it.
     const stats = document.getElementById('cdin-stats');
     stats.hidden = !d.stats;
     if (d.stats) stats.textContent = d.stats;
@@ -3284,8 +3618,338 @@ async function fetchCdin(btn) {
     }
 }
 
+// Stopping is confirmed and starting is not, for the usual asymmetry: a stop
+// is heard — the disc goes quiet one lead later — and a start is not.
+function cdinPower() {
+    const btn = document.getElementById('cdin-power-btn');
+    if (!btn || cdinBusy) return;
+    if (btn.dataset.action === 'start') { cdinControl('start'); return; }
+    confirmAction('Stop the CD input bridge',
+        'Anything playing from the CD input stops, and /dev/dsp.play goes back ' +
+        'to MPD and mpv.',
+        () => cdinControl('stop'));
+}
+
+async function cdinDismiss(at, btn) {
+    btn.disabled = true;
+    try {
+        const d = await (await fetch('/cdin/dismiss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ at }),
+        })).json();
+        if (d.ok) { paintCdin(d); return; }
+    } catch { /* fall through to the retry below */ }
+    // Nothing was dismissed, so the line must stay: re-enabling the button is
+    // the honest outcome, not hiding it optimistically.
+    btn.disabled = false;
+}
+
+async function cdinControl(action) {
+    const btn = document.getElementById('cdin-power-btn');
+    const label = btn.textContent;
+    cdinBusy = true;
+    btn.disabled = true;
+    btn.textContent = action === 'start' ? 'starting…' : 'stopping…';
+
+    let d = null;
+    try {
+        d = await (await fetch('/cdin/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action }),
+        })).json();
+    } catch {
+        d = { ok: false, error: 'network error' };
+    }
+
+    cdinBusy = false;
+    btn.disabled = false;
+    btn.textContent = label;
+    if (d.ok) {
+        // Starting the daemon is not the same as a disc playing, so let the
+        // state machine decide the size of the card again.
+        cdinExpandOverride = null;
+        toast(action === 'start' ? 'CD input started' : 'CD input stopped');
+    } else {
+        toast(d.error || 'the CD input bridge did not answer', 'error');
+    }
+    // The server already re-read the log after the process settled; use that
+    // rather than waiting out the poll interval.
+    if (d.status) paintCdin(d.status);
+    else if (autoRefreshControls.cdin) autoRefreshControls.cdin();
+}
+
 {% if cdin_enabled %}
+// ── audio chain diagram ────────────────────────────────────────────────────
+// The server hands over a graph — nodes with a row number, edges between node
+// ids — and this draws it: HTML blocks in rows so the text wraps and truncates
+// like text, an SVG underneath for the arcs so they can be curved and can span
+// more than one row (the DRC-bypass edge does).  The arcs are measured from the
+// laid-out boxes, so they are redrawn after every paint and on resize.
+let chainDetailOpen = false;
+let chainLast = null;
+
+function toggleChain() {
+    chainDetailOpen = !chainDetailOpen;
+    const box = document.getElementById('chain-detail');
+    const chev = document.getElementById('chain-chevron');
+    if (box) box.hidden = !chainDetailOpen;
+    if (chev) {
+        chev.textContent = chainDetailOpen ? '▾' : '▸';
+        chev.setAttribute('aria-expanded', chainDetailOpen ? 'true' : 'false');
+    }
+    if (chainDetailOpen) drawChainArcs();
+}
+
+function chainSetLed(id, node) {
+    const led = document.getElementById(id);
+    if (!led) return;
+    const state = node ? node.state : 'absent';
+    led.className = `led ${node ? node.colour : ''} ${state}`;
+    if (!node) {
+        led.title = 'not configured';
+        return;
+    }
+    const who = (node.role === 'capture' ? node.holders.filter(h => h.mode.includes('r'))
+                                         : node.holders.filter(h => h.mode.includes('w')))
+                .map(h => `${h.cmd} (${h.pid})`).join(', ');
+    led.title = {
+        absent: `${node.sub} — not attached`,
+        free:   `${node.sub} — free, nobody has it open`,
+        held:   `${node.sub} — held by ${who}`,
+        active: `${node.sub} — ${who}, audio flowing`,
+    }[state] || node.sub;
+}
+
+function chainNodeEl(n) {
+    const el = document.createElement('div');
+    const classes = ['chain-node', n.kind];
+    if (n.kind === 'device' && !n.present) classes.push('absent');
+    if (n.kind === 'bridge' && !n.present) classes.push('absent');
+    if (n.idle) classes.push('idle');
+    if (n.kind === 'app' && n.expected === false) classes.push('intruder');
+    if (n.state === 'active' || (n.kind !== 'device' && n.active)) classes.push('live');
+    el.className = classes.join(' ');
+    el.dataset.id = n.id;
+
+    if (n.kind === 'device') {
+        const led = document.createElement('span');
+        led.className = `led ${n.colour} ${n.state}`;
+        el.appendChild(led);
+    }
+    const body = document.createElement('div');
+    body.className = 'chain-node-body';
+    const title = document.createElement('div');
+    title.className = 'chain-node-title';
+    title.textContent = n.title;
+    body.appendChild(title);
+    const sub = document.createElement('div');
+    sub.className = 'chain-node-sub';
+    // An idle block has no arcs by design (see the server's edge rule), so it
+    // has to say why itself, or it reads as a drawing bug.
+    sub.textContent = n.idle ? 'running · holding nothing'
+                    : n.pid  ? `${n.sub} · pid ${n.pid}`
+                             : n.sub;
+    body.appendChild(sub);
+    el.appendChild(body);
+    el.title = chainNodeTitle(n);
+    return el;
+}
+
+function chainNodeTitle(n) {
+    if (n.kind === 'device') {
+        const roles = { capture: 'capture input', dac: 'DAC output' };
+        return `${roles[n.role] || n.role}: ${n.sub}`
+             + (n.target ? ` → ${n.target}` : '')
+             + (n.present ? '' : ' (not attached)');
+    }
+    if (n.kind === 'bridge') return n.sub + (n.present ? '' : ' — not up');
+    const held = Object.entries(n.roles || {})
+        .map(([role, mode]) => `${role} ${mode}`).join(', ');
+    return [n.title, n.sub, held && `holds ${held}`,
+            n.idle && 'running, holding nothing',
+            n.user && `user ${n.user}`].filter(Boolean).join(' — ');
+}
+
+// Put each row in the order that keeps its arcs from crossing: a node sits at
+// the average position of whatever feeds it.  Without this, a row of [capture
+// card, renderer] above a row of [MPD, CD bridge] draws its two arcs as an X
+// for no reason but the order the server happened to list them in.
+function orderChainRows(byRow, edges) {
+    const parents = new Map();
+    edges.forEach(e => {
+        if (!parents.has(e.to)) parents.set(e.to, []);
+        parents.get(e.to).push(e.from);
+    });
+    const placed = new Map();
+    [...byRow.keys()].sort((a, b) => a - b).forEach((key, depth) => {
+        const nodes = byRow.get(key);
+        if (depth > 0) {
+            nodes.forEach((n, i) => {
+                const seen = (parents.get(n.id) || [])
+                    .map(p => placed.get(p)).filter(v => v !== undefined);
+                n._order = seen.length
+                    ? seen.reduce((a, b) => a + b, 0) / seen.length
+                    : i;
+            });
+            nodes.sort((a, b) => a._order - b._order);
+        }
+        nodes.forEach((n, i) => placed.set(n.id, i));
+    });
+}
+
+function renderChainGraph(d) {
+    const rows = document.getElementById('chain-rows');
+    rows.textContent = '';
+    const byRow = new Map();
+    d.nodes.forEach(n => {
+        if (!byRow.has(n.row)) byRow.set(n.row, []);
+        byRow.get(n.row).push(n);
+    });
+    orderChainRows(byRow, d.edges);
+    [...byRow.keys()].sort((a, b) => a - b).forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'chain-row';
+        byRow.get(r).forEach(n => row.appendChild(chainNodeEl(n)));
+        rows.appendChild(row);
+    });
+    drawChainArcs();
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function drawChainArcs() {
+    const d = chainLast;
+    const svg = document.getElementById('chain-arcs');
+    const graph = document.getElementById('chain-graph');
+    if (!svg || !graph || !d) return;
+    svg.textContent = '';
+    if (!graph.offsetParent && graph.offsetWidth === 0) return;   // card hidden
+    const base = graph.getBoundingClientRect();
+    svg.setAttribute('viewBox', `0 0 ${base.width} ${base.height}`);
+
+    const box = id => {
+        const el = graph.querySelector(`[data-id="${CSS.escape(id)}"]`);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { cx: r.left + r.width / 2 - base.left,
+                 top: r.top - base.top, bottom: r.bottom - base.top };
+    };
+
+    d.edges.forEach(e => {
+        const a = box(e.from), b = box(e.to);
+        if (!a || !b || b.top <= a.bottom) return;
+        const x1 = a.cx, y1 = a.bottom + 1, x2 = b.cx, y2 = b.top - 5;
+        const bend = Math.max(8, (y2 - y1) / 2);
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('d',
+            `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`);
+        const cls = 'arc' + (e.active ? ' active' : '') + (e.warn ? ' warn' : '');
+        path.setAttribute('class', cls);
+        svg.appendChild(path);
+
+        const head = document.createElementNS(SVG_NS, 'path');
+        head.setAttribute('d', `M ${x2 - 4} ${y2} L ${x2 + 4} ${y2} L ${x2} ${y2 + 5} Z`);
+        head.setAttribute('class', 'arc-head' + (e.active ? ' active' : '')
+                                              + (e.warn ? ' warn' : ''));
+        svg.appendChild(head);
+
+        const label = e.label || e.warn;
+        if (!label) return;
+        const text = document.createElementNS(SVG_NS, 'text');
+        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+        // ~5.4px per monospace glyph at 9px: enough to know whether the label
+        // still fits to the right of the arc before flipping it over.
+        const right = mx + 8 + label.length * 5.4 < base.width;
+        text.setAttribute('x', right ? mx + 8 : mx - 8);
+        text.setAttribute('y', my + 3);
+        text.setAttribute('text-anchor', right ? 'start' : 'end');
+        text.textContent = label;
+        svg.appendChild(text);
+    });
+}
+
+function renderChainDetail(d) {
+    const box = document.getElementById('chain-detail');
+    if (!box) return;
+    box.textContent = '';
+    d.devices.forEach(dev => {
+        const line = document.createElement('div');
+        line.className = 'chain-dev-line';
+        const role = document.createElement('span');
+        role.className = 'chain-dev-role';
+        role.textContent = dev.role;
+        line.appendChild(role);
+        const path = document.createElement('span');
+        path.textContent = dev.path || dev.spec;
+        line.appendChild(path);
+        if (!dev.present) {
+            const none = document.createElement('span');
+            none.className = 'chain-dev-none';
+            none.textContent = 'not attached';
+            line.appendChild(none);
+        } else if (!dev.holders.length) {
+            const none = document.createElement('span');
+            none.className = 'chain-dev-none';
+            none.textContent = 'free';
+            line.appendChild(none);
+        } else {
+            dev.holders.forEach(h => {
+                const who = document.createElement('span');
+                who.className = 'chain-dev-holder';
+                who.textContent = `${h.cmd}[${h.pid}] ${h.mode} ${h.user}`;
+                line.appendChild(who);
+            });
+        }
+        box.appendChild(line);
+    });
+}
+
+function paintChain(d) {
+    chainLast = d;
+    chainSetLed('chain-in-led', d.input);
+    chainSetLed('chain-out-led', d.output);
+    const summary = document.getElementById('chain-summary');
+    summary.textContent = d.summary;
+    summary.classList.toggle('live', !!d.flowing);
+
+    const problems = document.getElementById('chain-problems');
+    problems.textContent = '';
+    problems.hidden = !d.problems.length;
+    d.problems.forEach(p => {
+        const el = document.createElement('div');
+        el.className = `chain-problem ${p.severity}`;
+        el.textContent = p.text;
+        problems.appendChild(el);
+    });
+
+    renderChainGraph(d);
+    renderChainDetail(d);
+}
+
+async function fetchChain(btn) {
+    const card = document.getElementById('chain-card');
+    if (!card) return;
+    let d;
+    try {
+        d = await (await fetch('/audio/chain')).json();
+    } catch {
+        return;                 // a transient poll failure is not a chain fault
+    }
+    if (!d.ok || d.enabled === false) { card.hidden = true; return; }
+    card.hidden = false;
+    paintChain(d);
+}
+
+let chainResizeTimer = null;
+window.addEventListener('resize', () => {
+    clearTimeout(chainResizeTimer);
+    chainResizeTimer = setTimeout(drawChainArcs, 120);
+});
+
 startAutoRefresh('cdin', CDIN_INTERVAL_MS, fetchCdin);
+startAutoRefresh('chain', CHAIN_INTERVAL_MS, fetchChain);
 {% endif %}
 startAutoRefresh('qc', 1000, fetchQcStatus);
 // Keep the renderer toggle in sync with actual service status on a slow cadence.

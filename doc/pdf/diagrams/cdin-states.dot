@@ -1,0 +1,22 @@
+// omdrc-cdin state machine.  The point of the picture is the OUTPUT tenancy:
+// the capture device is held for the whole session, the output device only
+// while music is actually on the wire.
+digraph cdin_states {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    nc   [label="NO_CARRIER\nno frames at all\ncapture retried every 2 s\noutput: not held", fillcolor="#fdf3d8"];
+    idle [label="IDLE\nframes, all exact zeros\nring keeps rolling\noutput: RELEASED", fillcolor="#fdf3d8"];
+    play [label="PLAYING\naudio on the wire\nring -> output\noutput: HELD", fillcolor="#dff0df"];
+
+    nc -> idle   [label="capture opens"];
+    idle -> play [label="a non-zero sample\n(ring trimmed to one lead,\nnot cleared)"];
+    play -> idle [label="idle-after ms of\ndigital silence (15 s)"];
+    play -> nc   [label="read() error or short read\n(carrier dropped)"];
+    idle -> nc   [label="read() error"];
+
+    hup [label="SIGHUP / service omdrc_cdin release\nrelease the output, hold off ~6 s\n(drc.sh does this before restarting virtual_oss)", shape=note, fillcolor="#f5f5f5"];
+    hup -> play [style=dotted, label="forces a release"];
+}

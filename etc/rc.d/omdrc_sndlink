@@ -1,0 +1,581 @@
+#!/bin/sh
+#
+# PROVIDE: omdrc_sndlink
+# REQUIRE: FILESYSTEMS
+# BEFORE: devd musicpd brutefir_drc drc_usb_audio
+# KEYWORD: nojail
+#
+# omdrc_cdin is deliberately not in BEFORE: it REQUIREs brutefir_drc and so
+# already lands after us, and naming a service that may not be installed makes
+# rcorder(8) warn on every boot.
+#
+# Add to /etc/rc.conf:
+#   omdrc_sndlink_enable="YES"
+#   omdrc_sndlink_capture="ESI U24XL"   # only if you use the CD input (cdin)
+#
+# Stable names for the sound cards, so nothing in this project has to know a
+# pcm unit number:
+#
+#   /dev/dsp.dac       -> /dev/dspN     the DAC everything plays to
+#   /dev/mixer.dac     -> /dev/mixerN
+#   /dev/dsp.capture   -> /dev/dspM     the CD/S-PDIF input, if configured
+#   /dev/mixer.capture -> /dev/mixerM
+#
+# Why this exists
+# ---------------
+# FreeBSD hands out pcm unit numbers in attach order, and USB attach order is
+# port order, so two USB cards can swap numbers from one boot to the next.  A
+# box with a DAC and a capture card then finds the whole chain pointed at the
+# wrong card.
+#
+# The unit number cannot be pinned.  Unit wiring (hint.pcm.1.at="uaudio0") is a
+# newbus feature implemented by BUS_HINT_DEVICE_UNIT, and only acpi(4), pci(4)
+# and isa(4) implement that method -- uaudio(4) does not, so a hint on a USB
+# sound card is silently ignored.  (Worse: an "at" hint for a unit makes
+# devclass_alloc_unit() *skip* that unit for every unwired device, so hinting
+# pcm0 would take unit 0 away from the DAC as well.)  hw.snd.default_unit only
+# picks among the units that already exist; it does not control enumeration.
+# devd is a userland consumer of events the kernel has already acted on: by the
+# time an ATTACH notification arrives the unit is allocated -- it has no
+# equivalent of udev's NAME=/SYMLINK=.
+#
+# So stop trying to fix the number and stop using it.  devfs takes symlinks
+# (that is how devfs.conf's "link" directive works -- /etc/rc.d/devfs runs a
+# plain `ln -fs` inside /dev), devd can run a command on every pcm attach, and
+# this service creates the links at boot, when devd is not yet running.  The
+# devd rule (etc/devd/omdrc-sndlink.conf) calls `service omdrc_sndlink update`
+# for hotplug, which is the same code path as boot.
+#
+# The only thing a symlink cannot cover is a sysctl OID -- dev.pcm.<unit>.* is
+# keyed by the number we are trying to forget.  Consumers resolve it from the
+# link instead, which is two lines of shell:
+#
+#	t=$(readlink /dev/dsp.dac)	# -> "dsp0"
+#	sysctl -n "dev.pcm.${t#dsp}.feedback_rate"
+#
+# Roles are decided by identity, never by number
+# ----------------------------------------------
+# The DAC is not simply "the card that is not the capture card": a plain box has
+# onboard HDA as pcm0 and the USB DAC as pcm1, and capability cannot separate
+# them either -- an OKTO DAC8 reports (play/rec) just like a capture interface
+# does (dev.pcm.N.mode is a bitmask, PLAY 0x02 | REC 0x04, and it reads 7).
+# So:
+#
+#   * an explicit match always wins, and may be given either as a USB id
+#     (0x152a:0x88c5, optionally 0x152a:0x88c5:serial to separate two identical
+#     cards) or as any substring of the card's description as /dev/sndstat
+#     prints it ("OKTO RESEARCH DAC8STEREO");
+#   * with no match configured the playback-capable cards that are not the
+#     capture card are ranked -- a USB card that only plays beats a USB card
+#     that also records, which beats a non-USB card -- and the best is taken.
+#     That covers the ordinary installations without any configuration at all
+#     (one card; or a DAC plus a capture interface, which the capture role has
+#     already claimed; or a DAC plus onboard HDA).  When two cards tie, the
+#     choice is announced as a guess with the rc.conf line that would end it,
+#     because a quiet wrong guess sends the chain, the bit-perfect sysctls and
+#     the hardware volume to the wrong device with nothing to show for it;
+#   * the capture role exists only when omdrc_sndlink_capture names a card.
+#     Leave it empty (the default) if you do not use the CD input: no capture
+#     link is created and nothing else changes.
+#
+
+. /etc/rc.subr
+
+name="omdrc_sndlink"
+rcvar="omdrc_sndlink_enable"
+start_cmd="omdrc_sndlink_start"
+stop_cmd="omdrc_sndlink_stop"
+status_cmd="omdrc_sndlink_status"
+extra_commands="update"
+update_cmd="omdrc_sndlink_update"
+
+load_rc_config "$name"
+
+: ${omdrc_sndlink_enable:="NO"}
+# Which card takes which role.  USB id (0x152a:0x88c5[:serial]) or a substring
+# of the description.  DAC empty = auto (see the header); capture empty = off.
+: ${omdrc_sndlink_dac:=""}
+: ${omdrc_sndlink_capture:=""}
+# Per-card pcm settings, keyed by ROLE rather than by unit number.  The defaults
+# are what a bit-perfect chain requires and are applied on every attach; see
+# sndlink_apply_knobs for why they cannot live in /etc/sysctl.conf.  Add
+# device-specific ones here (e.g. mixer.vol_0.val=0 to park a DAC at 0 dB).
+: ${omdrc_sndlink_dac_sysctls:="bitperfect=1 play.vchans=0"}
+: ${omdrc_sndlink_capture_sysctls:="bitperfect=1 rec.vchans=0"}
+# Recording source to select on the capture card: "auto" picks its digital
+# input if it has one, "none" leaves the card alone, or name a mixer device
+# ("line" for the analog input).  See sndlink_apply_recsrc.
+: ${omdrc_sndlink_capture_recsrc:="auto"}
+# Seconds to wait at boot for the cards to show up before giving up.
+: ${omdrc_sndlink_wait:="15"}
+
+: ${omdrc_sndlink_lockfile:="/var/run/omdrc_sndlink.lock"}
+# Where the resolved roles are published for other programs to read; see
+# sndlink_publish.  Empty disables it.
+: ${omdrc_sndlink_statefile:="/var/run/omdrc_sndlink.roles"}
+
+MIXER="/usr/sbin/mixer"
+
+sndlink_log()
+{
+	echo "${name}: $*"
+	[ -t 1 ] || logger -t "${name}" -- "$*" 2>/dev/null
+}
+
+# "<unit> <parent> <mode> <vendor> <product> <serial> <description>" for every
+# pcm device, one per line, sorted by unit.  Cards without a USB parent (onboard
+# HDA and friends) are listed too, with empty ids: they can still be matched by
+# description, and reporting them is better than pretending the picture is
+# complete.  The description comes last because it is the only field that can
+# contain spaces -- a `read -r u p mode vid pid ser desc` soaks it up.
+sndlink_cards()
+{
+	sysctl -N dev.pcm 2>/dev/null |
+	    sed -n 's/^dev\.pcm\.\([0-9][0-9]*\)\.%parent$/\1/p' |
+	    sort -n |
+	    while read -r _sl_u; do
+		_sl_p=$(sysctl -n "dev.pcm.${_sl_u}.%parent" 2>/dev/null) || continue
+		_sl_d=$(sysctl -n "dev.pcm.${_sl_u}.%desc" 2>/dev/null)
+		_sl_m=$(sysctl -n "dev.pcm.${_sl_u}.mode" 2>/dev/null)
+		[ -n "${_sl_m}" ] || _sl_m=0
+		set -- $(sndlink_ids "${_sl_p}")
+		printf '%s %s %s %s %s %s %s\n' \
+		    "${_sl_u}" "${_sl_p}" "${_sl_m}" "${1:--}" "${2:--}" "${3:--}" "${_sl_d}"
+	done
+}
+
+# "<vendor> <product> <serial>" of a parent device ("uaudio0"), lowercased, with
+# "-" for anything the device does not report.  USB devices report all three in
+# %pnpinfo; PCI ones do not report a product= at all, which is why the match
+# syntax also takes a description substring.
+sndlink_ids()
+{
+	_sl_cls=${1%%[0-9]*}
+	_sl_unit=${1#"${_sl_cls}"}
+	[ -n "${_sl_cls}" ] && [ -n "${_sl_unit}" ] || { echo "- - -"; return; }
+	sysctl -n "dev.${_sl_cls}.${_sl_unit}.%pnpinfo" 2>/dev/null |
+	    tr 'A-Z' 'a-z' |
+	    awk '{
+		v = "-"; p = "-"; s = "-";
+		for (i = 1; i <= NF; i++) {
+			split($i, kv, "=");
+			gsub(/"/, "", kv[2]);
+			if (kv[1] == "vendor" && kv[2] != "") v = kv[2];
+			else if (kv[1] == "product" && kv[2] != "") p = kv[2];
+			else if (kv[1] == "sernum" && kv[2] != "") s = kv[2];
+		}
+		print v, p, s;
+	    }'
+}
+
+# Does card <desc/vendor/product/serial> match the spec in $1?
+# Spec is either 0xVVVV:0xPPPP[:serial] or a substring of the description.
+sndlink_match()
+{
+	_sl_spec=$1 _sl_desc=$2 _sl_vid=$3 _sl_pid=$4 _sl_ser=$5
+	[ -n "${_sl_spec}" ] || return 1
+	case "${_sl_spec}" in
+	0x*:0x*)
+		_sl_spec=$(echo "${_sl_spec}" | tr 'A-Z' 'a-z')
+		_sl_want_v=${_sl_spec%%:*}
+		_sl_rest=${_sl_spec#*:}
+		_sl_want_p=${_sl_rest%%:*}
+		case "${_sl_rest}" in
+		*:*)	_sl_want_s=${_sl_rest#*:} ;;
+		*)	_sl_want_s="" ;;
+		esac
+		[ "${_sl_want_v}" = "${_sl_vid}" ] || return 1
+		[ "${_sl_want_p}" = "${_sl_pid}" ] || return 1
+		[ -z "${_sl_want_s}" ] || [ "${_sl_want_s}" = "${_sl_ser}" ] || return 1
+		return 0
+		;;
+	*)
+		case "${_sl_desc}" in *"${_sl_spec}"*) return 0 ;; esac
+		return 1
+		;;
+	esac
+}
+
+# A literal newline in a variable: used to join and then to test the candidate
+# list, because `[ $(... | wc -l) -gt 1 ]` would need a subshell per scan.
+_sl_nl='
+'
+
+sndlink_can_play() { [ $(( $1 & 2 )) -ne 0 ]; }
+sndlink_can_rec()  { [ $(( $1 & 4 )) -ne 0 ]; }
+
+# Decide the roles.  Sets DAC_UNIT/DAC_DESC and CAPTURE_UNIT/CAPTURE_DESC, empty
+# when the role is unfilled.  Capture is resolved first so that the DAC search
+# can rule that card out -- with no DAC match configured, the capture card is
+# often perfectly playback-capable and would otherwise be a candidate.
+sndlink_scan()
+{
+	DAC_UNIT="" DAC_DESC="" CAPTURE_UNIT="" CAPTURE_DESC=""
+	_sl_cards=$(sndlink_cards)
+
+	if [ -n "${omdrc_sndlink_capture}" ]; then
+		while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
+			[ -n "${_sl_u}" ] || continue
+			[ -z "${CAPTURE_UNIT}" ] || continue
+			sndlink_can_rec "${_sl_m}" || continue
+			if sndlink_match "${omdrc_sndlink_capture}" \
+			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}"; then
+				CAPTURE_UNIT="${_sl_u}"
+				CAPTURE_DESC="${_sl_d}"
+			fi
+		done <<-EOF
+		${_sl_cards}
+		EOF
+	fi
+
+	# An explicit match either hits or it does not; there is no second-best
+	# card to fall back to, and a spec that matches nothing must leave the
+	# role empty rather than quietly pick something else.
+	if [ -n "${omdrc_sndlink_dac}" ]; then
+		while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
+			[ -n "${_sl_u}" ] || continue
+			[ -z "${DAC_UNIT}" ] || continue
+			[ "${_sl_u}" != "${CAPTURE_UNIT}" ] || continue
+			sndlink_can_play "${_sl_m}" || continue
+			if sndlink_match "${omdrc_sndlink_dac}" \
+			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}"; then
+				DAC_UNIT="${_sl_u}"
+				DAC_DESC="${_sl_d}"
+			fi
+		done <<-EOF
+		${_sl_cards}
+		EOF
+		return 0
+	fi
+
+	# Nothing configured: rank every playback-capable card that is not the
+	# capture card and take the best.  Tiers, best first:
+	#
+	#   1  a USB card that plays and does NOT record   -- a pure DAC
+	#   2  a USB card that plays                       -- plays and records
+	#   3  any card that plays and does not record
+	#   4  any card that plays
+	#
+	# The tiers are what makes the common installation need no configuration
+	# at all.  One sound card: one candidate, no question.  A DAC plus a
+	# capture interface: the interface is claimed by the capture role first
+	# (a box with a CD input has to name it anyway -- omdrc-cdin cannot find
+	# its input otherwise), so again one candidate.  A DAC plus an onboard
+	# HDA chip: the USB tiers beat the PCI one.
+	#
+	# What the tiers CANNOT do is separate two USB cards that both play and
+	# both record, because that is not a distinction the kernel exposes --
+	# an OKTO DAC8 reports (play/rec) exactly like a capture interface does.
+	# There the choice is a GUESS, and the one thing that must not happen is
+	# a quiet guess: pick the wrong card and the whole chain, the
+	# bit-perfect sysctls and the hardware volume all go to the wrong device
+	# and nothing anywhere says so.  So the guess is announced, with the
+	# line to paste into rc.conf to end it -- see sndlink_report_guess.
+	DAC_GUESSED="" DAC_CANDIDATES="" DAC_COUNT=0
+	_sl_best=9
+	while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
+		[ -n "${_sl_u}" ] || continue
+		[ "${_sl_u}" != "${CAPTURE_UNIT}" ] || continue
+		sndlink_can_play "${_sl_m}" || continue
+
+		if sndlink_can_rec "${_sl_m}"; then
+			_sl_tier=4
+			case "${_sl_p}" in uaudio*) _sl_tier=2 ;; esac
+		else
+			_sl_tier=3
+			case "${_sl_p}" in uaudio*) _sl_tier=1 ;; esac
+		fi
+
+		DAC_CANDIDATES="${DAC_CANDIDATES}${DAC_CANDIDATES:+${_sl_nl}}${_sl_u} ${_sl_d}"
+		if [ "${_sl_tier}" -lt "${_sl_best}" ]; then
+			_sl_best="${_sl_tier}"
+			DAC_UNIT="${_sl_u}"
+			DAC_DESC="${_sl_d}"
+		fi
+	done <<-EOF
+	${_sl_cards}
+	EOF
+
+	DAC_COUNT=$(printf '%s\n' "${DAC_CANDIDATES}" | grep -c '[0-9]')
+	case "${DAC_CANDIDATES}" in
+	*"${_sl_nl}"*)	DAC_GUESSED=1 ;;
+	esac
+}
+
+# Say, loudly and with the fix in it, that the DAC role was decided by
+# preference order rather than by anything definite.  Called from update and
+# from status, because the operator may meet either one first.
+sndlink_report_guess()
+{
+	[ -n "${DAC_GUESSED}" ] || return 0
+	sndlink_log "WARNING: ${DAC_COUNT} playback cards and no omdrc_sndlink_dac set;"
+	sndlink_log "WARNING: guessed pcm${DAC_UNIT} <${DAC_DESC}>.  Add ONE of these"
+	sndlink_log "WARNING: to /etc/rc.conf to pin it and silence this:"
+	# One ready-to-paste line per candidate, not just for the one that was
+	# guessed: the guess is as likely to be the wrong card as the right one,
+	# and the operator is the only one here who knows which is the DAC.
+	printf '%s\n' "${DAC_CANDIDATES}" | while read -r _sl_cu _sl_cd; do
+		[ -n "${_sl_cu}" ] || continue
+		sndlink_log "WARNING:   omdrc_sndlink_dac=\"${_sl_cd}\"   # pcm${_sl_cu}"
+	done
+	sndlink_log "WARNING: any substring of the description is enough (\"OKTO\");"
+	sndlink_log "WARNING: a USB id 0xVVVV:0xPPPP[:serial] is only needed to tell"
+	sndlink_log "WARNING: two identical cards apart."
+	sndlink_log "WARNING: If one of them is a CD/S-PDIF input, name it with"
+	sndlink_log "WARNING: omdrc_sndlink_capture instead and the DAC resolves itself."
+}
+
+# /dev/dsp.<role> and /dev/mixer.<role> -> unit $2, or removed when $2 is empty.
+# Relative targets, so `readlink /dev/dsp.dac` yields "dsp0" and the unit is
+# what follows "dsp".  A node that is not a symlink is never touched: cuse
+# clients (virtual_oss) create real character devices under names of exactly
+# this shape, and clobbering one would take the audio chain down.
+sndlink_link()
+{
+	_sl_role=$1 _sl_unit=$2
+	for _sl_kind in dsp mixer; do
+		_sl_link="/dev/${_sl_kind}.${_sl_role}"
+		if [ -e "${_sl_link}" ] && [ ! -L "${_sl_link}" ]; then
+			warn "${name}: ${_sl_link} exists and is not a symlink -- leaving it alone"
+			continue
+		fi
+		if [ -z "${_sl_unit}" ]; then
+			[ -L "${_sl_link}" ] || continue
+			rm -f "${_sl_link}"
+			sndlink_log "removed ${_sl_link}"
+			continue
+		fi
+		[ -e "/dev/${_sl_kind}${_sl_unit}" ] || continue
+		_sl_old=$(readlink "${_sl_link}" 2>/dev/null)
+		[ "${_sl_old}" = "${_sl_kind}${_sl_unit}" ] && continue
+		ln -shf "${_sl_kind}${_sl_unit}" "${_sl_link}" || continue
+		sndlink_log "${_sl_link} -> ${_sl_kind}${_sl_unit}"
+	done
+}
+
+# Apply the per-card pcm settings, by role, to the cards we just decided.
+#
+# These cannot live in /etc/sysctl.conf, and that is not a style preference:
+#
+#   * that file is keyed by UNIT NUMBER, which is the one thing that is not
+#     stable here;
+#   * it is read by /etc/rc.d/sysctl at rc position 3, long before the cards are
+#     known to be the ones it names;
+#   * a re-attach re-creates the dev.pcm.<unit>.* tree from driver defaults, so
+#     anything applied at boot is gone the moment a card is replugged.
+#
+# Keying them by role and re-applying them from the devd hook gives one owner
+# and one application, on every attach.  Keep dev.pcm.* lines OUT of
+# /etc/sysctl.conf; global hw.snd.* / hw.usb.uaudio.* tunables are not
+# unit-keyed, survive a re-attach, and belong there as usual.
+sndlink_apply_knobs()
+{
+	# Pin the bare /dev/dsp to the DAC as well, for everything that is not
+	# part of this project.  A detach hands hw.snd.default_unit back to the
+	# kernel's "best unit" guess.
+	[ -z "${DAC_UNIT}" ] ||
+	    sysctl "hw.snd.default_unit=${DAC_UNIT}" >/dev/null 2>&1
+
+	for _sl_role in dac capture; do
+		case "${_sl_role}" in
+		dac)	 _sl_u="${DAC_UNIT}";     _sl_set="${omdrc_sndlink_dac_sysctls}" ;;
+		capture) _sl_u="${CAPTURE_UNIT}"; _sl_set="${omdrc_sndlink_capture_sysctls}" ;;
+		esac
+		[ -n "${_sl_u}" ] || continue
+		for _sl_kv in ${_sl_set}; do
+			sysctl "dev.pcm.${_sl_u}.${_sl_kv}" >/dev/null 2>&1 ||
+			    warn "${name}: dev.pcm.${_sl_u}.${_sl_kv} failed"
+		done
+	done
+}
+
+# Select the capture card's recording source.
+#
+# A card with two inputs comes up on whichever one the driver defaults to --- for
+# the ESI U24 XL that is the analog RCA pair, so cdin records silence from a
+# perfectly healthy CD transport until the digital input is selected.  The
+# setting is a mixer control, it does not survive a reboot, and a replug resets
+# it, so it is asserted here on every attach.
+#
+# "auto" prefers the digital input by name: uaudio maps a USB S/PDIF input
+# terminal (UATE_SPDIF) to SOUND_MIXER_ALTPCM, whose name in SOUND_DEVICE_NAMES
+# is "pcm2"; dig1..dig3 are the fallback names when several selector pins
+# collide.  Only devices the card actually offers as a recording source are
+# considered -- mixer(8) tags those "rec" -- so a card without a digital input
+# is left alone rather than being switched to something arbitrary.
+sndlink_apply_recsrc()
+{
+	[ -n "${CAPTURE_UNIT}" ] || return 0
+	[ -x "${MIXER}" ] || return 0
+
+	case "${omdrc_sndlink_capture_recsrc}" in
+	none|"")	return 0 ;;
+	auto)		_sl_want="pcm2 dig1 dig2 dig3" ;;
+	*)		_sl_want="${omdrc_sndlink_capture_recsrc}" ;;
+	esac
+
+	_sl_dev="/dev/mixer${CAPTURE_UNIT}"
+	# "    pcm2      = 0.00:0.00     rec  src" -- name, then the flags.
+	_sl_avail=$(${MIXER} -f "${_sl_dev}" 2>/dev/null |
+	    awk '$2 == "=" { for (i = 3; i <= NF; i++)
+			if ($i == "rec") { print $1; break } }')
+	[ -n "${_sl_avail}" ] || return 0
+	_sl_cur=$(${MIXER} -f "${_sl_dev}" 2>/dev/null |
+	    awk '$2 == "=" { for (i = 3; i <= NF; i++)
+			if ($i == "src") { print $1; break } }')
+
+	for _sl_src in ${_sl_want}; do
+		for _sl_have in ${_sl_avail}; do
+			[ "${_sl_src}" = "${_sl_have}" ] || continue
+			[ "${_sl_src}" = "${_sl_cur}" ] && return 0
+			if ${MIXER} -f "${_sl_dev}" "${_sl_src}.recsrc=set" \
+			    >/dev/null 2>&1; then
+				sndlink_log "capture source ${_sl_src} on ${_sl_dev}"
+			else
+				warn "${name}: cannot select ${_sl_src} on ${_sl_dev}"
+			fi
+			return 0
+		done
+	done
+
+	# Only worth a word when the operator asked for a specific source and the
+	# card does not have it; "auto" on a card with no digital input is normal.
+	[ "${omdrc_sndlink_capture_recsrc}" = "auto" ] ||
+	    warn "${name}: ${_sl_dev} has no recording source named ${_sl_want}"
+}
+
+# Publish the assignment where anything else can read it without running this
+# script.  The web panel's audio-chain card reports the roles and has to be
+# able to say "this DAC was a guess" -- one file read per poll, no subprocess,
+# no privilege.  Best-effort: a read-only /var/run is not a reason to fail.
+sndlink_publish()
+{
+	[ -n "${omdrc_sndlink_statefile}" ] || return 0
+	{
+		printf 'dac_unit=%s\n' "${DAC_UNIT}"
+		printf 'dac_desc=%s\n' "${DAC_DESC}"
+		printf 'dac_guessed=%s\n' "${DAC_GUESSED:-0}"
+		printf 'capture_unit=%s\n' "${CAPTURE_UNIT}"
+		printf 'capture_desc=%s\n' "${CAPTURE_DESC}"
+		printf 'capture_wanted=%s\n' "${omdrc_sndlink_capture}"
+	} > "${omdrc_sndlink_statefile}.new" 2>/dev/null &&
+	    mv -f "${omdrc_sndlink_statefile}.new" "${omdrc_sndlink_statefile}" \
+	        2>/dev/null || true
+}
+
+# The whole job, idempotent: called at boot, from the devd hook on every pcm
+# attach and detach, and by hand.  Serialised with lockf(1) because devd fires
+# one action per pcm and a two-card box attaches both at once.
+omdrc_sndlink_update()
+{
+	if [ -z "${OMDRC_SNDLINK_LOCKED}" ]; then
+		# Re-enter under the lock.  "oneupdate" for the inner run: the
+		# outer one has already cleared the rcvar (or was itself a "one"
+		# invocation), and /bin/sh keeps this working whatever the mode
+		# bits of an installed copy are.
+		OMDRC_SNDLINK_LOCKED=1 \
+		    /usr/bin/lockf -s -t 15 "${omdrc_sndlink_lockfile}" \
+		    /bin/sh "$0" oneupdate
+		return $?
+	fi
+
+	sndlink_scan
+	sndlink_link dac "${DAC_UNIT}"
+	sndlink_link capture "${CAPTURE_UNIT}"
+	sndlink_apply_knobs
+	sndlink_apply_recsrc
+	sndlink_report_guess
+	sndlink_publish
+
+	if [ -z "${DAC_UNIT}" ]; then
+		sndlink_log "no playback card attached; /dev/dsp.dac not created"
+	fi
+	if [ -n "${omdrc_sndlink_capture}" ] && [ -z "${CAPTURE_UNIT}" ]; then
+		sndlink_log "no card matches '${omdrc_sndlink_capture}'; /dev/dsp.capture not created"
+	fi
+	return 0
+}
+
+omdrc_sndlink_start()
+{
+	# At boot the USB bus is enumerated before rc runs, but a hub that comes
+	# up slowly (or a DAC still settling after its power switch) is worth
+	# waiting for: linking a half-populated bus is how the capture card ends
+	# up as the DAC.  A DAC that is switched on later still gets its link
+	# from the devd hook.
+	_sl_secs=${omdrc_sndlink_wait}
+	while :; do
+		sndlink_scan
+		if [ -n "${DAC_UNIT}" ]; then
+			[ -z "${omdrc_sndlink_capture}" ] && break
+			[ -n "${CAPTURE_UNIT}" ] && break
+		fi
+		[ "${_sl_secs}" -gt 0 ] || break
+		sleep 1
+		_sl_secs=$((_sl_secs - 1))
+	done
+	omdrc_sndlink_update
+}
+
+omdrc_sndlink_stop()
+{
+	sndlink_link dac ""
+	sndlink_link capture ""
+}
+
+omdrc_sndlink_status()
+{
+	sndlink_scan
+	sndlink_cards | while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
+		[ -n "${_sl_u}" ] || continue
+		case "${_sl_u}" in
+		"${DAC_UNIT}")		_sl_role="dac" ;;
+		"${CAPTURE_UNIT}")	_sl_role="capture" ;;
+		*)			_sl_role="-" ;;
+		esac
+		_sl_caps=""
+		sndlink_can_play "${_sl_m}" && _sl_caps="play"
+		sndlink_can_rec "${_sl_m}" && _sl_caps="${_sl_caps}${_sl_caps:+/}rec"
+		printf '/dev/dsp%-3s %-8s %s (%s, %s' \
+		    "${_sl_u}" "${_sl_role}" "${_sl_d}" "${_sl_p}" "${_sl_caps}"
+		[ "${_sl_vid}" = "-" ] || printf ', %s:%s' "${_sl_vid}" "${_sl_pid}"
+		printf ')\n'
+		case "${_sl_role}" in
+		dac)
+			printf '            bitperfect=%s play.vchans=%s\n' \
+			    "$(sysctl -n "dev.pcm.${_sl_u}.bitperfect" 2>/dev/null)" \
+			    "$(sysctl -n "dev.pcm.${_sl_u}.play.vchans" 2>/dev/null)"
+			;;
+		capture)
+			printf '            bitperfect=%s rec.vchans=%s recsrc=%s\n' \
+			    "$(sysctl -n "dev.pcm.${_sl_u}.bitperfect" 2>/dev/null)" \
+			    "$(sysctl -n "dev.pcm.${_sl_u}.rec.vchans" 2>/dev/null)" \
+			    "$(${MIXER} -f "/dev/mixer${_sl_u}" 2>/dev/null |
+			       awk '$2 == "=" { for (i = 3; i <= NF; i++)
+					if ($i == "src") { print $1; break } }')"
+			;;
+		esac
+	done
+
+	for _sl_link in /dev/dsp.dac /dev/dsp.capture; do
+		if [ -L "${_sl_link}" ]; then
+			printf '%-17s -> %s\n' "${_sl_link}" "$(readlink "${_sl_link}")"
+		fi
+	done
+
+	sndlink_report_guess
+
+	_sl_rc=0
+	if [ -z "${DAC_UNIT}" ]; then
+		echo "${name}: no playback card -- /dev/dsp.dac is missing"
+		_sl_rc=1
+	fi
+	if [ -n "${omdrc_sndlink_capture}" ] && [ -z "${CAPTURE_UNIT}" ]; then
+		echo "${name}: no card matches '${omdrc_sndlink_capture}' -- /dev/dsp.capture is missing"
+		_sl_rc=1
+	fi
+	[ "${_sl_rc}" = 0 ] && echo "${name}: roles assigned"
+	return "${_sl_rc}"
+}
+
+run_rc_command "$1"

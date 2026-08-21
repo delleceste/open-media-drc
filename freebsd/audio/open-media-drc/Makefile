@@ -29,7 +29,7 @@ GH_ACCOUNT=	delleceste
 NO_BUILD=	yes
 NO_ARCH=	yes
 
-USE_RC_SUBR=	brutefir_drc drc_usb_audio
+USE_RC_SUBR=	brutefir_drc drc_usb_audio omdrc_sndlink
 SUB_FILES=	pkg-message
 
 OPTIONS_DEFINE=		CTRL DOCS

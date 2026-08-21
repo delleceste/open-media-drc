@@ -8,22 +8,30 @@ digraph chain_audio {
     cp      [label="UPnP / OpenHome control point\n(phone app, upplay, Qobuz Connect)", fillcolor="#fdf3d8"];
     upmpdcli[label="upmpdcli\n(libupnpp / libnpupnp)"];
     mpd     [label="MPD\n(pkg: mpd on Linux, musicpd on FreeBSD)"];
-    dacdir  [label="OKTO DAC8\n/dev/dsp0 (FreeBSD) - hw:0,0 (Linux)", fillcolor="#dff0df"];
+    dacdir  [label="OKTO DAC8\n/dev/dsp.dac (FreeBSD) - hw:0,0 (Linux)", fillcolor="#dff0df"];
     loop    [label="Loopback\nsnd-aloop (Linux) / virtual_oss + cuse (FreeBSD)"];
     bf      [label="BruteFIR (delleceste fork)\nFIR convolution, float64"];
     dacdrc  [label="OKTO DAC8", fillcolor="#dff0df"];
     ctrl    [label="omdrc-ctrl\nweb control panel :9090", fillcolor="#f3e6f5"];
     drcsh   [label="drc.sh\norchestration + state", fillcolor="#f3e6f5"];
 
+    // The second source: a live, externally clocked CD transport (FreeBSD).
+    cdp     [label="CD transport\nS/PDIF 44.1 kHz", fillcolor="#fdf3d8"];
+    esi     [label="ESI U24 XL\n/dev/dsp.capture"];
+    cdin    [label="omdrc-cdin\nring + lead, no resampler"];
+
     cp -> upmpdcli -> mpd;
     mpd -> dacdir [label="direct output\n(OKTO-DAC, bit-perfect)"];
     mpd -> loop   [label="DRC output\n(DRC-native / DRC-resamp)"];
+    cdp -> esi -> cdin;
+    cdin -> loop  [label="CD input\n(held only while\naudio is on the wire)"];
     loop -> bf -> dacdrc;
 
     drcsh -> loop  [style=dashed, label="start/stop, rate"];
     drcsh -> bf    [style=dashed];
     drcsh -> mpd   [style=dashed, label="mpc enable"];
     ctrl -> drcsh  [style=dashed];
+    drcsh -> cdin  [style=dashed, label="SIGHUP release"];
 
     { rank=same; dacdir; dacdrc; }
 }

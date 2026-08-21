@@ -33,12 +33,14 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "carrier.h"
 #include "cdin.h"
 #include "convert.h"
 #include "filesrc.h"
 #include "gate.h"
 #include "log.h"
 #include "ossdev.h"
+#include "outsel.h"
 #include "ring.h"
 
 volatile sig_atomic_t cdin_stop;
@@ -68,7 +70,13 @@ static const char *const state_name[] = {
 
 struct config {
 	const char *in_path;
-	const char *out_path;	/* "none" = capture-only measurement */
+	/* The preference list as given (see outsel.h): which device the disc is
+	 * written to depends on whether the DRC chain is up, and that is not
+	 * this daemon's to decide. */
+	const char *out_list;
+	/* The one the startup probe settled on, and the only one used from then
+	 * on.  "none" = capture-only measurement. */
+	const char *out_path;
 	const char *log_path;
 	int    rate;
 	int    channels;
@@ -78,6 +86,7 @@ struct config {
 	size_t period_frames;
 	int    stats_secs;	/* 0 = no periodic stats */
 	int    idle_after_ms;	/* silence before the output is released; 0 = never */
+	int    carrier_min_pct;	/* % of rate below which the input is unclocked; 0 = off */
 	int    retry_secs;
 	int    out_bits;	/* 0 = negotiate with the device */
 	double in_ppm;		/* file source only: simulated clock offset */
@@ -224,6 +233,8 @@ capture_thread(void *arg)
 {
 	struct session *s = arg;
 	struct silence_gate gate;
+	struct carrier carrier;
+	char why[160];
 	unsigned char *buf;
 	ssize_t rc;
 
@@ -246,6 +257,13 @@ capture_thread(void *arg)
 	}
 
 	gate_init(&gate, s->cfg->idle_after_ms, s->cfg->rate);
+	/* 2 s: long enough that a dead input (whose periods land seconds apart,
+	   because that is what "dead" does to the read rate) still closes a
+	   window, short enough that a disc starting loses nothing audible —
+	   the lead it starts from is history out of the ring, not audio
+	   recorded after the decision. */
+	carrier_init(&carrier, s->cfg->rate, s->cfg->carrier_min_pct, 2000,
+	    now_monotonic());
 
 	while (!cdin_stop && !atomic_load(&s->failed)) {
 		size_t frames;
@@ -255,6 +273,7 @@ capture_thread(void *arg)
 			cdin_release = 0;
 			hold_until = now_monotonic() + (double)hold_secs;
 			gate_reset(&gate);
+			carrier_reset(&carrier, now_monotonic());
 			set_state(s, CDIN_IDLE, "release requested (SIGHUP)");
 			log_info("holding off the output for %d s", hold_secs);
 		}
@@ -346,19 +365,75 @@ capture_thread(void *arg)
 			} else {
 				dropped = ring_write(s->ring, buf, (size_t)rc);
 			}
-			/* Dropping the oldest silence out of a rolling window
-			   is that window working, not audio being lost; only
-			   an overflow while playing is a discontinuity. */
+			/*
+			 * Dropping the oldest audio out of a rolling window is
+			 * that window working, not audio being lost.  It is a
+			 * discontinuity only if somebody is draining the ring
+			 * at the other end, which is what `running` means —
+			 * PLAYING alone is not enough, because that is a fact
+			 * about the WIRE (a disc is spinning), not about the
+			 * output device.
+			 *
+			 * The gap between the two is not small: while the
+			 * output is unavailable — MPD holding the DAC, say —
+			 * the state is PLAYING for as long as the retries take
+			 * and the ring wraps over and over.  Counting those
+			 * would report megabytes of "discarded audio, one
+			 * discontinuity per drop" for a stretch in which
+			 * nothing played and nothing could have.  Every byte
+			 * of it was going to be discarded anyway: acquiring
+			 * the device begins by trimming the ring back to one
+			 * lead.  The news there is the unavailability, which
+			 * is already logged as the error it is.
+			 */
 			if (dropped > 0 &&
-			    atomic_load(&s->state) == CDIN_PLAYING)
+			    atomic_load(&s->state) == CDIN_PLAYING &&
+			    atomic_load(&s->running))
 				atomic_fetch_add(&s->drop_bytes, dropped);
 		}
 		atomic_fetch_add(&s->frames_in, (uint64_t)frames);
+
+		/*
+		 * Is the input still being clocked?  This is asked before the
+		 * silence gate because it can overrule it: an unclocked input
+		 * delivers non-zero rubbish, which the gate reads as music.
+		 * See carrier.h — this is the check that ends the dribble.
+		 */
+		switch (carrier_feed(&carrier, frames, now_monotonic())) {
+		case CARRIER_LOST:
+			snprintf(why, sizeof(why), "%.0f frames/s against %d "
+			    "nominal — the transport is stopped or the cable "
+			    "is out", carrier_hz(&carrier), s->cfg->rate);
+			/* Not `failed`: unlike a short read, nothing is wrong
+			   with the device, so there is nothing to reopen.  The
+			   frames keep being read and the ring keeps rolling;
+			   only the output is given back. */
+			set_state(s, CDIN_NO_CARRIER, why);
+			break;
+		case CARRIER_BACK:
+			/* Clocked again, but not necessarily playing: a disc
+			   sitting in a pause is clocked and silent, and it is
+			   the gate below that promotes it to PLAYING. */
+			if (atomic_load(&s->state) == CDIN_NO_CARRIER) {
+				snprintf(why, sizeof(why), "%.0f frames/s — "
+				    "the input is clocked again",
+				    carrier_hz(&carrier));
+				set_state(s, CDIN_IDLE, why);
+			}
+			break;
+		case CARRIER_SAME:
+			break;
+		}
 
 		switch (gate_feed(&gate, silent, frames)) {
 		case GATE_AUDIO:
 			if (now_monotonic() < hold_until)
 				break;		/* SIGHUP hold-off */
+			/* Non-zero samples off an unclocked wire are not a
+			   stream, and starting an episode on them is what held
+			   the output device for hours. */
+			if (!carrier_live(&carrier))
+				break;
 			if (atomic_load(&s->state) != CDIN_PLAYING) {
 				/*
 				 * Trim here, on this thread, BEFORE the state
@@ -896,7 +971,7 @@ run_session(struct session *s)
  */
 static int
 open_playback_negotiated(struct ossdev *d, const struct config *cfg,
-    int in_bits, char *err, size_t errsz)
+    const char *path, int in_bits, char *err, size_t errsz)
 {
 	char first_err[256] = "";
 	int candidates[3], n = 0, i;
@@ -914,7 +989,7 @@ open_playback_negotiated(struct ossdev *d, const struct config *cfg,
 	for (i = 0; i < n; i++) {
 		if (i > 0 && !convert_can_widen(in_bits, candidates[i]))
 			continue;
-		if (ossdev_open(d, cfg->out_path, false, cfg->rate,
+		if (ossdev_open(d, path, false, cfg->rate,
 		    cfg->channels, candidates[i], cfg->period_frames, err,
 		    errsz) == 0) {
 			if (candidates[i] != in_bits)
@@ -937,7 +1012,7 @@ open_playback_negotiated(struct ossdev *d, const struct config *cfg,
 			snprintf(first_err, sizeof(first_err), "%s", err);
 		if (i + 1 < n)
 			log_debug("playback %s at %d-bit: %s — trying wider",
-			    cfg->out_path, candidates[i], err);
+			    path, candidates[i], err);
 	}
 	snprintf(err, errsz, "%s", first_err);
 	return -1;
@@ -951,12 +1026,21 @@ usage(FILE *out)
 "\n"
 "usage: omdrc-cdin [options]\n"
 "\n"
-"  -i, --in dev       capture device                     (default /dev/dsp1)\n"
-"  -o, --out dev      playback device, or 'none' for a capture-only\n"
-"                     measurement                   (default /dev/dsp.play)\n"
+"  -i, --in dev       capture device               (default /dev/dsp.capture)\n"
+"                     The role symlink omdrc_sndlink keeps on the capture\n"
+"                     card; pcm unit numbers move with USB attach order.\n"
+"  -o, --out list     playback device, or a comma-separated preference\n"
+"                     list, or 'none' for a capture-only measurement\n"
+"                     (default /dev/dsp.play,/dev/dsp.dac)\n"
 "                     /dev/dsp.play is the virtual_oss loopback BruteFIR\n"
-"                     reads; use /dev/dsp0 to write the DAC directly and\n"
-"                     bypass the chain.\n"
+"                     reads, and only exists while the DRC chain is up;\n"
+"                     /dev/dsp.dac is the DAC itself, which is the right\n"
+"                     target when DRC is off.  The list is tried in order\n"
+"                     at startup and the first device that opens is kept\n"
+"                     for the life of the process -- the ring is laid out\n"
+"                     in the width that device negotiated.  drc.sh\n"
+"                     restarts the daemon when the chain comes up or goes\n"
+"                     down, which is how the choice is re-taken.\n"
 "  -r, --rate hz      sample rate                             (default 44100)\n"
 "  -c, --channels n   channel count                               (default 2)\n"
 "  -b, --bits n       source width: 16, 24 or 32                 (default 32)\n"
@@ -985,6 +1069,19 @@ usage(FILE *out)
 "                     pause, or a disc would tear its own output down between\n"
 "                     tracks.  0 disables it: the output is then held for the\n"
 "                     whole run.\n"
+"      --carrier-min pct  percentage of the nominal rate below which the\n"
+"                     input counts as unclocked and the output is released\n"
+"                                                               (default 50)\n"
+"                     This is the OTHER way a player goes quiet.  A pause\n"
+"                     keeps the carrier up and sends zeros (--idle-after\n"
+"                     handles that one); a stop drops the carrier, and an\n"
+"                     interface that slaves its clock to the carrier then\n"
+"                     dribbles a few hundred non-zero frames a second instead\n"
+"                     of the full rate.  Reads stay full and samples stay\n"
+"                     non-zero, so nothing else notices, and the trickle is\n"
+"                     audible as a burst each time the output buffer fills.\n"
+"                     The gap is huge (~1%% of rate observed against a 50%%\n"
+"                     threshold), so this needs no tuning; 0 disables it.\n"
 "  -l, --log file     also log to this file\n"
 "  -d, --debug        emit periodic stats\n"
 "  -v, --verbose      more verbose; repeat for debug\n"
@@ -1030,8 +1127,8 @@ int
 main(int argc, char **argv)
 {
 	struct config cfg = {
-		.in_path = "/dev/dsp1",
-		.out_path = "/dev/dsp.play",
+		.in_path = "/dev/dsp.capture",
+		.out_list = "/dev/dsp.play,/dev/dsp.dac",
 		.rate = 44100,
 		.channels = 2,
 		.bits = 32,
@@ -1041,6 +1138,7 @@ main(int argc, char **argv)
 		.stats_secs = 0,
 		.retry_secs = 2,
 		.idle_after_ms = 15000,
+		.carrier_min_pct = 50,
 		.gap_ms = 2000,
 		.level = CDL_INFO,
 	};
@@ -1052,6 +1150,8 @@ main(int argc, char **argv)
 	int verbose = 0, opt, rc = 0;
 	int out_bits = 0;		/* settled once by the probe below */
 	size_t out_frame_bytes = 0;
+	struct outsel outs;
+	char outdesc[256];
 	bool warned_in = false, warned_out = false;
 
 	static const struct option longopts[] = {
@@ -1073,6 +1173,7 @@ main(int argc, char **argv)
 		{ "loop",     no_argument,       NULL, 1001 },
 		{ "gap",      required_argument, NULL, 1003 },
 		{ "idle-after", required_argument, NULL, 1005 },
+		{ "carrier-min", required_argument, NULL, 1006 },
 		{ "transport", required_argument, NULL, 1004 },
 		{ "probe",    no_argument,       NULL, 'P' },
 		{ "help",     no_argument,       NULL, 'h' },
@@ -1084,7 +1185,7 @@ main(int argc, char **argv)
 	    longopts, NULL)) != -1) {
 		switch (opt) {
 		case 'i': cfg.in_path = optarg; break;
-		case 'o': cfg.out_path = optarg; break;
+		case 'o': cfg.out_list = optarg; break;
 		case 'r': cfg.rate = atoi(optarg); break;
 		case 'c': cfg.channels = atoi(optarg); break;
 		case 'b': cfg.bits = atoi(optarg); break;
@@ -1101,6 +1202,7 @@ main(int argc, char **argv)
 		case 1001: cfg.loop = true; break;
 		case 1003: cfg.gap_ms = atoi(optarg); break;
 		case 1005: cfg.idle_after_ms = atoi(optarg); break;
+		case 1006: cfg.carrier_min_pct = atoi(optarg); break;
 		case 1004: cfg.transport = optarg; break;
 		case 'P': cfg.probe = true; break;
 		case 'h': usage(stdout); return 0;
@@ -1150,17 +1252,31 @@ main(int argc, char **argv)
 	sigaction(SIGHUP, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
 
+	if (outsel_parse(&outs, cfg.out_list) < 0) {
+		log_err("--out %s: not a usable device list (at most %d "
+		    "comma-separated paths)", cfg.out_list, OUTSEL_MAX);
+		cdin_log_close();
+		return 1;
+	}
+	/* Until the probe below settles it, the "output" is the whole list.
+	 * Naming the first entry here would make an unavailable chain look
+	 * like a broken device when the fallback is sitting right behind it. */
+	cfg.out_path = outs.path[0];
+
 	log_info("omdrc-cdin " CDIN_VERSION " starting: in=%s out=%s "
 	    "%d Hz %d-bit %dch, lead %d ms, ring %d ms, period %zu frames, "
 	    "idle after %d ms of silence",
-	    cfg.in_path, cfg.out_path, cfg.rate, cfg.bits, cfg.channels,
+	    cfg.in_path, outsel_describe(&outs, outdesc, sizeof(outdesc)),
+	    cfg.rate, cfg.bits, cfg.channels,
 	    cfg.lead_ms, cfg.ring_ms, cfg.period_frames, cfg.idle_after_ms);
 
 	memset(&s, 0, sizeof(s));
 	s.cfg = &cfg;
 	s.in = &in;
 	s.out = &out;
-	s.measure_only = strcmp(cfg.out_path, "none") == 0;
+	/* "none" is only ever given alone; a list containing it is a typo, and
+	 * treating it as measure-only would silently drop the real device. */
+	s.measure_only = outs.count == 1 && strcmp(outs.path[0], "none") == 0;
 	in.fd = out.fd = -1;
 
 	/*
@@ -1193,15 +1309,24 @@ main(int argc, char **argv)
 	}
 
 	if (cfg.probe) {
-		int ok = 0;
+		int ok = 1, i;
 
-		if (open_playback_negotiated(&out, &cfg, cfg.bits, err,
-		    sizeof(err)) == 0) {
+		for (i = 0; i < outs.count; i++) {
+			if (open_playback_negotiated(&out, &cfg, outs.path[i],
+			    cfg.bits, err, sizeof(err)) != 0) {
+				log_warn("playback %s: %s", outs.path[i], err);
+				continue;
+			}
 			ossdev_close(&out);
-		} else {
-			log_err("playback %s: %s", cfg.out_path, err);
-			ok = 1;
+			log_info("playback %s: available, %d-bit",
+			    outs.path[i], out.bits);
+			cfg.out_path = outs.path[i];
+			ok = 0;
+			break;
 		}
+		if (ok != 0)
+			log_err("playback: none of %s could be opened",
+			    outsel_describe(&outs, outdesc, sizeof(outdesc)));
 		if (s.file != NULL) {
 			log_info("input %s: readable, %d track%s", cfg.in_path,
 			    filesrc_tracks(s.file),
@@ -1229,19 +1354,46 @@ main(int argc, char **argv)
 	 * is held only while music is actually playing.
 	 */
 	while (!cdin_stop && !s.measure_only && out_bits == 0) {
-		if (open_playback_negotiated(&out, &cfg, cfg.bits, err,
-		    sizeof(err)) == 0) {
+		char why[OUTSEL_MAX][256];
+		int i;
+
+		for (i = 0; i < outs.count; i++) {
+			if (open_playback_negotiated(&out, &cfg, outs.path[i],
+			    cfg.bits, err, sizeof(err)) != 0) {
+				/* Kept per candidate.  Reporting only the last
+				 * one answers "why is the CD input silent?"
+				 * with whatever the FALLBACK happened to say
+				 * ("Device busy", because BruteFIR legitimately
+				 * holds the DAC) and hides the answer, which is
+				 * on the preferred device ("device set 96000
+				 * Hz, not 44100" — the chain is not at CD
+				 * rate).  Both lines together are the whole
+				 * story and neither alone is. */
+				snprintf(why[i], sizeof(why[i]), "%s", err);
+				continue;
+			}
+			/* Settled, for the life of the process: the ring is
+			 * about to be laid out in this width and this device
+			 * is the one it fits.  drc.sh restarts the daemon when
+			 * the chain comes up or goes down, which is how the
+			 * answer changes. */
+			cfg.out_path = outs.path[i];
 			out_bits = out.bits;
 			out_frame_bytes = out.frame_bytes;
 			ossdev_close(&out);
-			log_info("playback %s: available, %d-bit", cfg.out_path,
-			    out_bits);
+			log_info("playback %s: available, %d-bit%s",
+			    cfg.out_path, out_bits,
+			    i == 0 ? "" : " (the preferred device is not there)");
 			warned_out = false;
 			break;
 		}
+		if (out_bits != 0)
+			break;
 		if (!warned_out) {
-			log_err("playback %s: unavailable — %s (retrying every "
-			    "%d s)", cfg.out_path, err, cfg.retry_secs);
+			log_err("playback unavailable — no output device could "
+			    "be opened (retrying every %d s):", cfg.retry_secs);
+			for (i = 0; i < outs.count; i++)
+				log_err("  %s: %s", outs.path[i], why[i]);
 			warned_out = true;
 		}
 		sleep_ms(cfg.retry_secs * 1000);

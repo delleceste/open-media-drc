@@ -140,7 +140,7 @@ Result: `pi = 96000` (R) / `96002` (L) → `96000 / 192000 = 0.5000 s`.
 The 0.5 s above is only the **filter's own** delay. Audio actually travels:
 
 ```
-mpv ─► /dev/dsp.play ─► virtual_oss ─► /dev/dsp.loop ─► brutefir ─► /dev/dsp0 ─► DAC
+mpv ─► /dev/dsp.play ─► virtual_oss ─► /dev/dsp.loop ─► brutefir ─► /dev/dsp.dac ─► DAC
                          (buffer)                       (filter)     (buffer)
 ```
 

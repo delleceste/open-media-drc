@@ -16,7 +16,9 @@ open-media-drc — post-install checklist
      mkdir -p ~/.config/BruteFIR
      cp %%PREFIX%%/etc/open-media-drc/brutefir_defaults.conf.sample \
         ~/.config/BruteFIR/brutefir_defaults.conf
-   Adjust the OSS device paths inside if your DAC is not /dev/dsp0.
+   The DAC is opened as /dev/dsp.dac, a symlink the omdrc_sndlink service
+   maintains (sysrc omdrc_sndlink_enable=YES), so pcm unit numbers do not
+   matter.  Adjust the OSS device paths inside only if you do not run it.
 
 3. Kernel modules (in /etc/rc.conf or kld_list):
      kld_list="cuse"          # required by virtual_oss

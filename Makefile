@@ -10,7 +10,8 @@
 #   $(PREFIX)/etc/open-media-drc/             omdrc.conf.sample,
 #                                             configs/flat/*.conf,
 #                                             brutefir_defaults.conf.sample
-#   $(PREFIX)/etc/devd/                       usb-audio-drc.conf.sample
+#   $(PREFIX)/etc/devd/                       usb-audio-drc.conf.sample,
+#                                             omdrc-sndlink.conf.sample
 #   $(PREFIX)/share/examples/open-media-drc/  mpd/upmpdcli config templates
 #   $(PREFIX)/share/doc/open-media-drc/       docs
 #
@@ -60,6 +61,7 @@ install:
 	                $(ETCDIR)/configs/flat
 	$(INSTALL_DATA) brutefir_defaults.conf $(ETCDIR)/brutefir_defaults.conf.sample
 	$(INSTALL_DATA) etc/devd/usb-audio-drc.conf $(DEVDDIR)/usb-audio-drc.conf.sample
+	$(INSTALL_DATA) etc/devd/omdrc-sndlink.conf $(DEVDDIR)/omdrc-sndlink.conf.sample
 	$(INSTALL_DATA) mpd/musicpd.conf.in mpd/mpd.conf.in $(EXAMPLESDIR)
 	$(INSTALL_DATA) upmpdcli/upmpdcli.conf.in $(EXAMPLESDIR)
 	$(INSTALL_DATA) README.md FILTERS_AND_DRC.md \

@@ -10,7 +10,7 @@ set -euo pipefail
 #     ./bitperfect-tap-freebsd.sh [--dev /dev/dspN] [--out PREFIX] INPUT.wav
 #
 #   INPUT.wav    16/24/32-bit PCM WAV, any rate the DAC supports.
-#   --dev DEV    OSS play device (default /dev/dsp0 — the direct DAC node;
+#   --dev DEV    OSS play device (default /dev/dsp.dac — the direct DAC node;
 #                run `./drc.sh off` first so virtual_oss/brutefir release
 #                it, and stop any renderer holding it).
 #   --out PREFIX output path prefix (default: bp-results/<input>-freebsd).
@@ -79,7 +79,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB="$HERE/bitperfect-lib.py"
 
-PLAY_DEV="/dev/dsp0"
+# /dev/dsp.dac is the DAC by role: FreeBSD pcm unit numbers follow attach
+# order, so /dev/dsp0 is only the DAC by luck on a multi-card box.  The
+# omdrc_sndlink service keeps the link pointed at the right one; without it
+# (single-DAC box, or Linux) fall back to unit 0.
+PLAY_DEV="$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)"
 PREFIX=""
 INPUT=""
 PAD_MS=500           # trailing silence played after the reference (see above)

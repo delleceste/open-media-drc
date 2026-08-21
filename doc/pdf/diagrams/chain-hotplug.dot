@@ -17,14 +17,18 @@ digraph chain_hotplug {
     subgraph cluster_fbsd {
         label="FreeBSD"; fontsize=11; style=dashed; color="#999999";
         devd  [label="devd rule\nusb-audio-drc.conf\n(USB intclass 0x01)"];
-        rcd   [label="rc.d: drc_usb_audio\n(probe /dev/dsp0, marker file)"];
+        link  [label="devd rule + rc.d\nomdrc-sndlink\n(pcm attach -> /dev/dsp.dac,\nrole sysctls)", fillcolor="#e8e0f4"];
+        rcd   [label="rc.d: drc_usb_audio\n(probe /dev/dsp.dac, marker file)"];
         wrk   [label="rc.d: brutefir_drc\n(worker, installed not enabled)"];
     }
 
     restore [label="drc.sh restore\nreads last_power + last_arg,\nrebuilds virtual_oss + BruteFIR,\nswitches MPD output", fillcolor="#dff0df"];
 
     plug -> udev -> svc -> restore;
+    plug -> link;
+    boot -> link [label="rc, before devd"];
     plug -> devd -> rcd -> wrk -> restore;
+    link -> rcd [style=dashed, label="link exists\nbefore the probe"];
     boot -> svc [label="udev synthesizes\nADD at boot"];
     boot -> rcd [label="rc.conf:\ndrc_usb_audio_enable"];
 }

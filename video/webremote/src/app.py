@@ -368,7 +368,7 @@ def _ensure_drc_resamp() -> str | None:
     the chain only has to be up by the time a file is loaded — which is here.
 
     It has to be up, though. This DAC is bit-perfect with virtual channels off
-    (`dev.pcm.0.bitperfect=1`, `play.vchans=0`), so the kernel resamples
+    (`bitperfect=1`, `play.vchans=0` on the DAC), so the kernel resamples
     nothing: 48 kHz movie audio sent straight to a DAC clocked at some other
     rate plays at hw_rate/48000 speed — the 2x that made this worth handling at
     all. Routing through the resampling chain is what makes the speed right, and

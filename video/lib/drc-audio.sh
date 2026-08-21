@@ -33,7 +33,8 @@ IS_LINUX=false
 [ "$(uname)" = "Linux" ] && IS_LINUX=true
 
 # DRC-on / DRC-off audio devices differ by OS:
-#   FreeBSD: virtual_oss exposes /dev/dsp.play (DRC) and the raw DAC is /dev/dsp0.
+#   FreeBSD: virtual_oss exposes /dev/dsp.play (DRC) and the raw DAC is
+#            /dev/dsp.dac (the omdrc_sndlink role link; /dev/dsp0 without it).
 #   Linux  : the DRC chain is MPD/mpv -> snd-aloop loopback hw:1,0 -> brutefir
 #            (captures hw:1,1) -> USB DAC hw:0,0.  Feeding the loopback hw:1,0 is
 #            what routes audio through brutefir (room correction + resample),
@@ -42,7 +43,8 @@ if $IS_LINUX; then
     DAC_DEVICE="alsa/hw:0,0"        # direct USB DAC (DRC off)
     DRC_DEVICE="alsa/hw:1,0"        # snd-aloop loopback feeding brutefir (DRC on)
 else
-    DAC_DEVICE="oss//dev/dsp0"      # direct DAC (DRC off)
+    # direct DAC (DRC off), by role — see omdrc_sndlink
+    DAC_DEVICE="oss/$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)"
     DRC_DEVICE="oss//dev/dsp.play"  # virtual_oss client device (DRC on)
 fi
 

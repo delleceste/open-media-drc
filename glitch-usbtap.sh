@@ -43,13 +43,22 @@ say() { printf '\033[1m%s\033[0m\n' "$*"; }
 command -v usbdump >/dev/null 2>&1 || { err "usbdump not found (FreeBSD only)"; exit 1; }
 
 # ── locate the DAC on the USB bus (same logic as verify-bitperfect.sh) ───────
-loc="$(sysctl -n dev.uaudio.0.%location 2>/dev/null || true)"
-[ -n "$loc" ] || { err "uaudio0 not found (DAC attached?)"; exit 1; }
+# Resolve the DAC from its stable name rather than assuming unit 0: the pcm
+# unit, and with it the uaudio parent to tap, moves with USB attach order.  See
+# etc/rc.d/omdrc_sndlink.  No link (single-DAC box) means unit 0, as before.
+dac_link="$(readlink /dev/dsp.dac 2>/dev/null || true)"
+case "$dac_link" in dsp[0-9]*) dac_unit="${dac_link#dsp}" ;; *) dac_unit=0 ;; esac
+dac_parent="$(sysctl -n "dev.pcm.${dac_unit}.%parent" 2>/dev/null || true)"
+case "$dac_parent" in uaudio[0-9]*) ;; *) dac_parent="uaudio0" ;; esac
+dac_parent_unit="${dac_parent#uaudio}"
+
+loc="$(sysctl -n "dev.uaudio.${dac_parent_unit}.%location" 2>/dev/null || true)"
+[ -n "$loc" ] || { err "${dac_parent} not found (DAC attached?)"; exit 1; }
 bus="$(echo "$loc"   | sed -n 's/.*bus=\([0-9]*\).*/\1/p')"
 daddr="$(echo "$loc" | sed -n 's/.*devaddr=\([0-9]*\).*/\1/p')"
 USBUS="usbus${bus}"
 
-RATE="$(sysctl -n dev.pcm.0.feedback_rate 2>/dev/null || true)"
+RATE="$(sysctl -n "dev.pcm.${dac_unit}.feedback_rate" 2>/dev/null || true)"
 case "$RATE" in ''|*[!0-9]*) RATE=44100 ;; esac
 
 # NB: FreeBSD mktemp only substitutes TRAILING Xs, so no .pcap suffix here.

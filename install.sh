@@ -90,19 +90,32 @@ echo "                 update-desktop-database \"${AUDIO_HOME}/.local/share/appl
 if [ "$(uname)" = "FreeBSD" ]; then
 	cat <<EOF
   FreeBSD:
-    rc.d  : for s in musicpd brutefir_drc drc_usb_audio upmpdcli omdrc_renderer; do
+    rc.d  : for s in musicpd brutefir_drc drc_usb_audio omdrc_sndlink upmpdcli omdrc_renderer; do
               cp "${REPO_DIR}/etc/rc.d/\$s" /usr/local/etc/rc.d/\$s   # COPY: read at early boot
             done
             # Copies (not symlinks): rc.d scripts are read by rc at early boot,
             # before a separately-mounted \$HOME/repo is available. brutefir_drc is
             # the worker invoked by drc_usb_audio (service brutefir_drc onestart) —
             # it must resolve, but is NOT enabled below.
-    devd  : cp "${REPO_DIR}/etc/devd/usb-audio-drc.conf" /usr/local/etc/devd/usb-audio-drc.conf   # COPY
+    devd  : for r in usb-audio-drc omdrc-sndlink; do
+              cp "${REPO_DIR}/etc/devd/\$r.conf" /usr/local/etc/devd/\$r.conf   # COPY
+            done
             service devd restart
     enable: add to /etc/rc.conf — musicpd_enable=YES omdrc_renderer_enable=YES \\
-            drc_usb_audio_enable=YES
+            drc_usb_audio_enable=YES omdrc_sndlink_enable=YES
             # Enable ONLY drc_usb_audio for DRC: it probes for the DAC at boot
             # and is driven by devd on hotplug. Do NOT enable brutefir_drc.
+            # omdrc_sndlink keeps /dev/dsp.dac pointed at the DAC — at boot from
+            # rc, afterwards from its devd rule — so brutefir, MPD and the
+            # scripts never name a pcm unit number.  FreeBSD numbers pcm units
+            # in USB attach order, which is not stable across boots or replugs.
+            # With one sound card it needs no configuration at all.
+            # For the CD input, name the capture card; that is what creates
+            # /dev/dsp.capture, and leaving it empty is how the feature stays
+            # out of the way on a box that has no capture device:
+            #   sysrc omdrc_sndlink_capture="ESI U24XL"     # or 0xVID:0xPID
+            # Its digital input is then selected automatically on every attach
+            # (omdrc_sndlink_capture_recsrc, default "auto").
     renderer: omdrc_renderer starts the renderer that was active last —
             qobuzconnect2mpd or upmpdcli, whichever omdrcctrl's toggle recorded
             in ${REPO_DIR}/last_renderer — so a reboot comes back as you left it.

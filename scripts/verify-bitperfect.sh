@@ -19,14 +19,14 @@ set -euo pipefail
 #
 # Useful combinations
 # -------------------
-#   # 1. direct kernel/USB path (default): writer -> /dev/dsp0, sniff the DAC
+#   # 1. direct kernel/USB path (default): writer -> /dev/dsp.dac, sniff the DAC
 #   sudo ./verify-bitperfect.sh
 #
 #   # 2. virtual_oss bridge: writer -> /dev/dsp.play, read /dev/dsp.loop
 #   #    (needs virtual_oss running; use --paced because virtual_oss free-runs)
 #   ./verify-bitperfect.sh --play /dev/dsp.play --tap loop:/dev/dsp.loop --paced
 #
-#   # 3. whole MPD direct path: MPD OKTO-DAC output -> /dev/dsp0, sniff the DAC
+#   # 3. whole MPD direct path: MPD OKTO-DAC output -> /dev/dsp.dac, sniff the DAC
 #   sudo ./verify-bitperfect.sh --source mpd:OKTO-DAC --tap usb
 #
 #   # 4. MPD -> virtual_oss bridge (front half of the DRC chain)
@@ -45,7 +45,11 @@ set -euo pipefail
 #   (disconnect the amp first).
 
 # ── defaults ─────────────────────────────────────────────────────────────────
-PLAY_DEV="/dev/dsp0"
+# /dev/dsp.dac is the DAC by role: FreeBSD pcm unit numbers follow attach
+# order, so /dev/dsp0 is only the DAC by luck on a multi-card box.  The
+# omdrc_sndlink service keeps the link pointed at the right one; without it
+# (single-DAC box, or Linux) fall back to unit 0.
+PLAY_DEV="$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)"
 RATE=44100
 FRAMES=200000
 TAP="usb"

@@ -73,3 +73,10 @@ bp-results/*
 /tests/bitperfect-test-44100-s24-stereo-30s.wav
 /tests/bitperfect-test-192000-s24-stereo-10s.wav
 
+
+# CMake/host-rendered artifacts that land in the source tree (never tracked):
+# omdrc.conf and install-summary.cmake carry the host's AUDIO_USER/AUDIO_HOME,
+# and cdin/rc.d/omdrc_cdin is a rendered copy of omdrc_cdin.in.
+/omdrc.conf
+/cmake/install-summary.cmake
+/cdin/rc.d/omdrc_cdin

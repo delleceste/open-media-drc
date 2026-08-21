@@ -18,7 +18,7 @@ main [README](../README.md) or in `doc/`; this file is the quick index.
 | `rew_mdat_audit.py` | Optional archival evidence: audits selected REW project traces through the REW API without a GUI, comparing exported TXT responses numerically and final WAV impulses sample-by-sample against the project, and recording the trace inventory with exact UUIDs. Not a deployment dependency. | Linux + FreeBSD (python3, NumPy) |
 | `verify-bitperfect.sh` | End-to-end bit-perfectness proof: feeds a deterministic S32_LE signal through a chosen source (built-in OSS writer, or MPD by output name) and compares it byte-for-byte against a chosen tap (the OKTO's isochronous USB OUT endpoint via `usbdump`, or an OSS loopback node such as `/dev/dsp.loop`). See [`doc/BIT-PERFECT-VERIFICATION.md`](../doc/BIT-PERFECT-VERIFICATION.md). | FreeBSD (USB tap needs root) |
 | `bitperfect-tap-linux.sh` | Plays a WAV (16/24/32-bit, any supported rate) to the USB DAC and records the exact bytes sent on the USB wire (usbmon tap of isochronous OUT endpoint 0x01) into `PREFIX.wav` / `PREFIX.wire.raw` / `PREFIX.txt`, with a local bit-perfect verdict. Same CLI and artifacts as the FreeBSD twin, for cross-OS comparison. | Linux (tap needs root) |
-| `bitperfect-tap-freebsd.sh` | FreeBSD twin of the above (`usbdump` tap, format-guarded OSS writer on `/dev/dsp0`). | FreeBSD (tap needs root) |
+| `bitperfect-tap-freebsd.sh` | FreeBSD twin of the above (`usbdump` tap, format-guarded OSS writer on `/dev/dsp.dac`). | FreeBSD (tap needs root) |
 | `bitperfect-compare.py` | Opens two tap artifacts (from either OS; `.wav`, `.wire.raw`, or the tiny committable `.txt` report — hash-proxy comparison, so the 10 MB streams never need to travel through git) and verdicts **MATCH: byte-by-byte identical** or **MISMATCH** with the first differing offset (when payloads are present). | Linux + FreeBSD (python3) |
 | `bitperfect-lib.py` | Shared engine for the two tap scripts (WAV→S32 wire-container promotion, usbmon reader, usbdump decoder, alignment/verdict/report) — not called directly. | Linux + FreeBSD |
 | `systemd-user-install.sh` | Legacy convenience: symlinks `drc.service` into `~/.config/systemd/user/`, reloads the user daemon and enables the service. Superseded by the system-level hotplug units installed via `install.sh` (see the main README, *USB DAC hotplug automation*), kept for user-session setups. | Linux only (systemd) |
@@ -265,7 +265,7 @@ git commit -m 'bp: linux tap report' && git push
 # 2. FreeBSD box: free the DAC, play + tap (usbdump), commit its report
 #    (needs dev.pcm.N.bitperfect=1 and dev.pcm.N.play.vchans=0; the writer
 #     aborts with FAIL: rather than play converted audio if they are unset)
-./drc.sh off        # and stop any renderer holding /dev/dsp0
+./drc.sh off        # and stop any renderer holding the DAC
 ./scripts/bitperfect-tap-freebsd.sh tests/bitperfect-test-44100-s32-stereo-30s.wav
 git add bp-results/bitperfect-test-44100-s32-stereo-30s-freebsd.txt
 git commit -m 'bp: freebsd tap report' && git push

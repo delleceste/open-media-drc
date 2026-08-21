@@ -1,0 +1,22 @@
+// The CD / S-PDIF input path: a live, externally clocked source joining the
+// DRC chain at the loopback, alongside MPD.
+digraph chain_cdin {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    cd   [label="CD transport\nS/PDIF, 44.1 kHz,\nits own crystal", fillcolor="#fdf3d8"];
+    esi  [label="ESI U24 XL\n/dev/dsp.capture\n24-bit, rec.vchans=0"];
+    cdin [label="omdrc-cdin\nring + lead (2000 ms)\nno resampler: memcpy", fillcolor="#f3e6f5"];
+    loop [label="virtual_oss\n/dev/dsp.play"];
+    bf   [label="BruteFIR\nFIR convolution"];
+    dac  [label="OKTO DAC8\n/dev/dsp.dac\n(its own crystal)", fillcolor="#dff0df"];
+    mpd  [label="MPD\n(the other writer)", fillcolor="#f5f5f5"];
+
+    cd -> esi   [label="blocking read()\nruns at f_cd"];
+    esi -> cdin;
+    cdin -> loop [label="held only while\naudio is on the wire"];
+    loop -> bf -> dac [label="blocking write()\nruns at f_dac"];
+    mpd -> loop [style=dashed, label="takes turns"];
+}

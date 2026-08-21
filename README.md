@@ -317,7 +317,8 @@ On FreeBSD, enable the CMake-installed service and name the ESI capture device:
 ```sh
 # /etc/rc.conf
 omdrc_cdin_enable="YES"
-omdrc_cdin_in="/dev/dsp1"       # check /dev/sndstat; this is not the DAC
+omdrc_sndlink_capture="ESI U24XL"  # names the capture card; that is what
+                                   # creates /dev/dsp.capture for cdin
 ```
 
 `service omdrc_cdin release` (or `SIGHUP`) gives `/dev/dsp.play` back without
@@ -529,7 +530,7 @@ MPD-forced resampling path is shown as `Flat auto-resample`.
 # Browser audio without DRC (`browser-nodrc/`)
 
 Web browsers (Firefox, Chrome, Chromium) cannot play through the DRC chain. While
-DRC is on, **BruteFIR holds the DAC (`/dev/dsp0`) single-open**, and a browser
+DRC is on, **BruteFIR holds the DAC (`/dev/dsp.dac`) single-open**, and a browser
 that tries to open the default audio device gets silence — or refuses to play.
 Unlike MPD or mpv, browsers have no easy hook to route into `/dev/dsp.play`
 (the `virtual_oss` entry point), and their audio is rarely critical-listening
@@ -551,7 +552,7 @@ browser-nodrc/
 
 1. **Snapshots** the current DRC state by reading `drc.sh`'s own persisted state
    files — `last_power` (`on`/`off`) and `last_arg` (the remembered rate/variant).
-2. Runs `drc.sh off`, freeing `/dev/dsp0` so the browser plays straight to the DAC.
+2. Runs `drc.sh off`, freeing the DAC so the browser plays straight to it.
 3. Runs the browser **in the foreground**.
 4. On exit **restores the exact pre-launch state** — re-applying the saved rate if
    DRC was on, or leaving it off if it was off. This runs from an `EXIT`/`INT`/`TERM`
@@ -758,7 +759,7 @@ drc_usb_audio_enable="YES"
 ```
 
 `drc_usb_audio` is the single entry point. At boot it **probes for the DAC**
-(`/dev/dsp0`): if the DAC is on it brings DRC up once; if not, it does nothing and
+(`/dev/dsp.dac`): if the DAC is on it brings DRC up once; if not, it does nothing and
 lets `devd` start DRC when the DAC is switched on later. Do **not** also enable
 `brutefir_drc` — it is the worker invoked by `drc_usb_audio` (it runs
 `drc.sh restore`) and must stay installed but unenabled, otherwise boot starts the
@@ -800,7 +801,7 @@ A USB DAC can become available in two ways, and both have to be caught:
 
 1. **Already on at boot.** The kernel enumerates the DAC during device probe, well
    before the service manager runs. By the time rc.d starts, the OSS node
-   (`/dev/dsp0`) already exists.
+   (`/dev/dsp.dac`) already exists.
 2. **Switched on later.** The DAC is powered up (or plugged in) on a running system.
    The kernel attaches it and emits a hotplug event — `devd` on FreeBSD, `udev` on
    Linux.
@@ -835,7 +836,7 @@ Its `start` does three things, in order:
    already up — do nothing. The marker lives on tmpfs, so it is correctly absent on a
    fresh boot and present once DRC is up; that makes repeated triggers idempotent.
 2. **Settle, then probe.** Sleep `drc_usb_audio_start_delay` (default 1 s) so a
-   freshly-attached DAC's OSS node has time to appear, then check for `/dev/dsp0`.
+   freshly-attached DAC's OSS node has time to appear, then check for `/dev/dsp.dac`.
    **If the node is absent, do nothing** and return — `devd` will start DRC when the
    DAC shows up. This is the level check that covers the boot case and harmlessly
    no-ops when the DAC is off.
@@ -854,6 +855,49 @@ rc.d is read at early boot, before a separately-mounted repo/home is available.)
 DAC attached (USB intclass 0x01)  → service drc_usb_audio onestart
 USB device detached               → service drc_usb_audio onestop
 ```
+
+## Which card is the DAC: `/dev/dsp.dac`
+
+Everything above says `/dev/dsp.dac`, not `/dev/dsp0`, and that is the point.
+FreeBSD hands out `pcm` unit numbers in attach order, and USB attach order is port
+order, so on a box with a second sound card — the CD input interface, or just
+onboard HDA — `/dev/dsp0` is the DAC only by luck, and the luck can change at the
+next boot or the next replug. The unit number cannot be pinned: `uaudio(4)` does
+not implement `BUS_HINT_DEVICE_UNIT`, so `hint.pcm.N.at=` is silently ignored, and
+`hw.snd.default_unit` only picks among units that already exist.
+
+So the project does not use the number. The `omdrc_sndlink` service keeps role
+symlinks pointed at the right cards:
+
+```sh
+# /etc/rc.conf
+omdrc_sndlink_enable="YES"
+omdrc_sndlink_capture="ESI U24XL"   # only if you use the CD input; see cdin/
+```
+
+```
+/dev/dsp.dac       /dev/mixer.dac       the DAC — always created
+/dev/dsp.capture   /dev/mixer.capture   the CD/S-PDIF input — only when named above
+```
+
+With a single DAC it needs no configuration at all: the role goes to the
+lowest-numbered playback-capable USB card, falling back to any playback-capable
+card. To be explicit, name the card by USB id (`0xVID:0xPID`, optionally
+`:serial`) or by a substring of the description in `/dev/sndstat`:
+
+```sh
+sysrc omdrc_sndlink_dac="0x152a:0x88c5"
+service omdrc_sndlink status          # roles, links, bitperfect/vchans state
+```
+
+It runs at boot (`BEFORE: devd musicpd brutefir_drc drc_usb_audio`) and again from
+its own `devd` rule on every `pcm` attach or detach, which is also where the
+per-role `bitperfect=1` / `vchans=0` settings are asserted — a re-attach rebuilds
+`dev.pcm.<unit>.*` from driver defaults, so a replug would otherwise quietly cost
+you bit-perfect playback. A sysctl OID cannot be symlinked, so the few readers of
+`dev.pcm.<unit>.*` resolve the unit from the link (`readlink /dev/dsp.dac` → `dspN`).
+
+Without the service, or on Linux, everything falls back to `/dev/dsp0` as before.
 
 ## What `drc.sh restore` does
 
@@ -916,7 +960,7 @@ resting state where `virtual_oss` runs without BruteFIR.
 When the DAC is unplugged or powered off, `devd` detach (or a service stop) runs
 `drc.sh off`:
 
-1. Stop BruteFIR and wait for it to release `/dev/dsp0`.
+1. Stop BruteFIR and wait for it to release the DAC.
 2. (FreeBSD) send `SIGHUP` to `omdrc-cdin`, wait for `/dev/dsp.play` to be
    released, and start its reacquisition hold-off.
 3. (FreeBSD) stop `virtual_oss`.

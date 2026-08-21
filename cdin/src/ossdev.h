@@ -26,7 +26,7 @@ struct ossdev {
 };
 
 /*
- * Open and fully configure a device.  period_frames * frame_bytes must be a
+ * Open and fully configure a device.  period_frames * frame_bytes need not be a
  * power of two.  On failure returns -1, leaves d->fd == -1, and fills err.
  */
 int  ossdev_open(struct ossdev *d, const char *path, bool capture, int rate,

@@ -19,6 +19,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     endif()
     get_filename_component(_OMDRC_REPO_DIR_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
     set(OMDRC_REPO_DIR "${_OMDRC_REPO_DIR_DEFAULT}" CACHE PATH "Path to the open-media-drc checkout used by the default commands.conf")
+    # Home of the user the panel runs as: commands.conf reads MPD's log out of
+    # it.  Standalone builds have no AUDIO_USER, so take the builder's own home.
+    set(OMDRCCTRL_AUDIO_HOME "$ENV{HOME}" CACHE PATH "Home directory of the audio user (used by commands.conf)")
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set(OMDRCCTRL_SERVICE_MANAGER "systemd")
@@ -41,6 +44,7 @@ else()
     set(USER_INSTALL OFF)
     set(OMDRCCTRL_SERVICE_USER    "${AUDIO_USER}")
     set(OMDRC_REPO_DIR            "${REPO_DIR}")
+    set(OMDRCCTRL_AUDIO_HOME      "${AUDIO_HOME}")
     set(OMDRCCTRL_SERVICE_MANAGER "${OMDRC_SERVICE_MANAGER}")
     set(_OMDRC_SUPERPROJECT TRUE)   # packaged install: point commands.conf at the wrappers
 endif()
@@ -76,6 +80,10 @@ if(_OMDRC_SUPERPROJECT)
     string(REPLACE "@OMDRC_REPO_DIR@/drc.sh"        "${CMAKE_INSTALL_PREFIX}/bin/omdrc"        _cc "${_cc}")
 endif()
 string(REPLACE "@OMDRC_REPO_DIR@" "${OMDRC_REPO_DIR}" _cc "${_cc}")
+if(NOT OMDRCCTRL_AUDIO_HOME)
+    set(OMDRCCTRL_AUDIO_HOME "/home/${OMDRCCTRL_SERVICE_USER}")
+endif()
+string(REPLACE "@AUDIO_HOME@" "${OMDRCCTRL_AUDIO_HOME}" _cc "${_cc}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/commands.conf" "${_cc}")
 
 if(OMDRCCTRL_SERVICE_MANAGER STREQUAL "systemd")

@@ -41,15 +41,19 @@ the PDF, then create the annotated `v*` tag on that commit.
 6. **Tools** — omdrc-ctrl (web UI, spectrum analyzer, filter response),
    video (launchers + webremote), glitch detection, bit-perfect
    verification, scripts/.
-7. **FreeBSD peculiarities** — one-place summary of everything
+7. **CD input** — `omdrc-cdin`, the S/PDIF capture bridge: why the lead
+   is the only number that matters, the state machine and the two device
+   tenancies, the transport simulator, the web card, and the ESI U24 XL
+   configuration it depends on (unit order, input selector, `rec.vchans`).
+8. **FreeBSD peculiarities** — one-place summary of everything
    FreeBSD-specific, including known bugs and the port plan.
-8. **Appendix A** — detailed description of every FreeBSD patch (uaudio,
+9. **Appendix A** — detailed description of every FreeBSD patch (uaudio,
    virtual_oss/cuse, Kodi): what it does, root cause, how to apply/build/
    install/verify/revert.
-9. **Appendix B** — the FreeBSD port plan (from `doc/FREEBSD-PORT-PLAN.md`).
-10. **Appendix C** — bit-perfect test assets and the cross-OS byte-comparison
+10. **Appendix B** — the FreeBSD port plan (from `doc/FREEBSD-PORT-PLAN.md`).
+11. **Appendix C** — bit-perfect test assets and the cross-OS byte-comparison
    procedure (from `tests/README.md`, `scripts/README.md`).
-11. **Appendix D** — mapping of manual sections to the source `.md` files,
+12. **Appendix D** — mapping of manual sections to the source `.md` files,
     plus the update procedure for this manual.
 
 ## Updating after documentation changes

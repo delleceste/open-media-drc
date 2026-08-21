@@ -31,11 +31,13 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_executable(omdrc-cdin
     src/main.c
+    src/carrier.c
     src/convert.c
     src/filesrc.c
     src/gate.c
     src/log.c
     src/ossdev.c
+    src/outsel.c
     src/ring.c
 )
 
@@ -72,7 +74,15 @@ if(BUILD_TESTING)
     target_include_directories(test_convert PRIVATE src)
     add_test(NAME convert COMMAND test_convert)
 
+    add_executable(test_carrier tests/test_carrier.c src/carrier.c)
+    target_include_directories(test_carrier PRIVATE src)
+    add_test(NAME carrier COMMAND test_carrier)
+
     add_executable(test_gate tests/test_gate.c src/gate.c)
     target_include_directories(test_gate PRIVATE src)
     add_test(NAME gate COMMAND test_gate)
+
+    add_executable(test_outsel tests/test_outsel.c src/outsel.c)
+    target_include_directories(test_outsel PRIVATE src)
+    add_test(NAME outsel COMMAND test_outsel)
 endif()

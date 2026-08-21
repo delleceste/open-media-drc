@@ -8,15 +8,23 @@
 #
 # Add to /etc/rc.conf:
 #   omdrc_cdin_enable="YES"
-#   omdrc_cdin_in="/dev/dsp1"          # the ESI U24 XL; check /dev/sndstat
+#   omdrc_sndlink_capture="ESI U24XL"  # names the capture card; check /dev/sndstat
+#
+# The capture device itself needs no setting: omdrc_sndlink turns that name into
+# /dev/dsp.capture and keeps it there across replugs.  omdrc_cdin_in overrides it
+# if you want a specific node anyway.
 #
 # This is meant to run continuously, whether or not the CD player is on and
 # whether or not the interface is plugged in.  It is safe to leave running
 # because the daemon holds the OUTPUT device only while audio is actually on
-# the wire: after omdrc_cdin_idle_after milliseconds of exact digital silence
-# it releases /dev/dsp.play, so MPD and mpv get the chain back without anyone
-# stopping this service.  A missing capture device is likewise not an error
-# here — it is retried, and reported in the web panel's CD input card.
+# the wire.  There are two ways it decides the wire has gone quiet, because a
+# CD player has two ways of going quiet: a PAUSE keeps the S/PDIF carrier up
+# and sends zeros (omdrc_cdin_idle_after), while a STOP drops the carrier
+# altogether and the interface stops being clocked (omdrc_cdin_carrier_min).
+# Either way /dev/dsp.play is released, so MPD and mpv get the chain back
+# without anyone stopping this service.  A missing capture device is likewise
+# not an error here — it is retried, and reported in the web panel's CD input
+# card.
 #
 # REQUIRE: brutefir_drc because the output is virtual_oss's client node, which
 # drc.sh creates.  Ordering only; if the chain is down the daemon waits for it
@@ -31,18 +39,54 @@ load_rc_config "$name"
 
 : ${omdrc_cdin_enable:="NO"}
 : ${omdrc_cdin_user:="@AUDIO_USER@"}
-# Capture device: the S/PDIF interface, NOT the DAC.  /dev/sndstat names them;
-# pcm0 is normally the DAC, so the interface is usually /dev/dsp1.
-: ${omdrc_cdin_in:="/dev/dsp1"}
-# Playback device: virtual_oss's client node, which BruteFIR reads.  Use
-# /dev/dsp0 to write the DAC directly and bypass the DRC chain.
-: ${omdrc_cdin_out:="/dev/dsp.play"}
+# Capture device: the S/PDIF interface, NOT the DAC.  /dev/dsp.capture is the
+# role symlink the omdrc_sndlink service keeps pointed at it — pcm unit numbers
+# follow USB attach order, so /dev/dsp1 is the interface only by luck.  The link
+# is created only when omdrc_sndlink_capture names the card in /etc/rc.conf,
+# which is what turns the CD input on:
+#
+#	sysrc omdrc_sndlink_capture="ESI U24XL"
+#
+# See ESI-U24XL.md.
+: ${omdrc_cdin_in:="/dev/dsp.capture"}
+# Playback device, or a comma-separated preference list tried in order.
+#
+# Which one is right depends on something outside this daemon: whether the DRC
+# chain is up.  /dev/dsp.play is virtual_oss's client node, which BruteFIR
+# reads, and it exists ONLY while drc.sh has the chain running -- so a disc
+# played with DRC off has nowhere to go unless the DAC itself is in the list.
+# The default therefore prefers the loopback (corrected audio) and falls back
+# to the DAC (uncorrected, but playing), which is the same choice drc.sh makes
+# for MPD by switching it between its DRC-native and direct outputs.
+#
+# The choice is made once at startup and kept: the daemon's ring is laid out in
+# the width the chosen device negotiated.  drc.sh restarts this service when it
+# brings the chain up or takes it down, which is how the answer is re-taken.
+#
+# Set a single path to pin it -- "/dev/dsp.play" for a box that should stay
+# silent unless the chain is up, "/dev/dsp.dac" to always bypass DRC.
+: ${omdrc_cdin_out:="/dev/dsp.play,/dev/dsp.dac"}
+# Source width.  The U24 XL's capture endpoint is 24-bit S-LE and nothing else,
+# and with bitperfect=1 (which omdrc_sndlink sets on the capture card) there is
+# no format feeder to hide that behind — so ask for the device's own width.  The
+# output side then negotiates upward on its own and widens 24 -> 32 losslessly.
+# Getting this wrong is not subtle: the open fails outright.
+: ${omdrc_cdin_bits:="24"}
 # Lead in ms — drift margin, startup delay and transport lag, all at once.
 # See the calibration section in the README before changing it.
 : ${omdrc_cdin_lead:="2000"}
 # Digital silence on the wire before the output device is released.  Must stay
 # well clear of the 2 s Red Book inter-track pause.
 : ${omdrc_cdin_idle_after:="15000"}
+# The other half of that decision: the percentage of the nominal rate below
+# which the input counts as unclocked.  A stopped transport drops the carrier,
+# and an interface that slaves its clock to the carrier (the ESI U24XL does)
+# then dribbles a few hundred non-zero frames a second instead of 44100 —
+# which every other check reads as music, so the output stays held and the
+# trickle is audible as a bump each time the device buffer fills.  Measured
+# ~1% of rate against this 50% threshold, so there is nothing to tune; 0
+# disables the check.
+: ${omdrc_cdin_carrier_min:="50"}
 # The web panel reads this file for the CD input card's status and events.
 # Keep it in step with the [logs] section of omdrcctrl's commands.conf.
 : ${omdrc_cdin_logfile:="/tmp/omdrc-cdin.log"}
@@ -72,8 +116,10 @@ pidfile="${omdrc_cdin_pidfile}"
 command_args="-f -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrc-cdin \
     --in ${omdrc_cdin_in} \
     --out ${omdrc_cdin_out} \
+    --bits ${omdrc_cdin_bits} \
     --lead ${omdrc_cdin_lead} \
     --idle-after ${omdrc_cdin_idle_after} \
+    --carrier-min ${omdrc_cdin_carrier_min} \
     --stats ${omdrc_cdin_stats} \
     --log ${omdrc_cdin_logfile} \
     ${omdrc_cdin_flags}"

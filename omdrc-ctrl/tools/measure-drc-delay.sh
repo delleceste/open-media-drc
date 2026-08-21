@@ -17,13 +17,13 @@
 #                                                                         │
 #   (calibration interposer, because /dev/dsp0 is PLAY-ONLY and cannot    │
 #    be read back to observe BruteFIR's output)                           ▼
-#                            real DAC ◄─[virtual_oss #2]◄─ /dev/dsp.dac ◄─┘
+#                            real DAC ◄─[virtual_oss #2]◄─ /dev/dsp.tap ◄─┘
 #                                              │
-#                                  /dev/dsp.dac.loop  (recordable tap)
+#                                  /dev/dsp.tap.loop  (recordable tap)
 #
 # We play a short log-sweep train through MPD with BOTH the DRC output and the
 # "OMDRC Spectrum" fifo enabled, record the fifo tap (analyzer input) and the
-# dsp.dac.loop tap (post-BruteFIR output), and cross-correlate.  The lag is the
+# dsp.tap.loop tap (post-BruteFIR output), and cross-correlate.  The lag is the
 # delay the analyzer must apply.  virtual_oss #2 adds its own small buffer; run
 # `tap-overhead` once to measure it and pass it back via SUBTRACT_MS.
 #
@@ -53,6 +53,9 @@ TAP_S="${TAP_S:-50ms}"          # virtual_oss #2 buffer (small = less added late
 SUBTRACT_MS="${SUBTRACT_MS:-0}" # virtual_oss #2 self-latency to remove (see tap-overhead)
 FIFO="${FIFO:-/tmp/omdrc-spectrum.fifo}"
 FIFO_RATE="${FIFO_RATE:-48000}" # must match mpd.conf "OMDRC Spectrum" format rate
+# The real DAC, by role: /dev/dsp.dac is the symlink omdrc_sndlink keeps on the
+# right card (pcm unit numbers follow USB attach order), /dev/dsp0 without it.
+DAC_DEV="${DAC_DEV:-$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/omdrc-delay.XXXXXX")"
 MUSIC_DIR="$(grep -E '^[[:space:]]*music_directory' "$REPO/mpd/musicpd.conf" \
@@ -133,14 +136,14 @@ clean_chain() {   # kill any brutefir/virtual_oss and wait for ALL stale cuse no
     sleep 0.2
   done
   _sudo killall -KILL virtual_oss brutefir 2>/dev/null || true
-  # The cuse nodes (dsp.play/dsp.loop from a prior virtual_oss, dsp.dac*) must be
+  # The cuse nodes (dsp.play/dsp.loop from a prior virtual_oss, dsp.tap*) must be
   # GONE before we recreate them, or virtual_oss fails with "Could not create
   # CUSE DSP device" and leaves a stale dsp.loop that brutefir can't open.
   for _ in $(seq 1 40); do
-    [ -e /dev/dsp.play ] || [ -e /dev/dsp.loop ] || [ -e /dev/dsp.dac ] || [ -e /dev/dsp.dac.loop ] || break
+    [ -e /dev/dsp.play ] || [ -e /dev/dsp.loop ] || [ -e /dev/dsp.tap ] || [ -e /dev/dsp.tap.loop ] || break
     sleep 0.2
   done
-  for n in /dev/dsp.play /dev/dsp.loop /dev/dsp.dac /dev/dsp.dac.loop; do
+  for n in /dev/dsp.play /dev/dsp.loop /dev/dsp.tap /dev/dsp.tap.loop; do
     [ -e "$n" ] && die "stale cuse node $n won't clear (zombie virtual_oss holding it?)"
   done
 }
@@ -158,32 +161,35 @@ start_voss1() {   # MPD -> dsp.play -> dsp.loop  (mirror drc.sh exactly)
   die "virtual_oss #1 did not come up / stay up (dsp.play/dsp.loop)"
 }
 
-start_voss2() {   # BruteFIR -> dsp.dac -> real /dev/dsp0, tap on dsp.dac.loop
-  # /dev/dsp0 is PLAY-ONLY -> make it a playback master with -O + -R /dev/null
+start_voss2() {   # BruteFIR -> dsp.tap -> the real DAC, tap on dsp.tap.loop
+  # The interposer node is called dsp.tap, NOT dsp.dac: /dev/dsp.dac is the
+  # symlink omdrc_sndlink keeps on the real card, and a cuse node of that name
+  # would collide with it.
+  # The DAC is PLAY-ONLY -> make it a playback master with -O + -R /dev/null
   # (the man-page idiom for a no-capture physical device; -f would open duplex
   # and fail).  -d creates the virtual device BruteFIR plays into; -l a loopback
   # tap of it.  Format flags must precede the device-creating flags.
-  log "virtual_oss #2 (dsp.dac -> /dev/dsp0, tap dsp.dac.loop) @ ${RATE}Hz s=${TAP_S}"
+  log "virtual_oss #2 (dsp.tap -> ${DAC_DEV}, tap dsp.tap.loop) @ ${RATE}Hz s=${TAP_S}"
   _sudo virtual_oss -D "$VOSS2_PID" -S -r "$RATE" -b 32 -c 2 -C 2 -s "$TAP_S" \
-        -R /dev/null -O /dev/dsp0 -d dsp.dac -l dsp.dac.loop &
-  # require the voss2 PROCESS alive (matches "dsp.dac" in its argv), not just a
+        -R /dev/null -O "$DAC_DEV" -d dsp.tap -l dsp.tap.loop &
+  # require the voss2 PROCESS alive (matches "dsp.tap" in its argv), not just a
   # possibly-stale node, so a CUSE-create failure is caught instead of masked.
   for _ in $(seq 1 50); do
-    pgrep -f "dsp.dac" >/dev/null 2>&1 && [ -e /dev/dsp.dac.loop ] && [ -e /dev/dsp.dac ] \
-      && { sleep 0.4; pgrep -f "dsp.dac" >/dev/null 2>&1 && return 0; }
+    pgrep -f "dsp.tap" >/dev/null 2>&1 && [ -e /dev/dsp.tap.loop ] && [ -e /dev/dsp.tap ] \
+      && { sleep 0.4; pgrep -f "dsp.tap" >/dev/null 2>&1 && return 0; }
     sleep 0.1
   done
-  die "virtual_oss #2 did not come up / stay up (CUSE-create failed? stale virtual_oss holding dsp.dac?)"
+  die "virtual_oss #2 did not come up / stay up (CUSE-create failed? stale virtual_oss holding dsp.tap?)"
 }
 
-write_bf_conf() { # per-rate conf, but output -> /dev/dsp.dac and input -> /dev/dsp.loop
+write_bf_conf() { # per-rate conf, but output -> /dev/dsp.tap and input -> /dev/dsp.loop
   SRC="$REPO/configs/$GEOMETRY/brutefir-${RATE}${VARIANT}.conf"
   [ -f "$SRC" ] || die "no brutefir conf: $SRC"
   perl -0pe '
     s/input\s+"left_in",\s*"right_in"\s*\{\s*\}/input "left_in", "right_in" {\n  device: "oss" { device: "\/dev\/dsp.loop"; };\n  sample: "S32_LE";\n  channels: 2\/0,1;\n}/s;
-    s/output\s+"left_out",\s*"right_out"\s*\{\s*\}/output "left_out", "right_out" {\n  device: "oss" { device: "\/dev\/dsp.dac"; };\n  sample: "S32_LE";\n  channels: 2\/0,1;\n}/s;
+    s/output\s+"left_out",\s*"right_out"\s*\{\s*\}/output "left_out", "right_out" {\n  device: "oss" { device: "\/dev\/dsp.tap"; };\n  sample: "S32_LE";\n  channels: 2\/0,1;\n}/s;
   ' "$SRC" > "$BF_CONF"
-  grep -q '/dev/dsp.dac' "$BF_CONF" || die "failed to inject dsp.dac output into $BF_CONF"
+  grep -q '/dev/dsp.tap' "$BF_CONF" || die "failed to inject dsp.tap output into $BF_CONF"
   log "brutefir cal conf -> $BF_CONF"
 }
 
@@ -240,7 +246,7 @@ READY="$WORK/ready"; rm -f "$READY"
 log "capturing fifo tap + DAC tap on one clock (DUR=${DUR}s)…"
 python3 "$BASE/tools/capture-taps.py" \
     --fifo "$FIFO" --fifo-rate "$FIFO_RATE" \
-    --tap /dev/dsp.dac.loop --tap-rate "$RATE" \
+    --tap /dev/dsp.tap.loop --tap-rate "$RATE" \
     --fmt s32le --dur "$DUR" --subtract-ms "$SUBTRACT_MS" \
     --ready-file "$READY" > "$WORK/result.txt" 2>&1 &
 CAP_PID=$!; READER_PIDS+=($CAP_PID)

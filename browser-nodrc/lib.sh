@@ -1,7 +1,7 @@
 #!/bin/sh
 # Shared DRC-bypass helpers for the *-nodrc browser launchers — sourced, not run.
 #
-# Why this exists: BruteFIR opens the DAC (/dev/dsp0) single-open while DRC is on,
+# Why this exists: BruteFIR opens the DAC (/dev/dsp.dac) single-open while DRC is on,
 # so a web browser (Firefox/Chrome/Chromium) cannot open the device and has no
 # sound — or refuses to play.  These launchers turn DRC *off* (freeing the DAC for
 # direct output), run the browser in the foreground, and restore the exact DRC
@@ -23,7 +23,11 @@ DRC="$HERE/../drc.sh"
 POWER_FILE="$HERE/../last_power"   # "on" / "off"  (matches drc.sh POWER_FILE)
 STATE_FILE="$HERE/../last_arg"     # remembered rate/variant (drc.sh STATE_FILE)
 
-DAC_DEV=/dev/dsp0                          # OSS DAC node the browser opens directly
+# /dev/dsp.dac is the DAC by role: FreeBSD pcm unit numbers follow attach
+# order, so /dev/dsp0 is only the DAC by luck on a multi-card box.  The
+# omdrc_sndlink service keeps the link pointed at the right one; without it
+# (single-DAC box, or Linux) fall back to unit 0.
+DAC_DEV=$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)
 DAC_WARMUP_SECS="${DAC_WARMUP_SECS:-2}"    # final silent warm-up hold before launch
 DAC_PRIME_CYCLES="${DAC_PRIME_CYCLES:-2}"  # open/close bounces before the warm-up
 DAC_PRIME_HOLD="${DAC_PRIME_HOLD:-0.8}"    # seconds to hold the DAC open per bounce
@@ -50,7 +54,7 @@ _dac_hold_open() {
 # "prime"), then one final warm hold so the clock is locked when the browser
 # opens; the browser is then the warm Nth open the DAC actually plays.
 #
-# Rate caveat: dd opens /dev/dsp0 at the OSS default rate, so the prime warms
+# Rate caveat: dd opens the DAC at the OSS default rate, so the prime warms
 # whichever crystal that rate belongs to.  If the browser then plays content from
 # the *other* crystal family, the device must still cross crystals on the
 # browser's own open — which a generic launcher cannot prime, as it can't know

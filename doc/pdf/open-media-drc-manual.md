@@ -67,6 +67,7 @@ The design principles that shape everything in the repository:
 | `mpd/` | MPD configuration templates (`mpd.conf.in` Linux, `musicpd.conf.in` FreeBSD) |
 | `etc/` | Service glue: `systemd/`, `modules-load.d/` (Linux); `rc.d/`, `devd/` (FreeBSD) |
 | `omdrc-ctrl/` | Web control panel (Flask) |
+| `cdin/` | `omdrc-cdin`, the CD / S-PDIF capture bridge (FreeBSD only) |
 | `video/` | mpv playback launchers + phone web remote |
 | `browser-nodrc/` | Browser launchers that temporarily bypass DRC |
 | `scripts/` | Filter conversion, headroom, verification helpers |
@@ -108,6 +109,17 @@ MPD must have the **soxr** resampler and the ALSA (Linux) / OSS (FreeBSD)
 output plugins enabled --- both stock packages do. MPD is configured with
 three outputs (section \ref{sec:mpd-outputs}): the direct DAC output and two
 DRC loopback outputs.
+
+## omdrc-cdin --- the CD / S-PDIF capture bridge (FreeBSD)
+
+The second source, and the only live one: a CD transport's S/PDIF output,
+captured through an ESI U24 XL and written into the same loopback MPD uses.
+It is a `memcpy` through a ring whose *lead* absorbs the permanent few-ppm
+difference between the disc's crystal and the DAC's --- no resampler, so the
+bit-perfect claim survives the CD path too. It holds the loopback only while
+audio is actually on the wire, so leaving it running costs MPD and mpv
+nothing. Full treatment, including the ESI configuration it depends on, in
+chapter \ref{sec:cdin}.
 
 ## The loopback: snd-aloop (Linux) / virtual_oss (FreeBSD)
 
@@ -377,7 +389,7 @@ Hotplug events only cover the "switched on later" case. On FreeBSD, devd
 does not reliably receive an attach that happened before it opened
 `/dev/devctl`, so a DAC already on at boot would never produce an actionable
 event. Therefore `drc_usb_audio`'s start does a *level* check --- sleep the
-settle delay, probe for `/dev/dsp0`, act only if present --- while devd
+settle delay, probe for `/dev/dsp.dac`, act only if present --- while devd
 provides the *edge* trigger for later attaches. A tmpfs marker file
 (`/var/run/drc_usb_audio.active`) makes repeated triggers idempotent.
 
@@ -928,12 +940,17 @@ feedback-less "Run command" plugin. Everything is driven by a plain INI file,
   (qobuzconnect2mpd vs upmpdcli --- never both) driven per-OS
   (`systemctl --user` on Linux, `sudo service ... onestart/onestop` on
   FreeBSD).
+* **CD input panel** (FreeBSD) --- what `omdrc-cdin` is doing, read entirely
+  from its log: an availability LED, the state in one line, the newest failure
+  in another, the `[stats]` line as chips, and a Start/Stop button. It is the
+  size of its news --- one line while no disc is playing, full size while one
+  is (chapter \ref{sec:cdin}).
 * **BruteFIR CPU** --- per-process CPU for every brutefir instance (matched by
   `argv[0]`, because on Linux brutefir renames its `comm`).
 * **Audio Devices** --- `/dev/sndstat` on FreeBSD with `fmt 0x...` bitfields
   decoded to `AFMT_*`/`PCM_CAP_*` labels; collapsible.
-* **Advanced** (FreeBSD only) --- `sysctl dev.pcm.0` and
-  `sysctl hw.usb.uaudio` diagnostics.
+* **Advanced** (FreeBSD only) --- `sysctl dev.pcm.<DAC unit>` (resolved from
+  `/dev/dsp.dac`) and `sysctl hw.usb.uaudio` diagnostics.
 * **Top CPU** --- processes above a configurable threshold.
 * **Debug card** --- the glitch-detection switch (section
   \ref{sec:glitch}).
@@ -992,7 +1009,7 @@ interface.
 
 Both source `lib/drc-audio.sh`, which ensures the chain is in **resamp
 mode** before playing --- necessary because the direct DAC is bit-perfect
-(`dev.pcm.0.bitperfect=1`): a 48 kHz movie on a higher-clocked DAC would
+(`bitperfect=1` on the DAC's unit): a 48 kHz movie on a higher-clocked DAC would
 play ~2x fast. With DRC up, mpv plays to `oss//dev/dsp.play` and delays the
 **video** by `DRC_VIDEO_DELAY` (default **0.67 s**) to match the audio-path
 latency; subtitles ride with the picture automatically.
@@ -1075,8 +1092,8 @@ Two levels:
    `/dev/sndstat` must show the play channel `BITPERFECT` with the feeder
    graph exactly `{userland} -> feeder_root -> {hardware}` --- any
    `feeder_rate`/`feeder_volume`/format node means the kernel is altering
-   bytes. Preconditions: `dev.pcm.0.bitperfect=1`,
-   `dev.pcm.0.play.vchans=0`.
+   bytes. Preconditions: `bitperfect=1` and `play.vchans=0` on the DAC's unit
+   --- which is what `omdrc_sndlink_dac_sysctls` asserts on every attach.
 2. **Empirical wire tap** (gold standard): play a deterministic test signal
    (near-silent ~-90 dBFS per-sample counter in the low 16 bits, distinct
    L/R --- maximally sensitive to truncation, dither, volume, resampling,
@@ -1119,6 +1136,628 @@ byte-identical to the reference raw --- MPD cannot play headerless raw.
 
 \newpage
 
+# CD input: S/PDIF capture into the DRC chain {#sec:cdin}
+
+A CD transport is the second source the chain accepts, and the only one that
+is not a file: it arrives as a live S/PDIF signal, clocked by the disc, on a
+USB capture interface. `omdrc-cdin` (FreeBSD only, `cdin/`) bridges it into
+the same `virtual_oss` entry point MPD uses, so a disc gets exactly the same
+room correction as everything else.
+
+![The CD path. Both ends of the bridge block on their own device, so the ring fill between them is the drift signal; there is no resampler anywhere in it.](build/chain-cdin.pdf){width=98%}
+
+It takes the seat `mpv` already takes for video (`video/lib/drc-audio.sh`):
+a non-MPD writer into the loopback that BruteFIR reads. On Linux the
+equivalent job is done by `alsaloop(1)`, which is why this is FreeBSD-only
+code.
+
+## Why a bridge is needed at all
+
+Capture is slaved to the CD's crystal, the DAC runs on its own, and the two
+differ by a few ppm **forever**. Samples arrive at `f_cd` and must leave at
+`f_dac`. FreeBSD ships no `alsaloop` equivalent, which is what made this look
+blocked --- but the missing piece was a tool, not a kernel facility: a
+blocking `read()` runs at the CD's clock, a blocking `write()` runs at the
+DAC's, so **the ring fill between them is the drift signal**. No OSS clock
+ioctl is needed to measure it.
+
+**There is no resampler.** The data path is a `memcpy`, so what reaches
+BruteFIR is bit-identical to what the transport sent --- and that is
+verifiable with `scripts/verify-bitperfect.sh`, which would be meaningless if
+a resampler sat in the path. Drift is absorbed by the *lead* instead.
+
+### The lead is the only number that matters
+
+The lead --- how much audio is buffered ahead of the output --- is
+simultaneously three things:
+
+* the **drift margin**: how long before the buffer runs out;
+* the **startup delay**: you cannot pre-fill a lead you have not waited for;
+* the **transport lag**: every Play/Stop/Skip is heard this much later.
+
+They cannot be tuned separately. The upper bound is arithmetic:
+`time-to-splice = lead / drift`, so at a pessimistic **50 ppm** a **2000 ms**
+lead covers about **11 hours** of continuous gapless audio. A disc is at most
+80 minutes, therefore **drift cannot cause a discontinuity inside a disc**.
+
+The *lower* bound is not set by drift at all. It is set by transport seeks and
+USB stalls: some players briefly **drop carrier** across a pregap or index
+boundary, which is a sub-second input stall that the lead has to absorb.
+That, not drift, is why the default is 2000 ms rather than the ~50 ms drift
+alone would need. Below ~250 ms the daemon warns that nothing is left to
+absorb a seek.
+
+Calibrate it on the real transport with a full disc:
+
+```
+omdrc-cdin --in /dev/dsp.capture --out /dev/dsp.play --lead 2000 -d -s 10 \
+    -l /tmp/cdin.log
+```
+
+`starves` must stay 0 --- each one is an audible dropout. After about five
+minutes the `drift` field reports the measured ppm and the projected headroom,
+which replaces the 50 ppm assumption with the actual hardware. Step `--lead`
+down (1500, 1000, 750...) until the first value that produces **any** starve;
+that is below the floor the transport imposes, so go back up one step and keep
+a margin. Record the value: it becomes `omdrc_cdin_lead`.
+
+## The three states, and the two very different tenancies
+
+![The daemon's state machine. The output device is held only in PLAYING; the capture device is held for the whole session.](build/cdin-states.pdf){width=78%}
+
+The daemon is meant to be up all the time --- CD player on or off, interface
+plugged in or not --- and that is only safe because of what it does with the
+*output* device:
+
+| State | On the wire | The daemon | `/dev/dsp.play` |
+|---|---|---|---|
+| `NO_CARRIER` | no frames at all | retries the capture device | not held |
+| `IDLE` | frames, all exact zeros | counts the silence | **released** |
+| `PLAYING` | audio | ring -> output | held |
+
+The **capture** device is held for the life of a session: it is the
+interface's own node, nobody else wants it, and it is the only thing that can
+tell us whether a carrier exists. The **output** device is `virtual_oss`'s
+client node, and it is taken only for the duration of actual music.
+
+That asymmetry is not politeness. `drc.sh` restarts `virtual_oss` on every
+rate change, and an open cuse client handle at that moment is what wedges the
+teardown *permanently*: `cuse_server_free()` spins uninterruptibly until every
+client handle is gone, SIGKILL does not touch it, and only a reboot recovers
+the machine (section \ref{sec:voss-patches}). A daemon holding `/dev/dsp.play`
+around the clock would put a fresh instance of that hazard under every single
+rate change. For the remaining exposure --- a rate change *during* a disc ---
+`drc.sh` asks first:
+
+```
+service omdrc_cdin release      # or: pkill -HUP -x omdrc-cdin
+```
+
+`SIGHUP` releases the output immediately and refuses to re-acquire it for
+about six seconds, which covers the stop/restart. Without that hold-off a
+spinning disc would grab the device again on the very next period. Both
+`drc.sh off` and its service-teardown `stop` path request the release before
+touching `virtual_oss`.
+
+**Choosing `--idle-after`** (default 15000 ms) has one failure mode at each
+end and a wide safe band between them: too short and Red Book's 2 s
+inter-track pause releases the device mid-disc, so every track change costs a
+lead to resume; too long and a stopped player keeps holding the chain.
+`--idle-after 0` disables the gate entirely, which is occasionally useful when
+measuring. Note this is silence *on the wire*: a player that drops carrier
+instead of sending zeros never reaches the gate at all --- the read fails and
+it lands in `NO_CARRIER`, which is the state that reopens the device.
+
+**Resuming does not lose the first note.** The ring keeps rolling through the
+silence, so an episode begins by *trimming* it to one lead rather than
+clearing it and waiting for a fresh pre-fill. The music still emerges one lead
+later, but the period that carried the first sample is still in the buffer.
+
+## What the transport does to the stream
+
+A CD player's S/PDIF output is **always 44.1 kHz**. Transport actions change
+*what* is sent, never *how fast* --- so there is no re-lock, ever:
+
+| Action | On the wire | Daemon behaviour |
+|---|---|---|
+| **Pause** | carrier alive, digital silence (most players) | plays the silence through; lead unchanged |
+| **Skip track** | brief mute (0.1--1 s), then audio | a short silence, heard one lead later |
+| **Fast fwd / rewind** | chopped scan snippets or mute, rate unchanged | ordinary audio or ordinary silence |
+| **Stop / tray / power** | carrier drops | `read()` stalls or errors, session ends, device reopened |
+
+Only the carrier drop matters, and only because the wall clock keeps running
+while no frames arrive: the lead drains by exactly the dropout's length and
+never recovers.
+
+### Every row of that table is testable without a CD player
+
+Point `--in` at a **directory** and its `*.wav` files become the tracks of a
+disc, played in name order; a single file is a one-track disc. Between tracks
+the rig emits `--gap` milliseconds of exact digital silence (default 2000, Red
+Book's inter-track pause) --- which is what the silence gate looks for, so a
+`--gap` longer than `--idle-after` exercises the release/re-acquire cycle with
+no hardware at all. `--transport` then scripts the buttons as `AT:EVENT` pairs,
+`AT` being seconds into the stream:
+
+```
+omdrc-cdin -i DISC -o /dev/dsp.dac -d -s 5 \
+    --transport "20:skip,35:pause=4,55:dropout=800,70:seek=+30,105:stop"
+```
+
+`dropout=N` is the important one --- it drops the carrier for N milliseconds
+--- and `--in-ppm` is its counterpart for the *clock*: it offsets the
+simulated source's pace, which makes the design's central claim testable in
+seconds instead of the full day real hardware would take. Both failure modes
+behave as the arithmetic predicts and are worth recognising in the stats:
+
+* **lead exhausted** --- `starves` increments, then `in` and `out` converge to
+  the *same* wrong rate. That equality is the backpressure signature: with no
+  buffer left, the DAC is paced by the source instead of by its own clock;
+* **ring saturated** --- `lead` pins at the ring capacity and `drops` climbs at
+  the drift rate; audio is being discarded, one discontinuity per drop.
+
+The rig emulates the CD player's clock, not the disk's seek time, so the disc
+is prefetched on its own thread (4 s deep) and the paced read is served from
+RAM --- with the read inline, one 3 s stall on an external USB drive drained a
+2 s lead and starved playback, which is a property of the rig and not of the
+design under test. If the medium genuinely cannot sustain realtime the daemon
+says so, and a schedule that slips more than 100 ms is shifted forward rather
+than firing every overdue deadline at once (hardware cannot replay frames it
+missed, and a burst would permanently inflate the lead). Both are counted and
+surface as `rig stalls N slips N`, shown only when non-zero.
+
+## Reading the stats line
+
+```
+[stats] lead 1635 ms (min 1625, max 1649)  drift +38.7 ppm (+/-387.0),
+        ring fills in 46 h  in 44100.206 Hz  out 44088.817 Hz
+        frames 4054016/3980288  drops 0 B  starves 0  silence 0%  up 90 s
+```
+
+* **`lead` is the ring only.** It settles *below* `--lead`, because the
+  pre-fill hands the first few hundred ms straight to the output device's own
+  buffer. End-to-end latency is this figure plus that buffer, plus
+  `virtual_oss`'s 200 ms and BruteFIR's filter group delay; the startup delay
+  actually waited is `--lead`.
+* **`drift` is measured from the change in `lead`**, not from the frame
+  counters: those carry each device's constant buffer offset, which at ppm
+  scale would swamp the figure and which cancels in a difference. The `+/-` is
+  the period quantisation over elapsed time --- while it exceeds the estimate,
+  the estimate means nothing. It needs minutes and tightens for hours.
+* **`in` / `out` are measured from the instant playback began**, and the
+  window restarts at every discontinuity, so a dropout does not leave the
+  cumulative average reading low for the rest of the session.
+* **`starves`** counts events, not periods: one continuous starvation is 1.
+* **`drift ref dropped (lead jumped)`** means the estimate was thrown away and
+  restarted because the lead moved for a reason that is not the clocks. A
+  3.3 s jump inside a 60 s window once read as `+54361 ppm`, which is a stall
+  wearing a drift figure's clothes.
+
+## Running it as a service
+
+```
+# /etc/rc.conf
+omdrc_cdin_enable="YES"
+omdrc_sndlink_capture="ESI U24XL"   # names the ESI; that is what creates
+                                    # /dev/dsp.capture, which cdin then uses
+```
+
+| rc.conf variable | Default | Meaning |
+|---|---|---|
+| `omdrc_cdin_in` | `/dev/dsp.capture` | capture device (or a WAV file/directory, for the rig); the link comes from `omdrc_sndlink_capture` |
+| `omdrc_cdin_out` | `/dev/dsp.play` | playback device; `/dev/dsp.dac` writes the DAC directly, bypassing BruteFIR |
+| `omdrc_cdin_bits` | `24` | source width --- the U24 XL's capture endpoint is 24-bit and nothing else (see below) |
+| `omdrc_cdin_lead` | `2000` | lead in ms; drift margin, startup delay and transport lag at once |
+| `omdrc_cdin_idle_after` | `15000` | digital silence before the output device is released; `0` disables the gate |
+| `omdrc_cdin_logfile` | `/tmp/omdrc-cdin.log` | **must match** `log_file` in `commands.conf`'s `[cdin]` --- this file *is* the web card |
+| `omdrc_cdin_stats` | `10` | seconds between `[stats]` lines |
+| `omdrc_cdin_user` | `AUDIO_USER` | run user; the same one that owns BruteFIR and MPD, because they take turns on the same devices |
+| `omdrc_cdin_flags` | | anything else: `--out-bits`, `--period`, `--retry`, `-v` |
+
+The rc script is installed by the CMake superproject
+(`cdin/CMakeLists.txt`, a subproject of the top-level build). It uses
+`daemon(8)`, drops privileges via the standard `rc.subr` `${name}_user`, and
+adds one non-standard verb, `release` (the `SIGHUP` above). Started
+unprivileged with `service omdrc_cdin onestart` it clears `${name}_user` --- so
+`rc.subr` does not try to `su` to it --- and uses a pidfile under `/tmp`.
+
+Log lines are a **contract**, not just prose: the web panel parses them, so
+`state <name>: <why>` and
+`<device> <path>: <available|unavailable|acquired|released>` keep their shape.
+Availability and holding are separate axes: `unavailable` means nothing can
+play and is the red light, while `acquired`/`released` is the ordinary rhythm
+of a daemon doing its job and is never a fault.
+
+## The web panel card
+
+`omdrc-ctrl` (section \ref{sec:omdrcctrl}) shows a **CD input** card driven
+entirely by that log, under the Renderer card. It is configured by the
+`[cdin]` section of `commands.conf`, which configures nothing about the daemon
+itself --- only where to read it from, plus whether the buttons exist:
+
+```ini
+[cdin]
+enabled  = yes
+log_file = /tmp/omdrc-cdin.log     # must match omdrc_cdin_logfile
+process  = omdrc-cdin              # pgrep -x: tells "stopped" from "broken"
+service  = omdrc_cdin              # what Start/Stop runs
+control  = yes                     # offer the Start/Stop button at all
+refresh  = 5
+max_events = 20
+```
+
+**The card is the size of its news**, which for a bridge with no disc in the
+player is one line:
+
+| Daemon state | The card |
+|---|---|
+| `state playing` | full size, opened by itself --- the only state with anything to watch |
+| idle / no carrier | the status line and an expand chevron; still polling, so a disc reopens it |
+| stopped | the status line and a **Start** button |
+
+Expanding or collapsing by hand sticks until the daemon's own state changes.
+Expanded, the card adds both device paths and their tenancy, the `[stats]`
+line as chips (`buffer 1962 ms (min 1955)`, `underruns 0`, `dropped 0 B`,
+`drift +1.2 ppm, fills in 46 h`, `silence`, `up`), a sentence for anything that
+has already cost something audible, the raw stats line, and a scrolling event
+list. Four rules decide what goes where:
+
+* **the LED follows device availability only** --- red when an end cannot be
+  opened, because that is the question "can a disc play right now?". A
+  released output device is the daemon working correctly and never colours
+  anything;
+* **failures are kept, health is replaced.** Every error stays in the list, in
+  red, in chronological order, even after the condition clears, and the newest
+  one gets its own red line above the fold. The healthy status line is
+  replaced rather than accumulated. A live status line can never say "the
+  output was missing for ten minutes this morning", and that is exactly the
+  thing worth saying;
+* **`starves` is the number to surface.** The lead is a margin; an underrun is
+  that margin having run out --- a dropout that already happened and that
+  nothing else in the chain will ever mention again;
+* **a daemon that is not running is idle, not broken**, however alarming the
+  tail of its log is. The log outlives the process, and nothing is unavailable
+  when nothing is trying to open it. With no daemon and no log at all, the
+  card hides itself.
+
+Three buttons: refresh, **Log** (opens the whole `omdrc-cdin` log in the Logs
+card), and **Stop**/**Start**, which runs the rc service and asks for
+confirmation before stopping. The exit status of `service ... onestart` is not
+trusted --- it forks a `daemon(8)` and returns before the daemon can die on a
+missing device --- so the process is polled with `pgrep -x` until it agrees.
+On FreeBSD the button needs a `sudoers` grant; without one, set
+`control = no` rather than leaving a button that can only fail:
+
+```
+omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service omdrc_cdin onestart, \
+    /usr/sbin/service omdrc_cdin onestop
+```
+
+## The ESI U24 XL: what has to be configured, and three traps
+
+The capture interface is an ESI U24 XL (USB Audio Class 1.0, USB 2.0 Full
+Speed, 32/44.1/48 kHz, 24-bit maximum). Two things the vendor documentation
+settles, so they are no longer assumptions:
+
+* **it slaves to the incoming S/PDIF automatically** --- ESI KB00307EN: when
+  the source is clock master "the U24 XL will receive clock from the source
+  and automatically will be slave", and there is no manual clock switch. The
+  behaviour this design needs is the only behaviour it has;
+* **the sample rate is not auto-detected.** Bit depth and rate must be set to
+  match the incoming signal. Here that is `SNDCTL_DSP_SPEED` = 44100, which
+  the daemon sets --- but it means a non-44.1 source would be captured at the
+  wrong rate rather than refused.
+
+It is class compliant, so `uaudio(4)` drives it natively and there is no
+vendor driver and no Linux quirk to port (ALSA reaches its input selector
+through the same generic UAC1 parsing FreeBSD has). **Do not update the
+interface firmware:** a Linux report has S/PDIF capture working on the
+original firmware and becoming "completely distorted" after an upgrade.
+
+Everything below was observed on FreeBSD 15.1-RELEASE-p2 and is documented at
+length in `cdin/ESI-U24XL.md`.
+
+### Unit numbers: nothing may depend on them
+
+FreeBSD hands out `pcm` units in attach order, USB attach order is port order,
+and on this box the U24 XL sits on a lower-numbered root-hub port than the DAC,
+so it wins that race at every boot. Whichever card wins, the chain used to
+address the DAC by unit and nothing else --- BruteFIR wrote `/dev/dsp0`, MPD's
+direct output was `/dev/dsp0`, `drc.sh` read the clock from
+`dev.pcm.0.feedback_rate` --- so DRC would play into the S/PDIF interface and
+`cdin` would capture from the DAC.
+
+**There is no declarative way to pin the number**, which is worth knowing
+before reaching for one. Unit wiring hints (`hint.pcm.1.at="uaudio0"`) rely on
+`BUS_HINT_DEVICE_UNIT`, which only `acpi(4)`, `pci(4)` and `isa(4)` implement
+--- `uaudio(4)` does not, so the hint is silently ignored, and worse,
+`devclass_alloc_unit()` *skips* any unit carrying an `at` hint when numbering
+an unwired device, so hinting `pcm0` would take unit 0 away from the DAC as
+well. `hw.snd.default_unit` only selects among the units that already exist; it
+does not control enumeration. And `devd` is a userland consumer of events the
+kernel has already acted on: by the time the ATTACH notification arrives the
+unit is allocated and `/dev/dspN` exists, and it has no equivalent of udev's
+`NAME=`/`SYMLINK=`.
+
+So stop trying to fix the number and stop using it. `devfs` accepts symlinks
+--- that is exactly how `devfs.conf`'s `link` directive works, a plain `ln -fs`
+inside `/dev` run by `/etc/rc.d/devfs` --- and the `omdrc_sndlink` service
+maintains two of them by **role**:
+
+| link | is | created |
+|---|---|---|
+| `/dev/dsp.dac`, `/dev/mixer.dac` | the DAC everything plays to | always |
+| `/dev/dsp.capture`, `/dev/mixer.capture` | the CD/S-PDIF input | only when a capture card is named |
+
+Everything opens the DAC by name: BruteFIR's output device, MPD's `OKTO-DAC`
+output, `cdin --out`, the mpv launchers, `verify-bitperfect.sh`. A box with one
+sound card needs no configuration for this to be right, and a box with two
+stops caring which one enumerated first.
+
+```
+sysrc omdrc_sndlink_enable=YES
+sysrc omdrc_sndlink_capture="ESI U24XL"   # only if you use the CD input
+service omdrc_sndlink status              # prints the roles, exits 1 if unfilled
+```
+
+**Roles are decided by identity, never by number.** The DAC is not simply "the
+card that is not the capture card": a plain desktop has onboard HDA on `pcm0`
+and the USB DAC on `pcm1`, and capability cannot separate them either --- an
+OKTO DAC8 reports `(play/rec)` exactly like a capture interface does
+(`dev.pcm.N.mode` is a bitmask, `PLAY 0x02 | REC 0x04`, and it reads 7). So an
+explicit match always wins, given either as a USB id or as a substring of the
+description `/dev/sndstat` prints:
+
+```
+sysrc omdrc_sndlink_dac="0x152a:0x88c5"          # vendor:product
+sysrc omdrc_sndlink_dac="0x152a:0x88c5:000483"   # ...:serial, for two identical DACs
+sysrc omdrc_sndlink_dac="OKTO RESEARCH"          # or just the name
+```
+
+With no match configured the DAC is the lowest-numbered playback-capable USB
+card, falling back to the lowest-numbered playback-capable card of any kind.
+The ids come from the card's USB parent, which the service reaches through
+`dev.pcm.N.%parent` -> `dev.uaudio.N.%pnpinfo`.
+
+**Two triggers, one code path.** `devd` starts late --- its own rc.d script
+`REQUIRE`s `netif ldconfig` --- so it never sees the cards that attached during
+boot; the rc.d service does that pass, at rc position 41, `BEFORE: devd musicpd
+brutefir_drc drc_usb_audio`. Everything after boot comes from the devd rule in
+`etc/devd/omdrc-sndlink.conf`, which fires on the **pcm** attach rather than the
+USB one:
+
+```
+attach 100 {
+	device-name "pcm[0-9]+";
+	action "/usr/sbin/service omdrc_sndlink update";
+};
+```
+
+By the time the kernel announces `+pcm1 at ...` (`devaddq()`,
+`sys/kern/kern_devctl.c`) the unit is allocated and `/dev/dsp1` exists, so one
+pass reads the card's identity and links it with nothing to poll for. Matching
+the USB device instead --- `system USB`, `subsystem DEVICE`, `type ATTACH` with
+`vendor`/`product` --- fires *before* its `pcm` child exists and would need a
+retry loop to find it. `update` is a full rescan, so the same rule covers both
+roles, the detach case and a card that moved.
+
+**The one thing a symlink cannot cover is a sysctl OID.** `dev.pcm.<unit>.*` is
+keyed by the number we are trying to forget, and `drc.sh` reads the DAC's clock
+from it. That is not a blocker, it is two lines: the unit is read back off the
+link.
+
+```sh
+t=$(readlink /dev/dsp.dac)                     # -> "dsp0"
+sysctl -n "dev.pcm.${t#dsp}.feedback_rate"
+```
+
+`drc.sh` has this as `dac_unit()`, the web panel as `_dac_unit()`, and
+`glitch-usbtap.sh` uses it to find the DAC's `uaudio` parent to tap. Everything
+that does *not* need the number uses `dac_dev()`, which is `/dev/dsp.dac` when
+the link exists and `/dev/dsp0` when it does not --- so a single-DAC box that
+never enabled the service, and Linux, where the chain is ALSA, keep working
+unchanged.
+
+The per-card `pcm` settings ride with the service, keyed by **role**:
+
+```
+omdrc_sndlink_dac_sysctls="bitperfect=1 play.vchans=0"
+omdrc_sndlink_capture_sysctls="bitperfect=1 rec.vchans=0"
+```
+
+`/etc/sysctl.conf` is the wrong home for them for three independent reasons:
+`dev.pcm.<unit>.*` is keyed by the one thing that is not stable here;
+`/etc/rc.d/sysctl` runs at rc position 3, long before anything knows which card
+is which; and a re-attach re-creates the whole `dev.pcm.<unit>.*` tree from
+driver defaults, discarding anything applied earlier. That last point is why
+these are applied from the devd hook and not only at boot: unplug the DAC and
+plug it back in, and `bitperfect` is back to `1` before BruteFIR reopens it.
+Global `hw.snd.*` and `hw.usb.uaudio.*` tunables are not unit-keyed and survive
+a re-attach, so they stay in `/etc/sysctl.conf`.
+
+Hotplug is now covered rather than refused, and nothing is ever replugged to
+achieve it --- the previous design detached the capture card and USB-reset both
+so the kernel would renumber them in the wanted order, which cost the capture
+card its mixer state at every boot and could not be done at all while the chain
+was playing.
+
+### Trap 1: the S/PDIF input is called `pcm2`, and must be selected
+
+The card has two inputs and only one is live at a time. Which one is a
+**mixer** setting, not a `cdin` setting, and on a fresh boot the card comes up
+on the *analog RCA* input --- so `cdin` records silence from a perfectly
+healthy CD transport until the recording source is switched:
+
+```
+mixer -f /dev/mixer.capture pcm2.recsrc=set   # mixer.capture pairs with dsp.capture
+mixer -f /dev/mixer.capture -s                # print just the active source
+```
+
+Only devices flagged `rec` can be a recording source; on this card those are
+`line` and `pcm2`, which are the two positions of the card's single USB
+selector unit (`sysctl dev.pcm.<unit>.mixer.selector_0`): `line` = position 1 =
+analog RCA, `pcm2` = position 2 = digital S/PDIF. They are mutually exclusive,
+so `set`, `add` and `toggle` all end with exactly one source. The name is not
+arbitrary: `uaudio` maps `UATE_SPDIF` to `SOUND_MIXER_ALTPCM`
+(`uaudio_tt_to_feature[]`), and index 10 of `SOUND_DEVICE_NAMES` is `pcm2`.
+The `dig1..3` names are only fallbacks for colliding selector pins, and the
+pre-14 syntax `mixer =rec dig1` no longer exists.
+
+**The setting does not survive a reboot**, and a replug resets it too ---
+`/etc/rc.d/mixer` only saves state for `mixer0` unless `mixer_enable="YES"` is
+set, and the U24 XL must be attached at boot for that to see it. So
+`omdrc_sndlink` asserts it, on every attach, right after it links the card:
+
+```
+omdrc_sndlink_capture_recsrc="auto"   # the default
+```
+
+`auto` prefers the digital input *by inspection* rather than by hardcoding this
+card: `mixer(8)` tags every device that can be a recording source `rec` and the
+active one `src` (`printdev()`, `usr.sbin/mixer/mixer.c`), so the service looks
+for `pcm2`, then `dig1..3`, among the sources the card actually offers, and
+leaves a card that has none of them alone. Name a device (`line`) to force the
+analog input instead, or `none` to keep hands off entirely. The command is
+idempotent and costs one USB control transfer.
+
+### Trap 2: `pcm2 = 0.00:0.00` is not a muted capture gain
+
+`mixer -f /dev/mixer.capture` shows `pcm2` at `0.00` next to three devices at `0.75`,
+which reads as a zeroed record level. It is not: there is no gain to raise and
+raising it does nothing. Sweeping it moves no hardware node, while sweeping
+`line` moves them immediately, and there is no software fallback either
+(`sys/dev/sound/pcm/mixer.c` applies feeder volume only to `SOUND_MIXER_PCM`,
+which is the playback path). The `0.00` is a display artifact: there is no
+`[SOUND_MIXER_PCM2]` entry in `snd_mixerdefaults[]`, so it zero-initialises,
+exactly as `line` shows `0.75` only because it *is* in that table at 75.
+Nothing was measured from the card in either case.
+
+The practical consequence is the correct one for this chain: the capture level
+on the S/PDIF input is whatever the transport sends, bit for bit, with no gain
+stage touching the samples.
+
+### Trap 3: a "44100 Hz" open that is neither 44.1 kHz nor bit-perfect
+
+This is the expensive one, because every layer reports success. By default
+FreeBSD puts a **virtual channel** in front of the card. The hardware then
+runs at `dev.pcm.N.rec.vchanrate` --- 48000, always --- and a kernel
+`feeder_rate` resamples to whatever the application asked for. `SNDCTL_DSP_SPEED`
+returns 44100, `SETFMT` returns the requested width, every ioctl succeeds, and
+`cdin` is satisfied. What actually happens is that the card delivers 44100
+frames per second into a stream the kernel believes is 48000:
+
+> 44100 x 44100/48000 = **40517 Hz** arriving at the application.
+
+`cdin` then reads 40.5k frames/s and writes 44.1k to the DAC. The lead drains
+at 3.6k frames/s, so a 2000 ms lead is gone in about 25 seconds, after which
+the DAC underruns continuously and the music is audibly destroyed. It looks
+exactly like catastrophic clock drift and it is not drift at all. The only
+place it is visible:
+
+```
+sysctl hw.snd.verbose=2 && cat /dev/sndstat
+
+[dsp1.record.0]: spd 48000 ...                            <-- the hardware
+dsp1.record.0[dsp1.virtual_record.0]: spd 44100/48000 ...
+  ... -> feeder_rate(q:4  48000 -> 44100) -> {userland}    <-- the lie
+```
+
+The cure is the `omdrc_sndlink_capture_sysctls` above ---
+`rec.vchans=0 bitperfect=1` --- after which the same command prints the whole
+capture path as `{hardware} -> feeder_root(0x00210000) -> {userland}`: one
+`memcpy` from the USB transfer to the read buffer, at the rate the transport
+is really running.
+
+### The consequence: capture is 24-bit
+
+With the format feeder gone, the card's own width is the only one it accepts,
+and the U24 XL's capture endpoint offers exactly one --- 24-bit S-LE, at
+either 44100 or 48000 Hz. So `omdrc_cdin_bits` is **24**, and the two ends of
+the bridge do not share a format: downstream runs S32_LE
+(`virtual_oss -b 32`, BruteFIR `sample: "S32_LE"`), and with `bitperfect=1`
+the kernel's format feeder is gone by design, so the output device does not
+convert --- it refuses the width. `cdin` therefore negotiates and converts
+itself (`cdin/src/convert.c`): the output is opened at the **source** width
+first, because no conversion is always truest; if the device refuses, a wider
+one is tried, **never** a narrower one. Widening is left-justification, which
+for little-endian PCM is pure byte placement (`24 -> 32` moves bytes and adds
+a zero) --- no arithmetic means no rounding, no dither, nothing to get wrong,
+so the bit-perfect claim survives it. Narrowing is never offered; it would
+need truncation or dither, which is what this daemon exists to avoid.
+`--out-bits N` forces the width instead of negotiating it.
+
+24-bit capture also needed one fix inside `cdin`, and the arithmetic is worth
+recording because it looks like a bug in the device. `SNDCTL_DSP_SETFRAGMENT`
+encodes the fragment size as an exponent, so only powers of two can be
+*expressed*. A 24-bit stereo frame is 6 bytes, so 1024 frames is 6144 bytes =
+`2^11 x 3` --- and no other period rescues it, since `6N = 2^k` would need 3 to
+divide a power of two. **Every** period is inexpressible at 24-bit stereo. The
+fix was to stop treating the fragment as the transfer size: it is the device's
+*interrupt granularity*, i.e. how much the driver accumulates before waking a
+blocked `read()`, and the read itself asks for whatever it wants and blocks
+until that much has arrived. `cdin` now asks for the largest power of two that
+fits inside the period (4096 bytes for a 6144-byte period) and goes on reading
+its own 1024-frame periods. The device is woken slightly more often than
+strictly needed; not one byte of audio changes.
+
+### Checklist when the CD input captures silence
+
+0. `service omdrc_sndlink status` --- the U24 XL must hold the `capture` role
+   with `bitperfect=1 rec.vchans=0`, and the DAC the `dac` role. It also prints
+   the links and the active recording source. If the stream is not silent but
+   *distorted*, and the lead drains to zero in about 25 s, it is Trap 3, not
+   the selector.
+1. `ls -l /dev/dsp.capture` --- it must exist and point at the U24 XL's unit.
+   If it does not, `omdrc_sndlink_capture` does not match the card's name.
+2. `mixer -f /dev/mixer.capture -s` --- must print `pcm2`. If it prints `line`,
+   the card is on the analog input and `omdrc_sndlink_capture_recsrc` was set
+   to `none` or to `line`.
+3. Ignore `pcm2 = 0.00:0.00`; it is cosmetic.
+4. Only then look at the transport, the cable and lock.
+
+## Status and what is still owed
+
+The bridge, its state machine, the lazy output open, the width negotiation,
+the rc.d service and the web card are all in place, and the simulated
+transport has exercised a 12-track 16-bit disc end to end against a
+bit-perfect `/dev/dsp0` with `starves 0`, `drops 0` and the lead inside a
+one-period band throughout --- including across track gaps, skips, seeks, a
+4 s pause and an 800 ms scripted carrier dropout, which cost exactly 800 ms of
+lead and starved nothing. Three unit-test suites cover the places where a bug
+would be silent rather than loud: `test_ring` (wrap-around, the drop-oldest
+policy, every blocking path's wake-up, the trim-to-the-lead), `test_convert`
+(the widening, pinned by the *value* relation `src << (dst_bits - src_bits)`
+plus canary bytes, because a wrong byte index does not crash and does not
+warn) and `test_gate` (the silence threshold and the fact that one non-zero
+sample resets the whole run).
+
+What is **not** yet proven is everything on the far side of `/dev/dspN` with a
+real transport attached:
+
+* **carrier loss**: stop the CD, then unplug the coax. Does `read()` block,
+  short-read, or error? The state machine assumes a short read or an error
+  means `NO_CARRIER`, and that a player which merely *mutes* keeps delivering
+  zeros and is caught by the silence gate. If a stopped player blocks the read
+  forever instead, the daemon needs a read timeout to notice;
+* **the real drift**: `omdrc-cdin --in /dev/dsp.capture --out none -d -s 30`
+  reports the capture rate against the host clock; compare it with the OKTO's
+  `feedback_rate`. Their difference is the drift the lead must cover;
+* **loopback pacing**: `virtual_oss` runs with `-f /dev/null`, so it owns no
+  hardware clock. Confirm that a writer to `/dev/dsp.play` is throttled at the
+  DAC rate by BruteFIR draining `/dev/dsp.loop`, and check what happens when
+  BruteFIR is *not* running --- writes may block forever;
+* **the shared-clock patch with two USB audio devices streaming**
+  (section \ref{sec:uaudio-patches}); ideally put the ESI on a different root
+  hub.
+
+Phase 2b --- drift resync during the inter-track silence, by padding or
+trimming with a zero-crossing / 10 ms crossfade splice as the fallback --- is
+not needed inside a disc, since drift cannot cause a discontinuity in 80
+minutes, but it is needed for a session that never stops. The seams are marked
+`TODO(phase2b)` in the source.
+
+\newpage
+
 # FreeBSD peculiarities
 
 A summary of everything FreeBSD-specific, in one place.
@@ -1143,11 +1782,15 @@ I/O is built in (no ALSA needed); the fork's OSS fixes matter here.
 Key sysctls for the bit-perfect direct path:
 
 ```
-dev.pcm.0.bitperfect=1     # first opener's format becomes the hardware format
-dev.pcm.0.play.vchans=0    # no virtual-channel mixer/resampler
+bitperfect=1     # first opener's format becomes the hardware format
+play.vchans=0    # no virtual-channel mixer/resampler
 ```
 
-These also mean `/dev/dsp0` is **single-open**: exactly one client at a time
+Applied to the DAC's unit by `omdrc_sndlink` (`omdrc_sndlink_dac_sysctls`), on
+every attach --- a re-attach rebuilds `dev.pcm.<unit>.*` from driver defaults,
+so a replug would otherwise silently lose them.
+
+These also mean the DAC is **single-open**: exactly one client at a time
 (BruteFIR when DRC is on; MPD's direct output or a browser otherwise).
 
 ## Known FreeBSD issues and their status
@@ -1173,6 +1816,20 @@ These also mean `/dev/dsp0` is **single-open**: exactly one client at a time
   refcount leak in `cuse_client_open()`'s `is_closing` error path
   (regression from commit `634e578ac7b0`, in 15.1). Kernel fix written
   (Appendix \ref{sec:voss-patches}).
+* **`pcm` unit numbers are attach order, and nothing declarative can change
+  them**: no unit-wiring hint (`uaudio(4)` does not implement
+  `BUS_HINT_DEVICE_UNIT`), and no devd rule can pre-empt it (the unit is
+  allocated before the event is delivered). With a second USB audio device
+  present, the DAC can lose `/dev/dsp0`. Handled by not depending on the
+  number: `omdrc_sndlink` keeps `/dev/dsp.dac` on the right card at boot and on
+  every hotplug, and the few sysctl readers resolve the unit from that link
+  (chapter \ref{sec:cdin}).
+* **A capture open can succeed at the wrong rate**: with a record virtual
+  channel in front of the card the hardware runs at `rec.vchanrate` (48000)
+  and `feeder_rate` resamples, while every ioctl reports the rate that was
+  asked for. A 44.1 kHz S/PDIF source then arrives at ~40517 Hz and looks like
+  catastrophic clock drift. `rec.vchans=0` plus `bitperfect=1` is the cure
+  (chapter \ref{sec:cdin}).
 * **musicpd 100% CPU on HTTP streams**: a libcurl leftover-fd spin --- curl
   registers an event fd into MPD's I/O loop and never removes it, so the
   loop burns a core in `poll()`. **Audio is unaffected**; MPD upstream has
@@ -1270,7 +1927,7 @@ b. **Shared-clock guard**: before any UAC2 `SET_CUR` to a clock shared by
    both directions, skip it if the other direction is running at a different
    rate --- the first active stream owns the clock.
 c. **Always submit the explicit-feedback SYNC transfer**, so
-   `dev.pcm.0.feedback_rate` stays live as a diagnostic (drc.sh's
+   `dev.pcm.<unit>.feedback_rate` stays live as a diagnostic (drc.sh's
    chain-sanity signal) even with capture present.
 
 A guard-only version was audited and rejected: without (a), the rec channel
@@ -1308,7 +1965,7 @@ update so the revert path matches the running ABI):
 ```sh
 OBJ=/usr/obj/usr/src/amd64.amd64/sys/modules/sound/driver/uaudio/snd_uaudio.ko
 sudo cp -f /boot/kernel/snd_uaudio.ko /boot/kernel/snd_uaudio.ko.orig
-sudo service musicpd stop                 # release /dev/dsp0
+sudo service musicpd stop                 # release the DAC
 sudo cp -f "$OBJ" /boot/kernel/snd_uaudio.ko
 sudo kldunload snd_uaudio                 # devd auto-reloads on attach
 UG=$(usbconfig | awk '/DAC8STEREO/{print $1}' | tr -d ':')
@@ -1319,7 +1976,8 @@ sudo service musicpd start
 
 Verify: `grep pcm0 /dev/sndstat` shows `(play/rec)`;
 `sysctl hw.usb.uaudio.clock_settle_ms` exists;
-`sysctl dev.pcm.0.feedback_rate` tracks the playback rate. Then run the
+`sysctl dev.pcm.$(readlink /dev/dsp.dac | tr -dc 0-9).feedback_rate` tracks the
+playback rate. Then run the
 listening matrix (both crystal directions, same-family changes, MPD-direct
 mixed-rate queue, browsers) --- machine signals cannot verify these fixes;
 only listening counts. Revert with the `.orig` copy + kldunload/kldload.
@@ -1770,6 +2428,9 @@ detail behind each section:
 | Site-data split (`OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT`) | `scripts/README.md`, `host.cmake.sample`, `cmake/core-drc.cmake` |
 | Helper scripts | `scripts/README.md`, `README.md` |
 | Web control panel | `omdrc-ctrl/README.md` |
+| CD / S-PDIF input bridge | `cdin/README.md` |
+| ESI U24 XL configuration and traps | `cdin/ESI-U24XL.md` |
+| Stable sound-device names | `etc/rc.d/omdrc_sndlink`, `etc/devd/omdrc-sndlink.conf` |
 | Spectrum analyzer | `omdrc-ctrl/SPECTRUM_ANALYZER.md` |
 | Video playback + Blu-ray | `video/README.md` |
 | A/V sync delay derivation | `video/AV-SYNC-DELAY.md` |

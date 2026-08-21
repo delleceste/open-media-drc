@@ -5,7 +5,7 @@ arrive at the OKTO DAC8 **bit-for-bit identical**, and how the verification tool
 (`scripts/verify-bitperfect.sh`) is implemented.
 
 > **Scope.** This verifies the **direct, bit-perfect path** (MPD `OKTO-DAC`
-> output → `/dev/dsp0`). The **DRC path** (… → brutefir → `/dev/dsp0`) is
+> output → `/dev/dsp.dac`). The **DRC path** (… → brutefir → `/dev/dsp.dac`) is
 > *intentionally not* bit-perfect: brutefir convolves the FIR room-correction
 > filter, so its output is *supposed* to differ from its input. See
 > "[Testing the DRC path](#testing-the-drc-path)" for how to check that path's
@@ -60,8 +60,13 @@ format-conversion node, the kernel is altering the bytes. Preconditions that
 keep the graph clean (both already set on this host):
 
 ```sh
-dev.pcm.0.bitperfect = 1     # first opener's format becomes the hardware format
-dev.pcm.0.play.vchans = 0    # no virtual-channel mixer/resampler in front of the DAC
+bitperfect = 1     # first opener's format becomes the hardware format
+play.vchans = 0    # no virtual-channel mixer/resampler in front of the DAC
+
+# on the DAC's own pcm unit — asserted on every attach by omdrc_sndlink
+# (omdrc_sndlink_dac_sysctls), since a replug rebuilds dev.pcm.<unit>.* from
+# driver defaults.  Read the unit back from the link when you need the OID:
+#   sysctl dev.pcm.$(readlink /dev/dsp.dac | tr -dc 0-9).bitperfect
 ```
 
 This check is definitive for the **host** portion of the path. It does not, by
@@ -74,7 +79,7 @@ itself, prove the USB layer is transparent — that's what level 2 adds.
 ```sh
 # free the DAC first (single-open device):
 ./drc.sh off            # stop virtual_oss/brutefir, enable direct output
-# stop whatever renderer holds /dev/dsp0 (e.g. upmpdcli / mpd) if needed
+# stop whatever renderer holds the DAC (e.g. upmpdcli / mpd) if needed
 
 sudo ./scripts/verify-bitperfect.sh             # 44100 Hz, ~4.5 s
 sudo ./scripts/verify-bitperfect.sh 88200       # pick the rate to test
@@ -101,7 +106,7 @@ Any divergence prints the source vs wire bytes at the first differing offset.
 
 | Test | Path | Tap | Result |
 |------|------|-----|--------|
-| A | MPD `OKTO-DAC` → `/dev/dsp0` → DAC | USB endpoint `0x01` | **BIT-PERFECT**, 0 slips, 0 corruption |
+| A | MPD `OKTO-DAC` → `/dev/dsp.dac` → DAC | USB endpoint `0x01` | **BIT-PERFECT**, 0 slips, 0 corruption |
 | B | MPD `DRC-native` → `/dev/dsp.play` → virtual_oss | `/dev/dsp.loop` | **VALUE-EXACT**, 0 slips (brutefir stopped so the tap owns the loopback) |
 
 Test A was also confirmed from the kernel side during a sustained playback:
@@ -130,7 +135,7 @@ via here-docs). Steps:
    hard-coded.
 
 2. **Sanity-print the bit-perfect knobs** (`bitperfect`, `play.vchans`) and
-   refuse to run if `/dev/dsp0` is already held by another process (`fuser`).
+   refuse to run if the DAC is already held by another process (`fuser`).
 
 3. **Generate a deterministic test signal** (`S32_LE`, stereo). By default it is
    a **near-silent (~−90 dBFS) per-sample counter** in the low 16 bits, with the
@@ -140,7 +145,7 @@ via here-docs). Steps:
    `FULLSCALE=1` for a full-range pseudo-random signal instead — **loud, so
    disconnect the amplifier first.**
 
-4. **Play it bit-perfectly** with an embedded C writer that opens `/dev/dsp0` and
+4. **Play it bit-perfectly** with an embedded C writer that opens `/dev/dsp.dac` and
    sets the format explicitly:
 
    ```c
@@ -206,7 +211,7 @@ the payload exactly.
 This is the subtle part, and it is why the test *method* matters as much as the
 result.
 
-**A digital audio sink consumes samples on a clock.** `/dev/dsp0` (the OKTO DAC)
+**A digital audio sink consumes samples on a clock.** `/dev/dsp.dac` (the OKTO DAC)
 consumes at the DAC's quartz crystal — exactly `rate` samples per second, no more,
 no less. `virtual_oss` started with `-f /dev/null` (as `drc.sh` does) has **no
 hardware clock**, so it consumes at a **software timer** it generates itself — a
@@ -218,7 +223,7 @@ sink exposes a small buffer. When you `write()` faster than the sink drains, the
 buffer fills and the next `write()` **blocks** until space frees up. That block
 is the sink throttling the producer to *its* clock. So:
 
-- Writing to **`/dev/dsp0`** → the kernel/USB stack blocks your `write()`s in
+- Writing to **`/dev/dsp.dac`** → the kernel/USB stack blocks your `write()`s in
   lockstep with the DAC crystal. The producer is **slaved to the DAC clock**.
   No drift is possible; the bytes can only arrive bit-exact (proven by the USB
   tap).
@@ -228,7 +233,7 @@ is the sink throttling the producer to *its* clock. So:
 
 **Why a flat-out `write()` loop is *not* paced.** Our standalone writer just
 loops `read(file) → write(dsp)`. If the device gave perfect back-pressure that
-would be fine — and on `/dev/dsp0` it is. But virtual_oss's play device let our
+would be fine — and on `/dev/dsp.dac` it is. But virtual_oss's play device let our
 writer dump the whole buffer's worth and return *faster than real time*
 (measured: 480 KB "played" in 0.17 s instead of 1.36 s). With no throttle, the
 writer overran virtual_oss's free-running consumer and most samples were dropped.
@@ -253,7 +258,7 @@ flow-controlled producer it neither alters nor drops a single sample. The slips
 in the synthetic-writer test were the *test harness's* fault, not virtual_oss's.
 
 **The one caveat for the real DRC chain.** In playback, brutefir reads
-`/dev/dsp.loop` (virtual_oss's free-running clock) and writes `/dev/dsp0` (the
+`/dev/dsp.loop` (virtual_oss's free-running clock) and writes `/dev/dsp.dac` (the
 DAC crystal) **without resampling**. Those two clocks are not the same, so over
 long runs brutefir must occasionally drop/duplicate one sample at the DAC to
 reconcile them — an inaudible slip every several minutes, on top of the
@@ -333,7 +338,7 @@ Both tap scripts have the same CLI and produce the same artifacts:
 ```
 
 Each run plays the input flat-out to the DAC (aplay on a `hw:` device /
-the format-guarded OSS writer on `/dev/dsp0` — both refuse any conversion),
+the format-guarded OSS writer on `/dev/dsp.dac` — both refuse any conversion),
 captures every isochronous OUT transfer to endpoint `0x01`, concatenates the
 payloads, aligns them to the source and writes:
 
@@ -427,7 +432,7 @@ Notes:
 | `bitperfect-compare.py` | **Executed** on all comparison paths (wav↔wav, wav↔txt, txt↔txt, refusal of raw↔txt), including a deliberately bit-flipped payload to confirm MISMATCH is reported at the exact offset. |
 | `bitperfect-tap-freebsd.sh` | **Executed and passing** on the FreeBSD host (Cambridge Audio DacMagic 100, `usbus0` devaddr 2, FreeBSD 15.1-RELEASE): 44100/32-bit × 30 s, 44100/24-bit × 30 s and 192000/24-bit × 10 s all **BIT-PERFECT** (exit 0). For 44100/32-bit, `bitperfect-compare.py` also reports MATCH against the committed Linux report for the same input; the 24-bit pair has no committed Linux counterpart yet, so those two stand as local proofs only. The 192 kHz run confirms the DAC clock actually followed (`dev.pcm.0.feedback_rate` = 191994) and cost 23.7 s wall clock end to end. The first run exposed one real defect — a truncated capture, fixed by the trailing silence pad described in ["Anatomy of a tap run"](#anatomy-of-a-tap-run-refraw-the-pad-and-the-cut) below. |
 
-Preconditions for the FreeBSD run, beyond a free `/dev/dsp0`
+Preconditions for the FreeBSD run, beyond a free DAC
 (`./drc.sh off` plus stopping any renderer): `dev.pcm.N.bitperfect=1` and
 `dev.pcm.N.play.vchans=0`, as in
 "[Structural check](#1-structural-check-fast-kernel-certified)" above. The

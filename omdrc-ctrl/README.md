@@ -33,6 +33,14 @@ provides no feedback. Every command here either shows its output directly
   channels, period/buffer), a sample-rate match check, and a plain-language
   **bit-perfect / no-resampling verdict** so you can confirm everything is
   correct without a screen attached.
+- **Audio chain diagram** — a block diagram of the chain as the *operating
+  system* sees it, with an input LED on the capture card and an output LED on
+  the DAC. The blocks are the programs actually holding the sound devices right
+  now, found with `fstat(1)` (FreeBSD) / `fuser(1)` (Linux) rather than from
+  anything this project writes down, so a process from **outside** the chain
+  squatting a device — a stray PulseAudio, a leftover `mpv`, a second BruteFIR
+  from a half-finished restart — shows up the moment it happens, named and in
+  red. See [`[chain]`](#reserved-section-chain).
 - **Filter-set switching** — the DRC card title carries a picker listing every
   filter set installed under `configs/`. Choosing one switches to it: BruteFIR
   is restarted on that set's config (it loads its coefficients once, at start,
@@ -618,18 +626,104 @@ enabled = yes
 log_file = /tmp/omdrc-cdin.log
 # Checked with pgrep -x, to tell "stopped" from "broken".
 process = omdrc-cdin
-# The rc.d service name, for reference in the UI.
+# The rc.d service name.  Shown in the UI, and what the card's Start/Stop
+# button runs: `service omdrc_cdin onestart|onestop`.
 service = omdrc_cdin
+# Whether that button exists at all.  Watching needs no privilege; starting and
+# stopping needs the rc.d grant in sudoers (below).
+control = yes
 refresh = 5
 # Past failures the card keeps.  Errors accumulate and stay; the healthy status
 # line is replaced, so a quiet week does not push last night's dropout out.
 max_events = 20
 ```
 
-`enabled = no` removes the card entirely. `process` is what separates a daemon
-that is *stopped* from one that is *failing*: a log file outlives the program
+`control = no` keeps the card and removes the Start/Stop button — the right
+setting on a box without the sudoers grant, where the button could only ever
+fail. `enabled = no` removes the card entirely. `process` is what separates a
+daemon that is *stopped* from one that is *failing*: a log file outlives the program
 that wrote it, and without the process check a box whose CD bridge was switched
 off last month would show a red light for whatever that log happened to end on.
+
+### Reserved section: `[chain]`
+
+`[chain]` configures the **Audio chain** card: the block diagram of who is
+holding the sound devices, and the two LEDs above it.
+
+```ini
+[chain]
+enabled = yes
+refresh = 4
+# Re-ask through `sudo -n` when omdrcctrl is not root (see below).
+privileged = yes
+# The four roles, in flow order.  Omit a key to take the platform default;
+# set it empty to drop that role, and its LED, from the diagram.
+capture = /dev/dsp.capture
+bridge  = /dev/dsp.play
+loop    = /dev/dsp.loop
+dac     = /dev/dsp.dac
+```
+
+Defaults per platform:
+
+| role      | FreeBSD             | Linux     | what it is                                  |
+|-----------|---------------------|-----------|---------------------------------------------|
+| `capture` | `/dev/dsp.capture`  | *(unset)* | the CD / S-PDIF input card, read by `omdrc-cdin` |
+| `bridge`  | `/dev/dsp.play`     | `hw:1,0`  | what the players write into                 |
+| `loop`    | `/dev/dsp.loop`     | `hw:1,1`  | the other side of that bridge, read by BruteFIR |
+| `dac`     | `/dev/dsp.dac`      | `hw:0,0`  | the DAC everything ends up at               |
+
+On FreeBSD these are the role symlinks
+[`omdrc_sndlink`](../etc/rc.d/omdrc_sndlink) keeps pointed at the right cards,
+plus the two cuse nodes `virtual_oss` creates. On Linux they are ALSA specs
+written the way BruteFIR writes them (`hw:1,1`, `plughw:0,0`, `hw:Loopback,1`)
+and translated to the `/dev/snd/pcmC<card>D<device>{p,c}` node `fuser` is asked
+about. `capture` has no conventional number on Linux, so it stays off until you
+name yours. A role left empty is not drawn: a box with no CD input sets
+`capture =` and the input block disappears rather than sitting there
+permanently grey.
+
+**What the LEDs mean.** Brightness is one axis only — how open the device is:
+
+| LED                | meaning                                                    |
+|--------------------|------------------------------------------------------------|
+| grey               | the device is not there (card unplugged, `virtual_oss` down) |
+| dim red / green    | the device exists and **nobody has it open** — free to acquire |
+| lit                | a process is holding it                                     |
+| lit and breathing  | audio is actually going through it                          |
+
+The last two are deliberately separate. BruteFIR opens the DAC the moment it
+starts and holds it until it exits, and MPD keeps its output open while paused,
+so a light driven by the descriptor alone would be green all day and would tell
+you nothing. Whether audio is *flowing* comes from the source instead — MPD over
+its own protocol, `omdrc-cdin` from the state line in its log. A holder we
+cannot ask (an `mpv`, a squatter) counts as producing: we cannot prove it
+silent, and it is the one to go and kill either way.
+
+**Role assignment.** On FreeBSD the card also reads
+`/var/run/omdrc_sndlink.roles`, which
+[`omdrc_sndlink`](../etc/rc.d/omdrc_sndlink) writes on every scan. That is the
+only way the panel can tell you the DAC role was a **guess** — two
+playback-capable cards and no `omdrc_sndlink_dac` in `rc.conf`. A wrong guess
+is invisible otherwise: the chain comes up, the DAC lights green, and every
+byte goes to the wrong card. The card reports it as a warning; `service
+omdrc_sndlink status` prints the candidates with the line to paste.
+
+**Privilege.** `fstat` and `fuser` can only report descriptors of processes the
+caller is allowed to debug. omdrcctrl runs as `AUDIO_USER`, which covers the
+whole chain — BruteFIR, MPD and `omdrc-cdin` all run as that user — but *not* a
+root process holding a device, which is half the point of the card. With
+`privileged = yes` and a sudoers grant, one escalated call per poll closes that
+hole:
+
+```
+<AUDIO_USER> ALL=(root) NOPASSWD: /usr/bin/fstat        # FreeBSD
+<AUDIO_USER> ALL=(root) NOPASSWD: /usr/bin/fuser        # Linux
+```
+
+Without a grant the first `sudo -n` fails, is never retried (it would only fill
+the auth log), and the card adds a line saying the listing is incomplete rather
+than quietly showing a half-truth.
 
 ### Reserved section: `[spectrum]`
 
@@ -990,7 +1084,7 @@ two device states, the latest stats line and the event list.
            "size": 48213, "mtime": 1787035072 },
   "led": "green", "summary": "idle — waiting for audio, output released",
   "state": "idle", "state_why": "digital silence long enough to release the output",
-  "capture": { "kind": "capture", "label": "capture", "path": "/dev/dsp1",
+  "capture": { "kind": "capture", "label": "capture", "path": "/dev/dsp.capture",
                "available": true, "error": "", "held": false,
                "at": "2026-08-20 08:01:44" },
   "output":  { "kind": "playback", "label": "output", "path": "/dev/dsp.play",
@@ -998,6 +1092,16 @@ two device states, the latest stats line and the event list.
                "at": "2026-08-20 08:59:31" },
   "stats": "lead 1962 ms (min 1955, max 1972)  drift +1.2 ppm …  starves 0 …",
   "stats_at": "2026-08-20 08:12:12",
+  "stats_fields": { "lead_ms": 1962, "lead_min_ms": 1955, "drift_ppm": 1.2,
+                    "horizon_h": 46, "drops_bytes": 0, "starves": 0,
+                    "silence": "0%", "up_s": 125 },
+  "metrics": [ { "key": "lead", "label": "buffer", "value": "1962 ms (min 1955)",
+                 "level": "ok" },
+               { "key": "starves", "label": "underruns", "value": "0", "level": "ok" } ],
+  "problems": [],
+  "last_error": { "at": "2026-08-20 08:00:01", "severity": "error",
+                  "text": "playback /dev/dsp.play: unavailable — …" },
+  "active": true, "control": true,
   "events": [ { "at": "2026-08-20 08:00:01", "severity": "error",
                 "text": "playback /dev/dsp.play: unavailable — No such file or directory (retrying every 2 s)" },
               { "at": "2026-08-20 08:59:31", "severity": "ok",
@@ -1009,6 +1113,16 @@ two device states, the latest stats line and the event list.
 only — never whether the output happens to be `held` at this instant, which
 swings back and forth all day in normal operation.
 
+`active` is narrower than `running`: it is true only while a disc is playing
+*through* the bridge, and it is what decides the card's size. `metrics` and
+`problems` are the `[stats]` line reduced — a chip is a measurement, a problem
+is a measurement that has already cost something audible (an underrun is a
+dropout that happened, and nothing else in the UI would ever mention it again).
+`stats_fields` carries the same numbers unformatted; a field the line does not
+carry is **absent rather than zero**, because a capture-only run has no lead at
+all and `lead 0` would read as a fault. `last_error` is the newest failure in
+the window, kept after the condition clears.
+
 `available` is `true`, `false`, or `null` for "not known yet": a daemon that has
 just started, or whose log was rotated out from under it, has said nothing about
 that end, and that is not the same answer as "broken". Only `false` is a red
@@ -1018,6 +1132,26 @@ light.
 `max_events`, with `truncated` set when older ones were dropped) plus the single
 most recent healthy line, in log order. `running` is false whenever the process
 is absent, and `led` is then `idle` regardless of what the log says.
+
+---
+
+### `POST /cdin/control`
+
+```json
+{ "action": "start" }        // or "stop"
+```
+
+Runs `service omdrc_cdin onestart|onestop` and answers with a fresh
+`/cdin/status` under `status`, so the card repaints from the truth instead of
+from the poll that was already in flight.
+
+**The rc verb's exit status is not the answer.** `onestart` forks a `daemon(8)`
+and returns immediately, so it can report success while the daemon dies a
+moment later on a device that is not there; `onestop` returns before the
+process has finished closing its devices. So the process itself is polled
+(`pgrep -x`) until it agrees, for up to `CDIN_SETTLE_SECONDS`, and that is what
+`ok` reports. A failure whose output mentions sudo gets the missing-grant hint
+appended. Returns 403 when `control = no`, 404 when the card is disabled.
 
 ---
 
@@ -1190,6 +1324,15 @@ used. Renderer start/stop still needs the following rc.d grant in `sudoers`:
 omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service qobuzconnect2mpd onestart, \
     /usr/sbin/service qobuzconnect2mpd onestop, \
     /usr/sbin/service upmpdcli onestart, /usr/sbin/service upmpdcli onestop
+```
+
+The **CD input** card's Start/Stop button needs the same shape of grant for its
+own service; without it, set `control = no` in `[cdin]` rather than leaving a
+button that can only fail:
+
+```
+omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service omdrc_cdin onestart, \
+    /usr/sbin/service omdrc_cdin onestop
 ```
 
 The qobuzconnect2mpd **sign in** action needs no additional grant: its OAuth
@@ -1525,22 +1668,56 @@ and resets the countdown.
 ### CD input
 
 Reports `omdrc-cdin`, the S/PDIF capture bridge that feeds a CD transport into
-the DRC chain. The panel **watches** it and does not drive it: the daemon runs
+the DRC chain. The panel **watches** it rather than driving it: the daemon runs
 continuously from boot (`omdrc_cdin_enable="YES"`) and manages its own devices,
 holding `/dev/dsp.play` only while audio is actually on the wire and releasing
-it after a run of digital silence. There is nothing to press.
+it after a run of digital silence. Nothing needs pressing for a disc to play.
+
+**The card is the size of its news.** A bridge with no disc in the player has
+one line's worth, and it takes one line:
+
+| | the card | why |
+|---|---|---|
+| **playing** | full size, opened by itself | the only state with anything to watch |
+| **idle** / no carrier | the status line and a `▸` | still polling, so a disc opens it again |
+| **stopped** | the status line and **Start** | nothing to report and one thing to do |
+
+Expanding or collapsing by hand sticks until the daemon's own state changes —
+what the bridge started doing is more interesting than the click before it.
+Polling continues while collapsed, which is what lets the card open itself.
 
 Everything shown is parsed from the daemon's log (`log_file` in `[cdin]`, which
 must match `omdrc_cdin_logfile` in `rc.conf`):
 
-- an **LED** and a one-line summary — `playing — audio on the wire`,
-  `idle — waiting for audio, output released`, `capture unavailable — No such
-  file or directory`;
-- both **device paths** with their state: `capture /dev/dsp1 free`,
+- an **LED** and a one-line summary, green while the bridge is doing its job —
+  `playing — audio on the wire`, `idle — waiting for audio, output released` —
+  and red when an end cannot be opened: `capture unavailable — No such file or
+  directory`;
+- under it, in red, the **last failure**, kept there after the condition
+  clears, because that is the thing a live status line can never say — with a
+  **dismiss** button, since the only one who can know when that line has
+  outlived its usefulness is the person reading it. Dismissing writes a
+  watermark (`cdin_error_ack` in the state directory), so it is a note about
+  the reader, not about the daemon: failures *newer* than the dismissed one
+  still appear, the event list below keeps the history, and nothing is deleted.
+  Clearing the log would be the obvious alternative and is the wrong one — the
+  card reads the daemon's current state, device rows and stats out of those
+  same lines, so it would go blind to hide one sentence;
+- both **device paths** with their state: `capture /dev/dsp.capture free`,
   `output /dev/dsp.play held`;
-- the most recent **`[stats]` line**, which is where `starves` lives — anything
-  above zero is a dropout that already happened;
+- the `[stats]` line as **chips** — `buffer 1962 ms (min 1955)`,
+  `underruns 0`, `dropped 0 B`, `drift +1.2 ppm, fills in 46 h`, `silence`,
+  `up` — with anything that already cost something audible spelled out in a
+  sentence below them (`3 underruns — the output ran dry, which is an audible
+  dropout`). The raw line is kept underneath, as the daemon wrote it;
 - a scrolling **event list**.
+
+Three buttons: **↻** refreshes now, **Log** opens the whole `omdrc-cdin` log in
+the Logs card, and **Stop** / **Start** runs the rc service. Stop asks first:
+it hands `/dev/dsp.play` back to MPD and mpv, and anything playing from the CD
+input stops. It is not part of normal use — the daemon is meant to be left
+running — but it is the one thing watching cannot do, from a box with no
+keyboard. `control = no` in `[cdin]` removes it.
 
 Two rules decide what goes where, and they are the whole design of the card:
 

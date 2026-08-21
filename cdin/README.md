@@ -12,7 +12,7 @@ CD player ──S/PDIF 44.1k──► ESI U24 XL ──USB──► /dev/dspN
                                              /dev/dsp.play  (virtual_oss)
                                                     │
                                                     ▼
-                                                BruteFIR ──► /dev/dsp0 (Okto DAC8)
+                                                BruteFIR ──► /dev/dsp.dac (Okto DAC8)
 ```
 
 It takes the same seat `mpv` already takes for video (`video/lib/drc-audio.sh`):
@@ -122,7 +122,7 @@ minutes) but needed for a session that never stops. Seams are marked
 `TODO(phase2b)`.
 
 **Phase 3** — an `rc.d` service (done, `rc.d/omdrc_cdin.in`) and the web panel
-integration (done, the CD input card — see below). Still open: a `drc.sh cd`
+integration (done, the CD input card, with a manual start/stop — see below). Still open: a `drc.sh cd`
 verb and a `drc-status.sh` line.
 
 ## Running it continuously
@@ -133,7 +133,8 @@ plugged in or not:
 ```sh
 # /etc/rc.conf
 omdrc_cdin_enable="YES"
-omdrc_cdin_in="/dev/dsp1"        # the ESI, NOT the DAC; check /dev/sndstat
+omdrc_sndlink_capture="ESI U24XL"   # names the ESI; omdrc_sndlink turns that
+                                    # into /dev/dsp.capture, which cdin opens
 ```
 
 That is only safe because of what the state machine does with the *output*
@@ -141,9 +142,17 @@ device, and the reason is sharper than "it would be rude to MPD":
 
 | | on the wire | the daemon | `/dev/dsp.play` |
 |---|---|---|---|
-| `NO_CARRIER` | no frames at all | retries the capture device | not held |
-| `IDLE` | frames, all exact zeros | counts the silence | **released** |
+| `NO_CARRIER` | no frames, or frames far below rate | keeps reading; waits for the clock | **released** |
+| `IDLE` | frames at rate, all exact zeros | counts the silence | **released** |
 | `PLAYING` | audio | ring → output | held |
+
+`NO_CARRIER` covers two different things that look the same from a listening
+seat. The device can fail outright — a short read or an error, which ends the
+session and reopens the interface — or it can stay perfectly healthy while the
+*clock* goes away, which is what a stopped transport does. The second one is
+not an error and nothing is reopened: the daemon keeps reading, keeps the ring
+rolling, and simply does not hold the output. See
+[Two ways a player goes quiet](#two-ways-a-player-goes-quiet).
 
 Two devices, two very different tenancies. The **capture** device is held for
 the life of a session: it is the interface's own node, nobody else wants it,
@@ -170,6 +179,60 @@ seconds, which covers the stop/restart. Without that hold-off a spinning disc
 would grab the device again on the very next period — the same handle we just
 gave up.
 
+### Where the disc is written: `/dev/dsp.play` or the DAC
+
+`/dev/dsp.play` exists **only while the DRC chain is up**. It is virtual_oss's
+client node, and `drc.sh off` takes virtual_oss down with everything else. So a
+daemon pinned to it has nowhere to put a disc whenever DRC is off — it retries
+forever and the CD is silent for a reason that has nothing to do with the CD.
+
+`--out` is therefore a **preference list**, tried in order:
+
+```sh
+: ${omdrc_cdin_out:="/dev/dsp.play,/dev/dsp.dac"}    # the default
+```
+
+- `/dev/dsp.play` first — when the chain is up the disc should go through
+  BruteFIR and get the room correction.
+- `/dev/dsp.dac` second — when it is not, play anyway, uncorrected.
+
+That is the same choice `drc.sh` makes for MPD, which it switches between its
+`DRC-native` and direct `OKTO-DAC` outputs for exactly this reason. Pin a
+single path to opt out: `"/dev/dsp.play"` for a box that should stay silent
+unless the chain is up, `"/dev/dsp.dac"` to always bypass DRC.
+
+**The choice is made once, at startup, and kept.** Not laziness — the ring is
+laid out in the width the chosen device negotiated (`open_playback_negotiated`
+in `src/main.c`), so switching devices mid-flight would mean re-laying a buffer
+that already has frames in it. Restarting the daemon is how the answer is
+re-taken, and `drc.sh` does that itself on both transitions:
+
+```
+drc.sh <rate>   chain verified up   -> restart_cdin -> cdin picks /dev/dsp.play
+drc.sh off      chain torn down     -> restart_cdin -> cdin picks /dev/dsp.dac
+```
+
+`restart_cdin` runs *last*, after the chain is confirmed and the MPD output is
+switched: any earlier and the daemon would re-pick while virtual_oss was still
+being replaced, and land on the DAC that BruteFIR is about to open. It only
+ever restarts a daemon that is already running — stopping the CD bridge by hand
+is a decision a rate change must not undo.
+
+When neither device can be opened, every candidate's reason is logged, because
+neither alone is the answer:
+
+```
+[ERR] playback unavailable — no output device could be opened (retrying every 2 s):
+[ERR]   /dev/dsp.play: device set 96000 Hz, not 44100 Hz
+[ERR]   /dev/dsp.dac: Device busy
+```
+
+Read together: the chain is up but at 96 kHz, so the 44.1 kHz disc cannot use
+the loopback, and the DAC is not a fallback because BruteFIR is holding it.
+The fix is `drc.sh 44100`, not anything about the CD. A list whose *last* error
+were reported alone would have blamed "Device busy" — which is BruteFIR doing
+its job.
+
 ### Choosing `--idle-after`
 
 The threshold has one failure mode at each end, and the safe band between them
@@ -184,9 +247,45 @@ still frees the chain within seconds of the music ending. `--idle-after 0`
 disables the gate and restores Phase 1 behaviour (output held for the whole
 run), which is occasionally useful when measuring.
 
-Note this is silence *on the wire*. A player that drops carrier rather than
-sending zeros never reaches the gate at all: the read fails and it lands in
-`NO_CARRIER`, which is the state that reopens the device.
+Note this is silence *on the wire*: it only catches a player that is still
+clocked. One that drops carrier instead is the other half of the problem, and
+it is caught by `--carrier-min` below.
+
+### Two ways a player goes quiet
+
+A CD player can stop making sound in two ways, and they present completely
+differently at the capture device:
+
+| | carrier | frames arriving | samples | caught by |
+|---|---|---|---|---|
+| **pause** | up | at rate | exact zeros | `--idle-after` |
+| **stop** | dropped | far below rate | non-zero rubbish | `--carrier-min` |
+
+The second one needs its own check because *every other signal looks healthy*.
+The ESI U24XL slaves its ADC clock to the incoming S/PDIF carrier, so when the
+carrier goes the card stops being fed — but `read()` does not fail and does not
+return short (`ossdev_read_full()` loops until the buffer is full), it just
+takes far longer to come back. And what does trickle through is whatever the
+receiver makes of an empty wire, which is not zeros, so the silence gate scores
+it as music.
+
+Measured on a stopped transport: **~500 frames/s against a nominal 44100**,
+`silence 0%`, reads never short. The daemon held `/dev/dsp.play` for hours on
+that, and the dribble was audible — it accumulates in the output device's
+buffer until the buffer is full and is then flushed as one short burst. With
+an 8820-frame buffer filling at 500 frames/s that is a burst roughly every 17
+seconds, each one a step in and a step out: a double bump, on the hour, with
+the CD player switched off.
+
+So the test is a rate test over a 2 s window: below `--carrier-min` percent of
+nominal, the input is not being clocked and there is nothing to play. The
+margin is enormous — 1% observed against a 50% default — which is why a plain
+ratio is enough here and there is nothing to tune. `--carrier-min 0` disables
+the check.
+
+The window costs nothing at the start of a disc. An episode begins from a lead
+of *buffered history* (see below), so the two seconds spent deciding are still
+in the ring when the decision is made.
 
 ### Resuming does not lose the first note
 
@@ -202,7 +301,7 @@ the device is opened when the music arrives rather than a `lead` ahead of it.
 
 ```
 [INF] playback /dev/dsp.play: available, 32-bit
-[INF] capture /dev/dsp1: available
+[INF] capture /dev/dsp.capture: available
 [INF] state idle: capture open, waiting for audio
 [INF] state playing: audio on the wire
 [INF] playback /dev/dsp.play: acquired
@@ -223,8 +322,8 @@ is never a fault.
 ## The web panel
 
 `omdrc-ctrl` shows a **CD input** card driven entirely by this log — the daemon
-is watched, not driven, because there is nothing to drive: it starts at boot and
-manages its own devices. Configure it in `commands.conf`:
+is watched, not driven, because there is nothing to drive for a disc to play: it
+starts at boot and manages its own devices. Configure it in `commands.conf`:
 
 ```ini
 [cdin]
@@ -232,12 +331,17 @@ enabled = yes
 log_file = /tmp/omdrc-cdin.log     # must match omdrc_cdin_logfile in rc.conf
 process = omdrc-cdin
 service = omdrc_cdin
+control = yes                      # offer the Start/Stop button
 refresh = 5
 max_events = 20
 ```
 
-The card shows one LED, one status line, both device paths, the latest `[stats]`
-line, and a scrolling event list. Two rules govern it:
+The card is the size of its news, and that is nearly always one line: a status
+line and an LED while the bridge is idle, the full card when a disc starts
+playing — it opens itself — and a single **Start** button when the daemon is
+stopped. Expanded it adds both device paths, the `[stats]` line as chips, a
+sentence for anything that has already cost something audible, the raw stats
+line as the daemon wrote it, and a scrolling event list. Four rules govern it:
 
 * **the LED follows availability only** — red when either end cannot be opened,
   because that is the question "can a disc play right now?". A released output
@@ -246,18 +350,32 @@ line, and a scrolling event list. Two rules govern it:
   red, in chronological order, even after the condition clears; the healthy
   status line is replaced rather than accumulated. A live status line can never
   say "the output was missing for ten minutes this morning", and that is
-  precisely the thing worth saying.
+  precisely the thing worth saying. The newest failure gets its own red line
+  above the fold for the same reason;
+* **`starves` is the number to surface.** The lead is a margin; an underrun is
+  that margin having run out — a dropout that already happened and that nothing
+  else in the chain will ever mention again. So it is a chip *and* a sentence,
+  while the rest of the 200-character stats line stays a chip;
+* **size follows `state playing`, not "running".** A bridge waiting for a disc
+  and a bridge with no interface plugged in have identical one-line news.
 
 A daemon that is not running is reported as idle, not broken, however alarming
 the last lines of its log are — the log outlives the process, and nothing is
 unavailable when nothing is trying to open it.
 
+The **Stop** button is the one thing watching cannot cover: it runs
+`service omdrc_cdin onestop`, so `/dev/dsp.play` goes back to MPD and mpv
+without an ssh session. It is not part of normal use, and it asks first —
+anything playing from the CD input stops. On FreeBSD it needs a `sudoers` grant
+for `service omdrc_cdin onestart|onestop`; without one, set `control = no`
+rather than leaving a button that can only fail.
+
 ## Options
 
 | Short | Long | Default | |
 |---|---|---|---|
-| `-i` | `--in` | `/dev/dsp1` | capture device, or a WAV file / a directory of them (a disc) |
-| `-o` | `--out` | `/dev/dsp.play` | playback device; `none` = capture-only measurement |
+| `-i` | `--in` | `/dev/dsp.capture` | capture device, or a WAV file / a directory of them (a disc) |
+| `-o` | `--out` | `/dev/dsp.play,/dev/dsp.dac` | playback device, or a comma-separated preference list tried in order at startup; `none` = capture-only measurement |
 | `-r` | `--rate` | `44100` | |
 | `-c` | `--channels` | `2` | |
 | `-b` | `--bits` | `32` | source width: 16, 24 or 32 (a WAV source overrides it) |
@@ -268,6 +386,7 @@ unavailable when nothing is trying to open it.
 | `-s` | `--stats` | `5` | stats interval in seconds |
 | `-R` | `--retry` | `2` | device retry interval |
 | | `--idle-after` | `15000` | digital silence on the wire before the output device is released — see above; `0` disables the gate |
+| | `--carrier-min` | `50` | percentage of the nominal rate below which the input counts as unclocked and the output is released — the *stopped transport* case, which the silence gate cannot see; `0` disables the check |
 | `-l` | `--log` | | also log to this file |
 | `-d` | `--debug` | | emit periodic stats |
 | `-v` | `--verbose` | | more verbose; repeat (`-vv`) for debug lines |
@@ -277,7 +396,7 @@ unavailable when nothing is trying to open it.
 | | `--transport` | | script the transport buttons — see below |
 | | `--loop` | | restart the disc at the end |
 
-Use `--out /dev/dsp0` to write the DAC directly, bypassing BruteFIR — useful to
+Use `--out /dev/dsp.dac` to write the DAC directly, bypassing BruteFIR — useful to
 isolate whether a problem is in the chain or in the bridge.
 
 ## Simulating a CD transport instead of a capture device
@@ -290,7 +409,7 @@ is opened once to suit it.
 
 ```sh
 # insert the disc
-omdrc-cdin -i "/media/.../Mendelssohn - Orgelsonaten - Hurford" -o /dev/dsp0 -d
+omdrc-cdin -i "/media/.../Mendelssohn - Orgelsonaten - Hurford" -o /dev/dsp.dac -d
 ```
 ```
 [INF] disc: 12 tracks, 57:53, 44100 Hz 16-bit 2ch, 2000 ms between tracks
@@ -324,7 +443,7 @@ on a real player, per the table further up:
 | `stop` | the carrier drops for good and the stream ends |
 
 ```sh
-omdrc-cdin -i DISC -o /dev/dsp0 -d -s 5 \
+omdrc-cdin -i DISC -o /dev/dsp.dac -d -s 5 \
     --transport "20:skip,35:pause=4,55:dropout=800,70:seek=+30,85:prev,105:stop"
 ```
 
@@ -392,6 +511,19 @@ and counted separately, as `dropouts`.
   cumulative average reading low for the rest of the session, long after the
   event that caused it had scrolled off the screen.
 * **`starves`** counts events, not periods: one continuous starvation is 1.
+* **`drops`** is captured audio thrown away because the ring was **full** —
+  the input kept arriving and nothing was taking it out fast enough, so the
+  oldest bytes fell off the back of the window. Each drop is a splice in what
+  plays, which is why it is counted in bytes rather than events.
+
+  It is only counted while the output is **actually being written**. A ring
+  that wraps while the daemon is still trying to *open* the device — MPD
+  holding the DAC, the chain being rebuilt — is not a discontinuity: nothing
+  was playing, and acquiring the device begins by trimming the ring back to one
+  lead anyway, so every one of those bytes was going to be discarded whatever
+  happened. Counting them reported megabytes of "discarded audio" for a stretch
+  in which nothing could have been heard. The news in that situation is the
+  unavailability itself, which is already logged as the error it is.
 * **`drift ref dropped (lead jumped)`** means the estimate was thrown away and
   restarted, because the lead moved for a reason that is not the clocks — a
   starve, a ring overflow, or a step too large to be drift. Measuring across
@@ -413,10 +545,10 @@ whole daemon exists to survive.
 
 ```sh
 # source 10% slow: the lead drains and the DAC starves
-omdrc-cdin -i FILE -o /dev/dsp0 --loop --in-ppm -100000 --lead 500 -d -s 2
+omdrc-cdin -i FILE -o /dev/dsp.dac --loop --in-ppm -100000 --lead 500 -d -s 2
 
 # source 10% fast: the lead grows to the ring cap, then frames are dropped
-omdrc-cdin -i FILE -o /dev/dsp0 --loop --in-ppm 100000 --lead 500 --ring 1000 -d -s 2
+omdrc-cdin -i FILE -o /dev/dsp.dac --loop --in-ppm 100000 --lead 500 --ring 1000 -d -s 2
 ```
 
 Both failure modes behave as the arithmetic predicts, and are worth recognising
@@ -427,7 +559,8 @@ in the stats:
   left, the DAC is paced by the source instead of its own clock, which is a
   continuous underrun.
 * **Ring saturated** — `lead` pins at the ring capacity and `drops` climbs at the
-  drift rate. Audio is being discarded, one discontinuity per drop.
+  drift rate. Audio is being discarded, one discontinuity per drop. (`drops`
+  stays at 0 while the output is merely unopenable — see above.)
 
 Neither can happen at real-hardware ppm within a disc; they are here to prove
 the instrumentation reports honestly when they do.
@@ -569,7 +702,7 @@ The digital input is 24-bit at most and a CD is 16-bit, while the chain
 downstream runs S32_LE (`virtual_oss -b 32`, BruteFIR `sample: "S32_LE"`). With
 `bitperfect=1` the kernel's format feeder is gone by design — `feeder_chain.c`
 makes origin and target identical — so the device does **not** convert, it
-simply refuses the width. That is not hypothetical: opening `/dev/dsp0` at
+simply refuses the width. That is not hypothetical: opening `/dev/dsp.dac` at
 16-bit on the dev box fails outright.
 
 So the daemon negotiates and converts itself (`src/convert.c`):
@@ -588,8 +721,8 @@ So the daemon negotiates and converts itself (`src/convert.c`):
 which path it took:
 
 ```
-[DBG] playback /dev/dsp0 at 16-bit: device rejected 16-bit samples — trying wider
-[INF] /dev/dsp0: opened for playback, 44100 Hz 32-bit 2ch
+[DBG] playback /dev/dsp.dac at 16-bit: device rejected 16-bit samples — trying wider
+[INF] /dev/dsp.dac: opened for playback, 44100 Hz 32-bit 2ch
 [INF] output opened at 32-bit; widening 16 -> 32 bit losslessly (left-justified, no arithmetic)
 ```
 
@@ -618,12 +751,16 @@ None of this can be verified on a box without the hardware.
 * **Measure the real drift**: `omdrc-cdin --in /dev/dspN --out none -d -s 30`
   reports the capture rate against the host clock; compare with the Okto's
   `dev.pcm.<n>.feedback_rate`. Their difference is the drift the lead must cover.
-* **Carrier loss**: stop the CD, then unplug the coax. Does `read()` block,
-  short-read, or error? The state machine assumes a short read or an error
-  means `NO_CARRIER`, and that a player which merely *mutes* keeps delivering
-  frames of zeros and is caught by the silence gate instead. If a stopped
-  player blocks the read forever instead of doing either, the gate never runs
-  and the daemon needs a read timeout to notice.
+* ~~**Carrier loss**: stop the CD, then unplug the coax. Does `read()` block,
+  short-read, or error?~~ **Answered — and the answer was none of the three.**
+  A stopped transport leaves `read()` returning *full* buffers, just far too
+  slowly: ~500 frames/s against 44100, carrying non-zero rubbish rather than
+  zeros. So neither the short-read path nor the silence gate fired, and the
+  daemon held the output indefinitely, bumping once per buffer-fill. Fixed by
+  the rate check in `carrier.c` — see
+  [Two ways a player goes quiet](#two-ways-a-player-goes-quiet). The remaining
+  sub-case is still open: an input that stops *dead* mid-read blocks in
+  `read(2)` and never reaches the check, which would need a read timeout.
 * **Loopback pacing**: virtual_oss runs with `-f /dev/null` (`drc.sh:96`), so it
   owns no hardware clock. Confirm a writer to `/dev/dsp.play` is throttled at
   the DAC rate via BruteFIR draining `/dev/dsp.loop`, and check what happens

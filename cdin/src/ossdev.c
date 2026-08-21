@@ -25,6 +25,19 @@ log2_exact(size_t v)
 	return lg;
 }
 
+/* log2 of the largest power of two that is <= v, or -1 for v == 0. */
+static int
+log2_floor(size_t v)
+{
+	int lg = -1;
+
+	while (v != 0) {
+		v >>= 1;
+		lg++;
+	}
+	return lg;
+}
+
 static int
 afmt_for_bits(int bits)
 {
@@ -66,11 +79,27 @@ ossdev_open(struct ossdev *d, const char *path, bool capture, int rate,
 	}
 
 	period_bytes = period_frames * d->frame_bytes;
-	if ((lg = log2_exact(period_bytes)) == -1) {
-		snprintf(err, errsz,
-		    "period of %zu frames is %zu bytes, which is not a power of two",
+	if (period_bytes < 16) {
+		snprintf(err, errsz, "period of %zu frames is only %zu bytes",
 		    period_frames, period_bytes);
 		return -1;
+	}
+	/*
+	 * SNDCTL_DSP_SETFRAGMENT encodes the fragment size as a power of two in
+	 * BYTES, so the period we want is not always expressible: a 24-bit
+	 * stereo frame is 6 bytes, and 6 * N is never a power of two for any N.
+	 * That is not a reason to refuse the device — the fragment is the
+	 * device's interrupt granularity, not our transfer size.  Ask for the
+	 * largest power of two that still fits inside the period: the device
+	 * then wakes us at least as often as we read, and the read size is
+	 * unchanged.  The period the device actually settled on is reported
+	 * back through SNDCTL_DSP_GETBLKSIZE below.
+	 */
+	if ((lg = log2_exact(period_bytes)) == -1) {
+		lg = log2_floor(period_bytes);
+		log_debug("%s: period of %zu frames is %zu bytes at %d-bit, "
+		    "which no fragment size can express; asking for %d bytes",
+		    path, period_frames, period_bytes, bits, 1 << lg);
 	}
 
 	/* O_NONBLOCK is deliberately NOT used: both threads want to be paced by

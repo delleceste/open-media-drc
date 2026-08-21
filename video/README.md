@@ -82,7 +82,7 @@ probes `bd_list_titles` and plays the **genuinely longest** title via
 Both launchers share `lib/drc-audio.sh`. Before playing it **ensures the DRC chain
 is in `resamp` mode** (`drc.sh resamp`, only if `drc-status.sh` isn't already
 reporting auto-resample). This is deliberate: the direct DAC is **bit-perfect**
-(`dev.pcm.0.bitperfect=1`, no resampling), so a 48 kHz movie on a higher-clocked
+(`bitperfect=1` on the DAC, no resampling), so a 48 kHz movie on a higher-clocked
 DAC plays **~2× fast**. Routing through virtual_oss/brutefir in resamp mode
 resamples everything to 192 kHz — correct speed *and* room correction. Export
 `DRC_SKIP_RESAMP=1` to bypass and use the bare DAC. The helper then picks:
@@ -90,7 +90,7 @@ resamples everything to 192 kHz — correct speed *and* room correction. Export
 | state | mpv audio device | video delay |
 | ----- | ---------------- | ----------- |
 | `virtual_oss` running + `/dev/dsp.play` exists | `oss//dev/dsp.play` | `-0.67 s` (delays video to match the DRC audio-path latency) |
-| otherwise | `oss//dev/dsp0` (direct DAC) | none |
+| otherwise | `oss//dev/dsp.dac` (direct DAC; `/dev/dsp0` without `omdrc_sndlink`) | none |
 
 `DRC_VIDEO_DELAY` (top of the script) defaults to **0.67 s**, derived not guessed:
 
