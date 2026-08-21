@@ -547,8 +547,8 @@
         .btn-log.cdin-start { border-color: var(--green); color: var(--green); }
 
         /* ── audio chain diagram ─────────────────────────────── */
-        /* Two LEDs and a block diagram of who currently holds the sound
-           devices.  The LED brightness is one axis and one axis only: how open
+        /* Endpoint LEDs and a block diagram of who currently holds the sound
+           devices.  LED brightness is one axis and one axis only: how open
            the device is.  Unlit = nothing has it (free to acquire), lit = a
            process holds it, lit and breathing = audio is actually going
            through.  Grey means the node is not there at all. */
@@ -603,6 +603,12 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .chain-node-body { min-width: 0; }
+        .chain-node-ports {
+            display: flex; flex-direction: column; gap: 3px; flex: 0 0 auto;
+        }
+        .chain-node-ports .led {
+            width: 7px; height: 7px; border-width: 0;
+        }
         .chain-node.device  { border-color: #3d4650; }
         .chain-node.bridge  { border-style: dashed; }
         .chain-node.idle    { opacity: .55; }
@@ -1221,7 +1227,7 @@
     </div>
     <div class="chain-status">
         <span class="chain-leds">
-            <span class="led red absent" id="chain-in-led" title="capture input"></span>
+            <span class="led red absent" id="chain-in-led" title="capture input" hidden></span>
             <span class="led green absent" id="chain-out-led" title="DAC output"></span>
         </span>
         <span class="chain-summary" id="chain-summary" aria-live="polite">loading…</span>
@@ -3680,7 +3686,7 @@ async function cdinControl(action) {
     else if (autoRefreshControls.cdin) autoRefreshControls.cdin();
 }
 
-{% if cdin_enabled %}
+{% if chain_enabled %}
 // ── audio chain diagram ────────────────────────────────────────────────────
 // The server hands over a graph — nodes with a row number, edges between node
 // ids — and this draws it: HTML blocks in rows so the text wraps and truncates
@@ -3702,24 +3708,25 @@ function toggleChain() {
     if (chainDetailOpen) drawChainArcs();
 }
 
-function chainSetLed(id, node) {
-    const led = document.getElementById(id);
-    if (!led) return;
-    const state = node ? node.state : 'absent';
-    led.className = `led ${node ? node.colour : ''} ${state}`;
-    if (!node) {
-        led.title = 'not configured';
-        return;
-    }
-    const who = (node.role === 'capture' ? node.holders.filter(h => h.mode.includes('r'))
-                                         : node.holders.filter(h => h.mode.includes('w')))
-                .map(h => `${h.cmd} (${h.pid})`).join(', ');
-    led.title = {
+function chainLedTitle(node) {
+    const direction = node.direction || (node.role === 'capture' ? 'r' : 'w');
+    const who = node.holders.filter(h => h.mode.includes(direction))
+                    .map(h => `${h.cmd} (${h.pid})`).join(', ');
+    return {
         absent: `${node.sub} — not attached`,
         free:   `${node.sub} — free, nobody has it open`,
         held:   `${node.sub} — held by ${who}`,
         active: `${node.sub} — ${who}, audio flowing`,
-    }[state] || node.sub;
+    }[node.state] || node.sub;
+}
+
+function chainSetLed(id, node) {
+    const led = document.getElementById(id);
+    if (!led) return;
+    led.hidden = !node;
+    if (!node) return;
+    led.className = `led ${node.colour} ${node.state}`;
+    led.title = chainLedTitle(node);
 }
 
 function chainNodeEl(n) {
@@ -3737,6 +3744,19 @@ function chainNodeEl(n) {
         const led = document.createElement('span');
         led.className = `led ${n.colour} ${n.state}`;
         el.appendChild(led);
+    }
+    if (n.ports && n.ports.length) {
+        const ports = document.createElement('span');
+        ports.className = 'chain-node-ports';
+        ports.setAttribute('aria-label', 'BruteFIR virtual device status');
+        n.ports.forEach(port => {
+            const led = document.createElement('span');
+            led.className = `led ${port.colour} ${port.state}`;
+            led.title = chainLedTitle(port);
+            led.setAttribute('aria-label', `${port.label}: ${led.title}`);
+            ports.appendChild(led);
+        });
+        el.appendChild(ports);
     }
     const body = document.createElement('div');
     body.className = 'chain-node-body';
@@ -3948,8 +3968,10 @@ window.addEventListener('resize', () => {
     chainResizeTimer = setTimeout(drawChainArcs, 120);
 });
 
-startAutoRefresh('cdin', CDIN_INTERVAL_MS, fetchCdin);
 startAutoRefresh('chain', CHAIN_INTERVAL_MS, fetchChain);
+{% endif %}
+{% if cdin_enabled %}
+startAutoRefresh('cdin', CDIN_INTERVAL_MS, fetchCdin);
 {% endif %}
 startAutoRefresh('qc', 1000, fetchQcStatus);
 // Keep the renderer toggle in sync with actual service status on a slow cadence.

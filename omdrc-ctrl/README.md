@@ -34,8 +34,9 @@ provides no feedback. Every command here either shows its output directly
   **bit-perfect / no-resampling verdict** so you can confirm everything is
   correct without a screen attached.
 - **Audio chain diagram** — a block diagram of the chain as the *operating
-  system* sees it, with an input LED on the capture card and an output LED on
-  the DAC. The blocks are the programs actually holding the sound devices right
+  system* sees it, with a conditional capture LED, an output LED on the DAC,
+  and compact `dsp.play` / `dsp.loop` LEDs beside active BruteFIR. The blocks
+  are the programs actually holding the sound devices right
   now, found with `fstat(1)` (FreeBSD) / `fuser(1)` (Linux) rather than from
   anything this project writes down, so a process from **outside** the chain
   squatting a device — a stray PulseAudio, a leftover `mpv`, a second BruteFIR
@@ -648,7 +649,7 @@ off last month would show a red light for whatever that log happened to end on.
 ### Reserved section: `[chain]`
 
 `[chain]` configures the **Audio chain** card: the block diagram of who is
-holding the sound devices, and the two LEDs above it.
+holding the sound devices and the LEDs on its external and virtual endpoints.
 
 ```ini
 [chain]
@@ -682,6 +683,12 @@ about. `capture` has no conventional number on Linux, so it stays off until you
 name yours. A role left empty is not drawn: a box with no CD input sets
 `capture =` and the input block disappears rather than sitting there
 permanently grey.
+
+The capture input and `omdrc-cdin` are one optional lane: neither its LED nor
+either block is drawn unless the capture interface is attached **and**
+`omdrc-cdin` is running. An active BruteFIR block has two smaller LEDs beside
+it, top to bottom: `dsp.play` and `dsp.loop` (or their configured Linux
+equivalents). Hovering either LED names the device and its current holder.
 
 **What the LEDs mean.** Brightness is one axis only — how open the device is:
 

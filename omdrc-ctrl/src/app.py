@@ -3783,6 +3783,15 @@ def _chain_status() -> dict:
     devices = _chain_resolve_devices()
     activity = _chain_activity()
 
+    # Capture and omdrc-cdin are one optional lane in the drawing.  A configured
+    # role is not evidence that the interface is attached, and an attached card
+    # by itself does not mean the bridge is in use.  Keep both blocks out unless
+    # the two facts that make the lane real are true at this instant.
+    capture_dev = devices.get("capture")
+    cdin_visible = bool(CDIN_ENABLED and capture_dev
+                        and capture_dev["present"]
+                        and _process_running(CDIN_PROCESS))
+
     paths = [d["path"] for d in devices.values() if d["present"]]
     holders, privileged = _device_holders(paths)
     for dev in devices.values():
@@ -3827,13 +3836,20 @@ def _chain_status() -> dict:
     filters = [_chain_app_node(pid, h["cmd"], h["user"], roles_of(pid), activity)
                for pid, h in sorted(filter_pids.items(), key=lambda kv: int(kv[0]))]
 
+    # A stale descriptor row during process teardown must not keep the optional
+    # CD lane on screen after pgrep says the daemon is gone.  The raw descriptor
+    # remains available in the expanded device list for diagnosis.
+    if not cdin_visible:
+        cdin_name = os.path.basename(CDIN_PROCESS)
+        sources = [n for n in sources if n["title"] != cdin_name]
+
     # The resting state of a healthy box: running, holding nothing.
     named = {n["title"] for n in sources + filters}
     for name in ("musicpd", "mpd"):
         if name not in named and _process_running(name):
             sources.append(_chain_phantom(name, activity))
             break
-    if CDIN_ENABLED and CDIN_PROCESS not in named and _process_running(CDIN_PROCESS):
+    if cdin_visible and os.path.basename(CDIN_PROCESS) not in named:
         sources.append(_chain_phantom(CDIN_PROCESS, activity))
     if "brutefir" not in named and _process_running("brutefir"):
         filters.append(_chain_phantom("brutefir", activity))
@@ -3881,22 +3897,26 @@ def _chain_status() -> dict:
             "active": flowing,
         }
 
+    def device_state(dev: dict, direction: str, traffic: bool) -> str:
+        if not dev["present"]:
+            return "absent"
+        key = "readers" if direction == "r" else "writers"
+        holders_here = dev[key]
+        if holders_here and traffic:
+            return "active"
+        return "held" if holders_here else "free"
+
     def dev_node(role: str, colour: str) -> dict | None:
         dev = devices.get(role)
         if dev is None:
             return None
-        if not dev["present"]:
-            state = "absent"
-        elif role == "capture":
-            holders_here = dev["readers"]
-            state = ("active" if holders_here and any(
-                         _chain_app_activity(h["cmd"], activity) is not False
-                         for h in holders_here)
-                     else "held" if holders_here else "free")
+        if role == "capture":
+            direction = "r"
+            traffic = any(_chain_app_activity(h["cmd"], activity) is not False
+                          for h in dev["readers"])
         else:
-            holders_here = dev["writers"]
-            state = ("active" if holders_here and flowing
-                     else "held" if holders_here else "free")
+            direction = "w"
+            traffic = flowing
         return {
             "id": f"dev:{role}", "kind": "device", "role": role,
             "title": (dev["label"] or (os.path.basename(dev["path"])
@@ -3904,12 +3924,44 @@ def _chain_status() -> dict:
                       or _CHAIN_ROLE_TITLE.get(role, role)),
             "sub": dev["path"] or dev["spec"],
             "target": dev["target"], "present": dev["present"],
-            "state": state, "colour": colour,
+            "state": device_state(dev, direction, traffic), "colour": colour,
             "holders": dev["holders"],
         }
 
-    capture_node = dev_node("capture", "red")
+    capture_node = dev_node("capture", "red") if cdin_visible else None
     dac_node = dev_node("dac", "green")
+
+    # dsp.play and dsp.loop are deliberately too small to deserve two more
+    # blocks in the graph.  They are nevertheless useful BruteFIR diagnostics,
+    # so expose their already-collected open/traffic state as two compact port
+    # LEDs on the real (descriptor-holding) BruteFIR block.  A phantom process
+    # that is merely running gets no ports: it is not an active convolver.
+    bridge_flowing = any(
+        _chain_producing(n) and "w" in n["roles"].get("bridge", "")
+        for n in sources)
+
+    def port_led(role: str, direction: str, traffic: bool) -> dict | None:
+        dev = devices.get(role)
+        if dev is None:
+            return None
+        return {
+            "role": role,
+            "label": os.path.basename(dev["spec"] or dev["path"]),
+            "sub": dev["path"] or dev["spec"],
+            "present": dev["present"],
+            "state": device_state(dev, direction, traffic),
+            "colour": "green",
+            "direction": direction,
+            "holders": dev["holders"],
+        }
+
+    brutefir_ports = [p for p in (
+        port_led("bridge", "w", bridge_flowing),
+        port_led("loop", "r", bridge_flowing),
+    ) if p is not None]
+    for node in filters:
+        if node["title"] == "brutefir" and not node.get("idle"):
+            node["ports"] = brutefir_ports
 
     rows: list[list[dict]] = [
         [n for n in ([capture_node] if capture_node else []) + feeders],

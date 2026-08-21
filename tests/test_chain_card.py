@@ -47,8 +47,10 @@ def _holder(pid, cmd, mode, user="giacomo"):
     return {"pid": pid, "cmd": cmd, "user": user, "mode": mode}
 
 
-def _status(devices=None, holders=None, activity=None, running=(),
+def _status(devices=None, holders=None, activity=None, running=None,
             services=(), privileged=True) -> dict:
+    if running is None:
+        running = (APP.CDIN_PROCESS,)
     devices = {k: dict(v) for k, v in (devices or FREEBSD).items()}
     with mock.patch.object(APP, "_chain_resolve_devices", return_value=devices), \
          mock.patch.object(APP, "_device_holders",
@@ -133,13 +135,21 @@ class Leds(unittest.TestCase):
         self.assertEqual(status["input"]["state"], "free")
         self.assertEqual(status["output"]["state"], "free")
 
-    def test_missing_capture_card_is_absent(self):
+    def test_missing_capture_card_hides_the_capture_and_cdin_blocks(self):
         devices = dict(FREEBSD)
         devices["capture"] = _device("capture", "/dev/dsp.capture", present=False)
         status = _status(devices)
-        self.assertEqual(status["input"]["state"], "absent")
+        self.assertIsNone(status["input"])
+        self.assertIsNone(_node(status, "dev:capture"))
+        self.assertIsNone(_node(status, "app:omdrc-cdin"))
         self.assertIn("not attached",
                       " ".join(p["text"] for p in status["problems"]))
+
+    def test_stopped_cdin_hides_itself_and_the_capture_led(self):
+        status = _status(running=())
+        self.assertIsNone(status["input"])
+        self.assertIsNone(_node(status, "dev:capture"))
+        self.assertIsNone(_node(status, "app:omdrc-cdin"))
 
     def test_brutefir_holding_an_idle_dac_is_held_not_active(self):
         # The case an fd-only LED gets wrong: brutefir opens the DAC when it
@@ -152,6 +162,9 @@ class Leds(unittest.TestCase):
             activity={"mpd": False})
         self.assertEqual(status["output"]["state"], "held")
         self.assertFalse(status["flowing"])
+        ports = _node(status, "app:722")["ports"]
+        self.assertEqual([p["label"] for p in ports], ["dsp.play", "dsp.loop"])
+        self.assertEqual([p["state"] for p in ports], ["held", "held"])
 
     def test_mpd_playing_lights_the_dac(self):
         status = _status(
@@ -163,6 +176,8 @@ class Leds(unittest.TestCase):
         self.assertTrue(status["flowing"])
         self.assertTrue(_edge(status, "app:601", "bridge")["active"])
         self.assertTrue(_edge(status, "app:722", "dev:dac")["active"])
+        self.assertEqual([p["state"] for p in _node(status, "app:722")["ports"]],
+                         ["active", "active"])
 
     def test_cdin_reading_a_silent_disc_holds_the_input_without_lighting_it(self):
         status = _status(
