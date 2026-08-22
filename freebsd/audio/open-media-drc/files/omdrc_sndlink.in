@@ -1,8 +1,8 @@
 #!/bin/sh
 #
 # PROVIDE: omdrc_sndlink
-# REQUIRE: FILESYSTEMS
-# BEFORE: devd musicpd brutefir_drc drc_usb_audio
+# REQUIRE: FILESYSTEMS devd
+# BEFORE: musicpd brutefir_drc drc_usb_audio
 # KEYWORD: nojail
 #
 # omdrc_cdin is deliberately not in BEFORE: it REQUIREs brutefir_drc and so
@@ -100,8 +100,13 @@ load_rc_config "$name"
 # input if it has one, "none" leaves the card alone, or name a mixer device
 # ("line" for the analog input).  See sndlink_apply_recsrc.
 : ${omdrc_sndlink_capture_recsrc:="auto"}
-# Seconds to wait at boot for the cards to show up before giving up.
-: ${omdrc_sndlink_wait:="15"}
+# Seconds to wait at boot for the cards to show up before giving up.  0 is the
+# right answer now that this service runs after devd (see the REQUIRE note in
+# the header): a card that is not there yet arrives as a devd event and is
+# linked by the same code path, so waiting for it here buys nothing and costs
+# the full timeout every time the DAC is simply switched off.  Raise it only
+# if you have evidence of a bus that is still enumerating this late in rc.
+: ${omdrc_sndlink_wait:="0"}
 
 : ${omdrc_sndlink_lockfile:="/var/run/omdrc_sndlink.lock"}
 
@@ -393,11 +398,12 @@ omdrc_sndlink_update()
 
 omdrc_sndlink_start()
 {
-	# At boot the USB bus is enumerated before rc runs, but a hub that comes
-	# up slowly (or a DAC still settling after its power switch) is worth
-	# waiting for: linking a half-populated bus is how the capture card ends
-	# up as the DAC.  A DAC that is switched on later still gets its link
-	# from the devd hook.
+	# The USB bus is enumerated before rc runs, and this service runs after
+	# devd, so there is normally nothing to wait for: a card that is still
+	# settling (a slow hub, a DAC coming up after its power switch) arrives
+	# as a devd event and is linked by the same update path.  The wait is
+	# kept as an escape hatch -- omdrc_sndlink_wait, 0 by default -- for a
+	# bus that somehow needs it; it exits the moment the roles resolve.
 	_sl_secs=${omdrc_sndlink_wait}
 	while :; do
 		sndlink_scan
