@@ -53,6 +53,32 @@ if(NOT EXISTS "${OMDRC_REPO_DIR}/drc.sh")
     message(WARNING "OMDRC_REPO_DIR does not contain drc.sh: ${OMDRC_REPO_DIR}")
 endif()
 
+# Which drc.sh the panel's buttons call, for a STANDALONE build (the
+# superproject always uses its own wrappers).  This is not cosmetic: the two
+# copies are the same script, but drc.sh decides run-from-repo vs installed mode
+# by whether a config.env sits next to it, and that decision picks BOTH the site
+# data (configs/<geometry>/, filters/) and the state directory.  Pointed at the
+# checkout on a box that has the packaged core installed, the panel looks for
+# filter sets inside the checkout -- which ships only "flat" -- so every real
+# geometry disappears from the UI, and its state lands in the checkout instead
+# of the shared OMDRC_STATE_DIR that the boot path and the desktop use.
+# AUTO therefore prefers the installed wrappers whenever they exist, which is
+# exactly the case of rebuilding just the panel from omdrc-ctrl/build.
+if(NOT _OMDRC_SUPERPROJECT)
+    set(OMDRC_PANEL_DRC "AUTO" CACHE STRING
+        "drc.sh the panel calls: AUTO (installed wrappers if present, else the checkout), INSTALLED, REPO")
+    if(OMDRC_PANEL_DRC STREQUAL "INSTALLED" OR
+       (OMDRC_PANEL_DRC STREQUAL "AUTO" AND EXISTS "${CMAKE_INSTALL_PREFIX}/bin/omdrc"))
+        set(_OMDRC_USE_INSTALLED TRUE)
+        message(STATUS "commands.conf: using the installed wrappers "
+                       "(${CMAKE_INSTALL_PREFIX}/bin/omdrc); "
+                       "set -DOMDRC_PANEL_DRC=REPO to call the checkout instead")
+    else()
+        message(STATUS "commands.conf: using the checkout (${OMDRC_REPO_DIR}/drc.sh); "
+                       "site data and state come from the checkout, not ${CMAKE_INSTALL_PREFIX}/etc/open-media-drc")
+    endif()
+endif()
+
 execute_process(
     COMMAND ${PYTHON3} -c "import flask"
     RESULT_VARIABLE _flask_rc
@@ -70,12 +96,13 @@ configure_file(
 )
 
 # commands.conf: the panel's buttons shell out to drc.sh / drc-status.sh.
-#   standalone (run-from-repo): point at ${OMDRC_REPO_DIR}/drc.sh (the checkout).
-#   superproject (packaged):    point at the installed omdrc / omdrc-status
-#                               wrappers (core-drc installs them in ${PREFIX}/bin).
+#   superproject (packaged):    the installed omdrc / omdrc-status wrappers
+#                               (core-drc installs them in ${PREFIX}/bin).
+#   standalone:                 those same wrappers when they exist, else the
+#                               checkout -- see OMDRC_PANEL_DRC above.
 message(STATUS "Rendering commands.conf from src/commands.conf.in")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/commands.conf.in" _cc)
-if(_OMDRC_SUPERPROJECT)
+if(_OMDRC_SUPERPROJECT OR _OMDRC_USE_INSTALLED)
     string(REPLACE "@OMDRC_REPO_DIR@/drc-status.sh" "${CMAKE_INSTALL_PREFIX}/bin/omdrc-status" _cc "${_cc}")
     string(REPLACE "@OMDRC_REPO_DIR@/drc.sh"        "${CMAKE_INSTALL_PREFIX}/bin/omdrc"        _cc "${_cc}")
 endif()
