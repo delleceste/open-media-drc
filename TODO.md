@@ -29,10 +29,11 @@ Two increments, either useful alone:
 2. **Auto-select from the connected DAC.** In practice the DAC often changes
    with the room, so the USB vendor/product id is a usable proxy for location.
    A `dac-id → geometry` mapping in `omdrc.conf` would let the chain pick its
-   own correction on hotplug. The hook already exists: `usb-audio-drc.conf`
-   drives start/stop on plug/unplug via devd, and `drc_usb_audio` is the boot
-   probe + hotplug worker, so the device identity is available at exactly the
-   moment the decision needs making.
+   own correction on hotplug. The hook already exists: `omdrc-sndlink.conf`
+   runs `libexec/omdrc-hotplug` on every `pcm` attach/detach, and it already
+   resolves the card identity (vendor/product/serial) through
+   `omdrc_audio`, so the id is in hand at exactly the moment the decision
+   needs making.
 
 Worth keeping the two separate: (1) is a small, self-contained ergonomic win;
 (2) is the interesting one but depends on (1) existing first.

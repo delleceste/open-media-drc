@@ -1,17 +1,13 @@
 #!/bin/sh
 #
-# PROVIDE: omdrc_sndlink
+# PROVIDE: omdrc_audio
 # REQUIRE: FILESYSTEMS devd
-# BEFORE: musicpd brutefir_drc drc_usb_audio
-# KEYWORD: nojail
-#
-# omdrc_cdin is deliberately not in BEFORE: it REQUIREs brutefir_drc and so
-# already lands after us, and naming a service that may not be installed makes
-# rcorder(8) warn on every boot.
+# KEYWORD: shutdown nojail
 #
 # Add to /etc/rc.conf:
-#   omdrc_sndlink_enable="YES"
-#   omdrc_sndlink_capture="ESI U24XL"   # only if you use the CD input (cdin)
+#   omdrc_audio_enable="YES"
+#   omdrc_audio_user="giacomo"
+#   omdrc_audio_capture="ESI U24XL"   # only if you use the CD input (cdin)
 #
 # Stable names for the sound cards, so nothing in this project has to know a
 # pcm unit number:
@@ -43,8 +39,10 @@
 # (that is how devfs.conf's "link" directive works -- /etc/rc.d/devfs runs a
 # plain `ln -fs` inside /dev), devd can run a command on every pcm attach, and
 # this service creates the links for the cards that were already there.  The
-# devd rule (etc/devd/omdrc-sndlink.conf) calls `service omdrc_sndlink update`
-# for hotplug, which is the same code path as boot.
+# devd rule (etc/devd/omdrc-audio.conf) starts a detached
+# `service omdrc_audio reconcile` for hotplug, which is the same level-triggered
+# code path as boot.  No devd event is interpreted as an instruction to start
+# or stop DRC; the reconciler reads the complete state after each event.
 #
 # Both halves are needed, and neither replaces the other: devd has no coldplug
 # replay, so it never sees a DAC that the kernel enumerated during boot -- that
@@ -89,57 +87,63 @@
 #     choice is announced as a guess with the rc.conf line that would end it,
 #     because a quiet wrong guess sends the chain, the bit-perfect sysctls and
 #     the hardware volume to the wrong device with nothing to show for it;
-#   * the capture role exists only when omdrc_sndlink_capture names a card.
+#   * the capture role exists only when omdrc_audio_capture names a card.
 #     Leave it empty (the default) if you do not use the CD input: no capture
 #     link is created and nothing else changes.
 #
 
 . /etc/rc.subr
 
-name="omdrc_sndlink"
-rcvar="omdrc_sndlink_enable"
-start_cmd="omdrc_sndlink_start"
-stop_cmd="omdrc_sndlink_stop"
-status_cmd="omdrc_sndlink_status"
-extra_commands="update"
-update_cmd="omdrc_sndlink_update"
+name="omdrc_audio"
+rcvar="omdrc_audio_enable"
+start_cmd="omdrc_audio_start"
+stop_cmd="omdrc_audio_stop"
+status_cmd="omdrc_audio_status"
+start_precmd="omdrc_audio_precmd"
+stop_precmd="omdrc_audio_precmd"
+status_precmd="omdrc_audio_status_precmd"
+roles_precmd="omdrc_audio_roles_precmd"
+reconcile_precmd="omdrc_audio_precmd"
+extra_commands="roles reconcile"
+roles_cmd="omdrc_audio_roles"
+reconcile_cmd="omdrc_audio_reconcile"
 
 load_rc_config "$name"
 
-: ${omdrc_sndlink_enable:="NO"}
+# Compatibility fallbacks make an upgrade safe, but the new names are the only
+# documented interface.  Remove the old rc.conf keys after migration.
+: ${omdrc_audio_enable:="${drc_usb_audio_enable:-NO}"}
+: ${omdrc_audio_user:="${brutefir_drc_user:-}"}
+: ${omdrc_audio_drcsh:="${brutefir_drc_drcsh:-%%PREFIX%%/libexec/omdrc/drc.sh}"}
+: ${omdrc_audio_statussh:="${brutefir_drc_statussh:-%%PREFIX%%/libexec/omdrc/drc-status.sh}"}
 # Which card takes which role.  USB id (0x152a:0x88c5[:serial]) or a substring
 # of the description.  DAC empty = auto (see the header); capture empty = off.
-: ${omdrc_sndlink_dac:=""}
-: ${omdrc_sndlink_capture:=""}
+: ${omdrc_audio_dac:="${omdrc_sndlink_dac:-}"}
+: ${omdrc_audio_capture:="${omdrc_sndlink_capture:-}"}
 # Per-card pcm settings, keyed by ROLE rather than by unit number.  The defaults
 # are what a bit-perfect chain requires and are applied on every attach; see
-# sndlink_apply_knobs for why they cannot live in /etc/sysctl.conf.  Add
+# audio_apply_knobs for why they cannot live in /etc/sysctl.conf.  Add
 # device-specific ones here (e.g. mixer.vol_0.val=0 to park a DAC at 0 dB).
-: ${omdrc_sndlink_dac_sysctls:="bitperfect=1 play.vchans=0"}
-: ${omdrc_sndlink_capture_sysctls:="bitperfect=1 rec.vchans=0"}
+: ${omdrc_audio_dac_sysctls:="${omdrc_sndlink_dac_sysctls:-bitperfect=1 play.vchans=0}"}
+: ${omdrc_audio_capture_sysctls:="${omdrc_sndlink_capture_sysctls:-bitperfect=1 rec.vchans=0}"}
 # Recording source to select on the capture card: "auto" picks its digital
 # input if it has one, "none" leaves the card alone, or name a mixer device
-# ("line" for the analog input).  See sndlink_apply_recsrc.
-: ${omdrc_sndlink_capture_recsrc:="auto"}
-# Seconds to wait at boot for the cards to show up before giving up.  0 is the
-# right answer now that this service runs after devd (see the REQUIRE note in
-# the header): a card that is not there yet arrives as a devd event and is
-# linked by the same code path, so waiting for it here buys nothing and costs
-# the full timeout every time the DAC is simply switched off.  Raise it only
-# if you have evidence of a bus that is still enumerating this late in rc.
-: ${omdrc_sndlink_wait:="0"}
+# ("line" for the analog input).  See audio_apply_recsrc.
+: ${omdrc_audio_capture_recsrc:="${omdrc_sndlink_capture_recsrc:-auto}"}
 
-: ${omdrc_sndlink_lockfile:="/var/run/omdrc_sndlink.lock"}
+: ${omdrc_audio_rundir:="/var/run/omdrc"}
+: ${omdrc_audio_lockfile:="${omdrc_audio_rundir}/device.lock"}
 # Where the resolved roles are published for other programs to read; see
-# sndlink_publish.  Empty disables it.
-: ${omdrc_sndlink_statefile:="/var/run/omdrc_sndlink.roles"}
+# audio_publish.  Empty disables it.
+: ${omdrc_audio_statefile:="${omdrc_audio_rundir}/audio.roles"}
 
 MIXER="/usr/sbin/mixer"
+SYSCTL="/sbin/sysctl"
 
-sndlink_log()
+audio_log()
 {
 	echo "${name}: $*"
-	[ -t 1 ] || logger -t "${name}" -- "$*" 2>/dev/null
+	[ -t 1 ] || logger -t "${name}" -- "$*" 2>/dev/null || true
 }
 
 # "<unit> <parent> <mode> <vendor> <product> <serial> <description>" for every
@@ -148,7 +152,7 @@ sndlink_log()
 # description, and reporting them is better than pretending the picture is
 # complete.  The description comes last because it is the only field that can
 # contain spaces -- a `read -r u p mode vid pid ser desc` soaks it up.
-sndlink_cards()
+audio_cards()
 {
 	sysctl -N dev.pcm 2>/dev/null |
 	    sed -n 's/^dev\.pcm\.\([0-9][0-9]*\)\.%parent$/\1/p' |
@@ -158,7 +162,7 @@ sndlink_cards()
 		_sl_d=$(sysctl -n "dev.pcm.${_sl_u}.%desc" 2>/dev/null)
 		_sl_m=$(sysctl -n "dev.pcm.${_sl_u}.mode" 2>/dev/null)
 		[ -n "${_sl_m}" ] || _sl_m=0
-		set -- $(sndlink_ids "${_sl_p}")
+		set -- $(audio_ids "${_sl_p}")
 		printf '%s %s %s %s %s %s %s\n' \
 		    "${_sl_u}" "${_sl_p}" "${_sl_m}" "${1:--}" "${2:--}" "${3:--}" "${_sl_d}"
 	done
@@ -168,7 +172,7 @@ sndlink_cards()
 # "-" for anything the device does not report.  USB devices report all three in
 # %pnpinfo; PCI ones do not report a product= at all, which is why the match
 # syntax also takes a description substring.
-sndlink_ids()
+audio_ids()
 {
 	_sl_cls=${1%%[0-9]*}
 	_sl_unit=${1#"${_sl_cls}"}
@@ -190,7 +194,7 @@ sndlink_ids()
 
 # Does card <desc/vendor/product/serial> match the spec in $1?
 # Spec is either 0xVVVV:0xPPPP[:serial] or a substring of the description.
-sndlink_match()
+audio_match()
 {
 	_sl_spec=$1 _sl_desc=$2 _sl_vid=$3 _sl_pid=$4 _sl_ser=$5
 	[ -n "${_sl_spec}" ] || return 1
@@ -221,24 +225,24 @@ sndlink_match()
 _sl_nl='
 '
 
-sndlink_can_play() { [ $(( $1 & 2 )) -ne 0 ]; }
-sndlink_can_rec()  { [ $(( $1 & 4 )) -ne 0 ]; }
+audio_can_play() { [ $(( $1 & 2 )) -ne 0 ]; }
+audio_can_rec()  { [ $(( $1 & 4 )) -ne 0 ]; }
 
 # Decide the roles.  Sets DAC_UNIT/DAC_DESC and CAPTURE_UNIT/CAPTURE_DESC, empty
 # when the role is unfilled.  Capture is resolved first so that the DAC search
 # can rule that card out -- with no DAC match configured, the capture card is
 # often perfectly playback-capable and would otherwise be a candidate.
-sndlink_scan()
+audio_scan()
 {
 	DAC_UNIT="" DAC_DESC="" CAPTURE_UNIT="" CAPTURE_DESC=""
-	_sl_cards=$(sndlink_cards)
+	_sl_cards=$(audio_cards)
 
-	if [ -n "${omdrc_sndlink_capture}" ]; then
+	if [ -n "${omdrc_audio_capture}" ]; then
 		while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
 			[ -n "${_sl_u}" ] || continue
 			[ -z "${CAPTURE_UNIT}" ] || continue
-			sndlink_can_rec "${_sl_m}" || continue
-			if sndlink_match "${omdrc_sndlink_capture}" \
+			audio_can_rec "${_sl_m}" || continue
+			if audio_match "${omdrc_audio_capture}" \
 			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}"; then
 				CAPTURE_UNIT="${_sl_u}"
 				CAPTURE_DESC="${_sl_d}"
@@ -251,13 +255,13 @@ sndlink_scan()
 	# An explicit match either hits or it does not; there is no second-best
 	# card to fall back to, and a spec that matches nothing must leave the
 	# role empty rather than quietly pick something else.
-	if [ -n "${omdrc_sndlink_dac}" ]; then
+	if [ -n "${omdrc_audio_dac}" ]; then
 		while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
 			[ -n "${_sl_u}" ] || continue
 			[ -z "${DAC_UNIT}" ] || continue
 			[ "${_sl_u}" != "${CAPTURE_UNIT}" ] || continue
-			sndlink_can_play "${_sl_m}" || continue
-			if sndlink_match "${omdrc_sndlink_dac}" \
+			audio_can_play "${_sl_m}" || continue
+			if audio_match "${omdrc_audio_dac}" \
 			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}"; then
 				DAC_UNIT="${_sl_u}"
 				DAC_DESC="${_sl_d}"
@@ -290,15 +294,15 @@ sndlink_scan()
 	# a quiet guess: pick the wrong card and the whole chain, the
 	# bit-perfect sysctls and the hardware volume all go to the wrong device
 	# and nothing anywhere says so.  So the guess is announced, with the
-	# line to paste into rc.conf to end it -- see sndlink_report_guess.
+	# line to paste into rc.conf to end it -- see audio_report_guess.
 	DAC_GUESSED="" DAC_CANDIDATES="" DAC_COUNT=0
 	_sl_best=9
 	while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
 		[ -n "${_sl_u}" ] || continue
 		[ "${_sl_u}" != "${CAPTURE_UNIT}" ] || continue
-		sndlink_can_play "${_sl_m}" || continue
+		audio_can_play "${_sl_m}" || continue
 
-		if sndlink_can_rec "${_sl_m}"; then
+		if audio_can_rec "${_sl_m}"; then
 			_sl_tier=4
 			case "${_sl_p}" in uaudio*) _sl_tier=2 ;; esac
 		else
@@ -325,24 +329,24 @@ sndlink_scan()
 # Say, loudly and with the fix in it, that the DAC role was decided by
 # preference order rather than by anything definite.  Called from update and
 # from status, because the operator may meet either one first.
-sndlink_report_guess()
+audio_report_guess()
 {
 	[ -n "${DAC_GUESSED}" ] || return 0
-	sndlink_log "WARNING: ${DAC_COUNT} playback cards and no omdrc_sndlink_dac set;"
-	sndlink_log "WARNING: guessed pcm${DAC_UNIT} <${DAC_DESC}>.  Add ONE of these"
-	sndlink_log "WARNING: to /etc/rc.conf to pin it and silence this:"
+	audio_log "WARNING: ${DAC_COUNT} playback cards and no omdrc_audio_dac set;"
+	audio_log "WARNING: guessed pcm${DAC_UNIT} <${DAC_DESC}>.  Add ONE of these"
+	audio_log "WARNING: to /etc/rc.conf to pin it and silence this:"
 	# One ready-to-paste line per candidate, not just for the one that was
 	# guessed: the guess is as likely to be the wrong card as the right one,
 	# and the operator is the only one here who knows which is the DAC.
 	printf '%s\n' "${DAC_CANDIDATES}" | while read -r _sl_cu _sl_cd; do
 		[ -n "${_sl_cu}" ] || continue
-		sndlink_log "WARNING:   omdrc_sndlink_dac=\"${_sl_cd}\"   # pcm${_sl_cu}"
+		audio_log "WARNING:   omdrc_audio_dac=\"${_sl_cd}\"   # pcm${_sl_cu}"
 	done
-	sndlink_log "WARNING: any substring of the description is enough (\"OKTO\");"
-	sndlink_log "WARNING: a USB id 0xVVVV:0xPPPP[:serial] is only needed to tell"
-	sndlink_log "WARNING: two identical cards apart."
-	sndlink_log "WARNING: If one of them is a CD/S-PDIF input, name it with"
-	sndlink_log "WARNING: omdrc_sndlink_capture instead and the DAC resolves itself."
+	audio_log "WARNING: any substring of the description is enough (\"OKTO\");"
+	audio_log "WARNING: a USB id 0xVVVV:0xPPPP[:serial] is only needed to tell"
+	audio_log "WARNING: two identical cards apart."
+	audio_log "WARNING: If one of them is a CD/S-PDIF input, name it with"
+	audio_log "WARNING: omdrc_audio_capture instead and the DAC resolves itself."
 }
 
 # /dev/dsp.<role> and /dev/mixer.<role> -> unit $2, or removed when $2 is empty.
@@ -350,7 +354,7 @@ sndlink_report_guess()
 # what follows "dsp".  A node that is not a symlink is never touched: cuse
 # clients (virtual_oss) create real character devices under names of exactly
 # this shape, and clobbering one would take the audio chain down.
-sndlink_link()
+audio_link()
 {
 	_sl_role=$1 _sl_unit=$2
 	for _sl_kind in dsp mixer; do
@@ -362,14 +366,14 @@ sndlink_link()
 		if [ -z "${_sl_unit}" ]; then
 			[ -L "${_sl_link}" ] || continue
 			rm -f "${_sl_link}"
-			sndlink_log "removed ${_sl_link}"
+			audio_log "removed ${_sl_link}"
 			continue
 		fi
 		[ -e "/dev/${_sl_kind}${_sl_unit}" ] || continue
 		_sl_old=$(readlink "${_sl_link}" 2>/dev/null)
 		[ "${_sl_old}" = "${_sl_kind}${_sl_unit}" ] && continue
 		ln -shf "${_sl_kind}${_sl_unit}" "${_sl_link}" || continue
-		sndlink_log "${_sl_link} -> ${_sl_kind}${_sl_unit}"
+		audio_log "${_sl_link} -> ${_sl_kind}${_sl_unit}"
 	done
 }
 
@@ -386,20 +390,35 @@ sndlink_link()
 #
 # Keying them by role and re-applying them from the devd hook gives one owner
 # and one application, on every attach.  Keep dev.pcm.* lines OUT of
-# /etc/sysctl.conf; global hw.snd.* / hw.usb.uaudio.* tunables are not
-# unit-keyed, survive a re-attach, and belong there as usual.
-sndlink_apply_knobs()
+# /etc/sysctl.conf.  Most global hw.snd.* / hw.usb.uaudio.* tunables survive
+# a re-attach and belong there; hw.snd.default_unit is the deliberate exception
+# because its VALUE is a role-dependent pcm number, so this service owns it.
+audio_apply_knobs()
 {
-	# Pin the bare /dev/dsp to the DAC as well, for everything that is not
-	# part of this project.  A detach hands hw.snd.default_unit back to the
-	# kernel's "best unit" guess.
-	[ -z "${DAC_UNIT}" ] ||
-	    sysctl "hw.snd.default_unit=${DAC_UNIT}" >/dev/null 2>&1
+	# Pin bare /dev/dsp to the card currently holding the DAC role.  This value
+	# must not be hard-coded in sysctl.conf: pcm numbers follow USB attach order,
+	# and /etc/rc.d/sysctl runs before roles are known.  Use the base-system path,
+	# verify the readback, and report failure instead of silently accepting a
+	# capture card as the default.  A detach leaves selection to the kernel until
+	# a DAC role exists again.
+	if [ -n "${DAC_UNIT}" ]; then
+		_sl_old=$(${SYSCTL} -n hw.snd.default_unit 2>/dev/null)
+		if ! ${SYSCTL} "hw.snd.default_unit=${DAC_UNIT}" >/dev/null 2>&1; then
+			warn "${name}: cannot set hw.snd.default_unit=${DAC_UNIT} for DAC role"
+		else
+			_sl_got=$(${SYSCTL} -n hw.snd.default_unit 2>/dev/null)
+			if [ "${_sl_got}" != "${DAC_UNIT}" ]; then
+				warn "${name}: hw.snd.default_unit readback is ${_sl_got:-unavailable}, expected ${DAC_UNIT}"
+			elif [ "${_sl_old}" != "${DAC_UNIT}" ]; then
+				audio_log "hw.snd.default_unit -> ${DAC_UNIT} (DAC role)"
+			fi
+		fi
+	fi
 
 	for _sl_role in dac capture; do
 		case "${_sl_role}" in
-		dac)	 _sl_u="${DAC_UNIT}";     _sl_set="${omdrc_sndlink_dac_sysctls}" ;;
-		capture) _sl_u="${CAPTURE_UNIT}"; _sl_set="${omdrc_sndlink_capture_sysctls}" ;;
+		dac)	 _sl_u="${DAC_UNIT}";     _sl_set="${omdrc_audio_dac_sysctls}" ;;
+		capture) _sl_u="${CAPTURE_UNIT}"; _sl_set="${omdrc_audio_capture_sysctls}" ;;
 		esac
 		[ -n "${_sl_u}" ] || continue
 		for _sl_kv in ${_sl_set}; do
@@ -423,15 +442,15 @@ sndlink_apply_knobs()
 # collide.  Only devices the card actually offers as a recording source are
 # considered -- mixer(8) tags those "rec" -- so a card without a digital input
 # is left alone rather than being switched to something arbitrary.
-sndlink_apply_recsrc()
+audio_apply_recsrc()
 {
 	[ -n "${CAPTURE_UNIT}" ] || return 0
 	[ -x "${MIXER}" ] || return 0
 
-	case "${omdrc_sndlink_capture_recsrc}" in
+	case "${omdrc_audio_capture_recsrc}" in
 	none|"")	return 0 ;;
 	auto)		_sl_want="pcm2 dig1 dig2 dig3" ;;
-	*)		_sl_want="${omdrc_sndlink_capture_recsrc}" ;;
+	*)		_sl_want="${omdrc_audio_capture_recsrc}" ;;
 	esac
 
 	_sl_dev="/dev/mixer${CAPTURE_UNIT}"
@@ -450,7 +469,7 @@ sndlink_apply_recsrc()
 			[ "${_sl_src}" = "${_sl_cur}" ] && return 0
 			if ${MIXER} -f "${_sl_dev}" "${_sl_src}.recsrc=set" \
 			    >/dev/null 2>&1; then
-				sndlink_log "capture source ${_sl_src} on ${_sl_dev}"
+				audio_log "capture source ${_sl_src} on ${_sl_dev}"
 			else
 				warn "${name}: cannot select ${_sl_src} on ${_sl_dev}"
 			fi
@@ -460,7 +479,7 @@ sndlink_apply_recsrc()
 
 	# Only worth a word when the operator asked for a specific source and the
 	# card does not have it; "auto" on a card with no digital input is normal.
-	[ "${omdrc_sndlink_capture_recsrc}" = "auto" ] ||
+	[ "${omdrc_audio_capture_recsrc}" = "auto" ] ||
 	    warn "${name}: ${_sl_dev} has no recording source named ${_sl_want}"
 }
 
@@ -468,86 +487,123 @@ sndlink_apply_recsrc()
 # script.  The web panel's audio-chain card reports the roles and has to be
 # able to say "this DAC was a guess" -- one file read per poll, no subprocess,
 # no privilege.  Best-effort: a read-only /var/run is not a reason to fail.
-sndlink_publish()
+audio_publish()
 {
-	[ -n "${omdrc_sndlink_statefile}" ] || return 0
+	[ -n "${omdrc_audio_statefile}" ] || return 0
 	{
 		printf 'dac_unit=%s\n' "${DAC_UNIT}"
 		printf 'dac_desc=%s\n' "${DAC_DESC}"
 		printf 'dac_guessed=%s\n' "${DAC_GUESSED:-0}"
 		printf 'capture_unit=%s\n' "${CAPTURE_UNIT}"
 		printf 'capture_desc=%s\n' "${CAPTURE_DESC}"
-		printf 'capture_wanted=%s\n' "${omdrc_sndlink_capture}"
-	} > "${omdrc_sndlink_statefile}.new" 2>/dev/null &&
-	    mv -f "${omdrc_sndlink_statefile}.new" "${omdrc_sndlink_statefile}" \
+		printf 'capture_wanted=%s\n' "${omdrc_audio_capture}"
+	} > "${omdrc_audio_statefile}.new" 2>/dev/null &&
+	    mv -f "${omdrc_audio_statefile}.new" "${omdrc_audio_statefile}" \
 	        2>/dev/null || true
 }
 
 # The whole job, idempotent: called at boot, from the devd hook on every pcm
 # attach and detach, and by hand.  Serialised with lockf(1) because devd fires
 # one action per pcm and a two-card box attaches both at once.
-omdrc_sndlink_update()
+omdrc_audio_roles()
 {
-	if [ -z "${OMDRC_SNDLINK_LOCKED}" ]; then
-		# Re-enter under the lock.  "oneupdate" for the inner run: the
+	if [ -z "${OMDRC_AUDIO_DEVICE_LOCKED}" ]; then
+		# Re-enter under the lock.  "oneroles" for the inner run: the
 		# outer one has already cleared the rcvar (or was itself a "one"
 		# invocation), and /bin/sh keeps this working whatever the mode
 		# bits of an installed copy are.
-		OMDRC_SNDLINK_LOCKED=1 \
-		    /usr/bin/lockf -s -t 15 "${omdrc_sndlink_lockfile}" \
-		    /bin/sh "$0" oneupdate
+		OMDRC_AUDIO_DEVICE_LOCKED=1 \
+		    /usr/bin/lockf -k -s -t 15 "${omdrc_audio_lockfile}" \
+			    /bin/sh "${rc_service:-$0}" oneroles
 		return $?
 	fi
 
-	sndlink_scan
-	sndlink_link dac "${DAC_UNIT}"
-	sndlink_link capture "${CAPTURE_UNIT}"
-	sndlink_apply_knobs
-	sndlink_apply_recsrc
-	sndlink_report_guess
-	sndlink_publish
+	audio_scan
+	audio_link dac "${DAC_UNIT}"
+	audio_link capture "${CAPTURE_UNIT}"
+	audio_apply_knobs
+	audio_apply_recsrc
+	audio_report_guess
+	audio_publish
 
 	if [ -z "${DAC_UNIT}" ]; then
-		sndlink_log "no playback card attached; /dev/dsp.dac not created"
+		audio_log "no playback card attached; /dev/dsp.dac not created"
 	fi
-	if [ -n "${omdrc_sndlink_capture}" ] && [ -z "${CAPTURE_UNIT}" ]; then
-		sndlink_log "no card matches '${omdrc_sndlink_capture}'; /dev/dsp.capture not created"
+	if [ -n "${omdrc_audio_capture}" ] && [ -z "${CAPTURE_UNIT}" ]; then
+		audio_log "no card matches '${omdrc_audio_capture}'; /dev/dsp.capture not created"
 	fi
 	return 0
 }
 
-omdrc_sndlink_start()
+omdrc_audio_roles_precmd()
 {
-	# The USB bus is enumerated before rc runs, and this service runs after
-	# devd, so there is normally nothing to wait for: a card that is still
-	# settling (a slow hub, a DAC coming up after its power switch) arrives
-	# as a devd event and is linked by the same update path.  The wait is
-	# kept as an escape hatch -- omdrc_sndlink_wait, 0 by default -- for a
-	# bus that somehow needs it; it exits the moment the roles resolve.
-	_sl_secs=${omdrc_sndlink_wait}
-	while :; do
-		sndlink_scan
-		if [ -n "${DAC_UNIT}" ]; then
-			[ -z "${omdrc_sndlink_capture}" ] && break
-			[ -n "${CAPTURE_UNIT}" ] && break
-		fi
-		[ "${_sl_secs}" -gt 0 ] || break
-		sleep 1
-		_sl_secs=$((_sl_secs - 1))
-	done
-	omdrc_sndlink_update
+	[ "$(id -u)" -eq 0 ] || err 1 "roles/reconcile require root"
+	/usr/bin/install -d -o root -g wheel -m 0755 "${omdrc_audio_rundir}" ||
+		err 1 "cannot create ${omdrc_audio_rundir}"
 }
 
-omdrc_sndlink_stop()
+omdrc_audio_precmd()
 {
-	sndlink_link dac ""
-	sndlink_link capture ""
+	omdrc_audio_roles_precmd || return $?
+	omdrc_audio_status_precmd
 }
 
-omdrc_sndlink_status()
+# Status is deliberately usable by the audio user.  It only scans read-only
+# pcm metadata and asks drc-status.sh about the caller's own chain; requiring
+# root here would turn a healthy service into a false diagnostic failure.
+omdrc_audio_status_precmd()
 {
-	sndlink_scan
-	sndlink_cards | while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
+	[ -n "${omdrc_audio_user}" ] ||
+		err 1 "set omdrc_audio_user in /etc/rc.conf"
+	[ -x "${omdrc_audio_drcsh}" ] ||
+		err 1 "${omdrc_audio_drcsh} is not executable"
+	if [ "$(id -u)" -eq 0 ]; then
+		/usr/sbin/pw usershow "${omdrc_audio_user}" >/dev/null 2>&1 ||
+			err 1 "unknown omdrc_audio_user: ${omdrc_audio_user}"
+	fi
+}
+
+# Preserve brutefir_drc's important behavior: BruteFIR must have the same
+# ownership at boot and from an interactive drc.sh.  A login shell also supplies
+# HOME and the login-class PATH containing brutefir, mpc and virtual_oss.
+audio_as_user()
+{
+	if [ "$(id -u)" -eq 0 ]; then
+		su -l "${omdrc_audio_user}" -c "$*"
+	else
+		# service(8) gives an unprivileged diagnostic invocation the base
+		# system PATH, which omits /usr/local/bin.  drc.sh's env(1) shebang
+		# must still be able to find bash, mpc and the audio tools.
+		PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin \
+		    /bin/sh -c "$*"
+	fi
+}
+
+omdrc_audio_reconcile()
+{
+	# Never hold the root device-role lock while waiting for the DRC lock.
+	# omdrc_audio_roles takes and releases device.lock inside its own process.
+	omdrc_audio_roles || return $?
+	audio_as_user "${omdrc_audio_drcsh} reconcile"
+}
+
+omdrc_audio_start()
+{
+	omdrc_audio_reconcile
+}
+
+omdrc_audio_stop()
+{
+	# Transient teardown: retain last_power and last_source so boot/hotplug can
+	# restore the user's DRC and CD-input choice.  Role links are factual device
+	# names and are left in place; detach reconciliation removes stale links.
+	audio_as_user "${omdrc_audio_drcsh} stop"
+}
+
+omdrc_audio_roles_status()
+{
+	audio_scan
+	audio_cards | while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
 		[ -n "${_sl_u}" ] || continue
 		case "${_sl_u}" in
 		"${DAC_UNIT}")		_sl_role="dac" ;;
@@ -555,8 +611,8 @@ omdrc_sndlink_status()
 		*)			_sl_role="-" ;;
 		esac
 		_sl_caps=""
-		sndlink_can_play "${_sl_m}" && _sl_caps="play"
-		sndlink_can_rec "${_sl_m}" && _sl_caps="${_sl_caps}${_sl_caps:+/}rec"
+		audio_can_play "${_sl_m}" && _sl_caps="play"
+		audio_can_rec "${_sl_m}" && _sl_caps="${_sl_caps}${_sl_caps:+/}rec"
 		printf '/dev/dsp%-3s %-8s %s (%s, %s' \
 		    "${_sl_u}" "${_sl_role}" "${_sl_d}" "${_sl_p}" "${_sl_caps}"
 		[ "${_sl_vid}" = "-" ] || printf ', %s:%s' "${_sl_vid}" "${_sl_pid}"
@@ -584,19 +640,39 @@ omdrc_sndlink_status()
 		fi
 	done
 
-	sndlink_report_guess
+	audio_report_guess
 
 	_sl_rc=0
+	_sl_default=$(${SYSCTL} -n hw.snd.default_unit 2>/dev/null)
+	printf '%-23s %s\n' 'hw.snd.default_unit' "${_sl_default:-unavailable}"
 	if [ -z "${DAC_UNIT}" ]; then
 		echo "${name}: no playback card -- /dev/dsp.dac is missing"
 		_sl_rc=1
 	fi
-	if [ -n "${omdrc_sndlink_capture}" ] && [ -z "${CAPTURE_UNIT}" ]; then
-		echo "${name}: no card matches '${omdrc_sndlink_capture}' -- /dev/dsp.capture is missing"
+	if [ -n "${DAC_UNIT}" ] && [ "${_sl_default}" != "${DAC_UNIT}" ]; then
+		echo "${name}: default unit mismatch -- DAC role is pcm${DAC_UNIT}"
+		_sl_rc=1
+	fi
+	if [ -n "${omdrc_audio_capture}" ] && [ -z "${CAPTURE_UNIT}" ]; then
+		echo "${name}: no card matches '${omdrc_audio_capture}' -- /dev/dsp.capture is missing"
 		_sl_rc=1
 	fi
 	[ "${_sl_rc}" = 0 ] && echo "${name}: roles assigned"
 	return "${_sl_rc}"
+}
+
+omdrc_audio_status()
+{
+	_sl_roles=0
+	omdrc_audio_roles_status || _sl_roles=$?
+	if [ -x "${omdrc_audio_statussh}" ]; then
+		audio_as_user "${omdrc_audio_statussh}"
+		_sl_chain=$?
+	else
+		audio_as_user "${omdrc_audio_drcsh} status"
+		_sl_chain=$?
+	fi
+	[ "${_sl_roles}" -eq 0 ] && [ "${_sl_chain}" -eq 0 ]
 }
 
 run_rc_command "$1"

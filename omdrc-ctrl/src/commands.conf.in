@@ -184,7 +184,7 @@ privileged = yes
 # diagram — a box with no CD input sets `capture =` and the input block, and its
 # LED, disappear instead of sitting there permanently grey.
 #
-# FreeBSD defaults (the role symlinks omdrc_sndlink maintains, plus the two cuse
+# FreeBSD defaults (the role symlinks omdrc_audio maintains, plus the two cuse
 # nodes virtual_oss creates):
 #   capture = /dev/dsp.capture
 #   bridge  = /dev/dsp.play
@@ -408,6 +408,14 @@ group   = drc
 type    = WRITE
 button  = Apply
 cmd     = @OMDRC_REPO_DIR@/drc.sh 44100
+process = brutefir
+
+[drc_cdin]
+what    = CD input (44.1 kHz)
+group   = drc
+type    = WRITE
+button  = Apply
+cmd     = @OMDRC_REPO_DIR@/drc.sh cdin
 process = brutefir
 
 [chrome]

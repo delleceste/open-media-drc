@@ -1,0 +1,11 @@
+set(_musicpd_rcconf_dir "$ENV{DESTDIR}@CMAKE_INSTALL_PREFIX@/etc/rc.conf.d/musicpd")
+execute_process(
+    COMMAND /bin/sh
+            "@CMAKE_CURRENT_SOURCE_DIR@/scripts/prepare-musicpd-rc-conf-dir.sh"
+            "${_musicpd_rcconf_dir}"
+    RESULT_VARIABLE _musicpd_prepare_result
+)
+if(NOT _musicpd_prepare_result EQUAL 0)
+    message(FATAL_ERROR
+        "Could not prepare ${_musicpd_rcconf_dir} for the omdrc_audio MPD hook")
+endif()

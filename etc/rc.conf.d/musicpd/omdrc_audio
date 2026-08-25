@@ -1,0 +1,22 @@
+# open-media-drc: finish MPD routing after musicpd has actually started.
+#
+# FreeBSD rcorder can schedule omdrc_audio before musicpd, and that is
+# intentional: a slow or broken MPD must not prevent the physical DRC chain
+# from starting.  drc.sh therefore treats a failed MPD output selection as
+# pending.  This successful-start hook supplies the later factual event that
+# retries it.  It is one-way (musicpd -> omdrc_audio), uses the ordinary
+# bounded reconcile path, and takes no lock of its own.
+#
+# rc.subr sources this file while loading the musicpd service.  The hook is a
+# no-op when the omdrc_audio master rcvar is disabled, and a failed audio
+# reconcile must not turn an already-running musicpd into a failed service.
+
+omdrc_musicpd_poststart()
+{
+	checkyesno omdrc_audio_enable 2>/dev/null || return 0
+	/usr/sbin/service omdrc_audio reconcile ||
+		warn "musicpd: omdrc_audio reconcile failed; retry it manually"
+	return 0
+}
+
+start_postcmd="omdrc_musicpd_poststart"

@@ -135,8 +135,12 @@ Open `http://<host>:9080` on the phone.
 ln -sf <repo>/video/webremote/rc.d/omdrcvideo /usr/local/etc/rc.d/omdrcvideo
 sudo sysrc omdrcvideo_enable=YES
 sudo service omdrcvideo start            # serves :9080
-# unprivileged, no enable: /usr/local/etc/rc.d/omdrcvideo onestart
+service omdrcvideo status                 # same canonical boot pidfile
 ```
+
+Use `sudo service omdrcvideo onestart` for a disabled system service. The rc.d
+script does not create a caller-specific `/tmp` instance; for development, run
+the Python application directly on a different port.
 
 **2. The persistent idle mpv (KDE/Plasma autostart):**
 

@@ -4,7 +4,9 @@
 #                                             + the graphviz diagrams
 #   doc/FILTER_PROVENANCE_AND_RESPONSE.pdf <- doc/FILTER_PROVENANCE_AND_RESPONSE.md
 #
-# Requirements: pandoc, pdflatex (texlive), graphviz (dot).
+# Requirements: pandoc and graphviz (dot).  PDF backend, in preference order:
+# pdflatex; or headless Chromium (keeps the build practical on small FreeBSD
+# root filesystems where TeX Live alone needs several GiB).
 #
 # Version stamp: the title page carries the project release the manual
 # documents. Pass it explicitly when building FOR a release that is about
@@ -24,11 +26,15 @@ cd "$(dirname "$0")"
 
 mkdir -p build
 
-# 1. Render every graphviz diagram to PDF (vector, scales cleanly in LaTeX).
+# 1. Render every graphviz diagram to both vector formats.  LaTeX embeds PDF;
+# Chromium embeds SVG.  Both are generated from the same .dot source.
 for f in diagrams/*.dot; do
     out="build/$(basename "${f%.dot}").pdf"
     echo "dot: $f -> $out"
     dot -Tpdf "$f" -o "$out"
+    svg="build/$(basename "${f%.dot}").svg"
+    echo "dot: $f -> $svg"
+    dot -Tsvg "$f" -o "$svg"
 done
 
 # 2. Resolve the version stamp (arg > git describe on v* tags > fallback).
@@ -36,19 +42,60 @@ VERSION="${1:-$(git describe --tags --match 'v*' --dirty --always 2>/dev/null ||
 [ -n "$VERSION" ] || VERSION="unreleased"
 DATE="$(date +%Y-%m-%d)"
 
-# 3. Pandoc -> PDF. pdflatex is used, so the master doc must stay
-#    (mostly) ASCII: no box-drawing chars, use -> instead of arrows.
+# Build one document with pdflatex when available, otherwise with Pandoc HTML
+# and installed headless Chromium.  The HTML path substitutes only generated
+# Graphviz image extensions and TeX page-break commands in a temporary source.
+build_document()
+{
+    src=$1 out=$2 class=$3
+    shift 3
+    if command -v pdflatex >/dev/null 2>&1; then
+        pandoc "$src" \
+            --from markdown+smart \
+            --pdf-engine=pdflatex \
+            --toc --toc-depth=3 \
+            --number-sections \
+            --syntax-highlighting=tango \
+            -V "documentclass=$class" \
+            "$@" -o "$out"
+        return
+    fi
+
+    chromium=$(command -v chromium 2>/dev/null || true)
+    [ -n "$chromium" ] || chromium=$(command -v chrome 2>/dev/null || true)
+    [ -n "$chromium" ] || [ ! -x /usr/local/bin/chromium ] ||
+        chromium=/usr/local/bin/chromium
+    [ -n "$chromium" ] || [ ! -x /usr/local/bin/chrome ] ||
+        chromium=/usr/local/bin/chrome
+    [ -n "$chromium" ] || {
+        echo "error: need pdflatex or chromium for PDF output" >&2
+        return 1
+    }
+    tmp="build/$(basename "${src%.md}").chromium.md"
+    html="build/$(basename "${src%.md}").html"
+    sed -e 's|build/\([^)]*\)\.pdf|build/\1.svg|g' \
+        -e 's|^\\newpage$|<div class="page-break"></div>|' \
+        "$src" > "$tmp"
+    pandoc "$tmp" \
+        --from markdown+smart+raw_html \
+        --standalone --embed-resources \
+        --toc --toc-depth=3 \
+        --number-sections \
+        --syntax-highlighting=tango \
+        --css chromium-pdf.css \
+        "$@" -o "$html"
+    abs_html="$(cd "$(dirname "$html")" && pwd)/$(basename "$html")"
+    abs_out="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
+    "$chromium" --headless --no-sandbox --disable-gpu \
+        --allow-file-access-from-files --no-pdf-header-footer \
+        --print-to-pdf="$abs_out" "file://$abs_html"
+}
+
+# 3. Pandoc -> PDF.
 OUT="../open-media-drc-manual.pdf"
 echo "pandoc: open-media-drc-manual.md -> doc/open-media-drc-manual.pdf ($VERSION, $DATE)"
-pandoc open-media-drc-manual.md \
-    --from markdown+smart \
-    --pdf-engine=pdflatex \
-    --toc --toc-depth=3 \
-    --number-sections \
-    --highlight-style=tango \
-    -V documentclass=report \
-    -M date="$VERSION ($DATE)" \
-    -o "$OUT"
+build_document open-media-drc-manual.md "$OUT" report \
+    -M date="$VERSION ($DATE)"
 
 # 4. The standalone provenance document.  It is not part of the manual (it is a
 #    specification, not a synthesis), but it is tracked as a PDF too, so build
@@ -57,17 +104,10 @@ pandoc open-media-drc-manual.md \
 #    of a duplicated section 1.
 PROV="../FILTER_PROVENANCE_AND_RESPONSE.pdf"
 echo "pandoc: FILTER_PROVENANCE_AND_RESPONSE.md -> doc/FILTER_PROVENANCE_AND_RESPONSE.pdf"
-pandoc ../FILTER_PROVENANCE_AND_RESPONSE.md \
-    --from markdown+smart \
-    --pdf-engine=pdflatex \
+build_document ../FILTER_PROVENANCE_AND_RESPONSE.md "$PROV" article \
     --shift-heading-level-by=-1 \
-    --toc --toc-depth=3 \
-    --number-sections \
-    --highlight-style=tango \
-    -V documentclass=article \
     -M title="Filter provenance, deployment, and response strategy" \
-    -M date="$VERSION ($DATE)" \
-    -o "$PROV"
+    -M date="$VERSION ($DATE)"
 
 echo "OK: $(cd .. && pwd)/open-media-drc-manual.pdf"
 echo "OK: $(cd .. && pwd)/FILTER_PROVENANCE_AND_RESPONSE.pdf"

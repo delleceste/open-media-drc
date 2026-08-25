@@ -2,7 +2,7 @@
 
 `open-media-drc-manual.md` is a **synthesis** of the repository's Markdown
 documentation, rendered to `doc/open-media-drc-manual.pdf` by
-`./build-pdf.sh` (pandoc + pdflatex + graphviz).
+`./build-pdf.sh` (pandoc + graphviz, with pdflatex or headless Chromium).
 
 ## Regenerating
 
@@ -11,7 +11,10 @@ doc/pdf/build-pdf.sh              # -> doc/open-media-drc-manual.pdf
 doc/pdf/build-pdf.sh v0.90.0      # build FOR a release about to be tagged
 ```
 
-Requirements: `pandoc`, a TeX Live with `pdflatex`, `graphviz` (`dot`).
+Requirements: `pandoc`, `graphviz` (`dot`), and either a TeX Live with
+`pdflatex` or headless Chromium. The Chromium fallback exists for small
+FreeBSD root filesystems where TeX Live's multi-gigabyte dependency is
+unreasonable; both paths consume the same Markdown and Graphviz sources.
 
 ## Versioning
 

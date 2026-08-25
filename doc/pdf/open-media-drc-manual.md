@@ -41,10 +41,10 @@ the DAC. When correction is off, the chain collapses to a verified
 
 The design principles that shape everything in the repository:
 
-* **The DAC's presence is the single condition that drives DRC.** DAC present
-  means DRC up, replaying the last saved rate and variant; DAC absent means
-  DRC down, MPD playing straight to the direct output. Boot, hotplug, and
-  shutdown all funnel into that one rule.
+* **Saved user intent plus actual device state drive DRC.** A present DAC and
+  saved power-on intent mean DRC up at the saved source/rate/design; an absent
+  DAC means transient teardown without losing that intent; saved power-off
+  means direct output. Boot, hotplug, and manual requests reconcile this rule.
 * **Only two resting states exist**: DRC fully up (BruteFIR processing), or
   direct output. A failed start rolls back --- there is no resting state where
   the loopback runs without BruteFIR.
@@ -354,68 +354,651 @@ already-present devices at boot, the same service covers boot and hotplug.
 Manual control: `sudo systemctl start|stop drc-usb-audio.service`,
 `journalctl -fu drc-usb-audio.service`.
 
-## FreeBSD specifics
+## FreeBSD installation and lifecycle {#sec:freebsd-lifecycle}
 
-The CMake install (step 4) renders the FreeBSD service glue from the port's
-templates and places it under `$PREFIX`; devd and rc both scan those paths
-natively, so there is no `/etc` copy step:
+This section is the authoritative FreeBSD installation and init-system
+reference. It covers every FreeBSD init or devd artifact owned by this
+repository. Port templates and their rendered copies are one logical script,
+so they appear in one row rather than as duplicates.
 
-| File | Installed to | Purpose |
-|---|---|---|
-| `etc/rc.d/brutefir_drc` | `$PREFIX/etc/rc.d/` | Worker: runs `omdrc restore` / `stop` as the audio user |
-| `etc/rc.d/drc_usb_audio` | `$PREFIX/etc/rc.d/` | Entry point: probe at boot, devd target |
-| `etc/devd/usb-audio-drc.conf` | `$PREFIX/etc/devd/` | Attach/detach triggers |
+### Installation procedure
 
-Enable **only** the entry point in `/etc/rc.conf`:
+**1. Install runtime packages and load cuse.**
 
 ```sh
-drc_usb_audio_enable="YES"
-# optional overrides:
-brutefir_drc_drcsh="/home/user/DRC/open-media-drc/drc.sh"
-drc_usb_audio_start_delay="1"
+pkg install bash brutefir virtual_oss musicpd mpc
+sysrc kld_list+="cuse"
+kldload cuse
 ```
 
-`brutefir_drc` is the worker invoked by `drc_usb_audio`; it must stay
-installed but **unenabled**, otherwise boot starts the chain twice.
-The devd rule calls `service ... onestart/onestop` directly, so hotplug
-needs no rc.conf flags. `drc.sh` serializes mutating runs under a lock
-(`lockf` on FreeBSD, `flock` on Linux), so overlapping triggers are safe.
+Install the optional controller/video Python dependencies and renderer packages
+for the features actually used. The login audio user must be a member of the
+groups that grant access to sound and USB devices. BruteFIR must never be
+started as root: an interactive `drc.sh` could not stop a root-owned instance.
 
-![Boot and hotplug event chains on both platforms. Both funnel into the single `drc.sh restore` path.](build/chain-hotplug.pdf){width=80%}
+**2. Render or install the project.**
 
-### Why both a boot probe and a hotplug edge
+For a run-from-repository installation, set `AUDIO_USER`, `AUDIO_HOME`,
+`PREFIX`, and the media paths in `config.env`, then run:
 
-Hotplug events only cover the "switched on later" case. On FreeBSD, devd
-does not reliably receive an attach that happened before it opened
-`/dev/devctl`, so a DAC already on at boot would never produce an actionable
-event. Therefore `drc_usb_audio`'s start does a *level* check --- sleep the
-settle delay, probe for `/dev/dsp.dac`, act only if present --- while devd
-provides the *edge* trigger for later attaches. A tmpfs marker file
-(`/var/run/drc_usb_audio.active`) makes repeated triggers idempotent.
+```sh
+./install.sh
+```
 
-\newpage
+For the package layout, use the FreeBSD port under
+`freebsd/audio/open-media-drc`. The installed `omdrc_audio` script points at
+`/usr/local/libexec/omdrc/drc.sh`; the run-from-repository script points at
+this checkout.
+
+The early-boot files must be regular copies in the system paths, not symlinks
+into a possibly separate `/home` filesystem:
+
+```sh
+install -m 755 etc/rc.d/omdrc_audio /usr/local/etc/rc.d/omdrc_audio
+install -m 644 etc/devd/omdrc-audio.conf /usr/local/etc/devd/omdrc-audio.conf
+sh scripts/prepare-musicpd-rc-conf-dir.sh \
+  /usr/local/etc/rc.conf.d/musicpd
+install -m 644 etc/rc.conf.d/musicpd/omdrc_audio \
+  /usr/local/etc/rc.conf.d/musicpd/omdrc_audio
+```
+
+FreeBSD's `rc.subr` permits `rc.conf.d/musicpd` to be either a single file or
+a directory. The preparation helper makes the directory form. If the path was
+already a file, it is moved unchanged, with its mode preserved, to
+`musicpd/00-local.conf`; then the independent `omdrc_audio` fragment is
+installed beside it. The helper is idempotent. The direct Make installer and
+CMake installer call it automatically, while the FreeBSD package performs the
+same conversion in its `PRE-INSTALL` script before package extraction. This
+avoids both an upgrade failure from `mkdir` on a file and the loss or rewriting
+of an administrator's existing MPD settings.
+
+Copy the other enabled rc.d scripts from the table below in the same way.
+After an update, refresh these copies. Runtime configurations may remain
+symlinked to the checkout once their containing filesystem is available.
+
+Remove obsolete lifecycle files after the new service is installed and tested:
+
+```sh
+# Historical names; they must not coexist with omdrc_audio.
+# /usr/local/etc/rc.d/{drc_usb_audio,brutefir_drc,omdrc_sndlink}
+# /usr/local/etc/devd/omdrc-sndlink.conf
+# /usr/local/libexec/omdrc-hotplug
+```
+
+**3. Install the user-owned BruteFIR defaults and MPD configuration.**
+
+```sh
+install -d -o AUDIO_USER -g AUDIO_GROUP /home/AUDIO_USER/.config/BruteFIR
+install -m 644 brutefir_defaults.conf \
+  /home/AUDIO_USER/.config/BruteFIR/brutefir_defaults.conf
+```
+
+Merge the three named outputs from `mpd/musicpd.conf.in`: `OKTO-DAC`,
+`DRC-native`, and `DRC-resamp`. All FreeBSD physical output paths must use
+`/dev/dsp.dac`; do not substitute a numbered `/dev/dsp0`.
+
+**4. Configure the lifecycle in rc.conf.**
+
+A core installation with the controller and renderer restore service uses:
+
+```sh
+musicpd_enable="YES"
+musicpd_config="/home/giacomo/open-media-drc/mpd/musicpd.conf"
+
+omdrc_audio_enable="YES"
+omdrc_audio_user="giacomo"
+omdrc_audio_dac="0x152a:0x88c5"       # strongly recommended with >1 card
+omdrc_audio_capture="ESI U24XL"       # omit when CD input is unused
+omdrc_audio_capture_recsrc="auto"
+
+omdrc_renderer_enable="YES"
+upmpdcli_enable="NO"
+qobuzconnect2mpd_enable="NO"
+qobuzconnect2mpd_user="giacomo"
+qobuzconnect2mpd_group="giacomo"
+qobuzconnect2mpd_homedir="/var/db/qobuzconnect2mpd"
+
+omdrcctrl_enable="YES"
+omdrcctrl_user="giacomo"
+omdrcvideo_enable="YES"
+omdrcvideo_user="giacomo"
+```
+
+Remove any numbered default-device assignment such as
+`hw.snd.default_unit=0` from `/etc/sysctl.conf`. The global OID survives a
+re-attach, but its **value is a pcm unit number**, so only the role resolver can
+know the correct value. Other genuinely global sound tunables remain in
+`/etc/sysctl.conf`.
+
+For CD input, also set `omdrc_cdin_enable="YES"` and
+`omdrc_cdin_user="giacomo"`. The detailed CD knobs are documented in
+section \ref{sec:cdin}.
+
+These are all project lifecycle key families:
+
+| Key family | Purpose |
+|---|---|
+| `musicpd_enable`, `musicpd_config` | MPD boot and configuration |
+| `omdrc_audio_enable`, `omdrc_audio_user`, `omdrc_audio_drcsh`, `omdrc_audio_statussh` | master audio lifecycle and user boundary |
+| `omdrc_audio_dac`, `omdrc_audio_capture` | stable card identities |
+| `omdrc_audio_dac_sysctls`, `omdrc_audio_capture_sysctls`, `omdrc_audio_capture_recsrc` | per-role settings reapplied after every attach |
+| `omdrc_audio_rundir`, `omdrc_audio_lockfile`, `omdrc_audio_statefile` | root boot-lifetime device transaction state |
+| `omdrc_cdin_*` | optional CD bridge, fully listed in section \ref{sec:cdin} |
+| `omdrc_renderer_enable`, `omdrc_renderer_prefix`, `omdrc_renderer_script`, `omdrc_renderer_statedir` | restore the last selected renderer |
+| `upmpdcli_enable`, `upmpdcli_user`, `upmpdcli_homedir`, `upmpdcli_config`, `upmpdcli_pidfile`, `upmpdcli_logfile`, `upmpdcli_flags` | UPnP renderer worker |
+| `omdrcctrl_enable`, `omdrcctrl_user`, `omdrcctrl_env`, `omdrcctrl_pidfile`, `omdrcctrl_logfile` | web controller |
+| `omdrcvideo_enable`, `omdrcvideo_user`, `omdrcvideo_env`, `omdrcvideo_pidfile`, `omdrcvideo_logfile` | video web remote |
+
+The old `drc_usb_audio_*`, `brutefir_drc_*`, and
+`omdrc_sndlink_*` families are accepted only as one-release migration
+fallbacks by `omdrc_audio`. Copy their local values to the new keys and
+remove them. Enabling an old copied script creates a second lifecycle owner
+and is unsupported.
+
+**5. Validate ordering and activate.**
+
+```sh
+rcorder /etc/rc.d/* /usr/local/etc/rc.d/* | \
+  egrep 'devd$|omdrc_audio$|musicpd$|omdrc_cdin$|omdrc_renderer$'
+service devd restart
+service omdrc_audio roles
+service omdrc_audio status
+service omdrc_audio reconcile
+sysctl hw.snd.default_unit       # must equal the pcm unit reported as dac
+mpc outputs                     # desired output enabled after musicpd starts
+```
+
+`omdrc_audio` requires `devd`, so the cold-plug scan runs after devd is
+listening. A card that finishes attaching after the scan produces a pcm event.
+The service deliberately does not require MPD: a slow MPD must not prevent the
+physical DRC chain from becoming healthy.
+
+### Complete FreeBSD init and devd inventory
+
+![Linux's current udev/systemd edge and the redesigned FreeBSD devd/rc.d level reconciliation.](build/chain-hotplug.pdf){width=88%}
+
+| Script/configuration | rcorder relation or event | Function | Enable directly? |
+|---|---|---|---|
+| `musicpd` | `REQUIRE: mixer LOGIN avahi_daemon` | Starts MPD with the repository's FreeBSD configuration | Yes |
+| `rc.conf.d/musicpd/omdrc_audio` | successful `musicpd` `start_postcmd` | Issues one bounded audio reconcile after MPD is actually available | No; sourced by `musicpd` |
+| `omdrc_audio` | `REQUIRE: FILESYSTEMS devd`; `shutdown` | Single owner of card roles and DRC lifecycle | Yes |
+| `omdrc_cdin` | `REQUIRE: omdrc_audio`; `shutdown` | Optional continuous S/PDIF capture bridge | Yes, only with CD input |
+| `omdrc_renderer` | `REQUIRE: NETWORKING FILESYSTEMS musicpd`; `shutdown` | Restores whichever renderer the UI last selected | Yes |
+| `upmpdcli` | `REQUIRE: NETWORKING FILESYSTEMS musicpd`; `shutdown` | UPnP/OpenHome worker controlled by `omdrc_renderer` | No when renderer restore is used |
+| `omdrcctrl` | `REQUIRE: NETWORKING LOGIN`; `shutdown` | Starts the web controller as the audio user | Yes when installed |
+| `omdrcvideo` | `REQUIRE: NETWORKING LOGIN`; `shutdown` | Starts the video web remote; it does not start mpv | Yes when installed |
+| `omdrc-audio.conf` | devd `pcm[0-9]+` attach and detach | Detaches one level-triggered `omdrc_audio reconcile` request | Installed in devd; no rcvar |
+
+#### musicpd
+
+The project `musicpd` script selects the rendered `musicpd_config`, asks
+rc.subr to derive the pidfile from that file, and launches the FreeBSD
+`musicpd` binary. MPD drops to the user/group declared inside its
+configuration. It owns no DRC transition and no project lock. The dependency
+token is consistently `musicpd`: both `omdrc_renderer` and `upmpdcli`
+require the name this script actually provides.
+
+#### rc.conf.d/musicpd/omdrc_audio
+
+This is a service-specific `rc.subr` configuration fragment, not another
+daemon and not another init service. It sets `musicpd`'s `start_postcmd` to a
+small function that runs only after MPD has started successfully:
+
+```sh
+omdrc_musicpd_poststart()
+{
+    checkyesno omdrc_audio_enable 2>/dev/null || return 0
+    /usr/sbin/service omdrc_audio reconcile ||
+        warn "musicpd: omdrc_audio reconcile failed; retry it manually"
+    return 0
+}
+```
+
+All supported installation paths install this fragment: the FreeBSD CMake
+branch, the direct Make target, and the port/package. This is required because
+`omdrc_audio` normally runs before `musicpd`: the physical chain can be healthy
+while its bounded MPD selection remains pending. The successful MPD start is
+the factual readiness event that triggers one later reconcile. The hook itself
+has no lock, wait, daemon, or reverse call to `musicpd`.
+
+An existing single-file `rc.conf.d/musicpd` cannot coexist at the same path
+with the fragment directory. Before installing the hook, it is therefore
+migrated to `rc.conf.d/musicpd/00-local.conf`. `rc.subr` sources regular files
+from the directory in lexical order, so local settings remain active and the
+hook is added without editing them.
+
+The trigger exists because `omdrc_audio` deliberately does **not** require or
+wait for MPD. At early boot it can construct and verify virtual_oss and
+BruteFIR first; the final bounded `mpc` output switch then reports `pending` if
+MPD is still unavailable. A successful MPD start is the earliest factual
+readiness signal, so the hook retries once at that event rather than guessing
+with a delay, polling forever, or adding a readiness gate to the physical
+chain. The same hook runs after a manual `service musicpd restart`, which is
+another point at which MPD may have forgotten or disabled its outputs.
+
+The edge is strictly one-way:
+
+```
+musicpd successful start
+  -> service omdrc_audio reconcile
+  -> roles transaction (device.lock, then release)
+  -> drc.sh reconcile (drc.lock, bounded mpc)
+```
+
+No `omdrc_audio` path starts or restarts `musicpd`, so there is no recursive
+service cycle. The fragment takes no lock and creates no background process.
+The ordinary reconcile path supplies all serialization and deadlines. A
+reconcile failure is reported but the hook returns success: MPD is already
+running and must not be falsely reported as failed because an optional audio
+route needs later operator attention. When `omdrc_audio_enable` is not enabled,
+the hook is a no-op, preserving the master switch.
+
+#### omdrc_audio
+
+`omdrc_audio` replaces the former three-service/helper chain. Its rcvar,
+`omdrc_audio_enable`, is the only master switch. Its verbs are:
+
+| Verb | Meaning |
+|---|---|
+| `start` | boot cold-plug role pass, then full reconcile |
+| `roles` | root-only role links/settings transaction, no DRC transition |
+| `reconcile` | role transaction, release device lock, then user DRC reconcile |
+| `stop` | transient teardown; preserve desired power, rate, design, and source |
+| `status` | show role resolution and actual chain status |
+
+The service absorbs, rather than discards, two essential old responsibilities.
+From `brutefir_drc` it preserves `su -l`, so HOME and the login-class PATH
+are correct and BruteFIR remains owned by the same user who runs interactive
+commands. From `drc_usb_audio` it preserves the master rcvar and boot/hotplug
+entry point. It does not preserve the unreliable
+`/var/run/drc_usb_audio.active` marker; actual processes, configuration paths,
+rates, nodes, role links, and saved intent are authoritative.
+
+Role publication is an atomic temporary-file rename to
+`/var/run/omdrc/audio.roles`. Link changes use relative targets:
+
+```
+/dev/dsp.dac       -> dspN
+/dev/mixer.dac     -> mixerN
+/dev/dsp.capture   -> dspM
+/dev/mixer.capture -> mixerM
+```
+
+A pre-existing non-symlink at a role name is never overwritten. A detach pass
+removes only project-owned symlinks whose role is now unfilled. An explicit
+USB ID, optional serial, or description match wins; automatic DAC ranking is
+reported loudly when several playback candidates make the result a guess.
+There is no numbered-device fallback.
+
+The same serialized role transaction owns the kernel's bare-OSS default. It
+sets `hw.snd.default_unit` to `DAC_UNIT` with the absolute base-system
+`/sbin/sysctl`, reads the value back, logs a change or failure, and makes
+`service omdrc_audio status` fail visibly when the readback does not match the
+resolved DAC. This setting matters to applications outside the project that
+open `/dev/dsp`; project components themselves continue to use
+`/dev/dsp.dac`. A silent best-effort write is insufficient: on a two-card box,
+leaving the default at pcm0 can route an unrelated application into the ESI
+capture interface even while BruteFIR correctly holds the DAC on pcm1.
+
+Do not put `hw.snd.default_unit=N` in `/etc/sysctl.conf`. That file runs near
+the beginning of rc, before USB attach order and roles are known. A fixed
+number therefore creates two owners and can encode yesterday's enumeration.
+The role pass is the correct location because it already holds
+`device.lock`, has selected the card by stable identity, and runs again after
+each pcm attach/detach. It adds no lock and no independent race window.
+
+#### omdrc_cdin
+
+`omdrc_cdin` runs continuously as the configured audio user. It holds the
+capture role, but opens its playback destination only while audio is present.
+It prefers `/dev/dsp.play` when DRC is active and can fall back to
+`/dev/dsp.dac` when DRC is off. The `release` extra command sends SIGHUP.
+
+Before replacing `virtual_oss`, `drc.sh` now verifies release through the
+daemon's line-buffered log. It records the log offset, signals one exact daemon
+PID, and waits up to a fixed deadline for the new idle/hold acknowledgement
+and, when playback was held, a new `playback ... released` record. Failure
+aborts CUSE teardown. This replaces the old blind 1.5 second sleep, which could
+destroy a device while the bridge still had it open.
+
+#### omdrc_renderer
+
+`omdrc_renderer` reads `last_renderer` and starts exactly one renderer:
+upmpdcli or qobuzconnect2mpd. It retains the selection at shutdown. Both worker
+rcvars remain `NO`; the helper deliberately uses `onestart`/`onestop`.
+Enabling a worker independently races the owner and may leave two front-ends
+driving MPD.
+
+#### upmpdcli
+
+The repository's `upmpdcli` script is a worker service. It supplies the
+audio user's HOME and a PATH containing `/usr/local/bin`, creates the
+user-owned pid directory, and captures inherited plugin stderr for the
+controller's log view. Its `REQUIRE` token is `musicpd`, not the Linux
+package name `mpd`.
+
+#### omdrcctrl
+
+`omdrcctrl` runs the Flask controller as the configured non-root user.
+Its pre-command creates user-writable pid/log directories; its environment
+sets HOME, PATH, DISPLAY, and optionally the shared `OMDRC_STATE_DIR`.
+It reads `/var/run/omdrc/audio.roles` without spawning a status command.
+The DRC panel includes a distinct `CD input (44.1 kHz)` action.
+
+Its service identity is invariant across callers:
+`/var/run/omdrcctrl/omdrcctrl.pid` always names the `daemon(8)` supervisor.
+The former non-root branch silently selected
+`${TMPDIR:-/tmp}/omdrcctrl-USER.pid`; consequently an ordinary status probe
+reported the root-started service as stopped, and `onestart` could attempt a
+second instance. That branch was removed rather than hidden behind a custom
+`pgrep` status command. rc.subr already avoids a redundant `su` when the caller
+is the configured service user. `daemon -M 0644` makes the canonical PID
+readable for diagnostics while the containing directory and service lifecycle
+remain system-owned.
+
+#### omdrcvideo
+
+`omdrcvideo` starts only the video HTTP/API process. The persistent idle mpv
+belongs to the graphical login session and is not launched by rc. The rc script
+sets the non-root user, PATH, pidfile, and logfile and never participates in
+audio locking.
+
+It follows the same one-service/one-pidfile rule at
+`/var/run/omdrcvideo/omdrcvideo.pid`. Neither service derives identity from
+`TMPDIR` or the invoking UID. FreeBSD rc.d remains the system lifecycle
+interface (`sudo service ... start|stop|restart`); a development process must
+use a distinct port and direct launcher, not masquerade as a second instance of
+the system service.
+
+#### omdrc-audio.conf
+
+The only project devd configuration matches `pcm[0-9]+` at attach and
+detach:
+
+```
+attach 100 {
+    device-name "pcm[0-9]+";
+    action "/usr/sbin/daemon -f /usr/sbin/service omdrc_audio reconcile";
+};
+```
+
+The detach rule has the identical action. Matching `pcm` is a safety
+boundary. A UAC2 device exposes several USB interfaces but one sound card;
+matching USB class events caused several lifecycle runs for one plug.
+A broad USB detach rule could also react to a keyboard or storage device.
+At the pcm event, the kernel has allocated the unit and created its OSS nodes,
+so role resolution has facts to inspect and does not need a settle sleep.
+
+#### What devd serializes --- and what it does not
+
+The current FreeBSD 15.1 source implements a direct action in
+`sbin/devd/devd.cc::my_system()`. It forks a child which executes
+`/bin/sh -c command`, while the devd parent waits for that exact child PID with
+`wait4()`. Consequently, a genuinely synchronous rule such as:
+
+```
+action "/usr/sbin/service omdrc_audio reconcile";
+```
+
+would block devd until that complete reconcile returned. If a detach arrived
+while an attach reconcile was running, the detach event would remain pending;
+after the first action returned, devd would execute the second. The second
+reconcile would not be lost and the two devd-originated service calls would not
+overlap under this implementation.
+
+That is an implementation fact, not an API promise. `devd.conf(5)` documents
+that `action` names a command to execute, but it does not promise synchronous
+execution, non-overlap, or the present `fork()`/`wait4()` process model.
+Correctness must distinguish the FreeBSD 15.1 source behavior from a supported
+interface which could survive a future devd implementation change.
+
+Our installed action deliberately changes the process lifetime:
+
+```
+devd
+  -> sh -c "daemon -f service omdrc_audio reconcile"
+       -> daemon launcher
+            -> detached service omdrc_audio reconcile
+```
+
+devd waits for its exact shell child. The shell waits for the immediate
+`daemon` command, but `daemon` returns after creating the detached descendant;
+neither the shell nor devd follows that descendant and waits for the actual
+reconcile. In FreeBSD, `daemon` itself always performs the detachment and its
+`-f` option means **close inherited file descriptors** --- it is not a
+"foreground" or "detach" switch as similarly named tools may use on other
+systems.
+
+The resulting timing can be:
+
+```
+pcm attach A: devd starts daemon A -> reconcile A detaches -> launcher A exits
+pcm attach B: devd starts daemon B -> reconcile B detaches -> launcher B exits
+                                      reconcile A and B can now overlap
+```
+
+Thus devd still serializes the short top-level launcher commands, but it does
+not serialize their detached audio workers. This is intentional: a full
+reconcile may wait on bounded locks, MPD, BruteFIR, virtual_oss/CUSE, and
+hardware verification. Running it inline would freeze the machine-wide event
+loop and delay unrelated USB, network, input, storage, and ACPI events.
+
+The device lock makes overlapping workers safe. It is acquired *before* each
+worker scans pcm state, so a waiter does not later publish a snapshot collected
+before it waited. For example:
+
+```
+A takes device.lock; scans ESI only
+OKTO attaches; B starts and waits
+A publishes capture-only state; releases device.lock
+B takes device.lock; scans ESI + OKTO; publishes both roles and links
+```
+
+The inverse detach case is equally important. Without the lock, an old
+pre-detach scan could recreate `/dev/dsp.dac` after a newer worker removed it.
+With the lock, the later waiter scans after acquiring the lock and therefore
+observes the final device tree. Every request reconstructs complete level
+state; no attach or detach edge is interpreted directly as an instruction to
+start or stop DRC.
+
+A detached **rejecting singleton** is not equivalent to either the synchronous
+model or this queued-lock model. Consider a pidfile wrapper which exits when a
+worker already exists:
+
+```
+A starts and scans: DAC present
+DAC detaches
+B's top-level devd action runs, but its singleton refuses to start reconcile B
+A publishes its older "DAC present" result
+```
+
+devd did not lose the detach event: it successfully executed B's launcher.
+The application-level singleton discarded the reconciliation requested by that
+event. A correct coalescing singleton would need to set a pending/dirty flag
+and force A to run another complete scan before exiting. That reintroduces a
+marker, wake-up protocol, and worker lifecycle while the scan/update
+transaction still needs serialization. The present lock queues the waiter
+instead of rejecting it, so the second pass performs a fresh scan.
+
+Authoritative references are the FreeBSD 15.1
+[`devd.cc`](https://cgit.freebsd.org/src/tree/sbin/devd/devd.cc?h=releng/15.1)
+implementation, [`devd(8)`](https://man.freebsd.org/cgi/man.cgi?query=devd&sektion=8),
+[`devd.conf(5)`](https://man.freebsd.org/cgi/man.cgi?query=devd.conf&sektion=5),
+[`daemon(8)`](https://man.freebsd.org/cgi/man.cgi?query=daemon&sektion=8), and
+[`lockf(1)`](https://man.freebsd.org/cgi/man.cgi?query=lockf&sektion=1).
+
+### Locking, concurrency, and bounded waits
+
+Only two locks remain, with a strict non-nesting rule:
+
+| Lock | Owner | Protects | Lifetime |
+|---|---|---|---|
+| `/var/run/omdrc/device.lock` | root `omdrc_audio roles` | role discovery, four links, sysctls, recsrc, role publication | one short role transaction |
+| `STATE_DIR/drc.lock` | audio-user `drc.sh` | saved intent reads/writes and the physical chain transition | one mutating DRC command |
+
+Both FreeBSD calls use `lockf -k -s -t ...`. `-k` keeps one inode after
+release; lockf(1) specifically recommends it for concurrent callers because
+unlink/recreate mode cannot guarantee waiter ordering. File existence does
+not mean locked. `/var/run` is correct for root boot-lifetime device state;
+the DRC lock belongs beside persistent user state, and its path is never
+derived from TMPDIR. A desktop session and a boot login shell therefore
+cannot silently choose different locks.
+
+The order is:
+
+```
+devd or rc
+  -> omdrc_audio roles       [take device.lock; update facts; release]
+  -> su -l AUDIO_USER
+  -> drc.sh reconcile        [take drc.lock; converge; release]
+
+musicpd successful start
+  -> the same omdrc_audio reconcile path (the hook owns no lock)
+```
+
+No path takes `drc.lock` and then asks for `device.lock`, and
+`omdrc_audio` releases `device.lock` before entering the user reconciler.
+This removes the former three-lock nesting. Several simultaneous pcm events
+may wait for the short role transaction, then wait for `drc.lock`; the first
+repairs state and later calls become no-ops. Lock waits have finite timeouts.
+
+The apparent simplification "devd serializes, so delete the locks" is therefore
+incorrect for four independent reasons:
+
+1. `daemon -f` intentionally releases devd before the real worker finishes.
+2. Boot rc, the MPD post-start hook, administrators, the UI, and direct
+   `drc.sh` commands are not serialized by devd.
+3. A rejecting asynchronous singleton can discard the reconcile requested by
+   a busy attach/detach event even though devd delivered and executed the
+   top-level action; a queued level rescan must observe the final device tree.
+4. The manuals do not guarantee the current internal `wait4()` behavior.
+
+Removing `daemon` would make long audio waits compromise the entire device
+subsystem. Replacing the queued lock with debounce plus a dirty marker would
+add a marker, timer, and worker lifecycle while the scan/update transaction
+would still need serialization. Combining the locks would hold the short root
+device transaction across the long audio-user chain transition and recreate
+cross-privilege lock coupling. The implemented two non-nested locks are thus
+the simplest safe design, not leftover scaffolding.
+
+The command under FreeBSD's `lockf file command` is supervised by the lockf
+process. The lock is released when the orchestration command exits; BruteFIR
+and virtual_oss do not become lifecycle-lock owners. Linux uses an explicit
+flock descriptor and closes it in daemon children; the Linux audit is treated
+separately.
+
+External waits are bounded while `drc.lock` is held. Every `mpc` call goes
+through a timeout wrapper. A slow or unavailable MPD does not block boot and
+does not prevent a verified physical chain from becoming active; the pending
+output selection is logged, and `musicpd`'s successful-start hook supplies the
+specific next reconcile that retries it. There is no sleep or indefinite MPD
+readiness loop. Service calls
+used to restart the CD bridge also have a deadline and use non-interactive
+sudo. BruteFIR startup, exit, virtual_oss readiness, DAC warm-up, verification,
+and CD release all use explicit poll caps.
+
+Syslog is supplementary evidence, not lifecycle state. During the incident,
+syslogd still held a bound but unlinked `/var/run/log` socket; existing
+connected processes could retain descriptors while new `logger` calls failed
+silently. `omdrc_audio` therefore publishes factual role state directly and
+`drc.sh` appends to persistent `STATE_DIR/drc.log`; neither decides anything
+from syslog. Repair/restart syslogd before using log absence as evidence. The
+project audit found no broad `/var/run` deletion, and FreeBSD `cleanvar`
+explicitly excludes the `log` and `logpriv` socket names, so the unlink cause
+remains a separate system issue rather than an attributed project action.
+
+### Reconcile state and reboot persistence
+
+The reconciler compares saved intent with physical reality:
+
+* `last_power`: on/off;
+* `last_source`: music/cdin;
+* `last_arg`: native rate or resampling request and design;
+* actual BruteFIR config/process, virtual_oss process/rate/nodes, and DAC role.
+
+A matching chain is a no-op. A missing DAC causes a transient teardown while
+preserving intent. Desired off remains off. A partial or wrong-rate chain is
+rebuilt once. The old active marker is not consulted.
+
+The `off` verb writes `last_power=off` before touching BruteFIR, MPD, CD
+input, or CUSE. This ordering matters under `set -e`: a teardown failure must
+not leave the previous on intent, which would bring DRC back at reboot.
+`stop` is different: shutdown and detach use it as a transient teardown and
+do not change desired power.
+
+`restore` reads state only after acquiring the same DRC lock, eliminating the
+old time-of-check/time-of-use window. The explicit UI/CD verb is:
+
+```sh
+drc.sh cdin
+```
+
+It records `last_source=cdin` before requesting the 44.1 kHz chain. Reboot
+therefore restores CD mode at 44.1 kHz. An ordinary rate action is the explicit
+return-to-music action and writes `last_source=music` before DAC presence and
+configuration validation or any teardown/startup work. This is write-ahead
+intent, not a success marker: if the requested music transition fails, the
+next `restore` or hotplug `reconcile` retries music instead of resurrecting the
+stale CD input at 44.1 kHz. `off` and transient `stop` do not change the source.
+A geometry change in CD mode is refused if the target geometry has no 44100 Hz
+configuration. The status/UI distinguishes CD input from ordinary 44.1 kHz
+music.
+
+### The verified boot-recursion failure and its removal
+
+The old `omdrc_sndlink` script re-entered itself under `lockf` using
+`$0`. This was safe under `service(8)`, where `$0` was the absolute
+script, but false during normal boot: FreeBSD's `/etc/rc` sources each rc.d
+script, so `$0` remained `/etc/rc`. The lock command therefore launched:
+
+```
+/bin/sh /etc/rc oneupdate
+```
+
+That caused a second rc pass: duplicated host UUID/network/route and service
+startup, devd already-busy errors, and long wireless timeouts. It was bounded
+to one extra pass only because the inherited lock marker suppressed another
+re-entry, but one nested boot was enough to destabilize the machine.
+
+The emergency old-script correction used `rc_service`, because rc.subr sets
+it to the absolute rc.d path before sourcing the script. The migration removes
+that script entirely. `omdrc_audio` retains the safe form for its short locked
+`roles` re-entry:
+
+```sh
+/bin/sh "$rc_service" oneroles
+```
+
+The implementation falls back to the executing script path only outside rc.
+There is no call to `/etc/rc`, no dirty/debounce recursion, and no helper
+that can replay boot.
+
 
 # Usage: drc.sh, filters, and configuration {#sec:usage}
 
 ## drc.sh --- the single control point
 
 ```
-drc.sh <rate>|resamp|restore|off|stop [variant]
+drc.sh <rate>|resamp|cdin|reconcile|restore|off|stop|status|session [variant]
 ```
 
 | Verb | Effect |
 |---|---|
 | `<rate>` | Start BruteFIR at 44100 / 48000 / 88200 / 96000 / 192000 Hz; restart the loopback at the same rate; switch MPD to `DRC-native` |
 | `resamp` | Everything at 192 kHz; switch MPD to `DRC-resamp` (MPD resamples with soxr) |
-| `restore` | Re-apply the state at shutdown: stays off if `last_power` is `off`, else replays `last_arg` (falls back to 192000) |
+| `cdin` | Persist CD/S-PDIF source mode and request its required 44100 Hz chain |
+| `reconcile` | Compare saved power/source/rate with actual processes, config, rate, nodes and DAC role; repair only a mismatch |
+| `restore` | Re-apply state at shutdown: honour `last_power`, `last_source`, and `last_arg` |
 | `off` | Stop BruteFIR + loopback; MPD back to direct output; **records the off state**. The user-facing disable |
 | `stop` | Same teardown as `off` but does **not** record off. Used by service stop paths so a reboot of a *running* system is restored |
+| `status`, `session` | Report actual chain state or the exact persistent restore tuple |
+| `geometry`, `design` | Show/list/switch the persistent room geometry or audited filter design |
 | `variant` | Optional second argument (a config-filename suffix): selects an alternate filter set; superseded by `design` |
 
-![drc.sh verbs and the two persistent state files.](build/drc-states.pdf){width=95%}
+![drc.sh verbs and the persistent lifecycle state.](build/drc-states.pdf){width=95%}
 
-State lives in two files in the repo root (git-ignored), so the on/off state
-and the remembered rate stay independent:
+State lives in the resolved persistent state directory (git-ignored checkout
+state in run-from-repo mode, or the configured/installed user state path):
 
 * **`last_arg`** --- the last *active* rate and optional variant
   (`192000`, `resamp`, `192000 <variant>`). Written on each successful run,
@@ -424,15 +1007,23 @@ and the remembered rate stay independent:
   next trigger retries the same configuration.
 * **`last_power`** --- `on` or `off`. Only real user actions write it
   (a rate run writes `on`, `off` writes `off`; `stop` leaves it alone).
+* **`last_source`** --- `music` or `cdin`. CD mode survives reboot and forces
+  44100 Hz; an ordinary rate selection records the return-to-music intent
+  before fallible validation/transition work, so failure cannot restore stale
+  CD mode on the next boot.
+* **`last_geometry`** --- the current geometry override. Design remains part
+  of `last_arg`, so the full tuple can be restored without guessing.
 
-The speaker geometry is not an argument: it is the `GEOMETRY`/`POSITION`
-variable at the top of `drc.sh` (currently `120.blue`).
+The configuration's `GEOMETRY` is the default; `drc.sh geometry <name>` records
+a runtime override in `last_geometry`.
 
-What a (re)start does, in order: stop any running BruteFIR and wait for the
-DAC to be released; disable all MPD outputs; (FreeBSD) restart `virtual_oss`
+What a required rebuild does, in order: stop any running BruteFIR and wait for
+the DAC to be released; make bounded MPD release requests; verify that CD input
+has released its output; (FreeBSD) restart `virtual_oss`
 at the target rate and wait for `/dev/dsp.loop`; prime the DAC if the rate
-changed; start BruteFIR and **verify it stays up**; enable the matching MPD
-output; record the state. If BruteFIR cannot come up, `drc.sh` **rolls
+changed; start BruteFIR and **verify it stays up**; make a bounded attempt to
+enable the matching MPD output; record the state. If BruteFIR cannot come up,
+`drc.sh` **rolls
 back** --- stops the loopback and re-enables the direct output --- leaving a
 clean, audible system equivalent to `off`.
 
@@ -1093,7 +1684,7 @@ Two levels:
    graph exactly `{userland} -> feeder_root -> {hardware}` --- any
    `feeder_rate`/`feeder_volume`/format node means the kernel is altering
    bytes. Preconditions: `bitperfect=1` and `play.vchans=0` on the DAC's unit
-   --- which is what `omdrc_sndlink_dac_sysctls` asserts on every attach.
+   --- which is what `omdrc_audio_dac_sysctls` asserts on every attach.
 2. **Empirical wire tap** (gold standard): play a deterministic test signal
    (near-silent ~-90 dBFS per-sample counter in the low 16 bits, distinct
    L/R --- maximally sensitive to truncation, dither, volume, resampling,
@@ -1338,13 +1929,13 @@ surface as `rig stalls N slips N`, shown only when non-zero.
 ```
 # /etc/rc.conf
 omdrc_cdin_enable="YES"
-omdrc_sndlink_capture="ESI U24XL"   # names the ESI; that is what creates
+omdrc_audio_capture="ESI U24XL"   # names the ESI; that is what creates
                                     # /dev/dsp.capture, which cdin then uses
 ```
 
 | rc.conf variable | Default | Meaning |
 |---|---|---|
-| `omdrc_cdin_in` | `/dev/dsp.capture` | capture device (or a WAV file/directory, for the rig); the link comes from `omdrc_sndlink_capture` |
+| `omdrc_cdin_in` | `/dev/dsp.capture` | capture device (or a WAV file/directory, for the rig); the link comes from `omdrc_audio_capture` |
 | `omdrc_cdin_out` | `/dev/dsp.play` | playback device; `/dev/dsp.dac` writes the DAC directly, bypassing BruteFIR |
 | `omdrc_cdin_bits` | `24` | source width --- the U24 XL's capture endpoint is 24-bit and nothing else (see below) |
 | `omdrc_cdin_lead` | `2000` | lead in ms; drift margin, startup delay and transport lag at once |
@@ -1479,9 +2070,28 @@ kernel has already acted on: by the time the ATTACH notification arrives the
 unit is allocated and `/dev/dspN` exists, and it has no equivalent of udev's
 `NAME=`/`SYMLINK=`.
 
+There is nevertheless one legitimate use of `hw.snd.default_unit`: pointing
+the unqualified `/dev/dsp` used by unrelated OSS applications at whichever
+card currently owns the DAC role. Because its value is still a volatile pcm
+number, `/etc/sysctl.conf` must not set it to a literal `0` or `1`.
+`omdrc_audio` writes it inside the locked role transaction after identity-based
+discovery and verifies the readback:
+
+```sh
+/sbin/sysctl "hw.snd.default_unit=${DAC_UNIT}"
+got=$(/sbin/sysctl -n hw.snd.default_unit)
+[ "$got" = "$DAC_UNIT" ] || warn "default unit mismatch"
+```
+
+This is ancillary to the stable links rather than a replacement for them.
+BruteFIR, MPD and cdin continue to use `/dev/dsp.dac` or
+`/dev/dsp.capture`; a later kernel or application change to the bare default
+cannot swap those project roles. Status prints both the discovered DAC unit and
+the default-unit readback so the distinction is auditable.
+
 So stop trying to fix the number and stop using it. `devfs` accepts symlinks
 --- that is exactly how `devfs.conf`'s `link` directive works, a plain `ln -fs`
-inside `/dev` run by `/etc/rc.d/devfs` --- and the `omdrc_sndlink` service
+inside `/dev` run by `/etc/rc.d/devfs` --- and the `omdrc_audio` service
 maintains two of them by **role**:
 
 | link | is | created |
@@ -1495,9 +2105,9 @@ sound card needs no configuration for this to be right, and a box with two
 stops caring which one enumerated first.
 
 ```
-sysrc omdrc_sndlink_enable=YES
-sysrc omdrc_sndlink_capture="ESI U24XL"   # only if you use the CD input
-service omdrc_sndlink status              # prints the roles, exits 1 if unfilled
+sysrc omdrc_audio_enable=YES
+sysrc omdrc_audio_capture="ESI U24XL"   # only if you use the CD input
+service omdrc_audio status              # prints the roles, exits 1 if unfilled
 ```
 
 **Roles are decided by identity, never by number.** The DAC is not simply "the
@@ -1509,37 +2119,38 @@ explicit match always wins, given either as a USB id or as a substring of the
 description `/dev/sndstat` prints:
 
 ```
-sysrc omdrc_sndlink_dac="0x152a:0x88c5"          # vendor:product
-sysrc omdrc_sndlink_dac="0x152a:0x88c5:000483"   # ...:serial, for two identical DACs
-sysrc omdrc_sndlink_dac="OKTO RESEARCH"          # or just the name
+sysrc omdrc_audio_dac="0x152a:0x88c5"          # vendor:product
+sysrc omdrc_audio_dac="0x152a:0x88c5:000483"   # ...:serial, for two identical DACs
+sysrc omdrc_audio_dac="OKTO RESEARCH"          # or just the name
 ```
 
-With no match configured the DAC is the lowest-numbered playback-capable USB
-card, falling back to the lowest-numbered playback-capable card of any kind.
+With no match configured, playback-capable cards are ranked: a pure-playback
+USB DAC beats a USB play/record interface, which beats non-USB playback. If
+several candidates remain, the service reports that it guessed and prints the
+exact `omdrc_audio_dac` lines that can pin the intended card.
 The ids come from the card's USB parent, which the service reaches through
 `dev.pcm.N.%parent` -> `dev.uaudio.N.%pnpinfo`.
 
-**Two triggers, one code path.** `devd` starts late --- its own rc.d script
-`REQUIRE`s `netif ldconfig` --- so it never sees the cards that attached during
-boot; the rc.d service does that pass, at rc position 41, `BEFORE: devd musicpd
-brutefir_drc drc_usb_audio`. Everything after boot comes from the devd rule in
-`etc/devd/omdrc-sndlink.conf`, which fires on the **pcm** attach rather than the
-USB one:
+**Two triggers, one code path.** The rc.d service performs the cold-plug pass
+after devd is listening; a later attach/detach comes from
+`etc/devd/omdrc-audio.conf`, which fires on the **pcm** device rather than a USB
+interface. Both invoke the same complete reconcile operation:
 
 ```
 attach 100 {
 	device-name "pcm[0-9]+";
-	action "/usr/sbin/service omdrc_sndlink update";
+	action "/usr/sbin/daemon -f /usr/sbin/service omdrc_audio reconcile";
 };
 ```
 
 By the time the kernel announces `+pcm1 at ...` (`devaddq()`,
 `sys/kern/kern_devctl.c`) the unit is allocated and `/dev/dsp1` exists, so one
-pass reads the card's identity and links it with nothing to poll for. Matching
+pass reads the card's identity and links it with nothing to poll for. devd is
+not blocked because daemon(8) detaches the request. Matching
 the USB device instead --- `system USB`, `subsystem DEVICE`, `type ATTACH` with
 `vendor`/`product` --- fires *before* its `pcm` child exists and would need a
-retry loop to find it. `update` is a full rescan, so the same rule covers both
-roles, the detach case and a card that moved.
+retry loop to find it. `reconcile` is a full level rescan, so the same rule
+covers both roles, detach, a card that moved, and coalesced/reordered events.
 
 **The one thing a symlink cannot cover is a sysctl OID.** `dev.pcm.<unit>.*` is
 keyed by the number we are trying to forget, and `drc.sh` reads the DAC's clock
@@ -1561,8 +2172,8 @@ unchanged.
 The per-card `pcm` settings ride with the service, keyed by **role**:
 
 ```
-omdrc_sndlink_dac_sysctls="bitperfect=1 play.vchans=0"
-omdrc_sndlink_capture_sysctls="bitperfect=1 rec.vchans=0"
+omdrc_audio_dac_sysctls="bitperfect=1 play.vchans=0"
+omdrc_audio_capture_sysctls="bitperfect=1 rec.vchans=0"
 ```
 
 `/etc/sysctl.conf` is the wrong home for them for three independent reasons:
@@ -1572,8 +2183,10 @@ is which; and a re-attach re-creates the whole `dev.pcm.<unit>.*` tree from
 driver defaults, discarding anything applied earlier. That last point is why
 these are applied from the devd hook and not only at boot: unplug the DAC and
 plug it back in, and `bitperfect` is back to `1` before BruteFIR reopens it.
-Global `hw.snd.*` and `hw.usb.uaudio.*` tunables are not unit-keyed and survive
-a re-attach, so they stay in `/etc/sysctl.conf`.
+Most global `hw.snd.*` and `hw.usb.uaudio.*` tunables are not unit-keyed and
+survive a re-attach, so they stay in `/etc/sysctl.conf`.
+`hw.snd.default_unit` is the deliberate exception: although the OID is global,
+its value names a role-dependent pcm unit and belongs to `omdrc_audio`.
 
 Hotplug is now covered rather than refused, and nothing is ever replugged to
 achieve it --- the previous design detached the capture card and USB-reset both
@@ -1606,10 +2219,10 @@ pre-14 syntax `mixer =rec dig1` no longer exists.
 **The setting does not survive a reboot**, and a replug resets it too ---
 `/etc/rc.d/mixer` only saves state for `mixer0` unless `mixer_enable="YES"` is
 set, and the U24 XL must be attached at boot for that to see it. So
-`omdrc_sndlink` asserts it, on every attach, right after it links the card:
+`omdrc_audio` asserts it, on every attach, right after it links the card:
 
 ```
-omdrc_sndlink_capture_recsrc="auto"   # the default
+omdrc_audio_capture_recsrc="auto"   # the default
 ```
 
 `auto` prefers the digital input *by inspection* rather than by hardcoding this
@@ -1662,7 +2275,7 @@ dsp1.record.0[dsp1.virtual_record.0]: spd 44100/48000 ...
   ... -> feeder_rate(q:4  48000 -> 44100) -> {userland}    <-- the lie
 ```
 
-The cure is the `omdrc_sndlink_capture_sysctls` above ---
+The cure is the `omdrc_audio_capture_sysctls` above ---
 `rec.vchans=0 bitperfect=1` --- after which the same command prints the whole
 capture path as `{hardware} -> feeder_root(0x00210000) -> {userland}`: one
 `memcpy` from the USB transfer to the read buffer, at the rate the transport
@@ -1702,15 +2315,15 @@ strictly needed; not one byte of audio changes.
 
 ### Checklist when the CD input captures silence
 
-0. `service omdrc_sndlink status` --- the U24 XL must hold the `capture` role
+0. `service omdrc_audio status` --- the U24 XL must hold the `capture` role
    with `bitperfect=1 rec.vchans=0`, and the DAC the `dac` role. It also prints
    the links and the active recording source. If the stream is not silent but
    *distorted*, and the lead drains to zero in about 25 s, it is Trap 3, not
    the selector.
 1. `ls -l /dev/dsp.capture` --- it must exist and point at the U24 XL's unit.
-   If it does not, `omdrc_sndlink_capture` does not match the card's name.
+   If it does not, `omdrc_audio_capture` does not match the card's name.
 2. `mixer -f /dev/mixer.capture -s` --- must print `pcm2`. If it prints `line`,
-   the card is on the analog input and `omdrc_sndlink_capture_recsrc` was set
+   the card is on the analog input and `omdrc_audio_capture_recsrc` was set
    to `none` or to `line`.
 3. Ignore `pcm2 = 0.00:0.00`; it is cosmetic.
 4. Only then look at the transport, the cable and lock.
@@ -1770,6 +2383,10 @@ A summary of everything FreeBSD-specific, in one place.
 * Services are rc.d scripts under `/usr/local/etc/rc.d/`, enabled with
   `sysrc <name>_enable=YES`, run manually with
   `service <name> onestart/onestop`. Hotplug is devd, not udev.
+* Service names, rc.d filenames, rc.conf keys, and service-specific hook names
+  use underscores (`omdrc_audio`, `omdrc_audio_enable`); standalone devd
+  configuration filenames use hyphens (`omdrc-audio.conf`). The separators are
+  not interchangeable in `service`, `rcorder`, or `PROVIDE`/`REQUIRE` tokens.
 
 ## OSS instead of ALSA; virtual_oss and cuse
 
@@ -1786,7 +2403,7 @@ bitperfect=1     # first opener's format becomes the hardware format
 play.vchans=0    # no virtual-channel mixer/resampler
 ```
 
-Applied to the DAC's unit by `omdrc_sndlink` (`omdrc_sndlink_dac_sysctls`), on
+Applied to the DAC's unit by `omdrc_audio` (`omdrc_audio_dac_sysctls`), on
 every attach --- a re-attach rebuilds `dev.pcm.<unit>.*` from driver defaults,
 so a replug would otherwise silently lose them.
 
@@ -1821,7 +2438,7 @@ These also mean the DAC is **single-open**: exactly one client at a time
   `BUS_HINT_DEVICE_UNIT`), and no devd rule can pre-empt it (the unit is
   allocated before the event is delivered). With a second USB audio device
   present, the DAC can lose `/dev/dsp0`. Handled by not depending on the
-  number: `omdrc_sndlink` keeps `/dev/dsp.dac` on the right card at boot and on
+  number: `omdrc_audio` keeps `/dev/dsp.dac` on the right card at boot and on
   every hotplug, and the few sysctl readers resolve the unit from that link
   (chapter \ref{sec:cdin}).
 * **A capture open can succeed at the wrong rate**: with a record virtual
@@ -2205,7 +2822,8 @@ anyone, not just this box/room.
 for omdrc-ctrl. `RUN_DEPENDS`: brutefir (per the Phase 0 decision),
 virtual_oss, musicpd, sox/soxr. `OPTIONS_DEFINE`: `CTRL` (web UI:
 py-flask/Markdown/numpy), `VIDEO` (webremote: mpv), `UPNP` (upmpdcli).
-`USE_RC_SUBR` for `drc_usb_audio omdrcctrl omdrcvideo` --- **not** musicpd
+`USE_RC_SUBR` for `omdrc_audio` (plus `omdrcctrl` with the CTRL option) ---
+**not** musicpd
 or upmpdcli; a pkg-message documents the rc.conf lines pointing the stock
 scripts at our configs. `@sample` entries for every config. Validate with
 `portlint -AC`, `portclippy`, `poudriere testport`, and `pkg check -s`
@@ -2430,7 +3048,7 @@ detail behind each section:
 | Web control panel | `omdrc-ctrl/README.md` |
 | CD / S-PDIF input bridge | `cdin/README.md` |
 | ESI U24 XL configuration and traps | `cdin/ESI-U24XL.md` |
-| Stable sound-device names | `etc/rc.d/omdrc_sndlink`, `etc/devd/omdrc-sndlink.conf` |
+| Stable sound-device names and lifecycle | `etc/rc.d/omdrc_audio`, `etc/devd/omdrc-audio.conf` |
 | Spectrum analyzer | `omdrc-ctrl/SPECTRUM_ANALYZER.md` |
 | Video playback + Blu-ray | `video/README.md` |
 | A/V sync delay derivation | `video/AV-SYNC-DELAY.md` |

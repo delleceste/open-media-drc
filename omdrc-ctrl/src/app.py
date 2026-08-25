@@ -373,7 +373,7 @@ _CDIN_DEVICE_LABEL = {"capture": "capture", "playback": "output"}
 # box whether or not it belongs to us.
 #
 # Four roles, in flow order.  On FreeBSD they are the role symlinks
-# omdrc_sndlink keeps pointed at the right cards (etc/rc.d/omdrc_sndlink) plus
+# omdrc_audio keeps pointed at the right cards (etc/rc.d/omdrc_audio) plus
 # the two cuse nodes virtual_oss creates; on Linux they are ALSA nodes under
 # /dev/snd, named here the way brutefir names them ("hw:1,1") and translated to
 # the node that fuser can be asked about.
@@ -694,7 +694,7 @@ def _dac_unit() -> str:
     """pcm unit of the DAC, resolved from the /dev/dsp.dac role symlink.
 
     FreeBSD hands out pcm unit numbers in attach order, so dev.pcm.0.* is the
-    DAC only by luck on a box with more than one card.  The omdrc_sndlink
+    DAC only by luck on a box with more than one card.  The omdrc_audio
     service keeps /dev/dsp.dac on the right one; a symlink cannot cover a sysctl
     OID, so the unit is read back from the link ("dsp1" -> "1").  Falls back to
     unit 0, which is what a single-card box has.
@@ -2280,6 +2280,8 @@ def _format_read_output(cmd_id: str, output: str) -> str:
             return output
         if parts[-1].lower() == "off":
             return "Off"
+        if output.lower().startswith("cd input"):
+            return output
         if len(parts) > 1:
             return " ".join(parts[1:])
     return output
@@ -3415,7 +3417,7 @@ def _holders_fstat(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
 
     Matching on the NAME column would be wrong: fstat resolves symlinks and
     prints one row per open file, so asking about /dev/dsp.dac (a symlink
-    omdrc_sndlink points at the real card) and /dev/dsp0 in the same call yields
+    omdrc_audio points at the real card) and /dev/dsp0 in the same call yields
     rows that name only one of them.  The inode is the identity that survives
     that, and stat(2) gives us the same number the INUM column carries."""
     inodes: dict[int, list[str]] = {}
@@ -3635,14 +3637,6 @@ def _chain_resolve_devices() -> dict[str, dict]:
         entry = {"role": role, "spec": spec, "path": path, "target": "",
                  "label": "", "present": bool(path) and os.path.exists(path),
                  "holders": [], "readers": [], "writers": []}
-        # The DAC has a fallback: a single-card FreeBSD box that never enabled
-        # omdrc_sndlink has no role symlink, and drc.sh makes the same
-        # substitution (dac_dev()), so the card must make it too or it would
-        # report a missing DAC on a box that plays perfectly well.
-        if role == "dac" and not entry["present"] and not _IS_LINUX:
-            if os.path.exists("/dev/dsp0"):
-                entry["path"] = "/dev/dsp0"
-                entry["present"] = True
         if entry["present"] and not _IS_LINUX:
             try:
                 entry["target"] = os.path.basename(os.readlink(entry["path"]))
@@ -3657,18 +3651,18 @@ def _chain_resolve_devices() -> dict[str, dict]:
     return devices
 
 
-# Where omdrc_sndlink publishes the role assignment it just made.  Reading it
+# Where omdrc_audio publishes the role assignment it just made.  Reading it
 # is one open per poll and needs no privilege, which is the point: the panel can
 # report a DAC that the service GUESSED without shelling out to `service
-# omdrc_sndlink status` every few seconds.
-SNDLINK_ROLES_FILE = "/var/run/omdrc_sndlink.roles"
+# omdrc_audio status` every few seconds.
+AUDIO_ROLES_FILE = "/var/run/omdrc/audio.roles"
 
 
-def _sndlink_roles() -> dict[str, str]:
-    """The role assignment omdrc_sndlink last made, or {} when the service is
+def _audio_roles() -> dict[str, str]:
+    """The role assignment omdrc_audio last made, or {} when the service is
     not installed, not enabled, or too old to publish it."""
     try:
-        with open(SNDLINK_ROLES_FILE, encoding="utf-8", errors="replace") as f:
+        with open(AUDIO_ROLES_FILE, encoding="utf-8", errors="replace") as f:
             text = f.read()
     except OSError:
         return {}
@@ -4062,21 +4056,21 @@ def _chain_problems(status: dict, bridge_node: dict | None,
                                      f"{_chain_bridge_name()} is not up"})
     # A DAC the service had to guess between two candidates is the failure that
     # is invisible everywhere else: the chain comes up, the DAC lights, and
-    # every byte goes to the wrong card.  omdrc_sndlink knows it guessed; this
+    # every byte goes to the wrong card.  omdrc_audio knows it guessed; this
     # is the only place a listener would ever be told.
-    roles = _sndlink_roles()
+    roles = _audio_roles()
     if roles.get("dac_guessed") == "1":
         problems.append({
             "severity": "warn",
             "text": f"the DAC was guessed: pcm{roles.get('dac_unit', '?')} "
                     f"{roles.get('dac_desc', '')} — more than one playback card "
-                    f"and no omdrc_sndlink_dac in rc.conf "
-                    f"(see `service omdrc_sndlink status`)",
+                    f"and no omdrc_audio_dac in rc.conf "
+                    f"(see `service omdrc_audio status`)",
         })
     if roles.get("capture_wanted") and not roles.get("capture_unit"):
         problems.append({
             "severity": "warn",
-            "text": f"no card matches omdrc_sndlink_capture="
+            "text": f"no card matches omdrc_audio_capture="
                     f"\"{roles['capture_wanted']}\" — the capture link is missing",
         })
 

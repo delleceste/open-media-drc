@@ -90,7 +90,7 @@ resamples everything to 192 kHz — correct speed *and* room correction. Export
 | state | mpv audio device | video delay |
 | ----- | ---------------- | ----------- |
 | `virtual_oss` running + `/dev/dsp.play` exists | `oss//dev/dsp.play` | `-0.67 s` (delays video to match the DRC audio-path latency) |
-| otherwise | `oss//dev/dsp.dac` (direct DAC; `/dev/dsp0` without `omdrc_sndlink`) | none |
+| otherwise | `oss//dev/dsp.dac` (direct DAC; `/dev/dsp0` without `omdrc_audio`) | none |
 
 `DRC_VIDEO_DELAY` (top of the script) defaults to **0.67 s**, derived not guessed:
 

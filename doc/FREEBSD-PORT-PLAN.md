@@ -138,7 +138,8 @@ Add `make install` (POSIX makefile or extend install.sh with
 | drc.sh, drc-status.sh | `${PREFIX}/libexec/omdrc/` + thin `${PREFIX}/bin/omdrc` wrapper |
 | omdrc.conf | `${PREFIX}/etc/open-media-drc/omdrc.conf.sample` |
 | flat configs, brutefir_defaults.conf | `${PREFIX}/etc/open-media-drc/…` (`.sample`) |
-| devd conf | `${PREFIX}/etc/devd/usb-audio-drc.conf` |
+| devd conf | `${PREFIX}/etc/devd/omdrc-sndlink.conf` |
+| hotplug reconciler | `${PREFIX}/libexec/omdrc-hotplug` |
 | mpd/upmpdcli config snippets | `${PREFIX}/share/examples/open-media-drc/` |
 | omdrc-ctrl (flask app) | `${PREFIX}/share/omdrc-ctrl/` (its CMake flow already close) |
 | docs | `${PREFIX}/share/doc/open-media-drc/` |

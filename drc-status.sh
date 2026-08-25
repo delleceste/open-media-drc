@@ -37,6 +37,7 @@ else
     STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omdrc"
 fi
 STATE_FILE="$STATE_DIR/last_arg"
+SOURCE_FILE="$STATE_DIR/last_source"
 
 # Runtime filter-set override — keep in sync with drc.sh: the config file's
 # GEOMETRY is the default, last_geometry (written by `drc.sh geometry <name>`
@@ -109,6 +110,12 @@ state_label() {
     variant="${2:-}"
     profile="${variant#@}"
     profile="${profile:-Flat}"
+
+    if [ "$mode" = "44100" ] && [ -f "$SOURCE_FILE" ] &&
+       [ "$(cat "$SOURCE_FILE" 2>/dev/null)" = "cdin" ]; then
+        printf 'CD input 44.1 kHz\n'
+        return
+    fi
 
     if [ "$mode" = "resamp" ]; then
         printf '%s auto-resample\n' "$profile"

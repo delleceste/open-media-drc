@@ -1,4 +1,4 @@
-// USB DAC hotplug automation, Linux (udev/systemd) and FreeBSD (devd/rc.d).
+// USB DAC hotplug plus late-MPD reconciliation, Linux and FreeBSD.
 digraph chain_hotplug {
     rankdir=TB;
     fontname="Helvetica";
@@ -16,19 +16,18 @@ digraph chain_hotplug {
 
     subgraph cluster_fbsd {
         label="FreeBSD"; fontsize=11; style=dashed; color="#999999";
-        devd  [label="devd rule\nusb-audio-drc.conf\n(USB intclass 0x01)"];
-        link  [label="devd rule + rc.d\nomdrc-sndlink\n(pcm attach -> /dev/dsp.dac,\nrole sysctls)", fillcolor="#e8e0f4"];
-        rcd   [label="rc.d: drc_usb_audio\n(probe /dev/dsp.dac, marker file)"];
-        wrk   [label="rc.d: brutefir_drc\n(worker, installed not enabled)"];
+        devd  [label="devd rule\nomdrc-audio.conf\n(pcm attach/detach, detached)"];
+        mpdok [label="musicpd successful start/restart"];
+        mpdhook [label="rc.conf.d/musicpd/omdrc_audio\none post-start reconcile; no lock"];
+        rcd   [label="rc.d: omdrc_audio reconcile\nrole links/settings + verified default unit\nunder device.lock, then su -l", fillcolor="#e8e0f4"];
     }
 
-    restore [label="drc.sh restore\nreads last_power + last_arg,\nrebuilds virtual_oss + BruteFIR,\nswitches MPD output", fillcolor="#dff0df"];
+    linuxrun [label="drc.sh restore / stop\n(current Linux service path)", fillcolor="#dff0df"];
+    reconcile [label="drc.sh reconcile\nreads power + source + rate + reality,\nrebuilds only on mismatch,\nbounded MPD switch", fillcolor="#dff0df"];
 
-    plug -> udev -> svc -> restore;
-    plug -> link;
-    boot -> link [label="rc, before devd"];
-    plug -> devd -> rcd -> wrk -> restore;
-    link -> rcd [style=dashed, label="link exists\nbefore the probe"];
+    plug -> udev -> svc -> linuxrun;
+    plug -> devd -> rcd -> reconcile;
+    mpdok -> mpdhook -> rcd;
     boot -> svc [label="udev synthesizes\nADD at boot"];
-    boot -> rcd [label="rc.conf:\ndrc_usb_audio_enable"];
+    boot -> rcd [label="rc.conf:\nomdrc_audio_enable"];
 }

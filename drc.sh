@@ -101,16 +101,13 @@ IS_LINUX=false
 # ── which card is the DAC ─────────────────────────────────────────────────────
 # FreeBSD hands out pcm unit numbers in attach order, and USB attach order is
 # port order, so /dev/dsp0 is not reliably the DAC on a box with more than one
-# card.  /dev/dsp.dac is a symlink the omdrc_sndlink service keeps pointed at the
-# right one (etc/rc.d/omdrc_sndlink, plus a devd rule for hotplug); brutefir and
-# MPD open it by name.  Fall back to unit 0 when there is no link: a single-DAC
-# box that never enabled the service, and Linux, where the chain is ALSA and none
-# of this applies.
-DAC_DEV_LINK=/dev/dsp.dac
-dac_dev() {
-  [ -e "$DAC_DEV_LINK" ] && { echo "$DAC_DEV_LINK"; return; }
-  echo /dev/dsp0
-}
+# card.  /dev/dsp.dac is a symlink the omdrc_audio service keeps pointed at the
+# right one (etc/rc.d/omdrc_audio, plus a devd rule for hotplug); brutefir and
+# MPD open it by name.  There is deliberately no FreeBSD dsp0 fallback: on a
+# multi-card machine that can be the capture interface, and silently opening the
+# wrong card is worse than failing with a precise error.  Linux uses ALSA and
+# does not use this OSS role link.
+DAC_DEV_LINK="${OMDRC_DAC_DEV_LINK:-/dev/dsp.dac}"
 # The pcm unit behind that link ("dsp0" -> 0).  A symlink covers a device node
 # but not a sysctl OID, and dev.pcm.<unit>.* is keyed by the number we are trying
 # to forget, so anything reading those resolves it here.
@@ -140,11 +137,50 @@ else
 fi
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
+# One lock identity for every mutating entry point.  Never derive it from
+# TMPDIR: desktop, login-shell and boot/service environments may use different
+# TMPDIR values, which would silently split mutual exclusion.  The resolved
+# state directory is shared by interactive and su -l service runs.
+LOCK_FILE="${OMDRC_LOCK_FILE:-$STATE_DIR/drc.lock}"
+
+# Decide whether this invocation mutates before reading any persistent state.
+# Read-only queries stay responsive; restore, on/off/rate, geometry/design
+# switches and reconcile all take the same lock before their first state read.
+_drc_read_only=false
+case "${1:-status}:${2:-}" in
+  status:|session:|geometry:|geometry:--list|geometry:-l|design:|design:--list|design:-l)
+    _drc_read_only=true
+    ;;
+esac
+if ! $_drc_read_only && [ -z "${DRC_LOCKED:-}" ]; then
+  export DRC_LOCKED=1
+  if command -v lockf >/dev/null 2>&1; then
+    # Keep the inode after release.  FreeBSD lockf(1) recommends -k for
+    # concurrent callers: unlink/recreate mode does not guarantee waiter order.
+    exec lockf -k -s -t 30 "$LOCK_FILE" "$0" "$@"
+  elif command -v flock >/dev/null 2>&1; then
+    # Use an explicit fd and close it in daemons (9>&-) so a child cannot keep
+    # the mutation lock after this orchestration process exits.
+    exec 9>"$LOCK_FILE"
+    if ! flock -w 30 9; then
+      echo "drc.sh: another run holds $LOCK_FILE; aborting" >&2
+      exit 1
+    fi
+  else
+    echo "drc.sh: neither lockf nor flock is available; refusing an unlocked mutation" >&2
+    exit 1
+  fi
+fi
+
 STATE_FILE="$STATE_DIR/last_arg"
 # Power state (on/off) kept separately from the rate: `off` records "off" here
 # but leaves STATE_FILE (the remembered rate) intact, so `restore` stays off
 # across a reboot yet can bring DRC back at the last rate when turned on.
 POWER_FILE="$STATE_DIR/last_power"
+# User-selected input mode.  The rate alone cannot distinguish ordinary
+# 44.1-kHz music from the explicit CD/S-PDIF mode.  This survives reboot and
+# lets restore bring the chain back before omdrc-cdin starts.
+SOURCE_FILE="$STATE_DIR/last_source"
 # Runtime filter-set (geometry) override, written by `drc.sh geometry <name>`
 # and by the web remote.  The config file's GEOMETRY is the *default*; this file
 # is the *current choice*.  Kept in the state dir beside last_arg / last_power so
@@ -178,9 +214,35 @@ log_event() {
   printf '%s run=%s %s\n' "$ts" "$RUN_ID" "$*" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# Skip sudo when already root (service files run as root); avoids the sudo
-# parent+monitor process tree that results in multiple processes in ps.
-_sudo() { [ "$(id -u)" -eq 0 ] && "$@" || sudo "$@"; }
+# Skip sudo when already root.  Otherwise use non-interactive mode: a password
+# prompt while drc.lock is held is an unbounded system-wide audio transition.
+_sudo() { [ "$(id -u)" -eq 0 ] && "$@" || sudo -n "$@"; }
+
+# No MPD or rc-service client is allowed to wait forever while drc.lock is
+# held.  timeout(1) is in FreeBSD base and GNU coreutils; fail closed when it is
+# unavailable instead of quietly restoring the old unbounded behaviour.
+OMDRC_MPC_TIMEOUT="${OMDRC_MPC_TIMEOUT:-2}"
+OMDRC_SERVICE_TIMEOUT="${OMDRC_SERVICE_TIMEOUT:-8}"
+_TIMEOUT_BIN=$(command -v timeout 2>/dev/null || true)
+run_bounded() {
+  local seconds="$1"
+  shift
+  if [ -z "$_TIMEOUT_BIN" ]; then
+    echo "drc.sh: timeout(1) is required for bounded command execution" >&2
+    return 125
+  fi
+  "$_TIMEOUT_BIN" -k 1 "$seconds" "$@"
+}
+mpc_bounded() { run_bounded "$OMDRC_MPC_TIMEOUT" mpc "$@"; }
+sudo_bounded() {
+  local seconds="$1"
+  shift
+  if [ "$(id -u)" -eq 0 ]; then
+    run_bounded "$seconds" "$@"
+  else
+    run_bounded "$seconds" sudo -n "$@"
+  fi
+}
 
 state_to_args() {
   local state="$1"
@@ -330,6 +392,41 @@ valid_variant() {
   esac
 }
 
+# Actual-chain probes used by reconcile.  Process existence alone is not
+# enough: a stale BruteFIR at the wrong config/rate is a mismatch that needs one
+# rebuild, while a fully matching chain must be a no-op.
+bf_pattern='(^|/)brutefir .*-daemon'
+bf_running() { pgrep -f "$bf_pattern" > /dev/null 2>&1; }
+
+running_voss_rate() {
+  ps -axww -o args= 2>/dev/null |
+    awk '($1=="virtual_oss" || $1~/\/virtual_oss$/) && /-r/ {
+      for (i=1; i<=NF; i++) if ($i=="-r") { print $(i+1); exit }
+    }'
+}
+
+bf_matches_conf() {
+  local wanted="$1"
+  ps -axww -o args= 2>/dev/null |
+    awk -v wanted="$wanted" '
+      ($1=="brutefir" || $1~/\/brutefir$/) && index($0, wanted) { found=1 }
+      END { exit found ? 0 : 1 }
+    '
+}
+
+physical_chain_matches() {
+  local wanted_rate="$1" wanted_conf="$2" have_rate
+  bf_running || return 1
+  bf_matches_conf "$wanted_conf" || return 1
+  if $IS_LINUX; then
+    return 0
+  fi
+  pgrep -q -x virtual_oss 2>/dev/null || return 1
+  [ -e /dev/dsp.play ] && [ -e /dev/dsp.loop ] || return 1
+  have_rate=$(running_voss_rate)
+  [ "$have_rate" = "$wanted_rate" ]
+}
+
 # Ask omdrc-cdin to hand /dev/dsp.play back before virtual_oss goes away.
 #
 # The CD bridge is meant to run continuously and normally holds nothing: it
@@ -341,17 +438,49 @@ valid_variant() {
 # So this is the same courtesy the MPD outputs get with `mpc disable` a few
 # lines up, for the same reason.  SIGHUP also holds the daemon off for a few
 # seconds, which covers the restart; nothing here fails if it is not running.
+OMDRC_CDIN_LOG_FILE="${OMDRC_CDIN_LOG_FILE:-/tmp/omdrc-cdin.log}"
+OMDRC_CDIN_RELEASE_POLLS="${OMDRC_CDIN_RELEASE_POLLS:-40}" # 4 s at 100 ms
+
 release_cdin() {
-  pgrep -q -x omdrc-cdin 2>/dev/null || return 0
-  echo "asking omdrc-cdin to release the loopback"
-  pkill -HUP -x omdrc-cdin 2>/dev/null || true
-  # The daemon cannot drop the device instantly: its playback thread is parked
-  # in write(), and virtual_oss's -s 200ms buffer plus one period plus the
-  # close() drain put the measured latency around 0.4 s.  Wait several times
-  # that.  The thing on the other side of this sleep is a teardown that wedges
-  # the machine until it is rebooted if a client handle is still open, so a
-  # second of latency on a rate change is not a trade worth making.
-  sleep 1.5
+  local pid first_line held i new
+  pid=$(pgrep -o -x omdrc-cdin 2>/dev/null || true)
+  [ -n "$pid" ] || return 0
+
+  # The daemon's own line-buffered file log is the acknowledgement channel.
+  # Record whether it currently owns playback and where new lines begin before
+  # signalling.  If the log is unavailable we cannot prove that the CUSE client
+  # closed, so fail safe rather than tearing virtual_oss down on a guess.
+  if [ ! -r "$OMDRC_CDIN_LOG_FILE" ]; then
+    echo "warning: cannot verify omdrc-cdin release; log is unreadable: $OMDRC_CDIN_LOG_FILE" >&2
+    return 1
+  fi
+  first_line=$(( $(wc -l < "$OMDRC_CDIN_LOG_FILE") + 1 ))
+  held=$(awk '
+    /playback .*: acquired$/ { held=1 }
+    /playback .*: released$/ { held=0 }
+    END { print held+0 }
+  ' "$OMDRC_CDIN_LOG_FILE")
+
+  echo "asking omdrc-cdin to release its output"
+  kill -HUP "$pid" 2>/dev/null || return 0
+
+  i=0
+  while [ "$i" -lt "$OMDRC_CDIN_RELEASE_POLLS" ]; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    new=$(tail -n "+$first_line" "$OMDRC_CDIN_LOG_FILE" 2>/dev/null || true)
+    if printf '%s\n' "$new" | grep -Eq 'state idle: release requested \(SIGHUP\)|holding off the output for'; then
+      if [ "$held" -eq 0 ] || printf '%s\n' "$new" | grep -q 'playback .*: released$'; then
+        log_event "event=cdin_release result=ack polls=${i}"
+        return 0
+      fi
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+
+  log_event "event=cdin_release result=timeout polls=${i}"
+  echo "ERROR: omdrc-cdin did not acknowledge output release; refusing virtual_oss teardown" >&2
+  return 1
 }
 
 # Restart omdrc-cdin so it re-picks where to write the disc.
@@ -376,7 +505,7 @@ restart_cdin() {
   pgrep -q -x omdrc-cdin 2>/dev/null || return 0
   command -v service >/dev/null 2>&1 || return 0
   echo "restarting omdrc-cdin so it re-picks its output device"
-  _sudo service omdrc_cdin onerestart >/dev/null 2>&1 ||
+  sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service omdrc_cdin onerestart >/dev/null 2>&1 ||
     echo "warning: could not restart omdrc_cdin — the CD input is still" \
          "pointed at the previous output (needs the rc.d sudoers grant)" >&2
 }
@@ -399,12 +528,14 @@ stop_virtual_oss() {
 }
 
 usage() {
-  echo "Usage: $0 <rate>|resamp|restore|off|stop|status|session|geometry|design [variant]"
+  echo "Usage: $0 <rate>|resamp|cdin|reconcile|restore|off|stop|status|session|geometry|design [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
   echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
   echo "             MPD uses DRC-native format *:*:* and does not resample"
   echo "  resamp   : MPD resamples everything to 192000 Hz"
+  echo "  cdin     : select the persistent CD/S-PDIF mode at 44100 Hz"
+  echo "  reconcile: make the actual chain match saved power/source/rate state"
   echo "  restore  : re-apply the last saved state (reads last_arg file);"
   echo "             falls back to 192000 if no previous active state exists"
   echo "  off      : stop brutefir and DRC; enable direct DAC output; record"
@@ -432,6 +563,8 @@ usage() {
   echo "  $0 192000"
   echo "  $0 resamp"
   echo "  $0 restore"
+  echo "  $0 reconcile"
+  echo "  $0 cdin"
   echo "  $0 status"
   echo "  $0 session"
   echo "  $0 geometry --list"
@@ -446,6 +579,92 @@ usage() {
 # below (which runs lock-free) rather than printing usage and exiting non-zero.
 [ $# -eq 0 ] && set -- status
 
+# ── explicit persistent CD-input mode ───────────────────────────────────────
+if [ $# -eq 1 ] && [ "$1" = "cdin" ]; then
+  printf '%s\n' cdin > "$SOURCE_FILE"
+  chmod 644 "$SOURCE_FILE" 2>/dev/null || true
+  log_event "event=source_saved source=cdin rate=44100"
+  export OMDRC_SOURCE_MODE=cdin
+  exec "$0" 44100
+fi
+
+# ── level-triggered lifecycle reconciliation ────────────────────────────────
+if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
+  desired_power="on"
+  [ -f "$POWER_FILE" ] && desired_power=$(cat "$POWER_FILE" 2>/dev/null || echo on)
+  case "$desired_power" in on|off) ;; *) desired_power=on ;; esac
+
+  desired_source="music"
+  [ -f "$SOURCE_FILE" ] && desired_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
+  case "$desired_source" in music|cdin) ;; *) desired_source=music ;; esac
+
+  desired_state=""
+  [ -f "$STATE_FILE" ] && desired_state=$(cat "$STATE_FILE" 2>/dev/null || true)
+  desired_args=$(state_to_args "$desired_state")
+  case "$desired_args" in ""|off) desired_args=192000 ;; esac
+  [ "$desired_source" = "cdin" ] && desired_args=44100
+
+  dac_present=true
+  if ! $IS_LINUX && [ ! -e "$DAC_DEV_LINK" ]; then
+    dac_present=false
+  fi
+
+  if ! $dac_present; then
+    if bf_running || { ! $IS_LINUX && pgrep -q -x virtual_oss 2>/dev/null; }; then
+      echo "DAC absent — transiently stopping the DRC chain"
+      log_event "event=reconcile result=stop reason=dac_absent power=${desired_power} source=${desired_source}"
+      exec "$0" stop
+    fi
+    log_event "event=reconcile result=noop reason=dac_absent power=${desired_power} source=${desired_source}"
+    echo "DAC absent; desired state preserved"
+    exit 0
+  fi
+
+  if [ "$desired_power" = "off" ]; then
+    if bf_running || { ! $IS_LINUX && pgrep -q -x virtual_oss 2>/dev/null; }; then
+      echo "Desired power is off — stopping the active/partial chain"
+      export OMDRC_SOURCE_MODE="$desired_source"
+      exec "$0" off
+    fi
+    mpc_bounded enable only "OKTO-DAC" >/dev/null 2>&1 || true
+    log_event "event=reconcile result=noop reason=already_off source=${desired_source}"
+    echo "DRC already off"
+    exit 0
+  fi
+
+  # Parse the remembered request without changing it.  `resamp` runs the
+  # physical chain at 192 kHz but selects a different MPD output.
+  # shellcheck disable=SC2086
+  set -- $desired_args
+  desired_mode="$1"
+  desired_variant="${2:-}"
+  if [ "$desired_mode" = "resamp" ]; then
+    desired_rate=192000
+    desired_output="DRC-resamp"
+  else
+    desired_rate=$(normalize_rate "$desired_mode")
+    desired_output="DRC-native"
+  fi
+  desired_conf="$SITE_DIR/configs/$GEOMETRY/brutefir-${desired_rate}${desired_variant}.conf"
+
+  if physical_chain_matches "$desired_rate" "$desired_conf"; then
+    if mpc_bounded enable only "$desired_output" >/dev/null 2>&1; then
+      mpd_reconcile=ok
+    else
+      mpd_reconcile=pending
+    fi
+    log_event "event=reconcile result=noop reason=physical_match rate=${desired_rate} source=${desired_source} mpd=${mpd_reconcile}"
+    echo "DRC chain already correct at ${desired_rate} Hz (MPD: ${mpd_reconcile})"
+    exit 0
+  fi
+
+  log_event "event=reconcile result=rebuild reason=physical_mismatch request=${desired_args} source=${desired_source}"
+  echo "Reconciling DRC chain to $(state_label "$desired_args")"
+  export OMDRC_SOURCE_MODE="$desired_source"
+  # shellcheck disable=SC2086
+  exec "$0" $desired_args
+fi
+
 # ── restore: re-apply the last saved state ───────────────────────────────────
 if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
   # Honour the on/off state recorded at shutdown.  If DRC was off, stay off;
@@ -455,13 +674,22 @@ if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
   [ -f "$POWER_FILE" ] && restore_power=$(cat "$POWER_FILE" 2>/dev/null || echo on)
   restore_state=""
   [ -f "$STATE_FILE" ] && restore_state=$(cat "$STATE_FILE" 2>/dev/null || true)
+  restore_source="music"
+  [ -f "$SOURCE_FILE" ] && restore_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
+  case "$restore_source" in music|cdin) ;; *) restore_source=music ;; esac
   # Log what restore actually read, so a boot that ignores the saved state can
   # be told apart from a saved state that was never written in the first place.
-  log_event "event=restore power=${restore_power:-unset} last_arg=${restore_state:-unset} state_dir=${STATE_DIR}"
+  log_event "event=restore power=${restore_power:-unset} source=${restore_source} last_arg=${restore_state:-unset} state_dir=${STATE_DIR}"
   if [ "$restore_power" = "off" ]; then
     echo "Last power state was off — leaving DRC disabled (direct DAC)"
     exec "$0" off
   fi
+  if [ "$restore_source" = "cdin" ]; then
+    echo "Restoring CD input mode at 44.1 kHz"
+    export OMDRC_SOURCE_MODE=cdin
+    exec "$0" 44100
+  fi
+  export OMDRC_SOURCE_MODE=music
   state="$restore_state"
   args=$(state_to_args "$state")
   case "$args" in
@@ -493,8 +721,12 @@ if [ $# -eq 1 ] && [ "$1" = "session" ]; then
   session_power="on"
   [ -f "$POWER_FILE" ] && session_power=$(cat "$POWER_FILE")
   case "$session_power" in on|off) ;; *) session_power="on" ;; esac
+  session_source="music"
+  [ -f "$SOURCE_FILE" ] && session_source=$(cat "$SOURCE_FILE")
+  case "$session_source" in music|cdin) ;; *) session_source="music" ;; esac
   printf 'geometry=%s\n' "$GEOMETRY"
   printf 'power=%s\n' "$session_power"
+  printf 'source=%s\n' "$session_source"
   printf 'mode=%s\n' "$session_mode"
   printf 'rate=%s\n' "$session_rate"
   printf 'design=%s\n' "$session_design"
@@ -554,6 +786,10 @@ if [ $# -ge 1 ] && [ "$1" = "design" ]; then
   fi
   echo "switching filter design: $previous -> $listed in geometry $GEOMETRY at ${design_rate} Hz"
   export OMDRC_SWITCH_FROM="$previous" OMDRC_SWITCH_TO="$listed"
+  switch_source="music"
+  [ -f "$SOURCE_FILE" ] && switch_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
+  case "$switch_source" in music|cdin) ;; *) switch_source=music ;; esac
+  export OMDRC_SOURCE_MODE="$switch_source"
   exec "$0" "$design_mode" ${wanted:+"$wanted"}
 fi
 
@@ -584,6 +820,14 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
   if ! list_geometries | grep -qxF -- "$new_geo"; then
     echo "unknown filter set: $new_geo" >&2
     echo "installed: $(list_geometries | tr '\n' ' ')" >&2
+    exit 1
+  fi
+
+  switch_source="music"
+  [ -f "$SOURCE_FILE" ] && switch_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
+  case "$switch_source" in music|cdin) ;; *) switch_source=music ;; esac
+  if [ "$switch_source" = "cdin" ] && ! geometry_rates "$new_geo" | grep -qx 44100; then
+    echo "filter set $new_geo cannot preserve CD input: it has no 44100 Hz config" >&2
     exit 1
   fi
 
@@ -631,6 +875,7 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
   fi
 
   echo "switching to filter set $new_geo"
+  export OMDRC_SOURCE_MODE="$switch_source"
   exec "$0" "$want_rate" ${want_variant:+"$want_variant"}
 fi
 
@@ -668,19 +913,22 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
   _st_bf_var=$(echo "$_st_bf_conf"  | sed 's/brutefir-[0-9]*//;s/\.conf//')
 
   # MPD via mpc (mpc exits non-zero when MPD is unreachable)
-  _st_mpc=$(mpc status 2>/dev/null) || _st_mpc=""
+  _st_mpc=$(mpc_bounded status 2>/dev/null) || _st_mpc=""
   _st_mpc_state=$(echo "$_st_mpc" | sed -n 's/.*\[\(playing\|paused\|stopped\)\].*/\1/p')
   [ -z "$_st_mpc_state" ] && _st_mpc_state="stopped"
   # audio: and bitrate: lines only appear when playing/paused; grep returns 1 on no match
   _st_mpc_audio=$(echo "$_st_mpc" | grep -i 'audio:'   | sed 's/^[^:]*:[[:space:]]*//') || true
   _st_mpc_br=$(echo    "$_st_mpc" | grep -i 'bitrate:' | sed 's/^[^:]*:[[:space:]]*//')  || true
-  _st_mpc_song=$(mpc current 2>/dev/null) || _st_mpc_song=""
+  _st_mpc_song=$(mpc_bounded current 2>/dev/null) || _st_mpc_song=""
 
   # Active config reflects what is actually processing now, not STATE_FILE
   [ -z "$_st_bf_rate" ] && _st_drc="off"
 
   printf "%-17s %s\n" "Geometry:"    "$GEOMETRY"
   printf "%-17s %s\n" "Active config:" "$(state_label "$_st_drc")"
+  _st_source="music"
+  [ -f "$SOURCE_FILE" ] && _st_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
+  printf "%-17s %s\n" "Saved source:" "$_st_source"
   if $IS_LINUX; then
     if [ -n "$_st_alsa_rate" ]; then
       printf "%-17s running  %s Hz\n" "ALSA:"  "$_st_alsa_rate"
@@ -734,40 +982,6 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
   exit 0
 fi
 
-# ── serialize mutating runs ──────────────────────────────────────────────────
-# Boot presence-probe, devd ATTACH/DETACH and interactive runs can otherwise
-# overlap: one run's stop_brutefir kills another's freshly-started brutefir and
-# its virtual_oss teardown yanks /dev/dsp.loop out from under it, leaving
-# virtual_oss orphaned with brutefir down (the "off + virtual_oss running"
-# state).  Re-exec under a lock so only one mutating run proceeds at a time.
-# Portable: lockf(1) on FreeBSD, flock(1) on Linux; if neither is present we
-# proceed unlocked rather than fail.  restore/status above run lock-free —
-# restore re-execs into a rate/off run, which lands here and takes the lock.
-if [ -z "${DRC_LOCKED:-}" ]; then
-  export DRC_LOCKED=1
-  LOCK_FILE="${TMPDIR:-/tmp}/drc.lock"
-  if command -v lockf >/dev/null 2>&1; then
-    exec lockf -s -t 30 "$LOCK_FILE" "$0" "$@"
-  elif command -v flock >/dev/null 2>&1; then
-    # Linux: acquire the lock on an explicit fd we control (9) instead of the
-    # command form `flock FILE "$0" "$@"`.  The command form leaves the lock fd
-    # open *without* close-on-exec, so the brutefir daemon spawned later
-    # inherits it and keeps the advisory lock for its entire lifetime.  The next
-    # mutating run then deadlocks — most visibly `drc.sh off`: it must hold the
-    # lock to run stop_brutefir, but the lock is not released until brutefir
-    # (the very process off needs to kill) exits, so flock waits the full 30 s
-    # and the run silently does nothing.  Holding the lock on a known fd lets us
-    # close it in the child when launching brutefir (see start_brutefir: 9>&-).
-    # FreeBSD's lockf above does not leak the fd into the daemon, so it keeps
-    # the plain re-exec form.
-    exec 9>"$LOCK_FILE"
-    if ! flock -w 30 9; then
-      echo "drc.sh: another run holds $LOCK_FILE; aborting" >&2
-      exit 1
-    fi
-  fi
-fi
-
 # ── argument parsing ──────────────────────────────────────────────────────────
 if [ $# -eq 1 ] && { [ "$1" = "off" ] || [ "$1" = "stop" ]; }; then
   # off  = user intent to disable DRC — records the off state below.
@@ -805,7 +1019,23 @@ fi
 # that is currently playing.  Validated here, the run aborts with the box still
 # making sound; validated after stop_brutefir — where this check used to live —
 # it left brutefir dead, MPD still pointed at the DRC output, and silence.
+# Persist the requested source as intent before any fallible device/config
+# work.  In particular, an ordinary rate action means "leave CD input and use
+# music"; if validation or startup fails, restore/reconcile must retry music,
+# not resurrect the previously saved CD input at 44.1 kHz.  Explicit off and
+# transient stop deliberately leave the source choice untouched.
 if [ "$mode" != "off" ] && [ "$mode" != "stop" ]; then
+  source_mode="${OMDRC_SOURCE_MODE:-music}"
+  case "$source_mode" in music|cdin) ;; *) source_mode=music ;; esac
+  printf '%s\n' "$source_mode" > "$SOURCE_FILE"
+  chmod 644 "$SOURCE_FILE" 2>/dev/null || true
+  log_event "event=source_saved source=${source_mode} reason=transition_intent"
+
+  if ! $IS_LINUX && [ ! -e "$DAC_DEV_LINK" ]; then
+    echo "required DAC role is missing: $DAC_DEV_LINK" >&2
+    echo "run: service omdrc_audio roles" >&2
+    exit 1
+  fi
   conf_file="$SITE_DIR/configs/$GEOMETRY/brutefir-${actual_rate}${variant}.conf"
   if [ ! -f "$conf_file" ]; then
     echo "config not found: $conf_file" >&2
@@ -823,14 +1053,6 @@ prime=""
 if [ "$mode" != "off" ] && [ "$mode" != "stop" ] && [ "$prev_rate" != "$actual_rate" ]; then
   prime=1
 fi
-
-# brutefir renames its forked worker processes via prctl(PR_SET_NAME) on Linux
-# (compat.c: set_thread_name -> "input"/"output"/...), so their `comm` is no
-# longer "brutefir" and `pgrep -x` / `killall` by name match nothing.  On
-# FreeBSD set_thread_name is a no-op, which is why name matching worked there.
-# Match the full command line instead so detection and teardown work on both.
-bf_pattern='(^|/)brutefir .*-daemon'
-bf_running() { pgrep -f "$bf_pattern" > /dev/null 2>&1; }
 
 stop_brutefir() {
   if bf_running; then
@@ -864,8 +1086,8 @@ start_brutefir() {
   # (/dev/dsp.dac).  If the link is missing the open fails for a reason that has
   # nothing to do with brutefir, so say so before it does.
   if ! $IS_LINUX && [ ! -e "$DAC_DEV_LINK" ]; then
-    echo "warning: $DAC_DEV_LINK is missing — is omdrc_sndlink enabled?" >&2
-    echo "         (service omdrc_sndlink status)" >&2
+    echo "warning: $DAC_DEV_LINK is missing — is omdrc_audio enabled?" >&2
+    echo "         (service omdrc_audio status)" >&2
   fi
   for attempt in 1 2 3; do
     BF_ATTEMPTS="$attempt"
@@ -1006,7 +1228,7 @@ rollback_to_direct() {
   if ! $IS_LINUX; then
     stop_virtual_oss
   fi
-  mpc enable only "OKTO-DAC" 2>/dev/null || true
+  mpc_bounded enable only "OKTO-DAC" 2>/dev/null || true
 }
 
 # ── stop brutefir ────────────────────────────────────────────────────────────
@@ -1014,6 +1236,15 @@ rollback_to_direct() {
 # prime step below can tell whether the requested rate crosses crystal domains.
 prev_rate="$(current_dac_rate)"
 log_event "event=run_start mode=${mode} rate=${actual_rate:-} from=${prev_rate:-unknown} variant=${variant:-} warmup=${DAC_WARMUP_SECS} verify_retries=${DAC_VERIFY_RETRIES}"
+
+# Persist user intent before the first teardown.  `stop` is deliberately
+# transient (shutdown/device loss) and leaves it untouched; `off` is a user
+# decision that must survive even if BruteFIR, MPD, sudo or CUSE teardown fails.
+if [ "$mode" = "off" ]; then
+  echo "off" > "$POWER_FILE"
+  chmod 644 "$POWER_FILE" 2>/dev/null || true
+  log_event "event=power_saved mode=off power=off"
+fi
 stop_brutefir
 
 # ── off / stop: re-enable direct DAC, stop virtual_oss ───────────────────────
@@ -1028,18 +1259,13 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # `stop` is a transient teardown (service shutdown / USB unplug) and leaves
   # last_power untouched, so a running system that simply reboots is restored
   # rather than left off.  STATE_FILE (the rate) is never touched here.
-  if [ "$mode" = "off" ]; then
-    echo "off" > "$POWER_FILE"
-    chmod 644 "$POWER_FILE" 2>/dev/null || true
-    log_event "event=power_saved mode=off power=off"
-  fi
   # Release MPD from the DRC outputs BEFORE the backend under them disappears.
   # brutefir is already down at this point, but MPD may still hold /dev/dsp.play
   # open through DRC-native/DRC-resamp; pulling virtual_oss out from under an
   # open output is what wedges MPD (and then the "enable only" below hangs).
   # This mirrors what the chain-rebuild path does a few lines further down.
-  mpc disable "DRC-native" >/dev/null 2>&1 || true
-  mpc disable "DRC-resamp" >/dev/null 2>&1 || true
+  mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
+  mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
   sleep 0.5
   $IS_LINUX || release_cdin
   # Now tear the chain down so the DAC is free before the direct output opens
@@ -1054,7 +1280,7 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # and disables all others atomically.  A failure here is reported, not fatal:
   # the DRC chain is already down and the state is already recorded, so aborting
   # would only hide the problem.
-  if mpc enable only "OKTO-DAC"; then
+  if mpc_bounded enable only "OKTO-DAC"; then
     log_event "event=run_result mode=${mode} result=stopped output=OKTO-DAC"
   else
     log_event "event=run_result mode=${mode} result=stopped output=fail"
@@ -1076,9 +1302,9 @@ fi
 # output instead of being a no-op on an already-enabled (but stale) output.
 # stdout silenced: each "mpc disable" echoes the full output list, which is
 # just noise here — the post-start "enable only" below prints the final state.
-mpc disable "OKTO-DAC"   >/dev/null 2>&1 || true
-mpc disable "DRC-native" >/dev/null 2>&1 || true
-mpc disable "DRC-resamp" >/dev/null 2>&1 || true
+mpc_bounded disable "OKTO-DAC"   >/dev/null 2>&1 || true
+mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
+mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
 # "mpc disable" returns before MPD's player thread has actually closed the
 # device; give it a moment so MPD releases /dev/dsp.play (and the DAC) before
 # we tear down virtual_oss underneath it.  Yanking the backend out from under
@@ -1200,7 +1426,13 @@ else
 fi
 # Enable ONLY the selected DRC output (disables the direct + the other DRC
 # output). "mpc disable all" is not valid in mpc — use "enable only <name>".
-mpc enable only "$mpd_output"
+if mpc_bounded enable only "$mpd_output"; then
+  mpd_result="$mpd_output"
+else
+  mpd_result="pending"
+  echo "warning: DRC is healthy but MPD output selection is pending" >&2
+  log_event "event=mpd_output result=pending output=${mpd_output}"
+fi
 
 # ── record state ─────────────────────────────────────────────────────────────
 state_args="${rate}${variant:+ ${variant}}"
@@ -1217,5 +1449,5 @@ chmod 644 "$POWER_FILE" 2>/dev/null || true
 # brutefir is about to open.
 restart_cdin
 
-log_event "event=run_result mode=${mode} rate=${actual_rate} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} warm_ms=${WARM_MS} observed=${VERIFY_OBSERVED} output=${mpd_output} switch_from=${OMDRC_SWITCH_FROM:-} switch_to=${OMDRC_SWITCH_TO:-}"
+log_event "event=run_result mode=${mode} rate=${actual_rate} source=${source_mode} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} warm_ms=${WARM_MS} observed=${VERIFY_OBSERVED} output=${mpd_result} switch_from=${OMDRC_SWITCH_FROM:-} switch_to=${OMDRC_SWITCH_TO:-}"
 echo "DRC active: $(state_label "$state_args") (MPD output: ${mpd_output})"

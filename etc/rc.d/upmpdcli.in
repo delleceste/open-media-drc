@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # PROVIDE: upmpdcli
-# REQUIRE: NETWORKING FILESYSTEMS mpd
+# REQUIRE: NETWORKING FILESYSTEMS musicpd
 # KEYWORD: shutdown
 #
 # Template — generated to upmpdcli by install.sh from config.env.

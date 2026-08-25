@@ -81,7 +81,7 @@ LIB="$HERE/bitperfect-lib.py"
 
 # /dev/dsp.dac is the DAC by role: FreeBSD pcm unit numbers follow attach
 # order, so /dev/dsp0 is only the DAC by luck on a multi-card box.  The
-# omdrc_sndlink service keeps the link pointed at the right one; without it
+# omdrc_audio service keeps the link pointed at the right one; without it
 # (single-DAC box, or Linux) fall back to unit 0.
 PLAY_DEV="$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)"
 PREFIX=""

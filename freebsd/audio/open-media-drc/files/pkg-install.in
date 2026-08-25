@@ -1,0 +1,39 @@
+#!/bin/sh
+# A local rc.conf.d service entry may be one file or a directory.  The package
+# installs an independent musicpd fragment, so convert the file form first and
+# preserve the administrator's settings verbatim as 00-local.conf.
+
+case "$2" in
+PRE-INSTALL)
+    target="%%PREFIX%%/etc/rc.conf.d/musicpd"
+
+    if [ -L "$target" ]; then
+        echo "open-media-drc: refusing to migrate symlink: $target" >&2
+        exit 1
+    fi
+    if [ -e "$target" ] && [ ! -f "$target" ] && [ ! -d "$target" ]; then
+        echo "open-media-drc: not a regular file or directory: $target" >&2
+        exit 1
+    fi
+    if [ -f "$target" ]; then
+        parent=${target%/*}
+        temporary="${target}.omdrc-migrate.$$"
+        mkdir -p "$parent" || exit 1
+        mkdir -m 755 "$temporary" || exit 1
+        if ! mv "$target" "$temporary/00-local.conf"; then
+            rmdir "$temporary" 2>/dev/null || true
+            exit 1
+        fi
+        if ! mv "$temporary" "$target"; then
+            mv "$temporary/00-local.conf" "$target" 2>/dev/null || true
+            rmdir "$temporary" 2>/dev/null || true
+            echo "open-media-drc: could not convert $target to directory form" >&2
+            exit 1
+        fi
+        echo "open-media-drc: preserved existing musicpd settings in $target/00-local.conf"
+    fi
+    mkdir -p "$target" || exit 1
+    ;;
+esac
+
+exit 0

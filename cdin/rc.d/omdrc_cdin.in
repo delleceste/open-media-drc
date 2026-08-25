@@ -1,16 +1,16 @@
 #!/bin/sh
 #
 # PROVIDE: omdrc_cdin
-# REQUIRE: brutefir_drc
+# REQUIRE: omdrc_audio
 # KEYWORD: shutdown
 #
 # omdrc-cdin — the CD / S-PDIF capture bridge.
 #
 # Add to /etc/rc.conf:
 #   omdrc_cdin_enable="YES"
-#   omdrc_sndlink_capture="ESI U24XL"  # names the capture card; check /dev/sndstat
+#   omdrc_audio_capture="ESI U24XL"  # names the capture card; check /dev/sndstat
 #
-# The capture device itself needs no setting: omdrc_sndlink turns that name into
+# The capture device itself needs no setting: omdrc_audio turns that name into
 # /dev/dsp.capture and keeps it there across replugs.  omdrc_cdin_in overrides it
 # if you want a specific node anyway.
 #
@@ -26,7 +26,7 @@
 # not an error here — it is retried, and reported in the web panel's CD input
 # card.
 #
-# REQUIRE: brutefir_drc because the output is virtual_oss's client node, which
+# REQUIRE: omdrc_audio because the output is virtual_oss's client node, which
 # drc.sh creates.  Ordering only; if the chain is down the daemon waits for it
 # and says so in the log rather than failing.
 
@@ -40,12 +40,12 @@ load_rc_config "$name"
 : ${omdrc_cdin_enable:="NO"}
 : ${omdrc_cdin_user:="@AUDIO_USER@"}
 # Capture device: the S/PDIF interface, NOT the DAC.  /dev/dsp.capture is the
-# role symlink the omdrc_sndlink service keeps pointed at it — pcm unit numbers
+# role symlink the omdrc_audio service keeps pointed at it — pcm unit numbers
 # follow USB attach order, so /dev/dsp1 is the interface only by luck.  The link
-# is created only when omdrc_sndlink_capture names the card in /etc/rc.conf,
+# is created only when omdrc_audio_capture names the card in /etc/rc.conf,
 # which is what turns the CD input on:
 #
-#	sysrc omdrc_sndlink_capture="ESI U24XL"
+#	sysrc omdrc_audio_capture="ESI U24XL"
 #
 # See ESI-U24XL.md.
 : ${omdrc_cdin_in:="/dev/dsp.capture"}
@@ -67,7 +67,7 @@ load_rc_config "$name"
 # silent unless the chain is up, "/dev/dsp.dac" to always bypass DRC.
 : ${omdrc_cdin_out:="/dev/dsp.play,/dev/dsp.dac"}
 # Source width.  The U24 XL's capture endpoint is 24-bit S-LE and nothing else,
-# and with bitperfect=1 (which omdrc_sndlink sets on the capture card) there is
+# and with bitperfect=1 (which omdrc_audio sets on the capture card) there is
 # no format feeder to hide that behind — so ask for the device's own width.  The
 # output side then negotiates upward on its own and widens 24 -> 32 losslessly.
 # Getting this wrong is not subtle: the open fails outright.

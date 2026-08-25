@@ -75,7 +75,7 @@ omdrc_renderer_start()
 omdrc_renderer_stop()
 {
 	# `stop` does not clear the remembered choice: a shutdown of a running box
-	# must come back to the same renderer, exactly as brutefir_drc's stop keeps
+	# must come back to the same renderer, exactly as omdrc_audio's stop keeps
 	# drc.sh's last_arg.
 	"${omdrc_renderer_script}" stop
 }

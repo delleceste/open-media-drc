@@ -63,8 +63,8 @@ keep the graph clean (both already set on this host):
 bitperfect = 1     # first opener's format becomes the hardware format
 play.vchans = 0    # no virtual-channel mixer/resampler in front of the DAC
 
-# on the DAC's own pcm unit — asserted on every attach by omdrc_sndlink
-# (omdrc_sndlink_dac_sysctls), since a replug rebuilds dev.pcm.<unit>.* from
+# on the DAC's own pcm unit — asserted on every attach by omdrc_audio
+# (omdrc_audio_dac_sysctls), since a replug rebuilds dev.pcm.<unit>.* from
 # driver defaults.  Read the unit back from the link when you need the OID:
 #   sysctl dev.pcm.$(readlink /dev/dsp.dac | tr -dc 0-9).bitperfect
 ```

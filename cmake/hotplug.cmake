@@ -5,12 +5,10 @@
 #         `omdrc stop` on detach.  The udev rule is the one file that cannot live
 #         under $PREFIX (udev scans /etc/udev and /usr/lib/udev only), so it
 #         installs to $PREFIX/lib/udev/rules.d with a documented copy into /etc.
-# FreeBSD: a devd rule runs the drc_usb_audio rc.d service, which invokes the
-#         brutefir_drc worker; both drop to the audio user via su(1).  devd and
-#         rc.d both scan $PREFIX/etc natively, so no /etc seam there.  A second
-#         devd rule keeps /dev/dsp.dac (the name everything opens the DAC by)
-#         on the right card across hotplug; omdrc_sndlink does the same at boot,
-#         when devd is not yet running.
+# FreeBSD: one omdrc_audio rc service owns card-role links and the DRC lifecycle.
+#         A pcm devd rule launches its detached, idempotent reconcile command.
+#         Root role resolution completes before su -l enters the audio user's
+#         DRC reconciler, so the two bounded locks are never nested.
 #
 # The root -> user-owned-brutefir seam is handled by User=/su -l (not a --user
 # unit); interactive and service runs share state via OMDRC_STATE_DIR pinned in
@@ -33,15 +31,23 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
 
     install(CODE "message(STATUS \"hotplug: drc-usb-audio.service + udev rule installed (see the final checklist for the /etc copy)\")")
 else()  # FreeBSD rc.d
-    foreach(_svc drc_usb_audio brutefir_drc omdrc_sndlink)
-        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/freebsd/audio/open-media-drc/files/${_svc}.in" _s)
-        string(REPLACE "%%PREFIX%%" "${CMAKE_INSTALL_PREFIX}" _s "${_s}")
-        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${_svc}" "${_s}")
-        install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/${_svc}" DESTINATION etc/rc.d)
-    endforeach()
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/freebsd/audio/open-media-drc/files/omdrc_audio.in" _s)
+    string(REPLACE "%%PREFIX%%" "${CMAKE_INSTALL_PREFIX}" _s "${_s}")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc_audio" "${_s}")
+    install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/omdrc_audio" DESTINATION etc/rc.d)
 
-    install(FILES etc/devd/usb-audio-drc.conf etc/devd/omdrc-sndlink.conf
-            DESTINATION etc/devd)
+    install(FILES etc/devd/omdrc-audio.conf DESTINATION etc/devd)
 
-    install(CODE "message(STATUS \"hotplug: drc_usb_audio + brutefir_drc + omdrc_sndlink rc.d + devd rules installed (see the final checklist to enable)\")")
+    # rc.subr permits rc.conf.d/musicpd to be either one file or a directory.
+    # Prepare the directory form before installing our independent post-start
+    # fragment; the helper preserves a pre-existing file as 00-local.conf.
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/install-musicpd-hook.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/install-musicpd-hook.cmake"
+        @ONLY)
+    install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/install-musicpd-hook.cmake")
+    install(FILES etc/rc.conf.d/musicpd/omdrc_audio
+            DESTINATION etc/rc.conf.d/musicpd)
+
+    install(CODE "message(STATUS \"hotplug: omdrc_audio rc.d + pcm devd rule + musicpd reconcile hook installed (see the final checklist to enable)\")")
 endif()

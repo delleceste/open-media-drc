@@ -133,7 +133,7 @@ plugged in or not:
 ```sh
 # /etc/rc.conf
 omdrc_cdin_enable="YES"
-omdrc_sndlink_capture="ESI U24XL"   # names the ESI; omdrc_sndlink turns that
+omdrc_audio_capture="ESI U24XL"   # names the ESI; omdrc_audio turns that
                                     # into /dev/dsp.capture, which cdin opens
 ```
 

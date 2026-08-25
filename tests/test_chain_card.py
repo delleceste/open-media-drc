@@ -355,14 +355,14 @@ class Escalation(unittest.TestCase):
         self.assertEqual(APP._chain_tool_command(["fstat"]), ["fstat"])
 
 
-class SndlinkRoles(unittest.TestCase):
-    """What omdrc_sndlink publishes about the role assignment it made."""
+class AudioRoles(unittest.TestCase):
+    """What omdrc_audio publishes about the role assignment it made."""
 
     def _with_roles(self, text):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "omdrc_sndlink.roles"
+            path = Path(directory) / "audio.roles"
             path.write_text(text, encoding="utf-8")
-            with mock.patch.object(APP, "SNDLINK_ROLES_FILE", str(path)):
+            with mock.patch.object(APP, "AUDIO_ROLES_FILE", str(path)):
                 return _status()
 
     def test_a_guessed_dac_is_reported(self):
@@ -389,7 +389,7 @@ class SndlinkRoles(unittest.TestCase):
                           if p["severity"] == "warn"], [])
 
     def test_a_box_without_the_service_is_not_a_fault(self):
-        with mock.patch.object(APP, "SNDLINK_ROLES_FILE", "/nonexistent/roles"):
+        with mock.patch.object(APP, "AUDIO_ROLES_FILE", "/nonexistent/roles"):
             status = _status()
         self.assertEqual([p for p in status["problems"]
                           if p["severity"] == "warn"], [])

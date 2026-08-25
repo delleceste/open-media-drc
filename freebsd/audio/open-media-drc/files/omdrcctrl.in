@@ -7,7 +7,7 @@
 # Add to /etc/rc.conf:
 # omdrcctrl_enable="YES"
 # omdrcctrl_user="<audio user>"        # REQUIRED — the same login user as
-#                                      # brutefir_drc_user
+#                                      # omdrc_audio_user
 #
 # Web control panel (Flask) for the DRC stack.  It shells out to omdrc(1), so
 # it must run as the same audio user that owns brutefir: a root-owned panel
@@ -44,7 +44,7 @@ command="/usr/sbin/daemon"
 # No `daemon -u`: rc.subr has already dropped privileges via ${name}_user, and
 # using both would run setusercontext() a second time as the already-dropped
 # user ("daemon: failed to set user environment").
-command_args="-f -o ${omdrcctrl_logfile} -P ${pidfile} \
+command_args="-f -M 0644 -o ${omdrcctrl_logfile} -P ${pidfile} \
 	%%PREFIX%%/bin/omdrcctrl --host ${omdrcctrl_addr} \
 	--port ${omdrcctrl_port} --config ${omdrcctrl_config}"
 
@@ -53,7 +53,7 @@ start_precmd="omdrcctrl_precmd"
 omdrcctrl_precmd()
 {
 	if [ -z "${omdrcctrl_user}" ]; then
-		err 1 "set omdrcctrl_user in /etc/rc.conf (same user as brutefir_drc_user)"
+		err 1 "set omdrcctrl_user in /etc/rc.conf (same user as omdrc_audio_user)"
 	fi
 	# Created here as root, before the su(1) switch: the daemon writes its
 	# pidfile and state after privileges are dropped.

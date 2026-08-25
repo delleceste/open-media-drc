@@ -45,7 +45,7 @@ command -v usbdump >/dev/null 2>&1 || { err "usbdump not found (FreeBSD only)"; 
 # ── locate the DAC on the USB bus (same logic as verify-bitperfect.sh) ───────
 # Resolve the DAC from its stable name rather than assuming unit 0: the pcm
 # unit, and with it the uaudio parent to tap, moves with USB attach order.  See
-# etc/rc.d/omdrc_sndlink.  No link (single-DAC box) means unit 0, as before.
+# etc/rc.d/omdrc_audio.  No link (single-DAC box) means unit 0, as before.
 dac_link="$(readlink /dev/dsp.dac 2>/dev/null || true)"
 case "$dac_link" in dsp[0-9]*) dac_unit="${dac_link#dsp}" ;; *) dac_unit=0 ;; esac
 dac_parent="$(sysctl -n "dev.pcm.${dac_unit}.%parent" 2>/dev/null || true)"

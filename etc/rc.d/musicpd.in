@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # PROVIDE: musicpd
-# REQUIRE: mixer LOGIN avahi_daemon oss
+# REQUIRE: mixer LOGIN avahi_daemon
 # KEYWORD: shutdown
 
 # Template — generated to musicpd by install.sh from config.env.
@@ -17,6 +17,11 @@
 #
 # Override musicpd_config in /etc/rc.conf (or /etc/rc.conf.d/musicpd) if the
 # checkout lives elsewhere.
+#
+# MPD-to-DRC lifecycle integration is deliberately kept in the separate
+# rc.conf.d fragment etc/rc.conf.d/musicpd/omdrc_audio.  rc.subr sources that
+# fragment and runs its one-way post-start reconcile only after this service
+# has successfully started; this script remains an ordinary musicpd launcher.
 
 . /etc/rc.subr
 

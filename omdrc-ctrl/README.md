@@ -282,8 +282,8 @@ configured. The following rc.conf variables can be overridden with `sysrc`:
 | --- | --- | --- |
 | `omdrcctrl_user` | `OMDRCCTRL_SERVICE_USER` (set at CMake time) | User the daemon runs as. rc.subr drops privileges to this user via `su(1)` when started as root. |
 | `omdrcctrl_env` | `PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin DISPLAY=:0` | Environment applied via `env(1)`. Includes `/usr/local/{s,}bin` on `PATH` (rc starts with a minimal `PATH`) and `DISPLAY` for X11 access. |
-| `omdrcctrl_pidfile` | `/var/run/omdrcctrl/omdrcctrl.pid` (root) or `${TMPDIR:-/tmp}/omdrcctrl-<user>.pid` (unprivileged) | Location of the pidfile. See note below. |
-| `omdrcctrl_logfile` | `/var/run/omdrcctrl/omdrcctrl.log` (root) or `${TMPDIR:-/tmp}/omdrcctrl-<user>.log` (unprivileged) | Captures the app's stdout/stderr (`daemon -o`); check here if the service starts but no process runs. |
+| `omdrcctrl_pidfile` | `/var/run/omdrcctrl/omdrcctrl.pid` | Canonical supervisor pidfile for boot, status, and manual service operations. |
+| `omdrcctrl_logfile` | `/var/run/omdrcctrl/omdrcctrl.log` | Captures the app's stdout/stderr (`daemon -o`); check here if the service starts but no process runs. |
 
 ```bash
 sudo sysrc omdrcctrl_user=myuser
@@ -306,16 +306,22 @@ sudo sysrc omdrcctrl_pidfile=/var/run/omdrcctrl/omdrcctrl.pid
 > `/var/run/omdrcctrl` owned by `omdrcctrl_user` so the unprivileged daemon can
 > write there.
 
-#### Running without root
+#### Status and manual startup
 
-When started by an unprivileged user the script clears `omdrcctrl_user` (so
-rc.subr does not try to `su` and prompt for a password) and defaults the
-pidfile/logfile to `${TMPDIR:-/tmp}/omdrcctrl-<user>.*`. Use `onestart` to bypass
-the `omdrcctrl_enable` rcvar check:
+The pidfile path never changes with the UID invoking `service(8)`. Therefore a
+non-root status probe by the configured service user sees the same boot
+instance, and `onestart` cannot evade duplicate detection through a private
+`/tmp` pidfile:
 
 ```bash
-/usr/local/etc/rc.d/omdrcctrl onestart
+service omdrcctrl status
+sudo service omdrcctrl onestart
 ```
+
+FreeBSD rc.d is the system-service interface; use `sudo` for lifecycle
+operations. For an independent development instance, run the application
+wrapper directly on a different port instead of giving the same rc service a
+second identity.
 
 Restart after config changes:
 
@@ -675,7 +681,7 @@ Defaults per platform:
 | `dac`     | `/dev/dsp.dac`      | `hw:0,0`  | the DAC everything ends up at               |
 
 On FreeBSD these are the role symlinks
-[`omdrc_sndlink`](../etc/rc.d/omdrc_sndlink) keeps pointed at the right cards,
+[`omdrc_audio`](../etc/rc.d/omdrc_audio) keeps pointed at the right cards,
 plus the two cuse nodes `virtual_oss` creates. On Linux they are ALSA specs
 written the way BruteFIR writes them (`hw:1,1`, `plughw:0,0`, `hw:Loopback,1`)
 and translated to the `/dev/snd/pcmC<card>D<device>{p,c}` node `fuser` is asked
@@ -708,13 +714,13 @@ cannot ask (an `mpv`, a squatter) counts as producing: we cannot prove it
 silent, and it is the one to go and kill either way.
 
 **Role assignment.** On FreeBSD the card also reads
-`/var/run/omdrc_sndlink.roles`, which
-[`omdrc_sndlink`](../etc/rc.d/omdrc_sndlink) writes on every scan. That is the
+`/var/run/omdrc_audio.roles`, which
+[`omdrc_audio`](../etc/rc.d/omdrc_audio) writes on every scan. That is the
 only way the panel can tell you the DAC role was a **guess** — two
-playback-capable cards and no `omdrc_sndlink_dac` in `rc.conf`. A wrong guess
+playback-capable cards and no `omdrc_audio_dac` in `rc.conf`. A wrong guess
 is invisible otherwise: the chain comes up, the DAC lights green, and every
 byte goes to the wrong card. The card reports it as a warning; `service
-omdrc_sndlink status` prints the candidates with the line to paste.
+omdrc_audio status` prints the candidates with the line to paste.
 
 **Privilege.** `fstat` and `fuser` can only report descriptors of processes the
 caller is allowed to debug. omdrcctrl runs as `AUDIO_USER`, which covers the

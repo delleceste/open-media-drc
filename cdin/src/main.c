@@ -1027,7 +1027,7 @@ usage(FILE *out)
 "usage: omdrc-cdin [options]\n"
 "\n"
 "  -i, --in dev       capture device               (default /dev/dsp.capture)\n"
-"                     The role symlink omdrc_sndlink keeps on the capture\n"
+"                     The role symlink omdrc_audio keeps on the capture\n"
 "                     card; pcm unit numbers move with USB attach order.\n"
 "  -o, --out list     playback device, or a comma-separated preference\n"
 "                     list, or 'none' for a capture-only measurement\n"

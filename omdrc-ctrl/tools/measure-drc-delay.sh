@@ -53,7 +53,7 @@ TAP_S="${TAP_S:-50ms}"          # virtual_oss #2 buffer (small = less added late
 SUBTRACT_MS="${SUBTRACT_MS:-0}" # virtual_oss #2 self-latency to remove (see tap-overhead)
 FIFO="${FIFO:-/tmp/omdrc-spectrum.fifo}"
 FIFO_RATE="${FIFO_RATE:-48000}" # must match mpd.conf "OMDRC Spectrum" format rate
-# The real DAC, by role: /dev/dsp.dac is the symlink omdrc_sndlink keeps on the
+# The real DAC, by role: /dev/dsp.dac is the symlink omdrc_audio keeps on the
 # right card (pcm unit numbers follow USB attach order), /dev/dsp0 without it.
 DAC_DEV="${DAC_DEV:-$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)}"
 
@@ -163,7 +163,7 @@ start_voss1() {   # MPD -> dsp.play -> dsp.loop  (mirror drc.sh exactly)
 
 start_voss2() {   # BruteFIR -> dsp.tap -> the real DAC, tap on dsp.tap.loop
   # The interposer node is called dsp.tap, NOT dsp.dac: /dev/dsp.dac is the
-  # symlink omdrc_sndlink keeps on the real card, and a cuse node of that name
+  # symlink omdrc_audio keeps on the real card, and a cuse node of that name
   # would collide with it.
   # The DAC is PLAY-ONLY -> make it a playback master with -O + -R /dev/null
   # (the man-page idiom for a no-capture physical device; -f would open duplex

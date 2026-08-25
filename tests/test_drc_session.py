@@ -22,6 +22,7 @@ class DrcSessionTest(unittest.TestCase):
                 "sampling_rate: 192000;\n", encoding="utf-8")
             (state / "last_arg").write_text("resamp @rscreen.v2\n", encoding="utf-8")
             (state / "last_power").write_text("on\n", encoding="utf-8")
+            (state / "last_source").write_text("cdin\n", encoding="utf-8")
             (state / "last_geometry").write_text("120.blue\n", encoding="utf-8")
             config = root / "omdrc.conf"
             config.write_text(
@@ -38,6 +39,7 @@ class DrcSessionTest(unittest.TestCase):
                 line.split("=", 1) for line in result.stdout.splitlines()), {
                     "geometry": "120.blue",
                     "power": "on",
+                    "source": "cdin",
                     "mode": "resamp",
                     "rate": "192000",
                     "design": "@rscreen.v2",

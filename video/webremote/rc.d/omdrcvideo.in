@@ -31,34 +31,29 @@ load_rc_config "$name"
 
 command="/usr/sbin/daemon"
 
-if [ "$(id -u)" -eq 0 ]; then
-	# Started as root: rc.subr drops privileges to ${omdrcvideo_user} via su(1).
-	# Do NOT also pass daemon -u (double setusercontext() fails).
-	: ${omdrcvideo_pidfile:="/var/run/${name}/${name}.pid"}
-	: ${omdrcvideo_logfile:="/var/run/${name}/${name}.log"}
-else
-	# Started unprivileged (service omdrcvideo onestart): nothing to drop to.
-	unset omdrcvideo_user
-	: ${omdrcvideo_pidfile:="${TMPDIR:-/tmp}/${name}-$(id -un).pid"}
-	: ${omdrcvideo_logfile:="${TMPDIR:-/tmp}/${name}-$(id -un).log"}
-fi
+# One rc service has one identity.  A caller's UID must not select a private
+# /tmp pidfile: non-root status would miss the boot instance and onestart could
+# attempt a duplicate.  rc.subr already suppresses a redundant su(1) when the
+# caller is omdrcvideo_user.  It drops privileges on root startup; do not also
+# pass daemon -u (double setusercontext() fails).
+: ${omdrcvideo_pidfile:="/var/run/${name}/${name}.pid"}
+: ${omdrcvideo_logfile:="/var/run/${name}/${name}.log"}
 
 pidfile="${omdrcvideo_pidfile}"
 # The installed wrapper bakes in the python3 interpreter, app path and --config.
-command_args="-f -o ${omdrcvideo_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcvideo"
+command_args="-f -M 0644 -o ${omdrcvideo_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcvideo"
 
 start_precmd="omdrcvideo_precmd"
 
 omdrcvideo_precmd()
 {
-	# Create the pidfile/logfile dir writable by the run-as user (the daemon
-	# writes them after rc.subr drops privileges). Runs as root, pre-su(1).
+	[ -n "${omdrcvideo_user}" ] ||
+		err 1 "set omdrcvideo_user in /etc/rc.conf"
+	# Create the canonical pidfile/logfile dir writable by the run-as user (the
+	# daemon writes them after rc.subr drops privileges).  At boot this runs as
+	# root, before rc.subr's su(1).
 	for d in "${omdrcvideo_pidfile%/*}" "${omdrcvideo_logfile%/*}"; do
-		if [ -n "${omdrcvideo_user}" ]; then
-			/usr/bin/install -d -o "${omdrcvideo_user}" -m 0755 "${d}"
-		else
-			/usr/bin/install -d -m 0755 "${d}"
-		fi
+		/usr/bin/install -d -o "${omdrcvideo_user}" -m 0755 "${d}"
 	done
 }
 

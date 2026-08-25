@@ -16,8 +16,8 @@ open-media-drc — post-install checklist
      mkdir -p ~/.config/BruteFIR
      cp %%PREFIX%%/etc/open-media-drc/brutefir_defaults.conf.sample \
         ~/.config/BruteFIR/brutefir_defaults.conf
-   The DAC is opened as /dev/dsp.dac, a symlink the omdrc_sndlink service
-   maintains (sysrc omdrc_sndlink_enable=YES), so pcm unit numbers do not
+   The DAC is opened as /dev/dsp.dac, a symlink the omdrc_audio service
+   maintains (sysrc omdrc_audio_enable=YES), so pcm unit numbers do not
    matter.  Adjust the OSS device paths inside only if you do not run it.
 
 3. Kernel modules (in /etc/rc.conf or kld_list):
@@ -28,21 +28,38 @@ open-media-drc — post-install checklist
    config — the OKTO-DAC / DRC-native / DRC-resamp output names are what
    drc.sh toggles with mpc.
 
+   The installed %%PREFIX%%/etc/rc.conf.d/musicpd/omdrc_audio fragment runs one
+   bounded `service omdrc_audio reconcile` after a successful MPD start.  This
+   repairs an output selection that was left pending when the physical DRC
+   chain started before MPD; it does not make DRC depend on MPD readiness.
+   If rc.conf.d/musicpd previously existed as a file, package installation
+   preserves it unchanged as rc.conf.d/musicpd/00-local.conf before installing
+   the separate hook.  rc.subr sources both files from the directory form.
+
 5. Services, in /etc/rc.conf:
      musicpd_enable="YES"
-     drc_usb_audio_enable="YES"
-     brutefir_drc_user="<audio user>"
-   Do NOT set brutefir_drc_enable — brutefir_drc is the worker that
-   drc_usb_audio drives (boot probe + devd hotplug).
+     omdrc_audio_enable="YES"
+     omdrc_audio_user="<audio user>"
+   omdrc_audio owns the role links, boot/hotplug entry point and su -l user
+   boundary.  Remove obsolete drc_usb_audio_*, brutefir_drc_* and
+   omdrc_sndlink_* entries after migrating their local values.
 
-6. devd hotplug (start/stop DRC on DAC plug/unplug):
-     cp %%PREFIX%%/etc/devd/usb-audio-drc.conf.sample \
-        %%PREFIX%%/etc/devd/usb-audio-drc.conf
+   Also remove any hard-coded hw.snd.default_unit=N from /etc/sysctl.conf.
+   PCM numbers follow USB attach order; omdrc_audio sets and verifies this
+   value from the current DAC role on every boot/hotplug role transaction.
+
+6. devd hotplug (follow the DAC and the capture card on plug/unplug):
+     cp %%PREFIX%%/etc/devd/omdrc-audio.conf.sample \
+        %%PREFIX%%/etc/devd/omdrc-audio.conf
      service devd restart
 
-7. Run `omdrc 192000` (or omdrc resamp / off / status) to drive the chain
-   manually; state persists in /var/db/omdrc (root) — pin OMDRC_STATE_DIR in
-   omdrc.conf so services and interactive runs share it.
+   The pcm attach/detach rules start a detached, idempotent
+   `service omdrc_audio reconcile`.  They never match a keyboard or interpret
+   an unrelated USB detach as a reason to stop audio.
+
+7. Run `omdrc 192000` (or omdrc cdin / resamp / off / status) to drive the
+   chain manually.  Power, rate and music/CD source persist together.  Pin
+   OMDRC_STATE_DIR in omdrc.conf if service and interactive users differ.
 EOM
 }
 ]

@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -88,6 +89,9 @@ class DrcPowerStateTest(unittest.TestCase):
         self.env = os.environ.copy()
         self.env["OMDRC_CONF"] = str(config)
         self.env["PATH"] = f"{self.stub}{os.pathsep}{self.env['PATH']}"
+        dac = root / "dsp.dac"
+        dac.touch()
+        self.env["OMDRC_DAC_DEV_LINK"] = str(dac)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -105,6 +109,9 @@ class DrcPowerStateTest(unittest.TestCase):
     def _write_state(self, last_arg="resamp", last_power="on"):
         (self.state / "last_arg").write_text(last_arg + "\n", encoding="utf-8")
         (self.state / "last_power").write_text(last_power + "\n", encoding="utf-8")
+
+    def _source(self):
+        return (self.state / "last_source").read_text(encoding="utf-8").strip()
 
     def _power(self):
         return (self.state / "last_power").read_text(encoding="utf-8").strip()
@@ -185,6 +192,51 @@ class DrcPowerStateTest(unittest.TestCase):
         # saved state can be told from a state that was never saved.
         log = (self.state / "drc.log").read_text(encoding="utf-8")
         self.assertIn("event=restore power=off", log)
+
+    def test_cdin_intent_is_saved_before_a_failed_chain_transition(self):
+        self._write_state()
+        # No 44.1-kHz config exists, so the physical transition fails.  The
+        # source selection is user intent and must still survive reboot/retry.
+        result = self._run("cdin")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self._source(), "cdin")
+        self.assertIn("config not found", result.stderr)
+
+    def test_music_intent_is_saved_before_a_failed_chain_transition(self):
+        self._write_state()
+        (self.state / "last_source").write_text("cdin\n", encoding="utf-8")
+        # An ordinary rate action is also the UI action for leaving CD input.
+        # Even a missing config must not leave CD as the next boot's intent.
+        result = self._run("192000")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self._source(), "music")
+        self.assertIn("config not found", result.stderr)
+
+    def test_transient_stop_does_not_change_the_saved_source(self):
+        self._write_state()
+        (self.state / "last_source").write_text("cdin\n", encoding="utf-8")
+        result = self._run("stop")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self._source(), "cdin")
+
+    def test_restore_honours_the_persistent_cdin_source(self):
+        self._write_state(last_arg="resamp", last_power="on")
+        (self.state / "last_source").write_text("cdin\n", encoding="utf-8")
+        result = self._run("restore")
+        self.assertNotEqual(result.returncode, 0)  # fixture has no 44.1k config
+        self.assertIn("Restoring CD input mode at 44.1 kHz", result.stdout)
+        self.assertIn("brutefir-44100.conf", result.stderr)
+
+    def test_mpd_failures_are_bounded_while_the_lock_is_held(self):
+        self._write_state()
+        self._stub("mpc", "#!/bin/sh\nsleep 20\n")
+        self.env["OMDRC_MPC_TIMEOUT"] = "0.1"
+        started = time.monotonic()
+        result = self._run("off")
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(elapsed, 3.0, f"mpc was not bounded: {elapsed:.2f}s")
+        self.assertEqual(self._power(), "off")
 
 
 if __name__ == "__main__":

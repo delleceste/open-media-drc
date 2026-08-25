@@ -36,38 +36,34 @@ fi
 
 command="/usr/sbin/daemon"
 
-if [ "$(id -u)" -eq 0 ]; then
-	# Started as root: rc.subr drops privileges to ${omdrcctrl_user} (the
-	# special ${name}_user variable) via su(1). Do NOT also pass daemon -u:
-	# using both runs setusercontext() a second time as the already-dropped
-	# user and fails with "daemon: failed to set user environment".
-	: ${omdrcctrl_pidfile:="/var/run/${name}/${name}.pid"}
-	: ${omdrcctrl_logfile:="/var/run/${name}/${name}.log"}
-else
-	# Started as an unprivileged user (e.g. service omdrcctrl onestart): there
-	# is nothing to drop to, so clear ${name}_user (otherwise rc.subr would
-	# su to it and prompt for a password) and use writable paths.
-	unset omdrcctrl_user
-	: ${omdrcctrl_pidfile:="${TMPDIR:-/tmp}/${name}-$(id -un).pid"}
-	: ${omdrcctrl_logfile:="${TMPDIR:-/tmp}/${name}-$(id -un).log"}
-fi
+# One rc service has one identity.  Never change pidfile or logfile according
+# to the UID invoking service(8): a non-root `status` must inspect the same
+# daemon supervisor that root started at boot, and `onestart` must not evade
+# duplicate detection by selecting a private /tmp pidfile.  rc.subr already
+# suppresses a redundant su(1) when the caller is omdrcctrl_user.
+#
+# rc.subr drops privileges via the special ${name}_user variable for startup.
+# Do NOT also pass daemon -u: using both runs setusercontext() twice and fails
+# with "daemon: failed to set user environment".
+: ${omdrcctrl_pidfile:="/var/run/${name}/${name}.pid"}
+: ${omdrcctrl_logfile:="/var/run/${name}/${name}.log"}
 
 pidfile="${omdrcctrl_pidfile}"
-command_args="-f -o ${omdrcctrl_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcctrl"
+# The PID is not secret.  Mode 0644 lets an ordinary status probe read the
+# canonical supervisor pidfile without granting any ability to modify it.
+command_args="-f -M 0644 -o ${omdrcctrl_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcctrl"
 
 start_precmd="omdrcctrl_precmd"
 
 omdrcctrl_precmd()
 {
-	# Ensure the pidfile/logfile directory exists and is writable by the user
-	# the daemon runs as (it writes them after rc.subr drops privileges).
-	# This runs as root, before the su(1) switch.
+	[ -n "${omdrcctrl_user}" ] ||
+		err 1 "set omdrcctrl_user in /etc/rc.conf"
+	# Ensure the canonical pidfile/logfile directory exists and is writable by
+	# the user the daemon runs as (it writes them after rc.subr drops
+	# privileges).  At boot this runs as root, before the su(1) switch.
 	for d in "${omdrcctrl_pidfile%/*}" "${omdrcctrl_logfile%/*}"; do
-		if [ -n "${omdrcctrl_user}" ]; then
-			/usr/bin/install -d -o "${omdrcctrl_user}" -m 0755 "${d}"
-		else
-			/usr/bin/install -d -m 0755 "${d}"
-		fi
+		/usr/bin/install -d -o "${omdrcctrl_user}" -m 0755 "${d}"
 	done
 }
 

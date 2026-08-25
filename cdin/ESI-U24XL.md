@@ -43,7 +43,7 @@ on this box the U24 XL wins it: it sits on a lower-numbered root-hub port than
 the DAC, so it attaches first and comes up as `pcm0`. That used to matter a
 great deal, because the chain addressed the DAC by unit and nothing else.
 
-It no longer does. `omdrc_sndlink` (rc.d + a devd rule) keeps two symlinks
+It no longer does. `omdrc_audio` (rc.d + a devd rule) keeps two symlinks
 pointed at the right cards, by role:
 
 ```
@@ -52,14 +52,14 @@ pointed at the right cards, by role:
 ```
 
 ```sh
-sysrc omdrc_sndlink_enable=YES
-sysrc omdrc_sndlink_capture="ESI U24XL"   # or 0xVID:0xPID — see below
-service omdrc_sndlink status              # roles, links, and the recsrc
+sysrc omdrc_audio_enable=YES
+sysrc omdrc_audio_capture="ESI U24XL"   # or 0xVID:0xPID — see below
+service omdrc_audio status              # roles, links, and the recsrc
 ```
 
 The capture link exists **only** when that name matches a card, which is also
 what makes the whole capture half of the service opt-in: a box with no CD input
-leaves `omdrc_sndlink_capture` empty and gets nothing but `/dev/dsp.dac`.
+leaves `omdrc_audio_capture` empty and gets nothing but `/dev/dsp.dac`.
 
 The match is a substring of the description `/dev/sndstat` prints, or a USB
 `vendor:product[:serial]` pair, which is worth preferring if you own two cards
@@ -68,7 +68,7 @@ whose descriptions are alike. The ids come from the card's USB parent:
 ```sh
 $ sysctl -n dev.pcm.1.%parent                 # -> uaudio1
 $ sysctl -n dev.uaudio.1.%pnpinfo             # -> vendor=0x... product=0x... sernum="..."
-$ sysrc omdrc_sndlink_capture="0x0a92:0x0053"
+$ sysrc omdrc_audio_capture="0x0a92:0x0053"
 ```
 
 Capability alone cannot pick this card out, which is why a name is required:
@@ -228,11 +228,11 @@ The selector setting is lost on reboot, and a replug resets it too.
 `mixer_enable="YES"` is set, and the U24 XL is USB, so it must be attached at
 boot for the rc script to see it at all.
 
-`omdrc_sndlink` asserts it instead, in the same pass that links the card, on
+`omdrc_audio` asserts it instead, in the same pass that links the card, on
 every attach:
 
 ```sh
-omdrc_sndlink_capture_recsrc="auto"   # the default
+omdrc_audio_capture_recsrc="auto"   # the default
 ```
 
 `auto` does not hardcode this card. `mixer(8)` prints a flag per device — `rec`
@@ -307,12 +307,12 @@ for three independent reasons:
   so anything applied at boot is gone the moment a card is replugged.
 
 So the settings are keyed by **role** in `/etc/rc.conf` and applied by
-`omdrc_sndlink` on every attach — which is what makes the third point harmless
+`omdrc_audio` on every attach — which is what makes the third point harmless
 rather than a trap:
 
 ```sh
-omdrc_sndlink_dac_sysctls="bitperfect=1 play.vchans=0 mixer.vol_0.val=0"
-omdrc_sndlink_capture_sysctls="bitperfect=1 rec.vchans=0"
+omdrc_audio_dac_sysctls="bitperfect=1 play.vchans=0 mixer.vol_0.val=0"
+omdrc_audio_capture_sysctls="bitperfect=1 rec.vchans=0"
 ```
 
 Global `hw.snd.*` and `hw.usb.uaudio.*` tunables are **not** unit-keyed and
@@ -395,12 +395,12 @@ not one byte of audio changes. The log shows both numbers:
 
 ## Checklist when `cdin` captures silence
 
-0. `service omdrc_sndlink status` — the U24 XL must hold the `capture` role with
+0. `service omdrc_audio status` — the U24 XL must hold the `capture` role with
    `bitperfect=1 rec.vchans=0`, and the DAC the `dac` role. If the stream is not
    silent but *distorted*, and the lead drains to zero in ~25 s, it is Trap 3
    above, not the input selector.
 1. `ls -l /dev/dsp.capture` — it must exist and point at the U24 XL's unit. If it
-   is missing, `omdrc_sndlink_capture` does not match the card.
+   is missing, `omdrc_audio_capture` does not match the card.
 2. `mixer -f /dev/mixer.capture -s` — must print `pcm2`. If it prints `line`, the card
    is on the analog input.
 3. Ignore `pcm2 = 0.00:0.00`. It is cosmetic; see above.

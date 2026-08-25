@@ -1,4 +1,4 @@
-// drc.sh verbs and the two persistent state files.
+// drc.sh verbs and the persistent lifecycle state.
 digraph drc_states {
     rankdir=LR;
     fontname="Helvetica";
@@ -10,14 +10,17 @@ digraph drc_states {
 
     la [label="last_arg\n(rate + variant,\nnever erased by off)", shape=note, fillcolor="#f5f5f5"];
     lp [label="last_power\n(on / off,\nonly user actions write it)", shape=note, fillcolor="#f5f5f5"];
+    ls [label="last_source\n(music / cdin,\nCD forces 44.1 kHz)", shape=note, fillcolor="#f5f5f5"];
 
-    down -> up  [label="drc.sh <rate> [variant]\ndrc.sh resamp"];
+    down -> up  [label="drc.sh <rate> [variant]\ndrc.sh resamp\ndrc.sh cdin"];
     up -> down  [label="drc.sh off\n(records off)"];
     up -> down  [label="drc.sh stop\n(service teardown,\ndoes NOT record off)", style=dashed];
     up -> up    [label="rate change:\nprime on rate switch,\nrollback on failure"];
 
     up -> la    [style=dotted, label="writes"];
     up -> lp    [style=dotted, label="on"];
+    up -> ls    [style=dotted, label="source"];
     la -> up    [style=dotted, label="restore replays"];
     lp -> down  [style=dotted, label="restore honours off"];
+    ls -> up    [style=dotted, label="restore music/CD mode"];
 }
