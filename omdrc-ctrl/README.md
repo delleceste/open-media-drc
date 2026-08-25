@@ -35,7 +35,7 @@ provides no feedback. Every command here either shows its output directly
   correct without a screen attached.
 - **Audio chain diagram** — a block diagram of the chain as the *operating
   system* sees it, with a conditional capture LED, an output LED on the DAC,
-  and compact `dsp.play` / `dsp.loop` LEDs beside active BruteFIR. The blocks
+  and compact LEDs beside `dsp.play` and `dsp.loop` in the virtual audio block. The blocks
   are the programs actually holding the sound devices right
   now, found with `fstat(1)` (FreeBSD) / `fuser(1)` (Linux) rather than from
   anything this project writes down, so a process from **outside** the chain
@@ -692,9 +692,10 @@ permanently grey.
 
 The capture input and `omdrc-cdin` are one optional lane: neither its LED nor
 either block is drawn unless the capture interface is attached **and**
-`omdrc-cdin` is running. An active BruteFIR block has two smaller LEDs beside
-it, top to bottom: `dsp.play` and `dsp.loop` (or their configured Linux
-equivalents). Hovering either LED names the device and its current holder.
+`omdrc-cdin` is running. The virtual audio block shows a smaller LED directly
+beside each of `dsp.play` and `dsp.loop` (or their configured Linux equivalents).
+Hovering either LED names the device and its current holder. The compact button
+under the diagram hides or restores the LED legend and remembers that choice.
 
 **What the LEDs mean.** Brightness is one axis only — how open the device is:
 
@@ -1901,21 +1902,23 @@ while it is clearly running. Matching the command line fixes Linux and stays
 correct on FreeBSD; an editor or grep that merely references a brutefir config
 path is excluded because only `argv[0]` is checked.
 
+This card, RAM, Audio devices, Advanced, and Top CPU are collapsible. Their
+collapsed state is remembered in the browser. Automatic refresh is paused
+while a card is collapsed and resumes with an immediate refresh when expanded.
+
 ### Audio Devices
 
 Shows `/dev/sndstat` on FreeBSD and decodes `fmt 0x...` bitfields to
 `AFMT_*` / `PCM_CAP_*` labels. Refreshed every `sndstat_interval` seconds from
 the `[monitor]` section of `commands.conf`.
 
-The card is **collapsible**: click its title (the chevron toggles `▾`/`▸`) to
-hide the body. While collapsed its auto-refresh is paused — no polling and no
-server-side `sndstat` work happens until it is expanded again, at which point it
-refreshes immediately.
+Click the title (the chevron toggles `▾`/`▸`) to hide or restore the body.
 
 ### Advanced
 
 FreeBSD-only diagnostic panel that gathers `sysctl dev.pcm.0` and
-`sysctl hw.usb.uaudio`. It is refreshed manually with the panel button.
+`sysctl hw.usb.uaudio`. It is refreshed manually with the panel button and
+when a collapsed card is expanded.
 
 ### Top CPU
 

@@ -550,9 +550,15 @@ Replace the blind delay with a bounded acknowledgement:
 5. on failure, abort the `virtual_oss` teardown rather than risk the known CUSE
    teardown deadlock.
 
-The subsequent `service omdrc_cdin onerestart` must also have a hard deadline.
-It stays non-fatal after the chain is healthy, but a timeout is reported as an
-incomplete CD-input handoff rather than hidden.
+The subsequent `service omdrc_cdin onestop` plus
+`service omdrc_cdin onestart` must also have hard deadlines.  The explicit
+`one` verbs matter when the panel owns the lifecycle and
+`omdrc_cdin_enable="NO"`: `onerestart` stops that instance but its ordinary
+start half is still rejected by the disabled rcvar.  The handoff stays
+non-fatal after the chain is healthy, but a timeout is reported rather than
+hidden.  The timeout wrapper uses `timeout --foreground`: the default timeout
+process group otherwise follows daemon(8)'s successful detached supervisor and
+kills the CD bridge when the deadline expires.
 
 ### CD input rate policy and UI action
 

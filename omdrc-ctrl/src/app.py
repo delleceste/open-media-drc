@@ -3926,10 +3926,9 @@ def _chain_status() -> dict:
     dac_node = dev_node("dac", "green")
 
     # dsp.play and dsp.loop are deliberately too small to deserve two more
-    # blocks in the graph.  They are nevertheless useful BruteFIR diagnostics,
-    # so expose their already-collected open/traffic state as two compact port
-    # LEDs on the real (descriptor-holding) BruteFIR block.  A phantom process
-    # that is merely running gets no ports: it is not an active convolver.
+    # blocks in the graph.  Expose their already-collected open/traffic state
+    # as labelled ports on the virtual audio bridge: these LEDs describe the
+    # two virtual devices, not BruteFIR itself.
     bridge_flowing = any(
         _chain_producing(n) and "w" in n["roles"].get("bridge", "")
         for n in sources)
@@ -3949,13 +3948,12 @@ def _chain_status() -> dict:
             "holders": dev["holders"],
         }
 
-    brutefir_ports = [p for p in (
+    bridge_ports = [p for p in (
         port_led("bridge", "w", bridge_flowing),
         port_led("loop", "r", bridge_flowing),
     ) if p is not None]
-    for node in filters:
-        if node["title"] == "brutefir" and not node.get("idle"):
-            node["ports"] = brutefir_ports
+    if bridge_node:
+        bridge_node["ports"] = bridge_ports
 
     rows: list[list[dict]] = [
         [n for n in ([capture_node] if capture_node else []) + feeders],

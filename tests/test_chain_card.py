@@ -162,7 +162,7 @@ class Leds(unittest.TestCase):
             activity={"mpd": False})
         self.assertEqual(status["output"]["state"], "held")
         self.assertFalse(status["flowing"])
-        ports = _node(status, "app:722")["ports"]
+        ports = _node(status, "bridge")["ports"]
         self.assertEqual([p["label"] for p in ports], ["dsp.play", "dsp.loop"])
         self.assertEqual([p["state"] for p in ports], ["held", "held"])
 
@@ -176,8 +176,17 @@ class Leds(unittest.TestCase):
         self.assertTrue(status["flowing"])
         self.assertTrue(_edge(status, "app:601", "bridge")["active"])
         self.assertTrue(_edge(status, "app:722", "dev:dac")["active"])
-        self.assertEqual([p["state"] for p in _node(status, "app:722")["ports"]],
+        self.assertEqual([p["state"] for p in _node(status, "bridge")["ports"]],
                          ["active", "active"])
+
+    def test_virtual_device_leds_belong_to_the_bridge_not_brutefir(self):
+        status = _status(
+            holders={"/dev/dsp.loop": [_holder("722", "brutefir", "r")],
+                     "/dev/dsp.dac":  [_holder("722", "brutefir", "w")],
+                     "/dev/dsp.play": [_holder("601", "musicpd", "w")]})
+        self.assertEqual([p["label"] for p in _node(status, "bridge")["ports"]],
+                         ["dsp.play", "dsp.loop"])
+        self.assertNotIn("ports", _node(status, "app:722"))
 
     def test_cdin_reading_a_silent_disc_holds_the_input_without_lighting_it(self):
         status = _status(

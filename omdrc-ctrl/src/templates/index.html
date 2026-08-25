@@ -86,6 +86,11 @@
             gap: 6px;
             flex-shrink: 0;
         }
+        .collapsible-title { cursor: pointer; user-select: none; }
+        .card-chevron {
+            display: inline-block; width: 1em; color: var(--muted);
+            text-transform: none;
+        }
 
         /* ── row ─────────────────────────────────────────────── */
         .row {
@@ -606,9 +611,13 @@
         .chain-node-ports {
             display: flex; flex-direction: column; gap: 3px; flex: 0 0 auto;
         }
-        .chain-node-ports .led {
-            width: 7px; height: 7px; border-width: 0;
+        .chain-port-line {
+            display: flex; align-items: center; gap: 5px;
+            font-size: .63rem; color: var(--muted);
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            white-space: nowrap;
         }
+        .chain-node-ports .led { width: 7px; height: 7px; border-width: 0; }
         .chain-node.device  { border-color: #3d4650; }
         .chain-node.bridge  { border-style: dashed; }
         .chain-node.idle    { opacity: .55; }
@@ -653,6 +662,16 @@
             display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 8px 0 2px;
         }
         .chain-legend span { display: inline-flex; align-items: center; gap: 4px; }
+        .chain-legend[hidden] { display: none; }
+        .chain-legend-row { display: flex; align-items: flex-end; gap: 5px; }
+        .chain-legend-row .chain-legend { flex: 1; }
+        .chain-legend-toggle {
+            border: 1px solid var(--border); border-radius: 4px;
+            background: none; color: var(--muted); cursor: pointer;
+            padding: 0; width: 16px; height: 16px; line-height: 13px;
+            font-size: .62rem; flex: 0 0 auto; margin-bottom: 3px;
+        }
+        .chain-legend-toggle:hover { color: var(--accent); border-color: var(--accent); }
         .chain-devices {
             font-size: .68rem; font-family: ui-monospace, "SFMono-Regular", monospace;
             color: var(--muted); border-top: 1px solid var(--border);
@@ -1237,11 +1256,16 @@
         <div class="chain-rows" id="chain-rows"></div>
     </div>
     <div class="chain-problems" id="chain-problems" hidden></div>
-    <div class="chain-legend">
-        <span><i class="led red free"></i>free</span>
-        <span><i class="led red held"></i>held</span>
-        <span><i class="led red active"></i>audio</span>
-        <span><i class="led absent"></i>not attached</span>
+    <div class="chain-legend-row">
+        <div class="chain-legend" id="chain-legend">
+            <span><i class="led red free"></i>free</span>
+            <span><i class="led red held"></i>held</span>
+            <span><i class="led red active"></i>audio</span>
+            <span><i class="led absent"></i>not attached</span>
+        </div>
+        <button type="button" class="chain-legend-toggle" id="chain-legend-toggle"
+                onclick="toggleChainLegend()" aria-expanded="true"
+                aria-controls="chain-legend" title="Hide LED legend">−</button>
     </div>
     <div class="chain-devices" id="chain-detail" hidden></div>
 </div>
@@ -1363,9 +1387,9 @@
 </div>
 
 <!-- Brutefir CPU panel -->
-<div class="card">
+<div class="card" id="bf-card">
     <div class="card-title title-row">
-        <span>Brutefir CPU <span class="refresh-note" id="bf-refresh-label">refresh: {{ brutefir_interval }}s</span></span>
+        <span class="collapsible-title" onclick="toggleCard('bf')"><span class="card-chevron" id="bf-chevron">▾</span>Brutefir CPU <span class="refresh-note" id="bf-refresh-label">refresh: {{ brutefir_interval }}s</span></span>
         <button class="btn-refresh" id="bf-refresh-btn" title="Refresh">↻</button>
     </div>
     <div style="padding:12px 0" id="bf-panel">
@@ -1374,9 +1398,9 @@
 </div>
 
 <!-- RAM panel -->
-<div class="card">
+<div class="card" id="ram-card">
     <div class="card-title title-row">
-        <span>RAM <span class="refresh-note" id="ram-refresh-label">refresh: 10s</span></span>
+        <span class="collapsible-title" onclick="toggleCard('ram')"><span class="card-chevron" id="ram-chevron">▾</span>RAM <span class="refresh-note" id="ram-refresh-label">refresh: 10s</span></span>
         <button class="btn-refresh" id="ram-refresh-btn" title="Refresh">↻</button>
     </div>
     <div id="ram-panel" style="padding:4px 0">
@@ -1385,9 +1409,9 @@
 </div>
 
 <!-- Audio devices panel -->
-<div class="card">
+<div class="card" id="sndstat-card">
     <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-        <span style="cursor:pointer;user-select:none" onclick="toggleCard('sndstat')"><span id="sndstat-chevron" style="display:inline-block;width:1em;color:var(--muted)">▾</span>Audio devices <span class="refresh-note" id="sndstat-refresh-label">refresh: {{ sndstat_interval }}s</span></span>
+        <span class="collapsible-title" onclick="toggleCard('sndstat')"><span class="card-chevron" id="sndstat-chevron">▾</span>Audio devices <span class="refresh-note" id="sndstat-refresh-label">refresh: {{ sndstat_interval }}s</span></span>
         <button class="btn-refresh" id="sndstat-refresh-btn" title="Refresh">↻</button>
     </div>
     <div id="sndstat-panel" style="padding:4px 0">
@@ -1396,9 +1420,9 @@
 </div>
 
 <!-- Advanced diagnostics panel -->
-<div class="card">
+<div class="card" id="advanced-card">
     <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-        <span>Advanced <span class="refresh-note">manual</span></span>
+        <span class="collapsible-title" onclick="toggleCard('advanced')"><span class="card-chevron" id="advanced-chevron">▾</span>Advanced <span class="refresh-note" id="advanced-refresh-label">manual</span></span>
         <button id="advanced-refresh-btn"
                 onclick="fetchAdvancedInfo(this)"
                 style="background:none;border:none;color:var(--muted);cursor:pointer;
@@ -1411,9 +1435,9 @@
 </div>
 
 <!-- Top CPU processes panel -->
-<div class="card">
+<div class="card" id="topcpu-card">
     <div class="card-title title-row">
-        <span id="topcpu-title">Top CPU<span id="topcpu-threshold"></span> <span class="refresh-note" id="topcpu-refresh-label">refresh: {{ topcpu_interval }}s</span></span>
+        <span id="topcpu-title" class="collapsible-title" onclick="toggleCard('topcpu')"><span class="card-chevron" id="topcpu-chevron">▾</span>Top CPU<span id="topcpu-threshold"></span> <span class="refresh-note" id="topcpu-refresh-label">refresh: {{ topcpu_interval }}s</span></span>
         <button class="btn-refresh" id="topcpu-refresh-btn" title="Refresh">↻</button>
     </div>
     <div id="topcpu-panel" style="padding:4px 0">
@@ -1907,11 +1931,23 @@ function setRefreshLabel(id, seconds) {
 // ── collapsible cards ──────────────────────────────────────────────────────
 // A collapsed card hides its body and pauses its auto-refresh so no polling
 // (and no server-side ps/sndstat work) happens while it is hidden.
+const COLLAPSIBLE_CARDS = ['bf', 'ram', 'sndstat', 'advanced', 'topcpu'];
+const CARD_STATE_PREFIX = 'omdrcctrl.card.collapsed.';
 const collapsedCards = {};
 const autoRefreshControls = {};
 
-function toggleCard(name) {
-    const collapsed = !collapsedCards[name];
+function storedBool(key, fallback = false) {
+    try {
+        const value = localStorage.getItem(key);
+        return value === null ? fallback : value === 'true';
+    } catch { return fallback; }
+}
+
+function storeBool(key, value) {
+    try { localStorage.setItem(key, value ? 'true' : 'false'); } catch {}
+}
+
+function paintCardCollapsed(name, collapsed) {
     collapsedCards[name] = collapsed;
     const panel = document.getElementById(`${name}-panel`);
     if (panel) panel.style.display = collapsed ? 'none' : '';
@@ -1921,10 +1957,21 @@ function toggleCard(name) {
     if (label) label.style.visibility = collapsed ? 'hidden' : '';
     const rbtn = document.getElementById(`${name}-refresh-btn`);
     if (rbtn) rbtn.style.visibility = collapsed ? 'hidden' : '';
+}
+
+function toggleCard(name) {
+    const collapsed = !collapsedCards[name];
+    paintCardCollapsed(name, collapsed);
+    storeBool(CARD_STATE_PREFIX + name, collapsed);
     // Refresh immediately on expand so the body isn't stale while the timer
     // counts back down.
     if (!collapsed && autoRefreshControls[name]) autoRefreshControls[name]();
 }
+
+// Restore before any refresh controller starts: a hidden card must not make
+// even the initial request.
+COLLAPSIBLE_CARDS.forEach(name =>
+    paintCardCollapsed(name, storedBool(CARD_STATE_PREFIX + name)));
 
 function startAutoRefresh(name, intervalMs, fetchFn) {
     const seconds = Math.max(1, Math.round(intervalMs / 1000));
@@ -3403,7 +3450,8 @@ async function fetchAdvancedInfo(btn) {
         if (btn_) { btn_.disabled = false; btn_.textContent = '↻'; }
     }
 }
-fetchAdvancedInfo();
+autoRefreshControls.advanced = () => fetchAdvancedInfo();
+if (!collapsedCards.advanced) fetchAdvancedInfo();
 
 // ── Top CPU processes panel ───────────────────────────────────────────────
 async function fetchTopCpu() {
@@ -3695,6 +3743,25 @@ async function cdinControl(action) {
 // laid-out boxes, so they are redrawn after every paint and on resize.
 let chainDetailOpen = false;
 let chainLast = null;
+let chainLegendHidden = storedBool('omdrcctrl.chain.legendHidden');
+
+function paintChainLegend() {
+    const legend = document.getElementById('chain-legend');
+    const button = document.getElementById('chain-legend-toggle');
+    if (legend) legend.hidden = chainLegendHidden;
+    if (button) {
+        button.textContent = chainLegendHidden ? '?' : '−';
+        button.title = chainLegendHidden ? 'Show LED legend' : 'Hide LED legend';
+        button.setAttribute('aria-expanded', chainLegendHidden ? 'false' : 'true');
+    }
+}
+
+function toggleChainLegend() {
+    chainLegendHidden = !chainLegendHidden;
+    storeBool('omdrcctrl.chain.legendHidden', chainLegendHidden);
+    paintChainLegend();
+}
+paintChainLegend();
 
 function toggleChain() {
     chainDetailOpen = !chainDetailOpen;
@@ -3748,13 +3815,19 @@ function chainNodeEl(n) {
     if (n.ports && n.ports.length) {
         const ports = document.createElement('span');
         ports.className = 'chain-node-ports';
-        ports.setAttribute('aria-label', 'BruteFIR virtual device status');
+        ports.setAttribute('aria-label', 'Virtual audio device status');
         n.ports.forEach(port => {
+            const line = document.createElement('span');
+            line.className = 'chain-port-line';
             const led = document.createElement('span');
             led.className = `led ${port.colour} ${port.state}`;
             led.title = chainLedTitle(port);
             led.setAttribute('aria-label', `${port.label}: ${led.title}`);
-            ports.appendChild(led);
+            const label = document.createElement('span');
+            label.textContent = port.sub;
+            line.appendChild(led);
+            line.appendChild(label);
+            ports.appendChild(line);
         });
         el.appendChild(ports);
     }
@@ -3764,14 +3837,18 @@ function chainNodeEl(n) {
     title.className = 'chain-node-title';
     title.textContent = n.title;
     body.appendChild(title);
-    const sub = document.createElement('div');
-    sub.className = 'chain-node-sub';
-    // An idle block has no arcs by design (see the server's edge rule), so it
-    // has to say why itself, or it reads as a drawing bug.
-    sub.textContent = n.idle ? 'running · holding nothing'
-                    : n.pid  ? `${n.sub} · pid ${n.pid}`
-                             : n.sub;
-    body.appendChild(sub);
+    // The bridge ports already carry their individual /dev/dspX labels.  All
+    // other nodes retain the usual single subtitle.
+    if (!(n.kind === 'bridge' && n.ports && n.ports.length)) {
+        const sub = document.createElement('div');
+        sub.className = 'chain-node-sub';
+        // An idle block has no arcs by design (see the server's edge rule), so
+        // it has to say why itself, or it reads as a drawing bug.
+        sub.textContent = n.idle ? 'running · holding nothing'
+                        : n.pid  ? `${n.sub} · pid ${n.pid}`
+                                 : n.sub;
+        body.appendChild(sub);
+    }
     el.appendChild(body);
     el.title = chainNodeTitle(n);
     return el;

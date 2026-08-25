@@ -39,6 +39,16 @@ class FreeBSDServicePidfileTests(unittest.TestCase):
                 self.assertNotIn('if [ "$(id -u)"', identity_block)
                 self.assertNotIn("$(id -un)", identity_block)
 
+    def test_cdin_extra_flags_are_child_options_not_daemon_options(self):
+        text = (ROOT / "cdin/rc.d/omdrc_cdin.in").read_text()
+        self.assertIn(
+            '-f -P ${pidfile} -- @CMAKE_INSTALL_PREFIX@/bin/omdrc-cdin',
+            text,
+        )
+        self.assertIn('omdrc_cdin_extra_args="${omdrc_cdin_flags}"', text)
+        self.assertIn("unset omdrc_cdin_flags", text)
+        self.assertIn("${omdrc_cdin_extra_args}", text)
+
 
 if __name__ == "__main__":
     unittest.main()

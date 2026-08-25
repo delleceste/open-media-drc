@@ -126,6 +126,17 @@ class FreeBSDAudioLifecycleTests(unittest.TestCase):
         self.assertIn('LOCK_FILE="${OMDRC_LOCK_FILE:-$STATE_DIR/drc.lock}"', drc)
         self.assertIn('lockf -k -s -t 30 "$LOCK_FILE"', drc)
 
+    def test_cdin_handoff_preserves_a_web_started_disabled_service(self):
+        drc = (ROOT / "drc.sh").read_text()
+        restart = drc.split("restart_cdin() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("service omdrc_cdin onestop", restart)
+        self.assertIn("service omdrc_cdin onestart", restart)
+        self.assertNotIn("service omdrc_cdin onerestart", restart)
+        self.assertIn("while pgrep -q -x omdrc-cdin", restart)
+        self.assertIn('"$_TIMEOUT_BIN" --foreground', drc)
+        self.assertIn("OMDRC_START_CDIN=1", drc)
+        self.assertIn("starting omdrc-cdin for the selected CD input", restart)
+
 
 if __name__ == "__main__":
     unittest.main()

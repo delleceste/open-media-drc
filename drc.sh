@@ -237,10 +237,19 @@ mpc_bounded() { run_bounded "$OMDRC_MPC_TIMEOUT" mpc "$@"; }
 sudo_bounded() {
   local seconds="$1"
   shift
+  if [ -z "$_TIMEOUT_BIN" ]; then
+    echo "drc.sh: timeout(1) is required for bounded command execution" >&2
+    return 125
+  fi
+  # service(8) may launch daemon(8), which deliberately outlives the rc script.
+  # timeout's default process group follows that detached supervisor and kills
+  # it when the deadline expires even though `service ... onestart` succeeded.
+  # Foreground mode still bounds the direct sudo/service command, while leaving
+  # the successfully detached service outside that cleanup group.
   if [ "$(id -u)" -eq 0 ]; then
-    run_bounded "$seconds" "$@"
+    "$_TIMEOUT_BIN" --foreground -k 1 "$seconds" "$@"
   else
-    run_bounded "$seconds" sudo -n "$@"
+    "$_TIMEOUT_BIN" --foreground -k 1 "$seconds" sudo -n "$@"
   fi
 }
 
@@ -440,6 +449,7 @@ physical_chain_matches() {
 # seconds, which covers the restart; nothing here fails if it is not running.
 OMDRC_CDIN_LOG_FILE="${OMDRC_CDIN_LOG_FILE:-/tmp/omdrc-cdin.log}"
 OMDRC_CDIN_RELEASE_POLLS="${OMDRC_CDIN_RELEASE_POLLS:-40}" # 4 s at 100 ms
+OMDRC_CDIN_STOP_POLLS="${OMDRC_CDIN_STOP_POLLS:-80}"       # 8 s at 100 ms
 
 release_cdin() {
   local pid first_line held i new
@@ -496,18 +506,63 @@ release_cdin() {
 # once it is running.
 #
 # Two rules:
-#   * only ever restart a daemon that is ALREADY running.  An operator who
-#     stopped the CD bridge does not want a rate change to start it again.
+#   * incidental rate/geometry changes only restart a daemon that is already
+#     running.  The explicit `drc.sh cdin` source action may start it.
 #   * never fatal.  The chain is up and the state is recorded by the time this
 #     runs; a missing sudoers grant is worth a line on stderr, not a rollback.
 restart_cdin() {
+  local i
   $IS_LINUX && return 0
-  pgrep -q -x omdrc-cdin 2>/dev/null || return 0
   command -v service >/dev/null 2>&1 || return 0
+
+  if ! pgrep -q -x omdrc-cdin 2>/dev/null; then
+    # `drc.sh cdin` is the panel's explicit source-selection action.  Unlike
+    # an ordinary rate/geometry change, it is allowed to start a bridge that
+    # the panel had not started yet.  onestart deliberately ignores the NO
+    # rcvar used by the web-controlled lifecycle.
+    [ "${OMDRC_START_CDIN:-0}" = 1 ] || return 0
+    echo "starting omdrc-cdin for the selected CD input"
+    sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service omdrc_cdin onestart \
+        >/dev/null 2>&1 ||
+      echo "warning: could not start omdrc_cdin" \
+           "(needs the rc.d sudoers grant)" >&2
+    return 0
+  fi
+
   echo "restarting omdrc-cdin so it re-picks its output device"
-  sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service omdrc_cdin onerestart >/dev/null 2>&1 ||
-    echo "warning: could not restart omdrc_cdin — the CD input is still" \
-         "pointed at the previous output (needs the rc.d sudoers grant)" >&2
+  # Keep the bridge web-controlled: its rcvar may deliberately be NO, while
+  # the panel started this particular instance with `onestart`.  FreeBSD's
+  # `onerestart` still uses the ordinary (rcvar-gated) start half, so it stops
+  # that instance and then leaves it down.  Spell out both `one` verbs: they
+  # preserve the running instance across a rate/output change without making
+  # it a boot service.
+  if ! sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service omdrc_cdin onestop \
+      >/dev/null 2>&1; then
+    echo "warning: could not stop omdrc_cdin for its output handoff" \
+         "(needs the rc.d sudoers grant)" >&2
+    return 0
+  fi
+
+  # rc.subr may return before daemon(8)'s supervised child has finished its
+  # shutdown and removed the pidfile.  Starting immediately races that exit:
+  # onestart sees the old instance and refuses, then the old instance vanishes
+  # and leaves the bridge down.  Poll the process that is the actual truth,
+  # just as the web controller does after its Stop button.
+  i=0
+  while pgrep -q -x omdrc-cdin 2>/dev/null && \
+      [ "$i" -lt "$OMDRC_CDIN_STOP_POLLS" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if pgrep -q -x omdrc-cdin 2>/dev/null; then
+    echo "warning: omdrc_cdin did not stop before its restart deadline" >&2
+    return 0
+  fi
+
+  sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service omdrc_cdin onestart \
+      >/dev/null 2>&1 ||
+    echo "warning: omdrc_cdin stopped but could not be started again" \
+         "(needs the rc.d sudoers grant)" >&2
 }
 
 stop_virtual_oss() {
@@ -584,7 +639,10 @@ if [ $# -eq 1 ] && [ "$1" = "cdin" ]; then
   printf '%s\n' cdin > "$SOURCE_FILE"
   chmod 644 "$SOURCE_FILE" 2>/dev/null || true
   log_event "event=source_saved source=cdin rate=44100"
-  export OMDRC_SOURCE_MODE=cdin
+  # This is an explicit source-selection action, not an incidental 44.1-kHz
+  # rate change: once the verified chain exists, start the web-controlled CD
+  # bridge even when its boot rcvar is deliberately disabled.
+  export OMDRC_SOURCE_MODE=cdin OMDRC_START_CDIN=1
   exec "$0" 44100
 fi
 

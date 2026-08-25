@@ -93,8 +93,13 @@ load_rc_config "$name"
 # Periodic stats in the log: the panel shows the most recent line, and it is
 # what "starves 0" is read off during calibration.
 : ${omdrc_cdin_stats:="10"}
-# Anything else: --out-bits, --period, --retry, -v ...
+# Anything else for omdrc-cdin itself: --out-bits, --period, --retry, -v ...
+# `${name}_flags` is reserved by rc.subr and would otherwise be prepended to
+# command_args as options to daemon(8).  Preserve the public rc.conf name, but
+# move its value out of rc.subr's namespace before run_rc_command.
 : ${omdrc_cdin_flags:=""}
+omdrc_cdin_extra_args="${omdrc_cdin_flags}"
+unset omdrc_cdin_flags
 
 command="/usr/sbin/daemon"
 
@@ -113,7 +118,7 @@ else
 fi
 
 pidfile="${omdrc_cdin_pidfile}"
-command_args="-f -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrc-cdin \
+command_args="-f -P ${pidfile} -- @CMAKE_INSTALL_PREFIX@/bin/omdrc-cdin \
     --in ${omdrc_cdin_in} \
     --out ${omdrc_cdin_out} \
     --bits ${omdrc_cdin_bits} \
@@ -122,7 +127,7 @@ command_args="-f -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrc-cdin \
     --carrier-min ${omdrc_cdin_carrier_min} \
     --stats ${omdrc_cdin_stats} \
     --log ${omdrc_cdin_logfile} \
-    ${omdrc_cdin_flags}"
+    ${omdrc_cdin_extra_args}"
 
 start_precmd="omdrc_cdin_precmd"
 extra_commands="release"

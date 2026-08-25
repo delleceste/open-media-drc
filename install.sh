@@ -55,9 +55,13 @@ render() {
 echo "Rendering templates from config.env (AUDIO_USER=${AUDIO_USER}, AUDIO_HOME=${AUDIO_HOME}):"
 # Skip .git and the CMake-owned subprojects — they ship their own *.in templates
 # rendered by CMake (different @VARS@: @CMAKE_INSTALL_PREFIX@ etc.), not by this
-# script: omdrc-ctrl (omdrcctrl) and video/webremote (omdrcvideo).
+# script: omdrc-ctrl (omdrcctrl), video/webremote (omdrcvideo), and cdin
+# (omdrc-cdin).  Rendering a CMake template here leaves its CMake-only tokens
+# literal; copying that output into rc.d then makes the service try to execute
+# a path such as "@CMAKE_INSTALL_PREFIX@/bin/omdrc-cdin".
 find "$REPO_DIR" -name '*.in' -not -path '*/.git/*' \
-     -not -path '*/omdrc-ctrl/*' -not -path '*/video/webremote/*' | while read -r tpl; do
+     -not -path '*/omdrc-ctrl/*' -not -path '*/video/webremote/*' \
+     -not -path '*/cdin/*' | while read -r tpl; do
 	render "$tpl"
 done
 
