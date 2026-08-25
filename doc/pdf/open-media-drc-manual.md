@@ -1948,9 +1948,21 @@ omdrc_audio_capture="ESI U24XL"   # names the ESI; that is what creates
 The rc script is installed by the CMake superproject
 (`cdin/CMakeLists.txt`, a subproject of the top-level build). It uses
 `daemon(8)`, drops privileges via the standard `rc.subr` `${name}_user`, and
-adds one non-standard verb, `release` (the `SIGHUP` above). Started
-unprivileged with `service omdrc_cdin onestart` it clears `${name}_user` --- so
-`rc.subr` does not try to `su` to it --- and uses a pidfile under `/tmp`.
+adds one non-standard verb, `release` (the `SIGHUP` above). A `--` separates
+the daemon supervisor's arguments from the bridge's arguments; the public
+`omdrc_cdin_flags` value is moved out of rc.subr's reserved `${name}_flags`
+namespace before startup. Started unprivileged with
+`service omdrc_cdin onestart` it clears `${name}_user` --- so `rc.subr` does
+not try to `su` to it --- and uses a pidfile under `/tmp`.
+
+The panel owns this service even when `omdrc_cdin_enable="NO"`. Selecting the
+CD source explicitly may start it with `onestart`; an incidental rate change
+never starts a stopped bridge. When a running bridge must follow a rebuilt
+virtual output, `drc.sh` uses bounded `onestop`, waits for the process to
+disappear, then uses bounded `onestart`. This preserves a panel-started
+instance: `onerestart` would stop it and then let the disabled rcvar reject
+the start half. The timeout runs in foreground mode so its process-group
+cleanup cannot kill daemon(8)'s successfully detached supervisor.
 
 Log lines are a **contract**, not just prose: the web panel parses them, so
 `state <name>: <why>` and
