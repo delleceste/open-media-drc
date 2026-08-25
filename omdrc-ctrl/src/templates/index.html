@@ -39,14 +39,15 @@
         }
         h1 { font-size: 1.35rem; font-weight: 600; letter-spacing: -.02em; }
 
-        #srv-dot {
-            width: 10px; height: 10px;
-            border-radius: 50%;
-            background: var(--green);
-            box-shadow: 0 0 8px var(--green);
-            transition: background .4s, box-shadow .4s;
+        #srv-beastie {
+            width: 58px;
+            height: 58px;
+            object-fit: contain;
+            flex: 0 0 auto;
+            filter: grayscale(0);
+            transition: filter .4s, opacity .4s;
         }
-        #srv-dot.offline { background: var(--red); box-shadow: 0 0 8px var(--red); }
+        #srv-beastie.offline { filter: grayscale(1); opacity: .72; }
 
         /* ── card ────────────────────────────────────────────── */
         .card {
@@ -1062,7 +1063,10 @@
 
 <header>
     <h1>{{ control_title }}</h1>
-    <div id="srv-dot"></div>
+    <img id="srv-beastie"
+         src="{{ url_for('static', filename='freebsd-beastie.png') }}"
+         alt="Server healthy"
+         title="Server healthy">
 </header>
 
 <div id="write-status"></div>
@@ -1885,11 +1889,17 @@ document.getElementById('overlay').addEventListener('click', e => {
 });
 
 // ── status polling — server health + Details button visibility ─────────────
-const dot = document.getElementById('srv-dot');
+const beastie = document.getElementById('srv-beastie');
+function paintServerHealth(offline) {
+    beastie.classList.toggle('offline', offline);
+    const status = offline ? 'Server offline' : 'Server healthy';
+    beastie.alt = status;
+    beastie.title = status;
+}
 async function pollStatus() {
     try {
         const d = await (await fetch('/status')).json();
-        dot.classList.remove('offline');
+        paintServerHealth(false);
         // show/hide Details buttons based on systemctl unit state
         if (d.units) {
             for (const [id, state] of Object.entries(d.units)) {
@@ -1898,7 +1908,7 @@ async function pollStatus() {
             }
         }
     } catch {
-        dot.classList.add('offline');
+        paintServerHealth(true);
     }
 }
 pollStatus();

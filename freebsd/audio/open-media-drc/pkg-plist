@@ -25,6 +25,7 @@ etc/open-media-drc/configs/flat/brutefir-192000.conf
 %%CTRL%%share/omdrc-ctrl/templates/details.html
 %%CTRL%%share/omdrc-ctrl/templates/filter_response.html
 %%CTRL%%share/omdrc-ctrl/static/chart.umd.min.js
+%%CTRL%%share/omdrc-ctrl/static/freebsd-beastie.png
 %%PORTDOCS%%%%DOCSDIR%%/README.md
 %%PORTDOCS%%%%DOCSDIR%%/FILTERS_AND_DRC.md
 %%PORTDOCS%%%%DOCSDIR%%/BIT-PERFECT-VERIFICATION.md
