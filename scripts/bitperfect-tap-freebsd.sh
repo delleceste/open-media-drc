@@ -166,13 +166,25 @@ int main(int argc, char **argv){
 C
 
 # ── 2. TAP: locate the DAC on the USB bus and start usbdump ──────────────────
-# USB addresses change across replugs, so bus/devaddr are read from the
-# uaudio driver's %location sysctl rather than hard-coded.
-LOC="$(sysctl -n dev.uaudio.0.%location 2>/dev/null || true)"
-[ -n "$LOC" ] || { echo "uaudio0 not found (DAC attached?)" >&2; exit 2; }
+# Resolve the uaudio UNIT from the play device, not just the address from a
+# hard-coded unit.  `dev.uaudio.0` is whichever USB audio device attached
+# first, which on a box with a capture interface is not the DAC: here uaudio0
+# is the ESI U24XL and the OKTO DAC8 is uaudio1, so tapping unit 0 recorded
+# the wrong device and produced "NO CAPTURE" against a perfectly good chain.
+# Same chain as glitch-usbtap.sh: $PLAY_DEV -> pcm unit -> %parent -> uaudio
+# unit -> bus/devaddr.  Addresses still come from %location, since they change
+# across replugs.
+DAC_LINK="$(readlink "$PLAY_DEV" 2>/dev/null || basename "$PLAY_DEV")"
+case "$DAC_LINK" in dsp[0-9]*) DAC_UNIT="${DAC_LINK#dsp}" ;; *) DAC_UNIT=0 ;; esac
+DAC_PARENT="$(sysctl -n "dev.pcm.${DAC_UNIT}.%parent" 2>/dev/null || true)"
+case "$DAC_PARENT" in uaudio[0-9]*) ;; *) DAC_PARENT="uaudio0" ;; esac
+# The OID separates driver and unit with a dot: dev.uaudio.1, not dev.uaudio1.
+DAC_PARENT_UNIT="${DAC_PARENT#uaudio}"
+LOC="$(sysctl -n "dev.uaudio.${DAC_PARENT_UNIT}.%location" 2>/dev/null || true)"
+[ -n "$LOC" ] || { echo "$DAC_PARENT not found (DAC attached?)" >&2; exit 2; }
 UBUS="usbus$(echo "$LOC" | sed -n 's/.*bus=\([0-9]*\).*/\1/p')"
 DADDR="$(echo "$LOC" | sed -n 's/.*devaddr=\([0-9]*\).*/\1/p')"
-say "DAC: $UBUS device $DADDR (tap endpoint 0x01)"
+say "DAC: $PLAY_DEV = pcm$DAC_UNIT = $DAC_PARENT = $UBUS device $DADDR (tap endpoint 0x01)"
 
 # -s 65536: snapshot length large enough to never truncate an audio URB.
 sudo usbdump -i "$UBUS" -f "$DADDR" -s 65536 -w "$TMP/cap.pcap" >/dev/null 2>&1 &

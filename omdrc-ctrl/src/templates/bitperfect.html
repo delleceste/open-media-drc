@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bit-perfect check</title>
+<style>
+:root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--blue:#388bfd;--green:#3fb950;--yellow:#d29922;--red:#f85149;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;padding:1.2rem;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+h1{font-size:1.35rem;margin:0 0 .2rem}
+h2{font-size:1.05rem;margin:0 0 .6rem}
+h3{font-size:.92rem;margin:1rem 0 .4rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+a{color:var(--blue)}
+.lede{color:var(--muted);margin:0 0 1.2rem;max-width:60rem}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:1rem;margin-bottom:1rem}
+.hint{color:var(--muted);font-size:.86rem;margin:.3rem 0}
+code,.mono{font-family:var(--mono);font-size:.84rem}
+button{background:#21262d;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:.4rem .8rem;font:inherit;font-size:.88rem;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--blue)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.go{background:var(--blue);border-color:var(--blue);color:#fff}
+select,input[type=text],input[type=number],input[type=file]{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:.35rem .5rem;font:inherit;font-size:.88rem}
+label{display:flex;flex-direction:column;gap:.25rem;font-size:.84rem;color:var(--muted)}
+.row{display:flex;gap:.8rem;flex-wrap:wrap;align-items:flex-end}
+table{border-collapse:collapse;width:100%;font-size:.85rem}
+th,td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600}
+.tag{display:inline-block;padding:.05rem .45rem;border-radius:99px;font-size:.75rem;border:1px solid var(--line)}
+.ok{color:var(--green);border-color:var(--green)}
+.warn{color:var(--yellow);border-color:var(--yellow)}
+.bad{color:var(--red);border-color:var(--red)}
+.note{border-left:3px solid var(--yellow);padding:.5rem .7rem;margin:.4rem 0;background:#1c1a12;font-size:.86rem}
+.note.stop{border-color:var(--red);background:#1d1315}
+.note.good{border-color:var(--green);background:#111d15}
+#log{background:#010409;border:1px solid var(--line);border-radius:6px;padding:.6rem;font-family:var(--mono);font-size:.78rem;white-space:pre-wrap;max-height:16rem;overflow:auto;margin-top:.6rem}
+.phases{display:flex;gap:.4rem;flex-wrap:wrap;margin:.5rem 0}
+.phase{padding:.2rem .6rem;border:1px solid var(--line);border-radius:99px;font-size:.78rem;color:var(--muted)}
+.phase.on{border-color:var(--blue);color:var(--blue)}
+.phase.done{border-color:var(--green);color:var(--green)}
+.verdict{font-size:1.1rem;font-weight:600;padding:.6rem .8rem;border-radius:6px;border:1px solid var(--line)}
+.verdict.pass{border-color:var(--green);color:var(--green);background:#111d15}
+.verdict.fail{border-color:var(--red);color:var(--red);background:#1d1315}
+.verdict.unknown{border-color:var(--yellow);color:var(--yellow);background:#1c1a12}
+#map{width:100%;height:56px;display:block;border:1px solid var(--line);border-radius:6px;cursor:crosshair;background:#010409}
+.maplegend{display:flex;gap:1rem;font-size:.78rem;color:var(--muted);margin-top:.3rem;flex-wrap:wrap}
+.swatch{display:inline-block;width:.7rem;height:.7rem;border-radius:2px;margin-right:.25rem;vertical-align:-1px}
+.bytes{overflow-x:auto;margin-top:.6rem}
+table.hex{font-family:var(--mono);font-size:.78rem;white-space:nowrap}
+table.hex th{position:sticky;top:0;background:var(--panel)}
+table.hex td,table.hex th{border-bottom:1px solid #21262d;padding:.15rem .5rem}
+table.hex .sep{border-left:2px solid var(--line)}
+table.hex tr.diff{background:#1d1315}
+.b{padding:0 .05rem;border-radius:2px}
+.b.x{background:var(--red);color:#000;font-weight:700}
+.stack{display:flex;flex-direction:column;gap:.15rem}
+.scrub{width:100%;margin:.6rem 0 .2rem}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.15rem .8rem;font-size:.85rem}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;font-family:var(--mono);font-size:.8rem;word-break:break-all}
+footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
+</style>
+</head>
+<body>
+
+<h1>Bit-perfect check</h1>
+<p class="lede">Plays a known signal through a chosen path and records the
+<strong>actual bytes on the USB wire</strong> to the DAC — the last point the host
+controls. Beyond it sit only the controller's DMA engine and the DAC's receiver,
+neither of which can alter a PCM payload. The verdict compares those bytes
+against the reference; the byte view below lets you see them side by side.</p>
+
+<section class="card">
+<h2>1 · Chain readiness</h2>
+<div id="readiness">Checking…</div>
+<div class="row" style="margin-top:.6rem">
+  <button type="button" id="recheck">Re-check</button>
+</div>
+</section>
+
+<section class="card">
+<h2>2 · Test material</h2>
+<h3>Generated per filter rate</h3>
+<p class="hint">A near-silent (~&minus;90 dBFS) counter whose every (L,R) pair is
+unique over the whole file, so a changed, dropped or duplicated sample is
+detectable at any offset — and inaudible while it plays.</p>
+<table id="assets"><tbody><tr><td>Loading…</td></tr></tbody></table>
+
+<h3>Or check any track</h3>
+<p class="hint">WAV or FLAC (anything <code>ffmpeg</code> reads). The file is decoded once
+to build the reference; the <em>original</em> is what gets played, because the
+decoder is part of what is being tested.</p>
+<div class="row">
+  <label>Upload a file<input type="file" id="matfile" accept=".wav,.flac,.aiff,.aif,.m4a,.mp4,.ape,.wv,.dsf"></label>
+  <label>…or a path in the music library<input type="text" id="matpath" placeholder="/path/to/track.flac" size="34"></label>
+  <button type="button" class="mut" id="loadmat">Load</button>
+</div>
+<table id="material"><tbody></tbody></table>
+</section>
+
+<section class="card">
+<h2>3 · Run a check</h2>
+<div class="row">
+  <label>Path under test<select id="source"></select></label>
+  <label>Material<select id="material-select"></select></label>
+  <label>Tap window (s)<input type="number" id="duration" value="30" min="5" max="600" style="width:6rem"></label>
+  <button type="button" class="mut go" id="run">Run check</button>
+</div>
+<p class="hint" id="source-hint"></p>
+</section>
+
+<section class="card">
+<h2>4 · Progress</h2>
+<div class="phases" id="phases"></div>
+<div id="stats" class="hint"></div>
+<div id="log" hidden></div>
+</section>
+
+<section class="card" id="result-card" hidden>
+<h2>5 · Result</h2>
+<div class="row" style="margin-bottom:.6rem">
+  <label>Run<select id="runs"></select></label>
+</div>
+<div id="verdict" class="verdict unknown">—</div>
+<div id="mpdchange"></div>
+<h3>Every stage, named and hashed</h3>
+<dl class="kv" id="stages"></dl>
+
+<div id="byteview" hidden>
+<h3>Whole file at a glance</h3>
+<p class="hint">Each column is a slice of the stream. Green: the wire carried
+exactly the reference bytes. Red: it did not. Grey: the capture did not cover it.
+The thin row underneath is signal level, so silence is distinguishable from a
+clean pass. Click anywhere to jump the byte view there.</p>
+<canvas id="map"></canvas>
+<div class="maplegend">
+  <span><i class="swatch" style="background:#3fb950"></i>identical</span>
+  <span><i class="swatch" style="background:#f85149"></i>differs</span>
+  <span><i class="swatch" style="background:#6e7681"></i>not captured</span>
+  <span><i class="swatch" style="background:#388bfd"></i>current view</span>
+</div>
+
+<h3>The bytes, side by side</h3>
+<div class="row">
+  <button type="button" id="b-start">Start</button>
+  <button type="button" id="b-mismatch">First mismatch</button>
+  <button type="button" id="b-random">Random spot check</button>
+  <button type="button" id="b-prev">&minus; page</button>
+  <button type="button" id="b-next">+ page</button>
+  <label>Byte offset<input type="number" id="b-offset" value="0" min="0" style="width:10rem"></label>
+  <label>Rows<input type="number" id="b-rows" value="48" min="8" max="512" style="width:6rem"></label>
+</div>
+<input type="range" id="scrub" class="scrub" min="0" max="1000" value="0">
+<div class="hint" id="b-pos"></div>
+<div class="bytes"><table class="hex" id="hex"><thead></thead><tbody></tbody></table></div>
+</div>
+</section>
+
+<footer><a href="/">&larr; Control panel</a> · <a href="/configuration">Configuration</a> · <a href="/readme">README</a></footer>
+
+<script>
+const CSRF={{ csrf|tojson }};
+const q=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=n=>Number(n).toLocaleString();
+let busy=false, STATE=null, RUN=null, REPORT=null, SCAN=null;
+
+const SOURCES=[
+ ['aplay','Direct — aplay / OSS writer','Plays straight to the raw device with no renderer and no mixer in the way. The control experiment: if this is not bit-perfect, nothing downstream can be.'],
+ ['mpd','MPD — local file','MPD decodes and plays the file to the direct output. This is the segment upmpdcli and qobuzconnect2mpd both share.'],
+ ['mpd-http','MPD — HTTP URL','Same, but fetched over HTTP so MPD uses its curl input plugin and streaming decoder — structurally the path a Qobuz stream takes, with a known file so the verdict is real byte equality.'],
+ ['upnp','upmpdcli — driven over OpenHome','upmpdcli is discovered by SSDP and told to play the file itself, so the whole renderer is in the path. It also reports whether upmpdcli changed MPD volume or replaygain, which would break bit-perfection on its own.'],
+ ['live','qobuzconnect2mpd — live stream','Plays nothing: it taps the wire while you play a real Qobuz track, then compares against the file the renderer itself buffered. Start playback before running.'],
+];
+
+function freeze(on){busy=on;document.querySelectorAll('button.mut,select,input').forEach(e=>e.disabled=on)}
+
+// ── readiness ───────────────────────────────────────────────────────────────
+function renderReadiness(r){
+  const box=q('readiness');const bits=[];
+  const dac=r.dac?(r.dac.os==='linux'?`ALSA card ${r.dac.card} · USB bus ${r.dac.bus} device ${r.dac.devnum}`
+                                      :`${r.dac.dsp} · ${r.dac.usbus} devaddr ${r.dac.devaddr}`):'not found';
+  bits.push(`<dl class="kv">
+   <dt>DAC</dt><dd>${esc(dac)}</dd>
+   <dt>brutefir</dt><dd>${r.brutefir?'<span class="tag bad">running</span>':'<span class="tag ok">stopped</span>'}</dd>
+   <dt>tap privilege</dt><dd>${r.sudo?'<span class="tag ok">sudo -n available</span>':'<span class="tag bad">refused</span>'}</dd>
+   <dt>MPD</dt><dd>${r.mpd&&r.mpd.ok?`${esc(r.mpd.state)} · volume ${esc(r.mpd.volume)} · replaygain ${esc(r.mpd.replaygain)} · outputs: ${esc((r.mpd.enabled||[]).join(', ')||'none')}`:esc((r.mpd&&r.mpd.error)||'unavailable')}</dd>
+   <dt>rates offered</dt><dd>${(r.rates||[]).join(', ')} Hz</dd>
+  </dl>`);
+  for(const b of r.blocking||[]) bits.push(`<div class="note stop"><strong>Blocked:</strong> ${esc(b)}</div>`);
+  for(const w of r.warnings||[]) bits.push(`<div class="note">${esc(w)}</div>`);
+  if(!(r.blocking||[]).length) bits.push('<div class="note good">Ready to verify.</div>');
+  box.innerHTML=bits.join('');
+}
+
+function renderAssets(a){
+  const rows=a.map(x=>`<tr>
+    <td>${x.rate?esc(x.rate)+' Hz':'<em>'+esc(x.name)+'</em>'}</td>
+    <td>${x.bits?esc(x.bits)+'-bit':''}</td>
+    <td>${x.seconds?esc(x.seconds)+' s':''}</td>
+    <td>${x.present?fmt(x.bytes)+' B':'&mdash;'}</td>
+    <td class="mono">${x.present?esc(x.sha256.slice(0,16))+'…':''}</td>
+    <td>${x.present?'<span class="tag ok">present</span>':'<span class="tag warn">absent</span>'}</td>
+    <td>${x.rate?`<button type="button" class="mut" onclick="genAsset(${x.rate},${x.bits},${x.seconds})">${x.present?'Regenerate':'Generate'}</button>`:''}</td>
+  </tr>`).join('');
+  q('assets').innerHTML=`<thead><tr><th>Rate</th><th>Depth</th><th>Length</th><th>Size</th><th>sha256</th><th></th><th></th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+function renderMaterial(m){
+  q('material').innerHTML=m.length?`<thead><tr><th>File</th><th>Format</th><th>Decoder</th><th>Anchor</th></tr></thead><tbody>`+
+   m.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.rate)} Hz · ${esc(x.bits)}-bit · ${esc(x.channels)}ch · ${esc(x.seconds)} s</td>
+     <td>${esc(x.decoder)}</td>
+     <td>${x.anchor_unique?'<span class="tag ok">unique</span>':'<span class="tag warn">ambiguous</span>'}</td></tr>`).join('')+'</tbody>':'';
+  const sel=q('material-select'),keep=sel.value;sel.replaceChildren();
+  for(const a of (STATE.assets||[])) if(a.present) sel.add(new Option(a.name,a.name));
+  for(const x of m) sel.add(new Option(x.name+'  (loaded)',x.source));
+  if(keep) sel.value=keep;
+}
+
+function renderRuns(runs){
+  const sel=q('runs'),keep=sel.value;sel.replaceChildren();
+  for(const r of runs) sel.add(new Option(`${r.id} · ${r.source||'?'} · ${(r.kind||r.verdict||'').slice(0,40)}`,r.id));
+  if(keep&&runs.some(r=>r.id===keep))sel.value=keep;
+  if(runs.length){q('result-card').hidden=false;if(!RUN)openRun(sel.value)}
+}
+
+async function loadState(){
+  const d=await fetch('/bitperfect/api/state').then(r=>r.json());
+  if(!d.ok){q('readiness').innerHTML=`<div class="note stop">${esc(d.error)}</div>`;return}
+  STATE=d;renderReadiness(d.readiness);renderAssets(d.assets);renderMaterial(d.material);renderRuns(d.runs);
+}
+
+// ── jobs ────────────────────────────────────────────────────────────────────
+const PHASES=['prep','tap','play','drain','align','verdict'];
+function setPhase(name){
+  const i=PHASES.findIndex(p=>name.startsWith(p));
+  q('phases').innerHTML=PHASES.map((p,k)=>`<span class="phase ${k<i?'done':k===i?'on':''}">${p}</span>`).join('');
+}
+function resetProgress(){q('phases').innerHTML='';q('stats').textContent='';q('log').textContent='';q('log').hidden=false}
+
+function watchJob(id,onDone){
+  const log=q('log');log.hidden=false;
+  const src=new EventSource(`/bitperfect/api/jobs/${id}/events`);
+  const stats={};
+  src.onmessage=e=>{
+    const line=JSON.parse(e.data).line;
+    if(line.startsWith('@@PHASE ')){setPhase(line.slice(8).trim());return}
+    if(line.startsWith('@@STAT ')){
+      const t=line.slice(7).trim();
+      for(const kv of t.split(/\s+/)){const [k,v]=kv.split('=');if(v!==undefined)stats[k]=v}
+      if(!t.includes('='))stats.tap=t;
+      q('stats').textContent=Object.entries(stats).map(([k,v])=>`${k}: ${v}`).join('   ');
+      return;
+    }
+    if(line.startsWith('@@RESULT ')||line.startsWith('@@INFO ')){log.textContent+=line+'\n'}
+    else log.textContent+=line+'\n';
+    log.scrollTop=log.scrollHeight;
+  };
+  src.addEventListener('done',e=>{
+    const d=JSON.parse(e.data);src.close();freeze(false);
+    setPhase(d.phase==='succeeded'?'verdict':'');
+    loadState().then(()=>onDone&&onDone(d));
+  });
+}
+
+async function post(url,body){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-OMDRC-CSRF':CSRF},body:JSON.stringify(body)});
+  return r.json();
+}
+
+window.genAsset=async(rate,bits,seconds)=>{
+  if(busy)return;freeze(true);resetProgress();
+  const d=await post('/bitperfect/api/assets/generate',{rate,bits,seconds});
+  if(!d.ok){freeze(false);q('log').textContent=d.error;return}
+  watchJob(d.job);
+};
+
+q('loadmat').onclick=async()=>{
+  if(busy)return;freeze(true);resetProgress();
+  const fd=new FormData();
+  const f=q('matfile').files[0];
+  if(f)fd.append('file',f); else fd.append('path',q('matpath').value.trim());
+  const r=await fetch('/bitperfect/api/material',{method:'POST',headers:{'X-OMDRC-CSRF':CSRF},body:fd});
+  const d=await r.json();
+  if(!d.ok){freeze(false);q('log').textContent=d.error;return}
+  watchJob(d.job);
+};
+
+q('run').onclick=async()=>{
+  if(busy)return;
+  const blocked=(STATE&&STATE.readiness.blocking)||[];
+  if(blocked.length&&!confirm('The chain is not ready:\n\n'+blocked.join('\n\n')+'\n\nRun anyway? The verdict may be meaningless.'))return;
+  freeze(true);resetProgress();
+  const d=await post('/bitperfect/api/run',{
+    source:q('source').value,material:q('material-select').value,
+    duration:Number(q('duration').value),allow_drc:blocked.length>0});
+  if(!d.ok){freeze(false);q('log').textContent=d.error;return}
+  watchJob(d.job,()=>{const runs=(STATE&&STATE.runs)||[];if(runs.length){q('runs').value=runs[0].id;openRun(runs[0].id)}});
+};
+
+// ── result + byte view ──────────────────────────────────────────────────────
+function verdictClass(k){
+  if(!k)return 'unknown';
+  if(k.startsWith('BIT-PERFECT'))return 'pass';
+  if(k.startsWith('NO CAPTURE')||k.startsWith('ALIGNMENT'))return 'unknown';
+  return 'fail';
+}
+
+async function openRun(id){
+  if(!id)return;
+  RUN=id;SCAN=null;
+  const d=await fetch(`/bitperfect/api/runs/${id}/report`).then(r=>r.json());
+  if(!d.ok)return;
+  REPORT=d.report;
+  const v=q('verdict');
+  v.className='verdict '+verdictClass(REPORT.kind);
+  v.textContent=REPORT.verdict||'—';
+  if(REPORT.lossy)v.textContent+='  (decoded from a lossy container — this is decode-path transparency, not bit-perfection of the file)';
+  const st=[
+    ['source path',REPORT.source||'—'],
+    ['input file',`${REPORT.input||''} — ${fmt(REPORT.input_bytes||0)} B, sha256 ${REPORT.input_sha256||''}`],
+    ['reference bytes',`${fmt(REPORT.ref_bytes||0)} B, sha256 ${REPORT.ref_sha256||''}`],
+    ['wire raw (untrimmed)',`${fmt(REPORT.wire_bytes||0)} B, sha256 ${REPORT.wire_sha256||''}`],
+    ['tapped payload',REPORT.tap_bytes!==undefined?`${fmt(REPORT.tap_bytes)} B, sha256 ${REPORT.tap_sha256||''}`:'not produced'],
+    ['format',`${REPORT.rate||'?'} Hz · ${REPORT.ch||'?'} ch · S32_LE wire container`],
+    ['aligned at',REPORT.start!==null&&REPORT.start!==undefined?`capture byte ${fmt(REPORT.start)} (anchor from reference byte ${fmt(REPORT.probe_offset||0)})`:'—'],
+    ['resolved by',REPORT.resolved_by||'—'],
+    ['os',REPORT.os||'—'],
+  ];
+  q('stages').innerHTML=st.map(([k,val])=>`<dt>${esc(k)}</dt><dd>${esc(val)}</dd>`).join('');
+
+  const mc=q('mpdchange');
+  if(REPORT.mpd_before&&REPORT.mpd_after){
+    const b=REPORT.mpd_before,a=REPORT.mpd_after;
+    mc.innerHTML=(b.volume!==a.volume||b.replaygain!==a.replaygain)
+      ?`<div class="note"><strong>The renderer changed MPD while playing:</strong> volume ${esc(b.volume)} &rarr; ${esc(a.volume)}, replaygain ${esc(b.replaygain)} &rarr; ${esc(a.replaygain)}. That is a bit-perfection risk in its own right.</div>`
+      :`<div class="note good">The renderer left MPD's volume (${esc(a.volume)}) and replaygain (${esc(a.replaygain)}) alone.</div>`;
+  } else mc.innerHTML='';
+
+  const run=(STATE.runs||[]).find(r=>r.id===id);
+  q('byteview').hidden=!(run&&run.has_bytes);
+  if(run&&run.has_bytes){await loadScan();gotoOffset(REPORT.first_mismatch!=null?Math.max(0,REPORT.first_mismatch-64):0)}
+}
+q('runs').onchange=e=>openRun(e.target.value);
+
+async function loadScan(){
+  const canvas=q('map');
+  const width=Math.max(256,Math.min(2048,Math.floor(canvas.clientWidth)));
+  const d=await fetch(`/bitperfect/api/runs/${RUN}/scan?buckets=${width}`).then(r=>r.json());
+  if(!d.ok)return;
+  SCAN=d;drawMap();
+}
+
+function drawMap(){
+  if(!SCAN)return;
+  const canvas=q('map'),dpr=window.devicePixelRatio||1;
+  const w=canvas.clientWidth,h=canvas.clientHeight;
+  canvas.width=w*dpr;canvas.height=h*dpr;
+  const g=canvas.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,w,h);
+  const n=SCAN.cells.length,cw=w/n,top=h-14;
+  const colour={equal:'#3fb950',diff:'#f85149',short:'#d29922',uncovered:'#6e7681'};
+  SCAN.cells.forEach((c,i)=>{
+    g.fillStyle=colour[c.s]||'#6e7681';
+    g.fillRect(i*cw,0,Math.max(1,cw),top);
+    // level row: log-ish so -90 dBFS material is still visible
+    const lv=c.l>0?Math.min(1,(Math.log10(c.l)+6)/6):0;
+    g.fillStyle='#1f6feb';
+    g.fillRect(i*cw,top+12-Math.max(1,lv*12),Math.max(1,cw),Math.max(1,lv*12));
+  });
+  // viewport marker
+  if(REPORT&&SCAN.ref_len){
+    const off=Number(q('b-offset').value)||0;
+    const rows=Number(q('b-rows').value)||48;
+    const span=rows*(REPORT.ch||2)*4;
+    const x=off/SCAN.ref_len*w, xw=Math.max(2,span/SCAN.ref_len*w);
+    g.strokeStyle='#388bfd';g.lineWidth=2;g.strokeRect(x,1,xw,top-2);
+  }
+}
+window.addEventListener('resize',()=>{drawMap()});
+q('map').onclick=e=>{
+  if(!SCAN)return;
+  const r=e.target.getBoundingClientRect();
+  gotoOffset(Math.floor((e.clientX-r.left)/r.width*SCAN.ref_len));
+};
+
+function gotoOffset(o){
+  const max=(REPORT&&REPORT.ref_bytes)||0;
+  o=Math.max(0,Math.min(o,Math.max(0,max-1)));
+  q('b-offset').value=o;
+  q('scrub').value=max?Math.round(o/max*1000):0;
+  loadWindow(o);
+}
+
+async function loadWindow(offset){
+  const rows=Number(q('b-rows').value)||48;
+  const d=await fetch(`/bitperfect/api/runs/${RUN}/window?offset=${offset}&frames=${rows}`).then(r=>r.json());
+  if(!d.ok){q('hex').querySelector('tbody').innerHTML=`<tr><td>${esc(d.error)}</td></tr>`;return}
+  const hex=(s,diff)=>s.split(' ').map((b,i)=>`<span class="b${diff.includes(i)?' x':''}">${b}</span>`).join(' ');
+  q('hex').querySelector('thead').innerHTML=
+    `<tr><th>frame</th><th>byte</th><th colspan="2">FILE &mdash; the reference</th><th class="sep" colspan="2">USB WIRE &mdash; what the DAC received</th></tr>`;
+  q('hex').querySelector('tbody').innerHTML=d.rows.map(r=>`<tr class="${r.eq?'':'diff'}">
+    <td>${fmt(r.i)}</td><td>${fmt(r.o)}</td>
+    <td>${hex(r.ref,r.d)}</td><td>${r.ref_s.join(' / ')}</td>
+    <td class="sep">${hex(r.wire,r.d)}</td><td>${r.wire_s.join(' / ')}</td></tr>`).join('');
+  const secs=REPORT.rate?(offset/((REPORT.ch||2)*4)/REPORT.rate):0;
+  q('b-pos').textContent=`byte ${fmt(offset)} of ${fmt(d.ref_len)} · frame ${fmt(Math.floor(offset/((REPORT.ch||2)*4)))} · ${secs.toFixed(3)} s into the stream`
+    +(d.rows.every(r=>r.eq)?' · every byte in view is identical':' · differences in view');
+  drawMap();
+}
+
+q('scrub').oninput=e=>{
+  const max=(REPORT&&REPORT.ref_bytes)||0;
+  gotoOffset(Math.floor(e.target.value/1000*max));
+};
+q('b-offset').onchange=e=>gotoOffset(Number(e.target.value)||0);
+q('b-rows').onchange=()=>gotoOffset(Number(q('b-offset').value)||0);
+q('b-start').onclick=()=>gotoOffset(0);
+q('b-mismatch').onclick=()=>{
+  if(REPORT&&REPORT.first_mismatch!=null)gotoOffset(Math.max(0,REPORT.first_mismatch-64));
+  else alert('No mismatch was found in this run — every reference byte matched on the wire.');
+};
+q('b-random').onclick=()=>gotoOffset(Math.floor(Math.random()*((REPORT&&REPORT.ref_bytes)||1)));
+q('b-prev').onclick=()=>gotoOffset(Number(q('b-offset').value)-Number(q('b-rows').value)*((REPORT&&REPORT.ch)||2)*4);
+q('b-next').onclick=()=>gotoOffset(Number(q('b-offset').value)+Number(q('b-rows').value)*((REPORT&&REPORT.ch)||2)*4);
+
+// ── init ────────────────────────────────────────────────────────────────────
+const sel=q('source');
+for(const [id,label] of SOURCES.map(s=>[s[0],s[1]])) sel.add(new Option(label,id));
+function sourceHint(){
+  const s=SOURCES.find(x=>x[0]===sel.value);
+  q('source-hint').textContent=s?s[2]:'';
+  q('duration').parentElement.style.opacity=sel.value==='live'?1:.45;
+  q('material-select').parentElement.style.opacity=sel.value==='live'?.45:1;
+}
+sel.onchange=sourceHint;sourceHint();
+q('recheck').onclick=()=>loadState();
+loadState();
+</script>
+</body>
+</html>

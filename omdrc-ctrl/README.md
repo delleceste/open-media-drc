@@ -43,6 +43,42 @@ There is no new login layer: mutations use same-origin and CSRF checks but keep
 the control panel's trusted-LAN model. Never expose port 9090 to an untrusted
 network.
 
+## Bit-perfect check page
+
+`/bitperfect` runs the USB wire tap from the browser and shows the bytes it
+compared. It drives the same `scripts/bitperfect-*` tools a person would run by
+hand, so it cannot produce a verdict the command line would not.
+
+Five playback paths, because proving the host is not the same as proving the
+box: `aplay` (delegated to `bitperfect-tap-{linux,freebsd}.sh` unchanged),
+`mpd`, `mpd-http` (MPD's curl input plugin — structurally the Qobuz stream
+path), `upnp` (upmpdcli discovered by SSDP and told to play the file itself),
+and `live` (taps a real qobuzconnect2mpd stream and compares against the buffer
+the renderer wrote). The renderer-driven modes also report whether the renderer
+changed MPD's volume or replaygain, which breaks bit-perfection without
+altering a byte of the source. Test material is either the generated per-rate
+counter asset or any WAV/FLAC you load.
+
+Results carry a colour map of the whole stream plus a side-by-side hex view of
+the reference against the tapped wire, locked to one offset slider.
+
+Two things the page enforces rather than assumes: runs are blocked while
+brutefir is convolving (the DRC path is not bit-perfect *by design*), and the
+tap's `sudo -n` availability is probed up front instead of failing mid-capture.
+Because the tap needs root, the panel's user needs a password-less rule for
+`usbmon` (Linux) or `usbdump` (FreeBSD).
+
+The `[bitperfect]` section configures it. Artifacts are large — a 30 s 44.1 kHz
+run keeps the reference, the aligned payload and the untrimmed wire stream — so
+`results_root` and `assets_root` default under `/var/tmp`, not the site tree.
+Verifying a track by *path* is confined to `music_root`; leave it empty to
+allow uploads only. One route, the asset MPD and upmpdcli fetch by URL, is
+necessarily token-free: it resolves basenames inside the asset cache and
+nothing else.
+
+The bit-perfect page and the configuration page share one operation lock: a
+filter publication and a tap run must never overlap on a single-DAC box.
+
 A lightweight web-based remote control panel for a Linux or FreeBSD desktop.
 Commands are defined in a plain-text INI config file; the server renders a
 mobile-friendly interface that can be opened in any browser on the local

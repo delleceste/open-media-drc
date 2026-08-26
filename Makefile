@@ -49,6 +49,13 @@ install:
 	$(INSTALL_SCRIPT) scripts/REW2raw.sh scripts/REW2raw-all-rates.sh \
 	                  scripts/verify-bitperfect.sh scripts/headroom_calc.py \
 	                  $(LIBEXECDIR)/scripts
+#	The cross-OS tap suite backs the panel's /bitperfect page.  They must be
+#	installed together: the tap scripts resolve bitperfect-lib.py next to $$0.
+	$(INSTALL_SCRIPT) scripts/bitperfect-lib.py scripts/bitperfect_runner.py \
+	                  scripts/bitperfect_material.py scripts/bitperfect-compare.py \
+	                  scripts/bitperfect-tap-linux.sh scripts/bitperfect-tap-freebsd.sh \
+	                  tests/gen-bitperfect-wav.py \
+	                  $(LIBEXECDIR)/scripts
 	printf '#!/bin/sh\nexec %s/libexec/omdrc/drc.sh "$$@"\n' "$(PREFIX)" \
 	    > $(BINDIR)/omdrc
 	printf '#!/bin/sh\nexec %s/libexec/omdrc/drc-status.sh "$$@"\n' "$(PREFIX)" \
@@ -83,11 +90,16 @@ install:
 install-ctrl:
 	mkdir -p $(CTRLDIR)/templates $(CTRLDIR)/static $(ETCDIR) $(BINDIR) $(DOCSDIR) \
 	         $(LIBEXECDIR)/filter-tools
-	$(INSTALL_DATA) omdrc-ctrl/src/app.py omdrc-ctrl/src/configuration.py $(CTRLDIR)
+	$(INSTALL_DATA) omdrc-ctrl/src/app.py omdrc-ctrl/src/configuration.py \
+	                omdrc-ctrl/src/bitperfect.py $(CTRLDIR)
+#	Every template with a route must be listed here, or the route ships
+#	without its page (brutefir_config.html was missing until this list grew).
 	$(INSTALL_DATA) omdrc-ctrl/src/templates/index.html \
 	                omdrc-ctrl/src/templates/details.html \
 	                omdrc-ctrl/src/templates/filter_response.html \
 	                omdrc-ctrl/src/templates/configuration.html \
+	                omdrc-ctrl/src/templates/brutefir_config.html \
+	                omdrc-ctrl/src/templates/bitperfect.html \
 	                $(CTRLDIR)/templates
 	$(INSTALL_DATA) scripts/new_filter_design.py scripts/deploy_filter.py \
 	                scripts/remove_filter_design.py scripts/verify_filter_bundle.py \

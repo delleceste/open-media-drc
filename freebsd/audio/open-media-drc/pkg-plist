@@ -6,6 +6,13 @@ libexec/omdrc/scripts/REW2raw.sh
 libexec/omdrc/scripts/REW2raw-all-rates.sh
 libexec/omdrc/scripts/verify-bitperfect.sh
 libexec/omdrc/scripts/headroom_calc.py
+libexec/omdrc/scripts/bitperfect-lib.py
+libexec/omdrc/scripts/bitperfect_runner.py
+libexec/omdrc/scripts/bitperfect_material.py
+libexec/omdrc/scripts/bitperfect-compare.py
+libexec/omdrc/scripts/bitperfect-tap-linux.sh
+libexec/omdrc/scripts/bitperfect-tap-freebsd.sh
+libexec/omdrc/scripts/gen-bitperfect-wav.py
 @sample etc/open-media-drc/omdrc.conf.sample
 @sample etc/open-media-drc/brutefir_defaults.conf.sample
 @sample etc/devd/omdrc-audio.conf.sample
@@ -22,10 +29,13 @@ etc/open-media-drc/configs/flat/brutefir-192000.conf
 %%CTRL%%@sample etc/open-media-drc/commands.conf.sample
 %%CTRL%%share/omdrc-ctrl/app.py
 %%CTRL%%share/omdrc-ctrl/configuration.py
+%%CTRL%%share/omdrc-ctrl/bitperfect.py
 %%CTRL%%share/omdrc-ctrl/templates/index.html
 %%CTRL%%share/omdrc-ctrl/templates/details.html
 %%CTRL%%share/omdrc-ctrl/templates/filter_response.html
 %%CTRL%%share/omdrc-ctrl/templates/configuration.html
+%%CTRL%%share/omdrc-ctrl/templates/brutefir_config.html
+%%CTRL%%share/omdrc-ctrl/templates/bitperfect.html
 %%CTRL%%libexec/omdrc/omdrc-config-helper
 %%CTRL%%libexec/omdrc/filter-tools/new_filter_design.py
 %%CTRL%%libexec/omdrc/filter-tools/deploy_filter.py

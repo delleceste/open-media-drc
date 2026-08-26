@@ -78,6 +78,10 @@ bp-results/*
 /tests/bitperfect-test-44100-s32-stereo-30s.wav
 /tests/bitperfect-test-44100-s24-stereo-30s.wav
 /tests/bitperfect-test-192000-s24-stereo-10s.wav
+# The panel keeps the reference alongside the capture so /bitperfect can show
+# the two byte streams side by side; it is as large as the payload.
+bp-results/*.ref.raw
+/.bitperfect-jobs/
 
 
 # CMake/host-rendered artifacts that land in the source tree (never tracked):

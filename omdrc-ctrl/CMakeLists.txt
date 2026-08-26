@@ -113,19 +113,35 @@ if(_OMDRC_SUPERPROJECT OR _OMDRC_USE_INSTALLED)
     set(_OMDRC_FILTER_TOOLS_ROOT "${CMAKE_INSTALL_PREFIX}/share/omdrc/filter-tools")
     set(_OMDRC_CONFIG_HELPER "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/omdrc-config-helper")
     set(_OMDRC_CONFIG_STATE_ROOT "${OMDRCCTRL_AUDIO_HOME}/.local/state/omdrc/configuration")
+    # The tap suite ships beside the other privileged-adjacent scripts; its
+    # artifacts are large, so they land in /var/tmp rather than the site tree.
+    set(_OMDRC_BP_TOOLS_ROOT "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/scripts")
+    set(_OMDRC_BP_GENERATOR "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/scripts/gen-bitperfect-wav.py")
+    set(_OMDRC_BP_STATE_ROOT "${OMDRCCTRL_AUDIO_HOME}/.local/state/omdrc/bitperfect")
 else()
     set(_OMDRC_CONFIG_SITE_ROOT "${OMDRC_REPO_DIR}")
     set(_OMDRC_CONFIG_DESIGN_ROOT "${OMDRC_REPO_DIR}")
     set(_OMDRC_FILTER_TOOLS_ROOT "${OMDRC_REPO_DIR}/scripts")
     set(_OMDRC_CONFIG_HELPER "${OMDRC_REPO_DIR}/scripts/omdrc-config-helper.py")
     set(_OMDRC_CONFIG_STATE_ROOT "${OMDRC_REPO_DIR}/.configuration-jobs")
+    set(_OMDRC_BP_TOOLS_ROOT "${OMDRC_REPO_DIR}/scripts")
+    set(_OMDRC_BP_GENERATOR "${OMDRC_REPO_DIR}/tests/gen-bitperfect-wav.py")
+    set(_OMDRC_BP_STATE_ROOT "${OMDRC_REPO_DIR}/.bitperfect-jobs")
 endif()
+set(_OMDRC_BP_RESULTS_ROOT "/var/tmp/omdrc-bitperfect/results")
+set(_OMDRC_BP_ASSETS_ROOT "/var/tmp/omdrc-bitperfect/assets")
 string(REPLACE "@OMDRC_REPO_DIR@" "${OMDRC_REPO_DIR}" _cc "${_cc}")
 string(REPLACE "@OMDRC_CONFIG_SITE_ROOT@" "${_OMDRC_CONFIG_SITE_ROOT}" _cc "${_cc}")
 string(REPLACE "@OMDRC_CONFIG_DESIGN_ROOT@" "${_OMDRC_CONFIG_DESIGN_ROOT}" _cc "${_cc}")
 string(REPLACE "@OMDRC_FILTER_TOOLS_ROOT@" "${_OMDRC_FILTER_TOOLS_ROOT}" _cc "${_cc}")
 string(REPLACE "@OMDRC_CONFIG_HELPER@" "${_OMDRC_CONFIG_HELPER}" _cc "${_cc}")
 string(REPLACE "@OMDRC_CONFIG_STATE_ROOT@" "${_OMDRC_CONFIG_STATE_ROOT}" _cc "${_cc}")
+string(REPLACE "@OMDRC_BITPERFECT_TOOLS_ROOT@" "${_OMDRC_BP_TOOLS_ROOT}" _cc "${_cc}")
+string(REPLACE "@OMDRC_BITPERFECT_GENERATOR@" "${_OMDRC_BP_GENERATOR}" _cc "${_cc}")
+string(REPLACE "@OMDRC_BITPERFECT_RESULTS_ROOT@" "${_OMDRC_BP_RESULTS_ROOT}" _cc "${_cc}")
+string(REPLACE "@OMDRC_BITPERFECT_ASSETS_ROOT@" "${_OMDRC_BP_ASSETS_ROOT}" _cc "${_cc}")
+string(REPLACE "@OMDRC_BITPERFECT_STATE_ROOT@" "${_OMDRC_BP_STATE_ROOT}" _cc "${_cc}")
+string(REPLACE "@OMDRC_BITPERFECT_MUSIC_ROOT@" "${OMDRC_MUSIC_DIR}" _cc "${_cc}")
 if(NOT OMDRCCTRL_AUDIO_HOME)
     set(OMDRCCTRL_AUDIO_HOME "/home/${OMDRCCTRL_SERVICE_USER}")
 endif()
@@ -157,8 +173,22 @@ endif()
 # ── install targets ────────────────────────────────────────────────────────
 
 # Python application + docs + helper scripts
-install(FILES src/app.py src/configuration.py README.md SPECTRUM_ANALYZER.md
+install(FILES src/app.py src/configuration.py src/bitperfect.py
+              README.md SPECTRUM_ANALYZER.md
         DESTINATION lib/omdrcctrl)
+
+# The bit-perfect tap suite.  These must travel together: the tap scripts
+# resolve bitperfect-lib.py next to $0, so shipping one without the others
+# leaves a /bitperfect page that cannot run anything.
+install(PROGRAMS
+        ../scripts/bitperfect-lib.py
+        ../scripts/bitperfect_runner.py
+        ../scripts/bitperfect_material.py
+        ../scripts/bitperfect-compare.py
+        ../scripts/bitperfect-tap-linux.sh
+        ../scripts/bitperfect-tap-freebsd.sh
+        ../tests/gen-bitperfect-wav.py
+        DESTINATION libexec/omdrc/scripts)
 
 install(FILES
         ../scripts/new_filter_design.py

@@ -74,6 +74,28 @@ max_file_bytes = 1073741824
 max_upload_bytes = 2147483648
 apply_timeout = 120
 
+# -- Bit-perfect verification ----------------------------------------------
+# Runs the USB wire tap from the browser and shows the compared bytes.
+# tools_root must hold bitperfect-lib.py, bitperfect_runner.py,
+# bitperfect_material.py and the two bitperfect-tap-*.sh scripts.
+# The tap needs root: the scripts escalate with `sudo -n`, so the panel's user
+# needs a password-less rule for usbmon (Linux) / usbdump (FreeBSD).
+[bitperfect]
+enabled = yes
+tools_root = @OMDRC_BITPERFECT_TOOLS_ROOT@
+generator = @OMDRC_BITPERFECT_GENERATOR@
+# Artifacts are large (a 30 s 44.1k capture is ~10 MB, and a run keeps the
+# reference, the aligned payload and the untrimmed wire stream), so these
+# default to /var/tmp rather than the site tree.
+results_root = @OMDRC_BITPERFECT_RESULTS_ROOT@
+assets_root = @OMDRC_BITPERFECT_ASSETS_ROOT@
+state_root = @OMDRC_BITPERFECT_STATE_ROOT@
+# Verifying an arbitrary track by PATH is confined to this directory; leave it
+# empty to allow uploads only.
+music_root = @OMDRC_BITPERFECT_MUSIC_ROOT@
+max_upload_bytes = 2147483648
+run_timeout = 900
+
 # -- Live spectrum analyzer ------------------------------------------------
 # Low-risk analyzer source: MPD writes a secondary raw PCM stream to a FIFO.
 # omdrcctrl enables the matching MPD output only while a browser is actively

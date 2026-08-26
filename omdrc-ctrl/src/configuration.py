@@ -22,6 +22,12 @@ import time
 from typing import Callable, Iterator
 
 
+# One box, one DAC, one site tree: a filter publication and a bit-perfect tap
+# run must never overlap.  The lock is module-level rather than per-manager so
+# every subsystem that drives the audio chain (see bitperfect.py) contends for
+# the same one.
+OPERATION_LOCK = threading.Lock()
+
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _FREEBSD_CARD = re.compile(
@@ -98,7 +104,7 @@ class ConfigurationManager:
         self.env = env
         self.active_design = active_design or (lambda: {})
         self.jobs: dict[str, Job] = {}
-        self.lock = threading.Lock()
+        self.lock = OPERATION_LOCK
         self.settings.state_root.mkdir(parents=True, exist_ok=True)
 
     def _new_job(self, action: str) -> Job:
@@ -116,7 +122,9 @@ class ConfigurationManager:
 
         def run() -> None:
             if not self.lock.acquire(blocking=False):
-                job.set_phase("failed", error="another configuration operation is running")
+                job.set_phase("failed",
+                              error="another operation is already using the "
+                                    "audio chain — wait for it to finish")
                 return
             try:
                 job.set_phase("running")

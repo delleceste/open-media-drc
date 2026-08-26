@@ -41,8 +41,18 @@ decode-usbdump OUT.raw                 (FreeBSD)
 
 finalize REF.raw CAP.raw RATE CH PREFIX OS INPUT_PATH
     Align the captured wire stream against the reference, write
-    PREFIX.wav + PREFIX.txt, print the verdict.
-    Exit 0 = bit-perfect, 1 = mismatch, 2 = capture unusable.
+    PREFIX.wav + PREFIX.txt + PREFIX.json + PREFIX.ref.raw, print the
+    verdict.  Exit 0 = bit-perfect, 1 = mismatch, 2 = capture unusable.
+
+window REF.raw TAP.wav OFFSET FRAMES [CH]
+    JSON rows for the browser's side-by-side byte view: per frame, the
+    reference bytes and the tapped wire bytes with their decoded per-channel
+    integers and the byte positions that differ.  Reads only the window.
+
+scan REF.raw TAP.wav BUCKETS [CH]
+    JSON summary of the WHOLE comparison as `buckets` cells
+    (equal/diff/short/uncovered + level), for the colour map.  Every byte of
+    the overlap is really compared; only the level is estimated.
 
 Wire container note
 ===================
@@ -297,8 +307,16 @@ def cmd_decode_usbdump(outpath):
 # finalize — align capture to reference, verdict, artifacts
 # ═════════════════════════════════════════════════════════════════════════════
 
-def find_probe_offset(ref):
+def find_probe_offset(ref, unique_in=None):
     """Pick where in the reference to take the 4 KiB alignment probe.
+
+    `unique_in` (normally the reference itself, when the caller cares) makes
+    the search additionally reject a window that OCCURS MORE THAN ONCE in
+    that stream.  The generated counter asset can never repeat a 4 KiB
+    window, but real music can — digital silence, a looped intro, a repeated
+    bar — and an ambiguous anchor would align the whole comparison at the
+    wrong occurrence *silently*.  Skipping to the next unambiguous window
+    costs nothing and keeps ALIGNMENT FAILED meaning what it says.
 
     The probe must not be dominated by zero bytes: real material may start
     with silence (and even the counter signal starts with small values
@@ -309,12 +327,29 @@ def find_probe_offset(ref):
     for a pathologically silent file (alignment will then be reported as
     failed rather than wrong, since a zero probe matches at position 0 of
     the zero run)."""
-    po = 0
-    while po + 8192 < len(ref):
-        if sum(1 for b in ref[po:po + 4096] if b) >= 256:
-            return po
-        po += 4096
-    return 0
+    po = first_content = None
+    checked = 0
+    o = 0
+    while o + 8192 < len(ref):
+        window = ref[o:o + 4096]
+        if sum(1 for b in window if b) >= 256:
+            if first_content is None:
+                first_content = o
+            if unique_in is None:
+                return o
+            # `count` scans the whole stream, so bound how many candidates
+            # get tested: a file needing more than this is pathological, and
+            # the first content-bearing window remains the honest fallback.
+            if checked >= 64:
+                break
+            checked += 1
+            if unique_in.count(window) == 1:
+                po = o
+                break
+        o += 4096
+    if po is not None:
+        return po
+    return first_content if first_content is not None else 0
 
 
 def walk(ref, cap):
@@ -358,6 +393,126 @@ def walk(ref, cap):
             return matched, slips, -1, -1, True
         return matched, slips, si, ci, False
     return matched, slips, -1, -1, False
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# window / scan — read the two compared streams for the browser's byte view
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# These never re-run the verdict; they only READ the two artifacts finalize
+# already wrote, so the page can show WHICH bytes were compared and how they
+# differ.  Both are O(window) or one streaming pass in memory, so a 34 MB
+# 192 kHz artifact browses as cheaply as a 10 MB one.
+#
+#   REF.raw   the promoted reference — what the DAC was supposed to receive
+#   TAP.wav   the aligned capture    — what it actually received
+#
+# The two are index-aligned by construction: finalize trimmed the capture to
+# start at reference byte 0, so byte N of one corresponds to byte N of the
+# other and no re-alignment is needed here.
+
+def _tap_reader(tapwav):
+    """Open PREFIX.wav positioned at its PCM payload.
+
+    The header is parsed rather than assumed to be 44 bytes: `wave` reports
+    the real data-chunk start, and a WAV with extra chunks would otherwise
+    shift every offset shown to the user."""
+    w = wave.open(tapwav, "rb")
+    return w, w.getnframes() * w.getnchannels() * w.getsampwidth()
+
+
+def _read_at(w, byte_offset, length, frame_bytes):
+    """Read `length` bytes of PCM starting at `byte_offset` within the payload."""
+    if length <= 0 or byte_offset < 0:
+        return b""
+    start_frame, lead = divmod(byte_offset, frame_bytes)
+    nframes = -(-(lead + length) // frame_bytes)     # ceil
+    w.setpos(min(start_frame, w.getnframes()))
+    return w.readframes(nframes)[lead:lead + length]
+
+
+def cmd_window(refraw, tapwav, offset, frames, ch):
+    """Emit one JSON row per frame: the reference bytes beside the wire bytes.
+
+    A "row" is one stereo frame (ch * 4 bytes in the S32_LE wire container),
+    carrying both streams' hex, both streams' decoded per-channel integers,
+    and the indices of the bytes that differ — everything the page needs to
+    highlight a mismatch in both columns at once."""
+    import json
+    fb = ch * 4
+    reflen = os.path.getsize(refraw)
+    w, taplen = _tap_reader(tapwav)
+    start = max(0, offset - offset % fb)             # snap to a frame boundary
+    length = frames * fb
+    with open(refraw, "rb") as f:
+        f.seek(start)
+        rbuf = f.read(length)
+    tbuf = _read_at(w, start, length, fb)
+    w.close()
+
+    rows = []
+    for i in range(max(-(-len(rbuf) // fb), -(-len(tbuf) // fb))):
+        o = start + i * fb
+        r, t = rbuf[i * fb:(i + 1) * fb], tbuf[i * fb:(i + 1) * fb]
+        unpack = lambda b: [struct.unpack_from("<i", b, c * 4)[0]
+                            for c in range(len(b) // 4)]
+        rows.append({
+            "i": o // fb, "o": o,
+            "ref": " ".join(f"{x:02x}" for x in r),
+            "wire": " ".join(f"{x:02x}" for x in t),
+            "ref_s": unpack(r), "wire_s": unpack(t),
+            "eq": r == t,
+            # byte indices within the frame that differ, so both columns can
+            # highlight exactly the same positions
+            "d": [k for k in range(max(len(r), len(t)))
+                  if r[k:k + 1] != t[k:k + 1]],
+        })
+    print(json.dumps({"ok": True, "offset": start, "frame_bytes": fb,
+                      "ref_len": reflen, "tap_len": taplen, "rows": rows}))
+    return 0
+
+
+def cmd_scan(refraw, tapwav, buckets, ch):
+    """Summarise the WHOLE comparison into `buckets` coloured cells.
+
+    One streaming pass, chunk by chunk: every byte of the overlap is really
+    compared (this is a consistency check, not a sample), while the level is
+    estimated from a bounded slice so a quiet passage can be told apart from
+    a clean one in the map.  Cells beyond the capture are 'uncovered' — the
+    capture ending early is a distinct condition from it differing."""
+    import json
+    fb = ch * 4
+    reflen = os.path.getsize(refraw)
+    w, taplen = _tap_reader(tapwav)
+    buckets = max(1, min(buckets, 4096))
+    size = max(fb, -(-reflen // buckets))
+    cells = []
+    with open(refraw, "rb") as f:
+        for b in range(buckets):
+            start = b * size
+            if start >= reflen:
+                break
+            n = min(size, reflen - start)
+            f.seek(start)
+            r = f.read(n)
+            t = _read_at(w, start, n, fb)
+            if not t:
+                state = "uncovered"
+            elif r == t:
+                state = "equal"
+            elif len(t) < len(r) and r[:len(t)] == t:
+                state = "short"
+            else:
+                state = "diff"
+            probe = r[:4096]
+            peak = max((abs(v) for v in struct.unpack(
+                f"<{len(probe) // 4}i", probe[:len(probe) // 4 * 4])), default=0)
+            cells.append({"o": start, "n": n, "s": state,
+                          "l": round(peak / 2147483648.0, 6)})
+    w.close()
+    print(json.dumps({"ok": True, "buckets": len(cells), "bucket_bytes": size,
+                      "ref_len": reflen, "tap_len": taplen, "cells": cells}))
+    return 0
 
 
 def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputpath):
@@ -427,17 +582,38 @@ def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputpath):
              f"wire raw   : {prefix}.wire.raw  ({len(cap)} bytes, "
              f"sha256 {sha256(cap)})"]
 
+    # Machine-readable twin of the report.  The .txt keeps its exact historical
+    # format (it is the committed cross-OS comparison key), so the page reads
+    # this instead of re-parsing prose.
+    import json
+    meta = {"input": os.path.basename(inputpath), "input_path": inputpath,
+            "input_bytes": len(indata), "input_sha256": sha256(indata),
+            "os": osname, "rate": rate, "ch": ch,
+            "ref_bytes": len(ref), "ref_sha256": sha256(ref),
+            "wire_bytes": len(cap), "wire_sha256": sha256(cap),
+            "prefix": prefix, "first_mismatch": None, "start": None,
+            "refskip": 0, "matched": None, "slips": 0}
+
     def out(verdict, code):
         lines.append(f"verdict    : {verdict}")
         with open(prefix + ".txt", "w") as f:
             f.write("\n".join(lines) + "\n")
+        meta["verdict"] = verdict
+        meta["kind"] = verdict.split(" —")[0].split(" (")[0].strip()
+        meta["exit"] = code
+        with open(prefix + ".json", "w") as f:
+            f.write(json.dumps(meta, indent=2) + "\n")
         print("\n".join(lines))
         return code
 
     if not cap:
         return out("NO CAPTURE — nothing seen on the USB wire", 2)
 
-    po = find_probe_offset(ref)
+    # `unique_in=ref` rejects an anchor that occurs more than once in the
+    # reference.  It costs nothing on the generated asset (whose windows can
+    # never repeat) and is what makes arbitrary music safe to verify.
+    po = find_probe_offset(ref, unique_in=ref)
+    meta["probe_offset"] = po
     pos = cap.find(ref[po:po + 4096])
     if pos < 0:
         return out("ALIGNMENT FAILED — reference not found in the wire stream "
@@ -449,6 +625,12 @@ def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputpath):
         start = 0
         lines.append(f"warning    : capture missed the first {refskip} stream bytes")
     aligned = cap[start:start + len(ref) - refskip]
+    meta["start"], meta["refskip"] = start, refskip
+
+    # The byte view compares PREFIX.ref.raw against PREFIX.wav, so the
+    # reference has to outlive the run's temporary directory.
+    with open(prefix + ".ref.raw", "wb") as f:
+        f.write(ref[refskip:])
 
     wo = wave.open(prefix + ".wav", "wb")
     wo.setnchannels(ch)
@@ -459,6 +641,8 @@ def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputpath):
     lines.append(f"tap wav    : {prefix}.wav  ({len(aligned)} PCM bytes, "
                  f"sha256 {sha256(aligned)})")
     lines.append(f"tap wav sha256 (file) : {sha256(open(prefix + '.wav', 'rb').read())}")
+    meta["tap_bytes"] = len(aligned)
+    meta["tap_sha256"] = sha256(aligned)
 
     refcmp = ref[refskip:]
     if aligned == refcmp:
@@ -469,12 +653,15 @@ def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputpath):
         return out(f"BIT-PERFECT — all {len(refcmp)} reference bytes identical "
                    "on the USB wire", 0)
     if len(aligned) < len(refcmp) and aligned == refcmp[:len(aligned)]:
+        meta["first_mismatch"] = len(aligned)
         return out(f"INCOMPLETE — first {len(aligned)} bytes identical but the "
                    f"capture ends {len(refcmp) - len(aligned)} bytes early "
                    "(tap stopped before playback drained?)", 1)
 
     matched, slips, csi, cci, underrun = walk(refcmp, aligned)
+    meta["matched"], meta["slips"] = matched, slips
     if csi >= 0:
+        meta["first_mismatch"] = refskip + csi
         hx = lambda b, o: " ".join(f"{x:02x}" for x in b[o:o + 8])
         lines.append(f"first corruption at reference offset {refskip + csi}:")
         lines.append(f"  ref : {hx(refcmp, csi)}")
@@ -501,6 +688,12 @@ def main():
         return cmd_decode_usbdump(a[0])
     if cmd == "finalize":
         return cmd_finalize(a[0], a[1], int(a[2]), int(a[3]), a[4], a[5], a[6])
+    if cmd == "window":
+        return cmd_window(a[0], a[1], int(a[2]), int(a[3]),
+                          int(a[4]) if len(a) > 4 else 2)
+    if cmd == "scan":
+        return cmd_scan(a[0], a[1], int(a[2]),
+                        int(a[3]) if len(a) > 3 else 2)
     sys.exit(f"unknown subcommand: {cmd}\n\n{__doc__}")
 
 

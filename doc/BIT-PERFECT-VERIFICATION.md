@@ -853,6 +853,126 @@ past the end of the reference, but the comparison window is still exactly
 follows it. What the pad removes is only the ability of a late capture cut
 to masquerade as a playback fault.
 
+---
+
+## The `/bitperfect` page: running this from the browser
+
+Everything above is a command-line proof of the segment *host → USB wire*. The
+panel's **Bit-perfect check** page (`http://<box>:9090/bitperfect`) runs the
+same engine, adds the playback paths the box actually uses, and — the part the
+command line cannot do — **shows the compared bytes**.
+
+### The five paths, and why more than one is needed
+
+`aplay` proves the host. It does not prove what happens when music arrives the
+way music actually arrives: through **upmpdcli** or **qobuzconnect2mpd**, both
+of which drive **MPD**. Each added layer is a place bit-perfection can be lost —
+MPD resampling, a decoder promoting samples differently, or a renderer setting
+MPD's volume or replaygain behind your back.
+
+| Source | What plays | What it proves |
+|---|---|---|
+| `aplay` | the existing per-OS tap script, delegated to unchanged | host → USB, no renderer. The control experiment. |
+| `mpd` | MPD plays a local file on the direct output | MPD → DAC: the segment both renderers share |
+| `mpd-http` | MPD fetches an HTTP URL the panel serves | MPD's curl input plugin + streaming decoder — structurally the Qobuz stream path, with a *known* file, so the verdict is real byte equality |
+| `upnp` | upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** → MPD → DAC path |
+| `live` | nothing; the wire is tapped during real Qobuz playback | the whole **qobuzconnect2mpd** path, against the renderer's own buffer |
+
+Running `mpd` and `upnp` on the same material is what localises a fault: if
+`mpd` is bit-perfect and `upnp` is not, the renderer is the cause. Both modes
+snapshot MPD's volume and replaygain before and after and report any change,
+because a renderer that quietly enables replaygain breaks bit-perfection
+without altering a single byte of the file it was handed.
+
+### The live Qobuz reference: the renderer's own buffer
+
+`live` needs a reference for a stream you do not have a copy of. It does not
+ask for one: **the renderer already wrote the exact bytes it fed MPD to local
+storage**, and that file is the reference — so this is genuine byte equality
+against the real service, not a comparison against a "same" track that might be
+a different master.
+
+Resolution is at run time, never a hard-coded path:
+
+1. `mpc current` — if MPD reports a local file, that is the reference;
+2. otherwise the open file descriptors of the MPD/renderer processes
+   (`/proc/PID/fd` on Linux, `fstat(1)` on FreeBSD) — renderer-agnostic;
+3. otherwise the known buffer locations, filtered to **files that changed
+   during the tap window** so a stale buffer from an earlier track can never be
+   compared against this capture. On this box those are
+   `/tmp/qobuzconnect2mpd-*` and `/tmp/qconnect2mpd-segmented/` (string
+   literals in the binary); a segmented buffer is concatenated in **numeric**
+   order — lexical order would put `part10` before `part2` and manufacture a
+   fault that never happened.
+
+If the buffer turns out to be a **lossy** container, the run is reported as
+*decode-path transparent*, not bit-perfect: the DAC legitimately receives the
+decoder's output rather than the file's bytes.
+
+### Checking any track, not just the generated asset
+
+The page also loads a **WAV or FLAC** (anything `ffmpeg` decodes). The file is
+decoded once to build the reference; the **original** is what gets played,
+because the decoder is part of what is under test. Rate and depth come from the
+file, so a 96/24 FLAC tests 96/24 with nothing to configure, and the existing
+`prep` promotion widens it to the wire container exactly as before.
+
+One caveat is specific to real music. Alignment anchors on a 4 KiB window of the
+reference, and the generated counter can never repeat one — real music can
+(digital silence, a looped intro, a repeated bar). Aligning on the wrong
+occurrence would be a *silent* error, so `find_probe_offset` now takes
+`unique_in=` and skips any window that occurs more than once, and the loader
+reports the anchor it chose before a run rather than after it.
+
+### Seeing the bytes
+
+A verdict says *whether*. The byte view says *where* and *what*, at two zoom
+levels driven by the new `scan` and `window` subcommands:
+
+- **The colour map** paints the whole stream, one cell per slice: green where
+  the wire carried exactly the reference bytes, red where it did not, grey where
+  the capture did not reach. Every byte of the overlap is really compared — only
+  the level row underneath is estimated. It makes the *shape* of a fault
+  legible: an isolated red cell is a bit flip, a red tail is an underrun, dense
+  speckle is a converting feeder in the path.
+- **The side-by-side hex view** shows the reference and the tapped wire in one
+  row per frame — byte offset, hex, and the decoded per-channel integers for
+  both — with the differing byte positions highlighted in *both* columns at
+  once. One slider drives the offset across the whole file with the two views
+  locked, so dragging it is a continuous consistency check; `first mismatch`
+  and `random spot check` jump straight to the interesting places.
+
+Both read only the artifacts `finalize` already wrote, so they can never
+disagree with the verdict — a property `tests/test_bitperfect_window.py` pins
+down on captures whose faults are known to the byte.
+
+### Preconditions the page enforces
+
+- **brutefir must be stopped.** The DRC path convolves the FIR filter, so its
+  output is *supposed* to differ; a verdict there would look like a failure and
+  mean nothing. The page blocks the run and the runner refuses it, overridable
+  only with an explicit `--allow-drc`.
+- **The tap needs root.** `sudo -n` is probed up front and reported, rather than
+  discovered halfway through a capture.
+- **The DAC is single-opener**, so the page names whoever currently holds it.
+
+### The same thing from a terminal
+
+```sh
+scripts/bitperfect_runner.py --source mpd   --input track.flac --out bp-results/run
+scripts/bitperfect_runner.py --source upnp  --input tests/bitperfect-test-44100-s32-stereo-30s.wav --out bp-results/upnp
+scripts/bitperfect_runner.py --source live  --duration 60 --out bp-results/qobuz
+scripts/bitperfect_material.py load album.flac --out-dir /tmp/mat
+scripts/bitperfect-lib.py window PREFIX.ref.raw PREFIX.wav 80000 8 2
+scripts/bitperfect-lib.py scan   PREFIX.ref.raw PREFIX.wav 200 2
+```
+
+`--source aplay` is delegated to `bitperfect-tap-{linux,freebsd}.sh`
+unchanged, so the control experiment stays byte-identical to every result
+recorded in this document.
+
+---
+
 ## Related
 
 - `freebsd-uaudio-patch/` — the play-only patch that disables the DAC's capture
@@ -861,3 +981,7 @@ to masquerade as a playback fault.
 - `OKTO-DAC8-FreeBSD-44k1-flicker.md` — the shared-clock bug the patch works
   around.
 - `scripts/verify-bitperfect.sh` — the tool documented here.
+- `scripts/bitperfect_runner.py` — the five playback paths behind `/bitperfect`.
+- `scripts/bitperfect_material.py` — the WAV/FLAC loader and the live-buffer
+  resolver.
+- `omdrc-ctrl/src/bitperfect.py` — the panel's side of the same.

@@ -22,6 +22,7 @@ from flask import Flask, Response, render_template, jsonify, request, send_from_
 if os.path.dirname(__file__) not in sys.path:
     sys.path.insert(0, os.path.dirname(__file__))
 from configuration import ConfigurationManager, Settings as ConfigurationSettings
+from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -483,6 +484,9 @@ CONFIGURATION = ConfigurationSettings()
 _CONFIGURATION_MANAGER: ConfigurationManager | None = None
 _CONFIGURATION_CSRF = os.urandom(24).hex()
 
+BITPERFECT = BitPerfectSettings()
+_BITPERFECT_MANAGER: BitPerfectManager | None = None
+
 
 def _default_log_sources() -> list[dict]:
     """Logs worth showing on a stock install.  upmpdcli writes its own log to
@@ -586,6 +590,7 @@ def load_config(path: str) -> None:
     global CDIN_INTERVAL, CDIN_MAX_EVENTS, CDIN_CONTROL
     global CHAIN_ENABLED, CHAIN_INTERVAL, CHAIN_PRIVILEGED, CHAIN_DEVICES
     global CONFIGURATION, _CONFIGURATION_MANAGER
+    global BITPERFECT, _BITPERFECT_MANAGER
     cfg = configparser.ConfigParser()
     if not cfg.read(path):
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -689,6 +694,23 @@ def load_config(path: str) -> None:
         )
         _CONFIGURATION_MANAGER = None
 
+    if cfg.has_section("bitperfect"):
+        sec = cfg["bitperfect"]
+        music_value = sec.get("music_root", fallback="").strip()
+        BITPERFECT = BitPerfectSettings(
+            enabled=sec.getboolean("enabled", fallback=True),
+            tools_root=Path(sec.get("tools_root", fallback=str(BITPERFECT.tools_root))).expanduser(),
+            generator=Path(sec.get("generator", fallback=str(BITPERFECT.generator))).expanduser(),
+            results_root=Path(sec.get("results_root", fallback=str(BITPERFECT.results_root))).expanduser(),
+            assets_root=Path(sec.get("assets_root", fallback=str(BITPERFECT.assets_root))).expanduser(),
+            state_root=Path(sec.get("state_root", fallback=str(BITPERFECT.state_root))).expanduser(),
+            site_root=Path(sec.get("site_root", fallback=str(CONFIGURATION.site_root))).expanduser(),
+            music_root=(Path(music_value).expanduser() if music_value else None),
+            max_upload_bytes=sec.getint("max_upload_bytes", fallback=BITPERFECT.max_upload_bytes),
+            run_timeout=sec.getint("run_timeout", fallback=BITPERFECT.run_timeout),
+        )
+        _BITPERFECT_MANAGER = None
+
     if cfg.has_section("qobuz_oauth"):
         QOBUZ_OAUTH_SCRIPT = cfg.get("qobuz_oauth", "script", fallback=QOBUZ_OAUTH_SCRIPT)
         QOBUZ_UPMPDCLI_CONF = cfg.get("qobuz_oauth", "upmpdcli_config", fallback=QOBUZ_UPMPDCLI_CONF)
@@ -707,7 +729,8 @@ def load_config(path: str) -> None:
                           fallback=QCONNECT_OAUTH_URL_TIMEOUT))
 
     _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth",
-                 "qconnect_oauth", "cdin", "chain", "configuration"}
+                 "qconnect_oauth", "cdin", "chain", "configuration",
+                 "bitperfect"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
@@ -5608,6 +5631,195 @@ def configuration_job_events(identifier):
         return jsonify({"ok": False, "error": "unknown or expired job"}), 404
     return Response(_configuration().events(job), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── bit-perfect verification ─────────────────────────────────────────────────
+#
+# The page runs the tap suite from scripts/ and shows, byte by byte, what the
+# DAC actually received.  Mutations share the /configuration CSRF token and the
+# same Origin rule; the only unauthenticated route is the asset served to MPD's
+# curl input plugin and to upmpdcli, which fetch by URL and carry no token.
+
+
+def _bitperfect() -> BitPerfectManager:
+    global _BITPERFECT_MANAGER
+    if _BITPERFECT_MANAGER is None:
+        _BITPERFECT_MANAGER = BitPerfectManager(BITPERFECT, _env)
+    return _BITPERFECT_MANAGER
+
+
+def _bitperfect_guard():
+    """None when the request may proceed, else a ready (response, status)."""
+    if not BITPERFECT.enabled:
+        return jsonify({"ok": False, "error": "bit-perfect page disabled"}), 404
+    return None
+
+
+@app.route("/bitperfect")
+def bitperfect_page():
+    if not BITPERFECT.enabled:
+        return "Bit-perfect page disabled", 404
+    return render_template("bitperfect.html", csrf=_CONFIGURATION_CSRF,
+                           os_name=platform.system())
+
+
+@app.route("/bitperfect/api/state")
+def bitperfect_state():
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
+    manager = _bitperfect()
+    try:
+        readiness = manager.readiness()
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)}), 500
+    return jsonify({"ok": True, "readiness": readiness,
+                    "assets": manager.assets(), "material": manager.material(),
+                    "runs": manager.runs()})
+
+
+@app.route("/bitperfect/api/assets/generate", methods=["POST"])
+def bitperfect_generate():
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
+    if not _configuration_mutation_allowed():
+        return jsonify({"ok": False, "error": "invalid request token"}), 403
+    body = request.get_json(silent=True) or {}
+    manager = _bitperfect()
+    try:
+        rate = int(body.get("rate", 44100))
+        bits = int(body.get("bits", 32))
+        seconds = int(body.get("seconds") or manager.default_seconds(rate))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid rate/bits/seconds"}), 400
+    job = manager.start("bitperfect-asset", lambda current:
+                        manager.generate_asset(current, rate, bits, seconds))
+    return jsonify({"ok": True, "job": job.id}), 202
+
+
+@app.route("/bitperfect/api/material", methods=["POST"])
+def bitperfect_material():
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
+    if not _configuration_mutation_allowed():
+        return jsonify({"ok": False, "error": "invalid request token"}), 403
+    manager = _bitperfect()
+    job = manager._new_job("bitperfect-material")
+    upload = request.files.get("file")
+    try:
+        if upload is not None and upload.filename:
+            name = os.path.basename(upload.filename)
+            if not name or "/" in name:
+                raise ValueError("invalid file name")
+            target = manager.bp.assets_root / name
+            upload.save(target)
+            source = target
+        else:
+            given = (request.form.get("path") or "").strip()
+            if not given:
+                raise ValueError("choose a file to upload, or give a path")
+            source = Path(given).expanduser().resolve()
+            # A path is only accepted inside the configured music library:
+            # this route must not become a way to read arbitrary files back
+            # out through the byte view.
+            root = manager.bp.music_root
+            if root is None:
+                raise ValueError("no music_root is configured; upload instead")
+            root = root.expanduser().resolve()
+            if root not in source.parents:
+                raise ValueError(f"path must be inside {root}")
+            if not source.is_file():
+                raise ValueError(f"not a file: {source}")
+    except Exception as error:
+        job.set_phase("failed", error=str(error), returncode=1)
+        return jsonify({"ok": False, "error": str(error), "job": job.id}), 400
+    manager.launch(job, lambda current: manager.load_material(current, source))
+    return jsonify({"ok": True, "job": job.id}), 202
+
+
+@app.route("/bitperfect/api/run", methods=["POST"])
+def bitperfect_run():
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
+    if not _configuration_mutation_allowed():
+        return jsonify({"ok": False, "error": "invalid request token"}), 403
+    body = request.get_json(silent=True) or {}
+    source = str(body.get("source", "aplay"))
+    material = str(body.get("material", ""))
+    allow_drc = bool(body.get("allow_drc"))
+    try:
+        duration = float(body.get("duration", 30))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid duration"}), 400
+    manager = _bitperfect()
+    job = manager.start("bitperfect-run", lambda current: manager.run_test(
+        current, source, material, duration, allow_drc))
+    return jsonify({"ok": True, "job": job.id}), 202
+
+
+@app.route("/bitperfect/api/jobs/<identifier>")
+def bitperfect_job(identifier):
+    job = _bitperfect().get_job(identifier)
+    if job is None:
+        return jsonify({"ok": False, "error": "unknown or expired job"}), 404
+    return jsonify({"ok": True, "job": job.snapshot()})
+
+
+@app.route("/bitperfect/api/jobs/<identifier>/events")
+def bitperfect_job_events(identifier):
+    manager = _bitperfect()
+    job = manager.get_job(identifier)
+    if job is None:
+        return jsonify({"ok": False, "error": "unknown or expired job"}), 404
+    return Response(manager.events(job), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/bitperfect/api/runs/<identifier>/report")
+def bitperfect_report(identifier):
+    try:
+        return jsonify({"ok": True, "report": _bitperfect().report(identifier)})
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)}), 404
+
+
+@app.route("/bitperfect/api/runs/<identifier>/window")
+def bitperfect_window(identifier):
+    try:
+        offset = int(request.args.get("offset", 0))
+        frames = int(request.args.get("frames", 64))
+        return jsonify(_bitperfect().window(identifier, offset, frames))
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@app.route("/bitperfect/api/runs/<identifier>/scan")
+def bitperfect_scan(identifier):
+    try:
+        buckets = int(request.args.get("buckets", 512))
+        return jsonify(_bitperfect().scan(identifier, buckets))
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@app.route("/bitperfect/api/asset/<name>")
+def bitperfect_asset(name):
+    """Serve one cached asset by basename.
+
+    Deliberately token-free: MPD's curl input plugin and upmpdcli fetch this
+    URL themselves and cannot present a CSRF header.  asset_path() resolves
+    basenames only, inside the asset cache, so nothing else is reachable."""
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
+    try:
+        path = _bitperfect().asset_path(name)
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)}), 404
+    return send_from_directory(str(path.parent), path.name, conditional=True)
 
 
 def _resolve_config_path() -> str:
