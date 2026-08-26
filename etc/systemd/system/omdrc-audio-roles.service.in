@@ -1,0 +1,7 @@
+[Unit]
+Description=Resolve the configured USB DAC to its current ALSA card
+Before=drc-usb-audio.service
+
+[Service]
+Type=oneshot
+ExecStart=@PREFIX@/libexec/omdrc/omdrc-config-helper reconcile

@@ -81,17 +81,29 @@ install:
 #   - no build-host path is baked in — @OMDRC_REPO_DIR@ is replaced by the
 #     installed bin/omdrc wrappers rather than a checkout location.
 install-ctrl:
-	mkdir -p $(CTRLDIR)/templates $(CTRLDIR)/static $(ETCDIR) $(BINDIR) $(DOCSDIR)
-	$(INSTALL_DATA) omdrc-ctrl/src/app.py $(CTRLDIR)
+	mkdir -p $(CTRLDIR)/templates $(CTRLDIR)/static $(ETCDIR) $(BINDIR) $(DOCSDIR) \
+	         $(LIBEXECDIR)/filter-tools
+	$(INSTALL_DATA) omdrc-ctrl/src/app.py omdrc-ctrl/src/configuration.py $(CTRLDIR)
 	$(INSTALL_DATA) omdrc-ctrl/src/templates/index.html \
 	                omdrc-ctrl/src/templates/details.html \
 	                omdrc-ctrl/src/templates/filter_response.html \
+	                omdrc-ctrl/src/templates/configuration.html \
 	                $(CTRLDIR)/templates
+	$(INSTALL_DATA) scripts/new_filter_design.py scripts/deploy_filter.py \
+	                scripts/remove_filter_design.py scripts/console_ui.py \
+	                scripts/filter_workflow_next.py $(LIBEXECDIR)/filter-tools
+	$(INSTALL_SCRIPT) scripts/REW2raw.sh $(LIBEXECDIR)/filter-tools
+	$(INSTALL_SCRIPT) scripts/omdrc-config-helper.py $(LIBEXECDIR)/omdrc-config-helper
 	$(INSTALL_DATA) omdrc-ctrl/src/static/chart.umd.min.js $(CTRLDIR)/static
 	$(INSTALL_DATA) omdrc-ctrl/SPECTRUM_ANALYZER.md $(DOCSDIR)
 	$(INSTALL_DATA) omdrc-ctrl/README.md $(DOCSDIR)/OMDRC-CTRL.md
 	sed -e 's,@OMDRC_REPO_DIR@/drc-status.sh,$(PREFIX)/bin/omdrc-status,g' \
 	    -e 's,@OMDRC_REPO_DIR@/drc.sh,$(PREFIX)/bin/omdrc,g' \
+	    -e 's,@OMDRC_CONFIG_SITE_ROOT@,$(PREFIX)/etc/open-media-drc,g' \
+	    -e 's,@OMDRC_FILTER_TOOLS_ROOT@,$(PREFIX)/libexec/omdrc/filter-tools,g' \
+	    -e 's,@OMDRC_CONFIG_HELPER@,$(PREFIX)/libexec/omdrc/omdrc-config-helper,g' \
+	    -e 's,@OMDRC_CONFIG_STATE_ROOT@,/var/db/omdrc/configuration,g' \
+	    -e 's,@AUDIO_HOME@,/var/db/omdrc,g' \
 	    omdrc-ctrl/src/commands.conf.in > $(ETCDIR)/commands.conf.sample
 	printf '#!/bin/sh\nexec %s %s/share/omdrc-ctrl/app.py --config %s/etc/open-media-drc/commands.conf "$$@"\n' \
 	    "$(PYTHON_CMD)" "$(PREFIX)" "$(PREFIX)" > $(BINDIR)/omdrcctrl

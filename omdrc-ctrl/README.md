@@ -1,5 +1,32 @@
 # omdrcctrl
 
+## Configuration page
+
+`/configuration` installs and removes audited room-correction designs and pins
+physical audio cards by USB identity. The browser uploads one REW `.txts`
+directory and its matching `.mdat`; the existing `new_filter_design.py` audit
+remains authoritative and its combined output is streamed into the page. Live
+installs archive the complete `.mdat` and required TXT/WAV inputs. Installation
+never activates a design, and a running or saved design must be switched away
+before removal.
+
+The web process runs as the audio user. Root-owned live sites and hardware
+configuration need the fixed-purpose helper installed with the panel:
+
+```sudoers
+<AUDIO_USER> ALL=(root) NOPASSWD: /usr/local/libexec/omdrc/omdrc-config-helper *
+```
+
+The helper validates USB identities, selectors, manifests, hashes, and
+destination roots. On FreeBSD Apply updates the two `omdrc_audio_*` role keys,
+reconciles the service, and verifies `/dev/dspX`. On Linux it resolves the
+saved identity to the current ALSA card before every hotplug restore. Linux
+capture selection remains disabled until the CD bridge has an ALSA backend.
+
+There is no new login layer: mutations use same-origin and CSRF checks but keep
+the control panel's trusted-LAN model. Never expose port 9090 to an untrusted
+network.
+
 A lightweight web-based remote control panel for a Linux or FreeBSD desktop.
 Commands are defined in a plain-text INI config file; the server renders a
 mobile-friendly interface that can be opened in any browser on the local

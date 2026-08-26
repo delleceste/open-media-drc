@@ -26,6 +26,12 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/drc-usb-audio.service"
             DESTINATION lib/systemd/system)
 
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/etc/systemd/system/omdrc-audio-roles.service.in" _roles_svc)
+    string(REPLACE "@PREFIX@" "${CMAKE_INSTALL_PREFIX}" _roles_svc "${_roles_svc}")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc-audio-roles.service" "${_roles_svc}")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omdrc-audio-roles.service"
+            DESTINATION lib/systemd/system)
+
     # udev rule — the one /etc seam (no @VARS@ to render).
     install(FILES 99-usb-audio-drc.rules DESTINATION lib/udev/rules.d)
 

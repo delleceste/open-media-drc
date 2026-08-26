@@ -1,5 +1,12 @@
 # Filters and DRC Operation
 
+The control panel's `/configuration` page is the live-install front end for
+this workflow. It accepts the REW `.txts` directory plus matching `.mdat`, runs
+the same filename, response, rate, headroom, and bundle checks documented
+below, archives the uploaded sources, and streams the tool output. A live web
+install makes the design available but leaves activation to the existing DRC
+design selector.
+
 This document describes how filter files are organized and how `drc.sh` selects
 geometry, sample rate, MPD output mode, and filter variants.
 

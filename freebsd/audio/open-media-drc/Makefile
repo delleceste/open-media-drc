@@ -48,7 +48,7 @@ CTRL_RUN_DEPENDS=	${PYTHON_PKGNAMEPREFIX}flask>0:www/py-flask@${PY_FLAVOR} \
 # (python3 app.py), so its shebang is never used; normalise it anyway rather
 # than ship a /usr/bin/env line.
 CTRL_VARS=		USE_RC_SUBR+=omdrcctrl \
-			SHEBANG_FILES+=omdrc-ctrl/src/app.py
+			SHEBANG_FILES+=omdrc-ctrl/src/app.py scripts/omdrc-config-helper.py
 
 # The UPnP/OpenHome front-end (upmpdcli) and the video webremote remain
 # deferred until the core port has been poudriere-tested.

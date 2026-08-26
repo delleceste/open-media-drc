@@ -234,7 +234,7 @@ audio_can_rec()  { [ $(( $1 & 4 )) -ne 0 ]; }
 # often perfectly playback-capable and would otherwise be a candidate.
 audio_scan()
 {
-	DAC_UNIT="" DAC_DESC="" CAPTURE_UNIT="" CAPTURE_DESC=""
+	DAC_UNIT="" DAC_DESC="" DAC_ID="" CAPTURE_UNIT="" CAPTURE_DESC="" CAPTURE_ID=""
 	_sl_cards=$(audio_cards)
 
 	if [ -n "${omdrc_audio_capture}" ]; then
@@ -246,6 +246,8 @@ audio_scan()
 			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}"; then
 				CAPTURE_UNIT="${_sl_u}"
 				CAPTURE_DESC="${_sl_d}"
+				CAPTURE_ID="${_sl_vid}:${_sl_pid}"
+				[ "${_sl_ser}" = "-" ] || CAPTURE_ID="${CAPTURE_ID}:${_sl_ser}"
 			fi
 		done <<-EOF
 		${_sl_cards}
@@ -265,6 +267,8 @@ audio_scan()
 			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}"; then
 				DAC_UNIT="${_sl_u}"
 				DAC_DESC="${_sl_d}"
+				DAC_ID="${_sl_vid}:${_sl_pid}"
+				[ "${_sl_ser}" = "-" ] || DAC_ID="${DAC_ID}:${_sl_ser}"
 			fi
 		done <<-EOF
 		${_sl_cards}
@@ -315,6 +319,8 @@ audio_scan()
 			_sl_best="${_sl_tier}"
 			DAC_UNIT="${_sl_u}"
 			DAC_DESC="${_sl_d}"
+			DAC_ID="${_sl_vid}:${_sl_pid}"
+			[ "${_sl_ser}" = "-" ] || DAC_ID="${DAC_ID}:${_sl_ser}"
 		fi
 	done <<-EOF
 	${_sl_cards}
@@ -493,9 +499,11 @@ audio_publish()
 	{
 		printf 'dac_unit=%s\n' "${DAC_UNIT}"
 		printf 'dac_desc=%s\n' "${DAC_DESC}"
+		printf 'dac_id=%s\n' "${DAC_ID}"
 		printf 'dac_guessed=%s\n' "${DAC_GUESSED:-0}"
 		printf 'capture_unit=%s\n' "${CAPTURE_UNIT}"
 		printf 'capture_desc=%s\n' "${CAPTURE_DESC}"
+		printf 'capture_id=%s\n' "${CAPTURE_ID}"
 		printf 'capture_wanted=%s\n' "${omdrc_audio_capture}"
 	} > "${omdrc_audio_statefile}.new" 2>/dev/null &&
 	    mv -f "${omdrc_audio_statefile}.new" "${omdrc_audio_statefile}" \
@@ -615,7 +623,10 @@ omdrc_audio_roles_status()
 		audio_can_rec "${_sl_m}" && _sl_caps="${_sl_caps}${_sl_caps:+/}rec"
 		printf '/dev/dsp%-3s %-8s %s (%s, %s' \
 		    "${_sl_u}" "${_sl_role}" "${_sl_d}" "${_sl_p}" "${_sl_caps}"
-		[ "${_sl_vid}" = "-" ] || printf ', %s:%s' "${_sl_vid}" "${_sl_pid}"
+		if [ "${_sl_vid}" != "-" ]; then
+			printf ', %s:%s' "${_sl_vid}" "${_sl_pid}"
+			[ "${_sl_ser}" = "-" ] || printf ':%s' "${_sl_ser}"
+		fi
 		printf ')\n'
 		case "${_sl_role}" in
 		dac)

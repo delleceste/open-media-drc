@@ -14,9 +14,14 @@ import configparser
 import threading
 import time
 import tempfile
+from pathlib import Path
+import sys
 from urllib.parse import quote, unquote, urlsplit
 import markdown as md_lib
 from flask import Flask, Response, render_template, jsonify, request, send_from_directory
+if os.path.dirname(__file__) not in sys.path:
+    sys.path.insert(0, os.path.dirname(__file__))
+from configuration import ConfigurationManager, Settings as ConfigurationSettings
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -450,6 +455,9 @@ GROUP_LABELS = {
 
 COMMANDS: list[dict] = []
 CMD_MAP:  dict[str, dict] = {}
+CONFIGURATION = ConfigurationSettings()
+_CONFIGURATION_MANAGER: ConfigurationManager | None = None
+_CONFIGURATION_CSRF = os.urandom(24).hex()
 
 
 def _default_log_sources() -> list[dict]:
@@ -553,6 +561,7 @@ def load_config(path: str) -> None:
     global CDIN_ENABLED, CDIN_LOG_FILE, CDIN_PROCESS, CDIN_SERVICE
     global CDIN_INTERVAL, CDIN_MAX_EVENTS, CDIN_CONTROL
     global CHAIN_ENABLED, CHAIN_INTERVAL, CHAIN_PRIVILEGED, CHAIN_DEVICES
+    global CONFIGURATION, _CONFIGURATION_MANAGER
     cfg = configparser.ConfigParser()
     if not cfg.read(path):
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -639,6 +648,20 @@ def load_config(path: str) -> None:
         CHAIN_DEVICES = {role: cfg.get("chain", role)
                          for role in _CHAIN_ROLES if cfg.has_option("chain", role)}
 
+    if cfg.has_section("configuration"):
+        sec = cfg["configuration"]
+        CONFIGURATION = ConfigurationSettings(
+            enabled=sec.getboolean("enabled", fallback=True),
+            site_root=Path(sec.get("site_root", fallback=str(CONFIGURATION.site_root))).expanduser(),
+            state_root=Path(sec.get("state_root", fallback=str(CONFIGURATION.state_root))).expanduser(),
+            tools_root=Path(sec.get("tools_root", fallback=str(CONFIGURATION.tools_root))).expanduser(),
+            helper=sec.get("helper", fallback=CONFIGURATION.helper).strip(),
+            max_file_bytes=sec.getint("max_file_bytes", fallback=CONFIGURATION.max_file_bytes),
+            max_upload_bytes=sec.getint("max_upload_bytes", fallback=CONFIGURATION.max_upload_bytes),
+            apply_timeout=sec.getint("apply_timeout", fallback=CONFIGURATION.apply_timeout),
+        )
+        _CONFIGURATION_MANAGER = None
+
     if cfg.has_section("qobuz_oauth"):
         QOBUZ_OAUTH_SCRIPT = cfg.get("qobuz_oauth", "script", fallback=QOBUZ_OAUTH_SCRIPT)
         QOBUZ_UPMPDCLI_CONF = cfg.get("qobuz_oauth", "upmpdcli_config", fallback=QOBUZ_UPMPDCLI_CONF)
@@ -657,7 +680,7 @@ def load_config(path: str) -> None:
                           fallback=QCONNECT_OAUTH_URL_TIMEOUT))
 
     _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth",
-                 "qconnect_oauth", "cdin", "chain"}
+                 "qconnect_oauth", "cdin", "chain", "configuration"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
@@ -5437,6 +5460,120 @@ def status():
         elif "unit" in c:
             units[c["id"]] = "active" if _unit_active(c["unit"]) else "inactive"
     return jsonify({"ok": True, "units": units})
+
+
+# ── configuration page: filter bundles and physical audio roles ─────────────
+
+def _configuration_selection() -> dict:
+    """Running selection, or the saved selection when DRC is currently off."""
+    try:
+        active = _active_design_identity()
+        if active.get("running"):
+            return active
+        script = _drc_script()
+        session = _drc_saved_session(script) if script else {}
+        return {"running": False, "geometry": session.get("geometry", ""),
+                "design": session.get("design", "default"),
+                "power": session.get("power", "off")}
+    except Exception:
+        return {}
+
+
+def _configuration() -> ConfigurationManager:
+    global _CONFIGURATION_MANAGER
+    if _CONFIGURATION_MANAGER is None:
+        _CONFIGURATION_MANAGER = ConfigurationManager(
+            CONFIGURATION, _env, _configuration_selection)
+    return _CONFIGURATION_MANAGER
+
+
+def _configuration_mutation_allowed() -> bool:
+    token = request.headers.get("X-OMDRC-CSRF", "")
+    if token != _CONFIGURATION_CSRF:
+        return False
+    origin = request.headers.get("Origin")
+    return not origin or origin.rstrip("/") == request.host_url.rstrip("/")
+
+
+@app.route("/configuration")
+def configuration_page():
+    if not CONFIGURATION.enabled:
+        return "Configuration page disabled", 404
+    return render_template(
+        "configuration.html", csrf=_CONFIGURATION_CSRF,
+        os_name=platform.system(), max_upload=CONFIGURATION.max_upload_bytes)
+
+
+@app.route("/configuration/api/filters")
+def configuration_filters():
+    return jsonify({"ok": True, "designs": _configuration().designs()})
+
+
+@app.route("/configuration/api/filters/install", methods=["POST"])
+def configuration_filter_install():
+    if not _configuration_mutation_allowed():
+        return jsonify({"ok": False, "error": "invalid configuration request token"}), 403
+    manager = _configuration()
+    job = manager._new_job("filter-install")
+    try:
+        directory = manager.save_uploads(
+            job, request.files.getlist("measurements"), request.files.get("mdat"))
+        geometry = request.form.get("geometry", "").strip()
+        design = request.form.get("design", "").strip()
+    except Exception as error:
+        job.set_phase("failed", error=str(error), returncode=1)
+        return jsonify({"ok": False, "error": str(error), "job": job.id}), 400
+    manager.launch(job, lambda current: manager.install_filter(
+        current, directory, geometry, design))
+    return jsonify({"ok": True, "job": job.id}), 202
+
+
+@app.route("/configuration/api/filters/<geometry>/<design>", methods=["DELETE"])
+def configuration_filter_remove(geometry, design):
+    if not _configuration_mutation_allowed():
+        return jsonify({"ok": False, "error": "invalid configuration request token"}), 403
+    manager = _configuration()
+    job = manager.start("filter-remove", lambda current:
+                        manager.remove_filter(current, geometry, design))
+    return jsonify({"ok": True, "job": job.id}), 202
+
+
+@app.route("/configuration/api/audio")
+def configuration_audio():
+    manager = _configuration()
+    cards = manager.cards()
+    roles = _audio_roles()
+    return jsonify({"ok": True, "os": platform.system(), "cards": cards,
+                    "roles": roles, "linux_capture_operational": False})
+
+
+@app.route("/configuration/api/audio/apply", methods=["POST"])
+def configuration_audio_apply():
+    if not _configuration_mutation_allowed():
+        return jsonify({"ok": False, "error": "invalid configuration request token"}), 403
+    body = request.get_json(silent=True) or {}
+    dac, capture = str(body.get("dac", "")), str(body.get("capture", ""))
+    manager = _configuration()
+    job = manager.start("audio-apply", lambda current:
+                        manager.apply_audio(current, dac, capture))
+    return jsonify({"ok": True, "job": job.id}), 202
+
+
+@app.route("/configuration/api/jobs/<identifier>")
+def configuration_job(identifier):
+    job = _configuration().get_job(identifier)
+    if job is None:
+        return jsonify({"ok": False, "error": "unknown or expired job"}), 404
+    return jsonify({"ok": True, "job": job.snapshot()})
+
+
+@app.route("/configuration/api/jobs/<identifier>/events")
+def configuration_job_events(identifier):
+    job = _configuration().get_job(identifier)
+    if job is None:
+        return jsonify({"ok": False, "error": "unknown or expired job"}), 404
+    return Response(_configuration().events(job), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 def _resolve_config_path() -> str:

@@ -105,8 +105,21 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/commands.conf.in" _cc)
 if(_OMDRC_SUPERPROJECT OR _OMDRC_USE_INSTALLED)
     string(REPLACE "@OMDRC_REPO_DIR@/drc-status.sh" "${CMAKE_INSTALL_PREFIX}/bin/omdrc-status" _cc "${_cc}")
     string(REPLACE "@OMDRC_REPO_DIR@/drc.sh"        "${CMAKE_INSTALL_PREFIX}/bin/omdrc"        _cc "${_cc}")
+    set(_OMDRC_CONFIG_SITE_ROOT "${CMAKE_INSTALL_PREFIX}/etc/open-media-drc")
+    set(_OMDRC_FILTER_TOOLS_ROOT "${CMAKE_INSTALL_PREFIX}/share/omdrc/filter-tools")
+    set(_OMDRC_CONFIG_HELPER "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/omdrc-config-helper")
+    set(_OMDRC_CONFIG_STATE_ROOT "${OMDRCCTRL_AUDIO_HOME}/.local/state/omdrc/configuration")
+else()
+    set(_OMDRC_CONFIG_SITE_ROOT "${OMDRC_REPO_DIR}")
+    set(_OMDRC_FILTER_TOOLS_ROOT "${OMDRC_REPO_DIR}/scripts")
+    set(_OMDRC_CONFIG_HELPER "${OMDRC_REPO_DIR}/scripts/omdrc-config-helper.py")
+    set(_OMDRC_CONFIG_STATE_ROOT "${OMDRC_REPO_DIR}/.configuration-jobs")
 endif()
 string(REPLACE "@OMDRC_REPO_DIR@" "${OMDRC_REPO_DIR}" _cc "${_cc}")
+string(REPLACE "@OMDRC_CONFIG_SITE_ROOT@" "${_OMDRC_CONFIG_SITE_ROOT}" _cc "${_cc}")
+string(REPLACE "@OMDRC_FILTER_TOOLS_ROOT@" "${_OMDRC_FILTER_TOOLS_ROOT}" _cc "${_cc}")
+string(REPLACE "@OMDRC_CONFIG_HELPER@" "${_OMDRC_CONFIG_HELPER}" _cc "${_cc}")
+string(REPLACE "@OMDRC_CONFIG_STATE_ROOT@" "${_OMDRC_CONFIG_STATE_ROOT}" _cc "${_cc}")
 if(NOT OMDRCCTRL_AUDIO_HOME)
     set(OMDRCCTRL_AUDIO_HOME "/home/${OMDRCCTRL_SERVICE_USER}")
 endif()
@@ -138,8 +151,20 @@ endif()
 # ── install targets ────────────────────────────────────────────────────────
 
 # Python application + docs + helper scripts
-install(FILES src/app.py README.md SPECTRUM_ANALYZER.md
+install(FILES src/app.py src/configuration.py README.md SPECTRUM_ANALYZER.md
         DESTINATION lib/omdrcctrl)
+
+install(FILES
+        ../scripts/new_filter_design.py
+        ../scripts/deploy_filter.py
+        ../scripts/remove_filter_design.py
+        ../scripts/console_ui.py
+        ../scripts/filter_workflow_next.py
+        DESTINATION share/omdrc/filter-tools)
+install(PROGRAMS ../scripts/REW2raw.sh
+        DESTINATION share/omdrc/filter-tools)
+install(PROGRAMS ../scripts/omdrc-config-helper.py
+        DESTINATION libexec/omdrc RENAME omdrc-config-helper)
 
 # Jinja2 templates
 install(DIRECTORY src/templates

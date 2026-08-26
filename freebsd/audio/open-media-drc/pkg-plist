@@ -21,9 +21,18 @@ etc/open-media-drc/configs/flat/brutefir-192000.conf
 %%CTRL%%bin/omdrcctrl
 %%CTRL%%@sample etc/open-media-drc/commands.conf.sample
 %%CTRL%%share/omdrc-ctrl/app.py
+%%CTRL%%share/omdrc-ctrl/configuration.py
 %%CTRL%%share/omdrc-ctrl/templates/index.html
 %%CTRL%%share/omdrc-ctrl/templates/details.html
 %%CTRL%%share/omdrc-ctrl/templates/filter_response.html
+%%CTRL%%share/omdrc-ctrl/templates/configuration.html
+%%CTRL%%libexec/omdrc/omdrc-config-helper
+%%CTRL%%libexec/omdrc/filter-tools/new_filter_design.py
+%%CTRL%%libexec/omdrc/filter-tools/deploy_filter.py
+%%CTRL%%libexec/omdrc/filter-tools/remove_filter_design.py
+%%CTRL%%libexec/omdrc/filter-tools/console_ui.py
+%%CTRL%%libexec/omdrc/filter-tools/filter_workflow_next.py
+%%CTRL%%libexec/omdrc/filter-tools/REW2raw.sh
 %%CTRL%%share/omdrc-ctrl/static/chart.umd.min.js
 %%CTRL%%share/omdrc-ctrl/static/freebsd-beastie.LICENSE
 %%CTRL%%share/omdrc-ctrl/static/freebsd-beastie.png

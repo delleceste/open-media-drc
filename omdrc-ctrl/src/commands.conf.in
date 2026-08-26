@@ -60,6 +60,17 @@ sndstat_interval = 5
 # Refresh interval in seconds for the BruteFIR CPU panel.
 brutefir_interval = 5
 
+# -- Configuration workflows -----------------------------------------------
+[configuration]
+enabled = yes
+site_root = @OMDRC_CONFIG_SITE_ROOT@
+state_root = @OMDRC_CONFIG_STATE_ROOT@
+tools_root = @OMDRC_FILTER_TOOLS_ROOT@
+helper = @OMDRC_CONFIG_HELPER@
+max_file_bytes = 1073741824
+max_upload_bytes = 2147483648
+apply_timeout = 120
+
 # -- Live spectrum analyzer ------------------------------------------------
 # Low-risk analyzer source: MPD writes a secondary raw PCM stream to a FIFO.
 # omdrcctrl enables the matching MPD output only while a browser is actively
