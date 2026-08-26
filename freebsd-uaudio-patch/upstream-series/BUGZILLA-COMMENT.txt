@@ -1,0 +1,64 @@
+Follow-up: three gaps left by 755685dd665e / 6886e8a9a0aa.
+
+Pull request: https://github.com/freebsd/freebsd-src/pull/NNNN
+
+1) The shared-clock guard does not stop the write it was added to stop.
+It skips only on a rate MISMATCH:
+
+    if (other != 0 && other != chan_alt->sample_rate) { /* skip */ }
+
+but the rate alignment added by the same commit (uaudio_chan_match_rate() in
+uaudio_chan_start()) guarantees a MATCH, so the write always falls through.
+uaudio_chan_start() auto-starts the capture stream for jitter information and
+uaudio_configure_msg() configures playback first, so the capture pass issues
+its SET_CUR after the playback alternate setting has armed the device and its
+transfers are running.
+
+Captured with hw.usb.uaudio.debug=6 on an OKTO DAC8 STEREO (0x152a:0x88c5,
+one Clock Source id 41 in both direction bitmaps), opening at 44.1 kHz:
+
+  uaudio_configure_msg_sub:                            <- PLAY pass
+  uaudio20_set_speed: ifaceno=0 clockid=41 speed=44100      <- first write
+  uaudio_configure_msg_sub: clock rate changed to 44100 Hz; settling 100 ms
+  uaudio_configure_msg_sub: fps=8000 sample_rem=4100   <- play armed, streaming
+  uaudio_configure_msg_sub:                            <- CAPTURE pass
+  uaudio20_set_speed: ifaceno=0 clockid=41 speed=44100      <- second write
+  uaudio_chan_play_callback: transferring 2816 bytes   <- already streaming
+
+Two writes, one settle, on every open. Same at 48/96/192 kHz.
+
+2) SET_CUR is issued blind: no GET_CUR, so a write that would change nothing
+is never skipped and the driver never learns whether the device took the rate.
+Linux's set_sample_rate_v2v3() reads back first and returns early on a match,
+with QUIRK_FLAG_ALWAYS_SET_RATE for devices that misreport.
+
+3) The capture stream is auto-started in preference to an explicit feedback
+endpoint. Measured on the OKTO at 44.1 kHz over 20 s:
+
+  UE_ISOCHRONOUS_OK delta : 5038  -> 251.9/s  (usbconfig dump_stats)
+  dsp.play interrupts     : 2509  -> 125.4/s  (/dev/sndstat, hw.snd.verbose=2)
+                            251.9 = 125.4 play + 125.4 capture + 1 feedback
+
+Half the device's isochronous bandwidth, plus a second interface armed right
+after playback, plus the extra clock pass in (1) -- to recompute a number the
+feedback endpoint already reports.
+
+What I am NOT claiming: that any of this is the cause of the intermittent
+silent-open on my DAC. That fault is rare and I cannot reproduce it on demand
+-- 42 consecutive open/play/close cycles across all eight supported rates, 21
+of them into 44.1 kHz, were all audible. The three items above are defects on
+their own terms, from code and from the trace/counters, independent of whether
+a given device audibly misbehaves.
+
+The PR also carries a third commit reordering SET_CUR before SET_INTERFACE
+(what Linux does). That one has only listening evidence on a single device and
+is explicitly droppable; the first two do not depend on it.
+
+Also found and deliberately NOT fixed, so they are not mistaken for oversights:
+only the interface being configured is parked rather than every interface on
+the clock (with STOP/START coalescing via usb_proc_msignal()); the new
+uaudio_dir_running_rate() reads the other direction's running/cur_alt unlocked
+because uaudio_configure_msg() drops the explore lock; incompatible
+simultaneous rates are not rejected (software at rate B, hardware at rate A,
+silently -- Linux returns -EBUSY); and bmControls is not consulted for clock
+frequency writability.

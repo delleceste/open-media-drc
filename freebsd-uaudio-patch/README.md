@@ -2,7 +2,8 @@
 
 Local fixes kept in-tree **while waiting for an official FreeBSD fix.**
 Two `uaudio(4)` source patches are currently applied to `/usr/src`, in this
-order on top of stock `releng/15.1`:
+order on top of stock `releng/15.1` — and a third, built but **not installed**,
+completes them (see [`uaudio-clock-transaction.md`](uaudio-clock-transaction.md)):
 
 1. **`uaudio-clock-before-alt.c.patch`** — fix for the *rate-change
    cold-open silence* ("run drc.sh several times"; any rate change, not just
@@ -29,6 +30,34 @@ order on top of stock `releng/15.1`:
    stock and on top of patch 1; NOT yet installed to `/boot/kernel`, NOT
    yet listening-tested.** Full analysis:
    [`uaudio-shared-clock-fix.md`](uaudio-shared-clock-fix.md).
+
+3. **`uaudio-clock-transaction.c.patch`** — the **2026-08-26 follow-up
+   audit** fix for the *residual* intermittent silent open when switching to
+   44.1 kHz. Patch 1 fixed the playback configuration pass; the **capture**
+   pass that runs right after it still issues a second `SET_CUR` to the same
+   shared clock, with the same value, **after playback is armed** — the
+   shared-clock guard skips a write only on a rate *mismatch*, and patch 2's
+   own rate alignment guarantees a *match*. This patch (a) never writes a clock
+   another stream owns, (b) reads the clock back with `GET_CUR` and skips a
+   redundant write (as Linux does), (c) stops borrowing the OKTO's vestigial
+   capture stream for jitter when the playback alt has an explicit feedback
+   endpoint — measured at ~126 wasted isochronous transfers/s — behind
+   `hw.usb.uaudio.prefer_feedback`, and (d) does not start the jitter capture
+   stream at a stale rate. **Built `-Werror` clean with and without
+   `USB_DEBUG`; NOT installed, NOT listening-tested** — run the three-way A/B in
+   the doc. Split for upstream as
+   `uaudio-upstream-0001-shared-clock-write-discipline.c.patch` and
+   `uaudio-upstream-0002-prefer-explicit-feedback.c.patch`. Full analysis:
+   [`uaudio-clock-transaction.md`](uaudio-clock-transaction.md).
+
+**Upstream submission:** [`upstream-series/`](upstream-series/) holds the
+ready-to-send three-commit series (`git am`-clean on `main` after
+`755685dd665e`), the PR description, the Bugzilla comment and
+[`HOWTO-SUBMIT.md`](upstream-series/HOWTO-SUBMIT.md).
+[`SUBMISSION-295933.md`](SUBMISSION-295933.md) — what
+`755685dd665e` still leaves unfinished, the evidence for each item, what is
+declared-but-not-patched, and the route (GitHub PR like #2323, committed by
+christos@; CC hselasky@ for the isochronous-policy item).
 
 Also kept here (not applied):
 
@@ -74,7 +103,14 @@ the (vestigial, never-streaming) capture side reprogram that clock to its
 |------|---------|
 | `uaudio-clock-before-alt.c.patch` | Clock-before-alt reorder + settle delay (cold-open silence fix). |
 | `uaudio-shared-clock-fix.c.patch` | Shared-clock proper fix: jitter-stream rate alignment + clock guard + always-on feedback SYNC. |
-| `uaudio-feedback-follow.c.patch` | Follow the feedback rate smoothly, like Linux (unbuilt candidate — needs rebase). |
+| `uaudio-clock-transaction.c.patch` | Follow-up audit fix: no redundant shared-clock writes, `GET_CUR` read-back, explicit feedback preferred over the auto-started capture stream. |
+| `uaudio-upstream-0001-shared-clock-write-discipline.c.patch` | The above, part 1, against upstream main/stable-15 after `755685dd665e`. |
+| `uaudio-upstream-0002-prefer-explicit-feedback.c.patch` | The above, part 2, against upstream main/stable-15. |
+| `SUBMISSION-295933.md` | Ready-to-send upstream follow-up: the four unfinished items, evidence, and the five declared-not-patched gaps. |
+| `uaudio-clock-transaction.md` | Follow-up audit: root cause of the residual 44.1 kHz silent open, all findings, upstream-completeness assessment, device-generality analysis, A/B test plan. |
+| `bench/` | DAC lock bench: per-rate test tones, repeated open/play/close cycles, and a per-cycle verdict measured from the DAC's analog output. See [`bench/README.md`](bench/README.md). |
+| `bench/uaudio-affects.py` | Decides from descriptors alone whether *any* device (yours or not) is affected by these patches, and how. |
+| `uaudio-feedback-follow.c.patch` | Follow the feedback rate smoothly, like Linux (unbuilt candidate — needs rebase; becomes live once the capture stream stops being started). |
 | `Makefile.patch` | Adds `CFLAGS+=-DUSB_DEBUG` to the module Makefile. |
 | `FreeBSD-uaudio-shared-clock-bug.md` | Flicker bug: full analysis + upstream bug-filing instructions (bug #295933). |
 | `uaudio-shared-clock-fix.md` | The proper fix: design, audit of the guard-only sketch, test plan. |
