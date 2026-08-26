@@ -44,6 +44,10 @@ def progress_ok(message: str, color: str = "1;32", label: str = "OK") -> None:
 
 # The engine checkout: helper scripts, CMake, the shipped `flat` set.
 ROOT = Path(__file__).resolve().parents[1]
+# Workflow modules and executables are installed together under
+# ``filter-tools``.  This path is valid both there and in the repository's
+# ``scripts`` directory.
+FILTER_TOOLS_ROOT = Path(__file__).resolve().parent
 # Where the room-specific data lives — configs/<geometry> and filters/<geometry>.
 # It defaults to the engine checkout, so an unconfigured tree behaves exactly as
 # it always has.  Point OMDRC_SITE_ROOT (or --site-root) at a second checkout to
@@ -642,20 +646,21 @@ def build_analysis(recipe: dict, source_paths: dict[str, Path]) -> tuple[dict, d
 
 
 def render_config(geometry: str, rate: int, selector: str,
-                  attenuation: float, fmt: str) -> str:
+                  attenuation: float, fmt: str,
+                  coefficient_root: str = "@REPO_DIR@") -> str:
     subdir = f"/{selector}" if selector else ""
     return f'''logic: "cli" {{ port: 3000; }};
 
 sampling_rate: {rate};
 
 coeff "c-l" {{
-\tfilename: "@REPO_DIR@/filters/{geometry}/{rate}{subdir}/L.raw";
+\tfilename: "{coefficient_root}/filters/{geometry}/{rate}{subdir}/L.raw";
 \tformat: "{fmt}";
 \tattenuation: {attenuation:.1f};
 }};
 
 coeff "c-r" {{
-\tfilename: "@REPO_DIR@/filters/{geometry}/{rate}{subdir}/R.raw";
+\tfilename: "{coefficient_root}/filters/{geometry}/{rate}{subdir}/R.raw";
 \tformat: "{fmt}";
 \tattenuation: {attenuation:.1f};
 }};
@@ -682,7 +687,7 @@ filter "drc_r" {{
 
 def generate_runtime(recipe: dict, source_paths: dict[str, Path],
                      staging: Path, site_root: Path) -> tuple[dict, dict[str, Path]]:
-    tool = ROOT / "scripts/REW2raw.sh"
+    tool = FILTER_TOOLS_ROOT / "REW2raw.sh"
     runtime: dict[str, dict] = {}
     staged_configs: dict[str, Path] = {}
     margin = float(recipe["runtime"]["safety_margin_db"])
@@ -758,7 +763,9 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
             config_stage.parent.mkdir(parents=True, exist_ok=True)
             config_stage.write_text(render_config(
                 recipe["geometry"], rate, selector, attenuation,
-                recipe["runtime"]["format"]), encoding="utf-8")
+                recipe["runtime"]["format"],
+                recipe["runtime"].get("coefficient_root", "@REPO_DIR@")),
+                encoding="utf-8")
             config = parse_config(config_stage, rate)
             staged_configs[config_relative] = config_stage
             progress_ok(
@@ -871,6 +878,35 @@ def unreferenced_files(geometry_root: Path, design_id: str,
     return stale
 
 
+def installed_bundle_matches(site_root: Path, manifest: dict) -> bool:
+    """True only when every byte claimed by ``manifest`` is already live."""
+    geometry = manifest["geometry"]
+    design_id = manifest.get("design_id", manifest["variant"])
+    geometry_root = site_root / "filters" / geometry
+    live_manifest = geometry_root / "provenance" / f"{design_id}.json"
+    try:
+        current = json.loads(live_manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if current.get("bundle_id") != manifest.get("bundle_id"):
+        return False
+    expected: list[tuple[Path, str]] = []
+    for item in manifest["source"]["artifacts"].values():
+        expected.append((geometry_root / item["bundle_path"], item["sha256"]))
+    measurements = manifest["source"].get("measurements", {})
+    if measurements.get("bundle_path"):
+        expected.append((geometry_root / measurements["bundle_path"],
+                         measurements["sha256"]))
+    analysis = manifest["analysis"]
+    expected.append((geometry_root / analysis["path"], analysis["sha256"]))
+    for runtime in manifest["runtime"]["rates"].values():
+        expected.append((site_root / runtime["config"], runtime["config_sha256"]))
+        for channel in runtime["channels"].values():
+            expected.append((geometry_root / channel["path"], channel["sha256"]))
+    return all(path.is_file() and not path.is_symlink() and sha256_file(path) == wanted
+               for path, wanted in expected)
+
+
 def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
                    *, apply: bool, replace: bool) -> dict:
     """Verify the selected exports, regenerate every rate, and publish.
@@ -940,6 +976,13 @@ def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
         # bundle that nothing references and nobody can account for.
         unreferenced = unreferenced_files(
             geometry_root, design_id, artifacts, runtime)
+        archived_measurement = recipe["source"].get("measurements", {}).get(
+            "archive_source", "")
+        if archived_measurement:
+            archive_name = Path(archived_measurement).name
+            unreferenced = [path for path in unreferenced
+                            if not (path.parent == geometry_root / "source" / design_id
+                                    and path.name == archive_name)]
 
         progress(
             "[DEPLOY 4/4]",
@@ -947,10 +990,22 @@ def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
         # The source block is hashed whole into the bundle ID, so the project
         # a design came from and the .mdat its exports were taken from are as
         # binding as the exports themselves.
+        measurements = dict(recipe["source"].get("measurements", {}))
+        measurement_source = measurements.pop("archive_source", "")
+        if measurement_source:
+            measurement_path = Path(measurement_source).resolve()
+            if not measurement_path.is_file() or measurement_path.is_symlink():
+                raise AuditError(
+                    f"measurement archive source is not a regular file: {measurement_path}")
+            if sha256_file(measurement_path) != measurements.get("sha256"):
+                raise AuditError("the .mdat changed on disk after it was inspected")
+            measurements["bundle_path"] = (
+                f"source/{design_id}/{measurement_path.name}")
+
         source_manifest = {
             "directory": recipe["source"]["directory"],
             "project": recipe["source"].get("project", {}),
-            "measurements": recipe["source"].get("measurements", {}),
+            "measurements": measurements,
             "artifacts": artifacts,
         }
         identity = {
@@ -1012,6 +1067,11 @@ def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
                   f"required={item['required_attenuation_db']:.1f} configured={item['attenuation_db']:.1f} dB")
         print(f"Bundle ID: {manifest['bundle_id']}")
 
+        if apply and not unreferenced and installed_bundle_matches(site_root, manifest):
+            print("UNCHANGED: this verified bundle is already installed; nothing was written.")
+            manifest["_publication_unchanged"] = True
+            return manifest
+
         if not apply:
             if differing_runtime:
                 print("DRY RUN: runtime files that would change: " + ", ".join(differing_runtime))
@@ -1043,6 +1103,9 @@ def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
         # deployment until it exists and verifies all preceding hashes.
         for role, item in artifacts.items():
             atomic_copy(source_paths[role], geometry_root / item["bundle_path"])
+        if measurement_source:
+            atomic_copy(Path(measurement_source).resolve(),
+                        geometry_root / measurements["bundle_path"])
         atomic_json(analysis, geometry_root / f"analysis/{design_id}.json")
         for rate, item in runtime.items():
             for channel in ("left", "right"):

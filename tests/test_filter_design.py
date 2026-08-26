@@ -4,6 +4,7 @@
 from contextlib import redirect_stdout
 import importlib.util
 import io
+import json
 import os
 import numpy as np
 from pathlib import Path
@@ -722,6 +723,33 @@ class CommandHelpTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not committed", result.stderr)
         self.assertFalse((Path(name) / "filters").exists())
+
+    def test_live_upload_mode_archives_mdat_and_writes_runnable_config(self):
+        with tempfile.TemporaryDirectory(prefix="omdrc-live-") as name:
+            root = Path(name)
+            directory = build_design_dir(root)
+            command = [
+                sys.executable, str(ROOT / "scripts/new_filter_design.py"),
+                str(directory), "--site-root", str(root), "--rates", "48000",
+                "--allow-uncommitted", "--no-commit", "--yes", "--live",
+                "--archive-mdat", "--upload-provenance"]
+            result = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = root / "configs/120.blue/brutefir-48000@fixture-design.conf"
+            self.assertTrue(config.is_file())
+            self.assertIn(str(root / "filters/120.blue/48000/@fixture-design/L.raw"),
+                          config.read_text())
+            archived = root / "filters/120.blue/source/fixture-design/120.blue.fixture-design.mdat"
+            self.assertEqual(archived.read_bytes(), b"REW measurement session fixture")
+            manifest = json.loads((root / "filters/120.blue/provenance/fixture-design.json").read_text())
+            self.assertEqual(manifest["source"]["measurements"]["bundle_path"],
+                             "source/fixture-design/120.blue.fixture-design.mdat")
+            before = {path: path.stat().st_mtime_ns for path in (config, archived)}
+            repeated = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(repeated.returncode, 0, repeated.stderr)
+            self.assertIn("already installed", repeated.stdout)
+            self.assertEqual(before, {path: path.stat().st_mtime_ns
+                                      for path in (config, archived)})
 
     def test_verifier_help_documents_handoff_suppression(self):
         result = subprocess.run(

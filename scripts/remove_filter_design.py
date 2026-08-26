@@ -204,6 +204,8 @@ def main() -> int:
                         help="report exactly what would be deleted, then stop")
     parser.add_argument("--yes", action="store_true",
                         help="skip the confirmation prompt")
+    parser.add_argument("--live", action="store_true",
+                        help="the site is the runtime tree; do not print CMake install steps")
     add_site_root_argument(parser)
     args = parser.parse_args()
     site_root = resolve_site_root(args.site_root)
@@ -283,7 +285,11 @@ def main() -> int:
 
     if args.commit:
         record_removal(CONSOLE, site_root, geometry, message)
-    next_steps(CONSOLE, site_root, geometry, sorted(remaining))
+    if args.live:
+        CONSOLE.heading("NEXT")
+        CONSOLE.note("live runtime removal complete; the remaining designs are available now")
+    else:
+        next_steps(CONSOLE, site_root, geometry, sorted(remaining))
     return 0
 
 

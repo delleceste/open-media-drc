@@ -589,6 +589,14 @@ def main() -> int:
                         help="run every check and report, then stop without asking")
     parser.add_argument("--yes", action="store_true",
                         help="skip the confirmation prompt")
+    parser.add_argument("--live", action="store_true",
+                        help="publish runnable .conf files directly into --site-root")
+    parser.add_argument("--archive-mdat", action="store_true",
+                        help="copy the complete .mdat into the deployed source bundle")
+    parser.add_argument("--coefficient-root", type=Path, default=None,
+                        help="absolute live root baked into --live configs when staging elsewhere")
+    parser.add_argument("--upload-provenance", action="store_true",
+                        help="record stable browser-upload provenance without temporary paths")
     add_site_root_argument(parser)
     args = parser.parse_args()
 
@@ -636,7 +644,19 @@ def main() -> int:
     mdat = find_mdat(directory, args.mdat)
     project, blobs = source_provenance(
         CONSOLE, directory, paths, mdat, allow_uncommitted=args.allow_uncommitted)
+    if args.upload_provenance:
+        project = {
+            "name": "browser upload", "repository": "", "remote": "",
+            "branch": "", "commit": "", "committed_at": "", "subject": "",
+            "path": directory.name, "clean": False,
+            "uncommitted": sorted([path.name for path in paths.values()] + [mdat.name]),
+        }
+        blobs = {}
     measurements = measurement_record(mdat, project, blobs)
+    if args.upload_provenance:
+        measurements["path"] = mdat.name
+    if args.archive_mdat:
+        measurements["archive_source"] = str(mdat.resolve())
     CONSOLE.ok(
         f"{mdat.name} hashed into the manifest"
         + (f"; project {project['name']} at {project['commit'][:12]}"
@@ -666,7 +686,7 @@ def main() -> int:
         "audited_at": dt.date.today().isoformat(),
         "aggregate": aggregate,
         "source": {
-            "directory": str(directory),
+            "directory": directory.name if args.upload_provenance else str(directory),
             "project": project,
             "measurements": measurements,
             "artifacts": {
@@ -698,8 +718,12 @@ def main() -> int:
             "format": "FLOAT64_LE",
             "attenuation_db": attenuation,
             "safety_margin_db": args.safety_margin,
+            "coefficient_root": str((args.coefficient_root or site_root).resolve())
+                                if args.live else "@REPO_DIR@",
             "rates": {
-                str(rate): f"configs/{geometry}/brutefir-{rate}{selector}.conf.in"
+                str(rate): (f"configs/{geometry}/brutefir-{rate}{selector}.conf"
+                            if args.live else
+                            f"configs/{geometry}/brutefir-{rate}{selector}.conf.in")
                 for rate in rates
             },
         },
@@ -713,6 +737,11 @@ def main() -> int:
         return 0
     # The runtime manifest is publish_bundle's commit marker. Keep this
     # reproduction recipe out of the bundle until publication has succeeded.
+    unchanged = manifest.pop("_publication_unchanged", False)
+    recipe["source"]["measurements"].pop("archive_source", None)
+    if unchanged:
+        CONSOLE.note("already installed: every filter, config and archived source is identical")
+        return 0
     atomic_json(recipe, site_root / "filters" / geometry / "provenance" /
                 f"{design_id}.source.json")
     CONSOLE.line()
