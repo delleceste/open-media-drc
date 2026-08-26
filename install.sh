@@ -78,7 +78,13 @@ echo "  * Files read later / at runtime (BruteFIR defaults under ~/.config) may 
 echo "    symlinked. Re-run this deploy step after a 'git pull' to refresh the copies."
 echo
 echo "Deploy reminder (needs root for the system paths):"
-echo "  state dirs : mkdir -p \"${AUDIO_HOME}/.local/share/mpd\" \"${AUDIO_HOME}/.cache/mpd\" \"${AUDIO_HOME}/.cache/upmpdcli\""
+if [ "$(uname)" = "FreeBSD" ]; then
+	_qconnect_state=/var/db/qobuzconnect2mpd
+else
+	_qconnect_state="${AUDIO_HOME}/.local/state/qobuzconnect2mpd"
+fi
+echo "  state dirs : sudo sh \"${REPO_DIR}/scripts/prepare-renderer-runtime.sh\" \\\"
+echo "                 \"${AUDIO_USER}\" \"${AUDIO_HOME}\" \"${_qconnect_state}\" /tmp"
 echo "  video remote (idle mpv autostart, KDE/Plasma): CMake-owned, like the rest of"
 echo "                 video/webremote — 'sudo make install' renders and installs the"
 echo "                 entry, 'make user-install' links it. By hand, after the install:"
@@ -138,9 +144,9 @@ if [ "$(uname)" = "FreeBSD" ]; then
             matching the Linux user-service model:
               sysrc qobuzconnect2mpd_user=${AUDIO_USER} qobuzconnect2mpd_group=$(id -gn "${AUDIO_USER}")
               sysrc qobuzconnect2mpd_homedir=/var/db/qobuzconnect2mpd
-            Keep qconnectstatedir=/var/db/qobuzconnect2mpd in its config. For an
-            existing dedicated-user installation, migrate that private state once:
-              chown -R ${AUDIO_USER}:$(id -gn "${AUDIO_USER}") /var/db/qobuzconnect2mpd
+            Keep qconnectstatedir=/var/db/qobuzconnect2mpd in its config. The
+            state-dirs preparation command above migrates its private state and
+            all MPD/upmpdcli/qobuzconnect2mpd writable paths to AUDIO_USER.
             Keep BOTH renderers' own rcvars off, or rc would start one behind
             its back and two front-ends would drive MPD at once:
               sysrc upmpdcli_enable=NO qobuzconnect2mpd_enable=NO

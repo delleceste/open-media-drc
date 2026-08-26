@@ -1,0 +1,24 @@
+# Writable state belongs to the AUDIO_USER rendered into the MPD and renderer
+# services.  A DESTDIR install is package staging, not the target host: never
+# mutate real accounts, homes, /var/db or /tmp in that case.
+if(NOT "$ENV{DESTDIR}" STREQUAL "")
+    message(STATUS "renderer runtime: skipped during DESTDIR staging")
+    return()
+endif()
+
+if("@OMDRC_SERVICE_MANAGER@" STREQUAL "rc.d")
+    set(_qconnect_state "/var/db/qobuzconnect2mpd")
+else()
+    set(_qconnect_state "@AUDIO_HOME@/.local/state/qobuzconnect2mpd")
+endif()
+
+execute_process(
+    COMMAND /bin/sh
+            "@CMAKE_CURRENT_SOURCE_DIR@/scripts/prepare-renderer-runtime.sh"
+            "@AUDIO_USER@" "@AUDIO_HOME@" "${_qconnect_state}" "/tmp"
+    RESULT_VARIABLE _renderer_runtime_result
+)
+if(NOT _renderer_runtime_result EQUAL 0)
+    message(FATAL_ERROR
+        "Could not prepare writable MPD/renderer state for @AUDIO_USER@")
+endif()

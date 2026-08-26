@@ -8,6 +8,19 @@
 set(_etc     "etc/open-media-drc")
 set(_siteetc "${CMAKE_INSTALL_PREFIX}/etc/open-media-drc")
 
+# The rendered services all write as AUDIO_USER.  Normalize their persistent
+# state and any existing /tmp logs during every real host install, including
+# migration from qobuzconnect2mpd's standalone dedicated service account.
+# Keep this ahead of the config/unit installs so a permission failure aborts
+# the install instead of leaving a deceptively successful handoff checklist.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/install-renderer-runtime.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/install-renderer-runtime.cmake"
+    @ONLY)
+install(PROGRAMS scripts/prepare-renderer-runtime.sh
+        DESTINATION libexec/omdrc/scripts)
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/install-renderer-runtime.cmake")
+
 # Substitute the common host @VARS@ in-place on the named variable.
 macro(_omdrc_common var)
     string(REPLACE "@AUDIO_USER@"    "${AUDIO_USER}"           ${var} "${${var}}")
