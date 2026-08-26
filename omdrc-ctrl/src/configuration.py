@@ -8,6 +8,7 @@ configured live site; hardware changes go through the fixed-purpose
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,7 @@ _FREEBSD_CARD = re.compile(
 class Settings:
     enabled: bool = True
     site_root: Path = Path("/usr/local/etc/open-media-drc")
+    design_root: Path | None = None
     state_root: Path = Path("/tmp/omdrcctrl-configuration")
     tools_root: Path = Path(__file__).resolve().parents[2] / "scripts"
     helper: str = "omdrc-config-helper"
@@ -165,6 +167,144 @@ class ConfigurationManager:
         if rc:
             raise RuntimeError(f"command exited with status {rc}")
 
+    def design_root(self) -> Path:
+        root = self.settings.design_root
+        if root is None:
+            raise RuntimeError(
+                "configuration design_root is not set; refusing publication without an authority")
+        resolved = root.resolve()
+        resolved.mkdir(parents=True, exist_ok=True)
+        if not resolved.is_dir():
+            raise RuntimeError(f"configuration design store is not a directory: {resolved}")
+        if not os.access(resolved, os.W_OK):
+            raise RuntimeError(f"configuration design store is not writable: {resolved}")
+        return resolved
+
+    @staticmethod
+    def is_git_root(root: Path) -> bool:
+        probe = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return not probe.returncode and Path(probe.stdout.strip()).resolve() == root.resolve()
+
+    def design_identity(self, directory: Path, geometry: str = "",
+                        design: str = "", project_folder: str = "") -> tuple[str, str]:
+        """Resolve browser uploads without using their temporary parent path."""
+        name = directory.name
+        if not name.lower().endswith(".txts"):
+            raise ValueError(f"export folder must end in .txts: {name}")
+        stem = name[:-len(".txts")]
+        if geometry and not _SAFE_NAME.fullmatch(geometry):
+            raise ValueError("invalid geometry name")
+        if design and (not _SAFE_NAME.fullmatch(design) or design == "default"):
+            raise ValueError("invalid or reserved design ID")
+
+        def suffix(candidate: str) -> str:
+            if stem.casefold().startswith((candidate + "@").casefold()):
+                return stem[len(candidate) + 1:]
+            for separator in (".", "-", "_"):
+                prefix = candidate + separator
+                if stem.casefold().startswith(prefix.casefold()):
+                    return stem[len(prefix):]
+            return ""
+
+        inferred_design = ""
+        if not geometry and project_folder:
+            project_geometry = re.sub(
+                r"^drc[-_.]", "", Path(project_folder).name, flags=re.IGNORECASE)
+            if _SAFE_NAME.fullmatch(project_geometry or "") and suffix(project_geometry):
+                geometry = project_geometry
+                inferred_design = suffix(geometry)
+        if not geometry:
+            design_root = self.design_root()
+            matches = [(path.name, suffix(path.name))
+                       for path in design_root.glob("configs/*") if path.is_dir()]
+            matches = [(candidate, remainder) for candidate, remainder in matches
+                       if remainder]
+            if not matches:
+                raise ValueError(
+                    f"cannot infer a known geometry from {name}; use Geometry override")
+            matches.sort(key=lambda item: len(item[0]), reverse=True)
+            if len(matches) > 1 and len(matches[0][0]) == len(matches[1][0]):
+                raise ValueError(f"more than one geometry matches {name}; use Geometry override")
+            geometry, inferred_design = matches[0]
+        elif not inferred_design:
+            inferred_design = suffix(geometry)
+        design = design or inferred_design
+        if not design or not _SAFE_NAME.fullmatch(design) or design == "default":
+            raise ValueError(
+                f"cannot infer a valid design ID from {name}; use Design ID override")
+        return geometry, design
+
+    @staticmethod
+    def _bundle_source(root: Path, relative: Path) -> Path:
+        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+            raise ValueError(f"unsafe bundle path: {relative}")
+        source = (root / relative).resolve()
+        try:
+            source.relative_to(root.resolve())
+        except ValueError as error:
+            raise ValueError(f"bundle path escapes repository: {relative}") from error
+        if not source.is_file() or source.is_symlink():
+            raise ValueError(f"bundle source is not a regular file: {relative}")
+        return source
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        value = hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                value.update(block)
+        return value.hexdigest()
+
+    def stage_repository_bundle(self, job: Job, repository: Path,
+                                geometry: str, design: str) -> tuple[Path, Path]:
+        manifest_relative = Path("filters") / geometry / "provenance" / f"{design}.json"
+        manifest_source = self._bundle_source(repository, manifest_relative)
+        manifest = json.loads(manifest_source.read_text(encoding="utf-8"))
+        if (manifest.get("geometry") != geometry or
+                manifest.get("design_id", manifest.get("variant")) != design):
+            raise ValueError("repository manifest identity does not match the selected design")
+        geometry_root = Path("filters") / geometry
+        expected: dict[Path, str] = {}
+
+        def expect(relative: Path, digest: str) -> None:
+            previous = expected.setdefault(relative, digest)
+            if previous != digest:
+                raise ValueError(f"conflicting hashes for bundle path: {relative}")
+
+        for item in manifest["source"]["artifacts"].values():
+            expect(geometry_root / Path(item["bundle_path"]), item["sha256"])
+        measurement = manifest["source"].get("measurements") or {}
+        if measurement.get("bundle_path"):
+            expect(geometry_root / Path(measurement["bundle_path"]), measurement["sha256"])
+        analysis = manifest["analysis"]
+        expect(geometry_root / Path(analysis["path"]), analysis["sha256"])
+        for runtime in manifest["runtime"]["rates"].values():
+            expect(Path(runtime["config"]), runtime["config_sha256"])
+            for channel in runtime["channels"].values():
+                expect(geometry_root / Path(channel["path"]), channel["sha256"])
+
+        staging = job.directory / "repository-bundle"
+        staging.mkdir(parents=True, exist_ok=False)
+        for relative, wanted in expected.items():
+            source = self._bundle_source(repository, relative)
+            if self._sha256(source) != wanted:
+                raise ValueError(f"repository bundle hash mismatch: {relative}")
+            target = staging / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+        recipe_relative = manifest_relative.with_name(f"{design}.source.json")
+        recipe_source = repository / recipe_relative
+        if recipe_source.is_file() and not recipe_source.is_symlink():
+            target = staging / recipe_relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(recipe_source, target)
+        target_manifest = staging / manifest_relative
+        target_manifest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(manifest_source, target_manifest)
+        return staging, target_manifest
+
     def save_uploads(self, job: Job, files, mdat) -> Path:
         if not files or mdat is None:
             raise ValueError("select the .txts folder and its matching .mdat")
@@ -210,52 +350,123 @@ class ConfigurationManager:
         return export
 
     def install_filter(self, job: Job, directory: Path, geometry: str = "",
-                       design: str = "") -> None:
+                       design: str = "", project_folder: str = "") -> None:
+        design_root = self.design_root()
+        geometry, design = self.design_identity(
+            directory, geometry, design, project_folder)
+        history = self.is_git_root(design_root)
         script = self.settings.tools_root / "new_filter_design.py"
-        live_writable = (self.settings.site_root.is_dir() and
-                         os.access(self.settings.site_root, os.W_OK))
-        publish_root = self.settings.site_root if live_writable else job.directory / "staged-site"
-        publish_root.mkdir(parents=True, exist_ok=True)
         argv = [shutil.which("python3") or "python3", str(script), str(directory),
-                "--site-root", str(publish_root), "--allow-uncommitted",
-                "--no-commit", "--yes", "--live", "--archive-mdat",
-                "--upload-provenance"]
-        if not live_writable:
-            argv += ["--coefficient-root", str(self.settings.site_root)]
-        if geometry:
-            if not _SAFE_NAME.fullmatch(geometry):
-                raise ValueError("invalid geometry name")
-            argv += ["--geometry", geometry]
-        if design:
-            if not _SAFE_NAME.fullmatch(design) or design == "default":
-                raise ValueError("invalid or reserved design ID")
-            argv += ["--design", design]
+                "--site-root", str(design_root), "--allow-uncommitted", "--yes",
+                "--archive-mdat", "--upload-provenance", "--geometry", geometry,
+                "--design", design, "--no-next"]
+        if history:
+            argv.append("--require-commit")
+            job.write(f"AUTHORITY: publishing and committing {geometry}@{design} in {design_root}")
+        else:
+            argv.append("--no-commit")
+            job.write(f"AUTHORITY: publishing {geometry}@{design} in non-Git design store {design_root}")
         self.run_command(job, argv)
-        if not live_writable:
-            helper = shutil.which(self.settings.helper) or self.settings.helper
-            command = [helper, "filter-publish", "--staged", str(publish_root),
-                       "--site-root", str(self.settings.site_root)]
-            if os.geteuid() != 0:
-                command = ["sudo", "-n", *command]
-            self.run_command(job, command)
+
+        manifest = (design_root / "filters" / geometry / "provenance" /
+                    f"{design}.json")
+        verifier = self.settings.tools_root / "verify_filter_bundle.py"
+        self.run_command(job, [shutil.which("python3") or "python3", str(verifier),
+                               "--require-sources", "--no-next", "--site-root",
+                               str(design_root), str(manifest)])
+        if design_root.resolve() == self.settings.site_root.resolve():
+            job.write("VERIFIED: design store is the active site; no derived copy required")
+            return
+
+        staging, staged_manifest = self.stage_repository_bundle(
+            job, design_root, geometry, design)
+        helper = shutil.which(self.settings.helper) or self.settings.helper
+        command = [helper, "filter-publish", "--staged", str(staging),
+                   "--site-root", str(self.settings.site_root)]
+        if os.geteuid() != 0:
+            command = ["sudo", "-n", *command]
+        self.run_command(job, command)
+        installed_manifest = (self.settings.site_root / "filters" / geometry /
+                              "provenance" / staged_manifest.name)
+        self.run_command(job, [shutil.which("python3") or "python3", str(verifier),
+                               "--require-sources", "--no-next", "--site-root",
+                               str(self.settings.site_root), str(installed_manifest)])
+        if self._sha256(manifest) != self._sha256(installed_manifest):
+            raise RuntimeError("installed manifest differs from the authoritative design store")
+        job.write(
+            f"VERIFIED: installed {geometry}@{design} is derived from the authoritative bundle")
 
     def designs(self) -> list[dict]:
         active = self.active_design()
-        rows = []
-        for path in sorted(self.settings.site_root.glob("filters/*/provenance/*.json")):
-            if path.name.endswith(".source.json"):
-                continue
+        design_root = self.design_root()
+
+        def manifests(root: Path) -> dict[tuple[str, str], dict]:
+            found = {}
+            for path in sorted(root.glob("filters/*/provenance/*.json")):
+                if path.name.endswith(".source.json"):
+                    continue
+                try:
+                    data = json.loads(path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    continue
+                geometry = data.get("geometry", path.parent.parent.name)
+                design = data.get("design_id", data.get("variant", path.stem))
+                found[(geometry, design)] = data
+            return found
+
+        def complete(root: Path, data: dict) -> bool:
+            geometry = data.get("geometry", "")
+            geometry_root = Path("filters") / geometry
+            expected = []
             try:
-                data = json.loads(path.read_text())
-            except (OSError, json.JSONDecodeError):
-                continue
-            design = data.get("design_id", data.get("variant", path.stem))
-            geometry = data.get("geometry", path.parent.parent.name)
+                expected.extend(
+                    (geometry_root / Path(item["bundle_path"]), item["sha256"])
+                    for item in data["source"]["artifacts"].values())
+                measurement = data["source"].get("measurements") or {}
+                if measurement.get("bundle_path"):
+                    expected.append(
+                        (geometry_root / Path(measurement["bundle_path"]),
+                         measurement["sha256"]))
+                expected.append(
+                    (geometry_root / Path(data["analysis"]["path"]),
+                     data["analysis"]["sha256"]))
+                for runtime in data["runtime"]["rates"].values():
+                    expected.append((Path(runtime["config"]),
+                                     runtime["config_sha256"]))
+                    expected.extend(
+                        (geometry_root / Path(channel["path"]), channel["sha256"])
+                        for channel in runtime["channels"].values())
+                return all(self._sha256(self._bundle_source(root, relative)) == wanted
+                           for relative, wanted in expected)
+            except (KeyError, OSError, TypeError, ValueError):
+                return False
+
+        authoritative = manifests(design_root)
+        installed = manifests(self.settings.site_root)
+        rows = []
+        for geometry, design in sorted(set(authoritative) | set(installed)):
+            source = authoritative.get((geometry, design))
+            live = installed.get((geometry, design))
+            data = source or live or {}
             session = (data.get("source", {}).get("measurements", {}))
+            same = bool(source and live and
+                        source.get("bundle_id") == live.get("bundle_id") and
+                        complete(design_root, source) and
+                        complete(self.settings.site_root, live))
+            if source and same:
+                location = "authoritative + installed"
+            elif source and live:
+                location = "OUT OF SYNC: design store differs from runtime"
+            elif source:
+                location = "design store only"
+            else:
+                location = "runtime-only legacy"
             rows.append({"geometry": geometry, "design": design,
                          "description": data.get("description", design),
                          "bundle_id": data.get("bundle_id", ""),
-                         "installed": data.get("verification", {}).get("audited_at", ""),
+                         "installed": same,
+                         "authoritative": bool(source),
+                         "location": location,
                          "rates": sorted(data.get("runtime", {}).get("rates", {}), key=int),
                          "mdat": session.get("file", ""),
                          "selected": (active.get("geometry") == geometry and
@@ -268,17 +479,34 @@ class ConfigurationManager:
         active = self.active_design()
         if active.get("geometry") == geometry and active.get("design") in {design, f"@{design}"}:
             raise RuntimeError("switch away from this selected design before removing it")
+        design_root = self.design_root()
         script = self.settings.tools_root / "remove_filter_design.py"
-        command = [shutil.which("python3") or "python3", str(script),
-                   f"{geometry}@{design}", "--site-root",
-                   str(self.settings.site_root), "--no-commit", "--yes", "--live"]
-        if not os.access(self.settings.site_root, os.W_OK):
+        authority_manifest = (design_root / "filters" / geometry / "provenance" /
+                              f"{design}.json")
+        live_manifest = (self.settings.site_root / "filters" / geometry /
+                         "provenance" / f"{design}.json")
+        if authority_manifest.is_file():
+            command = [shutil.which("python3") or "python3", str(script),
+                       f"{geometry}@{design}", "--site-root", str(design_root),
+                       "--yes", "--no-next"]
+            if self.is_git_root(design_root):
+                command.append("--require-commit")
+            else:
+                command.append("--no-commit")
+            self.run_command(job, command)
+        else:
+            job.write(
+                f"NOTICE: {geometry}@{design} is a runtime-only legacy design; "
+                "removing the orphaned installed copy")
+        if design_root.resolve() == self.settings.site_root.resolve():
+            return
+        if live_manifest.is_file():
             helper = shutil.which(self.settings.helper) or self.settings.helper
             command = [helper, "filter-remove", "--selector", f"{geometry}@{design}",
                        "--site-root", str(self.settings.site_root), "--script", str(script)]
             if os.geteuid() != 0:
                 command = ["sudo", "-n", *command]
-        self.run_command(job, command)
+            self.run_command(job, command)
 
     def cards(self) -> list[dict]:
         return linux_cards() if platform.system() == "Linux" else freebsd_cards(self.env())
@@ -290,8 +518,6 @@ class ConfigurationManager:
         if identities[dac].get("ambiguous"):
             raise ValueError("identical DACs have no serial numbers; unplug one before applying")
         if capture:
-            if platform.system() == "Linux":
-                raise ValueError("capture selection is not operational on Linux")
             if capture not in identities or not identities[capture].get("capture"):
                 raise ValueError("the selected capture interface is no longer attached")
             if identities[capture].get("ambiguous"):

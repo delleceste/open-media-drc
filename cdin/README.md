@@ -586,7 +586,12 @@ the Red Book pause; fire late, or twice, and the release either never happens or
 happens again every 23 ms. Neither is a crash.
 
 FreeBSD only — the daemon talks OSS directly. On Linux the equivalent job is
-already done by `alsaloop(1)`.
+already done by `alsaloop(1)`, wrapped by `scripts/omdrc-cdin-alsaloop` so the
+devices are chosen by role and the web panel's CD input card reads the same log
+grammar. See **doc/CDIN-LINUX.md** — the correction there is continuous
+(`--sync=playshift`, still with no resampler in the path) rather than absorbed
+by a lead, and the CD input is an exclusive source because the ALSA loopback
+has one seat where `virtual_oss` mixes.
 
 ## The ESI U24 XL — what the vendor documentation settles
 

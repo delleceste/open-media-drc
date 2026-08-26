@@ -64,6 +64,9 @@ brutefir_interval = 5
 [configuration]
 enabled = yes
 site_root = @OMDRC_CONFIG_SITE_ROOT@
+# Persistent authority for uploaded designs. Git history is used when this is
+# already a work tree; an ordinary writable directory is fully supported.
+design_root = @OMDRC_CONFIG_DESIGN_ROOT@
 state_root = @OMDRC_CONFIG_STATE_ROOT@
 tools_root = @OMDRC_FILTER_TOOLS_ROOT@
 helper = @OMDRC_CONFIG_HELPER@
@@ -141,26 +144,41 @@ scan_bytes = 65536
 # Seconds between browser polls for active alerts.
 alert_interval = 20
 
-# -- CD / S-PDIF input bridge (omdrc-cdin) ----------------------------------
-# omdrc-cdin captures the CD player's S/PDIF through the ESI U24 XL and feeds
-# it into the DRC chain.  It is a daemon the panel WATCHES, not a command it
-# runs: it is meant to be up continuously (omdrc_cdin_enable="YES" in
-# /etc/rc.conf) whether or not the player is on, because it holds
-# /dev/dsp.play only while audio is actually on the wire and releases it after
-# a run of digital silence.  Leaving it running therefore costs MPD and mpv
-# nothing.
+# -- CD / S-PDIF input bridge -----------------------------------------------
+# The bridge captures the CD player's S/PDIF through the ESI U24 XL and feeds
+# it into the DRC chain.  It is a service the panel WATCHES, not a command it
+# runs, and the two operating systems run different programs behind the same
+# log grammar:
+#
+#   FreeBSD  omdrc-cdin (cdin/), an OSS daemon.  Meant to be up continuously
+#            (omdrc_cdin_enable="YES" in /etc/rc.conf) whether or not the
+#            player is on: virtual_oss mixes, so it holds /dev/dsp.play only
+#            while audio is on the wire and releases it after a run of digital
+#            silence.  Leaving it running costs MPD and mpv nothing.
+#   Linux    scripts/omdrc-cdin-alsaloop, a supervisor around alsaloop(1).
+#            hw:Loopback,0,0 is a SINGLE substream, so the bridge and MPD's DRC
+#            outputs cannot both hold it — the CD input is an exclusive source
+#            and drc.sh starts and stops the service as the source changes.
+#            `drc.sh cdin` selects it; any rate action selects music again.
 #
 # Everything the CD input card shows is read from this log, so log_file must
-# match omdrc_cdin_logfile in /etc/rc.conf.
+# match the daemon's: omdrc_cdin_logfile in /etc/rc.conf (FreeBSD), or
+# OMDRC_CDIN_LOG_FILE in the unit (Linux).
 [cdin]
 enabled = yes
 log_file = /tmp/omdrc-cdin.log
 # Checked with pgrep -x to tell "stopped" from "broken": a stopped daemon's log
 # is last week's news, and the card says so instead of showing a red light.
-process = omdrc-cdin
-# rc.d service name — shown in the UI, and what the card's Start/Stop button
-# runs (`service omdrc_cdin onestart|onestop`).
-service = omdrc_cdin
+#
+# Name the process that actually HOLDS the device, which on Linux is alsaloop
+# and not the supervisor around it: a supervisor that is alive with the loop
+# dead is exactly the state a green light would misreport.  Leave this unset to
+# get the right default for the OS (omdrc-cdin / alsaloop).
+# process = omdrc-cdin
+# Service name — shown in the UI, and what the card's Start/Stop button runs
+# (`service omdrc_cdin onestart|onestop`, or `systemctl --user start|stop
+# omdrc-cdin`).  Unset takes the OS default (omdrc_cdin / omdrc-cdin).
+# service = omdrc_cdin
 # Whether that button exists.  Watching the daemon needs no privilege; starting
 # and stopping it needs the rc.d grant in sudoers (see the README), so a box
 # without that grant sets this to no rather than offering a button that can only
@@ -204,7 +222,8 @@ privileged = yes
 #
 # Linux defaults (ALSA, named the way brutefir names them and translated to the
 # /dev/snd node; card may be a number or an id, "hw:Loopback,1" works):
-#   capture =                 ; no conventional number - name yours here
+#   capture =                 ; unset follows the capture interface selected on
+#                             ; the /configuration page (/run/omdrc/audio.roles)
 #   bridge  = hw:1,0          ; snd-aloop playback side, MPD writes into it
 #   loop    = hw:1,1          ; snd-aloop capture side, brutefir reads it
 #   dac     = hw:0,0

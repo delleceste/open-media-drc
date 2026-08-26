@@ -585,6 +585,8 @@ def main() -> int:
                              "recording the gap in the manifest")
     parser.add_argument("--no-commit", dest="commit", action="store_false",
                         help="do not commit the deployment in the room repository")
+    parser.add_argument("--require-commit", action="store_true",
+                        help="fail unless the site repository records the deployment")
     parser.add_argument("--dry-run", action="store_true",
                         help="run every check and report, then stop without asking")
     parser.add_argument("--yes", action="store_true",
@@ -597,8 +599,13 @@ def main() -> int:
                         help="absolute live root baked into --live configs when staging elsewhere")
     parser.add_argument("--upload-provenance", action="store_true",
                         help="record stable browser-upload provenance without temporary paths")
+    parser.add_argument("--no-next", action="store_true",
+                        help="suppress the repository-to-runtime handoff (for web/CI use)")
     add_site_root_argument(parser)
     args = parser.parse_args()
+
+    if args.require_commit and not args.commit:
+        raise fail("--require-commit cannot be combined with --no-commit")
 
     site_root = resolve_site_root(args.site_root)
     try:
@@ -740,6 +747,9 @@ def main() -> int:
     unchanged = manifest.pop("_publication_unchanged", False)
     recipe["source"]["measurements"].pop("archive_source", None)
     if unchanged:
+        if args.commit:
+            record_history(CONSOLE, site_root, manifest,
+                           require=args.require_commit)
         CONSOLE.note("already installed: every filter, config and archived source is identical")
         return 0
     atomic_json(recipe, site_root / "filters" / geometry / "provenance" /
@@ -747,17 +757,19 @@ def main() -> int:
     CONSOLE.line()
     CONSOLE.ok(f"design {geometry}/{design_id} deployed (runtime selector {selector})")
     if args.commit:
-        record_history(CONSOLE, site_root, manifest)
-    print_deployed_next(Path(__file__).resolve().parents[1], [{
-        "geometry": manifest["geometry"],
-        "design_id": manifest["design_id"],
-        "bundle_id": manifest["bundle_id"],
-        "manifest": Path("filters") / geometry / "provenance" / f"{design_id}.json",
-    }], include_verification=True, site_root=site_root)
+        record_history(CONSOLE, site_root, manifest, require=args.require_commit)
+    if not args.no_next:
+        print_deployed_next(Path(__file__).resolve().parents[1], [{
+            "geometry": manifest["geometry"],
+            "design_id": manifest["design_id"],
+            "bundle_id": manifest["bundle_id"],
+            "manifest": Path("filters") / geometry / "provenance" / f"{design_id}.json",
+        }], include_verification=True, site_root=site_root)
     return 0
 
 
-def record_history(console: Console, site_root: Path, manifest: dict) -> None:
+def record_history(console: Console, site_root: Path, manifest: dict,
+                   *, require: bool = False) -> dict:
     """Commit the deployment where the room keeps its history."""
     result = commit_site(site_root, manifest)
     status = result["status"]
@@ -775,6 +787,11 @@ def record_history(console: Console, site_root: Path, manifest: dict) -> None:
         console.warn(f"room history: commit failed: {result.get('error', '')}")
         console.command(
             f"git -C {result.get('repository', site_root)} commit -a")
+    if require and result["status"] not in {"committed", "unchanged"}:
+        raise AuditError(
+            "site repository did not record the deployment: "
+            + result.get("error", result["status"]))
+    return result
 
 
 if __name__ == "__main__":

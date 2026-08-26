@@ -334,8 +334,13 @@ GROUP_ORDER  = ["drc", "apps", "system"]
 #                 showing it as one would train the eye to ignore the LED.
 CDIN_ENABLED = True
 CDIN_LOG_FILE = "/tmp/omdrc-cdin.log"
-CDIN_PROCESS = "omdrc-cdin"
-CDIN_SERVICE = "omdrc_cdin"
+# The bridge is one program on FreeBSD (the omdrc-cdin daemon) and two on Linux
+# (scripts/omdrc-cdin-alsaloop supervising alsaloop).  `process` must name the
+# one that actually holds the audio device, because that is the question the
+# card is asking — on Linux the supervisor can be alive with the loop dead, and
+# reporting that as "running" would be a green light over silence.
+CDIN_PROCESS = "alsaloop" if _IS_LINUX else "omdrc-cdin"
+CDIN_SERVICE = "omdrc-cdin" if _IS_LINUX else "omdrc_cdin"
 CDIN_INTERVAL = 5        # seconds between browser /cdin/status polls
 CDIN_MAX_EVENTS = 20     # past error/warn events the card keeps
 CDIN_SCAN_BYTES = 65_536 # tail of the log the card reads
@@ -415,6 +420,25 @@ _CHAIN_DEFAULT_DEVICES = {
     "Linux":   {"capture": "", "bridge": "hw:1,0",
                 "loop": "hw:1,1", "dac": "hw:0,0"},
 }
+# Where omdrc-config-helper publishes the resolved card numbers on Linux.  The
+# capture card genuinely has no conventional number, so rather than make every
+# box name one in [chain], the card reads back the role the /configuration page
+# already selected.  An explicit [chain] capture= still wins.
+_AUDIO_ROLES_FILE = os.environ.get("OMDRC_AUDIO_ROLES", "/run/omdrc/audio.roles")
+
+
+def _linux_capture_role() -> str:
+    """`hw:<card>,0` for the configured capture interface, or "" when none."""
+    try:
+        with open(_AUDIO_ROLES_FILE, errors="replace") as stream:
+            text = stream.read()
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == "capture_unit" and value.strip():
+            return f"hw:{value.strip()},0"
+    return ""
 # Which side of an ALSA pcm each role is: the bridge and the DAC are written to,
 # the capture card and the loopback's far side are read from.
 _CHAIN_ALSA_SIDE = {"capture": "c", "bridge": "p", "loop": "c", "dac": "p"}
@@ -650,9 +674,12 @@ def load_config(path: str) -> None:
 
     if cfg.has_section("configuration"):
         sec = cfg["configuration"]
+        design_root_value = sec.get("design_root", fallback="").strip()
         CONFIGURATION = ConfigurationSettings(
             enabled=sec.getboolean("enabled", fallback=True),
             site_root=Path(sec.get("site_root", fallback=str(CONFIGURATION.site_root))).expanduser(),
+            design_root=(Path(design_root_value).expanduser()
+                         if design_root_value else None),
             state_root=Path(sec.get("state_root", fallback=str(CONFIGURATION.state_root))).expanduser(),
             tools_root=Path(sec.get("tools_root", fallback=str(CONFIGURATION.tools_root))).expanduser(),
             helper=sec.get("helper", fallback=CONFIGURATION.helper).strip(),
@@ -3763,7 +3790,13 @@ def _chain_device_spec(role: str) -> str:
     configured = CHAIN_DEVICES.get(role)
     if configured is not None:
         return configured.strip()
-    return _CHAIN_DEFAULT_DEVICES.get(platform.system(), {}).get(role, "")
+    default = _CHAIN_DEFAULT_DEVICES.get(platform.system(), {}).get(role, "")
+    if not default and role == "capture" and _IS_LINUX:
+        # Re-read every poll rather than cache: the capture card can be
+        # selected on the /configuration page while this page is open, and a
+        # cached "" would keep the input block hidden until a restart.
+        return _linux_capture_role()
+    return default
 
 
 def _chain_resolve_devices() -> dict[str, dict]:
@@ -5520,11 +5553,12 @@ def configuration_filter_install():
             job, request.files.getlist("measurements"), request.files.get("mdat"))
         geometry = request.form.get("geometry", "").strip()
         design = request.form.get("design", "").strip()
+        project_folder = request.form.get("project_folder", "").strip()
     except Exception as error:
         job.set_phase("failed", error=str(error), returncode=1)
         return jsonify({"ok": False, "error": str(error), "job": job.id}), 400
     manager.launch(job, lambda current: manager.install_filter(
-        current, directory, geometry, design))
+        current, directory, geometry, design, project_folder))
     return jsonify({"ok": True, "job": job.id}), 202
 
 

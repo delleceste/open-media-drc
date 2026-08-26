@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 import importlib.util
+import hashlib
 import io
+import json
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,6 +22,12 @@ SPEC = importlib.util.spec_from_file_location("omdrc_configuration_app", SRC / "
 APP = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(APP)
+
+HELPER_SPEC = importlib.util.spec_from_file_location(
+    "omdrc_config_helper", ROOT / "scripts/omdrc-config-helper.py")
+HELPER = importlib.util.module_from_spec(HELPER_SPEC)
+assert HELPER_SPEC.loader
+HELPER_SPEC.loader.exec_module(HELPER)
 
 
 class CardIdentityTest(unittest.TestCase):
@@ -77,6 +87,181 @@ class UploadTest(unittest.TestCase):
                 manager.save_uploads(job, files, mdat)
 
 
+class RepositoryFirstInstallTest(unittest.TestCase):
+    def make_manager(self, root: Path, *, git: bool = False):
+        design_root = root / "design-store"
+        site_root = root / "live-site"
+        state_root = root / "jobs"
+        (design_root / "configs/120.blue").mkdir(parents=True)
+        site_root.mkdir()
+        if git:
+            subprocess.run(["git", "init", "-q", str(design_root)], check=True)
+        settings = configuration.Settings(
+            site_root=site_root, design_root=design_root, state_root=state_root,
+            tools_root=ROOT / "scripts", helper="omdrc-config-helper")
+        manager = configuration.ConfigurationManager(settings, lambda: {})
+        return manager, design_root, site_root
+
+    @staticmethod
+    def publish_fixture(design_root: Path) -> Path:
+        analysis = design_root / "filters/120.blue/analysis/Rscreen.json"
+        analysis.parent.mkdir(parents=True, exist_ok=True)
+        analysis.write_bytes(b"{}\n")
+        digest = hashlib.sha256(analysis.read_bytes()).hexdigest()
+        manifest = {
+            "geometry": "120.blue", "design_id": "Rscreen", "variant": "Rscreen",
+            "bundle_id": "fixture", "source": {"artifacts": {}, "measurements": {}},
+            "analysis": {"path": "analysis/Rscreen.json", "sha256": digest},
+            "runtime": {"rates": {}},
+        }
+        path = design_root / "filters/120.blue/provenance/Rscreen.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(manifest) + "\n")
+        return path
+
+    def exercise_install(self, git: bool):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, design_root, site_root = self.make_manager(root, git=git)
+            export = root / "upload/120.blue.Rscreen.txts"
+            export.mkdir(parents=True)
+            job = manager._new_job("install")
+            calls = []
+
+            def fake_run(current, argv, timeout=None):
+                del current, timeout
+                calls.append(argv)
+                if "new_filter_design.py" in " ".join(argv):
+                    self.publish_fixture(design_root)
+                elif "filter-publish" in argv:
+                    staged = Path(argv[argv.index("--staged") + 1])
+                    shutil.copytree(staged, site_root, dirs_exist_ok=True)
+
+            with mock.patch.object(manager, "run_command", side_effect=fake_run):
+                manager.install_filter(job, export)
+            publication = next(argv for argv in calls
+                               if "new_filter_design.py" in " ".join(argv))
+            self.assertIn("--geometry", publication)
+            self.assertEqual(publication[publication.index("--geometry") + 1], "120.blue")
+            self.assertEqual(publication[publication.index("--design") + 1], "Rscreen")
+            self.assertNotIn("--live", publication)
+            self.assertIn("--require-commit" if git else "--no-commit", publication)
+            self.assertEqual(sum("verify_filter_bundle.py" in " ".join(argv)
+                                 for argv in calls), 2)
+            self.assertTrue((site_root / "filters/120.blue/provenance/Rscreen.json").is_file())
+
+    def test_non_git_design_store_is_authoritative_without_forcing_git(self):
+        self.exercise_install(False)
+
+    def test_existing_git_design_store_requires_the_history_commit(self):
+        self.exercise_install(True)
+
+    def test_temporary_upload_parent_never_becomes_geometry(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, _, _ = self.make_manager(root)
+            export = root / "jobs/random/upload/120.blue.Rscreen.txts"
+            export.mkdir(parents=True)
+            self.assertEqual(manager.design_identity(export), ("120.blue", "Rscreen"))
+
+    def test_first_design_in_empty_store_can_use_explicit_identity(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, design_root, _ = self.make_manager(root)
+            shutil.rmtree(design_root / "configs")
+            export = root / "upload/session.txts"
+            export.mkdir(parents=True)
+            self.assertEqual(
+                manager.design_identity(export, "new-room", "first-design"),
+                ("new-room", "first-design"))
+
+    def test_parent_project_folder_identifies_first_design_without_git(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, design_root, _ = self.make_manager(root)
+            shutil.rmtree(design_root / "configs")
+            export = root / "upload/120.blue.Rscreen.txts"
+            export.mkdir(parents=True)
+            self.assertEqual(
+                manager.design_identity(export, project_folder="DRC-120.blue"),
+                ("120.blue", "Rscreen"))
+
+    def test_design_list_distinguishes_authority_runtime_and_drift(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, design_root, site_root = self.make_manager(root)
+            authoritative = json.loads(self.publish_fixture(design_root).read_text())
+            live_manifest = site_root / "filters/120.blue/provenance/Rscreen.json"
+            live_manifest.parent.mkdir(parents=True)
+            live_manifest.write_text(json.dumps(authoritative))
+            orphan = site_root / "filters/legacy/provenance/old.json"
+            orphan.parent.mkdir(parents=True)
+            orphan.write_text(json.dumps({
+                "geometry": "legacy", "design_id": "old", "bundle_id": "runtime",
+                "source": {}, "runtime": {"rates": {}},
+            }))
+
+            rows = {(row["geometry"], row["design"]): row
+                    for row in manager.designs()}
+            self.assertEqual(
+                rows[("120.blue", "Rscreen")]["location"],
+                "OUT OF SYNC: design store differs from runtime")
+            self.assertFalse(rows[("120.blue", "Rscreen")]["installed"])
+            self.assertEqual(rows[("legacy", "old")]["location"],
+                             "runtime-only legacy")
+
+
+class PrivilegedPublicationTest(unittest.TestCase):
+    @staticmethod
+    def write(path: Path, data: bytes) -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return hashlib.sha256(data).hexdigest()
+
+    def test_bound_template_is_preserved_and_runtime_config_is_derived(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            staged, site = root / "staged", root / "site"
+            geometry_root = staged / "filters/room"
+            analysis_hash = self.write(geometry_root / "analysis/design.json", b"{}\n")
+            left_hash = self.write(geometry_root / "48000/@design/L.raw", b"left")
+            right_hash = self.write(geometry_root / "48000/@design/R.raw", b"right")
+            template_relative = Path("configs/room/brutefir-48000@design.conf.in")
+            template = (
+                'sampling_rate: 48000;\n'
+                'coeff "c-l" { filename: "@REPO_DIR@/filters/room/48000/@design/L.raw"; };\n'
+                'coeff "c-r" { filename: "@REPO_DIR@/filters/room/48000/@design/R.raw"; };\n')
+            template_hash = self.write(staged / template_relative, template.encode())
+            manifest = {
+                "schema": 2,
+                "geometry": "room", "design_id": "design", "variant": "design",
+                "description": "fixture", "source": {"artifacts": {}, "measurements": {}},
+                "analysis": {"path": "analysis/design.json", "sha256": analysis_hash},
+                "runtime": {"rates": {"48000": {
+                    "config": str(template_relative), "config_sha256": template_hash,
+                    "format": "FLOAT64_LE", "attenuation_db": 1.0,
+                    "channels": {
+                        "left": {"path": "48000/@design/L.raw", "sha256": left_hash},
+                        "right": {"path": "48000/@design/R.raw", "sha256": right_hash},
+                    },
+                }}}, "verification": {"status": "verified"},
+            }
+            manifest["bundle_id"] = HELPER.canonical_hash(HELPER.bundle_identity(manifest))
+            manifest_path = geometry_root / "provenance/design.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest) + "\n")
+            site.mkdir()
+            with mock.patch.object(HELPER, "allowed_site_root", return_value=site):
+                HELPER.filter_publish(str(staged), str(site))
+            self.assertEqual((site / template_relative).read_text(), template)
+            rendered = site / "configs/room/brutefir-48000@design.conf"
+            self.assertNotIn("@REPO_DIR@", rendered.read_text())
+            self.assertIn(str(site / "filters/room/48000/@design/L.raw"),
+                          rendered.read_text())
+            self.assertEqual(
+                (site / "filters/room/provenance/design.json").read_text(),
+                manifest_path.read_text())
+
 class RoutesTest(unittest.TestCase):
     def setUp(self):
         self.client = APP.app.test_client()
@@ -98,6 +283,7 @@ class RoutesTest(unittest.TestCase):
         self.assertIn("actual.toLowerCase()!==expected.toLowerCase()", text)
         self.assertIn("if(sibling)setMdatFile(sibling)", text)
         self.assertIn("data.append('mdat',selectedMdat,selectedMdat.name)", text)
+        self.assertIn("data.set('project_folder',projectFolder)", text)
 
     def test_mutation_requires_token(self):
         response = self.client.delete("/configuration/api/filters/room/design")

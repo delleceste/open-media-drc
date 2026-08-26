@@ -83,7 +83,7 @@ if [ "$(uname)" = "FreeBSD" ]; then
 else
 	_qconnect_state="${AUDIO_HOME}/.local/state/qobuzconnect2mpd"
 fi
-echo "  state dirs : sudo sh \"${REPO_DIR}/scripts/prepare-renderer-runtime.sh\" \\\"
+echo "  state dirs : sudo sh \"${REPO_DIR}/scripts/prepare-renderer-runtime.sh\" \\"
 echo "                 \"${AUDIO_USER}\" \"${AUDIO_HOME}\" \"${_qconnect_state}\" /tmp"
 echo "  video remote (idle mpv autostart, KDE/Plasma): CMake-owned, like the rest of"
 echo "                 video/webremote — 'sudo make install' renders and installs the"
@@ -170,6 +170,14 @@ else
     # early-boot infrastructure before /home (a separate mount) is available, so a
     # symlink into the checkout would be dangling and silently skipped.
     modules-load.d : sudo cp "${REPO_DIR}/etc/modules-load.d/snd-aloop.conf" /etc/modules-load.d/
+                     # Pins the loopback's card index AND clocks it from the DAC
+                     # rather than a free-running hrtimer. Without it the chain
+                     # carries a second drift pair that ignore_xrun hides; with a
+                     # CD input in the chain that is an audible discontinuity.
+                     # timer_source is rewritten to the selected DAC card by
+                     # omdrc-config-helper, and takes effect on the next boot.
+                     sudo cp "${REPO_DIR}/etc/modprobe.d/omdrc-snd-aloop.conf" /etc/modprobe.d/
+                     sudo modprobe -r snd-aloop 2>/dev/null || true
                      sudo modprobe snd-aloop
     # Scope split: early-boot / hotplug audio infra stays in the SYSTEM scope
     # (mpd, drc-usb-audio, brutefir-drc); the app/renderer layer runs as systemd
@@ -221,6 +229,17 @@ else
                      systemctl --user enable --now omdrcctrl
     udev (USB DAC) : sudo cp "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
                      sudo udevadm control --reload-rules
+    CD input       : # Optional: the S/PDIF bridge (CD player -> ESI U24 XL -> DRC).
+                     # Needs alsaloop(1): apt install alsa-utils / pacman -S alsa-utils.
+                     # Select the capture interface on http://<box>:9090/configuration
+                     # (Audio hardware) FIRST — the bridge finds it by role.
+                     ln -sf "${REPO_DIR}/etc/systemd/user/omdrc-cdin.service" \\
+                            "${AUDIO_HOME}/.config/systemd/user/omdrc-cdin.service"
+                     systemctl --user daemon-reload
+                     # Deliberately NOT enabled: the CD input is an exclusive
+                     # source on Linux (one seat on hw:Loopback,0,0), and drc.sh
+                     # starts and stops it as the source changes. Select it with
+                     # \`drc.sh cdin\`; any rate action hands the loopback back to MPD.
     webremote      : ln -sf "${REPO_DIR}/video/webremote/systemd/omdrcvideo.service" \\
                             "${AUDIO_HOME}/.config/systemd/user/omdrcvideo.service"
                      systemctl --user daemon-reload

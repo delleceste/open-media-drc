@@ -1,0 +1,33 @@
+[Unit]
+Description=omdrc CD / S-PDIF input bridge (alsaloop)
+After=sound.target
+# BruteFIR decides where the bridge writes (loopback vs DAC straight), and the
+# answer is settled once at startup — so the unit is deliberately NOT ordered
+# after brutefir-drc.service.  drc.sh starts and stops this unit at the moment
+# the chain moves, which is the only ordering that is actually correct.
+
+# Template — generated to omdrc-cdin.service by install.sh from config.env.
+# A --user unit, like the renderers: omdrcctrl's CD input card drives it with
+# `systemctl --user start|stop omdrc-cdin`, which needs no sudoers grant.
+# Link into ~/.config/systemd/user/ and `systemctl --user enable` it only if
+# the CD input should survive a reboot; drc.sh starts it on demand either way.
+
+[Service]
+Type=simple
+Environment=HOME=@AUDIO_HOME@
+# The capture and DAC cards are looked up by role here; every knob below is
+# also an OMDRC_CDIN_* environment variable, so an override belongs in
+# ~/.config/systemd/user/omdrc-cdin.service.d/ rather than in this template.
+Environment=OMDRC_CDIN_LOG_FILE=/tmp/omdrc-cdin.log
+ExecStart=@REPO_DIR@/scripts/omdrc-cdin-alsaloop
+# The supervisor already retries alsaloop across carrier loss; a Restart here
+# covers only the supervisor itself dying, which is a bug, not a CD player
+# being switched off.
+Restart=on-failure
+RestartSec=5
+# Bit-perfect capture at 44.1 kHz is a real-time job with a small buffer, and
+# the box runs a convolution engine next to it.
+Nice=-5
+
+[Install]
+WantedBy=default.target

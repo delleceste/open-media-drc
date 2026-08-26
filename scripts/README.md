@@ -23,7 +23,24 @@ main [README](../README.md) or in `doc/`; this file is the quick index.
 | `bitperfect-lib.py` | Shared engine for the two tap scripts (WAV→S32 wire-container promotion, usbmon reader, usbdump decoder, alignment/verdict/report) — not called directly. | Linux + FreeBSD |
 | `systemd-user-install.sh` | Legacy convenience: symlinks `drc.service` into `~/.config/systemd/user/`, reloads the user daemon and enables the service. Superseded by the system-level hotplug units installed via `install.sh` (see the main README, *USB DAC hotplug automation*), kept for user-session setups. | Linux only (systemd) |
 
-## Typical workflows
+## Command-line alternative
+
+This is an alternative to the control panel's `/configuration` live installer,
+not a second procedure to run afterwards. Use it when the generated site data
+must be reviewed offline, used as CMake provisioning input, or transferred to
+another playback machine. For an ordinary live install, use `/configuration`
+and skip this section entirely; the page invokes these tools for you.
+
+In this alternative the two repositories have different ownership:
+
+- the REW project repository owns the editable `.mdat`, `.txts`, and source
+  WAV/TXT files;
+- the site-data repository owns generated `configs/<geometry>` and
+  `filters/<geometry>` bundles.
+
+Committing both gives the command-line workflow Git-backed history. The web
+installer archives the complete inputs in its persistent design root and uses
+Git history when that root already has it; Git is not a web-install prerequisite.
 
 **Deploy a design** — one command, one directory:
 

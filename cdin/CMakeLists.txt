@@ -22,7 +22,7 @@ else()
 endif()
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-    message(WARNING "omdrc-cdin targets FreeBSD/OSS; on Linux use alsaloop(1) instead. Skipping.")
+    message(STATUS "omdrc-cdin targets FreeBSD/OSS; the Linux CD input is\n                   scripts/omdrc-cdin-alsaloop + alsaloop(1) (doc/CDIN-LINUX.md). Skipping.")
     return()
 endif()
 

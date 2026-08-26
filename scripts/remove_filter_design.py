@@ -200,15 +200,22 @@ def main() -> int:
                         help="show every removable design and exit")
     parser.add_argument("--no-commit", dest="commit", action="store_false",
                         help="do not record the removal in the room repository")
+    parser.add_argument("--require-commit", action="store_true",
+                        help="fail unless the site repository records the removal")
     parser.add_argument("--dry-run", action="store_true",
                         help="report exactly what would be deleted, then stop")
     parser.add_argument("--yes", action="store_true",
                         help="skip the confirmation prompt")
     parser.add_argument("--live", action="store_true",
                         help="the site is the runtime tree; do not print CMake install steps")
+    parser.add_argument("--no-next", action="store_true",
+                        help="suppress handoff instructions (for web/CI use)")
     add_site_root_argument(parser)
     args = parser.parse_args()
     site_root = resolve_site_root(args.site_root)
+
+    if args.require_commit and not args.commit:
+        raise fail("--require-commit cannot be combined with --no-commit")
 
     if args.list or not args.design:
         designs = deployed_designs(site_root)
@@ -284,8 +291,11 @@ def main() -> int:
     CONSOLE.ok(f"{geometry}@{design_id} removed from {site_root}")
 
     if args.commit:
-        record_removal(CONSOLE, site_root, geometry, message)
-    if args.live:
+        record_removal(CONSOLE, site_root, geometry, message,
+                       require=args.require_commit)
+    if args.no_next:
+        pass
+    elif args.live:
         CONSOLE.heading("NEXT")
         CONSOLE.note("live runtime removal complete; the remaining designs are available now")
     else:
@@ -293,14 +303,18 @@ def main() -> int:
     return 0
 
 
-def record_removal(console, site_root: Path, geometry: str, message: str) -> None:
+def record_removal(console, site_root: Path, geometry: str, message: str,
+                   *, require: bool = False) -> dict:
     """Commit the deletion where the room keeps its history."""
     repo = git_toplevel(site_root)
     if repo is None:
         console.warn(
             f"{site_root} is not a Git work tree, so these files are simply gone; "
             "there is no commit to return to")
-        return
+        result = {"status": "no-repo", "root": str(site_root)}
+        if require:
+            raise AuditError("site repository did not record the removal: no-repo")
+        return result
     tracked = [item for item in (f"filters/{geometry}", f"configs/{geometry}")
                if (repo / item).exists() or git_maybe(repo, "ls-files", "--", item)]
     result = git_commit_paths(repo, tracked, message)
@@ -310,6 +324,11 @@ def record_removal(console, site_root: Path, geometry: str, message: str) -> Non
         console.note("room history: nothing changed for Git to record")
     else:
         console.warn("room history: commit failed: " + result.get("error", ""))
+    if require and result["status"] not in {"committed", "unchanged"}:
+        raise AuditError(
+            "site repository did not record the removal: "
+            + result.get("error", result["status"]))
+    return result
 
 
 if __name__ == "__main__":

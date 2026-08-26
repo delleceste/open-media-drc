@@ -401,6 +401,10 @@ class RoomHistoryTest(unittest.TestCase):
         result = deploy_filter.commit_site(self.room, self.manifest)
         self.assertEqual(result["status"], "no-repo")
 
+    def test_web_mode_can_require_existing_git_history(self):
+        with self.assertRaisesRegex(deploy_filter.AuditError, "did not record"):
+            MODULE.record_history(MODULE.CONSOLE, self.room, self.manifest, require=True)
+
     def test_a_deployment_becomes_one_retrievable_commit(self):
         (self.room / "filters/120.blue").mkdir(parents=True)
         (self.room / "configs/120.blue").mkdir(parents=True)
@@ -593,6 +597,12 @@ class ExportQualityTest(unittest.TestCase):
 
 
 class FilterAlignmentTest(unittest.TestCase):
+    def test_rew2raw_is_resolved_beside_installed_filter_tools(self):
+        self.assertEqual(
+            deploy_filter.FILTER_TOOLS_ROOT / "REW2raw.sh",
+            Path(deploy_filter.__file__).resolve().parent / "REW2raw.sh",
+        )
+
     def test_fixed_delay_and_gain_are_detected_without_filename_assumptions(self):
         rate = 48000
         sample_count = 4096
@@ -636,6 +646,10 @@ class FilterAlignmentTest(unittest.TestCase):
 
         def fake_rew2raw(arguments, cwd=None):
             del cwd
+            self.assertEqual(
+                arguments[0],
+                str(Path(deploy_filter.__file__).resolve().parent / "REW2raw.sh"),
+            )
             np.array([1.0, 0.0], dtype="<f8").tofile(Path(arguments[4]))
             return ""
 
@@ -687,6 +701,8 @@ class CommandHelpTest(unittest.TestCase):
                         "--sum-mode", "--declaration", "--source-ref",
                         "--source-root", "--write"):
             self.assertNotIn(removed, result.stdout)
+        self.assertIn("--require-commit", result.stdout)
+        self.assertIn("--no-next", result.stdout)
 
     def test_missing_directory_argument_is_refused(self):
         result = subprocess.run(

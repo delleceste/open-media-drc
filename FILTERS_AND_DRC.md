@@ -7,6 +7,36 @@ below, archives the uploaded sources, and streams the tool output. A live web
 install makes the design available but leaves activation to the existing DRC
 design selector.
 
+## Choose one deployment path
+
+For an already installed playback machine, use `/configuration`. That is the
+normal operator path: do **not** follow it by running
+`scripts/new_filter_design.py`, copying the generated files through a second
+checkout, or making a deployment commit. The web job is a front end to that
+audit engine. It first publishes the verified bundle into its persistent
+`design_root`, then derives the runnable configs and installs the exact manifest
+and coefficients into the live site. It archives the `.mdat` plus all required
+TXT/WAV inputs with the authoritative bundle.
+
+The Python/Git procedure remains a separate, repository-backed alternative for
+offline publication, reproducible machine provisioning, or moving site data
+between machines. In that workflow the REW project repository is the editable
+source of truth and the design root contains generated deployable bundles. Git
+is optional: when the configured design root is already a Git work tree, the
+web transaction requires its deployment commit before installing; an ordinary
+writable folder remains a complete, supported authority without Git. See
+[the scripts reference](scripts/README.md#command-line-alternative).
+
+The copies stored in a live bundle are intentional deployment evidence, not a
+second editable REW project. Keep editing measurements in the REW source
+project; never edit the installed archived copies.
+
+`design_root` defaults to a user-owned application-data directory. A host that
+already maintains a separate site-data checkout can point it there instead;
+this host uses `omdrc-801N`. The installed site (normally
+`/usr/local/etc/open-media-drc`) is always a derived runtime, never an
+independent publication target.
+
 This document describes how filter files are organized and how `drc.sh` selects
 geometry, sample rate, MPD output mode, and filter variants.
 
@@ -329,12 +359,13 @@ mpc enable DRC-resamp
 
 ## Filter Generation
 
-For committed designs, use the declaration/tag workflow documented in
+For a live machine, install a design through `/configuration` as described
+above. For the repository-backed alternative, use the single directory-driven
+`new_filter_design.py` workflow documented in
+[`scripts/README.md`](scripts/README.md#command-line-alternative) and
 [`doc/FILTER_PROVENANCE_AND_RESPONSE.md`](doc/FILTER_PROVENANCE_AND_RESPONSE.md).
-It binds explicitly selected files to a committed source declaration and an
-annotated Git tag, performs the TXT/WAV and headroom checks offline, generates
-all requested rate flavours and configs, and publishes the graph bundle. REW is
-not launched. The commands below are lower-level tools for experiments.
+The commands below are lower-level tools for experiments; they do not produce a
+verified web-UI bundle.
 
 For the `120.blue` layout, source REW WAV files are stored under:
 

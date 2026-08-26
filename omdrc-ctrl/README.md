@@ -10,6 +10,22 @@ installs archive the complete `.mdat` and required TXT/WAV inputs. Installation
 never activates a design, and a running or saved design must be switched away
 before removal.
 
+Select the common parent of one `.txts`/`.mdat` pair to have the session field
+filled automatically. A browser cannot inspect `../` after access was granted
+only to the `.txts` directory, so selecting the export directory itself leaves
+one explicit `.mdat` choice; both browser and server require its basename to
+match exactly. This live installer is the normal operator workflow and must not
+be followed by the command-line publication procedure. The page invokes that
+same engine itself.
+
+Every web publication first enters the persistent `[configuration] design_root`.
+If that directory is already a Git work tree, the deployment commit is required
+before runtime installation; otherwise it is an ordinary managed folder and no
+Git setup is required. The privileged helper then verifies the bundle ID and
+every named hash, renders runnable configs from the bound templates, writes the
+manifest last, and the unprivileged verifier checks the installed copy again.
+`site_root` is therefore derived runtime state rather than a second authority.
+
 The web process runs as the audio user. Root-owned live sites and hardware
 configuration need the fixed-purpose helper installed with the panel:
 
@@ -17,8 +33,8 @@ configuration need the fixed-purpose helper installed with the panel:
 <AUDIO_USER> ALL=(root) NOPASSWD: /usr/local/libexec/omdrc/omdrc-config-helper *
 ```
 
-The helper validates USB identities, selectors, manifests, hashes, and
-destination roots. On FreeBSD Apply updates the two `omdrc_audio_*` role keys,
+The helper validates USB identities, selectors, canonical bundle IDs, hashes,
+config derivation, and destination roots. On FreeBSD Apply updates the two `omdrc_audio_*` role keys,
 reconciles the service, and verifies `/dev/dspX`. On Linux it resolves the
 saved identity to the current ALSA card before every hotplug restore. Linux
 capture selection remains disabled until the CD bridge has an ALSA backend.
@@ -649,22 +665,37 @@ controller's user.
 
 ### Reserved section: `[cdin]`
 
-`[cdin]` points the **CD input** card at `omdrc-cdin`, the S/PDIF capture
-bridge. It configures nothing about the daemon itself — the daemon is
-configured in `/etc/rc.conf` — only where to read it from:
+`[cdin]` points the **CD input** card at the S/PDIF capture bridge. It
+configures nothing about the bridge itself — that is configured in
+`/etc/rc.conf` (FreeBSD) or in the systemd unit (Linux) — only where to read it
+from.
+
+The card is one parser serving two implementations, because both emit the same
+log grammar: `omdrc-cdin` (the OSS daemon, `cdin/`) on FreeBSD, and
+`scripts/omdrc-cdin-alsaloop` supervising `alsaloop(1)` on Linux. See
+`doc/CDIN-LINUX.md` for how the Linux side differs — chiefly that the CD input
+is an *exclusive* source there, because the ALSA loopback has one seat where
+`virtual_oss` mixes.
 
 ```ini
 [cdin]
 enabled = yes
-# Must match omdrc_cdin_logfile in /etc/rc.conf: this file IS the card.
+# Must match the bridge's log: omdrc_cdin_logfile in /etc/rc.conf (FreeBSD) or
+# OMDRC_CDIN_LOG_FILE in the unit (Linux).  This file IS the card.
 log_file = /tmp/omdrc-cdin.log
-# Checked with pgrep -x, to tell "stopped" from "broken".
-process = omdrc-cdin
-# The rc.d service name.  Shown in the UI, and what the card's Start/Stop
-# button runs: `service omdrc_cdin onestart|onestop`.
-service = omdrc_cdin
-# Whether that button exists at all.  Watching needs no privilege; starting and
-# stopping needs the rc.d grant in sudoers (below).
+# Checked with pgrep -x, to tell "stopped" from "broken".  Name the process
+# that HOLDS the device — on Linux that is alsaloop, not the supervisor around
+# it, because a live supervisor with a dead loop is silence under a green light.
+# Unset takes the OS default: omdrc-cdin (FreeBSD) / alsaloop (Linux).
+# process = omdrc-cdin
+# The service name.  Shown in the UI, and what the card's Start/Stop button
+# runs: `service omdrc_cdin onestart|onestop` (FreeBSD) or
+# `systemctl --user start|stop omdrc-cdin` (Linux).  Unset takes the OS
+# default: omdrc_cdin / omdrc-cdin.
+# service = omdrc_cdin
+# Whether that button exists at all.  Watching needs no privilege; on FreeBSD
+# starting and stopping needs the rc.d grant in sudoers (below), while the
+# Linux --user unit needs none.
 control = yes
 refresh = 5
 # Past failures the card keeps.  Errors accumulate and stay; the healthy status
@@ -702,14 +733,17 @@ Defaults per platform:
 
 | role      | FreeBSD             | Linux     | what it is                                  |
 |-----------|---------------------|-----------|---------------------------------------------|
-| `capture` | `/dev/dsp.capture`  | *(unset)* | the CD / S-PDIF input card, read by `omdrc-cdin` |
+| `capture` | `/dev/dsp.capture`  | *(from the configured role)* | the CD / S-PDIF input card, read by the bridge |
 | `bridge`  | `/dev/dsp.play`     | `hw:1,0`  | what the players write into                 |
 | `loop`    | `/dev/dsp.loop`     | `hw:1,1`  | the other side of that bridge, read by BruteFIR |
 | `dac`     | `/dev/dsp.dac`      | `hw:0,0`  | the DAC everything ends up at               |
 
 On FreeBSD these are the role symlinks
 [`omdrc_audio`](../etc/rc.d/omdrc_audio) keeps pointed at the right cards,
-plus the two cuse nodes `virtual_oss` creates. On Linux they are ALSA specs
+plus the two cuse nodes `virtual_oss` creates. On Linux the capture role has no
+conventional number, so rather than make every box name one here it follows the
+capture interface selected on `/configuration`, read back from
+`/run/omdrc/audio.roles` on every poll — an explicit `capture =` still wins. On Linux they are ALSA specs
 written the way BruteFIR writes them (`hw:1,1`, `plughw:0,0`, `hw:Loopback,1`)
 and translated to the `/dev/snd/pcmC<card>D<device>{p,c}` node `fuser` is asked
 about. `capture` has no conventional number on Linux, so it stays off until you

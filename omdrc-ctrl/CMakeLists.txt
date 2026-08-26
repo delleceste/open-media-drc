@@ -22,6 +22,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # Home of the user the panel runs as: commands.conf reads MPD's log out of
     # it.  Standalone builds have no AUDIO_USER, so take the builder's own home.
     set(OMDRCCTRL_AUDIO_HOME "$ENV{HOME}" CACHE PATH "Home directory of the audio user (used by commands.conf)")
+    set(OMDRC_FILTER_DESIGN_ROOT
+        "${OMDRCCTRL_AUDIO_HOME}/.local/share/omdrc/site-data" CACHE PATH
+        "Persistent design store used by the configuration web UI (Git optional)")
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set(OMDRCCTRL_SERVICE_MANAGER "systemd")
@@ -106,17 +109,20 @@ if(_OMDRC_SUPERPROJECT OR _OMDRC_USE_INSTALLED)
     string(REPLACE "@OMDRC_REPO_DIR@/drc-status.sh" "${CMAKE_INSTALL_PREFIX}/bin/omdrc-status" _cc "${_cc}")
     string(REPLACE "@OMDRC_REPO_DIR@/drc.sh"        "${CMAKE_INSTALL_PREFIX}/bin/omdrc"        _cc "${_cc}")
     set(_OMDRC_CONFIG_SITE_ROOT "${CMAKE_INSTALL_PREFIX}/etc/open-media-drc")
+    set(_OMDRC_CONFIG_DESIGN_ROOT "${OMDRC_FILTER_DESIGN_ROOT}")
     set(_OMDRC_FILTER_TOOLS_ROOT "${CMAKE_INSTALL_PREFIX}/share/omdrc/filter-tools")
     set(_OMDRC_CONFIG_HELPER "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/omdrc-config-helper")
     set(_OMDRC_CONFIG_STATE_ROOT "${OMDRCCTRL_AUDIO_HOME}/.local/state/omdrc/configuration")
 else()
     set(_OMDRC_CONFIG_SITE_ROOT "${OMDRC_REPO_DIR}")
+    set(_OMDRC_CONFIG_DESIGN_ROOT "${OMDRC_REPO_DIR}")
     set(_OMDRC_FILTER_TOOLS_ROOT "${OMDRC_REPO_DIR}/scripts")
     set(_OMDRC_CONFIG_HELPER "${OMDRC_REPO_DIR}/scripts/omdrc-config-helper.py")
     set(_OMDRC_CONFIG_STATE_ROOT "${OMDRC_REPO_DIR}/.configuration-jobs")
 endif()
 string(REPLACE "@OMDRC_REPO_DIR@" "${OMDRC_REPO_DIR}" _cc "${_cc}")
 string(REPLACE "@OMDRC_CONFIG_SITE_ROOT@" "${_OMDRC_CONFIG_SITE_ROOT}" _cc "${_cc}")
+string(REPLACE "@OMDRC_CONFIG_DESIGN_ROOT@" "${_OMDRC_CONFIG_DESIGN_ROOT}" _cc "${_cc}")
 string(REPLACE "@OMDRC_FILTER_TOOLS_ROOT@" "${_OMDRC_FILTER_TOOLS_ROOT}" _cc "${_cc}")
 string(REPLACE "@OMDRC_CONFIG_HELPER@" "${_OMDRC_CONFIG_HELPER}" _cc "${_cc}")
 string(REPLACE "@OMDRC_CONFIG_STATE_ROOT@" "${_OMDRC_CONFIG_STATE_ROOT}" _cc "${_cc}")
@@ -158,6 +164,7 @@ install(FILES
         ../scripts/new_filter_design.py
         ../scripts/deploy_filter.py
         ../scripts/remove_filter_design.py
+        ../scripts/verify_filter_bundle.py
         ../scripts/console_ui.py
         ../scripts/filter_workflow_next.py
         DESTINATION share/omdrc/filter-tools)

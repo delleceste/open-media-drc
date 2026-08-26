@@ -90,7 +90,8 @@ install-ctrl:
 	                omdrc-ctrl/src/templates/configuration.html \
 	                $(CTRLDIR)/templates
 	$(INSTALL_DATA) scripts/new_filter_design.py scripts/deploy_filter.py \
-	                scripts/remove_filter_design.py scripts/console_ui.py \
+	                scripts/remove_filter_design.py scripts/verify_filter_bundle.py \
+	                scripts/console_ui.py \
 	                scripts/filter_workflow_next.py $(LIBEXECDIR)/filter-tools
 	$(INSTALL_SCRIPT) scripts/REW2raw.sh $(LIBEXECDIR)/filter-tools
 	$(INSTALL_SCRIPT) scripts/omdrc-config-helper.py $(LIBEXECDIR)/omdrc-config-helper
@@ -100,6 +101,7 @@ install-ctrl:
 	sed -e 's,@OMDRC_REPO_DIR@/drc-status.sh,$(PREFIX)/bin/omdrc-status,g' \
 	    -e 's,@OMDRC_REPO_DIR@/drc.sh,$(PREFIX)/bin/omdrc,g' \
 	    -e 's,@OMDRC_CONFIG_SITE_ROOT@,$(PREFIX)/etc/open-media-drc,g' \
+	    -e 's,@OMDRC_CONFIG_DESIGN_ROOT@,@AUDIO_HOME@/.local/share/omdrc/site-data,g' \
 	    -e 's,@OMDRC_FILTER_TOOLS_ROOT@,$(PREFIX)/libexec/omdrc/filter-tools,g' \
 	    -e 's,@OMDRC_CONFIG_HELPER@,$(PREFIX)/libexec/omdrc/omdrc-config-helper,g' \
 	    -e 's,@OMDRC_CONFIG_STATE_ROOT@,/var/db/omdrc/configuration,g' \

@@ -30,6 +30,7 @@ etc/open-media-drc/configs/flat/brutefir-192000.conf
 %%CTRL%%libexec/omdrc/filter-tools/new_filter_design.py
 %%CTRL%%libexec/omdrc/filter-tools/deploy_filter.py
 %%CTRL%%libexec/omdrc/filter-tools/remove_filter_design.py
+%%CTRL%%libexec/omdrc/filter-tools/verify_filter_bundle.py
 %%CTRL%%libexec/omdrc/filter-tools/console_ui.py
 %%CTRL%%libexec/omdrc/filter-tools/filter_workflow_next.py
 %%CTRL%%libexec/omdrc/filter-tools/REW2raw.sh

@@ -1,0 +1,598 @@
+#!/usr/bin/env python3
+"""omdrc-cdin-alsaloop — the Linux CD / S-PDIF bridge.
+
+The FreeBSD counterpart is `omdrc-cdin` (cdin/), a daemon that talks OSS
+directly because FreeBSD ships nothing that reconciles two free-running audio
+clocks.  Linux does: `alsaloop(1)` from alsa-utils is exactly that control
+loop.  So this is not a port of the daemon — it is the supervisor around
+alsaloop that supplies everything alsaloop does not do:
+
+  * resolves WHICH devices to bridge, by role, from /run/omdrc/audio.roles
+    (the capture interface) and the running chain (the output);
+  * picks the output the way cdin/src/outsel.h does — the loopback while the
+    DRC chain is up, the DAC straight when it is not;
+  * restarts alsaloop across carrier loss, because a CD player that is
+    switched off makes the capture device stop dead and alsaloop exit;
+  * writes the log the omdrcctrl "CD input" card reads.  That card is a parser
+    for omdrc-cdin's log grammar, and the grammar is the interface: emit the
+    same lines and the same card works on both operating systems.
+
+## Why the clocks need a control loop at all
+
+Capture is clocked by the CD's crystal, the DAC runs on its own, and the two
+differ by a few ppm forever.  On FreeBSD the bridge absorbs that in a
+seconds-scale ring and lets it slip.  Here the correction is continuous, and
+which correction is used is the `--sync` mode:
+
+  playshift  (default) steers snd-aloop's "PCM Rate Shift 100000" control, so
+             the loopback consumes at exactly the rate the CD delivers.  There
+             is NO resampler in the data path: what reaches BruteFIR is
+             bit-identical to what the transport sent, which is the whole
+             point of the FreeBSD design and is preserved here.
+  samplerate resamples continuously with libsamplerate.  Always works, never
+             bit-perfect.  The documented fallback for a box whose rate-shift
+             control misbehaves.
+  simple     insert/drop.  Bit-perfect between corrections, one discontinuity
+             per correction.
+
+`playshift` is only meaningful when the loopback is itself clocked by the DAC.
+snd-aloop is hrtimer-driven by default, which would put a SECOND free-running
+clock in the chain (CD <-> aloop-timer <-> DAC); etc/modprobe.d/omdrc-snd-aloop.conf
+sets `timer_source` to the DAC card so there is only the one drift pair the
+FreeBSD topology has.  See doc/CDIN-LINUX.md.
+
+## Exclusive, unlike FreeBSD
+
+virtual_oss mixes, so omdrc-cdin can share /dev/dsp.play with MPD and release
+it on digital silence.  hw:Loopback,0,0 is a single substream: alsaloop and
+MPD's DRC output cannot both hold it, and the loser gets EBUSY.  So on Linux
+the CD input is an EXCLUSIVE source — drc.sh stops this service before it
+enables an MPD output, and disables MPD's outputs before it starts this one.
+That is why there is no silence gate here: releasing the output on silence
+would hand it to nobody.
+"""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+VERSION = "alsaloop"
+
+# ── the log the web card reads ───────────────────────────────────────────────
+# Grammar (omdrc-ctrl/src/app.py: _CDIN_LINE and friends):
+#   YYYY-MM-DD HH:MM:SS.mmm [LVL] message
+# with these message shapes carrying meaning:
+#   omdrc-cdin <ver> starting: in=<path> out=<path> <rate> Hz
+#   capture|playback <path>: available|unavailable|acquired|released[ — why]
+#   state playing|idle|no-carrier: <why>
+#   [stats] <fields>
+# Anything else is shown verbatim as an event, which is what alsaloop's own
+# output becomes.
+
+
+class Log:
+    """Line-buffered append to the daemon log, mirrored to stderr.
+
+    Mirrored rather than chosen between: the log is the card's data source and
+    has to be a file, while stderr is what `journalctl --user -u omdrc-cdin`
+    shows.  Both readers are real and neither is the other's fallback."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.lock = threading.Lock()
+        self.stream = None
+        if path:
+            try:
+                self.stream = open(path, "a", buffering=1, errors="replace")
+            except OSError as error:
+                print(f"cannot open log {path}: {error}", file=sys.stderr)
+
+    def __call__(self, level: str, message: str) -> None:
+        now = time.time()
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+        line = f"{stamp}.{int(now % 1 * 1000):03d} [{level}] {message}"
+        with self.lock:
+            if self.stream is not None:
+                try:
+                    self.stream.write(line + "\n")
+                except OSError:
+                    pass
+            print(line, file=sys.stderr, flush=True)
+
+
+# ── ALSA device names and the /proc nodes behind them ────────────────────────
+# alsaloop is given names like "hw:Loopback,0,0"; everything measurable about a
+# stream lives in /proc/asound/card<N>/pcm<D><p|c>/sub<S>/.  Resolving the name
+# to that directory is the only translation this program needs, and it is done
+# once per device at startup — a card that is unplugged takes the whole bridge
+# down anyway.
+
+_DEVICE = re.compile(r"^(?:hw:)?(?P<card>[^,]+)(?:,(?P<dev>\d+))?(?:,(?P<sub>\d+))?$")
+
+
+def card_number(name: str) -> int | None:
+    """ALSA card index for a number or an id string ("1", "Loopback")."""
+    if name.isdigit():
+        return int(name) if Path(f"/proc/asound/card{name}").is_dir() else None
+    try:
+        for line in Path("/proc/asound/cards").read_text(errors="replace").splitlines():
+            # " 1 [Loopback       ]: Loopback - Loopback"
+            match = re.match(r"^\s*(\d+)\s+\[([^\]]+)\]", line)
+            if match and match.group(2).strip() == name:
+                return int(match.group(1))
+    except OSError:
+        pass
+    return None
+
+
+class Device:
+    """One end of the bridge: the ALSA name, and where to read its state."""
+
+    def __init__(self, spec: str, direction: str):
+        self.spec = spec
+        self.direction = direction          # "p" (playback) or "c" (capture)
+        match = _DEVICE.match(spec or "")
+        if match is None:
+            raise ValueError(f"not an ALSA device name: {spec!r}")
+        self.card = card_number(match.group("card"))
+        self.device = int(match.group("dev") or 0)
+        self.sub = int(match.group("sub") or 0)
+
+    @property
+    def attached(self) -> bool:
+        return self.card is not None
+
+    @property
+    def proc(self) -> Path | None:
+        if self.card is None:
+            return None
+        return Path(f"/proc/asound/card{self.card}/pcm{self.device}{self.direction}"
+                    f"/sub{self.sub}")
+
+    def _fields(self, name: str) -> dict[str, str]:
+        base = self.proc
+        if base is None:
+            return {}
+        try:
+            text = (base / name).read_text(errors="replace")
+        except OSError:
+            return {}
+        if text.startswith("closed"):
+            return {}
+        fields = {}
+        for line in text.splitlines():
+            key, _, value = line.partition(":")
+            if value:
+                fields[key.strip()] = value.strip()
+        return fields
+
+    def hw_params(self) -> dict[str, str]:
+        """Negotiated format of the stream, empty while it is closed."""
+        return self._fields("hw_params")
+
+    def status(self) -> dict[str, str]:
+        """Live pointers: `delay` is the queued frames, i.e. our lead."""
+        return self._fields("status")
+
+    def rate(self) -> float | None:
+        value = self.hw_params().get("rate", "").split()[0:1]
+        try:
+            return float(value[0]) if value else None
+        except ValueError:
+            return None
+
+
+# ── the rate-shift control: the drift number, read straight from the driver ──
+# With --sync=playshift alsaloop steers snd-aloop's "PCM Rate Shift 100000"
+# control, where 100000 means 1.000000.  Reading it back is therefore a direct
+# measurement of the correction being applied, in units of 10 ppm — a far
+# better drift signal than differentiating the buffer level, because it is what
+# the loop actually decided rather than what we can infer about it.
+
+_CONTROL = re.compile(
+    r"numid=(?P<numid>\d+),iface=PCM,name='PCM Rate Shift 100000'"
+    r"(?:,device=(?P<device>\d+))?(?:,subdevice=(?P<sub>\d+))?")
+
+
+def rate_shift_numid(device: Device) -> str:
+    """`numid=N` of the shift control on `device`, or "" when there is none."""
+    if device.card is None:
+        return ""
+    try:
+        listing = subprocess.run(["amixer", "-c", str(device.card), "controls"],
+                                 text=True, capture_output=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for line in listing.splitlines():
+        match = _CONTROL.search(line)
+        if not match:
+            continue
+        if int(match.group("device") or 0) != device.device:
+            continue
+        if int(match.group("sub") or 0) != device.sub:
+            continue
+        return match.group("numid")
+    return ""
+
+
+def rate_shift_ppm(card: int, numid: str) -> float | None:
+    if not numid:
+        return None
+    try:
+        out = subprocess.run(["amixer", "-c", str(card), "cget", f"numid={numid}"],
+                             text=True, capture_output=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"^\s*: values=(-?\d+)", out, re.M)
+    if not match:
+        return None
+    # 100000 == 1.0, so one unit is 10 ppm.
+    return (int(match.group(1)) - 100000) * 10.0
+
+
+# ── choosing the output, the way cdin/src/outsel.h does ──────────────────────
+
+
+def process_running(name: str) -> bool:
+    try:
+        return subprocess.run(["pgrep", "-x", name], timeout=3,
+                              capture_output=True).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def read_roles(path: str) -> dict[str, str]:
+    """The roles the config helper published: dac_unit, capture_unit, ..."""
+    values: dict[str, str] = {}
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError:
+        return values
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key:
+            values[key.strip()] = value.strip()
+    return values
+
+
+def pick_output(bridge: str, dac: str, log: Log) -> tuple[str, str]:
+    """(device, why).  The loopback while BruteFIR is up, else the DAC.
+
+    Same rule and same reason as the FreeBSD bridge: writing into the loopback
+    when nothing is reading it produces silence, and writing to the DAC when
+    BruteFIR holds it produces EBUSY.  The answer is settled once, here,
+    because alsaloop negotiates a format against it and cannot re-take the
+    decision while it runs — restarting the service is how the answer changes,
+    which is exactly what drc.sh does when the chain moves."""
+    if process_running("brutefir"):
+        return bridge, "the DRC chain is up"
+    if dac:
+        log("WRN", "BruteFIR is not running — bridging straight to the DAC, "
+                   "so the disc is heard without room correction")
+        return dac, "the DRC chain is down"
+    return bridge, "no DAC device configured"
+
+
+# ── stats ────────────────────────────────────────────────────────────────────
+
+
+class Stats:
+    """The `[stats]` line the web card turns into chips.
+
+    Only the fields we can actually measure are emitted.  The card treats an
+    absent field as "not applicable" rather than zero, which is the honest
+    reading: a bridge whose output has not opened yet has no lead, and
+    reporting that as `lead 0 ms` would show a red buffer warning for a
+    condition that is not a fault."""
+
+    def __init__(self, output: Device):
+        self.output = output
+        self.started = time.monotonic()
+        self.starves = 0
+        self.restarts = 0
+        self.lead_min: int | None = None
+        self.lead_max: int | None = None
+        self.numid = ""
+        self.card = output.card
+
+    def refresh_control(self) -> None:
+        self.numid = rate_shift_numid(self.output)
+
+    def lead_ms(self) -> int | None:
+        status = self.output.status()
+        rate = self.output.rate()
+        if not status or not rate:
+            return None
+        try:
+            frames = int(status.get("delay", ""))
+        except ValueError:
+            return None
+        if frames < 0:
+            return None
+        return int(frames * 1000 / rate)
+
+    def line(self, capture: Device) -> str:
+        parts = []
+        in_hz, out_hz = capture.rate(), self.output.rate()
+        if in_hz:
+            parts.append(f"in {in_hz:.1f} Hz")
+        if out_hz:
+            parts.append(f"out {out_hz:.1f} Hz")
+        lead = self.lead_ms()
+        if lead is not None:
+            self.lead_min = lead if self.lead_min is None else min(self.lead_min, lead)
+            self.lead_max = lead if self.lead_max is None else max(self.lead_max, lead)
+            parts.append(f"lead {lead} ms (min {self.lead_min}, max {self.lead_max})")
+        ppm = rate_shift_ppm(self.card, self.numid) if self.card is not None else None
+        if ppm is None:
+            parts.append("drift settling")
+        elif abs(ppm) < 0.05:
+            parts.append("drift ~0 ppm")
+        else:
+            parts.append(f"drift {ppm:+.1f} ppm")
+        parts.append(f"starves {self.starves}")
+        parts.append(f"up {int(time.monotonic() - self.started)} s")
+        return "[stats] " + " ".join(parts)
+
+
+# ── translating alsaloop's own output ────────────────────────────────────────
+# alsaloop's messages are not a stable interface, so nothing here depends on a
+# particular format: the only classification is severity, plus counting the one
+# event that is audible.  Everything reaches the card verbatim as an event.
+
+_XRUN = re.compile(r"\b(xrun|underrun|overrun)\b", re.I)
+_ERROR = re.compile(r"\b(error|failed|cannot|unable|invalid|busy)\b", re.I)
+
+
+def classify(line: str, stats: Stats) -> str:
+    if _XRUN.search(line):
+        stats.starves += 1
+        return "ERR"
+    return "ERR" if _ERROR.search(line) else "INF"
+
+
+# ── the supervisor ───────────────────────────────────────────────────────────
+
+
+class Bridge:
+    def __init__(self, args, log: Log):
+        self.args = args
+        self.log = log
+        self.stopping = threading.Event()
+        self.child: subprocess.Popen | None = None
+        self.state: tuple[str, str] | None = None
+
+    def set_state(self, state: str, why: str) -> None:
+        if (state, why) == self.state:
+            return
+        self.state = (state, why)
+        self.log("INF", f"state {state}: {why}")
+
+    def stop(self, *_args) -> None:
+        self.stopping.set()
+        child = self.child
+        if child is not None and child.poll() is None:
+            child.terminate()
+
+    def alsaloop_argv(self, capture: Device, output: Device) -> list[str]:
+        argv = [self.args.alsaloop,
+                "-C", capture.spec,
+                "-P", output.spec,
+                "-r", str(self.args.rate),
+                "-c", str(self.args.channels),
+                "-f", self.args.format,
+                "-t", str(self.args.tlatency),
+                "--sync", self.args.sync]
+        if self.args.sync == "samplerate":
+            argv += ["-A", self.args.converter]
+        # Verbose is how anything at all reaches the log; without it a failing
+        # loop is a silent exit status.
+        argv += ["-v"]
+        argv += self.args.extra
+        return argv
+
+    def run_once(self, capture: Device, output: Device) -> int:
+        argv = self.alsaloop_argv(capture, output)
+        self.log("INF", "$ " + " ".join(argv))
+        stats = Stats(output)
+        try:
+            self.child = subprocess.Popen(
+                argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1, stdin=subprocess.DEVNULL)
+        except OSError as error:
+            self.log("ERR", f"playback {output.spec}: unavailable — "
+                            f"cannot run {self.args.alsaloop}: {error}")
+            return 127
+
+        # alsaloop has opened nothing yet; the acquisition is confirmed by the
+        # output stream appearing in /proc, not by the process existing.
+        acquired = False
+        deadline = time.monotonic() + self.args.settle
+        while time.monotonic() < deadline and self.child.poll() is None:
+            if output.hw_params():
+                acquired = True
+                break
+            time.sleep(0.1)
+        if acquired:
+            self.log("INF", f"playback {output.spec}: acquired")
+            stats.refresh_control()
+            if self.args.sync == "playshift" and not stats.numid:
+                self.log("WRN", f"playback {output.spec}: no 'PCM Rate Shift 100000' "
+                                "control — --sync=playshift has nothing to steer; "
+                                "use --sync=samplerate on this device")
+        elif self.child.poll() is None:
+            self.log("WRN", f"playback {output.spec}: not opened after "
+                            f"{self.args.settle:g} s")
+
+        # One reporter per alsaloop run, ended by its own event: a shared flag
+        # would let the previous run's thread be revived by the next run
+        # clearing it, and two reporters would interleave stats for one loop.
+        finished = threading.Event()
+        threading.Thread(target=self.report, args=(capture, output, stats, finished),
+                         daemon=True).start()
+        assert self.child.stdout is not None
+        for raw in self.child.stdout:
+            line = raw.rstrip("\r\n")
+            if line:
+                self.log(classify(line, stats), line)
+        code = self.child.wait()
+        finished.set()
+        if acquired:
+            self.log("INF", f"playback {output.spec}: released")
+        return code
+
+    def report(self, capture: Device, output: Device, stats: Stats,
+               finished: threading.Event) -> None:
+        """State line + `[stats]`, once per interval, until the child exits."""
+        while not finished.is_set() and not self.stopping.is_set():
+            if capture.hw_params():
+                self.set_state("playing", f"capturing from {capture.spec}")
+            else:
+                self.set_state("no-carrier", f"{capture.spec} is not streaming")
+            self.log("INF", stats.line(capture))
+            finished.wait(self.args.stats_interval)
+
+    def main(self) -> int:
+        args = self.args
+        roles = read_roles(args.roles)
+
+        capture_spec = args.capture
+        if not capture_spec:
+            unit = roles.get("capture_unit", "")
+            if not unit:
+                self.log("ERR", "capture: unavailable — no capture interface is "
+                                "configured; select one on the /configuration page")
+                return 2
+            capture_spec = f"hw:{unit},{args.capture_device}"
+
+        dac_spec = args.dac
+        if not dac_spec and roles.get("dac_unit"):
+            dac_spec = f"hw:{roles['dac_unit']},0"
+
+        try:
+            capture = Device(capture_spec, "c")
+        except ValueError as error:
+            self.log("ERR", f"capture: unavailable — {error}")
+            return 2
+        if not capture.attached:
+            self.log("ERR", f"capture {capture_spec}: unavailable — no such ALSA card")
+            return 2
+        self.log("INF", f"capture {capture.spec}: available")
+
+        output_spec, why = pick_output(args.bridge, dac_spec, self.log)
+        try:
+            output = Device(output_spec, "p")
+        except ValueError as error:
+            self.log("ERR", f"playback: unavailable — {error}")
+            return 2
+        if not output.attached:
+            self.log("ERR", f"playback {output_spec}: unavailable — no such ALSA card")
+            return 2
+        self.log("INF", f"playback {output.spec}: available — {why}")
+        self.log("INF", f"omdrc-cdin {VERSION} starting: in={capture.spec} "
+                        f"out={output.spec} {args.rate} Hz")
+
+        # Restart loop.  A CD player being switched off stops the capture
+        # device, alsaloop exits, and the bridge must come back by itself when
+        # the player is switched on again — that is what makes this a service
+        # you leave enabled rather than a command you run per disc.
+        backoff = args.retry
+        while not self.stopping.is_set():
+            code = self.run_once(capture, output)
+            if self.stopping.is_set():
+                break
+            if code == 127:
+                return code
+            self.set_state("idle", f"alsaloop exited with status {code}, "
+                                   f"retrying in {backoff:g} s")
+            self.stopping.wait(backoff)
+            backoff = min(backoff * 2, args.retry_max)
+            if capture.hw_params():
+                backoff = args.retry     # signal is back: retry promptly again
+        self.log("INF", "state idle: stopped")
+        return 0
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    env = os.environ.get
+    parser = argparse.ArgumentParser(
+        prog="omdrc-cdin-alsaloop",
+        description="CD / S-PDIF bridge into the DRC chain (Linux; wraps alsaloop)")
+    parser.add_argument("--capture", default=env("OMDRC_CDIN_CAPTURE", ""),
+                        help="ALSA capture device; default: the configured "
+                             "capture role from --roles")
+    parser.add_argument("--capture-device", default=env("OMDRC_CDIN_CAPTURE_DEVICE", "0"),
+                        help="PCM device number on the capture card (default 0)")
+    parser.add_argument("--bridge", default=env("OMDRC_CDIN_BRIDGE", "hw:Loopback,0,0"),
+                        help="snd-aloop playback side BruteFIR reads from")
+    parser.add_argument("--dac", default=env("OMDRC_CDIN_DAC", ""),
+                        help="DAC device used when the DRC chain is down; "
+                             "default: the configured DAC role from --roles")
+    parser.add_argument("--roles", default=env("OMDRC_AUDIO_ROLES", "/run/omdrc/audio.roles"))
+    parser.add_argument("--rate", type=int, default=int(env("OMDRC_CDIN_RATE", "44100")),
+                        help="Red Book is always 44100; the ESI U24 XL does not "
+                             "auto-detect the rate, so this must match the wire")
+    parser.add_argument("--channels", type=int, default=int(env("OMDRC_CDIN_CHANNELS", "2")))
+    parser.add_argument("--format", default=env("OMDRC_CDIN_FORMAT", "S32_LE"),
+                        help="must match the loopback / BruteFIR input format")
+    parser.add_argument("--sync", default=env("OMDRC_CDIN_SYNC", "playshift"),
+                        choices=["playshift", "captshift", "samplerate", "simple",
+                                 "auto", "none"],
+                        help="drift correction; playshift keeps the path bit-perfect")
+    parser.add_argument("--converter", default=env("OMDRC_CDIN_CONVERTER", "0"),
+                        help="libsamplerate converter for --sync=samplerate "
+                             "(0 = sinc best)")
+    parser.add_argument("--tlatency", type=int,
+                        default=int(env("OMDRC_CDIN_TLATENCY", "200000")),
+                        help="requested loop latency in microseconds.  This is the "
+                             "Linux counterpart of cdin's --lead: it is the drift "
+                             "margin, the startup delay and the transport lag all "
+                             "at once, and it is heard on every Play/Stop")
+    parser.add_argument("--stats-interval", type=float,
+                        default=float(env("OMDRC_CDIN_STATS", "10")))
+    parser.add_argument("--settle", type=float, default=5.0,
+                        help="seconds to wait for the output stream to open")
+    parser.add_argument("--retry", type=float, default=2.0)
+    parser.add_argument("--retry-max", type=float, default=30.0)
+    parser.add_argument("--alsaloop", default=env("OMDRC_ALSALOOP", "alsaloop"))
+    parser.add_argument("--log", default=env("OMDRC_CDIN_LOG_FILE", "/tmp/omdrc-cdin.log"))
+    parser.add_argument("extra", nargs="*", default=[],
+                        help="further arguments passed straight to alsaloop")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str]) -> int:
+    args = parse_args(argv)
+    log = Log(args.log)
+    bridge = Bridge(args, log)
+    signal.signal(signal.SIGTERM, bridge.stop)
+    signal.signal(signal.SIGINT, bridge.stop)
+    # SIGHUP is what drc.sh sends the FreeBSD daemon to ask for the output
+    # back.  Here the output cannot be handed back without stopping — the
+    # loopback substream has one seat — so the honest answer to the same signal
+    # is to stop, and drc.sh stops the service instead.  Handling it anyway
+    # keeps `kill -HUP` from killing the supervisor with the default action and
+    # leaving a stray alsaloop holding the device.
+    signal.signal(signal.SIGHUP, bridge.stop)
+    try:
+        return bridge.main()
+    except KeyboardInterrupt:
+        return 0
+    except OSError as error:
+        if error.errno == errno.EPIPE:
+            return 0
+        log("ERR", str(error))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

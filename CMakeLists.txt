@@ -30,6 +30,8 @@ set(GEOMETRIES    ""                    CACHE STRING "Extra filter sets to insta
 #     -DOMDRC_SITE_DATA_DIRS="${CMAKE_SOURCE_DIR};/home/me/devel/omdrc-site"
 set(OMDRC_SITE_DATA_DIRS "${CMAKE_CURRENT_SOURCE_DIR}" CACHE STRING
     "Search path for configs/<geo> + filters/<geo> (semicolon-separated, first match wins)")
+set(OMDRC_FILTER_DESIGN_ROOT "${AUDIO_HOME}/.local/share/omdrc/site-data" CACHE PATH
+    "Persistent design store used by the configuration web UI (Git optional)")
 set(MUSIC_DIR     ""                    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR     ""                    CACHE PATH   "Video library root (omdrcvideo)")
 set(QOBUZ_USER    ""                    CACHE STRING "Qobuz account username for upmpdcli (blank disables)")

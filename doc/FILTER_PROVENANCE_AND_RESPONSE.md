@@ -5,6 +5,14 @@ auditable bundle, how that bundle reaches the playback machine, and how
 `omdrcctrl` displays the measured, filter, and corrected responses belonging to
 the coefficients BruteFIR is actually using.
 
+The control panel's `/configuration` page is the normal live-install path and
+invokes this same audit/build engine itself. The command-line and Git handoff
+documented below is an alternative for offline publication or machine
+provisioning, not a procedure to run after a web install. The web path archives
+every input in a persistent design root, requires a deployment commit when that
+root is already a Git repository, supports a plain folder otherwise, and only
+then derives the installed runtime from that authoritative bundle.
+
 There are two central rules:
 
 > A graph is selected by the hashes of the coefficient files loaded by the

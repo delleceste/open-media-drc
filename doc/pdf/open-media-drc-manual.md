@@ -110,16 +110,20 @@ output plugins enabled --- both stock packages do. MPD is configured with
 three outputs (section \ref{sec:mpd-outputs}): the direct DAC output and two
 DRC loopback outputs.
 
-## omdrc-cdin --- the CD / S-PDIF capture bridge (FreeBSD)
+## The CD / S-PDIF capture bridge
 
 The second source, and the only live one: a CD transport's S/PDIF output,
 captured through an ESI U24 XL and written into the same loopback MPD uses.
-It is a `memcpy` through a ring whose *lead* absorbs the permanent few-ppm
-difference between the disc's crystal and the DAC's --- no resampler, so the
-bit-perfect claim survives the CD path too. It holds the loopback only while
-audio is actually on the wire, so leaving it running costs MPD and mpv
-nothing. Full treatment, including the ESI configuration it depends on, in
-chapter \ref{sec:cdin}.
+On FreeBSD this is `omdrc-cdin`, a purpose-written daemon: a `memcpy` through
+a ring whose *lead* absorbs the permanent few-ppm difference between the
+disc's crystal and the DAC's --- no resampler, so the bit-perfect claim
+survives the CD path too --- and it holds the loopback only while audio is
+actually on the wire, so leaving it running costs MPD and mpv nothing. On
+Linux the same job is `alsaloop(1)` from `alsa-utils`, steering `snd-aloop`'s
+rate-shift control instead of a hand-rolled ring, but the loopback there is a
+single substream, so the CD input becomes an *exclusive* source rather than
+one that shares the loopback with MPD. Full treatment, including the ESI
+configuration both platforms depend on, in chapter \ref{sec:cdin}.
 
 ## The loopback: snd-aloop (Linux) / virtual_oss (FreeBSD)
 
@@ -127,7 +131,11 @@ BruteFIR needs to receive the player's audio. That is done with a loopback
 device MPD plays into and BruteFIR reads from:
 
 * **Linux**: the `snd-aloop` ALSA kernel module (loaded via
-  `etc/modules-load.d/`).
+  `etc/modules-load.d/`), pinned to the DAC's clock with the `timer_source`
+  module parameter (`etc/modprobe.d/`) rather than its default free-running
+  hrtimer --- otherwise the loopback is a second, independent drift pair on
+  top of whatever else is clocked against the DAC (section
+  \ref{sec:cdin-linux}).
 * **FreeBSD**: **`virtual_oss`**, a userland OSS mixing/routing daemon from
   the base system, which creates character devices through the **`cuse(3)`**
   kernel facility. `drc.sh` starts it per rate with a play node
@@ -298,6 +306,22 @@ If this file is missing, BruteFIR (>= 1.1) silently auto-generates a broken
 fallback `~/.brutefir_defaults`, every start fails with *"Parse error: path
 not set ... module 'file'"*, and `drc.sh` rolls back to direct output --- so
 DRC never comes up at boot.
+
+**6. Renderer runtime state** --- MPD, upmpdcli and qobuzconnect2mpd all write
+persistent state (database, pid, cache, tokens) and drop logs into `/tmp`. On
+a real host install `make install` runs
+`scripts/prepare-renderer-runtime.sh` (wired in by
+`cmake/install-renderer-runtime.cmake.in`, and again from
+`cmake/renderers.cmake`) to converge every one of those paths onto
+`AUDIO_USER` --- the same user BruteFIR and MPD already share for the audio
+devices --- instead of leaving a reinstall, a user rename, or
+qobuzconnect2mpd's own dedicated service account to produce mismatched
+ownership that is discovered only when a renderer fails to start. The script
+takes `AUDIO_USER`, `AUDIO_HOME`, the qobuzconnect2mpd state directory and the
+runtime/log directory, refuses a handful of dangerously broad roots, and
+skips (rather than chowns) an unexpected symlink under `/tmp`. It is skipped
+entirely under `DESTDIR` packaging, since that is staging rather than the
+target host.
 
 ## Files that must live in /etc
 
@@ -1432,6 +1456,50 @@ means the curves must not be trusted. The scripts' **NEXT** block is the
 host-specific version of this sequence and names the correct working directory
 for each step in a split engine/site layout.
 
+## Live browser-driven installs {#sec:live-installs}
+
+The sequence above is the offline/Git path. `omdrc-ctrl`'s **`/configuration`**
+page (section \ref{sec:omdrcctrl}) drives the same audit/build engine from a
+browser on the trusted LAN, with no git checkout or shell access to the box,
+and is the normal way an operator installs or removes a room-correction
+design. The command-line procedure remains for offline publication and
+machine provisioning; it is not a follow-up step after a web install, because
+the web page already invokes the identical pipeline.
+
+The browser uploads one REW-exported `.txts` directory plus its matching
+`.mdat`. `omdrc-ctrl/src/configuration.py` stages the upload under a private
+per-job directory, rejecting anything but an exact-basename pair, a mixed
+export folder, or a mismatched `.mdat` --- selecting the common parent of the
+pair fills the session field automatically, but a browser cannot inspect `../`
+after access was granted only to the `.txts` directory, so selecting the
+export directory itself leaves one explicit `.mdat` choice, and both browser
+and server require its basename to match.
+
+`new_filter_design.py` gained the flags this needs: `--live` publishes
+runnable `.conf` files (instead of `.conf.in` templates) into `--site-root`
+rather than the repo checkout; `--coefficient-root` bakes an absolute live
+path into those configs when staging happens outside the real site;
+`--archive-mdat` copies the full `.mdat` into the deployed source bundle
+instead of only hashing it; `--upload-provenance` records a browser upload's
+own name as its provenance instead of a temporary staging path.
+
+Every web publication first enters the persistent `[configuration] design_root`.
+If that directory is already a Git work tree, the deployment commit is
+required before runtime installation, exactly as in the manual sequence above;
+otherwise it is an ordinary managed folder and no Git setup is required. When
+the live site is not writable by the unprivileged web process, the design is
+staged and handed to `scripts/omdrc-config-helper.py`, the same privileged
+helper that pins audio hardware roles (section \ref{sec:configuration-page}): it re-verifies
+every claimed hash before copying anything and writes the manifest **last**,
+so a reader can never observe a claim before the bytes behind it exist ---
+`site_root` is derived runtime state, not a second authority. A repeated
+install of an already-live, byte-identical bundle is a verified no-op
+(`installed_bundle_matches()` in `deploy_filter.py`) rather than a re-write.
+Progress streams back to the browser over Server-Sent Events. Installation
+never activates a design, and a running or saved design must be switched away
+before removal --- both enforced the same way whether triggered from the page
+or the command line.
+
 ## Verification at install time
 
 `cmake/core-drc.cmake` runs `verify_filter_bundle.py --require-sources` over
@@ -1579,6 +1647,43 @@ root-only).
 **Security**: the server executes arbitrary shell commands from
 `commands.conf` as the service user --- trusted LAN only, never a public
 interface.
+
+### Configuration page --- filter installs and audio hardware roles {#sec:configuration-page}
+
+`/configuration` lets an operator on the trusted LAN install or remove
+room-correction designs and pin physical audio cards by USB identity, with no
+git checkout or shell access to the box. `omdrc-ctrl/src/configuration.py`
+drives two independent workflows, both through the same privileged helper,
+`scripts/omdrc-config-helper.py`, installed with the panel:
+
+```
+<AUDIO_USER> ALL=(root) NOPASSWD: /usr/local/libexec/omdrc/omdrc-config-helper *
+```
+
+* **Filter installs** --- upload a REW `.txts`/`.mdat` pair and publish it as a
+  live, verified bundle. This is the normal live-install path described in
+  full in section \ref{sec:live-installs}; the page invokes the same
+  audit/build engine the command-line procedure does, streaming progress back
+  over Server-Sent Events.
+* **Audio hardware roles** --- pick the DAC and (where a bridge exists) the
+  capture interface from the cards actually attached, by USB identity
+  (`vid:pid[:serial]`), rather than editing `rc.conf`/`sysrc` or a systemd
+  unit by hand. `apply_audio()` refuses a DAC that is not attached or cannot
+  play, and refuses either role when two identical cards have no serial number
+  to disambiguate --- unplug one before applying. On FreeBSD, Apply updates
+  the two `omdrc_audio_*` role keys, reconciles the `omdrc_audio` rc.d
+  service, and verifies the resulting `/dev/dspX` nodes exist. On Linux it
+  writes `<prefix>/etc/open-media-drc/audio-roles.conf`
+  (`OMDRC_AUDIO_DAC` / `OMDRC_AUDIO_CAPTURE`, the USB identities, surviving a
+  reboot) and resolves the saved identity to the current ALSA card number into
+  `/run/omdrc/audio.roles` on every hotplug restore, so nothing in the CD
+  bridge or the panel's chain diagram has to hard-code a card number that USB
+  attach order can change. A configured capture card that is not plugged in
+  this boot is dropped with a notice rather than failing the whole reconcile.
+
+The helper validates USB identities, selectors, canonical bundle IDs, hashes,
+config derivation, and destination roots before touching anything root-owned;
+`configuration.py` itself runs as the unprivileged web user throughout.
 
 ## Video: mpv playback + phone web remote {#sec:video}
 
@@ -1731,16 +1836,26 @@ byte-identical to the reference raw --- MPD cannot play headerless raw.
 
 A CD transport is the second source the chain accepts, and the only one that
 is not a file: it arrives as a live S/PDIF signal, clocked by the disc, on a
-USB capture interface. `omdrc-cdin` (FreeBSD only, `cdin/`) bridges it into
-the same `virtual_oss` entry point MPD uses, so a disc gets exactly the same
-room correction as everything else.
+USB capture interface. On FreeBSD `omdrc-cdin` (`cdin/`) bridges it into the
+same `virtual_oss` entry point MPD uses; on Linux `alsaloop(1)` from
+`alsa-utils` does the equivalent job into `snd-aloop`. Either way a disc gets
+exactly the same room correction as everything else.
 
 ![The CD path. Both ends of the bridge block on their own device, so the ring fill between them is the drift signal; there is no resampler anywhere in it.](build/chain-cdin.pdf){width=98%}
 
 It takes the seat `mpv` already takes for video (`video/lib/drc-audio.sh`):
-a non-MPD writer into the loopback that BruteFIR reads. On Linux the
-equivalent job is done by `alsaloop(1)`, which is why this is FreeBSD-only
-code.
+a non-MPD writer into the loopback that BruteFIR reads.
+
+Most of this chapter --- the FreeBSD `omdrc-cdin` daemon, the lead/drift
+arithmetic, the state machine, the transport simulator and the stats line ---
+describes the daemon that had to be written because FreeBSD ships nothing
+that reconciles two free-running audio clocks. Linux does ship that
+reconciler, so section \ref{sec:cdin-linux} covers the Linux bridge on its
+own terms: what topology problem it has that FreeBSD does not, and the one
+behavioural difference that is forced on it by the loopback. The web panel's
+CD input card is unchanged either way --- it is a parser for the daemon's log
+grammar, and the Linux supervisor emits the same grammar, so one card serves
+both operating systems.
 
 ## Why a bridge is needed at all
 
@@ -2035,6 +2150,117 @@ On FreeBSD the button needs a `sudoers` grant; without one, set
 omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service omdrc_cdin onestart, \
     /usr/sbin/service omdrc_cdin onestop
 ```
+
+## The Linux bridge: alsaloop instead of a daemon {#sec:cdin-linux}
+
+*As of this writing, everything in this section is built and reasoned but has
+not run on the Linux box yet* --- see "What has not been measured" below
+before trusting it on real hardware.
+
+```
+CD player --S/PDIF 44.1k--> ESI U24 XL --USB--> hw:<cap>,0
+                                                     |  alsaloop
+                                                     v
+                                            hw:Loopback,0,0   (snd-aloop)
+                                                     |
+                                                     v
+                                            hw:Loopback,0,1
+                                                     |  BruteFIR
+                                                     v
+                                                  hw:0,0      (Okto DAC8)
+```
+
+On FreeBSD there is exactly **one** pair of independent clocks: the CD's
+crystal and the DAC's; `virtual_oss` sits between them and is itself clocked
+by the DAC it feeds, so it contributes no third clock. `snd-aloop` has no
+clock of its own and by default invents one, an hrtimer --- which makes
+**two** independent pairs on Linux (CD <-> aloop-timer, aloop-timer <-> DAC),
+the second present even in plain MPD playback with no CD input at all, and
+normally invisible only because both BruteFIR stanzas in
+`brutefir_defaults.linux.conf` set `ignore_xrun: true`.
+
+`etc/modprobe.d/omdrc-snd-aloop.conf` removes that second pair by pointing the
+module's `timer_source` at the DAC card:
+
+```
+options snd-aloop index=1 id=Loopback pcm_substreams=2 timer_source="hw:0,0,0"
+```
+
+The loopback then advances at the DAC's rate, the topology becomes the same
+shape as the FreeBSD one, and CD-to-DAC drift is the only drift left --- a
+prerequisite for the correction below, not an optimisation: correcting one
+drift pair while a second runs free would only move the problem.
+`omdrc-config-helper` rewrites the marked line to whichever DAC is selected on
+`/configuration` (section \ref{sec:configuration-page}); the module loads at
+boot, so a change takes effect on the next boot.
+
+**Drift correction** uses alsaloop's `playshift` mode, which steers
+`snd-aloop`'s `PCM Rate Shift 100000` control so the loopback consumes at
+exactly the rate the CD delivers --- **there is no resampler in the data
+path**, the same bit-perfect property the FreeBSD design protects. Other
+`--sync` modes exist for diagnosis (`OMDRC_CDIN_SYNC`, or `--sync`):
+`samplerate` (continuous libsamplerate resample, **not** bit-perfect, for when
+the shift control misbehaves), `simple` (insert/drop samples), `none`
+(measure the raw drift). `captshift` is not useful here: it needs a rate-shift
+control on the *capture* card, which a USB interface does not have. The
+supervisor reads the shift control back every stats interval and reports it
+as the `drift` field in ppm --- a direct measurement of the correction being
+applied, rather than an inference from buffer level.
+
+**The CD input is an exclusive source on Linux**, forced by the loopback
+rather than chosen. `virtual_oss` mixes, so on FreeBSD `omdrc-cdin` shares
+`/dev/dsp.play` with MPD and mpv, holding it only while audio is actually on
+the wire. `hw:Loopback,0,0` is a **single substream**: alsaloop and MPD's
+`DRC-native`/`DRC-resamp` outputs cannot both hold it, whichever opens second
+gets `EBUSY`. Consequently:
+
+* `drc.sh cdin` disables every MPD output, brings the chain up at 44.1 kHz,
+  and starts `omdrc-cdin.service`. MPD has no output while the CD input is
+  selected --- that is the correct state, not a limitation worked around, and
+  the direct `OKTO-DAC` output is no help either because BruteFIR holds the
+  DAC.
+* Any rate action (`drc.sh 44100`, `192000`, `resamp`, ...) records `music` as
+  the source, stops the bridge, **waits for the `alsaloop` process itself to
+  be gone** (not just for `systemctl stop` to return --- that happens before
+  the kernel has closed the substream, and reopening too early is an `EBUSY`
+  that reaches the user as "MPD will not play"), then enables the MPD output.
+* The unit is **not** enabled at boot; `drc.sh restore`/`reconcile` bring back
+  whichever source was saved.
+* `drc.sh off`/`stop` return the box to MPD direct and leave the bridge down.
+  FreeBSD moves its bridge to the DAC instead on `off`; Linux cannot, because
+  the off path hands that same DAC to MPD's direct output and the DAC is
+  single-open. Re-select the CD input with `drc.sh cdin`.
+
+The one thing that does carry over: when the DRC chain is down, the bridge
+writes straight to the DAC instead of the loopback, exactly as
+`cdin/src/outsel.h` describes for FreeBSD. The output device is settled once
+at startup --- alsaloop negotiates a format against it and cannot re-take the
+decision while running --- so the service is restarted whenever the chain
+moves.
+
+**Selecting the capture interface** uses the same `/configuration` Audio
+hardware section as the DAC, on both roles now. Applying writes
+`<prefix>/etc/open-media-drc/audio-roles.conf` (survives a reboot) and
+`/run/omdrc/audio.roles` (resolved ALSA card numbers, does not); the ESI's
+input selector --- the card has two inputs, only one live, chosen by a mixer
+setting that does **not** survive a reboot (`cdin/ESI-U24XL.md`) --- has a
+Linux equivalent in an `amixer` capture-source switch, e.g.
+`amixer -c <card> cset name='PCM Capture Source' 1`, whose exact control name
+is card- and kernel-dependent and belongs in an `ExecStartPre=` systemd
+drop-in on `omdrc-cdin.service` so it survives a reboot the way the FreeBSD
+`omdrc_audio_capture_recsrc` rc.conf var does.
+
+**Requirements**: `alsa-utils` (`alsaloop`, `amixer`); `snd-aloop` with
+`timer_source` support (mainline since 4.x); a capture interface that takes
+its clock from the incoming S/PDIF carrier the way the ESI U24 XL does
+automatically (ESI KB00307EN).
+
+**What has not been measured**: whether `timer_source="hw:0,0,0"` is accepted
+in that spelling and actually pins the loopback's `hw_ptr` to the DAC's rate,
+and whether `--sync=playshift` finds the shift control on the real hardware
+(the supervisor logs a warning naming the control if not, and
+`--sync=samplerate` is the documented fallback). Full detail in
+`doc/CDIN-LINUX.md`.
 
 ## The ESI U24 XL: what has to be configured, and three traps
 
@@ -2503,7 +2729,8 @@ Local fixes kept in-tree while the official FreeBSD fixes are pending. All
 
 Target device: OKTO RESEARCH DAC8 STEREO (USB `0x152a:0x88c5`, Thesycon
 UAC2 firmware, USB High-Speed). Two patches are applied in order on top of
-stock `releng/15.1`; a third is an unbuilt candidate.
+stock `releng/15.1`; a third, built but not yet installed, closes what those
+two left unfinished; a fourth is an unbuilt candidate.
 
 ### 1. `uaudio-clock-before-alt.c.patch` --- rate-change cold-open silence
 
@@ -2568,13 +2795,57 @@ sndstat is the *expected* state again.
 
 **Status.** Applied to `/usr/src` 2026-07-07, builds `-Werror`-clean alone
 and on top of patch 1; the combined module was pending install +
-listening test at the time of writing. Upstream: bug #295933 / PR 2323.
+listening test at the time of writing. Upstream: bug #295933 / PR 2323,
+landed as `755685dd665e` (MFC `6886e8a9a0aa`) --- superseded by patch 3 below.
 
-### 3. `uaudio-feedback-follow.c.patch` --- candidate (unbuilt)
+### 3. `uaudio-clock-transaction.c.patch` --- the residual 44.1 kHz silent open (2026-08-26 follow-up)
+
+**Problem.** Patch 2 landed upstream as `755685dd665e`, but a follow-up audit
+of the OKTO still occasionally refusing 44.1 kHz found the shared-clock guard
+incomplete: it skips a `SET_CUR` only on a rate *mismatch*, and the same
+commit's own jitter-stream rate alignment guarantees a *match* --- so the
+capture pass issues a second, same-value `SET_CUR` to the shared clock right
+after playback is armed and streaming. Confirmed on the wire with
+`hw.usb.uaudio.debug=6`: two `SET_CUR` to clock 41, one settle, on every open.
+Upstream is worse off than this host, having no clock-before-alt reorder
+(patch 1), so its second write lands under two armed interfaces rather than
+one. Separately measured: `uaudio(4)` auto-streams the OKTO's vestigial
+capture interface for the lifetime of every playback --- 251.9 isochronous
+completions/s against 125.4 playback interrupts/s, half the device's
+isochronous bandwidth --- to recompute a number the explicit feedback endpoint
+already reports.
+
+**The fix.** (a) Never write a UAC2 clock another stream owns; (b) read it
+back with `GET_CUR` first and skip a redundant write, as Linux does; (c) stop
+borrowing the vestigial capture stream for jitter when the playback alt has an
+explicit feedback endpoint, gated by `hw.usb.uaudio.prefer_feedback`; (d) do
+not start the jitter capture stream at a stale rate.
+
+**Not claimed:** that this causes the intermittent silent-open symptom that
+prompted the audit --- it did not reproduce in 42 controlled open/play/close
+cycles (21 of them into 44.1 kHz). The defects stand on the code, the USB
+trace and the isochronous counters, independently of that symptom.
+
+**Status.** Built `-Werror`-clean with and without `USB_DEBUG`, on top of
+patches 1 and 2. **Not installed, not listening-tested.** Split for upstream
+submission as `uaudio-upstream-0001-shared-clock-write-discipline.c.patch`
+and `uaudio-upstream-0002-prefer-explicit-feedback.c.patch` in
+`upstream-series/` --- `git am`-clean on `main` after `755685dd665e`, with a
+PR description and Bugzilla comment ready to send (same route as before: a
+GitHub PR, committed by `christos@`; CC `hselasky@` on the isochronous-policy
+item). Full audit, device-generality analysis and A/B test plan in
+`uaudio-clock-transaction.md`; what remains declared-but-not-patched in
+`SUBMISSION-295933.md`. `bench/` holds a DAC lock bench (per-rate test tones,
+repeated open/play/close, verdict from the DAC's analog output or by ear) and
+`bench/uaudio-affects.py`, which decides from USB descriptors alone whether
+any device is affected.
+
+### 4. `uaudio-feedback-follow.c.patch` --- candidate (unbuilt)
 
 Sketch to make playback follow the device's reported feedback rate smoothly
 (Linux-style), targeting an occasional tick. Touches the same sync-callback
-region as fix (c) above, so it **needs rebasing** before any use.
+region as patch 3, so it **needs rebasing**, and becomes live only once the
+vestigial capture stream stops being auto-started (patch 3, item c).
 
 ### Applying and building
 
@@ -2861,6 +3132,29 @@ musicpd/upmpdcli/virtual_oss updates.
 4. **Phases 2--3** --- only once the BruteFIR question is settled and there
    is evidence of an audience; a port is a maintenance promise.
 
+## A clean installable image (planned, not built)
+
+`doc/USB-APPLIANCE-IMAGE-PLAN.md` scopes a USB stick that installs FreeBSD
+with `open-media-drc` preinstalled --- no room filters, no per-geometry
+BruteFIR configs, no personal data, no git history, no build artifacts ---
+ready for a specific room's `configs/<geo>` + `filters/<geo>` to be dropped in
+afterward, the way a fresh port install would be configured. Target hardware
+is a fanless Intel/AMD-integrated-audio box dedicated to the appliance;
+**bee is explicitly out of scope**, staying the dev/measurement machine with
+its own disk/filesystem issues (root UFS, 99% full, a legacy partition layout
+sharing the disk).
+
+The plan builds on work already mid-flight rather than starting over:
+`OMDRC_SITE_DATA_DIRS` + `GEOMETRY=flat` already gives a built-in generic mode
+(BruteFIR's identity coefficient, no filter files needed); `.gitattributes`
+`export-ignore` already strips filters, per-room configs, the FreeBSD patch
+trees and the investigation-journal Markdown from `git archive` output on a
+tag; and Phase 1.5 of Appendix B's own port plan (`make install
+DESTDIR=... PREFIX=...`, reading config at runtime rather than baking
+`@AUDIO_USER@` in at render time) is what should land on the image rather
+than bee's live `install.sh` + `config.env` flow. Status is plan-only:
+nothing has been built from it yet.
+
 \newpage
 
 # Appendix C --- Bit-perfect test assets and cross-OS comparison {#sec:appendix-bitperfect}
@@ -3058,8 +3352,11 @@ detail behind each section:
 | Site-data split (`OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT`) | `scripts/README.md`, `host.cmake.sample`, `cmake/core-drc.cmake` |
 | Helper scripts | `scripts/README.md`, `README.md` |
 | Web control panel | `omdrc-ctrl/README.md` |
-| CD / S-PDIF input bridge | `cdin/README.md` |
+| CD / S-PDIF input bridge (FreeBSD) | `cdin/README.md` |
+| CD / S-PDIF input bridge (Linux) | `doc/CDIN-LINUX.md` |
 | ESI U24 XL configuration and traps | `cdin/ESI-U24XL.md` |
+| Web control panel: `/configuration` page | `omdrc-ctrl/README.md`, `omdrc-ctrl/src/configuration.py` |
+| USB appliance image plan | `doc/USB-APPLIANCE-IMAGE-PLAN.md` |
 | Stable sound-device names and lifecycle | `etc/rc.d/omdrc_audio`, `etc/devd/omdrc-audio.conf` |
 | Spectrum analyzer | `omdrc-ctrl/SPECTRUM_ANALYZER.md` |
 | Video playback + Blu-ray | `video/README.md` |
@@ -3075,6 +3372,8 @@ detail behind each section:
 | Shared-clock fix design | `freebsd-uaudio-patch/uaudio-shared-clock-fix.md` |
 | Clock-before-alt analysis | `freebsd-uaudio-patch/uaudio-clock-before-alt.md` |
 | Feedback-follow audit | `freebsd-uaudio-patch/uaudio-feedback-follow.md` |
+| Residual 44.1 kHz silent-open audit (patch 3) | `freebsd-uaudio-patch/uaudio-clock-transaction.md` |
+| Upstream follow-up submission for #295933 | `freebsd-uaudio-patch/SUBMISSION-295933.md` |
 | virtual_oss patches (index) | `freebsd-virtual-oss-patch/README.md` |
 | SETTRIGGER livelock root cause | `freebsd-virtual-oss-patch/ROOTCAUSE-settrigger-sync-engine-deadlock.md` |
 | cuse refleak root cause | `freebsd-virtual-oss-patch/ROOTCAUSE-cuse_client_open-refleak.md` |
