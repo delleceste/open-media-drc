@@ -1004,15 +1004,28 @@ Renders this README as an HTML page.
 
 ### `GET /qconnect/status`
 
-Reads the qobuzconnect2mpd status file and returns its display lines.  `line3`
-is the activity line — what the renderer is doing while nothing is audible yet,
-or the download error that stopped it — and is empty during ordinary playback.
+Reads the qobuzconnect2mpd status file and returns its display lines plus the
+renderer's activity: `state` is the current phase (`NEW PLAYLIST RECEIVED`,
+`RESOLVING STREAM`, `LOADING SEGMENT`, `BUFFERING`, `PLAYING`, `ERROR`, or
+empty when nothing is in progress) and `events` is the daemon's activity ring,
+oldest first — what it is doing while nothing is audible yet, or the error that
+stopped it.  `line3` is kept as the newest ring entry for older readers.
+
+`line1` is empty when the status file carries only a playback-state tag: the
+controller has replaced or cleared the queue and there is no track to name.
 
 ```json
 { "ok": true, "line1": "[playing] Artist - Title  [1:23 / 4:56]", "line2": "FLAC 16 bit 44.1 kHz",
-  "line3": "buffering track — segment 4/122 (1.9 MB)" }
-{ "ok": false, "line1": "", "line2": "", "line3": "" }
+  "state": "LOADING SEGMENT",
+  "events": ["11:24:03 queue received: 14 tracks, starting at item 0",
+             "11:24:04 resolving stream URL 1/14 (7%)",
+             "11:24:07 segment 7/52 (13%)"],
+  "line3": "11:24:07 segment 7/52 (13%)" }
+{ "ok": false, "line1": "", "line2": "", "state": "", "events": [], "line3": "" }
 ```
+
+A daemon too old to report activity simply returns an empty `state` and no
+`events`, and the card looks exactly as it did before.
 
 ---
 
@@ -1759,22 +1772,33 @@ The raw log is also available in the **Logs** card as `CD input`.
 Shows the track currently playing via qobuzconnect2mpd, updated every second:
 
 - Line 1: playback state + artist/title + position/duration
-  (`[playing] Artist - Title  [1:23 / 4:56]`)
+  (`[playing] Artist - Title  [1:23 / 4:56]`) — **or**, while the renderer is
+  working, the phase it is in, in the same large type: `[ NEW PLAYLIST
+  RECEIVED ]`, `[ RESOLVING STREAM ]`, `[ LOADING SEGMENT ]`, `[ BUFFERING ]`,
+  `[ ERROR ]` (red).  The track name is not kept there during the wait on
+  purpose: once the controller replaces the queue the old `[paused] …` line is
+  stale, and a stale track name is exactly what made a busy renderer look like
+  a stalled one.
 - Line 2: audio format (`FLAC 24 bit, stereo, 96.0 kHz`)
-- Line 3: the **activity line**, shown with a pulsing dot only while there is
-  something to report — pressing play on the phone starts a sequence (Qobuz
+- Below them the **activity lines**, shown with a pulsing dot only while there
+  is something to report.  Pressing play on the phone starts a sequence (Qobuz
   URL resolution, then segment-by-segment reconstruction of the track, then
-  MusicPD opening its output) that can take several seconds and used to give
-  no sign of life at all.  It reads e.g. `resolving Qobuz stream URLs —
-  track 3/12`, `buffering track — segment 4/122 (1.9 MB)`, or `waiting for
-  MusicPD to start playing`, and turns red for `download failed: …`.  Empty —
-  and hidden — once the music is simply playing.  See the status-file section
-  of the qobuzconnect2mpd README for the full vocabulary.
+  MusicPD opening its output) that can take tens of seconds — occasionally
+  minutes — and used to give no sign of life at all.  Entries are timestamped
+  and read e.g. `11:24:03 queue received: 14 tracks, starting at item 0`,
+  `11:24:07 segment 7/52 (13%)`, `11:24:22 queue handed to MusicPD, waiting
+  for it to start`, and turn red for `download failed: …`.  Only the track
+  playback is waiting on narrates itself: prefetch of upcoming tracks stays
+  quiet.  See the status-file section of the qobuzconnect2mpd README for the
+  full vocabulary.
 
-The panel header always has two buttons, plus a conditional third:
+The panel header always has three buttons, plus a conditional fourth:
 - **Restart** — calls `POST /qconnect/restart`; shows a toast on success/failure
 - **Log** — toggles a scrollable log viewer (auto-refreshed every 5 s while
   open) with colour-coded lines: red for `[ERR]`, green for `[OUT]`
+- **☰ / —** — how much activity to show: the last three entries (☰) or only
+  the current one (—).  Three is the default; the choice is remembered in
+  `localStorage` under `omdrcctrl.qc.activityLines`
 - **Qobuz sign-in** — appears only while an OAuth-invalid message is active and
   opens the matching renderer's flow
 

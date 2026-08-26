@@ -394,6 +394,15 @@
             margin-bottom: 4px;
         }
         #qc-line1.idle { color: var(--muted); font-style: italic; }
+        /* The same big line, carrying the activity phase instead of a track.
+           While the renderer is working there is no track worth naming — the
+           previous one is stale — so the phase takes the slot. */
+        #qc-line1.phase {
+            color: var(--accent);
+            font-style: normal;
+            letter-spacing: .06em;
+        }
+        #qc-line1.phase.error { color: var(--red, #f85149); }
         #qc-line2 {
             font-family: ui-monospace, "SFMono-Regular", monospace;
             font-size: .78rem;
@@ -405,13 +414,22 @@
            looks exactly as it did before. */
         #qc-activity {
             display: none;
-            align-items: center;
-            gap: 7px;
+            flex-direction: column;
+            gap: 2px;
             margin-top: 6px;
             font-size: .8rem;
             color: var(--accent);
         }
         #qc-activity.show { display: flex; }
+        /* Newest entry last, so the ring reads like the log it is.  Older
+           entries fade back: they are context, not the current operation. */
+        #qc-activity .qc-act-line {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+        #qc-activity .qc-act-line.past { color: var(--muted); }
+        #qc-activity .qc-act-line.past .qc-act-dot { animation: none; opacity: .4; }
         #qc-activity .qc-act-dot {
             width: 7px; height: 7px;
             border-radius: 50%;
@@ -419,14 +437,20 @@
             flex: 0 0 auto;
             animation: qc-act-pulse 1.2s ease-in-out infinite;
         }
-        #qc-activity.error { color: var(--red, #f85149); }
-        #qc-activity.error .qc-act-dot { animation: none; }
+        #qc-activity.error .qc-act-line:last-child { color: var(--red, #f85149); }
+        #qc-activity.error .qc-act-line:last-child .qc-act-dot { animation: none; }
         @keyframes qc-act-pulse {
             0%, 100% { opacity: 1; }
             50%      { opacity: .25; }
         }
         @media (prefers-reduced-motion: reduce) {
             #qc-activity .qc-act-dot { animation: none; }
+        }
+        .btn-log.btn-mini {
+            padding: 1px 5px;
+            font-size: .7rem;
+            line-height: 1.1;
+            min-width: 0;
         }
         #qconnect-log-panel {
             border-top: 1px solid var(--border);
@@ -1160,6 +1184,9 @@
             <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
             <button class="btn-log" id="btn-restart" onclick="restartQc()" disabled>Restart</button>
             <button class="btn-log" id="btn-log" onclick="toggleLog()">Log</button>
+            <button class="btn-log btn-mini" id="btn-act-lines"
+                    onclick="toggleActivityLines()"
+                    title="Activity detail: one line, or the last three">☰</button>
             <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
         </div>
     </div>
@@ -1175,9 +1202,7 @@
     <div style="padding:12px 0">
         <div id="qc-line1" class="idle">—</div>
         <div id="qc-line2"></div>
-        <div id="qc-activity" aria-live="polite">
-            <span class="qc-act-dot"></span><span id="qc-activity-text"></span>
-        </div>
+        <div id="qc-activity" aria-live="polite"></div>
     </div>
     <div id="qconnect-log-panel" style="display:none">
         <pre id="qc-log-content" class="qc-log"></pre>
@@ -2020,14 +2045,88 @@ function startAutoRefresh(name, intervalMs, fetchFn) {
     }, 1000);
 }
 
+// How much of qobuzconnect2mpd's activity ring to show: just the current
+// operation, or the last three so the shape of a slow start stays readable
+// (queue received -> resolving -> segment 7/52).  Remembered like the
+// collapsible cards.  Read lazily: storedBool is defined further down.
+const QC_ACT_LINES_KEY = 'omdrcctrl.qc.activityLines';
+let qcActivityLines = 0;          // 0 = not read from localStorage yet
+let qcLastStatus    = null;       // repaint on toggle without awaiting a poll
+
+function qcActivityDepth() {
+    if (!qcActivityLines)
+        qcActivityLines = storedBool(QC_ACT_LINES_KEY, true) ? 3 : 1;
+    return qcActivityLines;
+}
+
+function paintActivityToggle() {
+    const btn = document.getElementById('btn-act-lines');
+    if (!btn) return;
+    const three = qcActivityDepth() === 3;
+    btn.textContent = three ? '\u2630' : '\u2014';
+    btn.title = three ? 'Activity: last three lines \u2014 click for one only'
+                      : 'Activity: newest line only \u2014 click for the last three';
+}
+
+function toggleActivityLines() {
+    qcActivityLines = qcActivityDepth() === 3 ? 1 : 3;
+    storeBool(QC_ACT_LINES_KEY, qcActivityLines === 3);
+    paintActivityToggle();
+    if (qcLastStatus) paintQcStatus(qcLastStatus);
+}
+
 // Show what qobuzconnect2mpd is doing while nothing is audible yet, and get
-// out of the way once it is playing.
-function setQcActivity(text) {
+// out of the way once it is playing.  Newest entry last, carrying the pulsing
+// dot; the ones above it are what already happened.
+function setQcActivity(events, isError) {
     const box = document.getElementById('qc-activity');
     if (!box) return;
-    document.getElementById('qc-activity-text').textContent = text;
-    box.classList.toggle('show',  !!text);
-    box.classList.toggle('error', /fail|error/i.test(text));
+    const shown = events.slice(-qcActivityDepth());
+    box.textContent = '';
+    shown.forEach((entry, i) => {
+        const row  = document.createElement('div');
+        row.className = 'qc-act-line' + (i < shown.length - 1 ? ' past' : '');
+        const dot  = document.createElement('span');
+        dot.className = 'qc-act-dot';
+        const text = document.createElement('span');
+        text.textContent = entry;
+        row.append(dot, text);
+        box.appendChild(row);
+    });
+    box.classList.toggle('show',  shown.length > 0);
+    box.classList.toggle('error', !!isError);
+}
+
+// The big line carries the track while there is one worth naming, and the
+// activity phase while there is not: a queue the controller has just replaced
+// leaves a stale '[paused] <old track>' that reads as a stalled renderer.
+const QC_PHASE_PLAYING = 'PLAYING';
+const QC_PHASE_ERROR   = 'ERROR';
+
+function paintQcStatus(d) {
+    qcLastStatus = d;
+    const l1    = document.getElementById('qc-line1');
+    const l2    = document.getElementById('qc-line2');
+    const phase = d.state || '';
+    if (phase && phase !== QC_PHASE_PLAYING) {
+        l1.textContent = `[ ${phase} ]`;
+        l1.classList.remove('idle');
+        l1.classList.add('phase');
+        l1.classList.toggle('error', phase === QC_PHASE_ERROR);
+    } else {
+        l1.classList.remove('phase', 'error');
+        if (d.line1) {
+            l1.textContent = d.line1;
+            l1.classList.remove('idle');
+        } else {
+            l1.textContent = '\u2014';
+            l1.classList.add('idle');
+        }
+    }
+    l2.textContent = d.line2 || '';
+    l2.style.color = d.line2 ? fmtColor(d.line2) : '';
+    const events = d.events || (d.line3 ? [d.line3] : []);
+    setQcActivity(events, phase === QC_PHASE_ERROR);
 }
 
 function fmtColor(line2) {
@@ -2044,19 +2143,7 @@ function fmtColor(line2) {
 
 async function fetchQcStatus() {
     try {
-        const d = await (await fetch('/qconnect/status')).json();
-        const l1 = document.getElementById('qc-line1');
-        const l2 = document.getElementById('qc-line2');
-        if (d.line1) {
-            l1.textContent = d.line1;
-            l1.classList.remove('idle');
-        } else {
-            l1.textContent = '—';
-            l1.classList.add('idle');
-        }
-        l2.textContent  = d.line2 || '';
-        l2.style.color  = d.line2 ? fmtColor(d.line2) : '';
-        setQcActivity(d.line3 || '');
+        paintQcStatus(await (await fetch('/qconnect/status')).json());
     } catch { /* ignore — status dot already signals offline */ }
 }
 
@@ -4060,6 +4147,7 @@ startAutoRefresh('chain', CHAIN_INTERVAL_MS, fetchChain);
 {% if cdin_enabled %}
 startAutoRefresh('cdin', CDIN_INTERVAL_MS, fetchCdin);
 {% endif %}
+paintActivityToggle();
 startAutoRefresh('qc', 1000, fetchQcStatus);
 // Keep the renderer toggle in sync with actual service status on a slow cadence.
 syncRenderers();

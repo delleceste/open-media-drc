@@ -2505,26 +2505,65 @@ def read_command(cmd_id):
         return jsonify({"ok": False, "output": "timeout"})
 
 
+# A status-file line that is nothing but the playback state tag: the renderer
+# has no track any more (the controller replaced or cleared the queue).  Naming
+# the previous track there would make a busy renderer look like a stalled one.
+_QC_BARE_STATE = re.compile(r"^\[(?:playing|paused|stopped)\]$", re.I)
+
+
+def _parse_qconnect_status(lines: list[str]) -> dict:
+    """Split the status file into now-playing, decoded format, activity phase
+    and the activity ring.
+
+    Lines 1 and 2 are positional (track, format).  Everything below is tagged:
+    `state=<phase>` is the phase, any other non-empty line is a ring entry
+    ("HH:MM:SS what happened", oldest first).  Tagging rather than indexing
+    keeps a daemon that writes more (or fewer) lines from shifting the meaning
+    of the ones the panel already understands — older builds wrote no third
+    line at all, and those simply report no activity."""
+    line1 = lines[0].strip() if len(lines) > 0 else ""
+    if _QC_BARE_STATE.match(line1):
+        line1 = ""
+    line2  = None
+    state  = ""
+    events = []
+    for raw in lines[1:]:
+        entry = raw.strip()
+        if entry.startswith("state="):
+            state = entry[len("state="):].strip()
+            continue
+        if line2 is None:           # first untagged line below the track
+            line2 = entry
+            continue
+        if entry:
+            events.append(entry)
+    return {
+        "line1":  line1,
+        "line2":  line2 or "",
+        "state":  state,
+        "events": events,
+        # Legacy single activity line: the newest ring entry.
+        "line3":  events[-1] if events else "",
+    }
+
+
+_QC_STATUS_EMPTY = {"line1": "", "line2": "", "state": "", "events": [],
+                    "line3": ""}
+
+
 @app.route("/qconnect/status")
 def qconnect_status():
+    """Now playing, plus what qobuzconnect2mpd is doing between the phone's
+    play command and the first sound — resolving stream URLs, reconstructing
+    segments, waiting on MPD — or the error that stopped it."""
     try:
         with open(QCONNECT_STATUS_FILE, encoding="utf-8") as f:
             lines = f.read().splitlines()
-        return jsonify({
-            "ok":    True,
-            "line1": lines[0] if len(lines) > 0 else "",
-            "line2": lines[1] if len(lines) > 1 else "",
-            # Line 3 is qobuzconnect2mpd's activity line: what it is doing
-            # between the phone's play command and the first sound (resolving
-            # stream URLs, reconstructing segments, waiting on MPD), or the
-            # download error that stopped it.  Empty when it is just playing.
-            "line3": lines[2] if len(lines) > 2 else "",
-        })
+        return jsonify({"ok": True, **_parse_qconnect_status(lines)})
     except FileNotFoundError:
-        return jsonify({"ok": False, "line1": "", "line2": "", "line3": ""})
+        return jsonify({"ok": False, **_QC_STATUS_EMPTY})
     except OSError as e:
-        return jsonify({"ok": False, "line1": "", "line2": "", "line3": "",
-                        "error": str(e)})
+        return jsonify({"ok": False, **_QC_STATUS_EMPTY, "error": str(e)})
 
 
 def _service_running(name: str) -> bool:
