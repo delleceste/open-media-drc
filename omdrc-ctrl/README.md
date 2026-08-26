@@ -1031,10 +1031,19 @@ A daemon too old to report activity simply returns an empty `state` and no
 
 ### `GET /qconnect/log`
 
-Returns the full content of the qobuzconnect2mpd log file as a string.
+Returns the full content of the **active renderer's** log as a string, with the
+source it came from.  `?renderer=qobuzconnect2mpd|upmpdcli` picks one
+explicitly; anything else falls back to the renderer that is running, or the one
+the boot service would start.
+
+For upmpdcli the console log (`upmpdcli-console`) is preferred over its own log
+file: a renderer that dies during startup reports why on the stderr its service
+script captures, not in a log file it never got as far as writing.
 
 ```json
-{ "ok": true, "content": "2026-05-15 14:32:01 [OUT] ..." }
+{ "ok": true, "content": "2026-05-15 14:32:01 [OUT] ...",
+  "renderer": "upmpdcli", "source": "upmpdcli-console",
+  "label": "upmpdcli (plugins)", "path": "/tmp/upmpdcli-console.log" }
 ```
 
 ---
@@ -1317,8 +1326,20 @@ FreeBSD with `sudo service <name> onestart|onestop`.
 { "target": "upmpdcli" }
 // response
 { "ok": true, "active": "upmpdcli" }
-{ "ok": false, "error": "..." }
+{ "ok": false, "error": "upmpdcli exited immediately after starting",
+  "renderer": "upmpdcli",
+  "detail": "ld-elf.so.1: Shared object \"libnpupnp.so.13\" not found ...",
+  "log_source": "upmpdcli-console", "log_label": "upmpdcli (plugins)",
+  "log_path": "/tmp/upmpdcli-console.log" }
 ```
+
+A zero exit from the service script is not proof of a running renderer: both are
+launched through `daemon(8)`, which forks and returns before the binary has done
+anything.  The switch therefore waits (up to `RENDERER_START_TIMEOUT`, 5 s) for
+the target to actually appear, and reports a renderer that died on startup as a
+failure — with the tail of its own log in `detail`, which the card shows in
+place rather than in a toast.  A failed switch is not remembered for the next
+boot.
 
 **Linux:** both `qobuzconnect2mpd` and `upmpdcli` must be installed as systemd
 `--user` services and omdrcctrl itself must run in that same user session (the
@@ -1792,10 +1813,17 @@ Shows the track currently playing via qobuzconnect2mpd, updated every second:
   quiet.  See the status-file section of the qobuzconnect2mpd README for the
   full vocabulary.
 
+A renderer that refuses to start is reported in place, under the toggle: the
+failure, the tail of that renderer's own log, and which log it came from.  It
+stays until dismissed or until a switch succeeds — a toast is gone before it
+can be read, and a button silently flipping back is not an explanation.
+
 The panel header always has three buttons, plus a conditional fourth:
 - **Restart** — calls `POST /qconnect/restart`; shows a toast on success/failure
 - **Log** — toggles a scrollable log viewer (auto-refreshed every 5 s while
-  open) with colour-coded lines: red for `[ERR]`, green for `[OUT]`
+  open) with colour-coded lines: red for `[ERR]`, green for `[OUT]`.  It shows
+  the log of the renderer the card is about, named above the text, and after a
+  failed switch it stays on the renderer that would not start
 - **☰ / —** — how much activity to show: the last three entries (☰) or only
   the current one (—).  Three is the default; the choice is remembered in
   `localStorage` under `omdrcctrl.qc.activityLines`

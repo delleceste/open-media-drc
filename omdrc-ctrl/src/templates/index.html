@@ -452,6 +452,47 @@
             line-height: 1.1;
             min-width: 0;
         }
+        #renderer-error {
+            border: 1px solid var(--red, #f85149);
+            border-radius: 6px;
+            padding: 8px 10px;
+            margin: 8px 0 2px;
+            font-size: .8rem;
+        }
+        #renderer-error .rend-err-head {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            color: var(--red, #f85149);
+            font-weight: 500;
+        }
+        #renderer-error .rend-err-head span { flex: 1 1 auto; }
+        #renderer-error .rend-err-close {
+            flex: 0 0 auto;
+            background: none;
+            border: 0;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+            padding: 0 2px;
+        }
+        #renderer-error pre {
+            margin: 6px 0 0;
+            max-height: 9em;
+            overflow: auto;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .72rem;
+            color: var(--muted);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        #renderer-error pre:empty { display: none; }
+        #renderer-error .rend-err-foot {
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: .72rem;
+        }
         #qconnect-log-panel {
             border-top: 1px solid var(--border);
             padding: 10px 0 4px;
@@ -1197,6 +1238,18 @@
     </div>
     <!-- Which renderer the boot service would start on the NEXT reboot -->
     <div class="refresh-note" id="qc-boot"></div>
+    <!-- A renderer that refuses to start says why here, and stays said: a
+         toast is gone before you have read it, and the button silently
+         flipping back is not an explanation. -->
+    <div id="renderer-error" hidden>
+        <div class="rend-err-head">
+            <span id="renderer-error-text"></span>
+            <button type="button" class="rend-err-close"
+                    onclick="clearRendererError()" title="Dismiss">×</button>
+        </div>
+        <pre id="renderer-error-detail"></pre>
+        <div class="rend-err-foot" id="renderer-error-foot"></div>
+    </div>
     <!-- Streaming-service connection status read out of the logs (ok rules) -->
     <div id="renderer-status" class="log-status" aria-live="polite"></div>
     <div style="padding:12px 0">
@@ -1205,6 +1258,7 @@
         <div id="qc-activity" aria-live="polite"></div>
     </div>
     <div id="qconnect-log-panel" style="display:none">
+        <div class="refresh-note" id="qc-log-source"></div>
         <pre id="qc-log-content" class="qc-log"></pre>
     </div>
     <!-- Qobuz OAuth sign-in, driven from here so the box needs no keyboard -->
@@ -2152,8 +2206,11 @@ let qcLogTimer   = null;
 
 async function fetchQcLog() {
     const el = document.getElementById('qc-log-content');
+    const query = qcLogRenderer ? `?renderer=${encodeURIComponent(qcLogRenderer)}` : '';
     try {
-        const d = await (await fetch('/qconnect/log')).json();
+        const d = await (await fetch(`/qconnect/log${query}`)).json();
+        const src = document.getElementById('qc-log-source');
+        if (src) src.textContent = d.path ? `${d.label} — ${d.path}` : '';
         const text = d.content || '(empty)';
         el.innerHTML = text.split('\n').map(line => {
             const safe = escHtml(line);
@@ -2212,6 +2269,9 @@ async function restartQc() {
 let qcSwitching   = false;
 let activeRenderer = null;
 let bootRenderer   = null;
+// Whose log the card's Log button shows.  Null until the first sync; the
+// server then picks the running renderer for us.
+let qcLogRenderer  = null;
 
 function paintRenderers(active) {
     activeRenderer = active;
@@ -2249,13 +2309,48 @@ async function syncRenderers() {
         if (d.qobuzconnect2mpd) active = 'qobuzconnect2mpd';
         else if (d.upmpdcli)    active = 'upmpdcli';
         paintRenderers(active);
+        // Leave the log pointed at a failed switch's target until the failure
+        // is dismissed — that is the log the reader still needs.
+        if (active && !rendererErrorShown() && qcLogRenderer !== active) {
+            qcLogRenderer = active;
+            if (qcLogVisible) fetchQcLog();
+        }
         paintBootRenderer(d.boot, d.boot_is_default);
     } catch { /* ignore — status dot already signals offline */ }
+}
+
+// A renderer that will not start used to be reported by a toast and a button
+// that quietly flipped back — no way to tell a failed switch from a slow one,
+// and nowhere to read why.  The failure stays on the card until dismissed or
+// until a switch succeeds, and carries the tail of that renderer's own log.
+function showRendererError(target, message, detail, logLabel, logPath) {
+    const box = document.getElementById('renderer-error');
+    if (!box) return;
+    document.getElementById('renderer-error-text').textContent =
+        `${target}: ${message}`;
+    document.getElementById('renderer-error-detail').textContent = detail || '';
+    const foot = document.getElementById('renderer-error-foot');
+    foot.textContent = logPath ? `from ${logLabel || 'log'} — ${logPath}` : '';
+    box.hidden = false;
+}
+
+function clearRendererError() {
+    const box = document.getElementById('renderer-error');
+    if (box) box.hidden = true;
+}
+
+function rendererErrorShown() {
+    const box = document.getElementById('renderer-error');
+    return !!box && !box.hidden;
 }
 
 async function switchRenderer(target) {
     if (qcSwitching || target === activeRenderer) return;
     qcSwitching = true;
+    clearRendererError();
+    // Show the target's log from here on: if the switch fails, the log worth
+    // reading is the one belonging to the renderer that would not start.
+    qcLogRenderer = target;
     const sw = document.getElementById('qc-switch');
     sw.classList.add('busy');
     paintRenderers(target);   // optimistic
@@ -2269,12 +2364,16 @@ async function switchRenderer(target) {
             toast(`switched to ${target}`, 'ok');
         } else {
             toast(d.error || 'switch failed', 'error');
+            showRendererError(target, d.error || 'switch failed', d.detail,
+                              d.log_label, d.log_path);
         }
     } catch {
         toast('network error', 'error');
+        showRendererError(target, 'network error');
     }
     qcSwitching = false;
     sw.classList.remove('busy');
+    if (qcLogVisible) fetchQcLog();
     syncRenderers();   // reconcile with reality
 }
 

@@ -2699,7 +2699,34 @@ def qconnect_switch():
         return jsonify({"ok": False,
                         "error": "qobuzconnect2mpd sign-in is still in progress"}), 409
     ok, error = _activate_renderer(target)
-    return jsonify({"ok": ok, **({"active": target} if ok else {"error": error})})
+    if ok:
+        return jsonify({"ok": True, "active": target})
+    # A toast is gone in three seconds and cannot hold a linker error.  Send the
+    # tail of the renderer's own log with the failure so the card can show what
+    # actually went wrong, and name the log so the reader can go and read it.
+    source = _renderer_log_source(target)
+    return jsonify({"ok": False, "error": error, "renderer": target,
+                    "detail": _renderer_log_tail(target),
+                    "log_source": source["id"], "log_label": source["label"],
+                    "log_path": source["path"]})
+
+
+# How long a renderer gets to show up in the process table after its service
+# script returns.  Both are launched via daemon(8), so "started" and "running"
+# are not the same event; a second or two covers the gap without making a
+# genuine failure feel like a hang.
+RENDERER_START_TIMEOUT = 5.0
+
+
+def _await_service(name: str, timeout: float) -> bool:
+    """True as soon as `name` is running, False if it never turns up."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if _service_running(name):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
 
 
 def _activate_renderer(target: str) -> tuple[bool, str]:
@@ -2725,6 +2752,16 @@ def _activate_renderer(target: str) -> tuple[bool, str]:
             r = _service_action(target, "onestart")
             if r.returncode != 0:
                 return False, f"starting {target}: {(r.stderr or r.stdout).strip()}"
+            # A zero exit only means the service script ran.  Both renderers are
+            # started through daemon(8), which forks and reports success before
+            # the binary has done anything — a renderer that dies immediately
+            # (a missing shared library, a config it will not accept) looked
+            # exactly like a successful switch.  Wait for it to actually be
+            # there, and if it is not, say so with its own log as the evidence.
+            if not _await_service(target, RENDERER_START_TIMEOUT):
+                detail = (r.stderr or r.stdout).strip()
+                return False, (f"{target} exited immediately after starting"
+                               + (f": {detail}" if detail else ""))
         # Remember the choice for the next boot.  Written only once the switch
         # has actually succeeded, so a failed switch does not arm the boot
         # service with a renderer that would not start.
@@ -2752,16 +2789,66 @@ def qconnect_restart():
         return jsonify({"ok": False, "error": str(e)})
 
 
+# Which log the Renderer card shows, per renderer.  Ids refer to LOG_SOURCES,
+# so a [logs] section that moves a path is followed here too; the first id that
+# resolves wins.  upmpdcli's own log records what it did once it was up, but a
+# renderer that dies on startup says why on the inherited stderr its service
+# script captures — the console log — so that one comes first.
+RENDERER_LOG_SOURCES = {
+    QCONNECT_SERVICE: ("qobuzconnect2mpd",),
+    UPMPDCLI_SERVICE: ("upmpdcli-console", "upmpdcli"),
+}
+
+
+def _renderer_log_source(renderer: str) -> dict:
+    """Log source for `renderer`: {id, label, path}.  Falls back to
+    qobuzconnect2mpd's log, which is what this route always used to serve."""
+    for source_id in RENDERER_LOG_SOURCES.get(renderer, ()):
+        source = _log_source(source_id)
+        if source:
+            return source
+    return {"id": QCONNECT_SERVICE, "label": QCONNECT_SERVICE,
+            "path": QCONNECT_LOG_FILE}
+
+
+def _current_renderer() -> str:
+    """The renderer the card is about: the one running, else the one the boot
+    service would start.  Used when the caller does not name one."""
+    for name in SWITCHABLE_SERVICES:
+        if _service_running(name):
+            return name
+    return _read_state_str(_RENDERER_STATE_FILE) or RENDERER_BOOT_DEFAULT
+
+
+def _renderer_log_tail(renderer: str, limit: int = 4000) -> str:
+    """Last few KB of `renderer`'s log — the evidence for why it would not
+    start.  Empty when there is no log to read."""
+    try:
+        text, _ = _tail_text(_renderer_log_source(renderer)["path"], limit)
+    except OSError:
+        return ""
+    return text.strip()
+
+
 @app.route("/qconnect/log")
 def qconnect_log():
+    """The active renderer's log.  `?renderer=` picks one explicitly — the card
+    asks for the renderer it is displaying, so a failed switch can show the log
+    that explains it rather than the other renderer's."""
+    renderer = request.args.get("renderer", "")
+    if renderer not in SWITCHABLE_SERVICES:
+        renderer = _current_renderer()
+    source = _renderer_log_source(renderer)
+    meta = {"renderer": renderer, "source": source["id"],
+            "label": source["label"], "path": source["path"]}
     try:
-        with open(QCONNECT_LOG_FILE, encoding="utf-8") as f:
+        with open(source["path"], encoding="utf-8", errors="replace") as f:
             content = f.read()
-        return jsonify({"ok": True, "content": content})
+        return jsonify({"ok": True, "content": content, **meta})
     except FileNotFoundError:
-        return jsonify({"ok": True, "content": "(log file not found)"})
+        return jsonify({"ok": True, "content": "(log file not found)", **meta})
     except OSError as e:
-        return jsonify({"ok": False, "content": str(e)})
+        return jsonify({"ok": False, "content": str(e), **meta})
 
 
 # ── log viewer + log alerts ──────────────────────────────────────────────────
