@@ -95,69 +95,87 @@ libmpdclient). The optional Qobuz plugin needs python3 with `requests`.
 Prebuilt packages exist (FreeBSD port `upmpdcli`, Arch AUR); source builds
 are used here to track upstream.
 
-### It must be told which interface to announce on {#sec:upnpiface}
+### A disconnected wired port makes it invisible {#sec:upnpiface}
 
-**Set `upnpiface` on any box with more than one network interface.** Left
-unset, libupnpp picks one itself, and it picks the first that is
-UP+RUNNING+MULTICAST --- which on FreeBSD includes **a wired port with no
-cable in it**: `em(4)` keeps `RUNNING` set without link, and `/etc/rc.conf`
-here configures `em0` statically whether or not anything is plugged in.
+**Do not give an Ethernet port a static address in `rc.conf` on a box that is
+sometimes wired and sometimes wireless.** That single line is the whole bug.
 
-The failure this produces is unusually quiet, which is why it is worth
-naming. upmpdcli **starts, connects to MPD, and keeps driving it perfectly
-well**; `ps` shows it running and the renderer switch reports it as active.
-Only its *network control surface* is dead: bound to an interface with no
-link, its SSDP advertisements never leave the host, so BubbleUPnP, Kazoo,
-Linn and every other control point simply do not see the renderer. Nothing
-in the panel or the logs says "no carrier".
-
-Two log signatures, both from `/tmp/upmpdcli.log`:
+libupnpp chooses its interface once, at startup, taking the first that is
+UP+RUNNING+MULTICAST *and has an address*. On FreeBSD `em(4)` keeps `RUNNING`
+set with no carrier, so a statically configured wired port stays fully
+qualified with no cable in it:
 
 ```
-LibUPnP: Using IPV4 192.168.1.9 port 49152 IPV6  port 49152
+ifconfig_em0="inet 192.168.1.9 netmask 255.255.255.0"   # applied regardless
+em0: flags=8843<UP,BROADCAST,RUNNING,...>  status: no carrier
 ```
 
---- the tell. If that address is not the one the box actually serves the
-LAN on, the renderer is announcing into a dead cable. Sometimes the device
-also fails outright:
+upmpdcli then binds the dead port and its SSDP advertisements never leave the
+host. The failure is unusually quiet: upmpdcli **starts, connects to MPD and
+keeps driving it**, so `ps` and the panel's renderer switch both report it
+healthy --- only BubbleUPnP, Kazoo and every other control point stop listing
+it. A box whose wired port *used to be* the live one breaks this way without
+being touched: move it to Wi-Fi and the stale static address is still there,
+still first in the selection, and now dead.
+
+The tell is one line in `/tmp/upmpdcli.log`:
+
+```
+LibUPnP: Using IPV4 192.168.1.9 port 49152     <- not the address you serve on
+```
+
+sometimes accompanied by the harder failure:
 
 ```
 sendAvertisement failed: UpnpSendAdvertisement :-100: UPNP_E_INVALID_HANDLE
 Device would not start
 ```
 
-That variant is intermittent: the same configuration sometimes brings the
-HTTP side up (the description is served, and fetching it returns a real
-response) while the multicast side never works. Either way the renderer is
-undiscoverable.
+which is intermittent --- the HTTP side can come up (the description is
+served) while multicast never works.
 
-**A box that used to work can break without being touched.** If the wired
-port *was* the live interface, everything was correct; move the box to
-Wi-Fi, or unplug the cable, and the stale static `em0` address is still
-there, still first in the auto-selection, and now dead. The renderer keeps
-playing whatever tells MPD to play --- Qobuz Connect, the panel --- so the
-loss shows up only as "my control point stopped finding it".
-
-Diagnosis and fix:
+**The fix is in `rc.conf`, not in `upmpdcli.conf`:**
 
 ```sh
-ifconfig | grep -E '^[a-z]|inet |status'   # which interface has a carrier?
-netstat -rn | awk '$1=="default"{print $NF}'
-grep 'Using IPV4' /tmp/upmpdcli.log        # what did libupnpp pick?
+ifconfig_em0="DHCP"      # NOT "inet 1.2.3.4 ..."
 ```
 
-then set the interface in `upmpdcli.conf`:
+An unplugged DHCP interface never gets a lease, so it has no address, so
+libupnpp skips it and picks the interface that is actually connected --- with
+`upnpiface` left unset, and nothing to edit when you move between Ethernet and
+Wi-Fi. Plugging the cable back in still works: FreeBSD's own
+`/etc/devd/dhclient.conf` starts `dhclient` on `LINK_UP`.
 
-```ini
-upnpiface = wlan0
+Verified on this box: with the static address removed, upmpdcli's automatic
+selection lands on the live interface by itself, and `upnp:rootdevice` and
+`ssdp:all` both return the renderer.
+
+Pinning `upnpiface` also works but is the wrong tool --- the pinned value goes
+stale the moment the box changes network, which is exactly the situation this
+arises in. Keep it as a last resort for a genuinely ambiguous host.
+
+### Leave `defaultrouter` unset when any interface uses DHCP {#sec:defaultrouter}
+
+`rc.d/routing` installs `defaultrouter` **unconditionally at boot**, with no
+regard for whether that gateway is reachable. On a box that is sometimes wired
+and sometimes wireless it therefore does the wrong thing exactly when it
+matters: with no cable, the default route still points at the wired gateway
+and Wi-Fi's DHCP-supplied route is overridden.
+
+With both interfaces on DHCP the connected one supplies the default route by
+itself, which is the behaviour wanted. Leave `defaultrouter` commented out.
+
+```sh
+# /etc/rc.conf
+ifconfig_em0="DHCP"
+wlans_iwm0="wlan0"
+ifconfig_wlan0="WPA  DHCP"
+#defaultrouter="192.168.1.1"      # leave unset; DHCP provides it
 ```
 
-`install.sh` does this automatically: it renders `@UPNP_IFACE@` from
-`UPNP_IFACE` in `config.env`, defaulting to the interface holding the
-default route and falling back to the first non-loopback interface that has
-both an address and a carrier. Set `UPNP_IFACE` explicitly for anything
-unusual. Remember that the service reads the **installed**
-`${PREFIX}/etc/open-media-drc/upmpdcli.conf`, not the checkout's copy.
+Note that `synchronous_dhclient` defaults to `NO`, so an unplugged DHCP
+interface does not delay boot: `dhclient` is started by devd when a link
+actually comes up.
 
 ## MPD --- Music Player Daemon
 
@@ -1916,7 +1934,7 @@ the compared bytes.
 | `aplay` | the per-OS tap script, delegated to unchanged | host to USB, no renderer. The control. |
 | `mpd` | MPD plays a local file staged into `music_directory` | MPD to DAC: the segment both renderers share |
 | `mpd-http` | MPD fetches an HTTP URL the panel serves | MPD's curl input plugin and streaming decoder --- structurally the path a Qobuz stream takes, but with a *known* file, so the verdict is real byte equality |
-| `upnp` | upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** to MPD to DAC path (needs [`upnpiface`](#sec:upnpiface) set correctly, or nothing answers SSDP) |
+| `upnp` | upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** to MPD to DAC path (needs upmpdcli to be discoverable --- see [§\ref{sec:upnpiface}](#sec:upnpiface)) |
 | `live` | nothing; the wire is tapped during real Qobuz playback | the whole **qobuzconnect2mpd** path, against the renderer's own buffer |
 
 Running `mpd` and `upnp` on the same material is what *localises* a fault:
@@ -3054,13 +3072,14 @@ These also mean the DAC is **single-open**: exactly one client at a time
 
 ## Known FreeBSD issues and their status
 
-* **upmpdcli announces on a cable-less wired port.** `em(4)` keeps `RUNNING`
-  set with no carrier and `/etc/rc.conf` configures `em0` statically
-  regardless, so libupnpp's automatic interface selection picks a dead
-  interface: the renderer runs, drives MPD and looks healthy, but no control
-  point can discover it. Fixed by pinning `upnpiface`, which `install.sh`
-  now derives --- see [It must be told which interface to announce
-  on](#sec:upnpiface).
+* **A statically configured wired port that has no cable.** `em(4)` keeps
+  `RUNNING` set without a carrier, so a static `ifconfig_em0="inet ..."`
+  stays fully configured on a dead link. libupnpp then binds it and upmpdcli
+  becomes undiscoverable while still running and still driving MPD; a static
+  `defaultrouter` compounds it by overriding the route Wi-Fi learned. Both
+  are `rc.conf` bugs, not upmpdcli bugs: use `DHCP` on the wired port and
+  leave `defaultrouter` unset --- see [A disconnected wired port makes it
+  invisible](#sec:upnpiface).
 * **OKTO 44.1 kHz-family flicker** (bug #295933): the DAC continuously drops
   and re-acquires USB streaming lock on 44.1/88.2/176.4/352.8 kHz, while the
   48 kHz family is stable and Linux plays everything fine. Root cause: the

@@ -27,20 +27,16 @@ pkgdatadir=@PREFIX@/share/upmpdcli
 
 # Network interface to use for UPnP.
 #
-# LEAVE THIS SET if the box has more than one interface. libupnpp picks one
-# automatically, and it picks the FIRST that is UP+RUNNING+MULTICAST -- which
-# on FreeBSD includes a wired port with no cable in it, because em(4) keeps
-# RUNNING set without link. When that happens upmpdcli binds the dead
-# interface, SSDP advertisements never leave the host, and the renderer is
-# invisible to every control point on the network while still looking healthy
-# in `ps` and still driving MPD. The symptom in the log is
-# "UpnpSendAdvertisement :-100: UPNP_E_INVALID_HANDLE" followed by
-# "Device would not start"; the tell is the line above it,
-# "LibUPnP: Using IPV4 <address>", naming an address you do not expect.
+# Deliberately left unset: libupnpp picks the interface itself, and its choice
+# is correct as long as an interface that is NOT connected has no address.
+# That is a networking configuration property, not something to pin here --
+# see the em0 note in the FreeBSD section of the manual. Pinning it would only
+# move the problem: the pinned value goes stale the moment you move between
+# Ethernet and Wi-Fi.
 #
-# Check with `ifconfig` which interface actually carries traffic, and name it
-# here (@UPNP_IFACE@ is substituted from UPNP_IFACE in config.env).
-upnpiface = @UPNP_IFACE@
+# If libupnpp still picks wrong (check `grep 'Using IPV4' /tmp/upmpdcli.log`
+# against `ifconfig`), set it here as a last resort.
+#upnpiface =
 # IP address to use for UPnP, alternative to using an interface name.
 #upnpip =
 # Port number used for UPnP.
