@@ -21,13 +21,38 @@ git checkout -b uaudio-shared-clock-followup
 
 ## 2. Apply the series
 
+Set the identity **first** — `git am` keeps the author from the patch headers,
+but the committer and the DCO trailer come from local config, and FreeBSD's
+CI rejects a `Signed-off-by:` that does not match the author:
+
 ```sh
-git am /path/to/freebsd-uaudio-patch/upstream-series/000*.patch
-git log --oneline -3     # three commits, authored as you
+git config user.name Giacomo
+git config user.email delleceste@gmail.com
 ```
 
-If `git am` complains the base moved, rebase onto `main` — the hunks are local
-to `uaudio_configure_msg_sub()`, `uaudio_chan_play_sync_callback()`,
+```sh
+git am /path/to/freebsd-uaudio-patch/upstream-series/000*.patch
+git log -3 --format='--- %h %an <%ae>%n%(trailers:only,unfold)'
+```
+
+Each commit must show `Signed-off-by: Giacomo <delleceste@gmail.com>`. The
+patches in this directory now carry the trailer; if you ever regenerate them
+from commits that lack it, `git rebase --signoff HEAD~3` adds it.
+
+**Base matters.** The series is a follow-up *to* `755685dd665e`, so it needs a
+base that already contains that commit. Applying it to a stale fork `main`
+fails at patch 1 of 3 with a context conflict — the giveaway is
+`uaudio20_clock_is_shared()` missing from `sys/dev/sound/usb/uaudio.c`. Fetch
+real upstream, not your fork:
+
+```sh
+git remote add upstream https://git.freebsd.org/src.git
+git fetch upstream
+git reset --hard upstream/main
+```
+
+If the base has moved otherwise, rebase onto `main` — the hunks are local to
+`uaudio_configure_msg_sub()`, `uaudio_chan_play_sync_callback()`,
 `uaudio_chan_need_both()`, `uaudio_chan_start()` and `uaudio_chan_fill_info_sub()`.
 
 ## 3. Sanity-build
