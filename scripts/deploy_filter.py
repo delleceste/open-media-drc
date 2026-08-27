@@ -1147,10 +1147,14 @@ def commit_message(manifest: dict) -> str:
         f"Rates:        {rates}",
     ]
     if project:
-        lines.append(
-            f"Project:      {project.get('name', '?')} "
-            f"@ {(project.get('commit') or 'uncommitted')[:12]}"
-            + ("" if project.get("clean", True) else "  [UNCOMMITTED SOURCES]"))
+        if (project.get("kind") == "browser-upload" and
+                project.get("archive_history") == "required"):
+            lines.append("Project:      browser upload  [ARCHIVED IN SITE HISTORY]")
+        else:
+            lines.append(
+                f"Project:      {project.get('name', '?')} "
+                f"@ {(project.get('commit') or 'uncommitted')[:12]}"
+                + ("" if project.get("clean", True) else "  [UNCOMMITTED SOURCES]"))
         if project.get("path"):
             lines.append(f"Exports:      {project['path']}")
         if project.get("remote"):

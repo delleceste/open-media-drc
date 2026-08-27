@@ -23,8 +23,9 @@ offline publication, reproducible machine provisioning, or moving site data
 between machines. In that workflow the REW project repository is the editable
 source of truth and the design root contains generated deployable bundles. Git
 is optional: when the configured design root is already a Git work tree, the
-web transaction requires its deployment commit before installing; an ordinary
-writable folder remains a complete, supported authority without Git. See
+web transaction refuses pre-existing uncommitted work and requires its
+deployment commit before installing. Only an ordinary writable folder uses the
+explicit uncommitted mode and remains a complete, supported authority without Git. See
 [the scripts reference](scripts/README.md#command-line-alternative).
 
 The copies stored in a live bundle are intentional deployment evidence, not a

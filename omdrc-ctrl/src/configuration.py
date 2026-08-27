@@ -284,6 +284,23 @@ class ConfigurationManager:
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return not probe.returncode and Path(probe.stdout.strip()).resolve() == root.resolve()
 
+    @staticmethod
+    def require_clean_git_root(root: Path) -> None:
+        """Refuse to mix a web publication with pre-existing repository work."""
+        probe = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain=1", "-z"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if probe.returncode:
+            detail = probe.stderr.strip() or probe.stdout.strip()
+            raise RuntimeError(f"cannot inspect configured design repository: {detail}")
+        dirty = [entry for entry in probe.stdout.split("\0") if entry]
+        if dirty:
+            preview = ", ".join(entry[3:] for entry in dirty[:8])
+            suffix = "" if len(dirty) <= 8 else f" (+{len(dirty) - 8} more)"
+            raise RuntimeError(
+                f"configured design repository {root} has uncommitted work: "
+                f"{preview}{suffix}; commit or remove it before installing a filter")
+
     def design_identity(self, directory: Path, geometry: str = "",
                         design: str = "", project_folder: str = "") -> tuple[str, str]:
         """Resolve browser uploads without using their temporary parent path."""
@@ -452,16 +469,18 @@ class ConfigurationManager:
         geometry, design = self.design_identity(
             directory, geometry, design, project_folder)
         history = self.is_git_root(design_root)
+        if history:
+            self.require_clean_git_root(design_root)
         script = self.settings.tools_root / "new_filter_design.py"
         argv = [shutil.which("python3") or "python3", str(script), str(directory),
-                "--site-root", str(design_root), "--allow-uncommitted", "--yes",
+                "--site-root", str(design_root), "--yes",
                 "--archive-mdat", "--upload-provenance", "--geometry", geometry,
                 "--design", design, "--no-next"]
         if history:
-            argv.append("--require-commit")
+            argv.extend(["--require-clean-site", "--require-commit"])
             job.write(f"AUTHORITY: publishing and committing {geometry}@{design} in {design_root}")
         else:
-            argv.append("--no-commit")
+            argv.extend(["--allow-uncommitted", "--no-commit"])
             job.write(f"AUTHORITY: publishing {geometry}@{design} in non-Git design store {design_root}")
         self.run_command(job, argv)
 
@@ -540,6 +559,7 @@ class ConfigurationManager:
 
         authoritative = manifests(design_root)
         installed = manifests(self.settings.site_root)
+        saved = active.get("saved") or {}
         rows = []
         for geometry, design in sorted(set(authoritative) | set(installed)):
             source = authoritative.get((geometry, design))
@@ -566,16 +586,25 @@ class ConfigurationManager:
                          "location": location,
                          "rates": sorted(data.get("runtime", {}).get("rates", {}), key=int),
                          "mdat": session.get("file", ""),
-                         "selected": (active.get("geometry") == geometry and
-                                      active.get("design") in {f"@{design}", design})})
+                         "selected": (
+                             (active.get("geometry") == geometry and
+                              active.get("design") in {f"@{design}", design}) or
+                             (saved.get("geometry") == geometry and
+                              saved.get("design") in {f"@{design}", design}))})
         return rows
 
     def remove_filter(self, job: Job, geometry: str, design: str) -> None:
         if not _SAFE_NAME.fullmatch(geometry) or not _SAFE_NAME.fullmatch(design):
             raise ValueError("invalid filter design selector")
         active = self.active_design()
-        if active.get("geometry") == geometry and active.get("design") in {design, f"@{design}"}:
-            raise RuntimeError("switch away from this selected design before removing it")
+        saved = active.get("saved") or {}
+        if ((active.get("geometry") == geometry and
+             active.get("design") in {design, f"@{design}"}) or
+                (saved.get("geometry") == geometry and
+                 saved.get("design") in {design, f"@{design}"})):
+            raise RuntimeError(
+                "switch the running and saved selection away from this design "
+                "before removing it")
         design_root = self.design_root()
         script = self.settings.tools_root / "remove_filter_design.py"
         authority_manifest = (design_root / "filters" / geometry / "provenance" /

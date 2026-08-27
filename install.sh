@@ -221,12 +221,8 @@ else
                      systemctl --user disable upmpdcli.service qobuzconnect2mpd.service 2>/dev/null || true
                      # NOTE: qobuzconnect2mpd is installed separately (not shipped here);
                      # if used, it must also be a --user unit so the toggle can reach it.
-    omdrcctrl UI   : # audio web UI (:9090) — built and --user-installed by its own
-                     # CMake flow (renders its @VARS@, lands in ~/.local/share/systemd/user):
-                     ( cd "${REPO_DIR}/omdrc-ctrl" && cmake -S . -B build -DUSER_INSTALL=ON && \\
-                       cmake --build build && cmake --install build )
-                     systemctl --user daemon-reload
-                     systemctl --user enable --now omdrcctrl
+    omdrcctrl UI   : # No checkout-backed deployment. Install the panel and core
+                     # together with the top-level CMake build; see README.md.
     udev (USB DAC) : sudo cp "${REPO_DIR}/99-usb-audio-drc.rules" /etc/udev/rules.d/
                      sudo udevadm control --reload-rules
     CD input       : # Optional: the S/PDIF bridge (CD player -> ESI U24 XL -> DRC).

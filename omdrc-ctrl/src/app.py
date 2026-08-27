@@ -5525,13 +5525,16 @@ def _configuration_selection() -> dict:
     """Running selection, or the saved selection when DRC is currently off."""
     try:
         active = _active_design_identity()
-        if active.get("running"):
-            return active
         script = _drc_script()
         session = _drc_saved_session(script) if script else {}
-        return {"running": False, "geometry": session.get("geometry", ""),
-                "design": session.get("design", "default"),
-                "power": session.get("power", "off")}
+        if active.get("running"):
+            result = dict(active)
+        else:
+            result = {"running": False, "geometry": session.get("geometry", ""),
+                      "design": session.get("design", "default"),
+                      "power": session.get("power", "off")}
+        result["saved"] = session
+        return result
     except Exception:
         return {}
 
@@ -5558,7 +5561,8 @@ def configuration_page():
         return "Configuration page disabled", 404
     return render_template(
         "configuration.html", csrf=_CONFIGURATION_CSRF,
-        os_name=platform.system(), max_upload=CONFIGURATION.max_upload_bytes)
+        os_name=platform.system(), max_upload=CONFIGURATION.max_upload_bytes,
+        design_root=str(CONFIGURATION.design_root or "(not configured)"))
 
 
 @app.route("/configuration/api/filters")
@@ -5715,7 +5719,25 @@ def bitperfect_material():
             if not name or "/" in name:
                 raise ValueError("invalid file name")
             target = manager.bp.assets_root / name
-            upload.save(target)
+            temporary = manager.bp.assets_root / f".{job.id}.upload"
+            total = 0
+            try:
+                with temporary.open("xb") as stream:
+                    while True:
+                        block = upload.stream.read(1024 * 1024)
+                        if not block:
+                            break
+                        total += len(block)
+                        if total > manager.bp.max_upload_bytes:
+                            raise ValueError(
+                                "file exceeds the configured bit-perfect upload limit")
+                        stream.write(block)
+                os.replace(temporary, target)
+            finally:
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
             source = target
         else:
             given = (request.form.get("path") or "").strip()
@@ -5753,9 +5775,23 @@ def bitperfect_run():
     allow_drc = bool(body.get("allow_drc"))
     try:
         duration = float(body.get("duration", 30))
+        if not 5 <= duration <= 600:
+            raise ValueError
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "invalid duration"}), 400
+        return jsonify({"ok": False,
+                        "error": "tap window must be between 5 and 600 seconds"}), 400
     manager = _bitperfect()
+    try:
+        if source not in ("aplay", "mpd", "mpd-http", "upnp", "live"):
+            raise ValueError(f"unknown source: {source}")
+        if source != "live":
+            resolved = manager.resolve_material(material)
+            if source == "aplay" and resolved.suffix.lower() != ".wav":
+                raise ValueError(
+                    "the direct control accepts PCM WAV files only; choose a WAV "
+                    "or use an MPD path for FLAC and other containers")
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
     job = manager.start("bitperfect-run", lambda current: manager.run_test(
         current, source, material, duration, allow_drc))
     return jsonify({"ok": True, "job": job.id}), 202
@@ -5763,6 +5799,9 @@ def bitperfect_run():
 
 @app.route("/bitperfect/api/jobs/<identifier>")
 def bitperfect_job(identifier):
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
     job = _bitperfect().get_job(identifier)
     if job is None:
         return jsonify({"ok": False, "error": "unknown or expired job"}), 404
@@ -5771,6 +5810,9 @@ def bitperfect_job(identifier):
 
 @app.route("/bitperfect/api/jobs/<identifier>/events")
 def bitperfect_job_events(identifier):
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
     manager = _bitperfect()
     job = manager.get_job(identifier)
     if job is None:
@@ -5781,6 +5823,9 @@ def bitperfect_job_events(identifier):
 
 @app.route("/bitperfect/api/runs/<identifier>/report")
 def bitperfect_report(identifier):
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
     try:
         return jsonify({"ok": True, "report": _bitperfect().report(identifier)})
     except Exception as error:
@@ -5789,6 +5834,9 @@ def bitperfect_report(identifier):
 
 @app.route("/bitperfect/api/runs/<identifier>/window")
 def bitperfect_window(identifier):
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
     try:
         offset = int(request.args.get("offset", 0))
         frames = int(request.args.get("frames", 64))
@@ -5799,6 +5847,9 @@ def bitperfect_window(identifier):
 
 @app.route("/bitperfect/api/runs/<identifier>/scan")
 def bitperfect_scan(identifier):
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
     try:
         buckets = int(request.args.get("buckets", 512))
         return jsonify(_bitperfect().scan(identifier, buckets))

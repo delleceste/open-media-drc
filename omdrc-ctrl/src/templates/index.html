@@ -1627,7 +1627,9 @@ function renderDrcFeedback(data) {
         if (active.bundle_id) facts.push(`bundle ${shortIdentity(active.bundle_id)}`);
         const project = active.source_project || {};
         if (project.name) {
-            facts.push(project.commit
+            facts.push(project.kind === 'browser-upload' && project.archive_history === 'required'
+                ? 'from browser upload · archived in site history'
+                : project.commit
                 ? `from ${project.name} @ ${project.commit.slice(0, 12)}`
                 : `from ${project.name} (uncommitted)`);
         }

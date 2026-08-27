@@ -33,6 +33,11 @@ th{color:var(--muted);font-weight:600}
 .note{border-left:3px solid var(--yellow);padding:.5rem .7rem;margin:.4rem 0;background:#1c1a12;font-size:.86rem}
 .note.stop{border-color:var(--red);background:#1d1315}
 .note.good{border-color:var(--green);background:#111d15}
+.guide{margin-top:.8rem;padding:.75rem;border:1px solid var(--line);border-radius:6px;background:#0d1117}
+.guide h3{margin:0 0 .35rem;color:var(--text);text-transform:none;letter-spacing:0}
+.guide ol{margin:.35rem 0 .55rem;padding-left:1.35rem}
+.guide li{margin:.2rem 0}
+.guide strong{color:var(--text)}
 #log{background:#010409;border:1px solid var(--line);border-radius:6px;padding:.6rem;font-family:var(--mono);font-size:.78rem;white-space:pre-wrap;max-height:16rem;overflow:auto;margin-top:.6rem}
 .phases{display:flex;gap:.4rem;flex-wrap:wrap;margin:.5rem 0}
 .phase{padding:.2rem .6rem;border:1px solid var(--line);border-radius:99px;font-size:.78rem;color:var(--muted)}
@@ -89,7 +94,10 @@ detectable at any offset — and inaudible while it plays.</p>
 <h3>Or check any track</h3>
 <p class="hint">WAV or FLAC (anything <code>ffmpeg</code> reads). The file is decoded once
 to build the reference; the <em>original</em> is what gets played, because the
-decoder is part of what is being tested.</p>
+decoder is part of what is being tested. For a file already on this box, enter
+its <strong>absolute path inside the configured music library</strong>, click
+<strong>Load</strong>, then select it under Run a check. A path outside that library
+is deliberately refused; upload the file instead.</p>
 <div class="row">
   <label>Upload a file<input type="file" id="matfile" accept=".wav,.flac,.aiff,.aif,.m4a,.mp4,.ape,.wv,.dsf"></label>
   <label>…or a path in the music library<input type="text" id="matpath" placeholder="/path/to/track.flac" size="34"></label>
@@ -103,10 +111,10 @@ decoder is part of what is being tested.</p>
 <div class="row">
   <label>Path under test<select id="source"></select></label>
   <label>Material<select id="material-select"></select></label>
-  <label>Tap window (s)<input type="number" id="duration" value="30" min="5" max="600" style="width:6rem"></label>
+  <label>Tap window (live only)<input type="number" id="duration" value="60" min="5" max="600" style="width:6rem"></label>
   <button type="button" class="mut go" id="run">Run check</button>
 </div>
-<p class="hint" id="source-hint"></p>
+<div class="guide" id="source-guide"></div>
 </section>
 
 <section class="card">
@@ -166,14 +174,34 @@ const fmt=n=>Number(n).toLocaleString();
 let busy=false, STATE=null, RUN=null, REPORT=null, SCAN=null;
 
 const SOURCES=[
- ['aplay','Direct — aplay / OSS writer','Plays straight to the raw device with no renderer and no mixer in the way. The control experiment: if this is not bit-perfect, nothing downstream can be.'],
- ['mpd','MPD — local file','MPD decodes and plays the file to the direct output. This is the segment upmpdcli and qobuzconnect2mpd both share.'],
- ['mpd-http','MPD — HTTP URL','Same, but fetched over HTTP so MPD uses its curl input plugin and streaming decoder — structurally the path a Qobuz stream takes, with a known file so the verdict is real byte equality.'],
- ['upnp','upmpdcli — driven over OpenHome','upmpdcli is discovered by SSDP and told to play the file itself, so the whole renderer is in the path. It also reports whether upmpdcli changed MPD volume or replaygain, which would break bit-perfection on its own.'],
- ['live','qobuzconnect2mpd — live stream','Plays nothing: it taps the wire while you play a real Qobuz track, then compares against the file the renderer itself buffered. Start playback before running.'],
+ {id:'aplay',label:'WAV on disk — direct control',title:'Scenario: WAV file, direct host-to-DAC control',
+  steps:['Generate a counter WAV above, or load a WAV already on this box using its absolute music-library path.',
+         'Choose that file as Material and click Run check. The page temporarily stops the active renderer, plays directly to the raw DAC, then restores the renderer. Do not start playback in another app.'],
+  proves:'This isolates the host, USB stack and DAC connection. Run it first: if this control fails, renderer results cannot localise the fault.'},
+ {id:'mpd',label:'WAV on disk — through MPD',title:'Scenario: WAV file on disk through MPD',
+  steps:['Generate or load the on-disk WAV above and select it as Material.',
+         'Click Run check. The page stops the active renderer, stages the file in MPD\'s music library, selects the direct DAC output and restores the queue, outputs and renderer afterwards. Do not press Play elsewhere.'],
+  proves:'This checks MPD decoding and the MPD-to-DAC segment shared by upmpdcli and qobuzconnect2mpd.'},
+ {id:'mpd-http',label:'WAV over HTTP — through MPD',title:'Scenario: known WAV through MPD\'s streaming input',
+  steps:['Choose a generated or loaded file as Material.',
+         'Click Run check. The page serves it temporarily over HTTP and makes MPD fetch and play it; no external player action is needed.'],
+  proves:'This checks MPD\'s curl input and streaming decoder using known bytes. It resembles a network stream, but does not include either renderer.'},
+ {id:'upnp',label:'upmpdcli — complete renderer path',title:'Scenario: upmpdcli → MPD → DAC',
+  steps:['On the main Control panel, select upmpdcli as the active renderer. Return here, click Re-check, and confirm Active renderer says upmpdcli.',
+         'Choose a generated or loaded WAV as Material, then click Run check. Do not queue or play it from a UPnP app: this page discovers upmpdcli over OpenHome and tells it what to play.'],
+  proves:'This includes upmpdcli itself and reports any MPD volume or replaygain change it made. If MPD local passes and this fails, upmpdcli is the differing layer.'},
+ {id:'live',label:'qobuzconnect2mpd — live Qobuz track',title:'Scenario: qobuzconnect2mpd → MPD → DAC',
+  steps:['On the main Control panel, select qobuzconnect2mpd. Return here, click Re-check, and confirm Active renderer says qobuzconnect2mpd.',
+         'In Qobuz, choose a fresh track longer than the tap window, but do not start it yet. Set a window shorter than the track (60 seconds is a good default).',
+         'Click Run check first. When Progress reaches play and asks for playback, start the track promptly. Keep that same track playing—do not pause, seek, change track or change volume—until the tap finishes.'],
+  proves:'The page plays nothing. It compares the captured USB bytes with qobuzconnect2mpd\'s own buffered file, proving the real service path rather than a look-alike local file.'},
 ];
 
-function freeze(on){busy=on;document.querySelectorAll('button.mut,select,input').forEach(e=>e.disabled=on)}
+function freeze(on){
+  busy=on;
+  document.querySelectorAll('button.mut,select,input').forEach(e=>e.disabled=on);
+  sourceHint();
+}
 
 // ── readiness ───────────────────────────────────────────────────────────────
 function renderReadiness(r){
@@ -182,6 +210,8 @@ function renderReadiness(r){
                                       :`${r.dac.dsp} · ${r.dac.usbus} devaddr ${r.dac.devaddr}`):'not found';
   bits.push(`<dl class="kv">
    <dt>DAC</dt><dd>${esc(dac)}</dd>
+   <dt>DAC holder</dt><dd>${esc(r.dac_holder||'released')}</dd>
+   <dt>Active renderer</dt><dd>${esc(r.renderer||'none')}</dd>
    <dt>brutefir</dt><dd>${r.brutefir?'<span class="tag bad">running</span>':'<span class="tag ok">stopped</span>'}</dd>
    <dt>tap privilege</dt><dd>${r.sudo?'<span class="tag ok">sudo -n available</span>':'<span class="tag bad">refused</span>'}</dd>
    <dt>MPD</dt><dd>${r.mpd&&r.mpd.ok?`${esc(r.mpd.state)} · volume ${esc(r.mpd.volume)} · replaygain ${esc(r.mpd.replaygain)} · outputs: ${esc((r.mpd.enabled||[]).join(', ')||'none')}`:esc((r.mpd&&r.mpd.error)||'unavailable')}</dd>
@@ -212,8 +242,8 @@ function renderMaterial(m){
      <td>${esc(x.decoder)}</td>
      <td>${x.anchor_unique?'<span class="tag ok">unique</span>':'<span class="tag warn">ambiguous</span>'}</td></tr>`).join('')+'</tbody>':'';
   const sel=q('material-select'),keep=sel.value;sel.replaceChildren();
-  for(const a of (STATE.assets||[])) if(a.present) sel.add(new Option(a.name,a.name));
-  for(const x of m) sel.add(new Option(x.name+'  (loaded)',x.source));
+  for(const a of (STATE.assets||[])) if(a.present){const o=new Option(a.name,a.name);o.dataset.wav='1';sel.add(o)}
+  for(const x of m){const o=new Option(x.name+'  (loaded)',x.source);o.dataset.wav=x.name.toLowerCase().endsWith('.wav')?'1':'0';sel.add(o)}
   if(keep) sel.value=keep;
 }
 
@@ -227,7 +257,7 @@ function renderRuns(runs){
 async function loadState(){
   const d=await fetch('/bitperfect/api/state').then(r=>r.json());
   if(!d.ok){q('readiness').innerHTML=`<div class="note stop">${esc(d.error)}</div>`;return}
-  STATE=d;renderReadiness(d.readiness);renderAssets(d.assets);renderMaterial(d.material);renderRuns(d.runs);
+  STATE=d;renderReadiness(d.readiness);renderAssets(d.assets);renderMaterial(d.material);renderRuns(d.runs);sourceHint();
 }
 
 // ── jobs ────────────────────────────────────────────────────────────────────
@@ -426,12 +456,29 @@ q('b-next').onclick=()=>gotoOffset(Number(q('b-offset').value)+Number(q('b-rows'
 
 // ── init ────────────────────────────────────────────────────────────────────
 const sel=q('source');
-for(const [id,label] of SOURCES.map(s=>[s[0],s[1]])) sel.add(new Option(label,id));
+for(const s of SOURCES) sel.add(new Option(s.label,s.id));
 function sourceHint(){
-  const s=SOURCES.find(x=>x[0]===sel.value);
-  q('source-hint').textContent=s?s[2]:'';
-  q('duration').parentElement.style.opacity=sel.value==='live'?1:.45;
-  q('material-select').parentElement.style.opacity=sel.value==='live'?.45:1;
+  const s=SOURCES.find(x=>x.id===sel.value);
+  let status='';
+  const ready=STATE&&STATE.readiness;
+  if(ready&&sel.value==='upnp'&&ready.renderer!=='upmpdcli')
+    status=`<div class="note stop"><strong>Not ready for this scenario:</strong> active renderer is ${esc(ready.renderer||'none')}; switch to upmpdcli on the Control panel, then Re-check.</div>`;
+  if(ready&&sel.value==='live'&&ready.renderer!=='qobuzconnect2mpd')
+    status=`<div class="note stop"><strong>Not ready for this scenario:</strong> active renderer is ${esc(ready.renderer||'none')}; switch to qobuzconnect2mpd on the Control panel, then Re-check.</div>`;
+  else if(ready&&sel.value==='live'&&ready.mpd&&ready.mpd.state==='playing')
+    status='<div class="note"><strong>Stop the current track first.</strong> An already-playing track may have sent its alignment anchor before the tap starts. Click Run check, then start a fresh track when Progress reaches play.</div>';
+  q('source-guide').innerHTML=s?`<h3>${esc(s.title)}</h3>${status}<ol>${s.steps.map(x=>`<li>${esc(x)}</li>`).join('')}</ol><div><strong>What this proves:</strong> ${esc(s.proves)}</div>`:'';
+  const live=sel.value==='live';
+  for(const option of q('material-select').options)
+    option.disabled=!live&&sel.value==='aplay'&&option.dataset.wav!=='1';
+  if(!live&&q('material-select').selectedOptions[0]?.disabled){
+    const first=[...q('material-select').options].find(x=>!x.disabled);
+    if(first)q('material-select').value=first.value;
+  }
+  q('duration').disabled=!live||busy;
+  q('duration').parentElement.style.opacity=live?1:.45;
+  q('material-select').disabled=live||busy;
+  q('material-select').parentElement.style.opacity=live?.45:1;
 }
 sel.onchange=sourceHint;sourceHint();
 q('recheck').onclick=()=>loadState();

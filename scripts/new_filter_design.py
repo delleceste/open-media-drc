@@ -57,7 +57,7 @@ from deploy_filter import (
     ARTIFACT_ROLES, AuditError, DEFAULT_LIMITS, MAX_EXPORT_FREQUENCY_HZ,
     MAX_MEASUREMENT_RATE_HZ, TRACE_ROLES, add_site_root_argument, aggregate_labels,
     atomic_json, commit_site, detect_filter_alignment, export_defects, git_blobs,
-    git_project, git_relative, git_toplevel, git_uncommitted, load_filter_wav,
+    git_project, git_raw, git_relative, git_toplevel, git_uncommitted, load_filter_wav,
     parse_rew_txt, publish_bundle, resolve_site_root, sha256_file,
 )
 from console_ui import CONSOLE, Console, confirm, fail, report_error
@@ -359,6 +359,23 @@ def source_provenance(console: Console, directory: Path, paths: dict[str, Path],
     return record, blobs
 
 
+def require_clean_site_repository(site_root: Path) -> None:
+    """Require the configured site authority to be its own clean Git work tree."""
+    repo = git_toplevel(site_root)
+    if repo is None or repo != site_root.resolve():
+        raise fail(
+            f"{site_root} is not the root of a Git work tree",
+            "--require-clean-site is for a repository-backed site authority")
+    fields = [item for item in git_raw(
+        repo, "status", "--porcelain=1", "-z").split("\0") if item]
+    if fields:
+        names = [entry[3:] for entry in fields[:12]]
+        raise fail(
+            f"site repository {repo} has uncommitted work",
+            *(f"  {name}" for name in names),
+            "commit or remove it before publishing a filter from the web UI")
+
+
 def _relative_to(path: Path, root: Path) -> str:
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
@@ -488,7 +505,12 @@ def report(console: Console, paths: dict[str, Path], aggregate: dict, facts: dic
     console.note(
         f"{'project':<14} {project.get('name', '?')}"
         + (f"  (branch {project['branch']})" if project.get("branch") else ""))
-    if project.get("commit"):
+    archived_upload = (project.get("kind") == "browser-upload" and
+                       project.get("archive_history") == "required")
+    if archived_upload:
+        console.line(
+            f"      {'history':<14} site deployment commit required")
+    elif project.get("commit"):
         console.line(
             f"      {'commit':<14} {project['commit'][:12]}  "
             f"{console.styled(project.get('subject', '')[:60], console.DIM)}")
@@ -497,6 +519,8 @@ def report(console: Console, paths: dict[str, Path], aggregate: dict, facts: dic
     if project.get("remote"):
         console.line(f"      {'remote':<14} {project['remote']}")
     exports_state = (
+        console.styled("archived by the site deployment", console.GREEN)
+        if archived_upload else
         console.styled("all files committed", console.GREEN) if project.get("clean")
         else console.styled(
             f"{len(project.get('uncommitted', []))} file(s) NOT committed",
@@ -587,6 +611,8 @@ def main() -> int:
                         help="do not commit the deployment in the room repository")
     parser.add_argument("--require-commit", action="store_true",
                         help="fail unless the site repository records the deployment")
+    parser.add_argument("--require-clean-site", action="store_true",
+                        help="fail unless --site-root is its own clean Git work tree")
     parser.add_argument("--dry-run", action="store_true",
                         help="run every check and report, then stop without asking")
     parser.add_argument("--yes", action="store_true",
@@ -608,6 +634,8 @@ def main() -> int:
         raise fail("--require-commit cannot be combined with --no-commit")
 
     site_root = resolve_site_root(args.site_root)
+    if args.require_clean_site:
+        require_clean_site_repository(site_root)
     try:
         rates = sorted({int(value.strip()) for value in args.rates.split(",")})
     except ValueError as error:
@@ -649,16 +677,21 @@ def main() -> int:
     CONSOLE.stage(3, WORKFLOW_STEPS,
                   "Trace the exports back to their project and REW session")
     mdat = find_mdat(directory, args.mdat)
-    project, blobs = source_provenance(
-        CONSOLE, directory, paths, mdat, allow_uncommitted=args.allow_uncommitted)
     if args.upload_provenance:
+        history = "required" if args.require_commit else "none"
         project = {
             "name": "browser upload", "repository": "", "remote": "",
             "branch": "", "commit": "", "committed_at": "", "subject": "",
-            "path": directory.name, "clean": False,
-            "uncommitted": sorted([path.name for path in paths.values()] + [mdat.name]),
+            "path": directory.name, "kind": "browser-upload",
+            "archive_history": history, "clean": history == "required",
+            "uncommitted": ([] if history == "required" else
+                            sorted([path.name for path in paths.values()] + [mdat.name])),
         }
         blobs = {}
+    else:
+        project, blobs = source_provenance(
+            CONSOLE, directory, paths, mdat,
+            allow_uncommitted=args.allow_uncommitted)
     measurements = measurement_record(mdat, project, blobs)
     if args.upload_provenance:
         measurements["path"] = mdat.name

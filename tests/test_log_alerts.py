@@ -35,7 +35,8 @@ def _config(directory: Path, console: Path, token: str = "") -> Path:
     sandbox — the token file has to be sandboxed too, or the rules would be
     answering questions about the machine running the tests."""
     text = (ROOT / "omdrc-ctrl/src/commands.conf.in").read_text(encoding="utf-8")
-    text = text.replace("@OMDRC_REPO_DIR@", str(directory))
+    text = text.replace("@OMDRC_DRC_STATUS@", str(directory / "drc-status.sh"))
+    text = text.replace("@OMDRC_DRC@", str(directory / "drc.sh"))
     text = text.replace("/tmp/upmpdcli-console.log", str(console))
     text = text.replace("/tmp/qconnect2mpd.log", str(directory / "qconnect.log"))
     cache = directory / "qobuz-config"

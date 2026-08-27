@@ -40,11 +40,9 @@
 # refresh = 10
 # cmd     = sensors | awk '/Core 0/{print $3}'
 #
-# This file is rendered by CMake.  OMDRC_REPO_DIR defaults to the parent
-# open-media-drc checkout when omdrcctrl is used as this repository's submodule,
-# and can be overridden at configure time:
-#
-#   cmake -B build -DOMDRC_REPO_DIR=/path/to/open-media-drc
+# This file is rendered by the top-level open-media-drc CMake build. Commands,
+# site data, and state always use that installation's paths; there is no
+# checkout-backed installation variant.
 
 # -- Monitor settings -------------------------------------------------------
 # Settings for the MPD and top-CPU monitoring panels.
@@ -64,8 +62,8 @@ brutefir_interval = 5
 [configuration]
 enabled = yes
 site_root = @OMDRC_CONFIG_SITE_ROOT@
-# Persistent authority for uploaded designs. Git history is used when this is
-# already a work tree; an ordinary writable directory is fully supported.
+# Persistent authority for uploaded designs. A Git work tree must be clean and
+# records every deployment; an ordinary writable directory is fully supported.
 design_root = @OMDRC_CONFIG_DESIGN_ROOT@
 state_root = @OMDRC_CONFIG_STATE_ROOT@
 tools_root = @OMDRC_FILTER_TOOLS_ROOT@
@@ -408,14 +406,14 @@ what    = Active config
 group   = drc
 type    = READ
 refresh = 5
-cmd     = @OMDRC_REPO_DIR@/drc-status.sh
+cmd     = @OMDRC_DRC_STATUS@
 
 [drc_off]
 what    = No DRC
 group   = drc
 type    = WRITE
 button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh off
+cmd     = @OMDRC_DRC@ off
 process = brutefir
 
 [drc_resamp]
@@ -423,7 +421,7 @@ what    = DRC Flat (0 dB) - auto resample
 group   = drc
 type    = WRITE
 button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh resamp
+cmd     = @OMDRC_DRC@ resamp
 process = brutefir
 details_link = https://github.com/delleceste/DRC-120.blue/tree/master/README.md
 
@@ -432,7 +430,7 @@ what    = DRC 192 kHz
 group   = drc
 type    = WRITE
 button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh 192000
+cmd     = @OMDRC_DRC@ 192000
 process = brutefir
 
 [drc_96000]
@@ -440,7 +438,7 @@ what    = DRC 96 kHz
 group   = drc
 type    = WRITE
 button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh 96000
+cmd     = @OMDRC_DRC@ 96000
 process = brutefir
 
 [drc_88200]
@@ -448,7 +446,7 @@ what    = DRC 88.2 kHz
 group   = drc
 type    = WRITE
 button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh 88200
+cmd     = @OMDRC_DRC@ 88200
 process = brutefir
 
 [drc_48000]
@@ -456,7 +454,7 @@ what    = DRC 48 kHz
 group   = drc
 type    = WRITE
 button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh 48000
+cmd     = @OMDRC_DRC@ 48000
 process = brutefir
 
 [drc_44100]
@@ -464,7 +462,7 @@ what    = DRC 44.1 kHz
 group   = drc
 type    = WRITE
 button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh 44100
+cmd     = @OMDRC_DRC@ 44100
 process = brutefir
 
 [drc_cdin]
@@ -472,7 +470,7 @@ what    = CD input (44.1 kHz)
 group   = drc
 type    = WRITE
 button  = Apply
-cmd     = @OMDRC_REPO_DIR@/drc.sh cdin
+cmd     = @OMDRC_DRC@ cdin
 process = brutefir
 
 [chrome]

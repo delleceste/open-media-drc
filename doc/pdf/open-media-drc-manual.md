@@ -1440,6 +1440,9 @@ the source-recoverability gap as `clean: false`, which remains visible to the
 verifier and UI. `--no-commit` gives up the automatic room-history commit but
 does not alter bundle verification. `--site-root` selects the site checkout for
 the scripts; it is separate from CMake's `OMDRC_SITE_DATA_DIRS` search path.
+The web frontend requires a clean site work tree and a successful deployment
+commit when its configured design root is Git-managed; only a plain directory
+uses the explicit uncommitted/no-history mode.
 
 Publication is a transaction. Without confirmation every check runs in temporary
 storage and nothing is touched; the dry run also reports which runtime files
@@ -1566,9 +1569,12 @@ instead of only hashing it; `--upload-provenance` records a browser upload's
 own name as its provenance instead of a temporary staging path.
 
 Every web publication first enters the persistent `[configuration] design_root`.
-If that directory is already a Git work tree, the deployment commit is
-required before runtime installation, exactly as in the manual sequence above;
-otherwise it is an ordinary managed folder and no Git setup is required. When
+The Configuration page displays this server-configured path. If that directory
+is already a Git work tree, it must be clean before publication and the
+deployment commit is required before runtime installation, exactly as in the
+manual sequence above; the frontend does not pass `--allow-uncommitted` in this
+case. Otherwise it is an ordinary managed folder and the explicit
+uncommitted/no-history mode is used. When
 the live site is not writable by the unprivileged web process, the design is
 staged and handed to `scripts/omdrc-config-helper.py`, the same privileged
 helper that pins audio hardware roles (section \ref{sec:configuration-page}): it re-verifies
@@ -1716,11 +1722,10 @@ The filter files are only ever read, never modified.
   partition latency, cached and recomputed only when the active config
   changes) so it matches the audible sound.
 
-**Install**: CMake. `cmake .. && sudo cmake --install .` installs system-wide
-(systemd unit on Linux, rc.d script on FreeBSD); `-DUSER_INSTALL=ON` (Linux
-only) installs to `~/.local` with a `systemd --user` unit --- configure it
-*as the target user, without sudo*, and `loginctl enable-linger` for
-headless boxes. On FreeBSD: `sysrc omdrcctrl_enable=YES && service omdrcctrl
+**Install**: omdrcctrl has no standalone deployment. Configure and install the
+top-level open-media-drc project so the panel, core wrappers, site data, and
+state share one host configuration (systemd system unit on Linux, rc.d script
+on FreeBSD). On FreeBSD: `sysrc omdrcctrl_enable=YES && service omdrcctrl
 start`; the rc.d script uses `daemon(8)`, drops privileges via the standard
 rc.subr `${name}_user`, and keeps its pidfile in a subdirectory of
 `/var/run` created by `start_precmd` (plain `/var/run/*.pid` would be

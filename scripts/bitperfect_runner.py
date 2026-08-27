@@ -195,7 +195,7 @@ class Tap:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class Mpd:
-    """Thin mpc wrapper that puts the queue and the output enables back.
+    """Thin mpc wrapper that puts the queue, outputs and gain settings back.
 
     Same contract as verify-bitperfect.sh's feed_mpd/restore_mpd: a
     verification run must not cost the user their playlist."""
@@ -208,6 +208,7 @@ class Mpd:
         self.saved_playlist: str | None = None
         self.saved_outputs: list[tuple[str, bool]] = []
         self.saved_replaygain: str | None = None
+        self.saved_volume: str | None = None
 
     def __call__(self, *args: str, check: bool = False) -> str:
         argv = [self.client]
@@ -247,7 +248,9 @@ class Mpd:
         fails with "No such playlist".  The queue's URIs are held in memory
         instead, which works on any MPD."""
         self.saved_outputs = self.outputs()
-        self.saved_replaygain = self("replaygain").strip()
+        state = self.state()
+        self.saved_replaygain = state["replaygain"]
+        self.saved_volume = state["volume"]
         self.saved_queue = [line for line in
                             self("--format", "%file%", "playlist").splitlines()
                             if line.strip()]
@@ -262,6 +265,11 @@ class Mpd:
                 self("add", uri)
             for name, enabled in self.saved_outputs:
                 self("enable" if enabled else "disable", name)
+            if self.saved_replaygain not in (None, "", "?"):
+                self("replaygain", self.saved_replaygain)
+            volume = re.fullmatch(r"(\d+)%?", self.saved_volume or "")
+            if volume:
+                self("volume", volume.group(1))
         except Exception as error:
             say(f"WARNING: could not fully restore MPD: {error}")
 
@@ -574,7 +582,7 @@ class RendererArbiter:
         if self.source == "live":
             if self.was != "qobuzconnect2mpd":
                 raise SystemExit(
-                    "--source live needs qobuzconnect2mpd running and playing "
+                    "--source live needs qobuzconnect2mpd running "
                     f"(currently: {self.was or 'no renderer'}).")
             return self
         if self.source == "upnp":
@@ -593,6 +601,9 @@ class RendererArbiter:
                 if running_renderer() is None:
                     break
                 time.sleep(0.25)
+            if running_renderer() is not None:
+                raise RuntimeError(
+                    f"could not stop {self.was}; it would interfere with the test")
             self.stopped = True
         return self
 
@@ -608,7 +619,10 @@ def dac_busy(dac: dict) -> str:
     node = dac.get("pcm_node") or dac.get("dsp")
     if not node or not Path(node).exists():
         return ""
-    r = run(["fuser", node])
+    try:
+        r = run(["fuser", node])
+    except OSError:
+        return "unknown (fuser unavailable)"
     return (r.stdout + r.stderr).strip() if r.returncode == 0 else ""
 
 
@@ -724,11 +738,22 @@ def main() -> int:
     if args.source == "aplay":
         if not args.input:
             raise SystemExit("--input is required for --source aplay")
-        code = delegate_aplay(Path(args.input).resolve(), str(prefix))
+        # The stock appliance normally has one renderer holding the single-open
+        # DAC.  The delegated control script deliberately refuses a busy raw
+        # device, so arbitrate the renderer around it just as the MPD paths do.
+        arbiter = RendererArbiter(args.source)
+        arbiter.__enter__()
+        try:
+            code = delegate_aplay(Path(args.input).resolve(), str(prefix))
+        finally:
+            arbiter.__exit__(None, None, None)
         report = prefix.with_suffix(".json")
         verdict = "unknown"
         if report.exists():
-            verdict = json.loads(report.read_text()).get("verdict", verdict)
+            data = json.loads(report.read_text())
+            data["source"] = "aplay"
+            report.write_text(json.dumps(data, indent=2) + "\n")
+            verdict = data.get("verdict", verdict)
         emit("RESULT", f"verdict={verdict} exit={code} prefix={prefix}")
         return code
 

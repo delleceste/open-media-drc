@@ -7,6 +7,7 @@ the one token-free route (the asset MPD and upmpdcli fetch by URL) must not be
 usable to read anything outside the asset cache.
 """
 import importlib.util
+import io
 import json
 from pathlib import Path
 import shutil
@@ -24,6 +25,12 @@ SRC = ROOT / "omdrc-ctrl/src"
 sys.path.insert(0, str(SRC))
 
 import bitperfect as BP  # noqa: E402
+
+RUNNER_SPEC = importlib.util.spec_from_file_location(
+    "omdrc_bitperfect_runner", ROOT / "scripts/bitperfect_runner.py")
+RUNNER = importlib.util.module_from_spec(RUNNER_SPEC)
+assert RUNNER_SPEC.loader
+RUNNER_SPEC.loader.exec_module(RUNNER)
 
 SPEC = importlib.util.spec_from_file_location("omdrc_bitperfect_app", SRC / "app.py")
 APP = importlib.util.module_from_spec(SPEC)
@@ -89,6 +96,15 @@ class PageTest(unittest.TestCase):
         index = (SRC / "templates/index.html").read_text()
         self.assertIn('href="/bitperfect"', index)
 
+    def test_page_gives_an_explicit_sequence_for_all_three_user_scenarios(self):
+        page = self.client.get("/bitperfect").get_data(as_text=True)
+        self.assertIn("WAV file on disk through MPD", page)
+        self.assertIn("upmpdcli → MPD → DAC", page)
+        self.assertIn("qobuzconnect2mpd → MPD → DAC", page)
+        self.assertIn("Click Run check first", page)
+        self.assertIn("do not start it yet", page)
+        self.assertIn("absolute path inside the configured music library", page)
+
     def test_state_reports_readiness_assets_and_runs(self):
         d = self.client.get("/bitperfect/api/state").get_json()
         self.assertTrue(d["ok"])
@@ -105,6 +121,12 @@ class PageTest(unittest.TestCase):
         self.assertEqual(self.client.get("/bitperfect").status_code, 404)
         self.assertEqual(
             self.client.get("/bitperfect/api/state").status_code, 404)
+        for url in ("/bitperfect/api/jobs/nosuch",
+                    "/bitperfect/api/jobs/nosuch/events",
+                    "/bitperfect/api/runs/nosuch/report",
+                    "/bitperfect/api/runs/nosuch/window",
+                    "/bitperfect/api/runs/nosuch/scan"):
+            self.assertEqual(self.client.get(url).status_code, 404)
 
     # ── guards ──────────────────────────────────────────────────────────────
 
@@ -129,8 +151,9 @@ class PageTest(unittest.TestCase):
         (self.assets / "ok.wav").write_bytes(b"RIFF")
         secret = self.tmp / "secret.wav"
         secret.write_bytes(b"nope")
-        self.assertEqual(
-            self.client.get("/bitperfect/api/asset/ok.wav").status_code, 200)
+        response = self.client.get("/bitperfect/api/asset/ok.wav")
+        self.assertEqual(response.status_code, 200)
+        response.close()
         for bad in ("../secret.wav", "..%2Fsecret.wav", "nosuch.wav"):
             self.assertNotEqual(
                 self.client.get(f"/bitperfect/api/asset/{bad}").status_code, 200)
@@ -142,6 +165,58 @@ class PageTest(unittest.TestCase):
                              data={"path": str(outside)}, headers=self.headers)
         self.assertEqual(r.status_code, 400)
         self.assertIn("must be inside", r.get_json()["error"])
+
+    def test_run_cannot_bypass_loading_with_an_arbitrary_absolute_path(self):
+        outside = self.tmp / "private.wav"
+        counter_wav(outside)
+        r = self.client.post(
+            "/bitperfect/api/run",
+            json={"source": "mpd", "material": str(outside), "duration": 30},
+            headers=self.headers)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("load it", r.get_json()["error"])
+
+    def test_upload_limit_is_enforced_before_material_is_published(self):
+        APP.BITPERFECT.max_upload_bytes = 4
+        r = self.client.post(
+            "/bitperfect/api/material",
+            data={"file": (io.BytesIO(b"RIFF-too-large"), "large.wav")},
+            headers=self.headers)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("upload limit", r.get_json()["error"])
+        self.assertFalse((self.assets / "large.wav").exists())
+
+    def test_live_tap_window_is_bounded(self):
+        for duration in (0, 601):
+            r = self.client.post(
+                "/bitperfect/api/run",
+                json={"source": "live", "duration": duration},
+                headers=self.headers)
+            self.assertEqual(r.status_code, 400)
+
+    def test_direct_control_refuses_non_wav_material(self):
+        track = self.assets / "track.flac"
+        track.write_bytes(b"fLaC")
+        (self.assets / ".track.flac.material.json").write_text(json.dumps({
+            "name": "track.flac", "source": str(track), "wav": "",
+        }))
+        r = self.client.post(
+            "/bitperfect/api/run",
+            json={"source": "aplay", "material": str(track), "duration": 30},
+            headers=self.headers)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("PCM WAV files only", r.get_json()["error"])
+
+    def test_a_decoded_reference_wav_is_not_offered_as_test_material(self):
+        track = self.assets / "track.flac"
+        decoded = self.assets / "track.decoded.wav"
+        track.write_bytes(b"fLaC")
+        decoded.write_bytes(b"RIFF")
+        (self.assets / ".track.flac.material.json").write_text(json.dumps({
+            "name": "track.flac", "source": str(track), "wav": str(decoded),
+        }))
+        names = [row["name"] for row in APP._bitperfect().assets()]
+        self.assertNotIn(decoded.name, names)
 
     def test_a_path_inside_the_music_root_is_accepted(self):
         inside = self.music / "track.wav"
@@ -268,6 +343,60 @@ class SharedLockTest(unittest.TestCase):
                           configuration.Settings(
                               state_root=Path(tempfile.mkdtemp())),
                           dict).lock)
+
+
+class RunnerStateTest(unittest.TestCase):
+    def test_direct_control_stops_and_restores_the_active_renderer(self):
+        events = []
+
+        class Arbiter:
+            def __init__(self, source):
+                events.append(("init", source))
+
+            def __enter__(self):
+                events.append(("enter", None))
+
+            def __exit__(self, *unused):
+                events.append(("exit", None))
+
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory) / "direct"
+
+            def delegated(_input, output):
+                Path(output + ".json").write_text(json.dumps({"verdict": "ok"}))
+                events.append(("play", None))
+                return 0
+
+            argv = ["bitperfect_runner.py", "--source", "aplay", "--input",
+                    str(Path(directory) / "test.wav"), "--out", str(prefix)]
+            with mock.patch.object(RUNNER, "discover", return_value={"os": "linux"}), \
+                 mock.patch.object(RUNNER, "brutefir_running", return_value=False), \
+                 mock.patch.object(RUNNER, "RendererArbiter", Arbiter), \
+                 mock.patch.object(RUNNER, "delegate_aplay", delegated), \
+                 mock.patch.object(sys, "argv", argv):
+                self.assertEqual(RUNNER.main(), 0)
+            self.assertEqual(events, [("init", "aplay"), ("enter", None),
+                                      ("play", None), ("exit", None)])
+            self.assertEqual(json.loads((prefix.with_suffix(".json")).read_text())[
+                "source"], "aplay")
+
+    def test_mpd_restore_includes_replaygain_and_volume(self):
+        class FakeMpd(RUNNER.Mpd):
+            def __init__(self):
+                self.saved_outputs = [("OKTO-DAC", True), ("other", False)]
+                self.saved_replaygain = "off"
+                self.saved_volume = "73%"
+                self.saved_queue = ["one.wav"]
+                self.calls = []
+
+            def __call__(self, *args, **kwargs):
+                self.calls.append(args)
+                return ""
+
+        mpd = FakeMpd()
+        mpd.restore()
+        self.assertIn(("replaygain", "off"), mpd.calls)
+        self.assertIn(("volume", "73"), mpd.calls)
 
 
 if __name__ == "__main__":

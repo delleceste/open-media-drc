@@ -97,7 +97,11 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
             raise AuditError(f"{path}: insufficient attenuation at {rate} Hz")
     print(f"PASS {manifest['geometry']}/{manifest['variant']} {manifest['bundle_id']}")
     project = manifest["source"].get("project") or {}
-    if project.get("commit"):
+    if (project.get("kind") == "browser-upload" and
+            project.get("archive_history") == "required"):
+        print(f"     source browser upload archived in required site history"
+              f" · session {session['file']} {session['sha256'][:12]}")
+    elif project.get("commit"):
         print(f"     source {project.get('name', '?')} @ {project['commit'][:12]}"
               f" · session {session['file']} {session['sha256'][:12]}")
     else:

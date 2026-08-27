@@ -78,15 +78,14 @@ install:
 	                $(DOCSDIR)
 
 # omdrc-ctrl (web control panel) — the port's CTRL option calls this separately,
-# so the core install stays dependency-free.  Run-from-repo does NOT use this
-# target: it keeps building omdrc-ctrl with CMake into the checkout/~/.local,
-# which is unchanged.
+# so the core install stays dependency-free. This is packaging machinery for
+# the same installed runtime layout, not a checkout-backed deployment.
 #
 # Two port rules are honoured here that the CMake flow does not need:
 #   - the config is installed as commands.conf.sample (pkg @sample owns the
 #     live copy), so a user edit never modifies a packaged file;
-#   - no build-host path is baked in — @OMDRC_REPO_DIR@ is replaced by the
-#     installed bin/omdrc wrappers rather than a checkout location.
+#   - no build-host path is baked in — commands use the installed bin/omdrc
+#     wrappers rather than a checkout location.
 install-ctrl:
 	mkdir -p $(CTRLDIR)/templates $(CTRLDIR)/static $(ETCDIR) $(BINDIR) $(DOCSDIR) \
 	         $(LIBEXECDIR)/filter-tools
@@ -110,8 +109,8 @@ install-ctrl:
 	$(INSTALL_DATA) omdrc-ctrl/src/static/chart.umd.min.js $(CTRLDIR)/static
 	$(INSTALL_DATA) omdrc-ctrl/SPECTRUM_ANALYZER.md $(DOCSDIR)
 	$(INSTALL_DATA) omdrc-ctrl/README.md $(DOCSDIR)/OMDRC-CTRL.md
-	sed -e 's,@OMDRC_REPO_DIR@/drc-status.sh,$(PREFIX)/bin/omdrc-status,g' \
-	    -e 's,@OMDRC_REPO_DIR@/drc.sh,$(PREFIX)/bin/omdrc,g' \
+	sed -e 's,@OMDRC_DRC_STATUS@,$(PREFIX)/bin/omdrc-status,g' \
+	    -e 's,@OMDRC_DRC@,$(PREFIX)/bin/omdrc,g' \
 	    -e 's,@OMDRC_CONFIG_SITE_ROOT@,$(PREFIX)/etc/open-media-drc,g' \
 	    -e 's,@OMDRC_CONFIG_DESIGN_ROOT@,@AUDIO_HOME@/.local/share/omdrc/site-data,g' \
 	    -e 's,@OMDRC_FILTER_TOOLS_ROOT@,$(PREFIX)/libexec/omdrc/filter-tools,g' \

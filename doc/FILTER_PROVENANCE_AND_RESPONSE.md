@@ -414,6 +414,8 @@ The options that weaken a guard are deliberately explicit:
 | `--replace-design` | Permits an existing design ID's differing runtime/config bytes to be replaced | Does not skip verification or allow a partial L/R publication |
 | `--allow-uncommitted` | Publishes even though source exports or the `.mdat` cannot be recovered from the recorded project commit | Records `clean: false`; the verifier and UI keep the warning visible |
 | `--no-commit` | Leaves the published site-tree changes uncommitted | Does not change bundle verification; it gives up automatic deployment history |
+| `--require-clean-site` | Requires `--site-root` to be its own clean Git work tree before publication | Does not commit or discard pre-existing work |
+| `--require-commit` | Fails unless the publication is recorded in site history | Does not weaken source or bundle verification |
 | `--site-root DIR` | Chooses the one site checkout to read and write | Does not change CMake's separate `OMDRC_SITE_DATA_DIRS` search path |
 
 The transaction is:

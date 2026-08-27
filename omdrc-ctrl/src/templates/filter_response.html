@@ -257,7 +257,9 @@ function renderDetails(data) {
     addDetail('Source directory', d.source_directory);
     const project = d.project || {};
     if (project.name) {
-        addDetail('Source project', project.commit
+        addDetail('Source project', project.kind === 'browser-upload' && project.archive_history === 'required'
+            ? 'browser upload — archived in site history'
+            : project.commit
             ? `${project.name} @ ${project.commit.slice(0, 12)}` +
               (project.clean ? '' : ' — exports were NOT committed')
             : `${project.name} — not under version control`);

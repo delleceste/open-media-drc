@@ -405,6 +405,13 @@ class RoomHistoryTest(unittest.TestCase):
         with self.assertRaisesRegex(deploy_filter.AuditError, "did not record"):
             MODULE.record_history(MODULE.CONSOLE, self.room, self.manifest, require=True)
 
+    def test_web_mode_requires_a_clean_site_repository(self):
+        subprocess.run(["git", "init", "-q", str(self.room)], check=True)
+        MODULE.require_clean_site_repository(self.room)
+        (self.room / "unfinished.txt").write_text("operator work\n")
+        with self.assertRaisesRegex(deploy_filter.AuditError, "uncommitted work"):
+            MODULE.require_clean_site_repository(self.room)
+
     def test_a_deployment_becomes_one_retrievable_commit(self):
         (self.room / "filters/120.blue").mkdir(parents=True)
         (self.room / "configs/120.blue").mkdir(parents=True)
@@ -702,6 +709,7 @@ class CommandHelpTest(unittest.TestCase):
                         "--source-root", "--write"):
             self.assertNotIn(removed, result.stdout)
         self.assertIn("--require-commit", result.stdout)
+        self.assertIn("--require-clean-site", result.stdout)
         self.assertIn("--no-next", result.stdout)
 
     def test_missing_directory_argument_is_refused(self):
@@ -760,12 +768,48 @@ class CommandHelpTest(unittest.TestCase):
             manifest = json.loads((root / "filters/120.blue/provenance/fixture-design.json").read_text())
             self.assertEqual(manifest["source"]["measurements"]["bundle_path"],
                              "source/fixture-design/120.blue.fixture-design.mdat")
+            self.assertEqual(manifest["source"]["project"]["archive_history"], "none")
             before = {path: path.stat().st_mtime_ns for path in (config, archived)}
             repeated = subprocess.run(command, text=True, capture_output=True)
             self.assertEqual(repeated.returncode, 0, repeated.stderr)
             self.assertIn("already installed", repeated.stdout)
             self.assertEqual(before, {path: path.stat().st_mtime_ns
                                       for path in (config, archived)})
+
+    def test_git_managed_upload_requires_and_records_clean_site_history(self):
+        with tempfile.TemporaryDirectory(prefix="omdrc-upload-history-") as name:
+            root = Path(name)
+            site = root / "site"
+            site.mkdir()
+            subprocess.run(["git", "init", "-q", str(site)], check=True)
+            subprocess.run(["git", "-C", str(site), "config", "user.email",
+                            "test@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(site), "config", "user.name",
+                            "Test"], check=True)
+            directory = build_design_dir(root / "upload")
+            command = [
+                sys.executable, str(ROOT / "scripts/new_filter_design.py"),
+                str(directory), "--site-root", str(site), "--rates", "48000",
+                "--require-clean-site", "--require-commit", "--yes",
+                "--archive-mdat", "--upload-provenance", "--no-next"]
+            result = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("archived by the site deployment", result.stdout)
+            manifest_path = site / "filters/120.blue/provenance/fixture-design.json"
+            manifest = json.loads(manifest_path.read_text())
+            project = manifest["source"]["project"]
+            self.assertEqual(project["archive_history"], "required")
+            self.assertTrue(project["clean"])
+            self.assertEqual(project["uncommitted"], [])
+            self.assertEqual(
+                subprocess.run(["git", "-C", str(site), "status", "--porcelain"],
+                               check=True, text=True, capture_output=True).stdout, "")
+            verify = subprocess.run([
+                sys.executable, str(ROOT / "scripts/verify_filter_bundle.py"),
+                "--require-sources", "--no-next", "--site-root", str(site),
+                str(manifest_path)], text=True, capture_output=True)
+            self.assertEqual(verify.returncode, 0, verify.stderr)
+            self.assertIn("archived in required site history", verify.stdout)
 
     def test_verifier_help_documents_handoff_suppression(self):
         result = subprocess.run(

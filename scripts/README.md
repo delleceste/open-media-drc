@@ -118,6 +118,10 @@ git -C ../omdrc-801N checkout <commit> -- filters/120.blue configs/120.blue
 ```
 
 `--no-commit` skips it; a room that is not a work tree warns and deploys anyway.
+The web frontend adds `--require-clean-site --require-commit` when its
+configured `design_root` is a Git repository, and never adds
+`--allow-uncommitted` in that case. A non-Git design root instead uses the
+explicit `--allow-uncommitted --no-commit` mode.
 
 **Then verify, install and select:**
 

@@ -148,6 +148,8 @@ class RepositoryFirstInstallTest(unittest.TestCase):
             self.assertEqual(publication[publication.index("--design") + 1], "Rscreen")
             self.assertNotIn("--live", publication)
             self.assertIn("--require-commit" if git else "--no-commit", publication)
+            self.assertEqual("--allow-uncommitted" in publication, not git)
+            self.assertEqual("--require-clean-site" in publication, git)
             self.assertEqual(sum("verify_filter_bundle.py" in " ".join(argv)
                                  for argv in calls), 2)
             self.assertTrue((site_root / "filters/120.blue/provenance/Rscreen.json").is_file())
@@ -157,6 +159,19 @@ class RepositoryFirstInstallTest(unittest.TestCase):
 
     def test_existing_git_design_store_requires_the_history_commit(self):
         self.exercise_install(True)
+
+    def test_existing_git_design_store_must_be_clean_before_publication(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, design_root, _ = self.make_manager(root, git=True)
+            (design_root / "unfinished.txt").write_text("operator work\n")
+            export = root / "upload/120.blue.Rscreen.txts"
+            export.mkdir(parents=True)
+            job = manager._new_job("install")
+            with mock.patch.object(manager, "run_command") as run:
+                with self.assertRaisesRegex(RuntimeError, "uncommitted work"):
+                    manager.install_filter(job, export)
+            run.assert_not_called()
 
     def test_temporary_upload_parent_never_becomes_geometry(self):
         with tempfile.TemporaryDirectory() as name:
@@ -211,6 +226,22 @@ class RepositoryFirstInstallTest(unittest.TestCase):
             self.assertFalse(rows[("120.blue", "Rscreen")]["installed"])
             self.assertEqual(rows[("legacy", "old")]["location"],
                              "runtime-only legacy")
+
+    def test_saved_design_is_selected_and_cannot_be_removed(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, design_root, _ = self.make_manager(root)
+            self.publish_fixture(design_root)
+            manager.active_design = lambda: {
+                "running": True, "geometry": "120.blue", "design": "default",
+                "saved": {"geometry": "120.blue", "design": "@Rscreen"},
+            }
+            row = next(item for item in manager.designs()
+                       if item["geometry"] == "120.blue" and item["design"] == "Rscreen")
+            self.assertTrue(row["selected"])
+            job = manager._new_job("remove")
+            with self.assertRaisesRegex(RuntimeError, "running and saved"):
+                manager.remove_filter(job, "120.blue", "Rscreen")
 
 
 class PrivilegedPublicationTest(unittest.TestCase):
@@ -273,6 +304,8 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Export all measurements as text", response.data)
         self.assertIn(b"FLX-trimmed-48k.wav", response.data)
+        self.assertIn(b"Publication authority", response.data)
+        self.assertIn(b"[configuration] design_root", response.data)
 
     def test_form_data_is_captured_before_inputs_are_disabled(self):
         text = (SRC / "templates/configuration.html").read_text()

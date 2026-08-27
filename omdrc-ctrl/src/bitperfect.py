@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import time
+from datetime import datetime
 from typing import Callable
 
 from configuration import ConfigurationManager, Job
@@ -141,9 +142,23 @@ class BitPerfectManager(ConfigurationManager):
                     row["sha256"] = _sha256(path)
                 rows.append(row)
         # Anything else the user generated or loaded, listed after the grid.
+        # Loader-owned WAVs are represented by material(), not here.  In
+        # particular, exposing a FLAC's decoded reference WAV as independent
+        # material would let a user accidentally bypass the decoder they meant
+        # to test.
+        loader_owned: set[str] = set()
+        root = self.bp.assets_root.resolve()
+        for item in self.material():
+            for key in ("source", "wav"):
+                try:
+                    candidate = Path(item.get(key, "")).resolve()
+                except (OSError, TypeError):
+                    continue
+                if candidate.parent == root:
+                    loader_owned.add(candidate.name)
         known = {r["name"] for r in rows}
         for path in sorted(self.bp.assets_root.glob("*.wav")):
-            if path.name not in known:
+            if path.name not in known and path.name not in loader_owned:
                 rows.append({"name": path.name, "present": True, "extra": True,
                              "bytes": path.stat().st_size,
                              "sha256": _sha256(path)})
@@ -193,6 +208,35 @@ class BitPerfectManager(ConfigurationManager):
                 continue
         return rows
 
+    def resolve_material(self, requested: str) -> Path:
+        """Resolve only material that the page has already admitted.
+
+        Generated assets are addressed by basename.  Loaded files are
+        addressed by the exact ``source`` recorded by load_material(), after
+        the upload/music-root checks have run.  Keeping this check here means
+        a caller cannot bypass those checks by posting an arbitrary absolute
+        path directly to /api/run.
+        """
+        if not requested:
+            raise ValueError("choose test material first")
+        if "/" not in requested and "\\" not in requested:
+            path = (self.bp.assets_root / requested).resolve()
+            if path.is_file() and path.parent == self.bp.assets_root.resolve():
+                return path
+        admitted = {str(row.get("source", "")): row for row in self.material()}
+        if requested in admitted:
+            path = Path(requested).resolve()
+            allowed_roots = [self.bp.assets_root.resolve()]
+            if self.bp.music_root is not None:
+                allowed_roots.append(self.bp.music_root.resolve())
+            if path.is_file() and any(
+                    path.parent == root or root in path.parents
+                    for root in allowed_roots):
+                return path
+        raise ValueError(
+            "material is not in the bit-perfect library; load it from the "
+            "configured music library, or upload it, before running")
+
     # ── chain readiness ─────────────────────────────────────────────────────
 
     def readiness(self) -> dict:
@@ -201,9 +245,13 @@ class BitPerfectManager(ConfigurationManager):
 
         try:
             state["dac"] = self._runner().discover()
+            state["dac_holder"] = self._runner().dac_busy(state["dac"])
         except Exception as error:
             state["dac"] = None
+            state["dac_holder"] = ""
             state["blocking"].append(f"the DAC could not be located: {error}")
+
+        state["renderer"] = self._runner().running_renderer()
 
         brutefir = subprocess.run(["pgrep", "-x", "brutefir"],
                                   capture_output=True, text=True)
@@ -241,18 +289,20 @@ class BitPerfectManager(ConfigurationManager):
                  duration: float, allow_drc: bool) -> None:
         if source not in ("aplay", "mpd", "mpd-http", "upnp", "live"):
             raise ValueError(f"unknown source: {source}")
-        stamp = time.strftime("%Y%m%d-%H%M%S")
+        if not 5 <= duration <= 600:
+            raise ValueError("tap window must be between 5 and 600 seconds")
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         prefix = self.bp.results_root / f"{stamp}-{source}"
 
         argv = ["python3", str(self._tool("bitperfect_runner.py")),
                 "--source", source, "--out", str(prefix),
                 "--duration", str(duration)]
         if source != "live":
-            path = Path(material_path)
-            if not path.is_absolute():
-                path = self.bp.assets_root / path.name
-            if not path.is_file():
-                raise RuntimeError(f"material not found: {path}")
+            path = self.resolve_material(material_path)
+            if source == "aplay" and path.suffix.lower() != ".wav":
+                raise ValueError(
+                    "the direct control accepts PCM WAV files only; choose a WAV "
+                    "or use an MPD path for FLAC and other containers")
             argv += ["--input", str(path)]
         if allow_drc:
             argv.append("--allow-drc")

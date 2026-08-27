@@ -19,9 +19,11 @@ be followed by the command-line publication procedure. The page invokes that
 same engine itself.
 
 Every web publication first enters the persistent `[configuration] design_root`.
-If that directory is already a Git work tree, the deployment commit is required
-before runtime installation; otherwise it is an ordinary managed folder and no
-Git setup is required. The privileged helper then verifies the bundle ID and
+The page displays this server-configured authority above the upload form. If it
+is already a Git work tree, it must be clean before publication and the
+deployment commit is required before runtime installation; `--allow-uncommitted`
+is not used. Otherwise it is an ordinary managed folder and the explicit
+uncommitted/no-history mode is used. The privileged helper then verifies the bundle ID and
 every named hash, renders runnable configs from the bound templates, writes the
 manifest last, and the unprivileged verifier checks the installed copy again.
 `site_root` is therefore derived runtime state rather than a second authority.
@@ -201,8 +203,7 @@ omdrcctrl/
 ├── rc.d/
 │   └── omdrcctrl.in          # FreeBSD rc.d script template
 └── systemd/
-    ├── omdrcctrl.service.in       # Linux system service template
-    └── omdrcctrl-user.service.in  # Linux user service template
+    └── omdrcctrl.service.in       # Linux system service template
 ```
 
 ---
@@ -213,43 +214,25 @@ omdrcctrl/
 # 1. install Python dependencies
 pip install flask markdown
 
-# 2. configure
-mkdir build && cd build
+# 2. from the open-media-drc repository root, create and edit the host config
+cp host.cmake.sample host.cmake
+$EDITOR host.cmake
 
-# system-wide install (default prefix /usr/local, requires sudo for install)
-cmake ..
-
-# Linux only: user install with systemd --user (no root required, prefix defaults to ~/.local)
-cmake .. -DUSER_INSTALL=ON
-
-# override the prefix explicitly (only meaningful WITHOUT -DUSER_INSTALL; see note below)
-cmake .. -DCMAKE_INSTALL_PREFIX=/opt/omdrcctrl
-
-# system services run as the configuring user by default; override if needed
-cmake .. -DOMDRCCTRL_SERVICE_USER=myuser
-
-# default command paths point to the parent open-media-drc checkout; override if needed
-cmake .. -DOMDRC_REPO_DIR=/path/to/open-media-drc
-
-# 3. install
-sudo cmake --install .        # system install
-cmake --install .             # Linux user install (no sudo)
+# 3. configure, build, and install the complete system
+cmake -S . -B build -C host.cmake
+cmake --build build
+sudo cmake --install build
 ```
 
-> **`-DUSER_INSTALL=ON` forces the prefix to `$HOME/.local`** (it overrides any
-> `-DCMAKE_INSTALL_PREFIX` you pass). So **configure and install as the target
-> user, without `sudo`** — running it under `sudo`/root makes `$HOME=/root` and
-> the files land in `/root/.local`, where the user's `systemctl --user` service
-> can't find them. If a build tree was already configured with the wrong prefix,
-> wipe `build/` and reconfigure as the user. User install lands the unit in
-> `~/.local/share/systemd/user/`; enable it with `systemctl --user enable --now
-> omdrcctrl`.
+`omdrc-ctrl` deliberately has no standalone CMake installation. Configuring
+this directory by itself stops with an error and points back to the commands
+above. The top-level build is the sole owner of the installation prefix, audio
+user, site data, state paths, core wrappers, and panel, preventing a system
+service from accidentally depending on a source checkout.
 
-On Linux, CMake installs systemd units. On FreeBSD, CMake installs an rc.d
-script and rejects `-DUSER_INSTALL=ON` because systemd user services are not
-available there. The installed `commands.conf` is generated from
-`src/commands.conf.in`; `OMDRC_REPO_DIR` defaults to the parent directory, which
-matches the normal git-submodule layout inside `open-media-drc`.
+On Linux, CMake installs a systemd system unit. On FreeBSD, it installs an rc.d
+script. The installed `commands.conf` is generated from `src/commands.conf.in`
+with the same prefix and host configuration as the core.
 
 ### Linux system install paths (prefix `/usr/local`)
 
@@ -263,19 +246,6 @@ matches the normal git-submodule layout inside `open-media-drc`.
 | `/usr/local/lib/omdrcctrl/static/` | vendored Chart.js |
 | `/usr/local/etc/omdrcctrl/commands.conf` | command definitions |
 | `/usr/local/lib/systemd/system/omdrcctrl.service` | systemd system unit |
-
-### Linux user install paths (prefix `~/.local`)
-
-| Path | Contents |
-|---|---|
-| `~/.local/bin/omdrcctrl` | launcher shell script |
-| `~/.local/lib/omdrcctrl/app.py` | Flask application |
-| `~/.local/lib/omdrcctrl/README.md` | this file (served at `/readme`) |
-| `~/.local/lib/omdrcctrl/SPECTRUM_ANALYZER.md` | live spectrum analyzer documentation |
-| `~/.local/lib/omdrcctrl/templates/` | HTML templates |
-| `~/.local/lib/omdrcctrl/static/` | vendored Chart.js |
-| `~/.local/etc/omdrcctrl/commands.conf` | command definitions |
-| `~/.local/share/systemd/user/omdrcctrl.service` | systemd user unit |
 
 ### FreeBSD system install paths (prefix `/usr/local`)
 
@@ -296,11 +266,11 @@ matches the normal git-submodule layout inside `open-media-drc`.
 
 ### Linux systemd system service
 
-The service runs as `OMDRCCTRL_SERVICE_USER`, which defaults to the user that
-configured the CMake build. Override it during configure when needed:
+The service runs as the top-level `AUDIO_USER`. Set it in `host.cmake` before
+configuring the build:
 
-```bash
-cmake .. -DOMDRCCTRL_SERVICE_USER=myuser
+```cmake
+set(AUDIO_USER "myuser" CACHE STRING "Login user that owns the services and brutefir")
 ```
 
 ```bash
@@ -312,35 +282,18 @@ sudo systemctl status omdrcctrl
 Renderer switching drives the `qobuzconnect2mpd` / `upmpdcli` `systemctl --user`
 services. The system service reaches that user bus by deriving
 `XDG_RUNTIME_DIR` from the service user's uid, which requires
-`/run/user/<uid>` to exist. If `OMDRCCTRL_SERVICE_USER` is not always logged
-in, enable lingering once so the runtime dir (and thus the toggle) survives
+`/run/user/<uid>` to exist. If `AUDIO_USER` is not always logged in, enable
+lingering once so the runtime dir (and thus the toggle) survives
 logout:
 
 ```bash
-sudo loginctl enable-linger "$OMDRCCTRL_SERVICE_USER"
-```
-
-### Linux systemd user service (`-DUSER_INSTALL=ON`)
-
-No root required. The service runs as your own user automatically.
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now omdrcctrl
-systemctl --user status omdrcctrl
-```
-
-To keep the service running after logout (e.g. on a headless machine), enable linger once:
-
-```bash
-loginctl enable-linger $USER
+sudo loginctl enable-linger myuser
 ```
 
 ### Restarting after config changes
 
 ```bash
-sudo systemctl restart omdrcctrl          # system
-systemctl --user restart omdrcctrl        # user
+sudo systemctl restart omdrcctrl
 ```
 
 ### FreeBSD rc.d service
@@ -413,11 +366,15 @@ sudo service omdrcctrl restart
 ## Running manually (development)
 
 ```bash
-cd build
-python3 ../src/app.py --config commands.conf        # listens on 0.0.0.0:9090
-python3 ../src/app.py --config commands.conf --port 8080
-python3 ../src/app.py --config /path/to/commands.conf
+cd build/omdrc-ctrl
+python3 ../../omdrc-ctrl/src/app.py --config commands.conf        # port 9090
+python3 ../../omdrc-ctrl/src/app.py --config commands.conf --port 8080
+python3 ../../omdrc-ctrl/src/app.py --config /path/to/commands.conf
 ```
+
+The top-level configure step generates this development `commands.conf` with
+the same installed paths used by the service; development does not introduce a
+second checkout-backed runtime layout.
 
 Open `http://<hostname>:9090` in a browser.
 
@@ -1439,9 +1396,10 @@ place rather than in a toast.  A failed switch is not remembered for the next
 boot.
 
 **Linux:** both `qobuzconnect2mpd` and `upmpdcli` must be installed as systemd
-`--user` services and omdrcctrl itself must run in that same user session (the
-`-DUSER_INSTALL=ON` user service, or any process with the user bus available);
-no `sudoers` entry is required.
+`--user` services for `AUDIO_USER`. The omdrcctrl system service reaches that
+user's bus through `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`; no
+`sudoers` entry is required. Enable lingering for `AUDIO_USER` so the user bus
+exists on a headless system.
 
 **FreeBSD:** the service user must be able to run, password-free, the relevant
 commands. First align qobuzconnect2mpd with the same `AUDIO_USER` used by
