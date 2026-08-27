@@ -31,6 +31,23 @@ fi
 : "${MUSIC_DIR:?set MUSIC_DIR in config.env}"
 : "${QOBUZ_USER:=}"
 : "${FRIENDLY_NAME:=$(hostname)}"
+# The interface upmpdcli announces on. Preference: an explicit UPNP_IFACE from
+# config.env, else the interface carrying the default route, else the first
+# non-loopback interface that has an address AND a carrier. The last step
+# matters because a statically configured wired port with no cable still has an
+# address, and binding it makes the renderer invisible (see config.env).
+upnp_default_iface() {
+	iface=$(netstat -rn 2>/dev/null | awk '$1=="default"{print $NF; exit}')
+	if [ -n "$iface" ]; then echo "$iface"; return; fi
+	for i in $(ifconfig -l 2>/dev/null); do
+		[ "$i" = "lo0" ] && continue
+		ifconfig "$i" 2>/dev/null | grep -q "inet " || continue
+		ifconfig "$i" 2>/dev/null | grep -q "status: no carrier" && continue
+		echo "$i"; return
+	done
+}
+: "${UPNP_IFACE:=$(upnp_default_iface)}"
+[ -n "$UPNP_IFACE" ] || echo "warning: could not determine a network interface for upmpdcli; set UPNP_IFACE in config.env" >&2
 
 render() {
 	tpl=$1
@@ -42,6 +59,7 @@ render() {
 	    -e "s|@MUSIC_DIR@|${MUSIC_DIR}|g" \
 	    -e "s|@QOBUZ_USER@|${QOBUZ_USER}|g" \
 	    -e "s|@FRIENDLY_NAME@|${FRIENDLY_NAME}|g" \
+	    -e "s|@UPNP_IFACE@|${UPNP_IFACE}|g" \
 	    "$tpl" > "$out"
 	# Preserve the executable bit — sed output does not. Needed by rc.d scripts
 	# AND by KDE/Plasma autostart .desktop files: Plasma refuses to launch an

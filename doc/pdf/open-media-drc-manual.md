@@ -95,6 +95,70 @@ libmpdclient). The optional Qobuz plugin needs python3 with `requests`.
 Prebuilt packages exist (FreeBSD port `upmpdcli`, Arch AUR); source builds
 are used here to track upstream.
 
+### It must be told which interface to announce on {#sec:upnpiface}
+
+**Set `upnpiface` on any box with more than one network interface.** Left
+unset, libupnpp picks one itself, and it picks the first that is
+UP+RUNNING+MULTICAST --- which on FreeBSD includes **a wired port with no
+cable in it**: `em(4)` keeps `RUNNING` set without link, and `/etc/rc.conf`
+here configures `em0` statically whether or not anything is plugged in.
+
+The failure this produces is unusually quiet, which is why it is worth
+naming. upmpdcli **starts, connects to MPD, and keeps driving it perfectly
+well**; `ps` shows it running and the renderer switch reports it as active.
+Only its *network control surface* is dead: bound to an interface with no
+link, its SSDP advertisements never leave the host, so BubbleUPnP, Kazoo,
+Linn and every other control point simply do not see the renderer. Nothing
+in the panel or the logs says "no carrier".
+
+Two log signatures, both from `/tmp/upmpdcli.log`:
+
+```
+LibUPnP: Using IPV4 192.168.1.9 port 49152 IPV6  port 49152
+```
+
+--- the tell. If that address is not the one the box actually serves the
+LAN on, the renderer is announcing into a dead cable. Sometimes the device
+also fails outright:
+
+```
+sendAvertisement failed: UpnpSendAdvertisement :-100: UPNP_E_INVALID_HANDLE
+Device would not start
+```
+
+That variant is intermittent: the same configuration sometimes brings the
+HTTP side up (the description is served, and fetching it returns a real
+response) while the multicast side never works. Either way the renderer is
+undiscoverable.
+
+**A box that used to work can break without being touched.** If the wired
+port *was* the live interface, everything was correct; move the box to
+Wi-Fi, or unplug the cable, and the stale static `em0` address is still
+there, still first in the auto-selection, and now dead. The renderer keeps
+playing whatever tells MPD to play --- Qobuz Connect, the panel --- so the
+loss shows up only as "my control point stopped finding it".
+
+Diagnosis and fix:
+
+```sh
+ifconfig | grep -E '^[a-z]|inet |status'   # which interface has a carrier?
+netstat -rn | awk '$1=="default"{print $NF}'
+grep 'Using IPV4' /tmp/upmpdcli.log        # what did libupnpp pick?
+```
+
+then set the interface in `upmpdcli.conf`:
+
+```ini
+upnpiface = wlan0
+```
+
+`install.sh` does this automatically: it renders `@UPNP_IFACE@` from
+`UPNP_IFACE` in `config.env`, defaulting to the interface holding the
+default route and falling back to the first non-loopback interface that has
+both an address and a carrier. Set `UPNP_IFACE` explicitly for anything
+unusual. Remember that the service reads the **installed**
+`${PREFIX}/etc/open-media-drc/upmpdcli.conf`, not the checkout's copy.
+
 ## MPD --- Music Player Daemon
 
 The actual player. Installed **from the OS package**:
@@ -1685,6 +1749,23 @@ The helper validates USB identities, selectors, canonical bundle IDs, hashes,
 config derivation, and destination roots before touching anything root-owned;
 `configuration.py` itself runs as the unprivileged web user throughout.
 
+A finished job keeps only its log. Both large working trees --- the browser's
+upload and the staged site the helper publishes from --- are discarded when
+the job ends, and payloads orphaned by an earlier run of the panel are swept
+at startup. Before that, every install leaked its payload permanently: five
+of them had accumulated 901 MB under
+`~/.local/state/omdrc/configuration` and filled the root filesystem.
+
+### Bit-perfect check page {#sec:bitperfect-page-ref}
+
+`/bitperfect` runs the USB wire tap from the browser through any of five
+playback paths --- including the real **upmpdcli** and **qobuzconnect2mpd**
+routes --- and shows the reference bytes beside the bytes the DAC actually
+received, as a whole-stream colour map and a synchronised hex view. It
+shares this page's operation lock, CSRF token and Origin rule. Fully
+described in [The `/bitperfect` page](#sec:bitperfect-page) and
+[its implementation](#sec:bitperfect-impl).
+
 ## Video: mpv playback + phone web remote {#sec:video}
 
 ![Video playback and control paths.](build/chain-video.pdf){width=92%}
@@ -1813,6 +1894,324 @@ attenuation 0.
 The test asset (`tests/`) is a 44.1 kHz S32 WAV whose PCM payload is
 byte-identical to the reference raw --- MPD cannot play headerless raw.
 
+## The `/bitperfect` page {#sec:bitperfect-page}
+
+`verify-bitperfect.sh` above proves one segment: *host to USB wire*, with
+the tool itself as the player. That is the right control experiment, and it
+is not how the box plays music. Music arrives through **upmpdcli** or
+**qobuzconnect2mpd**, both of which drive **MPD**, and every one of those
+layers can break bit-perfection in a way the direct test would never see ---
+MPD resampling, a decoder promoting samples differently, or a renderer
+quietly setting MPD's volume or replaygain.
+
+The control panel's **Bit-perfect check** page
+(`http://<box>:9090/bitperfect`) runs the same tap and the same verdict
+engine, varies *who plays*, and --- the part no command line offers --- shows
+the compared bytes.
+
+### The five paths, and which question each answers
+
+| Source | What plays | What it proves |
+|---|---|---|
+| `aplay` | the per-OS tap script, delegated to unchanged | host to USB, no renderer. The control. |
+| `mpd` | MPD plays a local file staged into `music_directory` | MPD to DAC: the segment both renderers share |
+| `mpd-http` | MPD fetches an HTTP URL the panel serves | MPD's curl input plugin and streaming decoder --- structurally the path a Qobuz stream takes, but with a *known* file, so the verdict is real byte equality |
+| `upnp` | upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** to MPD to DAC path (needs [`upnpiface`](#sec:upnpiface) set correctly, or nothing answers SSDP) |
+| `live` | nothing; the wire is tapped during real Qobuz playback | the whole **qobuzconnect2mpd** path, against the renderer's own buffer |
+
+Running `mpd` and `upnp` on the same material is what *localises* a fault:
+if `mpd` is bit-perfect and `upnp` is not, the renderer is the cause. Both
+renderer-driven modes snapshot MPD's volume and replaygain before and after
+and report any change, because a renderer that silently enables replaygain
+destroys bit-perfection without altering a byte of the file it was handed.
+
+### The live Qobuz reference: the renderer's own buffer
+
+`live` needs a reference for a stream nobody has a copy of. It does not ask
+for one. **The renderer already wrote the exact bytes it fed MPD to local
+storage**, so that file *is* the reference --- genuine byte equality against
+the real service, not a comparison against a "same" track that might be a
+different master.
+
+On this box `qobuzconnect2mpd` stages a **complete FLAC per track**:
+
+```
+/tmp/qobuzconnect2mpd-<uid>/cache/track_<id>_<fmt>_<pid>_<n>.flac
+```
+
+Resolution happens at run time and never trusts a hard-coded path:
+
+1. `mpc current` --- if MPD reports a local file, that is the reference;
+2. otherwise the open file descriptors of the MPD and renderer processes
+   (`/proc/PID/fd` on Linux, `fstat(1)` on FreeBSD) --- renderer-agnostic;
+3. otherwise the known buffer locations, **filtered to files that changed
+   during the tap window**. That filter is not a nicety: the cache keeps
+   completed tracks for hours, and comparing this capture against a stale
+   one would report a fault that never happened.
+
+A directory of numbered *segments* is concatenated in **numeric** order
+(lexical order would put `part10` before `part2` and manufacture
+corruption); a directory of whole tracks is never concatenated. If the
+buffer turns out to be a **lossy** container the run is reported as
+*decode-path transparent*, not bit-perfect: the DAC legitimately receives
+the decoder's output rather than the file's bytes.
+
+### Checking any track, not only the generated asset
+
+The page loads a **WAV or FLAC** (anything `ffmpeg` decodes). The file is
+decoded once to build the reference while the **original** is played, since
+the decoder is part of what is under test. Rate and depth come from the
+file, so a 96/24 FLAC tests 96/24 with nothing to configure, and the
+existing `prep` promotion widens it to the S32 wire container exactly as
+before.
+
+One hazard belongs to real music alone. Alignment anchors on a 4 KiB window
+of the reference; the generated counter can never repeat one, but music can
+--- digital silence, a looped intro, a repeated bar. Aligning on the wrong
+occurrence would be a *silent* error, so `find_probe_offset` takes
+`unique_in=` and skips any window occurring more than once, and the loader
+reports the anchor it chose *before* a run rather than after it.
+
+### Using the page
+
+1. **Chain readiness** names the DAC, who holds it, whether BruteFIR is
+   running, whether `sudo -n` will start the tap, and MPD's volume,
+   replaygain and enabled outputs. Blocking conditions are listed
+   explicitly; `drc.sh off` clears the usual one.
+2. **Test material** --- either generate the per-rate counter asset (30 s
+   for rates up to 96 kHz, 10 s at 192 kHz) or load a file. Each row shows
+   size and sha256 so a run is identifiable from its report alone.
+3. **Run a check** --- pick the path, the material and (for `live`) the tap
+   window, then start. Progress streams as a phase strip
+   (`prep`, `tap`, `play`, `drain`, `align`, `verdict`) with live tap
+   counters: URBs, payload bytes, kernel drops.
+4. **Result** --- the verdict, then every stage named and hashed (input
+   file, reference bytes, untrimmed wire, tapped payload), then the byte
+   view.
+
+The identical run from a terminal:
+
+```sh
+scripts/bitperfect_runner.py --source mpd  --input track.flac --out bp-results/run
+scripts/bitperfect_runner.py --source upnp --input tests/bitperfect-test-44100-s32-stereo-30s.wav \
+                             --out bp-results/upnp
+scripts/bitperfect_runner.py --source live --duration 60 --out bp-results/qobuz
+scripts/bitperfect_material.py load album.flac --out-dir /tmp/mat
+scripts/bitperfect-lib.py window PREFIX.ref.raw PREFIX.wav 80000 8 2
+scripts/bitperfect-lib.py scan   PREFIX.ref.raw PREFIX.wav 200 2
+```
+
+### Seeing the bytes
+
+A verdict says *whether*. The byte view says *where* and *what*, at two zoom
+levels served by two subcommands added to `bitperfect-lib.py`:
+
+- **The colour map** paints the whole stream, one cell per slice: green
+  where the wire carried exactly the reference bytes, red where it did not,
+  grey where the capture did not reach. Every byte of the overlap is really
+  compared --- only the level row underneath is estimated. It makes the
+  *shape* of a fault legible: an isolated red cell is a bit flip, a red tail
+  is an underrun, dense speckle is a converting feeder in the path. Clicking
+  jumps the hex view there.
+- **The side-by-side hex view** shows the reference beside the tapped wire,
+  one row per frame --- byte offset, hex, and the decoded per-channel
+  integers for both --- with the differing byte positions highlighted in
+  *both* columns at once. A single slider drives the offset across the whole
+  file with the two views locked, so dragging it is a continuous consistency
+  check; `first mismatch` and `random spot check` jump to the interesting
+  places.
+
+Both read only the artifacts `finalize` already wrote, so they cannot
+disagree with the verdict --- a property `tests/test_bitperfect_window.py`
+pins down on captures whose faults are known to the byte.
+
+## Bit-perfect verification: implementation {#sec:bitperfect-impl}
+
+### The pipeline
+
+```
+material (WAV/FLAC)             the DAC
+   |                               ^
+   | prep + lossless promotion     | isochronous OUT, endpoint 0x01
+   v                               |
+ref.raw  (S32_LE wire container)   +--- usbmon (Linux) / usbdump (FreeBSD)
+   |                                          |
+   |            play (one of five sources)    v
+   +----------------------------------->  cap.raw
+                                              |
+                        finalize: align, compare, classify
+                                              v
+                     PREFIX.{txt,json,wav,ref.raw,wire.raw}
+```
+
+The tap sees the stream at the **last host-controlled point** --- the URBs
+handed to the USB host controller. Only the controller's DMA engine and the
+DAC's own receiver lie beyond it; neither can be tapped in software on any
+OS, and neither has any mechanism to alter a PCM payload.
+
+`scripts/bitperfect_runner.py` orchestrates; it does **not** reimplement the
+verdict. `--source aplay` is delegated to
+`bitperfect-tap-{linux,freebsd}.sh` unchanged, so the control experiment
+stays byte-identical to every result recorded in
+`doc/BIT-PERFECT-VERIFICATION.md`.
+
+### Artifacts
+
+| File | Content | Reproducible |
+|---|---|---|
+| `PREFIX.txt` | the human report: every stage named and hashed, then the verdict | yes (this is the committed cross-OS key) |
+| `PREFIX.json` | the same as structured data, plus `first_mismatch`, `start`, `probe_offset`, `matched`, `slips`, the MPD before/after state and the source | yes |
+| `PREFIX.wav` | the aligned capture, trimmed to reference length | yes |
+| `PREFIX.ref.raw` | the promoted reference --- kept so the byte view has both sides | yes |
+| `PREFIX.wire.raw` | the untrimmed capture: priming zeros, pad, trailing packets | **no** --- provenance only, never a comparison key |
+
+### Alignment: the anchor, not the silence
+
+The wire stream never starts at the first source byte: the capture begins
+before playback, and the audio stack emits priming zeros before the first
+written sample (measured: exactly 16 ms at any rate --- a fixed-duration
+buffer prime, hence reproducible). `finalize` therefore takes a 4 KiB
+*anchor* from the reference at a known offset `po`, finds it in the capture
+at `pos`, and derives `start = pos - po`.
+
+It anchors on content it already knows rather than "skipping the leading
+zeros" because **zeros can be data**: a track may legitimately open with
+silence, and on the wire those bytes are indistinguishable from the priming
+zeros in front of them. A "skip the zeros" rule would eat a quiet intro.
+
+### The silence pad
+
+What is *played* is not what is *compared*: playback gets a few seconds of
+digital silence appended, the reference does not, and `finalize` cuts by
+arithmetic (`cap[start : start + len(ref)]`) rather than by detecting
+silence.
+
+Two independent reasons, both measured:
+
+- `usbdump` buffers its pcap and loses whatever is unflushed when it is
+  terminated (hence also `SIGINT`, not `SIGTERM`);
+- **MPD does not drain its output buffer on close.** A 10 s WAV reached the
+  wire 129744 bytes (0.74 s) short --- identically across runs, and
+  regardless of how long the tap kept recording afterwards, which is what
+  proves it is the player discarding its tail rather than the tap stopping
+  early. The direct OSS writer has no such gap because it
+  `SNDCTL_DSP_SYNC`s first.
+
+The pad cannot mask a defect: the comparison window is still exactly
+`len(ref)` bytes, so every reference byte is still checked, and a bit
+flipped mid-stream is still reported at its exact offset. What the pad
+removes is only the ability of a late capture cut to masquerade as a
+playback fault.
+
+### Renderer arbitration
+
+`qobuzconnect2mpd` and `upmpdcli` are mutually exclusive front-ends, and an
+active one does not sit still: it watches MPD and re-queues its own track.
+That is not hypothetical --- it truncated a 10 s run to 2.2 s, with MPD's log
+showing the test WAV replaced by a Qobuz stream mid-playback. So:
+
+| Source | Requirement |
+|---|---|
+| `mpd`, `mpd-http` | nothing else may drive MPD --- the renderer is stopped and restarted around the run |
+| `upnp` | `upmpdcli` must be the one running |
+| `live` | `qobuzconnect2mpd` must be running and playing; nothing is touched |
+
+`omdrc-renderer stop` deliberately leaves the *remembered* choice alone, so
+the restart afterwards is exact.
+
+### Two MPD facts the runner has to work around
+
+- **MPD refuses `file://` from a TCP client** ("Access to local files via
+  TCP is not allowed") and this MPD has no Unix socket. The only way to
+  exercise the local-file input plugin is to place the material inside
+  `music_directory` and add it by relative path. When that directory is not
+  writable the run falls back to an HTTP URL --- and *says so*, because the
+  path under test changes from MPD's file input plugin to its curl one.
+- **Stored playlists are disabled**, so an `mpc save` backup silently does
+  nothing and the restore then fails with "No such playlist". The queue's
+  URIs are held in memory instead, which works on any MPD.
+
+### Privilege, and what the page refuses
+
+The panel runs unprivileged. The tap needs root --- `usbmon` on Linux,
+`usbdump` on FreeBSD --- and escalates with `sudo -n`, probed up front with
+`true` so a refusal is reported before a capture is wasted rather than
+discovered halfway through it.
+
+Runs are **refused while BruteFIR is convolving**. The DRC path applies the
+FIR filter, so its output is *supposed* to differ; a verdict there would
+look like a failure and mean nothing. `--allow-drc` overrides it for an
+operator who knows what they are asking for.
+
+The page shares the configuration page's operation lock (one box, one DAC:
+a filter publication and a tap run must never overlap), its CSRF token and
+its Origin rule. One route is necessarily token-free --- the asset MPD's
+curl plugin and upmpdcli fetch by URL, which can present no header --- and it
+resolves basenames inside the asset cache and nothing else.
+
+### Verdicts and exit codes
+
+| Exit | Meaning | Verdicts |
+|---|---|---|
+| 0 | judged, and the chain is transparent | `BIT-PERFECT` |
+| 1 | judged, and something is wrong | `HEAD LOST`, `INCOMPLETE`, `VALUE CORRUPTION`, `TIMING SLIP(S)`, `UNDERRUN TAIL` |
+| 2 | **could not judge** --- capture unusable | `NO CAPTURE`, `ALIGNMENT FAILED` |
+
+Exit 2 does not by itself indict the capture setup. Aligning needs 4096
+*consecutive intact* bytes, so a defect altering *every* sample (a volume
+feeder, say) leaves no such run anywhere and the search fails before any
+comparison. When exit 2 appears, open `PREFIX.wire.raw`: junk or zeros point
+at the tap, plausible-looking audio points at a converting feeder.
+
+### What running it exposed
+
+Two pre-existing defects surfaced the first time the page was driven against
+real hardware, both worth knowing independently of the page:
+
+- `bitperfect-tap-freebsd.sh` tapped `dev.uaudio.0`. On a box with a capture
+  interface that is **not** the DAC: here `uaudio0` is the ESI U24 XL and
+  the OKTO DAC8 is `uaudio1`, so the script recorded the wrong USB device
+  and reported `NO CAPTURE` against a perfectly healthy chain. It now
+  resolves the uaudio unit from the play device
+  (`/dev/dsp.dac` to `pcm<N>.%parent`), as `glitch-usbtap.sh` always did.
+  Same family as the `omdrc_sndlink` rename that once pointed the whole
+  chain at the capture card.
+- The `/configuration` page's job state root kept every filter install's
+  upload *and* its staged site copy forever. Five installs had accumulated
+  901 MB in `~/.local/state/omdrc/configuration` and filled the root
+  filesystem. Finished jobs now discard their payload and keep only
+  `job.json`, and the manager sweeps what earlier runs orphaned at startup.
+
+### Measured results
+
+On the OKTO DAC8 (FreeBSD 15.1-RELEASE-p2, `usbus0` devaddr 3):
+
+| Path | Material | Verdict |
+|---|---|---|
+| `aplay` | 44100 / 32-bit | **BIT-PERFECT** --- tap WAV file hash identical to the input |
+| `mpd` | 44100 / 32-bit | **BIT-PERFECT** |
+| `mpd-http` | 44100 / 32-bit | **BIT-PERFECT** |
+| `mpd-http` | 96000 / 24-bit FLAC | **BIT-PERFECT**, DAC clock followed (`feedback_rate` 96002) |
+| `upnp` | 44100 / 32-bit, driven through upmpdcli over OpenHome | **BIT-PERFECT** |
+
+The 96 kHz FLAC run carries the most information: it proves the FLAC decode
+is transparent *and* that the reference's 24-to-32 promotion matches MPD's
+own promotion exactly, which is the one place the two could have disagreed.
+The `upnp` run is the one that certifies the renderer itself: the whole
+upmpdcli-to-MPD-to-DAC path, with upmpdcli choosing what MPD plays.
+
+`live` remains unverified against hardware --- see
+[Status and what is still owed](#sec:bitperfect-owed).
+
+### Status and what is still owed {#sec:bitperfect-owed}
+
+- **`live`** needs a human to start Qobuz playback, so it has not been run
+  end to end. Its buffer resolver is unit-tested against the exact layout
+  observed on this box, including the stale-buffer and
+  never-concatenate-whole-tracks rules.
+- `drc.sh cdin` re-execs without the design variant, so switching to CD
+  input silently drops an active `@design`.
+
 ## scripts/ --- helper tools
 
 | Script | Purpose |
@@ -1827,7 +2226,12 @@ byte-identical to the reference raw --- MPD cannot play headerless raw.
 | `console_ui.py` | Shared stages, colour, confirmation and failure formatting for design commands |
 | `filter_workflow_next.py` | Shared operator handoff printed by the commands above |
 | `rew_mdat_audit.py` | Optional archival audit of REW project traces against exports |
-| `verify-bitperfect.sh` | The bit-perfect proof tool (above); sources: built-in writer or `mpd:OUTPUT`; taps: `usb` or `loop:/dev/dsp.X` |
+| `verify-bitperfect.sh` | The original bit-perfect proof tool; sources: built-in writer or `mpd:OUTPUT`; taps: `usb` or `loop:/dev/dsp.X` |
+| `bitperfect-lib.py` | Shared engine for the tap scripts and the panel: WAV to S32 wire-container promotion, usbmon reader, usbdump decoder, alignment, verdict, report --- plus `window`/`scan`, which read the two compared streams back for the byte view |
+| `bitperfect-tap-linux.sh` / `-freebsd.sh` | Play a WAV to the DAC and record the exact bytes on the USB wire; same CLI and artifacts on both OSes, for cross-OS comparison |
+| `bitperfect_runner.py` | Runs a tap through a chosen playback path (`aplay`, `mpd`, `mpd-http`, `upnp`, `live`); backs the `/bitperfect` page, emits `@@PHASE`/`@@STAT`/`@@RESULT` progress lines ([§Implementation](#sec:bitperfect-impl)) |
+| `bitperfect_material.py` | Decodes any WAV/FLAC into a run's reference, checks the alignment anchor is unambiguous, and resolves what a renderer is streaming for `--source live` |
+| `bitperfect-compare.py` | Compares two tap artifacts from either OS (`.wav`, `.wire.raw`, or the tiny committable `.txt` report) |
 | `systemd-user-install.sh` | Legacy: link + enable a `systemd --user` drc.service (Linux) |
 
 \newpage
@@ -2650,6 +3054,13 @@ These also mean the DAC is **single-open**: exactly one client at a time
 
 ## Known FreeBSD issues and their status
 
+* **upmpdcli announces on a cable-less wired port.** `em(4)` keeps `RUNNING`
+  set with no carrier and `/etc/rc.conf` configures `em0` statically
+  regardless, so libupnpp's automatic interface selection picks a dead
+  interface: the renderer runs, drives MPD and looks healthy, but no control
+  point can discover it. Fixed by pinning `upnpiface`, which `install.sh`
+  now derives --- see [It must be told which interface to announce
+  on](#sec:upnpiface).
 * **OKTO 44.1 kHz-family flicker** (bug #295933): the DAC continuously drops
   and re-acquires USB streaming lock on 44.1/88.2/176.4/352.8 kHz, while the
   48 kHz family is stable and Linux plays everything fine. Root cause: the
@@ -3159,7 +3570,8 @@ nothing has been built from it yet.
 
 # Appendix C --- Bit-perfect test assets and cross-OS comparison {#sec:appendix-bitperfect}
 
-The Tools chapter (*Bit-perfect verification*) covers the single-host proof.
+The Tools chapter covers the single-host proof
+([the page](#sec:bitperfect-page), [its implementation](#sec:bitperfect-impl)).
 This appendix documents the test assets and the cross-OS procedure that proves
 the Linux and FreeBSD boxes send the DAC the *very same bytes*.
 
@@ -3364,7 +3776,7 @@ detail behind each section:
 | Web remote (install/API) | `video/webremote/README.md` |
 | Web remote (design) | `video/webremote/ARCHITECTURE.md` |
 | Glitch detection | `doc/GLITCH-DETECTION.md` |
-| Bit-perfect verification | `doc/BIT-PERFECT-VERIFICATION.md` |
+| Bit-perfect verification, the `/bitperfect` page and its implementation | `doc/BIT-PERFECT-VERIFICATION.md`, `scripts/README.md`, `omdrc-ctrl/README.md` |
 | Test signal | `tests/README.md` |
 | FreeBSD port plan | `doc/FREEBSD-PORT-PLAN.md` |
 | uaudio patches (index + install) | `freebsd-uaudio-patch/README.md` |

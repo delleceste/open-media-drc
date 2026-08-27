@@ -41,9 +41,12 @@ the PDF, then create the annotated `v*` tag on that commit.
    geometry/design/variant, the bundle layout, what is hashed and how
    `bundle_id` is derived, the design scripts, the publication
    transaction, and verification at install time and at runtime.
-6. **Tools** — omdrc-ctrl (web UI, spectrum analyzer, filter response),
-   video (launchers + webremote), glitch detection, bit-perfect
-   verification, scripts/.
+6. **Tools** — omdrc-ctrl (web UI, spectrum analyzer, filter response,
+   configuration page, bit-perfect check page), video (launchers +
+   webremote), glitch detection, bit-perfect verification — the original
+   proof, the five-path `/bitperfect` page, and its implementation
+   (pipeline, artifacts, anchor, silence pad, renderer arbitration,
+   privilege, verdicts) — scripts/.
 7. **CD input** — `omdrc-cdin`, the S/PDIF capture bridge: why the lead
    is the only number that matters, the state machine and the two device
    tenancies, the transport simulator, the web card, and the ESI U24 XL

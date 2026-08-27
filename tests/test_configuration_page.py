@@ -3,11 +3,13 @@ import importlib.util
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -292,3 +294,119 @@ class RoutesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JobPayloadCleanupTest(unittest.TestCase):
+    """Finished jobs must not keep their bulk working files.
+
+    A filter install writes the browser's upload (a REW .mdat plus every
+    exported TXT/WAV) and a staged site copy under the job directory.  Nothing
+    read them again, and nothing deleted them: five installs had accumulated
+    901 MB in ~/.local/state/omdrc/configuration and filled the disk.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="jobclean."))
+        self.manager = configuration.ConfigurationManager(
+            configuration.Settings(state_root=self.root), dict)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _payload(self, job):
+        (job.directory / "upload").mkdir(parents=True, exist_ok=True)
+        (job.directory / "upload" / "session.mdat").write_bytes(b"x" * 4096)
+        (job.directory / "staged-site").mkdir(parents=True, exist_ok=True)
+        (job.directory / "staged-site" / "L.raw").write_bytes(b"y" * 4096)
+
+    def test_a_succeeded_job_keeps_its_log_and_drops_its_payload(self):
+        job = self.manager.start("filter-install", self._payload)
+        for _ in range(200):
+            if job.phase in {"succeeded", "failed"}:
+                break
+            time.sleep(0.05)
+        self.assertEqual(job.phase, "succeeded", job.error)
+        self.assertTrue((job.directory / "job.json").is_file())
+        self.assertFalse((job.directory / "upload").exists())
+        self.assertFalse((job.directory / "staged-site").exists())
+
+    def test_a_failed_job_also_drops_its_payload(self):
+        def boom(job):
+            self._payload(job)
+            raise RuntimeError("nope")
+
+        job = self.manager.start("filter-install", boom)
+        for _ in range(200):
+            if job.phase in {"succeeded", "failed"}:
+                break
+            time.sleep(0.05)
+        self.assertEqual(job.phase, "failed")
+        self.assertTrue((job.directory / "job.json").is_file())
+        self.assertFalse((job.directory / "upload").exists())
+
+    def test_startup_sweeps_payloads_orphaned_by_an_earlier_run(self):
+        """Jobs live in memory, so a panel restart orphans every directory."""
+        stale = self.root / "oldjob"
+        (stale / "upload").mkdir(parents=True)
+        (stale / "upload" / "big.wav").write_bytes(b"z" * 8192)
+        (stale / "job.json").write_text(json.dumps({"phase": "succeeded"}))
+        running = self.root / "livejob"
+        (running / "upload").mkdir(parents=True)
+        (running / "upload" / "big.wav").write_bytes(b"z" * 8192)
+        (running / "job.json").write_text(json.dumps({"phase": "running"}))
+
+        configuration.ConfigurationManager(
+            configuration.Settings(state_root=self.root), dict)
+
+        self.assertFalse((stale / "upload").exists())
+        self.assertTrue((stale / "job.json").is_file())
+        # Not in a terminal state: never guess, leave it alone.
+        self.assertTrue((running / "upload").exists())
+
+    def test_job_history_is_capped_at_retain_jobs(self):
+        """Even shed of their payload, one directory per job accumulates
+        forever on a box that never restarts; the newest `retain_jobs` are
+        kept and older logs are reclaimed as each job finishes."""
+        manager = configuration.ConfigurationManager(
+            configuration.Settings(state_root=self.root, retain_jobs=3), dict)
+        directories = []
+        for _ in range(6):
+            job = manager.start("filter-install", self._payload)
+            for _ in range(200):
+                if job.phase in {"succeeded", "failed"}:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(job.phase, "succeeded", job.error)
+            directories.append(job.directory)
+        surviving = [d for d in self.root.iterdir() if (d / "job.json").is_file()]
+        self.assertEqual(len(surviving), 3)
+        # The three most recent jobs are the ones kept.
+        self.assertEqual(sorted(d.name for d in surviving),
+                         sorted(d.name for d in directories[-3:]))
+
+    def test_history_is_capped_and_keeps_the_newest(self):
+        """discard_payload sheds the bulk; this stops one small directory per
+        job accumulating forever on a long-lived box."""
+        self.manager.settings.retain_jobs = 3
+        for n in range(6):
+            d = self.root / f"job{n}"
+            d.mkdir()
+            (d / "job.json").write_text(json.dumps({"phase": "succeeded"}))
+            os.utime(d / "job.json", (1000 + n, 1000 + n))
+        self.manager.prune_job_history()
+        left = sorted(p.name for p in self.root.iterdir())
+        self.assertEqual(left, ["job3", "job4", "job5"])
+
+    def test_a_running_job_is_never_pruned(self):
+        self.manager.settings.retain_jobs = 1
+        for n in range(3):
+            d = self.root / f"job{n}"
+            d.mkdir()
+            (d / "job.json").write_text(json.dumps({"phase": "succeeded"}))
+            os.utime(d / "job.json", (1000 + n, 1000 + n))
+        live = self.root / "live"
+        live.mkdir()
+        (live / "job.json").write_text(json.dumps({"phase": "running"}))
+        os.utime(live / "job.json", (1, 1))          # oldest by mtime
+        self.manager.prune_job_history()
+        self.assertTrue(live.is_dir())

@@ -26,7 +26,21 @@ pkgdatadir=@PREFIX@/share/upmpdcli
 # UPnP network parameters
 
 # Network interface to use for UPnP.
-#upnpiface =
+#
+# LEAVE THIS SET if the box has more than one interface. libupnpp picks one
+# automatically, and it picks the FIRST that is UP+RUNNING+MULTICAST -- which
+# on FreeBSD includes a wired port with no cable in it, because em(4) keeps
+# RUNNING set without link. When that happens upmpdcli binds the dead
+# interface, SSDP advertisements never leave the host, and the renderer is
+# invisible to every control point on the network while still looking healthy
+# in `ps` and still driving MPD. The symptom in the log is
+# "UpnpSendAdvertisement :-100: UPNP_E_INVALID_HANDLE" followed by
+# "Device would not start"; the tell is the line above it,
+# "LibUPnP: Using IPV4 <address>", naming an address you do not expect.
+#
+# Check with `ifconfig` which interface actually carries traffic, and name it
+# here (@UPNP_IFACE@ is substituted from UPNP_IFACE in config.env).
+upnpiface = @UPNP_IFACE@
 # IP address to use for UPnP, alternative to using an interface name.
 #upnpip =
 # Port number used for UPnP.

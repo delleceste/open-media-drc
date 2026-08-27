@@ -73,6 +73,11 @@ helper = @OMDRC_CONFIG_HELPER@
 max_file_bytes = 1073741824
 max_upload_bytes = 2147483648
 apply_timeout = 120
+# A finished job's bulk working files (the REW upload and staged bundle) are
+# deleted as soon as it ends; this caps the small job.json logs kept under
+# state_root so an old box does not accumulate one directory per install
+# forever. The newest are kept for the page to reopen.
+retain_jobs = 25
 
 # -- Bit-perfect verification ----------------------------------------------
 # Runs the USB wire tap from the browser and shows the compared bytes.

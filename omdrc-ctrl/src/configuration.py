@@ -48,6 +48,10 @@ class Settings:
     max_file_bytes: int = 1024 * 1024 * 1024
     max_upload_bytes: int = 2 * 1024 * 1024 * 1024
     apply_timeout: int = 120
+    # How many job directories to keep under state_root.  A finished job's
+    # bulky scratch (uploaded .txts/.mdat, staged bundle copies) is shed as
+    # soon as it finishes; this caps the residual pile of job.json logs.
+    retain_jobs: int = 25
 
 
 @dataclass
@@ -106,6 +110,64 @@ class ConfigurationManager:
         self.jobs: dict[str, Job] = {}
         self.lock = OPERATION_LOCK
         self.settings.state_root.mkdir(parents=True, exist_ok=True)
+        self.sweep_stale_payloads()
+
+    def sweep_stale_payloads(self) -> None:
+        """Drop payloads left behind by jobs from earlier runs of the panel.
+
+        Jobs live in memory, so a restart orphans every directory under
+        state_root.  Before payloads were discarded on completion these grew
+        without bound; this clears what those runs left, so an upgraded box
+        recovers its disk without anyone having to know where to look."""
+        try:
+            entries = list(self.settings.state_root.iterdir())
+        except OSError:
+            return
+        for directory in entries:
+            record = directory / "job.json"
+            if not record.is_file():
+                continue
+            try:
+                phase = json.loads(record.read_text()).get("phase")
+            except (OSError, json.JSONDecodeError):
+                continue
+            # Anything not finished belongs to a job this process did not
+            # start and cannot be running, but leave it alone regardless:
+            # only terminal states are safe to reclaim without guessing.
+            if phase in {"succeeded", "failed"}:
+                self.discard_payload(Job(directory.name, "sweep", directory))
+        self.prune_job_history()
+
+    def prune_job_history(self) -> None:
+        """Keep at most `retain_jobs` finished job directories.
+
+        `discard_payload` sheds the bulk, which is what filled the disk, but a
+        long-lived box still accumulates one small directory per job forever.
+        The newest are kept because they are the ones an operator might still
+        open from the page; a job this process is running is never a candidate,
+        whatever its directory's timestamp says."""
+        keep = max(1, self.settings.retain_jobs)
+        active = {i for i, j in list(self.jobs.items())
+                  if j.phase not in {"succeeded", "failed"}}
+        try:
+            finished = []
+            for directory in self.settings.state_root.iterdir():
+                record = directory / "job.json"
+                if not record.is_file() or directory.name in active:
+                    continue
+                try:
+                    if json.loads(record.read_text()).get("phase") not in {
+                            "succeeded", "failed"}:
+                        continue
+                except (OSError, json.JSONDecodeError):
+                    continue
+                finished.append((record.stat().st_mtime, directory))
+        except OSError:
+            return
+        finished.sort(reverse=True)
+        for _, directory in finished[keep:]:
+            shutil.rmtree(directory, ignore_errors=True)
+            self.jobs.pop(directory.name, None)
 
     def _new_job(self, action: str) -> Job:
         identifier = secrets.token_urlsafe(18)
@@ -136,10 +198,37 @@ class ConfigurationManager:
                 job.set_phase("failed", error=str(error), returncode=1)
             finally:
                 self.lock.release()
+                self.discard_payload(job)
+                self.prune_job_history()
 
         threading.Thread(target=run, name=f"omdrc-{job.action}-{job.id[:6]}",
                          daemon=True).start()
         return job
+
+    def discard_payload(self, job: Job) -> None:
+        """Delete a finished job's bulk working files, keeping its log.
+
+        A filter install writes two large trees under the job directory: the
+        browser's upload (the REW `.mdat` plus every exported TXT/WAV) and the
+        staged site the helper publishes from.  Neither is read again once the
+        job ends — the installed bundle and its provenance archive are the
+        lasting copies — but nothing removed them, so every install leaked its
+        payload permanently.  Five of them had accumulated 901 MB here and
+        filled the disk.
+
+        `job.json` stays: it is what the page's snapshot and SSE replay read,
+        and it is a few kilobytes.
+        """
+        try:
+            for child in job.directory.iterdir():
+                if child.name == "job.json":
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child, ignore_errors=True)
+                else:
+                    child.unlink(missing_ok=True)
+        except OSError:
+            pass        # never let cleanup turn a successful job into a failure
 
     def get_job(self, identifier: str) -> Job | None:
         return self.jobs.get(identifier)

@@ -691,6 +691,7 @@ def load_config(path: str) -> None:
             max_file_bytes=sec.getint("max_file_bytes", fallback=CONFIGURATION.max_file_bytes),
             max_upload_bytes=sec.getint("max_upload_bytes", fallback=CONFIGURATION.max_upload_bytes),
             apply_timeout=sec.getint("apply_timeout", fallback=CONFIGURATION.apply_timeout),
+            retain_jobs=sec.getint("retain_jobs", fallback=CONFIGURATION.retain_jobs),
         )
         _CONFIGURATION_MANAGER = None
 
