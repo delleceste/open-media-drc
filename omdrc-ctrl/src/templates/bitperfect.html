@@ -43,6 +43,7 @@ th{color:var(--muted);font-weight:600}
 .phase{padding:.2rem .6rem;border:1px solid var(--line);border-radius:99px;font-size:.78rem;color:var(--muted)}
 .phase.on{border-color:var(--blue);color:var(--blue)}
 .phase.done{border-color:var(--green);color:var(--green)}
+.phase-note{align-self:center;font-size:.78rem;color:var(--muted);font-style:italic}
 .verdict{font-size:1.1rem;font-weight:600;padding:.6rem .8rem;border-radius:6px;border:1px solid var(--line)}
 .verdict.pass{border-color:var(--green);color:var(--green);background:#111d15}
 .verdict.fail{border-color:var(--red);color:var(--red);background:#1d1315}
@@ -58,6 +59,9 @@ table.hex .sep{border-left:2px solid var(--line)}
 table.hex tr.diff{background:#1d1315}
 .b{padding:0 .05rem;border-radius:2px}
 .b.x{background:var(--red);color:#000;font-weight:700}
+table.hex tr.trimmed{color:var(--muted)}
+#leadin-box{margin-top:1rem;border-top:1px solid var(--line);padding-top:.6rem}
+#leadin-box summary{cursor:pointer;font-weight:600}
 .stack{display:flex;flex-direction:column;gap:.15rem}
 .scrub{width:100%;margin:.6rem 0 .2rem}
 .kv{display:grid;grid-template-columns:max-content 1fr;gap:.15rem .8rem;font-size:.85rem}
@@ -161,6 +165,24 @@ clean pass. Click anywhere to jump the byte view there.</p>
 <input type="range" id="scrub" class="scrub" min="0" max="1000" value="0">
 <div class="hint" id="b-pos"></div>
 <div class="bytes"><table class="hex" id="hex"><thead></thead><tbody></tbody></table></div>
+
+<details id="leadin-box">
+<summary>Before the stream: the untrimmed wire bytes</summary>
+<p class="hint">Alignment throws away everything the tap saw before the first
+reference byte — attach noise, then whatever the audio stack emitted ahead of
+the music. The verdict says nothing about those bytes, so here they are. There
+is no reference column: before the stream starts there is nothing to compare
+against. Rows before the anchor are marked <em>trimmed</em>.</p>
+<div class="row">
+  <button type="button" id="l-head">Capture start</button>
+  <button type="button" id="l-anchor">Anchor</button>
+  <button type="button" id="l-prev">&minus; page</button>
+  <button type="button" id="l-next">+ page</button>
+  <label>Rows<input type="number" id="l-rows" value="32" min="8" max="512" style="width:6rem"></label>
+</div>
+<div class="hint" id="l-pos"></div>
+<div class="bytes"><table class="hex" id="leadin"><thead></thead><tbody></tbody></table></div>
+</details>
 </div>
 </section>
 
@@ -194,7 +216,7 @@ const SOURCES=[
   steps:['On the main Control panel, select qobuzconnect2mpd. Return here, click Re-check, and confirm Active renderer says qobuzconnect2mpd.',
          'In Qobuz, choose a fresh track longer than the tap window, but do not start it yet. Set a window shorter than the track (60 seconds is a good default).',
          'Click Run check first. When Progress reaches play and asks for playback, start the track promptly. Keep that same track playing—do not pause, seek, change track or change volume—until the tap finishes.'],
-  proves:'The page plays nothing. It compares the captured USB bytes with qobuzconnect2mpd\'s own buffered file, proving the real service path rather than a look-alike local file.'},
+  proves:'The page starts no playback itself — you play the track in Qobuz while it taps the wire. It then compares the captured USB bytes with qobuzconnect2mpd\'s own buffered file, proving the real service path rather than a look-alike local file.'},
 ];
 
 function freeze(on){
@@ -262,11 +284,30 @@ async function loadState(){
 
 // ── jobs ────────────────────────────────────────────────────────────────────
 const PHASES=['prep','tap','play','drain','align','verdict'];
+// The runner emits stage names that are not one of the six chips: 'decoding
+// capture', 'resolving what the renderer streamed', 'restoring MPD',
+// 'restarting <renderer>'.  findIndex returns -1 for those, and -1 painted
+// every chip gray — so the strip blanked mid-run and only went green when the
+// done event forced it to 'verdict', which looked like one jump at the end.
+// Map them onto the chip they belong to, and otherwise hold position: a stage
+// name we do not know is still progress, never a reset.
+const PHASE_ALIAS={'decoding capture':'drain','resolving':'align',
+                   'restoring':'verdict','restarting':'verdict'};
+let phaseAt=-1;
 function setPhase(name){
-  const i=PHASES.findIndex(p=>name.startsWith(p));
-  q('phases').innerHTML=PHASES.map((p,k)=>`<span class="phase ${k<i?'done':k===i?'on':''}">${p}</span>`).join('');
+  if(!name)phaseAt=-1;
+  else{
+    let i=PHASES.findIndex(p=>name.startsWith(p));
+    if(i<0)for(const k of Object.keys(PHASE_ALIAS))
+      if(name.startsWith(k)){i=PHASES.indexOf(PHASE_ALIAS[k]);break}
+    if(i>phaseAt)phaseAt=i;
+  }
+  const i=phaseAt,note=(i>=0&&name&&!PHASES.includes(name))?name:'';
+  q('phases').innerHTML=
+    PHASES.map((p,k)=>`<span class="phase ${k<i?'done':k===i?'on':''}">${p}</span>`).join('')
+    +(note?`<span class="phase-note">${esc(note)}</span>`:'');
 }
-function resetProgress(){q('phases').innerHTML='';q('stats').textContent='';q('log').textContent='';q('log').hidden=false}
+function resetProgress(){phaseAt=-1;q('phases').innerHTML='';q('stats').textContent='';q('log').textContent='';q('log').hidden=false}
 
 function watchJob(id,onDone){
   const log=q('log');log.hidden=false;
@@ -339,6 +380,10 @@ function verdictClass(k){
 async function openRun(id){
   if(!id)return;
   RUN=id;SCAN=null;
+  // The lead-in belongs to one run; leaving it open across a switch would show
+  // the previous capture's bytes under the new run's heading.
+  q('leadin-box').open=false;LEAD=0;
+  q('leadin').querySelector('tbody').innerHTML='';q('l-pos').textContent='';
   const d=await fetch(`/bitperfect/api/runs/${id}/report`).then(r=>r.json());
   if(!d.ok)return;
   REPORT=d.report;
@@ -453,6 +498,43 @@ q('b-mismatch').onclick=()=>{
 q('b-random').onclick=()=>gotoOffset(Math.floor(Math.random()*((REPORT&&REPORT.ref_bytes)||1)));
 q('b-prev').onclick=()=>gotoOffset(Number(q('b-offset').value)-Number(q('b-rows').value)*((REPORT&&REPORT.ch)||2)*4);
 q('b-next').onclick=()=>gotoOffset(Number(q('b-offset').value)+Number(q('b-rows').value)*((REPORT&&REPORT.ch)||2)*4);
+
+// ── lead-in: the untrimmed wire ahead of the aligned stream ──────────────────
+let LEAD=0;
+async function loadLeadin(offset){
+  if(!RUN)return;
+  const rows=Number(q('l-rows').value)||32;
+  LEAD=Math.max(0,offset);
+  const d=await fetch(`/bitperfect/api/runs/${RUN}/leadin?offset=${LEAD}&frames=${rows}`)
+    .then(r=>r.json());
+  const body=q('leadin').querySelector('tbody');
+  if(!d.ok){q('l-pos').textContent='';body.innerHTML=`<tr><td>${esc(d.error)}</td></tr>`;return}
+  LEAD=d.offset;
+  q('leadin').querySelector('thead').innerHTML=
+    `<tr><th>byte</th><th colspan="2">USB WIRE &mdash; untrimmed capture</th><th></th></tr>`;
+  body.innerHTML=d.rows.map(r=>`<tr class="${r.trimmed?'trimmed':''}">
+    <td>${fmt(r.o)}</td>
+    <td>${r.wire.split(' ').map(b=>`<span class="b">${b}</span>`).join(' ')}</td>
+    <td>${r.wire_s.join(' / ')}</td>
+    <td>${r.trimmed?'trimmed':(r.o===d.start?'&larr; stream starts here':'')}</td></tr>`).join('');
+  const nonzero=d.start-d.zero_bytes;
+  q('l-pos').innerHTML=d.start
+    ?`byte ${fmt(d.offset)} of ${fmt(d.wire_len)} captured · alignment discarded the first `
+     +`<strong>${fmt(d.start)}</strong> bytes, of which ${fmt(d.zero_bytes)} were zero `
+     +`(${fmt(nonzero)} non-zero) · ${fmt(d.priming_zeros)} zero bytes sit immediately `
+     +`before the anchor`
+    :`byte ${fmt(d.offset)} of ${fmt(d.wire_len)} captured · nothing was trimmed: the `
+     +`capture began exactly at the first reference byte`;
+}
+q('l-rows').onchange=()=>loadLeadin(LEAD);
+q('l-head').onclick=()=>loadLeadin(0);
+q('l-anchor').onclick=()=>{
+  const fb=((REPORT&&REPORT.ch)||2)*4, start=(REPORT&&REPORT.start)||0;
+  loadLeadin(Math.max(0,start-Math.floor((Number(q('l-rows').value)||32)/2)*fb));
+};
+q('l-prev').onclick=()=>loadLeadin(LEAD-(Number(q('l-rows').value)||32)*((REPORT&&REPORT.ch)||2)*4);
+q('l-next').onclick=()=>loadLeadin(LEAD+(Number(q('l-rows').value)||32)*((REPORT&&REPORT.ch)||2)*4);
+q('leadin-box').addEventListener('toggle',e=>{if(e.target.open)loadLeadin(0)});
 
 // ── init ────────────────────────────────────────────────────────────────────
 const sel=q('source');

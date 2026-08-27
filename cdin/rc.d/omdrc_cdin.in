@@ -93,6 +93,19 @@ load_rc_config "$name"
 # Periodic stats in the log: the panel shows the most recent line, and it is
 # what "starves 0" is read off during calibration.
 : ${omdrc_cdin_stats:="10"}
+# FIFO the control panel's spectrum analyzer reads.  Empty (the default) means
+# no tap at all.  CD audio never reaches MPD, so the analyzer's usual MPD FIFO
+# output stays empty for the whole disc; pointing this at the same path as
+# `cdin_fifo_path` in omdrcctrl's [spectrum] section is what lets the analyzer
+# follow a CD.  Nothing is written until the panel opens the FIFO for reading,
+# and the copy is non-blocking and lossy by design, so leaving it set costs
+# nothing while the analyzer is closed.
+: ${omdrc_cdin_spectrum_fifo:=""}
+if [ -n "${omdrc_cdin_spectrum_fifo}" ]; then
+	omdrc_cdin_spectrum_args="--spectrum-fifo ${omdrc_cdin_spectrum_fifo}"
+else
+	omdrc_cdin_spectrum_args=""
+fi
 # Anything else for omdrc-cdin itself: --out-bits, --period, --retry, -v ...
 # `${name}_flags` is reserved by rc.subr and would otherwise be prepended to
 # command_args as options to daemon(8).  Preserve the public rc.conf name, but
@@ -127,6 +140,7 @@ command_args="-f -P ${pidfile} -- @CMAKE_INSTALL_PREFIX@/bin/omdrc-cdin \
     --carrier-min ${omdrc_cdin_carrier_min} \
     --stats ${omdrc_cdin_stats} \
     --log ${omdrc_cdin_logfile} \
+    ${omdrc_cdin_spectrum_args} \
     ${omdrc_cdin_extra_args}"
 
 start_precmd="omdrc_cdin_precmd"

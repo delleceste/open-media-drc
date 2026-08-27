@@ -365,6 +365,29 @@ class BitPerfectManager(ConfigurationManager):
             str(ref), str(tap), str(max(0, offset)), str(frames),
             str(meta.get("ch", 2))], timeout=60)
 
+    def leadin(self, identifier: str, offset: int, frames: int) -> dict:
+        """Browse the untrimmed capture ahead of the aligned stream start.
+
+        Deliberately NOT routed through `_run_paths`: that helper demands the
+        aligned pair, and the untrimmed wire is exactly what is still worth
+        reading when alignment failed and there is no aligned pair to show.
+        """
+        if not _SAFE_ID.match(identifier):
+            raise ValueError("invalid run id")
+        prefix = self.bp.results_root / identifier
+        report = Path(f"{prefix}.json")
+        wire = Path(f"{prefix}.wire.raw")
+        if not report.is_file():
+            raise RuntimeError("unknown run")
+        if not wire.is_file():
+            raise RuntimeError("this run kept no untrimmed capture")
+        meta = json.loads(report.read_text())
+        frames = max(1, min(frames, 4096))
+        return self._capture([
+            "python3", str(self._tool("bitperfect-lib.py")), "leadin",
+            str(wire), str(meta.get("start") or 0), str(meta.get("ch", 2)),
+            str(max(0, offset)), str(frames)], timeout=60)
+
     def scan(self, identifier: str, buckets: int) -> dict:
         ref, tap, meta = self._run_paths(identifier)
         buckets = max(16, min(buckets, 2048))

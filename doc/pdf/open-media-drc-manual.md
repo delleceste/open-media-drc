@@ -1708,12 +1708,30 @@ residual group delay, computed on demand by FFT (NumPy) from the active
 config's `L.raw`/`R.raw`. Chart.js is vendored, so the page works offline.
 The filter files are only ever read, never modified.
 
-**Live spectrum analyzer** --- an optional card fed by a secondary MPD
-`fifo` output (`OMDRC Spectrum`, raw S32_LE stereo copy of the stream):
+**Live spectrum analyzer** --- an optional card fed from a FIFO of raw
+S32_LE stereo. It FFTs whatever arrives and knows nothing about who wrote
+it, which is what lets more than one part of the chain feed it. `source`
+picks the producer: `mpd` (a secondary `OMDRC Spectrum` fifo output),
+`cdin` (the CD / S-PDIF bridge), or `auto` --- the default --- which takes
+`cdin` while a disc is actually playing through the bridge and `mpd`
+otherwise. CD audio never passes through MPD, so without the `cdin` source
+the analyzer is simply blank for the whole of a disc. The rate travels
+*with* the source, because CD is 44.1 kHz where the MPD FIFO is 48 kHz and
+analysing at the wrong rate mislabels every bin while reporting no error.
 
-* Started/stopped from the page; the MPD FIFO output is enabled only while
-  at least one browser is streaming (Server-Sent Events; multiple clients
-  share one capture thread), force-disabled at startup for crash recovery.
+How the CD PCM reaches the FIFO differs by operating system. On FreeBSD
+`omdrc-cdin` tees it itself from the period it is about to write, opened
+non-blocking and dropping rather than ever delaying a write to the DAC;
+the reader's presence is the entire protocol, so nothing happens until the
+panel opens the FIFO. On Linux `alsaloop(1)` is opaque and the supervisor
+never sees a sample, so omdrcctrl reads the *same capture device* a second
+time through an ALSA `dsnoop` and writes the FIFO itself --- deliberately
+an independent reader, so that a stalled analyzer misses samples instead
+of stalling the CD.
+
+* Started/stopped from the page; the source is enabled only while at least
+  one browser is streaming (Server-Sent Events; multiple clients share one
+  capture thread), force-disabled at startup for crash recovery.
 * 24 logarithmic bands from 31.5 Hz, 10 Hz refresh, Music (16384-point) vs
   Precision (65536-point) FFT windows, VU bars or needles measured over a
   ~50 ms trailing window, one Floor slider driving graphs and meters.
@@ -1934,13 +1952,22 @@ the compared bytes.
 
 ### The five paths, and which question each answers
 
-| Source | What plays | What it proves |
+| Source | Who starts playback | What it proves |
 |---|---|---|
-| `aplay` | the per-OS tap script, delegated to unchanged | host to USB, no renderer. The control. |
-| `mpd` | MPD plays a local file staged into `music_directory` | MPD to DAC: the segment both renderers share |
-| `mpd-http` | MPD fetches an HTTP URL the panel serves | MPD's curl input plugin and streaming decoder --- structurally the path a Qobuz stream takes, but with a *known* file, so the verdict is real byte equality |
-| `upnp` | upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** to MPD to DAC path (needs upmpdcli to be discoverable --- see [§\ref{sec:upnpiface}](#sec:upnpiface)) |
-| `live` | nothing; the wire is tapped during real Qobuz playback | the whole **qobuzconnect2mpd** path, against the renderer's own buffer |
+| `aplay` | the panel, via the per-OS tap script, delegated to unchanged | host to USB, no renderer. The control. |
+| `mpd` | the panel: MPD plays a local file staged into `music_directory` | MPD to DAC: the segment both renderers share |
+| `mpd-http` | the panel: MPD fetches an HTTP URL it serves | MPD's curl input plugin and streaming decoder --- structurally the path a Qobuz stream takes, but with a *known* file, so the verdict is real byte equality |
+| `upnp` | the panel: upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** to MPD to DAC path (needs upmpdcli to be discoverable --- see [§\ref{sec:upnpiface}](#sec:upnpiface)) |
+| `live` | **you, in the Qobuz app** --- the panel only arms the tap and waits | the whole **qobuzconnect2mpd** path, against the renderer's own buffer |
+
+`live` is the one row where the panel is not the playback initiator, and that
+is the point rather than a limitation. Every other source hands material to
+the chain; `live` deliberately touches nothing, arms the USB tap, and prompts
+you to start a track in Qobuz --- so the bytes it captures were produced by
+the real service path, with nothing synthesised on their behalf. Read "the
+page plays nothing" as *the page starts no playback of its own*, not as *no
+audio flows*: the tap has to see a live stream or there is no capture to
+compare.
 
 Running `mpd` and `upnp` on the same material is what *localises* a fault:
 if `mpd` is bit-perfect and `upnp` is not, the renderer is the cause. Both
@@ -2007,7 +2034,11 @@ reports the anchor it chose *before* a run rather than after it.
 3. **Run a check** --- pick the path, the material and (for `live`) the tap
    window, then start. Progress streams as a phase strip
    (`prep`, `tap`, `play`, `drain`, `align`, `verdict`) with live tap
-   counters: URBs, payload bytes, kernel drops.
+   counters: URBs, payload bytes, kernel drops. The runner also reports
+   finer stages that are not chips of their own --- decoding the capture,
+   resolving what the renderer streamed, restoring MPD --- and those are
+   shown as a caption beside the strip: the strip only ever advances, so a
+   stage it does not recognise holds position rather than clearing it.
 4. **Result** --- the verdict, then every stage named and hashed (input
    file, reference bytes, untrimmed wire, tapped payload), then the byte
    view.
@@ -2022,6 +2053,7 @@ scripts/bitperfect_runner.py --source live --duration 60 --out bp-results/qobuz
 scripts/bitperfect_material.py load album.flac --out-dir /tmp/mat
 scripts/bitperfect-lib.py window PREFIX.ref.raw PREFIX.wav 80000 8 2
 scripts/bitperfect-lib.py scan   PREFIX.ref.raw PREFIX.wav 200 2
+scripts/bitperfect-lib.py leadin PREFIX.wire.raw 5648 2 0 32
 ```
 
 ### Seeing the bytes
@@ -2047,6 +2079,21 @@ levels served by two subcommands added to `bitperfect-lib.py`:
 Both read only the artifacts `finalize` already wrote, so they cannot
 disagree with the verdict --- a property `tests/test_bitperfect_window.py`
 pins down on captures whose faults are known to the byte.
+
+A third subcommand, `leadin`, opens the box at its left edge. Alignment
+discards everything the tap saw before the first reference byte --- attach
+noise, then whatever the audio stack emitted ahead of the music --- and the
+verdict says nothing about those bytes. **Before the stream**, a collapsible
+panel under the hex view, reads them back out of `PREFIX.wire.raw`, which
+every path already writes. There is no reference column: before the stream
+starts there is nothing to compare against. Rows ahead of the anchor are
+marked *trimmed*, so a view spanning the boundary shows exactly where the
+compared stream began, and the summary separates the two things living in
+that head --- a run of zeros immediately before the anchor is the ring's
+priming silence, while a non-zero byte anywhere in it came from somewhere
+else and is worth looking at. Unlike the other two, it does not need the
+aligned pair: the untrimmed wire is precisely what is still worth reading
+after an `ALIGNMENT FAILED` verdict, when no aligned pair exists.
 
 ## Bit-perfect verification: implementation {#sec:bitperfect-impl}
 

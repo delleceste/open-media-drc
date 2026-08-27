@@ -317,6 +317,32 @@ SPECTRUM_DRC_DELAY_DELTA_MS = 0.0
 SPECTRUM_DRC_DELAY_DELTA_MIN_MS = -1000.0
 SPECTRUM_DRC_DELAY_DELTA_MAX_MS = 2000.0
 
+# ── where the analyzer gets its PCM ──────────────────────────────────────────
+# The analyzer is a FIFO reader: it FFTs whatever raw S32_LE stereo arrives and
+# knows nothing about who produced it.  That is what lets the CD / S-PDIF input
+# reuse it unchanged, because CD audio never passes through MPD — the bridge
+# feeds the loopback directly (see doc/CDIN-LINUX.md and the chain diagram), so
+# the MPD FIFO output stays empty for the whole disc.
+#
+# `source` picks the producer:
+#   mpd    the MPD `fifo` output, enabled for the duration of the stream
+#   cdin   the CD / S-PDIF bridge (details below, and they differ per OS)
+#   auto   cdin while a disc is actually playing through the bridge, else mpd
+#
+# The rate travels WITH the source rather than being one global: CD is 44.1 kHz
+# and the MPD FIFO is configured at 48 kHz, and a source read at the wrong rate
+# mislabels every frequency bin without failing in any visible way.
+SPECTRUM_SOURCE = "auto"
+SPECTRUM_CDIN_FIFO = "/tmp/omdrc-cdin-spectrum.fifo"
+SPECTRUM_CDIN_RATE = 44100
+# Linux only.  alsaloop(1) is a third-party binary and the supervisor never sees
+# a sample, so there is nothing in-process to tee; instead omdrcctrl runs its own
+# reader of the SAME capture device and writes the FIFO itself.  That needs a
+# shareable capture PCM — an ALSA `dsnoop` — because a second `hw:` opener gets
+# EBUSY.  Empty disables the CD source on Linux rather than guessing a PCM name.
+# On FreeBSD this stays empty: omdrc-cdin is ours and tees the FIFO itself.
+SPECTRUM_CDIN_CAPTURE_PCM = ""
+
 GROUP_ORDER  = ["drc", "apps", "system"]
 # ── the CD / S-PDIF input bridge (omdrc-cdin) ────────────────────────────────
 # omdrc-cdin is a daemon, not a command.  It is meant to run continuously —
@@ -586,6 +612,8 @@ def load_config(path: str) -> None:
     global SPECTRUM_VU_MODE, SPECTRUM_FLOOR_DB, SPECTRUM_MIN_FREQ
     global SPECTRUM_DRC_DELAY_TRIM_MS, SPECTRUM_DRC_DELAY_DELTA_MS
     global SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS
+    global SPECTRUM_SOURCE, SPECTRUM_CDIN_FIFO, SPECTRUM_CDIN_RATE
+    global SPECTRUM_CDIN_CAPTURE_PCM
     global CDIN_ENABLED, CDIN_LOG_FILE, CDIN_PROCESS, CDIN_SERVICE
     global CDIN_INTERVAL, CDIN_MAX_EVENTS, CDIN_CONTROL
     global CHAIN_ENABLED, CHAIN_INTERVAL, CHAIN_PRIVILEGED, CHAIN_DEVICES
@@ -635,6 +663,17 @@ def load_config(path: str) -> None:
         if SPECTRUM_DRC_DELAY_DELTA_MAX_MS < SPECTRUM_DRC_DELAY_DELTA_MIN_MS:
             SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS = (
                 SPECTRUM_DRC_DELAY_DELTA_MAX_MS, SPECTRUM_DRC_DELAY_DELTA_MIN_MS)
+        SPECTRUM_SOURCE = cfg.get("spectrum", "source",
+                                  fallback=SPECTRUM_SOURCE).strip().lower()
+        if SPECTRUM_SOURCE not in ("auto", "mpd", "cdin"):
+            SPECTRUM_SOURCE = "auto"
+        SPECTRUM_CDIN_FIFO = cfg.get("spectrum", "cdin_fifo_path",
+                                     fallback=SPECTRUM_CDIN_FIFO)
+        SPECTRUM_CDIN_RATE = max(8000, cfg.getint("spectrum", "cdin_sample_rate",
+                                                  fallback=SPECTRUM_CDIN_RATE))
+        SPECTRUM_CDIN_CAPTURE_PCM = cfg.get(
+            "spectrum", "cdin_capture_pcm",
+            fallback=SPECTRUM_CDIN_CAPTURE_PCM).strip()
 
     # The slider positions are runtime settings, not config values: restore the
     # last ones the listener dialled in (clamped to the config bounds/limits).
@@ -1265,6 +1304,163 @@ def _spectrum_multi_bins(chan, band_defs: list[dict], band_tier: list[int],
     return out
 
 
+class SpectrumSource:
+    """One producer of raw S32_LE stereo PCM on a FIFO the analyzer reads.
+
+    The analyzer itself is source-agnostic — it opens a FIFO and FFTs bytes —
+    so everything that differs between "MPD is playing" and "a CD is playing"
+    lives here: which FIFO, at which sample rate, and what has to be told to
+    start writing.  `start()` must be idempotent-safe to pair with `stop()`
+    exactly once, and both are called from the analyzer thread.
+    """
+    name = "none"
+    label = "none"
+
+    def __init__(self, fifo: str, rate: int) -> None:
+        self.fifo = fifo
+        self.rate = rate
+
+    def start(self) -> tuple[bool, str]:
+        return True, ""
+
+    def stop(self) -> None:
+        pass
+
+
+class MpdSpectrumSource(SpectrumSource):
+    """MPD's secondary `fifo` output, enabled only while a browser streams."""
+    name = "mpd"
+    label = "MPD"
+
+    def start(self) -> tuple[bool, str]:
+        return _mpd_output_action(SPECTRUM_OUTPUT_NAME, "enable")
+
+    def stop(self) -> None:
+        try:
+            _mpd_output_action(SPECTRUM_OUTPUT_NAME, "disable")
+        except Exception:
+            pass
+
+
+class CdinSpectrumSource(SpectrumSource):
+    """The CD / S-PDIF bridge, which never passes through MPD.
+
+    Two very different mechanisms behind one name, because the two bridges are
+    not the same kind of thing:
+
+    FreeBSD — `omdrc-cdin` is ours, and `playback_thread` already holds the PCM
+    it is about to write.  It tees that buffer to the FIFO itself, opening it
+    O_WRONLY|O_NONBLOCK (which fails with ENXIO until a reader appears) and
+    dropping on EAGAIN.  So there is nothing to start here: opening the FIFO
+    for reading IS the start signal, and closing it is the stop.  No IPC, and
+    no way for a stalled analyzer to block the audio bridge.
+
+    Linux — `alsaloop(1)` is a third-party binary and the supervisor never sees
+    a sample, so we read the capture device a SECOND time instead of teeing the
+    first.  That needs a shareable PCM (`dsnoop`); a second `hw:` opener gets
+    EBUSY.  Reading independently is the point: if this reader stalls it misses
+    samples and alsaloop is untouched, whereas a tee in alsaloop's output would
+    put omdrcctrl's scheduling in the CD's audio path.
+    """
+    name = "cdin"
+    label = "CD input"
+
+    def __init__(self, fifo: str, rate: int) -> None:
+        super().__init__(fifo, rate)
+        self.proc: subprocess.Popen | None = None
+
+    def start(self) -> tuple[bool, str]:
+        if not SPECTRUM_CDIN_CAPTURE_PCM:
+            # FreeBSD, or a Linux box that has not configured a dsnoop PCM.  On
+            # FreeBSD this is correct and complete; on Linux the FIFO simply
+            # stays empty and the analyzer reports "waiting", which is why the
+            # readiness text names the missing setting.
+            return True, ""
+        argv = ["arecord", "-D", SPECTRUM_CDIN_CAPTURE_PCM,
+                "-f", "S32_LE", "-c", str(SPECTRUM_CHANNELS),
+                "-r", str(self.rate), "-t", "raw", "--quiet", self.fifo]
+        try:
+            self.proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.PIPE,
+                                         start_new_session=True)
+        except OSError as e:
+            return False, f"cannot start arecord on {SPECTRUM_CDIN_CAPTURE_PCM}: {e}"
+        # A wrong PCM name fails immediately; report that rather than leaving
+        # the page on "waiting" forever with no clue why.
+        time.sleep(0.3)
+        if self.proc.poll() is not None:
+            err = ""
+            if self.proc.stderr is not None:
+                err = (self.proc.stderr.read() or b"").decode("utf-8", "replace").strip()
+            self.proc = None
+            return False, (f"arecord on {SPECTRUM_CDIN_CAPTURE_PCM} exited "
+                           f"immediately: {err[:300] or 'no error output'}")
+        return True, ""
+
+    def stop(self) -> None:
+        proc, self.proc = self.proc, None
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _spectrum_resolve_source() -> SpectrumSource:
+    """Pick the producer for a stream that is starting now.
+
+    `auto` prefers the CD bridge while a disc is actually playing through it.
+    On Linux that is unambiguous — the CD input is an exclusive source and
+    `drc.sh` stops it before enabling any MPD output, so at most one of the two
+    is ever live.  On FreeBSD virtual_oss mixes and both could be, and CD wins
+    because it is the one MPD's FIFO cannot see.
+    """
+    want = SPECTRUM_SOURCE
+    if want == "auto":
+        want = "cdin" if _cdin_source_active() else "mpd"
+    if want == "cdin":
+        return CdinSpectrumSource(SPECTRUM_CDIN_FIFO, SPECTRUM_CDIN_RATE)
+    return MpdSpectrumSource(SPECTRUM_FIFO, SPECTRUM_RATE)
+
+
+# `_cdin_status()` tails the daemon's log, and `_spectrum_resolve_source()` is
+# reached from `settings()` — which every page render calls.  A disc does not
+# start and stop within two seconds, so cache the answer for that long rather
+# than re-reading the log for each caller.
+_CDIN_ACTIVE_CACHE: tuple[float, bool] = (0.0, False)
+_CDIN_ACTIVE_TTL = 2.0
+
+
+def _cdin_source_active() -> bool:
+    """Is a disc playing through the bridge right now?
+
+    `_cdin_status()` already answers exactly this for the CD card (`active`),
+    so `auto` asks the same question rather than inventing a second, subtly
+    different notion of "the CD is on".
+    """
+    global _CDIN_ACTIVE_CACHE
+
+    if not CDIN_ENABLED:
+        return False
+    at, value = _CDIN_ACTIVE_CACHE
+    now = time.monotonic()
+    if now - at < _CDIN_ACTIVE_TTL:
+        return value
+    try:
+        value = bool(_cdin_status().get("active"))
+    except Exception:
+        # The log can be missing or malformed; that is "no disc", not a reason
+        # to take the spectrum card down with it.
+        value = False
+    _CDIN_ACTIVE_CACHE = (now, value)
+    return value
+
+
 def _spectrum_level_db(samples) -> tuple[float, float]:
     import numpy as np
     if samples.size == 0:
@@ -1295,6 +1491,9 @@ class SpectrumAnalyzer:
         self.thread: threading.Thread | None = None
         self.stop_event = threading.Event()
         self.mode = "music"
+        # Which producer the running stream resolved to, for the settings the
+        # page reads before any frame has arrived.
+        self.source_name = ""
 
     def settings(self) -> dict:
         return {
@@ -1302,6 +1501,14 @@ class SpectrumAnalyzer:
             "output_name": SPECTRUM_OUTPUT_NAME,
             "fifo": SPECTRUM_FIFO,
             "sample_rate": SPECTRUM_RATE,
+            # Configured preference, what a stream starting now would pick, and
+            # what the running stream actually picked — three different things
+            # while `auto` is in play, and the card shows the last two.
+            "source": SPECTRUM_SOURCE,
+            "source_now": _spectrum_resolve_source().name,
+            "source_active": self.source_name,
+            "cdin_fifo": SPECTRUM_CDIN_FIFO,
+            "cdin_sample_rate": SPECTRUM_CDIN_RATE,
             "bits": SPECTRUM_BITS,
             "channels": SPECTRUM_CHANNELS,
             "refresh_hz": SPECTRUM_REFRESH_HZ,
@@ -1390,15 +1597,15 @@ class SpectrumAnalyzer:
             self.frame = frame
             self.cond.notify_all()
 
-    def _ensure_fifo(self) -> tuple[bool, str]:
-        parent = os.path.dirname(SPECTRUM_FIFO) or "."
+    def _ensure_fifo(self, path: str) -> tuple[bool, str]:
+        parent = os.path.dirname(path) or "."
         try:
             os.makedirs(parent, exist_ok=True)
-            if os.path.exists(SPECTRUM_FIFO):
-                if not os.path.exists(SPECTRUM_FIFO) or not stat_is_fifo(SPECTRUM_FIFO):
-                    return False, f"{SPECTRUM_FIFO} exists and is not a FIFO"
+            if os.path.exists(path):
+                if not stat_is_fifo(path):
+                    return False, f"{path} exists and is not a FIFO"
             else:
-                os.mkfifo(SPECTRUM_FIFO, 0o600)
+                os.mkfifo(path, 0o600)
             return True, ""
         except OSError as e:
             return False, str(e)
@@ -1427,33 +1634,45 @@ class SpectrumAnalyzer:
                            "left": [], "right": [], "bands": [], "vu": {}})
             return
 
-        ok, err = self._ensure_fifo()
+        # Resolved once per stream, not once per process: `auto` has to see the
+        # chain as it is when Start is pressed, since a disc may have gone on
+        # since omdrcctrl booted.  `rate` then travels with the source — CD is
+        # 44.1 kHz where MPD's FIFO is 48 kHz, and analysing at the wrong rate
+        # mislabels every bin silently instead of failing.
+        source = _spectrum_resolve_source()
+        rate = source.rate
+        with self.lock:
+            self.source_name = source.name
+
+        ok, err = self._ensure_fifo(source.fifo)
         if not ok:
             self._publish({"ok": False, "state": "fifo-error", "error": err,
                            "left": [], "right": [], "bands": [], "vu": {}})
             return
 
         fd = None
-        output_enabled = False
+        source_started = False
         terminal_error = False
         try:
-            fd = os.open(SPECTRUM_FIFO, os.O_RDONLY | os.O_NONBLOCK)
-            ok, err = _mpd_output_action(SPECTRUM_OUTPUT_NAME, "enable")
+            fd = os.open(source.fifo, os.O_RDONLY | os.O_NONBLOCK)
+            ok, err = source.start()
             if not ok:
                 terminal_error = True
-                self._publish({"ok": False, "state": "mpd-error", "error": err,
+                self._publish({"ok": False, "state": "source-error", "error": err,
+                               "source": source.name,
                                "left": [], "right": [], "bands": [], "vu": {}})
                 return
-            output_enabled = True
+            source_started = True
             self._publish({"ok": True, "state": "waiting",
                            "error": "", "left": [], "right": [], "bands": [], "vu": {},
-                           "rate": SPECTRUM_RATE, "mode": self.mode})
+                           "rate": rate, "source": source.name,
+                           "source_label": source.label, "mode": self.mode})
 
             bytes_per_sample = 4
             frame_bytes = bytes_per_sample * SPECTRUM_CHANNELS
             fft_size = SPECTRUM_PRECISION_FFT_SIZE if self.mode == "precision" else SPECTRUM_FFT_SIZE
             need_bytes = fft_size * frame_bytes
-            chunk_bytes = max(4096, int(SPECTRUM_RATE / SPECTRUM_REFRESH_HZ) * frame_bytes)
+            chunk_bytes = max(4096, int(rate / SPECTRUM_REFRESH_HZ) * frame_bytes)
             buf = bytearray()
             interval = 1.0 / SPECTRUM_REFRESH_HZ
             next_at = time.monotonic()
@@ -1463,14 +1682,14 @@ class SpectrumAnalyzer:
             # response (cymbals/drums).  Disabled in precision mode, which wants
             # maximum resolution everywhere for test tones.
             multi_res = self.mode != "precision" and fft_size >= 2048
-            tiers = _spectrum_tiers(fft_size, SPECTRUM_RATE, multi_res)
-            band_defs = _spectrum_band_defs(SPECTRUM_BANDS, SPECTRUM_RATE / 2.0, SPECTRUM_MIN_FREQ)
-            band_tier = _assign_band_tiers(band_defs, tiers, SPECTRUM_RATE)
+            tiers = _spectrum_tiers(fft_size, rate, multi_res)
+            band_defs = _spectrum_band_defs(SPECTRUM_BANDS, rate / 2.0, SPECTRUM_MIN_FREQ)
+            band_tier = _assign_band_tiers(band_defs, tiers, rate)
             # VU ballistics are computed over a short trailing slice (~50 ms) of
             # the captured buffer rather than the whole FFT window so the meters
             # track the music instead of lagging behind by the FFT length
             # (341 ms music / 1.36 s precision).
-            vu_window = max(256, min(fft_size, int(SPECTRUM_RATE * 0.05)))
+            vu_window = max(256, min(fft_size, int(rate * 0.05)))
             silence_bands = band_defs
 
             # DRC sync: the FIFO is pre-DRC, so slide the analysis window back by
@@ -1502,7 +1721,9 @@ class SpectrumAnalyzer:
                     "ok": True,
                     "state": "running",
                     "error": "",
-                    "rate": SPECTRUM_RATE,
+                    "rate": rate,
+                    "source": source.name,
+                    "source_label": source.label,
                     "mode": self.mode,
                     "fft_size": fft_size,
                     "bands": [
@@ -1553,7 +1774,7 @@ class SpectrumAnalyzer:
                     # Total hold-back = measured base + the listener's sync delta,
                     # floored at 0 (cannot show samples not yet played).
                     total_delay_s = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0)
-                    delay_frames = int(round(total_delay_s * SPECTRUM_RATE))
+                    delay_frames = int(round(total_delay_s * rate))
                     delay_bytes = delay_frames * frame_bytes
                 if last_data_at and now - last_data_at > silence_timeout:
                     publish_silence()
@@ -1564,7 +1785,9 @@ class SpectrumAnalyzer:
                 if end < need_bytes:
                     self._publish({"ok": True, "state": "waiting",
                                    "error": "", "left": [], "right": [], "bands": [], "vu": {},
-                                   "rate": SPECTRUM_RATE, "mode": self.mode, "fft_size": fft_size})
+                                   "rate": rate, "source": source.name,
+                                   "source_label": source.label,
+                                   "mode": self.mode, "fft_size": fft_size})
                     continue
 
                 raw = bytes(buf[end - need_bytes:end])
@@ -1580,10 +1803,12 @@ class SpectrumAnalyzer:
                     "ok": True,
                     "state": "running",
                     "error": "",
-                    "rate": SPECTRUM_RATE,
+                    "rate": rate,
+                    "source": source.name,
+                    "source_label": source.label,
                     "mode": self.mode,
                     "fft_size": fft_size,
-                    "drc_delay": round(delay_bytes / frame_bytes / SPECTRUM_RATE, 3),
+                    "drc_delay": round(delay_bytes / frame_bytes / rate, 3),
                     "drc_delay_base": round(base_delay_s, 3),
                     "drc_delay_delta": round(SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0, 3),
                     "bands": [
@@ -1605,8 +1830,12 @@ class SpectrumAnalyzer:
                     },
                 })
         finally:
-            if output_enabled:
-                _mpd_output_action(SPECTRUM_OUTPUT_NAME, "disable")
+            if source_started:
+                source.stop()
+            # Closing the read end is itself the stop signal for a bridge that
+            # tees on reader presence: its next write gets EPIPE and it goes
+            # back to waiting.  Order matters — stop() first, so a source with
+            # an explicit writer is not left writing into a closing FIFO.
             if fd is not None:
                 try:
                     os.close(fd)
@@ -2361,26 +2590,34 @@ def _format_read_output(cmd_id: str, output: str) -> str:
     return output
 
 
-def _control_title() -> str:
+def _os_label() -> str:
+    """Short OS + version label for the header, e.g. 'FreeBSD 15.1'.
+
+    -RELEASE is dropped as noise; -CURRENT/-STABLE/etc are left alone since
+    they're the point of the label on a non-release box.
+    """
     try:
         r = subprocess.run(
             ["uname", "-sr"], capture_output=True, text=True, timeout=3,
         )
         label = r.stdout.strip()
         if r.returncode == 0 and label:
-            return f"{label} Control"
+            return re.sub(r"-RELEASE$", "", label)
     except Exception:
         pass
-    return "System Control"
+    return platform.system() or "System"
 
 
 # ── page routes ───────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
+    os_label = _os_label()
     return render_template(
         "index.html",
-        control_title=_control_title(),
+        control_title=f"Open Media DRC — {os_label}",
+        os_label=os_label,
+        os_name=platform.system(),
         groups=_groups(),
         topcpu_threshold=TOPCPU_THRESHOLD,
         monitor_interval=MONITOR_INTERVAL,
@@ -3146,6 +3383,14 @@ def _cdin_stats_fields(body: str) -> dict:
     m = re.search(r"\bsilence (\d+%|n/a)", body)
     if m:
         f["silence"] = m.group(1)
+    # The spectrum tap appears only while the analyzer is actually reading the
+    # FIFO (cdin/src/main.c), so its presence is the signal: absent means the
+    # tap is idle or not configured, which is the normal case and not a fault.
+    m = re.search(r"\bspectrum (\d+) B dropped (\d+) B", body)
+    if m:
+        f["spectrum_attached"] = True
+        f["spectrum_bytes"] = int(m.group(1))
+        f["spectrum_dropped_bytes"] = int(m.group(2))
     return f
 
 
@@ -5841,6 +6086,19 @@ def bitperfect_window(identifier):
         offset = int(request.args.get("offset", 0))
         frames = int(request.args.get("frames", 64))
         return jsonify(_bitperfect().window(identifier, offset, frames))
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@app.route("/bitperfect/api/runs/<identifier>/leadin")
+def bitperfect_leadin(identifier):
+    guard = _bitperfect_guard()
+    if guard:
+        return guard
+    try:
+        offset = int(request.args.get("offset", 0))
+        frames = int(request.args.get("frames", 32))
+        return jsonify(_bitperfect().leadin(identifier, offset, frames))
     except Exception as error:
         return jsonify({"ok": False, "error": str(error)}), 400
 

@@ -870,13 +870,21 @@ of which drive **MPD**. Each added layer is a place bit-perfection can be lost �
 MPD resampling, a decoder promoting samples differently, or a renderer setting
 MPD's volume or replaygain behind your back.
 
-| Source | What plays | What it proves |
+| Source | Who starts playback | What it proves |
 |---|---|---|
-| `aplay` | the existing per-OS tap script, delegated to unchanged | host → USB, no renderer. The control experiment. |
-| `mpd` | MPD plays a local file on the direct output | MPD → DAC: the segment both renderers share |
-| `mpd-http` | MPD fetches an HTTP URL the panel serves | MPD's curl input plugin + streaming decoder — structurally the Qobuz stream path, with a *known* file, so the verdict is real byte equality |
-| `upnp` | upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** → MPD → DAC path |
-| `live` | nothing; the wire is tapped during real Qobuz playback | the whole **qobuzconnect2mpd** path, against the renderer's own buffer |
+| `aplay` | the panel, via the existing per-OS tap script, delegated to unchanged | host → USB, no renderer. The control experiment. |
+| `mpd` | the panel: MPD plays a local file on the direct output | MPD → DAC: the segment both renderers share |
+| `mpd-http` | the panel: MPD fetches an HTTP URL it serves | MPD's curl input plugin + streaming decoder — structurally the Qobuz stream path, with a *known* file, so the verdict is real byte equality |
+| `upnp` | the panel: upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** → MPD → DAC path |
+| `live` | **you, in the Qobuz app** — the panel only arms the tap and waits | the whole **qobuzconnect2mpd** path, against the renderer's own buffer |
+
+`live` is the one row where the panel is not the playback initiator, and that
+is the point rather than a limitation. Every other source hands material to the
+chain; `live` deliberately touches nothing, arms the USB tap, and prompts you to
+start a track in Qobuz — so the bytes it captures were produced by the real
+service path, with nothing synthesised on their behalf. Read "the page plays
+nothing" as *the page starts no playback of its own*, not as *no audio flows*:
+the tap has to see a live stream or there is no capture to compare.
 
 Running `mpd` and `upnp` on the same material is what localises a fault: if
 `mpd` is bit-perfect and `upnp` is not, the renderer is the cause. Both modes
@@ -946,6 +954,26 @@ Both read only the artifacts `finalize` already wrote, so they can never
 disagree with the verdict — a property `tests/test_bitperfect_window.py` pins
 down on captures whose faults are known to the byte.
 
+### Before the stream: the untrimmed wire
+
+The aligned comparison is a black box at its left edge. `finalize` locates the
+reference inside the capture and discards everything before it — tap attach
+noise, then whatever the audio stack emitted ahead of the first source sample —
+and the verdict says nothing about those bytes. The `leadin` subcommand reads
+them back out of `PREFIX.wire.raw`, which every path already writes, so the
+panel can show the discarded head rather than asserting it was harmless.
+
+It is wire-only by nature: before the stream starts there is no reference byte
+to put beside it. Rows ahead of the anchor are marked *trimmed*, so a view
+spanning the boundary shows exactly where the compared stream began, and the
+summary separates the two things that live in that head — a run of zeros
+immediately before the anchor is the ring's priming silence, while a non-zero
+byte anywhere in it came from somewhere else and is worth looking at.
+
+Unlike `window` and `scan`, this one does **not** require the aligned pair: the
+untrimmed wire is precisely what is still worth reading after an
+`ALIGNMENT FAILED` verdict, when there is no aligned pair to show at all.
+
 ### Preconditions the page enforces
 
 - **brutefir must be stopped.** The DRC path convolves the FIR filter, so its
@@ -965,7 +993,12 @@ scripts/bitperfect_runner.py --source live  --duration 60 --out bp-results/qobuz
 scripts/bitperfect_material.py load album.flac --out-dir /tmp/mat
 scripts/bitperfect-lib.py window PREFIX.ref.raw PREFIX.wav 80000 8 2
 scripts/bitperfect-lib.py scan   PREFIX.ref.raw PREFIX.wav 200 2
+scripts/bitperfect-lib.py leadin PREFIX.wire.raw 5648 2 0 32
 ```
+
+`leadin` takes the trim point as its second argument — the `start` field of
+`PREFIX.json`, i.e. the capture offset `finalize` aligned on — then the channel
+count, the byte offset to display from, and how many frames to show.
 
 `--source aplay` is delegated to `bitperfect-tap-{linux,freebsd}.sh`
 unchanged, so the control experiment stays byte-identical to every result

@@ -6,6 +6,25 @@ does not insert anything into the BruteFIR/DAC playback path.
 
 ## Signal Source
 
+The analyzer is, at bottom, a FIFO reader: it opens a FIFO non-blocking, FFTs
+raw S32_LE stereo, and knows nothing about who wrote it.  That is what lets
+more than one part of the chain feed it.  `source` in `commands.conf` picks the
+producer:
+
+| `source` | Producer | Rate |
+|---|---|---|
+| `mpd` | MPD's secondary `fifo` output | `sample_rate` |
+| `cdin` | the CD / S-PDIF bridge | `cdin_sample_rate` |
+| `auto` (default) | `cdin` while a disc is playing through the bridge, else `mpd` | follows the choice |
+
+The rate travels **with** the source rather than being one global, because the
+two differ — CD is 44.1 kHz where the MPD FIFO is configured at 48 kHz — and
+analysing at the wrong rate mislabels every frequency bin while failing in no
+visible way: a 1 kHz tone read at the wrong rate lands at 1088 Hz and nothing
+anywhere reports an error.
+
+### The MPD source
+
 The analyzer uses a secondary MPD `fifo` output:
 
 ```conf
@@ -30,6 +49,92 @@ of MPD's FIFO `format`.
 This is a pre-DRC MPD tap.  It shows the music stream feeding MPD, not the
 post-BruteFIR corrected DAC signal.  The playback outputs remain unchanged.
 
+### The CD / S-PDIF source
+
+CD audio never passes through MPD.  The bridge reads the capture interface and
+writes the loopback directly (`doc/CDIN-LINUX.md`, and the chain diagram in the
+manual), with MPD a *sibling* writer on the same output rather than anything
+upstream.  So during a disc the MPD FIFO stays empty and the analyzer sees
+nothing — which is the whole reason this source exists.
+
+How the PCM reaches the FIFO differs by operating system, because the two
+bridges are not the same kind of thing.
+
+**FreeBSD.**  `omdrc-cdin` is ours, and its playback thread already holds the
+period it is about to write to the device.  It tees that buffer to the FIFO
+itself (`cdin/src/spectap.c`), enabled with one rc.conf line:
+
+```sh
+omdrc_cdin_spectrum_fifo="/tmp/omdrc-cdin-spectrum.fifo"   # same as cdin_fifo_path
+```
+
+Three properties make that safe to leave on permanently, and each is asserted
+in `cdin/tests/test_spectap.c` rather than trusted:
+
+* **It can never stall playback.**  The descriptor is `O_NONBLOCK` and a short
+  or `EAGAIN` write is discarded, never retried.  A reader that stops draining
+  loses frames; it does not back up into the audio path.  This is the one that
+  would otherwise be *audible*.
+* **The reader's presence is the entire protocol.**  Opening a FIFO `O_WRONLY`
+  fails with `ENXIO` while nobody holds the read end, so the daemon retries on
+  a slow cadence and starts teeing the moment the panel opens it; when the
+  panel goes away the next write gets `EPIPE` and the tap re-arms.  No IPC, no
+  shared state, nothing to clean up after a crash on either side.
+* **It never creates the FIFO.**  `omdrcctrl` does that, as its own user.  The
+  daemon usually runs as root, and a root-created world-writable FIFO for a
+  feature nobody asked to be always on is a hazard.  No FIFO means no tap,
+  which is correct when the analyzer is not configured.
+
+While a reader is attached the daemon's `[stats]` line carries the tap, and the
+CD input card reads it back:
+
+```
+... starves 0  silence 0%  up 125 s  spectrum 1411200 B dropped 4096 B
+```
+
+It is absent the rest of the time — a field that is almost always missing says
+more by its presence than a permanent `spectrum 0` would.  Steady growth in
+`dropped` means the analyzer is not keeping up and its display is not quite
+what it appears to be; it does **not** mean the disc dropped out.
+
+**Linux.**  `alsaloop(1)` is a third-party binary and the supervisor never sees
+a sample, so there is nothing in-process to tee.  Instead omdrcctrl reads the
+*same capture device* a second time and writes the FIFO itself, by running
+
+```sh
+arecord -D <cdin_capture_pcm> -f S32_LE -c2 -r44100 -t raw <cdin_fifo_path>
+```
+
+for the life of the stream.  That needs a **shareable** capture PCM, because a
+second `hw:` opener gets `EBUSY`.  `dsnoop` is exactly that, and it neither
+resamples nor mixes, so what reaches BruteFIR stays bit-identical:
+
+```
+pcm.dsnoop_cdin {
+    type dsnoop
+    ipc_key 2748
+    slave { pcm "hw:CARD=U24XL,DEV=0" channels 2 format S32_LE rate 44100 }
+}
+```
+
+Then point both at it — `cdin_capture_pcm = dsnoop_cdin` in `commands.conf`,
+and `omdrc-cdin-alsaloop`'s `-C` at the same PCM.
+
+Reading independently, rather than teeing alsaloop's output, is the point: if
+this reader stalls it misses samples and alsaloop is untouched.  The tempting
+alternative — an ALSA `file` plugin on alsaloop's `-P`, which looks tidier —
+was rejected because it puts omdrcctrl's scheduling *inside* the CD's audio
+path: the plugin blocks on opening a FIFO with no reader, and once open, a
+FIFO that is not drained fast enough blocks the writer.  That is CD dropouts
+caused by the spectrum display, and it contradicts the rule this whole feature
+is built on.
+
+> **Not yet verified on hardware.**  `--sync playshift` steers snd-aloop's rate
+> shift from capture timing, and inserting `dsnoop` changes the period layer it
+> observes.  The data path stays bit-perfect, but the control loop's behaviour
+> through `dsnoop` has not been measured on the NUC.  Leave `cdin_capture_pcm`
+> empty until it has been.
+
 ## Enabling
 
 The feature is off by default.  Enable it in the installed
@@ -38,9 +143,13 @@ The feature is off by default.  Enable it in the installed
 ```ini
 [spectrum]
 enabled = yes
+source = auto
 mpd_output_name = OMDRC Spectrum
 fifo_path = /tmp/omdrc-spectrum.fifo
 sample_rate = 48000
+cdin_fifo_path = /tmp/omdrc-cdin-spectrum.fifo
+cdin_sample_rate = 44100
+cdin_capture_pcm =
 bits = 32
 channels = 2
 refresh_hz = 10
@@ -70,10 +179,16 @@ the Start button; the spectrum, VU and floor controls stay collapsed.
 When the web UI Start button is pressed:
 
 0. The card expands to reveal the graphs, VU meters and floor slider.
-1. `omdrc-ctrl` creates the FIFO if needed.
-2. The analyzer opens the FIFO for non-blocking read.
-3. `omdrc-ctrl` enables the MPD output named by `mpd_output_name`.
-4. FFT frames are sent to the browser using Server-Sent Events.
+1. The source is resolved — once per stream, not once per process, so `auto`
+   sees the chain as it is *now*: a disc may have gone on since boot.
+2. `omdrc-ctrl` creates that source's FIFO if needed.
+3. The analyzer opens the FIFO for non-blocking read.
+4. The source is started: for `mpd` that enables the output named by
+   `mpd_output_name`; for `cdin` on Linux it spawns the `arecord` reader, and
+   on FreeBSD it does nothing at all, because opening the FIFO for reading is
+   itself the signal the bridge is waiting for.
+5. FFT frames are sent to the browser using Server-Sent Events, each carrying
+   the source name and its rate so the card can label what it is showing.
 
 When Stop is pressed the card collapses back to the title row.
 
@@ -81,7 +196,10 @@ When the browser stream closes:
 
 1. The server notices the disconnect.
 2. The analyzer thread stops.
-3. `omdrc-ctrl` disables the MPD FIFO output.
+3. The source is stopped — the MPD FIFO output is disabled, or the `arecord`
+   reader is terminated — and only then is the read end closed, so a source
+   with an explicit writer is never left writing into a closing FIFO.  For the
+   FreeBSD bridge that close *is* the stop: its next write gets `EPIPE`.
 
 The page also stops the stream on `visibilitychange` and `pagehide`, so hiding
 the browser on Android stops capture and FFT processing.  If the user had

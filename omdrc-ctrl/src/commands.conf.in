@@ -112,6 +112,32 @@ fifo_path = /tmp/omdrc-spectrum.fifo
 sample_rate = 48000
 bits = 32
 channels = 2
+# Where the PCM comes from: auto | mpd | cdin.
+#   mpd    MPD's secondary fifo output (above) — the music path
+#   cdin   the CD / S-PDIF bridge, which never passes through MPD, so the MPD
+#          FIFO above is empty for the whole of a disc
+#   auto   cdin while a disc is actually playing through the bridge, else mpd
+source = auto
+# The CD source's own FIFO and rate. The rate must travel with the source: CD
+# is 44.1 kHz where the MPD FIFO above is 48 kHz, and analysing at the wrong
+# rate mislabels every frequency bin without reporting any error.
+cdin_fifo_path = /tmp/omdrc-cdin-spectrum.fifo
+cdin_sample_rate = 44100
+# How the CD PCM reaches that FIFO differs by OS, and only Linux needs a
+# setting here:
+#
+#   FreeBSD  leave this empty. omdrc-cdin writes the FIFO itself — set
+#            omdrc_cdin_spectrum_fifo="/tmp/omdrc-cdin-spectrum.fifo" in
+#            rc.conf to the same path. The daemon writes nothing until the
+#            panel opens the FIFO, so it costs nothing while unused.
+#
+#   Linux    alsaloop(1) is a third-party binary and the supervisor never sees
+#            a sample, so omdrcctrl reads the capture device a SECOND time and
+#            writes the FIFO itself. That needs a SHAREABLE capture PCM — an
+#            ALSA `dsnoop` — because a second `hw:` opener gets EBUSY. Name it
+#            here, and point omdrc-cdin-alsaloop's -C at the same PCM. Empty
+#            disables the CD source on Linux rather than guessing a PCM name.
+cdin_capture_pcm =
 refresh_hz = 10
 fft_size = 16384
 precision_fft_size = 65536

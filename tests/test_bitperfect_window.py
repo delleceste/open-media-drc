@@ -78,6 +78,14 @@ class Harness(unittest.TestCase):
                     self.tmp / f"{prefix}.wav", buckets, 2)
         return json.loads(r.stdout)
 
+    def leadin(self, prefix: str, start: int, offset: int,
+               frames: int) -> dict:
+        """`finalize` does not write .wire.raw — its callers copy the capture
+        there — so the harness points `leadin` at the same .cap it was given."""
+        r = run_lib("leadin", self.tmp / f"{prefix}.cap", start, 2,
+                    offset, frames)
+        return json.loads(r.stdout)
+
 
 class CleanRunTest(Harness):
     def test_bit_perfect_run_shows_every_byte_identical(self):
@@ -103,6 +111,46 @@ class CleanRunTest(Harness):
             self.assertEqual(row["ref_s"],
                              [i & 0xFFFF, (i * 40503 + (i >> 16)) & 0xFFFF])
             self.assertEqual(row["wire_s"], row["ref_s"])
+
+
+class LeadInTest(Harness):
+    """The trimmed head must be reported as what it is, byte for byte.
+
+    The lead-in view exists to stop the aligned comparison being a black box at
+    its left edge: it shows the bytes the verdict never covered.  If it
+    disagreed with `finalize` about where trimming stopped, it would misplace
+    the one boundary it exists to draw.
+    """
+    def setUp(self):
+        super().setUp()
+        # A real attach leaves non-zero junk ahead of the ring's priming zeros.
+        self.junk = b"\xde\xad\xbe\xef" * 4
+        self.meta = self.finalize(
+            self.junk + b"\0" * PRIMING + self.refbytes + b"\0" * PAD, "lead")
+
+    def test_trim_boundary_matches_the_alignment_finalize_reported(self):
+        view = self.leadin("lead", self.meta["start"], 0, 4)
+        self.assertEqual(view["start"], len(self.junk) + PRIMING)
+        self.assertEqual(view["start"], self.meta["start"])
+        self.assertTrue(all(r["trimmed"] for r in view["rows"]))
+
+    def test_junk_is_counted_apart_from_the_priming_zeros(self):
+        view = self.leadin("lead", self.meta["start"], 0, 4)
+        self.assertEqual(view["priming_zeros"], PRIMING)
+        self.assertEqual(view["zero_bytes"], PRIMING)
+        self.assertEqual(view["start"] - view["zero_bytes"], len(self.junk))
+        self.assertEqual(view["rows"][0]["wire"].split()[:4],
+                         ["de", "ad", "be", "ef"])
+
+    def test_the_first_untrimmed_row_is_the_first_reference_frame(self):
+        start = self.meta["start"]
+        view = self.leadin("lead", start, start - 8, 2)
+        rows = {r["o"]: r for r in view["rows"]}
+        self.assertTrue(rows[start - 8]["trimmed"])
+        self.assertFalse(rows[start]["trimmed"])
+        # Same frame the aligned byte view shows at offset 0.
+        self.assertEqual(rows[start]["wire_s"],
+                         self.window("lead", 0, 1)["rows"][0]["ref_s"])
 
 
 class CorruptionTest(Harness):

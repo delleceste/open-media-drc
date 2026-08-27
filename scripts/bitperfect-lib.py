@@ -515,6 +515,50 @@ def cmd_scan(refraw, tapwav, buckets, ch):
     return 0
 
 
+def cmd_leadin(wireraw, start, ch, offset, frames):
+    """Hex-dump the head of the UNTRIMMED capture — the bytes finalize discarded.
+
+    `finalize` aligns by locating the reference inside the capture and drops
+    everything before it (meta["start"]): the tap attaches before playback, and
+    the audio stack may emit priming samples ahead of the first source byte.
+    That discarded head is the only place such priming is visible, and the
+    verdict says nothing about it — so the page shows it rather than asking the
+    reader to take on trust that it was harmless.
+
+    Wire-only by nature: before the stream starts there is no reference byte to
+    put beside it.  `trimmed` marks the rows that fall before the anchor, so a
+    view spanning the boundary shows exactly where the compared stream began.
+    """
+    import json
+    fb = ch * 4
+    size = os.path.getsize(wireraw)
+    start = max(0, min(int(start), size))
+    offset = max(0, int(offset))
+    offset -= offset % fb
+    length = max(1, min(int(frames), 4096)) * fb
+    with open(wireraw, "rb") as f:
+        head = f.read(start)                 # the discarded region, summarised
+        f.seek(offset)
+        buf = f.read(length)
+    # Zeros immediately before the anchor are the stack's priming silence; a
+    # non-zero byte in the head is something else and worth seeing.
+    priming = len(head) - len(head.rstrip(b"\x00"))
+    rows = []
+    for i in range(-(-len(buf) // fb)):
+        o = offset + i * fb
+        b = buf[i * fb:(i + 1) * fb]
+        rows.append({"o": o,
+                     "wire": " ".join(f"{x:02x}" for x in b),
+                     "wire_s": [struct.unpack_from("<i", b, c * 4)[0]
+                                for c in range(len(b) // 4)],
+                     "trimmed": o < start})
+    print(json.dumps({"ok": True, "offset": offset, "frame_bytes": fb,
+                      "wire_len": size, "start": start,
+                      "zero_bytes": head.count(0), "priming_zeros": priming,
+                      "rows": rows}))
+    return 0
+
+
 def cmd_finalize(refraw, capraw, rate, ch, prefix, osname, inputpath):
     """Compare the wire capture against the reference and emit artifacts.
 
@@ -694,6 +738,8 @@ def main():
     if cmd == "scan":
         return cmd_scan(a[0], a[1], int(a[2]),
                         int(a[3]) if len(a) > 3 else 2)
+    if cmd == "leadin":
+        return cmd_leadin(a[0], int(a[1]), int(a[2]), int(a[3]), int(a[4]))
     sys.exit(f"unknown subcommand: {cmd}\n\n{__doc__}")
 
 

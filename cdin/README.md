@@ -387,6 +387,7 @@ rather than leaving a button that can only fail.
 | `-R` | `--retry` | `2` | device retry interval |
 | | `--idle-after` | `15000` | digital silence on the wire before the output device is released — see above; `0` disables the gate |
 | | `--carrier-min` | `50` | percentage of the nominal rate below which the input counts as unclocked and the output is released — the *stopped transport* case, which the silence gate cannot see; `0` disables the check |
+| | `--spectrum-fifo` | | also write the playback stream to this FIFO, for the control panel's spectrum analyzer — see below |
 | `-l` | `--log` | | also log to this file |
 | `-d` | `--debug` | | emit periodic stats |
 | `-v` | `--verbose` | | more verbose; repeat (`-vv`) for debug lines |
@@ -398,6 +399,49 @@ rather than leaving a button that can only fail.
 
 Use `--out /dev/dsp.dac` to write the DAC directly, bypassing BruteFIR — useful to
 isolate whether a problem is in the chain or in the bridge.
+
+## Feeding the spectrum analyzer
+
+The control panel's spectrum analyzer reads a FIFO of raw S32_LE stereo.  It
+was built against MPD's secondary `fifo` output, which is empty for the whole
+of a disc: CD audio never reaches MPD, it goes capture -> this daemon -> the
+output.  `--spectrum-fifo` hands the analyzer the same periods the DAC is about
+to receive.
+
+```sh
+# /etc/rc.conf — same path as cdin_fifo_path in omdrcctrl's [spectrum] section
+omdrc_cdin_spectrum_fifo="/tmp/omdrc-cdin-spectrum.fifo"
+```
+
+The tap sits one line above the write to the device, so its failure modes are
+not "the spectrum looks wrong" — they are dropouts on a disc that is playing.
+Three properties keep it harmless, and `tests/test_spectap.c` asserts each one
+rather than trusting it:
+
+* **It can never stall playback.**  The descriptor is `O_NONBLOCK` and a short
+  or `EAGAIN` write is discarded, never retried.  A reader that stops draining
+  loses bytes; it does not back up into the audio path.
+* **The reader's presence is the whole protocol.**  A FIFO opened `O_WRONLY`
+  returns `ENXIO` while nobody holds the read end, so the daemon retries slowly
+  and starts teeing the moment the panel opens it; when the panel closes, the
+  next write gets `EPIPE` and the tap re-arms.  Nothing to keep in sync, and
+  nothing to clean up after a crash on either side.
+* **It never creates the FIFO.**  `omdrcctrl` does, as its own user.  This
+  daemon usually runs as root, and a root-created world-writable FIFO for a
+  feature nobody asked to be always on is a hazard.  No FIFO, no tap — which is
+  the right behaviour when the analyzer is not configured.
+
+While a reader is attached the `[stats]` line carries the tap, and the web
+card reads it back:
+
+```
+... starves 0  silence 0%  up 125 s  spectrum 1411200 B dropped 4096 B
+```
+
+It is absent otherwise, in the same spirit as the drift-rig fields: a number
+that is almost always missing says more by appearing than a permanent
+`spectrum 0` would.  Growth in `dropped` means the analyzer is not keeping up,
+not that the disc dropped out.
 
 ## Simulating a CD transport instead of a capture device
 

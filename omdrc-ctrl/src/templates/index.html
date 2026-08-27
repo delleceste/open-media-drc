@@ -33,11 +33,28 @@
         header {
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            gap: 12px;
             margin-bottom: 24px;
             padding-top: 8px;
         }
-        h1 { font-size: 1.35rem; font-weight: 600; letter-spacing: -.02em; }
+        h1 {
+            display: flex;
+            align-items: baseline;
+            flex: 1 1 auto;
+            min-width: 0;
+            gap: 8px;
+            font-size: 1.35rem;
+            font-weight: 600;
+            letter-spacing: -.02em;
+        }
+        h1 .os-label {
+            margin-left: auto;
+            font-size: .78rem;
+            font-weight: 500;
+            color: var(--muted);
+            letter-spacing: 0;
+            white-space: nowrap;
+        }
 
         #srv-beastie {
             width: 58px;
@@ -1127,11 +1144,11 @@
 <body>
 
 <header>
-    <h1>{{ control_title }}</h1>
     <img id="srv-beastie"
-         src="{{ url_for('static', filename='freebsd-beastie.png') }}"
+         src="{{ url_for('static', filename='tux-headphones.png' if os_name == 'Linux' else 'freebsd-beastie.png') }}"
          alt="Server healthy"
          title="Server healthy">
+    <h1>Open Media DRC <span class="os-label">{{ os_label }}</span></h1>
 </header>
 
 <div id="write-status"></div>
@@ -1380,7 +1397,7 @@
         <a class="btn-details active" href="/details-spectrum">Details</a>
     </div>
     <div class="spectrum-plot">
-        <div class="spectrum-label"><strong>Bands</strong><span>{{ spectrum.bands }} bands · {{ spectrum.sample_rate }} Hz FIFO</span></div>
+        <div class="spectrum-label"><strong>Bands</strong><span id="spectrum-source-label">{{ spectrum.bands }} bands · {{ spectrum.sample_rate }} Hz FIFO</span></div>
         <div class="spectrum-grid">
             <div>
                 <div class="spectrum-channel-title">Left</div>
@@ -3448,8 +3465,17 @@ function handleSpectrumFrame(d) {
         renderDelayReadout();
     }
     const drcText = d.drc_delay ? ` · DRC sync +${d.drc_delay.toFixed(2)}s` : '';
-    spectrumStatus(d.state === 'running' ? `running${modeText} · ${d.rate || ''} Hz${drcText}` : d.state,
+    // Name the producer: two sources at two different rates now feed this card,
+    // and "48000 Hz" alone no longer says which one is being analysed.
+    const srcText = d.source_label ? ` · ${d.source_label}` : '';
+    spectrumStatus(d.state === 'running' ? `running${modeText}${srcText} · ${d.rate || ''} Hz${drcText}` : d.state,
                    d.state === 'running' ? 'var(--green)' : 'var(--muted)');
+    if (d.source_label && d.rate) {
+        const el = document.getElementById('spectrum-source-label');
+        if (el) el.textContent =
+            `${(d.bands || []).length || {{ spectrum.bands }}} bands · ` +
+            `${d.source_label} · ${d.rate} Hz`;
+    }
     if (d.bands && d.left && d.right) {
         drawBandSpectrum(d.bands, d.left, d.right);
         updateVu(d.vu || {});

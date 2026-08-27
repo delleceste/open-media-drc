@@ -56,13 +56,18 @@ box: `aplay` (delegated to `bitperfect-tap-{linux,freebsd}.sh` unchanged),
 `mpd`, `mpd-http` (MPD's curl input plugin — structurally the Qobuz stream
 path), `upnp` (upmpdcli discovered by SSDP and told to play the file itself),
 and `live` (taps a real qobuzconnect2mpd stream and compares against the buffer
-the renderer wrote). The renderer-driven modes also report whether the renderer
+the renderer wrote — the page starts no playback of its own there, it arms the
+tap and asks you to start the track in Qobuz). The renderer-driven modes also report whether the renderer
 changed MPD's volume or replaygain, which breaks bit-perfection without
 altering a byte of the source. Test material is either the generated per-rate
 counter asset or any WAV/FLAC you load.
 
 Results carry a colour map of the whole stream plus a side-by-side hex view of
-the reference against the tapped wire, locked to one offset slider.
+the reference against the tapped wire, locked to one offset slider. A
+**Before the stream** panel underneath shows the untrimmed capture ahead of the
+anchor — the attach noise and priming samples alignment discarded, which the
+verdict covers nothing of — and is the one view that still works after an
+`ALIGNMENT FAILED` run, when there is no aligned pair to show.
 
 Two things the page enforces rather than assumes: runs are blocked while
 brutefir is convolving (the DRC path is not bit-perfect *by design*), and the

@@ -696,13 +696,23 @@ def delegate_aplay(input_path: Path, prefix: str) -> int:
     script = HERE / ("bitperfect-tap-freebsd.sh"
                      if sys.platform.startswith("freebsd")
                      else "bitperfect-tap-linux.sh")
-    emit("PHASE", f"delegating to {script.name}")
+    # The delegated script taps, plays, drains and compares by itself, so
+    # without this translation the page's phase strip sat on one stage for the
+    # whole control run and then jumped straight to the verdict.  Both per-OS
+    # scripts announce the moment audio starts with a line beginning "Playing";
+    # that single milestone is enough to split the run into tap and play.
+    emit("PHASE", f"tap — delegating to {script.name}")
     proc = subprocess.Popen([str(script), "--out", prefix, str(input_path)],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, bufsize=1)
     for line in proc.stdout:
-        say(line.rstrip())
-    return proc.wait()
+        text = line.rstrip()
+        if text.startswith("Playing"):
+            emit("PHASE", "play")
+        say(text)
+    code = proc.wait()
+    emit("PHASE", "verdict")
+    return code
 
 
 def main() -> int:

@@ -42,6 +42,7 @@
 #include "ossdev.h"
 #include "outsel.h"
 #include "ring.h"
+#include "spectap.h"
 
 volatile sig_atomic_t cdin_stop;
 volatile sig_atomic_t cdin_io_abort;
@@ -92,6 +93,8 @@ struct config {
 	double in_ppm;		/* file source only: simulated clock offset */
 	int    gap_ms;		/* file source only: silence between tracks */
 	const char *transport;	/* file source only: scripted transport events */
+	/* FIFO the spectrum analyzer reads; empty = no tap.  See spectap.h. */
+	const char *spectrum_fifo;
 	bool   loop;
 	bool   probe;
 	enum cdin_loglevel level;
@@ -103,6 +106,7 @@ struct session {
 	struct ossdev  *out;
 	struct filesrc *file;	/* non-NULL when the input is a WAV, not a device */
 	struct ring    *ring;
+	struct spectap *tap;	/* NULL unless --spectrum-fifo was given */
 	size_t          period_bytes;		/* ring/playback side (out format) */
 	size_t          frame_bytes;		/* out frame size */
 	size_t          in_period_bytes;	/* capture side (in format) */
@@ -544,6 +548,16 @@ play_episode(struct session *s, unsigned char *buf, size_t lead_bytes,
 		if (ring_read(s->ring, buf, s->period_bytes) == 0)
 			break;		/* ring shut down */
 
+		/*
+		 * The spectrum copy goes out BEFORE the device write, while the
+		 * period is in hand and nothing has blocked yet.  It cannot
+		 * delay the write: spectap_write() is non-blocking and drops
+		 * rather than retrying (spectap.h).  These are the exact bytes
+		 * the DAC is about to receive, pre-DRC, which is the same point
+		 * in the chain MPD's FIFO output taps for the music path.
+		 */
+		spectap_write(s->tap, buf, s->period_bytes);
+
 		rc = ossdev_write_full(s->out, buf, s->period_bytes);
 		if (rc < 0) {
 			if (errno == EINTR && cdin_stop)
@@ -676,7 +690,7 @@ stats_emit(struct session *s, struct stats_state *st)
 	double now = now_monotonic(), mean, elapsed, rate_elapsed;
 	double in_hz, out_hz, step, step_ms;
 	uint64_t fin, fout, periods, silent, starves, drops;
-	char drift[96], silencetxt[32], rig[64];
+	char drift[96], silencetxt[32], rig[64], tap[80];
 	bool discontinuity;
 
 	if (st->samples == 0)
@@ -829,19 +843,36 @@ stats_emit(struct session *s, struct stats_state *st)
 			    (unsigned long long)st_slips);
 	}
 
+	/*
+	 * The spectrum tap is reported only while a reader is attached, in the
+	 * same spirit as `rig` above: a field that is almost always absent says
+	 * more by its presence than a permanent "spectrum 0" would.  Dropped
+	 * bytes here are harmless by construction (spectap.h) but worth seeing,
+	 * because a tap that drops constantly means the analyzer is not keeping
+	 * up and its display is not what it appears to be.
+	 */
+	tap[0] = '\0';
+	if (spectap_attached(s->tap)) {
+		uint64_t tw = 0, td = 0;
+
+		spectap_stats(s->tap, &tw, &td);
+		snprintf(tap, sizeof(tap), "  spectrum %llu B dropped %llu B",
+		    (unsigned long long)tw, (unsigned long long)td);
+	}
+
 	if (s->measure_only) {
 		log_info("[stats] capture-only  in %.3f Hz  frames %llu  "
-		    "silence %s  up %.0f s%s", in_hz,
-		    (unsigned long long)fin, silencetxt, elapsed, rig);
+		    "silence %s  up %.0f s%s%s", in_hz,
+		    (unsigned long long)fin, silencetxt, elapsed, rig, tap);
 	} else {
 		log_info("[stats] lead %.0f ms (min %.0f, max %.0f)  %s  "
 		    "in %.3f Hz  out %.3f Hz  frames %llu/%llu  "
-		    "drops %llu B  starves %llu  silence %s  up %.0f s%s",
+		    "drops %llu B  starves %llu  silence %s  up %.0f s%s%s",
 		    mean, st->min_lead_ms, st->max_lead_ms, drift, in_hz, out_hz,
 		    (unsigned long long)fin, (unsigned long long)fout,
 		    (unsigned long long)atomic_load(&s->drop_bytes),
 		    (unsigned long long)atomic_load(&s->starves),
-		    silencetxt, elapsed, rig);
+		    silencetxt, elapsed, rig, tap);
 	}
 	stats_reset_interval(st);
 }
@@ -1082,6 +1113,15 @@ usage(FILE *out)
 "                     audible as a burst each time the output buffer fills.\n"
 "                     The gap is huge (~1%% of rate observed against a 50%%\n"
 "                     threshold), so this needs no tuning; 0 disables it.\n"
+"      --spectrum-fifo path  also write the playback stream to this FIFO, for\n"
+"                     the control panel's spectrum analyzer      (default off)\n"
+"                     CD audio never reaches MPD, so the analyzer's usual MPD\n"
+"                     FIFO output is empty for the whole disc; this hands it\n"
+"                     the same bytes instead.  The FIFO must already exist —\n"
+"                     omdrcctrl creates it — and the copy is lossy on purpose:\n"
+"                     it is non-blocking and drops rather than ever delaying a\n"
+"                     write to the DAC.  Nothing is written until a reader\n"
+"                     attaches, so this costs nothing while it is unused.\n"
 "  -l, --log file     also log to this file\n"
 "  -d, --debug        emit periodic stats\n"
 "  -v, --verbose      more verbose; repeat for debug\n"
@@ -1175,6 +1215,7 @@ main(int argc, char **argv)
 		{ "idle-after", required_argument, NULL, 1005 },
 		{ "carrier-min", required_argument, NULL, 1006 },
 		{ "transport", required_argument, NULL, 1004 },
+		{ "spectrum-fifo", required_argument, NULL, 1007 },
 		{ "probe",    no_argument,       NULL, 'P' },
 		{ "help",     no_argument,       NULL, 'h' },
 		{ "version",  no_argument,       NULL, 'V' },
@@ -1204,6 +1245,7 @@ main(int argc, char **argv)
 		case 1005: cfg.idle_after_ms = atoi(optarg); break;
 		case 1006: cfg.carrier_min_pct = atoi(optarg); break;
 		case 1004: cfg.transport = optarg; break;
+		case 1007: cfg.spectrum_fifo = optarg; break;
 		case 'P': cfg.probe = true; break;
 		case 'h': usage(stdout); return 0;
 		case 'V': printf("omdrc-cdin " CDIN_VERSION "\n"); return 0;
@@ -1450,6 +1492,11 @@ main(int argc, char **argv)
 			}
 			log_info("ring: %zu bytes (%d ms at %d Hz)", cap,
 			    cfg.ring_ms, cfg.rate);
+			/* Created once, alongside the ring, and kept for the
+			   life of the daemon: the tap attaches and detaches by
+			   itself as the analyzer comes and goes, so it must
+			   outlive any one session. */
+			s.tap = spectap_open(cfg.spectrum_fifo, cfg.retry_secs);
 		}
 
 		set_state(&s, CDIN_IDLE, "capture open, waiting for audio");
@@ -1470,6 +1517,7 @@ main(int argc, char **argv)
 	/* The playback thread owns `out` and has already been joined by
 	   run_session(), which closes it on the way out of every episode. */
 	ring_free(s.ring);
+	spectap_close(s.tap);
 	cdin_log_close();
 	return rc;
 }

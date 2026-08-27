@@ -39,6 +39,7 @@ add_executable(omdrc-cdin
     src/ossdev.c
     src/outsel.c
     src/ring.c
+    src/spectap.c
 )
 
 target_compile_options(omdrc-cdin PRIVATE
@@ -85,4 +86,8 @@ if(BUILD_TESTING)
     add_executable(test_outsel tests/test_outsel.c src/outsel.c)
     target_include_directories(test_outsel PRIVATE src)
     add_test(NAME outsel COMMAND test_outsel)
+
+    add_executable(test_spectap tests/test_spectap.c src/spectap.c src/log.c)
+    target_include_directories(test_spectap PRIVATE src)
+    add_test(NAME spectap COMMAND test_spectap)
 endif()
