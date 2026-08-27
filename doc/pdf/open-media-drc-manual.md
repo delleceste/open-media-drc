@@ -1259,6 +1259,15 @@ hashes running from the REW exports in the source repository to the coefficient
 bytes BruteFIR has actually loaded, with a refusal at every link that cannot be
 checked.
 
+What follows is the synthesis: what the chain is for, and how it hangs
+together. The *normative* detail lives beside it in
+`doc/FILTER_PROVENANCE_AND_RESPONSE.md` (built to a printable
+`doc/FILTER_PROVENANCE_AND_RESPONSE.pdf` by the same script as this manual) ---
+what every export must be, what may never be shown as verified, the exact
+deployment and removal transactions, and the audit record of the bundles
+actually deployed in this room. Read this chapter to understand the design;
+read that document when you need the rule.
+
 ![Provenance chain: each labelled arrow is a content check that must pass before a design is deployable, installable, or shown as verified.](build/provenance-chain.pdf){width=95%}
 
 ## The three repositories
