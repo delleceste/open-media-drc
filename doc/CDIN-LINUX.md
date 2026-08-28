@@ -86,15 +86,14 @@ as the `drift` field, in ppm. That is a direct measurement of the correction
 being applied, which is a better signal than inferring drift from buffer level:
 it is what the loop decided, not what we can guess about it.
 
-## The CD input is an exclusive source on Linux
+## The CD input is an exclusive source
 
-This is the one behavioural difference from FreeBSD, and it is forced by the
-loopback rather than chosen.
+Both platforms expose the same source-selection behavior, for different
+low-level reasons.
 
-`virtual_oss` mixes. `omdrc-cdin` can therefore share `/dev/dsp.play` with MPD
-and with mpv, hold it only while audio is actually on the wire, and release it
-after a run of digital silence — which is what makes it a daemon you leave
-running whether the player is on or not.
+`virtual_oss` mixes, so FreeBSD cannot rely on a second open returning `EBUSY`.
+The CDIN card therefore gates MPD's audible outputs around the bridge service:
+START disables them and STOP restores the exact previously enabled output.
 
 `hw:Loopback,0,0` is a **single substream**. alsaloop and MPD's `DRC-native` /
 `DRC-resamp` outputs cannot both hold it; whichever opens second gets `EBUSY`.

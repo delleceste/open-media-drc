@@ -671,9 +671,10 @@ from.
 The card is one parser serving two implementations, because both emit the same
 log grammar: `omdrc-cdin` (the OSS daemon, `cdin/`) on FreeBSD, and
 `scripts/omdrc-cdin-alsaloop` supervising `alsaloop(1)` on Linux. See
-`doc/CDIN-LINUX.md` for how the Linux side differs — chiefly that the CD input
-is an *exclusive* source there, because the ALSA loopback has one seat where
-`virtual_oss` mixes.
+`doc/CDIN-LINUX.md` for the implementation differences. The control policy is
+the same on both: CD input is an exclusive source. START remembers and disables
+MPD's audible output; STOP restores that exact output. The Spectrum FIFO is not
+part of this gate and remains tied only to Spectrum-card visibility.
 
 ```ini
 [cdin]
@@ -811,12 +812,13 @@ fifo_path = /tmp/omdrc-spectrum.fifo
 sample_rate = 48000
 bits = 32
 channels = 2
-refresh_hz = 10
+refresh_hz = 25
 fft_size = 16384
 precision_fft_size = 65536
 bands = 24
 min_frequency = 31.5
 floor_db = -40
+fall_db_per_s = 30
 vu_mode = bars
 drc_delay_trim_ms = 0
 ```
@@ -827,8 +829,14 @@ block, lifecycle, CPU cost, and limitations.
 `sample_rate` must match the MPD FIFO output's `format` rate. The FIFO is raw
 PCM, so the analyzer cannot discover the rate from the stream itself.
 
-`drc_delay_trim_ms` is an optional fine-tune (default `0`) added to the
-automatically measured DRC sync delay; see
+`refresh_hz` and `fall_db_per_s` are the two responsiveness knobs: how often a
+frame is analysed, and how fast a bar falls back afterwards. There is no attack
+setting — each band is peak-held across the whole frame interval, so a transient
+lands on the bar whenever inside the frame it arrived. See
+[Live Spectrum Analyzer → Responsiveness](SPECTRUM_ANALYZER.md#responsiveness).
+
+`drc_delay_trim_ms` is an optional static fine-tune (default `0`) used when
+Auto sync is off. It is excluded from the automatically estimated base; see
 [Live Spectrum Analyzer → DRC Sync](SPECTRUM_ANALYZER.md#drc-sync).
 
 ### Keys common to all commands
@@ -1713,7 +1721,9 @@ capture thread.
 Each event carries one JSON frame. While running it also reports `mode`,
 `fft_size`, and `drc_delay` — the DRC sync delay in seconds currently applied to
 keep the display aligned with the audible (post-BruteFIR) signal (`0` when DRC
-is bypassed):
+is bypassed). A frame identical to the one before it is not sent at all, so a
+paused source produces no traffic and a fault message does not flicker against
+live frames:
 
 ```json
 {
@@ -1821,11 +1831,12 @@ must match `omdrc_cdin_logfile` in `rc.conf`):
 - a scrolling **event list**.
 
 Three buttons: **↻** refreshes now, **Log** opens the whole `omdrc-cdin` log in
-the Logs card, and **Stop** / **Start** runs the rc service. Stop asks first:
-it hands `/dev/dsp.play` back to MPD and mpv, and anything playing from the CD
-input stops. It is not part of normal use — the daemon is meant to be left
-running — but it is the one thing watching cannot do, from a box with no
-keyboard. `control = no` in `[cdin]` removes it.
+the Logs card, and **Stop** / **Start** performs the source hand-off around the
+rc service. START first remembers the enabled MPD output and disables
+`OKTO-DAC`, `DRC-native`, and `DRC-resamp`; if that gate fails, CD-in is not
+started. STOP waits for CD-in to release its output, then restores the remembered
+MPD output. The `OMDRC Spectrum` FIFO is deliberately untouched. `control = no`
+in `[cdin]` removes the hand-off button.
 
 Two rules decide what goes where, and they are the whole design of the card:
 
@@ -1986,8 +1997,12 @@ the FFT length. The needle dials scale with the Floor slider and use a tall,
 wide arc for plenty of travel.
 
 **DRC sync.** The FIFO tap is *pre-DRC*, so while BruteFIR is running the
-analyzer holds its window back by the measured BruteFIR path delay to match the
-audible sound; the active value is shown in the status line as `DRC sync +Xs`.
+analyzer holds its window back by the measured path delay to match the audible
+sound; the active value is shown in the `base` / `delta` / `total` readout under
+the sliders. With the chain down every term is zero, which is why MPD straight
+to the DAC already looks in sync. The **Sync** slider closes the residual the
+model under-estimates, and a move now applies on the next frame — it used to
+freeze the plot for as long as the increase, which made the control look inert.
 See [Live Spectrum Analyzer → DRC Sync](SPECTRUM_ANALYZER.md#drc-sync).
 
 The Start button opens `/spectrum/stream`; Stop closes it. The browser also

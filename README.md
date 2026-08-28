@@ -90,8 +90,9 @@ the speakers:
    └── CD player ──S/PDIF──→ ESI U24 XL ──→ omdrc-cdin
 ```
 
-`omdrc-cdin` is the FreeBSD/OSS bridge for the second source. It shares the
-DRC loopback with MPD but holds it only while CD audio is present; see
+`omdrc-cdin` is the FreeBSD/OSS bridge for the second source. The CDIN card
+gates MPD's audible outputs while the bridge is started, because the underlying
+`virtual_oss` endpoint is a mixer; see
 [CD / S/PDIF input](#cd--spdif-input-omdrc-cdin) below.
 The scripts, configs, filters, services and `omdrc-ctrl` panel that manage both
 paths are supplied by this repository.

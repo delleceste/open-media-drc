@@ -49,6 +49,27 @@ of MPD's FIFO `format`.
 This is a pre-DRC MPD tap.  It shows the music stream feeding MPD, not the
 post-BruteFIR corrected DAC signal.  The playback outputs remain unchanged.
 
+**MPD owns this FIFO, and the analyzer must not.**  MPD's `fifo` plugin creates
+the special file when it enables the output, opens a write *and* a read end on
+it, and unlinks it again when the output is disabled.  Put another FIFO at the
+same path and the two sides part company in complete silence: MPD goes on
+writing the inode it opened, which no longer has a name, while the analyzer
+reads a new one nobody writes.  `mpc outputs` still says enabled, the FIFO is
+still there, and the display is simply empty for ever — MPD does not reopen an
+output it believes is fine, so only an MPD restart recovers.  So the analyzer
+enables the output *first* and opens whatever MPD puts there, never creating it
+(`_ensure_fifo(..., create=False)`), and re-checks while it runs that what it
+holds is still what the path names.  The CD FIFO is the other way round: it is
+ours, `omdrcctrl` creates it, and a reader appearing on it is the signal that
+starts the tee.
+
+When PCM never arrives while the producer says it is playing, the card says so
+(`no writer`) with the reason, rather than sitting on "waiting".  On FreeBSD
+that check cannot come from the read alone: a FIFO opened `O_RDONLY|O_NONBLOCK`
+does not report EOF until a writer has attached and gone, so "nobody has ever
+written this" and "the writer has nothing to say" look identical at the
+descriptor.
+
 ### The CD / S-PDIF source
 
 CD audio never passes through MPD.  The bridge reads the capture interface and
@@ -152,12 +173,13 @@ cdin_sample_rate = 44100
 cdin_capture_pcm =
 bits = 32
 channels = 2
-refresh_hz = 10
+refresh_hz = 25
 fft_size = 16384
 precision_fft_size = 65536
 bands = 24
 min_frequency = 31.5
 floor_db = -40
+fall_db_per_s = 30
 vu_mode = bars
 drc_delay_trim_ms = 0
 drc_delay_delta_min_ms = -1000
@@ -232,7 +254,7 @@ Default settings:
 
 | Setting | Value |
 | --- | --- |
-| Refresh | 10 Hz |
+| Refresh | 25 Hz |
 | Music FFT size | 16384 samples |
 | Precision FFT size | 65536 samples |
 | Bands | 24 nice-label logarithmic bands, starting at 31.5 Hz |
@@ -361,30 +383,112 @@ reference-counted, server-side SSE broadcast rather than starting a second
 capture.  The Sync delta and Floor are server-side settings, so every view — main
 page, popout and PiP — shows the same corrected, identically-scaled display.
 
+With `source = auto`, an already-open card follows playback hand-offs in both
+directions: it closes the MPD FIFO and attaches the CD-in FIFO when the CD bridge
+becomes active, then returns to MPD when the bridge stops. The browser stream
+and card stay open throughout the hand-off.
+
 ## DRC Sync
 
-The tap is the **pre-DRC** MPD FIFO, but the sound you hear has been through
-BruteFIR, which is late.  Left uncorrected, the bars and VU would run ahead of
-the music.  While BruteFIR is running, the analyzer holds its analysis window
-back by the BruteFIR path delay so the display matches what is audible.
+The tap is at the **top** of the chain — MPD's second FIFO output, or the CD
+bridge teeing the period it is about to play — while the sound you hear has been
+through the loopback, BruteFIR and the DAC, all of which are late.  Left
+uncorrected the bars run ahead of the music, and keep going after it stops.  The
+analyzer therefore holds its analysis window back by the whole path delay.
 
-The delay is computed from the **active** filter (see
-`video/AV-SYNC-DELAY.md` for the full derivation) and has two exact parts:
+Every stage gets its own term, derived from the chain that is actually running:
 
-- **Filter group delay** — the impulse-response peak of the active `L.raw`
-  (`argmax(|h|) / rate`).  For the bundled correction filters this is ~0.5 s and
-  is the same in *time* at every sample rate.
-- **BruteFIR partition latency** — one `filter_length` block,
-  `partition_size / rate`, read from `~/.config/BruteFIR/brutefir_defaults.conf`.
-  This term is rate-dependent: at 192 kHz it is ~0.17 s (≈0.67 s total, matching
-  the video delay); for native playback at 48 kHz it is larger.
+| Stage | How it is obtained | At 44.1 kHz, flat, `-s 200ms` |
+| --- | --- | --- |
+| virtual_oss | `drc_voss_blocks` x its own `-s` argument, read off the running process | 600 ms |
+| Filter group delay | `argmax(|h|) / rate` of the active coefficient | 0 ms (`dirac pulse`) |
+| Convolver | one `filter_length` partition | 186 ms |
+| BruteFIR I/O | `drc_brutefir_io_partitions` more of them | 371 ms |
+| Output | `drc_output_delay_ms` — DAC buffer and USB | 150 ms |
 
-`drc_delay_trim_ms` adds the small, runtime loopback/output buffering on top.
+The panel prints the breakdown term by term, so an estimate that looks wrong can
+be traced to the stage responsible instead of guessed at.
 
-The value is cached and recomputed only when the active config, filter file or
-defaults change, so it tracks preset / rate / filter edits with no per-frame
-cost.  When DRC is bypassed (BruteFIR not running) the delay is zero.  The live
-value is shown in the card status line as `DRC sync +Xs`.
+Two properties are worth calling out because they are easy to get backwards:
+
+- **The loopback is usually the largest term, and it does not scale with rate.**
+  `drc.sh` starts virtual_oss with `-s 200ms`, a *duration*, so those 600 ms are
+  the same at 44.1 kHz and at 192 kHz — while the BruteFIR partitions shrink as
+  the rate rises.  An earlier version of this estimate counted BruteFIR alone
+  and was short by well over a second.
+- **`dirac pulse` really does have zero group delay.**  BruteFIR's built-in
+  identity coefficient is an in-memory impulse, not a missing RAW file, and it
+  peaks at index 0 — so on the shipped flat profile the entire delay is
+  buffering.  The convolver partition is still charged.
+
+Stages that are not running contribute nothing: with the chain down (MPD
+straight to the DAC) the total is zero.
+
+The hold-back is anchored to the **clock**, not to the end of the capture
+buffer.  That distinction only shows up when the music stops: a fixed byte
+offset from the end of a buffer that has stopped growing freezes the display,
+so the plots outlive the sound by the whole delay.  Anchored to the clock, the
+read point keeps draining forward at one second per second once the writes
+stop — the display plays out the buffered tail exactly as the chain does, and
+goes silent when the tail is genuinely finished rather than after a fixed
+fraction of a second.  It also means a producer that drops frames (the CD
+bridge tees non-blocking, and says so in its `[stats]` line) cannot walk the
+display out of sync.
+
+With **Auto sync delay** off, the three *modelled* stages — virtual_oss, the
+BruteFIR I/O buffers and the output — are replaced wholesale by the configured
+`drc_delay_trim_ms`, so a figure measured with `tools/measure-drc-delay.sh` is
+not double-counted against a model of the same buffering.  What is *read* from
+the filter (group delay and the convolver partition) still counts in both modes.
+
+Reading the FIR to find its peak is cached on the filter's mtime; the rest is a
+short-TTL `ps` read, so the estimate follows a virtual_oss restart or a preset
+change under a card that never closed, at no per-frame cost.  The live value is
+shown by the `base` / `delta` / `total` readout under the sliders.
+
+**Auto sync delay** is the one checkbox below the Sync slider.  With it on, a
+running analyzer re-derives the estimate every couple of seconds, because the
+chain under an open card is not fixed: virtual_oss restarts at every rate change
+and a preset switch reloads BruteFIR with a different filter.  The expensive
+part is cached, so this costs nothing per frame.  Ordinary MPD, qobuzconnect2mpd
+and upmpdcli track changes do not change the answer.  The setting is remembered
+across restarts.
+
+This is a calculation from the active DRC configuration, not an acoustic or DAC
+loopback measurement. A real end-to-end measurement needs a separate post-DRC
+capture tap and an injected known signal; `tools/measure-drc-delay.sh` provides
+that disruptive calibration procedure. It is intentionally never run from the
+web card during music playback.
+
+### Stale history is dropped at a resume
+
+The hold-back reads back into the capture buffer, and that buffer survives a
+pause.  So a resume used to land the read point in the tail of whatever played
+*before* the gap: the bars came alive within a frame of Play, showing the end of
+the previous track, while the new music was still working its way down the
+chain.  To a listener that reads as "the bars move immediately and the sound
+arrives two seconds later" — the display looks early when it is in fact a whole
+track late, and no amount of Sync-slider adjustment can fix it, because the
+error is *what* is being drawn and not *when*.
+
+PCM arriving after a gap longer than the silence timeout therefore clears the
+retained history.  The bars then stay at the floor until real audio has been in
+flight for the length of the hold-back — which is also, to within a frame,
+when the first of it reaches the speakers.
+
+### What the no-DRC case tells you
+
+With the chain down the model yields **zero** — no virtual_oss, no convolver,
+no BruteFIR I/O — and the analyzer holds nothing back.  That is exactly what a
+listener sees: MPD straight to the DAC already looks in sync.  It is worth
+stating plainly, because it is the one free calibration point available, and it
+says the model's *shape* is right.  MPD's own buffering does not put the tap
+ahead of the DAC; everything that does is added by the DRC chain, and every
+stage of that chain is enumerated above.
+
+What the model gets wrong is the *size*, not the set of terms: with DRC up the
+real lead measures larger than they sum to.  Closing that residual is the Sync
+slider's job.
 
 ### Sync slider
 
@@ -403,10 +507,47 @@ effect.  The slider position is remembered across restarts (persisted as
 [Runtime state](#runtime-state)) and is applied to the shared capture thread, so
 every connected browser sees the same corrected display.
 
+A slider move applies on the **very next frame**.  It did not always: the
+capture buffer was trimmed to the hold-back then in force, and the trim runs
+before the section that recomputes it, so every *increase* found the history
+already cut short and the analyzer published `waiting` with no bands for
+exactly as long as the increase.  Dragging the slider restarted that stall at
+every intermediate value, so the plot never moved and the control looked
+completely inert.  The buffer now reserves the slider's whole travel
+(`base + drc_delay_delta_max_ms`, a couple of MB), so the read point stays
+inside it wherever the slider is put.  The one wait that remains is inherent
+and only at startup: the analyzer cannot show delayed audio it has not captured
+yet, so the first `base + delta` seconds of a fresh attachment read `waiting`.
+
 The travel limits are the two config-editable keys `drc_delay_delta_min_ms` and
 `drc_delay_delta_max_ms` (default `-1000` … `2000`, i.e. −1 s … +2 s).  Unlike
-`drc_delay_trim_ms`, which is a static fine-tune baked into the base, the slider
-delta is a runtime setting and is not written back to `commands.conf`.
+`drc_delay_trim_ms`, which replaces the modelled stages when Auto sync is off,
+the slider delta is a runtime setting and is not written back to `commands.conf`.
+
+## Responsiveness
+
+Two settings decide how the bars behave, and they are deliberately separate:
+
+| Setting | What it controls |
+| --- | --- |
+| `refresh_hz` | how often the server analyses and publishes a frame |
+| `fall_db_per_s` | how fast a bar falls back once its band goes quiet |
+
+There is no attack setting, because there is no attack shaping.  Every band is
+**peak-held across the whole frame interval**: a tier whose analysis window is
+shorter than the interval steps back over the new audio in half-window hops and
+keeps the loudest result, so a transient is drawn whatever moment inside the
+frame it arrived in.  This is what fast percussion needs — a 2048-sample treble
+window spans about 43 ms, and at the old 10 Hz default that left most of every
+100 ms interval unanalysed, so hi-hats landing in the gaps were simply never
+seen.  At 25 Hz the interval is 40 ms, every window already covers it, and the
+hops cost nothing; they only start doing work if `refresh_hz` is lowered or a
+frame runs late.
+
+Falls are shaped instead, in the browser, at a constant dB/s so the bars travel
+at a readable and uniform speed.  Because the release is animated client-side,
+the server does not have to keep publishing frames to make the bars come down
+when the music stops — the last frame says where they are going.
 
 ## Host Load
 
@@ -416,11 +557,16 @@ Expected load is low:
 | --- | --- |
 | FIFO PCM read | about 0.38 MB/s at 48 kHz, stereo, 32-bit |
 | FFT CPU | small; normally far below BruteFIR convolution cost |
-| LAN traffic | tiny at 10 Hz with 24 bands |
+| LAN traffic | tiny at 25 Hz with 24 bands |
 | Memory | a small rolling PCM buffer plus FFT arrays |
 
 The analyzer does no work while the card is stopped or the browser page is
-hidden/closed.
+hidden/closed.  The band analysis measures about 2 ms per display frame for both
+channels on this box — roughly 5% of one core at 25 Hz, against 2.6% at the old
+10 Hz default, which is the whole CPU price of the responsiveness.  A frame that
+has nothing new to say is not published at all, so a paused source costs nothing
+on the wire either.  The delay estimate is re-derived on a two-second cadence
+only while a card is open, and behind a cache, so there is no background timer.
 
 ## Limitations
 

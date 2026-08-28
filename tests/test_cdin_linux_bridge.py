@@ -299,7 +299,7 @@ class CaptureRoleTest(unittest.TestCase):
 
 
 class ExclusiveSourceTest(unittest.TestCase):
-    """drc.sh: one seat on hw:Loopback,0,0, and who gets it."""
+    """drc.sh: CD input gates MPD outputs on both supported platforms."""
 
     def setUp(self):
         self.text = DRC.read_text()
@@ -308,15 +308,28 @@ class ExclusiveSourceTest(unittest.TestCase):
         """Enabling DRC-native while alsaloop holds the substream is an EBUSY
         that surfaces as "Failed to open audio output" on the next Play."""
         self.assertTrue(re.search(
-            r'if \$IS_LINUX && \[ "\$\{source_mode:-music\}" = "cdin" \]; then'
+            r'if \[ "\$\{source_mode:-music\}" = "cdin" \]; then'
             r'.{0,600}?mpc_bounded disable "DRC-native"', self.text, re.S),
             "the cdin branch must leave MPD without a loopback output")
 
+    def test_cdin_mode_remembers_the_output_for_the_web_stop_action(self):
+        self.assertIn('CDIN_MPD_OUTPUT_FILE="$STATE_DIR/cdin-mpd-output"', self.text)
+        self.assertIn('> "$CDIN_MPD_OUTPUT_FILE"', self.text)
+
     def test_the_bridge_is_stopped_before_the_chain_is_torn_down(self):
         """Both `off/stop` and the rebuild path must free the substream first."""
-        self.assertEqual(
-            self.text.count("if $IS_LINUX; then stop_cdin_linux || true; else release_cdin; fi"),
-            2, "a teardown path no longer releases the loopback")
+        self.assertEqual(self.text.count("release_cdin_or_restore_mpd\n"), 2,
+                         "a teardown path no longer releases the loopback")
+        self.assertIn('mpc_bounded enable only "OKTO-DAC"', self.text)
+        self.assertIn("MPD direct output restored to OKTO-DAC; requested audio change was not applied",
+                      self.text)
+
+    def test_freebsd_bridge_release_uses_process_lifecycle(self):
+        self.assertIn('service omdrc_cdin onestop', self.text)
+        self.assertIn('source=process_exit', self.text)
+        self.assertIn('CDIN_RESTART_NEEDED=1', self.text)
+        self.assertNotIn('cannot verify omdrc-cdin release; log is unreadable',
+                         self.text)
 
     def test_stopping_waits_for_the_process_not_the_unit(self):
         """`systemctl stop` returns before the kernel closes the substream."""

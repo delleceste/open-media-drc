@@ -302,26 +302,43 @@ class DismissRoute(unittest.TestCase):
 class Control(unittest.TestCase):
     """Start and stop, and why the rc exit status is not the answer."""
 
-    def _post(self, action, rc=0, output="", settles=True, control=True):
+    def _post(self, action, rc=0, output="", settles=True, control=True,
+              gate_ok=True):
         done = subprocess.CompletedProcess([], rc, stdout=output, stderr="")
         running = settles == (action == "start")
         with mock.patch.object(APP, "CDIN_CONTROL", control), \
              mock.patch.object(APP, "CDIN_SETTLE_SECONDS", 0.0), \
+             mock.patch.object(APP, "_cdin_disable_mpd_outputs",
+                               return_value=(gate_ok, "gate failed")) as gate, \
+             mock.patch.object(APP, "_cdin_restore_mpd_output",
+                               return_value=(True, "")) as restore, \
              mock.patch.object(APP, "_service_action", return_value=done) as svc, \
              mock.patch.object(APP, "_process_running", return_value=running):
             response = APP.app.test_client().post(
                 "/cdin/control", json={"action": action})
+        self.last_gate = gate
+        self.last_restore = restore
         return response, svc
 
     def test_start_runs_the_rc_verb_and_reports_the_process(self):
         response, svc = self._post("start")
         self.assertTrue(response.get_json()["ok"])
+        self.last_gate.assert_called_once_with()
+        self.last_restore.assert_not_called()
         svc.assert_called_once_with(APP.CDIN_SERVICE, "onestart")
 
     def test_stop_runs_the_rc_verb(self):
         response, svc = self._post("stop")
         self.assertTrue(response.get_json()["ok"])
+        self.last_gate.assert_not_called()
+        self.last_restore.assert_called_once_with()
         svc.assert_called_once_with(APP.CDIN_SERVICE, "onestop")
+
+    def test_start_refuses_to_run_when_mpd_cannot_be_gated(self):
+        response, svc = self._post("start", gate_ok=False)
+        self.assertEqual(response.status_code, 502)
+        self.assertFalse(response.get_json()["ok"])
+        svc.assert_not_called()
 
     def test_a_zero_exit_that_did_not_start_anything_is_a_failure(self):
         """`service ... onestart` forks a daemon(8) and answers immediately, so
@@ -331,6 +348,7 @@ class Control(unittest.TestCase):
         body = response.get_json()
         self.assertFalse(body["ok"])
         self.assertIn("did not start", body["error"])
+        self.last_restore.assert_called_once_with()
 
     def test_a_missing_sudoers_grant_says_so(self):
         response, _ = self._post(
@@ -354,6 +372,40 @@ class Control(unittest.TestCase):
         than from the poll that was already in flight."""
         response, _ = self._post("start")
         self.assertIn("status", response.get_json())
+
+
+class MpdOutputGate(unittest.TestCase):
+    """The CD card owns only audible MPD outputs, never the Spectrum FIFO."""
+
+    def test_start_remembers_the_enabled_output_and_disables_all_audible_ones(self):
+        outputs = [
+            {"id": "1", "name": "OKTO-DAC", "enabled": False},
+            {"id": "2", "name": "DRC-native", "enabled": True},
+            {"id": "3", "name": "DRC-resamp", "enabled": False},
+            {"id": "4", "name": "OMDRC Spectrum", "enabled": True},
+        ]
+        with mock.patch.object(APP, "_mpd_outputs", return_value=outputs), \
+             mock.patch.object(APP, "_mpd_output_action",
+                               return_value=(True, "")) as action, \
+             mock.patch.object(APP, "_write_state_str") as write:
+            ok, error = APP._cdin_disable_mpd_outputs()
+        self.assertTrue(ok, error)
+        self.assertEqual(
+            [call.args for call in action.call_args_list],
+            [("OKTO-DAC", "disable"), ("DRC-native", "disable"),
+             ("DRC-resamp", "disable")])
+        write.assert_called_once_with(APP._CDIN_MPD_OUTPUT_FILE, "DRC-native")
+
+    def test_stop_restores_exactly_the_remembered_output(self):
+        with mock.patch.object(APP, "_read_state_str", return_value="DRC-resamp"), \
+             mock.patch.object(APP, "_mpd_output_action",
+                               return_value=(True, "")) as action:
+            ok, error = APP._cdin_restore_mpd_output()
+        self.assertTrue(ok, error)
+        self.assertEqual(
+            [call.args for call in action.call_args_list],
+            [("OKTO-DAC", "disable"), ("DRC-native", "disable"),
+             ("DRC-resamp", "enable")])
 
 
 if __name__ == "__main__":

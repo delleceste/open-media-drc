@@ -181,6 +181,10 @@ POWER_FILE="$STATE_DIR/last_power"
 # 44.1-kHz music from the explicit CD/S-PDIF mode.  This survives reboot and
 # lets restore bring the chain back before omdrc-cdin starts.
 SOURCE_FILE="$STATE_DIR/last_source"
+# Audible MPD output gated while the explicit CD source owns /dev/dsp.play.
+# The web CDIN card reads the same file on STOP and restores this exact output;
+# the Spectrum FIFO is intentionally not part of the gate.
+CDIN_MPD_OUTPUT_FILE="$STATE_DIR/cdin-mpd-output"
 # Runtime filter-set (geometry) override, written by `drc.sh geometry <name>`
 # and by the web remote.  The config file's GEOMETRY is the *default*; this file
 # is the *current choice*.  Kept in the state dir beside last_arg / last_power so
@@ -533,45 +537,52 @@ start_cdin_linux() {
   return 0
 }
 
+CDIN_RESTART_NEEDED=0
 release_cdin() {
-  local pid first_line held i new
-  pid=$(pgrep -o -x omdrc-cdin 2>/dev/null || true)
-  [ -n "$pid" ] || return 0
+  local i=0
+  pgrep -q -x omdrc-cdin 2>/dev/null || return 0
 
-  # The daemon's own line-buffered file log is the acknowledgement channel.
-  # Record whether it currently owns playback and where new lines begin before
-  # signalling.  If the log is unavailable we cannot prove that the CUSE client
-  # closed, so fail safe rather than tearing virtual_oss down on a guess.
-  if [ ! -r "$OMDRC_CDIN_LOG_FILE" ]; then
-    echo "warning: cannot verify omdrc-cdin release; log is unreadable: $OMDRC_CDIN_LOG_FILE" >&2
-    return 1
-  fi
-  first_line=$(( $(wc -l < "$OMDRC_CDIN_LOG_FILE") + 1 ))
-  held=$(awk '
-    /playback .*: acquired$/ { held=1 }
-    /playback .*: released$/ { held=0 }
-    END { print held+0 }
-  ' "$OMDRC_CDIN_LOG_FILE")
-
-  echo "asking omdrc-cdin to release its output"
-  kill -HUP "$pid" 2>/dev/null || return 0
-
-  i=0
-  while [ "$i" -lt "$OMDRC_CDIN_RELEASE_POLLS" ]; do
-    kill -0 "$pid" 2>/dev/null || return 0
-    new=$(tail -n "+$first_line" "$OMDRC_CDIN_LOG_FILE" 2>/dev/null || true)
-    if printf '%s\n' "$new" | grep -Eq 'state idle: release requested \(SIGHUP\)|holding off the output for'; then
-      if [ "$held" -eq 0 ] || printf '%s\n' "$new" | grep -q 'playback .*: released$'; then
-        log_event "event=cdin_release result=ack polls=${i}"
-        return 0
-      fi
+  # Stop the bridge and use process exit as the release acknowledgement.  The
+  # old SIGHUP path inferred release from a logfile, which was fragile when the
+  # file had been rotated or unlinked.  Every successful transition restarts
+  # the bridge below, so stopping it here also guarantees that it re-picks the
+  # correct output device after the chain changes.
+  CDIN_RESTART_NEEDED=1
+  echo "stopping omdrc-cdin so it releases its output"
+  sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service omdrc_cdin onestop \
+      >/dev/null 2>&1 || true
+  while [ "$i" -lt "$OMDRC_CDIN_STOP_POLLS" ]; do
+    if ! pgrep -q -x omdrc-cdin 2>/dev/null; then
+      log_event "event=cdin_release result=ack source=process_exit polls=${i}"
+      return 0
     fi
     sleep 0.1
     i=$((i + 1))
   done
 
-  log_event "event=cdin_release result=timeout polls=${i}"
-  echo "ERROR: omdrc-cdin did not acknowledge output release; refusing virtual_oss teardown" >&2
+  log_event "event=cdin_release result=timeout source=process_exit polls=${i}"
+  echo "ERROR: omdrc-cdin did not stop; refusing virtual_oss teardown" >&2
+  return 1
+}
+
+# release_cdin deliberately refuses to tear virtual_oss down unless the CD
+# bridge acknowledges that it released the playback device.  By the time the
+# transition calls us, however, BruteFIR is stopped and MPD's DRC outputs have
+# already been disabled.  Letting `set -e` propagate a failed acknowledgement
+# at that point leaves MPD with no enabled output.  Restore the direct output
+# before returning the original failure to the caller/UI.  Keep virtual_oss
+# intact: release_cdin's refusal means it is not safe to tear that device down.
+release_cdin_or_restore_mpd() {
+  release_cdin && return 0
+
+  echo "warning: CD input release failed; restoring MPD direct output" >&2
+  if mpc_bounded enable only "OKTO-DAC" >/dev/null 2>&1; then
+    log_event "event=cdin_release_recovery result=ok output=OKTO-DAC"
+    echo "MPD direct output restored to OKTO-DAC; requested audio change was not applied" >&2
+  else
+    log_event "event=cdin_release_recovery result=fail output=OKTO-DAC"
+    echo "ERROR: could not restore MPD direct output after CD input release failure" >&2
+  fi
   return 1
 }
 
@@ -624,7 +635,8 @@ restart_cdin() {
     # an ordinary rate/geometry change, it is allowed to start a bridge that
     # the panel had not started yet.  onestart deliberately ignores the NO
     # rcvar used by the web-controlled lifecycle.
-    [ "${OMDRC_START_CDIN:-0}" = 1 ] || return 0
+    [ "${OMDRC_START_CDIN:-0}" = 1 ] || \
+      [ "$CDIN_RESTART_NEEDED" = 1 ] || return 0
     echo "starting omdrc-cdin for the selected CD input"
     sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service omdrc_cdin onestart \
         >/dev/null 2>&1 ||
@@ -740,6 +752,17 @@ usage() {
 
 # ── explicit persistent CD-input mode ───────────────────────────────────────
 if [ $# -eq 1 ] && [ "$1" = "cdin" ]; then
+  _cdin_previous_output=$(mpc_bounded outputs 2>/dev/null | awk '
+    /^Output [0-9]+ \((OKTO-DAC|DRC-native|DRC-resamp)\) is enabled$/ {
+      sub(/^Output [0-9]+ \(/, ""); sub(/\) is enabled$/, ""); print; exit
+    }')
+  case "$_cdin_previous_output" in
+    OKTO-DAC|DRC-native|DRC-resamp)
+      printf '%s\n' "$_cdin_previous_output" > "$CDIN_MPD_OUTPUT_FILE"
+      chmod 644 "$CDIN_MPD_OUTPUT_FILE" 2>/dev/null || true
+      ;;
+  esac
+  unset _cdin_previous_output
   printf '%s\n' cdin > "$SOURCE_FILE"
   chmod 644 "$SOURCE_FILE" 2>/dev/null || true
   log_event "event=source_saved source=cdin rate=44100"
@@ -1429,7 +1452,11 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
   sleep 0.5
-  if $IS_LINUX; then stop_cdin_linux || true; else release_cdin; fi
+  if $IS_LINUX; then
+    stop_cdin_linux || true
+  else
+    release_cdin_or_restore_mpd
+  fi
   # Now tear the chain down so the DAC is free before the direct output opens
   # it (the DAC is single-open: vchans off / bit-perfect).
   if ! $IS_LINUX; then
@@ -1473,7 +1500,11 @@ mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
 # an open MPD output is what produced "exception: Failed to open audio output"
 # and forced a second run.
 sleep 0.5
-if $IS_LINUX; then stop_cdin_linux || true; else release_cdin; fi
+if $IS_LINUX; then
+  stop_cdin_linux || true
+else
+  release_cdin_or_restore_mpd
+fi
 
 # ── restart virtual_oss at the required sample rate ──────────────────────────
 if ! $IS_LINUX; then
@@ -1586,18 +1617,11 @@ if [ "$mode" = "resamp" ]; then
 else
   mpd_output="DRC-native"
 fi
-# Linux + CD input: MPD gets NO output at all, and that is the correct answer
-# rather than a limitation worked around.  Both DRC outputs write into
-# hw:Loopback,0,0, the bridge is about to take that substream, and a substream
-# has one seat — whichever opens second gets EBUSY.  Enabling an output here
-# would either steal the disc's seat or leave MPD in a state where the next
-# Play fails with "Failed to open audio output".  The direct OKTO-DAC output is
-# no better: BruteFIR holds the DAC.  So the CD input is an exclusive source on
-# Linux, and selecting music is what gives MPD its output back.
-#
-# FreeBSD does not have this problem and deliberately keeps its behaviour:
-# virtual_oss mixes, so MPD and the bridge share /dev/dsp.play.
-if $IS_LINUX && [ "${source_mode:-music}" = "cdin" ]; then
+# CD input is an exclusive source on both platforms. Linux enforces this at the
+# ALSA loopback itself; FreeBSD's virtual_oss would otherwise mix CD and MPD,
+# so enforce the same policy by gating MPD's audible outputs. The Spectrum FIFO
+# remains independently controlled by the visible analyzer card.
+if [ "${source_mode:-music}" = "cdin" ]; then
   mpc_bounded disable "OKTO-DAC"   >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true

@@ -1021,6 +1021,16 @@
             color: var(--text);
             font-weight: 600;
         }
+        .spectrum-auto-sync {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding-top: 10px;
+            color: var(--muted);
+            font-size: .74rem;
+            cursor: pointer;
+        }
+        .spectrum-auto-sync input { accent-color: var(--accent); }
         @media (orientation: landscape) and (min-width: 700px) {
             body { max-width: 960px; }
             .spectrum-grid { grid-template-columns: 1fr 1fr; }
@@ -1435,6 +1445,12 @@
             · delta <strong id="drc-delta-ms">–</strong> ms
             · total <strong id="drc-total-ms">–</strong> ms
         </div>
+        <label class="spectrum-auto-sync" title="Recalculate the DRC-path delay while this card is open; turn off when it is known to remain unchanged.">
+            <input id="spectrum-auto-sync" type="checkbox"
+                   {% if spectrum.drc_delay_auto_sync %}checked{% endif %}
+                   onchange="setSpectrumAutoSync(this.checked)">
+            Auto sync delay
+        </label>
         </div>
     </div>
     <div class="vu-wrap">
@@ -3033,8 +3049,10 @@ let spectrumMode = 'music';
 // DRC-sync slider: measured base delay + a live listener delta (both ms).
 let spectrumDelayBaseMs = {{ spectrum.drc_delay_base_ms }};
 let spectrumDelayDeltaMs = {{ spectrum.drc_delay_delta_ms }};
+let spectrumAutoSync = {{ 'true' if spectrum.drc_delay_auto_sync else 'false' }};
 let spectrumDelayPost = null;   // debounce handle for POSTing the delta
 let spectrumFloorPost = null;   // debounce handle for POSTing the floor
+let spectrumReconnect = null;   // retry handle for a dropped SSE stream
 let currentVuMode = SPECTRUM_VU_MODE;
 let lastVu = {};
 // ── VU ballistics (analog-style needle/bar decay) ─────────────────────────────
@@ -3054,6 +3072,18 @@ let vuRaf = null, vuLastTs = 0;
 let lastSpectrumBands = [];
 let lastSpectrumLeft = [];
 let lastSpectrumRight = [];
+// ── band ballistics ──────────────────────────────────────────────────────────
+// The server peak-holds every band over the whole frame interval, so a rise is
+// a real transient that must land on the bar immediately — easing the attack
+// would only put the hi-hats back where they were.  Only the release is shaped,
+// at a constant dB/s so the bars travel at a readable, uniform speed, and it is
+// animated here rather than at the frame rate: the analyzer stops publishing
+// once the music stops, and the bars still have to walk down.
+const BAND_FALL_DB_S = {{ spectrum.fall_db_per_s }};
+const BAND_DRAW_MS = 33;        // cap the redraw at ~30 fps between frames
+let bandTarget = { left: [], right: [] };
+let bandDisp = { left: [], right: [] };
+let bandRaf = null, bandLastTs = 0, bandLastDraw = 0;
 
 function spectrumStatus(text, color) {
     const el = document.getElementById('spectrum-status');
@@ -3069,6 +3099,10 @@ function setSpectrumButton(active) {
 }
 
 function clearSpectrum() {
+    if (bandRaf) { cancelAnimationFrame(bandRaf); bandRaf = null; }
+    bandTarget = { left: [], right: [] };
+    bandDisp = { left: [], right: [] };
+    lastSpectrumBands = [];
     drawBandSpectrum([], [], []);
     snapVu({});   // hard reset to floor (no analog glide) on clear/disconnect
 }
@@ -3226,8 +3260,49 @@ function showSpectrumBody(show) {
     }
 }
 
-function drawBandSpectrum(bands, left, right) {
+// New frame → set the per-band targets and make sure the release is running.
+function updateBands(bands, left, right) {
     lastSpectrumBands = bands || [];
+    const n = lastSpectrumBands.length;
+    for (const [ch, vals] of [['left', left || []], ['right', right || []]]) {
+        const tgt = new Array(n);
+        for (let i = 0; i < n; i++) tgt[i] = Number(vals[i] ?? VU_FLOOR_DB);
+        const disp = bandDisp[ch];
+        if (disp.length !== n) {
+            // A re-banded plot (the source changed rate) has nothing to glide
+            // from; take the new values as they stand.
+            bandDisp[ch] = tgt.slice();
+        } else {
+            for (let i = 0; i < n; i++) if (tgt[i] >= disp[i]) disp[i] = tgt[i];
+        }
+        bandTarget[ch] = tgt;
+    }
+    if (!bandRaf) { bandLastTs = 0; bandRaf = requestAnimationFrame(bandStep); }
+}
+
+function bandStep(ts) {
+    const dt = bandLastTs ? Math.min(0.1, (ts - bandLastTs) / 1000) : 0;
+    bandLastTs = ts;
+    let settled = true;
+    for (const ch of ['left', 'right']) {
+        const disp = bandDisp[ch], tgt = bandTarget[ch];
+        for (let i = 0; i < disp.length; i++) {
+            if (tgt[i] >= disp[i]) { disp[i] = tgt[i]; continue; }
+            disp[i] = Math.max(tgt[i], disp[i] - BAND_FALL_DB_S * dt);
+            if (disp[i] - tgt[i] > 0.1) settled = false;
+        }
+    }
+    // Throttle the redraw between frames, but never leave the last step
+    // undrawn: the loop stops the moment it settles, and that final state is
+    // usually the attack the listener is waiting to see.
+    if (settled || ts - bandLastDraw >= BAND_DRAW_MS) {
+        bandLastDraw = ts;
+        drawBandSpectrum(lastSpectrumBands, bandDisp.left, bandDisp.right);
+    }
+    bandRaf = settled ? null : requestAnimationFrame(bandStep);
+}
+
+function drawBandSpectrum(bands, left, right) {
     lastSpectrumLeft = left || [];
     lastSpectrumRight = right || [];
     initSpectrumChart();
@@ -3312,6 +3387,26 @@ function setSpectrumDelay(value) {
             })
             .catch(() => {});
     }, 250);
+}
+
+function setSpectrumAutoSync(enabled) {
+    spectrumAutoSync = Boolean(enabled);
+    const box = document.getElementById('spectrum-auto-sync');
+    if (box) box.checked = spectrumAutoSync;
+    fetch('/spectrum/drc-delay-auto-sync', {
+        method: 'POST',
+        body: new URLSearchParams({ enabled: spectrumAutoSync ? '1' : '0' }),
+    }).then(r => r.json()).then(j => {
+        if (j && j.ok) {
+            spectrumAutoSync = Boolean(j.drc_delay_auto_sync);
+            if (box) box.checked = spectrumAutoSync;
+        }
+    }).catch(() => {
+        // Restore the server-rendered truth after a failed request rather than
+        // leaving a checkbox that promises a mode the capture thread lacks.
+        spectrumAutoSync = !spectrumAutoSync;
+        if (box) box.checked = spectrumAutoSync;
+    });
 }
 
 function dbToPct(db, floor = spectrumFloorDb) {
@@ -3454,7 +3549,13 @@ function handleSpectrumFrame(d) {
     if (!d.ok) {
         spectrumStatus(d.error || d.state || 'not streaming',
                        d.state === 'idle' ? 'var(--muted)' : 'var(--red)');
-        if (d.state !== 'idle') clearSpectrum();
+        // A fault is not a reason to wipe the plot from under the listener.
+        // The analyzer retries an attachment that failed because a producer is
+        // restarting (switching DRC mode restarts MPD), so let the bars glide
+        // down to the floor and be ready to come back up.  Only a deliberate
+        // stop clears them outright.
+        if (d.state === 'idle') clearSpectrum();
+        else { updateBands(lastSpectrumBands, [], []); snapVu({}); }
         return;
     }
     const modeText = d.mode ? ` · ${d.mode}` : '';
@@ -3464,11 +3565,15 @@ function handleSpectrumFrame(d) {
         spectrumDelayBaseMs = d.drc_delay_base * 1000;
         renderDelayReadout();
     }
-    const drcText = d.drc_delay ? ` · DRC sync +${d.drc_delay.toFixed(2)}s` : '';
+    if (typeof d.drc_delay_auto_sync === 'boolean') {
+        spectrumAutoSync = d.drc_delay_auto_sync;
+        const box = document.getElementById('spectrum-auto-sync');
+        if (box) box.checked = spectrumAutoSync;
+    }
     // Name the producer: two sources at two different rates now feed this card,
     // and "48000 Hz" alone no longer says which one is being analysed.
     const srcText = d.source_label ? ` · ${d.source_label}` : '';
-    spectrumStatus(d.state === 'running' ? `running${modeText}${srcText} · ${d.rate || ''} Hz${drcText}` : d.state,
+    spectrumStatus(d.state === 'running' ? `running${modeText}${srcText} · ${d.rate || ''} Hz` : d.state,
                    d.state === 'running' ? 'var(--green)' : 'var(--muted)');
     if (d.source_label && d.rate) {
         const el = document.getElementById('spectrum-source-label');
@@ -3477,7 +3582,7 @@ function handleSpectrumFrame(d) {
             `${d.source_label} · ${d.rate} Hz`;
     }
     if (d.bands && d.left && d.right) {
-        drawBandSpectrum(d.bands, d.left, d.right);
+        updateBands(d.bands, d.left, d.right);
         updateVu(d.vu || {});
     }
 }
@@ -3521,13 +3626,21 @@ function startSpectrum() {
         catch { spectrumStatus('bad spectrum frame', 'var(--red)'); }
     };
     spectrumSource.onerror = () => {
-        spectrumStatus('stream disconnected', 'var(--red)');
         stopSpectrum(false);
+        spectrumStatus('stream disconnected — reconnecting', 'var(--red)');
+        // Come back on our own.  The card used to sit there dead until the
+        // listener pressed Stop and Start again, which is exactly the state a
+        // dropped connection leaves it in.
+        if (spectrumReconnect) clearTimeout(spectrumReconnect);
+        spectrumReconnect = setTimeout(() => {
+            if (spectrumWanted && !document.hidden) startSpectrum();
+        }, 1500);
     };
 }
 
 function stopSpectrum(clearWanted = true) {
     if (clearWanted) spectrumWanted = false;
+    if (spectrumReconnect) { clearTimeout(spectrumReconnect); spectrumReconnect = null; }
     if (spectrumSource) {
         spectrumSource.close();
         spectrumSource = null;

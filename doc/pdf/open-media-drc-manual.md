@@ -200,11 +200,13 @@ On FreeBSD this is `omdrc-cdin`, a purpose-written daemon: a `memcpy` through
 a ring whose *lead* absorbs the permanent few-ppm difference between the
 disc's crystal and the DAC's --- no resampler, so the bit-perfect claim
 survives the CD path too --- and it holds the loopback only while audio is
-actually on the wire, so leaving it running costs MPD and mpv nothing. On
-Linux the same job is `alsaloop(1)` from `alsa-utils`, steering `snd-aloop`'s
-rate-shift control instead of a hand-rolled ring, but the loopback there is a
-single substream, so the CD input becomes an *exclusive* source rather than
-one that shares the loopback with MPD. Full treatment, including the ESI
+actually on the wire. The source-selection policy is nevertheless exclusive:
+the CD-input control remembers and disables MPD's audible output before the
+bridge starts, then restores that exact output after it stops. This is explicit
+on FreeBSD because `virtual_oss` would otherwise mix both writers. On Linux the
+same job is `alsaloop(1)` from `alsa-utils`, steering `snd-aloop`'s rate-shift
+control instead of a hand-rolled ring; its single-substream loopback enforces
+the same exclusivity at the device level. Full treatment, including the ESI
 configuration both platforms depend on, in chapter \ref{sec:cdin}.
 
 ## The loopback: snd-aloop (Linux) / virtual_oss (FreeBSD)
@@ -755,17 +757,20 @@ each pcm attach/detach. It adds no lock and no independent race window.
 
 #### omdrc_cdin
 
-`omdrc_cdin` runs continuously as the configured audio user. It holds the
-capture role, but opens its playback destination only while audio is present.
-It prefers `/dev/dsp.play` when DRC is active and can fall back to
-`/dev/dsp.dac` when DRC is off. The `release` extra command sends SIGHUP.
+`omdrc_cdin` runs as the configured audio user. Internally it holds the capture
+role but opens its playback destination only while audio is present. At the
+source-policy level, however, a running bridge is exclusive: the controller
+remembers and disables MPD's audible output before Start and restores it after
+Stop, because `virtual_oss` would otherwise mix both sources.
 
-Before replacing `virtual_oss`, `drc.sh` now verifies release through the
-daemon's line-buffered log. It records the log offset, signals one exact daemon
-PID, and waits up to a fixed deadline for the new idle/hold acknowledgement
-and, when playback was held, a new `playback ... released` record. Failure
-aborts CUSE teardown. This replaces the old blind 1.5 second sleep, which could
-destroy a device while the bridge still had it open.
+Before replacing `virtual_oss`, `drc.sh` stops the bridge and waits to a fixed
+deadline for its process to exit. Process exit is the release acknowledgement;
+it does not depend on a logfile that may have been rotated or unlinked. Failure
+aborts CUSE teardown and attempts to restore MPD's direct output. After a
+successful chain transition, a bridge that was running is restarted with
+`onestart` so a panel-started instance survives even when its rcvar is off.
+The service's `release` extra command still sends SIGHUP for direct diagnostic
+use, but it is no longer the transition handshake.
 
 #### omdrc_renderer
 
@@ -1117,6 +1122,9 @@ state in run-from-repo mode, or the configured/installed user state path):
   44100 Hz; an ordinary rate selection records the return-to-music intent
   before fallible validation/transition work, so failure cannot restore stale
   CD mode on the next boot.
+* **`cdin-mpd-output`** --- the audible MPD output remembered when CD input is
+  selected (`OKTO-DAC`, `DRC-native`, or `DRC-resamp`). Stopping the bridge
+  restores this exact output; the Spectrum FIFO is never recorded or gated.
 * **`last_geometry`** --- the current geometry override. Design remains part
   of `last_arg`, so the full tuple can be restored without guessing.
 
@@ -1124,8 +1132,9 @@ The configuration's `GEOMETRY` is the default; `drc.sh geometry <name>` records
 a runtime override in `last_geometry`.
 
 What a required rebuild does, in order: stop any running BruteFIR and wait for
-the DAC to be released; make bounded MPD release requests; verify that CD input
-has released its output; (FreeBSD) restart `virtual_oss`
+the DAC to be released; make bounded MPD release requests; stop a running CD
+bridge and verify process exit as its output-release acknowledgement; (FreeBSD)
+restart `virtual_oss`
 at the target rate and wait for `/dev/dsp.loop`; prime the DAC if the rate
 changed; start BruteFIR and **verify it stays up**; make a bounded attempt to
 enable the matching MPD output; record the state. If BruteFIR cannot come up,
@@ -1696,11 +1705,14 @@ feedback-less "Run command" plugin. Everything is driven by a plain INI file,
   (qobuzconnect2mpd vs upmpdcli --- never both) driven per-OS
   (`systemctl --user` on Linux, `sudo service ... onestart/onestop` on
   FreeBSD).
-* **CD input panel** (FreeBSD) --- what `omdrc-cdin` is doing, read entirely
+* **CD input panel** --- what the FreeBSD `omdrc-cdin` daemon or Linux
+  `alsaloop` supervisor is doing, read entirely
   from its log: an availability LED, the state in one line, the newest failure
-  in another, the `[stats]` line as chips, and a Start/Stop button. It is the
-  size of its news --- one line while no disc is playing, full size while one
-  is (chapter \ref{sec:cdin}).
+  in another, the `[stats]` line as chips, and a Start/Stop source hand-off.
+  Start remembers and disables MPD's audible output; Stop restores it. The
+  Spectrum FIFO is deliberately outside this gate. The card is the size of
+  its news --- one line while no disc is playing, full size while one is
+  (chapter \ref{sec:cdin}).
 * **BruteFIR CPU** --- per-process CPU for every brutefir instance (matched by
   `argv[0]`, because on Linux brutefir renames its `comm`).
 * **Audio Devices** --- `/dev/sndstat` on FreeBSD with `fmt 0x...` bitfields
@@ -1741,13 +1753,59 @@ of stalling the CD.
 * Started/stopped from the page; the source is enabled only while at least
   one browser is streaming (Server-Sent Events; multiple clients share one
   capture thread), force-disabled at startup for crash recovery.
-* 24 logarithmic bands from 31.5 Hz, 10 Hz refresh, Music (16384-point) vs
+* 24 logarithmic bands from 31.5 Hz, 25 Hz refresh, Music (16384-point) vs
   Precision (65536-point) FFT windows, VU bars or needles measured over a
   ~50 ms trailing window, one Floor slider driving graphs and meters.
-* **DRC sync**: the tap is pre-DRC, so while BruteFIR runs the display is
-  held back by the measured BruteFIR path delay (filter group delay +
-  partition latency, cached and recomputed only when the active config
-  changes) so it matches the audible sound.
+* Each band peak-holds across the complete publication interval, so short
+  transients cannot fall between FFT windows. Rises are immediate; the browser
+  animates only the release at `fall_db_per_s` (30 dB/s by default), including
+  after the server stops publishing unchanged frames.
+* **DRC sync**: the tap is at the top of the DRC path, so the display is held
+  back by a clock-anchored estimate of the whole running chain: `virtual_oss`
+  blocks, filter group delay, the convolver partition, BruteFIR I/O partitions,
+  and DAC/USB output delay. The card shows the term-by-term breakdown and
+  base/delta/total values. **Auto sync delay** periodically follows rate,
+  process and filter changes; with it off, `drc_delay_trim_ms` replaces the
+  modelled buffering terms. The Sync slider is persistent and takes effect on
+  the next frame because the buffer reserves its full travel.
+* With `source = auto`, an open card follows MPD-to-CD and CD-to-MPD hand-offs
+  without closing the browser stream. MPD owns and creates its FIFO; the
+  analyzer never replaces that inode. Writer loss and FIFO replacement are
+  detected, stale pre-pause history is dropped on resume, and a disconnected
+  browser stream reconnects automatically.
+
+The delay model exposes these configuration terms:
+
+| Stage | Derived value |
+|---|---|
+| virtual_oss | `drc_voss_blocks` times the running process's `-s` duration |
+| filter | peak index of the active impulse response divided by sample rate |
+| convolver | one BruteFIR `filter_length` partition |
+| BruteFIR I/O | `drc_brutefir_io_partitions` additional partitions |
+| physical output | `drc_output_delay_ms` for the OSS/DAC buffer and USB path |
+
+The defaults are three virtual_oss blocks, two additional BruteFIR I/O
+partitions, and 150 ms of output delay. The built-in `dirac pulse` coefficient
+has zero group delay, but still pays the convolver partition. Because
+virtual_oss's `-s 200ms` is a duration, that term stays constant across sample
+rates; the partition terms shrink as the rate rises. When the DRC chain is
+down, every term is zero. This is a configuration-derived estimate, not an
+acoustic measurement; `omdrc-ctrl/tools/measure-drc-delay.sh` remains the
+disruptive end-to-end calibration path.
+
+Hold-back is anchored to elapsed time rather than a fixed offset from the last
+byte received. The read point therefore drains the buffered tail when a writer
+stops, and non-blocking CD-FIFO drops cannot permanently walk the display out
+of sync. After a silence gap, retained PCM is discarded before the source
+resumes so the analyzer cannot show the previous track while the new one is
+still travelling through the chain.
+
+The analyzer enables MPD's Spectrum output first and then opens the FIFO inode
+MPD created. It never creates or replaces that path: MPD keeps its existing
+descriptor open and would otherwise silently write an unlinked inode until it
+is restarted. The CD FIFO has the opposite ownership --- omdrcctrl creates it,
+and the appearance of a reader tells the bridge to tee samples. Identical
+frames are suppressed, so paused playback produces no SSE traffic.
 
 **Install**: omdrcctrl has no standalone deployment. Configure and install the
 top-level open-media-drc project so the panel, core wrappers, site data, and
@@ -2334,9 +2392,9 @@ arithmetic, the state machine, the transport simulator and the stats line ---
 describes the daemon that had to be written because FreeBSD ships nothing
 that reconciles two free-running audio clocks. Linux does ship that
 reconciler, so section \ref{sec:cdin-linux} covers the Linux bridge on its
-own terms: what topology problem it has that FreeBSD does not, and the one
-behavioural difference that is forced on it by the loopback. The web panel's
-CD input card is unchanged either way --- it is a parser for the daemon's log
+own terms: what topology problem it has that FreeBSD does not. Both platforms
+now present the same user-visible rule: CD input is an exclusive source. The
+web panel's CD input card is unchanged either way --- it parses the common log
 grammar, and the Linux supervisor emits the same grammar, so one card serves
 both operating systems.
 
@@ -2394,9 +2452,9 @@ a margin. Record the value: it becomes `omdrc_cdin_lead`.
 
 ![The daemon's state machine. The output device is held only in PLAYING; the capture device is held for the whole session.](build/cdin-states.pdf){width=78%}
 
-The daemon is meant to be up all the time --- CD player on or off, interface
-plugged in or not --- and that is only safe because of what it does with the
-*output* device:
+The daemon can remain up across CD player power and carrier changes, and that
+is safe at the OSS-device level because of what it does with the *output*
+device:
 
 | State | On the wire | The daemon | `/dev/dsp.play` |
 |---|---|---|---|
@@ -2415,18 +2473,26 @@ teardown *permanently*: `cuse_server_free()` spins uninterruptibly until every
 client handle is gone, SIGKILL does not touch it, and only a reboot recovers
 the machine (section \ref{sec:voss-patches}). A daemon holding `/dev/dsp.play`
 around the clock would put a fresh instance of that hazard under every single
-rate change. For the remaining exposure --- a rate change *during* a disc ---
-`drc.sh` asks first:
+rate change. The deployed source-selection policy is stricter than this
+internal tenancy: while the bridge service is selected, MPD's audible output
+is disabled even during silence. `virtual_oss` is a mixer, so relying on the
+device open alone would allow MPD and the disc to be audible together.
+
+For the remaining CUSE exposure --- a rate change while the bridge is running
+--- `drc.sh` stops the service and treats process exit as the release
+acknowledgement:
 
 ```
-service omdrc_cdin release      # or: pkill -HUP -x omdrc-cdin
+service omdrc_cdin onestop
+# wait until pgrep -x omdrc-cdin no longer finds the process
 ```
 
-`SIGHUP` releases the output immediately and refuses to re-acquire it for
-about six seconds, which covers the stop/restart. Without that hold-off a
-spinning disc would grab the device again on the very next period. Both
-`drc.sh off` and its service-teardown `stop` path request the release before
-touching `virtual_oss`.
+The old path sent `SIGHUP` and inferred release from new logfile lines. That
+failed when the log was rotated or unlinked. A successful transition restarts
+the bridge after rebuilding `virtual_oss`, including an instance originally
+started with `onestart` while its rcvar is disabled. If the bridge does not
+exit, teardown is refused; `drc.sh` attempts to restore MPD's direct output so
+the failed transition does not leave the machine needlessly silent.
 
 **Choosing `--idle-after`** (default 15000 ms) has one failure mode at each
 end and a wide safe band between them: too short and Red Book's 2 s
@@ -2546,7 +2612,7 @@ omdrc_audio_capture="ESI U24XL"   # names the ESI; that is what creates
 The rc script is installed by the CMake superproject
 (`cdin/CMakeLists.txt`, a subproject of the top-level build). It uses
 `daemon(8)`, drops privileges via the standard `rc.subr` `${name}_user`, and
-adds one non-standard verb, `release` (the `SIGHUP` above). A `--` separates
+adds one non-standard verb, `release` (the diagnostic `SIGHUP` above). A `--` separates
 the daemon supervisor's arguments from the bridge's arguments; the public
 `omdrc_cdin_flags` value is moved out of rc.subr's reserved `${name}_flags`
 namespace before startup. Started unprivileged with
@@ -2555,12 +2621,13 @@ not try to `su` to it --- and uses a pidfile under `/tmp`.
 
 The panel owns this service even when `omdrc_cdin_enable="NO"`. Selecting the
 CD source explicitly may start it with `onestart`; an incidental rate change
-never starts a stopped bridge. When a running bridge must follow a rebuilt
-virtual output, `drc.sh` uses bounded `onestop`, waits for the process to
-disappear, then uses bounded `onestart`. This preserves a panel-started
-instance: `onerestart` would stop it and then let the disabled rcvar reject
-the start half. The timeout runs in foreground mode so its process-group
-cleanup cannot kill daemon(8)'s successfully detached supervisor.
+never starts a bridge that was already stopped. When a running bridge must
+follow a rebuilt virtual output, `drc.sh` uses bounded `onestop`, waits for the
+process to disappear, then uses bounded `onestart`. This preserves a
+panel-started instance: `onerestart` would stop it and then let the disabled
+rcvar reject the start half. The timeout runs in foreground mode so its
+process-group cleanup cannot kill daemon(8)'s successfully detached
+supervisor.
 
 Log lines are a **contract**, not just prose: the web panel parses them, so
 `state <name>: <why>` and
@@ -2622,10 +2689,17 @@ list. Four rules decide what goes where:
   card hides itself.
 
 Three buttons: refresh, **Log** (opens the whole `omdrc-cdin` log in the Logs
-card), and **Stop**/**Start**, which runs the rc service and asks for
-confirmation before stopping. The exit status of `service ... onestart` is not
-trusted --- it forks a `daemon(8)` and returns before the daemon can die on a
-missing device --- so the process is polled with `pgrep -x` until it agrees.
+card), and **Stop**/**Start**, which performs a source hand-off around the rc
+service. Start records whichever of `OKTO-DAC`, `DRC-native`, or `DRC-resamp`
+is enabled, then disables all three before starting CD input; a failure to gate
+MPD aborts the start. Stop waits for the bridge to release its output and then
+restores exactly the recorded MPD output. The `OMDRC Spectrum` FIFO is not an
+audible output and is deliberately left alone. A failed or timed-out start
+also restores MPD.
+
+The exit status of `service ... onestart` is not trusted --- it forks a
+`daemon(8)` and returns before the daemon can die on a missing device --- so
+the process is polled with `pgrep -x` until it agrees.
 On FreeBSD the button needs a `sudoers` grant; without one, set
 `control = no` rather than leaving a button that can only fail:
 
@@ -2690,12 +2764,12 @@ supervisor reads the shift control back every stats interval and reports it
 as the `drift` field in ppm --- a direct measurement of the correction being
 applied, rather than an inference from buffer level.
 
-**The CD input is an exclusive source on Linux**, forced by the loopback
-rather than chosen. `virtual_oss` mixes, so on FreeBSD `omdrc-cdin` shares
-`/dev/dsp.play` with MPD and mpv, holding it only while audio is actually on
-the wire. `hw:Loopback,0,0` is a **single substream**: alsaloop and MPD's
-`DRC-native`/`DRC-resamp` outputs cannot both hold it, whichever opens second
-gets `EBUSY`. Consequently:
+**The CD input is an exclusive source on both platforms**, for different
+low-level reasons. FreeBSD must enforce the rule explicitly because
+`virtual_oss` mixes clients: the card gates MPD's audible outputs around the
+bridge service. Linux's `hw:Loopback,0,0` is a **single substream**, so
+alsaloop and MPD's `DRC-native`/`DRC-resamp` outputs cannot both hold it;
+whichever opens second gets `EBUSY`. Consequently:
 
 * `drc.sh cdin` disables every MPD output, brings the chain up at 44.1 kHz,
   and starts `omdrc-cdin.service`. MPD has no output while the CD input is

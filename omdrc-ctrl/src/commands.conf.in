@@ -138,7 +138,7 @@ cdin_sample_rate = 44100
 #            here, and point omdrc-cdin-alsaloop's -C at the same PCM. Empty
 #            disables the CD source on Linux rather than guessing a PCM name.
 cdin_capture_pcm =
-refresh_hz = 10
+refresh_hz = 25
 fft_size = 16384
 precision_fft_size = 65536
 bands = 24
@@ -146,19 +146,60 @@ min_frequency = 31.5
 # Lower chart/VU bound in dBFS. Raising this makes the analyzer less sensitive
 # to very low-level content; lower values show more quiet detail.
 floor_db = -40
+# How fast a bar falls back once its band goes quiet, in dB per second.  Only
+# the release is shaped: the analysis peak-holds every band across the whole
+# frame interval, so a rise is a real transient and lands on the bar at once.
+# Lower is more languid, higher is twitchier; 30 dB/s crosses a 40 dB plot in
+# a little over a second.
+fall_db_per_s = 30
 # VU display below the analyzer: bars | needles
 vu_mode = bars
-# DRC sync fine-tune (ms).  The display is fed from the pre-DRC MPD FIFO, so it
-# is held back to match the audible, post-BruteFIR sound.  The bulk delay
-# (filter group delay + one BruteFIR partition) is measured automatically from
-# the active filter; this trim absorbs the small, runtime loopback/output
-# buffering on top.  Positive = delay the display more.
+# DRC sync.  The display is fed from a tap at the TOP of the chain — MPD's
+# second FIFO output, or the CD bridge teeing what it is about to play — so it
+# has to be held back by everything between there and the speaker, or the plots
+# run ahead of the sound and keep going after it stops.  With Auto sync on, the
+# stages are derived from the chain that is actually running:
+#
+#   virtual_oss     drc_voss_blocks x its own `-s` argument
+#   filter group    the impulse-response peak of the active filter (0 for the
+#                   flat `dirac pulse` default, which is a real zero)
+#   convolver       one BruteFIR partition, from `filter_length`
+#   BruteFIR I/O    drc_brutefir_io_partitions more of them
+#   output          drc_output_delay_ms
+#
+# The panel shows the breakdown term by term, so a figure that looks wrong can
+# be traced to the stage responsible instead of guessed at.
+#
+# How many `-s` blocks of virtual_oss sit between a writer and what BruteFIR
+# reads back: the client ring, the mix block and the `-L` loopback ring.  With
+# drc.sh's `-s 200ms` this is the single largest term in the whole chain.
+drc_voss_blocks = 3
+# BruteFIR partitions of double-buffered OSS I/O, on top of the one partition
+# the convolver itself costs.  One in flight on the input side, one on output.
+drc_brutefir_io_partitions = 2
+# The DAC's own OSS buffer plus the USB pipeline (ms) — the one stage with no
+# configuration anywhere to read it out of.
+drc_output_delay_ms = 150
+# Auto sync off: `drc_voss_blocks`, `drc_brutefir_io_partitions` and
+# `drc_output_delay_ms` are all replaced by this one measured number (ms).  What
+# is READ from the filter — group delay and the convolver partition — still
+# counts, so a trim measured with omdrc-ctrl/tools/measure-drc-delay.sh is not
+# double-counted against a model of the same buffering.  Positive = hold the
+# display back more.
 drc_delay_trim_ms = 0
 # Bounds (ms) of the interactive "Sync" slider shown under the analyzer.  The
 # slider adds a live delta on top of the measured base delay so the listener can
 # nudge the display into sync with what they hear; its position is remembered
 # across restarts.  Defaults let it travel from -1 s (show sooner) to +2 s (hold
 # back more).
+#
+# The base is a model, and on this box it lands short.  With the chain down it
+# correctly yields zero — MPD straight to the DAC already looks in sync, which
+# is the calibration point saying the model's SHAPE is right — but with DRC up
+# the real lead is larger than the terms sum to.  Closing that gap is the
+# slider's job: set it once by ear and it sticks.  A slider move now takes
+# effect on the very next frame (the capture buffer reserves the slider's full
+# travel), where it used to blank the plot for as long as the increase.
 drc_delay_delta_min_ms = -1000
 drc_delay_delta_max_ms = 2000
 
@@ -201,15 +242,13 @@ alert_interval = 20
 # runs, and the two operating systems run different programs behind the same
 # log grammar:
 #
-#   FreeBSD  omdrc-cdin (cdin/), an OSS daemon.  Meant to be up continuously
-#            (omdrc_cdin_enable="YES" in /etc/rc.conf) whether or not the
-#            player is on: virtual_oss mixes, so it holds /dev/dsp.play only
-#            while audio is on the wire and releases it after a run of digital
-#            silence.  Leaving it running costs MPD and mpv nothing.
+#   FreeBSD  omdrc-cdin (cdin/), an OSS daemon. virtual_oss mixes clients, so
+#            the card enforces source exclusivity explicitly: START disables
+#            MPD's audible outputs and STOP restores the one previously active.
 #   Linux    scripts/omdrc-cdin-alsaloop, a supervisor around alsaloop(1).
 #            hw:Loopback,0,0 is a SINGLE substream, so the bridge and MPD's DRC
-#            outputs cannot both hold it — the CD input is an exclusive source
-#            and drc.sh starts and stops the service as the source changes.
+#            outputs cannot both hold it — the CD input is an exclusive source,
+#            congruent with the FreeBSD card policy above.
 #            `drc.sh cdin` selects it; any rate action selects music again.
 #
 # Everything the CD input card shows is read from this log, so log_file must

@@ -6,6 +6,7 @@ import math
 import os
 import platform
 import pwd
+import queue
 import re
 import shutil
 import shlex
@@ -297,18 +298,31 @@ SPECTRUM_FIFO = "/tmp/omdrc-spectrum.fifo"
 SPECTRUM_RATE = 48000
 SPECTRUM_BITS = 32
 SPECTRUM_CHANNELS = 2
-SPECTRUM_REFRESH_HZ = 10.0
+SPECTRUM_REFRESH_HZ = 25.0
 SPECTRUM_FFT_SIZE = 16384
 SPECTRUM_PRECISION_FFT_SIZE = 65536
 SPECTRUM_BANDS = 24
 SPECTRUM_VU_MODE = "bars"
 SPECTRUM_FLOOR_DB = -40.0
 SPECTRUM_MIN_FREQ = 31.5
-# Manual fine-tune (ms) added to the auto-measured DRC filter delay used to keep
-# the FIFO-derived display in sync with the audible, post-BruteFIR signal.  The
-# bulk delay (filter group delay) is measured from the active filter; this trim
-# absorbs the smaller, constant BruteFIR block + ALSA loopback buffer latency.
+# Manual fine-tune (ms) used INSTEAD of the automatic chain estimate when "Auto
+# sync delay" is off.  With auto sync on, every stage is derived from the live
+# chain (see `_drc_display_delay_terms()`) and this key is ignored.
 SPECTRUM_DRC_DELAY_TRIM_MS = 0.0
+# The two stages of the chain that publish no length anywhere, expressed in the
+# unit each stage actually works in so they stay right across sample rates.
+#
+# BruteFIR: the convolver itself costs exactly one partition, which is read from
+# `filter_length`.  On top of that it double-buffers its OSS input and output —
+# one partition in flight on each side — so the I/O costs a further two.
+SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS = 2.0
+# virtual_oss: `-s` sets the block it moves audio in (`200ms` on this box).  A
+# writer's client ring plus the mix block plus the `-L` loopback ring hold about
+# three of those between /dev/dsp.play and what BruteFIR reads from /dev/dsp.loop.
+SPECTRUM_DRC_VOSS_BLOCKS = 3.0
+# What is left downstream of BruteFIR: the DAC's own OSS buffer and the USB
+# pipeline.  Small, and the only term with no configuration to read it out of.
+SPECTRUM_DRC_OUTPUT_DELAY_MS = 150.0
 # Interactive "sync" slider: a runtime delta (ms) the listener adds on top of the
 # auto-measured base delay to line the display up with what they actually hear.
 # Neutral at 0, bounded by the two config-editable limits below, and remembered
@@ -316,6 +330,17 @@ SPECTRUM_DRC_DELAY_TRIM_MS = 0.0
 SPECTRUM_DRC_DELAY_DELTA_MS = 0.0
 SPECTRUM_DRC_DELAY_DELTA_MIN_MS = -1000.0
 SPECTRUM_DRC_DELAY_DELTA_MAX_MS = 2000.0
+# When enabled, a running analyzer re-reads the active DRC path every couple of
+# seconds.  That catches preset/rate changes; ordinary MPD track changes do not
+# alter the deterministic BruteFIR delay.
+SPECTRUM_DRC_DELAY_AUTO_SYNC = True
+
+# How the bars fall back once a band goes quiet, in dB per second.  Analysis is
+# peak-holding within each display frame (see `_spectrum_multi_bins`), so the
+# rise is always instantaneous and only the release is shaped; the browser
+# animates between frames at the same rate.  30 dB/s crosses a 40 dB plot in
+# 1.3 s — fast enough for hi-hats, slow enough to read.
+SPECTRUM_FALL_DB_PER_S = 30.0
 
 # ── where the analyzer gets its PCM ──────────────────────────────────────────
 # The analyzer is a FIFO reader: it FFTs whatever raw S32_LE stereo arrives and
@@ -610,8 +635,11 @@ def load_config(path: str) -> None:
     global SPECTRUM_RATE, SPECTRUM_BITS, SPECTRUM_CHANNELS
     global SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
     global SPECTRUM_VU_MODE, SPECTRUM_FLOOR_DB, SPECTRUM_MIN_FREQ
-    global SPECTRUM_DRC_DELAY_TRIM_MS, SPECTRUM_DRC_DELAY_DELTA_MS
+    global SPECTRUM_FALL_DB_PER_S
+    global SPECTRUM_DRC_DELAY_TRIM_MS, SPECTRUM_DRC_DELAY_DELTA_MS, SPECTRUM_DRC_DELAY_AUTO_SYNC
     global SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS
+    global SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS, SPECTRUM_DRC_VOSS_BLOCKS
+    global SPECTRUM_DRC_OUTPUT_DELAY_MS
     global SPECTRUM_SOURCE, SPECTRUM_CDIN_FIFO, SPECTRUM_CDIN_RATE
     global SPECTRUM_CDIN_CAPTURE_PCM
     global CDIN_ENABLED, CDIN_LOG_FILE, CDIN_PROCESS, CDIN_SERVICE
@@ -655,6 +683,8 @@ def load_config(path: str) -> None:
             SPECTRUM_VU_MODE = "bars"
         SPECTRUM_FLOOR_DB = max(-90.0, min(-24.0, cfg.getfloat("spectrum", "floor_db", fallback=SPECTRUM_FLOOR_DB)))
         SPECTRUM_MIN_FREQ = max(5.0, min(200.0, cfg.getfloat("spectrum", "min_frequency", fallback=SPECTRUM_MIN_FREQ)))
+        SPECTRUM_FALL_DB_PER_S = max(3.0, min(240.0, cfg.getfloat(
+            "spectrum", "fall_db_per_s", fallback=SPECTRUM_FALL_DB_PER_S)))
         SPECTRUM_DRC_DELAY_TRIM_MS = cfg.getfloat("spectrum", "drc_delay_trim_ms", fallback=SPECTRUM_DRC_DELAY_TRIM_MS)
         SPECTRUM_DRC_DELAY_DELTA_MIN_MS = cfg.getfloat(
             "spectrum", "drc_delay_delta_min_ms", fallback=SPECTRUM_DRC_DELAY_DELTA_MIN_MS)
@@ -663,6 +693,14 @@ def load_config(path: str) -> None:
         if SPECTRUM_DRC_DELAY_DELTA_MAX_MS < SPECTRUM_DRC_DELAY_DELTA_MIN_MS:
             SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS = (
                 SPECTRUM_DRC_DELAY_DELTA_MAX_MS, SPECTRUM_DRC_DELAY_DELTA_MIN_MS)
+        SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS = max(0.0, cfg.getfloat(
+            "spectrum", "drc_brutefir_io_partitions",
+            fallback=SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS))
+        SPECTRUM_DRC_VOSS_BLOCKS = max(0.0, cfg.getfloat(
+            "spectrum", "drc_voss_blocks", fallback=SPECTRUM_DRC_VOSS_BLOCKS))
+        SPECTRUM_DRC_OUTPUT_DELAY_MS = max(0.0, cfg.getfloat(
+            "spectrum", "drc_output_delay_ms",
+            fallback=SPECTRUM_DRC_OUTPUT_DELAY_MS))
         SPECTRUM_SOURCE = cfg.get("spectrum", "source",
                                   fallback=SPECTRUM_SOURCE).strip().lower()
         if SPECTRUM_SOURCE not in ("auto", "mpd", "cdin"):
@@ -684,6 +722,9 @@ def load_config(path: str) -> None:
     saved_floor = _read_state_float(_FLOOR_STATE_FILE)
     if saved_floor is not None:
         SPECTRUM_FLOOR_DB = max(-90.0, min(-24.0, saved_floor))
+    saved_auto_sync = _read_state_bool(_AUTO_SYNC_STATE_FILE)
+    if saved_auto_sync is not None:
+        SPECTRUM_DRC_DELAY_AUTO_SYNC = saved_auto_sync
 
     # [logs] and [alert:<id>] are settings sections — read them here, and skip
     # them (like the other reserved ones) when collecting commands below.
@@ -1153,23 +1194,59 @@ def _mpc_status(port: str | None = None) -> dict:
 # ── Live spectrum analyzer ───────────────────────────────────────────────────
 
 def _mpd_output_id(name: str, port: str | None = None) -> str | None:
+    return next((item["id"] for item in _mpd_outputs(port)
+                 if item["name"] == name), None)
+
+
+def _mpd_outputs(port: str | None = None) -> list[dict]:
+    """MPD outputs as name/id/enabled records, parsed from one `mpc outputs`."""
     cmd = _mpc_client()
     if not cmd:
-        return None
+        return []
     if port:
         cmd = cmd + ["-p", str(port)]
     try:
         r = subprocess.run(cmd + ["outputs"], capture_output=True, text=True,
                            timeout=5, env=_env())
     except Exception:
-        return None
+        return []
     if r.returncode != 0:
-        return None
+        return []
+    outputs = []
     for line in r.stdout.splitlines():
         m = re.match(r'Output\s+(\d+)\s+\((.*)\)\s+is\s+(enabled|disabled)', line)
-        if m and m.group(2) == name:
-            return m.group(1)
-    return None
+        if m:
+            outputs.append({"id": m.group(1), "name": m.group(2),
+                            "enabled": m.group(3) == "enabled"})
+    return outputs
+
+
+_MPD_PLAYING_CACHE: tuple[float, bool] = (0.0, False)
+_MPD_PLAYING_TTL = 2.0
+
+
+def _mpd_is_playing() -> bool:
+    """Is MPD feeding its outputs right now?  Cached like the CD-active probe."""
+    global _MPD_PLAYING_CACHE
+
+    at, value = _MPD_PLAYING_CACHE
+    now = time.monotonic()
+    if now - at < _MPD_PLAYING_TTL:
+        return value
+    cmd = _mpc_client()
+    value = False
+    if cmd:
+        port = _resolve_mpd_port()
+        if port:
+            cmd = cmd + ["-p", str(port)]
+        try:
+            r = subprocess.run(cmd + ["status"], capture_output=True, text=True,
+                               timeout=5, env=_env())
+            value = r.returncode == 0 and "[playing]" in r.stdout
+        except Exception:
+            value = False
+    _MPD_PLAYING_CACHE = (now, value)
+    return value
 
 
 def _mpd_output_action(name: str, action: str) -> tuple[bool, str]:
@@ -1281,20 +1358,59 @@ def _assign_band_tiers(band_defs: list[dict], tiers: list[dict], rate: int,
     return assign
 
 
+# How many hops one short tier may take across the new audio in a single display
+# frame.  A bound, not a target: the hop count follows the frame interval, and
+# this only stops a stalled frame from turning into a long FFT sweep.
+_SPECTRUM_MAX_HOPS = 6
+
+
 def _spectrum_multi_bins(chan, band_defs: list[dict], band_tier: list[int],
-                         tiers: list[dict]) -> list[float]:
-    """Per-band magnitudes (dBFS) using each band's assigned resolution tier.
-    `chan` is the analysis window (newest sample last); shorter tiers reuse its
-    most-recent samples so every tier is time-aligned to the same window end."""
+                         tiers: list[dict], span: int = 0) -> list[float]:
+    """Per-band magnitudes (dBFS) using each band's assigned resolution tier,
+    peak-held over the `span` newest samples.
+
+    All tiers end at the newest sample the buffer holds, so a band is never
+    drawn from older audio than its neighbours.  What differs is how much of
+    the frame interval each one can see: a 16384-sample bass window covers 341
+    ms and takes in the whole interval outright, while a 2048-sample treble
+    window spans only ~43 ms.  Once the interval is longer than that — a low
+    `refresh_hz`, or a frame that ran late — a hi-hat can land in the gap and
+    never be analysed at all, which is what made fast percussion vanish from
+    the bars.  A tier shorter than the span therefore steps back across the new
+    audio in half-window hops and keeps the loudest result per band.  A window
+    that already covers the span runs once, so at a healthy frame rate this
+    costs nothing.
+    """
     import numpy as np
     mags = []
-    for t in tiers:
-        seg = chan[-t["n"]:]
-        mags.append(np.abs(np.fft.rfft(seg * t["window"])) / t["scale"])
+    for i, t in enumerate(tiers):
+        n = t["n"]
+        if len(chan) < n:
+            mags.append(None)
+            continue
+        # One window suffices whenever it already reaches back over the whole
+        # interval — which is the normal case for the long bass tier, and for
+        # every tier once the frame rate is high enough.  Only a window shorter
+        # than the interval leaves audio unanalysed, and only it hops.
+        hop = max(1, n // 2)
+        hops = 1 if span <= n else min(_SPECTRUM_MAX_HOPS,
+                                       1 + -(-(span - n) // hop))
+        best = None
+        for k in range(hops):
+            end = len(chan) - k * hop
+            if end - n < 0:
+                break
+            seg = chan[end - n:end]
+            m = np.abs(np.fft.rfft(seg * t["window"])) / t["scale"]
+            best = m if best is None else np.maximum(best, m)
+        mags.append(best)
     out = []
     for b, band in enumerate(band_defs):
         ti = band_tier[b]
         freqs, mag = tiers[ti]["freqs"], mags[ti]
+        if mag is None:
+            out.append(-180.0)
+            continue
         mask = (freqs >= band["lo"]) & (freqs < band["hi"])
         if mask.any():
             m = float(np.sqrt(np.sum(np.square(mag[mask]))))
@@ -1315,6 +1431,11 @@ class SpectrumSource:
     """
     name = "none"
     label = "none"
+    # Who creates and deletes the special file.  False (the default) means the
+    # analyzer does, and the producer only ever opens what it finds — which is
+    # how omdrc-cdin works.  True means the producer owns it and the analyzer
+    # must never mkfifo behind its back; see `MpdSpectrumSource`.
+    owns_fifo = False
 
     def __init__(self, fifo: str, rate: int) -> None:
         self.fifo = fifo
@@ -1326,11 +1447,42 @@ class SpectrumSource:
     def stop(self) -> None:
         pass
 
+    def expects_data(self) -> bool:
+        """Should PCM be arriving right now?
+
+        Silence on the FIFO is perfectly normal when the producer is paused, so
+        the analyzer may only call an empty FIFO a fault when the producer says
+        it is playing.  FreeBSD makes this check necessary rather than merely
+        nice: a FIFO opened O_RDONLY|O_NONBLOCK does not report EOF until a
+        writer has attached and gone, so "nobody has ever written this" is
+        indistinguishable from "the writer has nothing to say" at the read.
+        """
+        return False
+
+    def no_writer_hint(self) -> str:
+        """What to tell the listener when the FIFO exists but nobody writes it."""
+        return f"nothing is writing {self.fifo}"
+
 
 class MpdSpectrumSource(SpectrumSource):
-    """MPD's secondary `fifo` output, enabled only while a browser streams."""
+    """MPD's secondary `fifo` output, enabled only while a browser streams.
+
+    MPD's `fifo` plugin owns the special file, and that ownership is the whole
+    reason this class does not just mkfifo and read.  The plugin creates the
+    FIFO when it enables the output, opens a write *and* a read end on it, and
+    **unlinks** it again when the output is disabled.  Put our own FIFO at that
+    path and the two sides drift apart silently: MPD goes on writing into the
+    inode it opened, which no longer has a name, while the analyzer reads a
+    different inode nobody writes.  Nothing reports an error — MPD says the
+    output is enabled, the FIFO is there, and the display simply stays empty for
+    ever, because MPD does not reopen an output it still believes is fine.
+
+    So the FIFO is enabled FIRST and only opened once MPD has put it there, and
+    the analyzer keeps checking that what it holds is still what the path names.
+    """
     name = "mpd"
     label = "MPD"
+    owns_fifo = True
 
     def start(self) -> tuple[bool, str]:
         return _mpd_output_action(SPECTRUM_OUTPUT_NAME, "enable")
@@ -1340,6 +1492,15 @@ class MpdSpectrumSource(SpectrumSource):
             _mpd_output_action(SPECTRUM_OUTPUT_NAME, "disable")
         except Exception:
             pass
+
+    def expects_data(self) -> bool:
+        return _mpd_is_playing()
+
+    def no_writer_hint(self) -> str:
+        return (f'MPD is playing with output "{SPECTRUM_OUTPUT_NAME}" enabled '
+                f"but nothing is arriving on {self.fifo}: MPD is still holding "
+                f"the FIFO it created earlier, which has since been replaced at "
+                f"this path.  Restart MPD to reattach it.")
 
 
 class CdinSpectrumSource(SpectrumSource):
@@ -1364,6 +1525,9 @@ class CdinSpectrumSource(SpectrumSource):
     """
     name = "cdin"
     label = "CD input"
+
+    def expects_data(self) -> bool:
+        return _cdin_source_active()
 
     def __init__(self, fifo: str, rate: int) -> None:
         super().__init__(fifo, rate)
@@ -1496,6 +1660,7 @@ class SpectrumAnalyzer:
         self.source_name = ""
 
     def settings(self) -> dict:
+        terms = _drc_display_delay_breakdown()
         return {
             "enabled": SPECTRUM_ENABLED,
             "output_name": SPECTRUM_OUTPUT_NAME,
@@ -1519,12 +1684,15 @@ class SpectrumAnalyzer:
             "floor_db": SPECTRUM_FLOOR_DB,
             "min_frequency": SPECTRUM_MIN_FREQ,
             "mode": self.mode,
-            # DRC-sync slider: measured base delay, the listener's live delta and
+            "fall_db_per_s": SPECTRUM_FALL_DB_PER_S,
+            # DRC-sync slider: derived base delay, the listener's live delta and
             # the bounds it can travel between (all milliseconds).
-            "drc_delay_base_ms": round(_drc_display_delay_seconds() * 1000.0, 1),
+            "drc_delay_base_ms": round(terms.get("total", 0.0) * 1000.0, 1),
+            "drc_delay_terms_ms": _drc_delay_terms_ms(terms),
             "drc_delay_delta_ms": round(SPECTRUM_DRC_DELAY_DELTA_MS, 1),
             "drc_delay_delta_min_ms": round(SPECTRUM_DRC_DELAY_DELTA_MIN_MS, 1),
             "drc_delay_delta_max_ms": round(SPECTRUM_DRC_DELAY_DELTA_MAX_MS, 1),
+            "drc_delay_auto_sync": SPECTRUM_DRC_DELAY_AUTO_SYNC,
         }
 
     def _start_thread_locked(self, mode: str) -> None:
@@ -1592,77 +1760,169 @@ class SpectrumAnalyzer:
             return self.seq, dict(self.frame)
 
     def _publish(self, frame: dict) -> None:
+        """Broadcast a frame, unless it says exactly what the last one said.
+
+        Re-sending an unchanged frame is not merely wasteful, it was visible:
+        the loop alternated a fault frame with a live one twice a second and the
+        browser rendered that as an unreadable flashing red banner over bars it
+        kept clearing.  A status that has not changed is not news, and a silent
+        FIFO publishes the same -120 dB frame for as long as the pause lasts.
+        """
         with self.cond:
+            if frame == self.frame:
+                return
             self.seq += 1
             self.frame = frame
             self.cond.notify_all()
 
-    def _ensure_fifo(self, path: str) -> tuple[bool, str]:
+    def _ensure_fifo(self, path: str, create: bool = True) -> tuple[bool, str]:
+        """Make sure `path` is a FIFO we can read.
+
+        `create=False` for a producer that owns the special file itself — see
+        `MpdSpectrumSource`.  Creating one there does active harm: MPD's `fifo`
+        plugin unlinks the FIFO it made when the output is disabled, and if we
+        put a fresh one at the same path MPD keeps writing into the old, now
+        nameless inode.  Both sides then look healthy and no PCM ever arrives.
+        """
         parent = os.path.dirname(path) or "."
         try:
             os.makedirs(parent, exist_ok=True)
             if os.path.exists(path):
                 if not stat_is_fifo(path):
                     return False, f"{path} exists and is not a FIFO"
-            else:
+            elif create:
                 os.mkfifo(path, 0o600)
+            else:
+                return False, f"{path} does not exist"
             return True, ""
         except OSError as e:
             return False, str(e)
 
     def _run(self) -> None:
+        """Run one source at a time, following `source = auto` transitions.
+
+        A card can remain open while playback moves CD -> MPD or MPD -> CD.
+        The FIFO selected when the SSE first connected is therefore not a
+        lifetime choice: unwind that producer cleanly and attach the newly
+        active one without making the browser reconnect.
+
+        Attaching can also simply fail for a while, and that must not end the
+        card.  Switching DRC mode restarts MPD underneath an open analyzer:
+        the FIFO it owns is unlinked and only re-created a second or two later,
+        so an attachment landing in that window finds no FIFO to open.  Ending
+        the thread there left the browser holding a live SSE connection that
+        would never carry another frame — the display froze until the listener
+        pressed Stop and Start.  Retry with a backoff instead; only a fault
+        nothing can recover from (no numpy, a bad config) ends the thread.
+        """
+        backoff = 0.0
+        while not self.stop_event.is_set():
+            again, retryable = self._run_source()
+            if again:
+                backoff = 0.0
+                continue
+            if not retryable:
+                break
+            backoff = min(5.0, backoff * 2 if backoff else 0.5)
+            if self.stop_event.wait(backoff):
+                break
+
+    def _run_source(self) -> tuple[bool, bool]:
+        """Run the currently resolved producer.
+
+        Returns (resolve again now, worth retrying after a pause).  The first is
+        a clean hand-over between sources; the second says whether a failure is
+        transient — a producer that is restarting — or permanent.
+        """
         if not SPECTRUM_ENABLED:
             self._publish({"ok": False, "state": "disabled",
                            "error": "spectrum analyzer disabled in commands.conf",
                            "left": [], "right": [], "bands": [], "vu": {}})
-            return
+            return False, False
         if not _SPECTRUM_OS_OK:
             self._publish({"ok": False, "state": "unsupported",
                            "error": "MPD FIFO spectrum analyzer needs Linux or FreeBSD",
                            "left": [], "right": [], "bands": [], "vu": {}})
-            return
+            return False, False
         if SPECTRUM_BITS != 32 or SPECTRUM_CHANNELS < 2:
             self._publish({"ok": False, "state": "bad-config",
                            "error": "only stereo S32_LE FIFO capture is implemented",
                            "left": [], "right": [], "bands": [], "vu": {}})
-            return
+            return False, False
         try:
             import numpy as np
         except ImportError:
             self._publish({"ok": False, "state": "missing-numpy",
                            "error": "numpy is required for live spectrum analysis",
                            "left": [], "right": [], "bands": [], "vu": {}})
-            return
+            return False, False
 
-        # Resolved once per stream, not once per process: `auto` has to see the
-        # chain as it is when Start is pressed, since a disc may have gone on
-        # since omdrcctrl booted.  `rate` then travels with the source — CD is
-        # 44.1 kHz where MPD's FIFO is 48 kHz, and analysing at the wrong rate
-        # mislabels every bin silently instead of failing.
+        # Resolved once for this producer attachment. In `auto` mode `_run()`
+        # starts another attachment when playback moves between CD and MPD.
+        # `rate` travels with the source — CD is 44.1 kHz where MPD's FIFO is
+        # 48 kHz, and analysing at the wrong rate mislabels every bin silently.
         source = _spectrum_resolve_source()
         rate = source.rate
         with self.lock:
             self.source_name = source.name
 
-        ok, err = self._ensure_fifo(source.fifo)
-        if not ok:
-            self._publish({"ok": False, "state": "fifo-error", "error": err,
-                           "left": [], "right": [], "bands": [], "vu": {}})
-            return
-
         fd = None
         source_started = False
         terminal_error = False
+        switch_source = False
+        # Whether the failure just published is worth another attempt shortly.
+        # A producer that is restarting (MPD around a DRC-mode switch) fails to
+        # attach for a second or two and then works again.
+        retryable = False
+        reader_stop: threading.Event | None = None
+        reader_thread: threading.Thread | None = None
         try:
-            fd = os.open(source.fifo, os.O_RDONLY | os.O_NONBLOCK)
+            # Order matters, and it is the opposite for the two kinds of
+            # producer.  Ours (omdrc-cdin) treats a reader on the FIFO as the
+            # signal to start teeing, so the FIFO has to exist and be open
+            # before it is told anything.  MPD instead creates the FIFO itself
+            # as part of enabling the output, so there it must go first and the
+            # analyzer opens whatever MPD put there.
+            if not source.owns_fifo:
+                ok, err = self._ensure_fifo(source.fifo)
+                if not ok:
+                    terminal_error = True
+                    retryable = True
+                    self._publish({"ok": False, "state": "fifo-error", "error": err,
+                                   "left": [], "right": [], "bands": [], "vu": {}})
+                    return False, retryable
+                fd = os.open(source.fifo, os.O_RDONLY | os.O_NONBLOCK)
+
             ok, err = source.start()
             if not ok:
                 terminal_error = True
+                retryable = True
                 self._publish({"ok": False, "state": "source-error", "error": err,
                                "source": source.name,
                                "left": [], "right": [], "bands": [], "vu": {}})
-                return
+                return False, retryable
             source_started = True
+
+            if fd is None:
+                # Give the producer a moment to create it, then take whatever
+                # is there — including a path it has not (re)created, which the
+                # identity check in the loop below is what catches.
+                deadline = time.monotonic() + 2.0
+                while (not stat_is_fifo(source.fifo)
+                       and time.monotonic() < deadline
+                       and not self.stop_event.is_set()):
+                    time.sleep(0.05)
+                ok, err = self._ensure_fifo(source.fifo, create=False)
+                if not ok:
+                    terminal_error = True
+                    retryable = True
+                    self._publish({"ok": False, "state": "fifo-error",
+                                   "error": f"{err} — {source.no_writer_hint()}",
+                                   "source": source.name, "source_label": source.label,
+                                   "left": [], "right": [], "bands": [], "vu": {}})
+                    return False, retryable
+                fd = os.open(source.fifo, os.O_RDONLY | os.O_NONBLOCK)
+
             self._publish({"ok": True, "state": "waiting",
                            "error": "", "left": [], "right": [], "bands": [], "vu": {},
                            "rate": rate, "source": source.name,
@@ -1676,6 +1936,7 @@ class SpectrumAnalyzer:
             buf = bytearray()
             interval = 1.0 / SPECTRUM_REFRESH_HZ
             next_at = time.monotonic()
+            attached_at = next_at
             last_data_at = 0.0
             # Multi-resolution band analysis: bass keeps the full window for fine
             # frequency resolution, treble uses short windows for snappy transient
@@ -1692,24 +1953,116 @@ class SpectrumAnalyzer:
             vu_window = max(256, min(fft_size, int(rate * 0.05)))
             silence_bands = band_defs
 
-            # DRC sync: the FIFO is pre-DRC, so slide the analysis window back by
-            # the BruteFIR path delay to match the audible signal.  Re-checked on
-            # a slow cadence (the heavy filter read is cached) so it tracks filter
-            # / preset / rate changes without per-frame cost.
+            # FIFO ingestion must not wait for numpy/JSON/chart-frame work.  CD
+            # input writes this tap O_NONBLOCK by design, so leaving the pipe
+            # undrained for even a couple of periods discards PCM from the
+            # visualization.  A card-scoped reader thread continuously drains
+            # it into a small bounded queue; it is stopped in this method's
+            # finally block, so no capture survives a collapsed/closed card.
+            pcm_queue: queue.Queue[bytes] = queue.Queue(maxsize=64)
+            reader_errors: list[OSError] = []
+            reader_stop = threading.Event()
+            # A non-blocking read on a FIFO says which of two very different
+            # things is happening, and the analyzer used to conflate them:
+            # EAGAIN means a writer is attached and simply has nothing for us
+            # right now (a pause, a gap between tracks), while a zero-length
+            # read means there is no writer at all.  The second is a fault —
+            # the producer is not connected to this FIFO — and it is worth
+            # saying so rather than showing an empty display for ever.
+            no_writer_since = 0.0
+
+            def read_fifo() -> None:
+                nonlocal no_writer_since
+                while not reader_stop.is_set() and not self.stop_event.is_set():
+                    try:
+                        data = os.read(fd, chunk_bytes)
+                    except BlockingIOError:
+                        no_writer_since = 0.0
+                        reader_stop.wait(0.002)
+                        continue
+                    except OSError as exc:
+                        reader_errors.append(exc)
+                        return
+                    if not data:
+                        if not no_writer_since:
+                            no_writer_since = time.monotonic()
+                        reader_stop.wait(0.05)
+                        continue
+                    no_writer_since = 0.0
+                    try:
+                        pcm_queue.put_nowait(data)
+                    except queue.Full:
+                        # Keep wall-clock freshness if analysis is ever stalled
+                        # for several seconds; normal operation never reaches
+                        # this 6+ second cushion.
+                        try:
+                            pcm_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            pcm_queue.put_nowait(data)
+                        except queue.Full:
+                            pass
+
+            reader_thread = threading.Thread(
+                target=read_fifo, name="spectrum-fifo-reader", daemon=True)
+            reader_thread.start()
+
+            # DRC sync: the tap is upstream of the whole chain, so the display
+            # is held back by everything between it and the speaker.  With the
+            # chain down the model yields zero and nothing is held back, which
+            # is why MPD straight to the DAC already looks in sync.
             delay_bytes = 0
             base_delay_s = 0.0
-            delay_check_interval = 2.0
+            delay_auto_sync: bool | None = None
             next_delay_check = 0.0
+            # PCM arrives a chunk at a time, so "no data for a moment" is normal
+            # and must not be mistaken for the source having stopped.  Only
+            # quiet beyond a couple of chunk periods starts draining the display
+            # forward; see the read-point calculation below.
+            drain_grace_s = 2.0 * chunk_bytes / frame_bytes / rate
+            # Peak-hold span: every sample that arrived since the previous frame
+            # must reach the bars, or a hi-hat that landed between two frames is
+            # never drawn at all.  Tracked here and passed to the band analysis.
+            last_frame_at = 0.0
+            # A reported fault stands until PCM comes back.  Without this the
+            # loop went on publishing display frames underneath the fault,
+            # alternating a red banner with live bars twice a second — the
+            # flashing, unreadable message a listener sees after switching DRC
+            # mode.  One state at a time, and the newer one wins.
+            faulted = False
             # Declare silence quickly once the FIFO stops delivering, so the bars
-            # and VU meters drop the moment playback stops instead of freezing on
-            # the last delay-held window for half a second.  PCM flows continuously
+            # and VU meters drop the moment playback stops instead of holding the
+            # last window for half a second.  PCM flows continuously
             # during playback and only a real stop/pause halts the writes, so this
-            # short timeout does not false-trigger on quiet musical passages.
-            silence_timeout = 0.15
+            # FFT processing itself can take longer than one display interval.
+            # A 150-ms timeout therefore produced false -120 dB frames between
+            # valid CD-in periods even though playback was continuous.  Half a
+            # second still clears promptly on a real stop without flashing the
+            # plots during ordinary processing jitter.
+            silence_timeout = 0.5
+            # `source = auto` must follow transport hand-offs while the card is
+            # already open.  Source activity itself is cached for two seconds,
+            # so checking twice a second is cheap and bounds hand-over latency.
+            next_source_check = time.monotonic() + 0.5
 
             def keep_bytes() -> int:
-                # Hold enough history for the FFT window plus the sync delay.
-                return need_bytes + delay_bytes + chunk_bytes * 2
+                """History to retain: the FFT window, the LARGEST hold-back the
+                listener can currently ask for, and room for the peak-hold hops.
+
+                Sizing this from the delay *in force* is what made the Sync
+                slider look inert.  The trim runs before the frame section that
+                recomputes the delay, so every increase found the buffer already
+                cut to the old, shorter length: `start` went negative, the
+                analyzer published `waiting` with no bands, and the plot sat
+                frozen for exactly as long as the increase — which, with a base
+                a second short of the truth, was every move that mattered.
+                Reserving the slider's full travel costs a few hundred KB and
+                makes a delay change take effect on the very next frame.
+                """
+                reach = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MAX_MS / 1000.0)
+                return (need_bytes + int(reach * rate) * frame_bytes
+                        + chunk_bytes * 3)
 
             def publish_silence() -> None:
                 # Emit a level well below any reachable UI floor so the bars,
@@ -1726,6 +2079,10 @@ class SpectrumAnalyzer:
                     "source_label": source.label,
                     "mode": self.mode,
                     "fft_size": fft_size,
+                    "drc_delay": round(delay_bytes / frame_bytes / rate, 3),
+                    "drc_delay_base": round(base_delay_s, 3),
+                    "drc_delay_delta": round(SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0, 3),
+                    "drc_delay_auto_sync": SPECTRUM_DRC_DELAY_AUTO_SYNC,
                     "bands": [
                         {
                             "freq": round(b["freq"], 1),
@@ -1746,59 +2103,157 @@ class SpectrumAnalyzer:
                 })
 
             while not self.stop_event.is_set():
-                try:
-                    data = os.read(fd, chunk_bytes)
-                    if data:
-                        last_data_at = time.monotonic()
-                        buf.extend(data)
-                        max_keep = keep_bytes()
-                        if len(buf) > max_keep:
-                            del buf[:len(buf) - max_keep]
-                    else:
-                        time.sleep(0.02)
-                except BlockingIOError:
-                    time.sleep(0.02)
-                except OSError as e:
+                # Transfer everything the dedicated reader has drained before
+                # computing the next display frame.
+                read_any = False
+                if reader_errors:
                     terminal_error = True
-                    self._publish({"ok": False, "state": "read-error", "error": str(e),
+                    retryable = True
+                    self._publish({"ok": False, "state": "read-error",
+                                   "error": str(reader_errors[0]),
                                    "left": [], "right": [], "bands": [], "vu": {}})
                     break
+                while True:
+                    try:
+                        data = pcm_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    at = time.monotonic()
+                    if last_data_at and at - last_data_at > silence_timeout:
+                        # Resuming after a real gap, so the retained history is
+                        # the tail of whatever played BEFORE it — and the
+                        # hold-back reads exactly that far back.  Without this
+                        # the bars come alive the instant Play is pressed,
+                        # showing the end of the previous track while the new
+                        # one is still working its way down the chain: the
+                        # display looks early by the whole delay when in fact it
+                        # is late by a whole track.  Drop it.  The correct
+                        # display now is silence until real audio has been in
+                        # flight for the length of the hold-back, which is also
+                        # exactly when the first of it reaches the speakers.
+                        buf.clear()
+                    read_any = True
+                    faulted = False
+                    last_data_at = at
+                    buf.extend(data)
+                max_keep = keep_bytes()
+                if len(buf) > max_keep:
+                    del buf[:len(buf) - max_keep]
+                if not read_any:
+                    time.sleep(0.01)
 
                 now = time.monotonic()
+                if now >= next_source_check:
+                    next_source_check = now + 0.5
+                    if (SPECTRUM_SOURCE == "auto"
+                            and _spectrum_resolve_source().name != source.name):
+                        switch_source = True
+                        break
+                    # The FIFO can be replaced under an open descriptor: MPD's
+                    # `fifo` plugin unlinks and re-creates it around a disable /
+                    # enable cycle, and once the path points at a new inode the
+                    # one we hold is written by nobody.  Nothing ever reports
+                    # that — the reads just stop — so compare identities and
+                    # re-attach rather than sit on "waiting" for ever.
+                    if not _same_file(fd, source.fifo):
+                        switch_source = True
+                        break
+                    # Nothing has arrived while the producer says it is playing,
+                    # for long enough that it is not a hand-over or a gap
+                    # between tracks.  Nothing downstream can fix that, so say
+                    # what is wrong instead of leaving the card on "waiting".
+                    # `stalled_for` gates both tests, including the one the
+                    # reader thread raises.  A FIFO can report "no writer" in
+                    # the gaps between periods while PCM is plainly arriving —
+                    # omdrc-cdin opens its write end only when it has audio to
+                    # tee — and calling that a fault while the bars are moving
+                    # is how the red banner came to flash over live music.
+                    stalled_for = now - max(last_data_at, attached_at)
+                    if stalled_for > 3.0 and (
+                            (no_writer_since and now - no_writer_since > 3.0)
+                            or (stalled_for > 5.0 and source.expects_data())):
+                        faulted = True
+                        self._publish({
+                            "ok": False, "state": "no-writer",
+                            "error": source.no_writer_hint(),
+                            "rate": rate, "source": source.name,
+                            "source_label": source.label, "mode": self.mode,
+                            "left": [], "right": [], "bands": [], "vu": {}})
+                        continue
                 if now < next_at:
                     continue
                 next_at = now + interval
-                if now >= next_delay_check:
-                    next_delay_check = now + delay_check_interval
+                if faulted:
+                    last_frame_at = now
+                    continue
+                # The chain under an open card is not fixed: virtual_oss restarts
+                # at every rate change and a preset switch reloads BruteFIR with a
+                # different filter.  The heavy part (reading the FIR to find its
+                # peak) is cached, so re-deriving on a slow cadence costs nothing.
+                if (delay_auto_sync is None
+                        or delay_auto_sync != SPECTRUM_DRC_DELAY_AUTO_SYNC
+                        or now >= next_delay_check):
                     base_delay_s = _drc_display_delay_seconds()
-                    # Total hold-back = measured base + the listener's sync delta,
-                    # floored at 0 (cannot show samples not yet played).
-                    total_delay_s = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0)
-                    delay_frames = int(round(total_delay_s * rate))
-                    delay_bytes = delay_frames * frame_bytes
-                if last_data_at and now - last_data_at > silence_timeout:
+                    delay_auto_sync = SPECTRUM_DRC_DELAY_AUTO_SYNC
+                    next_delay_check = now + 2.0
+                # The slider is deliberately live on top of the derived base.
+                total_delay_s = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0)
+                delay_bytes = int(round(total_delay_s * rate)) * frame_bytes
+                # Audio to account for since the previous frame.  Clamped to two
+                # intervals so a scheduling hiccup cannot turn one frame into a
+                # long FFT sweep; the hop count is bounded again in the analysis.
+                span_frames = (int(min(now - last_frame_at, 2.0 * interval) * rate)
+                               if last_frame_at else 0)
+                last_frame_at = now
+                # Anchor the read point to the CLOCK, not to the end of the
+                # buffer.  Holding back a fixed byte count only tracks the
+                # audible signal while PCM keeps arriving; once the source stops
+                # the buffer stops growing, so a byte-anchored window freezes and
+                # the plots outlive the sound by the whole delay.  The chain
+                # downstream keeps playing out in real time, and so must the
+                # display: let the read point drain forward at one second per
+                # second until the buffered tail is genuinely finished.
+                quiet_s = max(0.0, (now - last_data_at) - drain_grace_s) if last_data_at else 0.0
+                drain_bytes = min(delay_bytes, int(quiet_s * rate) * frame_bytes)
+                if last_data_at and now - last_data_at > max(silence_timeout, total_delay_s):
                     publish_silence()
                     continue
-                # Window ends `delay_bytes` before the newest sample so the
-                # display matches the audible (post-DRC) signal.
-                end = len(buf) - delay_bytes
+                end = len(buf) - delay_bytes + drain_bytes
                 if end < need_bytes:
-                    self._publish({"ok": True, "state": "waiting",
-                                   "error": "", "left": [], "right": [], "bands": [], "vu": {},
-                                   "rate": rate, "source": source.name,
-                                   "source_label": source.label,
-                                   "mode": self.mode, "fft_size": fft_size})
+                    # Not enough audio behind the read point yet.  Once PCM has
+                    # been seen this is the hold-back filling after a start or a
+                    # resume, and the honest display is silence — the music has
+                    # not reached the speakers either.  Only a source that has
+                    # never delivered anything is "waiting".
+                    if last_data_at:
+                        publish_silence()
+                    else:
+                        self._publish({"ok": True, "state": "waiting",
+                                       "error": "", "left": [], "right": [], "bands": [], "vu": {},
+                                       "rate": rate, "source": source.name,
+                                       "source_label": source.label,
+                                       "mode": self.mode, "fft_size": fft_size})
                     continue
 
+                # The window ENDS on the sample that is audible now, so the
+                # peak-hold hops step back from the audible instant rather than
+                # from the newest byte the tap has handed over.
                 raw = bytes(buf[end - need_bytes:end])
                 pcm = np.frombuffer(raw, dtype="<i4").reshape(-1, SPECTRUM_CHANNELS)
                 left = pcm[:, 0].astype(np.float32) / 2147483648.0
                 right = pcm[:, 1].astype(np.float32) / 2147483648.0
                 bands = band_defs
-                l_bins = _spectrum_multi_bins(left, band_defs, band_tier, tiers)
-                r_bins = _spectrum_multi_bins(right, band_defs, band_tier, tiers)
-                l_rms, l_peak = _spectrum_level_db(left[-vu_window:])
-                r_rms, r_peak = _spectrum_level_db(right[-vu_window:])
+                l_bins = _spectrum_multi_bins(
+                    left, band_defs, band_tier, tiers, span_frames)
+                r_bins = _spectrum_multi_bins(
+                    right, band_defs, band_tier, tiers, span_frames)
+                # The VU slice covers the frame interval too, for the same
+                # reason the bands hop: a peak inside it must not fall between
+                # two meter updates.
+                vu_frames = max(vu_window, min(span_frames, len(left)))
+                l_vu, r_vu = left[-vu_frames:], right[-vu_frames:]
+                l_rms, l_peak = _spectrum_level_db(l_vu)
+                r_rms, r_peak = _spectrum_level_db(r_vu)
                 self._publish({
                     "ok": True,
                     "state": "running",
@@ -1811,6 +2266,7 @@ class SpectrumAnalyzer:
                     "drc_delay": round(delay_bytes / frame_bytes / rate, 3),
                     "drc_delay_base": round(base_delay_s, 3),
                     "drc_delay_delta": round(SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0, 3),
+                    "drc_delay_auto_sync": SPECTRUM_DRC_DELAY_AUTO_SYNC,
                     "bands": [
                         {
                             "freq": round(b["freq"], 1),
@@ -1830,6 +2286,10 @@ class SpectrumAnalyzer:
                     },
                 })
         finally:
+            if reader_stop is not None:
+                reader_stop.set()
+            if reader_thread is not None:
+                reader_thread.join(timeout=1.0)
             if source_started:
                 source.stop()
             # Closing the read end is itself the stop signal for a bridge that
@@ -1841,9 +2301,12 @@ class SpectrumAnalyzer:
                     os.close(fd)
                 except OSError:
                     pass
-            if not terminal_error:
+            if not terminal_error and not switch_source:
                 self._publish({"ok": False, "state": "idle", "error": "not streaming",
                                "left": [], "right": [], "bands": [], "vu": {}})
+        if self.stop_event.is_set():
+            return False, False
+        return switch_source, retryable
 
 
 def stat_is_fifo(path: str) -> bool:
@@ -1852,6 +2315,21 @@ def stat_is_fifo(path: str) -> bool:
         return stat.S_ISFIFO(os.stat(path).st_mode)
     except OSError:
         return False
+
+
+def _same_file(fd: int, path: str) -> bool:
+    """Is the open descriptor still the file this path names?
+
+    False once the path has been unlinked and re-created — the descriptor stays
+    perfectly valid and perfectly useless, because the new writers open the new
+    inode.  Errors count as "still the same": a transient stat failure is not a
+    reason to tear an attachment down.
+    """
+    try:
+        held, named = os.fstat(fd), os.stat(path)
+    except OSError:
+        return True
+    return (held.st_dev, held.st_ino) == (named.st_dev, named.st_ino)
 
 
 _SPECTRUM = SpectrumAnalyzer()
@@ -1868,29 +2346,72 @@ def _ps_arg_lines() -> list[str]:
     return []
 
 
-def _virtual_oss_rate() -> int | None:
+def _virtual_oss_args() -> list[str] | None:
+    """argv of the running virtual_oss, or None when it is not up.
+
+    drc.sh starts it under `sudo -n`, so the command line appears twice — once
+    wrapped and once bare.  Strip the wrapper (and any of its own options) so
+    either line yields the same argv.
+    """
     for line in _ps_arg_lines():
         try:
             parts = shlex.split(line)
         except ValueError:
             parts = line.split()
-        if not parts:
-            continue
-        name = os.path.basename(parts[0])
-        if name == "sudo" and len(parts) > 1:
-            name = os.path.basename(parts[1])
-            args = parts[1:]
-        else:
-            args = parts
-        if name != "virtual_oss":
-            continue
-        for i, arg in enumerate(args):
-            if arg == "-r" and i + 1 < len(args):
-                try:
-                    return int(args[i + 1])
-                except ValueError:
-                    return None
+        while parts and os.path.basename(parts[0]) == "sudo":
+            parts = parts[1:]
+            while parts and parts[0].startswith("-"):
+                parts = parts[1:]
+        if parts and os.path.basename(parts[0]) == "virtual_oss":
+            return parts
     return None
+
+
+def _argv_option(args: list[str], flag: str) -> str | None:
+    """The value following `flag` in an argv list, or None."""
+    for i, arg in enumerate(args):
+        if arg == flag and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def _virtual_oss_rate() -> int | None:
+    args = _virtual_oss_args()
+    if not args:
+        return None
+    value = _argv_option(args, "-r")
+    try:
+        return int(value) if value else None
+    except ValueError:
+        return None
+
+
+def _virtual_oss_block_seconds() -> float | None:
+    """Length of one virtual_oss transfer block, from its own `-s` argument.
+
+    `-s` is written either as a frame count (`-s 1024`) or as a duration
+    (`-s 200ms`, which is what drc.sh uses).  A frame count only becomes a
+    duration at the rate virtual_oss was started with, so `-r` is read too.
+    Returns None when virtual_oss is not running — the loopback is then not in
+    the path at all, and the caller must not charge the display for it.
+    """
+    args = _virtual_oss_args()
+    if not args:
+        return None
+    raw = (_argv_option(args, "-s") or "").strip().lower()
+    if not raw:
+        return None
+    m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(ms|s)?', raw)
+    if not m:
+        return None
+    value = float(m.group(1))
+    unit = m.group(2)
+    if unit == "ms":
+        return value / 1000.0
+    if unit == "s":
+        return value
+    rate = _virtual_oss_rate()
+    return (value / rate) if rate else None
 
 
 def _alsa_hw_params() -> dict | None:
@@ -2376,34 +2897,6 @@ def _active_brutefir_configuration() -> dict:
     return result
 
 
-# ── DRC display-sync delay ────────────────────────────────────────────────────
-# The spectrum/VU tap is the pre-DRC MPD FIFO; the audible signal is delayed by
-# the BruteFIR path, so the browser must hold the FIFO-derived display back by
-# that much to stay in sync with what is heard.  The delay has two exactly
-# computable parts (see video/AV-SYNC-DELAY.md for the full derivation):
-#
-#   filter group delay = argmax(|h|) / rate   — impulse-response peak, ~0.5 s,
-#                                                rate-independent in time
-# + partition latency  = filter_length / rate — one BruteFIR block; rate-DEPENDENT
-#
-# plus a small, runtime BruteFIR/loopback buffering term left to the configurable
-# `drc_delay_trim_ms`.  Computed from the *active* filter and cached, recomputed
-# only when the active conf / filter / defaults change — not per frame.
-
-_BRUTEFIR_DEFAULTS = os.path.join(
-    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
-    "BruteFIR", "brutefir_defaults.conf",
-)
-
-_drc_delay_cache: dict = {"key": None, "seconds": 0.0}
-_drc_delay_lock = threading.Lock()
-
-# The analyzer slider positions (Sync delta and Floor) are per-listener runtime
-# settings, remembered between runs in tiny state files.  They are deliberately
-# kept out of commands.conf so the installed config stays declarative; only the
-# *defaults* / *bounds* live there.
-
-
 def _resolve_state_dir() -> str:
     """Runtime state directory, mirroring drc.sh's resolution so the whole stack
     shares one location (see doc/FREEBSD-PORT-PLAN.md 1.4):
@@ -2434,6 +2927,7 @@ def _resolve_state_dir() -> str:
 _STATE_DIR = _resolve_state_dir()
 _DELTA_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-delta")
 _FLOOR_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-floor-db")
+_AUTO_SYNC_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-auto-sync")
 # Which renderer the toggle last selected.  Unlike the two sliders above this is
 # not read back by the panel to restore itself — the boot service reads it (see
 # scripts/omdrc-renderer, driven by etc/rc.d/omdrc_renderer or the systemd
@@ -2445,6 +2939,8 @@ _RENDERER_STATE_FILE = os.path.join(_STATE_DIR, "last_renderer")
 # watermark rather than a flag: failures NEWER than it still show, so
 # dismissing can never blind the card to something that happens next.
 _CDIN_ACK_FILE = os.path.join(_STATE_DIR, "cdin_error_ack")
+_CDIN_MPD_OUTPUT_FILE = os.path.join(_STATE_DIR, "cdin-mpd-output")
+_CDIN_AUDIBLE_MPD_OUTPUTS = ("OKTO-DAC", "DRC-native", "DRC-resamp")
 
 
 def _clamp_delta(ms: float) -> float:
@@ -2459,6 +2955,18 @@ def _read_state_float(path: str) -> float | None:
             return float(fh.read().strip())
     except (OSError, ValueError):
         return None
+
+
+def _read_state_bool(path: str) -> bool | None:
+    """A one-line boolean saved by a previous run, or None if unset."""
+    value = _read_state_str(path)
+    if value is None:
+        return None
+    if value.lower() in ("1", "true", "yes", "on"):
+        return True
+    if value.lower() in ("0", "false", "no", "off"):
+        return False
+    return None
 
 
 def _write_state_float(path: str, val: float) -> None:
@@ -2487,6 +2995,48 @@ def _write_state_str(path: str, val: str) -> None:
         pass
 
 
+# ── DRC display-sync delay ────────────────────────────────────────────────────
+# The analyzer's tap is upstream of the whole playback chain — MPD's second FIFO
+# output, or omdrc-cdin teeing the period it is about to hand to /dev/dsp.play —
+# so the browser must hold the display back by everything between that tap and
+# the speaker.  Earlier versions counted only BruteFIR and were short by more
+# than a second, which is exactly what a listener sees as the plots running on
+# after the music has stopped.  Every stage now gets its own term:
+#
+#   virtual_oss    blocks x `-s`         the writer's client ring, the mix block
+#                                        and the `-L` loopback ring, read out of
+#                                        the running process's own arguments.
+#                                        Written as a duration (`-s 200ms`), so
+#                                        this term does NOT scale with the rate.
+# + filter group   argmax(|h|) / rate    the impulse-response peak.  BruteFIR's
+#                                        built-in `dirac pulse` — the shipped
+#                                        flat default — peaks at index 0, so
+#                                        this term is genuinely zero there and
+#                                        the convolver terms below are the whole
+#                                        of BruteFIR's contribution.
+# + convolver      filter_length / rate  one partition, from `filter_length`
+# + BruteFIR I/O   n x filter_length     its double-buffered OSS input and output
+# + output         drc_output_delay_ms   the DAC's OSS buffer and the USB pipeline
+#
+# The first four are read from the live chain; only the last is a constant, and
+# every one of them is exposed to the panel so a wrong term can be seen rather
+# than guessed at.  Stages that are not running contribute nothing: with the
+# chain down (MPD straight to the DAC) the total is zero.  See
+# video/AV-SYNC-DELAY.md for the derivation and omdrc-ctrl/tools/ for the
+# cross-correlation harness that measures the real figure end to end.
+#
+# The expensive part is reading the FIR to find its peak; that stays keyed on
+# the filter's mtime.  The rest is a couple of `ps` reads behind a short TTL,
+# because virtual_oss can restart at a new rate under a running analyzer.
+
+_BRUTEFIR_DEFAULTS = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+    "BruteFIR", "brutefir_defaults.conf",
+)
+
+_drc_delay_cache: dict = {"key": None, "seconds": 0.0}
+_drc_delay_lock = threading.Lock()
+
 def _brutefir_partition_size(conf_text: str) -> int | None:
     """partition_size from `filter_length: P[,n];`.  Lives in the runtime
     defaults (~/.config/BruteFIR/brutefir_defaults.conf), but honour a per-conf
@@ -2500,10 +3050,23 @@ def _brutefir_partition_size(conf_text: str) -> int | None:
     return None
 
 
+def _is_builtin_dirac(filename: str) -> bool:
+    """Whether a coefficient names BruteFIR's built-in identity impulse."""
+    return filename.strip().lower() == "dirac pulse"
+
+
 def _fir_peak_delay_seconds(filename: str, fmt: str, rate: int) -> float:
-    """Bulk (group) delay of a raw FIR = impulse-response peak index / rate."""
+    """Bulk (group) delay of a FIR = impulse-response peak index / rate.
+
+    BruteFIR's special ``dirac pulse`` coefficient is an in-memory unit impulse,
+    not a pathname.  Its group delay is zero, but the convolver still has its
+    partition latency, so callers must not fail the whole estimate trying to
+    stat or read it as a RAW file.
+    """
     import numpy as np
     if not rate:
+        return 0.0
+    if _is_builtin_dirac(filename):
         return 0.0
     dtype = _RAW_DTYPES.get(fmt.upper(), "<f8")
     data = np.fromfile(filename, dtype=dtype)
@@ -2512,43 +3075,137 @@ def _fir_peak_delay_seconds(filename: str, fmt: str, rate: int) -> float:
     return int(np.argmax(np.abs(data))) / float(rate)
 
 
-def _drc_display_delay_seconds() -> float:
-    """Seconds to hold the FIFO-derived display back so it matches the audible,
-    post-BruteFIR signal.  0 when DRC is bypassed (BruteFIR not running).
+def _fir_group_delay_cached(fn: str, fmt: str, rate: int) -> float:
+    """`_fir_peak_delay_seconds()` behind an mtime cache.
 
-    Cached; recomputed only when the active conf, filter file, defaults file or
-    trim change."""
-    conf = _active_brutefir_conf()
-    if not conf:
-        return 0.0   # DRC off → no compensation
+    Reading a half-million-tap filter to find its peak is the only expensive
+    part of the estimate, and it changes only when the filter file does.
+    """
+    fn_mtime = 0.0 if _is_builtin_dirac(fn) else os.stat(fn).st_mtime
+    key = (fn, fn_mtime, rate, fmt)
+    with _drc_delay_lock:
+        if _drc_delay_cache["key"] == key:
+            return _drc_delay_cache["seconds"]
+    group = _fir_peak_delay_seconds(fn, fmt, rate)
+    with _drc_delay_lock:
+        _drc_delay_cache["key"] = key
+        _drc_delay_cache["seconds"] = group
+    return group
+
+
+def _drc_display_delay_terms() -> dict:
+    """Every stage between the analyzer's tap and the speaker, in seconds.
+
+    Returned term by term rather than pre-summed: the panel shows the breakdown,
+    and a chain estimate that is wrong is far easier to correct when it says
+    which stage it thinks is responsible.  `total` is the sum actually applied.
+
+    With "Auto sync delay" off the three *modelled* stages — virtual_oss, the
+    BruteFIR I/O buffers and the DAC — are replaced wholesale by the configured
+    `drc_delay_trim_ms`, so a listener who has measured their own chain can pin
+    that residual and ignore the model.  The two stages that are read straight
+    out of the filter (group delay and the convolver partition) are facts, not
+    estimates, and stand in both modes.  The interactive slider delta is a
+    separate correction on top, also in both modes.
+    """
+    auto = bool(SPECTRUM_DRC_DELAY_AUTO_SYNC)
+    terms = {
+        "virtual_oss": 0.0,
+        "group": 0.0,
+        "convolver": 0.0,
+        "brutefir_io": 0.0,
+        "output": 0.0,
+        "trim": 0.0,
+        "auto": auto,
+        "total": 0.0,
+    }
     try:
-        conf_text = _read_text_quietly(conf)
-        parsed = _parse_brutefir_conf(conf)
-        coeffs = parsed.get("coeffs") or []
-        rate = parsed.get("rate")
-        if not coeffs or not rate:
-            return 0.0
-        coeff = coeffs[0]
-        fn = coeff["filename"]
-        fn_mtime = os.stat(fn).st_mtime
-        try:
-            defaults_mtime = os.stat(_BRUTEFIR_DEFAULTS).st_mtime
-        except OSError:
-            defaults_mtime = 0.0
-        key = (fn, fn_mtime, rate, defaults_mtime, SPECTRUM_DRC_DELAY_TRIM_MS)
-        with _drc_delay_lock:
-            if _drc_delay_cache["key"] == key:
-                return _drc_delay_cache["seconds"]
-        group = _fir_peak_delay_seconds(fn, coeff["format"], rate)
-        part = _brutefir_partition_size(conf_text)
-        partition = (part / rate) if part else 0.0
-        secs = max(0.0, group + partition + SPECTRUM_DRC_DELAY_TRIM_MS / 1000.0)
-        with _drc_delay_lock:
-            _drc_delay_cache["key"] = key
-            _drc_delay_cache["seconds"] = secs
-        return secs
+        if auto:
+            block = _virtual_oss_block_seconds()
+            if block:
+                terms["virtual_oss"] = SPECTRUM_DRC_VOSS_BLOCKS * block
+        else:
+            terms["trim"] = max(0.0, SPECTRUM_DRC_DELAY_TRIM_MS / 1000.0)
+
+        conf = _active_brutefir_conf()
+        if conf:
+            parsed = _parse_brutefir_conf(conf)
+            coeffs = parsed.get("coeffs") or []
+            rate = parsed.get("rate")
+            if coeffs and rate:
+                coeff = coeffs[0]
+                terms["group"] = _fir_group_delay_cached(
+                    coeff["filename"], coeff["format"], rate)
+                part = _brutefir_partition_size(_read_text_quietly(conf))
+                if part:
+                    terms["convolver"] = part / rate
+                    if auto:
+                        terms["brutefir_io"] = (
+                            SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS * part / rate)
+
+        # The DAC term only exists while something is actually feeding it
+        # through the chain.  With virtual_oss and BruteFIR both down the tap
+        # is not upstream of anything the analyzer knows about, and reporting a
+        # bare 150 ms would be a fiction.
+        if auto and (terms["virtual_oss"] or terms["convolver"] or terms["group"]):
+            terms["output"] = SPECTRUM_DRC_OUTPUT_DELAY_MS / 1000.0
     except (OSError, ValueError, KeyError):
-        return 0.0
+        return terms
+
+    terms["total"] = max(0.0, terms["virtual_oss"] + terms["group"]
+                         + terms["convolver"] + terms["brutefir_io"]
+                         + terms["output"] + terms["trim"])
+    return terms
+
+
+_DRC_TERMS_CACHE: tuple[float, tuple, dict] = (0.0, (), {})
+_DRC_TERMS_TTL = 2.0
+
+
+def _drc_display_delay_breakdown() -> dict:
+    """`_drc_display_delay_terms()` behind a short TTL.
+
+    `settings()` runs on every page render and the analyzer re-derives on each
+    source attachment; two `ps` scans per call is more than either needs.  The
+    TTL covers only what has to be *discovered* (which processes are up, with
+    which arguments).  Everything the operator can change — the mode toggle,
+    the tunables a config reload rewrites — is part of the key, so a setting
+    never appears not to have taken for a couple of seconds.
+    """
+    global _DRC_TERMS_CACHE
+
+    key = (SPECTRUM_DRC_DELAY_AUTO_SYNC, SPECTRUM_DRC_DELAY_TRIM_MS,
+           SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS, SPECTRUM_DRC_VOSS_BLOCKS,
+           SPECTRUM_DRC_OUTPUT_DELAY_MS)
+    at, cached_key, cached = _DRC_TERMS_CACHE
+    now = time.monotonic()
+    if cached and cached_key == key and now - at < _DRC_TERMS_TTL:
+        return cached
+    terms = _drc_display_delay_terms()
+    _DRC_TERMS_CACHE = (now, key, terms)
+    return terms
+
+
+def _drc_display_delay_seconds() -> float:
+    """Seconds to hold the tap-derived display back so it matches what is heard.
+
+    0 when nothing of the chain is up — the tap is then not ahead of the DAC by
+    anything this can account for."""
+    return _drc_display_delay_breakdown().get("total", 0.0)
+
+
+# The order the panel lists the stages in, which is the order the audio meets
+# them.  `auto` is a flag, not a duration, and is carried alongside.
+_DRC_DELAY_TERM_ORDER = ("virtual_oss", "group", "convolver", "brutefir_io",
+                         "output", "trim", "total")
+
+
+def _drc_delay_terms_ms(terms: dict) -> dict:
+    """The breakdown in milliseconds, for the panel."""
+    out = {k: round(float(terms.get(k, 0.0)) * 1000.0, 1)
+           for k in _DRC_DELAY_TERM_ORDER}
+    out["auto"] = bool(terms.get("auto"))
+    return out
 
 
 def _coeff_channel(coeff: dict) -> str:
@@ -3724,6 +4381,51 @@ def cdin_dismiss():
     return jsonify({"ok": True, **_cdin_status()})
 
 
+def _cdin_disable_mpd_outputs() -> tuple[bool, str]:
+    """Gate MPD before CD-in starts, remembering the audible output to restore.
+
+    The spectrum FIFO is deliberately absent from this list: its enable state
+    belongs exclusively to the visible Spectrum card.
+    """
+    outputs = _mpd_outputs(_resolve_mpd_port())
+    if not outputs:
+        return False, "cannot read MPD outputs"
+    enabled = [item["name"] for item in outputs
+               if item["enabled"] and item["name"] in _CDIN_AUDIBLE_MPD_OUTPUTS]
+    previous = enabled[0] if enabled else _read_state_str(_CDIN_MPD_OUTPUT_FILE)
+    changed = []
+    for name in _CDIN_AUDIBLE_MPD_OUTPUTS:
+        ok, error = _mpd_output_action(name, "disable")
+        if not ok:
+            for old in changed:
+                if old in enabled:
+                    _mpd_output_action(old, "enable")
+            return False, f"disabling MPD output {name}: {error}"
+        changed.append(name)
+    if previous in _CDIN_AUDIBLE_MPD_OUTPUTS:
+        _write_state_str(_CDIN_MPD_OUTPUT_FILE, previous)
+    return True, ""
+
+
+def _cdin_restore_mpd_output() -> tuple[bool, str]:
+    """Restore the output gated by START after CD-in has fully stopped."""
+    target = _read_state_str(_CDIN_MPD_OUTPUT_FILE)
+    if target not in _CDIN_AUDIBLE_MPD_OUTPUTS:
+        target = "DRC-native" if _active_brutefir_conf() else "OKTO-DAC"
+    # Preserve the one-audible-output invariant even if MPD state was changed
+    # externally while CD-in owned the source.
+    for name in _CDIN_AUDIBLE_MPD_OUTPUTS:
+        if name == target:
+            continue
+        ok, error = _mpd_output_action(name, "disable")
+        if not ok:
+            return False, f"disabling MPD output {name}: {error}"
+    ok, error = _mpd_output_action(target, "enable")
+    if not ok:
+        return False, f"restoring MPD output {target}: {error}"
+    return True, ""
+
+
 @app.route("/cdin/control", methods=["POST"])
 def cdin_control():
     """Start or stop the bridge by hand.
@@ -3749,12 +4451,22 @@ def cdin_control():
     if verb is None:
         return jsonify({"ok": False, "error": "invalid action"}), 400
 
+    if action == "start":
+        ok, error = _cdin_disable_mpd_outputs()
+        if not ok:
+            return jsonify({"ok": False, "action": action, "error": error,
+                            "status": _cdin_status()}), 502
+
     try:
         r = _service_action(CDIN_SERVICE, verb)
     except subprocess.TimeoutExpired:
+        if action == "start":
+            _cdin_restore_mpd_output()
         return jsonify({"ok": False, "error": f"`service {CDIN_SERVICE} {verb}` timed out",
                         "status": _cdin_status()})
     except OSError as e:
+        if action == "start":
+            _cdin_restore_mpd_output()
         return jsonify({"ok": False, "error": str(e), "status": _cdin_status()})
 
     want = (action == "start")
@@ -3766,6 +4478,12 @@ def cdin_control():
 
     status = _cdin_status()
     if running == want:
+        if action == "stop":
+            ok, error = _cdin_restore_mpd_output()
+            if not ok:
+                return jsonify({"ok": False, "action": action,
+                                "error": f"CD input stopped, but {error}",
+                                "status": status}), 502
         return jsonify({"ok": True, "action": action, "status": status})
 
     detail = ((r.stderr or "") + (r.stdout or "")).strip().splitlines()
@@ -3773,6 +4491,10 @@ def cdin_control():
     if not error:
         error = (f"{CDIN_SERVICE} did not start — see the log"
                  if want else f"{CDIN_SERVICE} is still running")
+    if action == "start":
+        restore_ok, restore_error = _cdin_restore_mpd_output()
+        if not restore_ok:
+            error += f"; MPD restore also failed: {restore_error}"
     # The one failure worth naming, because it is the one a fresh install hits.
     if "password" in error.lower() or "sudo" in error.lower():
         error += (f" (the panel needs a NOPASSWD grant for "
@@ -5192,15 +5914,37 @@ def spectrum_drc_delay():
         return jsonify({"ok": False, "error": "delta_ms must be a number"}), 400
     SPECTRUM_DRC_DELAY_DELTA_MS = delta
     _write_state_float(_DELTA_STATE_FILE, delta)
-    base_ms = round(_drc_display_delay_seconds() * 1000.0, 1)
+    terms = _drc_display_delay_breakdown()
+    base_ms = round(terms.get("total", 0.0) * 1000.0, 1)
     return jsonify({
         "ok": True,
         "drc_delay_delta_ms": round(delta, 1),
         "drc_delay_base_ms": base_ms,
+        "drc_delay_terms_ms": _drc_delay_terms_ms(terms),
         "drc_delay_total_ms": round(max(0.0, base_ms + delta), 1),
         "drc_delay_delta_min_ms": round(SPECTRUM_DRC_DELAY_DELTA_MIN_MS, 1),
         "drc_delay_delta_max_ms": round(SPECTRUM_DRC_DELAY_DELTA_MAX_MS, 1),
     })
+
+
+@app.route("/spectrum/drc-delay-auto-sync", methods=["POST"])
+def spectrum_drc_delay_auto_sync():
+    """Enable or freeze the live DRC-delay recalculation for a running card."""
+    global SPECTRUM_DRC_DELAY_AUTO_SYNC
+    raw = request.form.get("enabled", request.args.get("enabled"))
+    if raw is None and request.is_json:
+        raw = (request.get_json(silent=True) or {}).get("enabled")
+    if isinstance(raw, bool):
+        enabled = raw
+    elif str(raw).lower() in ("1", "true", "yes", "on"):
+        enabled = True
+    elif str(raw).lower() in ("0", "false", "no", "off"):
+        enabled = False
+    else:
+        return jsonify({"ok": False, "error": "enabled must be a boolean"}), 400
+    SPECTRUM_DRC_DELAY_AUTO_SYNC = enabled
+    _write_state_str(_AUTO_SYNC_STATE_FILE, "1" if enabled else "0")
+    return jsonify({"ok": True, "drc_delay_auto_sync": enabled})
 
 
 @app.route("/spectrum/floor", methods=["POST"])
