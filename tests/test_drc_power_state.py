@@ -193,6 +193,33 @@ class DrcPowerStateTest(unittest.TestCase):
         log = (self.state / "drc.log").read_text(encoding="utf-8")
         self.assertIn("event=restore power=off", log)
 
+    def test_bare_rate_reuses_the_saved_design_when_reenabling(self):
+        """The rate buttons must not turn an A/B choice back into default."""
+        self._write_state(last_arg="resamp @Rscreen", last_power="off")
+        config = Path(self._tmp.name) / "site/configs/flat/brutefir-192000@Rscreen.conf"
+        config.write_text("sampling_rate: 192000;\n", encoding="utf-8")
+        marker = Path(self._tmp.name) / "brutefir.running"
+        self.env["DRC_TEST_BF_MARKER"] = str(marker)
+        self.env["DAC_WARMUP_SECS"] = "0"
+        self.env["DAC_SETTLE_SECS"] = "0"
+        self._stub("brutefir", FAKE_BRUTEFIR)
+        self._stub("pkill", FAKE_PKILL)
+        self._stub("pgrep", FAKE_PGREP)
+
+        result = self._run("resamp")
+        # The fake Linux DAC cannot verify, but config selection happens first.
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("config not found", result.stderr)
+        log = (self.state / "drc.log").read_text(encoding="utf-8")
+        self.assertIn(
+            "event=design_reused geometry=flat rate=192000 design=@Rscreen", log)
+        self.assertIn("event=run_start mode=resamp rate=192000", log)
+        self.assertIn("variant=@Rscreen", log)
+        # Failed hardware activation must not destroy the saved tuple either.
+        self.assertEqual(
+            (self.state / "last_arg").read_text(encoding="utf-8").strip(),
+            "resamp @Rscreen")
+
     def test_cdin_intent_is_saved_before_a_failed_chain_transition(self):
         self._write_state()
         # No 44.1-kHz config exists, so the physical transition fails.  The

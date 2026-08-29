@@ -8,10 +8,9 @@ After=default.target
 Type=oneshot
 RemainAfterExit=yes
 
-ExecStart=/bin/bash -c '\
-  ARG="$(cat @REPO_DIR@/last_arg 2>/dev/null || echo off)"; \
-  echo "[DRC] Restoring last_arg=$ARG"; \
-  exec @REPO_DIR@/drc.sh "$ARG"'
+# Let drc.sh read the complete saved session itself.  Besides splitting the
+# rate/design tuple correctly, restore also honours power, source and geometry.
+ExecStart=@REPO_DIR@/drc.sh restore
 
 [Install]
 WantedBy=default.target

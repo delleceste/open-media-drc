@@ -975,6 +975,9 @@ if [ $# -ge 1 ] && [ "$1" = "design" ]; then
   [ -f "$SOURCE_FILE" ] && switch_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
   case "$switch_source" in music|cdin) ;; *) switch_source=music ;; esac
   export OMDRC_SOURCE_MODE="$switch_source"
+  # An empty selector is meaningful here: it is the explicit `default`
+  # selection, not an invitation for the rate path to re-use the old design.
+  export OMDRC_EXPLICIT_DESIGN=1
   exec "$0" "$design_mode" ${wanted:+"$wanted"}
 fi
 
@@ -1061,6 +1064,9 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
 
   echo "switching to filter set $new_geo"
   export OMDRC_SOURCE_MODE="$switch_source"
+  # If the selected design was unavailable above, keep the deliberate plain
+  # config fallback from being replaced by the selector still in last_arg.
+  [ -z "$want_variant" ] && export OMDRC_EXPLICIT_DESIGN=1
   exec "$0" "$want_rate" ${want_variant:+"$want_variant"}
 fi
 
@@ -1179,6 +1185,9 @@ if [ $# -eq 1 ] && { [ "$1" = "off" ] || [ "$1" = "stop" ]; }; then
 elif [ $# -eq 1 ] || [ $# -eq 2 ]; then
   rate="$1"
   variant="${2:-}"
+  variant_was_explicit=false
+  [ $# -eq 2 ] && variant_was_explicit=true
+  [ "${OMDRC_EXPLICIT_DESIGN:-}" = "1" ] && variant_was_explicit=true
   if ! valid_variant "$variant"; then
     echo "invalid filter variant: $variant" >&2
     exit 1
@@ -1192,6 +1201,27 @@ elif [ $# -eq 1 ] || [ $# -eq 2 ]; then
     # STATE_FILE, restore and rate-change detection all use the full value.
     rate="$(normalize_rate "$rate")"
     actual_rate="$rate"
+  fi
+
+  # A filter design is part of the saved listening configuration, independent
+  # of the power switch.  The panel's ordinary rate buttons are also its DRC
+  # enable buttons; after `off`, issuing the same bare rate must therefore
+  # re-use the saved design instead of silently selecting the base (`default`)
+  # config and overwriting last_arg.  Carry the saved selector across a rate
+  # change only when that design actually exists at the requested rate.
+  #
+  # `design default` and geometry's documented fallback deliberately pass
+  # OMDRC_EXPLICIT_DESIGN=1 so an empty selector remains an explicit choice.
+  if ! $variant_was_explicit && [ -f "$STATE_FILE" ]; then
+    saved_args=$(state_to_args "$(cat "$STATE_FILE" 2>/dev/null || true)")
+    # shellcheck disable=SC2086
+    set -- $saved_args
+    saved_variant="${2:-}"
+    if [ -n "$saved_variant" ] && \
+       [ -f "$SITE_DIR/configs/$GEOMETRY/brutefir-${actual_rate}${saved_variant}.conf" ]; then
+      variant="$saved_variant"
+      log_event "event=design_reused geometry=${GEOMETRY} rate=${actual_rate} design=${variant}"
+    fi
   fi
 else
   usage

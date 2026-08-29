@@ -11,6 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DrcSessionTest(unittest.TestCase):
+    def test_login_service_restores_the_complete_session(self):
+        service = (ROOT / "drc.service.in").read_text(encoding="utf-8")
+        self.assertIn("ExecStart=@REPO_DIR@/drc.sh restore", service)
+        self.assertNotIn("last_arg", service)
+
     def test_session_reports_the_exact_persistent_restore_tuple(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
