@@ -5,7 +5,7 @@
 #  DAC      : hw:0,0   — direct, bit-perfect playback (OKTO-DAC output)
 #  Loopback : hw:1     — snd-aloop capture side feeds brutefir (DRC outputs)
 #
-#  Template — generated to mpd.conf by ../install.sh from ../config.env.
+#  Template — rendered to mpd.conf by CMake (see cmake/).
 #  Do not edit the generated file; edit this .in or config.env.
 #
 #  Counterpart of mpd/musicpd.conf (FreeBSD / OSS).  The FreeBSD virtual_oss

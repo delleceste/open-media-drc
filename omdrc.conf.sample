@@ -21,8 +21,8 @@
 # service must share state — pin it here to be explicit.
 #OMDRC_STATE_DIR=/var/db/omdrc
 
-# The user that owns brutefir / the audio session (used by install.sh
-# templating in repo mode; informational here).
+# The user that owns brutefir / the audio session (informational here; an
+# installed box gets these from host.cmake at configure time).
 #AUDIO_USER=media
 #AUDIO_HOME=/home/media
 

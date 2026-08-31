@@ -49,8 +49,8 @@ files ahead of it uncommitted):
 - **`make install DESTDIR=… PREFIX=…`** (Phase 1.5 of
   `FREEBSD-PORT-PLAN.md`) installs host-neutral files + `.sample` configs,
   reading config at *runtime* instead of baking `@AUDIO_USER@` at render
-  time — this is what should land on the image, not bee's live
-  `install.sh` + `config.env` flow.
+  time — this is what should land on the image, not bee's live CMake install
+  (which bakes `host.cmake` values at configure time).
 - **`omdrc-ctrl`'s phone panel already has an "app launchers" feature**
   (`commands.conf`, `[apps]` group), currently wired to `kodi` and `chrome`
   only.

@@ -152,14 +152,14 @@ sudo pacman -S mpd            # Arch
 > that `User=` setting; it will silently lose to the package drop-in.
 >
 > This repo therefore ships a **counter-drop-in** instead of a full unit
-> override: `etc/systemd/system/mpd.service.d/open-media-drc.conf` (generated
-> by `install.sh` from `config.env`).  It sets `User=@AUDIO_USER@` and
-> the repo config path.  A drop-in in `/etc/systemd/system/` takes precedence
+> override: `etc/systemd/system/mpd.service.d/open-media-drc.conf` (rendered by
+> `cmake/renderers.cmake` and installed to
+> `$PREFIX/share/omdrc/mpd.service.d/`).  It sets `User=<audio user>` and the
+> installed config path.  A drop-in in `/etc/systemd/system/` takes precedence
 > over one in `/usr/lib/systemd/system/`, so this correctly wins.
 >
-> The deploy commands printed by `install.sh` handle this — they copy the
-> drop-in to `/etc/systemd/system/mpd.service.d/` rather than a full unit
-> file.  **Do not** copy or create a full
+> The checklist printed by `make install` handles this — it copies the drop-in
+> to `/etc/systemd/system/mpd.service.d/` rather than a full unit file.  **Do not** copy or create a full
 > `/etc/systemd/system/mpd.service` — it will not help and will only add
 > confusion.
 >
@@ -169,8 +169,8 @@ sudo pacman -S mpd            # Arch
 > so a symlink pointing into the checkout is dangling at that moment and the
 > override is silently skipped — MPD then starts as the package default `mpd`
 > and dies with `Failed to open ".../mpd.conf": Permission denied` (it cannot
-> read the config under a `700` home).  `install.sh` therefore `cp`s this one
-> drop-in instead of symlinking it; everything else may stay symlinked.
+> read the config under a `700` home).  This one drop-in is therefore `cp`ed
+> rather than symlinked; runtime payload has no such constraint.
 
 **3. BruteFIR** — built from the fork **`github.com/delleceste/brutefir`**
 (adds FreeBSD OSS fixes — `bfio_oss` fragment-size fix, `brutefir_loopback`
@@ -260,13 +260,22 @@ omdrcvideo `--user` service (Linux; FreeBSD serves :9080 from `rc.d`), and the
 per-user BruteFIR defaults — and prints the two steps that still need root
 (`loginctl enable-linger`, joining the `audio` group).
 
-> **Transitional:** the older `./install.sh` (render `*.in` in place from
-> `config.env`, run straight from the checkout) still works and is superseded by
-> the CMake install, which now covers the whole DRC stack — engine, DAC-hotplug
-> glue, both web UIs, and the MPD + upmpdcli renderer configs/units. `install.sh`
-> remains only for the desktop glue not yet in CMake: the `browser-nodrc`
-> `.desktop` launcher entries and the Linux `snd-aloop` module-load. (The video
-> mpv-idle autostart entry moved to CMake + `make user-install`.)
+> **CMake installs the whole stack**: engine, DAC-hotplug glue, both web UIs, the
+> MPD + upmpdcli renderer configs/units, the `browser-nodrc` launchers and the
+> video `play-media`/`play-bluray` launchers with their `.desktop` entries, the
+> Linux `snd-aloop` module config, and the Linux CD-input bridge
+> (`omdrc-cdin-alsaloop` + its `--user` unit). The older `./install.sh`, which
+> rendered the `*.in` templates in place for a run-from-checkout deployment, has
+> been removed — it produced nothing CMake does not, and its printed deploy
+> instructions were a second copy of the `make install` checklist that drifted out
+> of date.
+>
+> One installer remains beside CMake: the POSIX `Makefile`, which exists for the
+> FreeBSD port (`freebsd/audio/open-media-drc`'s `do-install` calls it). It
+> installs a strict subset — no hotplug services, desktop entries,
+> `browser-nodrc`, or `snd-aloop` config — so a `pkg` build is currently thinner
+> than a CMake install. Reconciling the two is an open item; see
+> `doc/FREEBSD-PORT-PLAN.md`.
 
 **5. BruteFIR defaults** — BruteFIR reads its general/I/O defaults (float precision,
 partition size, and the ALSA/OSS input+output devices) from
@@ -546,16 +555,23 @@ browser-nodrc/
   firefox-nodrc.sh        # firefox --no-remote, DRC bypassed
   chromium-nodrc.sh       # chromium, DRC bypassed
   chrome-nodrc.sh         # google-chrome, DRC bypassed
-  *-nodrc.desktop.in      # KDE/Plasma launcher entries (rendered by install.sh)
+  *-nodrc.desktop.in      # KDE/Plasma launcher entries (rendered by CMake)
 ```
 
 ## What a launcher does
 
-1. **Snapshots** the current DRC state by reading `drc.sh`'s own persisted state
-   files — `last_power` (`on`/`off`) and `last_arg` (the remembered rate/variant).
+1. **Snapshots** the current DRC state by asking the engine: `drc.sh session`
+   prints the persistent state `restore` would use, as `key=value` lines —
+   `power=on|off` and `mode=<rate>|resamp|cdin`. It deliberately does *not* read
+   `last_power`/`last_arg` at a guessed path: those live in `OMDRC_STATE_DIR`
+   (pinned in `omdrc.conf`), and the copies in a checkout are stale leftovers
+   that would snapshot somebody else's DRC state.
 2. Runs `drc.sh off`, freeing the DAC so the browser plays straight to it.
-3. Runs the browser **in the foreground**.
-4. On exit **restores the exact pre-launch state** — re-applying the saved rate if
+3. For a browser with no OSS backend (Chromium/Chrome, `BROWSER_AUDIO=alsa`),
+   generates the per-run ALSA shim config described below and exports
+   `ALSA_CONFIG_PATH` + the browser flags for it.
+4. Runs the browser **in the foreground**.
+5. On exit **restores the exact pre-launch state** — re-applying the saved rate if
    DRC was on, or leaving it off if it was off. This runs from an `EXIT`/`INT`/`TERM`
    trap, so the state is restored even if the browser crashes or the launcher is
    killed.
@@ -574,24 +590,212 @@ Chrome/Chromium can't use `--no-remote` the same way, so those launchers instead
 detect an already-running instance with `pgrep` and, if found, just open the URL
 without touching DRC.
 
-## Install / deploy
+## Chromium: the ALSA shim (FreeBSD)
 
-The `.desktop` entries are rendered from their `.in` templates by `./install.sh`
-(`@AUDIO_HOME@` from `config.env`). To make them appear in the KDE launcher,
-symlink the rendered files into `~/.local/share/applications/` — `install.sh`
-prints the exact commands in its deploy reminder:
+Firefox has a native OSS backend and plays to the DAC as soon as the chain lets
+go. **Chromium and Chrome have no OSS backend at all** — their FreeBSD backends
+are PulseAudio, SNDIO and ALSA, probed in that order — so freeing the DAC is not
+enough for them.
 
-```sh
-mkdir -p ~/.local/share/applications
-for b in firefox chromium chrome; do
-  ln -sf ~/open-media-drc/browser-nodrc/$b-nodrc.desktop \
-         ~/.local/share/applications/$b-nodrc.desktop
-done
-update-desktop-database ~/.local/share/applications 2>/dev/null || true
+The answer is ALSA, and on FreeBSD that costs nothing, because ALSA here **is
+not a layer**. There is no kernel component: `alsa-lib` is a userland shim and
+the only PCM plugin installed is `libasound_module_pcm_oss.so`, which opens
+`/dev/dspN`. It is loaded only by processes that link `libasound` — Chromium
+does, MPD/BruteFIR/`cdin` do not — so it cannot appear in the bit-perfect path
+even in principle.
+
+`lib.sh` generates that shim's config **per run**, into a temporary directory,
+and hands it to the browser through `ALSA_CONFIG_PATH`:
+
+```
+chromium ──libasound──► pcm_oss ──► /dev/dsp.dac      (DRC off, chain down, sole opener)
 ```
 
+No system ALSA file is touched: `/usr/local/etc/asound.conf` is left as the
+package ships it, no `~/.asoundrc` is created, and `hw.snd.default_unit` is not
+changed. The config lives and dies with the browser process.
+
+**Rate policy — the DAC is pinned, `alsa-lib` resamples.** With
+`hw.snd.vchans_enable=0` and `dev.pcm.<unit>.bitperfect=1` there is no in-kernel
+mixer and no resampler, so the browser's open would otherwise *program* the DAC's
+clock — and on the OKTO a rate change on a cold open routes silence
+(`OKTO-DAC8-silent-first-open.md`). So the slave PCM is pinned to the rate the
+DAC is already running (read from `dev.pcm.<unit>.feedback_rate` and snapped to
+the nearest standard rate), and alsa-lib's `plug` does the conversion. No crystal
+switch, no cold-open prime, a deterministic launch. The cost is a userland SRC on
+audio that is lossy streaming material to begin with — which is the same reason
+the browser bypasses DRC in the first place.
+
+**Format policy — pin it too, and pin it wide.** This one is not optional, and
+leaving it to negotiation costs you the audio *silently*. `alsa-lib`'s OSS plugin
+advertises `S24_LE` among its formats, so for a 16-bit source — which is what a
+browser produces — `plug` legitimately selects `S24_LE` for the slave and
+converts correctly *for 24 bits*. The device is running 32-bit, so those samples
+are consumed as 32-bit and arrive **256× too small: 48 dB down**, which is
+silence to the ear. Nothing reports an error — byte counts are right, every
+write is accepted, and a syscall trace is byte-for-byte identical to the working
+case:
+
+```
+app S16_LE  ->  Slave: OSS PCM I/O Plugin, format S24_LE   ->  inaudible
+app S32_LE  ->  Slave: OSS PCM I/O Plugin, format S32_LE   ->  correct
+```
+
+So the generated config pins `format S32_LE` (override with `BROWSER_ALSA_FORMAT`).
+`plug`'s S16→S32 conversion is then exact — measured peak 0.089996 for a 0.09
+full-scale tone. S32 is right for USB DACs on FreeBSD, where `uaudio` fixes one
+(rate, bits) per attach and pads narrower sources up to 32 bits.
+
+> **If a browser is ever silent again**, this is the shape to recognise: device
+> open, stream running, correct byte counts, no errors anywhere — and no sound.
+> Dump the negotiated chain with `snd_pcm_dump()` and read the **Slave** format.
+> Anything narrower than the device's own width is attenuation, not a failure.
+
+**The other way a browser goes silent: it lost the race for the DAC.** The device
+is single-open, and `drc.sh off` waits only for BruteFIR. A previous browser can
+keep the device for seconds after its window closes, and MPD's direct output —
+which `drc.sh off` has just *enabled* — takes it whenever it plays. Chromium's
+ALSA backend does not retry: it logs the open failure once and plays silently for
+the rest of the session.
+
+```
+ALSA lib pcm_oss.c:729:(_snd_pcm_oss_open) [error.] Cannot open device /dev/dsp.dac
+ERROR:media/audio/alsa/alsa_util.cc:204] PcmOpen: omdrc_dac,Device busy
+```
+
+`lib.sh` therefore waits (`wait_dac_free`, up to `DAC_FREE_WAIT` seconds) for the
+device to be released before starting the browser, and if it is still held it
+names the holding process rather than leaving you to guess.
+
+### One manual step: tell Chromium to use ALSA
+
+**Required once per profile, and there is no command-line way to do it:**
+
+> `chrome://flags` → search **Audio Backend** → **ALSA** → Relaunch
+
+This build's audio manager probes PulseAudio, then SNDIO, and never reaches ALSA
+on its own — `--audio-backend=alsa` does not steer it (the value is not even in
+the binary; only the `chrome://flags` label is). Without the flag the browser
+plays through sndio, which fails on this DAC with `Unsupported audio parameters`,
+our config is never consulted, and the symptom is **silence with no error
+anywhere**. `lib.sh` checks the profile's `Local State` for the setting and warns
+on launch if it is missing, because nothing else in the system will tell you.
+
+The launchers still pass `--audio-backend=alsa --alsa-output-device=omdrc_dac`.
+`--alsa-output-device` is what selects our PCM; the `--audio-backend` switch is
+harmless but appears to be inert on this build — the flag is what does the work.
+Passing the backend explicitly also keeps Chromium's probe from running, which
+matters for the PulseAudio guard below.
+
+### Packages
+
+Two, and only two:
+
+| Package | Why |
+| --- | --- |
+| `audio/alsa-lib` | `libasound.so.2` and `/usr/local/share/alsa/alsa.conf` (the base config the generated one includes). |
+| `audio/alsa-plugins` | **`libasound_module_pcm_oss.so`** — the OSS PCM plugin. This *is* the mechanism; `alsa-lib` alone gives you an API with nowhere to send audio. |
+
+`audio/alsa-sndio` is the wrong direction — it routes ALSA to **sndio**, which
+would then need `sndiod` running and would put a second daemon between the
+browser and the DAC. `audio/alsa-utils` is optional and only useful for
+debugging (`aplay`, `speaker-test`); note that the *Linux* CD-input bridge needs
+`alsaloop` from it, but nothing on FreeBSD does. `audio/alsa-seq-server` is MIDI
+sequencing — unrelated.
+
+### What makes this safe to coexist with bit-perfect playback
+
+Four invariants. The first three are properties of the design; the fourth is the
+one thing a well-meaning change could break.
+
+1. **The shim is per-process and per-run.** It reaches the browser only through
+   `ALSA_CONFIG_PATH`, pointing at a temporary directory created at launch and
+   deleted on exit. **Never move this config to `~/.asoundrc` or
+   `/usr/local/etc/asound.conf`.** Globally, a DAC-pinned `default` would be
+   inherited by every `libasound` process on the box — a notification sound, a
+   Qt app, an escaped `libcanberra` — any of which could then take the DAC.
+2. **The chain is down while the browser runs.** `drc_bypass_begin` stops DRC
+   before generating the config, and `stop_brutefir` waits for BruteFIR to
+   release the device. The browser is the *sole* opener, not a co-tenant.
+3. **The bit-perfect path cannot load it.** MPD, BruteFIR and `cdin` do not link
+   `libasound`. This is not a convention to be maintained — it is what "no kernel
+   component" means.
+4. **The DAC is single-open, and must stay that way.** `hw.snd.vchans_enable=0`
+   with `dev.pcm.<unit>.bitperfect=1` means no virtual channels, no in-kernel
+   mixer, no kernel resampler. **Do not enable vchans to "let the browser and MPD
+   share the DAC".** It would work — and that is the problem: the kernel would
+   mix and rate-convert *both* streams, so MPD's output would silently stop being
+   bit-perfect. The DRC-bypass launchers exist precisely so that sharing is never
+   needed.
+
+A useful consequence of (4): launching Chromium *directly* rather than through
+`chromium-nodrc.sh` is a safe mistake. It resolves the system `default`
+(`plug:oss` → `/dev/dsp` → `hw.snd.default_unit`, i.e. the DAC), finds it held by
+BruteFIR, and gets `EBUSY` — the browser is silent and the chain is undisturbed.
+Silence, never corruption.
+
+## The PulseAudio guard (FreeBSD, installed by CMake)
+
+PulseAudio must never run on this box. The DAC is single-open, and a pulse server
+takes `hw.snd.default_unit` — which *is* the DAC — so BruteFIR, MPD's direct
+output and the browser would all simply fail to open it. Two defaults can start
+one, and `cmake/browser-audio.cmake` disables both as part of `make install`:
+
+| What | Where it lands | Why |
+| --- | --- | --- |
+| `autospawn = no` | `<pulse sysconfdir>/client.conf.d/10-omdrc-no-autospawn.conf` | `autospawn` defaults to yes, and *any* libpulse client spawns a server on demand — including Chromium's own backend probe. One browser launch would be enough. |
+| `Hidden=true` | `~<audio user>/.config/autostart/pulseaudio.desktop` | Masks the package's XDG autostart entry (`X-KDE-autostart-phase=1`, `Exec=start-pulseaudio-x11`). XDG resolves by basename with `$XDG_CONFIG_HOME/autostart` ahead of `$XDG_CONFIG_DIRS`, so a same-named file wins. |
+
+Both are files, not edits. The pulse drop-in is additive and leaves the
+package-owned `client.conf` alone; the autostart entry is masked rather than
+overwritten, so `pkg check -s` stays clean and a pulse upgrade cannot undo it.
+An autostart file that is *not* ours is kept and reported instead of clobbered,
+and a `DESTDIR` (staged/package) install skips the home-directory write and
+prints the command to run on the target.
+
+`pkg delete pulseaudio` is deliberately not the answer: it would take
+`plasma6-plasma-pa`, `plasma6-kinfocenter`, `qt6-multimedia` and
+`speech-dispatcher` with it. Disabling is a config fix; deleting is machinery.
+
+## Install / deploy
+
+CMake owns this (`cmake/browser-audio.cmake`). `make install` puts the launcher
+scripts beside the engine and renders one `.desktop` entry per browser into the
+standard XDG application directory:
+
+```
+$PREFIX/libexec/omdrc/browser-nodrc/{lib.sh,firefox-nodrc.sh,chromium-nodrc.sh,chrome-nodrc.sh}
+$PREFIX/share/applications/<browser>-nodrc.desktop
+```
+
+Nothing is written into a home directory, so **the install prefix alone decides
+the scope** — `~/.local/share/applications` is exactly the per-user counterpart
+of `/usr/local/share/applications` in the XDG data-directory search path:
+
+```sh
+cmake .. -C ../host.cmake                                  # system-wide
+sudo make install
+
+cmake .. -C ../host.cmake -DCMAKE_INSTALL_PREFIX=$HOME/.local   # just this user
+make install                                                     # no sudo
+```
+
+Only browsers that are actually on `PATH` at configure time get an entry — an
+entry whose `Exec` cannot resolve is worse than none, since it appears in the
+menu and fails silently when clicked. The candidate names per entry mirror
+`browser_resolve()` in `lib.sh`, because the command name is not portable: the
+FreeBSD chromium port installs its launcher as **`chrome`** and ships no
+`chromium` at all, while Linux distributions use `chromium`/`chromium-browser`
+and keep `chrome` for Google Chrome. Install a browser later and re-run `cmake`
+to pick it up; the configure output says which were found and which were skipped.
+
+> **Upgrading from a checkout deployment:** earlier versions rendered the entries
+> from a checkout and had you symlink them out of the repository into
+> `~/.local/share/applications/`. Those symlinks shadow the installed entries —
+> remove them: `rm -f ~/.local/share/applications/*-nodrc.desktop`.
+
 The launcher scripts can also be run directly from a terminal:
-`browser-nodrc/firefox-nodrc.sh https://example.com`.
+`$PREFIX/libexec/omdrc/browser-nodrc/firefox-nodrc.sh https://example.com`.
 
 # The doc/ directory
 It shall contain at least two plots (PNG format), each one with two curves: uncorrected and corrected:
@@ -635,7 +839,7 @@ resets the service to inactive so the next plug-in works correctly.
 | File | Installed to | Purpose |
 |---|---|---|
 | `99-usb-audio-drc.rules` | `/etc/udev/rules.d/` | udev rule: triggers the service on DAC plug-in/unplug |
-| `etc/systemd/system/mpd.service.d/open-media-drc.conf` | `/etc/systemd/system/mpd.service.d/omdrc.conf` | MPD drop-in: run as AUDIO_USER, read config from checkout |
+| `$PREFIX/share/omdrc/mpd.service.d/open-media-drc.conf` | `/etc/systemd/system/mpd.service.d/omdrc.conf` | MPD drop-in: run as the audio user, read the installed config |
 | `etc/systemd/system/drc-usb-audio.service` | `/etc/systemd/system/` | Starts/stops DRC on USB DAC attach/detach |
 
 All three are **copied** into the system path (not symlinked from the checkout): each
@@ -667,35 +871,55 @@ switched on later) — no separate boot service is needed.
 
 ## Installation
 
-Render the host-specific files from `config.env`, then deploy them:
-
 ```bash
-$EDITOR config.env     # AUDIO_USER, AUDIO_HOME, PREFIX, MUSIC_DIR, ...
-./install.sh           # renders *.in; prints the exact OS-specific deploy commands
+$EDITOR host.cmake              # copied from host.cmake.sample: AUDIO_USER,
+                                # AUDIO_HOME, GEOMETRY, MUSIC_DIR, prefix, ...
+mkdir -p build && cd build
+cmake .. -C ../host.cmake
+make && sudo make install
+make user-install               # as the audio user, after the system install
 ```
 
-`install.sh` only renders templates; it then prints the deploy commands (run as root
-for the system paths). **Whether a file is copied or symlinked follows one rule — by
-*when* it is read:**
+`host.cmake` is the single source of box config. The `-C` matters: a plain
+`cmake ..` configures from built-in defaults and a later `-C` cannot repair the
+cache — start a fresh build directory if that happens (the configure step warns
+when it detects this).
 
-- **Deploy glue parsed at early boot** — the systemd `.service` units, the `mpd`
-  drop-in, the udev rule, `modules-load.d` (on FreeBSD: the `rc.d` scripts and `devd`
-  rule) — is **copied** into the system path. systemd/udevd/rc parse these *before*
-  `/home` (a separate mount) is available, so a symlink into the checkout would be
-  dangling at parse time and silently skipped — e.g. MPD would fall back to the
-  package `User=mpd` and fail to read its config under a `700` home. (Ordering the
-  service `After=local-fs.target` does **not** help: that defers *start*, not the
-  *parse*. Equivalently the glue could be symlinked from the *root* fs, just not from
-  `/home`.)
-- **Payload read at runtime** — `mpd.conf`, `drc.sh`, the filters, and BruteFIR's
-  `~/.config/BruteFIR/brutefir_defaults.conf` — stays in the checkout/home: it is read
-  only after `local-fs.target`, and the services are ordered after the mount, so no
-  copy is needed. Re-run the deploy step after a `git pull` to refresh the copied glue.
+`make install` copies files. It does not change host policy: no `rc.conf` /
+`sysctl` edits, no `systemctl enable`, no service restarts, no writing into
+`/etc`. It ends with a checklist naming the exact paths for your prefix — the
+files to copy into `/etc`, the keys to set, the services to start. That
+checklist is the authority; this README does not duplicate it.
 
-> A `make install` (CMake) front-end that performs this deploy in one step — instead
-> of copy-pasting the printed commands — is planned.
+**Per-user install:** nothing is written into a home directory behind the
+prefix's back, so `-DCMAKE_INSTALL_PREFIX=$HOME/.local` gives a complete
+per-user install that needs no `sudo` — `~/.local/share/applications` is the XDG
+counterpart of `/usr/local/share/applications`, and so on.
 
-`make install` requires sudo (prompted once per target that needs it).
+### Why some files must be *copied* into /etc
+
+`make install` puts the boot-time glue under the prefix (`$PREFIX/lib/udev/rules.d`,
+`$PREFIX/lib/modprobe.d`, `$PREFIX/share/omdrc/mpd.service.d/`) and the checklist
+prints the `cp` commands into `/etc`. Two reasons, and they are not negotiable:
+
+- **Packaged installs must not own `/etc` files.** A pkg-managed file that the
+  user edits breaks `pkg check -s`; `/etc` is the administrator's.
+- **Early-boot readers cannot follow a symlink into `/home`.** systemd, udevd
+  and `rc` parse this glue *before* `/home` (commonly a separate mount) is
+  available, so a symlink into the checkout is dangling at parse time and
+  silently skipped. Ordering a unit `After=local-fs.target` does not help: that
+  defers the *start*, not the *parse*.
+
+Payload read at runtime — `mpd.conf`, `drc.sh`, the filters, BruteFIR's
+`~/.config/BruteFIR/brutefir_defaults.conf` — has no such constraint.
+
+> **Running from a checkout instead.** `drc.sh` and `drc-status.sh` enter *repo
+> mode* when `config.env` sits beside them: state files live next to the engine
+> and site data comes from the checkout, with no install at all. That is what
+> `config.env` is for, and it is the only thing it is for — an installed box is
+> configured by `host.cmake`. (The old `./install.sh`, which rendered the `*.in`
+> templates in place, has been removed: everything it produced is installed by
+> CMake, which covers a good deal more besides.)
 
 ## Manual control
 

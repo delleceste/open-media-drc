@@ -67,6 +67,32 @@ install(DIRECTORY src/
 install(PROGRAMS disc.sh mpv-idle.sh ../lib/drc-audio.sh
         DESTINATION lib/omdrcvideo)
 
+# The two desktop mpv launchers live one level up in video/, not in webremote/,
+# but they share drc-audio.sh with mpv-idle.sh and so install beside it — which
+# is why both scripts look for drc-audio.sh next to themselves as well as in
+# lib/.  Previously they reached the desktop only as a hand-made ~/play-*.sh
+# symlink into the checkout, named by an Exec= that pointed into $HOME.
+install(PROGRAMS ../play-media.sh ../play-bluray.sh DESTINATION lib/omdrcvideo)
+set(OMDRC_VIDEO_LAUNCHER_DIR "${CMAKE_INSTALL_PREFIX}/lib/omdrcvideo")
+
+# Their menu / "Open With" entries, in the standard XDG application directory —
+# same rule as the browser launchers (cmake/browser-audio.cmake): nothing is
+# written into a home directory, so the install prefix alone sets the scope.
+# mpv is what both Exec lines ultimately run, so an entry without it is a menu
+# item that fails when clicked.
+find_program(MPV_EXECUTABLE mpv)
+if(MPV_EXECUTABLE)
+    foreach(_launcher play-media play-bluray)
+        configure_file("${CMAKE_CURRENT_SOURCE_DIR}/../${_launcher}.desktop.in"
+                       "${CMAKE_CURRENT_BINARY_DIR}/${_launcher}.desktop" @ONLY)
+        install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${_launcher}.desktop"
+                DESTINATION share/applications)
+    endforeach()
+    message(STATUS "  ${OMDRC_GREEN}play-media / play-bluray${OMDRC_RESET} <- ${MPV_EXECUTABLE}")
+else()
+    message(STATUS "  ${OMDRC_DIM}play-media / play-bluray <- no mpv on PATH, entries skipped${OMDRC_RESET}")
+endif()
+
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/omdrcvideo
         DESTINATION bin)
 

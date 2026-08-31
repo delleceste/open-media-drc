@@ -32,6 +32,6 @@ and neither is aware of the other.
 To try it on the FreeBSD box: copy `audio/open-media-drc` into a ports tree
 checkout, `make makesum`, then `make stage && make check-plist`.
 
-Run-from-repo mode is unaffected by any of this: `./install.sh` remains the
-setup path for a checkout, and drc.sh auto-detects which mode it is in by the
-presence of `config.env` beside it.
+Run-from-repo mode is unaffected by any of this: a checkout needs no setup
+step at all — drc.sh auto-detects which mode it is in by the presence of
+`config.env` beside it.

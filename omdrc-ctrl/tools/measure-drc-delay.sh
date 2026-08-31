@@ -58,7 +58,25 @@ FIFO_RATE="${FIFO_RATE:-48000}" # must match mpd.conf "OMDRC Spectrum" format ra
 DAC_DEV="${DAC_DEV:-$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/omdrc-delay.XXXXXX")"
-MUSIC_DIR="$(grep -E '^[[:space:]]*music_directory' "$REPO/mpd/musicpd.conf" \
+# The MPD config, from the MPD that is actually running: it is started with its
+# config file as an argument, so the command line is the authority.  (This used
+# to read $REPO/mpd/musicpd.conf — a file rendered into the checkout by the old
+# install.sh, which no longer exists; the installed copy is what MPD reads.)
+_mpd_conf() {
+	# musicpd(FreeBSD) / mpd(Linux), invoked as: <binary> [opts] <config>
+	for _c in $(pgrep -fl 'musicpd|mpd' 2>/dev/null | sed -n 's/.*[[:space:]]\(\/[^[:space:]]*\.conf\)$/\1/p'); do
+		[ -f "$_c" ] && { echo "$_c"; return 0; }
+	done
+	for _c in "$PREFIX/etc/open-media-drc/musicpd.conf" \
+	          "$PREFIX/etc/open-media-drc/mpd.conf"; do
+		[ -f "$_c" ] && { echo "$_c"; return 0; }
+	done
+	return 1
+}
+PREFIX="${PREFIX:-/usr/local}"
+MPD_CONF="${MPD_CONF:-$(_mpd_conf || true)}"
+MUSIC_DIR=""
+[ -n "$MPD_CONF" ] && MUSIC_DIR="$(grep -E '^[[:space:]]*music_directory' "$MPD_CONF" \
              | sed -E 's/.*"([^"]+)".*/\1/' | head -1)"
 CAL_SUBDIR="_omdrc_cal"
 CHIRP="$MUSIC_DIR/$CAL_SUBDIR/chirp.wav"
@@ -73,7 +91,7 @@ die() { printf '\033[31m[delay] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
 need sox; need mpc; need brutefir; need virtual_oss
 python3 -c 'import numpy' 2>/dev/null || die "python3 numpy not available"
-[ -n "$MUSIC_DIR" ] || die "could not read music_directory from mpd/musicpd.conf"
+[ -n "$MUSIC_DIR" ] || die "could not read music_directory from ${MPD_CONF:-any MPD config (is MPD running? try MPD_CONF=/path/to/mpd.conf)}"
 
 # ── teardown (always restores the box) ───────────────────────────────────────
 READER_PIDS=()

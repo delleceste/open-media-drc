@@ -1,15 +1,17 @@
 [Desktop Entry]
-# Rendered from this .in by ../install.sh (@AUDIO_HOME@ from config.env).
-# Deploy so it shows in the KDE launcher:
-#   ln -sf @AUDIO_HOME@/open-media-drc/browser-nodrc/chromium-nodrc.desktop \
-#          @AUDIO_HOME@/.local/share/applications/chromium-nodrc.desktop
+# Rendered and installed by cmake/browser-audio.cmake (`make install`).
+# Exec points at the installed launcher under @CMAKE_INSTALL_PREFIX@/libexec;
+# the entry itself lands in @CMAKE_INSTALL_PREFIX@/share/applications, so the
+# install prefix alone decides system-wide (/usr/local) vs per-user (~/.local).
 Version=1.0
 Type=Application
 Name=Chromium (No DRC)
 Comment=Chromium with BruteFIR/DRC bypassed so the browser plays to the DAC
-Exec=@AUDIO_HOME@/open-media-drc/browser-nodrc/chromium-nodrc.sh %U
-Icon=chromium
+Exec=@OMDRC_BROWSER_NODRC_DIR@/chromium-nodrc.sh %U
+# The chromium port ships its icon as `chrome` (hicolor/*/apps/chrome.png);
+# there is no icon named `chromium`, which showed a blank launcher entry.
+Icon=chrome
 Terminal=false
 Categories=Network;WebBrowser;
 MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
-StartupWMClass=chromium
+StartupWMClass=chrome

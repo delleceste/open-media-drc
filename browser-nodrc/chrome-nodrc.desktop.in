@@ -1,13 +1,13 @@
 [Desktop Entry]
-# Rendered from this .in by ../install.sh (@AUDIO_HOME@ from config.env).
-# Deploy so it shows in the KDE launcher:
-#   ln -sf @AUDIO_HOME@/open-media-drc/browser-nodrc/chrome-nodrc.desktop \
-#          @AUDIO_HOME@/.local/share/applications/chrome-nodrc.desktop
+# Rendered and installed by cmake/browser-audio.cmake (`make install`).
+# Exec points at the installed launcher under @CMAKE_INSTALL_PREFIX@/libexec;
+# the entry itself lands in @CMAKE_INSTALL_PREFIX@/share/applications, so the
+# install prefix alone decides system-wide (/usr/local) vs per-user (~/.local).
 Version=1.0
 Type=Application
 Name=Google Chrome (No DRC)
 Comment=Google Chrome with BruteFIR/DRC bypassed so the browser plays to the DAC
-Exec=@AUDIO_HOME@/open-media-drc/browser-nodrc/chrome-nodrc.sh %U
+Exec=@OMDRC_BROWSER_NODRC_DIR@/chrome-nodrc.sh %U
 Icon=google-chrome
 Terminal=false
 Categories=Network;WebBrowser;

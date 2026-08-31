@@ -4,7 +4,7 @@
 # REQUIRE: NETWORKING FILESYSTEMS musicpd
 # KEYWORD: shutdown
 #
-# Template — generated to upmpdcli by install.sh from config.env.
+# Template — rendered to upmpdcli by CMake (see cmake/).
 #
 # FreeBSD rc.d service script for upmpdcli (UPnP/OpenHome front-end for MPD).
 #

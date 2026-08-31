@@ -4,7 +4,7 @@
 #The command line options have higher priorities than the values in
 #this file.
 #
-# Template — generated to upmpdcli.conf by ../install.sh from ../config.env.
+# Template — rendered to upmpdcli.conf by CMake (see cmake/).
 # Do not edit the generated file; edit this .in or config.env.
 # OS-independent: paths use @PREFIX@ / @AUDIO_HOME@ so the same template works
 # on Linux and FreeBSD (source build under @PREFIX@, default /usr/local).

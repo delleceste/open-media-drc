@@ -6,7 +6,7 @@ After=sound.target
 # after brutefir-drc.service.  drc.sh starts and stops this unit at the moment
 # the chain moves, which is the only ordering that is actually correct.
 
-# Template — generated to omdrc-cdin.service by install.sh from config.env.
+# Template — rendered to omdrc-cdin.service by CMake (see cmake/).
 # A --user unit, like the renderers: omdrcctrl's CD input card drives it with
 # `systemctl --user start|stop omdrc-cdin`, which needs no sudoers grant.
 # Link into ~/.config/systemd/user/ and `systemctl --user enable` it only if

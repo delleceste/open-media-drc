@@ -8,7 +8,7 @@ project(open-media-drc VERSION 0.93.0 LANGUAGES NONE)
 # Host values live in host.cmake (copied from host.cmake.sample) and are the
 # single source of box-specific config, rendered into each subproject via
 # configure_file(*.in @ONLY) — the CMake equivalent of the old config.env +
-# install.sh render step.
+# install.sh render step (that script has since been removed).
 
 # ── host values (config.env successor) ──────────────────────────────────────
 set(AUDIO_USER    "$ENV{USER}"          CACHE STRING "Login user that owns the services and brutefir")
@@ -75,10 +75,13 @@ include(cmake/dependencies.cmake)
 include(cmake/core-drc.cmake)          # drc.sh + configs/filters + omdrc/omdrc-status wrappers
 include(cmake/hotplug.cmake)           # DAC-hotplug + brutefir services (udev/devd + rc.d/systemd)
 include(cmake/renderers.cmake)         # mpd config/drop-in + upmpdcli config/service
+include(cmake/browser-audio.cmake)     # browser ALSA shim + PulseAudio guard (FreeBSD)
 add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
   add_subdirectory(cdin)               # omdrc-cdin — CD/S-PDIF capture bridge (OSS only)
+else()
+  include(cmake/cdin-linux.cmake)      # the same bridge on Linux: alsaloop + a --user unit
 endif()
 
 # ── `make user-install`: the per-user steps a root install cannot do ─────────

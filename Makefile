@@ -1,8 +1,11 @@
 # Install target for the PACKAGED (FreeBSD port / pkg) layout.  POSIX make —
 # works with both BSD make and GNU make.
 #
-# Run-from-repo users do NOT need this: keep using ./install.sh, which renders
-# the *.in templates in place and leaves everything in the checkout.
+# This is NOT the general installer: `cmake .. -C ../host.cmake && make &&
+# sudo make install` is, and it installs strictly more (hotplug services, the
+# web UIs, desktop launchers, the snd-aloop module config).  This file exists
+# for the FreeBSD port, whose do-install calls it; keeping the two in parity is
+# an open item — see doc/FREEBSD-PORT-PLAN.md.
 #
 # Layout installed here (hier(7)):
 #   $(PREFIX)/bin/omdrc, omdrc-status         thin wrappers
@@ -39,7 +42,7 @@ INSTALL_DATA=	install -m 644
 
 all:
 	@echo "Nothing to build.  Targets: install [DESTDIR=... PREFIX=...]"
-	@echo "Run-from-repo setup: ./install.sh (renders *.in templates in place)."
+	@echo "General install: cmake .. -C ../host.cmake && make && sudo make install"
 
 install:
 	/bin/sh scripts/prepare-musicpd-rc-conf-dir.sh "$(MUSICPDRCCONFDIR)"
@@ -100,7 +103,8 @@ install-ctrl:
 	                omdrc-ctrl/src/templates/brutefir_config.html \
 	                omdrc-ctrl/src/templates/bitperfect.html \
 	                $(CTRLDIR)/templates
-	$(INSTALL_DATA) scripts/new_filter_design.py scripts/deploy_filter.py \
+	$(INSTALL_DATA) scripts/new_filter_design.py scripts/new_wav_filter_design.py \
+	                scripts/deploy_filter.py \
 	                scripts/remove_filter_design.py scripts/verify_filter_bundle.py \
 	                scripts/console_ui.py \
 	                scripts/filter_workflow_next.py $(LIBEXECDIR)/filter-tools

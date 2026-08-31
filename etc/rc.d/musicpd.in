@@ -4,7 +4,7 @@
 # REQUIRE: mixer LOGIN avahi_daemon
 # KEYWORD: shutdown
 
-# Template — generated to musicpd by install.sh from config.env.
+# Template — rendered to musicpd by CMake (see cmake/).
 #
 # Add the following line to /etc/rc.conf to enable mpd:
 #
