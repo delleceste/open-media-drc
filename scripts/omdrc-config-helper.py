@@ -35,8 +35,17 @@ ALOOP_MODPROBE = "/etc/modprobe.d/omdrc-snd-aloop.conf"
 
 def run(argv: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
     print("$ " + " ".join(repr(item) if " " in item else item for item in argv), flush=True)
-    result = subprocess.run(argv, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT)
+    # A reconciler may daemonize BruteFIR, which inherits stdout.  Capturing
+    # through PIPE makes subprocess.run wait for that daemon to close the pipe
+    # even after the command itself is done.  A regular file has no such EOF
+    # dependency on descendants.
+    with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8") as output:
+        result = subprocess.run(argv, text=True, stdout=output,
+                                stderr=subprocess.STDOUT)
+        # Reopen instead of seeking the writer: daemon descendants may still
+        # hold it and must not share our read position.
+        with open(output.name, encoding="utf-8", errors="replace") as reader:
+            result.stdout = reader.read()
     if result.stdout:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n", flush=True)
     if check and result.returncode:

@@ -38,6 +38,7 @@ etc/open-media-drc/configs/flat/brutefir-192000.conf
 %%CTRL%%share/omdrc-ctrl/templates/bitperfect.html
 %%CTRL%%libexec/omdrc/omdrc-config-helper
 %%CTRL%%libexec/omdrc/filter-tools/new_filter_design.py
+%%CTRL%%libexec/omdrc/filter-tools/new_wav_filter_design.py
 %%CTRL%%libexec/omdrc/filter-tools/deploy_filter.py
 %%CTRL%%libexec/omdrc/filter-tools/remove_filter_design.py
 %%CTRL%%libexec/omdrc/filter-tools/verify_filter_bundle.py

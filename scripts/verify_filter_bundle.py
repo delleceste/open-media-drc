@@ -38,10 +38,11 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
         raise AuditError(f"{path}: bundle ID mismatch")
     if manifest.get("verification", {}).get("status") != "verified":
         raise AuditError(f"{path}: manifest status is not verified")
-    # A bundle has to say which REW session it came out of, or the filters
-    # cannot be traced back to the sweeps that produced them.
+    response_available = manifest.get("response_available", True)
+    # A response bundle has to say which REW session it came out of. A WAV-only
+    # bundle deliberately has no measurements and makes no response claim.
     session = manifest["source"].get("measurements") or {}
-    if not session.get("sha256"):
+    if response_available and not session.get("sha256"):
         raise AuditError(
             f"{path}: the manifest does not name the REW .mdat these exports were "
             "taken from; redeploy this design with new_filter_design.py")
@@ -60,6 +61,11 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
     if ("description" in manifest and
             analysis.get("description") != manifest["description"]):
         raise AuditError(f"{path}: analysis description mismatch")
+    if bool(analysis.get("response_available", True)) != bool(response_available):
+        raise AuditError(f"{path}: response availability mismatch")
+    if not response_available and (analysis.get("traces") or
+                                   analysis.get("frequency_grids")):
+        raise AuditError(f"{path}: WAV-only bundle unexpectedly contains response data")
     for role, item in manifest["source"]["artifacts"].items():
         if analysis["inputs"].get(role) != item["sha256"]:
             raise AuditError(f"{path}: analysis dependency mismatch for {role}")
@@ -97,7 +103,9 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
             raise AuditError(f"{path}: insufficient attenuation at {rate} Hz")
     print(f"PASS {manifest['geometry']}/{manifest['variant']} {manifest['bundle_id']}")
     project = manifest["source"].get("project") or {}
-    if (project.get("kind") == "browser-upload" and
+    if not response_available:
+        print("     source WAV filters only; FILTER RESPONSE unavailable")
+    elif (project.get("kind") == "browser-upload" and
             project.get("archive_history") == "required"):
         print(f"     source browser upload archived in required site history"
               f" · session {session['file']} {session['sha256'][:12]}")

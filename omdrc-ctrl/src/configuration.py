@@ -16,7 +16,9 @@ import platform
 import re
 import secrets
 import shutil
+import signal
 import subprocess
+import tempfile
 import threading
 import time
 from typing import Callable, Iterator
@@ -250,17 +252,42 @@ class ConfigurationManager:
 
     def run_command(self, job: Job, argv: list[str], timeout: int | None = None) -> None:
         job.write("$ " + " ".join(argv))
-        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, bufsize=1, env=self.env(),
-                                stdin=subprocess.DEVNULL, start_new_session=True)
-        assert proc.stdout is not None
-        started = time.monotonic()
-        for line in proc.stdout:
-            job.write(line)
-            if timeout and time.monotonic() - started > timeout:
-                proc.kill()
-                raise RuntimeError(f"operation timed out after {timeout} seconds")
-        rc = proc.wait()
+        # A pipe is the wrong capture primitive here.  Service commands can
+        # start BruteFIR in the background; that daemon inherits stdout and
+        # keeps the pipe open after the service command has exited.  Iterating
+        # over proc.stdout then waits forever for EOF, and cannot enforce the
+        # timeout while no line arrives.  A regular temporary file lets us
+        # stream progress without making EOF depend on every descendant.
+        with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8") as output:
+            # Open a second file description for reading.  A dup would share
+            # its seek position with the child's writer and corrupt output.
+            with open(output.name, encoding="utf-8", errors="replace") as reader:
+                proc = subprocess.Popen(
+                    argv, stdout=output, stderr=subprocess.STDOUT, text=True,
+                    env=self.env(), stdin=subprocess.DEVNULL, start_new_session=True)
+                started = time.monotonic()
+                pending = ""
+                while proc.poll() is None:
+                    chunk = reader.read()
+                    if chunk:
+                        lines = (pending + chunk).splitlines(keepends=True)
+                        pending = ""
+                        if lines and not lines[-1].endswith(("\n", "\r")):
+                            pending = lines.pop()
+                        for line in lines:
+                            job.write(line)
+                    if timeout and time.monotonic() - started > timeout:
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        proc.wait()
+                        raise RuntimeError(f"operation timed out after {timeout} seconds")
+                    time.sleep(0.1)
+                remainder = pending + reader.read()
+                for line in remainder.splitlines():
+                    job.write(line)
+                rc = proc.returncode
         if rc:
             raise RuntimeError(f"command exited with status {rc}")
 
@@ -463,6 +490,36 @@ class ConfigurationManager:
                     stream.write(block)
         return export
 
+    def save_wav_uploads(self, job: Job, left, right,
+                         geometry: str, design: str) -> Path:
+        """Save an explicitly assigned L/R WAV pair under stable safe names."""
+        if left is None or right is None:
+            raise ValueError("select both the left and right filter WAV")
+        if not _SAFE_NAME.fullmatch(geometry):
+            raise ValueError("Geometry is required for a WAV-only install")
+        if not _SAFE_NAME.fullmatch(design) or design == "default":
+            raise ValueError("a non-default Design ID is required for a WAV-only install")
+        for upload, channel in ((left, "left"), (right, "right")):
+            if Path(upload.filename or "").suffix.casefold() != ".wav":
+                raise ValueError(f"the {channel} filter must be a .wav file")
+        directory = job.directory / "upload" / f"{geometry}.{design}.wavs"
+        directory.mkdir(parents=True, exist_ok=False)
+        total = 0
+        for upload, name in ((left, "L.wav"), (right, "R.wav")):
+            target = directory / name
+            with target.open("xb") as stream:
+                while True:
+                    block = upload.stream.read(1024 * 1024)
+                    if not block:
+                        break
+                    total += len(block)
+                    if target.stat().st_size + len(block) > self.settings.max_file_bytes:
+                        raise ValueError(f"{upload.filename} exceeds the per-file upload limit")
+                    if total > self.settings.max_upload_bytes:
+                        raise ValueError("the selected files exceed the total upload limit")
+                    stream.write(block)
+        return directory
+
     def install_filter(self, job: Job, directory: Path, geometry: str = "",
                        design: str = "", project_folder: str = "") -> None:
         design_root = self.design_root()
@@ -511,6 +568,49 @@ class ConfigurationManager:
             raise RuntimeError("installed manifest differs from the authoritative design store")
         job.write(
             f"VERIFIED: installed {geometry}@{design} is derived from the authoritative bundle")
+
+    def install_wav_filter(self, job: Job, directory: Path,
+                           geometry: str, design: str) -> None:
+        design_root = self.design_root()
+        history = self.is_git_root(design_root)
+        if history:
+            self.require_clean_git_root(design_root)
+        script = self.settings.tools_root / "new_wav_filter_design.py"
+        argv = [shutil.which("python3") or "python3", str(script), str(directory),
+                "--site-root", str(design_root), "--yes", "--upload-provenance",
+                "--geometry", geometry, "--design", design, "--no-next"]
+        if history:
+            argv.extend(["--require-commit"])
+            job.write(f"AUTHORITY: publishing and committing WAV-only {geometry}@{design} in {design_root}")
+        else:
+            argv.extend(["--no-commit"])
+            job.write(f"AUTHORITY: publishing WAV-only {geometry}@{design} in non-Git design store {design_root}")
+        self.run_command(job, argv)
+
+        manifest = design_root / "filters" / geometry / "provenance" / f"{design}.json"
+        verifier = self.settings.tools_root / "verify_filter_bundle.py"
+        self.run_command(job, [shutil.which("python3") or "python3", str(verifier),
+                               "--require-sources", "--no-next", "--site-root",
+                               str(design_root), str(manifest)])
+        if design_root.resolve() == self.settings.site_root.resolve():
+            job.write("VERIFIED: WAV-only design store is the active site")
+            return
+        staging, staged_manifest = self.stage_repository_bundle(
+            job, design_root, geometry, design)
+        helper = shutil.which(self.settings.helper) or self.settings.helper
+        command = [helper, "filter-publish", "--staged", str(staging),
+                   "--site-root", str(self.settings.site_root)]
+        if os.geteuid() != 0:
+            command = ["sudo", "-n", *command]
+        self.run_command(job, command)
+        installed_manifest = (self.settings.site_root / "filters" / geometry /
+                              "provenance" / staged_manifest.name)
+        self.run_command(job, [shutil.which("python3") or "python3", str(verifier),
+                               "--require-sources", "--no-next", "--site-root",
+                               str(self.settings.site_root), str(installed_manifest)])
+        if self._sha256(manifest) != self._sha256(installed_manifest):
+            raise RuntimeError("installed manifest differs from the authoritative design store")
+        job.write(f"VERIFIED: installed WAV-only {geometry}@{design}; response unavailable")
 
     def designs(self) -> list[dict]:
         active = self.active_design()
@@ -586,6 +686,7 @@ class ConfigurationManager:
                          "location": location,
                          "rates": sorted(data.get("runtime", {}).get("rates", {}), key=int),
                          "mdat": session.get("file", ""),
+                         "response_available": data.get("response_available", True),
                          "selected": (
                              (active.get("geometry") == geometry and
                               active.get("design") in {f"@{design}", design}) or

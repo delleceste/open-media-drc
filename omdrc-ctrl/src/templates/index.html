@@ -228,6 +228,9 @@
         }
         .btn-details:hover { border-color: var(--accent); color: var(--accent); }
         .btn-details.active { display: inline-block; }
+        .btn-details.unavailable { opacity:.55; cursor:not-allowed; border-color:var(--border); color:var(--muted); }
+        .response-action { display:flex; flex-direction:column; align-items:flex-end; gap:2px; }
+        .response-unavailable { max-width:190px; color:var(--muted); font-size:.62rem; line-height:1.2; text-align:right; }
         /* Filter-set (geometry) picker in the DRC card title.  Sized like a
            .btn-details so the title row reads as one strip of controls. */
         .geo-select {
@@ -1169,7 +1172,7 @@
 {% macro render_group(group_name, group_label, cmds) %}
 <div class="card">
     <div class="card-title"{% if group_name == 'drc' %} style="display:flex;justify-content:space-between;align-items:baseline"{% endif %}>
-        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/brutefir-config" target="_blank" rel="noopener noreferrer">Configuration ↗</a><a class="btn-details active" href="/filter-response">Filter response ↗</a></span>{% endif %}
+        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/brutefir-config" target="_blank" rel="noopener noreferrer">Configuration ↗</a><span class="response-action"><a id="filter-response-link" class="btn-details active" href="/filter-response">Filter response ↗</a><small id="filter-response-note" class="response-unavailable" hidden>Not available for this WAV-only configuration</small></span></span>{% endif %}
     </div>
     {% if group_name == 'drc' %}
     <div id="drc-session-panel" class="drc-session-panel" aria-live="polite">
@@ -1773,6 +1776,20 @@ async function loadDesigns() {
         }
         sel.disabled = list.length < 2;
         sel.title = list.length < 2 ? 'Filter design (only one at this rate)' : 'Filter design (A/B)';
+        const responseLink = document.getElementById('filter-response-link');
+        const responseNote = document.getElementById('filter-response-note');
+        const responseUnavailable = Boolean(d.active && d.active.running &&
+            d.active.response_available === false);
+        if (responseLink) {
+            responseLink.classList.toggle('unavailable', responseUnavailable);
+            responseLink.setAttribute('aria-disabled', String(responseUnavailable));
+            responseLink.title = responseUnavailable
+                ? (d.active.response_unavailable_reason || 'Filter response is not available for this WAV-only configuration.')
+                : 'Open the verified filter response';
+            if (responseUnavailable) responseLink.removeAttribute('href');
+            else responseLink.href = '/filter-response';
+        }
+        if (responseNote) responseNote.hidden = !responseUnavailable;
         renderDrcFeedback(d);
     } catch { /* offline */ }
 }

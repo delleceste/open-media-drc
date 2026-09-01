@@ -320,6 +320,25 @@ class RoutesTest(unittest.TestCase):
         self.assertIn("data.append('mdat',selectedMdat,selectedMdat.name)", text)
         self.assertIn("data.set('project_folder',projectFolder)", text)
 
+    def test_audio_apply_recovers_from_http_json_and_event_stream_failures(self):
+        text = (SRC / "templates/configuration.html").read_text()
+        self.assertIn("if(!r.ok||!d.ok)throw new Error", text)
+        self.assertIn("source.onerror=async()", text)
+        self.assertIn("freeze(false)", text[text.index("source.onerror=async()"):])
+
+    def test_wav_only_install_controls_and_response_notice_are_present(self):
+        configuration_page = (SRC / "templates/configuration.html").read_text()
+        control_page = (SRC / "templates/index.html").read_text()
+        response_page = (SRC / "templates/filter_response.html").read_text()
+        self.assertIn('id="wav-only"', configuration_page)
+        self.assertIn('name="left_wav"', configuration_page)
+        self.assertIn('name="right_wav"', configuration_page)
+        self.assertIn("Geometry is required for a WAV-only install",
+                      (SRC / "configuration.py").read_text())
+        self.assertIn('id="filter-response-note"', control_page)
+        self.assertIn("d.active.response_available === false", control_page)
+        self.assertIn("data.response_available === false", response_page)
+
     def test_mutation_requires_token(self):
         response = self.client.delete("/configuration/api/filters/room/design")
         self.assertEqual(response.status_code, 403)

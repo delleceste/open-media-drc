@@ -2699,8 +2699,10 @@ def _verified_filter_bundle(parsed: dict) -> tuple[dict | None, dict]:
     }, {
         "status": manifest["verification"]["status"],
         "message": (
-            "Active L/R bytes, config and graph dependencies match the manifest; "
-            f"bundle {manifest['bundle_id'][:16]}"),
+            ("Active L/R bytes and config match the WAV-only manifest; "
+             if not manifest.get("response_available", True) else
+             "Active L/R bytes, config and graph dependencies match the manifest; ")
+            + f"bundle {manifest['bundle_id'][:16]}"),
         "bundle_id": manifest["bundle_id"],
         "active_hashes": {channel: item["sha256"] for channel, item in active.items()},
     }
@@ -6197,6 +6199,9 @@ def _active_design_identity() -> dict:
                 "source_directory": manifest["source"]["directory"],
                 "source_project": manifest["source"].get("project", {}),
                 "session": manifest["source"].get("measurements", {}),
+                "response_available": manifest.get("response_available", True),
+                "response_unavailable_reason": bundle["analysis"].get(
+                    "unavailable_reason", ""),
             })
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         identity["verification"] = {"status": "mismatch", "message": str(error)}
@@ -6407,7 +6412,16 @@ def drc_filter_response():
         if bundle:
             manifest = bundle["manifest"]
             analysis = bundle["analysis"]
+            if not manifest.get("response_available", True):
+                result.update({
+                    "response_available": False,
+                    "response_unavailable_reason": analysis.get(
+                        "unavailable_reason",
+                        "This configuration was installed from WAV filters only."),
+                })
+                return jsonify(result)
             result.update({
+                "response_available": True,
                 "frequency_grids": analysis["frequency_grids"],
                 "traces": analysis["traces"],
                 "details": {
@@ -6566,16 +6580,26 @@ def configuration_filter_install():
     manager = _configuration()
     job = manager._new_job("filter-install")
     try:
-        directory = manager.save_uploads(
-            job, request.files.getlist("measurements"), request.files.get("mdat"))
         geometry = request.form.get("geometry", "").strip()
         design = request.form.get("design", "").strip()
         project_folder = request.form.get("project_folder", "").strip()
+        wav_only = request.form.get("wav_only", "") == "1"
+        if wav_only:
+            directory = manager.save_wav_uploads(
+                job, request.files.get("left_wav"), request.files.get("right_wav"),
+                geometry, design)
+        else:
+            directory = manager.save_uploads(
+                job, request.files.getlist("measurements"), request.files.get("mdat"))
     except Exception as error:
         job.set_phase("failed", error=str(error), returncode=1)
         return jsonify({"ok": False, "error": str(error), "job": job.id}), 400
-    manager.launch(job, lambda current: manager.install_filter(
-        current, directory, geometry, design, project_folder))
+    if wav_only:
+        manager.launch(job, lambda current: manager.install_wav_filter(
+            current, directory, geometry, design))
+    else:
+        manager.launch(job, lambda current: manager.install_filter(
+            current, directory, geometry, design, project_folder))
     return jsonify({"ok": True, "job": job.id}), 202
 
 

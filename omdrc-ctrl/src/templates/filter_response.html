@@ -299,6 +299,12 @@ async function load() {
                 : (data.error || 'Filter analysis failed.');
             return;
         }
+        if (data.response_available === false) {
+            status.className = '';
+            status.textContent = data.response_unavailable_reason ||
+                'Filter response is not available for this configuration because it was installed from impulse WAV filters only, without REW response exports.';
+            return;
+        }
         responseData = data;
         traces = buildTraceList(data);
         const taps = data.channels.length ? data.channels[0].taps : 0;

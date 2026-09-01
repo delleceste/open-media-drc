@@ -114,6 +114,7 @@ install(PROGRAMS
 
 install(FILES
         ../scripts/new_filter_design.py
+        ../scripts/new_wav_filter_design.py
         ../scripts/deploy_filter.py
         ../scripts/remove_filter_design.py
         ../scripts/verify_filter_bundle.py

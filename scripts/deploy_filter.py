@@ -93,13 +93,15 @@ DEFAULT_LIMITS = {
 
 def artifact_roles(recipe: dict) -> tuple[str, ...]:
     artifacts = recipe["source"]["artifacts"]
-    missing = [role for role in ARTIFACT_ROLES if role not in artifacts]
+    response_available = recipe.get("response_available", True)
+    required = ARTIFACT_ROLES if response_available else WAV_ROLES
+    missing = [role for role in required if role not in artifacts]
     if missing:
         raise AuditError(f"recipe is missing required artifacts: {', '.join(missing)}")
     unknown = sorted(set(artifacts) - set(ARTIFACT_ROLES))
     if unknown:
         raise AuditError(f"recipe has unknown artifact roles: {', '.join(unknown)}")
-    return ARTIFACT_ROLES
+    return required
 
 
 def aggregate_labels(aggregate: dict) -> tuple[str, str]:
@@ -549,6 +551,30 @@ def build_analysis(recipe: dict, source_paths: dict[str, Path]) -> tuple[dict, d
     the plotted filter response would be an unverified claim about the bytes
     BruteFIR actually loads.
     """
+    if not recipe.get("response_available", True):
+        return ({
+            "schema": 2,
+            "geometry": recipe["geometry"],
+            "variant": recipe["variant"],
+            "design_id": recipe.get("design_id", recipe["variant"]),
+            "description": recipe.get(
+                "description", recipe.get("design_id", recipe["variant"])),
+            "response_available": False,
+            "unavailable_reason": (
+                "This configuration was installed from impulse WAV filters only; "
+                "no REW response exports were supplied."),
+            "frequency_grids": {},
+            "traces": [],
+            "calculation": {
+                "note": "No response was calculated from the impulse WAV files.",
+                "smoothing_applied": "none",
+            },
+            "inputs": {role: recipe["source"]["artifacts"][role]["sha256"]
+                       for role in artifact_roles(recipe)},
+            "source_headers": {},
+            "validation": {"filter_txt_to_wav": {}},
+        }, {})
+
     parsed = {role: parse_rew_txt(source_paths[role]) for role in TRACE_ROLES}
     defects = export_defects(parsed)
     if defects:
@@ -938,14 +964,21 @@ def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
 
     progress(
         "[DEPLOY 2/4]",
-        "Read the eight REW exports and relate each filter TXT to its impulse WAV")
+        ("Read the eight REW exports and relate each filter TXT to its impulse WAV"
+         if recipe.get("response_available", True) else
+         "Record that no REW response exports were supplied"))
     analysis, response_validation = build_analysis(recipe, source_paths)
     analysis_bytes = (json.dumps(analysis, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     analysis_hash = hashlib.sha256(analysis_bytes).hexdigest()
     points = sum(len(item["magnitude_db"]) for item in analysis["traces"])
-    progress_ok(
-        f"{len(analysis['traces'])} traces carried through unchanged, "
-        f"{points:,} plotted points, analysis sha256 {analysis_hash[:12]}")
+    if recipe.get("response_available", True):
+        progress_ok(
+            f"{len(analysis['traces'])} traces carried through unchanged, "
+            f"{points:,} plotted points, analysis sha256 {analysis_hash[:12]}")
+    else:
+        progress_ok(
+            f"WAV-only configuration recorded; response unavailable, "
+            f"analysis sha256 {analysis_hash[:12]}")
 
     with tempfile.TemporaryDirectory(prefix="omdrc-filter-deploy-") as temp_name:
         staging = Path(temp_name)
@@ -1032,19 +1065,27 @@ def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
             "variant": recipe["variant"],
             "design_id": design_id,
             "description": recipe["description"],
+            "response_available": recipe.get("response_available", True),
             "verification": {
                 "status": "verified",
                 "audited_at": recipe["audited_at"],
-                "claims": [
+                "claims": ([
                     "every plotted trace is one REW text export, stored and hashed verbatim",
                     "no average, sum, convolution or smoothing stands between REW and the graph",
                     "filter TXT responses match the canonical WAV responses within declared limits",
                     "all runtime RAWs reproduce from those canonical WAVs",
                     "every BruteFIR config maps to the hashed RAW pair and has sufficient headroom",
                     "graph inputs are content-hash bound to this manifest",
-                ],
+                ] if recipe.get("response_available", True) else [
+                    "both source impulse WAVs are stored and hashed verbatim",
+                    "all runtime RAWs reproduce from those canonical WAVs",
+                    "every BruteFIR config maps to the hashed RAW pair and has sufficient headroom",
+                    "no response curve is claimed or calculated from the impulse WAVs",
+                ]),
                 "prediction": (
-                    "none: the corrected curves are measured REW exports, not a prediction"),
+                    "none: the corrected curves are measured REW exports, not a prediction"
+                    if recipe.get("response_available", True) else
+                    "unavailable: this design contains impulse WAV filters only"),
             },
             "source": source_manifest,
             "aggregate": recipe["aggregate"],
