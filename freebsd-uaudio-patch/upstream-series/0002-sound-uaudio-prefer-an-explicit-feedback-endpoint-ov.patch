@@ -1,4 +1,4 @@
-From ab9d98e47d52a88ab8be7a79db193dc130808836 Mon Sep 17 00:00:00 2001
+From a67d153650b6774f53556b7b00cf08fb7bbec294 Mon Sep 17 00:00:00 2001
 From: Giacomo <delleceste@gmail.com>
 Date: Wed, 26 Aug 2026 14:41:49 +0200
 Subject: [PATCH 2/3] sound: uaudio: prefer an explicit feedback endpoint over
@@ -39,10 +39,9 @@ closes a pre-existing hole: when the capture stream exists but was never
 started, or failed to configure, playback used to free-run with no rate
 feedback from either source.
 
-PR: 295933
-MFC after: 2 weeks
-Assisted-By: Claude Opus 5 (claude-opus-5)
-
+PR:		295933
+MFC after:	2 weeks
+Assisted-By:	Claude Opus 5 (claude-opus-5)
 Signed-off-by: Giacomo <delleceste@gmail.com>
 ---
  sys/dev/sound/usb/uaudio.c | 75 ++++++++++++++++++++++++++++++++++++--

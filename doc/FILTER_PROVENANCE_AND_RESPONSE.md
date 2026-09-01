@@ -114,6 +114,17 @@ much more tightly to the Python FFT.
 The earlier audit of the already deployed default bundle used
 `120-blue-with-inversion.mdat`, SHA-256
 `b184b824236868a898c33877a56d0f1003a2e442922d8b4f9c05ef1a51b8d6c7`.
+
+> **That file no longer exists under that name or with that content.** On
+> 2026-09-01 `DRC-120.blue` renamed it to `120.blue.mdat` *and* cleaned it of
+> measurements made by other techniques; the current file hashes
+> `62d534dac28abdd697223dde9187f02c78c1aa10f073cb51bfc5a6667efc953c`
+> (45 499 690 B). The audited original, 57 685 240 B, is recoverable as
+> `git show 23b1a6a:120-blue-with-inversion.mdat` in `DRC-120.blue`. The audit
+> below therefore still stands, but it must be re-run against that blob, not
+> against the working tree. The traces it names all survive the clean, and the
+> filter exports (`FLX`, `FRX`, `FLX-trimmed`, `FRX-trimmed`,
+> `X801 (revised)`) re-export numerically identical.
 It was opened with REW V5.40 Beta 132 using `-nogui -noaudio -api`; no audio
 device was opened. All TXT exports resolve to unique traces in its 44-trace
 inventory.

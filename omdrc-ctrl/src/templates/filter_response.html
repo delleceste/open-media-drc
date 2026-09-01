@@ -6,6 +6,7 @@
     <title>Verified DRC response</title>
     <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
     <script src="{{ url_for('static', filename='filter-response-smoothing.js') }}"></script>
+    <script src="{{ url_for('static', filename='filter-response-zoom.js') }}"></script>
     <style>
         :root {
             --bg:#0d1117; --panel:#161b22; --border:#30363d;
@@ -28,6 +29,13 @@
             border-radius:6px; padding:6px 11px; font-size:.8rem; cursor:pointer;
         }
         button:hover, button.active { border-color:var(--accent); color:#fff; background:#1f6feb33; }
+        button:disabled { opacity:.4; cursor:not-allowed; }
+        button:disabled:hover { border-color:var(--border); color:var(--text); background:var(--panel); }
+        .badge-count {
+            display:inline-block; min-width:1.1em; margin-left:5px; padding:0 5px;
+            border-radius:9px; background:var(--accent); color:#fff; font-size:.68rem;
+            line-height:1.5; text-align:center;
+        }
         .smoothing-control { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:.8rem; }
         select {
             background:var(--panel); color:var(--text); border:1px solid var(--border);
@@ -46,7 +54,8 @@
         .verified .badge { color:var(--good); }
         .mismatch .badge { color:var(--bad); }
         .controls, .legend { display:flex; align-items:center; flex-wrap:wrap; gap:8px 14px; }
-        .controls { margin:0 0 10px; }
+        .controls { margin:0 0 10px; justify-content:space-between; }
+        .controls .group { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
         .legend {
             padding:10px 12px; background:var(--panel); border:1px solid var(--border);
             border-radius:8px; margin-bottom:14px; font-size:.78rem;
@@ -55,14 +64,30 @@
         .legend label { display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
         .legend input { accent-color:var(--accent); }
         .swatch { width:15px; height:3px; border-radius:2px; display:inline-block; }
-        .chart-card, details {
+        .chart-card, details, .curve-card {
             background:var(--panel); border:1px solid var(--border); border-radius:10px;
             padding:12px 14px; margin-bottom:14px;
         }
         .chart-card h2 { font-size:.9rem; margin:0 0 8px; }
         .sub { font-size:.72rem; color:var(--muted); font-weight:400; }
-        .wrap { position:relative; height:min(62vh,540px); min-height:330px; }
+        .wrap { position:relative; height:min(62vh,540px); min-height:330px; touch-action:none; }
+        .wrap canvas { cursor:grab; }
+        .marquee {
+            position:absolute; display:none; pointer-events:none; z-index:2;
+            border:1px dashed var(--accent); background:#388bfd22;
+        }
+        .axis-toolbar {
+            display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; margin-bottom:10px;
+            padding:8px 10px; background:#0d111788; border:1px solid var(--border); border-radius:8px;
+            font-size:.78rem;
+        }
+        .axis-toolbar .label { color:var(--muted); margin-right:2px; white-space:nowrap; }
+        .axis-toolbar .presets { display:flex; flex-wrap:wrap; gap:5px; }
+        .axis-toolbar .zoom-pair { display:flex; gap:3px; }
+        .axis-toolbar button { padding:5px 9px; }
+        .axis-toolbar .sep { width:1px; align-self:stretch; background:var(--border); margin:0 2px; }
         .note { color:var(--muted); font-size:.74rem; line-height:1.55; margin-top:9px; }
+        .hint { color:var(--muted); font-size:.72rem; margin:0 0 10px; line-height:1.5; }
         details summary { cursor:pointer; font-size:.86rem; font-weight:600; }
         .detail-grid {
             display:grid; grid-template-columns:max-content 1fr; gap:5px 12px;
@@ -74,10 +99,21 @@
             white-space:pre-wrap; overflow-wrap:anywhere; color:var(--muted); font-size:.7rem;
             border-top:1px solid var(--border); padding-top:10px; max-height:420px; overflow:auto;
         }
+        .compare-grid {
+            display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%,420px), 1fr));
+            gap:14px;
+        }
+        .curve-card .wrap { height:min(42vh,340px); min-height:220px; }
+        .curve-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px; }
+        .curve-card-title { font-size:.82rem; font-weight:600; }
+        .curve-card-sub { color:var(--muted); font-size:.72rem; margin-top:2px; }
+        .curve-card-head button { flex-shrink:0; }
+        .empty-compare { color:var(--muted); font-size:.85rem; padding:20px 4px; line-height:1.6; }
         @media (max-width:620px) {
             body { padding:12px; }
             .detail-grid { grid-template-columns:1fr; gap:2px; }
             .detail-grid dd { margin-bottom:7px; }
+            .axis-toolbar { font-size:.74rem; }
         }
     </style>
 </head>
@@ -87,51 +123,111 @@
         <h1>Verified DRC response</h1>
         <span class="meta" id="meta"></span>
         <span class="spacer"></span>
+        <button id="view-single" class="active" onclick="setView('single')">Response</button>
+        <button id="view-compare" onclick="setView('compare')">Compare<span id="compare-badge" class="badge-count" hidden>0</span></button>
         <button onclick="load()">↻ Refresh</button>
     </div>
 
     <div id="status">Loading active filter and provenance…</div>
     <main id="content" hidden>
         <div id="verification" class="verification"></div>
-        <div class="controls">
-            <button id="mode-mag" class="active" onclick="setMode('magnitude_db')">Magnitude</button>
-            <button id="mode-phase" onclick="setMode('phase_deg')">Phase</button>
-            <label class="smoothing-control" for="smoothing-select">Smoothing
-                <select id="smoothing-select" title="Display-only smoothing applied in the browser; the stored REW exports are unchanged" onchange="setSmoothing(this.value)">
-                    <option value="none">Unsmoothed (as exported)</option>
-                    <option value="variable">Variable</option>
-                    <option value="psychoacoustic">Psychoacoustic</option>
-                    <option value="octave-3">1/3 octave</option>
-                    <option value="octave-6">1/6 octave</option>
-                </select>
-            </label>
-        </div>
-        <div id="legend" class="legend"></div>
-        <section class="chart-card">
-            <h2 id="chart-title">Magnitude <span class="sub">— dB vs frequency</span></h2>
-            <div class="wrap"><canvas id="response-chart"></canvas></div>
-            <div class="note" id="note"></div>
+
+        <section id="single-view">
+            <div class="controls">
+                <div class="group">
+                    <button id="mode-mag" class="active" onclick="setMode('magnitude_db')">Magnitude</button>
+                    <button id="mode-phase" onclick="setMode('phase_deg')">Phase</button>
+                    <label class="smoothing-control" for="smoothing-select">Smoothing
+                        <select id="smoothing-select" title="Display-only smoothing applied in the browser; the stored REW exports are unchanged" onchange="setSmoothing(this.value)">
+                            <option value="none">Unsmoothed (as exported)</option>
+                            <option value="variable">Variable</option>
+                            <option value="psychoacoustic">Psychoacoustic</option>
+                            <option value="octave-3">1/3 octave</option>
+                            <option value="octave-6">1/6 octave</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="group">
+                    <button id="save-curve" onclick="saveSelectedCurve()" disabled
+                            title="Select exactly one curve in the legend below, then save it here">
+                        ☆ Save curve for comparison
+                    </button>
+                </div>
+            </div>
+            <div id="legend" class="legend"></div>
+            <div class="axis-toolbar" id="axis-toolbar"></div>
+            <section class="chart-card">
+                <h2 id="chart-title">Magnitude <span class="sub">— dB vs frequency</span></h2>
+                <div class="wrap"><canvas id="response-chart"></canvas></div>
+                <div class="note" id="note"></div>
+            </section>
+            <details id="details-card" hidden>
+                <summary>Provenance and audit details</summary>
+                <dl class="detail-grid" id="detail-grid"></dl>
+                <pre id="detail-json"></pre>
+            </details>
         </section>
-        <details id="details-card" hidden>
-            <summary>Provenance and audit details</summary>
-            <dl class="detail-grid" id="detail-grid"></dl>
-            <pre id="detail-json"></pre>
-        </details>
+
+        <section id="compare-view" hidden>
+            <p class="hint">
+                Curves saved from the Response view, side by side. Each card zooms and pans on
+                its own — drag or pinch a card the same way as the single view. "Align SPL"
+                shifts each curve up or down (magnitude only) so they overlap over the band
+                shown below, for an easier level comparison; it never changes phase curves or
+                the saved numbers.
+            </p>
+            <div class="controls">
+                <div class="group">
+                    <button id="compare-mode-mag" class="active" onclick="setCompareMode('magnitude_db')">Magnitude</button>
+                    <button id="compare-mode-phase" onclick="setCompareMode('phase_deg')">Phase</button>
+                </div>
+                <div class="group">
+                    <label class="smoothing-control" for="align-band">Align band
+                        <select id="align-band" onchange="setAlignBand(this.value)">
+                            <option value="63,125">63–125 Hz</option>
+                            <option value="100,300" selected>100–300 Hz</option>
+                            <option value="200,500">200–500 Hz</option>
+                            <option value="500,2000">500 Hz–2 kHz</option>
+                        </select>
+                    </label>
+                    <button id="align-spl" onclick="toggleAlign()">Align SPL</button>
+                </div>
+            </div>
+            <div class="axis-toolbar" id="compare-axis-toolbar"></div>
+            <div id="compare-grid" class="compare-grid"></div>
+        </section>
     </main>
 
 <script>
-const FREQ_TICKS = [10,20,50,100,200,500,1000,2000,5000,10000,20000];
+const ZoomLib = window.FilterResponseView;
 let responseData = null;
 let responseChart = null;
 let mode = 'magnitude_db';
 let smoothing = 'none';
 let traces = [];
 let responseNote = '';
+let currentView = 'single';
+
+// The frequency window is shared across Magnitude/Phase (only re-zooming the
+// user does should move it); the level window is kept separately per mode
+// because dB and degrees are not comparable ranges.
+const savedLevels = {magnitude_db:null, phase_deg:null};
+const view = new ZoomLib.ResponseView({
+    getChart:() => responseChart,
+    onChange:draw,
+});
 
 const SMOOTHING_LABELS = {
     none:'Unsmoothed', variable:'Variable', psychoacoustic:'Psychoacoustic',
     'octave-6':'1/6 octave', 'octave-3':'1/3 octave',
 };
+
+const SAVED_CURVES_KEY = 'omdrc-filter-response-saved-curves';
+let savedCurves = loadSavedCurves();
+let compareMode = 'magnitude_db';
+let compareAligned = false;
+let alignBand = [100, 300];
+const compareCards = new Map(); // curve id -> {chart, view}
 
 function el(name, text) {
     const node = document.createElement(name);
@@ -160,15 +256,92 @@ function renderLegend() {
         const label = el('label');
         const input = document.createElement('input');
         input.type = 'checkbox'; input.checked = trace.selected;
-        input.addEventListener('change', () => { traces[index].selected = input.checked; draw(); });
+        input.addEventListener('change', () => {
+            traces[index].selected = input.checked;
+            updateSaveButton();
+            draw();
+        });
         const swatch = el('span'); swatch.className = 'swatch'; swatch.style.background = trace.color;
         label.append(input, swatch, document.createTextNode(trace.label));
         legend.appendChild(label);
     });
+    updateSaveButton();
+}
+
+function updateSaveButton() {
+    const button = document.getElementById('save-curve');
+    const selected = traces.filter(t => t.selected);
+    button.disabled = selected.length !== 1;
+    button.title = selected.length === 1
+        ? `Save "${selected[0].label}" for comparison`
+        : 'Select exactly one curve in the legend below, then save it here';
+}
+
+/* ---- axis toolbar (shared markup for the single and compare views) ---- */
+
+// `getViews` returns every ResponseView the toolbar should drive — one for
+// the single chart, or one per saved curve in the compare grid, so a preset
+// or a reset button moves every visible card in lockstep.
+function buildAxisToolbar(container, getViews) {
+    container.replaceChildren();
+    const apply = fn => { for (const v of getViews()) fn(v); };
+    const presetLabel = el('span', 'Range'); presetLabel.className = 'label';
+    const presets = el('div'); presets.className = 'presets';
+    ZoomLib.FREQUENCY_PRESETS.forEach(preset => {
+        const button = el('button', preset.label);
+        button.title = preset.title;
+        button.onclick = () => apply(v => v.setFrequency(preset.min, preset.max));
+        presets.appendChild(button);
+    });
+    const sep1 = el('span'); sep1.className = 'sep';
+    const zoomLabelX = el('span', 'Freq'); zoomLabelX.className = 'label';
+    const zoomX = el('div'); zoomX.className = 'zoom-pair';
+    const xOut = el('button', '−'); xOut.title = 'Zoom out (frequency)';
+    xOut.onclick = () => apply(v => v.zoomFrequency(1.4142));
+    const xIn = el('button', '+'); xIn.title = 'Zoom in (frequency)';
+    xIn.onclick = () => apply(v => v.zoomFrequency(0.7071));
+    zoomX.append(xOut, xIn);
+    const sep2 = el('span'); sep2.className = 'sep';
+    const zoomLabelY = el('span', 'Level'); zoomLabelY.className = 'label';
+    const zoomY = el('div'); zoomY.className = 'zoom-pair';
+    const yOut = el('button', '−'); yOut.title = 'Zoom out (level)';
+    yOut.onclick = () => apply(v => v.zoomLevel(1.4142));
+    const yIn = el('button', '+'); yIn.title = 'Zoom in (level)';
+    yIn.onclick = () => apply(v => v.zoomLevel(0.7071));
+    const yFit = el('button', 'Fit'); yFit.title = 'Fit the level axis to the visible curves';
+    yFit.onclick = () => apply(v => v.fitLevel());
+    zoomY.append(yOut, yIn, yFit);
+    const sep3 = el('span'); sep3.className = 'sep';
+    const selectToggle = el('button', '⬚ Select area');
+    selectToggle.title = 'Drag a rectangle on the chart to zoom straight to it (a zoom lens)';
+    let selecting = false;
+    selectToggle.onclick = () => {
+        selecting = !selecting;
+        apply(v => v.setSelectMode(selecting));
+        selectToggle.classList.toggle('active', selecting);
+    };
+    const reset = el('button', '⟲ Reset');
+    reset.title = 'Back to the default 15–450 Hz view';
+    reset.onclick = () => apply(v => v.reset());
+    container.append(presetLabel, presets, sep1, zoomLabelX, zoomX, sep2, zoomLabelY, zoomY,
+                      sep3, selectToggle, reset);
+}
+
+/* ---- single response view -------------------------------------------- */
+
+function setView(next) {
+    currentView = next;
+    document.getElementById('view-single').classList.toggle('active', next === 'single');
+    document.getElementById('view-compare').classList.toggle('active', next === 'compare');
+    document.getElementById('single-view').hidden = next !== 'single';
+    document.getElementById('compare-view').hidden = next !== 'compare';
+    if (next === 'compare') renderCompare();
 }
 
 function setMode(next) {
+    savedLevels[mode] = view.level;
     mode = next;
+    view.level = savedLevels[mode];
     document.getElementById('mode-mag').classList.toggle('active', mode === 'magnitude_db');
     document.getElementById('mode-phase').classList.toggle('active', mode === 'phase_deg');
     draw();
@@ -200,8 +373,33 @@ function updateNote() {
     document.getElementById('note').textContent = `${responseNote} ${visual}`;
 }
 
+function frequencyAxis(range) {
+    const ticks = ZoomLib.frequencyTicks(range.min, range.max);
+    return {
+        type:'logarithmic', min:range.min, max:range.max,
+        title:{display:true,text:'Frequency (Hz)',color:'#8b949e'},
+        ticks:{color:'#8b949e',autoSkip:false,maxRotation:0,
+               callback:v => ticks.some(t => Math.abs(Math.log(t / v)) < 1e-6) ? ZoomLib.formatHz(v) : ''},
+        grid:{color:'rgba(139,148,158,.15)'},
+    };
+}
+
+function levelAxis(range, phase) {
+    const span = range.max - range.min;
+    const rawStep = span / 6;
+    const steps = [0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100];
+    const stepSize = steps.find(s => s >= rawStep) || Math.ceil(rawStep / 50) * 50;
+    return {
+        min:range.min, max:range.max,
+        title:{display:true,text:phase?'Phase (°)':'Level / gain (dB)',color:'#8b949e'},
+        ticks:{color:'#8b949e',stepSize},
+        grid:{color:'rgba(139,148,158,.15)'},
+    };
+}
+
 function draw() {
     if (!responseData) return;
+    buildAxisToolbar(document.getElementById('axis-toolbar'), () => [view]);
     const phase = mode === 'phase_deg';
     document.getElementById('chart-title').innerHTML = phase
         ? `Phase <span class="sub">— wrapped degrees vs frequency · ${SMOOTHING_LABELS[smoothing]}</span>`
@@ -214,28 +412,21 @@ function draw() {
             data:series.frequencies.map((frequency, index) => ({x:frequency, y:series.values[index]})),
         };
     });
+    const levelRange = view.level || (phase ? {min:-180, max:180}
+        : view.autoLevel(datasets, ZoomLib.MIN_AUTOFIT_SPAN_DB) || {min:-24, max:24});
     if (responseChart) responseChart.destroy();
     responseChart = new Chart(document.getElementById('response-chart'), {
         type:'line', data:{datasets}, options:{
             responsive:true, maintainAspectRatio:false, animation:false, parsing:false,
             interaction:{mode:'nearest', intersect:false},
-            scales:{
-                x:{type:'logarithmic', min:10, max:20000,
-                   title:{display:true,text:'Frequency (Hz)',color:'#8b949e'},
-                   ticks:{color:'#8b949e',autoSkip:false,maxRotation:0,
-                          callback:v=>FREQ_TICKS.includes(v)?(v>=1000?(v/1000)+'k':v):''},
-                   grid:{color:'rgba(139,148,158,.15)'}},
-                y:{min:phase?-180:undefined,max:phase?180:undefined,
-                   title:{display:true,text:phase?'Phase (°)':'Level / gain (dB)',color:'#8b949e'},
-                   ticks:{color:'#8b949e',stepSize:phase?90:undefined},
-                   grid:{color:'rgba(139,148,158,.15)'}},
-            },
+            scales:{x:frequencyAxis(view.frequency), y:levelAxis(levelRange, phase)},
             plugins:{legend:{display:false},tooltip:{callbacks:{
                 title:items=>items.length?Math.round(items[0].parsed.x)+' Hz':'',
             }}},
             elements:{point:{radius:0},line:{borderWidth:1.55,tension:0}},
         }
     });
+    if (!view.canvas) view.attach(document.querySelector('#single-view .wrap'));
     updateNote();
 }
 
@@ -272,7 +463,7 @@ function renderDetails(data) {
         ? 'REW vector average of L and R'
         : 'L+R sum') + (d.aggregate.corrected === 'remeasured'
             ? ' — corrected curve re-measured in the room'
-            : ' — corrected curve is REW\u2019s filtered result'));
+            : ' — corrected curve is REW’s filtered result'));
     addDetail('Exports plotted', Object.entries(d.artifacts)
         .filter(([role]) => !role.endsWith('_wav'))
         .map(([, item]) => `${item.path} (${item.sha256.slice(0, 12)})`).join(' · '));
@@ -282,6 +473,171 @@ function renderDetails(data) {
     addDetail('Processing', d.calculation.note);
     document.getElementById('detail-json').textContent = JSON.stringify(d, null, 2);
     card.hidden = false;
+}
+
+/* ---- saved curves / compare view -------------------------------------- */
+
+function loadSavedCurves() {
+    try {
+        const raw = window.localStorage.getItem(SAVED_CURVES_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+function persistSavedCurves() {
+    try {
+        window.localStorage.setItem(SAVED_CURVES_KEY, JSON.stringify(savedCurves));
+    } catch (error) {
+        // Storage full or unavailable (private browsing): the in-memory list
+        // still works for this page load, it just won't survive a reload.
+    }
+    updateCompareBadge();
+}
+
+function updateCompareBadge() {
+    const badge = document.getElementById('compare-badge');
+    badge.textContent = String(savedCurves.length);
+    badge.hidden = savedCurves.length === 0;
+}
+
+function saveSelectedCurve() {
+    const selected = traces.filter(t => t.selected);
+    if (selected.length !== 1 || !responseData) return;
+    const trace = selected[0];
+    const details = responseData.details || {};
+    savedCurves.push({
+        id:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        savedAt:new Date().toISOString(),
+        label:trace.label,
+        color:trace.color,
+        dash:trace.dash || [],
+        context:`${responseData.geometry} · ${details.description || details.design_id || responseData.conf}`,
+        freqs:trace.freqs,
+        magnitude_db:trace.magnitude_db,
+        phase_deg:trace.phase_deg,
+    });
+    persistSavedCurves();
+    const button = document.getElementById('save-curve');
+    const original = button.textContent;
+    button.textContent = '✓ Saved for comparison';
+    window.setTimeout(() => { button.textContent = original; updateSaveButton(); }, 1400);
+}
+
+function removeSavedCurve(id) {
+    savedCurves = savedCurves.filter(c => c.id !== id);
+    persistSavedCurves();
+    renderCompare();
+}
+
+function setCompareMode(next) {
+    compareMode = next;
+    document.getElementById('compare-mode-mag').classList.toggle('active', compareMode === 'magnitude_db');
+    document.getElementById('compare-mode-phase').classList.toggle('active', compareMode === 'phase_deg');
+    renderCompare();
+}
+
+function setAlignBand(value) {
+    alignBand = value.split(',').map(Number);
+    renderCompare();
+}
+
+function toggleAlign() {
+    compareAligned = !compareAligned;
+    document.getElementById('align-spl').classList.toggle('active', compareAligned);
+    renderCompare();
+}
+
+function bandOffset(curve) {
+    if (compareMode !== 'magnitude_db') return 0;
+    const [low, high] = alignBand;
+    let sum = 0, count = 0;
+    curve.freqs.forEach((frequency, index) => {
+        if (frequency >= low && frequency <= high) {
+            sum += curve.magnitude_db[index];
+            count += 1;
+        }
+    });
+    return count ? sum / count : 0;
+}
+
+function renderCompare() {
+    const grid = document.getElementById('compare-grid');
+    buildAxisToolbar(document.getElementById('compare-axis-toolbar'),
+        () => Array.from(compareCards.values()).map(c => c.view));
+    if (!savedCurves.length) {
+        for (const card of compareCards.values()) if (card.chart) card.chart.destroy();
+        compareCards.clear();
+        grid.replaceChildren(el('p', 'No curves saved yet. Open Response, leave exactly one curve '
+            + 'checked in the legend, then use "Save curve for comparison".'));
+        grid.firstChild.className = 'empty-compare';
+        return;
+    }
+    // Overall alignment offset: shift every curve so their band means land on
+    // the group average, rather than favouring whichever curve was saved first.
+    const offsets = savedCurves.map(bandOffset);
+    const target = compareAligned ? offsets.reduce((a, b) => a + b, 0) / offsets.length : 0;
+
+    const keep = new Set(savedCurves.map(c => c.id));
+    for (const [id, card] of compareCards) {
+        if (!keep.has(id)) { card.chart.destroy(); compareCards.delete(id); }
+    }
+    grid.replaceChildren();
+    savedCurves.forEach((curve, index) => {
+        let card = compareCards.get(curve.id);
+        if (!card) {
+            const wrapper = el('div'); wrapper.className = 'curve-card';
+            const head = el('div'); head.className = 'curve-card-head';
+            const titles = el('div');
+            const title = el('div', curve.label); title.className = 'curve-card-title';
+            title.style.borderLeft = `4px solid ${curve.color}`; title.style.paddingLeft = '7px';
+            const sub = el('div', curve.context); sub.className = 'curve-card-sub';
+            titles.append(title, sub);
+            const remove = el('button', '✕ Remove');
+            remove.onclick = () => removeSavedCurve(curve.id);
+            head.append(titles, remove);
+            const wrap = el('div'); wrap.className = 'wrap';
+            const canvas = document.createElement('canvas');
+            wrap.appendChild(canvas);
+            wrapper.append(head, wrap);
+            card = {
+                chart:null,
+                view:new ZoomLib.ResponseView({getChart:() => card.chart, container:wrap,
+                                                onChange:() => drawCompareCard(curve, card)}),
+                node:wrapper,
+            };
+            compareCards.set(curve.id, card);
+        }
+        grid.appendChild(card.node);
+        drawCompareCard(curve, card, target - offsets[index]);
+    });
+}
+
+function drawCompareCard(curve, card, offset) {
+    if (offset === undefined) offset = 0;
+    const phase = compareMode === 'phase_deg';
+    const series = FilterResponseSmoothing.smoothTrace(curve.freqs, curve[compareMode], compareMode, smoothing);
+    const dataset = {
+        label:curve.label, borderColor:curve.color, backgroundColor:curve.color, borderDash:curve.dash,
+        data:series.frequencies.map((frequency, index) => ({x:frequency, y:series.values[index] + offset})),
+    };
+    const levelRange = card.view.level || (phase ? {min:-180, max:180}
+        : card.view.autoLevel([dataset], ZoomLib.MIN_AUTOFIT_SPAN_DB) || {min:-24, max:24});
+    if (card.chart) card.chart.destroy();
+    card.chart = new Chart(card.node.querySelector('canvas'), {
+        type:'line', data:{datasets:[dataset]}, options:{
+            responsive:true, maintainAspectRatio:false, animation:false, parsing:false,
+            interaction:{mode:'nearest', intersect:false},
+            scales:{x:frequencyAxis(card.view.frequency), y:levelAxis(levelRange, phase)},
+            plugins:{legend:{display:false},tooltip:{callbacks:{
+                title:items=>items.length?Math.round(items[0].parsed.x)+' Hz':'',
+            }}},
+            elements:{point:{radius:0},line:{borderWidth:1.55,tension:0}},
+        }
+    });
+    if (!card.view.canvas) card.view.attach(card.node.querySelector('.wrap'));
 }
 
 async function load() {
@@ -337,6 +693,7 @@ async function load() {
     }
 }
 
+updateCompareBadge();
 load();
 </script>
 </body>

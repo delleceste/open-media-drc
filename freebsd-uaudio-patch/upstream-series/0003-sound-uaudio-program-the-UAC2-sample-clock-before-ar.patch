@@ -1,4 +1,4 @@
-From 5d3e2167030e6ac2f5b82b37dc23ae5425c4773c Mon Sep 17 00:00:00 2001
+From 5807e6dece28eb7fe541af79b89b3146b8ce31e3 Mon Sep 17 00:00:00 2001
 From: Giacomo <delleceste@gmail.com>
 Date: Wed, 26 Aug 2026 14:42:08 +0200
 Subject: [PATCH 3/3] sound: uaudio: program the UAC2 sample clock before
@@ -45,7 +45,6 @@ series stand without it.
 PR:		295933
 MFC after:	2 weeks
 Assisted-By:	Claude Opus 5 (claude-opus-5)
-
 Signed-off-by: Giacomo <delleceste@gmail.com>
 ---
  sys/dev/sound/usb/uaudio.c | 202 ++++++++++++++++++++++++++++---------
