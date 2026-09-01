@@ -3,13 +3,13 @@
 
 Example:
   python3 scripts/rew_mdat_audit.py \
-    --project ../DRC/DRC-120.blue/120-blue-with-inversion.mdat \
+    --project ../DRC/DRC-120.blue/120.blue.mdat \
     --trace measurement_left=L.120.Blue \
     --trace measurement_right=R.120.Blue \
     --trace measurement_sum=L+R.120.Blue \
     --trace filter_left=FLX-trimmed \
     --trace filter_right=FRX-trimmed \
-    --export measurement_left=../DRC/DRC-120.blue/txt/L.120.Blue.txt \
+    --export measurement_left=../DRC/DRC-120.blue/120.blue.txts/L.120.Blue.txt \
     --wav filter_left=../DRC/DRC-120.blue/FLX-trimmed-48k.wav
 
 The report records the complete trace inventory and exact selected UUIDs. TXT

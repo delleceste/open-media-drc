@@ -8,7 +8,7 @@
 ## Filters
 
 v.1.5.0, with no boost, peak correction with inversion, crossover correction
-(DRC-120.blue/120-blue-with-inversion.mdat)
+(DRC-120.blue/120.blue.mdat, named 120-blue-with-inversion.mdat until 2026-09-01)
 
 Revised crossover files (used in rephase): DRC-120.blue/ LR-EP-psy.txt , LR-EP-unsmoothed.txt, X801.rephase, X801.wav
 
