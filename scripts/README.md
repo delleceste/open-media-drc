@@ -23,7 +23,6 @@ main [README](../README.md) or in `doc/`; this file is the quick index.
 | `bitperfect-lib.py` | Shared engine for the tap scripts and the panel (WAV→S32 wire-container promotion, usbmon reader, usbdump decoder, alignment/verdict/report, plus `window`/`scan` which read the two compared streams back for the browser's byte view). Mostly not called directly. | Linux + FreeBSD |
 | `bitperfect_runner.py` | Runs a tap through a chosen playback path — `aplay` (delegates to the tap script above, unchanged), `mpd`, `mpd-http`, `upnp` (drives upmpdcli over OpenHome) or `live` (taps a real Qobuz stream and compares against the buffer the renderer itself wrote). Backs the panel's `/bitperfect` page; emits `@@PHASE`/`@@STAT`/`@@RESULT` progress lines. | Linux + FreeBSD (tap needs root) |
 | `bitperfect_material.py` | Turns any track into a run's inputs: decodes WAV/FLAC (or anything `ffmpeg` reads) into the reference stream, checks the alignment anchor is unambiguous, and — for the `live` source — finds what the renderer is streaming (`mpc current`, then open file descriptors, then the known `/tmp` buffers, newest-during-the-tap only). | Linux + FreeBSD (python3) |
-| `systemd-user-install.sh` | Legacy convenience: symlinks `drc.service` into `~/.config/systemd/user/`, reloads the user daemon and enables the service. Superseded by the system-level hotplug units installed via `install.sh` (see the main README, *USB DAC hotplug automation*), kept for user-session setups. | Linux only (systemd) |
 
 ## Command-line alternative
 

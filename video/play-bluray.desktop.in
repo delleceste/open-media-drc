@@ -1,12 +1,13 @@
 [Desktop Entry]
-# Rendered from this .in by ../install.sh (@AUDIO_HOME@ comes from config.env).
-# Deploy: ln -sf @AUDIO_HOME@/open-media-drc/video/play-bluray.desktop \
-#               @AUDIO_HOME@/.local/share/applications/play-bluray.desktop
+# Rendered and installed by video/webremote/CMakeLists.txt (`make install`)
+# into @CMAKE_INSTALL_PREFIX@/share/applications; Exec points at the installed
+# launcher, so the install prefix decides system-wide vs per-user scope.
+# Appears in Dolphin's "Open With" for video files; also runnable from the menu.
 Type=Application
 Name=Play Blu-ray
 GenericName=Blu-ray Player
 Comment=Play the disc in the USB Blu-ray drive (mpv + gcache read-ahead, DRC-aware audio)
-Exec=@AUDIO_HOME@/play-bluray.sh
+Exec=@OMDRC_VIDEO_LAUNCHER_DIR@/play-bluray.sh
 Icon=media-optical
 Terminal=false
 Categories=AudioVideo;Player;Video;

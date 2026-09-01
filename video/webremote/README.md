@@ -124,10 +124,10 @@ Open `http://<host>:9080` on the phone.
 
 ---
 
-## Deploy (run-from-repo)
+## Deploy
 
-`../../install.sh` renders the `*.in` templates here from `config.env`
-(`@REPO_DIR@`, `@AUDIO_USER@`). Then, on the box:
+`make install` renders and installs the `*.in` templates here from `host.cmake`.
+Then, on the box:
 
 **1. The web service (FreeBSD rc.d):**
 

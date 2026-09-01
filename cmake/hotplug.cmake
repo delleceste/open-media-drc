@@ -12,8 +12,8 @@
 #
 # The root -> user-owned-brutefir seam is handled by User=/su -l (not a --user
 # unit); interactive and service runs share state via OMDRC_STATE_DIR pinned in
-# omdrc.conf (core-drc).  The redundant --user drc.service is intentionally not
-# installed by the packaged build.
+# omdrc.conf (core-drc).  A --user drc.service used to duplicate this unit's
+# `drc.sh restore`; it was never installed and has been deleted.
 
 if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     # DRC hotplug oneshot: @AUDIO_USER@/@AUDIO_HOME@ from host.cmake; the engine
@@ -32,10 +32,22 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omdrc-audio-roles.service"
             DESTINATION lib/systemd/system)
 
-    # udev rule — the one /etc seam (no @VARS@ to render).
+    # udev rule — one of the /etc seams (no @VARS@ to render).
     install(FILES 99-usb-audio-drc.rules DESTINATION lib/udev/rules.d)
 
-    install(CODE "message(STATUS \"hotplug: drc-usb-audio.service + udev rule installed (see the final checklist for the /etc copy)\")")
+    # snd-aloop: the Linux equivalent of virtual_oss, and the two files that
+    # decide HOW it is created.  Same seam as the udev rule above — modprobe and
+    # systemd-modules-load read /etc and /lib (i.e. /usr/lib), never
+    # /usr/local/lib — so these install under the prefix and the final checklist
+    # carries the /etc copy.  They are not optional detail: without the
+    # modprobe.d options line the loopback takes a free-running hrtimer instead
+    # of the DAC's clock (a second drift pair that ignore_xrun hides rather than
+    # reports) and its card index follows attach order, breaking the hw:1,1 that
+    # brutefir_defaults.linux.conf and mpd.conf name.  See the files themselves.
+    install(FILES etc/modules-load.d/snd-aloop.conf DESTINATION lib/modules-load.d)
+    install(FILES etc/modprobe.d/omdrc-snd-aloop.conf DESTINATION lib/modprobe.d)
+
+    install(CODE "message(STATUS \"hotplug: drc-usb-audio.service + udev rule + snd-aloop module config installed (see the final checklist for the /etc copies)\")")
 else()  # FreeBSD rc.d
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/freebsd/audio/open-media-drc/files/omdrc_audio.in" _s)
     string(REPLACE "%%PREFIX%%" "${CMAKE_INSTALL_PREFIX}" _s "${_s}")

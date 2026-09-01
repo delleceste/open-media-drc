@@ -9,5 +9,10 @@
 SELF=$(readlink -f "$0"); HERE=$(dirname "$SELF")
 . "$HERE/lib.sh"
 
+BROWSER=$(browser_resolve firefox firefox-esr) || {
+	echo "browser-nodrc: no Firefox found on PATH — nothing to launch." >&2
+	exit 127
+}
+
 drc_bypass_begin
-firefox --no-remote "$@"
+"$BROWSER" --no-remote "$@"

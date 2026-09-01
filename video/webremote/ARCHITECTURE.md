@@ -283,8 +283,8 @@ max_width    = 320
    OMDb enrichment (year/director/cast/plot/rating + verified link, cached),
    `/api/imdb`, details sheet. Needs an OMDb key for rich info; falls back to a
    search link without one.
-4. ✅ **Packaging** — CMake renders and installs everything here (`install.sh`
-   skips `video/webremote/`): `rc.d/omdrcvideo.in` (FreeBSD service) or the
+4. ✅ **Packaging** — CMake renders and installs everything here:
+   `rc.d/omdrcvideo.in` (FreeBSD service) or the
    `systemd --user` unit, and `autostart/mpv-idle.desktop.in` → the KDE/Plasma
    autostart for `mpv-idle.sh`, installed on both OSes under
    `$PREFIX/share/omdrcvideo/autostart/` and linked into `~/.config/autostart/`

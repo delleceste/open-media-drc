@@ -76,6 +76,19 @@ if [ "$(uname)" = "Linux" ] && \
     fi
 fi
 
+# --- CD / S-PDIF input bridge (Linux; linked, deliberately not enabled) ------
+# The CD input is an exclusive source here (one seat on hw:Loopback,0,0) and
+# drc.sh starts/stops the unit as the source changes, so linking it is enough:
+# `drc.sh cdin` selects the input, and any rate action hands the loopback back
+# to MPD.  Enabling it would fight that.
+if [ "$(uname)" = "Linux" ] && [ -f "$PREFIX/lib/systemd/user/omdrc-cdin.service" ]; then
+    mkdir -p "$CFG/systemd/user"
+    ln -sf "$PREFIX/lib/systemd/user/omdrc-cdin.service" \
+           "$CFG/systemd/user/omdrc-cdin.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo "user-install: linked omdrc-cdin (started on demand by 'drc.sh cdin')"
+fi
+
 # --- ALSA hw access needs the 'audio' group (root; advise only) ---
 if [ "$(uname)" = "Linux" ]; then
     if ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx audio; then

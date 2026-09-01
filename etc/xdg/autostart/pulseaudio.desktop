@@ -1,0 +1,16 @@
+[Desktop Entry]
+# open-media-drc: user-level override that masks the PulseAudio autostart entry.
+#
+# The pulseaudio package ships /usr/local/etc/xdg/autostart/pulseaudio.desktop
+# (X-KDE-autostart-phase=1, Exec=start-pulseaudio-x11).  XDG autostart resolves
+# by basename with $XDG_CONFIG_HOME/autostart ahead of $XDG_CONFIG_DIRS, so this
+# same-named file wins and Hidden=true stops the session from running it.
+#
+# Why not `pkg delete pulseaudio`: it would take plasma6-plasma-pa,
+# plasma6-kinfocenter, qt6-multimedia and speech-dispatcher with it.  Disabling
+# is a config fix; deleting is machinery.  See the drop-in at
+# etc/pulse/client.conf.d/10-omdrc-no-autospawn.conf for the autospawn half, and
+# README "Browser audio without DRC" for why pulse must never reach the DAC.
+Type=Application
+Name=PulseAudio Sound System
+Hidden=true

@@ -197,19 +197,30 @@ qdbus6 org.mpris.MediaPlayer2.mpv /org/mpris/MediaPlayer2 \
 pkg install mpv-mpris haruna libdvdcss   # libdvdcss only needed for commercial DVDs
 ```
 
-## Deploy (run-from-repo)
+## Deploy
 
-`install.sh` (repo root) renders `play-bluray.desktop.in` and `play-media.desktop.in`.
-Live links:
+`make install` (see the top-level README) installs both launchers to
+`$PREFIX/lib/omdrcvideo/` and renders their `.desktop` entries into
+`$PREFIX/share/applications`, so they appear in the menu and in Dolphin's
+"Open With". The entries are installed only if `mpv` is on `PATH` at configure
+time. Nothing goes into `$HOME`, so `-DCMAKE_INSTALL_PREFIX=$HOME/.local` gives
+a per-user install instead.
+
+Earlier versions asked you to symlink the scripts and entries out of the
+checkout by hand; those symlinks shadow the installed entries, so retire them:
+
+```sh
+rm -f ~/play-bluray.sh ~/play-media.sh
+rm -f ~/.local/share/applications/play-{bluray,media}.desktop
+```
+
+The mpv config is still linked by hand (it is personal configuration, not part
+of the install):
 
 ```sh
 H=$HOME
-ln -sf "$H/open-media-drc/video/play-bluray.sh"      "$H/play-bluray.sh"
-ln -sf "$H/open-media-drc/video/play-media.sh"       "$H/play-media.sh"
-ln -sf "$H/open-media-drc/video/mpv/mpv.conf"        "$H/.config/mpv/mpv.conf"
-ln -sf "$H/open-media-drc/video/mpv/input.conf"      "$H/.config/mpv/input.conf"
-ln -sf "$H/open-media-drc/video/play-bluray.desktop" "$H/.local/share/applications/play-bluray.desktop"
-ln -sf "$H/open-media-drc/video/play-media.desktop"  "$H/.local/share/applications/play-media.desktop"
+ln -sf "$H/open-media-drc/video/mpv/mpv.conf"   "$H/.config/mpv/mpv.conf"
+ln -sf "$H/open-media-drc/video/mpv/input.conf" "$H/.config/mpv/input.conf"
 ```
 
 `mpv-mpris` needs no linking — mpv auto-loads `mpris.so` from
@@ -221,8 +232,8 @@ ln -sf "$H/open-media-drc/video/play-media.desktop"  "$H/.local/share/applicatio
 video/
   play-bluray.sh            disc launcher: gcache + DRC audio + longest-title + mpv
   play-media.sh             file/URL launcher: DRC audio + mpv (no gcache)
-  play-bluray.desktop.in    KDE launcher template (rendered by ../install.sh)
-  play-media.desktop.in     KDE "Open With" template (rendered by ../install.sh)
+  play-bluray.desktop.in    KDE launcher template (rendered by CMake)
+  play-media.desktop.in     KDE "Open With" template (rendered by CMake)
   lib/
     drc-audio.sh            shared DRC-aware audio routing (sourced by both)
   mpv/

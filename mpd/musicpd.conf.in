@@ -2,7 +2,7 @@
 #
 #  FreeBSD specific musicpd.conf (uses /dev/dsp.dac)
 #
-#  Template — generated to musicpd.conf by ../install.sh from ../config.env.
+#  Template — rendered to musicpd.conf by CMake (see cmake/).
 #  Do not edit the generated file; edit this .in or config.env.
 #
 

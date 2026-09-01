@@ -1,0 +1,51 @@
+# Generated from cmake/install-pulse-autostart-mask.cmake.in — do not edit.
+#
+# Places the user-level XDG autostart override that masks the pulseaudio
+# package's own entry for @AUDIO_USER@.  Idempotent, and it never clobbers a
+# file it did not write: an unmarked pulseaudio.desktop in the user's autostart
+# directory is somebody's deliberate choice, so it is kept and reported.
+
+set(_marker "open-media-drc")
+set(_src "@CMAKE_CURRENT_SOURCE_DIR@/etc/xdg/autostart/pulseaudio.desktop")
+set(_dir "@AUDIO_HOME@/.config/autostart")
+set(_dst "${_dir}/pulseaudio.desktop")
+
+if(NOT "$ENV{DESTDIR}" STREQUAL "")
+    # A staged/package build must not write into a real user's home.
+    message(STATUS "@OMDRC_YELLOW@browser-audio@OMDRC_RESET@: DESTDIR set — skipping the PulseAudio autostart mask")
+    message(STATUS "  install it on the target as @AUDIO_USER@:")
+    message(STATUS "    mkdir -p ${_dir} && cp ${_src} ${_dst}")
+    return()
+endif()
+
+set(_write TRUE)
+if(EXISTS "${_dst}")
+    file(READ "${_dst}" _existing)
+    string(FIND "${_existing}" "${_marker}" _found)
+    if(_found EQUAL -1)
+        set(_write FALSE)
+        message(STATUS "@OMDRC_YELLOW@browser-audio@OMDRC_RESET@: keeping existing ${_dst} (not ours)")
+        message(STATUS "  PulseAudio may still autostart; add 'Hidden=true' there, or replace it with")
+        message(STATUS "    ${_src}")
+    endif()
+endif()
+
+if(_write)
+    file(MAKE_DIRECTORY "${_dir}")
+    file(COPY "${_src}" DESTINATION "${_dir}")
+    # file(COPY) keeps the source permissions; ownership is ours to fix, since a
+    # root install would otherwise leave a root-owned file in the user's home.
+    execute_process(COMMAND id -u OUTPUT_VARIABLE _uid OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(_uid EQUAL 0)
+        execute_process(COMMAND chown "@AUDIO_USER@" "${_dst}" ERROR_QUIET)
+    endif()
+    message(STATUS "@OMDRC_GREEN@browser-audio@OMDRC_RESET@: PulseAudio autostart masked (${_dst})")
+endif()
+
+# The guard only takes effect for a session started after this point, and it
+# does nothing about a server that is already up.
+execute_process(COMMAND pgrep -x pulseaudio RESULT_VARIABLE _pulse_rc OUTPUT_QUIET ERROR_QUIET)
+if(_pulse_rc EQUAL 0)
+    message(STATUS "@OMDRC_RED@browser-audio@OMDRC_RESET@: a pulseaudio server is RUNNING and holds the default unit")
+    message(STATUS "  stop it before starting the chain:  pulseaudio --kill")
+endif()

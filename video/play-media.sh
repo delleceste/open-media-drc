@@ -24,7 +24,13 @@ fi
 SELF=$(readlink -f "$0"); HERE=$(dirname "$SELF")
 
 # --- DRC-aware audio routing: sets AUDIO_DEVICE / AUDIO_DELAY / SUB_DELAY -----
-. "$HERE/lib/drc-audio.sh"
+# drc-audio.sh lives in lib/ in this checkout and NEXT TO this script once
+# installed (both land in $PREFIX/lib/omdrcvideo/), so try both layouts.
+if [ -f "$HERE/lib/drc-audio.sh" ]; then
+	. "$HERE/lib/drc-audio.sh"
+else
+	. "$HERE/drc-audio.sh"
+fi
 
 # --- play (-- guards files/URLs that start with '-') -----------------------
 exec mpv --fs \

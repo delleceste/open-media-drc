@@ -5,8 +5,7 @@ Wants=mpd.service
 Requires=omdrc-audio-roles.service
 After=omdrc-audio-roles.service
 
-# Template — generated to drc-usb-audio.service by install.sh from config.env.
-
+# Template — rendered to drc-usb-audio.service by CMake (see cmake/).
 [Service]
 Type=oneshot
 RemainAfterExit=yes

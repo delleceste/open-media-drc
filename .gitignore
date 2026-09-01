@@ -1,7 +1,9 @@
-# Generated from *.in by install.sh (single source of truth = the .in + config.env)
+# Rendered outputs.  CMake renders every *.in into its build directory, so a
+# clean checkout no longer grows these — they are leftovers from the removed
+# install.sh, which rendered in place.  Kept ignored so an old working tree
+# stays quiet; safe to delete.
 /mpd/mpd.conf
 /mpd/musicpd.conf
-/drc.service
 /etc/rc.d/musicpd
 /etc/rc.d/omdrc_audio
 /etc/rc.d/brutefir_drc
@@ -15,6 +17,12 @@
 /video/webremote/webremote.conf
 /etc/systemd/system/brutefir-drc.service
 /etc/systemd/system/drc-usb-audio.service
+/etc/systemd/system/omdrc-audio-roles.service
+/etc/systemd/system/upmpdcli.service
+/etc/systemd/system/mpd.service.d/open-media-drc.conf
+/video/play-media.desktop
+/video/play-bluray.desktop
+/etc/systemd/user/omdrc-cdin.service
 # brutefir per-rate configs are generated from configs/**/*.conf.in
 configs/*/*.conf
 # … except the shipped flat (dirac pulse) defaults, which have no host-specific

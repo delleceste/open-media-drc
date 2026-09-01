@@ -1,13 +1,13 @@
 [Desktop Entry]
-# Rendered from this .in by ../install.sh (@AUDIO_HOME@ from config.env).
+# Rendered and installed by video/webremote/CMakeLists.txt (`make install`)
+# into @CMAKE_INSTALL_PREFIX@/share/applications; Exec points at the installed
+# launcher, so the install prefix decides system-wide vs per-user scope.
 # Appears in Dolphin's "Open With" for video files; also runnable from the menu.
-# Deploy: ln -sf @AUDIO_HOME@/open-media-drc/video/play-media.desktop \
-#               @AUDIO_HOME@/.local/share/applications/play-media.desktop
 Type=Application
 Name=Play (DRC audio)
 GenericName=Media Player
 Comment=Play a file or URL through the room-correction audio chain (mpv)
-Exec=@AUDIO_HOME@/play-media.sh %U
+Exec=@OMDRC_VIDEO_LAUNCHER_DIR@/play-media.sh %U
 Icon=mpv
 Terminal=false
 Categories=AudioVideo;Player;Video;

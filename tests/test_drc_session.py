@@ -11,8 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DrcSessionTest(unittest.TestCase):
-    def test_login_service_restores_the_complete_session(self):
-        service = (ROOT / "drc.service.in").read_text(encoding="utf-8")
+    def test_boot_service_restores_the_complete_session(self):
+        # The installed hotplug/boot unit must delegate to `drc.sh restore`,
+        # which honours power, source, geometry and the rate/design tuple —
+        # not parse last_arg itself.  (This guard used to point at the --user
+        # drc.service, deleted as a duplicate of this unit.)
+        service = (ROOT / "etc/systemd/system/drc-usb-audio.service.in").read_text(
+            encoding="utf-8")
         self.assertIn("ExecStart=@REPO_DIR@/drc.sh restore", service)
         self.assertNotIn("last_arg", service)
 

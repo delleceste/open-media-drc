@@ -18,8 +18,9 @@ machine, under hier(7) paths, from a versioned release tarball. The
 run-from-repo model violates that on every axis — deliberately, because it
 optimizes for a different thing (zero-config personal appliance):
 
-1. **Files are rendered per-host.** install.sh bakes `config.env` values
-   (`@AUDIO_USER@`, `@AUDIO_HOME@`, `@REPO_DIR@`) into the live files. A
+1. **Files are rendered per-host.** The build bakes host values
+   (`@AUDIO_USER@`, `@AUDIO_HOME@`, `@REPO_DIR@`) into the live files —
+   originally `install.sh` from `config.env`, now CMake from `host.cmake`. A
    package must install the same bytes everywhere; configuration happens
    *after* install, at runtime.
 2. **The tree is written at runtime.** drc.sh keeps `last_arg`, `last_power`,
@@ -114,8 +115,9 @@ coeff "c-l" { filename: "dirac pulse"; attenuation: 0.0; };
   `FRIENDLY_NAME`, `QOBUZ_USER`.
 - rc.d scripts: already rc.conf-overridable — flip the defaults so they point
   at installed paths (`%%PREFIX%%/etc/open-media-drc/...`) instead of
-  `@REPO_DIR@`. install.sh keeps rendering `@REPO_DIR@` defaults for the
-  run-from-repo mode; the port substitutes `%%PREFIX%%` via `SUB_FILES`.
+  `@REPO_DIR@`. Run-from-repo mode needs no rendering at all (drc.sh reads
+  `config.env` beside itself); the port substitutes `%%PREFIX%%` via
+  `SUB_FILES`.
 - brutefir conf templates: drc.sh already picks the conf per rate; make it
   render `@REPO_DIR@`/`@SITE_DIR@` on the fly to a state-dir tempfile (or
   switch configs to relative includes) so packaged confs are host-neutral.
@@ -130,8 +132,10 @@ coeff "c-l" { filename: "dirac pulse"; attenuation: 0.0; };
 
 ### 1.5 Install target
 
-Add `make install` (POSIX makefile or extend install.sh with
-`DESTDIR`/`PREFIX`):
+Add `make install` with `DESTDIR`/`PREFIX` (**done**: the POSIX `Makefile`,
+which the port's `do-install` calls.  It installs a strict subset of the CMake
+build — no hotplug services, desktop entries, `browser-nodrc` or `snd-aloop`
+config — so reconciling the two is the open item here):
 
 | What | Where |
 |---|---|

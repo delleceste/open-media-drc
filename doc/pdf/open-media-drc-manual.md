@@ -365,15 +365,21 @@ omdrcvideo :9080 as a **`--user`** service, since it drives the desktop-session
 mpv), and the DAC-hotplug glue. The install prints the OS-specific enable steps
 and the one or two files that must be copied into `/etc` (next section).
 
-The older `./install.sh` rendered the `*.in` templates in place and ran
-everything straight from the checkout (`git pull` = update). That run-from-repo
-mode still works but is superseded by the CMake install, which now covers the
-whole DRC stack --- engine, DAC-hotplug glue, both web UIs, and the MPD +
-upmpdcli renderer configs/units. `install.sh` remains only for the desktop
-glue not yet in CMake: the `browser-nodrc` `.desktop` launcher entries and the
-Linux `snd-aloop` module-load. (The video mpv-idle autostart entry moved to
-CMake: `make install` puts it under `$PREFIX/share/omdrcvideo/autostart/` on
-both OSes, `make user-install` links it into `~/.config/autostart/`.)
+CMake covers the whole stack: engine, DAC-hotplug glue, both web UIs, the MPD +
+upmpdcli renderer configs/units, the `browser-nodrc` launchers and the video
+`play-media` / `play-bluray` launchers with their `.desktop` entries, the Linux
+`snd-aloop` module config, and the Linux CD-input bridge. Desktop-session
+entries install under the prefix and `make user-install` links the ones that
+must live in the user's session (the mpv-idle autostart); menu entries go
+straight to `$PREFIX/share/applications`.
+
+An older `./install.sh` rendered the `*.in` templates in place so everything ran
+straight from the checkout (`git pull` = update). It has been **removed**: it
+produced nothing CMake does not, and the deploy instructions it printed were a
+second copy of the `make install` checklist that drifted out of date. Running
+from a checkout is still supported and needs no install step at all --- `drc.sh`
+and `drc-status.sh` enter *repo mode* when `config.env` sits beside them, taking
+their state and site data from the checkout instead of `${PREFIX}/etc`.
 
 **5. BruteFIR defaults** --- BruteFIR reads float precision, partition size
 and the I/O devices from `~/.config/BruteFIR/brutefir_defaults.conf`. The
@@ -439,8 +445,9 @@ Drop-ins always apply *on top of* the main unit, so a full unit override at
 `/etc/systemd/system/mpd.service` **cannot** override that `User=` --- it
 silently loses. The repo therefore ships a **counter-drop-in**
 (`etc/systemd/system/mpd.service.d/open-media-drc.conf`, rendered by
-`install.sh`) that sets `User=@AUDIO_USER@` and the repo config path; a
-drop-in in `/etc` beats one in `/usr/lib`. It must be a **real file copied
+`cmake/renderers.cmake` and installed to `$PREFIX/share/omdrc/mpd.service.d/`)
+that sets `User=` to the audio user and the installed config path; a drop-in in
+`/etc` beats one in `/usr/lib`. It must be a **real file copied
 into `/etc`, not a symlink** (early-boot parse, see above). Do not create a
 full `/etc/systemd/system/mpd.service`.
 
@@ -484,14 +491,20 @@ for the features actually used. The login audio user must be a member of the
 groups that grant access to sound and USB devices. BruteFIR must never be
 started as root: an interactive `drc.sh` could not stop a root-owned instance.
 
-**2. Render or install the project.**
+**2. Install the project.**
 
-For a run-from-repository installation, set `AUDIO_USER`, `AUDIO_HOME`,
-`PREFIX`, and the media paths in `config.env`, then run:
+Set the box values in `host.cmake` (copied from `host.cmake.sample`), then:
 
 ```sh
-./install.sh
+mkdir -p build && cd build
+cmake .. -C ../host.cmake
+make && sudo make install
+make user-install          # as the audio user, after the system install
 ```
+
+To run from the repository instead, no install step is needed: put a
+`config.env` beside `drc.sh` and it enters repo mode, reading its state and site
+data from the checkout.
 
 For the package layout, use the FreeBSD port under
 `freebsd/audio/open-media-drc`. The installed `omdrc_audio` script points at
@@ -1852,6 +1865,53 @@ drives two independent workflows, both through the same privileged helper,
   bridge or the panel's chain diagram has to hard-code a card number that USB
   attach order can change. A configured capture card that is not plugged in
   this boot is dropped with a notice rather than failing the whole reconcile.
+
+#### DAC switching and known-device policy {#sec:known-dac-policy}
+
+**Current implementation (important).** The installed system remembers one
+active DAC identity, not a history of DACs. Applying a different DAC replaces
+that identity: for example, applying a Cambridge Audio DAC after an OKTO makes
+Cambridge the saved DAC. If Cambridge is then absent and OKTO is reconnected,
+the operator must select OKTO on `/configuration` and Apply again. Merely having
+configured that OKTO in an earlier session does not currently make it an
+automatic candidate. USB card numbers such as `pcm0` or ALSA `card1` are never
+the saved identity; they are resolved afresh from USB VID/PID and, when needed,
+serial number.
+
+The following is the required policy for a future known-DAC registry. It is a
+design requirement, not a description of the currently installed behavior:
+
+1. A newly encountered DAC must be selected and successfully applied in the
+   web UI before it becomes known. Attachment alone must never enroll a device.
+2. A successful Apply stores the stable USB identity in the known-DAC registry
+   and records that DAC as the explicit active selection. Previously known DACs
+   remain in the registry.
+3. On a later boot or hotplug reconcile, if the explicit active DAC is absent
+   and exactly one other known DAC is attached and playback-capable, that DAC
+   may be selected automatically. No UI reconfiguration is required for the
+   ordinary at-home OKTO/Cambridge swap where only one is connected at a time.
+4. An attached but unknown DAC must not be guessed or silently enrolled. The
+   audio role remains unresolved until the operator selects and applies it in
+   the UI.
+5. If two or more known DACs are attached and there is no applicable explicit
+   selection, automatic selection is ambiguous and must stop. The UI must ask
+   the operator to choose. An explicit UI choice is authoritative for that
+   session; unplugging the alternatives removes the ambiguity for future
+   automatic reconciliation.
+6. VID/PID identifies a model. A serial suffix distinguishes multiple devices
+   of that model. If identical attached devices expose no usable serial number,
+   the system must refuse to guess and instruct the operator to unplug all but
+   the intended device before applying.
+7. Failure to identify a unique known DAC is fail-safe: do not redirect the DRC
+   chain, bit-perfect controls, or hardware-volume operations to an arbitrary
+   playback card. Capture-interface selection remains a separate role and does
+   not implicitly make a playback-capable capture interface a known DAC.
+
+When this registry is introduced, migration should seed it with the single DAC
+identity active at upgrade time. Older identities that were overwritten cannot
+be reconstructed reliably from the current role file; each such DAC must be
+applied once to enroll it. Display names and transient card numbers are
+diagnostic information only and must not be used to infer registry membership.
 
 The helper validates USB identities, selectors, canonical bundle IDs, hashes,
 config derivation, and destination roots before touching anything root-owned;
@@ -3582,8 +3642,9 @@ under hier(7) paths, from a versioned release tarball. The run-from-repo
 model violates that on every axis --- deliberately, because it optimizes
 for a zero-config personal appliance:
 
-1. **Files are rendered per-host**: `install.sh` bakes `config.env` values
-   (`@AUDIO_USER@`, `@AUDIO_HOME@`, `@REPO_DIR@`) into the live files; a
+1. **Files are rendered per-host**: the build bakes host values
+   (`@AUDIO_USER@`, `@AUDIO_HOME@`, `@REPO_DIR@`) into the live files ---
+   originally `install.sh` from `config.env`, now CMake from `host.cmake`; a
    package must install the same bytes everywhere and configure at runtime.
 2. **The tree is written at runtime**: `drc.sh` keeps `last_arg`,
    `last_power`, `drc.log` beside itself; `pkg check -s` flags modified
@@ -3717,7 +3778,8 @@ trees and the investigation-journal Markdown from `git archive` output on a
 tag; and Phase 1.5 of Appendix B's own port plan (`make install
 DESTDIR=... PREFIX=...`, reading config at runtime rather than baking
 `@AUDIO_USER@` in at render time) is what should land on the image rather
-than bee's live `install.sh` + `config.env` flow. Status is plan-only:
+than bee's live CMake install, which bakes `host.cmake` values at configure
+time. Status is plan-only:
 nothing has been built from it yet.
 
 \newpage
