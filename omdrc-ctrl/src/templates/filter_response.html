@@ -64,7 +64,7 @@
         .legend label { display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
         .legend input { accent-color:var(--accent); }
         .swatch { width:15px; height:3px; border-radius:2px; display:inline-block; }
-        .chart-card, details, .curve-card {
+        .chart-card, details {
             background:var(--panel); border:1px solid var(--border); border-radius:10px;
             padding:12px 14px; margin-bottom:14px;
         }
@@ -99,15 +99,18 @@
             white-space:pre-wrap; overflow-wrap:anywhere; color:var(--muted); font-size:.7rem;
             border-top:1px solid var(--border); padding-top:10px; max-height:420px; overflow:auto;
         }
-        .compare-grid {
-            display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%,420px), 1fr));
-            gap:14px;
+        .compare-legend { align-items:stretch; gap:8px 10px; }
+        .compare-legend .curve-entry {
+            display:flex; align-items:center; gap:7px; padding:4px 7px;
+            border:1px solid var(--border); border-radius:7px; background:#0d111788;
         }
-        .curve-card .wrap { height:min(42vh,340px); min-height:220px; }
-        .curve-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px; }
-        .curve-card-title { font-size:.82rem; font-weight:600; }
-        .curve-card-sub { color:var(--muted); font-size:.72rem; margin-top:2px; }
-        .curve-card-head button { flex-shrink:0; }
+        .compare-legend .curve-entry label { gap:6px; }
+        .compare-legend .curve-name { font-weight:600; }
+        .compare-legend .curve-context { color:var(--muted); font-size:.72rem; }
+        .compare-legend .curve-remove {
+            padding:1px 6px; font-size:.72rem; line-height:1.4; color:var(--muted);
+        }
+        .compare-legend .curve-remove:hover { color:var(--bad); border-color:var(--bad); background:transparent; }
         .empty-compare { color:var(--muted); font-size:.85rem; padding:20px 4px; line-height:1.6; }
         @media (max-width:620px) {
             body { padding:12px; }
@@ -170,11 +173,10 @@
 
         <section id="compare-view" hidden>
             <p class="hint">
-                Curves saved from the Response view, side by side. Each card zooms and pans on
-                its own — drag or pinch a card the same way as the single view. "Align SPL"
-                shifts each curve up or down (magnitude only) so they overlap over the band
-                shown below, for an easier level comparison; it never changes phase curves or
-                the saved numbers.
+                Every curve saved from the Response view, overlaid on one plot. Drag or pinch to
+                zoom and pan exactly as in the single view. "Align SPL" shifts each curve up or
+                down (magnitude only) so they overlap over the band shown below, for an easier
+                level comparison; it never changes phase curves or the saved numbers.
             </p>
             <div class="controls">
                 <div class="group">
@@ -193,8 +195,14 @@
                     <button id="align-spl" onclick="toggleAlign()">Align SPL</button>
                 </div>
             </div>
+            <div id="compare-legend" class="legend compare-legend"></div>
             <div class="axis-toolbar" id="compare-axis-toolbar"></div>
-            <div id="compare-grid" class="compare-grid"></div>
+            <div id="compare-empty" class="empty-compare" hidden></div>
+            <section class="chart-card" id="compare-card">
+                <h2 id="compare-title">Magnitude <span class="sub">— dB vs frequency</span></h2>
+                <div class="wrap"><canvas id="compare-chart"></canvas></div>
+                <div class="note" id="compare-note"></div>
+            </section>
         </section>
     </main>
 
@@ -227,7 +235,21 @@ let savedCurves = loadSavedCurves();
 let compareMode = 'magnitude_db';
 let compareAligned = false;
 let alignBand = [100, 300];
-const compareCards = new Map(); // curve id -> {chart, view}
+let compareChart = null;
+// Same split as the single view: the frequency window carries across
+// Magnitude/Phase, the level window is remembered per mode.
+const compareLevels = {magnitude_db:null, phase_deg:null};
+const compareView = new ZoomLib.ResponseView({
+    getChart:() => compareChart,
+    onChange:() => drawCompare(),
+});
+
+// Two curves saved from different runs can carry the same export colour; on a
+// single plot that makes them indistinguishable, so repeats get a fallback hue.
+const COMPARE_FALLBACK_COLORS = [
+    '#58a6ff', '#3fb950', '#d29922', '#f85149', '#bc8cff',
+    '#39c5cf', '#ff7b72', '#a5d6ff', '#7ee787', '#ffa657',
+];
 
 function el(name, text) {
     const node = document.createElement(name);
@@ -533,7 +555,9 @@ function removeSavedCurve(id) {
 }
 
 function setCompareMode(next) {
+    compareLevels[compareMode] = compareView.level;
     compareMode = next;
+    compareView.level = compareLevels[compareMode];
     document.getElementById('compare-mode-mag').classList.toggle('active', compareMode === 'magnitude_db');
     document.getElementById('compare-mode-phase').classList.toggle('active', compareMode === 'phase_deg');
     renderCompare();
@@ -563,81 +587,113 @@ function bandOffset(curve) {
     return count ? sum / count : 0;
 }
 
-function renderCompare() {
-    const grid = document.getElementById('compare-grid');
-    buildAxisToolbar(document.getElementById('compare-axis-toolbar'),
-        () => Array.from(compareCards.values()).map(c => c.view));
-    if (!savedCurves.length) {
-        for (const card of compareCards.values()) if (card.chart) card.chart.destroy();
-        compareCards.clear();
-        grid.replaceChildren(el('p', 'No curves saved yet. Open Response, leave exactly one curve '
-            + 'checked in the legend, then use "Save curve for comparison".'));
-        grid.firstChild.className = 'empty-compare';
-        return;
-    }
-    // Overall alignment offset: shift every curve so their band means land on
-    // the group average, rather than favouring whichever curve was saved first.
-    const offsets = savedCurves.map(bandOffset);
-    const target = compareAligned ? offsets.reduce((a, b) => a + b, 0) / offsets.length : 0;
-
-    const keep = new Set(savedCurves.map(c => c.id));
-    for (const [id, card] of compareCards) {
-        if (!keep.has(id)) { card.chart.destroy(); compareCards.delete(id); }
-    }
-    grid.replaceChildren();
-    savedCurves.forEach((curve, index) => {
-        let card = compareCards.get(curve.id);
-        if (!card) {
-            const wrapper = el('div'); wrapper.className = 'curve-card';
-            const head = el('div'); head.className = 'curve-card-head';
-            const titles = el('div');
-            const title = el('div', curve.label); title.className = 'curve-card-title';
-            title.style.borderLeft = `4px solid ${curve.color}`; title.style.paddingLeft = '7px';
-            const sub = el('div', curve.context); sub.className = 'curve-card-sub';
-            titles.append(title, sub);
-            const remove = el('button', '✕ Remove');
-            remove.onclick = () => removeSavedCurve(curve.id);
-            head.append(titles, remove);
-            const wrap = el('div'); wrap.className = 'wrap';
-            const canvas = document.createElement('canvas');
-            wrap.appendChild(canvas);
-            wrapper.append(head, wrap);
-            card = {
-                chart:null,
-                view:new ZoomLib.ResponseView({getChart:() => card.chart, container:wrap,
-                                                onChange:() => drawCompareCard(curve, card)}),
-                node:wrapper,
-            };
-            compareCards.set(curve.id, card);
+function compareColors() {
+    const used = new Set();
+    let fallback = 0;
+    return savedCurves.map(curve => {
+        let color = curve.color;
+        while (!color || used.has(color)) {
+            color = COMPARE_FALLBACK_COLORS[fallback % COMPARE_FALLBACK_COLORS.length];
+            fallback += 1;
         }
-        grid.appendChild(card.node);
-        drawCompareCard(curve, card, target - offsets[index]);
+        used.add(color);
+        return color;
     });
 }
 
-function drawCompareCard(curve, card, offset) {
-    if (offset === undefined) offset = 0;
+function renderCompareLegend(colors) {
+    const legend = document.getElementById('compare-legend');
+    legend.replaceChildren();
+    savedCurves.forEach((curve, index) => {
+        const entry = el('div'); entry.className = 'curve-entry';
+        const label = el('label');
+        label.title = curve.context;
+        const input = document.createElement('input');
+        input.type = 'checkbox'; input.checked = curve.visible !== false;
+        input.addEventListener('change', () => {
+            curve.visible = input.checked;
+            persistSavedCurves();
+            renderCompare();
+        });
+        const swatch = el('span'); swatch.className = 'swatch'; swatch.style.background = colors[index];
+        const names = el('span');
+        names.append(el('span', curve.label), document.createTextNode(' '),
+                     el('span', curve.context));
+        names.firstChild.className = 'curve-name';
+        names.lastChild.className = 'curve-context';
+        label.append(input, swatch, names);
+        const remove = el('button', '✕'); remove.className = 'curve-remove';
+        remove.title = `Remove "${curve.label}"`;
+        remove.onclick = () => removeSavedCurve(curve.id);
+        entry.append(label, remove);
+        legend.appendChild(entry);
+    });
+}
+
+function renderCompare() {
+    buildAxisToolbar(document.getElementById('compare-axis-toolbar'), () => [compareView]);
+    const empty = document.getElementById('compare-empty');
+    const card = document.getElementById('compare-card');
+    if (!savedCurves.length) {
+        if (compareChart) { compareChart.destroy(); compareChart = null; }
+        renderCompareLegend([]);
+        empty.textContent = 'No curves saved yet. Open Response, leave exactly one curve '
+            + 'checked in the legend, then use "Save curve for comparison".';
+        empty.hidden = false;
+        card.hidden = true;
+        return;
+    }
+    empty.hidden = true;
+    card.hidden = false;
+    const colors = compareColors();
+    renderCompareLegend(colors);
+    drawCompare(colors);
+}
+
+function drawCompare(colors) {
+    if (!savedCurves.length) return;
+    if (!colors) colors = compareColors();
     const phase = compareMode === 'phase_deg';
-    const series = FilterResponseSmoothing.smoothTrace(curve.freqs, curve[compareMode], compareMode, smoothing);
-    const dataset = {
-        label:curve.label, borderColor:curve.color, backgroundColor:curve.color, borderDash:curve.dash,
-        data:series.frequencies.map((frequency, index) => ({x:frequency, y:series.values[index] + offset})),
-    };
-    const levelRange = card.view.level || (phase ? {min:-180, max:180}
-        : card.view.autoLevel([dataset], ZoomLib.MIN_AUTOFIT_SPAN_DB) || {min:-24, max:24});
-    if (card.chart) card.chart.destroy();
-    card.chart = new Chart(card.node.querySelector('canvas'), {
-        type:'line', data:{datasets:[dataset]}, options:{
+    document.getElementById('compare-title').innerHTML = phase
+        ? `Phase <span class="sub">— wrapped degrees vs frequency · ${SMOOTHING_LABELS[smoothing]}</span>`
+        : `Magnitude <span class="sub">— saved curves overlaid · ${SMOOTHING_LABELS[smoothing]}</span>`;
+    // Overall alignment offset: shift every curve so their band means land on
+    // the group average, rather than favouring whichever curve was saved first.
+    // Only the curves actually drawn take part, so hiding one re-centres the rest.
+    const shown = savedCurves.map((curve, index) => ({curve, color:colors[index]}))
+                             .filter(item => item.curve.visible !== false);
+    const offsets = shown.map(item => bandOffset(item.curve));
+    const target = compareAligned && offsets.length
+        ? offsets.reduce((a, b) => a + b, 0) / offsets.length : 0;
+    const datasets = shown.map((item, index) => {
+        const offset = compareAligned ? target - offsets[index] : 0;
+        const series = FilterResponseSmoothing.smoothTrace(
+            item.curve.freqs, item.curve[compareMode], compareMode, smoothing);
+        return {
+            label:item.curve.label, borderColor:item.color, backgroundColor:item.color,
+            borderDash:item.curve.dash || [],
+            data:series.frequencies.map((frequency, i) => ({x:frequency, y:series.values[i] + offset})),
+        };
+    });
+    const levelRange = compareView.level || (phase ? {min:-180, max:180}
+        : compareView.autoLevel(datasets, ZoomLib.MIN_AUTOFIT_SPAN_DB) || {min:-24, max:24});
+    if (compareChart) compareChart.destroy();
+    compareChart = new Chart(document.getElementById('compare-chart'), {
+        type:'line', data:{datasets}, options:{
             responsive:true, maintainAspectRatio:false, animation:false, parsing:false,
             interaction:{mode:'nearest', intersect:false},
-            scales:{x:frequencyAxis(card.view.frequency), y:levelAxis(levelRange, phase)},
+            scales:{x:frequencyAxis(compareView.frequency), y:levelAxis(levelRange, phase)},
             plugins:{legend:{display:false},tooltip:{callbacks:{
                 title:items=>items.length?Math.round(items[0].parsed.x)+' Hz':'',
             }}},
             elements:{point:{radius:0},line:{borderWidth:1.55,tension:0}},
         }
     });
-    if (!card.view.canvas) card.view.attach(card.node.querySelector('.wrap'));
+    if (!compareView.canvas) compareView.attach(document.querySelector('#compare-view .wrap'));
+    document.getElementById('compare-note').textContent = compareAligned
+        ? `Curves are level-shifted to a common mean over ${alignBand[0]}–${alignBand[1]} Hz; `
+          + 'the saved numbers are untouched.'
+        : 'Curves are drawn at their saved levels. Use "Align SPL" to overlap them by level.';
 }
 
 async function load() {
