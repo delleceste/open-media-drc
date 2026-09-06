@@ -123,7 +123,12 @@ Two consequences worth your attention as the designer:
 
 - FreeBSD ignores your **native 16-bit alt** and pads 16→32 instead, because the
   driver fixes one format at attach rather than switching alts per stream.
-- FreeBSD skips the **DSD/RAW alt** entirely — no native DSD on this OS.
+- FreeBSD skips the **DSD/RAW alt** entirely. This is a FreeBSD gap, not
+  anything wrong on your side: `UA20_FMT_RAW` is defined in the driver's
+  headers but has no entry in its format table, so alt 4 matches nothing and is
+  dropped at enumeration — and one level down, FreeBSD's OSS layer has no DSD
+  sample format at all. Native DSD would need work through the whole sound
+  stack, not a one-line addition. Which leads to a question below.
 
 ## 5. Questions only you can answer
 
@@ -151,6 +156,28 @@ These are firmware/hardware questions we have no way to settle from the host:
 
 5. **Is the vestigial capture interface intentional** — a firmware option you
    could disable in a future build — or fixed by the Thesycon stack?
+
+6. **Does the DAC8 STEREO support DoP (DSD over PCM), and if so, what exactly
+   does it expect?** This matters more than it might look. Native DSD is out of
+   reach on FreeBSD for the reasons above, but DoP needs *no* driver support at
+   all — it carries DSD inside an ordinary 24-bit PCM stream, marked by the
+   alternating `0x05`/`0xFA` pattern in the top byte, and any bit-perfect
+   24-bit path will carry it. Our path is bit-perfect and your device offers
+   176.4 and 352.8 kHz, so DSD64 and DSD128 over DoP look feasible on FreeBSD
+   *today* if the DAC8 recognises them.
+
+   The detail we would need from you is **bit alignment**: FreeBSD selects your
+   24-bit-in-a-4-byte-subslot alternate setting, so the 24 significant bits sit
+   inside a 32-bit container. We would want to know where the DAC8 expects the
+   DoP marker to land in that container before trying it — and whether the
+   DAC8's DoP detection has any requirements we should know about (consecutive
+   marker frames before it switches, behaviour on loss of marker, and so on).
+
+   We will not experiment blindly here: a DoP stream a DAC does not recognise
+   is reproduced as **full-scale white noise**, and this chain ends in Purifi
+   1ET9040BA amplifiers driving B&W Nautilus 801s. If you can tell us what the
+   DAC8 expects, we will test carefully at low level; if you would rather we
+   did not, we will leave it alone.
 
 ## 6. The request: would your lab measure this?
 
