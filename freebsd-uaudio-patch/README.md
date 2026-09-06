@@ -43,9 +43,13 @@ completes them (see [`uaudio-clock-transaction.md`](uaudio-clock-transaction.md)
    capture stream for jitter when the playback alt has an explicit feedback
    endpoint — measured at ~126 wasted isochronous transfers/s — behind
    `hw.usb.uaudio.prefer_feedback`, and (d) does not start the jitter capture
-   stream at a stale rate. **Built `-Werror` clean with and without
-   `USB_DEBUG`; NOT installed, NOT listening-tested** — run the three-way A/B in
-   the doc. Split for upstream as
+   stream at a stale rate. **Installed 2026-09-06 and verified on the wire**
+   (DTrace on `usbd_do_request_flags()`, digital silence, three rate cycles):
+   the redundant post-arming `SET_CUR` is gone, a same-rate start now writes the
+   clock **zero** times, and the vestigial capture stream is **never armed** —
+   before/after logs and method in [`traces/`](traces/README.md).
+   Built `-Werror` clean with and without `USB_DEBUG`. **Not yet
+   listening-tested** — run the three-way A/B in the doc. Split for upstream as
    `uaudio-upstream-0001-shared-clock-write-discipline.c.patch` and
    `uaudio-upstream-0002-prefer-explicit-feedback.c.patch`. Full analysis:
    [`uaudio-clock-transaction.md`](uaudio-clock-transaction.md).

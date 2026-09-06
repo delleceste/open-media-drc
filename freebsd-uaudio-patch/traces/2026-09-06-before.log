@@ -1,0 +1,77 @@
+ms         event                        detail
+4138       uaudio_chan_start            chan=fffffe006bc07c20
+4138       configure_msg_sub ENTER      dir=PLAY
+4138       >>> SET_CUR SAM_FREQ         clockid=41 iface=0 rate=44100
+4276         SET_INTERFACE              iface=1 alt=1
+4276       configure_msg_sub ENTER      dir=REC
+4276       >>> SET_CUR SAM_FREQ         clockid=41 iface=0 rate=44100
+4297         SET_INTERFACE              iface=2 alt=1
+4297       configure_msg_sub ENTER      dir=PLAY
+4297       configure_msg_sub ENTER      dir=REC
+4297       configure_msg_sub ENTER      dir=PLAY
+4297       configure_msg_sub ENTER      dir=REC
+4297       configure_msg_sub ENTER      dir=PLAY
+4297       configure_msg_sub ENTER      dir=REC
+7325       uaudio_chan_stop             chan=fffffe006bc07c20
+7325       configure_msg_sub ENTER      dir=PLAY
+7329         SET_INTERFACE              iface=1 alt=0
+7329       configure_msg_sub ENTER      dir=REC
+7333         SET_INTERFACE              iface=2 alt=0
+7333       configure_msg_sub ENTER      dir=PLAY
+7333       configure_msg_sub ENTER      dir=REC
+7333       configure_msg_sub ENTER      dir=PLAY
+7333       configure_msg_sub ENTER      dir=REC
+7333       configure_msg_sub ENTER      dir=PLAY
+7333       configure_msg_sub ENTER      dir=REC
+14924      uaudio_chan_start            chan=fffffe006bc07c20
+14924      configure_msg_sub ENTER      dir=PLAY
+14924      >>> SET_CUR SAM_FREQ         clockid=41 iface=0 rate=44100
+14944        SET_INTERFACE              iface=1 alt=1
+14945      configure_msg_sub ENTER      dir=REC
+14945      >>> SET_CUR SAM_FREQ         clockid=41 iface=0 rate=44100
+14965        SET_INTERFACE              iface=2 alt=1
+14966      configure_msg_sub ENTER      dir=PLAY
+14966      configure_msg_sub ENTER      dir=REC
+14966      configure_msg_sub ENTER      dir=PLAY
+14966      configure_msg_sub ENTER      dir=REC
+14966      configure_msg_sub ENTER      dir=PLAY
+14966      configure_msg_sub ENTER      dir=REC
+17994      uaudio_chan_stop             chan=fffffe006bc07c20
+17994      configure_msg_sub ENTER      dir=PLAY
+17998        SET_INTERFACE              iface=1 alt=0
+17998      configure_msg_sub ENTER      dir=REC
+18002        SET_INTERFACE              iface=2 alt=0
+18002      configure_msg_sub ENTER      dir=PLAY
+18002      configure_msg_sub ENTER      dir=REC
+18002      configure_msg_sub ENTER      dir=PLAY
+18002      configure_msg_sub ENTER      dir=REC
+18002      configure_msg_sub ENTER      dir=PLAY
+18002      configure_msg_sub ENTER      dir=REC
+18071      uaudio_chan_start            chan=fffffe006bc07c20
+18071      configure_msg_sub ENTER      dir=PLAY
+18071      >>> SET_CUR SAM_FREQ         clockid=41 iface=0 rate=48000
+18208        SET_INTERFACE              iface=1 alt=1
+18209      configure_msg_sub ENTER      dir=REC
+18209      >>> SET_CUR SAM_FREQ         clockid=41 iface=0 rate=48000
+18229        SET_INTERFACE              iface=2 alt=1
+18230      configure_msg_sub ENTER      dir=PLAY
+18230      configure_msg_sub ENTER      dir=REC
+18230      configure_msg_sub ENTER      dir=PLAY
+18230      configure_msg_sub ENTER      dir=REC
+18230      configure_msg_sub ENTER      dir=PLAY
+18230      configure_msg_sub ENTER      dir=REC
+21242      uaudio_chan_stop             chan=fffffe006bc07c20
+21242      configure_msg_sub ENTER      dir=PLAY
+21246        SET_INTERFACE              iface=1 alt=0
+21246      configure_msg_sub ENTER      dir=REC
+21249        SET_INTERFACE              iface=2 alt=0
+21250      configure_msg_sub ENTER      dir=PLAY
+21250      configure_msg_sub ENTER      dir=REC
+21250      configure_msg_sub ENTER      dir=PLAY
+21250      configure_msg_sub ENTER      dir=REC
+21250      configure_msg_sub ENTER      dir=PLAY
+21250      configure_msg_sub ENTER      dir=REC
+
+
+-- trace ended --
+

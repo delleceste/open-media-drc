@@ -1,8 +1,30 @@
-# TODO — submit the uaudio(4) follow-up series
+# TODO — the uaudio(4) follow-up series
 
-Everything in this directory is finished and verified. What remains is the
-push, which could not be done from the audio box: no `gh`, no `freebsd-src`
-checkout, and `/` at 94% with ~1.5 GB free. Do it from a machine with room.
+**Submitted. Awaiting review.**
+[freebsd-src PR #2390](https://github.com/freebsd/freebsd-src/pull/2390) —
+*"sound: uaudio: finish the UAC2 shared-clock fix"*, opened 2026-08-26, three
+commits, **open with no reviewer assigned and no maintainer response** as of
+2026-09-06. `christosmarg` was pinged in the thread; nothing back yet.
+
+The checklist below is kept as the record of how it was sent. Steps 1–6 are
+done; step 7 (the Bugzilla comment) is the one to confirm.
+
+### Current state of the tree it targets
+
+`main` today has **only** `755685dd665e` (2026-07-24, the shared-clock fix).
+Verified against `main` on 2026-09-06 — `uaudio20_clock_is_shared()` and
+`uaudio_chan_match_rate()` are present; `uaudio20_get_speed`,
+`uaudio_clock_readback`, `uaudio_prefer_feedback`, `uaudio_chan_find_sync_ep`,
+`sync_ep` and `clock_settle_ms` are all **absent**, and
+`uaudio_chan_need_both()` is unchanged. So every defect this series describes is
+still live upstream.
+
+**Rebase risk:** `5c3bc8a` (2026-08-21, *"snd_uaudio: Use uDWord for the UAC2
+sample rate"*) rewrote `uaudio20_set_speed()` to use `uDWord data` +
+`USETDW(data, speed)` in place of the `uint8_t data[4]` byte-shifting. Commit
+1/3 adds `uaudio20_get_speed()` immediately after that function and still uses
+`uint8_t data[4]` + `UGETDW(data)`. Expect a context conflict there on rebase,
+and match the new style while fixing it.
 
 **Bugzilla cannot be scripted** — bugs.freebsd.org sits behind an Anubis JS
 proof-of-work gate that blocks the REST API too. Step 7 is manual, by hand, in
@@ -72,9 +94,14 @@ with an unreproducible symptom is how this gets closed as unreproducible.
 
 ## After it lands (or doesn't)
 
-- [ ] Install the local rollup (`../uaudio-clock-transaction.c.patch`) on the
-      audio box and run the three-leg A/B in [`../bench/README.md`](../bench/README.md)
-      — legs differ only by `hw.usb.uaudio.prefer_feedback`
+- [x] **Install the local rollup** (`../uaudio-clock-transaction.c.patch`) on the
+      audio box — done 2026-09-06, and **verified on the wire** with DTrace:
+      redundant post-arming `SET_CUR` gone, same-rate start writes the clock zero
+      times, capture stream never armed. See [`../traces/`](../traces/README.md).
+      This is new evidence for the PR and is worth posting to it.
+- [ ] Run the three-leg A/B in [`../bench/README.md`](../bench/README.md)
+      — legs differ only by `hw.usb.uaudio.prefer_feedback`. Still the
+      experiment that decides audibility; the trace only settles the wire.
 - [ ] Decide the five declared-but-not-patched items (listed in
       `PR-DESCRIPTION.md` and `../SUBMISSION-295933.md`): park-every-interface +
       `STOP`/`START` coalescing, unlocked cross-direction reads, `-EBUSY` for

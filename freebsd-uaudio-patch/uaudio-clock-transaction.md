@@ -410,8 +410,8 @@ the offending traffic happens after the delay.
 
 ## Build, install, test
 
-Nothing has been installed. The module was built and verified only in a scratch
-tree; `/usr/src` and `/boot/kernel` are untouched.
+**Installed on the audio box 2026-09-06 and verified on the wire** (see the next
+section). Before that date this patch had only ever been built in a scratch tree.
 
 ```sh
 cd /usr/src
@@ -420,11 +420,85 @@ patch -p1 < /home/giacomo/open-media-drc/freebsd-uaudio-patch/uaudio-clock-trans
 cd /usr/src/sys/modules/sound/driver/uaudio
 make clean && make
 # -> /usr/obj/usr/src/amd64.amd64/sys/modules/sound/driver/uaudio/snd_uaudio.ko
+
+sudo cp /usr/obj/usr/src/amd64.amd64/sys/modules/sound/driver/uaudio/snd_uaudio.ko \
+        /boot/kernel/snd_uaudio.ko
+sudo kldunload snd_uaudio && sudo kldload snd_uaudio
 ```
 
-Install per the procedure in [`README.md`](README.md) (stop the chain, copy over
-`/boot/kernel/snd_uaudio.ko`, `kldunload snd_uaudio`, `usbconfig -d ugen0.3
-reset`, restart).
+Stop the DRC chain first. The DAC on this host is **`ugen0.2`**, not `ugen0.3`;
+if `kldunload` refuses because `pcm0` is attached, reboot instead.
+
+The one-line check that the patch is still present — `freebsd-update` silently
+reverts both `/boot/kernel` and `/usr/src`:
+
+```sh
+sysctl hw.usb.uaudio.clock_readback     # OID missing => patch is gone
+```
+
+## Verified on the wire — 2026-09-06
+
+Traced with DTrace on `usbd_do_request_flags()`, so what is recorded is the
+control transfer that really went out, not a driver log line. Script, logs,
+method and the full before/after listings: [`traces/`](traces/README.md).
+
+Three open/play/close cycles of **digital silence** — 44.1 kHz entered from a
+48 kHz clock, 44.1 kHz again, then 48 kHz. Silence is the point: the result is a
+statement about control-plane traffic and does not depend on audibility.
+
+### Before
+
+```
+ 4138  uaudio_chan_start
+ 4138  configure_msg_sub PLAY
+ 4138  >>> SET_CUR SAM_FREQ  clockid=41  rate=44100
+ 4276    SET_INTERFACE iface=1 alt=1        <- playback ARMED (138 ms settle)
+ 4276  configure_msg_sub REC
+ 4276  >>> SET_CUR SAM_FREQ  clockid=41  rate=44100   <- redundant, post-arming
+ 4297    SET_INTERFACE iface=2 alt=1        <- capture stream armed
+        ... 3 s of playback: no clock writes ...
+ 7325  uaudio_chan_stop
+```
+
+### After
+
+Same rate as the previous stream — the common case, track after track at 44.1 kHz:
+
+```
+13451  uaudio_chan_start
+13451      GET_CUR SAM_FREQ        <- reads back 44100, matches
+13451    SET_INTERFACE iface=1 alt=1
+13451  configure_msg_sub REC       <- runs, does nothing
+```
+
+Zero clock writes, and no settle delay either, because nothing was written.
+On a real rate change exactly one `SET_CUR` goes out, followed by the
+post-settle verification `GET_CUR`, before the interface is armed.
+
+| | before | after |
+|---|---|---|
+| `SET_CUR` per start, same rate | 2 | **0** |
+| `SET_CUR` per start, rate change | 2 | **1** |
+| `SET_CUR` issued after playback armed | 1 | **0** |
+| `SET_CUR` during steady-state playback | 0 | 0 |
+| capture stream armed (`SET_INTERFACE iface=2`) | every playback | **never** |
+
+Two findings worth recording beyond the pass/fail:
+
+* **`prefer_feedback` is safe on this device.** The documented risk is a DAC that
+  declares `UE_ISO_USAGE_FEEDBACK` but does not honour it. The OKTO honours it:
+  `dev.pcm.0.feedback_rate` reads 44101 and 48001 with the capture stream gone,
+  i.e. the endpoint is live and tracking, and playback ran clean at both rates.
+* **The stock feedback clamp never saturates here.** The reported offset is ~1 Hz
+  (~23 ppm) against a clamp of `howmany(44100, 16000)` = ±3 Hz. So the main
+  complaint in [`uaudio-feedback-follow.c.patch`](uaudio-feedback-follow.c.patch)
+  — real clock offsets truncated to ~62 ppm — does **not** apply to this DAC.
+  Its other complaint, how that correction is distributed across frames, is
+  untested and remains open.
+
+Still **not** listening-tested through the full DRC chain, and the intermittent
+silent-open fault is not reproduced either way. The three-way A/B below is what
+decides audibility; this section only settles what the driver puts on the wire.
 
 ### Three-way A/B — this is the experiment that decides it
 
