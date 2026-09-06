@@ -3,8 +3,9 @@ Description=omdrc CD / S-PDIF input bridge (alsaloop)
 After=sound.target
 # BruteFIR decides where the bridge writes (loopback vs DAC straight), and the
 # answer is settled once at startup — so the unit is deliberately NOT ordered
-# after brutefir-drc.service.  drc.sh starts and stops this unit at the moment
-# the chain moves, which is the only ordering that is actually correct.
+# after drc-usb-audio.service (the unit that brings BruteFIR up on Linux).
+# drc.sh starts and stops this unit at the moment the chain moves, which is the
+# only ordering that is actually correct.
 
 # Template — rendered to omdrc-cdin.service by CMake (see cmake/).
 # A --user unit, like the renderers: omdrcctrl's CD input card drives it with
