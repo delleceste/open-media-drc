@@ -1,4 +1,4 @@
-From a67d153650b6774f53556b7b00cf08fb7bbec294 Mon Sep 17 00:00:00 2001
+From bc360f6ec379589a70128017f332c58a08a7263b Mon Sep 17 00:00:00 2001
 From: Giacomo <delleceste@gmail.com>
 Date: Wed, 26 Aug 2026 14:41:49 +0200
 Subject: [PATCH 2/3] sound: uaudio: prefer an explicit feedback endpoint over
@@ -48,10 +48,10 @@ Signed-off-by: Giacomo <delleceste@gmail.com>
  1 file changed, 72 insertions(+), 3 deletions(-)
 
 diff --git a/sys/dev/sound/usb/uaudio.c b/sys/dev/sound/usb/uaudio.c
-index 40846055db0..211c06de54f 100644
+index 17b5871..0016163 100644
 --- a/sys/dev/sound/usb/uaudio.c
 +++ b/sys/dev/sound/usb/uaudio.c
-@@ -137,6 +137,12 @@ SYSCTL_PROC(_hw_usb_uaudio, OID_AUTO, buffer_ms,
+@@ -144,6 +144,12 @@ SYSCTL_PROC(_hw_usb_uaudio, OID_AUTO, buffer_ms,
      uaudio_buffer_ms_sysctl, "I",
      "uaudio buffering delay in milliseconds, from 1 to 8");
  
@@ -64,7 +64,7 @@ index 40846055db0..211c06de54f 100644
  static int uaudio_clock_readback = 1;
  SYSCTL_INT(_hw_usb_uaudio, OID_AUTO, clock_readback, CTLFLAG_RWTUN,
      &uaudio_clock_readback, 0,
-@@ -230,6 +236,7 @@ struct uaudio_chan_alt {
+@@ -237,6 +243,7 @@ struct uaudio_chan_alt {
  	uint16_t sample_size;
  	uint8_t	iface_index;
  	uint8_t	iface_alt_index;
@@ -72,7 +72,7 @@ index 40846055db0..211c06de54f 100644
  	uint8_t channels;
  };
  
-@@ -1839,6 +1846,38 @@ uaudio_get_chan(struct uaudio_softc *sc, struct uaudio_chan *chan,
+@@ -1848,6 +1855,38 @@ uaudio_get_chan(struct uaudio_softc *sc, struct uaudio_chan *chan,
  	return (NULL);
  }
  
@@ -111,7 +111,7 @@ index 40846055db0..211c06de54f 100644
  static void
  uaudio_chan_fill_info_sub(struct uaudio_softc *sc, struct usb_device *udev,
      uint32_t rate, uint8_t channels, uint8_t bit_resolution)
-@@ -2175,6 +2214,7 @@ uaudio_chan_fill_info_sub(struct uaudio_softc *sc, struct usb_device *udev,
+@@ -2184,6 +2223,7 @@ uaudio_chan_fill_info_sub(struct uaudio_softc *sc, struct usb_device *udev,
  		chan_alt->p_sed = sed;
  		chan_alt->iface_index = curidx;
  		chan_alt->iface_alt_index = alt_index;
@@ -119,7 +119,7 @@ index 40846055db0..211c06de54f 100644
  
  		if (ep_dir == UE_DIR_IN)
  			chan_alt->usb_cfg = uaudio_cfg_record;
-@@ -2413,10 +2453,19 @@ uaudio_chan_play_sync_callback(struct usb_xfer *xfer, usb_error_t error)
+@@ -2422,10 +2462,19 @@ uaudio_chan_play_sync_callback(struct usb_xfer *xfer, usb_error_t error)
  		    (int)temp, (int)sample_rate);
  
  		/*
@@ -142,7 +142,7 @@ index 40846055db0..211c06de54f 100644
  			int32_t jitter_max = howmany(sample_rate, 16000);
  
  			/*
-@@ -2459,6 +2508,12 @@ uaudio_chan_is_async(struct uaudio_chan *ch, uint8_t alt)
+@@ -2468,6 +2517,12 @@ uaudio_chan_is_async(struct uaudio_chan *ch, uint8_t alt)
  	return (UE_GET_ISO_TYPE(attr) == UE_ISO_ASYNC);
  }
  
@@ -155,7 +155,7 @@ index 40846055db0..211c06de54f 100644
  static void
  uaudio_chan_play_callback(struct usb_xfer *xfer, usb_error_t error)
  {
-@@ -2942,9 +2997,23 @@ uaudio_chan_reconfigure(struct uaudio_chan *ch, uint8_t operation)
+@@ -2951,9 +3006,23 @@ uaudio_chan_reconfigure(struct uaudio_chan *ch, uint8_t operation)
  static int
  uaudio_chan_need_both(struct uaudio_chan *pchan, struct uaudio_chan *rchan)
  {

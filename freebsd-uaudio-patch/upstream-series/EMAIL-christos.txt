@@ -36,10 +36,10 @@ that essentially nothing else does:
 That last point is what makes it useful as a test surface. When something is
 wrong here, it is provably wrong.
 
-So far this workload has produced one commit you already took, four more
-uaudio(4) defects that are still open, and separate bugs in virtual_oss
-(a cuse teardown deadlock and a SETTRIGGER livelock). I am not short of
-material. The question is whether it is useful to you.
+So far this workload has produced one commit you already took, a three-commit
+follow-up that is still open, and separate bugs in virtual_oss (a cuse teardown
+deadlock and a SETTRIGGER livelock). I am not short of material. The question is
+whether it is useful to you.
 
 
 WHAT IS STILL OPEN
@@ -47,6 +47,19 @@ WHAT IS STILL OPEN
 PR #2390, opened 26 August, three commits. Still open, no reviewer assigned:
 
   https://github.com/freebsd/freebsd-src/pull/2390
+
+  1/3  The shared-clock guard still lets the write through when both
+       directions agree on the rate, and nothing reads the clock back.
+       Evidence: wire trace.
+
+  2/3  The capture stream is auto-started even when the playback alternate
+       setting carries an explicit feedback endpoint -- whose value the driver
+       then discards. Evidence: wire trace plus transfer counters.
+
+  3/3  The sample clock is programmed after the alternate setting has already
+       armed the stream. Evidence: listening, on one device, and nothing more.
+       It is deliberately last in the series so you can drop it without a
+       rebase. I would rather tell you that myself than have you find it.
 
 The one I would most like a second opinion on is the first, because it is the
 one 755685dd665e was meant to prevent and does not. The guard skips a write only
@@ -59,9 +72,14 @@ uaudio_chan_start()) guarantees a match. The capture pass always falls through
 and writes the shared clock -- after the playback alternate setting has already
 armed the device.
 
-I checked main this morning: uaudio20_clock_is_shared() and
+I re-checked main today, 7 September: uaudio20_clock_is_shared() and
 uaudio_chan_match_rate() are in, everything else is absent, and
-uaudio_chan_need_both() is unchanged. All four defects are live.
+uaudio_chan_need_both() is unchanged. All of the above is still live.
+
+The series is rebased onto today's main. 5c3bc8a (21 Aug) rewrote
+uaudio20_set_speed() to uDWord/USETDW(); commit 1/3 adds uaudio20_get_speed()
+beside it and now matches that style. Each commit builds -Werror clean,
+standalone and stacked, with and without USB_DEBUG.
 
 
 THE EVIDENCE, TIGHTENED
@@ -72,6 +90,12 @@ bmRequestType/bRequest/wValue, so what is recorded is the request that actually
 went on the wire. Three open/play/close cycles of digital silence -- deliberately
 silence, so the result says nothing about audibility and cannot be dismissed
 on those grounds.
+
+One thing to be clear about before you read the table: both legs already have
+commit 3/3 applied, so what it isolates is commits 1/3 and 2/3, not the series
+against stock. On stock main the "after playback armed" row would read 2 rather
+than 1, because stock programs the clock after selecting the alternate setting
+in both directions.
 
                                     before    after
   SET_CUR per start, same rate         2        0
@@ -95,10 +119,6 @@ Two results I did not expect, both of which cut against my own patches:
 Script, logs and method are in the repo under freebsd-uaudio-patch/traces/.
 Reproducing needs nothing but DTrace.
 
-Rebase note: 5c3bc8a (21 Aug) rewrote uaudio20_set_speed() to uDWord/USETDW().
-Commit 1/3 adds uaudio20_get_speed() right after it in the old style, so expect
-a conflict there. Say the word and I will rebase before you look.
-
 
 THE PART I AM LEAST SURE ABOUT
 
@@ -113,22 +133,28 @@ simultaneous, and expectation bias is the single most likely explanation. I am
 not claiming a defect, and I would rather be wrong.
 
 But since the bits are identical, anything real has to be electrical or in
-timing, and there I would trust your judgement over my ears. What I have found
-so far that is FreeBSD-specific and real:
+timing, and there I would trust your judgement over my ears. Two things the
+current driver does that Linux does not, both of them real and both removed by
+the PR:
 
-  - the redundant SET_CUR above, landing after the stream is armed. The trace
-    bounds this: it is a transient at stream start, not continuous.
+  - Stock uaudio(4) issues the redundant SET_CUR described above, landing after
+    the stream is armed. The trace bounds this one: it is a transient at stream
+    start, not something that continues during playback.
 
-  - the auto-started capture stream. On this DAC it is a phantom -- the input
-    terminal is declared as a Microphone (wTerminalType 0x0201) on a converter
-    with no ADC. uaudio(4) streams it for the entire duration of every playback,
-    about 126 isochronous transfers a second inbound from a device that has
-    nothing to send, purely to recompute a number the feedback endpoint already
-    reports. Linux never starts it. This one is continuous, and it is the one I
-    find hardest to dismiss.
+  - Stock uaudio(4) auto-starts the capture stream. On this DAC that stream is a
+    phantom -- the input terminal is declared as a Microphone (wTerminalType
+    0x0201) on a converter with no ADC -- and the driver runs it for the entire
+    duration of every playback: roughly 126 isochronous transfers a second
+    inbound from a device that has nothing to send, in order to recompute a
+    number that the feedback endpoint already reports and that
+    uaudio_chan_play_sync_callback() then throws away, because it gates on
+    sc_rec_chan[].num_alt. Linux never starts it. This one is continuous, and it
+    is the one I find hardest to dismiss.
 
-Neither is proven audible. Both are unnecessary work, and both are gone in the
-PR.
+To say it plainly, since it is easy to read the two bullets the wrong way round:
+that is work the *current* driver does for no benefit, not work the patches add.
+Neither is proven audible and I am not claiming either is. In the trace the
+capture stream goes from six interface arms across three cycles to none.
 
 
 WHAT I AM ASKING

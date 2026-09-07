@@ -1,4 +1,4 @@
-From 5807e6dece28eb7fe541af79b89b3146b8ce31e3 Mon Sep 17 00:00:00 2001
+From 6a91bc88f6d5b3148118ac1ff1762a0171d9f68b Mon Sep 17 00:00:00 2001
 From: Giacomo <delleceste@gmail.com>
 Date: Wed, 26 Aug 2026 14:42:08 +0200
 Subject: [PATCH 3/3] sound: uaudio: program the UAC2 sample clock before
@@ -51,10 +51,10 @@ Signed-off-by: Giacomo <delleceste@gmail.com>
  1 file changed, 152 insertions(+), 50 deletions(-)
 
 diff --git a/sys/dev/sound/usb/uaudio.c b/sys/dev/sound/usb/uaudio.c
-index 211c06de54f..8b7d83e0ab0 100644
+index 0016163..9b58990 100644
 --- a/sys/dev/sound/usb/uaudio.c
 +++ b/sys/dev/sound/usb/uaudio.c
-@@ -137,11 +137,12 @@ SYSCTL_PROC(_hw_usb_uaudio, OID_AUTO, buffer_ms,
+@@ -144,11 +144,12 @@ SYSCTL_PROC(_hw_usb_uaudio, OID_AUTO, buffer_ms,
      uaudio_buffer_ms_sysctl, "I",
      "uaudio buffering delay in milliseconds, from 1 to 8");
  
@@ -72,7 +72,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  
  static int uaudio_clock_readback = 1;
  SYSCTL_INT(_hw_usb_uaudio, OID_AUTO, clock_readback, CTLFLAG_RWTUN,
-@@ -149,6 +150,12 @@ SYSCTL_INT(_hw_usb_uaudio, OID_AUTO, clock_readback, CTLFLAG_RWTUN,
+@@ -156,6 +157,12 @@ SYSCTL_INT(_hw_usb_uaudio, OID_AUTO, clock_readback, CTLFLAG_RWTUN,
      "read the UAC2 sample clock back with GET_CUR and skip a write that would "
      "not change it; set to 0 for devices that misreport their rate");
  
@@ -85,7 +85,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  #ifdef USB_DEBUG
  static int uaudio_debug;
  
-@@ -398,6 +405,14 @@ struct uaudio_softc {
+@@ -405,6 +412,14 @@ struct uaudio_softc {
  	uint16_t sc_audio_rev;
  	uint16_t sc_mixer_count;
  
@@ -100,7 +100,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  	uint8_t	sc_mixer_iface_index;
  	uint8_t	sc_mixer_iface_no;
  	uint8_t	sc_mixer_chan;
-@@ -1480,25 +1495,39 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
+@@ -1489,25 +1504,39 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
  
  	chan_alt = chan->usb_alt + next_alt;
  
@@ -153,7 +153,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  		for (x = 0; x != 256; x++) {
  			if (dir == PCMDIR_PLAY) {
  				if (!(sc->sc_mixer_clocks.bit_output[x / 8] &
-@@ -1518,23 +1547,22 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
+@@ -1527,23 +1556,22 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
  			 * and the OTHER direction is already streaming,
  			 * that direction owns the clock: leave it alone.
  			 *
@@ -193,7 +193,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  			 */
  			if (uaudio20_clock_is_shared(sc, x)) {
  				uint32_t other = (dir == PCMDIR_PLAY) ?
-@@ -1551,10 +1579,19 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
+@@ -1560,10 +1588,19 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
  			}
  
  			/*
@@ -217,7 +217,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  			 */
  			if (uaudio_clock_readback != 0 &&
  			    uaudio20_get_speed(sc->sc_udev,
-@@ -1564,6 +1601,13 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
+@@ -1573,6 +1610,13 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
  					    "%u Hz\n", x, cur_rate);
  					continue;
  				}
@@ -231,7 +231,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  			}
  
  			if (uaudio20_set_speed(sc->sc_udev,
-@@ -1574,8 +1618,66 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
+@@ -1583,8 +1627,66 @@ uaudio_configure_msg_sub(struct uaudio_softc *sc,
  				 */
  				DPRINTF("setting of sample rate failed! "
  				    "(continuing anyway)\n");
@@ -298,7 +298,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  	} else if (chan_alt->p_sed.v1->bmAttributes & UA_SED_FREQ_CONTROL) {
  		if (uaudio_set_speed(sc->sc_udev,
  		    chan_alt->p_ed1->bEndpointAddress, chan_alt->sample_rate)) {
-@@ -2458,11 +2560,11 @@ uaudio_chan_play_sync_callback(struct usb_xfer *xfer, usb_error_t error)
+@@ -2467,11 +2569,11 @@ uaudio_chan_play_sync_callback(struct usb_xfer *xfer, usb_error_t error)
  		 * packet lengths are the jitter source -- this is the
  		 * exact complement of the condition guarding the jitter
  		 * translation in uaudio_chan_play_callback().  Testing
@@ -315,7 +315,7 @@ index 211c06de54f..8b7d83e0ab0 100644
  		 */
  		if (ch->priv_sc->sc_rec_chan[i].cur_alt >=
  		    ch->priv_sc->sc_rec_chan[i].num_alt) {
-@@ -2998,16 +3100,16 @@ static int
+@@ -3007,16 +3109,16 @@ static int
  uaudio_chan_need_both(struct uaudio_chan *pchan, struct uaudio_chan *rchan)
  {
  	/*

@@ -39,6 +39,12 @@ sudo pkill -INT dtrace
 
 ## Result
 
+Both legs already carry the clock-before-alt reorder, so what the table isolates
+is the **transaction patch** (upstream commits 1/3 and 2/3) — not the whole
+series against stock. On stock `main`, which programs the clock *after*
+selecting the alternate setting, the "issued after playback armed" row would
+read **2**, not 1.
+
 | | before | after |
 |---|---|---|
 | `SET_CUR` per start, same rate | 2 | **0** |

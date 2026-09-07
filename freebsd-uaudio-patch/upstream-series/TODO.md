@@ -19,12 +19,18 @@ Verified against `main` on 2026-09-06 — `uaudio20_clock_is_shared()` and
 `uaudio_chan_need_both()` is unchanged. So every defect this series describes is
 still live upstream.
 
-**Rebase risk:** `5c3bc8a` (2026-08-21, *"snd_uaudio: Use uDWord for the UAC2
-sample rate"*) rewrote `uaudio20_set_speed()` to use `uDWord data` +
-`USETDW(data, speed)` in place of the `uint8_t data[4]` byte-shifting. Commit
-1/3 adds `uaudio20_get_speed()` immediately after that function and still uses
-`uint8_t data[4]` + `UGETDW(data)`. Expect a context conflict there on rebase,
-and match the new style while fixing it.
+**Rebased onto `main` of 2026-09-07.** The feared conflict from `5c3bc8a`
+(2026-08-21, *"snd_uaudio: Use uDWord for the UAC2 sample rate"*) did **not**
+materialise: it rewrote the body of `uaudio20_set_speed()`, while commit 1/3
+inserts `uaudio20_get_speed()` *after* that function's closing brace, so the
+hunks never overlapped. The style mismatch was real, though, and is fixed —
+`uaudio20_get_speed()` now uses `uDWord data` + `USETW(req.wLength,
+sizeof(data))` to match its neighbour. `uDWord` is `uint8_t[4]`
+(`sys/dev/usb/usb_endian.h:42`), so `UGETDW()` and `sizeof` are unchanged: a
+pure style change with no behaviour difference.
+
+Regenerating the series only shifted hunk offsets by +7/+9 lines and updated
+blob hashes; no content drift beyond that one deliberate change.
 
 **Bugzilla cannot be scripted** — bugs.freebsd.org sits behind an Anubis JS
 proof-of-work gate that blocks the REST API too. Step 7 is manual, by hand, in
@@ -56,8 +62,18 @@ a browser.
       moved, rebase — every hunk is local to `uaudio_configure_msg_sub()`,
       `uaudio_chan_play_sync_callback()`, `uaudio_chan_need_both()`,
       `uaudio_chan_start()` and `uaudio_chan_fill_info_sub()`.
-- [ ] **3. Build** — each commit builds standalone, `-Werror`, with and without
-      `USB_DEBUG`. Re-check on the real tree:
+- [x] **3. Build** — verified 2026-09-07 against `main`'s `uaudio.c`: the base
+      and all three commits compile `-Werror` clean, standalone and stacked,
+      with and without `USB_DEBUG`.
+
+      This box has 2.3 GB free and no `gh`, so this was **not** a full
+      `freebsd-src` checkout: `main`'s `uaudio.c` was compiled out of tree
+      against `/usr/src`'s (releng/15.1) headers. Two shims were needed, both
+      for upstream drift unrelated to the series — `usbdevs.h` regenerated from
+      `main`'s `sys/dev/usb/usbdevs` (new Yamaha/Roland/M-Audio MIDI IDs), and
+      `-DGID_AUDIO=0` (`GID_AUDIO` does not exist anywhere in 15.1). Neither is
+      referenced by any of the three patches. Still re-check on the real tree
+      before pushing:
       ```sh
       cd sys/modules/sound/driver/uaudio && make clean && make
       ```
