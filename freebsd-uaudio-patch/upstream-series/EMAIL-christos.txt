@@ -1,6 +1,6 @@
 To:      christos@FreeBSD.org
 Cc:      hselasky@FreeBSD.org
-Subject: Bit-perfect hi-fi on FreeBSD: what it found in uaudio(4), and a question for you
+Subject: Bit-perfect hi-fi on FreeBSD: uaudio(4) findings, and a question
 
 Hi Christos,
 
@@ -21,9 +21,9 @@ bit-perfect playback with digital room correction.
 
   https://github.com/delleceste/open-media-drc
 
-FreeBSD's USB audio stack is, as far as I can tell, mostly exercised by headsets,
-webcams and MIDI interfaces. This is a different animal, and it lights up paths
-that essentially nothing else does:
+FreeBSD's USB audio stack is, as far as I can tell, mostly exercised by
+headsets, webcams and MIDI interfaces. This is a different animal, and it
+lights up paths that essentially nothing else does:
 
   - UAC2 devices with a single Clock Source shared between both directions
   - 44.1k <-> 48k crystal-family switches, on every track change, all day
@@ -49,7 +49,7 @@ PR #2390, opened 26 August, three commits. Still open, no reviewer assigned:
   https://github.com/freebsd/freebsd-src/pull/2390
 
   1/3  The shared-clock guard still lets the write through when both
-       directions agree on the rate, and nothing reads the clock back.
+       directions agree on the rate, and nothing ever reads the clock back.
        Evidence: wire trace.
 
   2/3  The capture stream is auto-started even when the playback alternate
@@ -74,7 +74,7 @@ armed the device.
 
 I re-checked main today, 7 September: uaudio20_clock_is_shared() and
 uaudio_chan_match_rate() are in, everything else is absent, and
-uaudio_chan_need_both() is unchanged. All of the above is still live.
+uaudio_chan_need_both() is unchanged. All three are still live.
 
 The series is rebased onto today's main. 5c3bc8a (21 Aug) rewrote
 uaudio20_set_speed() to uDWord/USETDW(); commit 1/3 adds uaudio20_get_speed()
@@ -87,9 +87,9 @@ THE EVIDENCE, TIGHTENED
 I had previously shown this with hw.usb.uaudio.debug=6, which is only a driver
 log line. I have now traced usbd_do_request_flags() with DTrace, decoding
 bmRequestType/bRequest/wValue, so what is recorded is the request that actually
-went on the wire. Three open/play/close cycles of digital silence -- deliberately
-silence, so the result says nothing about audibility and cannot be dismissed
-on those grounds.
+went on the wire. Three open/play/close cycles of digital silence --
+deliberately silence, so the result says nothing about audibility and cannot
+be dismissed on those grounds.
 
 One thing to be clear about before you read the table: both legs already have
 commit 3/3 applied, so what it isolates is commits 1/3 and 2/3, not the series
@@ -134,8 +134,7 @@ not claiming a defect, and I would rather be wrong.
 
 But since the bits are identical, anything real has to be electrical or in
 timing, and there I would trust your judgement over my ears. Two things the
-current driver does that Linux does not, both of them real and both removed by
-the PR:
+current driver does that Linux does not:
 
   - Stock uaudio(4) issues the redundant SET_CUR described above, landing after
     the stream is armed. The trace bounds this one: it is a transient at stream
@@ -151,10 +150,9 @@ the PR:
     sc_rec_chan[].num_alt. Linux never starts it. This one is continuous, and it
     is the one I find hardest to dismiss.
 
-To say it plainly, since it is easy to read the two bullets the wrong way round:
-that is work the *current* driver does for no benefit, not work the patches add.
-Neither is proven audible and I am not claiming either is. In the trace the
-capture stream goes from six interface arms across three cycles to none.
+Both are work the driver does today for no benefit, and both are removed by the
+PR: in the trace the capture stream goes from six interface arms across three
+cycles to none. Neither is proven audible, and I am not claiming either is.
 
 
 WHAT I AM ASKING
@@ -167,8 +165,8 @@ WHAT I AM ASKING
      final audio quality on FreeBSD for a chain like this? I am asking about
      what I have not thought to look at -- scheduling and interrupt behaviour
      around isochronous transfers, host controller policy, power management,
-     buffer sizing, anything downstream of "the bits are correct". You know
-     this stack; I am feeling my way.
+     buffer sizing, anything downstream of "the bits are correct". You know this
+     stack; I am feeling my way.
 
   3. Is this workload interesting enough to be worth continuing to report
      upstream? I have the hardware, a bench harness, DTrace and patience. If
