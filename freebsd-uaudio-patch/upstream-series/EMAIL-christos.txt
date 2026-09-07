@@ -76,10 +76,14 @@ I re-checked main today, 7 September: uaudio20_clock_is_shared() and
 uaudio_chan_match_rate() are in, everything else is absent, and
 uaudio_chan_need_both() is unchanged. All three are still live.
 
-The series is rebased onto today's main. 5c3bc8a (21 Aug) rewrote
-uaudio20_set_speed() to uDWord/USETDW(); commit 1/3 adds uaudio20_get_speed()
-beside it and now matches that style. Each commit builds -Werror clean,
-standalone and stacked, with and without USB_DEBUG.
+The PR is still on its 26 August base. 5c3bc8a (21 Aug) rewrote
+uaudio20_set_speed() to uDWord/USETDW() and commit 1/3 adds
+uaudio20_get_speed() beside it, so there is a style mismatch to settle there. I
+have already applied the series to today's main locally: it goes on cleanly,
+the style fix is a one-liner, and every commit builds -Werror clean, standalone
+and stacked, with and without USB_DEBUG. I have not force-pushed it, because I
+would rather not churn the PR until I know someone is going to look at it. Say
+the word and it is rebased the same day.
 
 
 THE EVIDENCE, TIGHTENED
