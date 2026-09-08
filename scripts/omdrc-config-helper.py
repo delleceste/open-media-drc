@@ -371,9 +371,21 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
     text = defaults.read_text()
     replacement = rf'\1"hw:{selected["number"]},0";\2'
     changed, count = MANAGED.subn(replacement, text)
-    if count != 1:
+    if count == 0:
+        # The defaults file is hand-edited and no install ever overwrites it, so
+        # a copy predating the marker keeps rejecting every DAC selection until
+        # someone says how to fix it.  Say it here rather than in a doc.
         raise RuntimeError(
-            f"{defaults} must contain exactly one '# omdrc-managed-dac' output device")
+            f"{defaults} has no '# omdrc-managed-dac' output device.\n"
+            "       That marker names the line this helper rewrites; a defaults "
+            "file written before it existed needs it added once.\n"
+            "       `make user-install` does it, or by hand — inside the "
+            "output { device: \"alsa\" { … } } block, end the device line with:\n"
+            '           device: "hw:0,0"; # omdrc-managed-dac')
+    if count > 1:
+        raise RuntimeError(
+            f"{defaults} carries '# omdrc-managed-dac' on {count} device lines; "
+            "exactly one output device may be managed")
     atomic_text(defaults, changed, owner=(account.pw_uid, account.pw_gid))
     linux_aloop_timer(selected["number"])
     role_conf = Path(f"{prefix}/etc/open-media-drc/audio-roles.conf")
