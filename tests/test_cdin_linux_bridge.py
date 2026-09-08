@@ -274,6 +274,45 @@ class CaptureRoleTest(unittest.TestCase):
         self.assertIn('OMDRC_AUDIO_CAPTURE="0x0a92:0x0053"',
                       captured["audio-roles.conf"])
 
+    def _apply_with_defaults(self, root, defaults_text):
+        """Run linux_apply against a hand-written defaults file."""
+        (root / ".config/BruteFIR").mkdir(parents=True)
+        (root / ".config/BruteFIR/brutefir_defaults.conf").write_text(defaults_text)
+        with mock.patch.object(self.helper, "linux_usb_cards", return_value=self.CARDS), \
+             mock.patch.object(self.helper, "installed_conf",
+                               return_value={"AUDIO_USER": "tester",
+                                             "AUDIO_HOME": str(root)}), \
+             mock.patch.object(self.helper.pwd, "getpwnam",
+                               return_value=mock.Mock(pw_dir=str(root),
+                                                      pw_uid=1000, pw_gid=1000)), \
+             mock.patch.object(self.helper, "atomic_text"), \
+             mock.patch.object(self.helper, "linux_aloop_timer"), \
+             mock.patch.dict(os.environ, {"PREFIX": str(root)}):
+            self.helper.linux_apply("0x2fc6:0x0001:okto1", 5, restart=False)
+
+    def test_a_defaults_file_without_the_marker_names_the_fix(self):
+        # What every box installed before the marker existed still has: the
+        # file is hand-edited, so no install overwrites it.  The error has to
+        # carry the repair, or the web UI's DAC picker just keeps failing.
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(RuntimeError) as error:
+                self._apply_with_defaults(
+                    Path(tmp), 'output {\n  device: "alsa" {\n'
+                    '    device: "hw:0,0";   # the USB DAC\n  };\n};\n')
+        message = str(error.exception)
+        self.assertIn("omdrc-managed-dac", message)
+        self.assertIn("user-install", message)
+        self.assertIn('device: "hw:0,0"; # omdrc-managed-dac', message)
+
+    def test_two_marked_device_lines_are_refused_by_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(RuntimeError) as error:
+                self._apply_with_defaults(
+                    Path(tmp), 'output {\n  device: "alsa" {\n'
+                    '    device: "hw:0,0"; # omdrc-managed-dac\n'
+                    '    device: "hw:1,0"; # omdrc-managed-dac\n  };\n};\n')
+        self.assertIn("2 device lines", str(error.exception))
+
     def test_an_unresolvable_capture_is_named_as_such(self):
         with mock.patch.object(self.helper, "linux_usb_cards", return_value=self.CARDS):
             with self.assertRaises(RuntimeError) as error:
