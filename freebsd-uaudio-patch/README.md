@@ -1,9 +1,9 @@
 # FreeBSD `uaudio(4)` patches — OKTO DAC8 STEREO fixes
 
 Local fixes kept in-tree **while waiting for an official FreeBSD fix.**
-Two `uaudio(4)` source patches are currently applied to `/usr/src`, in this
-order on top of stock `releng/15.1` — and a third, built but **not installed**,
-completes them (see [`uaudio-clock-transaction.md`](uaudio-clock-transaction.md)):
+The three clock/stream fixes below are present in the current `/usr/src` and
+running module.  A new generic feedback/scheduler series is built but not yet
+installed; it is described in item 4.
 
 1. **`uaudio-clock-before-alt.c.patch`** — fix for the *rate-change
    cold-open silence* ("run drc.sh several times"; any rate change, not just
@@ -54,6 +54,16 @@ completes them (see [`uaudio-clock-transaction.md`](uaudio-clock-transaction.md)
    `uaudio-upstream-0002-prefer-explicit-feedback.c.patch`. Full analysis:
    [`uaudio-clock-transaction.md`](uaudio-clock-transaction.md).
 
+4. **`uaudio-upstream-0003` through `0008`** — a deliberately split,
+   reviewable replacement for the old feedback-follow sketch: exact endpoint
+   binding, `bSynchAddress` association, Linux-compatible feedback decoding,
+   continuous feedback acquisition, per-packet Q16.16 scheduling, and a small
+   diagnostic snapshot.  There are no OKTO-specific checks.  Every stage
+   builds independently with `-Werror`; the largest patch is 220 diff lines
+   including context.  The long-session event history lives in `omdrcctrl`,
+   not in the kernel.  **Built, not installed.** Full design and rollout
+   status: [`uaudio-feedback-diagnostics.md`](uaudio-feedback-diagnostics.md).
+
 **Upstream submission:** [`upstream-series/`](upstream-series/) holds the
 ready-to-send three-commit series (`git am`-clean on `main` after
 `755685dd665e`), the PR description, the Bugzilla comment and
@@ -63,12 +73,12 @@ ready-to-send three-commit series (`git am`-clean on `main` after
 declared-but-not-patched, and the route (GitHub PR like #2323, committed by
 christos@; CC hselasky@ for the isochronous-policy item).
 
-Also kept here (not applied):
+Superseded archive (not applied):
 
 - **`uaudio-feedback-follow.c.patch`** — candidate to make playback follow
-  the device's reported feedback rate smoothly (Linux-style), targeting the
-  *occasional tick*. **Unbuilt sketch; now needs REBASING** — it touches the
-  same sync-callback region as the shared-clock fix's change (c). Analysis:
+  the device's reported feedback rate smoothly. **Do not install it.** It is
+  an unbuilt, incomplete sketch, conflicts with the current source, and is
+  superseded by the staged 0003–0008 implementation. Historical analysis:
   [`uaudio-feedback-follow.md`](uaudio-feedback-follow.md).
 
 Retired (removed from the tree and from this directory; see git history):
@@ -110,11 +120,18 @@ the (vestigial, never-streaming) capture side reprogram that clock to its
 | `uaudio-clock-transaction.c.patch` | Follow-up audit fix: no redundant shared-clock writes, `GET_CUR` read-back, explicit feedback preferred over the auto-started capture stream. |
 | `uaudio-upstream-0001-shared-clock-write-discipline.c.patch` | The above, part 1, against upstream main/stable-15 after `755685dd665e`. |
 | `uaudio-upstream-0002-prefer-explicit-feedback.c.patch` | The above, part 2, against upstream main/stable-15. |
+| `uaudio-upstream-0003-bind-exact-endpoints.c.patch` | Bind data and feedback transfers to the parsed alternate setting's exact endpoints. |
+| `uaudio-upstream-0004-honor-synch-address.c.patch` | Associate explicit feedback using `bSynchAddress`, with descriptor fallback. |
+| `uaudio-upstream-0005-linux-feedback-decode.c.patch` | Linux-compatible Q10.14/Q16.16 feedback normalization and validation. |
+| `uaudio-upstream-0006-continuous-feedback.c.patch` | Continuous feedback acquisition plus runtime legacy rollback. |
+| `uaudio-upstream-0007-feedback-packet-scheduler.c.patch` | Linux-style fractional per-packet scheduler. |
+| `uaudio-upstream-0008-feedback-diagnostics.c.patch` | Minimal persistent counters and coherent sysctl snapshot. |
+| `uaudio-feedback-diagnostics.md` | Design, patch order, controls, diagnostics ABI, UI journal, and rollout status. |
 | `SUBMISSION-295933.md` | Ready-to-send upstream follow-up: the four unfinished items, evidence, and the five declared-not-patched gaps. |
 | `uaudio-clock-transaction.md` | Follow-up audit: root cause of the residual 44.1 kHz silent open, all findings, upstream-completeness assessment, device-generality analysis, A/B test plan. |
 | `bench/` | DAC lock bench: per-rate test tones, repeated open/play/close cycles, and a per-cycle verdict measured from the DAC's analog output. See [`bench/README.md`](bench/README.md). |
 | `bench/uaudio-affects.py` | Decides from descriptors alone whether *any* device (yours or not) is affected by these patches, and how. |
-| `uaudio-feedback-follow.c.patch` | Follow the feedback rate smoothly, like Linux (unbuilt candidate — needs rebase; becomes live once the capture stream stops being started). |
+| `uaudio-feedback-follow.c.patch` | Superseded unsafe/unbuilt sketch; retained only for historical comparison. |
 | `Makefile.patch` | Adds `CFLAGS+=-DUSB_DEBUG` to the module Makefile. |
 | `FreeBSD-uaudio-shared-clock-bug.md` | Flicker bug: full analysis + upstream bug-filing instructions (bug #295933). |
 | `uaudio-shared-clock-fix.md` | The proper fix: design, audit of the guard-only sketch, test plan. |
@@ -127,6 +144,16 @@ the (vestigial, never-streaming) capture side reprogram that clock to its
 cd /usr/src
 patch -p1 < /path/to/uaudio-clock-before-alt.c.patch
 patch -p1 < /path/to/uaudio-shared-clock-fix.c.patch   # applies with offsets; also applies to pure stock
+patch -p1 < /path/to/uaudio-clock-transaction.c.patch
+
+# On the current three-fix source, apply the feedback work as a series.
+# Do not substitute uaudio-feedback-follow.c.patch.
+patch -p1 < /path/to/uaudio-upstream-0003-bind-exact-endpoints.c.patch
+patch -p1 < /path/to/uaudio-upstream-0004-honor-synch-address.c.patch
+patch -p1 < /path/to/uaudio-upstream-0005-linux-feedback-decode.c.patch
+patch -p1 < /path/to/uaudio-upstream-0006-continuous-feedback.c.patch
+patch -p1 < /path/to/uaudio-upstream-0007-feedback-packet-scheduler.c.patch
+patch -p1 < /path/to/uaudio-upstream-0008-feedback-diagnostics.c.patch
 patch -p1 < /path/to/Makefile.patch
 
 cd /usr/src/sys/modules/sound/driver/uaudio
@@ -156,7 +183,10 @@ Verify:
 ```sh
 cat /dev/sndstat | grep pcm0              # expect: pcm0: <OKTO...> (play/rec)  <- capture is BACK (by design)
 sysctl hw.usb.uaudio.clock_settle_ms      # exists (clock-before-alt applied)
+sysctl hw.usb.uaudio.feedback_mode        # 1 = continuous Q16.16 scheduler
+sysctl hw.usb.uaudio.prefer_feedback      # 1 = explicit feedback when available
 sysctl dev.pcm.0.feedback_rate            # tracks playback rate during playback
+sysctl -n dev.pcm.0.uaudio_diagnostics    # coherent counters/state snapshot
 ```
 Then run the listening test plan in
 [`uaudio-shared-clock-fix.md`](uaudio-shared-clock-fix.md) — no 44.1 kHz

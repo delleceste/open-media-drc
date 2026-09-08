@@ -1,0 +1,144 @@
+--- a/sys/dev/sound/usb/uaudio.c
++++ b/sys/dev/sound/usb/uaudio.c
+@@ -53,6 +53,7 @@
+ #include <sys/queue.h>
+ #include <sys/types.h>
+ #include <sys/systm.h>
++#include <sys/time.h>
+ #include <sys/kernel.h>
+ #include <sys/bus.h>
+ #include <sys/module.h>
+@@ -156,6 +157,12 @@
+     "use an asynchronous playback stream's explicit feedback endpoint instead "
+     "of borrowing the capture stream for jitter information");
+ 
++static int uaudio_feedback_mode = 1;
++SYSCTL_INT(_hw_usb_uaudio, OID_AUTO, feedback_mode, CTLFLAG_RWTUN,
++    &uaudio_feedback_mode, 0,
++    "explicit feedback handling: 0=legacy one-second correction, "
++    "1=continuous fixed-point feedback");
++
+ #ifdef USB_DEBUG
+ static int uaudio_debug;
+ 
+@@ -271,7 +278,9 @@
+ 	int32_t jitter_curr;
+ 
+ 	int feedback_rate;
++	sbintime_t feedback_last_sbt;
+ 	uint32_t feedback_q16;
++	uint32_t feedback_valid;
+ 	int8_t feedback_shift;
+ 	uint8_t feedback_shift_valid;
+ 
+@@ -291,6 +300,7 @@
+ #define	CHAN_OP_DRAIN 3
+ 
+ 	uint8_t iface_index;
++	uint16_t feedback_interval_ms;
+ };
+ 
+ #define	UMIDI_EMB_JACK_MAX   16		/* units */
+@@ -1696,7 +1706,16 @@
+ 	}
+ 
+ 	fps = usbd_get_isoc_fps(sc->sc_udev);
++	chan->feedback_interval_ms = 0;
++	if (chan->xfer[UAUDIO_NCHANBUFS] != NULL) {
++		uint32_t feedback_frames;
+ 
++		feedback_frames = 1U << usbd_xfer_get_fps_shift(
++		    chan->xfer[UAUDIO_NCHANBUFS]);
++		chan->feedback_interval_ms = MAX(1,
++		    howmany(feedback_frames * 1000U, fps));
++	}
++
+ 	if (fps < 8000) {
+ 		/* FULL speed USB */
+ 		frames = uaudio_buffer_ms;
+@@ -1745,10 +1764,14 @@
+ 
+ 	mtx_lock(&chan->lock);
+ 	chan->cur_alt = next_alt;
++	chan->feedback_last_sbt = getsbinuptime();
+ 	chan->feedback_q16 = 0;
++	chan->feedback_valid = 0;
+ 	chan->feedback_shift_valid = 0;
+ 	usbd_transfer_start(chan->xfer[0]);
+ 	usbd_transfer_start(chan->xfer[1]);
++	if (uaudio_feedback_mode != 0 && chan->xfer[UAUDIO_NCHANBUFS] != NULL)
++		usbd_transfer_start(chan->xfer[UAUDIO_NCHANBUFS]);
+ 	mtx_unlock(&chan->lock);
+ 	return;
+ error:
+@@ -2591,6 +2614,8 @@
+ 			goto bad_feedback;
+ 
+ 		ch->feedback_q16 = f64;
++		ch->feedback_last_sbt = getsbinuptime();
++		ch->feedback_valid = 1;
+ 		ch->feedback_rate = (f64 * base_fps + 0x8000) >> 16;
+ 
+ 		DPRINTFN(6, "Comparing %d Hz :: %d Hz\n",
+@@ -2608,7 +2633,8 @@
+ 		 * configure; previously playback then free-ran with no
+ 		 * rate feedback at all.
+ 		 */
+-		if (ch->priv_sc->sc_rec_chan[i].cur_alt >=
++		if (uaudio_feedback_mode == 0 &&
++		    ch->priv_sc->sc_rec_chan[i].cur_alt >=
+ 		    ch->priv_sc->sc_rec_chan[i].num_alt) {
+ 			int32_t jitter_max = howmany(sample_rate, 16000);
+ 
+@@ -2626,13 +2652,18 @@
+ 			else if (ch->jitter_curr < -jitter_max)
+ 				ch->jitter_curr = -jitter_max;
+ 		}
++		if (uaudio_feedback_mode != 0)
++			goto tr_setup;
+ 		break;
+ 
+ bad_feedback:
+ 		ch->feedback_shift_valid = 0;
++		if (uaudio_feedback_mode != 0)
++			goto tr_setup;
+ 		break;
+ 
+ 	case USB_ST_SETUP:
++	tr_setup:
+ 		/*
+ 		 * Submit the transfer even when the recording stream
+ 		 * provides the jitter information, so that the feedback
+@@ -2644,6 +2675,8 @@
+ 		break;
+ 
+ 	default:			/* Error */
++		if (error != USB_ERR_CANCELLED && uaudio_feedback_mode != 0)
++			goto tr_setup;
+ 		break;
+ 	}
+ }
+@@ -2754,11 +2787,17 @@
+ 			}
+ 		}
+ 
+-		/* start the SYNC transfer one time per second, if any */
+-		ch->intr_counter += ch->intr_frames;
+-		if (ch->intr_counter >= ch->frames_per_second) {
+-			ch->intr_counter -= ch->frames_per_second;
+-			usbd_transfer_start(ch->xfer[UAUDIO_NCHANBUFS]);
++		if (ch->xfer[UAUDIO_NCHANBUFS] != NULL) {
++			if (uaudio_feedback_mode != 0) {
++				usbd_transfer_start(ch->xfer[UAUDIO_NCHANBUFS]);
++			} else {
++				ch->intr_counter += ch->intr_frames;
++				if (ch->intr_counter >= ch->frames_per_second) {
++					ch->intr_counter -= ch->frames_per_second;
++					usbd_transfer_start(
++					    ch->xfer[UAUDIO_NCHANBUFS]);
++				}
++			}
+ 		}
+ 
+ 		mfl = usbd_xfer_max_framelen(xfer);
+

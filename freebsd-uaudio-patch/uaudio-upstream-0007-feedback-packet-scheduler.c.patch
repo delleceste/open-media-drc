@@ -1,0 +1,194 @@
+--- a/sys/dev/sound/usb/uaudio.c
++++ b/sys/dev/sound/usb/uaudio.c
+@@ -157,12 +157,21 @@
+     "use an asynchronous playback stream's explicit feedback endpoint instead "
+     "of borrowing the capture stream for jitter information");
+ 
++/*
++ * Explicit USB Audio feedback is a fixed-point count of samples per USB
++ * (micro)frame.  Mode 1 follows every feedback packet with a phase
++ * accumulator.  Mode 0 retains the historical one-sample-per-second
++ * correction path as a run-time rollback while this change is evaluated on
++ * a wider set of devices.
++ */
+ static int uaudio_feedback_mode = 1;
+ SYSCTL_INT(_hw_usb_uaudio, OID_AUTO, feedback_mode, CTLFLAG_RWTUN,
+     &uaudio_feedback_mode, 0,
+     "explicit feedback handling: 0=legacy one-second correction, "
+-    "1=continuous fixed-point feedback");
++    "1=continuous fixed-point scheduling");
+ 
++#define	UAUDIO_FEEDBACK_STALE_MS	250
++
+ #ifdef USB_DEBUG
+ static int uaudio_debug;
+ 
+@@ -280,6 +289,7 @@
+ 	int feedback_rate;
+ 	sbintime_t feedback_last_sbt;
+ 	uint32_t feedback_q16;
++	uint32_t feedback_phase;
+ 	uint32_t feedback_valid;
+ 	int8_t feedback_shift;
+ 	uint8_t feedback_shift_valid;
+@@ -1766,6 +1776,7 @@
+ 	chan->cur_alt = next_alt;
+ 	chan->feedback_last_sbt = getsbinuptime();
+ 	chan->feedback_q16 = 0;
++	chan->feedback_phase = 0;
+ 	chan->feedback_valid = 0;
+ 	chan->feedback_shift_valid = 0;
+ 	usbd_transfer_start(chan->xfer[0]);
+@@ -2571,6 +2582,7 @@
+ 			f &= 0x00ffffff;
+ 		else
+ 			f &= 0x0fffffff;
++
+ 		if (f == 0)
+ 			goto bad_feedback;
+ 
+@@ -2604,12 +2616,15 @@
+ 
+ 		if (f64 > UINT32_MAX)
+ 			goto bad_feedback;
++
++		/* Linux uses nominal +50%, reduced when wMaxPacketSize is lower. */
+ 		freqmax = nominal_q16 + nominal_q16 / 2;
+ 		capacity_q16 = ((uint64_t)usbd_xfer_max_framelen(ch->xfer[0]) /
+ 		    ch->usb_alt[ch->cur_alt].sample_size << 16) >>
+ 		    usbd_xfer_get_fps_shift(ch->xfer[0]);
+ 		if (capacity_q16 < freqmax)
+ 			freqmax = capacity_q16;
++
+ 		if (f64 < nominal_q16 - nominal_q16 / 8 || f64 > freqmax)
+ 			goto bad_feedback;
+ 
+@@ -2706,9 +2721,13 @@
+ 	uint32_t n;
+ 	uint32_t offset;
+ 	unsigned i;
++	uint8_t fps_shift;
++	sbintime_t now;
++	int capture_active;
+ 	int sample_size;
+ 	int actlen;
+ 	int sumlen;
++	int use_feedback;
+ 
+ 	if (ch->running == 0 || ch->start == ch->end) {
+ 		DPRINTF("not running or no buffer!\n");
+@@ -2724,6 +2743,8 @@
+ 		ch_rec = NULL;
+ 
+ 	usbd_xfer_status(xfer, &actlen, &sumlen, NULL, NULL);
++	use_feedback = 0;
++	capture_active = 0;
+ 
+ 	switch (USB_GET_STATE(xfer)) {
+ 	case USB_ST_SETUP:
+@@ -2784,23 +2805,50 @@
+ 				rx_rate = ch_rec->usb_alt[rec_alt].sample_rate;
+ 				ch->jitter_curr += tx_jitter / rx_rate;
+ 				ch->jitter_rem = tx_jitter % rx_rate;
++				capture_active = 1;
+ 			}
+ 		}
+ 
+ 		if (ch->xfer[UAUDIO_NCHANBUFS] != NULL) {
+ 			if (uaudio_feedback_mode != 0) {
++				/* Also makes a live legacy -> continuous switch work. */
+ 				usbd_transfer_start(ch->xfer[UAUDIO_NCHANBUFS]);
+ 			} else {
++				/* Historical diagnostic/correction cadence. */
+ 				ch->intr_counter += ch->intr_frames;
+ 				if (ch->intr_counter >= ch->frames_per_second) {
+ 					ch->intr_counter -= ch->frames_per_second;
+ 					usbd_transfer_start(
+ 					    ch->xfer[UAUDIO_NCHANBUFS]);
+ 				}
++			}
++		}
++
++		/*
++		 * Prefer explicit feedback only when capture is not already the
++		 * active jitter source.  This preserves the existing duplex rule.
++		 */
++		if (uaudio_feedback_mode != 0 && uaudio_prefer_feedback != 0 &&
++		    capture_active == 0 &&
++		    uaudio_chan_is_async(ch, ch->cur_alt) != 0 &&
++		    uaudio_chan_has_sync_ep(ch, ch->cur_alt) != 0) {
++			unsigned stale_ms;
++
++			stale_ms = MAX(UAUDIO_FEEDBACK_STALE_MS,
++			    (unsigned)ch->feedback_interval_ms * 4);
++			now = getsbinuptime();
++			if (ch->feedback_valid != 0 &&
++			    now - ch->feedback_last_sbt <=
++			    (sbintime_t)stale_ms * SBT_1MS) {
++				use_feedback = 1;
++			} else if (now - ch->feedback_last_sbt >
++			    (sbintime_t)stale_ms * SBT_1MS) {
++				ch->feedback_valid = 0;
+ 			}
+ 		}
+ 
+ 		mfl = usbd_xfer_max_framelen(xfer);
++		fps_shift = usbd_xfer_get_fps_shift(xfer);
+ 
+ 		if (ch->bytes_per_frame[1] > mfl) {
+ 			DPRINTF("bytes per transfer, %d, "
+@@ -2824,6 +2872,8 @@
+ 		/* setup frame lengths */
+ 		for (n = 0; n != blockcount; n++) {
+ 			uint32_t frame_len;
++			uint32_t packet_frames;
++			uint64_t phase;
+ 
+ 			ch->sample_curr += ch->sample_rem;
+ 			if (ch->sample_curr >= ch->frames_per_second) {
+@@ -2832,18 +2882,32 @@
+ 			} else {
+ 				frame_len = ch->bytes_per_frame[0];
+ 			}
+-
+-			/* handle free running clock case */
+-			if (ch->jitter_curr > 0 &&
+-			    (frame_len + sample_size) <= mfl) {
+-				DPRINTFN(6, "sending one sample more\n");
+-				ch->jitter_curr--;
+-				frame_len += sample_size;
+-			} else if (ch->jitter_curr < 0 &&
+-			    frame_len >= sample_size) {
+-				DPRINTFN(6, "sending one sample less\n");
+-				ch->jitter_curr++;
+-				frame_len -= sample_size;
++			if (use_feedback) {
++				/*
++				 * Same fixed-point scheduler as Linux's
++				 * synced_next_packet_size().  feedback_q16 is in
++				 * samples per base USB frame/microframe; fps_shift is
++				 * log2 of the data endpoint's service interval.
++				 */
++				phase = (ch->feedback_phase & 0xffff) +
++				    ((uint64_t)ch->feedback_q16 << fps_shift);
++				packet_frames = MIN((uint32_t)(phase >> 16),
++				    mfl / sample_size);
++				ch->feedback_phase = phase;
++				frame_len = packet_frames * sample_size;
++			} else {
++				/* handle the historical free-running/capture case */
++				if (ch->jitter_curr > 0 &&
++				    (frame_len + sample_size) <= mfl) {
++					DPRINTFN(6, "sending one sample more\n");
++					ch->jitter_curr--;
++					frame_len += sample_size;
++				} else if (ch->jitter_curr < 0 &&
++				    frame_len >= sample_size) {
++					DPRINTFN(6, "sending one sample less\n");
++					ch->jitter_curr++;
++					frame_len -= sample_size;
++				}
+ 			}
+ 			usbd_xfer_set_frame_len(xfer, n, frame_len);
+ 			total += frame_len;
+

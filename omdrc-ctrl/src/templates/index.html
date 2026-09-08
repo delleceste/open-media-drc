@@ -407,6 +407,22 @@
             color: #fff;
         }
         .qc-switch.busy { opacity: .55; pointer-events: none; }
+        .uaudio-controls { display:grid;gap:8px;margin:8px 0 10px; }
+        .uaudio-control { display:grid;grid-template-columns:minmax(110px,1fr) minmax(190px,1.4fr);gap:8px;align-items:center; }
+        .uaudio-control-label { color:var(--muted);font-size:.76rem; }
+        .uaudio-switch { display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden; }
+        .uaudio-seg { flex:1;border:0;background:var(--bg);color:var(--muted);padding:6px 8px;font-size:.72rem;cursor:pointer; }
+        .uaudio-seg + .uaudio-seg { border-left:1px solid var(--border); }
+        .uaudio-seg.active { background:var(--accent);color:#fff; }
+        .uaudio-seg:disabled { opacity:.48;cursor:not-allowed; }
+        .uaudio-summary { display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin:8px 0; }
+        .uaudio-metric { border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:0; }
+        .uaudio-metric small { display:block;color:var(--muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.04em; }
+        .uaudio-metric strong { display:block;font-family:ui-monospace,"SFMono-Regular",monospace;font-size:.82rem;overflow:hidden;text-overflow:ellipsis; }
+        .uaudio-good { color:var(--green,#3fb950); }
+        .uaudio-bad { color:var(--red,#f85149); }
+        .uaudio-history { margin:8px 0 0;max-height:150px;overflow:auto;font: .68rem/1.45 ui-monospace,"SFMono-Regular",monospace;color:var(--muted);white-space:pre-wrap; }
+        @media (max-width:560px) { .uaudio-control { grid-template-columns:1fr; } }
         #qc-line1 {
             font-size: .95rem;
             font-weight: 500;
@@ -1538,6 +1554,19 @@
     </div>
 </div>
 
+{% if os_name == 'FreeBSD' %}
+<!-- FreeBSD uaudio feedback and long-session diagnostics -->
+<div class="card" id="uaudio-card">
+    <div class="card-title title-row">
+        <span class="collapsible-title" onclick="toggleCard('uaudio')"><span class="card-chevron" id="uaudio-chevron">▾</span>USB audio integrity <span class="refresh-note" id="uaudio-refresh-label">refresh: 2s</span></span>
+        <button class="btn-refresh" id="uaudio-refresh-btn" title="Refresh">↻</button>
+    </div>
+    <div id="uaudio-panel" style="padding:4px 0">
+        <span style="color:var(--muted);font-style:italic">loading…</span>
+    </div>
+</div>
+{% endif %}
+
 <!-- Advanced diagnostics panel -->
 <div class="card" id="advanced-card">
     <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -1599,11 +1628,14 @@ const TOPCPU_INTERVAL_MS  = {{ topcpu_interval }} * 1000;
 const SNDSTAT_INTERVAL_MS = {{ sndstat_interval }} * 1000;
 const BRUTEFIR_INTERVAL_MS = {{ brutefir_interval }} * 1000;
 const RAM_INTERVAL_MS = 10000;
+const UAUDIO_INTERVAL_MS = 2000;
 const TOPCPU_THRESHOLD    = {{ topcpu_threshold }};
 const LOG_ALERT_INTERVAL_MS = {{ log_alert_interval }} * 1000;
 const CHAIN_INTERVAL_MS = {{ chain_interval }} * 1000;
 const SPECTRUM_ENABLED = {{ 'true' if spectrum.enabled else 'false' }};
 const SPECTRUM_VU_MODE = {{ spectrum.vu_mode | tojson }};
+const OMDRC_CSRF = {{ csrf | tojson }};
+const UAUDIO_ENABLED = {{ 'true' if os_name == 'FreeBSD' else 'false' }};
 
 // ── DRC filter set (geometry) picker ──────────────────────────────────────
 // brutefir loads its coefficients from the .conf it was started with, so
@@ -2072,7 +2104,9 @@ function setRefreshLabel(id, seconds) {
 // ── collapsible cards ──────────────────────────────────────────────────────
 // A collapsed card hides its body and pauses its auto-refresh so no polling
 // (and no server-side ps/sndstat work) happens while it is hidden.
-const COLLAPSIBLE_CARDS = ['bf', 'ram', 'sndstat', 'advanced', 'topcpu'];
+const COLLAPSIBLE_CARDS = ['bf', 'ram', 'sndstat',
+                           ...(UAUDIO_ENABLED ? ['uaudio'] : []),
+                           'advanced', 'topcpu'];
 const CARD_STATE_PREFIX = 'omdrcctrl.card.collapsed.';
 const collapsedCards = {};
 const autoRefreshControls = {};
@@ -3779,6 +3813,126 @@ async function fetchSndstat(btn) {
     }
 }
 
+// ── USB Audio integrity panel ─────────────────────────────────────────────
+let uaudioControlBusy = false;
+
+function uaudioMetric(label, value, cls = '') {
+    return `<div class="uaudio-metric"><small>${escHtml(String(label))}</small>` +
+           `<strong class="${cls}">${escHtml(String(value))}</strong></div>`;
+}
+
+function uaudioSwitch(label, name, value, choices, disabled) {
+    const buttons = choices.map(([choice, text]) =>
+        `<button class="uaudio-seg${Number(value) === choice ? ' active' : ''}" ` +
+        `${disabled ? 'disabled' : ''} onclick="setUaudioControl('${name}',${choice})">` +
+        `${escHtml(text)}</button>`).join('');
+    return `<div class="uaudio-control"><span class="uaudio-control-label">${escHtml(label)}</span>` +
+           `<div class="uaudio-switch">${buttons}</div></div>`;
+}
+
+function uaudioHistoryLine(record) {
+    const snapshot = record.snapshot || {};
+    const diag = snapshot.diagnostics || {};
+    const when = snapshot.collected_at || record.marked_at || '';
+    const counts = [
+        ['short', diag.play_short_transfers],
+        ['usb-errors', diag.play_errors],
+        ['bad-fb', diag.feedback_bad],
+        ['stale-fb', diag.feedback_stale],
+    ].filter(([, value]) => Number(value || 0) !== 0)
+     .map(([key, value]) => `${key}=${value}`).join(' ');
+    return `${when.replace('T',' ').replace('+00:00','Z')}  ${record.reason || 'event'}` +
+           `${record.note ? ` — ${record.note}` : ''}${counts ? `  ${counts}` : ''}`;
+}
+
+async function fetchUaudioDiagnostics() {
+    const el = document.getElementById('uaudio-panel');
+    try {
+        const d = await (await fetch('/audio/diagnostics?history=12', {cache:'no-store'})).json();
+        if (!d.ok) {
+            const note = d.supported === false ? 'available on FreeBSD only' : (d.error || 'driver diagnostics unavailable');
+            el.innerHTML = `<span style="color:var(--muted)">${escHtml(note)}</span>`;
+            return;
+        }
+        const x = d.diagnostics || {}, controls = d.controls || {}, path = d.audio_path || {};
+        const running = Number(x.running || 0) !== 0;
+        const controlsDisabled = running || uaudioControlBusy;
+        const source = ({0:'nominal fallback',1:'explicit feedback',2:'capture feedback'})[Number(x.source)] || 'unknown';
+        const anomalyTotal = ['feedback_bad','feedback_errors','feedback_stale',
+                              'play_short_transfers','play_errors']
+                             .reduce((sum, key) => sum + Number(x[key] || 0), 0);
+        const pathGood = Number(path.bitperfect) === 1 && Number(path.play_vchans) === 0;
+        const feedbackGood = Number(controls.feedback_mode) === 1 &&
+                             Number(controls.prefer_feedback) === 1;
+        const feedbackAge = Number(x.feedback_age_ms) > 1e12 ? 'none' : `${x.feedback_age_ms} ms`;
+        let html = `<div style="font-size:.76rem;color:var(--muted);margin-bottom:5px">` +
+                   `${escHtml(d.description || d.pcm)} · ${escHtml(d.pcm)} · ` +
+                   `<span class="${running ? 'uaudio-good' : ''}">${running ? 'streaming' : 'idle'}</span> · ` +
+                   `saved to ${escHtml(d.log_path || '')}</div>`;
+        html += '<div class="uaudio-controls">';
+        html += uaudioSwitch('Packet scheduler', 'feedback_mode', controls.feedback_mode,
+                             [[0,'legacy'],[1,'Linux-style Q16.16']], controlsDisabled);
+        html += uaudioSwitch('Async clock source', 'prefer_feedback', controls.prefer_feedback,
+                             [[0,'capture'],[1,'explicit endpoint']], controlsDisabled);
+        html += '</div>';
+        if (running) html += '<div style="font-size:.7rem;color:var(--muted);margin:-4px 0 8px">Stop playback before changing either kernel control.</div>';
+        html += '<div class="uaudio-summary">';
+        html += uaudioMetric('active source', source, feedbackGood ? 'uaudio-good' : '');
+        html += uaudioMetric('feedback', x.feedback_rate ? `${x.feedback_rate} Hz` : 'waiting');
+        html += uaudioMetric('feedback age', feedbackAge, Number(x.feedback_valid) ? 'uaudio-good' : '');
+        html += uaudioMetric('bit-perfect / vchans', `${path.bitperfect} / ${path.play_vchans}`, pathGood ? 'uaudio-good' : 'uaudio-bad');
+        html += uaudioMetric('short transfers', x.play_short_transfers || 0, Number(x.play_short_transfers) ? 'uaudio-bad' : 'uaudio-good');
+        html += uaudioMetric('play errors', x.play_errors || 0, Number(x.play_errors) ? 'uaudio-bad' : 'uaudio-good');
+        html += uaudioMetric('bad / stale feedback', `${x.feedback_bad || 0} / ${x.feedback_stale || 0}`, (Number(x.feedback_bad) || Number(x.feedback_stale)) ? 'uaudio-bad' : 'uaudio-good');
+        html += uaudioMetric('stream generation', x.generation || 0);
+        html += '</div>';
+        const health = anomalyTotal === 0
+            ? '<span class="uaudio-good">No driver anomaly recorded during this USB attachment.</span>'
+            : `<span class="uaudio-bad">${anomalyTotal} anomaly counter(s) recorded; inspect history below.</span>`;
+        html += `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:.72rem">` +
+                `<span>${health}</span><button class="btn-log" onclick="markAudioClick()">I heard a click</button></div>`;
+        const history = (d.history || []).slice().reverse().map(uaudioHistoryLine).join('\n');
+        html += `<pre class="uaudio-history">${escHtml(history || 'No persisted history yet.')}</pre>`;
+        el.innerHTML = html;
+    } catch (error) {
+        el.innerHTML = `<span style="color:var(--red)">${escHtml(error.message || 'error')}</span>`;
+    }
+}
+
+async function setUaudioControl(name, value) {
+    if (uaudioControlBusy) return;
+    uaudioControlBusy = true;
+    try {
+        const response = await fetch('/audio/diagnostics/control', {
+            method:'POST', headers:{'Content-Type':'application/json','X-OMDRC-CSRF':OMDRC_CSRF},
+            body:JSON.stringify({name, value})
+        });
+        const d = await response.json();
+        if (!response.ok || !d.ok) throw new Error(d.error || 'uaudio control failed');
+        toast('uaudio control changed and read back', 'ok');
+    } catch (error) {
+        toast(error.message || 'uaudio control failed', 'error');
+    } finally {
+        uaudioControlBusy = false;
+        await fetchUaudioDiagnostics();
+    }
+}
+
+async function markAudioClick() {
+    try {
+        const response = await fetch('/audio/diagnostics/mark', {
+            method:'POST', headers:{'Content-Type':'application/json','X-OMDRC-CSRF':OMDRC_CSRF},
+            body:JSON.stringify({note:'listener reported a click in the remote UI'})
+        });
+        const d = await response.json();
+        if (!response.ok || !d.ok) throw new Error(d.error || 'could not save marker');
+        toast('click marker saved with the current kernel counters', 'ok');
+        await fetchUaudioDiagnostics();
+    } catch (error) {
+        toast(error.message || 'could not save marker', 'error');
+    }
+}
+
 // ── Advanced diagnostics panel ─────────────────────────────────────────────
 async function fetchAdvancedInfo(btn) {
     const el   = document.getElementById('advanced-panel');
@@ -4416,6 +4570,8 @@ setInterval(fetchLogAlerts, LOG_ALERT_INTERVAL_MS);
 startAutoRefresh('bf', BRUTEFIR_INTERVAL_MS, fetchBrutefirCpu);
 startAutoRefresh('mpd', MONITOR_INTERVAL_MS, fetchMpdInfo);
 startAutoRefresh('sndstat', SNDSTAT_INTERVAL_MS, fetchSndstat);
+if (UAUDIO_ENABLED)
+    startAutoRefresh('uaudio', UAUDIO_INTERVAL_MS, fetchUaudioDiagnostics);
 startAutoRefresh('topcpu', TOPCPU_INTERVAL_MS, fetchTopCpu);
 startAutoRefresh('ram', RAM_INTERVAL_MS, fetchRam);
 </script>

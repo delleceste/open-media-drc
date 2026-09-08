@@ -1,0 +1,28 @@
+--- a/sys/dev/sound/usb/uaudio.c
++++ b/sys/dev/sound/usb/uaudio.c
+@@ -1958,6 +1958,8 @@
+ {
+ 	const usb_endpoint_descriptor_audio_t *ed;
+ 	uint8_t data_dir = UE_GET_DIR(ed1->bEndpointAddress);
++	uint8_t fallback = 0;
++	uint8_t sync_addr = UEP_HAS_SYNCADDR(ed1) ? ed1->bSynchAddress : 0;
+ 
+ 	while ((desc = usb_desc_foreach(cd, desc)) != NULL) {
+ 		if (desc->bDescriptorType == UDESC_INTERFACE)
+@@ -1972,9 +1974,13 @@
+ 			continue;
+ 		if (UE_GET_ISO_USAGE(ed->bmAttributes) != UE_ISO_USAGE_FEEDBACK)
+ 			continue;
+-		return (ed->bEndpointAddress);
++		if (fallback == 0)
++			fallback = ed->bEndpointAddress;
++		if (sync_addr != 0 &&
++		    UE_GET_ADDR(ed->bEndpointAddress) == UE_GET_ADDR(sync_addr))
++			return (ed->bEndpointAddress);
+ 	}
+-	return (0);
++	return (fallback);
+ }
+ 
+ static void
+

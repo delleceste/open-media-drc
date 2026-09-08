@@ -1,0 +1,27 @@
+--- a/sys/dev/sound/usb/uaudio.c
++++ b/sys/dev/sound/usb/uaudio.c
+@@ -1424,6 +1424,7 @@
+     struct uaudio_chan *chan, int dir)
+ {
+ 	struct uaudio_chan_alt *chan_alt;
++	struct usb_config usb_cfg[UAUDIO_NCHANBUFS + 1];
+ 	uint32_t frames;
+ 	uint32_t buf_size;
+ 	uint16_t fps;
+@@ -1679,8 +1680,14 @@
+ 			    "(continuing anyway)\n");
+ 		}
+ 	}
++	/* Bind transfers to the endpoints selected for this alternate setting. */
++	memcpy(usb_cfg, chan_alt->usb_cfg, sizeof(usb_cfg));
++	usb_cfg[0].endpoint = chan_alt->p_ed1->bEndpointAddress;
++	usb_cfg[1].endpoint = chan_alt->p_ed1->bEndpointAddress;
++	usb_cfg[UAUDIO_NCHANBUFS].endpoint = chan_alt->sync_ep;
++
+ 	if (usbd_transfer_setup(sc->sc_udev, &chan_alt->iface_index, chan->xfer,
+-	    chan_alt->usb_cfg, UAUDIO_NCHANBUFS + 1, chan, &chan->lock)) {
++	    usb_cfg, UAUDIO_NCHANBUFS + 1, chan, &chan->lock)) {
+ 		DPRINTF("could not allocate USB transfers!\n");
+ 		goto error;
+ 	}
+

@@ -24,6 +24,7 @@ if os.path.dirname(__file__) not in sys.path:
     sys.path.insert(0, os.path.dirname(__file__))
 from configuration import ConfigurationManager, Settings as ConfigurationSettings
 from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
+from audio_diagnostics import AudioDiagnosticsMonitor
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -2943,6 +2944,16 @@ _RENDERER_STATE_FILE = os.path.join(_STATE_DIR, "last_renderer")
 _CDIN_ACK_FILE = os.path.join(_STATE_DIR, "cdin_error_ack")
 _CDIN_MPD_OUTPUT_FILE = os.path.join(_STATE_DIR, "cdin-mpd-output")
 _CDIN_AUDIBLE_MPD_OUTPUTS = ("OKTO-DAC", "DRC-native", "DRC-resamp")
+_AUDIO_DIAGNOSTICS_MONITOR: AudioDiagnosticsMonitor | None = None
+
+
+def _audio_diagnostics() -> AudioDiagnosticsMonitor:
+    global _AUDIO_DIAGNOSTICS_MONITOR
+    if _AUDIO_DIAGNOSTICS_MONITOR is None:
+        _AUDIO_DIAGNOSTICS_MONITOR = AudioDiagnosticsMonitor(
+            Path(_STATE_DIR), _dac_unit,
+        )
+    return _AUDIO_DIAGNOSTICS_MONITOR
 
 
 def _clamp_delta(ms: float) -> float:
@@ -3292,6 +3303,7 @@ def index():
         cdin_log_id=_cdin_log_source_id(),
         chain_enabled=CHAIN_ENABLED,
         chain_interval=CHAIN_INTERVAL,
+        csrf=_CONFIGURATION_CSRF,
     )
 
 
@@ -5858,6 +5870,38 @@ def system_advanced():
     return jsonify({"ok": True, "sections": sections})
 
 
+@app.route("/audio/diagnostics")
+def audio_diagnostics_state():
+    monitor = _audio_diagnostics()
+    result = monitor.state()
+    result["history"] = monitor.history(request.args.get("history", 12))
+    return jsonify(result)
+
+
+@app.route("/audio/diagnostics/control", methods=["POST"])
+def audio_diagnostics_control():
+    if not _configuration_mutation_allowed():
+        return jsonify({"ok": False, "error": "invalid configuration request token"}), 403
+    body = request.get_json(silent=True) or {}
+    try:
+        result = _audio_diagnostics().set_control(
+            str(body.get("name", "")), int(body.get("value")),
+        )
+        result["history"] = _audio_diagnostics().history(12)
+        return jsonify(result)
+    except (TypeError, ValueError, RuntimeError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@app.route("/audio/diagnostics/mark", methods=["POST"])
+def audio_diagnostics_mark():
+    if not _configuration_mutation_allowed():
+        return jsonify({"ok": False, "error": "invalid configuration request token"}), 403
+    body = request.get_json(silent=True) or {}
+    record = _audio_diagnostics().mark(str(body.get("note", "")))
+    return jsonify({"ok": True, "record": record})
+
+
 @app.route("/system/memory")
 def system_memory():
     return jsonify(_read_memory())
@@ -6931,4 +6975,6 @@ if __name__ == "__main__":
     # Make sure the spectrum FIFO output is off until Start is pressed, even if
     # a previous run was killed mid-stream.
     _SPECTRUM.ensure_disabled()
+    if platform.system() == "FreeBSD":
+        _audio_diagnostics().start()
     app.run(host=args.host, port=args.port, threaded=True)
