@@ -115,8 +115,13 @@ browser_resolve() {
 
 # ── sndio mixing server for the browser session (FreeBSD) ────────────────────
 # sndiod takes the DAC, mixes every client into one stream, and converts rate and
-# format.  Chromium picks its sndio backend on its own once PulseAudio is absent
-# (its probe order is PulseAudio -> SNDIO -> ALSA), so unlike the ALSA shim this
+# format.  It is deliberately exposed as playback-only: sndiod's default is
+# play,rec, which opens a duplex USB DAC for capture even when the browser only
+# plays.  On FreeBSD uaudio that makes capture supersede the DAC's explicit
+# feedback endpoint as the playback clock source and wastes USB bandwidth.
+#
+# Chromium picks its sndio backend on its own once PulseAudio is absent (its
+# probe order is PulseAudio -> SNDIO -> ALSA), so unlike the ALSA shim this
 # needs no browser flags and no chrome://flags choice.
 #
 # The daemon MUST NOT outlive the browser: it holds the DAC, so BruteFIR could
@@ -161,12 +166,13 @@ browser_sndio_begin() {
 	_unit=${_unit#dsp}
 	case "$_unit" in ''|*[!0-9]*) _unit=0 ;; esac
 
-	# ORDER MATTERS: per-device options must PRECEDE -f, or they are silently
-	# ignored and the device opens at sndiod's default rate instead.
-	if sndiod -r "$_rate" -f "rsnd/$_unit"; then
+	# ORDER MATTERS: per-device options must precede -f and per-sub-device
+	# options must precede -s.  The explicit default sub-device ensures that
+	# -m play overrides sndiod's play,rec default.
+	if sndiod -r "$_rate" -f "rsnd/$_unit" -m play -s default; then
 		# sndiod daemonises; find the instance we just created.
 		SNDIOD_PID=$(pgrep -x sndiod | tail -1)
-		echo "browser-nodrc: sndiod mixing on rsnd/$_unit at ${_rate} Hz (pid ${SNDIOD_PID:-?})" >&2
+		echo "browser-nodrc: playback-only sndiod mixing on rsnd/$_unit at ${_rate} Hz (pid ${SNDIOD_PID:-?})" >&2
 	else
 		echo "browser-nodrc: sndiod failed to start — the browser will have no sound" >&2
 	fi

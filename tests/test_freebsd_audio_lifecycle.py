@@ -14,6 +14,16 @@ MPD_HOOK = ROOT / "etc/rc.conf.d/musicpd/omdrc_audio"
 
 
 class FreeBSDAudioLifecycleTests(unittest.TestCase):
+    def test_browser_sndiod_is_playback_only(self):
+        launcher = (ROOT / "browser-nodrc/lib.sh").read_text()
+        self.assertIn(
+            'sndiod -r "$_rate" -f "rsnd/$_unit" -m play -s default',
+            launcher,
+        )
+        self.assertNotIn(
+            'sndiod -r "$_rate" -f "rsnd/$_unit"; then', launcher
+        )
+
     def test_musicpd_hook_is_one_way_bounded_reconcile(self):
         text = MPD_HOOK.read_text()
         self.assertIn('start_postcmd="omdrc_musicpd_poststart"', text)

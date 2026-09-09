@@ -1,9 +1,8 @@
 # FreeBSD `uaudio(4)` patches — OKTO DAC8 STEREO fixes
 
 Local fixes kept in-tree **while waiting for an official FreeBSD fix.**
-The three clock/stream fixes below are present in the current `/usr/src` and
-running module.  A new generic feedback/scheduler series is built but not yet
-installed; it is described in item 4.
+All clock, stream, feedback, scheduler, and diagnostic fixes below are present
+in the current `/usr/src` and running module.
 
 1. **`uaudio-clock-before-alt.c.patch`** — fix for the *rate-change
    cold-open silence* ("run drc.sh several times"; any rate change, not just
@@ -25,10 +24,11 @@ installed; it is described in item 4.
    Clock Source the other direction is actively using at a different rate;
    (c) the explicit-feedback SYNC transfer is **always submitted** so
    `dev.pcm.0.feedback_rate` stays live as a diagnostic. The OKTO's capture
-   interface is **no longer removed** — `pcm0 (play/rec)` is expected.
-   **Applied to `/usr/src` 2026-07-07, builds `-Werror`-clean standalone on
-   stock and on top of patch 1; NOT yet installed to `/boot/kernel`, NOT
-   yet listening-tested.** Full analysis:
+   interface is **no longer removed** — `pcm0 (play/rec)` is expected.  Applied
+   to `/usr/src` 2026-07-07, built `-Werror`-clean standalone and on top of
+   patch 1, and now included in the installed module.  The borrowed-capture
+   path remains available behind `prefer_feedback=0`; the production default
+   prefers the explicit endpoint.  Full analysis:
    [`uaudio-shared-clock-fix.md`](uaudio-shared-clock-fix.md).
 
 3. **`uaudio-clock-transaction.c.patch`** — the **2026-08-26 follow-up
@@ -61,8 +61,11 @@ installed; it is described in item 4.
    diagnostic snapshot.  There are no OKTO-specific checks.  Every stage
    builds independently with `-Werror`; the largest patch is 220 diff lines
    including context.  The long-session event history lives in `omdrcctrl`,
-   not in the kernel.  **Built, not installed.** Full design and rollout
-   status: [`uaudio-feedback-diagnostics.md`](uaudio-feedback-diagnostics.md).
+   not in the kernel.  **Built, installed, and running since 2026-09-08.** A
+   direct 30-minute Q16.16 soak completed with about 1.8 million valid feedback
+   packets and no new driver anomaly counter.  Full design, hot-switch method,
+   browser-path finding, and rollout status:
+   [`uaudio-feedback-diagnostics.md`](uaudio-feedback-diagnostics.md).
 
 **Upstream submission:** [`upstream-series/`](upstream-series/) holds the
 ready-to-send three-commit series (`git am`-clean on `main` after
@@ -127,6 +130,7 @@ the (vestigial, never-streaming) capture side reprogram that clock to its
 | `uaudio-upstream-0007-feedback-packet-scheduler.c.patch` | Linux-style fractional per-packet scheduler. |
 | `uaudio-upstream-0008-feedback-diagnostics.c.patch` | Minimal persistent counters and coherent sysctl snapshot. |
 | `uaudio-feedback-diagnostics.md` | Design, patch order, controls, diagnostics ABI, UI journal, and rollout status. |
+| `FREEBSD-LINUX-USB-AUDIO-QUALITY.md` | Full scheduler, sound-quality, Linux-gap, Wi-Fi, evidence, and operating-system safety assessment. |
 | `SUBMISSION-295933.md` | Ready-to-send upstream follow-up: the four unfinished items, evidence, and the five declared-not-patched gaps. |
 | `uaudio-clock-transaction.md` | Follow-up audit: root cause of the residual 44.1 kHz silent open, all findings, upstream-completeness assessment, device-generality analysis, A/B test plan. |
 | `bench/` | DAC lock bench: per-rate test tones, repeated open/play/close cycles, and a per-cycle verdict measured from the DAC's analog output. See [`bench/README.md`](bench/README.md). |

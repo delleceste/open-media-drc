@@ -40,7 +40,7 @@ class FakeSysctl:
 
     def __call__(self, argv, **_kwargs):
         args = list(argv)
-        if args[:2] == ["/usr/bin/sudo", "-n"]:
+        if args[:2] == [audio_diagnostics.FREEBSD_SUDO, "-n"]:
             args = args[2:]
         if args[:2] != ["/sbin/sysctl", "-n"]:
             assignment = args[-1]
@@ -94,21 +94,24 @@ class MonitorTest(unittest.TestCase):
             self.assertEqual([entry["reason"] for entry in history],
                              ["attach", "anomaly"])
 
-    def test_controls_require_idle_and_are_read_back(self):
+    def test_scheduler_hot_switches_but_source_policy_requires_idle(self):
         fake = FakeSysctl()
         with tempfile.TemporaryDirectory() as directory:
             monitor = audio_diagnostics.AudioDiagnosticsMonitor(
                 Path(directory), lambda: "0", runner=fake,
                 system_name=lambda: "FreeBSD",
             )
+            state = monitor.set_control("feedback_mode", 0)
+            self.assertEqual(state["controls"]["feedback_mode"], 0)
+
             with self.assertRaisesRegex(RuntimeError, "stop playback"):
-                monitor.set_control("feedback_mode", 0)
+                monitor.set_control("prefer_feedback", 0)
             fake.diag = DIAG.format(
                 running=0, generation=1, updates=10, bad=0, stale=0,
                 short=0, short_bytes=0,
             )
-            state = monitor.set_control("feedback_mode", 0)
-            self.assertEqual(state["controls"]["feedback_mode"], 0)
+            state = monitor.set_control("prefer_feedback", 0)
+            self.assertEqual(state["controls"]["prefer_feedback"], 0)
 
     def test_parser_ignores_future_non_numeric_fields(self):
         parsed = audio_diagnostics.parse_diagnostics("version=1 running=1 future=text")
@@ -127,6 +130,9 @@ class WebVisibilityTest(unittest.TestCase):
             body = APP.app.test_client().get("/").get_data(as_text=True)
         self.assertIn('id="uaudio-card"', body)
         self.assertIn("Linux-style Q16.16", body)
+        self.assertIn("const schedulerDisabled = uaudioControlBusy", body)
+        self.assertIn("const sourceDisabled = running || uaudioControlBusy", body)
+        self.assertIn("responseText = await response.text()", body)
 
     def test_card_is_invisible_on_linux(self):
         with mock.patch.object(APP.platform, "system", return_value="Linux"):

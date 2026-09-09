@@ -62,9 +62,15 @@ hw.usb.uaudio.prefer_feedback=1 # explicit endpoint instead of borrowed capture
 ```
 
 Both default to 1.  `feedback_mode=0` restores the historical FreeBSD
-once-per-second integer correction without rebuilding.  `prefer_feedback=0`
-allows the existing rate-aligned borrowed-capture path.  Stop playback before
-changing either value so an A/B begins with fresh endpoint and phase state.
+once-per-second integer correction without rebuilding or reloading the module.
+
+`feedback_mode` can be hot-switched while playback is running.  Transfer
+callbacks observe the new scheduler immediately; the web UI leaves this switch
+available during a stream for emergency rollback and controlled A/B tests.
+
+`prefer_feedback=0` allows the existing rate-aligned borrowed-capture path and
+determines which endpoints are started.  Stop and reopen playback before
+changing this clock-source policy so the new choice actually takes effect.
 
 The acceptance window and timeout are intentionally not tunable: they are
 safety policy derived from Linux and the endpoint interval, not sound-quality
@@ -106,8 +112,9 @@ session remains reviewable after playback stops; the kernel does not need a
 large logging subsystem.
 
 The USB audio integrity card, its JavaScript polling, and the background
-monitor are rendered/started only on FreeBSD.  They are absent on Linux.  The
-two UI switches show actual kernel readback and are disabled during playback.
+monitor are rendered/started only on FreeBSD; they are absent on Linux.  Both
+switches show actual kernel readback.  The scheduler remains hot-switchable
+during playback, while the endpoint policy stays disabled until the DSP is idle.
 
 For an unprivileged service account, writes need only this narrow sudo rule:
 
@@ -119,7 +126,8 @@ For an unprivileged service account, writes need only this narrow sudo rule:
 ```
 
 Read-only monitoring needs no privilege.  The backend whitelists only those
-two names and values 0/1, requires idle playback, uses `sudo -n`, and verifies
+two names and values 0/1, permits the scheduler's supported live switch,
+requires idle playback for the endpoint policy, uses `sudo -n`, and verifies
 the readback.
 
 ## Validation status
@@ -127,11 +135,34 @@ the readback.
 The series applies cleanly to the exact current `/usr/src` source (the three
 earlier local fixes installed) and reconstructs the tested final source
 byte-for-byte.  All six stages build independently with `-Werror`, including
-the final diagnostics stage.  It has not yet replaced the running module.
+the final diagnostics stage.
 
-A live rollout still requires an idle DSP, a module backup matching the
-running kernel, reload/re-enumeration, verification of `bitperfect=1` and
-`play.vchans=0`, then a long listening session.  A click marker correlated
-with `play_short_*`, `play_errors`, `feedback_bad`, or `feedback_stale` is
-evidence of a transport/driver event; a marker with no counter movement means
-the cause is elsewhere or below these observability points.
+The resulting single `snd_uaudio.ko` is installed and loaded by the current
+kernel.  The exact earlier three-patch module remains at
+`/boot/kernel/snd_uaudio.ko.pre-feedback-20260908` for rollback.
+
+On 2026-09-08 a 30-minute, 44.1 kHz, 32-bit digital-silence stream ran directly
+to the OKTO with `feedback_mode=1`, `prefer_feedback=1`, `bitperfect=1`, and
+`play.vchans=0`.  It remained in one stream generation with source 1 (explicit
+feedback).  About 1,799,980 valid 1 ms feedback packets arrived; no feedback
+bad/error/stale counter, short-transfer counter, or playback-error counter
+changed.  Feedback remained 361276--361277 Q16.16, reported as 44,101 Hz.
+
+A live Q16.16 to legacy to Q16.16 switch was also exercised during a direct
+silent stream.  The active source moved 1 to 0 to 1 immediately and playback
+returned to explicit feedback without a new error or short transfer.
+
+The earlier Chromium hiccups exercised a different path: diagnostics showed
+source 2 because sndiod's default full-duplex mode had opened `/dev/dsp0` for
+capture even though Chromium only needed playback.  The browser launcher now
+starts `sndiod -m play -s default` to avoid that path; a browser listening retest
+is still required.
+
+This validates driver transport and scheduler stability under an idle-host
+direct stream; it does not substitute for long music playback under realistic
+CPU and I/O load.
+
+A click marker correlated with `play_short_*`, `play_errors`, `feedback_bad`,
+or `feedback_stale` is evidence of a transport/driver event.  A marker with no
+counter movement means the cause is elsewhere or below these observability
+points.

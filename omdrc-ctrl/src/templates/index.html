@@ -3856,7 +3856,8 @@ async function fetchUaudioDiagnostics() {
         }
         const x = d.diagnostics || {}, controls = d.controls || {}, path = d.audio_path || {};
         const running = Number(x.running || 0) !== 0;
-        const controlsDisabled = running || uaudioControlBusy;
+        const schedulerDisabled = uaudioControlBusy;
+        const sourceDisabled = running || uaudioControlBusy;
         const source = ({0:'nominal fallback',1:'explicit feedback',2:'capture feedback'})[Number(x.source)] || 'unknown';
         const anomalyTotal = ['feedback_bad','feedback_errors','feedback_stale',
                               'play_short_transfers','play_errors']
@@ -3864,6 +3865,7 @@ async function fetchUaudioDiagnostics() {
         const pathGood = Number(path.bitperfect) === 1 && Number(path.play_vchans) === 0;
         const feedbackGood = Number(controls.feedback_mode) === 1 &&
                              Number(controls.prefer_feedback) === 1;
+        const feedbackActive = feedbackGood && Number(x.source) === 1;
         const feedbackAge = Number(x.feedback_age_ms) > 1e12 ? 'none' : `${x.feedback_age_ms} ms`;
         let html = `<div style="font-size:.76rem;color:var(--muted);margin-bottom:5px">` +
                    `${escHtml(d.description || d.pcm)} · ${escHtml(d.pcm)} · ` +
@@ -3871,13 +3873,13 @@ async function fetchUaudioDiagnostics() {
                    `saved to ${escHtml(d.log_path || '')}</div>`;
         html += '<div class="uaudio-controls">';
         html += uaudioSwitch('Packet scheduler', 'feedback_mode', controls.feedback_mode,
-                             [[0,'legacy'],[1,'Linux-style Q16.16']], controlsDisabled);
+                             [[0,'legacy'],[1,'Linux-style Q16.16']], schedulerDisabled);
         html += uaudioSwitch('Async clock source', 'prefer_feedback', controls.prefer_feedback,
-                             [[0,'capture'],[1,'explicit endpoint']], controlsDisabled);
+                             [[0,'capture'],[1,'explicit endpoint']], sourceDisabled);
         html += '</div>';
-        if (running) html += '<div style="font-size:.7rem;color:var(--muted);margin:-4px 0 8px">Stop playback before changing either kernel control.</div>';
+        if (running) html += '<div style="font-size:.7rem;color:var(--muted);margin:-4px 0 8px">The packet scheduler can be hot-switched. Stop playback before changing the clock-source policy.</div>';
         html += '<div class="uaudio-summary">';
-        html += uaudioMetric('active source', source, feedbackGood ? 'uaudio-good' : '');
+        html += uaudioMetric('active source', source, feedbackActive ? 'uaudio-good' : '');
         html += uaudioMetric('feedback', x.feedback_rate ? `${x.feedback_rate} Hz` : 'waiting');
         html += uaudioMetric('feedback age', feedbackAge, Number(x.feedback_valid) ? 'uaudio-good' : '');
         html += uaudioMetric('bit-perfect / vchans', `${path.bitperfect} / ${path.play_vchans}`, pathGood ? 'uaudio-good' : 'uaudio-bad');
@@ -3907,7 +3909,13 @@ async function setUaudioControl(name, value) {
             method:'POST', headers:{'Content-Type':'application/json','X-OMDRC-CSRF':OMDRC_CSRF},
             body:JSON.stringify({name, value})
         });
-        const d = await response.json();
+        const responseText = await response.text();
+        let d;
+        try {
+            d = JSON.parse(responseText);
+        } catch {
+            throw new Error(`uaudio control failed (HTTP ${response.status})`);
+        }
         if (!response.ok || !d.ok) throw new Error(d.error || 'uaudio control failed');
         toast('uaudio control changed and read back', 'ok');
     } catch (error) {

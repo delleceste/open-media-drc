@@ -43,6 +43,7 @@ CONTROL_OIDS = {
     "feedback_mode": "hw.usb.uaudio.feedback_mode",
     "prefer_feedback": "hw.usb.uaudio.prefer_feedback",
 }
+FREEBSD_SUDO = "/usr/local/bin/sudo"
 
 
 def parse_diagnostics(text: str) -> dict[str, int | str]:
@@ -326,15 +327,19 @@ class AudioDiagnosticsMonitor:
         if name not in CONTROL_OIDS or value not in (0, 1):
             raise ValueError("unsupported uaudio control")
         before = self._snapshot()
-        if before.get("diagnostics", {}).get("running"):
+        if name == "prefer_feedback" and before.get("diagnostics", {}).get("running"):
             raise RuntimeError(
-                "stop playback before changing uaudio feedback controls"
+                "stop playback before changing the uaudio clock-source policy"
             )
         oid = CONTROL_OIDS[name]
         argv = ["/sbin/sysctl", f"{oid}={value}"]
         if os.geteuid() != 0:
-            argv = ["/usr/bin/sudo", "-n", *argv]
-        result = self._run(argv)
+            argv = [FREEBSD_SUDO, "-n", *argv]
+        try:
+            result = self._run(argv)
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot run {argv[0]}: {error.strerror or error}") from None
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
             raise RuntimeError(detail or f"cannot set {oid}")
