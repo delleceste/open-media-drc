@@ -411,6 +411,14 @@ valid_variant() {
 bf_pattern='(^|/)brutefir .*-daemon'
 bf_running() { pgrep -f "$bf_pattern" > /dev/null 2>&1; }
 
+# "is this process running", spelled so both pgrep implementations agree.
+# `pgrep -q` is FreeBSD's; procps-ng has no -q and exits 2 on it, so on Linux
+# every `pgrep -q` test answers "not running" whatever is actually running —
+# which made drc.sh neither wait for the CD bridge to let go nor ever see it
+# start.  The FreeBSD-only call sites below keep their -q; this is for the
+# predicates both operating systems reach.
+pgrep_x() { pgrep -x "$1" > /dev/null 2>&1; }
+
 running_voss_rate() {
   ps -axww -o args= 2>/dev/null |
     awk '($1=="virtual_oss" || $1~/\/virtual_oss$/) && /-r/ {
@@ -482,16 +490,24 @@ systemctl_user() {
 # `systemctl stop` returns when the unit is inactive, which is before the
 # kernel has finished closing the substream.  Opening it again too early is an
 # EBUSY that reads to the user as "MPD will not play".
+#
+# Deciding whether to stop, though, has to look at the UNIT and not only at
+# alsaloop.  The supervisor settles its output device once, at startup, and
+# retries alsaloop on a backoff — so between retries the unit is active with no
+# alsaloop in sight, and a stop that skipped on the process left it running
+# with its old answer.  `start` on an already-active unit is a no-op, which is
+# what made re-pressing "CD input" change nothing at all.
 stop_cdin_linux() {
   local i=0
   $IS_LINUX || return 0
   command -v systemctl >/dev/null 2>&1 || return 0
-  pgrep -q -x "$OMDRC_CDIN_PROCESS" 2>/dev/null || return 0
+  systemctl_user is-active --quiet "$OMDRC_CDIN_UNIT" >/dev/null 2>&1 ||
+    pgrep_x "$OMDRC_CDIN_PROCESS" || return 0
 
   echo "stopping the CD bridge so the loopback is free"
   systemctl_user stop "$OMDRC_CDIN_UNIT" >/dev/null 2>&1 || true
   while [ "$i" -lt "$OMDRC_CDIN_STOP_POLLS" ]; do
-    pgrep -q -x "$OMDRC_CDIN_PROCESS" 2>/dev/null || {
+    pgrep_x "$OMDRC_CDIN_PROCESS" || {
       log_event "event=cdin_release result=ack polls=${i}"
       return 0
     }
@@ -525,7 +541,7 @@ start_cdin_linux() {
   # alsaloop opened anything.  A bridge that dies on a missing capture card
   # should say so here rather than look like a success.
   while [ "$i" -lt "$OMDRC_CDIN_RELEASE_POLLS" ]; do
-    pgrep -q -x "$OMDRC_CDIN_PROCESS" 2>/dev/null && {
+    pgrep_x "$OMDRC_CDIN_PROCESS" && {
       log_event "event=cdin_start result=ok polls=${i}"
       return 0
     }
@@ -619,7 +635,7 @@ restart_cdin() {
     # only moves a bridge that was already running, exactly as on FreeBSD.
     if [ "${source_mode:-}" = "cdin" ]; then
       if [ "${OMDRC_START_CDIN:-0}" = 1 ] || \
-         pgrep -q -x "$OMDRC_CDIN_PROCESS" 2>/dev/null; then
+         pgrep_x "$OMDRC_CDIN_PROCESS"; then
         stop_cdin_linux || true
         start_cdin_linux
       fi
@@ -810,6 +826,22 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
       echo "Desired power is off — stopping the active/partial chain"
       export OMDRC_SOURCE_MODE="$desired_source"
       exec "$0" off
+    fi
+    if $IS_LINUX && [ "$desired_source" = "cdin" ]; then
+      # "Off with the CD input selected" is a real resting state on Linux: the
+      # bridge owns the single-open DAC and MPD stays released.  Handing the
+      # DAC to MPD here would evict the disc the next time anything calls
+      # reconcile — boot, hotplug, a manual run — and from the listener's side
+      # the music would simply stop by itself.
+      # Start the bridge only when it is actually absent: reconcile is meant to
+      # be safe to call repeatedly, and restarting a healthy bridge on every
+      # call would chop the music up on its own.
+      if ! pgrep_x "$OMDRC_CDIN_PROCESS"; then
+        start_cdin_linux
+      fi
+      log_event "event=reconcile result=noop reason=already_off source=cdin"
+      echo "DRC already off; CD input owns the DAC"
+      exit 0
     fi
     mpc_bounded enable only "OKTO-DAC" >/dev/null 2>&1 || true
     log_event "event=reconcile result=noop reason=already_off source=${desired_source}"
@@ -1482,6 +1514,30 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
   sleep 0.5
+  # Does the disc survive "no DRC"?  On FreeBSD it always has: the bridge is
+  # restarted at the bottom of this block and re-picks /dev/dsp.dac once
+  # virtual_oss is gone, so turning the correction off leaves the CD playing
+  # uncorrected rather than stopping it.  Linux now does the same, and the
+  # saved source is what says whether to: `off` deliberately leaves it
+  # untouched, so it still reads cdin here.
+  #
+  # `stop` is excluded on purpose.  It is the transient teardown (service
+  # shutdown, USB unplug), and a bridge left holding the DAC across it is a
+  # device that never gets handed back.
+  #
+  # The one thing NOT copied from FreeBSD is sharing the DAC with MPD.  There
+  # the daemon can, because it releases the output after a run of digital
+  # silence; alsaloop is a third-party binary and this supervisor never sees a
+  # sample, so it has no silence to gate on, and the DAC is single-open.  MPD
+  # therefore stays released — the same exclusivity the CD input already has on
+  # the loopback, undone by selecting any rate, which means music.
+  off_source="music"
+  [ -f "$SOURCE_FILE" ] && off_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
+  case "$off_source" in music|cdin) ;; *) off_source=music ;; esac
+  keep_cdin=false
+  if $IS_LINUX && [ "$mode" = "off" ] && [ "$off_source" = "cdin" ]; then
+    keep_cdin=true
+  fi
   if $IS_LINUX; then
     stop_cdin_linux || true
   else
@@ -1499,7 +1555,13 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # and disables all others atomically.  A failure here is reported, not fatal:
   # the DRC chain is already down and the state is already recorded, so aborting
   # would only hide the problem.
-  if mpc_bounded enable only "OKTO-DAC"; then
+  if $keep_cdin; then
+    # Deliberately not "enable only OKTO-DAC": the DAC is about to be the CD
+    # bridge's, and handing it to MPD first is the EBUSY that would make this
+    # look like the bridge failing to start.
+    log_event "event=run_result mode=${mode} result=stopped source=cdin output=cdin"
+    echo "CD input keeps playing, straight to the DAC (no room correction)"
+  elif mpc_bounded enable only "OKTO-DAC"; then
     log_event "event=run_result mode=${mode} result=stopped output=OKTO-DAC"
   else
     log_event "event=run_result mode=${mode} result=stopped output=fail"
@@ -1507,6 +1569,13 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   fi
   # The loopback is gone with virtual_oss, so the bridge has to be moved to
   # the DAC — the same move `mpc enable only "OKTO-DAC"` just made for MPD.
+  # On Linux restart_cdin reads these two: the source this run is honouring,
+  # and the permission to start a bridge that is currently stopped (it was
+  # stopped a few lines up so it would let go of the loopback).
+  if $keep_cdin; then
+    source_mode=cdin
+    export OMDRC_START_CDIN=1
+  fi
   restart_cdin
   echo "DRC stopped"
   exit 0

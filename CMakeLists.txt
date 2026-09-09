@@ -45,15 +45,43 @@ include(cmake/console.cmake)          # OMDRC_* ANSI colours for our own output
 
 # ── host.cmake sanity ────────────────────────────────────────────────────────
 # host.cmake is read only by `cmake -C host.cmake ..`, and CMake skips it for
-# cache entries that already exist — so a plain `cmake ..` silently configures
-# everything from the built-in defaults, and a later -C cannot repair it.
+# cache entries that already exist — so a build directory configured without it
+# silently takes the built-in defaults, and a later -C cannot repair it.
 # host.cmake sets OMDRC_HOST_CMAKE; its absence is the whole detection.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/host.cmake" AND NOT OMDRC_HOST_CMAKE)
+#
+# The check is on that marker alone, never on host.cmake existing: the ways to
+# end up here are `cmake ..` with no -C at all, -C pointed at a file that primes
+# no cache (one of the cmake/*.cmake subproject includes, say — they set no
+# CACHE entries, so CMake reads them without complaint and nothing happens), and
+# never having copied the sample in the first place.  Only the last of those
+# leaves a host.cmake missing, and gating on EXISTS let the other two through.
+if(NOT OMDRC_HOST_CMAKE)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/host.cmake")
+        set(_host_hint "cmake -C ../host.cmake ..")
+    else()
+        set(_host_hint "cp ../host.cmake.sample ../host.cmake   # then edit it\n    cmake -C ../host.cmake ..")
+    endif()
     message(WARNING
-        "host.cmake exists but this build directory was not initialised from it, "
-        "so the built-in defaults are in effect.  Adding -C now will not help; "
-        "start a fresh build directory:\n"
-        "    rm -rf build && mkdir build && cd build && cmake -C ../host.cmake ..")
+        "this build directory was not initialised from host.cmake, so the "
+        "built-in defaults are in effect: the rendered configs will carry an "
+        "empty music_directory, no Qobuz user, no friendly name, and the `flat` "
+        "geometry alone.  -C only primes an *empty* cache, so adding it to this "
+        "build directory will not help — start a fresh one:\n"
+        "    rm -rf build && mkdir build && cd build && ${_host_hint}")
+endif()
+
+# Name the host values that are empty.  Each one renders into a config file as a
+# blank setting rather than an error, so the install succeeds and the breakage
+# only shows up later — an MPD with no library, a renderer with no name.
+set(_host_unset "")
+foreach(_v MUSIC_DIR VIDEO_DIR QOBUZ_USER FRIENDLY_NAME OMDB_API_KEY)
+    if(NOT ${_v})
+        list(APPEND _host_unset "${_v}")
+    endif()
+endforeach()
+if(_host_unset)
+    string(REPLACE ";" ", " _host_unset_msg "${_host_unset}")
+    message(STATUS "open-media-drc: host values left empty: ${_host_unset_msg}")
 endif()
 
 # ── service manager per OS ───────────────────────────────────────────────────

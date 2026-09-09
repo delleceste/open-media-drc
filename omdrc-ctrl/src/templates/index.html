@@ -1335,7 +1335,8 @@
             {% endif %}
             {% if cdin_control %}
             <button class="btn-log" id="cdin-power-btn" data-action="stop"
-                    onclick="cdinPower()">Stop</button>
+                    data-can-start="{{ 'yes' if cdin_control_start else 'no' }}"
+                    onclick="cdinPower()" hidden>Stop</button>
             {% endif %}
         </div>
     </div>
@@ -4097,6 +4098,12 @@ function paintCdin(d) {
     // while a start or stop is in flight so it cannot flip under the finger.
     const power = document.getElementById('cdin-power-btn');
     if (power && !cdinBusy) {
+        // Where this card may not start the bridge (Linux: only `drc.sh cdin`
+        // knows the rate and the source a start needs), the button is a Stop
+        // and nothing else — hidden when there is nothing to stop, rather than
+        // turning into a second, weaker "CD input" button beside the real one.
+        const canStart = power.dataset.canStart !== 'no';
+        power.hidden = !d.running && !canStart;
         power.dataset.action = d.running ? 'stop' : 'start';
         power.textContent    = d.running ? 'Stop' : 'Start';
         power.title = d.running ? 'Stop the CD input bridge'
@@ -4187,8 +4194,9 @@ function cdinPower() {
     if (!btn || cdinBusy) return;
     if (btn.dataset.action === 'start') { cdinControl('start'); return; }
     confirmAction('Stop the CD input bridge',
-        'Anything playing from the CD input stops, and /dev/dsp.play goes back ' +
-        'to MPD and mpv.',
+        'Anything playing from the CD input stops, and the device goes back ' +
+        'to MPD and mpv.  This does not change the selected source: pick a ' +
+        'rate for music, or "CD input" to bring the disc back.',
         () => cdinControl('stop'));
 }
 

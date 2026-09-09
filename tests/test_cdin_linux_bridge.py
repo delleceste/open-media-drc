@@ -122,6 +122,135 @@ class LogGrammarTest(unittest.TestCase):
         self.assertEqual(fields["drift_ppm"], -3.0)
         self.assertEqual(fields["starves"], 0)
 
+    def test_the_lead_is_published_with_the_target_it_is_held_at(self):
+        """200 ms is what the Linux bridge ASKS for, so 187 ms is nominal and
+        must not read as a drained buffer.  The card cannot know that without
+        the target, and applying the FreeBSD daemon's absolute floor to it
+        warned on every healthy run — a warning that is always on is one nobody
+        reads when it finally means something."""
+        class FakeDevice:
+            spec = "hw:Loopback,0,0"
+            card = 1
+
+            def rate(self):
+                return 44100.0
+
+            def status(self):
+                return {"delay": "8247"}      # 187 ms at 44.1k
+
+        stats = CDIN.Stats(FakeDevice(), target_ms=200)
+        stats.numid = "7"
+        with mock.patch.object(CDIN, "rate_shift_ppm", return_value=0.0):
+            line = stats.line(FakeDevice())
+        body = APP._CDIN_STATS.match(line).group("body")
+        fields = APP._cdin_stats_fields(body)
+        self.assertEqual(fields["lead_ms"], 187)
+        self.assertEqual(fields["lead_target_ms"], 200)
+
+    def test_the_card_can_tell_a_corrected_disc_from_an_uncorrected_one(self):
+        """"playing" reads the same either way, and which of the two you are
+        hearing is decided by whether BruteFIR happened to be up when the
+        bridge started — the one difference a listener can hear and cannot
+        see.  It has to survive the round trip into the panel's own parser."""
+        class FakeDevice:
+            spec = "hw:Loopback,0,0"
+            card = 1
+
+            def rate(self):
+                return 44100.0
+
+            def status(self):
+                return {"delay": "8820"}
+
+        for path, summary in (("drc", "playing through DRC — audio on the wire"),
+                              ("direct", "playing straight to the DAC — "
+                                         "no room correction")):
+            stats = CDIN.Stats(FakeDevice(), target_ms=200, path=path)
+            stats.numid = "7"
+            with mock.patch.object(CDIN, "rate_shift_ppm", return_value=0.0):
+                line = stats.line(FakeDevice())
+            fields = APP._cdin_stats_fields(APP._CDIN_STATS.match(line).group("body"))
+            self.assertEqual(fields["path"], path)
+            verdict = APP._cdin_verdict(
+                {"running": True, "state": "playing", "stats_fields": fields,
+                 "capture": {"available": True, "error": "", "label": "capture"},
+                 "output": {"available": True, "error": "", "label": "output"}})
+            self.assertEqual(verdict, ("green", summary))
+
+    def test_the_digital_input_is_selected_rather_than_assumed(self):
+        """An S/PDIF interface is usually also an analog one and boots on the
+        analog input: the U24 XL's selector comes up on 'Line'.  Capturing that
+        with nothing plugged in is a stream that is healthy in every measurable
+        way and about -76 dBFS of converter noise — right rate, right format,
+        no xruns, "audio on the wire", no error anywhere."""
+        contents = ("numid=8,iface=MIXER,name='PCM Capture Source'\n"
+                    "  ; type=ENUMERATED,access=rw------,values=1,items=2\n"
+                    "  ; Item #0 'Line'\n"
+                    "  ; Item #1 'IEC958 In'\n"
+                    "  : values=0\n")
+        with mock.patch.object(CDIN.subprocess, "run", return_value=
+                               subprocess.CompletedProcess([], 0, contents, "")):
+            controls = CDIN.mixer_enum_controls(2)
+        self.assertEqual(controls[0]["items"], {0: "Line", 1: "IEC958 In"})
+        control, index = CDIN.pick_capture_source(controls, "auto")
+        self.assertEqual((control["numid"], index), ("8", 1))
+        # Already on the digital input, or asked to keep hands off: nothing.
+        controls[0]["value"] = 1
+        self.assertIsNone(CDIN.pick_capture_source(controls, "auto"))
+        # A card with no selector at all — the majority — is untouched.
+        self.assertIsNone(CDIN.pick_capture_source(
+            [{"numid": "1", "name": "Mic Boost", "items": {0: "a"}, "value": 0}],
+            "auto"))
+
+    def test_the_missing_realtime_priority_is_said_once_not_filed_as_an_error(self):
+        """alsaloop prints this on every start when RLIMIT_RTPRIO is 0 — the
+        default for an ordinary user — and it matches "FAILED", so the card
+        collected one more red event per restart for a condition that costs no
+        audio at all."""
+        line = "!!!Scheduler set to Round Robin with priority 99 FAILED!"
+        self.assertIsNotNone(CDIN._NO_REALTIME.search(line))
+        # Without the interception it is an error, which is what made it noise.
+        class FakeDevice:
+            card = 1
+        self.assertEqual(CDIN.classify(line, CDIN.Stats(FakeDevice())), "ERR")
+        source = BRIDGE.read_text()
+        self.assertIn("warned_no_realtime", source)
+
+    def test_a_stopped_transport_is_not_audio_on_the_wire(self):
+        """The ESI U24 XL slaves its clock to the S/PDIF carrier, so a stopped
+        CD player does not stop the stream — it keeps it open and dribbles ~1%
+        of the frame rate.  "Is the device streaming?" says yes to that, which
+        is how the card came to report "playing — audio on the wire" over a
+        stopped transport while its starve counter climbed.  hw_ptr against the
+        wall clock is the only thing here that measures arrival."""
+        log = lambda *args: None
+        bridge = CDIN.Bridge(CDIN.parse_args([]), log)
+        self.assertEqual(bridge.args.carrier_min, 50.0)
+
+        class FakeCapture:
+            spec = "hw:0,0"
+
+            def __init__(self):
+                self.ptr = 0
+
+            def hw_ptr(self):
+                return self.ptr
+
+        capture = FakeCapture()
+        seen: dict = {}
+        with mock.patch.object(CDIN.time, "monotonic", side_effect=[0.0, 1.0, 2.0]):
+            self.assertIsNone(bridge.carrier(capture, seen))   # first sample
+            capture.ptr = 441                                  # 1% of nominal
+            self.assertIs(bridge.carrier(capture, seen), False)
+            capture.ptr = 441 + 44100                          # full rate
+            self.assertIs(bridge.carrier(capture, seen), True)
+
+    def test_the_carrier_check_can_be_turned_off(self):
+        """0 disables it, the same knob FreeBSD spells omdrc_cdin_carrier_min."""
+        log = lambda *args: None
+        bridge = CDIN.Bridge(CDIN.parse_args(["--carrier-min", "0"]), log)
+        self.assertIsNone(bridge.carrier(object(), {}))
+
     def test_no_lead_is_absent_rather_than_zero(self):
         """A closed output has no lead; reporting 0 ms would show a red buffer
         warning for a bridge that is merely starting up."""
@@ -182,12 +311,33 @@ class DeviceResolutionTest(unittest.TestCase):
         the same preference cdin/src/outsel.h applies, for the same reason:
         writing into a loopback nothing reads is silence."""
         log = lambda *args: None
-        with mock.patch.object(CDIN, "process_running", return_value=True):
+        with mock.patch.object(CDIN, "brutefir_running", return_value=True):
             device, _ = CDIN.pick_output("hw:Loopback,0,0", "hw:0,0", log)
             self.assertEqual(device, "hw:Loopback,0,0")
-        with mock.patch.object(CDIN, "process_running", return_value=False):
+        with mock.patch.object(CDIN, "brutefir_running", return_value=False):
             device, _ = CDIN.pick_output("hw:Loopback,0,0", "hw:0,0", log)
             self.assertEqual(device, "hw:0,0")
+
+    def test_brutefir_is_found_by_command_line_not_by_comm(self):
+        """BruteFIR renames its main thread to "input" as soon as it starts
+        convolving, so a comm match (`pgrep -x brutefir`) reports the engine as
+        down while it holds the DAC.  The bridge then picks the DAC as its
+        output and every alsaloop start dies of EBUSY — silence with a green
+        service.  Pin the cmdline match, and pin that it is the same pattern
+        drc.sh uses, so the two sides cannot drift into disagreeing about
+        whether the chain is up."""
+        seen = []
+
+        def fake_run(argv, **kwargs):
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 1)
+
+        with mock.patch.object(CDIN.subprocess, "run", fake_run):
+            CDIN.brutefir_running()
+        self.assertEqual(seen, [["pgrep", "-f", CDIN.BRUTEFIR_PATTERN]])
+
+        drc = DRC.read_text()
+        self.assertIn(f"bf_pattern='{CDIN.BRUTEFIR_PATTERN}'", drc)
 
     def test_roles_file_supplies_the_capture_card(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,9 +353,42 @@ class DeviceResolutionTest(unittest.TestCase):
         self.assertEqual(CDIN.read_roles("/nonexistent/audio.roles"), {})
 
     def test_sync_default_keeps_the_path_bit_perfect(self):
+        """The default follows the output, and neither answer resamples."""
         args = CDIN.parse_args([])
-        self.assertEqual(args.sync, "playshift",
+        loop, _ = CDIN.pick_sync(args.sync, "hw:Loopback,0,0", "hw:Loopback,0,0")
+        dac, _ = CDIN.pick_sync(args.sync, "hw:0,0", "hw:Loopback,0,0")
+        self.assertEqual(loop, "playshift")
+        self.assertEqual(dac, "simple")
+        self.assertNotIn("samplerate", (loop, dac),
                          "the default must not put a resampler in the CD path")
+
+    def test_the_dac_straight_path_still_corrects_the_drift(self):
+        """Only snd-aloop has the rate-shift control playshift steers.  Leaving
+        playshift on the DAC-straight path means NO correction at all: "drift
+        settling" forever while the crystals walk apart, until the loop starves
+        or overruns — a slow failure that looks healthy for the length of a
+        disc.  An explicit choice still wins on either path."""
+        self.assertEqual(CDIN.pick_sync("", "hw:0,0", "hw:Loopback,0,0")[0], "simple")
+        self.assertEqual(
+            CDIN.pick_sync("samplerate", "hw:0,0", "hw:Loopback,0,0")[0], "samplerate")
+        self.assertEqual(
+            CDIN.pick_sync("simple", "hw:Loopback,0,0", "hw:Loopback,0,0")[0], "simple")
+
+    def test_only_the_capture_end_goes_through_plug(self):
+        """alsaloop takes one -f for both ends and the ends disagree: BruteFIR
+        reads the loopback as S32_LE, the ESI U24 XL captures only S16_LE /
+        S24_3LE.  A raw `hw:` capture is "Sample format not available" at every
+        start — silence with a service that looks healthy.  The loopback end
+        must stay raw, so nothing can slip a converter into the DRC input."""
+        log = lambda *args: None
+        with mock.patch.object(CDIN, "card_number", return_value=2):
+            capture = CDIN.Device("hw:2,0", "c")
+        with mock.patch.object(CDIN, "card_number", return_value=1):
+            output = CDIN.Device("hw:Loopback,0,0", "p")
+            bridge = CDIN.Bridge(CDIN.parse_args([]), log)
+        argv = bridge.alsaloop_argv(capture, output)
+        self.assertEqual(argv[argv.index("-C") + 1], "plughw:2,0")
+        self.assertEqual(argv[argv.index("-P") + 1], "hw:Loopback,0,0")
 
     def test_samplerate_is_the_only_mode_that_passes_a_converter(self):
         log = lambda *args: None
@@ -373,8 +556,64 @@ class ExclusiveSourceTest(unittest.TestCase):
     def test_stopping_waits_for_the_process_not_the_unit(self):
         """`systemctl stop` returns before the kernel closes the substream."""
         block = self.text.split("stop_cdin_linux() {", 1)[1].split("\n}", 1)[0]
-        self.assertIn('pgrep -q -x "$OMDRC_CDIN_PROCESS"', block)
+        self.assertIn('pgrep_x "$OMDRC_CDIN_PROCESS"', block)
         self.assertIn("OMDRC_CDIN_STOP_POLLS", block)
+
+    def test_a_stopped_loop_still_stops_the_unit(self):
+        """The supervisor picks its output once, at startup, and retries
+        alsaloop on a backoff — so "no alsaloop" does not mean "no bridge".
+        Skipping the stop there leaves the unit up with its old answer, and the
+        `start` that follows is a no-op: pressing CD input again changes
+        nothing."""
+        block = self.text.split("stop_cdin_linux() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn('systemctl_user is-active --quiet "$OMDRC_CDIN_UNIT"', block)
+
+    def test_process_predicates_are_not_spelled_the_freebsd_way(self):
+        """`pgrep -q` is FreeBSD's; procps-ng exits 2 on it, so on Linux every
+        such test reads as "not running" — the bridge is neither waited for nor
+        ever seen to start.  The Linux paths go through pgrep_x."""
+        self.assertIn('pgrep_x() { pgrep -x "$1" > /dev/null 2>&1; }', self.text)
+        for line in self.text.splitlines():
+            if "pgrep -q" in line:
+                self.assertNotIn("OMDRC_CDIN_PROCESS", line,
+                                 "a Linux-reached predicate still uses pgrep -q")
+
+    def test_no_drc_keeps_the_disc_playing_straight_to_the_dac(self):
+        """FreeBSD has always done this: `off` tears virtual_oss down and the
+        bridge is restarted, re-picking /dev/dsp.dac, so turning the correction
+        off leaves the CD audible.  Linux stopped it instead, which made "no
+        DRC" mean "no CD" — the divergence this pins shut."""
+        block = self.text.split('if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then',
+                                1)[1].split("\nfi\n", 1)[0]
+        # The saved source decides, and `off` is the only verb that keeps it:
+        # `stop` is the transient teardown and must still hand the DAC back.
+        self.assertIn('[ "$mode" = "off" ] && [ "$off_source" = "cdin" ]', block)
+        self.assertIn("keep_cdin=true", block)
+        # MPD must NOT be given the DAC first: it is single-open, and doing so
+        # is the EBUSY that would read as the bridge failing to start.
+        self.assertTrue(re.search(
+            r'if \$keep_cdin; then.{0,400}?elif mpc_bounded enable only "OKTO-DAC"',
+            block, re.S),
+            "the direct-DAC output must be skipped when the CD input keeps it")
+        # And the bridge has to be told to start again after being stopped.
+        self.assertTrue(re.search(
+            r'if \$keep_cdin; then\s+source_mode=cdin\s+export OMDRC_START_CDIN=1',
+            block), "restart_cdin needs the source and the start permission")
+
+    def test_reconcile_does_not_evict_a_disc_that_owns_the_dac(self):
+        """reconcile is level-triggered and runs repeatedly.  Handing the DAC
+        to MPD in its already-off branch would evict the disc on the next tick,
+        and from the listener's side the music would just stop by itself."""
+        block = self.text.split('if [ "$desired_power" = "off" ]; then',
+                                1)[1].split("\n  fi\n", 1)[0]
+        self.assertTrue(re.search(
+            r'if \$IS_LINUX && \[ "\$desired_source" = "cdin" \]; then'
+            r'.{0,900}?exit 0.{0,80}?fi\s+mpc_bounded enable only "OKTO-DAC"',
+            block, re.S),
+            "the cdin guard must come before the direct-DAC handover")
+        # Started only when absent: restarting a healthy bridge every tick
+        # would chop the music up on its own.
+        self.assertIn('if ! pgrep_x "$OMDRC_CDIN_PROCESS"; then', block)
 
     def test_music_source_always_stops_the_bridge(self):
         block = self.text.split("restart_cdin() {", 1)[1].split("\n}", 1)[0]

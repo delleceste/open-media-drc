@@ -6,11 +6,27 @@
 # flask / markdown / numpy are checked per web-UI subproject.
 
 # find a runtime tool; STATUS if present, WARNING if a required one is absent,
-# STATUS if an OPTIONAL one is absent.  HINTS extends the search path.
+# STATUS if an OPTIONAL one is absent.
+#
+# HINTS are searched BEFORE the system PATH and FALLBACK_HINTS after it, which
+# is find_program's PATHS.  The distinction decides which copy of a program that
+# exists twice on a host wins, so pick deliberately: HINTS for a location that
+# should outrank whatever is on PATH, FALLBACK_HINTS for one that is only a last
+# resort.
 function(omdrc_need_tool name)
-    cmake_parse_arguments(A "OPTIONAL" "NOTE" "HINTS" ${ARGN})
+    cmake_parse_arguments(A "OPTIONAL" "NOTE" "HINTS;FALLBACK_HINTS" ${ARGN})
     string(TOUPPER "${name}" _u)
-    find_program(OMDRC_TOOL_${_u} "${name}" HINTS ${A_HINTS})
+    # A cached find_program result is never re-validated, so a tool that moves
+    # between configures keeps its old path — upmpdcli going from a /usr/local
+    # source build to the distro package in /usr/bin, say.  Anything that bakes
+    # the path into a service unit then names a binary that is not there any
+    # more, and the service dies at exec.  Drop a cached path that has gone.
+    if(OMDRC_TOOL_${_u} AND NOT EXISTS "${OMDRC_TOOL_${_u}}")
+        message(STATUS "  ${name}: cached ${OMDRC_TOOL_${_u}} is gone — searching again")
+        unset(OMDRC_TOOL_${_u} CACHE)
+    endif()
+    find_program(OMDRC_TOOL_${_u} "${name}"
+                 HINTS ${A_HINTS} PATHS ${A_FALLBACK_HINTS})
     if(OMDRC_TOOL_${_u})
         message(STATUS "  ${name}: ${OMDRC_TOOL_${_u}}")
     elseif(A_OPTIONAL)
@@ -24,7 +40,15 @@ message(STATUS "open-media-drc: checking runtime dependencies")
 omdrc_need_tool(brutefir  NOTE " (DRC convolution engine)")
 omdrc_need_tool(mpc       NOTE " (MPD client; drc.sh and omdrcctrl drive MPD through it)")
 omdrc_need_tool(upmpdcli  NOTE " (UPnP/OpenHome renderer)")
-omdrc_need_tool(qobuzconnect2mpd OPTIONAL NOTE ", Qobuz Connect renderer" HINTS "$ENV{HOME}/.local/bin")
+# qobuzconnect2mpd is built and installed separately.  HINTS are searched BEFORE
+# the system PATH, so a per-user build left in ~/.local/bin used to win over a
+# later system-wide install of the same program — and go on winning long after
+# it had been superseded, since nothing re-validates a stale binary that still
+# exists.  Look where the system install puts it first, and keep ~/.local/bin
+# only as the fallback for a host that has no system-wide copy.
+omdrc_need_tool(qobuzconnect2mpd OPTIONAL NOTE ", Qobuz Connect renderer"
+                HINTS "${CMAKE_INSTALL_PREFIX}/bin" "/usr/local/bin"
+                FALLBACK_HINTS "$ENV{HOME}/.local/bin")
 
 # Video web remote (omdrcvideo) thumbnails / disc info.
 omdrc_need_tool(ffmpeg  OPTIONAL NOTE ", omdrcvideo thumbnails")

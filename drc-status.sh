@@ -167,6 +167,19 @@ configs=$(ps -ax -o args= 2>/dev/null \
     | sort -u)
 
 if [ -z "$configs" ]; then
+    # No BruteFIR — but "off" is not the whole answer while a disc is playing.
+    # With the CD input selected, turning the correction off leaves the bridge
+    # holding the DAC and the disc audible, uncorrected; reporting a bare "off"
+    # there describes a silent box that is in fact making sound.  The process
+    # that holds the device differs by OS: alsaloop on Linux, the omdrc-cdin
+    # daemon on FreeBSD.
+    if [ -f "$SOURCE_FILE" ] &&
+       [ "$(cat "$SOURCE_FILE" 2>/dev/null)" = "cdin" ] &&
+       { pgrep -x alsaloop >/dev/null 2>&1 ||
+         pgrep -x omdrc-cdin >/dev/null 2>&1; }; then
+        echo "CD input 44.1 kHz (no DRC)"
+        exit 0
+    fi
     echo "off"
     exit 0
 fi

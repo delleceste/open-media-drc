@@ -14,7 +14,9 @@ pinning are exactly the two the belief-based cards cannot do:
 """
 
 import importlib.util
+import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -412,6 +414,42 @@ class AlsaNames(unittest.TestCase):
         self.assertEqual(APP._alsa_node("hw:2", "c"), "/dev/snd/pcmC2D0c")
         self.assertEqual(APP._alsa_node("nonsense", "p"), "")
 
+
+
+
+class LinuxHolderEvidenceTest(unittest.TestCase):
+    """The three ways this card reported an idle chain while it was playing."""
+
+    def test_fuser_output_is_read_from_one_merged_stream(self):
+        """`fuser -v` prints its table to stderr and the bare PIDs to stdout,
+        and the PID column of that table IS the stdout half landing inside the
+        stderr half.  Captured apart and concatenated, every row loses its PID,
+        nothing parses, and the card draws an idle chain over a playing one."""
+        source = Path(APP.__file__).read_text()
+        block = source.split("def _chain_run_tool(", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("stderr=subprocess.STDOUT", block)
+        self.assertNotIn("r.stdout + r.stderr", block)
+
+    def test_a_holder_is_named_by_argv_not_by_its_thread_name(self):
+        """BruteFIR renames its main thread to "input" as soon as it convolves,
+        and that is what fuser's COMMAND column and /proc/<pid>/comm report.
+        The card would draw the convolver as an unknown process squatting the
+        DAC — the alarm it exists to raise, raised at the one program that
+        belongs there."""
+        # argv[0] of this very process, which is the interpreter — not
+        # whatever sys.argv[0] has been rewritten to.
+        self.assertEqual(APP._proc_command(str(os.getpid()), "wrong"),
+                         os.path.basename(sys.executable))
+        # An exited pid keeps whatever the tool said rather than becoming "".
+        self.assertEqual(APP._proc_command("2147483646", "alsaloop"), "alsaloop")
+
+    def test_the_bridge_is_expected_on_the_capture_card(self):
+        """On Linux the process holding the capture card and the loopback is
+        alsaloop; the supervisor around it opens no device."""
+        note, expected = APP._chain_app_note("alsaloop")
+        self.assertTrue(expected, note)
+        note, expected = APP._chain_app_note("brutefir")
+        self.assertTrue(expected, note)
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,15 @@ install(PROGRAMS scripts/prepare-renderer-runtime.sh
         DESTINATION libexec/omdrc/scripts)
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/install-renderer-runtime.cmake")
 
+# Absolute path to the upmpdcli binary for the rendered service unit.  Falls
+# back to the install prefix when find_program came up empty (upmpdcli may be
+# installed after this configure), which is what the unit used to hardcode.
+if(OMDRC_TOOL_UPMPDCLI)
+    set(_upmpdcli_bin "${OMDRC_TOOL_UPMPDCLI}")
+else()
+    set(_upmpdcli_bin "${CMAKE_INSTALL_PREFIX}/bin/upmpdcli")
+endif()
+
 # Substitute the common host @VARS@ in-place on the named variable.
 macro(_omdrc_common var)
     string(REPLACE "@AUDIO_USER@"    "${AUDIO_USER}"           ${var} "${${var}}")
@@ -81,6 +90,11 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     # omdrc-renderer and the web UI switch both through `systemctl --user`.
     file(READ etc/systemd/user/upmpdcli.service.in _s)
     string(REPLACE "@REPO_DIR@/upmpdcli/upmpdcli.conf" "${_siteetc}/upmpdcli.conf" _s "${_s}")
+    # ExecStart points at wherever upmpdcli actually is (dependencies.cmake
+    # found it), not at this project's prefix: it is packaged by the distro on
+    # Arch (/usr/bin) and built into /usr/local/bin from source, and a unit that
+    # names the wrong one fails at exec on every start.
+    string(REPLACE "@UPMPDCLI_BIN@" "${_upmpdcli_bin}" _s "${_s}")
     _omdrc_common(_s)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" "${_s}")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/user)

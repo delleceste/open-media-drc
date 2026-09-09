@@ -143,6 +143,23 @@ class Readout(unittest.TestCase):
         self.assertEqual(_chip(status, "drops")["level"], "error")
         self.assertIn("8192 B", status["problems"][0]["text"])
 
+    def test_a_published_target_is_what_low_is_measured_against(self):
+        """The Linux bridge holds ~200 ms on purpose, so 187 ms is nominal.
+        Judging it by the FreeBSD daemon's absolute floor warned on every
+        healthy run; judging a genuinely drained lead by the target still
+        warns."""
+        nominal = PLAYING.replace("lead 1962 ms (min 1955, max 1972)",
+                                  "lead 187 ms (min 187, max 197, target 200)")
+        status = _status(nominal)
+        self.assertEqual(_chip(status, "lead")["level"], "ok")
+        self.assertIn("of 200", _chip(status, "lead")["value"])
+        self.assertEqual(status["problems"], [])
+
+        drained = PLAYING.replace("lead 1962 ms (min 1955, max 1972)",
+                                  "lead 60 ms (min 60, max 197, target 200)")
+        status = _status(drained)
+        self.assertEqual(_chip(status, "lead")["level"], "warn")
+
     def test_a_lead_with_nothing_left_to_absorb_a_seek_warns(self):
         text = PLAYING.replace("lead 1962 ms", "lead 120 ms")
         status = _status(text)
@@ -303,10 +320,14 @@ class Control(unittest.TestCase):
     """Start and stop, and why the rc exit status is not the answer."""
 
     def _post(self, action, rc=0, output="", settles=True, control=True,
-              gate_ok=True):
+              gate_ok=True, control_start=True):
         done = subprocess.CompletedProcess([], rc, stdout=output, stderr="")
         running = settles == (action == "start")
+        # control_start defaults True here because these cases are about the
+        # start/stop MACHINERY, which FreeBSD still uses in full.  Whether the
+        # start half is offered at all is a separate decision, pinned below.
         with mock.patch.object(APP, "CDIN_CONTROL", control), \
+             mock.patch.object(APP, "CDIN_CONTROL_START", control_start), \
              mock.patch.object(APP, "CDIN_SETTLE_SECONDS", 0.0), \
              mock.patch.object(APP, "_cdin_disable_mpd_outputs",
                                return_value=(gate_ok, "gate failed")) as gate, \
@@ -372,6 +393,32 @@ class Control(unittest.TestCase):
         than from the poll that was already in flight."""
         response, _ = self._post("start")
         self.assertIn("status", response.get_json())
+
+    def test_starting_the_bridge_by_hand_is_refused_where_only_drc_may(self):
+        """Stopping releases a device; starting acquires one, and acquiring it
+        correctly means knowing the rate and the state of the chain.  A bridge
+        opened at 44.1 kHz against a loopback BruteFIR reads at 192 kHz is an
+        EBUSY, and one started behind drc.sh's back leaves last_source saying
+        "music" — so the next reconcile or rate action stops it again and it
+        looks like it died on its own.  Closed at the API, not just hidden in
+        the page."""
+        response, svc = self._post("start", control_start=False)
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("CD input (44.1 kHz)", response.get_json()["error"])
+        svc.assert_not_called()
+        # And nothing was done to MPD on the way to refusing.
+        self.last_gate.assert_not_called()
+        self.last_restore.assert_not_called()
+
+    def test_stop_survives_where_starting_does_not(self):
+        """Stop is the escape hatch precisely because it does not go through
+        drc.sh: when drc.sh is the thing that is stuck — its lock held by a
+        wedged run, or MPD refusing connections so every rate action aborts —
+        this is the only control left that hands the device back."""
+        response, svc = self._post("stop", control_start=False)
+        self.assertTrue(response.get_json()["ok"])
+        svc.assert_called_once_with(APP.CDIN_SERVICE, "onestop")
+        self.last_restore.assert_called_once_with()
 
 
 class MpdOutputGate(unittest.TestCase):

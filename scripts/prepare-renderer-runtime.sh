@@ -73,6 +73,26 @@ prepare_tree "$audio_home/.cache/upmpdcli" 0755
 # AUDIO_USER, so migrate the token/cache tree as part of every install.
 prepare_tree "$qconnect_state_dir" 0700
 
+# qobuzconnect2mpd used to keep its cached Qobuz token under the program's older
+# name, in the XDG *data* directory: ~/.local/share/qconnect2mpd/user_token.
+# Current builds read ~/.local/state/qobuzconnect2mpd/user_token instead, and
+# preparing the new directory without carrying the token into it left the
+# renderer starting, connecting to MPD, and only then exiting with "not
+# authenticated and no cached Qobuz token" — a working sign-in silently turned
+# into a bootstrap prompt.  Move what is there, once: never overwrite a token
+# already in the new location (it is the newer of the two), and leave the old
+# file in place so a downgrade still finds it.
+qconnect_legacy_state="$audio_home/.local/share/qconnect2mpd"
+for name in user_token; do
+	legacy="$qconnect_legacy_state/$name"
+	current="$qconnect_state_dir/$name"
+	if [ -f "$legacy" ] && [ ! -L "$legacy" ] && [ ! -e "$current" ]; then
+		"$INSTALL" -o "$audio_user" -g "$audio_group" -m 0600 \
+			"$legacy" "$current" &&
+			echo "renderer runtime: carried $name over from $qconnect_legacy_state"
+	fi
+done
+
 # /tmp normally starts empty and each daemon creates its own files.  Repair
 # files left by an earlier service identity, but do not create empty logs and
 # do not follow an unexpected symlink from a world-writable directory.

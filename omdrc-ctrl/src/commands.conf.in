@@ -20,6 +20,8 @@
 #   url - URL to open in a new tab (e.g. http://192.168.1.1/)
 #
 # Optional keys (READ or WRITE):
+#   os      - comma-separated platform names where the command is shown
+#             (e.g. Linux, FreeBSD). Omit to show on every supported OS.
 #   process - process name checked with pgrep -x; Details button appears when
 #             the process is running. Use this instead of 'unit' when the
 #             process is not managed by systemd or to avoid any systemd side
@@ -276,6 +278,29 @@ log_file = /tmp/omdrc-cdin.log
 # watching cannot cover: handing /dev/dsp.play back by hand, from a box with no
 # keyboard.
 control = yes
+# Whether STARTING it is one of the actions offered.  Unset takes the OS
+# default: yes on FreeBSD, no on Linux.
+#
+# The asymmetry is not squeamishness.  Stopping only ever RELEASES a device, so
+# a stray press ends audio you wanted — visible, recoverable, and it never
+# leaves a device wedged.  Starting ACQUIRES one, and acquiring it correctly
+# means knowing the rate and the state of the chain: on Linux the bridge and
+# BruteFIR share a single snd-aloop substream, so alsaloop opened at 44.1 kHz
+# against a loopback BruteFIR is reading at 192 kHz is an EBUSY; and a bridge
+# started behind drc.sh's back leaves last_source saying "music", so the next
+# reconcile, rate action or reboot stops it again and the bridge looks like it
+# died by itself.  `drc.sh cdin` — the "CD input (44.1 kHz)" button — is the
+# start, and it sets the rate and the source first.
+#
+# FreeBSD keeps both halves: virtual_oss mixes, the daemon is a persistent
+# service that picks its own output, and a raw start really is just "put it
+# back in the chain".
+#
+# Stop stays on both, and on Linux it stays precisely BECAUSE it does not go
+# through drc.sh: when drc.sh is what is stuck — its lock held by a wedged run,
+# or MPD refusing connections so every rate action aborts on the way in — this
+# is the one control left that can hand the device back.
+# control_start = no
 refresh = 5
 # Past failures the card keeps.  Failures accumulate and stay visible in red;
 # the healthy status line is replaced rather than accumulated, so a quiet week
@@ -559,6 +584,15 @@ type    = WRITE
 button  = Reboot
 confirm = yes
 cmd     = sudo reboot
+
+[reboot_freebsd]
+what    = Reboot to FreeBSD
+group   = system
+type    = WRITE
+button  = Reboot to FreeBSD
+confirm = yes
+os      = Linux
+cmd     = grub-reboot-to-freebsd.sh
 
 [poweroff]
 what    = Power off
