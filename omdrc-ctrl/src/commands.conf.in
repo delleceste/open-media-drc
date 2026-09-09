@@ -560,6 +560,15 @@ button  = Reboot
 confirm = yes
 cmd     = sudo reboot
 
+[reboot_to_arch]
+what     = Reboot into Linux
+group    = system
+platform = FreeBSD
+type     = WRITE
+button   = Reboot into Linux
+confirm  = yes
+cmd      = /usr/local/sbin/reboot-to-arch
+
 [poweroff]
 what    = Power off
 group   = system

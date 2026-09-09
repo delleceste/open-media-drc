@@ -941,6 +941,10 @@ If it exits within that window the button turns green (success) or red
 (e.g. a GUI app that keeps running) it is assumed to have launched
 successfully and the button turns green.
 
+Set `platform = FreeBSD` (or another value returned by Python's
+`platform.system()`) to expose a command only on that operating system. Commands
+for other platforms are omitted from both the page and the `/run/<id>` API.
+
 **READ** — on page load the UI calls `GET /read/<id>`, runs the command
 synchronously (10-second timeout), and displays the combined stdout+stderr
 next to the label. The `↻` button triggers a manual re-fetch. With

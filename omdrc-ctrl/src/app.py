@@ -819,6 +819,9 @@ def load_config(path: str) -> None:
             continue
         c = dict(cfg[sid])
         c["id"] = sid
+        command_platform = c.get("platform", "").strip()
+        if command_platform and command_platform.casefold() != platform.system().casefold():
+            continue
         for key in ("what", "group", "type"):
             if key not in c:
                 raise ValueError(f"[{sid}] missing required key: '{key}'")
