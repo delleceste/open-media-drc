@@ -592,9 +592,12 @@ type    = WRITE
 button  = Reboot to FreeBSD
 confirm = yes
 os      = Linux
-# The helper sets GRUB's one-shot next-boot entry and then reboots, both of
+# The helper makes FreeBSD GRUB's saved default and then reboots, both of
 # which need root — it exits 1 with "Must run as root." otherwise, and the
 # click appears to do nothing.  Same shape as [reboot] above.
+# The switch is sticky, not one-shot: FreeBSD stays the default until
+# something changes it, and picking "Arch Linux" at the GRUB menu is the
+# return path.  See scripts/grub-reboot-to-freebsd.sh.
 cmd     = sudo grub-reboot-to-freebsd.sh
 
 [poweroff]
