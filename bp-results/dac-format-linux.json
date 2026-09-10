@@ -1,0 +1,695 @@
+{
+  "schema": "omdrc-dac-format-probe/1",
+  "generated_utc": "2026-09-10T10:38:25Z",
+  "os": {
+    "name": "Linux",
+    "release": "7.2.3-arch1-3",
+    "version": "#1 SMP PREEMPT_DYNAMIC Sun, 06 Sep 2026 13:01:04 +0000"
+  },
+  "hostname": "arki",
+  "audio_processes": [
+    "385 giacomo  /usr/bin/mpd --systemd /usr/local/etc/open-media-drc/mpd.conf",
+    "493 giacomo  /usr/bin/upmpdcli -c /usr/local/etc/open-media-drc/upmpdcli.conf",
+    "666 giacomo  brutefir /usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@multi.pt.conf -daemon",
+    "765 giacomo  mpv --idle=yes --fs --input-ipc-server=/tmp/mpv-socket --ao=alsa --audio-device=alsa/hw:1,0 --audio-channels=stereo --audio-delay=-0.67 --sub-delay=0",
+    "1541 giacomo  python3 /usr/share/upmpdcli/cdplugins/qobuz/qobuz-app.py"
+  ],
+  "brutefir": {
+    "path": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+    "input": {
+      "io_module": "alsa",
+      "device": "hw:1,1",
+      "sample": "S32_LE"
+    },
+    "output": {
+      "io_module": "alsa",
+      "device": "hw:2,0",
+      "sample": "S32_LE",
+      "dither": "false"
+    },
+    "float_bits": "64",
+    "filter_length": "32768,16",
+    "sampling_rate": "44100",
+    "safety_limit": "6"
+  },
+  "usb_audio_devices": [
+    {
+      "usb_id": "0a92:00d1",
+      "product": "U24XL",
+      "manufacturer": "ESI",
+      "serial": null,
+      "bcd_device": "0001",
+      "speed": "12",
+      "alt_settings": [
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 0,
+          "uac": 1,
+          "endpoints": [],
+          "container": "unknown"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 1,
+          "uac": 1,
+          "endpoints": [
+            {
+              "address": "0x82",
+              "dir": "IN",
+              "attributes": "0x09",
+              "max_packet_size": 196
+            }
+          ],
+          "channels": 2,
+          "subslot_bytes": 2,
+          "bit_resolution": 16,
+          "container": "S16_LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 2,
+          "uac": 1,
+          "endpoints": [
+            {
+              "address": "0x82",
+              "dir": "IN",
+              "attributes": "0x09",
+              "max_packet_size": 294
+            }
+          ],
+          "channels": 2,
+          "subslot_bytes": 3,
+          "bit_resolution": 24,
+          "container": "S24_3LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 3,
+          "alt": 0,
+          "uac": 1,
+          "endpoints": [],
+          "container": "unknown"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 3,
+          "alt": 1,
+          "uac": 1,
+          "endpoints": [
+            {
+              "address": "0x03",
+              "dir": "OUT",
+              "attributes": "0x09",
+              "max_packet_size": 196
+            }
+          ],
+          "channels": 2,
+          "subslot_bytes": 2,
+          "bit_resolution": 16,
+          "container": "S16_LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 3,
+          "alt": 2,
+          "uac": 1,
+          "endpoints": [
+            {
+              "address": "0x03",
+              "dir": "OUT",
+              "attributes": "0x09",
+              "max_packet_size": 294
+            }
+          ],
+          "channels": 2,
+          "subslot_bytes": 3,
+          "bit_resolution": 24,
+          "container": "S24_3LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 3,
+          "alt": 3,
+          "uac": 1,
+          "endpoints": [
+            {
+              "address": "0x03",
+              "dir": "OUT",
+              "attributes": "0x09",
+              "max_packet_size": 192
+            }
+          ],
+          "container": "unknown"
+        }
+      ]
+    },
+    {
+      "usb_id": "152a:88c5",
+      "product": "DAC8STEREO",
+      "manufacturer": "OKTO RESEARCH",
+      "serial": "000483",
+      "bcd_device": "0160",
+      "speed": "480",
+      "alt_settings": [
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 0,
+          "uac": 2,
+          "endpoints": [],
+          "container": "unknown"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 1,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x01",
+              "dir": "OUT",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            },
+            {
+              "address": "0x81",
+              "dir": "IN",
+              "attributes": "0x11",
+              "max_packet_size": 4
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 24,
+          "container": "S32_LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 2,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x01",
+              "dir": "OUT",
+              "attributes": "0x05",
+              "max_packet_size": 196
+            },
+            {
+              "address": "0x81",
+              "dir": "IN",
+              "attributes": "0x11",
+              "max_packet_size": 4
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 2,
+          "bit_resolution": 16,
+          "container": "S16_LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 3,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x01",
+              "dir": "OUT",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            },
+            {
+              "address": "0x81",
+              "dir": "IN",
+              "attributes": "0x11",
+              "max_packet_size": 4
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 32,
+          "container": "S32_LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 4,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x01",
+              "dir": "OUT",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            },
+            {
+              "address": "0x81",
+              "dir": "IN",
+              "attributes": "0x11",
+              "max_packet_size": 4
+            }
+          ],
+          "bm_formats": 2147483648,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 32,
+          "container": "S32_LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 0,
+          "uac": 2,
+          "endpoints": [],
+          "container": "unknown"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 1,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x82",
+              "dir": "IN",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 24,
+          "container": "S32_LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 2,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x82",
+              "dir": "IN",
+              "attributes": "0x05",
+              "max_packet_size": 196
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 2,
+          "bit_resolution": 16,
+          "container": "S16_LE"
+        },
+        {
+          "config": 1,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 3,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x82",
+              "dir": "IN",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 32,
+          "container": "S32_LE"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 0,
+          "uac": 2,
+          "endpoints": [],
+          "container": "unknown"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 1,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x01",
+              "dir": "OUT",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            },
+            {
+              "address": "0x81",
+              "dir": "IN",
+              "attributes": "0x11",
+              "max_packet_size": 4
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 24,
+          "container": "S32_LE"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 2,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x01",
+              "dir": "OUT",
+              "attributes": "0x05",
+              "max_packet_size": 196
+            },
+            {
+              "address": "0x81",
+              "dir": "IN",
+              "attributes": "0x11",
+              "max_packet_size": 4
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 2,
+          "bit_resolution": 16,
+          "container": "S16_LE"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 3,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x01",
+              "dir": "OUT",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            },
+            {
+              "address": "0x81",
+              "dir": "IN",
+              "attributes": "0x11",
+              "max_packet_size": 4
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 32,
+          "container": "S32_LE"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 1,
+          "alt": 4,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x01",
+              "dir": "OUT",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            },
+            {
+              "address": "0x81",
+              "dir": "IN",
+              "attributes": "0x11",
+              "max_packet_size": 4
+            }
+          ],
+          "bm_formats": 2147483648,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 32,
+          "container": "S32_LE"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 0,
+          "uac": 2,
+          "endpoints": [],
+          "container": "unknown"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 1,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x82",
+              "dir": "IN",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 24,
+          "container": "S32_LE"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 2,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x82",
+              "dir": "IN",
+              "attributes": "0x05",
+              "max_packet_size": 196
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 2,
+          "bit_resolution": 16,
+          "container": "S16_LE"
+        },
+        {
+          "config": 2,
+          "config_value": 1,
+          "interface": 2,
+          "alt": 3,
+          "uac": 2,
+          "endpoints": [
+            {
+              "address": "0x82",
+              "dir": "IN",
+              "attributes": "0x05",
+              "max_packet_size": 392
+            }
+          ],
+          "bm_formats": 1,
+          "channels": 2,
+          "subslot_bytes": 4,
+          "bit_resolution": 32,
+          "container": "S32_LE"
+        }
+      ]
+    }
+  ],
+  "alsa_cards": [
+    {
+      "index": 0,
+      "id": "U24XL",
+      "description": "USB-Audio - U24XL",
+      "streams": []
+    },
+    {
+      "index": 1,
+      "id": "Loopback",
+      "description": "Loopback - Loopback",
+      "streams": [
+        {
+          "node": "card1/pcm0p/sub0",
+          "direction": "playback",
+          "format": "S32_LE",
+          "channels": 2,
+          "rate": 192000,
+          "access": "RW_INTERLEAVED",
+          "period_size": "32768",
+          "buffer_size": "98304",
+          "state": "RUNNING",
+          "owner_pid": 2903,
+          "owner_cmd": "aplay -D hw:1,0 -t wav /tmp/claude-1000/-home-giacomo-open-media-drc/ddbeab4b-9121-4b07-9f16-fd3323167343/scratchpad/probe-192k.wav"
+        },
+        {
+          "node": "card1/pcm1c/sub0",
+          "direction": "capture",
+          "format": "S32_LE",
+          "channels": 2,
+          "rate": 192000,
+          "access": "MMAP_INTERLEAVED",
+          "period_size": "32768",
+          "buffer_size": "262144",
+          "state": "RUNNING",
+          "owner_pid": 666,
+          "owner_cmd": "brutefir /usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@multi.pt.conf -daemon"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "id": "DAC8STEREO",
+      "description": "USB-Audio - DAC8STEREO",
+      "streams": [
+        {
+          "node": "card2/pcm0p/sub0",
+          "direction": "playback",
+          "format": "S32_LE",
+          "channels": 2,
+          "rate": 192000,
+          "access": "MMAP_INTERLEAVED",
+          "period_size": "32768",
+          "buffer_size": "384000",
+          "state": "RUNNING",
+          "owner_pid": 666,
+          "owner_cmd": "brutefir /usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@multi.pt.conf -daemon"
+        }
+      ],
+      "usb_selected": [
+        {
+          "interface": 1,
+          "alt": 1,
+          "packet_size": 288,
+          "momentary_freq_hz": 192005,
+          "source": "stream0"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "dacs": [
+      {
+        "usb_id": "0a92:00d1",
+        "product": "U24XL",
+        "playback_alts": [
+          {
+            "alt": 1,
+            "subslot_bytes": 2,
+            "bit_resolution": 16,
+            "container": "S16_LE",
+            "bm_formats": null
+          },
+          {
+            "alt": 2,
+            "subslot_bytes": 3,
+            "bit_resolution": 24,
+            "container": "S24_3LE",
+            "bm_formats": null
+          }
+        ]
+      },
+      {
+        "usb_id": "152a:88c5",
+        "product": "DAC8STEREO",
+        "playback_alts": [
+          {
+            "alt": 1,
+            "subslot_bytes": 4,
+            "bit_resolution": 24,
+            "container": "S32_LE",
+            "bm_formats": "0x00000001"
+          },
+          {
+            "alt": 2,
+            "subslot_bytes": 2,
+            "bit_resolution": 16,
+            "container": "S16_LE",
+            "bm_formats": "0x00000001"
+          },
+          {
+            "alt": 3,
+            "subslot_bytes": 4,
+            "bit_resolution": 32,
+            "container": "S32_LE",
+            "bm_formats": "0x00000001"
+          },
+          {
+            "alt": 4,
+            "subslot_bytes": 4,
+            "bit_resolution": 32,
+            "container": "S32_LE",
+            "bm_formats": "0x80000000"
+          }
+        ]
+      }
+    ],
+    "open_streams": [
+      {
+        "where": "Loopback/card1/pcm0p/sub0",
+        "format": "S32_LE",
+        "rate": 192000,
+        "channels": 2,
+        "owner": "aplay -D hw:1,0 -t wav /tmp/claude-1000/-home-giacomo-open-m"
+      },
+      {
+        "where": "Loopback/card1/pcm1c/sub0",
+        "format": "S32_LE",
+        "rate": 192000,
+        "channels": 2,
+        "owner": "brutefir /usr/local/etc/open-media-drc/configs/120.blue/brut"
+      },
+      {
+        "where": "DAC8STEREO/card2/pcm0p/sub0",
+        "format": "S32_LE",
+        "rate": 192000,
+        "channels": 2,
+        "owner": "brutefir /usr/local/etc/open-media-drc/configs/120.blue/brut"
+      }
+    ],
+    "selected_alt": {
+      "alt": 1,
+      "interface": 1,
+      "card": "DAC8STEREO"
+    },
+    "all_open_streams_same_rate": true,
+    "open_stream_rates": [
+      192000
+    ],
+    "open_stream_formats": [
+      "S32_LE"
+    ],
+    "all_open_streams_same_format": true
+  }
+}
