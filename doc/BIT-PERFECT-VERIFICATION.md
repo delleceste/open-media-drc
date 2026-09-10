@@ -470,6 +470,21 @@ at ~1.0, so the gate never suppresses a real finding — a 0.3 dB level differen
 between the two chains, for instance, nulls at about −59 dBFS and is reported as
 `DIFFERENT` immediately.
 
+### Before the first cross-OS run: check the two hosts have the same filter
+
+`bitperfect-null.py` compares provenance before it compares audio, and a
+coefficient sha256 mismatch is **blocking** — it exits 2 without producing a
+number. As of 2026-09-10 the two hosts here *do* differ, because the deploy
+regenerates the per-rate coefficients with the local SoX instead of shipping
+the ones the design produced. The audible difference is nil (−103 dB, entirely
+above 20 kHz) but the test will refuse to start. Read
+`doc/CROSS-OS-FILTER-COEFFICIENTS.md` and copy the coefficients across first.
+
+```sh
+# same answer both sides, or the null cannot run
+sha256 /usr/local/etc/open-media-drc/filters/<geom>/<rate>/@<variant>/[LR].raw
+```
+
 ### Establish the noise floor first
 
 Run the capture **twice on the same machine** and null those against each other
