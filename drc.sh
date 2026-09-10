@@ -470,6 +470,90 @@ OMDRC_CDIN_STOP_POLLS="${OMDRC_CDIN_STOP_POLLS:-80}"       # 8 s at 100 ms
 OMDRC_CDIN_UNIT="${OMDRC_CDIN_UNIT:-omdrc-cdin.service}"
 OMDRC_CDIN_PROCESS="${OMDRC_CDIN_PROCESS:-alsaloop}"
 
+# ── the capture sources: what "not MPD" is allowed to mean ───────────────────
+# `music` is MPD.  Every other source is a CAPTURE source: the bridge takes the
+# single loopback seat, MPD is released, and the chain is built for the rate
+# that source arrives at.  Two of them exist because one capture card is
+# usually several inputs, and the ESI/Sound-Blaster class of card puts the
+# digital and the analog input on different PCM devices with different rates.
+#
+# The rate belongs to the SOURCE and is not a thing the listener picks.  A CD
+# is 44.1 kHz because Red Book says so.  The analog input is whatever the
+# card's converter runs at — the USB Sound Blaster HD's analog device offers
+# 48 and 96 kHz only, so asking it for 44.1 would not fail, it would quietly
+# resample through ALSA's plug layer and the path would stop being bit-exact.
+#
+# CAPTURE_SOURCE is the mixer item to select on the card, passed through to the
+# bridge verbatim ("auto" picks the digital item, "keep" leaves the card alone
+# — see pick_capture_source in scripts/omdrc-cdin-alsaloop).  CAPTURE_DEVICE is
+# the PCM device index within the card, for the cards that put their digital
+# input on a second device rather than behind the selector.
+CDIN_RATE="${CDIN_RATE:-44100}"
+CDIN_CAPTURE_DEVICE="${CDIN_CAPTURE_DEVICE:-0}"
+CDIN_CAPTURE_SOURCE="${CDIN_CAPTURE_SOURCE:-auto}"
+LINEIN_RATE="${LINEIN_RATE:-96000}"
+LINEIN_CAPTURE_DEVICE="${LINEIN_CAPTURE_DEVICE:-0}"
+LINEIN_CAPTURE_SOURCE="${LINEIN_CAPTURE_SOURCE:-Line}"
+
+# One place that knows the set, so a third source is a line here and not a
+# hunt through every `case` in the file.
+valid_source() {
+  case "$1" in music|cdin|linein) return 0 ;; esac
+  return 1
+}
+
+is_capture_source() {
+  case "$1" in cdin|linein) return 0 ;; esac
+  return 1
+}
+
+# The chain rate a capture source demands.  Empty for music, whose rate is
+# whatever the listener last chose.
+source_rate() {
+  case "$1" in
+    cdin)   printf '%s\n' "$CDIN_RATE" ;;
+    linein) printf '%s\n' "$LINEIN_RATE" ;;
+  esac
+}
+
+source_label() {
+  case "$1" in
+    cdin)   printf 'CD / S-PDIF input\n' ;;
+    linein) printf 'analog Line input\n' ;;
+    *)      printf 'music\n' ;;
+  esac
+}
+
+# Linux: which input the bridge captures cannot be an argument.  The bridge is
+# a --user systemd unit and is started by name, so the choice travels in an
+# EnvironmentFile the unit reads at every start (cmake/cdin-linux.cmake names
+# the same path).  Written immediately before the start, so the input the
+# bridge opens and the chain that was just built for it cannot disagree: they
+# are two halves of one action, and a stale file is the failure where the
+# analog input plays into a chain running at the CD's rate.
+CDIN_ENV_FILE="${OMDRC_CDIN_ENV_FILE:-$STATE_DIR/cdin.env}"
+
+write_cdin_env() {
+  local src="$1" _device _item
+  case "$src" in
+    linein) _device="$LINEIN_CAPTURE_DEVICE"; _item="$LINEIN_CAPTURE_SOURCE" ;;
+    *)      _device="$CDIN_CAPTURE_DEVICE";   _item="$CDIN_CAPTURE_SOURCE" ;;
+  esac
+  {
+    echo "# Written by drc.sh for the '${src}' source. Do not edit: every"
+    echo "# start of the bridge overwrites it."
+    echo "OMDRC_CDIN_SOURCE=${src}"
+    echo "OMDRC_CDIN_RATE=$(source_rate "$src")"
+    echo "OMDRC_CDIN_CAPTURE_DEVICE=${_device}"
+    echo "OMDRC_CDIN_CAPTURE_SOURCE=${_item}"
+  } > "$CDIN_ENV_FILE" 2>/dev/null || {
+    echo "warning: could not write ${CDIN_ENV_FILE};" \
+         "the bridge will fall back to its own defaults" >&2
+    return 0
+  }
+  chmod 644 "$CDIN_ENV_FILE" 2>/dev/null || true
+}
+
 # systemctl --user, bounded, run as the audio user.  No sudo: the renderer
 # services already use this scope precisely so the panel and drc.sh can drive
 # them without a sudoers grant.
@@ -504,7 +588,7 @@ stop_cdin_linux() {
   systemctl_user is-active --quiet "$OMDRC_CDIN_UNIT" >/dev/null 2>&1 ||
     pgrep_x "$OMDRC_CDIN_PROCESS" || return 0
 
-  echo "stopping the CD bridge so the loopback is free"
+  echo "stopping the input bridge so the loopback is free"
   systemctl_user stop "$OMDRC_CDIN_UNIT" >/dev/null 2>&1 || true
   while [ "$i" -lt "$OMDRC_CDIN_STOP_POLLS" ]; do
     pgrep_x "$OMDRC_CDIN_PROCESS" || {
@@ -527,11 +611,13 @@ stop_cdin_linux() {
 # be re-taken while alsaloop runs); only the explicit `drc.sh cdin` action may
 # start one that was not.
 start_cdin_linux() {
-  local i=0
+  local i=0 src="${1:-cdin}"
   $IS_LINUX || return 0
   command -v systemctl >/dev/null 2>&1 || return 0
 
-  echo "starting the CD bridge for the selected CD input"
+  # The rate and the input first, then the unit: see write_cdin_env.
+  write_cdin_env "$src"
+  echo "starting the bridge for the selected $(source_label "$src")"
   if ! systemctl_user start "$OMDRC_CDIN_UNIT" >/dev/null 2>&1; then
     echo "warning: could not start ${OMDRC_CDIN_UNIT}" \
          "(is it linked into ~/.config/systemd/user?)" >&2
@@ -542,14 +628,14 @@ start_cdin_linux() {
   # should say so here rather than look like a success.
   while [ "$i" -lt "$OMDRC_CDIN_RELEASE_POLLS" ]; do
     pgrep_x "$OMDRC_CDIN_PROCESS" && {
-      log_event "event=cdin_start result=ok polls=${i}"
+      log_event "event=cdin_start result=ok source=${src} polls=${i}"
       return 0
     }
     sleep 0.1
     i=$((i + 1))
   done
-  log_event "event=cdin_start result=timeout polls=${i}"
-  echo "warning: the CD bridge did not open its devices; see ${OMDRC_CDIN_LOG_FILE}" >&2
+  log_event "event=cdin_start result=timeout source=${src} polls=${i}"
+  echo "warning: the bridge did not open its devices; see ${OMDRC_CDIN_LOG_FILE}" >&2
   return 0
 }
 
@@ -633,11 +719,11 @@ restart_cdin() {
     #
     # OMDRC_START_CDIN marks that explicit action; an incidental rate change
     # only moves a bridge that was already running, exactly as on FreeBSD.
-    if [ "${source_mode:-}" = "cdin" ]; then
+    if is_capture_source "${source_mode:-}"; then
       if [ "${OMDRC_START_CDIN:-0}" = 1 ] || \
          pgrep_x "$OMDRC_CDIN_PROCESS"; then
         stop_cdin_linux || true
-        start_cdin_linux
+        start_cdin_linux "$source_mode"
       fi
     else
       stop_cdin_linux || true
@@ -646,14 +732,20 @@ restart_cdin() {
   fi
   command -v service >/dev/null 2>&1 || return 0
 
+  # FreeBSD selects the chain rate for whichever capture source is saved, the
+  # same as Linux, but it does NOT carry the input choice: omdrc-cdin is a
+  # daemon configured from rc.conf, so which input of the card it opens is
+  # omdrc_cdin_* there rather than anything written here.  `linein` on FreeBSD
+  # therefore means "run the chain at the analog input's rate"; point the
+  # daemon at that input in rc.conf to match.
   if ! pgrep -q -x omdrc-cdin 2>/dev/null; then
-    # `drc.sh cdin` is the panel's explicit source-selection action.  Unlike
-    # an ordinary rate/geometry change, it is allowed to start a bridge that
-    # the panel had not started yet.  onestart deliberately ignores the NO
-    # rcvar used by the web-controlled lifecycle.
+    # `drc.sh cdin` / `drc.sh linein` is the panel's explicit source-selection
+    # action.  Unlike an ordinary rate/geometry change, it is allowed to start
+    # a bridge that the panel had not started yet.  onestart deliberately
+    # ignores the NO rcvar used by the web-controlled lifecycle.
     [ "${OMDRC_START_CDIN:-0}" = 1 ] || \
       [ "$CDIN_RESTART_NEEDED" = 1 ] || return 0
-    echo "starting omdrc-cdin for the selected CD input"
+    echo "starting omdrc-cdin for the selected $(source_label "${source_mode:-cdin}")"
     sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service omdrc_cdin onestart \
         >/dev/null 2>&1 ||
       echo "warning: could not start omdrc_cdin" \
@@ -715,13 +807,14 @@ stop_virtual_oss() {
 }
 
 usage() {
-  echo "Usage: $0 <rate>|resamp|cdin|reconcile|restore|off|stop|status|session|geometry|design [variant]"
+  echo "Usage: $0 <rate>|resamp|cdin|linein|reconcile|restore|off|stop|status|session|geometry|design [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
   echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
   echo "             MPD uses DRC-native format *:*:* and does not resample"
   echo "  resamp   : MPD resamples everything to 192000 Hz"
-  echo "  cdin     : select the persistent CD/S-PDIF mode at 44100 Hz"
+  echo "  cdin     : select the persistent CD/S-PDIF input (${CDIN_RATE} Hz)"
+  echo "  linein   : select the persistent analog Line input (${LINEIN_RATE} Hz)"
   echo "  reconcile: make the actual chain match saved power/source/rate state"
   echo "  restore  : re-apply the last saved state (reads last_arg file);"
   echo "             falls back to 192000 if no previous active state exists"
@@ -766,8 +859,12 @@ usage() {
 # below (which runs lock-free) rather than printing usage and exiting non-zero.
 [ $# -eq 0 ] && set -- status
 
-# ── explicit persistent CD-input mode ───────────────────────────────────────
-if [ $# -eq 1 ] && [ "$1" = "cdin" ]; then
+# ── explicit persistent capture-input mode (CD / S-PDIF, or analog Line) ────
+# One action for both: they differ only in the rate the chain is built for and
+# in the input the bridge is told to open, and both of those come from the
+# source table above.
+if [ $# -eq 1 ] && is_capture_source "$1"; then
+  _cdin_source="$1"
   _cdin_previous_output=$(mpc_bounded outputs 2>/dev/null | awk '
     /^Output [0-9]+ \((OKTO-DAC|DRC-native|DRC-resamp)\) is enabled$/ {
       sub(/^Output [0-9]+ \(/, ""); sub(/\) is enabled$/, ""); print; exit
@@ -779,14 +876,14 @@ if [ $# -eq 1 ] && [ "$1" = "cdin" ]; then
       ;;
   esac
   unset _cdin_previous_output
-  printf '%s\n' cdin > "$SOURCE_FILE"
+  printf '%s\n' "$_cdin_source" > "$SOURCE_FILE"
   chmod 644 "$SOURCE_FILE" 2>/dev/null || true
-  log_event "event=source_saved source=cdin rate=44100"
-  # This is an explicit source-selection action, not an incidental 44.1-kHz
-  # rate change: once the verified chain exists, start the web-controlled CD
-  # bridge even when its boot rcvar is deliberately disabled.
-  export OMDRC_SOURCE_MODE=cdin OMDRC_START_CDIN=1
-  exec "$0" 44100
+  log_event "event=source_saved source=${_cdin_source} rate=$(source_rate "$_cdin_source")"
+  # This is an explicit source-selection action, not an incidental rate change:
+  # once the verified chain exists, start the web-controlled bridge even when
+  # its boot rcvar is deliberately disabled.
+  export OMDRC_SOURCE_MODE="$_cdin_source" OMDRC_START_CDIN=1
+  exec "$0" "$(source_rate "$_cdin_source")"
 fi
 
 # ── level-triggered lifecycle reconciliation ────────────────────────────────
@@ -797,13 +894,13 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
 
   desired_source="music"
   [ -f "$SOURCE_FILE" ] && desired_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
-  case "$desired_source" in music|cdin) ;; *) desired_source=music ;; esac
+  valid_source "$desired_source" || desired_source=music
 
   desired_state=""
   [ -f "$STATE_FILE" ] && desired_state=$(cat "$STATE_FILE" 2>/dev/null || true)
   desired_args=$(state_to_args "$desired_state")
   case "$desired_args" in ""|off) desired_args=192000 ;; esac
-  [ "$desired_source" = "cdin" ] && desired_args=44100
+  is_capture_source "$desired_source" && desired_args=$(source_rate "$desired_source")
 
   dac_present=true
   if ! $IS_LINUX && [ ! -e "$DAC_DEV_LINK" ]; then
@@ -827,7 +924,7 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
       export OMDRC_SOURCE_MODE="$desired_source"
       exec "$0" off
     fi
-    if $IS_LINUX && [ "$desired_source" = "cdin" ]; then
+    if $IS_LINUX && is_capture_source "$desired_source"; then
       # "Off with the CD input selected" is a real resting state on Linux: the
       # bridge owns the single-open DAC and MPD stays released.  Handing the
       # DAC to MPD here would evict the disc the next time anything calls
@@ -837,10 +934,10 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
       # be safe to call repeatedly, and restarting a healthy bridge on every
       # call would chop the music up on its own.
       if ! pgrep_x "$OMDRC_CDIN_PROCESS"; then
-        start_cdin_linux
+        start_cdin_linux "$desired_source"
       fi
-      log_event "event=reconcile result=noop reason=already_off source=cdin"
-      echo "DRC already off; CD input owns the DAC"
+      log_event "event=reconcile result=noop reason=already_off source=${desired_source}"
+      echo "DRC already off; the $(source_label "$desired_source") owns the DAC"
       exit 0
     fi
     mpc_bounded enable only "OKTO-DAC" >/dev/null 2>&1 || true
@@ -893,7 +990,7 @@ if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
   [ -f "$STATE_FILE" ] && restore_state=$(cat "$STATE_FILE" 2>/dev/null || true)
   restore_source="music"
   [ -f "$SOURCE_FILE" ] && restore_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
-  case "$restore_source" in music|cdin) ;; *) restore_source=music ;; esac
+  valid_source "$restore_source" || restore_source=music
   # Log what restore actually read, so a boot that ignores the saved state can
   # be told apart from a saved state that was never written in the first place.
   log_event "event=restore power=${restore_power:-unset} source=${restore_source} last_arg=${restore_state:-unset} state_dir=${STATE_DIR}"
@@ -901,10 +998,10 @@ if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
     echo "Last power state was off — leaving DRC disabled (direct DAC)"
     exec "$0" off
   fi
-  if [ "$restore_source" = "cdin" ]; then
-    echo "Restoring CD input mode at 44.1 kHz"
-    export OMDRC_SOURCE_MODE=cdin
-    exec "$0" 44100
+  if is_capture_source "$restore_source"; then
+    echo "Restoring the $(source_label "$restore_source") at $(source_rate "$restore_source") Hz"
+    export OMDRC_SOURCE_MODE="$restore_source"
+    exec "$0" "$(source_rate "$restore_source")"
   fi
   export OMDRC_SOURCE_MODE=music
   state="$restore_state"
@@ -940,7 +1037,7 @@ if [ $# -eq 1 ] && [ "$1" = "session" ]; then
   case "$session_power" in on|off) ;; *) session_power="on" ;; esac
   session_source="music"
   [ -f "$SOURCE_FILE" ] && session_source=$(cat "$SOURCE_FILE")
-  case "$session_source" in music|cdin) ;; *) session_source="music" ;; esac
+  valid_source "$session_source" || session_source="music"
   printf 'geometry=%s\n' "$GEOMETRY"
   printf 'power=%s\n' "$session_power"
   printf 'source=%s\n' "$session_source"
@@ -1005,7 +1102,7 @@ if [ $# -ge 1 ] && [ "$1" = "design" ]; then
   export OMDRC_SWITCH_FROM="$previous" OMDRC_SWITCH_TO="$listed"
   switch_source="music"
   [ -f "$SOURCE_FILE" ] && switch_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
-  case "$switch_source" in music|cdin) ;; *) switch_source=music ;; esac
+  valid_source "$switch_source" || switch_source=music
   export OMDRC_SOURCE_MODE="$switch_source"
   # An empty selector is meaningful here: it is the explicit `default`
   # selection, not an invitation for the rate path to re-use the old design.
@@ -1045,9 +1142,11 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
 
   switch_source="music"
   [ -f "$SOURCE_FILE" ] && switch_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
-  case "$switch_source" in music|cdin) ;; *) switch_source=music ;; esac
-  if [ "$switch_source" = "cdin" ] && ! geometry_rates "$new_geo" | grep -qx 44100; then
-    echo "filter set $new_geo cannot preserve CD input: it has no 44100 Hz config" >&2
+  valid_source "$switch_source" || switch_source=music
+  if is_capture_source "$switch_source" && \
+     ! geometry_rates "$new_geo" | grep -qx "$(source_rate "$switch_source")"; then
+    echo "filter set $new_geo cannot preserve the $(source_label "$switch_source"):" \
+         "it has no $(source_rate "$switch_source") Hz config" >&2
     exit 1
   fi
 
@@ -1289,7 +1388,7 @@ fi
 # transient stop deliberately leave the source choice untouched.
 if [ "$mode" != "off" ] && [ "$mode" != "stop" ]; then
   source_mode="${OMDRC_SOURCE_MODE:-music}"
-  case "$source_mode" in music|cdin) ;; *) source_mode=music ;; esac
+  valid_source "$source_mode" || source_mode=music
   printf '%s\n' "$source_mode" > "$SOURCE_FILE"
   chmod 644 "$SOURCE_FILE" 2>/dev/null || true
   log_event "event=source_saved source=${source_mode} reason=transition_intent"
@@ -1549,9 +1648,9 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # the loopback, undone by selecting any rate, which means music.
   off_source="music"
   [ -f "$SOURCE_FILE" ] && off_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
-  case "$off_source" in music|cdin) ;; *) off_source=music ;; esac
+  valid_source "$off_source" || off_source=music
   keep_cdin=false
-  if $IS_LINUX && [ "$mode" = "off" ] && [ "$off_source" = "cdin" ]; then
+  if $IS_LINUX && [ "$mode" = "off" ] && is_capture_source "$off_source"; then
     keep_cdin=true
   fi
   if $IS_LINUX; then
@@ -1575,8 +1674,8 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
     # Deliberately not "enable only OKTO-DAC": the DAC is about to be the CD
     # bridge's, and handing it to MPD first is the EBUSY that would make this
     # look like the bridge failing to start.
-    log_event "event=run_result mode=${mode} result=stopped source=cdin output=cdin"
-    echo "CD input keeps playing, straight to the DAC (no room correction)"
+    log_event "event=run_result mode=${mode} result=stopped source=${off_source} output=cdin"
+    echo "The $(source_label "$off_source") keeps playing, straight to the DAC (no room correction)"
   elif mpc_bounded enable only "OKTO-DAC"; then
     log_event "event=run_result mode=${mode} result=stopped output=OKTO-DAC"
   else
@@ -1589,7 +1688,7 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # and the permission to start a bridge that is currently stopped (it was
   # stopped a few lines up so it would let go of the loopback).
   if $keep_cdin; then
-    source_mode=cdin
+    source_mode="$off_source"
     export OMDRC_START_CDIN=1
   fi
   restart_cdin
@@ -1736,13 +1835,13 @@ fi
 # ALSA loopback itself; FreeBSD's virtual_oss would otherwise mix CD and MPD,
 # so enforce the same policy by gating MPD's audible outputs. The Spectrum FIFO
 # remains independently controlled by the visible analyzer card.
-if [ "${source_mode:-music}" = "cdin" ]; then
+if is_capture_source "${source_mode:-music}"; then
   mpc_bounded disable "OKTO-DAC"   >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
-  mpd_output="none (CD input owns the loopback)"
+  mpd_output="none ($(source_label "$source_mode") owns the loopback)"
   mpd_result="cdin"
-  log_event "event=mpd_output result=released reason=cdin_exclusive"
+  log_event "event=mpd_output result=released reason=cdin_exclusive source=${source_mode}"
 # Enable ONLY the selected DRC output (disables the direct + the other DRC
 # output). "mpc disable all" is not valid in mpc — use "enable only <name>".
 elif mpc_bounded enable only "$mpd_output"; then

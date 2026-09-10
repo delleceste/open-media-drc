@@ -36,3 +36,29 @@
 #DAC_WARMUP_SECS=3
 #DAC_SETTLE_SECS=1
 #DAC_PRIME_CYCLES=0
+
+# ── the capture sources ─────────────────────────────────────────────────────
+# `drc.sh cdin` and `drc.sh linein` run the same input bridge; these six values
+# are the whole difference between them.  See doc/CDIN-LINUX.md.
+#
+# The rate is the rate the source ARRIVES at, not a preference: a CD is
+# 44.1 kHz because Red Book says so, and an analog input is whatever its
+# converter runs at.  Asking a card for a rate it does not have does not fail —
+# ALSA's plug layer resamples and nothing reports it.  The active filter set
+# must have a config for the rate, or `drc.sh geometry` refuses the switch.
+#CDIN_RATE=44100
+#LINEIN_RATE=96000
+
+# The input to select on the capture card, passed to the bridge verbatim:
+# "auto" picks the card's digital item (iec958 / s-pdif / optical / coax),
+# "keep" leaves the card alone, anything else is a mixer item name.  List a
+# card's items with:  amixer -c <card> contents | grep -i -A5 'Capture Source'
+# Cards with no such control are unaffected either way.
+#CDIN_CAPTURE_SOURCE=auto
+#LINEIN_CAPTURE_SOURCE=Line
+
+# The PCM device index within the card, for cards that put the digital input on
+# a second device instead of behind the selector — the USB Sound Blaster HD is
+# one: analog on device 0, S/PDIF on device 1.
+#CDIN_CAPTURE_DEVICE=0
+#LINEIN_CAPTURE_DEVICE=0

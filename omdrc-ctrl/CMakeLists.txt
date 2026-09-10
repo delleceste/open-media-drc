@@ -76,6 +76,10 @@ if(NOT OMDRCCTRL_AUDIO_HOME)
     set(OMDRCCTRL_AUDIO_HOME "/home/${OMDRCCTRL_SERVICE_USER}")
 endif()
 string(REPLACE "@AUDIO_HOME@" "${OMDRCCTRL_AUDIO_HOME}" _cc "${_cc}")
+# The capture sources' rates, from the top-level project, so a button never
+# claims a rate the chain would not actually be built at.
+string(REPLACE "@CDIN_RATE@"   "${CDIN_RATE}"   _cc "${_cc}")
+string(REPLACE "@LINEIN_RATE@" "${LINEIN_RATE}" _cc "${_cc}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/commands.conf" "${_cc}")
 
 if(OMDRCCTRL_SERVICE_MANAGER STREQUAL "systemd")

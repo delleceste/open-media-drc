@@ -1689,7 +1689,13 @@ function renderDrcFeedback(data) {
         const named = active.description && active.description !== active.design_id
             ? `${active.description} (${selector})` : selector;
         const rate = active.rate ? `${Number(active.rate).toLocaleString()} Hz` : 'unknown rate';
-        activeLine.textContent = `Active: ${named} · ${rate} · ${active.config || 'unknown config'}`;
+        // The input goes next to the rate because it is what explains it:
+        // 96,000 Hz alone reads the same whether it is a hi-res file through
+        // MPD or the analog input.  Absent means MPD, the resting state.
+        const input = (active.input || {}).label;
+        const fedBy = input ? ` · ${input}` : '';
+        activeLine.textContent =
+            `Active: ${named} · ${rate}${fedBy} · ${active.config || 'unknown config'}`;
         const facts = [];
         if (verification.status === 'verified') facts.push('verified');
         else facts.push(`NOT VERIFIED: ${verification.message || verification.status || 'unknown'}`);
@@ -1714,6 +1720,13 @@ function renderDrcFeedback(data) {
             ? 'auto-resample at 192,000 Hz'
             : `${Number(session.rate).toLocaleString()} Hz`;
         savedLine.textContent = `Auto-saved session: ${session.power} · ${session.geometry} · ${designLabel(session.design)} · ${savedRate}`;
+        // Named only when it is not music: a capture source is the one part of
+        // the saved session that the rate alone cannot reveal — 96,000 Hz reads
+        // the same whether it is the analog input or a hi-res file — and it is
+        // what restore will bring back, bridge and all.
+        if (session.source_label) {
+            savedLine.textContent += ` · ${session.source_label}`;
+        }
         if (session.power === 'off') savedLine.textContent += ' (restore keeps DRC off)';
     } else {
         savedLine.textContent = 'Saved session unavailable';

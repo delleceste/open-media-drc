@@ -1037,15 +1037,29 @@ service omdrc_cdin release      # verified release of /dev/dsp.play
 There is no FreeBSD `/dev/dsp0` fallback. If `/dev/dsp.dac` is absent, an
 active transition fails before touching the current chain.
 
-### CD-input state across reboot
+### Capture-input state across reboot
 
-`drc.sh cdin` records `last_source=cdin` and the 44.1 kHz intent under the
-lifecycle lock. The web panel's “CD input (44.1 kHz)” action invokes it. An
-ordinary rate action records the return-to-music intent before device and
+There are two capture sources, one bridge. `drc.sh cdin` records
+`last_source=cdin` and the CD's 44.1 kHz intent under the lifecycle lock;
+`drc.sh linein` records `last_source=linein` and the analog input's 96 kHz.
+The web panel's “CD input” and “Line input” actions invoke them. The rate
+belongs to the source (`CDIN_RATE` / `LINEIN_RATE` in `omdrc.conf`) rather than
+to the listener, and so does which input of the capture card the bridge opens —
+see `doc/CDIN-LINUX.md`.
+
+Which input is actually engaged is reported by the bridge itself, not inferred
+from what was requested: it logs `source <name>: capturing '<item>' from
+<device>` on every start, the panel reads that line, and the DRC session
+card's **Active** line names the input next to the rate (`Active: … · 96,000
+Hz · Line input · …`) only while that bridge is running — a chain built for
+the Line input with a dead bridge reports no input, because *Active* describes
+what is running, not what was asked for.
+
+An ordinary rate action records the return-to-music intent before device and
 configuration validation. Thus a failed transition is retried as music after
-reboot instead of restoring stale CD mode. Boot reconciliation restores the
-saved source and rate even when MPD is slow; MPD calls have deadlines and the
-MPD successful-start hook repairs pending output routing.
+reboot instead of restoring a stale capture mode. Boot reconciliation restores
+the saved source and its rate even when MPD is slow; MPD calls have deadlines
+and the MPD successful-start hook repairs pending output routing.
 
 
 ## What `drc.sh restore` does

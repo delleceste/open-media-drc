@@ -412,8 +412,9 @@ CDIN_CONTROL = True
 # against a loopback BruteFIR is reading at 192 kHz is an EBUSY, and a bridge
 # started behind drc.sh's back leaves last_source saying "music", so the next
 # reconcile, rate action or boot stops it again and the bridge looks like it
-# died on its own.  Only `drc.sh cdin` knows enough to start it, and that is
-# what the "CD input (44.1 kHz)" button already is.
+# died on its own.  Only `drc.sh cdin` / `drc.sh linein` knows enough to start
+# it — they also settle which input of the capture card the bridge opens — and
+# that is what the "CD input" and "Line input" buttons already are.
 #
 # FreeBSD keeps both: virtual_oss mixes, the daemon is a persistent service
 # that picks its own output, and a raw start really is just "put it back in the
@@ -436,9 +437,26 @@ _CDIN_DEVICE = re.compile(
 _CDIN_STATE = re.compile(r"^state (?P<state>[a-z-]+): (?P<why>.*)$")
 _CDIN_STATS = re.compile(r"^\[stats\] (?P<body>.*)$")
 # The input path may be a directory of WAVs (the test rig), so it can contain
-# spaces; the output is always a device node.
+# spaces; the output is always a device node.  The rate is captured because the
+# bridge is the only thing that knows it: the capture sources run at different
+# rates (a CD is 44.1 kHz, an analog input is whatever its converter does), and
+# the spectrum analyzer reading the wrong one mislabels every frequency bin
+# without failing at anything.
 _CDIN_START = re.compile(
-    r"^omdrc-cdin \S+ starting: in=(?P<inpath>.+?) out=(?P<outpath>\S+) \d+ Hz")
+    r"^omdrc-cdin \S+ starting: in=(?P<inpath>.+?) out=(?P<outpath>\S+) "
+    r"(?P<rate>\d+) Hz")
+
+# "source linein: capturing 'Line' from hw:3,0" — which of the box's inputs the
+# bridge was started for.  Only the caller that chose knows: the device path
+# does not say it, because the same card's digital input is a second PCM device
+# on one box and an item of the same mixer selector on the next.  A bridge
+# started by hand logs no such line, and then the panel names no input rather
+# than guessing one.
+_CDIN_SOURCE = re.compile(r"^source (?P<source>[a-z][a-z0-9_-]*):")
+
+# What the panel calls each of them.  Unknown tokens are shown as they came,
+# so a source added to drc.sh appears here as itself rather than vanishing.
+CDIN_SOURCE_LABELS = {"cdin": "CD input", "linein": "Line input"}
 
 _CDIN_DEVICE_LABEL = {"capture": "capture", "playback": "output"}
 
@@ -1646,7 +1664,12 @@ def _spectrum_resolve_source() -> SpectrumSource:
     if want == "auto":
         want = "cdin" if _cdin_source_active() else "mpd"
     if want == "cdin":
-        return CdinSpectrumSource(SPECTRUM_CDIN_FIFO, SPECTRUM_CDIN_RATE)
+        # The bridge's own rate wins over the configured one: `cdin` and
+        # `linein` are the same bridge at different rates, and the analyzer
+        # must FFT at the rate the samples were captured at.  The setting is
+        # the fallback for a bridge that has not logged a start yet.
+        return CdinSpectrumSource(SPECTRUM_CDIN_FIFO,
+                                  _cdin_live()[1] or SPECTRUM_CDIN_RATE)
     return MpdSpectrumSource(SPECTRUM_FIFO, SPECTRUM_RATE)
 
 
@@ -1654,33 +1677,60 @@ def _spectrum_resolve_source() -> SpectrumSource:
 # reached from `settings()` — which every page render calls.  A disc does not
 # start and stop within two seconds, so cache the answer for that long rather
 # than re-reading the log for each caller.
-_CDIN_ACTIVE_CACHE: tuple[float, bool] = (0.0, False)
+_CDIN_ACTIVE_CACHE: tuple[float, bool, int, str] = (0.0, False, 0, "")
 _CDIN_ACTIVE_TTL = 2.0
 
 
-def _cdin_source_active() -> bool:
-    """Is a disc playing through the bridge right now?
+def _cdin_live() -> tuple[bool, int, str]:
+    """(playing right now, the rate it plays at, the input that is engaged).
 
-    `_cdin_status()` already answers exactly this for the CD card (`active`),
-    so `auto` asks the same question rather than inventing a second, subtly
-    different notion of "the CD is on".
+    `_cdin_status()` already answers all three for the CD card, so the callers
+    here ask the same question rather than inventing a second, subtly different
+    notion of "the input is on".
+
+    The third is "engaged", which is broader than the first: a bridge holding
+    the loopback with the transport switched off is still the selected input,
+    and MPD still has no output.  So it is gated on the bridge RUNNING rather
+    than on audio flowing.
     """
     global _CDIN_ACTIVE_CACHE
 
     if not CDIN_ENABLED:
-        return False
-    at, value = _CDIN_ACTIVE_CACHE
+        return False, 0, ""
+    at, active, rate, engaged = _CDIN_ACTIVE_CACHE
     now = time.monotonic()
     if now - at < _CDIN_ACTIVE_TTL:
-        return value
+        return active, rate, engaged
     try:
-        value = bool(_cdin_status().get("active"))
+        status = _cdin_status()
+        active, rate = bool(status.get("active")), int(status.get("rate") or 0)
+        engaged = str(status.get("source") or "") if status.get("running") else ""
     except Exception:
-        # The log can be missing or malformed; that is "no disc", not a reason
-        # to take the spectrum card down with it.
-        value = False
-    _CDIN_ACTIVE_CACHE = (now, value)
-    return value
+        # The log can be missing or malformed; that is "nothing playing", not a
+        # reason to take the spectrum card down with it.
+        active, rate, engaged = False, 0, ""
+    _CDIN_ACTIVE_CACHE = (now, active, rate, engaged)
+    return active, rate, engaged
+
+
+def _cdin_source_active() -> bool:
+    """Is a capture source playing through the bridge right now?"""
+    return _cdin_live()[0]
+
+
+def _engaged_capture_input() -> dict:
+    """The input holding the chain right now, as {source, label}, or {}.
+
+    Empty is the ordinary case — music through MPD — and also the honest answer
+    for a chain that was built for a capture source whose bridge then died: the
+    rate would still be the Line input's, and saying "Line input" on a line
+    that reports what is RUNNING would be a claim nothing had checked.
+    """
+    engaged = _cdin_live()[2]
+    if not engaged:
+        return {}
+    return {"source": engaged,
+            "label": CDIN_SOURCE_LABELS.get(engaged, engaged)}
 
 
 def _spectrum_level_db(samples) -> tuple[float, float]:
@@ -4371,6 +4421,14 @@ def _cdin_status() -> dict:
         # `running`: is a disc playing THROUGH the bridge right now?  That is
         # what decides whether the card is worth the screen space it takes.
         "active": False,
+        # The rate of the bridge's most recent start, 0 until it has logged
+        # one.  Read by the spectrum analyzer, which must FFT at the rate the
+        # samples were captured at rather than at a configured constant.
+        "rate": 0,
+        # Which input that start was for ("cdin", "linein"), "" for a bridge
+        # nobody selected.  Read by the DRC card to name the engaged input.
+        "source": "",
+        "source_label": "",
         "control": CDIN_CONTROL,
         "control_start": CDIN_CONTROL_START,
     }
@@ -4404,6 +4462,19 @@ def _cdin_status() -> dict:
             for kind, key in (("capture", "inpath"), ("playback", "outpath")):
                 ends[kind].update(_cdin_blank_end(kind))
                 ends[kind]["path"] = start.group(key)
+            try:
+                status["rate"] = int(start.group("rate"))
+            except (TypeError, ValueError):
+                status["rate"] = 0
+            # A restart re-declares its source on the line below, or does not
+            # declare one; either way the previous run's answer is stale.
+            status["source"] = status["source_label"] = ""
+
+        source = _CDIN_SOURCE.match(msg)
+        if source is not None:
+            status["source"] = source.group("source")
+            status["source_label"] = CDIN_SOURCE_LABELS.get(
+                status["source"], status["source"])
 
         stats = _CDIN_STATS.match(msg)
         if stats is not None:
@@ -6423,7 +6494,8 @@ def _drc_saved_session(script: str) -> dict:
     session: dict[str, object] = {}
     for line in result.stdout.splitlines():
         key, separator, value = line.partition("=")
-        if separator and key in {"geometry", "power", "mode", "rate", "design", "label"}:
+        if separator and key in {"geometry", "power", "source", "mode", "rate",
+                                 "design", "label"}:
             session[key] = value.strip()
     missing = {"geometry", "power", "mode", "rate", "design"} - session.keys()
     if missing:
@@ -6432,6 +6504,12 @@ def _drc_saved_session(script: str) -> dict:
         session["rate"] = int(str(session["rate"]))
     except ValueError as error:
         raise RuntimeError("invalid rate in saved DRC session") from error
+    # Named here rather than in the page, so the tokens have one spelling on
+    # the box: the same table names the input the bridge is actually holding.
+    saved_source = str(session.get("source", "music"))
+    session["source_label"] = ("" if saved_source in ("", "music")
+                               else CDIN_SOURCE_LABELS.get(saved_source,
+                                                           saved_source))
     session["auto_saved"] = True
     return session
 
@@ -6451,6 +6529,11 @@ def _active_design_identity() -> dict:
         "rate": rate_from_name,
         "design": selector,
         "config": os.path.basename(conf_path),
+        # What is feeding it.  The rate cannot stand in for this — 96,000 Hz
+        # reads the same whether it is a hi-res file through MPD or the analog
+        # input — and the bridge is the only thing that knows, so this comes
+        # off its log rather than off the saved intent.
+        "input": _engaged_capture_input(),
     }
     try:
         parsed = _parse_brutefir_conf(conf_path)

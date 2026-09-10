@@ -229,6 +229,42 @@ class DrcPowerStateTest(unittest.TestCase):
         self.assertEqual(self._source(), "cdin")
         self.assertIn("config not found", result.stderr)
 
+    def test_linein_intent_is_saved_and_builds_the_chain_at_its_own_rate(self):
+        """`drc.sh linein` is `drc.sh cdin` with the analog source's rate."""
+        self._write_state()
+        result = self._run("linein")
+        self.assertNotEqual(result.returncode, 0)   # no 96-kHz config either
+        self.assertEqual(self._source(), "linein")
+        self.assertIn("brutefir-96000.conf", result.stderr)
+        log = (self.state / "drc.log").read_text(encoding="utf-8")
+        self.assertIn("event=source_saved source=linein rate=96000", log)
+
+    def test_a_capture_source_writes_the_bridge_its_input_before_starting_it(self):
+        """The bridge is started by unit name, so the input it opens can only
+        reach it through the file drc.sh writes first.
+
+        A stale file is the failure where the chain is built for one source and
+        the bridge captures the other — no error, just the wrong input at the
+        wrong rate — so the write is part of the start, not of the config.
+        """
+        drc = (ROOT / "drc.sh").read_text(encoding="utf-8")
+        block = drc.split("start_cdin_linux() {", 1)[1].split("\n}", 1)[0]
+        self.assertLess(block.index('write_cdin_env "$src"'),
+                        block.index("systemctl_user start"),
+                        "the input must be settled before the unit is started")
+        # All four values the bridge needs, including the name the panel
+        # reports the engaged input by.
+        env = drc.split("write_cdin_env() {", 1)[1].split("\n}", 1)[0]
+        for key in ("OMDRC_CDIN_SOURCE=", "OMDRC_CDIN_RATE=",
+                    "OMDRC_CDIN_CAPTURE_DEVICE=", "OMDRC_CDIN_CAPTURE_SOURCE="):
+            self.assertIn(key, env)
+        unit = (ROOT / "etc/systemd/user/omdrc-cdin.service.in").read_text(
+            encoding="utf-8")
+        self.assertIn("EnvironmentFile=-@OMDRC_STATE_DIR@/cdin.env", unit)
+        # The '-' matters: a box that has never selected a capture source has
+        # no such file, and the unit must still start on the bridge's defaults.
+        self.assertNotIn("EnvironmentFile=@OMDRC_STATE_DIR@", unit)
+
     def test_music_intent_is_saved_before_a_failed_chain_transition(self):
         self._write_state()
         (self.state / "last_source").write_text("cdin\n", encoding="utf-8")
@@ -251,8 +287,25 @@ class DrcPowerStateTest(unittest.TestCase):
         (self.state / "last_source").write_text("cdin\n", encoding="utf-8")
         result = self._run("restore")
         self.assertNotEqual(result.returncode, 0)  # fixture has no 44.1k config
-        self.assertIn("Restoring CD input mode at 44.1 kHz", result.stdout)
+        self.assertIn("Restoring the CD / S-PDIF input at 44100 Hz", result.stdout)
         self.assertIn("brutefir-44100.conf", result.stderr)
+
+    def test_restore_brings_back_the_line_input_at_its_own_rate(self):
+        """The saved source carries the rate, and the two capture sources do
+        not share one.
+
+        Restoring `linein` at the CD's 44.1 kHz would not fail anywhere: the
+        chain would come up, the bridge would open the analog input, and ALSA's
+        plug layer would resample the card's 96 kHz down to it — audible,
+        no longer bit-exact, and reported by nothing.
+        """
+        self._write_state(last_arg="resamp", last_power="on")
+        (self.state / "last_source").write_text("linein\n", encoding="utf-8")
+        result = self._run("restore")
+        self.assertNotEqual(result.returncode, 0)  # fixture has no 96k config
+        self.assertIn("Restoring the analog Line input at 96000 Hz", result.stdout)
+        self.assertIn("brutefir-96000.conf", result.stderr)
+        self.assertNotIn("brutefir-44100.conf", result.stderr)
 
     def test_mpd_failures_are_bounded_while_the_lock_is_held(self):
         self._write_state()

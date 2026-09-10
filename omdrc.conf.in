@@ -12,7 +12,7 @@ OMDRC_SITE_DIR=@CMAKE_INSTALL_PREFIX@/etc/open-media-drc
 
 # Runtime state (last_arg, last_power, drc.log).  Pinned so the services and
 # interactive `omdrc` runs share one location.
-OMDRC_STATE_DIR=@AUDIO_HOME@/.local/state/omdrc
+OMDRC_STATE_DIR=@OMDRC_STATE_DIR@
 
 # The user that owns brutefir / the audio session.
 AUDIO_USER=@AUDIO_USER@
@@ -20,3 +20,22 @@ AUDIO_HOME=@AUDIO_HOME@
 
 # Music library location (used by the mpd config templates).
 MUSIC_DIR=@MUSIC_DIR@
+
+# ── the capture sources ─────────────────────────────────────────────────────
+# `drc.sh cdin` and `drc.sh linein` both run the same input bridge; these are
+# the only values that differ.  The rate is the rate the source ARRIVES at, so
+# the filter set must have a config for it (`drc.sh geometry` refuses a set
+# that has none while a capture source is selected).
+CDIN_RATE=@CDIN_RATE@
+LINEIN_RATE=@LINEIN_RATE@
+# The input to select on the capture card, passed to the bridge verbatim:
+# "auto" picks the card's digital item, "keep" leaves the card alone, anything
+# else is a mixer item name (`amixer -c <card> contents` lists them — this card
+# calls its analog input "Line", the next one may call it "Line In").  Cards
+# with no such control are unaffected either way.  *_CAPTURE_DEVICE is the PCM
+# device index within the card, for cards that put the digital input on a
+# second device instead of behind the selector.
+#CDIN_CAPTURE_SOURCE=auto
+#CDIN_CAPTURE_DEVICE=0
+#LINEIN_CAPTURE_SOURCE=Line
+#LINEIN_CAPTURE_DEVICE=0

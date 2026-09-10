@@ -777,6 +777,16 @@ class Bridge:
         self.log("INF", f"drift correction: --sync {self.sync} — {sync_why}")
         self.log("INF", f"omdrc-cdin {VERSION} starting: in={capture.spec} "
                         f"out={output.spec} {args.rate} Hz")
+        # Which of the box's inputs this run IS.  The devices above do not say
+        # it: hw:3,0 is the analog side of a card whose digital side is hw:3,1
+        # on one box and an item of the same selector on the next, so only the
+        # caller that chose knows.  The panel reads it off this line to name
+        # the engaged input in its own status, which is why it is a line of its
+        # own rather than more words on the one above: that line's grammar is a
+        # contract, and a bridge started by hand has no source to declare.
+        if args.source:
+            self.log("INF", f"source {args.source}: capturing "
+                            f"{args.capture_source!r} from {capture.spec}")
 
         # Restart loop.  A CD player being switched off stops the capture
         # device, alsaloop exits, and the bridge must come back by itself when
@@ -821,6 +831,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--channels", type=int, default=int(env("OMDRC_CDIN_CHANNELS", "2")))
     parser.add_argument("--format", default=env("OMDRC_CDIN_FORMAT", "S32_LE"),
                         help="must match the loopback / BruteFIR input format")
+    parser.add_argument("--source", default=env("OMDRC_CDIN_SOURCE", ""),
+                        help="the name drc.sh knows this run by ('cdin', "
+                             "'linein'): logged so the panel can say which "
+                             "input is engaged.  Empty for a hand-started "
+                             "bridge, which is nobody's selected source")
     parser.add_argument("--capture-source",
                         default=env("OMDRC_CDIN_CAPTURE_SOURCE", "auto"),
                         help="the capture card's input selector: 'auto' (the "

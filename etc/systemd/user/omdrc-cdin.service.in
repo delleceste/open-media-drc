@@ -20,6 +20,14 @@ Environment=HOME=@AUDIO_HOME@
 # also an OMDRC_CDIN_* environment variable, so an override belongs in
 # ~/.config/systemd/user/omdrc-cdin.service.d/ rather than in this template.
 Environment=OMDRC_CDIN_LOG_FILE=/tmp/omdrc-cdin.log
+# Which input to capture, and at which rate, for the source drc.sh has just
+# selected.  The bridge is started by unit name, so this is the only way the
+# choice can reach it; drc.sh writes the file immediately before the start
+# (write_cdin_env), which makes "CD input" and "Line input" the same unit with
+# a different two lines in front of it.  The leading '-' is what lets a box
+# that has never selected a capture source start the bridge anyway, on the
+# bridge's own defaults.
+EnvironmentFile=-@OMDRC_STATE_DIR@/cdin.env
 ExecStart=@REPO_DIR@/scripts/omdrc-cdin-alsaloop
 # The supervisor already retries alsaloop across carrier loss; a Restart here
 # covers only the supervisor itself dying, which is a bug, not a CD player

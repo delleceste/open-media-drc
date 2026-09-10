@@ -57,5 +57,39 @@ class DrcSessionTest(unittest.TestCase):
                 })
 
 
+    def test_the_session_reports_a_line_input_as_itself(self):
+        """`source` is the one part of the session the rate cannot reveal.
+
+        96,000 Hz reads identically whether it is a hi-res file or the analog
+        input, so a session that flattened `linein` back to `music` would
+        restore the chain and leave the bridge down — silence, from a state
+        that looked correct.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            site, state = root / "site", root / "state"
+            (site / "configs/flat").mkdir(parents=True)
+            state.mkdir()
+            (site / "configs/flat/brutefir-96000.conf").write_text(
+                "sampling_rate: 96000;\n", encoding="utf-8")
+            (state / "last_arg").write_text("96000\n", encoding="utf-8")
+            (state / "last_power").write_text("on\n", encoding="utf-8")
+            (state / "last_source").write_text("linein\n", encoding="utf-8")
+            config = root / "omdrc.conf"
+            config.write_text(
+                f"GEOMETRY=flat\nOMDRC_SITE_DIR={site}\nOMDRC_STATE_DIR={state}\n",
+                encoding="utf-8")
+            env = os.environ.copy()
+            env["OMDRC_CONF"] = str(config)
+            result = subprocess.run(
+                [str(ROOT / "drc.sh"), "session"], env=env,
+                capture_output=True, text=True, timeout=5, check=True,
+            )
+            session = dict(line.split("=", 1)
+                           for line in result.stdout.splitlines())
+            self.assertEqual(session["source"], "linein")
+            self.assertEqual(session["rate"], "96000")
+
+
 if __name__ == "__main__":
     unittest.main()

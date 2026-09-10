@@ -521,18 +521,34 @@ class CaptureRoleTest(unittest.TestCase):
 
 
 class ExclusiveSourceTest(unittest.TestCase):
-    """drc.sh: CD input gates MPD outputs on both supported platforms."""
+    """drc.sh: a capture input gates MPD outputs on both supported platforms."""
 
     def setUp(self):
         self.text = DRC.read_text()
+
+    def test_every_capture_source_is_exclusive(self):
+        """`cdin` and `linein` are one bridge on one loopback seat.
+
+        The exclusivity is a property of that seat, not of the CD, so every
+        branch that used to name "cdin" has to ask the set instead — a source
+        added to the table and forgotten in one `case` is a bridge that plays
+        while MPD is also enabled, which on Linux is an EBUSY and on FreeBSD is
+        two programs mixed together.
+        """
+        self.assertIn("""valid_source() {
+  case "$1" in music|cdin|linein) return 0 ;; esac""", self.text)
+        self.assertIn("""is_capture_source() {
+  case "$1" in cdin|linein) return 0 ;; esac""", self.text)
+        # No branch may test the token directly any more.
+        self.assertNotRegex(self.text, r'\[ "\$\w*source\w*" = "cdin" \]')
 
     def test_cdin_mode_leaves_mpd_without_a_loopback_output(self):
         """Enabling DRC-native while alsaloop holds the substream is an EBUSY
         that surfaces as "Failed to open audio output" on the next Play."""
         self.assertTrue(re.search(
-            r'if \[ "\$\{source_mode:-music\}" = "cdin" \]; then'
+            r'if is_capture_source "\$\{source_mode:-music\}"; then'
             r'.{0,600}?mpc_bounded disable "DRC-native"', self.text, re.S),
-            "the cdin branch must leave MPD without a loopback output")
+            "the capture branch must leave MPD without a loopback output")
 
     def test_cdin_mode_remembers_the_output_for_the_web_stop_action(self):
         self.assertIn('CDIN_MPD_OUTPUT_FILE="$STATE_DIR/cdin-mpd-output"', self.text)
@@ -587,7 +603,7 @@ class ExclusiveSourceTest(unittest.TestCase):
                                 1)[1].split("\nfi\n", 1)[0]
         # The saved source decides, and `off` is the only verb that keeps it:
         # `stop` is the transient teardown and must still hand the DAC back.
-        self.assertIn('[ "$mode" = "off" ] && [ "$off_source" = "cdin" ]', block)
+        self.assertIn('[ "$mode" = "off" ] && is_capture_source "$off_source"', block)
         self.assertIn("keep_cdin=true", block)
         # MPD must NOT be given the DAC first: it is single-open, and doing so
         # is the EBUSY that would read as the bridge failing to start.
@@ -597,7 +613,8 @@ class ExclusiveSourceTest(unittest.TestCase):
             "the direct-DAC output must be skipped when the CD input keeps it")
         # And the bridge has to be told to start again after being stopped.
         self.assertTrue(re.search(
-            r'if \$keep_cdin; then\s+source_mode=cdin\s+export OMDRC_START_CDIN=1',
+            r'if \$keep_cdin; then\s+source_mode="\$off_source"\s+'
+            r'export OMDRC_START_CDIN=1',
             block), "restart_cdin needs the source and the start permission")
 
     def test_reconcile_does_not_evict_a_disc_that_owns_the_dac(self):
@@ -607,10 +624,10 @@ class ExclusiveSourceTest(unittest.TestCase):
         block = self.text.split('if [ "$desired_power" = "off" ]; then',
                                 1)[1].split("\n  fi\n", 1)[0]
         self.assertTrue(re.search(
-            r'if \$IS_LINUX && \[ "\$desired_source" = "cdin" \]; then'
+            r'if \$IS_LINUX && is_capture_source "\$desired_source"; then'
             r'.{0,900}?exit 0.{0,80}?fi\s+mpc_bounded enable only "OKTO-DAC"',
             block, re.S),
-            "the cdin guard must come before the direct-DAC handover")
+            "the capture guard must come before the direct-DAC handover")
         # Started only when absent: restarting a healthy bridge every tick
         # would chop the music up on its own.
         self.assertIn('if ! pgrep_x "$OMDRC_CDIN_PROCESS"; then', block)

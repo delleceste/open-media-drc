@@ -120,9 +120,12 @@ channels = 2
 #          FIFO above is empty for the whole of a disc
 #   auto   cdin while a disc is actually playing through the bridge, else mpd
 source = auto
-# The CD source's own FIFO and rate. The rate must travel with the source: CD
-# is 44.1 kHz where the MPD FIFO above is 48 kHz, and analysing at the wrong
-# rate mislabels every frequency bin without reporting any error.
+# The capture source's own FIFO and rate. The rate must travel with the
+# source: CD is 44.1 kHz where the MPD FIFO above is 48 kHz, the analog Line
+# input is 96 kHz, and analysing at the wrong rate mislabels every frequency
+# bin without reporting any error. The rate below is only the FALLBACK — a
+# running bridge logs the rate it started at, and the analyzer prefers that,
+# because `cdin` and `linein` are one bridge at two rates.
 cdin_fifo_path = /tmp/omdrc-cdin-spectrum.fifo
 cdin_sample_rate = 44100
 # How the CD PCM reaches that FIFO differs by OS, and only Linux needs a
@@ -249,9 +252,10 @@ alert_interval = 20
 #            MPD's audible outputs and STOP restores the one previously active.
 #   Linux    scripts/omdrc-cdin-alsaloop, a supervisor around alsaloop(1).
 #            hw:Loopback,0,0 is a SINGLE substream, so the bridge and MPD's DRC
-#            outputs cannot both hold it — the CD input is an exclusive source,
-#            congruent with the FreeBSD card policy above.
-#            `drc.sh cdin` selects it; any rate action selects music again.
+#            outputs cannot both hold it — a capture input is an exclusive
+#            source, congruent with the FreeBSD card policy above.
+#            `drc.sh cdin` and `drc.sh linein` select it (same bridge, own rate
+#            and own input on the card); any rate action selects music again.
 #
 # Everything the CD input card shows is read from this log, so log_file must
 # match the daemon's: omdrc_cdin_logfile in /etc/rc.conf (FreeBSD), or
@@ -289,8 +293,9 @@ control = yes
 # against a loopback BruteFIR is reading at 192 kHz is an EBUSY; and a bridge
 # started behind drc.sh's back leaves last_source saying "music", so the next
 # reconcile, rate action or reboot stops it again and the bridge looks like it
-# died by itself.  `drc.sh cdin` — the "CD input (44.1 kHz)" button — is the
-# start, and it sets the rate and the source first.
+# died by itself.  `drc.sh cdin` and `drc.sh linein` — the "CD input" and "Line
+# input" buttons — are the start, and they set the rate, the source and which
+# input of the card the bridge opens, first.
 #
 # FreeBSD keeps both halves: virtual_oss mixes, the daemon is a persistent
 # service that picks its own output, and a raw start really is just "put it
@@ -555,12 +560,24 @@ button  = Apply
 cmd     = @OMDRC_DRC@ 44100
 process = brutefir
 
+# The two capture sources.  Same bridge, same exclusivity, same button
+# semantics: each builds the chain at its own rate, points the bridge at its
+# own input on the capture card, and releases MPD.  Selecting any rate above
+# hands the loopback back to MPD and stops the bridge.
 [drc_cdin]
-what    = CD input (44.1 kHz)
+what    = CD input (@CDIN_RATE@ Hz)
 group   = drc
 type    = WRITE
 button  = Apply
 cmd     = @OMDRC_DRC@ cdin
+process = brutefir
+
+[drc_linein]
+what    = Line input (@LINEIN_RATE@ Hz)
+group   = drc
+type    = WRITE
+button  = Apply
+cmd     = @OMDRC_DRC@ linein
 process = brutefir
 
 [chrome]

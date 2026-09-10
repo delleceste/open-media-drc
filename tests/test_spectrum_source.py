@@ -35,6 +35,9 @@ assert SPEC.loader
 SPEC.loader.exec_module(APP)
 
 
+NO_BRIDGE = {"active": False, "rate": 0, "running": False, "source": ""}
+
+
 class SourceSelectionTest(unittest.TestCase):
     """`auto` has to ask the chain, not a config file."""
 
@@ -42,10 +45,10 @@ class SourceSelectionTest(unittest.TestCase):
         # The CD-active probe is cached for a couple of seconds so that page
         # renders do not each tail the daemon's log; clear it so one test's
         # answer cannot leak into the next.
-        APP._CDIN_ACTIVE_CACHE = (0.0, False)
+        APP._CDIN_ACTIVE_CACHE = (0.0, False, 0, "")
 
     def resolve(self, source, cd_active, cdin_enabled=True):
-        APP._CDIN_ACTIVE_CACHE = (0.0, False)
+        APP._CDIN_ACTIVE_CACHE = (0.0, False, 0, "")
         with mock.patch.object(APP, "SPECTRUM_SOURCE", source), \
              mock.patch.object(APP, "CDIN_ENABLED", cdin_enabled), \
              mock.patch.object(APP, "_cdin_status",
@@ -60,14 +63,14 @@ class SourceSelectionTest(unittest.TestCase):
             calls.append(1)
             return {"active": True}
 
-        APP._CDIN_ACTIVE_CACHE = (0.0, False)
+        APP._CDIN_ACTIVE_CACHE = (0.0, False, 0, "")
         with mock.patch.object(APP, "CDIN_ENABLED", True), \
              mock.patch.object(APP, "_cdin_status", side_effect=status):
             for _ in range(20):
                 self.assertTrue(APP._cdin_source_active())
             self.assertEqual(len(calls), 1, "should read the log once, not 20 times")
             # Expire it and the next caller must go back to the log.
-            APP._CDIN_ACTIVE_CACHE = (APP.time.monotonic() - 60.0, True)
+            APP._CDIN_ACTIVE_CACHE = (APP.time.monotonic() - 60.0, True, 0, "")
             APP._cdin_source_active()
             self.assertEqual(len(calls), 2)
 
@@ -98,10 +101,11 @@ class SourceRateTest(unittest.TestCase):
     """The rate travels with the source, because the two differ."""
 
     def setUp(self):
-        APP._CDIN_ACTIVE_CACHE = (0.0, False)
+        APP._CDIN_ACTIVE_CACHE = (0.0, False, 0, "")
 
     def test_each_source_carries_its_own_rate_and_fifo(self):
-        with mock.patch.object(APP, "SPECTRUM_SOURCE", "cdin"), \
+        with mock.patch.object(APP, "_cdin_status", return_value=NO_BRIDGE), \
+             mock.patch.object(APP, "SPECTRUM_SOURCE", "cdin"), \
              mock.patch.object(APP, "SPECTRUM_CDIN_RATE", 44100), \
              mock.patch.object(APP, "SPECTRUM_CDIN_FIFO", "/tmp/cd.fifo"), \
              mock.patch.object(APP, "SPECTRUM_RATE", 48000), \
@@ -113,6 +117,35 @@ class SourceRateTest(unittest.TestCase):
              mock.patch.object(APP, "SPECTRUM_FIFO", "/tmp/mpd.fifo"):
             mpd = APP._spectrum_resolve_source()
             self.assertEqual((mpd.rate, mpd.fifo), (48000, "/tmp/mpd.fifo"))
+
+
+    def test_the_running_bridge_outranks_the_configured_cd_rate(self):
+        """`cdin` and `linein` are one bridge at two rates.
+
+        The setting can only name one of them, so a box whose selected source
+        is the analog input at 96 kHz would have every bin labelled as though
+        the samples were a CD's — a 1 kHz tone drawn at 459 Hz, with nothing
+        reporting an error.  The bridge logs the rate it actually started at,
+        and that is the one the FFT has to use; the setting is what answers
+        before any start has been logged.
+        """
+        with mock.patch.object(APP, "SPECTRUM_SOURCE", "cdin"), \
+             mock.patch.object(APP, "SPECTRUM_CDIN_RATE", 44100), \
+             mock.patch.object(APP, "CDIN_ENABLED", True), \
+             mock.patch.object(APP, "_cdin_status",
+                               return_value={"active": True, "rate": 96000}):
+            APP._CDIN_ACTIVE_CACHE = (0.0, False, 0, "")
+            self.assertEqual(APP._spectrum_resolve_source().rate, 96000)
+
+        # A bridge that has logged no start at all leaves the setting standing,
+        # rather than falling back to a rate of zero and dividing by it.
+        with mock.patch.object(APP, "SPECTRUM_SOURCE", "cdin"), \
+             mock.patch.object(APP, "SPECTRUM_CDIN_RATE", 44100), \
+             mock.patch.object(APP, "CDIN_ENABLED", True), \
+             mock.patch.object(APP, "_cdin_status",
+                               return_value={"active": False, "rate": 0}):
+            APP._CDIN_ACTIVE_CACHE = (0.0, False, 0, "")
+            self.assertEqual(APP._spectrum_resolve_source().rate, 44100)
 
 
 class FifoOwnershipTest(unittest.TestCase):
@@ -360,8 +393,12 @@ class ResumeAfterSilenceTest(unittest.TestCase):
 
         t = threading.Thread(target=writer, daemon=True)
         t.start()
+        APP._CDIN_ACTIVE_CACHE = (0.0, False, 0, "")
         with mock.patch.object(APP, "SPECTRUM_ENABLED", True), \
              mock.patch.object(APP, "SPECTRUM_SOURCE", "cdin"), \
+             mock.patch.object(APP, "_cdin_status",
+                               return_value={"active": True, "running": True,
+                                             "rate": self.RATE, "source": "cdin"}), \
              mock.patch.object(APP, "SPECTRUM_CDIN_FIFO", fifo), \
              mock.patch.object(APP, "SPECTRUM_CDIN_RATE", self.RATE), \
              mock.patch.object(APP, "SPECTRUM_CDIN_CAPTURE_PCM", ""), \

@@ -145,7 +145,9 @@ class FreeBSDAudioLifecycleTests(unittest.TestCase):
         self.assertIn("while pgrep -q -x omdrc-cdin", restart)
         self.assertIn('"$_TIMEOUT_BIN" --foreground', drc)
         self.assertIn("OMDRC_START_CDIN=1", drc)
-        self.assertIn("starting omdrc-cdin for the selected CD input", restart)
+        self.assertIn(
+            'starting omdrc-cdin for the selected $(source_label "${source_mode:-cdin}")',
+            restart)
 
 
 if __name__ == "__main__":
