@@ -7055,6 +7055,7 @@ def bitperfect_run():
     source = str(body.get("source", "aplay"))
     material = str(body.get("material", ""))
     allow_drc = bool(body.get("allow_drc"))
+    route = (body.get("route") or "direct").strip()
     try:
         duration = float(body.get("duration", 30))
         if not 5 <= duration <= 600:
@@ -7066,6 +7067,8 @@ def bitperfect_run():
     try:
         if source not in ("aplay", "mpd", "mpd-http", "upnp", "live"):
             raise ValueError(f"unknown source: {source}")
+        if route not in ("direct", "drc"):
+            raise ValueError(f"unknown route: {route}")
         if source != "live":
             resolved = manager.resolve_material(material)
             if source == "aplay" and resolved.suffix.lower() != ".wav":
@@ -7075,7 +7078,7 @@ def bitperfect_run():
     except ValueError as error:
         return jsonify({"ok": False, "error": str(error)}), 400
     job = manager.start("bitperfect-run", lambda current: manager.run_test(
-        current, source, material, duration, allow_drc))
+        current, source, material, duration, allow_drc, route))
     return jsonify({"ok": True, "job": job.id}), 202
 
 

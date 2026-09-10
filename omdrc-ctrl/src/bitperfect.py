@@ -255,12 +255,23 @@ class BitPerfectManager(ConfigurationManager):
 
         brutefir = subprocess.run(["pgrep", "-x", "brutefir"],
                                   capture_output=True, text=True)
+        # `blocking` stays what it has always been: the DIRECT route's
+        # preconditions, which is what the page gates its Run button on.  The
+        # DRC route inverts one of them — it needs the chain UP, not down — so
+        # its own blockers go in a separate list rather than changing the
+        # meaning of this one.
         state["brutefir"] = brutefir.returncode == 0
+        state["blocking_drc"] = []
         if state["brutefir"]:
             state["blocking"].append(
                 "brutefir is convolving the room-correction filter, so the DRC "
                 "path is not bit-perfect by design. Stop the chain "
-                "(drc.sh off) before verifying.")
+                "(drc.sh off) before verifying, or run the DRC route to verify "
+                "the chain itself.")
+        else:
+            state["blocking_drc"].append(
+                "the DRC chain is not running, so there is nothing for the DRC "
+                "route to verify. Start it with drc.sh <rate>.")
 
         state["sudo"] = _sudo_available(self.env())
         if not state["sudo"]:
@@ -286,16 +297,23 @@ class BitPerfectManager(ConfigurationManager):
     # ── runs ────────────────────────────────────────────────────────────────
 
     def run_test(self, job: Job, source: str, material_path: str,
-                 duration: float, allow_drc: bool) -> None:
+                 duration: float, allow_drc: bool, route: str = "direct") -> None:
         if source not in ("aplay", "mpd", "mpd-http", "upnp", "live"):
             raise ValueError(f"unknown source: {source}")
+        if route not in ("direct", "drc"):
+            raise ValueError(f"unknown route: {route}")
+        if route == "drc" and source == "aplay":
+            raise ValueError(
+                "the direct control writes to the raw DAC node itself, so it "
+                "cannot be routed through the chain; choose an MPD source")
         if not 5 <= duration <= 600:
             raise ValueError("tap window must be between 5 and 600 seconds")
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        prefix = self.bp.results_root / f"{stamp}-{source}"
+        suffix = source if route == "direct" else f"{source}-drc"
+        prefix = self.bp.results_root / f"{stamp}-{suffix}"
 
         argv = ["python3", str(self._tool("bitperfect_runner.py")),
-                "--source", source, "--out", str(prefix),
+                "--source", source, "--route", route, "--out", str(prefix),
                 "--duration", str(duration)]
         if source != "live":
             path = self.resolve_material(material_path)

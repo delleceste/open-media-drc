@@ -299,19 +299,184 @@ mpc -p 6610 add src.wav
 
 The DRC path applies the FIR filter, so it is not byte-equal by design. To check
 that the *non-correction* parts of that path (virtual_oss bridge, S32 container,
-brutefir I/O) are transparent, generate a **unit-impulse** filter
-(`L.raw`/`R.raw` = a single `1.0` FLOAT64 sample followed by zeros, with the
-config's `attenuation` set to `0`), run the DRC chain, tap `0x01`, and compare:
-the wire stream should equal the source delayed by the filter latency. That
-isolates everything except the (now trivial) convolution.
+brutefir I/O) are transparent, run the chain on a **pass-through** filter and
+compare as usual. The shipped `flat` geometry is exactly that: `dirac pulse` at
+`attenuation 0.0`, so the convolution is an identity and any byte difference on
+the wire belongs to the plumbing around it.
+
+`bitperfect_runner.py --route drc` does this:
+
+```sh
+./drc.sh geometry flat
+./drc.sh 44100
+python3 scripts/bitperfect_runner.py --source mpd --route drc \
+    --input tests/bitperfect-test-44100-s32-stereo-30s.wav \
+    --out bp-results/drc-44100
+```
+
+MPD plays into `DRC-native` instead of `OKTO-DAC`, so the tapped stream is what
+came out of **MPD → loopback → BruteFIR → DAC** rather than MPD → DAC. This is
+the path music actually takes, and the direct route cannot see it: the direct
+route requires `drc.sh off` first, which removes the two elements under test.
+
+That matters most across operating systems, because the loopback is **not the
+same element** on each:
+
+| | loopback | on a rate disagreement |
+|---|---|---|
+| Linux | `snd-aloop`, `hw:Loopback,0,0` | dictates its rate; MPD adopts it and resamples with soxr |
+| FreeBSD | `virtual_oss`, `/dev/dsp.play` | dictates its `-r`; MPD adopts it and resamples with soxr. virtual_oss resamples **only** with `-S`, which drc.sh does not pass |
+
+Neither loopback resamples on its own, so neither is a candidate for a silent
+quality difference between the two operating systems. What they do differ in is
+everything else: a userspace cuse mixer against a kernel ring buffer, different
+buffering, and a different BruteFIR I/O backend (OSS against ALSA). Those are
+what the DRC route exists to measure.
+
+The route refuses to produce a verdict it cannot stand behind. It stops when:
+
+* **the chain is not running** — there is nothing under test;
+* **the loaded filter is not a pass-through** — checked by reading the config
+  the running brutefir was actually started with, not by trusting `GEOMETRY`
+  or a state file. A `dirac pulse` with a non-zero `attenuation` is refused
+  too: it looks like an identity and is a scale factor on every sample;
+* **any rate in the chain differs from the material** — something would
+  resample, and the run would measure the resampler.
+
+While audio is flowing it re-reads `drc.sh status` once and records MPD's own
+output rate against the loopback's. That is the only moment both exist, and it
+is what distinguishes "the chain is transparent" from "the chain resampled and
+happened to survive the comparison". Both snapshots land in the run's JSON as
+`chain` and `chain_playing`.
 
 The most realistic precision risk on the DRC path is **not** the convolution but
 a **sample-rate mismatch**: `virtual_oss` runs at a fixed `-r <rate>` while MPD's
-`DRC-native` output keeps the source rate (`*:*:*`). If the selected DRC rate
-does not match the track, `virtual_oss` silently resamples with its built-in
-(non-soxr) resampler. `./drc.sh status` flags this as `MISMATCH` — treat that as
-a hard stop, or use `resamp` mode (MPD's soxr "very high") for mixed-rate
-playlists.
+`DRC-native` output keeps the source rate (`*:*:*`).
+
+Who resamples when they disagree depends on one flag. virtual_oss(8):
+
+```
+-S      Enable automatic DSP rate resampling.
+-Q quality
+        Set resampling quality: 0=best, 1=medium and 2=fastest (default).
+```
+
+`-S` is **opt-in, and drc.sh does not pass it** (`VIRTUAL_OSS_ARGS`, drc.sh:96).
+So virtual_oss does not resample: it coerces the client to its own `-r`, and
+**MPD** does the conversion with the soxr "very high" resampler configured in
+`musicpd.conf`. That is the same resampler, at the same quality, as on Linux —
+where `hw:Loopback,0,0` likewise cannot resample and MPD adopts the rate the
+device dictates. The two operating systems behave the same here.
+
+Two consequences worth keeping straight:
+
+* **Do not add `-S`.** It would move the conversion from soxr "very high" to
+  virtual_oss's own resampler, whose default `-Q` is `2` — *fastest*.
+* **`./drc.sh status`'s `MISMATCH` line is not proof of a fault.** It compares
+  MPD's *source* rate (what `mpc status` reports for the current song) against
+  virtual_oss's `-r`. A 44.1 kHz track in a 192 kHz chain reports `MISMATCH`
+  while MPD is resampling it perfectly well. It flags "a conversion is
+  happening", not "a bad conversion is happening".
+
+## Cross-OS comparison through a REAL filter
+
+The pass-through route above proves the plumbing. It cannot answer the question
+that actually matters, because nobody listens to a dirac pulse: **does the chain
+the appliance really runs put the same samples on the wire under FreeBSD and
+under Linux?**
+
+With a real filter there is no absolute reference — the wire never equals the
+source. So the reference becomes the other machine. BruteFIR is deterministic:
+same input samples, same coefficients, same arithmetic, same output. Two
+captures that null to the noise floor prove the difference being heard is not in
+the bytes and cannot be.
+
+```sh
+# ---- on FreeBSD, chain up at the material's own rate, real geometry ----
+omdrc 44100 @multi.pt
+python3 scripts/bitperfect_runner.py --source mpd --route drc \
+    --reference capture \
+    --input tests/bitperfect-test-44100-s32-stereo-30s.wav \
+    --out bp-results/drc-44100-freebsd
+
+# ---- on Linux, SAME material, SAME geometry and variant, SAME rate ----
+python3 scripts/bitperfect_runner.py --source mpd --route drc \
+    --reference capture \
+    --input tests/bitperfect-test-44100-s32-stereo-30s.wav \
+    --out bp-results/drc-44100-linux
+
+# ---- compare ----
+./scripts/bitperfect-null.py \
+    bp-results/drc-44100-freebsd bp-results/drc-44100-linux
+```
+
+`--reference capture` emits **no verdict against the source**. It records the
+wire stream plus the chain's provenance — geometry, variant, rate, the config's
+sha256, each coefficient file's sha256 and attenuation, `filter_length`,
+`float_bits`, dither, BruteFIR version, and the loopback's own command line
+including whether virtual_oss was given `-S`. `bitperfect-null.py` compares that
+provenance **first** and refuses to print a number when the two runs were not
+taken through the same thing: different coefficients, attenuation, rate, or
+input material make a null meaningless, and a meaningless null gets read as an
+operating-system difference.
+
+### `filter_length` does not affect the bytes — measured
+
+The shipped defaults used to differ (`8192,64` FreeBSD, `32768,16` Linux) and
+the obvious worry was that the partitioning itself was audible. It is not, and
+this was settled by measurement rather than argument:
+
+```
+bp-results/null-192000-fbsd-run1        8192,64
+bp-results/null-192000-fbsd-part32768   32768,16
+-> IDENTICAL, 0 differing samples, 26.857 s compared, r=1.000000
+```
+
+Same machine, same real `120.blue @multi.pt` filter at 192 kHz, only the
+partitioning changed between the two captures — and BruteFIR put **exactly** the
+same bytes on the USB wire, not merely bytes within a last-bit rounding of each
+other. Partitioning changes latency and CPU load; it does not change what
+reaches the DAC.
+
+The two defaults are kept matched anyway, so a cross-OS null has one less line
+of explanation in it, and the comparison reports a `filter_length` disagreement
+as *noted* rather than blocking.
+
+Note what this experiment did **not** need: `filter_length` is read by BruteFIR
+alone, so only BruteFIR was restarted. virtual_oss stayed up throughout, which
+avoids the cuse teardown deadlock (`VIRTUAL_OSS_CUSE_DEADLOCK.md`) entirely.
+Prefer that whenever a test only concerns the convolver:
+
+```sh
+kill "$(pgrep -x brutefir)"
+daemon -f /usr/local/bin/brutefir <the same config path> -daemon
+```
+
+### Reading the result
+
+| verdict | exit | meaning |
+|---|---|---|
+| `IDENTICAL` | 0 | the two chains produced the same bytes |
+| `EQUIVALENT` | 0 | differences of 1–2 LSB of S32, about −190 dBFS — 64-bit float rounding, some 30 dB below the DAC's own noise floor |
+| `DIFFERENT` | 1 | a real divergence; `first_diff` says where |
+| *cannot judge* | 2 | provenance disagreed, or the captures would not correlate |
+
+Alignment is by cross-correlation (the captures never start at the same sample,
+and the convolver's latency depends on the partitioning), gated on the Pearson
+correlation at the chosen lag. That gate matters: without it, two captures of
+*different material* produce a large null depth that reads exactly like an
+operating-system difference. A level or filter difference leaves the correlation
+at ~1.0, so the gate never suppresses a real finding — a 0.3 dB level difference
+between the two chains, for instance, nulls at about −59 dBFS and is reported as
+`DIFFERENT` immediately.
+
+### Establish the noise floor first
+
+Run the capture **twice on the same machine** and null those against each other
+before comparing across operating systems. That measures the repeatability of
+the experiment itself. If a same-OS null is not `IDENTICAL`, something in the
+capture or the chain is not deterministic, and no cross-OS number from it means
+anything yet.
 
 ---
 

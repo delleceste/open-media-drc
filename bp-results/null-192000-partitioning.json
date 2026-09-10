@@ -1,0 +1,101 @@
+{
+  "a": {
+    "name": "bp-results/null-192000-fbsd-run1",
+    "raw": "bp-results/null-192000-fbsd-run1.wire.raw",
+    "rate": 192000,
+    "channels": 2,
+    "provenance": {
+      "os": "freebsd15/15.1-RELEASE-p2",
+      "conf": "/usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@multi.pt.conf",
+      "conf_sha256": "c2ae7dec1e7ce0c1136229c5a33bb29238675011e385e05202d7d04eb243743d",
+      "geometry": "120.blue",
+      "rate": 192000,
+      "variant": "multi.pt",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@multi.pt/L.raw",
+          "attenuation": 1.5,
+          "sha256": "0b3a9c24703115edfe8ca9e02e0c4c58ce1ab1bb67bcc7438cd9cebe8e17a371"
+        },
+        {
+          "coeff": "c-r",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@multi.pt/R.raw",
+          "attenuation": 1.5,
+          "sha256": "a69dd6035e62e20f317b5157059c4d2afb6aca0231d1562d19882beca608d79f"
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "8192,64",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "virtual_oss",
+      "loopback_args": "-D /tmp/virtual_oss.pid -r 192000 -i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop",
+      "loopback_resampling": false
+    }
+  },
+  "b": {
+    "name": "bp-results/null-192000-fbsd-part32768",
+    "raw": "bp-results/null-192000-fbsd-part32768.wire.raw",
+    "rate": 192000,
+    "channels": 2,
+    "provenance": {
+      "os": "freebsd15/15.1-RELEASE-p2",
+      "conf": "/usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@multi.pt.conf",
+      "conf_sha256": "c2ae7dec1e7ce0c1136229c5a33bb29238675011e385e05202d7d04eb243743d",
+      "geometry": "120.blue",
+      "rate": 192000,
+      "variant": "multi.pt",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@multi.pt/L.raw",
+          "attenuation": 1.5,
+          "sha256": "0b3a9c24703115edfe8ca9e02e0c4c58ce1ab1bb67bcc7438cd9cebe8e17a371"
+        },
+        {
+          "coeff": "c-r",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@multi.pt/R.raw",
+          "attenuation": 1.5,
+          "sha256": "a69dd6035e62e20f317b5157059c4d2afb6aca0231d1562d19882beca608d79f"
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "32768,16",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "virtual_oss",
+      "loopback_args": "-D /tmp/virtual_oss.pid -r 192000 -i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop",
+      "loopback_resampling": false
+    }
+  },
+  "provenance_diff": {
+    "blocking": [],
+    "noted": [
+      "filter_length: '8192,64' vs '32768,16' \u2014 different partitioning: mathematically the same convolution, different FFT sizes, so the last bit may differ and the latency certainly does"
+    ]
+  },
+  "result": {
+    "verdict": "IDENTICAL",
+    "reading": "the two chains produced the same bytes",
+    "lag_frames": 3848111,
+    "alignment_confidence": 1.0,
+    "compared_frames": 5156484,
+    "compared_seconds": 26.857,
+    "differing_samples": 0,
+    "differing_fraction": 0.0,
+    "max_diff_lsb": 0,
+    "null_depth_db": -Infinity,
+    "first_diff": null
+  }
+}
