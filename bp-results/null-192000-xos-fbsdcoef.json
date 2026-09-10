@@ -1,0 +1,103 @@
+{
+  "a": {
+    "name": "bp-results/null-192000-fbsd-part32768",
+    "raw": "bp-results/null-192000-fbsd-part32768.wire.raw",
+    "rate": 192000,
+    "channels": 2,
+    "provenance": {
+      "os": "freebsd15/15.1-RELEASE-p2",
+      "conf": "/usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@multi.pt.conf",
+      "conf_sha256": "c2ae7dec1e7ce0c1136229c5a33bb29238675011e385e05202d7d04eb243743d",
+      "geometry": "120.blue",
+      "rate": 192000,
+      "variant": "multi.pt",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@multi.pt/L.raw",
+          "attenuation": 1.5,
+          "sha256": "0b3a9c24703115edfe8ca9e02e0c4c58ce1ab1bb67bcc7438cd9cebe8e17a371"
+        },
+        {
+          "coeff": "c-r",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@multi.pt/R.raw",
+          "attenuation": 1.5,
+          "sha256": "a69dd6035e62e20f317b5157059c4d2afb6aca0231d1562d19882beca608d79f"
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "32768,16",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "virtual_oss",
+      "loopback_args": "-D /tmp/virtual_oss.pid -r 192000 -i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop",
+      "loopback_resampling": false
+    }
+  },
+  "b": {
+    "name": "bp-results/null-192000-arch-fbsdcoef",
+    "raw": "bp-results/null-192000-arch-fbsdcoef.wire.raw",
+    "rate": 192000,
+    "channels": 2,
+    "provenance": {
+      "os": "linux/7.2.3-arch1-3",
+      "conf": "/usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@fbsdcoef.conf",
+      "conf_sha256": "7ca6b73662fa487cf26affcfea6bfa1cf241f00be5e080f9180663f0241e1aed",
+      "geometry": "120.blue",
+      "rate": 192000,
+      "variant": "fbsdcoef",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@fbsdcoef/L.raw",
+          "attenuation": 1.5,
+          "sha256": "0b3a9c24703115edfe8ca9e02e0c4c58ce1ab1bb67bcc7438cd9cebe8e17a371"
+        },
+        {
+          "coeff": "c-r",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@fbsdcoef/R.raw",
+          "attenuation": 1.5,
+          "sha256": "a69dd6035e62e20f317b5157059c4d2afb6aca0231d1562d19882beca608d79f"
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "32768,16",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "snd-aloop",
+      "loopback_resampling": false
+    }
+  },
+  "provenance_diff": {
+    "blocking": [],
+    "noted": [
+      "variant: 'multi.pt' vs 'fbsdcoef' \u2014 different label, but the coefficient sha256s are identical, so the two runs convolved the same filter",
+      "os: 'freebsd15/15.1-RELEASE-p2' vs 'linux/7.2.3-arch1-3' \u2014 the whole point of the comparison",
+      "loopback: 'virtual_oss' vs 'snd-aloop' \u2014 virtual_oss against snd-aloop \u2014 the element under test",
+      "conf: '/usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@multi.pt.conf' vs '/usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@fbsdcoef.conf' \u2014 the config lives at a different path on each machine"
+    ]
+  },
+  "result": {
+    "verdict": "IDENTICAL",
+    "reading": "the two chains produced the same bytes",
+    "lag_frames": -5506220,
+    "alignment_confidence": 1.0,
+    "compared_frames": 3525692,
+    "compared_seconds": 18.363,
+    "differing_samples": 0,
+    "differing_fraction": 0.0,
+    "max_diff_lsb": 0,
+    "null_depth_db": -Infinity,
+    "first_diff": null
+  }
+}

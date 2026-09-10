@@ -179,3 +179,95 @@ read-only; a stray write is a real risk.
    implying "same filter" across hosts, and copy the files when it matters.
 3. `verify_filter_bundle.py` should be run against the *design* manifest, not a
    locally regenerated one, or it cannot catch this.
+
+---
+
+## 7. Resolved, and the null has now run — IDENTICAL
+
+**2026-09-10, Arch side.** Rather than overwrite the deployed `@multi.pt`
+coefficients, FreeBSD's were staged as a second variant and the chain pointed at
+that, leaving the Arch deployment untouched:
+
+* FreeBSD is dual-boot on this same disk, so its filesystem was mounted
+  read-only (`mount -t ufs -o ro,ufstype=ufs2 /dev/sda5`) — no network copy, and
+  no chance of writing to it. `L.raw`/`R.raw` came straight from
+  `/usr/local/etc/.../@multi.pt/`, sha256 `0b3a9c24…` / `a69dd603…`, matching
+  the hashes the FreeBSD capture recorded in its own provenance.
+* Staged as `@fbsdcoef` — coefficients under `filters/120.blue/192000/@fbsdcoef/`
+  and a `brutefir-192000@fbsdcoef.conf` identical to the `@multi.pt` config
+  except for the two `filename:` lines. Attenuation stayed 1.5 dB.
+* The input material was regenerated from `tests/gen-bitperfect-wav.py` and came
+  out at sha256 `01317af6…`, byte-identical to the FreeBSD run's input. The
+  generator's determinism claim holds across operating systems.
+* Partitioning was `32768,16` on both sides, so the FreeBSD `part32768` capture
+  is the apples-to-apples reference.
+
+### Result
+
+```
+bp-results/null-192000-fbsd-part32768   freebsd15/15.1-RELEASE-p2   9031912 frames
+bp-results/null-192000-arch-fbsdcoef    linux/7.2.3-arch1-3         3921411 frames
+
+aligned at lag -5506220 frames (r=1.000000); compared 3525692 frames (18.363 s)
+differing samples : 0 (0.000e+00 of all)
+max difference    : 0 LSB of S32
+null depth        : -inf dBFS
+
+IDENTICAL: the two chains produced the same bytes
+```
+
+Artifact: `bp-results/null-192000-xos-fbsdcoef.json`.
+
+**Reading.** Given the same input samples and the same coefficients, FreeBSD and
+Linux put *bit-identical* bytes on the USB wire — through two different
+loopbacks (`virtual_oss` vs `snd-aloop`), two different kernels, two different
+audio stacks. Not "within rounding": zero differing samples out of 7 051 384,
+peak level −46.4 dBFS on both.
+
+Every digital explanation for an audible difference between the two systems is
+now excluded, on this material at this rate. What remains is downstream of the
+wire (the DAC's own clocking and analogue behaviour, host USB electrical noise,
+grounding) or not in the equipment (level matching, expectation). The one
+digital caveat still open is the rate-mismatch guard described in
+`DAC-FORMAT-CROSS-OS-PROCEDURE.md` §7: it was inoperative on FreeBSD until
+2026-09-10, and it governs *mixed-rate ordinary listening*, not the fixed-rate
+captures nulled here.
+
+### Three obstacles worth recording
+
+They cost more than the test did, and each one produced a wrong answer that
+looked like a result.
+
+1. **The runner tapped the wrong DAC.** `discover_linux()` returned the
+   lowest-numbered USB audio card — the ESI U24XL — not the OKTO the chain
+   feeds. A capture of the wrong endpoint is indistinguishable from a capture of
+   the right one. It now refuses to guess when several USB audio cards are
+   present and takes `--card N`.
+2. **`qobuzconnect2mpd` kept repopulating MPD's queue.** Two captures were
+   dominated by full-level Qobuz audio at −4.7 dBFS peak while the test signal
+   sits near −90 dBFS by design, so cross-correlation locked onto the music and
+   reported `r=0.072` — "not the same material". Correct verdict, misleading
+   cause. The renderer has to be stopped, not just the queue cleared.
+3. **The null blocked on the variant *label*.** `variant` is in `MUST_MATCH`,
+   but it is only a proxy for "a different correction curve", and the direct
+   evidence — coefficient sha256 equality — is checked separately a few lines
+   later. When those hashes agree the curve is provably the same and the label
+   is just the directory the identical taps were read from, which is exactly the
+   shape of this run. It is now a note in that case, still blocking otherwise.
+
+### Reproducing
+
+The staged variant was removed afterwards, leaving `@multi.pt` byte-identical to
+its pre-test backup. To redo it: mount the FreeBSD partition read-only, copy
+`@multi.pt/{L,R}.raw` to a `@fbsdcoef` variant, `sed` the two `filename:` lines
+in a copy of the config, `omdrc 192000 @fbsdcoef`, stop every renderer, clear
+MPD's queue, then run the capture with `--card 2` and null it against
+`bp-results/null-192000-fbsd-part32768`.
+
+### Still worth fixing
+
+The provenance bug in §2 is untouched by this: `deploy_filter.py` still makes
+the deployed filter a function of the installing host's SoX build, and
+`verify_filter_bundle.py` on Arch can still only pass against a manifest Arch
+wrote itself. The null above had to work around that rather than benefit from a
+fix.

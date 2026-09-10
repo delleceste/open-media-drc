@@ -101,18 +101,41 @@ def run(argv: list[str], **kw) -> subprocess.CompletedProcess:
 # DAC discovery — never hard-coded, because the address moves across replugs
 # ═══════════════════════════════════════════════════════════════════════════
 
-def discover_linux() -> dict:
-    """ALSA card -> USB bus/device, from /proc/asound/cardN/usbbus."""
+def discover_linux(card: str | None = None) -> dict:
+    """ALSA card -> USB bus/device, from /proc/asound/cardN/usbbus.
+
+    A box with more than one USB audio device has no defensible default: taking
+    the lowest-numbered card silently taps whichever one happens to have
+    enumerated first, which on this appliance is the ESI U24XL rather than the
+    DAC the chain feeds.  A capture of the wrong endpoint looks exactly like a
+    capture of the right one, so refuse to guess and make the caller name it.
+    """
+    found = []
     for d in sorted(Path("/proc/asound").glob("card[0-9]*")):
         usbbus = d / "usbbus"
         if not usbbus.is_file():
             continue
         bus, devnum = usbbus.read_text().strip().split("/")
-        card = d.name[len("card"):]
-        return {"os": "linux", "card": card, "bus": int(bus),
-                "devnum": int(devnum), "alsa": f"hw:{card},0",
-                "pcm_node": f"/dev/snd/pcmC{card}D0p"}
-    raise RuntimeError("no USB audio card found under /proc/asound")
+        n = d.name[len("card"):]
+        name = (d / "id").read_text().strip() if (d / "id").is_file() else "?"
+        found.append({"os": "linux", "card": n, "bus": int(bus),
+                      "devnum": int(devnum), "alsa": f"hw:{n},0",
+                      "pcm_node": f"/dev/snd/pcmC{n}D0p", "name": name})
+    if not found:
+        raise RuntimeError("no USB audio card found under /proc/asound")
+    if card is not None:
+        for f in found:
+            if f["card"] == str(card):
+                return f
+        raise RuntimeError(
+            "card %s is not a USB audio card; found: %s"
+            % (card, ", ".join("%s (%s)" % (f["card"], f["name"]) for f in found)))
+    if len(found) > 1:
+        raise RuntimeError(
+            "more than one USB audio card present, so the tap target is "
+            "ambiguous — pass --card N.  Found: %s"
+            % ", ".join("%s (%s)" % (f["card"], f["name"]) for f in found))
+    return found[0]
 
 
 def discover_freebsd() -> dict:
@@ -141,8 +164,10 @@ def discover_freebsd() -> dict:
             "dsp": f"/dev/dsp{unit}"}
 
 
-def discover() -> dict:
-    return discover_freebsd() if sys.platform.startswith("freebsd") else discover_linux()
+def discover(card: str | None = None) -> dict:
+    if sys.platform.startswith("freebsd"):
+        return discover_freebsd()
+    return discover_linux(card)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1076,6 +1101,9 @@ def main() -> int:
                         "started at the material's own rate.")
     p.add_argument("--input", help="WAV/FLAC to verify (not used by --source live)")
     p.add_argument("--out", required=True, help="artifact prefix")
+    p.add_argument("--card", default=None,
+                   help="ALSA card number of the DAC to tap (Linux). Required "
+                        "when more than one USB audio card is present.")
     p.add_argument("--duration", type=float, default=30.0,
                    help="tap window for --source live")
     p.add_argument("--mpd-port", default=None)
@@ -1091,7 +1119,7 @@ def main() -> int:
     prefix.parent.mkdir(parents=True, exist_ok=True)
 
     emit("PHASE", "prep")
-    dac = discover()
+    dac = discover(args.card)
     emit("INFO", f"DAC: {json.dumps(dac)}")
 
     if args.reference == "capture" and args.route != "drc":

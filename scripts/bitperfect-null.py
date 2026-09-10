@@ -284,18 +284,34 @@ def compare_provenance(a: dict, b: dict) -> dict:
         noted.append("one or both runs carry no provenance (older artifacts, "
                      "or not taken with --reference capture) — the numbers "
                      "below assume the runs were comparable")
+    # The coefficients themselves: same file contents, whatever the paths.
+    # Establish this FIRST, because it is the direct evidence about the filter
+    # and it decides how to read the variant label below.
+    ha = [c.get("sha256") for c in pa.get("coeffs", []) if c.get("sha256")]
+    hb = [c.get("sha256") for c in pb.get("coeffs", []) if c.get("sha256")]
+    coeffs_identical = bool(ha) and bool(hb) and ha == hb
+
     for key, why in MUST_MATCH.items():
         va, vb = pa.get(key), pb.get(key)
-        if va is not None and vb is not None and va != vb:
-            blocking.append(f"{key}: {va!r} vs {vb!r} — {why}")
+        if va is None or vb is None or va == vb:
+            continue
+        # `variant` is only ever a proxy for "a different correction curve".
+        # When both runs recorded coefficient hashes and those hashes agree,
+        # the curve is provably the same and the label is just the directory
+        # the identical taps were read from — which is exactly the shape of a
+        # deliberate cross-OS run, where one machine's coefficients are staged
+        # under a second name rather than overwriting the deployed set.
+        if key == "variant" and coeffs_identical:
+            noted.append(f"variant: {va!r} vs {vb!r} — different label, but "
+                         "the coefficient sha256s are identical, so the two "
+                         "runs convolved the same filter")
+            continue
+        blocking.append(f"{key}: {va!r} vs {vb!r} — {why}")
     for key, why in EXPLAINED.items():
         va, vb = pa.get(key), pb.get(key)
         if va is not None and vb is not None and va != vb:
             noted.append(f"{key}: {va!r} vs {vb!r} — {why}")
 
-    # The coefficients themselves: same file contents, whatever the paths.
-    ha = [c.get("sha256") for c in pa.get("coeffs", []) if c.get("sha256")]
-    hb = [c.get("sha256") for c in pb.get("coeffs", []) if c.get("sha256")]
     if ha and hb and ha != hb:
         blocking.append(f"filter coefficients differ: {ha} vs {hb} — the two "
                         "machines convolved different filters")

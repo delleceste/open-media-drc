@@ -1,0 +1,88 @@
+{
+  "kind": "CAPTURE",
+  "verdict": "CAPTURED",
+  "route": "drc",
+  "reference": "capture",
+  "source": "mpd-http",
+  "os": "linux/7.2.3-arch1-3",
+  "rate": 192000,
+  "channels": 2,
+  "input": "bitperfect-test-192000-s24-stereo-10s.wav",
+  "input_sha256": "01317af6523ec67f74834361ce47df63438f8892d5238f0b2c08239eec903320",
+  "ref_raw_bytes": 15360000,
+  "decoder": "none (already PCM WAV)",
+  "lossy": false,
+  "wire_raw": "bp-results/null-192000-arch-fbsdcoef.wire.raw",
+  "wire_bytes": 31371288,
+  "chain": {
+    "script": "/usr/local/bin/omdrc",
+    "geometry": "120.blue",
+    "sink": "ALSA",
+    "sink_rate": 192000,
+    "brutefir_rate": 192000,
+    "mpd_rate": null,
+    "mpd_format": null,
+    "rate_verdict": null,
+    "conf": "/usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@fbsdcoef.conf",
+    "geometry_running": "120.blue",
+    "provenance": {
+      "os": "linux/7.2.3-arch1-3",
+      "conf": "/usr/local/etc/open-media-drc/configs/120.blue/brutefir-192000@fbsdcoef.conf",
+      "conf_sha256": "7ca6b73662fa487cf26affcfea6bfa1cf241f00be5e080f9180663f0241e1aed",
+      "geometry": "120.blue",
+      "rate": 192000,
+      "variant": "fbsdcoef",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@fbsdcoef/L.raw",
+          "attenuation": 1.5,
+          "sha256": "0b3a9c24703115edfe8ca9e02e0c4c58ce1ab1bb67bcc7438cd9cebe8e17a371"
+        },
+        {
+          "coeff": "c-r",
+          "filename": "/usr/local/etc/open-media-drc/filters/120.blue/192000/@fbsdcoef/R.raw",
+          "attenuation": 1.5,
+          "sha256": "a69dd6035e62e20f317b5157059c4d2afb6aca0231d1562d19882beca608d79f"
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "32768,16",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "snd-aloop",
+      "loopback_resampling": false
+    },
+    "identity": false,
+    "material_rate": 192000
+  },
+  "chain_playing": {
+    "script": "/usr/local/bin/omdrc",
+    "geometry": "120.blue",
+    "sink": "ALSA",
+    "sink_rate": 192000,
+    "brutefir_rate": 192000,
+    "mpd_rate": null,
+    "mpd_format": null,
+    "rate_verdict": null
+  },
+  "mpd_before": {
+    "volume": "n/a",
+    "replaygain": "off",
+    "outputs": [
+      "DRC-native"
+    ]
+  },
+  "mpd_after": {
+    "volume": "n/a",
+    "replaygain": "off",
+    "outputs": [
+      "DRC-native"
+    ]
+  }
+}
