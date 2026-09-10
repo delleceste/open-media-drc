@@ -274,10 +274,24 @@ AFMT = {
 }
 
 
+# sys/dev/sound/pcm/sound.h, verified against 15.1-RELEASE-p2:
+#     AFMT_ENCODING_MASK   0xf00fffff
+#     AFMT_CHANNEL_MASK    0x07f00000   AFMT_CHANNEL_SHIFT    20
+#     AFMT_EXTCHANNEL_MASK 0x08000000   AFMT_EXTCHANNEL_SHIFT 27
+# The channel count sits at bits 20-26, NOT 24-28: a stereo S32_LE stream is
+# 0x00201000, and shifting by 24 decodes it as zero channels.
+AFMT_ENCODING_MASK = 0xF00FFFFF
+AFMT_CHANNEL_MASK = 0x07F00000
+AFMT_CHANNEL_SHIFT = 20
+AFMT_EXTCHANNEL_MASK = 0x08000000
+AFMT_EXTCHANNEL_SHIFT = 27
+
+
 def afmt_decode(v):
-    """FreeBSD packs the channel count into the top bits of an AFMT word."""
-    enc = v & 0x0FFFFFFF
-    ch = (v >> 24) & 0x1F
+    """FreeBSD packs the channel count into the middle bits of an AFMT word."""
+    enc = v & AFMT_ENCODING_MASK
+    ch = (v & AFMT_CHANNEL_MASK) >> AFMT_CHANNEL_SHIFT
+    ch += (v & AFMT_EXTCHANNEL_MASK) >> AFMT_EXTCHANNEL_SHIFT
     return {
         "raw": "0x%08x" % v,
         "encoding": AFMT.get(enc, "0x%08x" % enc),
@@ -288,18 +302,40 @@ def afmt_decode(v):
     }
 
 
+def usbconfig(args):
+    """usbconfig(8), which needs root to see any device.
+
+    Unprivileged it does not fail loudly — it prints "No device match or lack
+    of permissions." to stdout and exits 0, so the descriptor walk silently
+    produced an empty alt table and `selected_alt: null` looked like a FreeBSD
+    limitation rather than a missing sudo.  Try direct first (in case this is
+    already root), then non-interactive sudo."""
+    out = run(["usbconfig"] + args)
+    if out and "lack of permissions" not in out:
+        return out
+    if os.geteuid() != 0 and shutil.which("sudo"):
+        out = run(["sudo", "-n", "usbconfig"] + args)
+        if out and "lack of permissions" not in out:
+            return out
+    return ""
+
+
 def freebsd_usb_devices():
     """Raw descriptors via usbconfig, parsed by the same walker as Linux."""
     out = []
     if not shutil.which("usbconfig"):
         return out
-    listing = run(["usbconfig", "list"]) or run(["usbconfig"])
+    listing = usbconfig(["list"]) or usbconfig([])
+    if not listing:
+        return [{"error": "usbconfig returned nothing — it needs root; "
+                          "run the probe with sudo, or allow "
+                          "`sudo -n usbconfig`"}]
     for line in listing.splitlines():
         m = re.match(r"(ugen\S+):\s*<(.*?)>", line)
         if not m:
             continue
         dev, label = m.group(1), m.group(2)
-        dump = run(["usbconfig", "-d", dev, "dump_all_desc"])
+        dump = usbconfig(["-d", dev, "dump_all_desc"])
         if not dump:
             continue
         blob = usbconfig_raw_bytes(dump)
@@ -324,29 +360,88 @@ def freebsd_usb_devices():
     return out
 
 
-def usbconfig_raw_bytes(dump):
-    """Rebuild the descriptor blob from usbconfig's 'RAW dump' hex lines.
+# usbconfig(8) prints a descriptor one of two ways, and the walker needs both:
+#
+#   * class-specific ("Additional Descriptor") ones come with a `RAW dump:`
+#     block holding their exact bytes;
+#   * STANDARD ones — device, configuration, interface, endpoint — are printed
+#     only as decoded `name = 0xVALUE` fields, with no hex at all.
+#
+# Concatenating just the RAW blocks therefore yields a blob with every
+# interface and endpoint descriptor missing.  The walker never sees an
+# AudioStreaming interface to open an alt-setting on, returns nothing, and the
+# probe reports `alt_settings: []` as if FreeBSD could not read descriptors —
+# which is what it did before this.  So the standard ones are re-encoded from
+# their printed fields and spliced back in, in order, giving the same blob
+# Linux hands over in `/sys/bus/usb/devices/*/descriptors`.
+#
+# Field widths follow USB naming: `w`/`bcd`/`id` are 16-bit little-endian,
+# everything else ("b", "bm", "i") is one byte.  Each descriptor is then cut or
+# zero-padded to its own bLength, because usbconfig prints trailing fields that
+# a short descriptor does not actually carry — a 7-byte endpoint descriptor is
+# printed with bRefresh and bSynchAddress, and emitting those 9 bytes would
+# desynchronise every descriptor after it.
 
-    usbconfig decodes standard descriptors into fields but prints every
-    descriptor's bytes under a `RAW dump:` block as `0xNN, 0xNN, ...`.
-    Concatenating those blocks in order reproduces the configuration blob
-    that Linux exposes directly in sysfs.
+_FIELD = re.compile(r"^\s*([A-Za-z]\w*)\s*=\s*0x([0-9a-fA-F]+)")
+
+
+def _encode_fields(fields):
+    """Re-encode one standard descriptor from its printed fields."""
+    if not fields or fields[0][0] != "bLength":
+        return b""
+    out = bytearray()
+    for name, value in fields:
+        width = 2 if (name.startswith("w") or name.startswith("bcd")
+                      or name.startswith("id")) else 1
+        out.extend(int(value, 16).to_bytes(width, "little", signed=False)
+                   if int(value, 16) < (1 << (8 * width))
+                   else (int(value, 16) & ((1 << (8 * width)) - 1)
+                         ).to_bytes(width, "little"))
+    blen = int(fields[0][1], 16)
+    if blen < 2:
+        return b""
+    return bytes(out[:blen].ljust(blen, b"\x00"))
+
+
+def usbconfig_raw_bytes(dump):
+    """Rebuild the configuration blob from `usbconfig -d ugenX.Y dump_all_desc`.
+
+    Walks the output once, emitting each descriptor in the order printed:
+    the bytes of a `RAW dump:` block where one is given, and otherwise the
+    re-encoded fields of the standard descriptor that precedes it.
     """
     data = bytearray()
+    fields = []
     in_raw = False
+
+    def flush():
+        nonlocal fields
+        if fields:
+            data.extend(_encode_fields(fields))
+            fields = []
+
     for line in dump.splitlines():
         if "RAW dump" in line:
+            # The raw bytes supersede the fields printed just above them.
+            fields = []
             in_raw = True
             continue
         if in_raw:
-            hexes = re.findall(r"0x([0-9a-fA-F]{2})\b", line)
+            body = line.split("|", 1)[1] if "|" in line else line
+            hexes = re.findall(r"0x([0-9a-fA-F]{2})\b", body)
             if hexes:
-                # drop a leading offset column like "0x00 | 0x09, 0x04, ..."
-                if "|" in line:
-                    hexes = re.findall(r"0x([0-9a-fA-F]{2})\b", line.split("|", 1)[1])
                 data.extend(int(h, 16) for h in hexes)
-            else:
-                in_raw = False
+                continue
+            in_raw = False
+            # fall through: this line may already start the next descriptor
+        m = _FIELD.match(line)
+        if m:
+            if m.group(1) == "bLength":
+                flush()
+            fields.append((m.group(1), m.group(2)))
+        elif line.strip() and not line.startswith(" " * 2):
+            flush()
+    flush()
     return bytes(data)
 
 
@@ -371,20 +466,84 @@ def freebsd_pcm_state():
             "flags": m.group(3).strip(),
         })
 
-    # verbose sndstat channel lines, e.g.
+    # Verbose sndstat channel lines.  Two spellings are in the wild and both
+    # appear here, because the file is a debugging aid with no stable format:
+    #
     #   [pcm0:play:dsp0.p0]: spd 192000/192000, fmt 0x02001000/0x02001000, ...
-    for m in re.finditer(
-            r"\[(pcm\d+):(play|rec):(\S+?)\]:\s*spd\s*(\d+)(?:/(\d+))?,\s*"
-            r"fmt\s*0x([0-9a-fA-F]+)(?:/0x([0-9a-fA-F]+))?", text):
-        state["streams"].append({
-            "unit": m.group(1),
-            "direction": "playback" if m.group(2) == "play" else "capture",
-            "node": m.group(3),
-            "rate": int(m.group(4)),
-            "hw_rate": int(m.group(5)) if m.group(5) else None,
-            "format": afmt_decode(int(m.group(6), 16)),
-            "hw_format": afmt_decode(int(m.group(7), 16)) if m.group(7) else None,
-        })
+    #   [dsp1.play.0]: spd 192000, fmt 0x00201000, flags ..., pid 2067 (brutefir)
+    #
+    # The second is what 15.1-RELEASE emits, and it does not name its pcm unit
+    # on the channel line — the enclosing `pcmN:` header does — so the unit is
+    # carried down rather than matched per line.
+    #
+    # The feeder chain that follows each channel is the point of reading this
+    # at all.  A bit-perfect path is
+    #     {userland} -> feeder_root(0x00201000) -> {hardware}
+    # while a converted one names every stage it inserts
+    #     ... feeder_root -> feeder_format(...) -> feeder_volume(...) -> ...
+    # No amount of format agreement proves transparency if a feeder sits in
+    # the path, so the chain is recorded verbatim alongside the format.
+    unit = None
+    pending = None
+
+    def flush(entry):
+        if entry:
+            state["streams"].append(entry)
+
+    for line in text.splitlines():
+        head = re.match(r"^(pcm\d+):", line)
+        if head:
+            unit = head.group(1)
+        m = re.search(
+            r"\[(?:(pcm\d+):(play|rec):(\S+?)|(\S+?)\.(play|rec(?:ord)?)\.(\d+))\]:"
+            r"\s*spd\s*(\d+)(?:/(\d+))?,\s*"
+            r"fmt\s*0x([0-9a-fA-F]+)(?:/0x([0-9a-fA-F]+))?", line)
+        if m:
+            flush(pending)
+            if m.group(1):
+                owner_unit, direction, node = m.group(1), m.group(2), m.group(3)
+            else:
+                owner_unit = unit
+                direction = m.group(5)
+                node = "%s.%s.%s" % (m.group(4), m.group(5), m.group(6))
+            pending = {
+                "unit": owner_unit,
+                "direction": "playback" if direction == "play" else "capture",
+                "node": node,
+                "rate": int(m.group(7)),
+                "hw_rate": int(m.group(8)) if m.group(8) else None,
+                "format": afmt_decode(int(m.group(9), 16)),
+                "hw_format": (afmt_decode(int(m.group(10), 16))
+                              if m.group(10) else None),
+            }
+            pid = re.search(r"pid\s+(\d+)\s*\(([^)]*)\)", line)
+            if pid:
+                pending["owner_pid"] = int(pid.group(1))
+                pending["owner"] = pid.group(2)
+            continue
+        if pending is None:
+            continue
+        if ("{userland}" in line or "{hardware}" in line) \
+                and "feeder_chain" not in pending:
+            chain = line.strip()
+            pending["feeder_chain"] = chain
+            stages = re.findall(r"(feeder_\w+)", chain)
+            pending["feeders"] = stages
+            # feeder_root is the channel itself, not a conversion stage.
+            pending["converting_feeders"] = [f for f in stages
+                                             if f != "feeder_root"]
+            pending["transparent"] = not pending["converting_feeders"]
+        elif "channel flags=" in line and "channel_flags" not in pending:
+            cf = re.search(r"channel flags=0x[0-9a-fA-F]+<([^>]*)>", line)
+            if cf:
+                pending["channel_flags"] = cf.group(1).split(",")
+        elif line.strip().startswith("interrupts"):
+            st = re.search(r"interrupts\s+(\d+),\s*(underruns|overruns)\s+(\d+)",
+                           line)
+            if st:
+                pending["interrupts"] = int(st.group(1))
+                pending[st.group(2)] = int(st.group(3))
+    flush(pending)
 
     for unit in {d["unit"] for d in state["devices"]}:
         knobs = {}
@@ -543,13 +702,34 @@ def summarize(data):
                              "owner": (st.get("owner_cmd") or "")[:60]})
         s["open_streams"] = fmts
     else:
-        s["open_streams"] = [
-            {"where": "%s/%s" % (st["unit"], st["node"]),
-             "format": st["format"]["encoding"],
-             "wire_bytes": st["format"]["wire_bytes"],
-             "rate": st["rate"], "channels": st["format"]["channels"]}
-            for st in data.get("oss", {}).get("streams", [])
-        ]
+        # Every pcm device lists ALL its channels in verbose sndstat, open or
+        # not, each carrying the format it would default to (48 kHz S16_LE on
+        # an idle one).  Counting those as open streams made the second sound
+        # card — an idle ESI U24XL sitting at its default — look like a rate
+        # and format disagreement inside the playback chain, which is the
+        # suite's hard-stop signal for "a resampler is running".  A channel is
+        # open only if the kernel says it is: an owner pid, or RUNNING/BUSY in
+        # its channel flags.  The rest are recorded, but not as open streams.
+        def is_open(st):
+            flags = set(st.get("channel_flags") or [])
+            return bool(st.get("owner_pid")) or bool(flags & {"RUNNING", "BUSY"})
+
+        def describe(st):
+            entry = {"where": "%s/%s" % (st["unit"], st["node"]),
+                     "format": st["format"]["encoding"],
+                     "wire_bytes": st["format"]["wire_bytes"],
+                     "rate": st["rate"],
+                     "channels": st["format"]["channels"],
+                     "direction": st.get("direction")}
+            for key in ("owner", "owner_pid", "feeder_chain",
+                        "converting_feeders", "transparent", "channel_flags"):
+                if st.get(key) is not None:
+                    entry[key] = st[key]
+            return entry
+
+        streams = data.get("oss", {}).get("streams", [])
+        s["open_streams"] = [describe(st) for st in streams if is_open(st)]
+        s["idle_channels"] = [describe(st) for st in streams if not is_open(st)]
     s["selected_alt"] = sel
 
     rates = {st.get("rate") for st in s["open_streams"] if st.get("rate")}
