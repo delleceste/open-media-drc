@@ -404,6 +404,24 @@ CDIN_SCAN_BYTES = 65_536 # tail of the log the card reads
 # /dev/dsp.play while a disc plays, and that is the handle to give back by
 # hand when something downstream needs the chain to itself.
 CDIN_CONTROL = True
+# ...and whether STARTING it is one of them.  The asymmetry is deliberate and
+# it is Linux's: stopping only ever RELEASES a device, so the worst a stray
+# press can do is end audio you wanted — visible, recoverable, and it never
+# leaves a device wedged.  Starting ACQUIRES one, and acquiring correctly means
+# knowing the rate and the state of the chain: alsaloop opened at 44.1 kHz
+# against a loopback BruteFIR is reading at 192 kHz is an EBUSY, and a bridge
+# started behind drc.sh's back leaves last_source saying "music", so the next
+# reconcile, rate action or boot stops it again and the bridge looks like it
+# died on its own.  Only `drc.sh cdin` knows enough to start it, and that is
+# what the "CD input (44.1 kHz)" button already is.
+#
+# FreeBSD keeps both: virtual_oss mixes, the daemon is a persistent service
+# that picks its own output, and a raw start really is just "put it back in the
+# chain".  Stop stays on Linux precisely because it does NOT go through
+# drc.sh — when drc.sh is the thing that is stuck (its lock held by a wedged
+# run, or MPD refusing connections so every rate action aborts), this is the
+# one control left that can hand the device back.
+CDIN_CONTROL_START = not _IS_LINUX
 # How long to wait for the process to appear (or go) after the rc verb returns.
 # `service ... onestart` forks a daemon(8) and answers immediately, so the
 # answer is not yet evidence of anything.
@@ -470,8 +488,11 @@ _CHAIN_DEFAULT_DEVICES = {
     # snd-aloop is card 1 by convention here: MPD plays into hw:1,0 and brutefir
     # reads hw:1,1 (brutefir_defaults.linux.conf).  The capture card has no
     # conventional number, so it stays off until [chain] names it.
+    # snd-aloop is pinned to card 1 by etc/modprobe.d/omdrc-snd-aloop.conf, so
+    # the two loopback roles are constants.  Neither USB card is: both are
+    # resolved per poll from the roles file the config helper publishes.
     "Linux":   {"capture": "", "bridge": "hw:1,0",
-                "loop": "hw:1,1", "dac": "hw:0,0"},
+                "loop": "hw:1,1", "dac": ""},
 }
 # Where omdrc-config-helper publishes the resolved card numbers on Linux.  The
 # capture card genuinely has no conventional number, so rather than make every
@@ -480,18 +501,34 @@ _CHAIN_DEFAULT_DEVICES = {
 _AUDIO_ROLES_FILE = os.environ.get("OMDRC_AUDIO_ROLES", "/run/omdrc/audio.roles")
 
 
-def _linux_capture_role() -> str:
-    """`hw:<card>,0` for the configured capture interface, or "" when none."""
+def _linux_role_device(key: str) -> str:
+    """`hw:<card>,0` for a role the config helper published, or "" when none.
+
+    Both the capture card and the DAC have to come from here.  A USB card's
+    ALSA index is whatever the kernel handed out this boot — swap the DAC, or
+    just replug in a different order, and every number moves: on this box the
+    capture interface went from card 2 to card 0 across one reboot.  A
+    hardcoded default therefore names the wrong card the moment the hardware
+    changes, and the chain diagram then reports the DAC as free while the
+    convolver is plainly writing to it."""
     try:
         with open(_AUDIO_ROLES_FILE, errors="replace") as stream:
             text = stream.read()
     except OSError:
         return ""
     for line in text.splitlines():
-        key, _, value = line.partition("=")
-        if key.strip() == "capture_unit" and value.strip():
+        name, _, value = line.partition("=")
+        if name.strip() == key and value.strip():
             return f"hw:{value.strip()},0"
     return ""
+
+
+def _linux_capture_role() -> str:
+    return _linux_role_device("capture_unit")
+
+
+def _linux_dac_role() -> str:
+    return _linux_role_device("dac_unit")
 # Which side of an ALSA pcm each role is: the bridge and the DAC are written to,
 # the capture card and the loopback's far side are read from.
 _CHAIN_ALSA_SIDE = {"capture": "c", "bridge": "p", "loop": "c", "dac": "p"}
@@ -504,6 +541,11 @@ _CHAIN_ROLE_TITLE = {"capture": "Capture in", "bridge": "Bridge",
 _CHAIN_APPS = {
     "brutefir":         "DRC convolver",
     "omdrc-cdin":       "CD / S-PDIF bridge",
+    # Linux runs the same role as a supervised alsaloop(1), and it is alsaloop
+    # itself that holds the capture card and the loopback — the supervisor
+    # around it opens no device.  Without this the card draws the bridge it is
+    # watching on the other panel as an unknown process squatting the input.
+    "alsaloop":         "CD / S-PDIF bridge",
     "mpd":              "music player daemon",
     "musicpd":          "music player daemon",
     "virtual_oss":      "OSS bridge",
@@ -644,7 +686,7 @@ def load_config(path: str) -> None:
     global SPECTRUM_SOURCE, SPECTRUM_CDIN_FIFO, SPECTRUM_CDIN_RATE
     global SPECTRUM_CDIN_CAPTURE_PCM
     global CDIN_ENABLED, CDIN_LOG_FILE, CDIN_PROCESS, CDIN_SERVICE
-    global CDIN_INTERVAL, CDIN_MAX_EVENTS, CDIN_CONTROL
+    global CDIN_INTERVAL, CDIN_MAX_EVENTS, CDIN_CONTROL, CDIN_CONTROL_START
     global CHAIN_ENABLED, CHAIN_INTERVAL, CHAIN_PRIVILEGED, CHAIN_DEVICES
     global CONFIGURATION, _CONFIGURATION_MANAGER
     global BITPERFECT, _BITPERFECT_MANAGER
@@ -747,6 +789,8 @@ def load_config(path: str) -> None:
         CDIN_INTERVAL = max(1, cfg.getint("cdin", "refresh", fallback=CDIN_INTERVAL))
         CDIN_MAX_EVENTS = max(1, cfg.getint("cdin", "max_events", fallback=CDIN_MAX_EVENTS))
         CDIN_CONTROL = cfg.getboolean("cdin", "control", fallback=CDIN_CONTROL)
+        CDIN_CONTROL_START = cfg.getboolean("cdin", "control_start",
+                                            fallback=CDIN_CONTROL_START)
 
     # [chain] is a settings section — the audio-chain diagram names the four
     # device roles it asks the OS about.  Leave a key out to take the default
@@ -818,10 +862,9 @@ def load_config(path: str) -> None:
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
             continue
         c = dict(cfg[sid])
-        c["id"] = sid
-        command_platform = c.get("platform", "").strip()
-        if command_platform and command_platform.casefold() != platform.system().casefold():
+        if not _command_os_matches(c):
             continue
+        c["id"] = sid
         for key in ("what", "group", "type"):
             if key not in c:
                 raise ValueError(f"[{sid}] missing required key: '{key}'")
@@ -835,6 +878,14 @@ def load_config(path: str) -> None:
             raise ValueError(f"[{sid}] LINK command missing 'url' key")
         COMMANDS.append(c)
     CMD_MAP = {c["id"]: c for c in COMMANDS}
+
+
+def _command_os_matches(cmd: dict) -> bool:
+    raw = cmd.get("os", "").strip()
+    if not raw:
+        return True
+    allowed = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    return platform.system().lower() in allowed
 
 
 def _groups() -> list[tuple]:
@@ -882,10 +933,13 @@ def _env() -> dict:
         if os.path.isdir(run_dir):
             e["XDG_RUNTIME_DIR"] = run_dir
             e.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={run_dir}/bus")
-    # FreeBSD rc.d services start with a minimal PATH that omits /usr/local/{s,}bin
-    # where brutefir, mpc, virtual_oss, pgrep, … live.
+    # Services start with a minimal PATH.  Include system-local tools and the
+    # run user's script directories so custom commands.conf helpers resolve the
+    # same way they do in an interactive session.
     path_dirs = e.get("PATH", "").split(":")
-    for d in ("/usr/local/sbin", "/usr/local/bin"):
+    for d in (os.path.join(e["HOME"], "bin"),
+              os.path.join(e["HOME"], ".local", "bin"),
+              "/usr/local/sbin", "/usr/local/bin"):
         if d not in path_dirs:
             path_dirs.insert(0, d)
     e["PATH"] = ":".join(path_dirs)
@@ -3303,6 +3357,7 @@ def index():
         cdin_enabled=CDIN_ENABLED,
         cdin_interval=CDIN_INTERVAL,
         cdin_control=CDIN_CONTROL,
+        cdin_control_start=CDIN_CONTROL_START,
         cdin_log_id=_cdin_log_source_id(),
         chain_enabled=CHAIN_ENABLED,
         chain_interval=CHAIN_INTERVAL,
@@ -3687,13 +3742,32 @@ def qconnect_switch():
     if ok:
         return jsonify({"ok": True, "active": target})
     # A toast is gone in three seconds and cannot hold a linker error.  Send the
-    # tail of the renderer's own log with the failure so the card can show what
-    # actually went wrong, and name the log so the reader can go and read it.
+    # evidence with the failure so the card can show what actually went wrong,
+    # and name its source so the reader can go and read the rest of it.
     source = _renderer_log_source(target)
+    detail, log_label, log_path = _renderer_failure_detail(target, source)
     return jsonify({"ok": False, "error": error, "renderer": target,
-                    "detail": _renderer_log_tail(target),
-                    "log_source": source["id"], "log_label": source["label"],
-                    "log_path": source["path"]})
+                    "detail": detail, "log_source": source["id"],
+                    "log_label": log_label, "log_path": log_path})
+
+
+def _renderer_failure_detail(target: str, source: dict) -> tuple[str, str, str]:
+    """Evidence for a renderer that would not start, as (detail, label, path).
+
+    The renderer's own log is the right place to look once its binary is
+    running, but a start that fails before that says so only to the service
+    manager — and an unchanged log tail from the previous run reads as if it
+    were about this attempt.  When both have something to say, show both under
+    headings and leave label/path empty: the card's footer names a single
+    source, and it would be naming the wrong one for half of the text."""
+    report = _service_failure_report(target)
+    tail   = _renderer_log_tail(target)
+    if report and tail:
+        return (f"── systemd {target} ──\n{report}\n\n"
+                f"── {source['path']} ──\n{tail}"), "", ""
+    if report:
+        return report, "", ""
+    return tail, source["label"], source["path"]
 
 
 # How long a renderer gets to show up in the process table after its service
@@ -3702,16 +3776,60 @@ def qconnect_switch():
 # genuine failure feel like a hang.
 RENDERER_START_TIMEOUT = 5.0
 
+# How long it then has to stay there.  A renderer that dies at exec — a unit
+# naming a binary that moved, a missing shared library — is *running* for the
+# few milliseconds before the service manager reaps it, and a Restart= rule
+# then flips it between up and down for as long as you care to watch.  A single
+# sample lands inside one of those windows often enough that dead renderers
+# were reported as successful switches, so the switch has to see it still up
+# after this long as well.
+#
+# The value is set by how late a renderer can still fail, not by how quickly it
+# starts: both of these connect to MPD and then to their cloud service before
+# they know whether they can run at all.  qobuzconnect2mpd reaches its
+# authentication verdict — and exits — about four seconds in, which a shorter
+# window walked straight past.  It also has to clear a systemd RestartSec so a
+# restart loop always shows itself as a gap.  Every switch pays it, but only on
+# the way to success: a failure ends the wait as soon as the service drops.
+RENDERER_SETTLE = 6.0
 
-def _await_service(name: str, timeout: float) -> bool:
-    """True as soon as `name` is running, False if it never turns up."""
+
+def _await_service(name: str, timeout: float, settle: float = 0.0) -> bool:
+    """True once `name` is running and has stayed running for `settle` seconds.
+    False if it never turns up within `timeout`, or if it turns up and falls
+    over again while settling."""
     deadline = time.monotonic() + timeout
-    while True:
-        if _service_running(name):
-            return True
+    while not _service_running(name):
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.25)
+    settled_at = time.monotonic() + settle
+    while time.monotonic() < settled_at:
+        time.sleep(0.25)
+        if not _service_running(name):
+            return False
+    return True
+
+
+def _service_failure_report(name: str) -> str:
+    """What systemd says about a renderer that would not stay up.  A start that
+    fails before the binary runs — an ExecStart naming a binary that is not
+    there, a unit that will not load — writes nothing to the renderer's own
+    log, and systemd's status carries both the exit status and the journal
+    lines that name the cause.
+
+    Linux only: FreeBSD's `service onestatus` answers "is not running", which
+    is what the caller already knows, so there it is the log that has to speak
+    and this stays empty."""
+    if not _IS_LINUX:
+        return ""
+    try:
+        r = subprocess.run(
+            ["systemctl", "--user", "status", "--no-pager", "--lines=20", name],
+            capture_output=True, text=True, timeout=10, env=_env())
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return str(e)
+    return (r.stdout or r.stderr).strip()
 
 
 def _activate_renderer(target: str) -> tuple[bool, str]:
@@ -3733,20 +3851,28 @@ def _activate_renderer(target: str) -> tuple[bool, str]:
             return False, f"could not stop {other}"
         # Leave MPD in a clean state for the incoming renderer.
         _mpc_quiesce()
+        started = None
         if not _service_running(target):
-            r = _service_action(target, "onestart")
-            if r.returncode != 0:
-                return False, f"starting {target}: {(r.stderr or r.stdout).strip()}"
-            # A zero exit only means the service script ran.  Both renderers are
-            # started through daemon(8), which forks and reports success before
-            # the binary has done anything — a renderer that dies immediately
-            # (a missing shared library, a config it will not accept) looked
-            # exactly like a successful switch.  Wait for it to actually be
-            # there, and if it is not, say so with its own log as the evidence.
-            if not _await_service(target, RENDERER_START_TIMEOUT):
-                detail = (r.stderr or r.stdout).strip()
-                return False, (f"{target} exited immediately after starting"
-                               + (f": {detail}" if detail else ""))
+            started = _service_action(target, "onestart")
+            if started.returncode != 0:
+                return False, (f"starting {target}: "
+                               f"{(started.stderr or started.stdout).strip()}")
+        # A zero exit only means the service script ran.  Both renderers are
+        # started through daemon(8), which forks and reports success before the
+        # binary has done anything — a renderer that dies immediately (a missing
+        # shared library, an ExecStart naming a binary that moved) looked
+        # exactly like a successful switch.  Confirm it is there and stays
+        # there, and if it does not, say so with the evidence.
+        #
+        # Checked even when the start above was skipped: "already running" is
+        # exactly what a renderer in a restart loop looks like from a single
+        # sample, and skipping the check turned that into a switch that
+        # reported success without having done anything at all.
+        if not _await_service(target, RENDERER_START_TIMEOUT, RENDERER_SETTLE):
+            detail = ((started.stderr or started.stdout).strip()
+                      if started else "")
+            return False, (f"{target} would not stay running"
+                           + (f": {detail}" if detail else ""))
         # Remember the choice for the next boot.  Written only once the switch
         # has actually succeeded, so a failed switch does not arm the boot
         # service with a renderer that would not start.
@@ -4016,12 +4142,17 @@ def _cdin_stats_fields(body: str) -> dict:
     if "capture-only" in body:
         f["measure_only"] = True
 
-    m = re.search(r"\blead (\d+) ms(?: \(min (\d+), max (\d+)\))?", body)
+    m = re.search(r"\blead (\d+) ms"
+                  r"(?: \(min (\d+), max (\d+)(?:, target (\d+))?\))?", body)
     if m:
         f["lead_ms"] = int(m.group(1))
         if m.group(2):
             f["lead_min_ms"] = int(m.group(2))
             f["lead_max_ms"] = int(m.group(3))
+        # The lead the bridge was configured to hold, when it publishes one.
+        # Absent from the FreeBSD daemon, which is why it is optional here.
+        if m.group(4):
+            f["lead_target_ms"] = int(m.group(4))
 
     # The drift field is prose with a number in it, and it has more states than
     # "a number": it settles, it is anchored, and it is thrown away whenever the
@@ -4039,6 +4170,13 @@ def _cdin_stats_fields(body: str) -> dict:
     if m:
         f["horizon_what"] = m.group(1)
         f["horizon_h"] = int(m.group(2))
+
+    # Which way the disc is going: through the convolver, or straight to the
+    # DAC because the chain was down when the bridge started.  Absent from the
+    # FreeBSD daemon's line, and absent means "not said" rather than "direct".
+    m = re.search(r"\bpath (drc|direct)\b", body)
+    if m:
+        f["path"] = m.group(1)
 
     for key, pattern in (("drops_bytes", r"\bdrops (\d+) B"),
                          ("starves",     r"\bstarves (\d+)"),
@@ -4096,16 +4234,35 @@ def _cdin_readout(status: dict) -> tuple[list, list]:
 
     if "lead_ms" in f:
         lead = f["lead_ms"]
-        # Below ~250 ms there is nothing left to absorb a transport seek — the
-        # same floor the daemon warns about at startup.
-        low = lead < 250
+        # "Low" only means anything against the lead the bridge is holding on
+        # purpose.  The FreeBSD daemon keeps a seconds-scale ring and publishes
+        # no target, so its absolute floor stays: a 2 s lead down to 250 ms has
+        # been eaten and a seek will starve.  The Linux bridge corrects drift
+        # continuously and asks for ~200 ms by design, so that same floor
+        # condemned every healthy run — a warning that is always on is one
+        # nobody reads when it finally means something.
+        target = f.get("lead_target_ms")
+        low = lead < target // 2 if target else lead < 250
         value = f"{lead} ms"
+        if target:
+            value += f" of {target}"
         if "lead_min_ms" in f:
             value += f" (min {f['lead_min_ms']})"
         chip("lead", "buffer", value, "warn" if low else "ok")
         if low:
+            text = f"lead down to {lead} ms"
+            text += (f" of the {target} ms it holds" if target else "")
             problems.append({"level": "warn", "text":
-                f"lead down to {lead} ms — nothing left to absorb a transport seek"})
+                text + " — nothing left to absorb a transport seek"})
+
+    if f.get("path"):
+        # Not an alarm: bridging straight to the DAC is a legitimate mode, and
+        # the bridge already logged a warning when it chose it.  It is a chip
+        # so the answer is on the card at a glance instead of inferred from an
+        # ALSA device name in the ends row.
+        drc = f["path"] == "drc"
+        chip("path", "path", "through DRC" if drc else "direct to DAC",
+             "ok" if drc else "warn")
 
     if "drift_ppm" in f:
         value = f"{f['drift_ppm']:+.1f} ppm"
@@ -4215,6 +4372,7 @@ def _cdin_status() -> dict:
         # what decides whether the card is worth the screen space it takes.
         "active": False,
         "control": CDIN_CONTROL,
+        "control_start": CDIN_CONTROL_START,
     }
 
     try:
@@ -4313,10 +4471,10 @@ def _cdin_status() -> dict:
         newest is not None and acked is not None
         and newest["at"] <= acked) else newest
 
-    status["led"], status["summary"] = _cdin_verdict(status)
-    status["active"] = bool(running and status["state"] == "playing")
     if status["stats"]:
         status["stats_fields"] = _cdin_stats_fields(status["stats"])
+    status["led"], status["summary"] = _cdin_verdict(status)
+    status["active"] = bool(running and status["state"] == "playing")
     status["metrics"], status["problems"] = _cdin_readout(status)
     return status
 
@@ -4342,6 +4500,15 @@ def _cdin_verdict(status: dict) -> tuple[str, str]:
         return "red", f"{which} unavailable" + (f" — {why}" if why else "")
 
     if status["state"] == "playing":
+        # Which path the disc is taking belongs here rather than only in the
+        # chips: "playing" alone reads the same whether the room correction is
+        # in the path or not, and that is the one difference a listener can
+        # hear without being able to see it.
+        path = (status.get("stats_fields") or {}).get("path")
+        if path == "drc":
+            return "green", "playing through DRC — audio on the wire"
+        if path == "direct":
+            return "green", "playing straight to the DAC — no room correction"
         return "green", "playing — audio on the wire"
     if status["state"] == "idle":
         return "green", "idle — waiting for audio, output released"
@@ -4467,6 +4634,14 @@ def cdin_control():
     verb = {"start": "onestart", "stop": "onestop"}.get(action)
     if verb is None:
         return jsonify({"ok": False, "error": "invalid action"}), 400
+    if action == "start" and not CDIN_CONTROL_START:
+        # Closed at the API too, not just hidden in the page: a bridge started
+        # from outside drc.sh is a rate and a source the rest of the system
+        # does not agree with.
+        return jsonify({"ok": False, "error":
+                        "starting the bridge here is disabled — select "
+                        "\"CD input (44.1 kHz)\", which sets the rate and the "
+                        "source the bridge needs"}), 403
 
     if action == "start":
         ok, error = _cdin_disable_mpd_outputs()
@@ -4553,28 +4728,37 @@ def _chain_run_tool(argv: list[str], timeout: float = 5.0) -> tuple[str, bool]:
 
     Returns (combined output, privileged).  `privileged` is what the answer was
     actually produced with, not what was asked for, so the card can say "only
-    this user's processes are listed" when it matters."""
+    this user's processes are listed" when it matters.
+
+    The two streams are merged into ONE pipe rather than captured apart and
+    concatenated.  `fuser -v` prints its table to stderr and the bare PIDs to
+    stdout, and the PID column of that table is the stdout half landing in the
+    middle of the stderr half — captured separately, every row loses its PID,
+    nothing parses, and the card reports an idle chain while brutefir and the
+    bridge are plainly holding their devices."""
     global _CHAIN_SUDO_OK
     command = _chain_tool_command(argv)
     escalated = command[0] == "sudo"
     try:
-        r = subprocess.run(command, capture_output=True, text=True,
+        r = subprocess.run(command, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, text=True,
                            timeout=timeout, env=_env())
     except Exception:
         if escalated:
             _CHAIN_SUDO_OK = False      # no sudo on this box at all
         return "", os.geteuid() == 0
-    output = r.stdout + r.stderr
+    output = r.stdout
     if escalated and _SUDO_REFUSAL.search(output):
         # Remember it: a grant that is not there will not appear on the next
         # poll, and retrying every few seconds would only fill the auth log.
         _CHAIN_SUDO_OK = False
         try:
-            r = subprocess.run(argv, capture_output=True, text=True,
+            r = subprocess.run(argv, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, text=True,
                                timeout=timeout, env=_env())
         except Exception:
             return "", False
-        return r.stdout + r.stderr, False
+        return r.stdout, False
     if escalated:
         _CHAIN_SUDO_OK = True
     return output, escalated or os.geteuid() == 0
@@ -4637,6 +4821,23 @@ def _holders_fstat(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
 _FUSER_ROW = re.compile(r"^(?P<user>\S+)\s+(?P<pid>\d+)\s+(?P<access>\S+)\s+(?P<cmd>.+)$")
 
 
+def _proc_command(pid: str, fallback: str) -> str:
+    """Linux: the program's own name, which is not what it calls its threads.
+
+    BruteFIR renames its main thread to "input" the moment it starts
+    convolving ("filter-0", "output" beside it), and that name is what both
+    fuser's COMMAND column and /proc/<pid>/comm report.  The card would then
+    draw the convolver as an unknown process squatting the DAC and the
+    loopback — the exact alarm it exists to raise, raised at the one program
+    that is supposed to be there.  argv[0] does not move."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as stream:
+            argv0 = stream.read().split(b"\0", 1)[0]
+    except OSError:
+        return fallback
+    return os.path.basename(argv0.decode(errors="replace")) or fallback
+
+
 def _holders_fuser(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
     """Linux: fuser(1) -v, whose table names the file it is talking about.
 
@@ -4670,7 +4871,8 @@ def _holders_fuser(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
         mode = "w" if "F" in access else ("r" if "f" in access else "")
         if not mode:
             continue
-        _add_holder(found, current, m.group("pid"), m.group("cmd").strip(),
+        _add_holder(found, current, m.group("pid"),
+                    _proc_command(m.group("pid"), m.group("cmd").strip()),
                     m.group("user"), mode)
     return {p: list(v.values()) for p, v in found.items()}, privileged
 
@@ -4725,6 +4927,7 @@ def _holders_proc(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
                     comm = f.read().strip()
             except OSError:
                 comm = "?"
+            comm = _proc_command(entry, comm)
             try:
                 user = pwd.getpwuid(os.stat(f"/proc/{entry}").st_uid).pw_name
             except (OSError, KeyError):
@@ -4799,11 +5002,14 @@ def _chain_device_spec(role: str) -> str:
     if configured is not None:
         return configured.strip()
     default = _CHAIN_DEFAULT_DEVICES.get(platform.system(), {}).get(role, "")
-    if not default and role == "capture" and _IS_LINUX:
-        # Re-read every poll rather than cache: the capture card can be
-        # selected on the /configuration page while this page is open, and a
-        # cached "" would keep the input block hidden until a restart.
-        return _linux_capture_role()
+    if not default and _IS_LINUX:
+        # Re-read every poll rather than cache: either card can be selected on
+        # the /configuration page while this page is open, and a cached "" would
+        # keep that block hidden (or stale) until a restart.
+        if role == "capture":
+            return _linux_capture_role()
+        if role == "dac":
+            return _linux_dac_role()
     return default
 
 
@@ -4978,11 +5184,27 @@ def _chain_status() -> dict:
 
     paths = [d["path"] for d in devices.values() if d["present"]]
     holders, privileged = _device_holders(paths)
-    for dev in devices.values():
+    for role, dev in devices.items():
         rows = sorted(holders.get(dev["path"], []), key=lambda h: int(h["pid"]))
         dev["holders"] = rows
-        dev["readers"] = [h for h in rows if "r" in h["mode"]]
-        dev["writers"] = [h for h in rows if "w" in h["mode"]]
+        if _IS_LINUX:
+            # An ALSA pcm node has exactly one direction: a "...c" node can
+            # only be read from and a "...p" node only written to.  fuser's
+            # F/f letters describe the OPEN FLAGS instead, and alsa-lib opens
+            # even a capture pcm O_RDWR so it can mmap it — so every reader of
+            # the capture card and of the loopback's far side reports as a
+            # writer, the card finds no reader on either, and the input block
+            # sits red and "free" while the bridge is plainly capturing.
+            #
+            # FreeBSD's OSS nodes really are bidirectional — a virtual_oss
+            # client reads and writes the same /dev/dsp.play — so the flags
+            # are the only evidence there and this correction is Linux's alone.
+            reading = _CHAIN_ALSA_SIDE.get(role) == "c"
+            dev["readers"] = rows if reading else []
+            dev["writers"] = [] if reading else rows
+        else:
+            dev["readers"] = [h for h in rows if "r" in h["mode"]]
+            dev["writers"] = [h for h in rows if "w" in h["mode"]]
 
     def held(role: str, direction: str) -> dict[str, dict]:
         dev = devices.get(role)

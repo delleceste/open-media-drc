@@ -144,6 +144,15 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/commands.conf
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/omdrcctrl
         DESTINATION bin)
 
+# GRUB dual-boot helper, backing the panel's "Reboot to FreeBSD" button.
+# commands.conf invokes it by bare name, so it has to land on PATH (bin/),
+# not in libexec.  Linux-only: it drives GRUB, and the matching command in
+# commands.conf.in is already gated with `os = Linux`.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    install(PROGRAMS ../scripts/grub-reboot-to-freebsd.sh
+            DESTINATION bin)
+endif()
+
 # service integration
 if(OMDRCCTRL_SERVICE_MANAGER STREQUAL "systemd")
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/omdrcctrl.service

@@ -83,6 +83,10 @@ doc/pdf/build/
 # byte-deterministic — sha256 in tests/README.md).
 bp-results/*
 !bp-results/*.txt
+# Format/alignment probes (scripts/dac-format-probe.py) are ~17 KB of JSON and
+# exist precisely to be compared across hosts, so they are tracked too — same
+# rationale as the .txt reports above.
+!bp-results/*.json
 /tests/bitperfect-test-44100-s32-stereo-30s.wav
 /tests/bitperfect-test-44100-s24-stereo-30s.wav
 /tests/bitperfect-test-192000-s24-stereo-10s.wav

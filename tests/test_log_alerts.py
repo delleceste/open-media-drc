@@ -307,6 +307,40 @@ class LogConfigTest(unittest.TestCase):
                           "upmpdcli_mpd_ok", "qconnect_auth",
                           "qconnect_mpd_ok", "qconnect_ok"])
 
+    def test_linux_gets_the_reboot_to_freebsd_system_button(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(APP.platform, "system", return_value="Linux"):
+                APP.load_config(str(_config(root, root / "console.log")))
+                system_ids = [
+                    c["id"]
+                    for group, _label, cmds in APP._groups()
+                    if group == "system"
+                    for c in cmds
+                ]
+                command = APP.CMD_MAP["reboot_freebsd"]
+        self.assertEqual(system_ids, ["reboot", "reboot_freebsd", "poweroff"])
+        self.assertEqual(command["button"], "Reboot to FreeBSD")
+        self.assertEqual(command["cmd"], "sudo grub-reboot-to-freebsd.sh")
+
+    def test_freebsd_does_not_get_the_linux_reboot_target_button(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(APP.platform, "system", return_value="FreeBSD"):
+                APP.load_config(str(_config(root, root / "console.log")))
+                ids = [c["id"] for c in APP.COMMANDS]
+        self.assertNotIn("reboot_freebsd", ids)
+
+    def test_command_environment_includes_user_script_dirs(self):
+        with mock.patch.dict(APP.os.environ,
+                             {"HOME": "/home/audio", "PATH": "/usr/bin:/bin"},
+                             clear=True):
+            path = APP._env()["PATH"].split(":")
+        self.assertIn("/home/audio/bin", path)
+        self.assertIn("/home/audio/.local/bin", path)
+        self.assertLess(path.index("/home/audio/bin"), path.index("/usr/bin"))
+        self.assertLess(path.index("/home/audio/.local/bin"), path.index("/usr/bin"))
+
     def test_a_config_without_a_logs_section_still_gets_the_renderer_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "commands.conf"
