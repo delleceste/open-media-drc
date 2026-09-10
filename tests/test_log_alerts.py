@@ -321,7 +321,7 @@ class LogConfigTest(unittest.TestCase):
                 command = APP.CMD_MAP["reboot_freebsd"]
         self.assertEqual(system_ids, ["reboot", "reboot_freebsd", "poweroff"])
         self.assertEqual(command["button"], "Reboot to FreeBSD")
-        self.assertEqual(command["cmd"], "grub-reboot-to-freebsd.sh")
+        self.assertEqual(command["cmd"], "sudo grub-reboot-to-freebsd.sh")
 
     def test_freebsd_does_not_get_the_linux_reboot_target_button(self):
         with tempfile.TemporaryDirectory() as directory:

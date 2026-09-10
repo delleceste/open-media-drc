@@ -592,7 +592,10 @@ type    = WRITE
 button  = Reboot to FreeBSD
 confirm = yes
 os      = Linux
-cmd     = grub-reboot-to-freebsd.sh
+# The helper sets GRUB's one-shot next-boot entry and then reboots, both of
+# which need root — it exits 1 with "Must run as root." otherwise, and the
+# click appears to do nothing.  Same shape as [reboot] above.
+cmd     = sudo grub-reboot-to-freebsd.sh
 
 [poweroff]
 what    = Power off
