@@ -1,5 +1,7 @@
 # The two machines are not convolving the same filter
 
+> **Start here for the whole story:** [`doc/SOUND-QUALITY-INVESTIGATION.md`](SOUND-QUALITY-INVESTIGATION.md) is the complete record — what was measured, what it ruled out, and what is still open.
+
 Found 2026-09-10 while pre-flighting the cross-OS null test
 (`doc/BIT-PERFECT-VERIFICATION.md`, "Cross-OS comparison through a REAL
 filter"). It blocks that test, and it is worth understanding before anyone

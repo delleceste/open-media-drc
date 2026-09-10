@@ -1,5 +1,7 @@
 # DAC sample format and byte alignment — Linux reference, FreeBSD checklist
 
+> **Start here for the whole story:** [`doc/SOUND-QUALITY-INVESTIGATION.md`](SOUND-QUALITY-INVESTIGATION.md) is the complete record — what was measured, what it ruled out, and what is still open.
+
 **Date:** 2026-09-09 · **Reference host:** Arch Linux, kernel 7.2.3-arch1-3 ·
 **DAC:** OKTO RESEARCH DAC8STEREO (Thesycon/XMOS `152a:88c5`, bcdDevice 1.60)
 

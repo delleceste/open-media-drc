@@ -1,5 +1,7 @@
 # How the bits get to the DAC, and how we check they arrive intact
 
+> **Start here for the whole story:** [`doc/SOUND-QUALITY-INVESTIGATION.md`](SOUND-QUALITY-INVESTIGATION.md) is the complete record — what was measured, what it ruled out, and what is still open.
+
 A plain-language companion to `doc/DAC-FORMAT-ALIGNMENT.md` (the findings) and
 `doc/DAC-FORMAT-CROSS-OS-PROCEDURE.md` (the runbook). This one explains what
 the problem *is*, what could go wrong, what it would sound like, and how to
