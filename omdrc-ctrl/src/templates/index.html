@@ -1987,8 +1987,9 @@ async function runWrite(id) {
     if (ok) {
         writeStatus('');
     } else {
-        writeStatus(output || errMsg || 'command failed');
-        toast('command failed', 'error');
+        const message = output || errMsg || 'command failed';
+        writeStatus(message);
+        toast(message, 'error');
     }
 
     setTimeout(() => {

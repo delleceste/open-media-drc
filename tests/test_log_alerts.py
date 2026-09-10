@@ -331,6 +331,16 @@ class LogConfigTest(unittest.TestCase):
                 ids = [c["id"] for c in APP.COMMANDS]
         self.assertNotIn("reboot_freebsd", ids)
 
+    def test_command_environment_includes_user_script_dirs(self):
+        with mock.patch.dict(APP.os.environ,
+                             {"HOME": "/home/audio", "PATH": "/usr/bin:/bin"},
+                             clear=True):
+            path = APP._env()["PATH"].split(":")
+        self.assertIn("/home/audio/bin", path)
+        self.assertIn("/home/audio/.local/bin", path)
+        self.assertLess(path.index("/home/audio/bin"), path.index("/usr/bin"))
+        self.assertLess(path.index("/home/audio/.local/bin"), path.index("/usr/bin"))
+
     def test_a_config_without_a_logs_section_still_gets_the_renderer_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "commands.conf"

@@ -933,10 +933,13 @@ def _env() -> dict:
         if os.path.isdir(run_dir):
             e["XDG_RUNTIME_DIR"] = run_dir
             e.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={run_dir}/bus")
-    # FreeBSD rc.d services start with a minimal PATH that omits /usr/local/{s,}bin
-    # where brutefir, mpc, virtual_oss, pgrep, … live.
+    # Services start with a minimal PATH.  Include system-local tools and the
+    # run user's script directories so custom commands.conf helpers resolve the
+    # same way they do in an interactive session.
     path_dirs = e.get("PATH", "").split(":")
-    for d in ("/usr/local/sbin", "/usr/local/bin"):
+    for d in (os.path.join(e["HOME"], "bin"),
+              os.path.join(e["HOME"], ".local", "bin"),
+              "/usr/local/sbin", "/usr/local/bin"):
         if d not in path_dirs:
             path_dirs.insert(0, d)
     e["PATH"] = ":".join(path_dirs)
