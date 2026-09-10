@@ -3,6 +3,11 @@
 **Date:** 2026-09-09 · **Reference host:** Arch Linux, kernel 7.2.3-arch1-3 ·
 **DAC:** OKTO RESEARCH DAC8STEREO (Thesycon/XMOS `152a:88c5`, bcdDevice 1.60)
 
+For the plain-language version of everything below — what a container is,
+what a shift would sound like, and how to read the probe output — see
+`doc/DAC-FORMAT-EXPLAINED.md`. The FreeBSD-side runbook is
+`doc/DAC-FORMAT-CROSS-OS-PROCEDURE.md`.
+
 Written to answer one question: *is something in the chain handing the DAC
 misaligned or wrongly-justified samples, and is FreeBSD doing it differently
 from Linux?*

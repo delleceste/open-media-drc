@@ -4,9 +4,11 @@
 Everything you need is in this repo. Read §1, run §3, report §6.
 
 Companion documents:
-`doc/DAC-FORMAT-ALIGNMENT.md` (the Linux analysis and why this matters) and
-`doc/BIT-PERFECT-VERIFICATION.md` (the heavier USB-wire tap suite, which this
-procedure deliberately does **not** require).
+`doc/DAC-FORMAT-EXPLAINED.md` (plain-language background — read this first if
+USB audio formats are unfamiliar), `doc/DAC-FORMAT-ALIGNMENT.md` (the Linux
+analysis and why this matters), and `doc/BIT-PERFECT-VERIFICATION.md` (the
+heavier USB-wire tap suite, which this procedure deliberately does **not**
+require).
 
 ---
 
