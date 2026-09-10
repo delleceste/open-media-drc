@@ -1137,10 +1137,26 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
 
   # MPD via mpc (mpc exits non-zero when MPD is unreachable)
   _st_mpc=$(mpc_bounded status 2>/dev/null) || _st_mpc=""
-  _st_mpc_state=$(echo "$_st_mpc" | sed -n 's/.*\[\(playing\|paused\|stopped\)\].*/\1/p')
+  # -E, not -n alone: `\|` alternation in a BRE is a GNU sed extension that
+  # FreeBSD's sed does not implement.  It does not fail — it simply never
+  # matches, so this reported "MPD: stopped" during playback on every FreeBSD
+  # box, and with no state there was no rate check either (see below).
+  _st_mpc_state=$(echo "$_st_mpc" | sed -nE 's/.*\[(playing|paused|stopped)\].*/\1/p')
   [ -z "$_st_mpc_state" ] && _st_mpc_state="stopped"
   # audio: and bitrate: lines only appear when playing/paused; grep returns 1 on no match
   _st_mpc_audio=$(echo "$_st_mpc" | grep -i 'audio:'   | sed 's/^[^:]*:[[:space:]]*//') || true
+  # mpc >= 0.34 dropped the "audio:" line from `mpc status`; the format is only
+  # available by asking for it.  Without this the Output audio line never
+  # printed and the rate comparison below never ran, so a chain silently
+  # resampling every track still reported clean.  When nothing is playing mpc
+  # echoes the unexpanded "%audioformat%", hence the shape check.
+  if [ -z "$_st_mpc_audio" ]; then
+    _st_mpc_audio=$(mpc_bounded status '%audioformat%' 2>/dev/null | head -1) || true
+    case "$_st_mpc_audio" in
+      [0-9]*:*:*) : ;;
+      *) _st_mpc_audio="" ;;
+    esac
+  fi
   _st_mpc_br=$(echo    "$_st_mpc" | grep -i 'bitrate:' | sed 's/^[^:]*:[[:space:]]*//')  || true
   _st_mpc_song=$(mpc_bounded current 2>/dev/null) || _st_mpc_song=""
 
