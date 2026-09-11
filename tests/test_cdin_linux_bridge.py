@@ -251,6 +251,29 @@ class LogGrammarTest(unittest.TestCase):
         bridge = CDIN.Bridge(CDIN.parse_args(["--carrier-min", "0"]), log)
         self.assertIsNone(bridge.carrier(object(), {}))
 
+    def test_carrier_loss_ends_alsaloop_instead_of_repeating_its_tail(self):
+        """snd-aloop can circulate its queued tail after S/PDIF stops.  Once
+        measured delivery falls below the carrier threshold, the current
+        alsaloop process must release the playback side."""
+        recorded = []
+        bridge = CDIN.Bridge(CDIN.parse_args([]),
+                             lambda level, message: recorded.append(message))
+        bridge.carrier = mock.Mock(return_value=False)
+
+        class Capture:
+            spec = "hw:2,0"
+
+            def hw_params(self):
+                return {"rate": "44100"}
+
+        child = mock.Mock()
+        child.poll.return_value = None
+        stats = mock.Mock()
+        bridge.report(Capture(), object(), stats, CDIN.threading.Event(), child)
+        child.terminate.assert_called_once_with()
+        self.assertTrue(any("transport is not clocking" in line
+                            for line in recorded))
+
     def test_no_lead_is_absent_rather_than_zero(self):
         """A closed output has no lead; reporting 0 ms would show a red buffer
         warning for a bridge that is merely starting up."""
@@ -270,8 +293,8 @@ class LogGrammarTest(unittest.TestCase):
 
     def test_an_xrun_is_counted_as_a_starve(self):
         """alsaloop's own wording is not a stable interface, so only the sense
-        is matched — but an underrun is an audible dropout and must reach the
-        card's problem list rather than scroll past as an ordinary line."""
+        is matched.  alsaloop cannot tell whether the samples are silent, so
+        preserve the event as a warning rather than claiming it was audible."""
         class Nothing:
             spec = ""
             card = None
@@ -283,9 +306,33 @@ class LogGrammarTest(unittest.TestCase):
                 return {}
 
         stats = CDIN.Stats(Nothing())
-        self.assertEqual(CDIN.classify("Playback: xrun detected", stats), "ERR")
+        self.assertEqual(CDIN.classify("Playback: xrun detected", stats), "WRN")
         self.assertEqual(stats.starves, 1)
         self.assertEqual(CDIN.classify("Loop thread started", stats), "INF")
+        self.assertEqual(stats.starves, 1)
+
+    def test_an_xrun_while_alsaloop_primes_is_not_a_dropout(self):
+        """The playback side can underrun while alsaloop fills and locks its
+        buffers.  There was no established stream to interrupt, so the raw
+        diagnostic stays informational and the persistent counter stays zero.
+        """
+        class Nothing:
+            spec = ""
+            card = None
+
+            def rate(self):
+                return None
+
+            def status(self):
+                return {}
+
+        with mock.patch.object(CDIN.time, "monotonic", return_value=100.0):
+            stats = CDIN.Stats(Nothing(), xrun_grace=10)
+        with mock.patch.object(CDIN.time, "monotonic", return_value=109.9):
+            self.assertEqual(CDIN.classify("underrun for playback", stats), "INF")
+        self.assertEqual(stats.starves, 0)
+        with mock.patch.object(CDIN.time, "monotonic", return_value=110.0):
+            self.assertEqual(CDIN.classify("underrun for playback", stats), "WRN")
         self.assertEqual(stats.starves, 1)
 
 

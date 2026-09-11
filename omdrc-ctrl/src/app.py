@@ -4325,11 +4325,11 @@ def _cdin_readout(status: dict) -> tuple[list, list]:
 
     starves = f.get("starves")
     if starves is not None:
-        chip("starves", "underruns", str(starves), "error" if starves else "ok")
+        chip("starves", "underruns", str(starves), "warn" if starves else "ok")
         if starves:
-            problems.append({"level": "error", "text":
-                f"{_cdin_plural(starves, 'underrun')} — the output ran dry, "
-                "which is an audible dropout"})
+            problems.append({"level": "warn", "text":
+                f"{_cdin_plural(starves, 'underrun')} — possible dropout "
+                "while an audio signal is present"})
 
     drops = f.get("drops_bytes")
     if drops is not None:

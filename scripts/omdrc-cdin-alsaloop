@@ -429,7 +429,7 @@ class Stats:
     condition that is not a fault."""
 
     def __init__(self, output: Device, target_ms: int | None = None,
-                 path: str = ""):
+                 path: str = "", xrun_grace: float = 0):
         self.output = output
         # "drc" when the disc goes through BruteFIR, "direct" when it is being
         # bridged straight to the DAC.  Published because it is the one thing
@@ -448,6 +448,11 @@ class Stats:
         # of applying the FreeBSD floor to a healthy Linux bridge.
         self.target_ms = target_ms
         self.started = time.monotonic()
+        # alsaloop may report playback underruns while it primes and locks its
+        # two ends.  No established stream ran dry during that interval, so
+        # keep those diagnostics out of the persistent dropout count.  Once
+        # the grace expires every xrun is counted as a possible dropout.
+        self.xrun_grace = xrun_grace
         self.starves = 0
         self.restarts = 0
         self.lead_min: int | None = None
@@ -507,8 +512,9 @@ class Stats:
 
 # ── translating alsaloop's own output ────────────────────────────────────────
 # alsaloop's messages are not a stable interface, so nothing here depends on a
-# particular format: the only classification is severity, plus counting the one
-# event that is audible.  Everything reaches the card verbatim as an event.
+# particular format: the only classification is severity, plus counting xruns.
+# alsaloop cannot see sample amplitude, so an xrun is a possible audible gap
+# when signal is present, not proof that the listener heard a dropout.
 
 _XRUN = re.compile(r"\b(xrun|underrun|overrun)\b", re.I)
 _ERROR = re.compile(r"\b(error|failed|cannot|unable|invalid|busy)\b", re.I)
@@ -526,8 +532,10 @@ _NO_REALTIME = re.compile(r"Scheduler set to Round Robin.*FAILED", re.I)
 
 def classify(line: str, stats: Stats) -> str:
     if _XRUN.search(line):
+        if time.monotonic() - stats.started < stats.xrun_grace:
+            return "INF"
         stats.starves += 1
-        return "ERR"
+        return "WRN"
     return "ERR" if _ERROR.search(line) else "INF"
 
 
@@ -616,7 +624,8 @@ class Bridge:
         argv = self.alsaloop_argv(capture, output)
         self.log("INF", "$ " + " ".join(argv))
         stats = Stats(output, target_ms=round(self.args.tlatency / 1000),
-                      path="drc" if self.through_drc else "direct")
+                      path="drc" if self.through_drc else "direct",
+                      xrun_grace=self.args.xrun_grace)
         try:
             self.child = subprocess.Popen(
                 argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -666,7 +675,8 @@ class Bridge:
         # would let the previous run's thread be revived by the next run
         # clearing it, and two reporters would interleave stats for one loop.
         finished = threading.Event()
-        threading.Thread(target=self.report, args=(capture, output, stats, finished),
+        threading.Thread(target=self.report,
+                         args=(capture, output, stats, finished, self.child),
                          daemon=True).start()
         assert self.child.stdout is not None
         for raw in self.child.stdout:
@@ -720,20 +730,39 @@ class Bridge:
         return measured >= self.args.rate * self.args.carrier_min / 100.0
 
     def report(self, capture: Device, output: Device, stats: Stats,
-               finished: threading.Event) -> None:
-        """State line + `[stats]`, once per interval, until the child exits."""
+               finished: threading.Event, child: subprocess.Popen) -> None:
+        """Watch carrier and report status until this alsaloop run exits.
+
+        A clock-slaved S/PDIF interface can remain open after the transport
+        stops while advancing far below the nominal rate.  snd-aloop may then
+        replay its queued tail indefinitely.  Merely labelling that state
+        `no-carrier` leaves the bad audio path alive, so end this alsaloop run;
+        the supervisor's retry loop will reopen it when the transport returns.
+        """
         seen: dict = {}
+        next_stats = 0.0
         while not finished.is_set() and not self.stopping.is_set():
             live = self.carrier(capture, seen)
             if not capture.hw_params():
                 self.set_state("no-carrier", f"{capture.spec} is not streaming")
+                if child.poll() is None:
+                    child.terminate()
+                return
             elif live is False:
                 self.set_state("no-carrier", f"{capture.spec} is open but the "
                                              "transport is not clocking it")
+                if child.poll() is None:
+                    child.terminate()
+                return
             else:
                 self.set_state("playing", f"capturing from {capture.spec}")
-            self.log("INF", stats.line(capture))
-            finished.wait(self.args.stats_interval)
+            now = time.monotonic()
+            if now >= next_stats:
+                self.log("INF", stats.line(capture))
+                next_stats = now + self.args.stats_interval
+            # Carrier loss should mute promptly; stats remain at their slower,
+            # user-facing cadence.
+            finished.wait(min(0.5, self.args.stats_interval))
 
     def main(self) -> int:
         args = self.args
@@ -869,6 +898,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "FreeBSD")
     parser.add_argument("--stats-interval", type=float,
                         default=float(env("OMDRC_CDIN_STATS", "10")))
+    parser.add_argument("--xrun-grace", type=float,
+                        default=float(env("OMDRC_CDIN_XRUN_GRACE", "10")),
+                        help="seconds after each alsaloop start during which "
+                             "buffer-priming xruns are diagnostic only (default "
+                             "10; later xruns remain possible-dropout warnings)")
     parser.add_argument("--settle", type=float, default=5.0,
                         help="seconds to wait for the output stream to open")
     parser.add_argument("--retry", type=float, default=2.0)

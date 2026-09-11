@@ -192,9 +192,9 @@ class Readout(unittest.TestCase):
     def test_underruns_are_both_a_chip_and_a_sentence(self):
         text = PLAYING.replace("starves 0", "starves 3")
         status = _status(text)
-        self.assertEqual(_chip(status, "starves")["level"], "error")
+        self.assertEqual(_chip(status, "starves")["level"], "warn")
         self.assertEqual(
-            [p["level"] for p in status["problems"]], ["error"])
+            [p["level"] for p in status["problems"]], ["warn"])
         self.assertIn("3 underruns", status["problems"][0]["text"])
 
     def test_a_ring_that_filled_up_is_reported_as_discarded_audio(self):
