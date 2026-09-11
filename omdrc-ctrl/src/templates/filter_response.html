@@ -64,6 +64,21 @@
         .legend label { display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
         .legend input { accent-color:var(--accent); }
         .swatch { width:15px; height:3px; border-radius:2px; display:inline-block; }
+        .room-sketch {
+            background:var(--panel); border:1px solid var(--border); border-radius:10px;
+            padding:10px 14px; margin-bottom:14px;
+        }
+        .room-sketch h2 { font-size:.9rem; margin:0 0 4px; }
+        .room-sketch p { color:var(--muted); font-size:.72rem; margin:0 0 6px; }
+        .room-sketch svg { display:block; width:100%; max-width:760px; height:auto; margin:auto; }
+        .room-sketch .room-line { stroke:#8b949e; stroke-width:2; fill:none; }
+        .room-sketch .dimension { stroke:#58a6ff; stroke-width:1.7; fill:none; }
+        .room-sketch .speaker { fill:#30363d; stroke:#e6edf3; stroke-width:2; }
+        .room-sketch .tweeter { fill:#58a6ff; stroke:#0d1117; stroke-width:2; }
+        .room-sketch .sofa { fill:#6e768166; stroke:#e6edf3; stroke-width:2; }
+        .room-sketch .mlp { fill:#f85149; stroke:#fff; stroke-width:2; }
+        .room-sketch text { fill:#e6edf3; font-size:14px; font-family:ui-monospace, monospace; }
+        .room-sketch .label { fill:#8b949e; font-size:12px; }
         .chart-card, details {
             background:var(--panel); border:1px solid var(--border); border-radius:10px;
             padding:12px 14px; margin-bottom:14px;
@@ -134,6 +149,66 @@
     <div id="status">Loading active filter and provenance…</div>
     <main id="content" hidden>
         <div id="verification" class="verification"></div>
+        <section class="room-sketch" aria-labelledby="room-sketch-title">
+            <h2 id="room-sketch-title">Listening position sketch</h2>
+            <p>Proportional room outline · speaker and sofa symbols are schematic · blue dimensions come from measurement comments.</p>
+            <svg viewBox="0 0 760 650" role="img" aria-label="Proportional listening room plan with speakers, sofa and main listening position">
+                <defs>
+                    <marker id="dimension-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"></path>
+                    </marker>
+                </defs>
+                <!-- 75 px/m. Structural dimensions decoded from room.png. -->
+                <path class="room-line" stroke-width="7" stroke-linecap="square"
+                      d="M180 506 L180 45 L494 45 L494 176 M629 176 L629 600 L524 600 M419 600 L330 600 L330 506 Z"></path>
+                <text class="label" x="337" y="27" text-anchor="middle">FRONT WALL · 4.186m</text>
+                <text class="label" x="158" y="276" text-anchor="middle" transform="rotate(-90 158 276)">LEFT WALL · 6.15m</text>
+                <text class="label" x="512" y="112" transform="rotate(90 512 112)">HALF-WALL · 1.75m</text>
+                <text class="label" x="562" y="163" text-anchor="middle">CORRIDOR · 1.80m</text>
+                <text class="label" x="472" y="625" text-anchor="middle">1.40m OPENING</text>
+                <text class="label" x="647" y="388" text-anchor="middle" transform="rotate(90 647 388)">OVERALL DEPTH · 7.40m</text>
+
+                <!-- Speaker centres: 1.20m from front; tweeters 2.74m apart. -->
+                <g transform="translate(231 135) rotate(-24)">
+                    <path class="speaker" d="M-22 -34 L22 -34 L25 30 L-25 30 Z"></path>
+                    <line x1="-22" y1="30" x2="22" y2="30" stroke="#58a6ff" stroke-width="3"></line>
+                    <circle class="tweeter" cx="0" cy="18" r="7"></circle>
+                    <circle class="speaker" cx="0" cy="-8" r="13"></circle>
+                </g>
+                <g transform="translate(436 135) rotate(24)">
+                    <path class="speaker" d="M-22 -34 L22 -34 L25 30 L-25 30 Z"></path>
+                    <line x1="-22" y1="30" x2="22" y2="30" stroke="#58a6ff" stroke-width="3"></line>
+                    <circle class="tweeter" cx="0" cy="18" r="7"></circle>
+                    <circle class="speaker" cx="0" cy="-8" r="13"></circle>
+                </g>
+                <text class="label" x="217" y="190" text-anchor="middle">LEFT</text>
+                <text class="label" x="451" y="190" text-anchor="middle">RIGHT</text>
+
+                <path class="sofa" d="M245 357 Q245 344 258 344 L416 344 Q429 344 429 357 L429 421 L245 421 Z"></path>
+                <path class="room-line" stroke-width="3" d="M263 360 L263 405 M411 360 L411 405 M263 397 Q337 414 411 397"></path>
+                <text x="337" y="392" text-anchor="middle">SOFA</text>
+                <circle class="mlp" cx="337" cy="368" r="8"></circle>
+                <text class="label" x="337" y="337" text-anchor="middle">MLP</text>
+
+                <g id="dim-mlp-speaker" hidden>
+                    <line class="dimension" x1="329" y1="359" x2="231" y2="153" marker-start="url(#dimension-arrow)" marker-end="url(#dimension-arrow)"></line>
+                    <text id="label-mlp-speaker" x="247" y="269" text-anchor="middle"></text>
+                </g>
+                <g id="dim-mlp-wall" hidden>
+                    <line class="dimension" x1="359" y1="365" x2="359" y2="52" marker-start="url(#dimension-arrow)" marker-end="url(#dimension-arrow)"></line>
+                    <text id="label-mlp-wall" x="370" y="310"></text>
+                </g>
+                <g id="dim-speaker-wall" hidden>
+                    <line class="dimension" x1="231" y1="153" x2="231" y2="52" marker-start="url(#dimension-arrow)" marker-end="url(#dimension-arrow)"></line>
+                    <text id="label-speaker-wall" x="242" y="88"></text>
+                </g>
+                <g id="sofa-markers" hidden>
+                    <circle id="sofa-marker-left" cx="276" cy="337" r="7" stroke="#fff" stroke-width="2"></circle>
+                    <circle id="sofa-marker-right" cx="398" cy="337" r="7" stroke="#fff" stroke-width="2"></circle>
+                    <text id="label-marker" class="label" x="443" y="341"></text>
+                </g>
+            </svg>
+        </section>
 
         <section id="single-view">
             <div class="controls">
@@ -457,6 +532,29 @@ function addDetail(term, description) {
     grid.append(el('dt', term), el('dd', description));
 }
 
+function renderRoomSketch(data) {
+    const session = data.details?.session || {};
+    const distances = session.distances || {};
+    const showDimension = (groupId, labelId, value, suffix) => {
+        const group = document.getElementById(groupId);
+        group.hidden = !value;
+        if (value) document.getElementById(labelId).textContent = value + "m " + suffix;
+    };
+    showDimension("dim-mlp-speaker", "label-mlp-speaker", distances.speakers_m, "MLP ↔ speaker");
+    showDimension("dim-mlp-wall", "label-mlp-wall", distances.front_wall_m, "MLP ↔ wall");
+    showDimension("dim-speaker-wall", "label-speaker-wall", distances.speaker_wall_m, "tweeter ↔ wall");
+
+    const marker = session.marker_color || "";
+    const markerGroup = document.getElementById("sofa-markers");
+    const validColor = marker && CSS.supports("color", marker);
+    markerGroup.hidden = !validColor;
+    if (validColor) {
+        document.getElementById("sofa-marker-left").style.fill = marker;
+        document.getElementById("sofa-marker-right").style.fill = marker;
+        document.getElementById("label-marker").textContent = marker + " floor markers";
+    }
+}
+
 function renderDetails(data) {
     const card = document.getElementById('details-card');
     const grid = document.getElementById('detail-grid');
@@ -742,7 +840,7 @@ async function load() {
             + `never modified. BruteFIR applies a further ${data.channels[0].attenuation} dB `
             + 'of coefficient attenuation at runtime, deliberately not subtracted from the '
             + 'filter curves so they keep matching REW. Full hashes are below.';
-        renderLegend(); renderDetails(data); draw();
+        renderLegend(); renderRoomSketch(data); renderDetails(data); draw();
         status.hidden = true; content.hidden = false;
     } catch (error) {
         status.className = 'error'; status.textContent = `Network or data error: ${error.message}`;

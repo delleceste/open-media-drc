@@ -251,6 +251,13 @@
         .geo-select:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
         .geo-select:disabled { cursor: default; opacity: .65; }
         .geo-select.busy { border-color: var(--accent); opacity: .55; }
+        .drc-distances {
+            padding-top: 5px;
+            color: var(--muted);
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .66rem;
+            text-align: right;
+        }
         .drc-session-panel {
             padding: 10px 0 11px;
             border-bottom: 1px solid var(--border);
@@ -1191,6 +1198,7 @@
         <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/brutefir-config" target="_blank" rel="noopener noreferrer">Configuration ↗</a><span class="response-action"><a id="filter-response-link" class="btn-details active" href="/filter-response">Filter response ↗</a><small id="filter-response-note" class="response-unavailable" hidden>Not available for this WAV-only configuration</small></span></span>{% endif %}
     </div>
     {% if group_name == 'drc' %}
+    <div id="drc-distances" class="drc-distances" hidden></div>
     <div id="drc-session-panel" class="drc-session-panel" aria-live="polite">
         <div class="drc-feedback-line">
             <span class="drc-state-dot"></span>
@@ -1836,6 +1844,15 @@ async function loadDesigns() {
             else responseLink.href = '/filter-response';
         }
         if (responseNote) responseNote.hidden = !responseUnavailable;
+        const distanceLine = document.getElementById('drc-distances');
+        if (distanceLine) {
+            const distances = d.active?.session?.distances || {};
+            const parts = [];
+            if (distances.front_wall_m) parts.push(distances.front_wall_m + 'm → front wall');
+            if (distances.speakers_m) parts.push(distances.speakers_m + 'm → speakers');
+            distanceLine.textContent = parts.join('   ');
+            distanceLine.hidden = parts.length === 0;
+        }
         renderDrcFeedback(d);
     } catch { /* offline */ }
 }

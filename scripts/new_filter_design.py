@@ -297,6 +297,64 @@ def find_mdat(directory: Path, explicit: Path | None) -> Path:
         "name it with --mdat <file>")
 
 
+_DISTANCE_VALUE = r"(\d+(?:[.,]\d+)?)\s*m"
+_FRONT_WALL_DISTANCE = re.compile(
+    _DISTANCE_VALUE + r"\s+from\s+(?:the\s+)?front\s+wall\b", re.IGNORECASE)
+_SPEAKER_DISTANCE = re.compile(
+    _DISTANCE_VALUE +
+    r"\s+(?:from\s+(?:(?:R\s+and\s+L\s+)?(?:the\s+)?speakers?)|"
+    r"mic\s+to\s+(?:the\s+)?speakers?)\b",
+    re.IGNORECASE)
+_SPEAKER_WALL_DISTANCE = re.compile(
+    _DISTANCE_VALUE + r"\s+speakers?\s+to\s+(?:the\s+)?(?:front\s+)?wall\b",
+    re.IGNORECASE)
+_MARKER_COLOR = re.compile(r"\bmarker\s*:\s*([a-z]+)\b", re.IGNORECASE)
+
+
+def measurement_distances(paths: dict[str, Path]) -> dict[str, str]:
+    """Extract listening-position distances from REW export comments."""
+    found: dict[str, str] = {}
+    for role in ("original_left", "original_right", "original_sum"):
+        with paths[role].open(encoding="utf-8-sig", errors="replace") as stream:
+            comments = " ".join(
+                line.lstrip()[1:].strip() for line in stream
+                if line.lstrip().startswith("*"))
+        for key, pattern in (("front_wall_m", _FRONT_WALL_DISTANCE),
+                             ("speakers_m", _SPEAKER_DISTANCE),
+                             ("speaker_wall_m", _SPEAKER_WALL_DISTANCE)):
+            match = pattern.search(comments)
+            if not match:
+                continue
+            value = match.group(1).replace(",", ".")
+            previous = found.get(key)
+            if previous is not None and previous != value:
+                raise fail(
+                    f"conflicting {key} distances in L/R/aggregate measurement "
+                    f"comments: {previous}m and {value}m")
+            found[key] = value
+    return found
+
+
+def measurement_marker_color(paths: dict[str, Path]) -> str:
+    """Return the sofa floor-marker color recorded in REW comments."""
+    found = ""
+    for role in ("original_left", "original_right", "original_sum"):
+        with paths[role].open(encoding="utf-8-sig", errors="replace") as stream:
+            comments = " ".join(
+                line.lstrip()[1:].strip() for line in stream
+                if line.lstrip().startswith("*"))
+        match = _MARKER_COLOR.search(comments)
+        if not match:
+            continue
+        value = match.group(1).lower()
+        if found and found != value:
+            raise fail(
+                f"conflicting marker colors in L/R/aggregate measurement comments: "
+                f"{found} and {value}")
+        found = value
+    return found
+
+
 def source_provenance(console: Console, directory: Path, paths: dict[str, Path],
                       mdat: Path, *, allow_uncommitted: bool) -> tuple[dict, dict]:
     """Name the project that produced these files, and prove they survive.
@@ -693,6 +751,12 @@ def main() -> int:
             CONSOLE, directory, paths, mdat,
             allow_uncommitted=args.allow_uncommitted)
     measurements = measurement_record(mdat, project, blobs)
+    distances = measurement_distances(paths)
+    if distances:
+        measurements["distances"] = distances
+    marker_color = measurement_marker_color(paths)
+    if marker_color:
+        measurements["marker_color"] = marker_color
     if args.upload_provenance:
         measurements["path"] = mdat.name
     if args.archive_mdat:
@@ -780,6 +844,12 @@ def main() -> int:
     unchanged = manifest.pop("_publication_unchanged", False)
     recipe["source"]["measurements"].pop("archive_source", None)
     if unchanged:
+        if not (distances.get("front_wall_m") or distances.get("speakers_m")):
+            CONSOLE.warn(
+                "no listening-position distances found in L/R/aggregate comments; "
+                "add comments such as: * Note: 4.18m from front wall; "
+                "* Note: 3.32m from speakers; * Note: 0.80m speakers to front wall; "
+                "* Note: marker: green")
         if args.commit:
             record_history(CONSOLE, site_root, manifest,
                            require=args.require_commit)
@@ -791,6 +861,12 @@ def main() -> int:
     CONSOLE.ok(f"design {geometry}/{design_id} deployed (runtime selector {selector})")
     if args.commit:
         record_history(CONSOLE, site_root, manifest, require=args.require_commit)
+    if not (distances.get("front_wall_m") or distances.get("speakers_m")):
+        CONSOLE.warn(
+            "no listening-position distances found in L/R/aggregate comments; "
+            "add comments such as: * Note: 4.18m from front wall; "
+            "* Note: 3.32m from speakers; * Note: 0.80m speakers to front wall; "
+            "* Note: marker: green")
     if not args.no_next:
         print_deployed_next(Path(__file__).resolve().parents[1], [{
             "geometry": manifest["geometry"],
