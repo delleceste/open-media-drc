@@ -159,10 +159,16 @@ virtual_oss -D /tmp/virtual_oss.pid -r <rate> \
 ### 5.1 Rule out the rate mismatch first — this is the likeliest culprit
 
 `virtual_oss` runs at a fixed `-r <rate>`, while MPD's `DRC-native` output is
-`format "*:*:*"` (keeps the source rate). **If they disagree, `virtual_oss`
-silently resamples with its own low-quality resampler** — no error, no log, just
-degraded sound. This produces exactly the "macroscopic quality problem, chain
-otherwise looks fine" symptom, and it is far more likely than a byte shift.
+`format "*:*:*"` (keeps the source rate). If they disagree, something resamples
+silently — no error, no log. A poor resampler would produce exactly the
+"macroscopic quality problem, chain otherwise looks fine" symptom, which is why
+this was the first thing to rule out.
+
+> **Correction (2026-09-11).** This originally said `virtual_oss` does that
+> resampling "with its own low-quality resampler". Per `virtual_oss(8)` it only
+> resamples with `-S`, which `drc.sh` does not pass: it coerces MPD to its rate
+> and MPD converts with soxr "very high". On Linux the equivalent path was
+> measured at the 32-bit floor. See `RATE-MISMATCH-PROCEDURE.md`.
 
 ```sh
 ./drc.sh status          # must NOT print MISMATCH
@@ -261,7 +267,7 @@ Use this to skip straight to the right hypothesis.
 | Full-scale noise / unlistenable | 1-byte progressive shift, stride mismatch (3-byte vs 4-byte sample) | §5.2 |
 | Gross clipping, distorted loud | 8-bit left shift — right-justified 24-in-32 consumed as full-scale 32 | §5.2 |
 | Very quiet (~−48 dB) but clean | 8-bit right shift — the inverse | §5.2 |
-| Dull, grainy, "digital"; recognisable music | silent resampling by `virtual_oss` at the wrong rate | §5.1 |
+| Dull, grainy, "digital"; recognisable music | a poor resampler on a rate mismatch (MPD without soxr; or `virtual_oss` if started with `-S`) | §5.1 |
 | Image collapse / phase oddness | channel swap or half-frame offset | §5.3 |
 | Fine on direct, wrong on DRC only | bridge or filter, not the DAC | §5.3, §5.4 |
 | Wrong on both direct and DRC | not covered by any of this — the direct path is proven byte-identical to Linux (§3); look at the analogue side, clock, or filter data |

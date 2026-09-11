@@ -1,0 +1,70 @@
+{
+  "capture": "bp-results/rate-192000-linux-tone192k-matched",
+  "rate": 192000,
+  "window_s": 6.0,
+  "floor_db": -197.4,
+  "provenance_os": "linux/7.2.3-arch1-3",
+  "material": "tone-192000-s32.wav",
+  "channels": {
+    "L": {
+      "tone_hz": 997.0,
+      "tone_dbfs": -90.0,
+      "residual_rms_dbfs": -197.4,
+      "error_db": -104.4,
+      "above_floor_db": -0.0,
+      "max_abs_residual_lsb": 1,
+      "top_spurs": [
+        {
+          "hz": 57149.0,
+          "dbfs": -227.4
+        },
+        {
+          "hz": 79083.0,
+          "dbfs": -227.8
+        },
+        {
+          "hz": 31227.0,
+          "dbfs": -228.3
+        },
+        {
+          "hz": 69113.0,
+          "dbfs": -228.7
+        },
+        {
+          "hz": 61137.0,
+          "dbfs": -228.9
+        }
+      ]
+    },
+    "R": {
+      "tone_hz": 1499.0,
+      "tone_dbfs": -90.0,
+      "residual_rms_dbfs": -197.4,
+      "error_db": -104.4,
+      "above_floor_db": -0.0,
+      "max_abs_residual_lsb": 1,
+      "top_spurs": [
+        {
+          "hz": 53117.0,
+          "dbfs": -227.4
+        },
+        {
+          "hz": 20139.0,
+          "dbfs": -227.8
+        },
+        {
+          "hz": 92091.0,
+          "dbfs": -228.3
+        },
+        {
+          "hz": 35129.0,
+          "dbfs": -228.7
+        },
+        {
+          "hz": 47121.0,
+          "dbfs": -228.9
+        }
+      ]
+    }
+  }
+}

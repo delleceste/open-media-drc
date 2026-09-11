@@ -15,6 +15,7 @@ documents go deeper on individual pieces:
 | `DAC-FORMAT-CROSS-OS-PROCEDURE.md` | the runbook, and §7 the FreeBSD run's results |
 | `CROSS-OS-FILTER-COEFFICIENTS.md` | the filter divergence, and §7 the final null |
 | `BIT-PERFECT-VERIFICATION.md` | the USB-wire tap suite |
+| `RATE-MISMATCH-PROCEDURE.md` | the rate-mismatch test: Linux results, and the FreeBSD procedure |
 
 ---
 
@@ -449,17 +450,29 @@ remembering for any future capture.
 
 ---
 
-## 9. What is still open — the rate-mismatch guard. **This is tomorrow's task (2026-09-11).**
+## 9. What is still open — rate mismatch. **Linux half done 2026-09-11; FreeBSD half pending.**
+
+> **Status and procedure: `doc/RATE-MISMATCH-PROCEDURE.md`.** It holds the Linux
+> results and the exact FreeBSD steps. The summary at the end of this section is
+> the short version.
 
 `virtual_oss` runs at a fixed `-r <rate>` while MPD's `DRC-native` output is
-`format "*:*:*"` (it keeps the source rate). **If the two disagree, `virtual_oss`
-silently resamples with its own built-in resampler** — no error, no log entry,
-nothing in the UI. Its resampler is not soxr; quality defaults to the fastest
-setting.
+`format "*:*:*"` (it keeps the source rate). When the two disagree, something
+has to resample — with no error, no log entry, nothing in the UI.
 
-That is the single most plausible remaining explanation for "sounds worse but I
-cannot say why", because unlike a byte shift it is *subtle*: the music stays
-perfectly recognisable and just loses clarity.
+> **Correction (2026-09-11).** This section first said that `virtual_oss` does
+> that resampling "with its own built-in resampler", at the fastest quality. That
+> contradicts `virtual_oss(8)`, which `BIT-PERFECT-VERIFICATION.md` already quoted:
+> resampling is opt-in via `-S`, and `drc.sh` does not pass it. So `virtual_oss`
+> coerces MPD to its rate and **MPD resamples with soxr "very high"** — as on
+> Linux, where it has now been measured (below). I missed that section when
+> writing this record.
+
+A resampler is the most plausible *kind* of remaining explanation for "sounds
+worse but I cannot say why", because unlike a byte shift it is subtle: the music
+stays recognisable and just loses clarity. Whether it is plausible *here*
+depends on which resampler it is and how good it is — which is what was
+measured.
 
 `./drc.sh status` is supposed to catch it and print
 
@@ -497,14 +510,43 @@ mpd_rate: None    mpd_format: None    rate_verdict: None
 matters: **ordinary listening with mixed-rate material**, e.g. a 44.1 kHz track
 playing while `virtual_oss` sits at 192 kHz.
 
-### Tomorrow's plan
+### What the Linux half showed (2026-09-11)
+
+Full detail, tables and artifacts: `RATE-MISMATCH-PROCEDURE.md` §2.
+
+* **The guard works** in both directions and at 16, 24 and 32 bits: `[MISMATCH]`
+  whenever the decoder rate differs from the chain's, `[match]` otherwise.
+* **MPD resamples, not the loopback**: MPD opens `snd-aloop` at the chain's rate
+  while its decoder runs at the source rate.
+* **The resample is at the 32-bit floor**: a −90 dBFS two-tone through a
+  mismatched flat chain comes back +2.5…+4 dB above the 32-bit rounding floor,
+  ~100 dB below the tone, in both directions and in `resamp` mode. On Linux a
+  rate mismatch costs nothing measurable.
+* **`resamp` mode's 24-bit path is BIT-PERFECT** on Linux.
+* Three tool fixes: `resamp` mode no longer prints a bare `[MISMATCH]` for a
+  deliberate resample; captures now record the wire's rate, which differs from
+  the material's through a resampler; and the null refuses resampled captures,
+  because two runs of MPD's soxr were measured not to be sample-identical.
+
+### What FreeBSD still has to show
+
+That it behaves as documented — MPD's soxr doing the work, residual beside
+Linux's. Two FreeBSD-only risks the man page does not cover: MPD built without
+soxr would fall back to a poor internal resampler (`musicpd --version`,
+`Filters:`), and `resamp` mode forces a 24-bit format across OSS to
+`virtual_oss`, the 3-byte/4-byte ambiguity that the 2026-09-10 run only cleared
+for `DRC-native`. Expectation: FreeBSD matches Linux, and rate mismatch does not
+explain the difference.
+
+### The original plan (kept for the record; superseded by the procedure doc)
 
 1. Confirm the guard now **reports** a mismatch when one exists: bring the chain
    up at 192 kHz, play 44.1 kHz material through `DRC-native`, and check
    `drc.sh status` prints `[MISMATCH]`. Then the converse — matched rates must
    print `[match]`, or the guard is useless in the other direction.
-2. Establish what the resampling actually **does** to the signal. `virtual_oss`
-   resamples upstream of the DAC, so tap the loopback rather than the USB wire:
+2. Establish what the resampling actually **does** to the signal. The resampling
+   happens upstream of the DAC (in MPD — see the correction above), so tap the
+   loopback rather than the USB wire:
    `./verify-bitperfect.sh --source mpd:DRC-native --tap loop:/dev/dsp.loop`.
    Compare a rate-matched run against a rate-mismatched one.
 3. Exercise **16-, 24- and 32-bit** material, not just one depth.
@@ -520,8 +562,11 @@ Verified by reading what the guard actually compares (`drc.sh:1210-1219`): MPD's
 reported rate from `mpc status` against the `-r` argument on the running
 `virtual_oss` process command line. It is **pure software state — the DAC is not
 part of the comparison at all** on FreeBSD. And the resampling under
-investigation happens *inside* `virtual_oss`, upstream of the DAC, so tapping
-`/dev/dsp.loop` characterises it without the DAC being involved either.
+investigation happens upstream of the DAC (in MPD, per the correction at the top
+of this section), so tapping `/dev/dsp.loop` characterises it without the DAC
+being involved either. (In the event the Linux half measured it on the USB wire
+with `resampler-residual.py`, which is also DAC-independent because it fits a
+tone rather than comparing bytes.)
 
 Three caveats, none of them blocking:
 
@@ -659,7 +704,8 @@ current default), `-n` (set the default without rebooting), and a read-back of
 | `virtual_oss` vs `snd-aloop` bridge | **excluded** | cross-OS null IDENTICAL (§6.8) |
 | The convolver itself | **excluded** | same, §6.8 |
 | Different filter coefficients | **real, but inaudible** | −103 dB, all above 20 kHz (§7) |
-| **Silent resampling on rate mismatch** | **OPEN — tomorrow** | guard inoperative on FreeBSD until 2026-09-10 (§9) |
+| Resampling on rate mismatch — Linux | **excluded** | MPD soxr, +2.5…+4 dB above the 32-bit floor (§9, `RATE-MISMATCH-PROCEDURE.md`) |
+| **Resampling on rate mismatch — FreeBSD** | **OPEN — procedure ready** | documented as MPD soxr (virtual_oss(8), no `-S`); not yet measured; soxr presence and the `resamp` 24-bit path are FreeBSD-only risks |
 | DAC clocking / analogue / USB noise | open, not yet probed | §10 |
 | Level matching / expectation | open, not yet probed | §10 |
 

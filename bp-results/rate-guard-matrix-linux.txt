@@ -1,0 +1,29 @@
+Rate-mismatch guard matrix — Linux (arki, Arch 7.2.3-arch1-3), 2026-09-11
+DAC: Cambridge Audio DacMagic 100 (card 0; alt 1, 4-byte subslot, 24 valid bits, S32_LE)
+Filter: flat (dirac pulse, attenuation 0.0).  Material: tests/gen-bitperfect-wav.py counters, 10 s.
+Columns: decoder = `mpc status '%audioformat%'`; hops from /proc/asound/*/hw_params;
+guard = the `Rate:` line of `omdrc status`.
+
+═══ chain: flat 192000 (native, DRC-native) ═══
+counter-192000-s24.wav  decoder=192000:32:2  mpd->loop=S32_LE@192000  loop->bf=S32_LE@192000  bf->dac=S32_LE@192000  | MPD 192000 Hz = brutefir 192000 Hz  [match]
+counter-192000-s32.wav  decoder=192000:32:2  mpd->loop=S32_LE@192000  loop->bf=S32_LE@192000  bf->dac=S32_LE@192000  | MPD 192000 Hz = brutefir 192000 Hz  [match]
+counter-44100-s16.wav   decoder=44100:16:2   mpd->loop=S32_LE@192000  loop->bf=S32_LE@192000  bf->dac=S32_LE@192000  | MPD 44100 Hz != brutefir 192000 Hz  [MISMATCH]
+counter-44100-s24.wav   decoder=44100:32:2   mpd->loop=S32_LE@192000  loop->bf=S32_LE@192000  bf->dac=S32_LE@192000  | MPD 44100 Hz != brutefir 192000 Hz  [MISMATCH]
+counter-44100-s32.wav   decoder=44100:32:2   mpd->loop=S32_LE@192000  loop->bf=S32_LE@192000  bf->dac=S32_LE@192000  | MPD 44100 Hz != brutefir 192000 Hz  [MISMATCH]
+
+═══ chain: flat 44100 (native, DRC-native) ═══
+counter-44100-s16.wav   decoder=44100:16:2   mpd->loop=S32_LE@44100   loop->bf=S32_LE@44100   bf->dac=S32_LE@44100   | MPD 44100 Hz = brutefir 44100 Hz  [match]
+counter-44100-s24.wav   decoder=44100:32:2   mpd->loop=S32_LE@44100   loop->bf=S32_LE@44100   bf->dac=S32_LE@44100   | MPD 44100 Hz = brutefir 44100 Hz  [match]
+counter-44100-s32.wav   decoder=44100:32:2   mpd->loop=S32_LE@44100   loop->bf=S32_LE@44100   bf->dac=S32_LE@44100   | MPD 44100 Hz = brutefir 44100 Hz  [match]
+counter-192000-s24.wav  decoder=192000:32:2  mpd->loop=S32_LE@44100   loop->bf=S32_LE@44100   bf->dac=S32_LE@44100   | MPD 192000 Hz != brutefir 44100 Hz  [MISMATCH]
+counter-192000-s32.wav  decoder=192000:32:2  mpd->loop=S32_LE@44100   loop->bf=S32_LE@44100   bf->dac=S32_LE@44100   | MPD 192000 Hz != brutefir 44100 Hz  [MISMATCH]
+
+═══ chain: resamp mode ("Flat auto-resample", DRC-resamp output, format 192000:24:2) ═══
+counter-44100-s24.wav   decoder=44100:32:2   mpd->loop=S32_LE@192000  loop->bf=S32_LE@192000  bf->dac=S32_LE@192000  | MPD 44100 Hz != brutefir 192000 Hz  [MISMATCH]   <- deliberate soxr resample: false alarm
+counter-192000-s24.wav  decoder=192000:32:2  mpd->loop=S32_LE@192000  loop->bf=S32_LE@192000  bf->dac=S32_LE@192000  | MPD 192000 Hz = brutefir 192000 Hz  [match]
+
+Reading: the guard reports correctly in both directions and at every bit depth.  Whenever
+the decoder rate differs from the chain rate, MPD opens the loopback at the CHAIN's rate —
+snd-aloop cannot resample, so MPD converts with its configured resampler (soxr, very high)
+before the loopback.  In resamp mode the guard cannot tell a deliberate resample from an
+accidental one.

@@ -1,0 +1,108 @@
+{
+  "a": {
+    "name": "bp-results/rate-192000-linux-counter44k-mismatch-run1",
+    "raw": "bp-results/rate-192000-linux-counter44k-mismatch-run1.wire.raw",
+    "rate": 192000,
+    "channels": 2,
+    "provenance": {
+      "os": "linux/7.2.3-arch1-3",
+      "conf": "/usr/local/etc/open-media-drc/configs/flat/brutefir-192000.conf",
+      "conf_sha256": "2f1f88789a2ccf0cc8a74804a8db0a98af161c0ecb47ab3c642725546bb37d74",
+      "geometry": "flat",
+      "rate": 192000,
+      "variant": "",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "dirac pulse",
+          "attenuation": 0.0
+        },
+        {
+          "coeff": "c-r",
+          "filename": "dirac pulse",
+          "attenuation": 0.0
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "32768,16",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "snd-aloop",
+      "loopback_resampling": false
+    }
+  },
+  "b": {
+    "name": "bp-results/rate-192000-linux-counter44k-mismatch-run2",
+    "raw": "bp-results/rate-192000-linux-counter44k-mismatch-run2.wire.raw",
+    "rate": 192000,
+    "channels": 2,
+    "provenance": {
+      "os": "linux/7.2.3-arch1-3",
+      "conf": "/usr/local/etc/open-media-drc/configs/flat/brutefir-192000.conf",
+      "conf_sha256": "2f1f88789a2ccf0cc8a74804a8db0a98af161c0ecb47ab3c642725546bb37d74",
+      "geometry": "flat",
+      "rate": 192000,
+      "variant": "",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "dirac pulse",
+          "attenuation": 0.0
+        },
+        {
+          "coeff": "c-r",
+          "filename": "dirac pulse",
+          "attenuation": 0.0
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "32768,16",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "snd-aloop",
+      "loopback_resampling": false
+    }
+  },
+  "provenance_diff": {
+    "blocking": [],
+    "noted": []
+  },
+  "result": {
+    "verdict": "DIFFERENT",
+    "reading": "the chains diverge by more than float rounding explains",
+    "lag_frames": 275580,
+    "alignment_confidence": 1.0,
+    "compared_frames": 3635905,
+    "compared_seconds": 18.937,
+    "differing_samples": 4253041,
+    "differing_fraction": 0.5848669038382466,
+    "max_diff_lsb": 18963644,
+    "null_depth_db": -55.286255316381656,
+    "first_diff": {
+      "frame": 0,
+      "seconds": 0.0,
+      "a": [
+        0,
+        0
+      ],
+      "b": [
+        4664016,
+        12570365
+      ],
+      "delta": [
+        -4664016,
+        -12570365
+      ]
+    }
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "kind": "CAPTURE",
+  "verdict": "CAPTURED",
+  "route": "drc",
+  "reference": "capture",
+  "source": "mpd-http",
+  "os": "linux/7.2.3-arch1-3",
+  "rate": 192000,
+  "channels": 2,
+  "wire_rate": 44100,
+  "input": "tone-192000-s32.wav",
+  "input_sha256": "63dbfe371efc26eef08f377f56f12a9bdeac4b5258bf522d577123e7df2b0084",
+  "ref_raw_bytes": 15360000,
+  "decoder": "none (already PCM WAV)",
+  "lossy": false,
+  "wire_raw": "bp-results/rate-44100-linux-tone192k-mismatch.wire.raw",
+  "wire_bytes": 7322664,
+  "chain": {
+    "script": "/usr/local/bin/omdrc",
+    "geometry": "flat",
+    "sink": "ALSA",
+    "sink_rate": 44100,
+    "brutefir_rate": 44100,
+    "mpd_rate": null,
+    "mpd_format": null,
+    "rate_verdict": "MISMATCH (deliberate): material 192000 Hz, ALSA 44100 Hz",
+    "conf": "/usr/local/etc/open-media-drc/configs/flat/brutefir-44100.conf",
+    "geometry_running": "flat",
+    "provenance": {
+      "os": "linux/7.2.3-arch1-3",
+      "conf": "/usr/local/etc/open-media-drc/configs/flat/brutefir-44100.conf",
+      "conf_sha256": "c12bd43c6c64fe0f80e22fb904171ef9e4d23ab01c396c729042807a8d974786",
+      "geometry": "flat",
+      "rate": 44100,
+      "variant": "",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "dirac pulse",
+          "attenuation": 0.0
+        },
+        {
+          "coeff": "c-r",
+          "filename": "dirac pulse",
+          "attenuation": 0.0
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "32768,16",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "snd-aloop",
+      "loopback_resampling": false
+    },
+    "identity": true,
+    "material_rate": 192000,
+    "deliberate_resample": true
+  },
+  "chain_playing": {
+    "script": "/usr/local/bin/omdrc",
+    "geometry": "flat",
+    "sink": "ALSA",
+    "sink_rate": 44100,
+    "brutefir_rate": 44100,
+    "mpd_rate": 192000,
+    "mpd_format": "192000:32:2",
+    "rate_verdict": "mismatch"
+  },
+  "mpd_before": {
+    "volume": "n/a",
+    "replaygain": "off",
+    "outputs": [
+      "DRC-native"
+    ]
+  },
+  "mpd_after": {
+    "volume": "n/a",
+    "replaygain": "off",
+    "outputs": [
+      "DRC-native"
+    ]
+  }
+}
