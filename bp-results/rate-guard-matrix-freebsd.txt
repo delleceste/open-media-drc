@@ -1,0 +1,22 @@
+Rate-guard matrix — FreeBSD (bee, 15.1-RELEASE-p2), 2026-09-11
+Geometry: flat.  DAC: Cambridge Audio DacMagic 100 (0x22e8:0xdac4) on pcm0.
+virtual_oss: -r <rate> -i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop  (no -S)
+MPD 0.24.13, Filters: soxr.
+
+=== chain 192000 (flat) ===
+counter-192000-s24.wav   decoder=192000:32:2  | MPD 192000 Hz = virtual_oss 192000 Hz  [match]
+counter-192000-s32.wav   decoder=192000:32:2  | MPD 192000 Hz = virtual_oss 192000 Hz  [match]
+counter-44100-s16.wav    decoder=44100:16:2   | MPD 44100 Hz != virtual_oss 192000 Hz  [MISMATCH]
+counter-44100-s24.wav    decoder=44100:32:2   | MPD 44100 Hz != virtual_oss 192000 Hz  [MISMATCH]
+counter-44100-s32.wav    decoder=44100:32:2   | MPD 44100 Hz != virtual_oss 192000 Hz  [MISMATCH]
+
+=== chain 44100 (flat) ===
+counter-44100-s16.wav    decoder=44100:16:2   | MPD 44100 Hz = virtual_oss 44100 Hz  [match]
+counter-44100-s24.wav    decoder=44100:32:2   | MPD 44100 Hz = virtual_oss 44100 Hz  [match]
+counter-44100-s32.wav    decoder=44100:32:2   | MPD 44100 Hz = virtual_oss 44100 Hz  [match]
+counter-192000-s24.wav   decoder=192000:32:2  | MPD 192000 Hz != virtual_oss 44100 Hz  [MISMATCH]
+counter-192000-s32.wav   decoder=192000:32:2  | MPD 192000 Hz != virtual_oss 44100 Hz  [MISMATCH]
+
+=== chain resamp (flat, virtual_oss 192000) ===
+counter-44100-s24.wav    decoder=44100:32:2   | MPD 44100 Hz != virtual_oss 192000 Hz  [MISMATCH: deliberate - resamp mode resamples with MPD soxr]
+counter-192000-s24.wav   decoder=192000:32:2  | MPD 192000 Hz = virtual_oss 192000 Hz  [match]

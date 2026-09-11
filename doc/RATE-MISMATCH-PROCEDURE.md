@@ -1,9 +1,11 @@
-# Rate-mismatch test — Linux results, and the FreeBSD procedure
+# Rate-mismatch test — both halves run, Linux and FreeBSD
 
-**Audience: the Claude Code session on the FreeBSD host (`bee`).** Read §1–§3
-for context, run §4, judge with §5, report with §7.
+**Both halves are done and the question is closed: §8 has the FreeBSD results
+and the verdict.** §1–§3 are the context, §4 the procedure (still exact, if it
+ever needs re-running), §5 how to judge it.
 
 Linux half run 2026-09-11 on `arki` (Arch 7.2.3-arch1-3), same NUC, same disk.
+FreeBSD half run 2026-09-11 on `bee` (15.1-RELEASE-p2).
 Background: `doc/SOUND-QUALITY-INVESTIGATION.md` §9 (why this is the last open
 digital question) and `doc/DAC-FORMAT-EXPLAINED.md` §11 (what a null test is).
 
@@ -124,7 +126,7 @@ hand the loopback 32-bit because the loopback only accepts `S32_LE`. FreeBSD's
 
 ## 3. What FreeBSD has to answer
 
-### 3.1 Who resamples on FreeBSD? Documented: MPD. Not yet measured.
+### 3.1 Who resamples on FreeBSD? Documented: MPD. Measured: MPD — §8.2.
 
 `virtual_oss(8)` answers it, and `BIT-PERFECT-VERIFICATION.md` already quotes
 it (added 2026-09-10, `42975a6`):
@@ -158,14 +160,14 @@ mismatch will turn out not to explain the audible difference. The test is worth
 running because §3.2 and §3.3 are genuine FreeBSD-only risks the man page does
 not cover.
 
-### 3.2 Is MPD on FreeBSD built with soxr?
+### 3.2 Is MPD on FreeBSD built with soxr? Yes — §8.1.
 
 If the `audio/musicpd` build lacks soxr, the `resampler { plugin "soxr" }`
 block cannot be honoured and MPD would use its internal fallback resampler — a
 poor one. That alone would make every mismatched track worse on FreeBSD only.
 Check before anything else (§4.0).
 
-### 3.3 Does `resamp` mode's 24-bit output survive OSS?
+### 3.3 Does `resamp` mode's 24-bit output survive OSS? Yes — §8.3.
 
 `DRC-resamp` forces `format "192000:24:2"`. On FreeBSD that 24-bit format goes
 through OSS to `virtual_oss` — the `AFMT_S24_LE` 3-byte / 4-byte ambiguity that
@@ -381,3 +383,116 @@ mode deliberately — *after* §3.3 is known to be safe.
 4. Commit the `.json` and `.residual.json` artifacts (`.wire.raw` stays local, gitignored).
 5. Update `doc/SOUND-QUALITY-INVESTIGATION.md` §9 and §13 with the verdict, and
    add the measured confirmation (or refutation) of §3.1 to §9.
+
+---
+
+## 8. What FreeBSD showed — run 2026-09-11 on `bee`
+
+**Verdict: FreeBSD behaves exactly as documented, and to the tenth of a dB
+exactly as Linux. Rate mismatch is not the explanation for the audible
+difference, on either operating system.** All three questions in §1 are closed.
+
+Host state, for the record:
+
+| | |
+|---|---|
+| OS | FreeBSD 15.1-RELEASE-p2 (`bee`) |
+| MPD | 0.24.13, `Filters: soxr` |
+| DAC | **Cambridge Audio DacMagic 100** (`0x22e8:0xdac4`) on pcm0 — the OKTO DAC8 was not attached |
+| `virtual_oss` | `-r <rate> -i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop` — **no `-S`** |
+| chain | `flat` geometry, `dirac pulse`, 0 dB, BruteFIR 1.1.2, `8192,64`, 64-bit, no dither |
+
+The DacMagic is the same DAC the Linux half ran on, which makes §8.3's
+cross-OS comparison a byte comparison rather than an argument. `omdrc_audio`
+had to be pointed at it (it is configured for the OKTO's USB id), and the
+installed `omdrc` predated `f1aaf3a` and was reinstalled first — without that
+the guard would have been measured in its broken state.
+
+### 8.1 MPD is built with soxr
+
+`musicpd --version` lists exactly one filter: `soxr`. The §3.2 risk — an
+`audio/musicpd` build falling back to MPD's internal resampler on every
+mismatched track — does not exist on this box.
+
+### 8.2 The guard works, and MPD is the one resampling
+
+Full output: `bp-results/rate-guard-matrix-freebsd.txt`. Every one of the
+twelve rows is the Linux row, including the decoder formats:
+
+| chain | material | `mpc %audioformat%` | guard |
+|---|---|---|---|
+| 192 k | 192 k / 24, 32 | `192000:32:2` | `[match]` |
+| 192 k | 44.1 k / 16, 24, 32 | `44100:16:2`, `44100:32:2` | `[MISMATCH]` |
+| 44.1 k | 44.1 k / 16, 24, 32 | `44100:16:2`, `44100:32:2` | `[match]` |
+| 44.1 k | 192 k / 24, 32 | `192000:32:2` | `[MISMATCH]` |
+| resamp | 44.1 k / 24 | `44100:32:2` | `[MISMATCH: deliberate - resamp mode resamples with MPD soxr]` |
+| resamp | 192 k / 24 | `192000:32:2` | `[match]` |
+
+So the `f1aaf3a` fix took: the guard that had **never once fired on FreeBSD**
+now fires, in both directions and at all three bit depths, and stays quiet when
+it should.
+
+**Who resamples is now measured, not inferred.** In every mismatched run the
+runner recorded `loopback_resampling: false` (no `-S`) while MPD's decoder sat
+at the material's rate and `virtual_oss` at the chain's — and the residual
+below is Linux's number to the tenth of a dB. §3.1's reading of `virtual_oss(8)`
+is confirmed: `virtual_oss` coerces MPD to its `-r` and **MPD** converts with
+soxr "very high". The three documents corrected on 2026-09-11
+(`SOUND-QUALITY-INVESTIGATION.md` §9, `DAC-FORMAT-ALIGNMENT.md` §5.1,
+`DAC-FORMAT-EXPLAINED.md` §10) were corrected the right way.
+
+### 8.3 The resample is at the 32-bit floor — the same floor as Linux
+
+| run (flat chain) | error below tone | vs 32-bit floor | max \|residual\| | Linux (§2.3) | artifact |
+|---|---|---|---|---|---|
+| 192 k tone → 192 k chain (matched control) | −104.4 dB | **−0.0 dB** | 1 LSB | −0.0 dB | `rate-192000-freebsd-tone192k-matched` |
+| 44.1 k tone → 192 k chain (mismatch, up) | −100.4 dB | **+4.0 dB** | 2 LSB | +4.0 dB | `rate-192000-freebsd-tone44k-mismatch` |
+| 192 k tone → 44.1 k chain (mismatch, down) | −101.9 dB | **+2.5 dB** | 1 LSB | +2.5 dB | `rate-44100-freebsd-tone192k-mismatch` |
+| 44.1 k tone, `resamp` mode | −100.4 dB | **+4.0 dB** | 2 LSB | +4.0 dB | `rate-resamp-freebsd-tone44k` |
+
+Every cell matches Linux. The spurs match too: the only ones above the floor
+are **odd harmonics of the tones** (2991, 4985, 6979 Hz = 3f, 5f, 7f of 997 Hz;
+4497, 7495, 10493 Hz of 1499 Hz) at −200 dBFS and below — ordinary rounding.
+**There are no images at `source rate ± tone`**, the signature §5 says to look
+for and the one the synthetic linear-interpolation control produced at +42 dB.
+Nothing in the FreeBSD path resamples badly, because nothing in the FreeBSD
+path resamples except soxr.
+
+The matched control landing exactly on the floor also clears §5's other trap:
+no part of this chain alters the signal when no resampling is asked of it.
+
+### 8.4 `resamp` mode's 24-bit path is bit-perfect — and byte-identical to Linux
+
+`--drc-output DRC-resamp --reference source` with the 192 k / 24-bit counter:
+
+```
+verdict : BIT-PERFECT — all 15360000 reference bytes identical on the USB wire
+```
+
+(`bp-results/rate-resamp-freebsd-counter192k-s24.txt`.) The 3-vs-4-byte stride
+ambiguity §3.3 feared — MPD writing 4-byte samples to a consumer counting 3,
+which would have shifted every sample after the first into full-scale noise —
+**does not occur**. `DRC-resamp`'s forced `192000:24:2` crosses OSS to
+`virtual_oss` intact.
+
+Better than a matching verdict, the two operating systems produced the *same
+bytes*: the tap WAV hashes to `d6f584ce60282d7653b68564abf6b2829a59a90dc4c23a559712e76d8f8b12f9`
+on both, against reference `7acfeed3f84614d1e88ecc015484a6621be5799072a6912d5c3a5c894685418c`.
+That is a cross-OS null for the `resamp` path, obtained for free because both
+halves ran on the DacMagic — and it extends §6.8 of
+`SOUND-QUALITY-INVESTIGATION.md`, which only covered `DRC-native`.
+
+As on Linux (§2.4), the forced 24-bit format did **not** cost resolution: the
+`resamp` tone's residual is identical to the native one's, where truncation to
+24 bits would have sat ~48 dB higher.
+
+### 8.5 Consequences
+
+* None of §5's candidate fixes is needed. Mixed-rate listening through
+  `DRC-native` costs 2.5–4 dB above the 32-bit rounding floor, ~100 dB below a
+  −90 dBFS signal. There is nothing there to hear.
+* `resamp` mode is now safe to recommend deliberately — §3.3 was the one thing
+  blocking that, and it is closed.
+* The digital path is exhausted as an explanation. What remains is
+  `SOUND-QUALITY-INVESTIGATION.md` §10: DAC clocking, analogue, USB noise,
+  level matching and expectation.

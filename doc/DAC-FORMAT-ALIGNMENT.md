@@ -167,8 +167,9 @@ this was the first thing to rule out.
 > **Correction (2026-09-11).** This originally said `virtual_oss` does that
 > resampling "with its own low-quality resampler". Per `virtual_oss(8)` it only
 > resamples with `-S`, which `drc.sh` does not pass: it coerces MPD to its rate
-> and MPD converts with soxr "very high". On Linux the equivalent path was
-> measured at the 32-bit floor. See `RATE-MISMATCH-PROCEDURE.md`.
+> and MPD converts with soxr "very high". Measured at the 32-bit floor on both
+> operating systems since — see `RATE-MISMATCH-PROCEDURE.md` §2 and §8 — so a
+> `MISMATCH` is worth fixing for tidiness, not because it is audible.
 
 ```sh
 ./drc.sh status          # must NOT print MISMATCH

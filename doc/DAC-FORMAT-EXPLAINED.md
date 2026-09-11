@@ -239,14 +239,16 @@ systems, and the cross-OS null (§11) showed the whole DRC chain is
 bit-identical too. The difference being heard is not a container problem and
 not a convolver or loopback problem. What is left, in order of likelihood:
 
-1. **Sample-rate mismatch with mixed-rate material** — **half done.** The
-   chain runs at one fixed rate; when a track at a different rate plays through
-   `DRC-native`, MPD resamples it with soxr (the loopback cannot; `virtual_oss`
-   only would with `-S`, which is not passed). `./drc.sh status` flags it as
-   `[MISMATCH]` — on FreeBSD that guard never fired until 2026-09-10. On Linux
-   it has now been measured: the guard works, and the resample lands within
-   2.5–4 dB of the 32-bit floor, i.e. costs nothing measurable. The FreeBSD
-   measurement is pending: `RATE-MISMATCH-PROCEDURE.md`.
+1. **Sample-rate mismatch with mixed-rate material** — **excluded, 2026-09-11.**
+   The chain runs at one fixed rate; when a track at a different rate plays
+   through `DRC-native`, MPD resamples it with soxr (the loopback cannot;
+   `virtual_oss` only would with `-S`, which is not passed). `./drc.sh status`
+   flags it as `[MISMATCH]` — on FreeBSD that guard never fired until
+   2026-09-10. Both operating systems have now been measured, and they agree to
+   the tenth of a dB: the guard works in both directions at every bit depth, and
+   the resample lands within 2.5–4 dB of the 32-bit floor — ~100 dB below the
+   signal, with no resampler images at all. It costs nothing measurable, let
+   alone audible. `RATE-MISMATCH-PROCEDURE.md` §2 (Linux) and §8 (FreeBSD).
 2. **Everything downstream of the wire** — the DAC's clocking and analogue
    stages, USB electrical noise, grounding. Beyond what a wire capture can see.
 3. **Not in the equipment** — level matching and expectation. Worth saying

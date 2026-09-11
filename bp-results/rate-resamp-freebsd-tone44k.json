@@ -1,0 +1,89 @@
+{
+  "kind": "CAPTURE",
+  "verdict": "CAPTURED",
+  "route": "drc",
+  "reference": "capture",
+  "source": "mpd-http",
+  "os": "freebsd15/15.1-RELEASE-p2",
+  "rate": 44100,
+  "channels": 2,
+  "wire_rate": 192000,
+  "input": "tone-44100-s32.wav",
+  "input_sha256": "d0aee305cc85691e20e168feba20496f2b785f637bb8791fd25de1f743b99880",
+  "ref_raw_bytes": 3528000,
+  "decoder": "none (already PCM WAV)",
+  "lossy": false,
+  "wire_raw": "bp-results/rate-resamp-freebsd-tone44k.wire.raw",
+  "wire_bytes": 30227616,
+  "chain": {
+    "script": "/usr/local/bin/omdrc",
+    "geometry": "flat",
+    "sink": "virtual_oss",
+    "sink_rate": 192000,
+    "brutefir_rate": 192000,
+    "mpd_rate": null,
+    "mpd_format": null,
+    "rate_verdict": "MISMATCH (deliberate): material 44100 Hz, virtual_oss 192000 Hz",
+    "conf": "/usr/local/etc/open-media-drc/configs/flat/brutefir-192000.conf",
+    "geometry_running": "flat",
+    "provenance": {
+      "os": "freebsd15/15.1-RELEASE-p2",
+      "conf": "/usr/local/etc/open-media-drc/configs/flat/brutefir-192000.conf",
+      "conf_sha256": "2f1f88789a2ccf0cc8a74804a8db0a98af161c0ecb47ab3c642725546bb37d74",
+      "geometry": "flat",
+      "rate": 192000,
+      "variant": "",
+      "coeffs": [
+        {
+          "coeff": "c-l",
+          "filename": "dirac pulse",
+          "attenuation": 0.0
+        },
+        {
+          "coeff": "c-r",
+          "filename": "dirac pulse",
+          "attenuation": 0.0
+        }
+      ],
+      "defaults": "/home/giacomo/.config/BruteFIR/brutefir_defaults.conf",
+      "filter_length": "8192,64",
+      "float_bits": "64",
+      "sdf_length": "-1",
+      "safety_limit": "6",
+      "input_sample": "S32_LE",
+      "output_sample": "S32_LE",
+      "dither": "false",
+      "brutefir_version": "1.1.2",
+      "loopback": "virtual_oss",
+      "loopback_args": "-D /tmp/virtual_oss.pid -r 192000 -i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop",
+      "loopback_resampling": false
+    },
+    "identity": true,
+    "material_rate": 44100,
+    "deliberate_resample": true
+  },
+  "chain_playing": {
+    "script": "/usr/local/bin/omdrc",
+    "geometry": "flat",
+    "sink": "virtual_oss",
+    "sink_rate": 192000,
+    "brutefir_rate": 192000,
+    "mpd_rate": 44100,
+    "mpd_format": "44100:32:2",
+    "rate_verdict": "mismatch"
+  },
+  "mpd_before": {
+    "volume": "n/a",
+    "replaygain": "off",
+    "outputs": [
+      "DRC-resamp"
+    ]
+  },
+  "mpd_after": {
+    "volume": "n/a",
+    "replaygain": "off",
+    "outputs": [
+      "DRC-resamp"
+    ]
+  }
+}
