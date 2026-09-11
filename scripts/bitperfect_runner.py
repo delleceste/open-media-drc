@@ -922,7 +922,8 @@ def chain_provenance() -> dict:
     return prov
 
 
-def assert_drc_route(material: dict | None, reference: str = "source") -> dict:
+def assert_drc_route(material: dict | None, reference: str = "source",
+                     allow_resample: bool = False) -> dict:
     """Refuse a DRC-route run that could not produce a meaningful verdict.
 
     Three ways it could not: the chain is not up (nothing under test), the
@@ -979,6 +980,16 @@ def assert_drc_route(material: dict | None, reference: str = "source") -> dict:
         for label, value in (("brutefir", chain["brutefir_rate"]),
                              (chain["sink"] or "the loopback", chain["sink_rate"])):
             if value is not None and value != rate:
+                # --allow-resample: the resampler is the SUBJECT of the run
+                # (rate-mismatch testing), so record the mismatch in the
+                # provenance where a reader cannot miss it, instead of refusing.
+                # Only meaningful against a capture — a source verdict through
+                # a resampler would be a verdict about nothing.
+                if allow_resample and reference == "capture":
+                    chain["deliberate_resample"] = True
+                    chain["rate_verdict"] = (f"MISMATCH (deliberate): material "
+                                             f"{rate} Hz, {label} {value} Hz")
+                    continue
                 blocking.append(
                     f"{label} is at {value} Hz but the material is {rate} Hz — "
                     f"start the chain at {rate} Hz (`drc.sh {rate}`), or "
@@ -1109,6 +1120,17 @@ def main() -> int:
     p.add_argument("--mpd-port", default=None)
     p.add_argument("--friendly-name", default=None,
                    help="upmpdcli friendlyname, to pick one renderer of several")
+    p.add_argument("--drc-output", default=None, choices=("DRC-native", "DRC-resamp"),
+                   help="which MPD output feeds the DRC chain (default DRC-native). "
+                        "DRC-resamp is resamp mode: MPD resamples to 192000 and "
+                        "forces 24-bit output — on FreeBSD that 24-bit format "
+                        "crosses the OSS boundary to virtual_oss, which DRC-native "
+                        "never exercises.")
+    p.add_argument("--allow-resample", action="store_true",
+                   help="with --route drc --reference capture: accept material "
+                        "whose rate differs from the chain's, so the resampler "
+                        "itself can be captured. Recorded in the provenance as "
+                        "rate_verdict 'MISMATCH (deliberate)'.")
     p.add_argument("--allow-drc", action="store_true",
                    help="run even while brutefir is convolving (the DRC path "
                         "is not bit-perfect by design; the verdict will be "
@@ -1204,7 +1226,8 @@ def main() -> int:
             if material.get("warning"):
                 say(f"WARNING: {material['warning']}")
             if args.route == "drc":
-                chain = assert_drc_route(material, args.reference)
+                chain = assert_drc_route(material, args.reference,
+                                         args.allow_resample)
 
         # `live` reads MPD too, but never writes to it: the user's real Qobuz
         # session is playing and must not be disturbed.  The settings are
@@ -1232,10 +1255,24 @@ def main() -> int:
             playing.update(chain_state())
             emit("INFO", f"chain while playing: {json.dumps(playing)}")
             if playing.get("rate_verdict") == "mismatch":
-                say(f"WARNING: MPD is feeding {playing['mpd_rate']} Hz into "
-                    f"{playing['sink']} at {playing['sink_rate']} Hz — the "
-                    "loopback is RESAMPLING and this verdict is about the "
-                    "resampler, not the chain.")
+                # Say who resamples, because it differs by OS and it is the
+                # whole question for rate-mismatch testing.  On Linux snd-aloop
+                # cannot resample, so MPD opens it at the sink rate and converts
+                # with its configured resampler (soxr) — measured, 2026-09-11.
+                # On FreeBSD it depends on virtual_oss: without -S it is expected
+                # to force the client to its own rate (MPD resamples), with -S it
+                # converts itself.
+                on_linux = not sys.platform.startswith("freebsd")
+                who = ("MPD is resampling (snd-aloop cannot)" if on_linux else
+                       "MPD or virtual_oss is resampling (virtual_oss "
+                       + ("was started with -S, so it may be converting itself"
+                          if ((chain or {}).get("provenance") or {}).get("loopback_resampling")
+                          else "was not started with -S, so MPD is expected to")
+                       + ")")
+                say(f"WARNING: MPD is decoding {playing['mpd_rate']} Hz but "
+                    f"{playing['sink']} runs at {playing['sink_rate']} Hz — "
+                    f"{who}, and this verdict is about the resampler, not the "
+                    "chain.")
             elif playing.get("rate_verdict") == "match":
                 say(f"chain rates agree: MPD {playing['mpd_format']} into "
                     f"{playing['sink']} at {playing['sink_rate']} Hz — "
@@ -1252,7 +1289,7 @@ def main() -> int:
                 time.sleep(1.0)
                 emit("STAT", f"tap_seconds={int(args.duration - (end - time.monotonic()))}")
         else:
-            mpd_output = DRC_OUTPUT if args.route == "drc" else DIRECT_OUTPUT
+            mpd_output = (args.drc_output or DRC_OUTPUT) if args.route == "drc" else DIRECT_OUTPUT
             emit("INFO", f"MPD output: {mpd_output}")
             # The REFERENCE stays unpadded; only what is played gets the pad.
             play_path = pad_for_play(Path(material["play_path"]), tmp)
@@ -1338,6 +1375,11 @@ def main() -> int:
                 "kind": "CAPTURE", "verdict": "CAPTURED", "route": args.route,
                 "reference": "capture", "source": args.source, "os": osname,
                 "rate": material["rate"], "channels": material["channels"],
+                # `rate` is the MATERIAL's rate.  On the DRC route the wire runs
+                # at the chain's rate, and the two differ whenever a resampler
+                # is in the path (--allow-resample).  Anything reading the
+                # .wire.raw must use this, not `rate`.
+                "wire_rate": (chain or {}).get("brutefir_rate") or material["rate"],
                 "input": material.get("name") or str(args.input),
                 # The input's own hash, and the hash of the promoted S32_LE
                 # payload that both machines must be fed.  Two captures of

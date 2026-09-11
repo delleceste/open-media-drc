@@ -1202,6 +1202,18 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
 fi
 
 # ── status: show DRC state, virtual_oss rate, brutefir, and MPD output ───────
+# In resamp mode a rate difference is the point: the DRC-resamp output makes MPD
+# convert every track to 192 kHz with soxr "very high".  Printing a bare
+# [MISMATCH] there cries wolf on every non-192k track, which trains people to
+# ignore the one line that guards against an ACCIDENTAL resample.  Keep the word
+# MISMATCH — bitperfect_runner.py keys on it, and a resampler is in the path
+# either way — but say why.
+rate_mismatch_label() {
+  case "$_st_drc" in
+    resamp*) printf '%s' "[MISMATCH: deliberate - resamp mode resamples with MPD soxr]" ;;
+    *)       printf '%s' "[MISMATCH]" ;;
+  esac
+}
 if [ $# -eq 1 ] && [ "$1" = "status" ]; then
   _st_drc="off"
   [ -f "$STATE_FILE" ] && _st_drc=$(state_to_args "$(cat "$STATE_FILE")")
@@ -1302,8 +1314,8 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
         printf "%-17s MPD %s Hz = brutefir %s Hz  [match]%s\n" \
           "Rate:" "$_st_mpd_rate" "$_st_bf_rate" "$_st_alsa_suffix"
       else
-        printf "%-17s MPD %s Hz != brutefir %s Hz  [MISMATCH]%s\n" \
-          "Rate:" "$_st_mpd_rate" "$_st_bf_rate" "$_st_alsa_suffix"
+        printf "%-17s MPD %s Hz != brutefir %s Hz  %s%s\n" \
+          "Rate:" "$_st_mpd_rate" "$_st_bf_rate" "$(rate_mismatch_label)" "$_st_alsa_suffix"
       fi
     fi
   elif [ -n "$_st_voss_rate" ] && [ -n "$_st_mpc_audio" ]; then
@@ -1313,8 +1325,8 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
       printf "%-17s MPD %s Hz = virtual_oss %s Hz  [match]\n" \
         "Rate:" "$_st_mpd_rate" "$_st_voss_rate"
     else
-      printf "%-17s MPD %s Hz != virtual_oss %s Hz  [MISMATCH]\n" \
-        "Rate:" "$_st_mpd_rate" "$_st_voss_rate"
+      printf "%-17s MPD %s Hz != virtual_oss %s Hz  %s\n" \
+        "Rate:" "$_st_mpd_rate" "$_st_voss_rate" "$(rate_mismatch_label)"
     fi
   fi
   exit 0

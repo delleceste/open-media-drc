@@ -128,7 +128,12 @@ def load_capture(target: str, rate: int | None, channels: int | None) -> dict:
             report = {}
 
     ch = channels or report.get("channels") or 2
-    sr = rate or report.get("rate")
+    # The wire's rate, not the material's: they differ when a resampler was in
+    # the path.  Older captures carry no wire_rate; on the DRC route the chain's
+    # BruteFIR rate is the wire rate.
+    sr = (rate or report.get("wire_rate")
+          or (report.get("chain") or {}).get("brutefir_rate")
+          or report.get("rate"))
     if not sr:
         raise CannotJudge(f"{target}: no rate in {sidecar.name}; pass --rate")
 
@@ -327,6 +332,16 @@ def compare_provenance(a: dict, b: dict) -> dict:
         blocking.append("the two runs used different input material")
 
     for run in (a, b):
+        if (run["report"].get("chain") or {}).get("deliberate_resample"):
+            blocking.append(
+                f"{run['name']}: captured with --allow-resample, i.e. through a "
+                "resampler.  Two runs of the same resampler are not guaranteed "
+                "to be sample-identical (on Linux, MPD's soxr output was measured "
+                "to differ run to run by a sub-sample offset, agreeing only to "
+                "~112 dB below the signal), and a whole-sample null cannot "
+                "absorb that — it would report DIFFERENT for two perfect "
+                "resamples.  Measure each capture with resampler-residual.py and "
+                "compare the numbers instead")
         if run["provenance"].get("loopback_resampling"):
             noted.append(f"{run['name']}: virtual_oss was started with -S, so a "
                          "resampler was in the path (quality defaults to "
