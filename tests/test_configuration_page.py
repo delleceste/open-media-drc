@@ -307,6 +307,15 @@ class RoutesTest(unittest.TestCase):
         self.assertIn(b"Publication authority", response.data)
         self.assertIn(b"[configuration] design_root", response.data)
 
+    def test_filter_response_page_has_verified_room_sketch(self):
+        text = (SRC / "templates/filter_response.html").read_text()
+        self.assertIn("id=\"room-sketch-title\"", text)
+        self.assertIn("id=\"dim-mlp-speaker\"", text)
+        self.assertIn("id=\"dim-mlp-wall\"", text)
+        self.assertIn("id=\"dim-speaker-wall\"", text)
+        self.assertIn("session.marker_color", text)
+        self.assertIn("renderRoomSketch(data)", text)
+
     def test_form_data_is_captured_before_inputs_are_disabled(self):
         text = (SRC / "templates/configuration.html").read_text()
         handler = text[text.index("q('install-form').onsubmit"):]

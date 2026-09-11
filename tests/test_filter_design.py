@@ -117,6 +117,67 @@ def git_init(repo: Path) -> None:
                        check=True, env=environment, capture_output=True)
 
 
+class MeasurementDistanceTest(unittest.TestCase):
+    def paths(self, root: Path, comments: dict[str, str]) -> dict[str, Path]:
+        paths = {}
+        for role, name in (("original_left", "L.txt"),
+                           ("original_right", "R.txt"),
+                           ("original_sum", "LR.txt")):
+            path = root / name
+            path.write_text(comments.get(name, "") + "\n1 2 3\n", encoding="utf-8")
+            paths[role] = path
+        return paths
+
+    def test_extracts_requested_comment_phrasings(self):
+        variants = (
+            "3.32m from R and L speaker",
+            "3.32m from the speakers",
+            "3.32m from speakers",
+            "3.32m mic to speakers",
+        )
+        for wording in variants:
+            with self.subTest(wording=wording), tempfile.TemporaryDirectory() as name:
+                paths = self.paths(Path(name), {
+                    "L.txt": "* Note: 4.18m from front wall",
+                    "R.txt": "* Measurement: " + wording,
+                })
+                self.assertEqual(MODULE.measurement_distances(paths), {
+                    "front_wall_m": "4.18", "speakers_m": "3.32"})
+
+    def test_extracts_speaker_wall_distance_and_marker_color(self):
+        wall_variants = ("0.80m speakers to wall", "0.80m speakers to front wall")
+        for wording in wall_variants:
+            with self.subTest(wording=wording), tempfile.TemporaryDirectory() as name:
+                paths = self.paths(Path(name), {
+                    "LR.txt": "* Note: " + wording + "\n* Note: marker: Blue",
+                })
+                self.assertEqual(MODULE.measurement_distances(paths), {
+                    "speaker_wall_m": "0.80"})
+                self.assertEqual(MODULE.measurement_marker_color(paths), "blue")
+
+    def test_ignores_distance_text_outside_comments(self):
+        with tempfile.TemporaryDirectory() as name:
+            paths = self.paths(Path(name), {"L.txt": "4.18m from front wall"})
+            self.assertEqual(MODULE.measurement_distances(paths), {})
+            self.assertEqual(MODULE.measurement_marker_color(paths), "")
+
+    def test_rejects_conflicting_measurement_comments(self):
+        with tempfile.TemporaryDirectory() as name:
+            paths = self.paths(Path(name), {
+                "L.txt": "* 4.18m from front wall",
+                "LR.txt": "* 4.20m from front wall",
+            })
+            with self.assertRaisesRegex(MODULE.AuditError, "conflicting"):
+                MODULE.measurement_distances(paths)
+
+    def test_rejects_conflicting_marker_colors(self):
+        with tempfile.TemporaryDirectory() as name:
+            paths = self.paths(Path(name), {
+                "L.txt": "* marker: green", "R.txt": "* marker: blue"})
+            with self.assertRaisesRegex(MODULE.AuditError, "conflicting marker"):
+                MODULE.measurement_marker_color(paths)
+
+
 class HeadroomCalculationTest(unittest.TestCase):
     def test_existing_filter_attenuation_counts_towards_margin(self):
         cases = (
