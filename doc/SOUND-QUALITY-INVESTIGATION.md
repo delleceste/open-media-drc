@@ -293,7 +293,8 @@ argument.
 ### 6.8 The cross-OS null — the headline result
 
 The test the whole investigation was building toward: same input samples, same
-coefficients, one machine's wire capture nulled against the other's.
+coefficients, one machine's wire capture nulled against the other's. (What a
+null test is and how to read its numbers: `DAC-FORMAT-EXPLAINED.md` §11.)
 
 ```
 bp-results/null-192000-fbsd-part32768   freebsd15/15.1-RELEASE-p2   9,031,912 frames
