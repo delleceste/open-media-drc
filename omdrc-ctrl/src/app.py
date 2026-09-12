@@ -5361,8 +5361,23 @@ def _chain_status() -> dict:
     bridge_dev = devices.get("bridge")
     loop_dev = devices.get("loop")
     bridge_node = None
+    # "present" is only a proxy for "up" on FreeBSD: virtual_oss creates
+    # /dev/dsp.play itself and removes it on teardown, so the node's very
+    # existence means the bridge is running, in use or not — worth drawing the
+    # same way the DAC box is always drawn.  On Linux the bridge is snd-aloop, a
+    # kernel module whose /dev/snd/pcm nodes are loaded at boot by
+    # etc/modprobe.d/omdrc-snd-aloop.conf and never go away — DRC off, no CD
+    # input, nothing routed through it, the node is still "present".  Falling
+    # back to it there draws a floating, unconnected "snd-aloop" box on an
+    # otherwise idle box.
+    #
+    # NB this covers only the case where NOTHING holds the loopback.  A bridge
+    # drawn because a holder is genuinely there (MPD left on hw:1,0 after a
+    # switch to no-DRC, say) is the card reporting a real routing fault, and
+    # must keep being drawn.
     if (bridge_dev or loop_dev) and (bridge_used or
-                                     (bridge_dev and bridge_dev["present"])):
+                                     (not _IS_LINUX and bridge_dev
+                                      and bridge_dev["present"])):
         present = bool((bridge_dev and bridge_dev["present"]) or
                        (loop_dev and loop_dev["present"]))
         bridge_node = {
