@@ -264,6 +264,20 @@ class Graph(unittest.TestCase):
     def test_a_renderer_with_no_mpd_to_feed_is_not_drawn(self):
         self.assertIsNone(_node(_status(services=("upmpdcli",)), "app:upmpdcli"))
 
+    @unittest.skipUnless(APP._IS_LINUX, "snd-aloop's static nodes are Linux-only")
+    def test_snd_aloop_does_not_linger_after_drc_is_switched_off(self):
+        # Reported bug: switch the "Apply" button from a DRC design (e.g. 192
+        # kHz) to no-DRC. drc.sh stops brutefir and alsaloop, but the
+        # snd-aloop *kernel module* stays loaded (etc/modprobe.d pins it), so
+        # its /dev/snd/pcm nodes for the loopback are still "present" with
+        # nobody holding either side. Unlike FreeBSD's virtual_oss, which
+        # creates and removes /dev/dsp.play itself, presence here proves
+        # nothing about use — drawing a bridge box from it alone left a
+        # disconnected "snd-aloop" floating in the diagram with no source
+        # feeding it and nothing reaching the DAC.
+        status = _status()
+        self.assertIsNone(_node(status, "bridge"))
+
 
 class Summary(unittest.TestCase):
     """An arrow in the summary line means "feeds"."""

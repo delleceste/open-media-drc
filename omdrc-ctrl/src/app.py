@@ -412,9 +412,9 @@ CDIN_CONTROL = True
 # against a loopback BruteFIR is reading at 192 kHz is an EBUSY, and a bridge
 # started behind drc.sh's back leaves last_source saying "music", so the next
 # reconcile, rate action or boot stops it again and the bridge looks like it
-# died on its own.  Only `drc.sh cdin` / `drc.sh linein` knows enough to start
-# it — they also settle which input of the capture card the bridge opens — and
-# that is what the "CD input" and "Line input" buttons already are.
+# died on its own.  Only `drc.sh cdin` knows enough to start it — it also
+# settles which input of the capture card the bridge opens — and that is what
+# the "CD input" button already is.
 #
 # FreeBSD keeps both: virtual_oss mixes, the daemon is a persistent service
 # that picks its own output, and a raw start really is just "put it back in the
@@ -446,7 +446,7 @@ _CDIN_START = re.compile(
     r"^omdrc-cdin \S+ starting: in=(?P<inpath>.+?) out=(?P<outpath>\S+) "
     r"(?P<rate>\d+) Hz")
 
-# "source linein: capturing 'Line' from hw:3,0" — which of the box's inputs the
+# "source cdin: capturing 'iec958' from hw:3,0" — which of the box's inputs the
 # bridge was started for.  Only the caller that chose knows: the device path
 # does not say it, because the same card's digital input is a second PCM device
 # on one box and an item of the same mixer selector on the next.  A bridge
@@ -456,7 +456,7 @@ _CDIN_SOURCE = re.compile(r"^source (?P<source>[a-z][a-z0-9_-]*):")
 
 # What the panel calls each of them.  Unknown tokens are shown as they came,
 # so a source added to drc.sh appears here as itself rather than vanishing.
-CDIN_SOURCE_LABELS = {"cdin": "CD input", "linein": "Line input"}
+CDIN_SOURCE_LABELS = {"cdin": "CD input"}
 
 _CDIN_DEVICE_LABEL = {"capture": "capture", "playback": "output"}
 
@@ -1664,8 +1664,7 @@ def _spectrum_resolve_source() -> SpectrumSource:
     if want == "auto":
         want = "cdin" if _cdin_source_active() else "mpd"
     if want == "cdin":
-        # The bridge's own rate wins over the configured one: `cdin` and
-        # `linein` are the same bridge at different rates, and the analyzer
+        # The bridge's own rate wins over the configured one: the analyzer
         # must FFT at the rate the samples were captured at.  The setting is
         # the fallback for a bridge that has not logged a start yet.
         return CdinSpectrumSource(SPECTRUM_CDIN_FIFO,
@@ -1723,8 +1722,8 @@ def _engaged_capture_input() -> dict:
 
     Empty is the ordinary case — music through MPD — and also the honest answer
     for a chain that was built for a capture source whose bridge then died: the
-    rate would still be the Line input's, and saying "Line input" on a line
-    that reports what is RUNNING would be a claim nothing had checked.
+    rate would still be the CD input's, and saying "CD input" on a line that
+    reports what is RUNNING would be a claim nothing had checked.
     """
     engaged = _cdin_live()[2]
     if not engaged:
@@ -4425,8 +4424,8 @@ def _cdin_status() -> dict:
         # one.  Read by the spectrum analyzer, which must FFT at the rate the
         # samples were captured at rather than at a configured constant.
         "rate": 0,
-        # Which input that start was for ("cdin", "linein"), "" for a bridge
-        # nobody selected.  Read by the DRC card to name the engaged input.
+        # Which input that start was for ("cdin"), "" for a bridge nobody
+        # selected.  Read by the DRC card to name the engaged input.
         "source": "",
         "source_label": "",
         "control": CDIN_CONTROL,
@@ -5394,8 +5393,19 @@ def _chain_status() -> dict:
     bridge_dev = devices.get("bridge")
     loop_dev = devices.get("loop")
     bridge_node = None
+    # "present" is only a proxy for "up" on FreeBSD: virtual_oss creates
+    # /dev/dsp.play itself and removes it on teardown, so the node's very
+    # existence means the bridge is running, in use or not — worth drawing the
+    # same way the DAC box is always drawn.  On Linux the bridge is snd-aloop, a
+    # kernel module whose /dev/snd/pcm nodes are loaded at boot by
+    # etc/modprobe.d/omdrc-snd-aloop.conf and never go away — DRC off, no CD
+    # input, nothing routed through it, the node is still "present".  Falling
+    # back to it there draws a floating, unconnected "snd-aloop" box on every
+    # idle box, which is the bug: switch to no-DRC and the phantom bridge stays
+    # in the diagram with nothing feeding it and nothing coming out of it.
     if (bridge_dev or loop_dev) and (bridge_used or
-                                     (not _IS_LINUX and bridge_dev and bridge_dev["present"])):
+                                     (not _IS_LINUX and bridge_dev
+                                      and bridge_dev["present"])):
         present = bool((bridge_dev and bridge_dev["present"]) or
                        (loop_dev and loop_dev["present"]))
         bridge_node = {

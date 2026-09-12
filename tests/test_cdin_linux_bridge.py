@@ -581,7 +581,7 @@ class ExclusiveSourceTest(unittest.TestCase):
         self.text = DRC.read_text()
 
     def test_every_capture_source_is_exclusive(self):
-        """`cdin` and `linein` are one bridge on one loopback seat.
+        """The CD input holds one bridge on one loopback seat.
 
         The exclusivity is a property of that seat, not of the CD, so every
         branch that used to name "cdin" has to ask the set instead — a source
@@ -590,9 +590,9 @@ class ExclusiveSourceTest(unittest.TestCase):
         two programs mixed together.
         """
         self.assertIn("""valid_source() {
-  case "$1" in music|cdin|linein) return 0 ;; esac""", self.text)
+  case "$1" in music|cdin) return 0 ;; esac""", self.text)
         self.assertIn("""is_capture_source() {
-  case "$1" in cdin|linein) return 0 ;; esac""", self.text)
+  case "$1" in cdin) return 0 ;; esac""", self.text)
         # No branch may test the token directly any more.
         self.assertNotRegex(self.text, r'\[ "\$\w*source\w*" = "cdin" \]')
 

@@ -38,13 +38,10 @@ set(OMDRC_FILTER_DESIGN_ROOT "${AUDIO_HOME}/.local/share/omdrc/site-data" CACHE 
 # name the same directory or the bridge silently keeps its previous input.
 set(OMDRC_STATE_DIR "${AUDIO_HOME}/.local/state/omdrc" CACHE PATH
     "Runtime state directory shared by drc.sh, the services and the web panel")
-# The rate each capture source arrives at.  Not a preference: a CD is 44.1 kHz
-# because Red Book says so, and the analog input is whatever the capture card's
-# converter runs at (the USB Sound Blaster HD's analog device does 48/96 kHz
-# only, so 44.1 there would resample through ALSA's plug layer).  Rendered into
-# both omdrc.conf and the panel's button labels so the two cannot drift apart.
+# The rate the CD capture source arrives at.  Not a preference: a CD is
+# 44.1 kHz because Red Book says so.  Rendered into both omdrc.conf and the
+# panel's button label so the two cannot drift apart.
 set(CDIN_RATE   "44100" CACHE STRING "Sample rate of the CD / S-PDIF input")
-set(LINEIN_RATE "96000" CACHE STRING "Sample rate of the analog Line input")
 set(MUSIC_DIR     ""                    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR     ""                    CACHE PATH   "Video library root (omdrcvideo)")
 set(QOBUZ_USER    ""                    CACHE STRING "Qobuz account username for upmpdcli (blank disables)")
