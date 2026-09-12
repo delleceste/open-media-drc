@@ -491,19 +491,16 @@ OMDRC_CDIN_PROCESS="${OMDRC_CDIN_PROCESS:-alsaloop}"
 CDIN_RATE="${CDIN_RATE:-44100}"
 CDIN_CAPTURE_DEVICE="${CDIN_CAPTURE_DEVICE:-0}"
 CDIN_CAPTURE_SOURCE="${CDIN_CAPTURE_SOURCE:-auto}"
-LINEIN_RATE="${LINEIN_RATE:-96000}"
-LINEIN_CAPTURE_DEVICE="${LINEIN_CAPTURE_DEVICE:-0}"
-LINEIN_CAPTURE_SOURCE="${LINEIN_CAPTURE_SOURCE:-Line}"
 
 # One place that knows the set, so a third source is a line here and not a
 # hunt through every `case` in the file.
 valid_source() {
-  case "$1" in music|cdin|linein) return 0 ;; esac
+  case "$1" in music|cdin) return 0 ;; esac
   return 1
 }
 
 is_capture_source() {
-  case "$1" in cdin|linein) return 0 ;; esac
+  case "$1" in cdin) return 0 ;; esac
   return 1
 }
 
@@ -512,14 +509,12 @@ is_capture_source() {
 source_rate() {
   case "$1" in
     cdin)   printf '%s\n' "$CDIN_RATE" ;;
-    linein) printf '%s\n' "$LINEIN_RATE" ;;
   esac
 }
 
 source_label() {
   case "$1" in
     cdin)   printf 'CD / S-PDIF input\n' ;;
-    linein) printf 'analog Line input\n' ;;
     *)      printf 'music\n' ;;
   esac
 }
@@ -529,16 +524,11 @@ source_label() {
 # EnvironmentFile the unit reads at every start (cmake/cdin-linux.cmake names
 # the same path).  Written immediately before the start, so the input the
 # bridge opens and the chain that was just built for it cannot disagree: they
-# are two halves of one action, and a stale file is the failure where the
-# analog input plays into a chain running at the CD's rate.
+# are two halves of one action.
 CDIN_ENV_FILE="${OMDRC_CDIN_ENV_FILE:-$STATE_DIR/cdin.env}"
 
 write_cdin_env() {
-  local src="$1" _device _item
-  case "$src" in
-    linein) _device="$LINEIN_CAPTURE_DEVICE"; _item="$LINEIN_CAPTURE_SOURCE" ;;
-    *)      _device="$CDIN_CAPTURE_DEVICE";   _item="$CDIN_CAPTURE_SOURCE" ;;
-  esac
+  local src="$1" _device="$CDIN_CAPTURE_DEVICE" _item="$CDIN_CAPTURE_SOURCE"
   {
     echo "# Written by drc.sh for the '${src}' source. Do not edit: every"
     echo "# start of the bridge overwrites it."
@@ -735,14 +725,12 @@ restart_cdin() {
   # FreeBSD selects the chain rate for whichever capture source is saved, the
   # same as Linux, but it does NOT carry the input choice: omdrc-cdin is a
   # daemon configured from rc.conf, so which input of the card it opens is
-  # omdrc_cdin_* there rather than anything written here.  `linein` on FreeBSD
-  # therefore means "run the chain at the analog input's rate"; point the
-  # daemon at that input in rc.conf to match.
+  # omdrc_cdin_* there rather than anything written here.
   if ! pgrep -q -x omdrc-cdin 2>/dev/null; then
-    # `drc.sh cdin` / `drc.sh linein` is the panel's explicit source-selection
-    # action.  Unlike an ordinary rate/geometry change, it is allowed to start
-    # a bridge that the panel had not started yet.  onestart deliberately
-    # ignores the NO rcvar used by the web-controlled lifecycle.
+    # `drc.sh cdin` is the panel's explicit source-selection action.  Unlike
+    # an ordinary rate/geometry change, it is allowed to start a bridge that
+    # the panel had not started yet.  onestart deliberately ignores the NO
+    # rcvar used by the web-controlled lifecycle.
     [ "${OMDRC_START_CDIN:-0}" = 1 ] || \
       [ "$CDIN_RESTART_NEEDED" = 1 ] || return 0
     echo "starting omdrc-cdin for the selected $(source_label "${source_mode:-cdin}")"
@@ -807,14 +795,13 @@ stop_virtual_oss() {
 }
 
 usage() {
-  echo "Usage: $0 <rate>|resamp|cdin|linein|reconcile|restore|off|stop|status|session|geometry|design [variant]"
+  echo "Usage: $0 <rate>|resamp|cdin|reconcile|restore|off|stop|status|session|geometry|design [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
   echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
   echo "             MPD uses DRC-native format *:*:* and does not resample"
   echo "  resamp   : MPD resamples everything to 192000 Hz"
   echo "  cdin     : select the persistent CD/S-PDIF input (${CDIN_RATE} Hz)"
-  echo "  linein   : select the persistent analog Line input (${LINEIN_RATE} Hz)"
   echo "  reconcile: make the actual chain match saved power/source/rate state"
   echo "  restore  : re-apply the last saved state (reads last_arg file);"
   echo "             falls back to 192000 if no previous active state exists"

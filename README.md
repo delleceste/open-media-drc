@@ -1039,21 +1039,19 @@ active transition fails before touching the current chain.
 
 ### Capture-input state across reboot
 
-There are two capture sources, one bridge. `drc.sh cdin` records
-`last_source=cdin` and the CD's 44.1 kHz intent under the lifecycle lock;
-`drc.sh linein` records `last_source=linein` and the analog input's 96 kHz.
-The web panel's “CD input” and “Line input” actions invoke them. The rate
-belongs to the source (`CDIN_RATE` / `LINEIN_RATE` in `omdrc.conf`) rather than
-to the listener, and so does which input of the capture card the bridge opens —
-see `doc/CDIN-LINUX.md`.
+There is one capture source and one bridge. `drc.sh cdin` records
+`last_source=cdin` and the CD's 44.1 kHz intent under the lifecycle lock. The
+web panel's “CD input” action invokes it. The rate belongs to the source
+(`CDIN_RATE` in `omdrc.conf`) rather than to the listener, and so does which
+input of the capture card the bridge opens — see `doc/CDIN-LINUX.md`.
 
 Which input is actually engaged is reported by the bridge itself, not inferred
 from what was requested: it logs `source <name>: capturing '<item>' from
 <device>` on every start, the panel reads that line, and the DRC session
-card's **Active** line names the input next to the rate (`Active: … · 96,000
-Hz · Line input · …`) only while that bridge is running — a chain built for
-the Line input with a dead bridge reports no input, because *Active* describes
-what is running, not what was asked for.
+card's **Active** line names the input next to the rate (`Active: … · 44,100
+Hz · CD input · …`) only while that bridge is running — a chain built for the
+CD input with a dead bridge reports no input, because *Active* describes what
+is running, not what was asked for.
 
 An ordinary rate action records the return-to-music intent before device and
 configuration validation. Thus a failed transition is retried as music after
