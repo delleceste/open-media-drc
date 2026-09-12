@@ -543,6 +543,13 @@ class CaptureRoleTest(unittest.TestCase):
                     '    device: "hw:1,0"; # omdrc-managed-dac\n  };\n};\n')
         self.assertIn("2 device lines", str(error.exception))
 
+    def test_mpd_direct_output_marker_follows_selected_dac(self):
+        text = 'audio_output {\n device "hw:0,0" # omdrc-managed-mpd-dac\n}\n'
+        changed, count = self.helper.MANAGED_MPD.subn(
+            r'\1"hw:2,0"\2', text)
+        self.assertEqual(count, 1)
+        self.assertIn('device "hw:2,0" # omdrc-managed-mpd-dac', changed)
+
     def test_an_unresolvable_capture_is_named_as_such(self):
         with mock.patch.object(self.helper, "linux_usb_cards", return_value=self.CARDS):
             with self.assertRaises(RuntimeError) as error:

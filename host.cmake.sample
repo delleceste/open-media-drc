@@ -17,6 +17,9 @@ set(CMAKE_INSTALL_PREFIX "/usr/local"      CACHE PATH   "Install prefix")
 set(AUDIO_USER   "giacomo"                 CACHE STRING "Login user that owns the services and brutefir")
 set(AUDIO_HOME   "/home/giacomo"           CACHE PATH   "Home directory of AUDIO_USER")
 
+# Linux browser ALSA defaults follow the devices selected on /configuration.
+# set(OMDRC_INSTALL_BROWSER_ALSA OFF CACHE BOOL "Leave desktop ALSA unmanaged")
+
 # Speaker geometry: configs/<GEOMETRY>/ + filters/<GEOMETRY>/.  "flat" = identity
 # (no correction).  This box uses the 120.blue room set.
 set(GEOMETRY     "120.blue"                CACHE STRING "Default speaker geometry / filter set")

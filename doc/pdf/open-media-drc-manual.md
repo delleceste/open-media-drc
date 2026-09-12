@@ -267,7 +267,10 @@ Web browsers cannot easily route into the DRC loopback, and BruteFIR holds
 the DAC single-open while DRC runs. `browser-nodrc/` provides one launcher
 per browser (Firefox, Chromium, Chrome) that snapshots the DRC state, runs
 `drc.sh off`, launches the browser in the foreground, and restores the exact
-pre-launch state from an EXIT trap --- even if the browser crashes.
+pre-launch state from an EXIT trap --- even if the browser crashes. On Linux,
+the browser uses a managed ALSA default which follows the DAC and capture
+interface selected on `/configuration`; it never relies on USB card index 0.
+Section \ref{sec:browser-audio} describes the complete lifecycle.
 
 \newpage
 
@@ -368,10 +371,18 @@ and the one or two files that must be copied into `/etc` (next section).
 CMake covers the whole stack: engine, DAC-hotplug glue, both web UIs, the MPD +
 upmpdcli renderer configs/units, the `browser-nodrc` launchers and the video
 `play-media` / `play-bluray` launchers with their `.desktop` entries, the Linux
-`snd-aloop` module config, and the Linux CD-input bridge. Desktop-session
+`snd-aloop` module config, the Linux browser ALSA default, and the Linux CD-input
+bridge. Desktop-session
 entries install under the prefix and `make user-install` links the ones that
 must live in the user's session (the mpv-idle autostart); menu entries go
 straight to `$PREFIX/share/applications`.
+
+On a live Linux host, `make install` also appends one marked include to the
+audio user's existing ALSA configuration. It uses `~/.asoundrc`, unless the
+later-loaded `~/.config/alsa/asoundrc` already exists, and preserves a one-time
+`.omdrc-before-browser-alsa` backup. A `DESTDIR` package build installs the
+template but deliberately does not touch a real home directory. Section
+\ref{sec:browser-audio} gives the installed paths and recovery procedure.
 
 An older `./install.sh` rendered the `*.in` templates in place so everything ran
 straight from the checkout (`git pull` = update). It has been **removed**: it
@@ -1252,17 +1263,176 @@ The measured result of the current filter set (`120.blue`, v1.5.0):
 
 ![Phase response: corrected vs uncorrected.](../current.phase.png){width=84%}
 
-## Browser audio without DRC
+## Browser and ALSA management {#sec:browser-audio}
 
-While DRC runs, BruteFIR holds the DAC single-open and browsers get
-silence. Each `browser-nodrc/` launcher: (1) snapshots `last_power` +
-`last_arg`; (2) runs `drc.sh off`; (3) runs the browser in the foreground;
-(4) restores the exact pre-launch state from an `EXIT`/`INT`/`TERM` trap.
-It deliberately does *not* use `drc.sh restore` (which would honour the
-`off` just recorded and leave DRC down). Firefox runs with `--no-remote`;
-Chrome/Chromium detect an already-running instance with `pgrep` and then
-just hand over the URL without touching DRC. The rendered `.desktop`
-launchers are symlinked into `~/.local/share/applications/`.
+### Why the browser has a separate path
+
+While DRC runs, BruteFIR owns the raw DAC. A browser cannot share that hardware
+handle and cannot conveniently send its audio through the MPD -> `snd-aloop` ->
+BruteFIR route. Browser audio also needs normal desktop mixing: Chromium can
+have overlapping streams from tabs, UI sounds and an audio process that closes
+the device later than the page that created it. The supported path therefore
+stops DRC for the whole browser session and gives a small ALSA mixer exclusive
+use of the selected DAC:
+
+```
+browser -> ALSA default -> plug -> dmix (48 kHz, S32_LE) -> selected DAC
+```
+
+MPD and BruteFIR continue to name raw `hw:` devices explicitly. They bypass
+this default and its mixer, so installing the browser configuration does not
+insert resampling into music playback or the DRC chain. `dmix` shares browser
+streams with other browser streams; it cannot share the DAC with MPD or
+BruteFIR while either process has the raw device open.
+
+Linux uses ALSA directly for this path. No sndio daemon is involved, and the
+configuration does not require a running PulseAudio or PipeWire server. The
+FreeBSD launchers use the native OSS/sndio or per-process ALSA-to-OSS handling
+documented in the FreeBSD chapter; the Linux files described below are not
+installed there.
+
+### Installation and ownership
+
+On Linux, `cmake/browser-audio.cmake` installs the browser launchers and menu
+entries, then `cmake/browser-alsa-linux.cmake` installs the ALSA template:
+
+```
+$PREFIX/share/open-media-drc/asoundrc.linux.conf.in
+```
+
+A live `make install` asks the configuration helper to render the saved audio
+roles into:
+
+```
+$PREFIX/etc/open-media-drc/browser-alsa.conf
+```
+
+It then adds this marked block after the audio user's existing ALSA settings:
+
+```
+# BEGIN open-media-drc browser ALSA
+</usr/local/etc/open-media-drc/browser-alsa.conf>
+# END open-media-drc browser ALSA
+```
+
+The destination is `~/.config/alsa/asoundrc` when that file already exists,
+because alsa-lib loads it after `~/.asoundrc`; otherwise the destination is
+`~/.asoundrc`. Existing content is retained byte-for-byte and the installer
+creates a one-time sibling backup named
+`.omdrc-before-browser-alsa`. Reinstallation replaces the marked block instead
+of appending duplicates. It refuses a malformed or edited partial block rather
+than guessing how to rewrite the user's file. A root install restores ownership
+of the edited file to `AUDIO_USER`.
+
+With `DESTDIR` set, installation stages the template only. It does not inspect
+the build host's cards or write into `AUDIO_HOME`. Run a live install on the
+target to create the include. Set `OMDRC_INSTALL_BROWSER_ALSA=OFF` at CMake
+configuration time to leave desktop ALSA unmanaged; this does not remove a
+block installed earlier.
+
+### Following the `/configuration` device selection
+
+The stable source of truth is the USB identity selected on `/configuration`,
+not an ALSA card number and not a DAC name stored in `host.cmake`. On Linux the
+helper maintains three related views of the same selection:
+
+| File | Contents and lifetime |
+|---|---|
+| `$PREFIX/etc/open-media-drc/audio-roles.conf` | Persistent DAC and capture USB identities (`vid:pid[:serial]`) |
+| `/run/omdrc/audio.roles` | Current-boot ALSA card numbers and descriptions, regenerated during Apply and hotplug reconcile |
+| `$PREFIX/etc/open-media-drc/browser-alsa.conf` | Current ALSA card IDs used by browser playback and capture |
+
+When the operator presses **Apply**, `omdrc-config-helper` resolves the chosen
+USB identities against the attached cards. It updates BruteFIR, MPD, the
+runtime roles and the browser ALSA configuration as one device-selection
+operation, then restarts the DRC lifecycle service. Selecting another DAC
+therefore changes the browser's output as well; no CMake reconfiguration,
+manual `.asoundrc` edit or attempt to pin that DAC at card 0 is required.
+
+On boot or USB hotplug, `omdrc-audio-roles.service` runs the same reconcile
+path. ALSA indexes may change from `card0` to `card2`, but the persistent USB
+identity is resolved again and the generated browser file receives the current
+ALSA card ID, such as `DAC8STEREO`. The generated hardware address has the form
+`hw:CARD=<id>,DEV=0`, which is independent of the numeric index assigned during
+that boot.
+
+If the saved DAC is absent, the helper generates an unavailable sentinel output
+instead of falling back to card 0. This prevents browser audio from being sent
+to an unrelated capture interface or HDMI output. If the optional capture card
+is absent, browser capture uses ALSA's `null` PCM until an attached capture
+interface is selected or reconciled. Multiple identical USB devices still need
+a usable serial number or an unambiguous Apply with the others unplugged, as
+described in section \ref{sec:known-dac-policy}.
+
+The generated mixer is fixed at stereo, 48000 Hz and `S32_LE`. A selected DAC
+must support that mode. The `plug` layer converts ordinary browser formats and
+sample rates before they enter `dmix`; this conversion is intentional for
+desktop streaming audio and is outside the bit-perfect MPD/DRC paths.
+
+### Launcher lifecycle
+
+Each installed menu entry runs one foreground launcher from
+`$PREFIX/libexec/omdrc/browser-nodrc/`. The launcher:
+
+1. reads `omdrc session` and remembers the exact power and mode state;
+2. arms `EXIT`, `INT` and `TERM` traps;
+3. runs `omdrc off`, stopping BruteFIR and enabling the direct MPD output;
+4. waits for the selected DAC to be released;
+5. runs the browser in the foreground; and
+6. on browser exit, releases browser audio and reapplies the state from step 1.
+
+The trap deliberately reapplies the captured mode rather than calling plain
+`omdrc restore`: `off` has just recorded persistent power-off state, which a
+plain restore would correctly honour and thus leave DRC down. If DRC was already
+off before launch, the launcher leaves it off afterward.
+
+Firefox uses `--no-remote` so the launcher owns a new foreground instance.
+Chrome and Chromium cannot use that model reliably: when one is already
+running, a second invocation merely hands it a URL and exits. Their launchers
+detect that condition and leave DRC unchanged. Fully quit an existing Chromium
+or Chrome process before starting the **No DRC** entry; otherwise the old
+process keeps both its original audio configuration and its original DRC
+relationship.
+
+Chromium should use its ALSA backend and the `default` PCM. A command-line
+`--alsa-output-device=default` makes the choice explicit on builds that accept
+it. Firefox must be built with ALSA support; if it keeps selecting an absent
+sound server, set the string preference `media.cubeb.backend` to `alsa` in
+`about:config`, then restart it. Backend preferences and an ALSA configuration
+are normally read when the browser/audio process starts, so a running browser
+must be fully restarted after selecting another DAC.
+
+### Verification and recovery
+
+After installation or a device change, close every browser process, launch the
+browser through its **No DRC** menu entry and play two tabs at once. Verify the
+selection and the open hardware endpoint with:
+
+```sh
+cat /usr/local/etc/open-media-drc/audio-roles.conf
+cat /run/omdrc/audio.roles
+sed -n '1,120p' /usr/local/etc/open-media-drc/browser-alsa.conf
+cat /proc/asound/cards
+cat /proc/asound/<selected-card-id>/pcm0p/sub0/hw_params
+```
+
+The last file should show a two-channel 48000 Hz `S32_LE` playback stream on the
+selected DAC. The ESI or other capture interface's playback PCM should remain
+closed. If the browser is silent, check in this order:
+
+1. Confirm that it was launched through **No DRC** and that no earlier browser
+   process remains.
+2. Confirm that `/run/omdrc/audio.roles` and `browser-alsa.conf` describe the
+   same DAC selected on `/configuration`.
+3. Check `/proc/asound/*/pcm*p/sub*/hw_params` for MPD, BruteFIR or another
+   process still holding the raw DAC.
+4. Fully restart the browser after any Apply or USB reconnection.
+5. Check the Chromium or Firefox backend selection described above.
+
+To stop project management of the ALSA default, restore the one-time backup or
+remove only the three-line marked include block, then configure future builds
+with `-DOMDRC_INSTALL_BROWSER_ALSA=OFF`. The generated file under the prefix is
+otherwise harmless when nothing includes it.
 
 \newpage
 
@@ -1863,8 +2033,12 @@ drives two independent workflows, both through the same privileged helper,
   reboot) and resolves the saved identity to the current ALSA card number into
   `/run/omdrc/audio.roles` on every hotplug restore, so nothing in the CD
   bridge or the panel's chain diagram has to hard-code a card number that USB
-  attach order can change. A configured capture card that is not plugged in
-  this boot is dropped with a notice rather than failing the whole reconcile.
+  attach order can change. The same Apply/reconcile operation regenerates
+  `<prefix>/etc/open-media-drc/browser-alsa.conf` with stable ALSA card IDs, so
+  the managed browser default follows both selected roles without assuming the
+  DAC is `card0`. A configured capture card that is not plugged in this boot is
+  dropped with a notice rather than failing the whole reconcile. See section
+  \ref{sec:browser-audio}.
 
 #### DAC switching and known-device policy {#sec:known-dac-policy}
 
@@ -3972,6 +4146,7 @@ detail behind each section:
 | Build modules: DRC engine + site data | `cmake/core-drc.cmake` |
 | Build modules: DAC-hotplug + brutefir services | `cmake/hotplug.cmake` |
 | Build modules: MPD + upmpdcli renderers | `cmake/renderers.cmake` |
+| Browser launchers and Linux ALSA management | `browser-nodrc/README.md`, `cmake/browser-audio.cmake`, `cmake/browser-alsa-linux.cmake` |
 | Build modules: runtime dependency audit | `cmake/dependencies.cmake` |
 | Build modules: per-user setup (`make user-install`) | `cmake/user-install.sh.in` |
 | Web-UI subproject builds | `omdrc-ctrl/CMakeLists.txt`, `video/webremote/CMakeLists.txt` |

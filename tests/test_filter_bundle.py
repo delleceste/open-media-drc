@@ -256,6 +256,18 @@ class FilterBundleTest(unittest.TestCase):
         self.assertEqual(rate, 48000)
         self.assertEqual(selector, "@rscreen.v2")
 
+    def test_removed_saved_design_is_not_offered_as_available(self):
+        session = {"power": "off", "geometry": "120.green", "rate": 44100,
+                   "design": "@v1"}
+        with mock.patch.object(APP, "_drc_script", return_value="/bin/omdrc"), \
+             mock.patch.object(APP, "_drc_designs", return_value=["@multipt.FDW6"]), \
+             mock.patch.object(APP, "_drc_saved_session", return_value=session), \
+             mock.patch.object(APP, "_active_design_identity", return_value={"running": False}):
+            data = APP.app.test_client().get("/drc/design").get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["design"], "@v1")
+        self.assertEqual(data["available"], ["@multipt.FDW6"])
+
     def test_saved_session_must_match_exact_active_identity(self):
         session = {
             "power": "on", "geometry": "120.blue", "rate": 48000,
