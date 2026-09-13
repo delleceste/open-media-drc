@@ -5389,7 +5389,20 @@ def _chain_status() -> dict:
     # retain one of its endpoints.  The CD capture endpoint above is the
     # discriminant for this optional lane; its activity controls only the LED.
     # FreeBSD keeps virtual_oss while its daemon is up.
-    bridge_used = bool(cdin_visible if _IS_LINUX else filters)
+    #
+    # The CD lane is not the only thing that routes through the loopback: the
+    # ordinary Linux playback chain is MPD -> snd-aloop -> BruteFIR -> DAC, and
+    # a writer on hw:1,0 together with a reader on hw:1,1 is exactly that route
+    # standing up.  Keying the bridge off the CD lane alone dropped the box
+    # while music was playing, and with it the two arcs either side of it: MPD
+    # floated with nothing leaving it and the summary read "incomplete chain".
+    # One endpoint on its own stays out, which is what the idle cases need --
+    # BruteFIR sits on hw:1,1 from the moment it starts and MPD keeps hw:1,0
+    # open while paused, so a single held endpoint proves no more than presence
+    # does.
+    loopback_routed = bool(bridge_writers and loop_readers)
+    bridge_used = bool((cdin_visible or loopback_routed) if _IS_LINUX
+                       else filters)
     bridge_dev = devices.get("bridge")
     loop_dev = devices.get("loop")
     bridge_node = None

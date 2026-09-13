@@ -540,6 +540,25 @@ class LinuxHolderEvidenceTest(unittest.TestCase):
         self.assertIsNone(_node(status, "bridge"))
         self.assertIsNone(_edge(status, "bridge", "app:24733"))
 
+    def test_playing_mpd_reaches_brutefir_through_the_loopback(self):
+        """Reported bug: music playing, and MPD had no arc leaving it.
+
+        The ordinary Linux chain is MPD -> snd-aloop -> BruteFIR -> DAC, and
+        the bridge box carries both of its arcs.  Drawing it only for the CD
+        lane deleted the box mid-playback, so MPD floated unconnected and the
+        summary called a working chain incomplete.
+        """
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status(
+                holders={"/dev/dsp.play": [_holder("391", "mpd", "w")],
+                         "/dev/dsp.loop": [_holder("25147", "brutefir", "w")],
+                         "/dev/dsp.dac": [_holder("25147", "brutefir", "w")]},
+                activity={"mpd": True}, running=("mpd", "brutefir"))
+        self.assertIsNotNone(_node(status, "bridge"))
+        self.assertTrue(_edge(status, "app:391", "bridge")["active"])
+        self.assertTrue(_edge(status, "bridge", "app:25147")["active"])
+        self.assertEqual(status["summary"], "mpd \u2192 brutefir \u2192 OKTO DAC8")
+
     def test_applied_idle_cd_input_displays_loopback_without_live_leds(self):
         """Presence follows the applied route; LEDs alone follow audio flow."""
         with mock.patch.object(APP, "_IS_LINUX", True):
