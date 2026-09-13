@@ -411,6 +411,30 @@ valid_variant() {
 bf_pattern='(^|/)brutefir .*-daemon'
 bf_running() { pgrep -f "$bf_pattern" > /dev/null 2>&1; }
 
+# Preserve the output of a brutefir that died, and say why in one word.
+#
+# /tmp/brutefir.out is opened with ">" on every start, so the retry that
+# follows a death overwrites the evidence for it, and the next successful run
+# overwrites whatever survived.  A death was therefore unexplainable by
+# construction: drc.log said result=died and the reason was already gone.
+#
+# brutefir exits cleanly on these (no signal, no core), so the log file is the
+# only place the cause is ever written.
+bf_death_reason() {
+  local out=/tmp/brutefir.out keep
+  [ -s "$out" ] || { printf '%s' "no_output"; return; }
+  keep="$STATE_DIR/brutefir-died-$(date +%Y%m%dT%H%M%S).out"
+  cp "$out" "$keep" 2>/dev/null || true
+  # Keep the last few only; these are diagnostics, not an archive.
+  ls -1t "$STATE_DIR"/brutefir-died-*.out 2>/dev/null | tail -n +6 |
+    while read -r old; do rm -f "$old"; done
+  if   grep -q "Safety limit exceeded" "$out" 2>/dev/null; then printf '%s' "safety_limit"
+  elif grep -q "NaN or Inf"            "$out" 2>/dev/null; then printf '%s' "nan_inf"
+  elif grep -qi "cannot open\|unable to open\|could not open" "$out" 2>/dev/null; then printf '%s' "device_open"
+  elif grep -qi "error\|aborting"     "$out" 2>/dev/null; then printf '%s' "error"
+  else printf '%s' "unknown"; fi
+}
+
 # "is this process running", spelled so both pgrep implementations agree.
 # `pgrep -q` is FreeBSD's; procps-ng has no -q and exits 2 on it, so on Linux
 # every `pgrep -q` test answers "not running" whatever is actually running —
@@ -1606,6 +1630,32 @@ if [ "$mode" = "off" ]; then
   chmod 644 "$POWER_FILE" 2>/dev/null || true
   log_event "event=power_saved mode=off power=off"
 fi
+# Release MPD from the loopback outputs BEFORE brutefir — the reader on the
+# other end of snd-aloop — goes away.  This is the same rule the blocks below
+# state for virtual_oss, but on Linux the backend under DRC-native/DRC-resamp
+# is brutefir itself, and it used to be killed first.
+#
+# What that cost: snd-aloop only advances the playback pointer while the
+# capture side is open.  Kill brutefir while MPD is mid-write and pcm0p stays
+# state=RUNNING with avail=0 forever — the output thread blocks in
+# snd_pcm_writei on a buffer nothing will ever drain.  `mpc disable` then waits
+# on that thread, so MPD stops answering its client socket entirely: every
+# later mpc call (including the `enable only "OKTO-DAC"` that is the whole
+# point of `off`) times out, MPD never opens the DAC, and it holds the
+# loopback open until it is restarted.  Only a restart clears it — the stuck
+# substream does not recover even if a reader comes back.
+#
+# Disabling here, while brutefir is still draining, lets the write complete and
+# the output close cleanly.  Bounded and non-fatal: if MPD is already wedged
+# from an earlier brutefir crash there is nothing to save, and the teardown
+# must continue regardless.
+if $IS_LINUX; then
+  mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
+  mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
+  # `mpc disable` returns before the output thread has actually closed the
+  # device; give it a moment so the loopback is released before the pkill.
+  sleep 0.5
+fi
 stop_brutefir
 
 # ── off / stop: re-enable direct DAC, stop virtual_oss ───────────────────────
@@ -1802,8 +1852,10 @@ while [ "$vattempt" -lt "$total_attempts" ]; do
       chain_ok=1
       break
     fi
-    log_event "event=settle attempt=$vattempt result=died"
-    echo "brutefir exited during post-lock dwell (attempt $vattempt/$total_attempts)" >&2
+    bf_reason=$(bf_death_reason)
+    log_event "event=settle attempt=$vattempt result=died reason=${bf_reason}"
+    echo "brutefir exited during post-lock dwell (attempt $vattempt/$total_attempts): ${bf_reason}" >&2
+    tail -n 3 /tmp/brutefir.out 2>/dev/null | sed 's/^/  /' >&2 || true
   else
     log_event "event=verify attempt=$vattempt result=fail observed=${VERIFY_OBSERVED} want=${actual_rate} warm_ms=${WARM_MS}"
     echo "clock did not lock: DAC at '${VERIFY_OBSERVED}', wanted ${actual_rate} Hz (attempt $vattempt/$total_attempts)" >&2

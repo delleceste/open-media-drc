@@ -1,5 +1,5 @@
 # browser-audio — keep the browser off the DRC chain, and keep PulseAudio off
-# the DAC.  FreeBSD only (see the guard below).
+# the DAC. Linux uses a named ALSA default; FreeBSD uses its native backends.
 #
 # The browser is the one player here that must NOT go through BruteFIR: its
 # audio is already lossy streaming material, and the chain adds ~0.67 s of
@@ -113,6 +113,10 @@ if(_omdrc_desktop_installed)
         ")
     endif()
     install(CODE "message(STATUS \"${OMDRC_GREEN}browser-audio${OMDRC_RESET}: No-DRC launcher entries installed to ${CMAKE_INSTALL_PREFIX}/share/applications\")")
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    include("${CMAKE_CURRENT_LIST_DIR}/browser-alsa-linux.cmake")
 endif()
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")

@@ -1810,13 +1810,22 @@ loadGeometries();
 
 async function loadDesigns() {
     const sel = document.getElementById('drc-design-select');
-    if (!sel || designBusy) return;
+    if (!sel || designBusy || geoBusy || drcSessionBusy) return;
     try {
         const d = await (await fetch('/drc/design')).json();
         if (!d.ok || !d.design) return;
         designCurrent = d.design;
-        const list = (d.available && d.available.length) ? d.available : [d.design];
+        const list = d.available || [];
         sel.replaceChildren();
+        const missing = !list.includes(d.design);
+        if (missing) {
+            const option = document.createElement('option');
+            option.value = d.design;
+            option.textContent = `${designLabel(d.design)} (unavailable)`;
+            option.disabled = true;
+            option.selected = true;
+            sel.appendChild(option);
+        }
         for (const design of list) {
             const option = document.createElement('option');
             option.value = design;
@@ -1828,7 +1837,7 @@ async function loadDesigns() {
             option.selected = design === d.design;
             sel.appendChild(option);
         }
-        sel.disabled = list.length < 2;
+        sel.disabled = missing ? list.length === 0 : list.length < 2;
         sel.title = list.length < 2 ? 'Filter design (only one at this rate)' : 'Filter design (A/B)';
         const responseLink = document.getElementById('filter-response-link');
         const responseNote = document.getElementById('filter-response-note');
@@ -1948,6 +1957,17 @@ async function restoreDrcSession() {
 }
 
 loadDesigns();
+
+// Configuration can add/remove designs in another tab while this page stays
+// open. Refresh the pickers without requiring a controller restart or reload.
+function refreshDrcChoices() {
+    if (document.hidden || designBusy || geoBusy || drcSessionBusy) return;
+    loadGeometries();
+    loadDesigns();
+}
+window.addEventListener('focus', refreshDrcChoices);
+document.addEventListener('visibilitychange', refreshDrcChoices);
+setInterval(refreshDrcChoices, 10000);
 
 // ── toast ──────────────────────────────────────────────────────────────────
 let _tt = null;

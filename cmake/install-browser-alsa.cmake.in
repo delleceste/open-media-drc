@@ -1,0 +1,68 @@
+# Attach the managed default after existing settings. Keep their original bytes
+# and a one-time backup; repeated installs replace only our include block.
+if(NOT "$ENV{DESTDIR}" STREQUAL "")
+    message(STATUS "browser-audio: DESTDIR set; skipping the live user's ALSA include")
+    return()
+endif()
+if(NOT IS_DIRECTORY "@AUDIO_HOME@")
+    message(WARNING "browser-audio: @AUDIO_HOME@ does not exist; ALSA include was not installed")
+    return()
+endif()
+
+# alsa-lib loads this XDG file after ~/.asoundrc when both exist.
+set(_dst "@AUDIO_HOME@/.asoundrc")
+if(EXISTS "@AUDIO_HOME@/.config/alsa/asoundrc")
+    set(_dst "@AUDIO_HOME@/.config/alsa/asoundrc")
+endif()
+# Seed only browser audio from the saved selection. Do not restart the chain
+# or rewrite MPD/BruteFIR while installing. The helper is installed by the later
+# controller subdirectory, so use its source copy for this installation step.
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env "PREFIX=${CMAKE_INSTALL_PREFIX}"
+            "@PYTHON3@" "@CMAKE_CURRENT_SOURCE_DIR@/scripts/omdrc-config-helper.py"
+            browser-alsa-refresh
+    RESULT_VARIABLE _refresh)
+if(NOT _refresh EQUAL 0)
+    message(FATAL_ERROR "browser-audio: could not generate ALSA defaults from the configured audio roles")
+endif()
+
+set(_begin "# BEGIN open-media-drc browser ALSA")
+set(_end "# END open-media-drc browser ALSA")
+set(_existing "")
+if(EXISTS "${_dst}")
+    file(READ "${_dst}" _existing)
+endif()
+string(FIND "${_existing}" "${_begin}" _start)
+string(FIND "${_existing}" "${_end}" _finish)
+if((_start EQUAL -1 AND NOT _finish EQUAL -1) OR
+   (NOT _start EQUAL -1 AND _finish LESS _start))
+    message(FATAL_ERROR "browser-audio: incomplete managed include in ${_dst}; keeping the file")
+endif()
+set(_updated "${_existing}")
+if(NOT _start EQUAL -1)
+    string(REGEX REPLACE "# BEGIN open-media-drc browser ALSA\n[^\n]*\n# END open-media-drc browser ALSA\n?" "" _updated "${_updated}")
+    string(FIND "${_updated}" "${_begin}" _remaining)
+    if(NOT _remaining EQUAL -1)
+        message(FATAL_ERROR "browser-audio: edited managed include in ${_dst}; keeping the file")
+    endif()
+endif()
+if(NOT _updated STREQUAL "" AND NOT _updated MATCHES "\n$")
+    string(APPEND _updated "\n")
+endif()
+string(APPEND _updated "${_begin}\n<${CMAKE_INSTALL_PREFIX}/etc/open-media-drc/browser-alsa.conf>\n${_end}\n")
+if(_updated STREQUAL _existing)
+    message(STATUS "browser-audio: ALSA include already installed in ${_dst}")
+    return()
+endif()
+if(EXISTS "${_dst}" AND NOT EXISTS "${_dst}.omdrc-before-browser-alsa")
+    configure_file("${_dst}" "${_dst}.omdrc-before-browser-alsa" COPYONLY)
+endif()
+file(WRITE "${_dst}" "${_updated}")
+execute_process(COMMAND id -u OUTPUT_VARIABLE _uid OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(_uid EQUAL 0)
+    execute_process(COMMAND chown "@AUDIO_USER@" "${_dst}" RESULT_VARIABLE _chown)
+    if(NOT _chown EQUAL 0)
+        message(FATAL_ERROR "browser-audio: could not set ${_dst} ownership to @AUDIO_USER@")
+    endif()
+endif()
+message(STATUS "browser-audio: installed ALSA include in ${_dst}; restart browsers to use it")

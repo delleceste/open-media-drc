@@ -4793,12 +4793,21 @@ _SUDO_REFUSAL = re.compile(
     re.MULTILINE)
 
 
-def _chain_run_tool(argv: list[str], timeout: float = 5.0) -> tuple[str, bool]:
+def _chain_run_tool(argv: list[str],
+                    timeout: float = 5.0) -> tuple[str, bool, bool]:
     """Run a holder-listing tool, downgrading out of sudo on the first refusal.
 
-    Returns (combined output, privileged).  `privileged` is what the answer was
-    actually produced with, not what was asked for, so the card can say "only
-    this user's processes are listed" when it matters.
+    Returns (combined output, privileged, ok).  `privileged` is what the answer
+    was actually produced with, not what was asked for, so the card can say
+    "only this user's processes are listed" when it matters.
+
+    `ok` says whether the tool actually answered.  It exists because the
+    failure return here is an empty string, and empty parses to zero holders —
+    which is also exactly what a genuinely idle chain looks like.  A fuser that
+    times out (it blocks on the very wedged process the card is there to show)
+    would otherwise be drawn as a healthy idle box.  The caller needs to be
+    able to say "could not tell" instead of asserting "nothing is holding
+    anything".
 
     The two streams are merged into ONE pipe rather than captured apart and
     concatenated.  `fuser -v` prints its table to stderr and the bare PIDs to
@@ -4813,10 +4822,15 @@ def _chain_run_tool(argv: list[str], timeout: float = 5.0) -> tuple[str, bool]:
         r = subprocess.run(command, stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, text=True,
                            timeout=timeout, env=_env())
+    except subprocess.TimeoutExpired:
+        # Deliberately NOT a sudo verdict: the grant is fine, the tool hung.
+        # Clearing _CHAIN_SUDO_OK here would drop the card to unprivileged
+        # listings for the rest of the process over a transient stall.
+        return "", escalated or os.geteuid() == 0, False
     except Exception:
         if escalated:
             _CHAIN_SUDO_OK = False      # no sudo on this box at all
-        return "", os.geteuid() == 0
+        return "", os.geteuid() == 0, False
     output = r.stdout
     if escalated and _SUDO_REFUSAL.search(output):
         # Remember it: a grant that is not there will not appear on the next
@@ -4827,11 +4841,11 @@ def _chain_run_tool(argv: list[str], timeout: float = 5.0) -> tuple[str, bool]:
                                stderr=subprocess.STDOUT, text=True,
                                timeout=timeout, env=_env())
         except Exception:
-            return "", False
-        return r.stdout, False
+            return "", False, False
+        return r.stdout, False, True
     if escalated:
         _CHAIN_SUDO_OK = True
-    return output, escalated or os.geteuid() == 0
+    return output, escalated or os.geteuid() == 0, True
 
 
 def _merge_mode(old: str, new: str) -> str:
@@ -4850,7 +4864,7 @@ def _add_holder(into: dict, key, pid: str, cmd: str, user: str, mode: str) -> No
         row["mode"] = _merge_mode(row["mode"], mode)
 
 
-def _holders_fstat(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
+def _holders_fstat(paths: list[str]) -> tuple[dict[str, list[dict]], bool, bool]:
     """FreeBSD: fstat(1), one call for every device, matched back by inode.
 
     Matching on the NAME column would be wrong: fstat resolves symlinks and
@@ -4865,12 +4879,12 @@ def _holders_fstat(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
         except OSError:
             continue
     if not inodes:
-        return {}, os.geteuid() == 0
+        return {}, os.geteuid() == 0, True
 
     # One path per inode is enough to ask about; the answer is recorded against
     # every name that resolves to it, so a card configured with both
     # /dev/dsp.dac and /dev/dsp0 does not lose one of them to the de-duplication.
-    out, privileged = _chain_run_tool(
+    out, privileged, ok = _chain_run_tool(
         ["fstat", *sorted(names[0] for names in inodes.values())])
     found: dict[str, dict] = {}
     for line in out.splitlines():
@@ -4885,7 +4899,7 @@ def _holders_fstat(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
         mode = "".join(c for c in parts[8].lower() if c in "rw")
         for path in inodes.get(inode, ()):
             _add_holder(found, path, parts[2], parts[1], parts[0], mode)
-    return {p: list(v.values()) for p, v in found.items()}, privileged
+    return {p: list(v.values()) for p, v in found.items()}, privileged, ok
 
 
 _FUSER_ROW = re.compile(r"^(?P<user>\S+)\s+(?P<pid>\d+)\s+(?P<access>\S+)\s+(?P<cmd>.+)$")
@@ -4908,7 +4922,7 @@ def _proc_command(pid: str, fallback: str) -> str:
     return os.path.basename(argv0.decode(errors="replace")) or fallback
 
 
-def _holders_fuser(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
+def _holders_fuser(paths: list[str]) -> tuple[dict[str, list[dict]], bool, bool]:
     """Linux: fuser(1) -v, whose table names the file it is talking about.
 
     The ACCESS column is a fixed set of letters; only the two that mean "has
@@ -4918,8 +4932,8 @@ def _holders_fuser(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
     for every device in this chain."""
     live = [p for p in paths if os.path.exists(p)]
     if not live:
-        return {}, os.geteuid() == 0
-    out, privileged = _chain_run_tool(["fuser", "-v", *live])
+        return {}, os.geteuid() == 0, True
+    out, privileged, ok = _chain_run_tool(["fuser", "-v", *live])
     found: dict[str, dict] = {}
     current = ""
     for line in out.splitlines():
@@ -4944,10 +4958,10 @@ def _holders_fuser(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
         _add_holder(found, current, m.group("pid"),
                     _proc_command(m.group("pid"), m.group("cmd").strip()),
                     m.group("user"), mode)
-    return {p: list(v.values()) for p, v in found.items()}, privileged
+    return {p: list(v.values()) for p, v in found.items()}, privileged, ok
 
 
-def _holders_proc(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
+def _holders_proc(paths: list[str]) -> tuple[dict[str, list[dict]], bool, bool]:
     """Linux fallback when fuser is not installed: walk /proc ourselves.
 
     Slower and noisier than fuser, but it reads the open flags out of
@@ -4961,7 +4975,7 @@ def _holders_proc(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
             continue
         wanted[(st.st_dev, st.st_ino)] = path
     if not wanted:
-        return {}, os.geteuid() == 0
+        return {}, os.geteuid() == 0, True
     found: dict[str, dict] = {}
     complete = True
     for entry in os.listdir("/proc"):
@@ -5003,13 +5017,14 @@ def _holders_proc(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
             except (OSError, KeyError):
                 user = "?"
             _add_holder(found, path, entry, comm, user, mode)
-    return {p: list(v.values()) for p, v in found.items()}, complete
+    return {p: list(v.values()) for p, v in found.items()}, complete, True
 
 
-def _device_holders(paths: list[str]) -> tuple[dict[str, list[dict]], bool]:
-    """{device path: [holder, ...]}, plus whether every process was visible."""
+def _device_holders(paths: list[str]) -> tuple[dict[str, list[dict]], bool, bool]:
+    """{device path: [holder, ...]}, whether every process was visible, and
+    whether the listing tool answered at all."""
     if not paths:
-        return {}, True
+        return {}, True, True
     if _IS_LINUX:
         if shutil.which("fuser"):
             return _holders_fuser(paths)
@@ -5184,7 +5199,7 @@ def _chain_activity() -> dict[str, bool | None]:
         activity["mpd"] = None
     if CDIN_ENABLED:
         try:
-            activity["omdrc-cdin"] = _cdin_status()["state"] == "playing"
+            activity["omdrc-cdin"] = _cdin_status()["active"]
         except Exception:
             activity["omdrc-cdin"] = None
     _CHAIN_ACTIVITY, _CHAIN_ACTIVITY_AT = activity, now
@@ -5195,6 +5210,8 @@ def _chain_app_activity(cmd: str, activity: dict) -> bool | None:
     name = os.path.basename(cmd)
     if name in ("mpd", "musicpd"):
         return activity.get("mpd")
+    if name == os.path.basename(CDIN_PROCESS):
+        return activity.get("omdrc-cdin")
     return activity.get(name)
 
 
@@ -5248,12 +5265,12 @@ def _chain_status() -> dict:
     # by itself does not mean the bridge is in use.  Keep both blocks out unless
     # the two facts that make the lane real are true at this instant.
     capture_dev = devices.get("capture")
-    cdin_visible = bool(CDIN_ENABLED and capture_dev
-                        and capture_dev["present"]
-                        and _process_running(CDIN_PROCESS))
+    cdin_available = bool(CDIN_ENABLED and capture_dev
+                          and capture_dev["present"]
+                          and _process_running(CDIN_PROCESS))
 
     paths = [d["path"] for d in devices.values() if d["present"]]
-    holders, privileged = _device_holders(paths)
+    holders, privileged, holders_ok = _device_holders(paths)
     for role, dev in devices.items():
         rows = sorted(holders.get(dev["path"], []), key=lambda h: int(h["pid"]))
         dev["holders"] = rows
@@ -5288,6 +5305,18 @@ def _chain_status() -> dict:
     loop_readers    = held("loop", "r")
     dac_writers     = held("dac", "w")
 
+    # Selecting CD input starts the bridge, which takes the capture endpoint.
+    # That held endpoint is the kernel-level evidence that the optional input
+    # lane is applied.  Audio activity is deliberately a separate question:
+    # held is a fixed LED, while samples on the wire make it active/blinking.
+    cdin_name = os.path.basename(CDIN_PROCESS)
+    cdin_holds_capture = bool(capture_readers)
+    # Linux uses the capture descriptor as the applied-CD discriminator.
+    # FreeBSD's omdrc-cdin can release its descriptors while remaining the
+    # selected, running input, so retain its established process-based rule.
+    cdin_visible = bool(cdin_available and
+                        (cdin_holds_capture if _IS_LINUX else True))
+
     # Which lane a holder belongs in.  A process reading the loopback is a
     # filter (brutefir); everything else that has a hand on the chain is a
     # source, including a player writing the DAC straight (the bypass case) and
@@ -5304,7 +5333,8 @@ def _chain_status() -> dict:
         for role, dev in devices.items():
             for h in dev["holders"]:
                 if h["pid"] == pid:
-                    out[role] = h["mode"]
+                    out[role] = (("r" if _CHAIN_ALSA_SIDE.get(role) == "c" else "w")
+                                 if _IS_LINUX else h["mode"])
         return out
 
     sources = [_chain_app_node(pid, h["cmd"], h["user"], roles_of(pid), activity)
@@ -5316,7 +5346,6 @@ def _chain_status() -> dict:
     # CD lane on screen after pgrep says the daemon is gone.  The raw descriptor
     # remains available in the expanded device list for diagnosis.
     if not cdin_visible:
-        cdin_name = os.path.basename(CDIN_PROCESS)
         sources = [n for n in sources if n["title"] != cdin_name]
 
     # The resting state of a healthy box: running, holding nothing.
@@ -5356,7 +5385,24 @@ def _chain_status() -> dict:
     # that turns out to be silent is still the thing to go and kill.
     flowing = any(_chain_producing(n) for n in sources)
 
-    bridge_used = bool(bridge_writers or loop_readers or filters)
+    # snd-aloop remains loaded between sessions, and both MPD and BruteFIR may
+    # retain one of its endpoints.  The CD capture endpoint above is the
+    # discriminant for this optional lane; its activity controls only the LED.
+    # FreeBSD keeps virtual_oss while its daemon is up.
+    #
+    # The CD lane is not the only thing that routes through the loopback: the
+    # ordinary Linux playback chain is MPD -> snd-aloop -> BruteFIR -> DAC, and
+    # a writer on hw:1,0 together with a reader on hw:1,1 is exactly that route
+    # standing up.  Keying the bridge off the CD lane alone dropped the box
+    # while music was playing, and with it the two arcs either side of it: MPD
+    # floated with nothing leaving it and the summary read "incomplete chain".
+    # One endpoint on its own stays out, which is what the idle cases need --
+    # BruteFIR sits on hw:1,1 from the moment it starts and MPD keeps hw:1,0
+    # open while paused, so a single held endpoint proves no more than presence
+    # does.
+    loopback_routed = bool(bridge_writers and loop_readers)
+    bridge_used = bool((cdin_visible or loopback_routed) if _IS_LINUX
+                       else filters)
     bridge_dev = devices.get("bridge")
     loop_dev = devices.get("loop")
     bridge_node = None
@@ -5495,9 +5541,10 @@ def _chain_status() -> dict:
         # The alternative is guessing the route it WOULD take, and a guessed
         # line is indistinguishable from a real one to the eye reading it.
     for f in filters:
-        if bridge_node is not None:
-            link(bridge_node, f, "", flowing and "r" in f["roles"].get("loop", ""))
-        link(f, dac_node, "", flowing and "w" in f["roles"].get("dac", ""))
+        if bridge_node is not None and "r" in f["roles"].get("loop", ""):
+            link(bridge_node, f, "", flowing)
+        if "w" in f["roles"].get("dac", ""):
+            link(f, dac_node, "", flowing)
 
     status = {
         "ok": True,
@@ -5505,6 +5552,7 @@ def _chain_status() -> dict:
         "interval": CHAIN_INTERVAL,
         "os": platform.system(),
         "privileged": privileged,
+        "holders_ok": holders_ok,
         "flowing": flowing,
         "nodes": nodes,
         "edges": edges,
@@ -5522,6 +5570,14 @@ def _chain_problems(status: dict, bridge_node: dict | None,
     """The short list of things that are actually wrong, worst first.  Anything
     that is merely idle belongs in the diagram, not here."""
     problems = []
+    devices = {d["role"]: d for d in status["devices"]}
+    if (devices.get("bridge", {}).get("writers") and
+            not devices.get("loop", {}).get("readers")):
+        problems.append({
+            "severity": "error",
+            "text": f"audio is routed into {_chain_bridge_name()}, but no filter "
+                    "is reading it — BruteFIR is not connected",
+        })
     for node in sources + filters:
         if not node["expected"]:
             problems.append({
@@ -5565,6 +5621,13 @@ def _chain_problems(status: dict, bridge_node: dict | None,
                     f"\"{roles['capture_wanted']}\" — the capture link is missing",
         })
 
+    if not status.get("holders_ok", True):
+        problems.append({
+            "severity": "error",
+            "text": "could not read which processes hold the audio devices — "
+                    "the listing tool timed out, so the chain below is a guess "
+                    "and may show idle devices that are actually in use",
+        })
     if not status["privileged"]:
         problems.append({
             "severity": "warn",
@@ -5587,6 +5650,11 @@ def _chain_summary(status: dict, sources: list[dict], filters: list[dict]) -> st
     out = status["output"]
     if out is not None and not out["present"]:
         return "no DAC"
+    # No holder listing means no descriptors, and every line below reads
+    # absent descriptors as "idle".  Say we cannot tell rather than report a
+    # free DAC we never actually looked at.
+    if not status.get("holders_ok", True):
+        return "cannot read device holders"
     if not status["flowing"]:
         if out is None:
             return "idle"
@@ -5595,9 +5663,20 @@ def _chain_summary(status: dict, sources: list[dict], filters: list[dict]) -> st
             who = ", ".join(sorted({h["cmd"] for h in held}))
             return f"idle — {out['title']} held by {who}"
         return f"idle — {out['title']} free"
-    live = [n["title"] for n in sources if _chain_producing(n)]
+    # Follow descriptor-backed edges to the DAC. A source holding only the
+    # loopback must not be reported as feeding a free DAC.
+    connected = {out["id"]} if out else set()
+    while True:
+        upstream = {e["from"] for e in status["edges"] if e["to"] in connected}
+        if upstream <= connected:
+            break
+        connected.update(upstream)
+    live = [n["title"] for n in sources
+            if _chain_producing(n) and n["id"] in connected]
+    if not live:
+        return "incomplete chain — no source connected to the DAC"
     head = " + ".join(live[:2]) + (f" +{len(live) - 2}" if len(live) > 2 else "")
-    stages = [head] + [f["title"] for f in filters] + [out["title"] if out else "?"]
+    stages = [head] + [f["title"] for f in filters if f["id"] in connected] + [out["title"] if out else "?"]
     return " → ".join(s for s in stages if s)
 
 
@@ -6640,8 +6719,6 @@ def drc_design():
         session = _drc_saved_session(script)
         active = _active_design_identity()
         current = str(active.get("design") if active.get("running") else session["design"])
-        if current not in available:
-            available.append(current)
         session["matches_active"] = _session_matches_active(session, active)
         return jsonify({
             "ok": True,

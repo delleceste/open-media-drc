@@ -113,7 +113,7 @@ include(cmake/dependencies.cmake)
 include(cmake/core-drc.cmake)          # drc.sh + configs/filters + omdrc/omdrc-status wrappers
 include(cmake/hotplug.cmake)           # DAC-hotplug + brutefir services (udev/devd + rc.d/systemd)
 include(cmake/renderers.cmake)         # mpd config/drop-in + upmpdcli config/service
-include(cmake/browser-audio.cmake)     # browser ALSA shim + PulseAudio guard (FreeBSD)
+include(cmake/browser-audio.cmake)     # Linux ALSA default + FreeBSD browser audio glue
 add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")

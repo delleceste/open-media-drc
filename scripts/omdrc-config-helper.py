@@ -24,6 +24,8 @@ import time
 
 IDENTITY = re.compile(r"0x[0-9a-fA-F]{4}:0x[0-9a-fA-F]{4}(?::[A-Za-z0-9._+-]+)?")
 MANAGED = re.compile(r'^(\s*device:\s*)"[^"]+";(\s*#\s*omdrc-managed-dac\s*)$', re.M)
+MANAGED_MPD = re.compile(
+    r'^(\s*device\s+)"[^"]+"(\s*#\s*omdrc-managed-mpd-dac\s*)$', re.M)
 # The snd-aloop options line whose timer_source has to follow the selected DAC,
 # so the loopback is clocked by the DAC rather than by a free-running hrtimer.
 # See etc/modprobe.d/omdrc-snd-aloop.conf for why that matters.
@@ -332,6 +334,55 @@ def linux_resolve(identity: str, role: str) -> dict:
     return matches[0]
 
 
+def linux_alsa_card_id(card: dict) -> str:
+    """Resolve the kernel's ALSA ID after selecting hardware by USB identity."""
+    card_id = Path(f"/proc/asound/card{card['number']}/id").read_text().strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", card_id) or card_id.isdigit():
+        raise RuntimeError(f"invalid ALSA card ID: {card_id!r}")
+    return card_id
+
+
+def linux_browser_alsa(prefix: str, dac: dict | None,
+                       capture: dict | None) -> None:
+    """Publish desktop routes from the same USB roles as MPD and BruteFIR.
+
+    The template's presence opts an installed Linux system into this feature.
+    Use an unavailable named card when no DAC is selected/attached: falling back
+    to card zero could send audio to an unrelated output.
+    """
+    template = Path(prefix) / "share/open-media-drc/asoundrc.linux.conf.in"
+    if not template.is_file():
+        return
+    dac_id = linux_alsa_card_id(dac) if dac else "OMDRCNoDAC"
+    capture_pcm = (f"hw:CARD={linux_alsa_card_id(capture)},DEV=0"
+                   if capture else "null")
+    rendered = template.read_text().replace("@_browser_dac@", dac_id).replace(
+        "@_browser_capture_pcm@", capture_pcm)
+    destination = Path(prefix) / "etc/open-media-drc/browser-alsa.conf"
+    if not destination.is_file() or destination.read_text() != rendered:
+        atomic_text(destination, rendered)
+    print(f"BROWSER ALSA: playback={dac_id}, capture={capture_pcm}")
+
+
+def linux_browser_alsa_refresh() -> None:
+    """Installation-time refresh without touching the DRC lifecycle."""
+    prefix = os.environ.get("PREFIX", "/usr/local")
+    roles = Path(prefix) / "etc/open-media-drc/audio-roles.conf"
+    saved = roles.read_text() if roles.is_file() else ""
+    selected = {}
+    for role in ("dac", "capture"):
+        match = re.search(rf'^OMDRC_AUDIO_{role.upper()}="([^"]*)"$', saved, re.M)
+        identity = parse_identity(match.group(1), optional=True) if match else ""
+        cards = [card for card in linux_usb_cards()
+                 if identity and identity_matches(identity, card)]
+        if len(cards) > 1:
+            raise RuntimeError(f"configured {role} identity is ambiguous")
+        selected[role] = cards[0] if cards else None
+    if selected["dac"] is None:
+        print("NOTICE: browser output is unavailable; select an attached DAC on /configuration")
+    linux_browser_alsa(prefix, selected["dac"], selected["capture"])
+
+
 def linux_aloop_timer(card: str) -> None:
     """Point snd-aloop's timer_source at the DAC card, if the file is there.
 
@@ -386,7 +437,20 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
         raise RuntimeError(
             f"{defaults} carries '# omdrc-managed-dac' on {count} device lines; "
             "exactly one output device may be managed")
+    linux_browser_alsa(prefix, selected, chosen_capture)
     atomic_text(defaults, changed, owner=(account.pw_uid, account.pw_gid))
+    # MPD's direct/no-DRC output must follow the same physical role. Card
+    # numbers change when USB interfaces enumerate in a different order.
+    mpd_conf = Path(prefix) / "etc/open-media-drc/mpd.conf"
+    if mpd_conf.is_file():
+        mpd_text = mpd_conf.read_text()
+        mpd_changed, mpd_count = MANAGED_MPD.subn(
+            rf'\1"hw:{selected["number"]},0"\2', mpd_text)
+        if mpd_count != 1:
+            raise RuntimeError(
+                f"{mpd_conf} has {mpd_count} '# omdrc-managed-mpd-dac' device lines; "
+                "exactly one OKTO-DAC output must be managed")
+        atomic_text(mpd_conf, mpd_changed)
     linux_aloop_timer(selected["number"])
     role_conf = Path(f"{prefix}/etc/open-media-drc/audio-roles.conf")
     atomic_text(role_conf, f'OMDRC_AUDIO_DAC="{dac}"\n'
@@ -431,6 +495,7 @@ def main() -> int:
     apply.add_argument("--timeout", type=int, default=120)
     reconcile = sub.add_parser("reconcile")
     reconcile.add_argument("--timeout", type=int, default=120)
+    sub.add_parser("browser-alsa-refresh")
     publish = sub.add_parser("filter-publish")
     publish.add_argument("--staged", required=True)
     publish.add_argument("--site-root", required=True)
@@ -439,6 +504,11 @@ def main() -> int:
     remove.add_argument("--site-root", required=True)
     remove.add_argument("--script", required=True)
     args = parser.parse_args()
+    if args.command == "browser-alsa-refresh":
+        if platform.system() != "Linux":
+            raise RuntimeError("browser-alsa-refresh is Linux-only")
+        linux_browser_alsa_refresh()
+        return 0
     if args.command == "filter-publish":
         filter_publish(args.staged, args.site_root)
         return 0

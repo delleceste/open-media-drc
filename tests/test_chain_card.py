@@ -56,7 +56,7 @@ def _status(devices=None, holders=None, activity=None, running=None,
     devices = {k: dict(v) for k, v in (devices or FREEBSD).items()}
     with mock.patch.object(APP, "_chain_resolve_devices", return_value=devices), \
          mock.patch.object(APP, "_device_holders",
-                           return_value=(holders or {}, privileged)), \
+                           return_value=(holders or {}, privileged, True)), \
          mock.patch.object(APP, "_chain_activity", return_value=activity or {}), \
          mock.patch.object(APP, "_process_running", lambda name: name in running), \
          mock.patch.object(APP, "_service_running", lambda name: name in services):
@@ -90,8 +90,8 @@ class HolderParsing(unittest.TestCase):
                 f"giacomo  brutefir     722    7 /dev  {inode} crw-rw-rw-"
                 f"    dsp0  w  {node}\n"
             )
-            with mock.patch.object(APP, "_chain_run_tool", return_value=(out, True)):
-                holders, privileged = APP._holders_fstat([str(node), str(link)])
+            with mock.patch.object(APP, "_chain_run_tool", return_value=(out, True, True)):
+                holders, privileged, _ = APP._holders_fstat([str(node), str(link)])
         self.assertTrue(privileged)
         self.assertEqual(sorted(holders), sorted([str(node), str(link)]))
         self.assertEqual(holders[str(link)][0]["cmd"], "brutefir")
@@ -107,8 +107,8 @@ class HolderParsing(unittest.TestCase):
                 f"giacomo  mpv          900    4 /dev  {inode} crw-rw-rw-    dsp0  r  {node}",
                 f"giacomo  mpv          900    5 /dev  {inode} crw-rw-rw-    dsp0  w  {node}",
             ])
-            with mock.patch.object(APP, "_chain_run_tool", return_value=(out, True)):
-                holders, _ = APP._holders_fstat([str(node)])
+            with mock.patch.object(APP, "_chain_run_tool", return_value=(out, True, True)):
+                holders, _, _ = APP._holders_fstat([str(node)])
         self.assertEqual(len(holders[str(node)]), 1)
         self.assertEqual(holders[str(node)][0]["mode"], "rw")
 
@@ -123,8 +123,8 @@ class HolderParsing(unittest.TestCase):
                 f"{play}:              giacomo     722 F.... brutefir",
                 f"{cap}:               giacomo     722 f.... brutefir",
             ])
-            with mock.patch.object(APP, "_chain_run_tool", return_value=(out, True)):
-                holders, _ = APP._holders_fuser([str(play), str(cap)])
+            with mock.patch.object(APP, "_chain_run_tool", return_value=(out, True, True)):
+                holders, _, _ = APP._holders_fuser([str(play), str(cap)])
         self.assertEqual(holders[str(play)][0]["mode"], "w")
         self.assertEqual(holders[str(cap)][0]["mode"], "r")
 
@@ -132,10 +132,20 @@ class HolderParsing(unittest.TestCase):
 class Leds(unittest.TestCase):
     """Free / held / active are three different answers and stay that way."""
 
-    def test_nothing_open_is_free_not_absent(self):
-        status = _status()
-        self.assertEqual(status["input"]["state"], "free")
+    def test_nothing_open_hides_optional_input_and_leaves_dac_free(self):
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status()
+        self.assertIsNone(status["input"])
         self.assertEqual(status["output"]["state"], "free")
+
+    def test_freebsd_running_cdin_stays_visible_after_releasing_devices(self):
+        with mock.patch.object(APP, "_IS_LINUX", False), \
+             mock.patch.object(APP, "CDIN_PROCESS", "omdrc-cdin"):
+            status = _status(running=("omdrc-cdin",))
+        self.assertEqual(status["input"]["state"], "free")
+        self.assertIsNotNone(_node(status, "dev:capture"))
+        self.assertIsNotNone(_node(status, "app:omdrc-cdin"))
+        self.assertIsNotNone(_node(status, "bridge"))
 
     def test_missing_capture_card_hides_the_capture_and_cdin_blocks(self):
         devices = dict(FREEBSD)
@@ -157,11 +167,12 @@ class Leds(unittest.TestCase):
         # The case an fd-only LED gets wrong: brutefir opens the DAC when it
         # starts and never lets go, so "held" has to be distinguishable from
         # "audio is going through it" or the light means nothing.
-        status = _status(
-            holders={"/dev/dsp.loop": [_holder("722", "brutefir", "r")],
-                     "/dev/dsp.dac":  [_holder("722", "brutefir", "w")],
-                     "/dev/dsp.play": [_holder("601", "musicpd", "w")]},
-            activity={"mpd": False})
+        with mock.patch.object(APP, "_IS_LINUX", False):
+            status = _status(
+                holders={"/dev/dsp.loop": [_holder("722", "brutefir", "r")],
+                         "/dev/dsp.dac":  [_holder("722", "brutefir", "w")],
+                         "/dev/dsp.play": [_holder("601", "musicpd", "w")]},
+                activity={"mpd": False})
         self.assertEqual(status["output"]["state"], "held")
         self.assertFalse(status["flowing"])
         ports = _node(status, "bridge")["ports"]
@@ -169,11 +180,12 @@ class Leds(unittest.TestCase):
         self.assertEqual([p["state"] for p in ports], ["held", "held"])
 
     def test_mpd_playing_lights_the_dac(self):
-        status = _status(
-            holders={"/dev/dsp.loop": [_holder("722", "brutefir", "r")],
-                     "/dev/dsp.dac":  [_holder("722", "brutefir", "w")],
-                     "/dev/dsp.play": [_holder("601", "musicpd", "w")]},
-            activity={"mpd": True})
+        with mock.patch.object(APP, "_IS_LINUX", False):
+            status = _status(
+                holders={"/dev/dsp.loop": [_holder("722", "brutefir", "r")],
+                         "/dev/dsp.dac":  [_holder("722", "brutefir", "w")],
+                         "/dev/dsp.play": [_holder("601", "musicpd", "w")]},
+                activity={"mpd": True})
         self.assertEqual(status["output"]["state"], "active")
         self.assertTrue(status["flowing"])
         self.assertTrue(_edge(status, "app:601", "bridge")["active"])
@@ -182,10 +194,11 @@ class Leds(unittest.TestCase):
                          ["active", "active"])
 
     def test_virtual_device_leds_belong_to_the_bridge_not_brutefir(self):
-        status = _status(
-            holders={"/dev/dsp.loop": [_holder("722", "brutefir", "r")],
-                     "/dev/dsp.dac":  [_holder("722", "brutefir", "w")],
-                     "/dev/dsp.play": [_holder("601", "musicpd", "w")]})
+        with mock.patch.object(APP, "_IS_LINUX", False):
+            status = _status(
+                holders={"/dev/dsp.loop": [_holder("722", "brutefir", "r")],
+                         "/dev/dsp.dac":  [_holder("722", "brutefir", "w")],
+                         "/dev/dsp.play": [_holder("601", "musicpd", "w")]})
         self.assertEqual([p["label"] for p in _node(status, "bridge")["ports"]],
                          ["dsp.play", "dsp.loop"])
         self.assertNotIn("ports", _node(status, "app:722"))
@@ -268,6 +281,26 @@ class Graph(unittest.TestCase):
 
 class Summary(unittest.TestCase):
     """An arrow in the summary line means "feeds"."""
+
+    def test_loopback_without_a_reader_is_not_a_path_to_the_dac(self):
+        status = _status(
+            holders={"/dev/dsp.play": [_holder("392", "mpd", "w")]},
+            activity={"mpd": True}, running=("mpd",))
+        self.assertIn("incomplete chain", status["summary"])
+        self.assertNotIn("→", status["summary"])
+        self.assertTrue(any("no filter is reading" in p["text"]
+                            for p in status["problems"]))
+
+    def test_direct_playback_still_reaches_the_dac(self):
+        status = _status(
+            holders={"/dev/dsp.dac": [_holder("392", "mpd", "w")]},
+            activity={"mpd": True}, running=("mpd",))
+        self.assertEqual(status["summary"], "mpd → OKTO DAC8")
+
+    def test_linux_bridge_uses_the_cd_activity_verdict(self):
+        with mock.patch.object(APP, "CDIN_PROCESS", "alsaloop"):
+            self.assertIs(APP._chain_app_activity(
+                "alsaloop", {"omdrc-cdin": False}), False)
 
     def test_two_idle_players_are_never_strung_together(self):
         # The reported bug: MPD and the CD bridge both running, neither
@@ -358,7 +391,7 @@ class Escalation(unittest.TestCase):
 
         with mock.patch.object(APP.os, "geteuid", return_value=1001), \
              mock.patch.object(APP.subprocess, "run", side_effect=fake):
-            out, privileged = APP._chain_run_tool(["fuser", "-v", "/dev/x"])
+            out, privileged, _ = APP._chain_run_tool(["fuser", "-v", "/dev/x"])
         return out, privileged, calls
 
     def test_a_device_nobody_holds_is_not_read_as_a_refusal(self):
@@ -378,6 +411,50 @@ class Escalation(unittest.TestCase):
         self.assertEqual(calls[1][0], "fuser")
         self.assertIs(APP._CHAIN_SUDO_OK, False)
         self.assertEqual(APP._chain_tool_command(["fstat"]), ["fstat"])
+
+
+class BlindListing(unittest.TestCase):
+    """A tool that never answers must not read as "nothing holds anything".
+
+    fuser blocks on exactly the wedged process the card exists to show, so the
+    timeout is not a rare edge: it is what a stuck chain looks like from here.
+    Returning "" for it parses to zero holders, which is also what a genuinely
+    idle box parses to — so without an explicit flag the card draws its
+    healthiest picture at the precise moment the machine is broken."""
+
+    def setUp(self):
+        APP._CHAIN_SUDO_OK = None
+        self.addCleanup(setattr, APP, "_CHAIN_SUDO_OK", None)
+
+    def test_a_timeout_is_reported_not_read_as_an_idle_chain(self):
+        with mock.patch.object(APP.os, "geteuid", return_value=1001), \
+             mock.patch.object(
+                 APP.subprocess, "run",
+                 side_effect=APP.subprocess.TimeoutExpired("fuser", 5.0)):
+            out, _, ok = APP._chain_run_tool(["fuser", "-v", "/dev/x"])
+        self.assertEqual(out, "")
+        self.assertFalse(ok)
+
+    def test_a_timeout_does_not_revoke_the_sudo_grant(self):
+        # The grant is fine; the tool hung.  Clearing it here would drop the
+        # card to unprivileged listings for the rest of the process.
+        with mock.patch.object(APP.os, "geteuid", return_value=1001), \
+             mock.patch.object(
+                 APP.subprocess, "run",
+                 side_effect=APP.subprocess.TimeoutExpired("fuser", 5.0)):
+            APP._chain_run_tool(["fuser", "-v", "/dev/x"])
+        self.assertIsNot(APP._CHAIN_SUDO_OK, False)
+
+    def test_the_card_says_it_cannot_tell(self):
+        status = {"output": None, "flowing": False, "holders_ok": False}
+        self.assertEqual(APP._chain_summary(status, [], []),
+                         "cannot read device holders")
+
+    def test_blindness_is_an_error_not_a_footnote(self):
+        problems = APP._chain_problems(
+            {"privileged": True, "holders_ok": False, "devices": []},
+            None, [], [])
+        self.assertTrue(any(p["severity"] == "error" for p in problems))
 
 
 class AudioRoles(unittest.TestCase):
@@ -433,6 +510,86 @@ class AlsaNames(unittest.TestCase):
 
 class LinuxHolderEvidenceTest(unittest.TestCase):
     """The three ways this card reported an idle chain while it was playing."""
+
+    def test_unused_loaded_loopback_is_hidden(self):
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status(running=("mpd",), activity={"mpd": False})
+        self.assertIsNone(_node(status, "bridge"))
+
+    def test_direct_playback_does_not_display_unused_loopback(self):
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status(
+                holders={"/dev/dsp.dac": [_holder("392", "mpd", "w")]},
+                activity={"mpd": True}, running=("mpd",))
+        self.assertIsNone(_node(status, "bridge"))
+
+    def test_mpd_writer_does_not_enable_the_cd_loopback_lane(self):
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status(
+                holders={"/dev/dsp.play": [_holder("392", "mpd", "w")]},
+                activity={"mpd": False}, running=("mpd",))
+        self.assertIsNone(_node(status, "bridge"))
+
+    def test_brutefir_reader_alone_does_not_display_loopback(self):
+        """BruteFIR holds snd-aloop while idle even when CD input is stopped."""
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status(
+                holders={"/dev/dsp.loop": [_holder("24733", "brutefir", "w")],
+                         "/dev/dsp.dac": [_holder("24733", "brutefir", "w")]},
+                activity={"mpd": False}, running=("mpd", "brutefir"))
+        self.assertIsNone(_node(status, "bridge"))
+        self.assertIsNone(_edge(status, "bridge", "app:24733"))
+
+    def test_playing_mpd_reaches_brutefir_through_the_loopback(self):
+        """Reported bug: music playing, and MPD had no arc leaving it.
+
+        The ordinary Linux chain is MPD -> snd-aloop -> BruteFIR -> DAC, and
+        the bridge box carries both of its arcs.  Drawing it only for the CD
+        lane deleted the box mid-playback, so MPD floated unconnected and the
+        summary called a working chain incomplete.
+        """
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status(
+                holders={"/dev/dsp.play": [_holder("391", "mpd", "w")],
+                         "/dev/dsp.loop": [_holder("25147", "brutefir", "w")],
+                         "/dev/dsp.dac": [_holder("25147", "brutefir", "w")]},
+                activity={"mpd": True}, running=("mpd", "brutefir"))
+        self.assertIsNotNone(_node(status, "bridge"))
+        self.assertTrue(_edge(status, "app:391", "bridge")["active"])
+        self.assertTrue(_edge(status, "bridge", "app:25147")["active"])
+        self.assertEqual(status["summary"], "mpd \u2192 brutefir \u2192 OKTO DAC8")
+
+    def test_applied_idle_cd_input_displays_loopback_without_live_leds(self):
+        """Presence follows the applied route; LEDs alone follow audio flow."""
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status(
+                holders={
+                    "/dev/dsp.capture": [_holder("911", APP.CDIN_PROCESS, "w")],
+                    "/dev/dsp.play": [_holder("911", APP.CDIN_PROCESS, "w")],
+                    "/dev/dsp.loop": [_holder("24733", "brutefir", "w")],
+                    "/dev/dsp.dac": [_holder("24733", "brutefir", "w")],
+                },
+                activity={"omdrc-cdin": False, "mpd": False},
+                running=(APP.CDIN_PROCESS, "brutefir"))
+        bridge = _node(status, "bridge")
+        self.assertIsNotNone(_node(status, "dev:capture"))
+        self.assertIsNotNone(bridge)
+        self.assertFalse(bridge["active"])
+        self.assertEqual([p["state"] for p in bridge["ports"]],
+                         ["held", "held"])
+        self.assertFalse(_edge(status, "app:911", "bridge")["active"])
+
+    def test_filter_without_dac_descriptor_does_not_reach_dac(self):
+        with mock.patch.object(APP, "_IS_LINUX", True):
+            status = _status(
+                holders={"/dev/dsp.capture": [_holder("911", APP.CDIN_PROCESS, "w")],
+                         "/dev/dsp.play": [_holder("911", APP.CDIN_PROCESS, "w")],
+                         "/dev/dsp.loop": [_holder("722", "brutefir", "w")]},
+                activity={"omdrc-cdin": True},
+                running=(APP.CDIN_PROCESS, "brutefir"))
+        self.assertIsNone(_edge(status, "app:722", "dev:dac"))
+        self.assertIn("incomplete chain", status["summary"])
+        self.assertTrue(_edge(status, "bridge", "app:722")["active"])
 
     def test_fuser_output_is_read_from_one_merged_stream(self):
         """`fuser -v` prints its table to stderr and the bare PIDs to stdout,
