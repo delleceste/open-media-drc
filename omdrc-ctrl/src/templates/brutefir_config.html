@@ -48,6 +48,9 @@
         .metric.safe.good { border-color:#238636; background:#14261a; }
         .metric.safe.bad { border-color:#da3633; background:#2d1619; }
         .metric.safe.unknown { border-color:#9e6a03; background:#2b2111; }
+        .metric.peak { grid-column:1 / -1; }
+        .metric.peak.warn { border-color:#9e6a03; background:#2b2111; }
+        .metric.peak.bad { border-color:#da3633; background:#2d1619; }
         .metric-label { color:var(--muted); font-size:.76rem; text-transform:uppercase; letter-spacing:.06em; }
         .metric-value { font-size:2rem; font-weight:700; margin:5px 0 2px; }
         .metric-note { color:var(--muted); font-size:.75rem; }
@@ -110,6 +113,11 @@
                 <div class="metric-label">2 · Safe attenuation, calculated now</div>
                 <div class="metric-value" id="safe-att">—</div>
                 <div class="metric-note" id="safe-note"></div>
+            </div>
+            <div class="metric peak unknown" id="peak-card">
+                <div class="metric-label">3 · Live peak, reported by BruteFIR</div>
+                <div class="metric-value" id="peak-value">—</div>
+                <div class="metric-note" id="peak-note"></div>
             </div>
         </section>
 
@@ -234,6 +242,60 @@ function render(data) {
         `<strong>How “safe” is calculated:</strong> each readable .raw file named by the running config is decoded as its declared BruteFIR format. Its worst FFT gain is measured from the current bytes, ${Number(data.safety_margin_db).toFixed(1)} dB is added, and the result is rounded upward to 0.1 dB. The headline safe attenuation is the worst requirement across the loaded filters. This is a live calculation; stored manifests are not used.`;
 }
 
+// Approaching-0-dBFS threshold: brutefir's peak line only ever reports a
+// held session-high (see _brutefir_peak_status in app.py), so this colors
+// "getting close" rather than an instantaneous level.
+const PEAK_WARN_DB = -3.0;
+
+function renderPeak(peak) {
+    const card = document.getElementById('peak-card');
+    const value = document.getElementById('peak-value');
+    const note = document.getElementById('peak-note');
+    card.className = 'metric peak';
+    if (!peak || peak.error) {
+        card.classList.add('unknown');
+        value.textContent = '—';
+        note.textContent = peak && peak.error
+            ? `Could not read BruteFIR's log: ${peak.error}`
+            : 'Live peak is unavailable.';
+        return;
+    }
+    if (!peak.available) {
+        card.classList.add('unknown');
+        value.textContent = 'no record yet';
+        note.textContent = 'BruteFIR has not logged a peak-hold since it last started — ' +
+            'it only writes one when a sample sets a new session-high, and never resets it on its own.';
+        return;
+    }
+    const worst = peak.peak_db;
+    value.textContent = worst === null ? '−∞ dB' : db(worst, true);
+    const perChannel = peak.channels
+        .map(c => `ch ${c.channel}: ${c.peak_db === null ? '−∞' : db(c.peak_db, true)}` +
+            (c.overflow_count > 0 ? ` (${c.overflow_count} over full scale)` : ''))
+        .join(' · ');
+    if (peak.clipped || (worst !== null && worst > 0)) {
+        card.classList.add('bad');
+        value.className = 'metric-value bad-text';
+        note.textContent = `✕ Clipped since BruteFIR started — ${perChannel}`;
+    } else if (worst !== null && worst >= PEAK_WARN_DB) {
+        card.classList.add('warn');
+        value.className = 'metric-value warn-text';
+        note.textContent = `Approaching 0 dBFS — ${perChannel}`;
+    } else {
+        value.className = 'metric-value';
+        note.textContent = `Session peak-hold across all output channels, held since BruteFIR started — ${perChannel}`;
+    }
+}
+
+async function loadPeak() {
+    try {
+        const response = await fetch('/drc/brutefir-peak', {cache:'no-store'});
+        renderPeak(await response.json());
+    } catch (error) {
+        renderPeak({error: error.message});
+    }
+}
+
 async function load() {
     const status = document.getElementById('status');
     const content = document.getElementById('content');
@@ -257,6 +319,8 @@ async function load() {
 }
 
 load();
+loadPeak();
+setInterval(loadPeak, 3000);   // live, independent of the "↻ Refresh" button above
 </script>
 </body>
 </html>

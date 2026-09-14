@@ -764,8 +764,8 @@ class FilterAlignmentTest(unittest.TestCase):
         )
         self.assertIn("\x1b[1;33m[HEADROOM 96,000 Hz]", rendered)
         self.assertIn("\x1b[1;34mCONFIG", rendered)
-        self.assertIn("baked attenuation: 1.0 dB", rendered)
-        self.assertIn("config read-back verified 1.0 dB", rendered)
+        self.assertIn("baked attenuation: 8.0 dB (fixed safe value", rendered)
+        self.assertIn("config read-back verified 8.0 dB", rendered)
 
     def test_versioned_config_uses_isolated_runtime_paths(self):
         config = deploy_filter.render_config(

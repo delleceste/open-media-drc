@@ -43,6 +43,12 @@ therefore:
 
 A practical safety margin of +1 dB is added on top.  The suggested
 brutefir `attenuation:` value is then rounded up to one decimal place.
+
+This is an audit tool only: deployed configs no longer bake in this computed
+value.  `deploy_filter.py` bakes in a fixed FIXED_ATTENUATION_DB (8 dB) for
+every design instead, and this script's "Suggested" figure is a floor a
+config must be at or above, not a value it is expected to equal -- see the
+"configured" row and PASS/FAIL verdict this script prints alongside it.
 """
 
 import argparse

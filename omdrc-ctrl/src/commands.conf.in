@@ -506,6 +506,8 @@ what    = No DRC
 group   = drc
 type    = WRITE
 button  = Apply
+confirm = yes
+confirm_message = Turning DRC off removes BruteFIR's fixed 8 dB of attenuation: the same digital signal will play about 8 dB LOUDER. Turn your amplifier/preamp volume DOWN by roughly 8 dB first, then Apply.
 cmd     = @OMDRC_DRC@ off
 process = brutefir
 

@@ -1398,6 +1398,30 @@ else
   exit 1
 fi
 
+# ── confirm before disabling DRC ─────────────────────────────────────────────
+# Every generated BruteFIR config bakes in a fixed 8 dB of attenuation (see
+# FIXED_ATTENUATION_DB in scripts/deploy_filter.py) purely to prevent
+# clipping; `off` routes MPD straight to the DAC and BruteFIR is not in the
+# path at all, so that 8 dB of headroom disappears with it — the exact same
+# digital signal plays roughly 8 dB LOUDER the instant this completes.
+#
+# Only prompt at a real terminal: the web UI shows its own confirmation
+# dialog before it ever invokes `drc.sh off`, and a non-interactive caller
+# (systemd, cron, another script) has no one to type "yes" and must not hang
+# forever waiting for one.  OMDRC_ASSUME_YES lets an operator script bypass
+# the prompt deliberately, the same way `off` itself is deliberate.
+if [ "$mode" = "off" ] && [ -z "${OMDRC_ASSUME_YES:-}" ] && [ -t 0 ] && [ -t 1 ]; then
+  echo "WARNING: turning DRC off removes BruteFIR's fixed 8 dB attenuation." >&2
+  echo "         The same digital signal will play about 8 dB LOUDER." >&2
+  echo "         Turn your amplifier/preamp volume DOWN first, then confirm." >&2
+  printf "Type 'yes' to continue: " >&2
+  read -r _drc_off_confirm || _drc_off_confirm=""
+  if [ "$_drc_off_confirm" != "yes" ]; then
+    echo "aborted: DRC left as-is" >&2
+    exit 1
+  fi
+fi
+
 # ── validate config ──────────────────────────────────────────────────────────
 # Before anything is torn down: a bad argument (a typo, `--help`, or a rate the
 # active filter set simply does not cover) must not cost the listener the chain

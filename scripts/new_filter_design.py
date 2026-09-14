@@ -659,7 +659,9 @@ def main() -> int:
     parser.add_argument("--safety-margin", type=float, default=1.0,
                         help="headroom margin in dB above the worst filter peak")
     parser.add_argument("--attenuation", default="auto",
-                        help="auto, or one dB value used by every generated config")
+                        help="auto (fixed safe value baked into every generated "
+                             "config; see FIXED_ATTENUATION_DB in deploy_filter.py), "
+                             "or an explicit dB value to use instead")
     parser.add_argument("--replace-design", action="store_true",
                         help="allow overwriting files already deployed for this design ID")
     parser.add_argument("--allow-uncommitted", action="store_true",

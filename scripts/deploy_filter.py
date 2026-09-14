@@ -83,6 +83,17 @@ TRACE_SPECS = (
 MAX_MEASUREMENT_RATE_HZ = 48000
 MAX_EXPORT_FREQUENCY_HZ = MAX_MEASUREMENT_RATE_HZ / 2.0
 
+# BruteFIR's `attenuation:` is baked into every generated config from this
+# fixed value, not from the peak-gain FFT evaluation below.  That evaluation
+# (see `peak_gain_db`/`required_attenuation`) still runs on every deploy, but
+# only as an audit: it must find this fixed value sufficient, or the deploy is
+# refused (AuditError in generate_runtime).  Deploys used to bake in whatever
+# value that evaluation computed for the filter at hand; a fixed value is
+# simpler to reason about and to verify from the outside, at the cost of some
+# headroom on filters that need less than 8 dB.  8 dB was chosen as
+# comfortably above every peak gain seen in this project's filters to date.
+FIXED_ATTENUATION_DB = 8.0
+
 DEFAULT_LIMITS = {
     "max_rms_magnitude_db": 0.02,
     "max_rms_phase_deg": 0.2,
@@ -779,11 +790,13 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
             f"[HEADROOM {rate:,} Hz]",
             f"max(L {peak_values[0]:+.3f}, R {peak_values[1]:+.3f}) dB "
             f"+ {margin:.1f} dB margin = {worst_peak + margin:+.3f} dB; "
-            f"ceil to 0.1 dB -> {required:.1f} dB required attenuation",
+            f"ceil to 0.1 dB -> {required:.1f} dB required attenuation "
+            f"(audit only -- the config bakes in the fixed "
+            f"{FIXED_ATTENUATION_DB:.1f} dB below, not this figure)",
             "1;33")
         if generated_configs:
             requested = recipe["runtime"].get("attenuation_db", "auto")
-            attenuation = required if requested == "auto" else float(requested)
+            attenuation = FIXED_ATTENUATION_DB if requested == "auto" else float(requested)
             if attenuation + 1e-9 < required:
                 raise AuditError(
                     f"requested attenuation {attenuation} dB is below required {required} dB at {rate} Hz")
@@ -796,9 +809,11 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
                 encoding="utf-8")
             config = parse_config(config_stage, rate)
             staged_configs[config_relative] = config_stage
+            note = ("fixed safe value, not the computed figure above"
+                    if requested == "auto" else "explicit override")
             progress_ok(
-                f"baked attenuation: {attenuation:.1f} dB into both BruteFIR "
-                f"coeff blocks in staged {config_relative}",
+                f"baked attenuation: {attenuation:.1f} dB ({note}) into both "
+                f"BruteFIR coeff blocks in staged {config_relative}",
                 "1;34", "CONFIG")
         else:
             config = parse_config(config_path, rate)
