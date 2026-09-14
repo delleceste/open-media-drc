@@ -157,6 +157,31 @@
         .btn-write.ok    { border-color: var(--green); color: var(--green); background: rgba(63,185,80,.08); }
         .btn-write.error { border-color: var(--red);   color: var(--red);   background: rgba(248,81,73,.08); }
 
+        /* DSP headroom gauge: shown only next to the currently applied DRC
+           rate's Apply button (see updateDspGauge()).  Linear, left-to-right,
+           filled fraction = 1 - BruteFIR's own real-time index (rti: in
+           /tmp/brutefir.out) -- full bar is comfortable scheduling headroom,
+           an empty/red bar means BruteFIR is at or past its deadline. */
+        .dsp-gauge {
+            display: inline-block;
+            width: 54px;
+            height: 9px;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            background: var(--bg);
+            overflow: hidden;
+            vertical-align: middle;
+        }
+        .dsp-gauge-fill {
+            display: block;
+            height: 100%;
+            width: 0%;
+            background: var(--green);
+            transition: width .3s linear, background-color .3s linear;
+        }
+        .dsp-gauge-fill.warn { background: var(--yellow); }
+        .dsp-gauge-fill.bad  { background: var(--red); }
+
         /* ── LINK button ─────────────────────────────────────── */
         .btn-link {
             min-width: 72px;
@@ -1221,9 +1246,15 @@
         <div class="row-right">
 
             {% if cmd.type == 'WRITE' %}
+            {% if group_name == 'drc' %}
+            <span class="dsp-gauge" id="gauge-{{ cmd.id }}" title="DSP headroom (BruteFIR real-time index)" hidden>
+                <span class="dsp-gauge-fill" id="gauge-fill-{{ cmd.id }}"></span>
+            </span>
+            {% endif %}
             <button class="btn-write"
                     id="btn-{{ cmd.id }}"
                     data-confirm="{{ cmd.confirm | default('no') }}"
+                    data-confirm-message="{{ cmd.confirm_message | default('') }}"
                     data-what="{{ cmd.what }}"
                     onclick="handleWrite('{{ cmd.id }}')">
                 {{ cmd.button }}
@@ -1743,7 +1774,64 @@ function renderDrcFeedback(data) {
     restore.title = session.matches_active
         ? 'The running chain already matches the saved session'
         : 'Re-apply the exact saved power, geometry, rate and design';
+    updateDspGaugePlacement(active);
 }
+
+// ── DSP headroom gauge ──────────────────────────────────────────────────────
+// One gauge element sits beside every DRC rate's Apply button (rendered in
+// the drc-group row markup above), but only the one for the currently
+// applied rate is ever shown — BruteFIR only has one real-time index to
+// report, and it describes whichever config is actually running.
+const DSP_GAUGE_WARN = 0.7;    // rti at/above this: getting close to the deadline
+const DSP_GAUGE_BAD  = 0.95;   // rti at/above this: essentially out of headroom
+const DRC_RATE_TO_GAUGE_ID = {
+    44100: 'drc_44100', 48000: 'drc_48000', 88200: 'drc_88200',
+    96000: 'drc_96000', 192000: 'drc_192000',
+};
+let dspGaugeCurrentId = '';
+let dspGaugeLastStatus = null;
+
+function updateDspGaugePlacement(active) {
+    const nextId = (active && active.running) ? DRC_RATE_TO_GAUGE_ID[Number(active.rate)] : '';
+    if (nextId === dspGaugeCurrentId) return;
+    const previous = document.getElementById('gauge-' + dspGaugeCurrentId);
+    if (previous) previous.hidden = true;
+    dspGaugeCurrentId = nextId || '';
+    const current = dspGaugeCurrentId ? document.getElementById('gauge-' + dspGaugeCurrentId) : null;
+    if (current) {
+        current.hidden = false;
+        renderDspGauge(dspGaugeLastStatus);
+    }
+}
+
+function renderDspGauge(status) {
+    if (!dspGaugeCurrentId) return;
+    const gauge = document.getElementById('gauge-' + dspGaugeCurrentId);
+    const fill = document.getElementById('gauge-fill-' + dspGaugeCurrentId);
+    if (!gauge || !fill) return;
+    if (!status || !status.available || status.rti === null || status.rti === undefined) {
+        gauge.title = 'DSP headroom: no recent BruteFIR figure';
+        fill.style.width = '0%';
+        fill.className = 'dsp-gauge-fill';
+        return;
+    }
+    const rti = Math.max(0, Math.min(1, status.rti));
+    const headroom = 1 - rti;
+    fill.style.width = `${(headroom * 100).toFixed(0)}%`;
+    fill.className = 'dsp-gauge-fill' +
+        (rti >= DSP_GAUGE_BAD ? ' bad' : rti >= DSP_GAUGE_WARN ? ' warn' : '');
+    gauge.title = `DSP headroom: ${(headroom * 100).toFixed(0)}% (BruteFIR real-time index ${rti.toFixed(3)})`;
+}
+
+async function loadDspGauge() {
+    if (!dspGaugeCurrentId) return;   // DRC off, or a mode this gauge cannot place — nothing to poll for
+    try {
+        const status = await (await fetch('/drc/brutefir-rti', {cache: 'no-store'})).json();
+        dspGaugeLastStatus = status;
+        renderDspGauge(status);
+    } catch { /* offline — leave the last known fill in place */ }
+}
+setInterval(loadDspGauge, 2000);
 
 async function loadGeometries() {
     const sel = document.getElementById('drc-geometry-select');
@@ -2008,7 +2096,7 @@ function writeStatus(msg) {
 function handleWrite(id) {
     const btn = document.getElementById('btn-' + id);
     if (btn.dataset.confirm === 'yes') {
-        askConfirm(id, btn.dataset.what);
+        askConfirm(id, btn.dataset.what, btn.dataset.confirmMessage);
     } else {
         runWrite(id);
     }
@@ -2095,8 +2183,8 @@ function confirmAction(title, message, onOk) {
     document.getElementById('overlay').classList.add('show');
 }
 
-function askConfirm(id, what) {
-    confirmAction(what, 'Are you sure?', () => runWrite(id));
+function askConfirm(id, what, message) {
+    confirmAction(what, message || 'Are you sure?', () => runWrite(id));
 }
 function hideConfirm() { document.getElementById('overlay').classList.remove('show'); }
 document.getElementById('overlay').addEventListener('click', e => {

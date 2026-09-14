@@ -2913,6 +2913,100 @@ def _raw_filter_headroom(filename: str, fmt: str,
     }
 
 
+# How far back to search /tmp/brutefir.out for the last "peak: ..." line.
+# BruteFIR only emits one when the running per-output peak-hold (bfrun.c's
+# icomm->overflow[n].largest) sets a new session-high -- it never resets on
+# its own, so the line can be old.  Between records, `show_progress: true`
+# (see brutefir_defaults*.conf) fills the same file with one "rti: ..." line
+# per second, so a plain tail of the last few KB can miss the peak line for
+# hours.  2 MB covers roughly a day of that filler without reading a log that
+# may have been growing since the box last rebooted.
+_BRUTEFIR_PEAK_TAIL_BYTES = 2 * 1024 * 1024
+_BRUTEFIR_PEAK_ENTRY = re.compile(r'(\d+)/(\d+)/(-Inf|[+-]?\d+\.\d+)')
+
+
+def _brutefir_last_peak_line(path: str = "/tmp/brutefir.out") -> str | None:
+    """The most recent "peak: ..." line BruteFIR has ever printed to `path`
+    since it last started, or None if it has not printed one yet."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(max(0, size - _BRUTEFIR_PEAK_TAIL_BYTES))
+            chunk = stream.read().decode(errors="replace")
+    except OSError:
+        return None
+    for line in reversed(chunk.splitlines()):
+        if line.startswith("peak: "):
+            return line
+    return None
+
+
+def _brutefir_peak_status(path: str = "/tmp/brutefir.out") -> dict:
+    """Parse BruteFIR's own peak-hold line: one entry per output channel of
+    `channel/overflow_count/peak_dB`, `peak_dB` being the loudest sample seen
+    so far relative to full scale (0 dBFS), or "-Inf" before any sample has
+    registered.  `overflow_count` only increases once a sample actually
+    exceeded full scale, at which point `peak_dB` turns positive.
+
+    This is a running peak-hold BruteFIR itself never resets, not an
+    instantaneous meter: silence right now does not move this number back
+    down, and a value here is only ever as fresh as the last new record.
+    """
+    line = _brutefir_last_peak_line(path)
+    if line is None:
+        return {"available": False}
+    channels = []
+    worst_db = None
+    for channel_text, overflow_text, peak_text in _BRUTEFIR_PEAK_ENTRY.findall(line):
+        peak_db = None if peak_text == "-Inf" else float(peak_text)
+        overflow_count = int(overflow_text)
+        channels.append({
+            "channel": int(channel_text),
+            "overflow_count": overflow_count,
+            "peak_db": peak_db,
+        })
+        if peak_db is not None and (worst_db is None or peak_db > worst_db):
+            worst_db = peak_db
+    return {
+        "available": True,
+        "peak_db": worst_db,
+        "clipped": any(c["overflow_count"] > 0 for c in channels),
+        "channels": channels,
+    }
+
+
+# `show_progress: true` (brutefir_defaults*.conf) makes brutefir print a
+# fresh "rti: ..." line once a second for as long as it is processing full
+# blocks, so unlike the peak-hold above the last one is always recent — a
+# small tail is enough.
+_BRUTEFIR_RTI_TAIL_BYTES = 4096
+_BRUTEFIR_RTI_LINE = re.compile(r'^rti:\s*([\d.]+)\s*$')
+
+
+def _brutefir_rti_status(path: str = "/tmp/brutefir.out") -> dict:
+    """BruteFIR's own real-time index: measured filter-block period divided
+    by the longest period it can take before missing its deadline.  0 means
+    comfortable headroom before a dropout, 1 means it is right at the edge.
+
+    This is scheduling/CPU headroom, not audio level -- see
+    `_brutefir_peak_status` for the peak-hold dBFS meter.
+    """
+    chunk = _tail_file(path, _BRUTEFIR_RTI_TAIL_BYTES)
+    if not chunk:
+        return {"available": False}
+    for line in reversed(chunk.splitlines()):
+        line = line.strip()
+        match = _BRUTEFIR_RTI_LINE.match(line)
+        if match:
+            return {"available": True, "rti": float(match.group(1)), "full_processing": True}
+        if line == "rti: not full processing - no rti update":
+            return {"available": True, "rti": None, "full_processing": False}
+    return {"available": False}
+
+
 def _active_brutefir_configuration() -> dict:
     """Inspect the exact config and RAW filters loaded by BruteFIR right now."""
     process = _active_brutefir_process()
@@ -6805,6 +6899,31 @@ def drc_brutefir_config():
         })
     except Exception as error:
         return jsonify({"ok": False, "running": True, "error": str(error)})
+
+
+@app.route("/drc/brutefir-peak")
+def drc_brutefir_peak():
+    """BruteFIR's own peak-hold, tailed from its log.
+
+    Deliberately cheap to poll every couple of seconds: unlike
+    /drc/brutefir-config this never opens or FFTs a coefficient file, it only
+    tails a bounded window of /tmp/brutefir.out.
+    """
+    try:
+        return jsonify(_brutefir_peak_status())
+    except Exception as error:
+        return jsonify({"available": False, "error": str(error)})
+
+
+@app.route("/drc/brutefir-rti")
+def drc_brutefir_rti():
+    """BruteFIR's own real-time index (DSP scheduling headroom), tailed from
+    its log — the gauge next to the active rate's Apply button on the control
+    page polls this, separately from the peak-dBFS meter above."""
+    try:
+        return jsonify(_brutefir_rti_status())
+    except Exception as error:
+        return jsonify({"available": False, "error": str(error)})
 
 
 @app.route("/drc/filter-response")

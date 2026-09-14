@@ -87,6 +87,89 @@ coeff "c-r" {{ filename: "{right}"; format: "FLOAT64_LE"; attenuation: 7.1; }};
         self.assertIn("Geometry: ${data.geometry} · Filter design: ${design}", details)
         self.assertIn("Attenuation set in BruteFIR", details)
         self.assertIn("Safe attenuation, calculated now", details)
+        self.assertIn("Live peak, reported by BruteFIR", details)
+
+
+class BrutefirPeakStatusTest(unittest.TestCase):
+    """BruteFIR only writes a "peak: ..." line when its held per-output peak
+    sets a new session-high (see bfrun.c's print_overflows); between records
+    `show_progress: true` fills the same file with one "rti: ..." line per
+    second, so the parser has to see past those to find the last real one."""
+
+    def test_no_log_means_no_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            status = APP._brutefir_peak_status(str(Path(directory) / "missing.out"))
+        self.assertEqual(status, {"available": False})
+
+    def test_last_peak_line_wins_over_older_ones_and_filler(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "brutefir.out"
+            path.write_text(
+                "peak: 0/0/-12.30 1/0/-11.90 \n" +
+                "rti: 0.412\n" * 50 +
+                "peak: 0/0/-1.50 1/1/+0.80 \n" +
+                "rti: 0.418\n" * 20,
+                encoding="utf-8")
+            status = APP._brutefir_peak_status(str(path))
+        self.assertTrue(status["available"])
+        self.assertAlmostEqual(status["peak_db"], 0.80)
+        self.assertTrue(status["clipped"])
+        self.assertEqual(
+            status["channels"],
+            [{"channel": 0, "overflow_count": 0, "peak_db": -1.50},
+             {"channel": 1, "overflow_count": 1, "peak_db": 0.80}])
+
+    def test_minus_inf_before_any_sample_is_not_a_number(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "brutefir.out"
+            path.write_text("peak: 0/0/-Inf 1/0/-Inf \n", encoding="utf-8")
+            status = APP._brutefir_peak_status(str(path))
+        self.assertTrue(status["available"])
+        self.assertIsNone(status["peak_db"])
+        self.assertFalse(status["clipped"])
+
+    def test_endpoint_serves_the_parsed_peak(self):
+        parsed = {"available": True, "peak_db": -6.0, "clipped": False, "channels": []}
+        with mock.patch.object(APP, "_brutefir_peak_status", return_value=parsed):
+            response = APP.app.test_client().get("/drc/brutefir-peak")
+        data = response.get_json()
+        self.assertTrue(data["available"])
+        self.assertEqual(data["peak_db"], -6.0)
+
+
+class BrutefirRtiStatusTest(unittest.TestCase):
+    """The DSP-headroom gauge reads BruteFIR's own "rti: ..." line -- a
+    once-a-second scheduling figure (`show_progress: true`), distinct from
+    the audio-level peak-hold above."""
+
+    def test_no_log_means_no_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            status = APP._brutefir_rti_status(str(Path(directory) / "missing.out"))
+        self.assertEqual(status, {"available": False})
+
+    def test_last_line_wins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "brutefir.out"
+            path.write_text("rti: 0.310\nrti: 0.322\nrti: 0.298\n", encoding="utf-8")
+            status = APP._brutefir_rti_status(str(path))
+        self.assertEqual(status, {"available": True, "rti": 0.298, "full_processing": True})
+
+    def test_not_full_processing_reports_no_number(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "brutefir.out"
+            path.write_text(
+                "rti: 0.310\nrti: not full processing - no rti update\n", encoding="utf-8")
+            status = APP._brutefir_rti_status(str(path))
+        self.assertEqual(status,
+                         {"available": True, "rti": None, "full_processing": False})
+
+    def test_endpoint_serves_the_parsed_rti(self):
+        parsed = {"available": True, "rti": 0.42, "full_processing": True}
+        with mock.patch.object(APP, "_brutefir_rti_status", return_value=parsed):
+            response = APP.app.test_client().get("/drc/brutefir-rti")
+        data = response.get_json()
+        self.assertTrue(data["available"])
+        self.assertEqual(data["rti"], 0.42)
 
 
 if __name__ == "__main__":

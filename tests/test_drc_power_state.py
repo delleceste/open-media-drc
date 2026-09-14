@@ -19,6 +19,7 @@ with every MPD output disabled, silently.
 
 import os
 from pathlib import Path
+import pty
 import subprocess
 import tempfile
 import time
@@ -106,6 +107,22 @@ class DrcPowerStateTest(unittest.TestCase):
             [str(ROOT / "drc.sh"), *args], env=self.env,
             capture_output=True, text=True, timeout=60)
 
+    def _run_interactive(self, *args, reply):
+        """Run drc.sh with stdin/stdout attached to a real pty, so `[ -t 0 ]`
+        and `[ -t 1 ]` see a terminal and the off-confirmation prompt fires."""
+        primary, secondary = pty.openpty()
+        try:
+            process = subprocess.Popen(
+                [str(ROOT / "drc.sh"), *args], env=self.env,
+                stdin=secondary, stdout=secondary, stderr=subprocess.PIPE,
+                text=True)
+            os.close(secondary)
+            os.write(primary, (reply + "\n").encode())
+            _, stderr = process.communicate(timeout=60)
+            return process.returncode, stderr
+        finally:
+            os.close(primary)
+
     def _write_state(self, last_arg="resamp", last_power="on"):
         (self.state / "last_arg").write_text(last_arg + "\n", encoding="utf-8")
         (self.state / "last_power").write_text(last_power + "\n", encoding="utf-8")
@@ -133,6 +150,41 @@ class DrcPowerStateTest(unittest.TestCase):
         # MPD problem instead of failing and discarding the choice.
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("could not switch MPD", result.stderr)
+        self.assertEqual(self._power(), "off")
+
+    def test_off_at_a_real_terminal_warns_and_waits_for_yes(self):
+        self._write_state()
+        returncode, stderr = self._run_interactive("off", reply="yes")
+        self.assertEqual(returncode, 0, stderr)
+        self.assertIn("8 dB", stderr)
+        self.assertEqual(self._power(), "off")
+
+    def test_off_at_a_real_terminal_is_aborted_by_anything_but_yes(self):
+        self._write_state()
+        returncode, stderr = self._run_interactive("off", reply="no")
+        self.assertNotEqual(returncode, 0)
+        self.assertIn("aborted", stderr)
+        # The choice already recorded by a previous run must survive an
+        # aborted attempt to turn DRC off again.
+        self.assertEqual(self._power(), "on")
+
+    def test_off_with_a_piped_stdin_does_not_prompt(self):
+        """Non-interactive callers (the web UI, systemd, another script) have
+        no one to type "yes" and must not hang waiting for one; ordinary
+        `subprocess.run` without a pty, as used everywhere else in this file,
+        already covers this, but the point is made explicit here."""
+        self._write_state()
+        result = self._run("off")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Type 'yes'", result.stderr)
+        self.assertEqual(self._power(), "off")
+
+    def test_off_assume_yes_skips_the_prompt_even_at_a_terminal(self):
+        self._write_state()
+        self.env["OMDRC_ASSUME_YES"] = "1"
+        # No reply is ever sent; a hang here means the override did not work.
+        returncode, stderr = self._run_interactive("off", reply="")
+        self.assertEqual(returncode, 0, stderr)
         self.assertEqual(self._power(), "off")
 
     def test_stop_leaves_the_saved_power_state_alone(self):
@@ -302,6 +354,40 @@ class DrcPowerStateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertLess(elapsed, 3.0, f"mpc was not bounded: {elapsed:.2f}s")
         self.assertEqual(self._power(), "off")
+
+
+class DrcOffWebConfirmationTest(unittest.TestCase):
+    """The web panel's own confirmation for `drc_off`, separate from the
+    console prompt drc.sh shows for a human typing at a real terminal."""
+
+    def test_drc_off_requires_confirmation_and_names_the_8db_jump(self):
+        text = (ROOT / "omdrc-ctrl/src/commands.conf.in").read_text(encoding="utf-8")
+        section = text.split("[drc_off]", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("confirm = yes", section)
+        self.assertIn("confirm_message", section)
+        self.assertIn("8 dB", section)
+
+    def test_index_page_wires_the_per_command_confirm_message(self):
+        page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
+        self.assertIn("data-confirm-message=", page)
+        self.assertIn("btn.dataset.confirmMessage", page)
+
+
+class DspHeadroomGaugeMarkupTest(unittest.TestCase):
+    """The linear DSP-headroom gauge beside the active rate's Apply button."""
+
+    def test_gauge_element_is_rendered_only_for_the_drc_group(self):
+        page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
+        self.assertIn("class=\"dsp-gauge\"", page)
+        self.assertIn("gauge-{{ cmd.id }}", page)
+        self.assertIn("group_name == 'drc'", page)
+
+    def test_placement_follows_the_active_rate_and_polls_brutefir_rti(self):
+        page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
+        self.assertIn("function updateDspGaugePlacement(", page)
+        self.assertIn("function renderDspGauge(", page)
+        self.assertIn("/drc/brutefir-rti", page)
+        self.assertIn("updateDspGaugePlacement(active)", page)
 
 
 if __name__ == "__main__":
