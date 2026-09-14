@@ -1,0 +1,58 @@
+{
+  "reference_hz": 1000,
+  "captures": [
+    {
+      "path": "bp-results/high-frequency-120.green-v1-fdw6-192k-freebsd",
+      "rate": 192000,
+      "channels": 2,
+      "filter_taps": 524288,
+      "settling_seconds": 2.980667,
+      "analysis_seconds": 2.0,
+      "estimated_clock_ppm": -0.037,
+      "tones": [
+        {
+          "hz": 1000,
+          "relative_db": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "hz": 4000,
+          "relative_db": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "hz": 8000,
+          "relative_db": [
+            -0.0,
+            -0.0
+          ]
+        },
+        {
+          "hz": 12000,
+          "relative_db": [
+            -0.0,
+            -0.0
+          ]
+        },
+        {
+          "hz": 16000,
+          "relative_db": [
+            -0.0002,
+            -0.0002
+          ]
+        },
+        {
+          "hz": 19000,
+          "relative_db": [
+            -0.003,
+            -0.003
+          ]
+        }
+      ]
+    }
+  ]
+}

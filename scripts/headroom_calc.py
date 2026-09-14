@@ -16,13 +16,30 @@ given frequency f is:
 where H(f) is the filter's complex frequency response.  For a full-scale
 sine at the frequency of maximum gain the output would clip if |H(f)| > 1.
 
-For a requested safety margin, the required BruteFIR attenuation is therefore:
-
-    attenuation_dB = max(0, peak_gain_dB + safety_margin_dB)
-
 We obtain H(f) by taking the FFT of the impulse response:
 the FFT output at each bin IS H(f) evaluated at that bin's frequency,
 so we just take the magnitude and find the maximum.
+
+That bound is only tight for a STEADY-STATE sine.  A correction filter's
+frequency magnitude can sit at 0 dB everywhere and still overshoot on a
+transient: different frequency components all start responding at once
+when the input steps from silence (or from quiet to loud), and their
+partial sums can momentarily exceed the filter's steady-state gain before
+settling.  This showed up in practice on 2026-09-14: a v1-fdw6 filter
+measured at ~0 dB peak|H(f)| still drove BruteFIR's output past its
++6 dB safety_limit on ordinary program material, because the 1.1 dB
+attenuation sized from peak|H(f)| alone budgeted nothing for this.
+
+We bound the transient case with the filter's STEP response: the running
+cumulative sum of h[n], i.e. the output when the input jumps from 0 to
+full scale.  Its peak absolute value can exceed 1.0 even when peak|H(f)|
+does not, and is a much better proxy for what a real attack/transient in
+music can trigger than the pure sine-response test.
+
+For a requested safety margin, the required BruteFIR attenuation is
+therefore:
+
+    attenuation_dB = max(0, peak_gain_dB, step_peak_dB) + safety_margin_dB
 
 A practical safety margin of +1 dB is added on top.  The suggested
 brutefir `attenuation:` value is then rounded up to one decimal place.
@@ -108,15 +125,35 @@ def peak_gain_db(h: np.ndarray) -> float:
     return 20.0 * np.log10(peak_linear)
 
 
-def suggested_attenuation(peak_db: float, margin_db: float) -> float:
+def step_response_peak_db(h: np.ndarray) -> float:
+    """
+    Return the peak absolute output (in dB) BruteFIR could produce when
+    the input steps from silence to full scale, i.e. |cumsum(h)|.max().
+
+    This is a transient bound, distinct from peak_gain_db()'s steady-state
+    sine bound: a filter with 0 dB gain at every single frequency can still
+    momentarily overshoot unity while its frequency components are still
+    settling into phase after an attack.  See the module docstring.
+    """
+    step = np.cumsum(h)
+    peak_linear = np.max(np.abs(step))
+    if peak_linear <= 0:
+        return float('-inf')
+    return 20.0 * np.log10(peak_linear)
+
+
+def suggested_attenuation(peak_db: float, margin_db: float, step_db: float = float('-inf')) -> float:
     """
     Return the brutefir `attenuation:` value to use.
 
     brutefir's attenuation is a non-negative number of dB of reduction.
     Existing attenuation in the filter contributes to the requested safety
     margin.  We round up to one decimal place to keep the conf file tidy.
+
+    Takes the worse of the steady-state (peak_db) and transient (step_db)
+    bounds -- either alone can under-estimate the required headroom.
     """
-    raw = peak_db + margin_db
+    raw = max(peak_db, step_db) + margin_db
     # Ceiling to one decimal place, with no runtime gain above unity.
     return max(0.0, round(np.ceil(raw * 10) / 10, 1))
 
@@ -174,12 +211,15 @@ def main():
             continue
         if not left.is_file() or not right.is_file():
             raise FileNotFoundError(f'incomplete filter pair in {pair_dir}')
-        peaks = {
-            'left': peak_gain_db(load_filter(str(left), dtype)),
-            'right': peak_gain_db(load_filter(str(right), dtype)),
-        }
-        limiting = max(peaks, key=peaks.get)
-        required = suggested_attenuation(peaks[limiting], args.margin)
+        left_h, right_h = load_filter(str(left), dtype), load_filter(str(right), dtype)
+        peaks = {'left': peak_gain_db(left_h), 'right': peak_gain_db(right_h)}
+        steps = {'left': step_response_peak_db(left_h), 'right': step_response_peak_db(right_h)}
+        # Each channel's own worse-case bound is the max of its steady-state
+        # (sine) and transient (step) peaks; the pair's limiting channel is
+        # whichever of those four numbers is largest.
+        worst = {ch: max(peaks[ch], steps[ch]) for ch in ('left', 'right')}
+        limiting = max(worst, key=worst.get)
+        required = suggested_attenuation(peaks[limiting], args.margin, steps[limiting])
         suffix = args.variant if args.variant else ''
         config = data_root / 'configs' / geometry / f'brutefir-{rate_dir.name}{suffix}.conf.in'
         configured = config_attenuation(config)
@@ -188,7 +228,9 @@ def main():
         results.append({
             'rate': int(rate_dir.name), 'variant': args.variant or 'default',
             'format': args.format, 'left_peak_db': round(peaks['left'], 6),
-            'right_peak_db': round(peaks['right'], 6), 'limiting_channel': limiting,
+            'right_peak_db': round(peaks['right'], 6),
+            'left_step_db': round(steps['left'], 6), 'right_step_db': round(steps['right'], 6),
+            'limiting_channel': limiting,
             'safety_margin_db': args.margin, 'required_attenuation_db': required,
             'configured_attenuation_db': configured, 'passed': bool(passed),
         })
@@ -204,16 +246,18 @@ def main():
     col_num   = 10
 
     header = (f"{'Pair':<{col_pair}} {'Channel file':<{col_ch}}"
-              f" {'Peak gain':>{col_num}} {'Limiting ch':>{col_num}} {'Suggested':>{col_num}}")
+              f" {'Peak gain':>{col_num}} {'Step peak':>{col_num}} {'Limiting ch':>{col_num}} {'Suggested':>{col_num}}")
     print(header)
-    print(f"{'':─<{col_pair}} {'':─<{col_ch}} {'(dB)':>{col_num}} {'':>{col_num}} {'atten (dB)':>{col_num}}")
+    print(f"{'':─<{col_pair}} {'':─<{col_ch}} {'(dB)':>{col_num}} {'(dB)':>{col_num}} {'':>{col_num}} {'atten (dB)':>{col_num}}")
 
     for item in results:
         label = f"{item['rate']} {item['variant']}"
         limiting = item['limiting_channel']
         print(f"{label:<{col_pair}} {'L.raw':<{col_ch}} {item['left_peak_db']:>+{col_num}.3f}"
+              f" {item['left_step_db']:>+{col_num}.3f}"
               f" {'← limits' if limiting == 'left' else '':>{col_num}} {item['required_attenuation_db']:>{col_num}.1f}")
         print(f"{'': <{col_pair}} {'R.raw':<{col_ch}} {item['right_peak_db']:>+{col_num}.3f}"
+              f" {item['right_step_db']:>+{col_num}.3f}"
               f" {'← limits' if limiting == 'right' else '':>{col_num}}")
         configured = item['configured_attenuation_db']
         if configured is not None:

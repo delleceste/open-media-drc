@@ -1,0 +1,160 @@
+{
+  "reference_hz": 1000,
+  "captures": [
+    {
+      "path": "tests/high-frequency-test-44100-s24-stereo.wav",
+      "rate": 44100,
+      "channels": 2,
+      "filter_taps": 524288,
+      "settling_seconds": 12.138617,
+      "analysis_seconds": 2.0,
+      "estimated_clock_ppm": -0.024,
+      "tones": [
+        {
+          "hz": 1000,
+          "relative_db": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "hz": 4000,
+          "relative_db": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "hz": 8000,
+          "relative_db": [
+            -0.0,
+            -0.0
+          ]
+        },
+        {
+          "hz": 12000,
+          "relative_db": [
+            -0.0,
+            -0.0
+          ]
+        },
+        {
+          "hz": 16000,
+          "relative_db": [
+            -0.0,
+            -0.0
+          ]
+        },
+        {
+          "hz": 19000,
+          "relative_db": [
+            -0.0,
+            -0.0
+          ]
+        }
+      ]
+    },
+    {
+      "path": "bp-results/high-frequency-120.green-v1-fdw6-192k-freebsd",
+      "rate": 192000,
+      "channels": 2,
+      "filter_taps": 524288,
+      "settling_seconds": 2.980667,
+      "analysis_seconds": 2.0,
+      "estimated_clock_ppm": -0.037,
+      "tones": [
+        {
+          "hz": 1000,
+          "relative_db": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "hz": 4000,
+          "relative_db": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "hz": 8000,
+          "relative_db": [
+            -0.0,
+            -0.0
+          ]
+        },
+        {
+          "hz": 12000,
+          "relative_db": [
+            -0.0,
+            -0.0
+          ]
+        },
+        {
+          "hz": 16000,
+          "relative_db": [
+            -0.0002,
+            -0.0002
+          ]
+        },
+        {
+          "hz": 19000,
+          "relative_db": [
+            -0.003,
+            -0.003
+          ]
+        }
+      ]
+    }
+  ],
+  "comparison": {
+    "second_minus_first": [
+      {
+        "hz": 1000,
+        "delta_db": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "hz": 4000,
+        "delta_db": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "hz": 8000,
+        "delta_db": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "hz": 12000,
+        "delta_db": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "hz": 16000,
+        "delta_db": [
+          -0.0002,
+          -0.0002
+        ]
+      },
+      {
+        "hz": 19000,
+        "delta_db": [
+          -0.003,
+          -0.003
+        ]
+      }
+    ],
+    "worst_abs_delta_db": 0.003,
+    "limit_db": 0.25,
+    "passed": true
+  }
+}
