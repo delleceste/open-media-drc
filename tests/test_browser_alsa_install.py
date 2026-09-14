@@ -85,7 +85,7 @@ class BrowserRolesTest(unittest.TestCase):
              mock.patch.object(HELPER, "installed_conf", return_value={
                  "AUDIO_USER": pwd.getpwuid(os.getuid()).pw_name,
                  "AUDIO_HOME": str(home)}), \
-             mock.patch.object(HELPER, "linux_aloop_timer"), \
+             mock.patch.object(HELPER, "linux_aloop_timer", return_value=False), \
              mock.patch.object(HELPER, "atomic_text", side_effect=write):
             HELPER.linux_apply("0x1234:0xabcd", 5, restart=False)
         self.assertIn("hw:CARD=SelectedDAC,DEV=0", self.config.read_text())

@@ -33,6 +33,9 @@ MANAGED_ALOOP = re.compile(
     r'^(\s*options\s+snd-aloop\b[^\n]*?)timer_source="[^"]*"([^\n]*'
     r'#\s*omdrc-managed-aloop-timer\s*)$', re.M)
 ALOOP_MODPROBE = "/etc/modprobe.d/omdrc-snd-aloop.conf"
+ALOOP_TIMER_PARAM = "/sys/module/snd_aloop/parameters/timer_source"
+SYSTEMCTL = "/usr/bin/systemctl"
+MODPROBE = "/usr/bin/modprobe"
 
 
 def run(argv: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -383,28 +386,68 @@ def linux_browser_alsa_refresh() -> None:
     linux_browser_alsa(prefix, selected["dac"], selected["capture"])
 
 
-def linux_aloop_timer(card: str) -> None:
+def linux_aloop_timer(card: str) -> bool:
     """Point snd-aloop's timer_source at the DAC card, if the file is there.
 
-    Best-effort on purpose.  The loopback module is loaded at boot, so this
-    cannot take effect now anyway, and a box that never installed the
-    modprobe.d file has simply chosen the hrtimer default — neither is a reason
-    to fail an otherwise successful DAC selection."""
+    Return whether this installation manages the timer source.  A box that
+    never installed the modprobe.d file has chosen the hrtimer default, which
+    is not a reason to fail an otherwise successful DAC selection."""
     path = Path(ALOOP_MODPROBE)
     if not path.is_file():
         print(f"NOTICE: {path} does not exist; snd-aloop keeps its default timer source")
-        return
+        return False
     text = path.read_text()
     changed, count = MANAGED_ALOOP.subn(rf'\1timer_source="hw:{card},0,0"\2', text)
     if count != 1:
         print(f"NOTICE: no '# omdrc-managed-aloop-timer' options line in {path}; "
               "leaving the loopback timer source alone")
-        return
-    if changed == text:
-        return
-    atomic_text(path, changed)
-    print(f"NOTICE: snd-aloop timer_source set to hw:{card},0,0 — "
-          "takes effect on the next boot")
+        return False
+    if changed != text:
+        atomic_text(path, changed)
+        print(f"NOTICE: snd-aloop timer_source set to hw:{card},0,0")
+    return True
+
+
+def linux_reload_aloop_timer(card: str) -> bool:
+    """Apply a managed snd-aloop timer change to the running module.
+
+    snd-aloop copies timer_source at module load; rewriting modprobe.d alone
+    leaves the old physical clock active until reboot.  Stop the DRC service
+    first so its ExecStop releases MPD, BruteFIR and the loopback in the safe
+    order, reload only when the live value differs, and tell the caller whether
+    an already-active chain must be restored after all role files are written.
+    """
+    wanted = f"hw:{card},0,0"
+    parameter = Path(ALOOP_TIMER_PARAM)
+
+    def live_timer() -> str:
+        # The sysfs parameter is an array, rendered as
+        # "hw:C,D,S,(null),(null),...".  The commas inside the first PCM timer
+        # name are therefore not array separators we can split on directly.
+        match = re.match(r"^(hw:[^,]+,[^,]+,[^,]+|[^,]*)",
+                         parameter.read_text(errors="replace").strip())
+        return match.group(1) if match else ""
+
+    if parameter.is_file():
+        current = live_timer()
+        if current == wanted:
+            return False
+
+    status = run([SYSTEMCTL, "is-active", "drc-usb-audio.service"], check=False)
+    was_active = status.stdout.strip() == "active"
+    if was_active:
+        run([SYSTEMCTL, "stop", "drc-usb-audio.service"])
+    if parameter.is_file():
+        run([MODPROBE, "-r", "snd-aloop"])
+    run([MODPROBE, "snd-aloop"])
+
+    if not parameter.is_file():
+        raise RuntimeError("snd-aloop loaded without publishing timer_source")
+    loaded = live_timer()
+    if loaded != wanted:
+        raise RuntimeError(f"snd-aloop timer_source is {loaded!r}, wanted {wanted!r}")
+    print(f"VERIFIED: live snd-aloop timer_source={wanted}")
+    return was_active
 
 
 def linux_apply(dac: str, timeout: int, restart: bool = True,
@@ -451,7 +494,7 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
                 f"{mpd_conf} has {mpd_count} '# omdrc-managed-mpd-dac' device lines; "
                 "exactly one OKTO-DAC output must be managed")
         atomic_text(mpd_conf, mpd_changed)
-    linux_aloop_timer(selected["number"])
+    manages_aloop = linux_aloop_timer(selected["number"])
     role_conf = Path(f"{prefix}/etc/open-media-drc/audio-roles.conf")
     atomic_text(role_conf, f'OMDRC_AUDIO_DAC="{dac}"\n'
                            f'OMDRC_AUDIO_CAPTURE="{capture}"\n')
@@ -466,6 +509,9 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
                        f"capture_unit={chosen_capture['number'] if chosen_capture else ''}\n"
                        f"capture_desc={chosen_capture['name'] if chosen_capture else ''}\n"
                        f"capture_id={capture}\n")
+    restore_active = (linux_reload_aloop_timer(selected["number"])
+                      if manages_aloop else False)
+    restart = restart or restore_active
     if not restart:
         print(f"RESOLVED: {dac} -> ALSA card {selected['number']}"
               + (f", capture {capture} -> ALSA card {chosen_capture['number']}"

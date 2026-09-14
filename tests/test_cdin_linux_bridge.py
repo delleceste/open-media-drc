@@ -485,7 +485,7 @@ class CaptureRoleTest(unittest.TestCase):
                                    return_value=mock.Mock(pw_dir=str(root),
                                                           pw_uid=1000, pw_gid=1000)), \
                  mock.patch.object(self.helper, "atomic_text", side_effect=fake_atomic), \
-                 mock.patch.object(self.helper, "linux_aloop_timer"), \
+                 mock.patch.object(self.helper, "linux_aloop_timer", return_value=False), \
                  mock.patch.dict(os.environ, {"PREFIX": str(root)}), \
                  mock.patch.object(self.helper, "Path", Path):
                 # ~/.config/BruteFIR is where linux_apply looks; point it there.
@@ -516,7 +516,7 @@ class CaptureRoleTest(unittest.TestCase):
                                return_value=mock.Mock(pw_dir=str(root),
                                                       pw_uid=1000, pw_gid=1000)), \
              mock.patch.object(self.helper, "atomic_text"), \
-             mock.patch.object(self.helper, "linux_aloop_timer"), \
+             mock.patch.object(self.helper, "linux_aloop_timer", return_value=False), \
              mock.patch.dict(os.environ, {"PREFIX": str(root)}):
             self.helper.linux_apply("0x2fc6:0x0001:okto1", 5, restart=False)
 
@@ -571,7 +571,57 @@ class CaptureRoleTest(unittest.TestCase):
 
     def test_a_missing_modprobe_file_is_a_notice_not_a_failure(self):
         with mock.patch.object(self.helper, "ALOOP_MODPROBE", "/nonexistent/x.conf"):
-            self.helper.linux_aloop_timer("0")   # must not raise
+            self.assertFalse(self.helper.linux_aloop_timer("0"))
+
+    def test_matching_live_aloop_timer_needs_no_reload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parameter = Path(tmp) / "timer_source"
+            parameter.write_text("hw:3,0,0,(null),(null)\n")
+            with mock.patch.object(self.helper, "ALOOP_TIMER_PARAM", str(parameter)), \
+                 mock.patch.object(self.helper, "run") as run:
+                self.assertFalse(self.helper.linux_reload_aloop_timer("3"))
+            run.assert_not_called()
+
+    def test_changed_live_aloop_timer_stops_reloads_and_requests_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parameter = Path(tmp) / "timer_source"
+            parameter.write_text("hw:2,0,0,(null)\n")
+
+            def fake_run(argv, check=True):
+                if argv[1:] == ["is-active", "drc-usb-audio.service"]:
+                    return subprocess.CompletedProcess(argv, 0, "active\n")
+                if argv[1:] == ["snd-aloop"]:
+                    parameter.write_text("hw:0,0,0,(null)\n")
+                return subprocess.CompletedProcess(argv, 0, "")
+
+            with mock.patch.object(self.helper, "ALOOP_TIMER_PARAM", str(parameter)), \
+                 mock.patch.object(self.helper, "run", side_effect=fake_run) as run:
+                self.assertTrue(self.helper.linux_reload_aloop_timer("0"))
+            commands = [call.args[0][1:] for call in run.call_args_list]
+            self.assertEqual(commands, [
+                ["is-active", "drc-usb-audio.service"],
+                ["stop", "drc-usb-audio.service"],
+                ["-r", "snd-aloop"],
+                ["snd-aloop"],
+            ])
+
+    def test_unloaded_aloop_is_loaded_with_the_new_timer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parameter = Path(tmp) / "timer_source"
+
+            def fake_run(argv, check=True):
+                if argv[1:] == ["is-active", "drc-usb-audio.service"]:
+                    return subprocess.CompletedProcess(argv, 3, "inactive\n")
+                if argv[1:] == ["snd-aloop"]:
+                    parameter.write_text("hw:1,0,0,(null)\n")
+                return subprocess.CompletedProcess(argv, 0, "")
+
+            with mock.patch.object(self.helper, "ALOOP_TIMER_PARAM", str(parameter)), \
+                 mock.patch.object(self.helper, "run", side_effect=fake_run) as run:
+                self.assertFalse(self.helper.linux_reload_aloop_timer("1"))
+            commands = [call.args[0][1:] for call in run.call_args_list]
+            self.assertNotIn(["-r", "snd-aloop"], commands)
+            self.assertIn(["snd-aloop"], commands)
 
 
 class ExclusiveSourceTest(unittest.TestCase):
