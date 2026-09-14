@@ -405,15 +405,17 @@ def response_metrics(txt_freqs: np.ndarray, txt_mag: np.ndarray, txt_phase: np.n
     got_mag, got_phase = db_phase(selected)
     mag_error = got_mag - (txt_mag + txt_to_wav_gain_db)
     phase_error = wrap_phase_deg(got_phase - txt_phase)
-    # The displayed/audible validation band is 100 Hz--20 kHz.  The export also
-    # contains bins almost to Nyquist, where a finite-window endpoint is much
-    # more sensitive and is not used by the response page.
+    # REW exports bins almost to Nyquist, where its TXT response and exported
+    # WAV can use different tapers.  Exclude that unused endpoint from the RMS
+    # while retaining the complete bass response.  Peak limits use the
+    # displayed/audible validation band of 100 Hz--20 kHz.
+    rms_band = txt_freqs <= 20_000.0
     audio = (txt_freqs >= 100.0) & (txt_freqs <= 20_000.0)
     return {
         "rows": int(txt_freqs.size),
         "max_frequency_grid_error_hz": round(float(np.max(np.abs(fft_freqs[indices] - txt_freqs))), 9),
-        "rms_magnitude_db": round(float(np.sqrt(np.mean(mag_error ** 2))), 6),
-        "rms_phase_deg": round(float(np.sqrt(np.mean(phase_error ** 2))), 6),
+        "rms_magnitude_db": round(float(np.sqrt(np.mean(mag_error[rms_band] ** 2))), 6),
+        "rms_phase_deg": round(float(np.sqrt(np.mean(phase_error[rms_band] ** 2))), 6),
         "above_100_hz_max_magnitude_db": round(float(np.max(np.abs(mag_error[audio]))), 6),
         "above_100_hz_max_phase_deg": round(float(np.max(np.abs(phase_error[audio]))), 6),
     }

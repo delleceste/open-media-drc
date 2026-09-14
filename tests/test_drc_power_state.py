@@ -229,16 +229,6 @@ class DrcPowerStateTest(unittest.TestCase):
         self.assertEqual(self._source(), "cdin")
         self.assertIn("config not found", result.stderr)
 
-    def test_linein_intent_is_saved_and_builds_the_chain_at_its_own_rate(self):
-        """`drc.sh linein` is `drc.sh cdin` with the analog source's rate."""
-        self._write_state()
-        result = self._run("linein")
-        self.assertNotEqual(result.returncode, 0)   # no 96-kHz config either
-        self.assertEqual(self._source(), "linein")
-        self.assertIn("brutefir-96000.conf", result.stderr)
-        log = (self.state / "drc.log").read_text(encoding="utf-8")
-        self.assertIn("event=source_saved source=linein rate=96000", log)
-
     def test_a_capture_source_writes_the_bridge_its_input_before_starting_it(self):
         """The bridge is started by unit name, so the input it opens can only
         reach it through the file drc.sh writes first.
@@ -290,22 +280,17 @@ class DrcPowerStateTest(unittest.TestCase):
         self.assertIn("Restoring the CD / S-PDIF input at 44100 Hz", result.stdout)
         self.assertIn("brutefir-44100.conf", result.stderr)
 
-    def test_restore_brings_back_the_line_input_at_its_own_rate(self):
-        """The saved source carries the rate, and the two capture sources do
-        not share one.
-
-        Restoring `linein` at the CD's 44.1 kHz would not fail anywhere: the
-        chain would come up, the bridge would open the analog input, and ALSA's
-        plug layer would resample the card's 96 kHz down to it — audible,
-        no longer bit-exact, and reported by nothing.
-        """
+    def test_restore_of_a_source_no_longer_recognised_falls_back_to_music(self):
+        """A `last_source` left over from a removed source (e.g. the retired
+        analog Line input) must degrade to music rather than crash or wedge
+        the chain on an input drc.sh no longer knows how to open."""
         self._write_state(last_arg="resamp", last_power="on")
         (self.state / "last_source").write_text("linein\n", encoding="utf-8")
         result = self._run("restore")
-        self.assertNotEqual(result.returncode, 0)  # fixture has no 96k config
-        self.assertIn("Restoring the analog Line input at 96000 Hz", result.stdout)
-        self.assertIn("brutefir-96000.conf", result.stderr)
-        self.assertNotIn("brutefir-44100.conf", result.stderr)
+        self.assertNotEqual(result.returncode, 0)  # fixture has no 192k config
+        self.assertIn("Restoring last state:", result.stdout)
+        self.assertNotIn("Line input", result.stdout)
+        self.assertEqual(self._source(), "music")
 
     def test_mpd_failures_are_bounded_while_the_lock_is_held(self):
         self._write_state()

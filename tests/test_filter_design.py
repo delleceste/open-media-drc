@@ -692,6 +692,26 @@ class FilterAlignmentTest(unittest.TestCase):
         self.assertLess(result["metrics"]["rms_magnitude_db"], 1e-6)
         self.assertLess(result["metrics"]["rms_phase_deg"], 1e-6)
 
+    def test_txt_wav_rms_ignores_the_nyquist_taper(self):
+        """REW may taper its WAV differently from its response above 20 kHz."""
+        rate = 48000
+        sample_count = 4096
+        fft_freqs = np.fft.rfftfreq(sample_count, 1.0 / rate)
+        fft_values = np.ones(fft_freqs.size, dtype=np.complex128)
+        txt_mag = np.zeros(fft_freqs.size)
+        txt_phase = np.zeros(fft_freqs.size)
+        nyquist_taper = fft_freqs > 20_000.0
+        txt_mag[nyquist_taper] = 30.0
+        txt_phase[nyquist_taper] = 90.0
+
+        metrics = deploy_filter.response_metrics(
+            fft_freqs, txt_mag, txt_phase, fft_freqs, fft_values)
+
+        self.assertEqual(metrics["rms_magnitude_db"], 0.0)
+        self.assertEqual(metrics["rms_phase_deg"], 0.0)
+        self.assertEqual(metrics["above_100_hz_max_magnitude_db"], 0.0)
+        self.assertEqual(metrics["above_100_hz_max_phase_deg"], 0.0)
+
     def test_runtime_progress_shows_sox_headroom_and_config_bake(self):
         class TtyBuffer(io.StringIO):
             def isatty(self):

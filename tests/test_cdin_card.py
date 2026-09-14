@@ -124,11 +124,10 @@ class Readout(unittest.TestCase):
     def test_the_start_line_yields_the_rate_the_bridge_is_running_at(self):
         """The bridge is the only thing that knows it.
 
-        `cdin` and `linein` are one bridge at two rates, and the spectrum
-        analyzer FFTs whatever the FIFO gives it — read at the wrong rate,
-        every frequency bin is mislabelled and nothing reports an error.  The
-        rate is in the start line the card already parses, so it is taken from
-        there rather than from a setting that can only name one of the two.
+        The spectrum analyzer FFTs whatever the FIFO gives it — read at the
+        wrong rate, every frequency bin is mislabelled and nothing reports an
+        error.  The rate is in the start line the card already parses, so it
+        is taken from there rather than from a fixed setting.
         """
         self.assertEqual(_status(PLAYING)["rate"], 44100)
         self.assertEqual(
@@ -140,18 +139,19 @@ class Readout(unittest.TestCase):
     def test_the_bridge_names_the_input_it_was_started_for(self):
         """The devices do not say which input this is.
 
-        `hw:3,0` is the analog side of a card whose digital side is a second
-        PCM device on one box and an item of the same mixer selector on the
-        next, so only the caller that chose knows — and it says so in a line of
-        its own, because the start line's grammar is a contract.
+        Only the caller that chose knows — and it says so in a line of its
+        own, because the start line's grammar is a contract.  A token with no
+        entry in CDIN_SOURCE_LABELS is shown as itself rather than vanishing,
+        so a source added to drc.sh appears here before the panel learns a
+        friendly name for it.
         """
         text = PLAYING.replace(
             "state idle: capture open",
-            "source linein: capturing 'Line' from hw:3,0\n"
+            "source aux: capturing 'Aux' from hw:3,0\n"
             "2026-08-21 10:00:05.310 [INF] state idle: capture open")
         status = _status(text)
-        self.assertEqual(status["source"], "linein")
-        self.assertEqual(status["source_label"], "Line input")
+        self.assertEqual(status["source"], "aux")
+        self.assertEqual(status["source_label"], "aux")
 
     def test_a_bridge_nobody_selected_names_no_input(self):
         """A hand-started bridge declares no source, and the panel must then
@@ -161,19 +161,19 @@ class Readout(unittest.TestCase):
         self.assertEqual(status["source_label"], "")
 
     def test_only_a_running_bridge_counts_as_an_engaged_input(self):
-        """The chain can be up at the Line input's rate with the bridge dead.
+        """The chain can be up at the selected input's rate with the bridge dead.
 
         The DRC card's Active line reports what is RUNNING, so naming the input
         there on the strength of a log line alone would be a claim nothing had
-        checked — the rate would still read 96,000 Hz and the listener would
-        hear nothing.
+        checked — the rate would still read whatever the dead bridge left
+        behind and the listener would hear nothing.
         """
         text = PLAYING.replace(
             "state idle: capture open",
-            "source linein: capturing 'Line' from hw:3,0\n"
+            "source cdin: capturing 'iec958' from hw:3,0\n"
             "2026-08-21 10:00:05.310 [INF] state idle: capture open")
-        for running, expected in ((True, {"source": "linein",
-                                          "label": "Line input"}),
+        for running, expected in ((True, {"source": "cdin",
+                                          "label": "CD input"}),
                                   (False, {})):
             APP._CDIN_ACTIVE_CACHE = (0.0, False, 0, "")
             with mock.patch.object(APP, "CDIN_ENABLED", True), \

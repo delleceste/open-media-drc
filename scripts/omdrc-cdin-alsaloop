@@ -861,10 +861,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--format", default=env("OMDRC_CDIN_FORMAT", "S32_LE"),
                         help="must match the loopback / BruteFIR input format")
     parser.add_argument("--source", default=env("OMDRC_CDIN_SOURCE", ""),
-                        help="the name drc.sh knows this run by ('cdin', "
-                             "'linein'): logged so the panel can say which "
-                             "input is engaged.  Empty for a hand-started "
-                             "bridge, which is nobody's selected source")
+                        help="the name drc.sh knows this run by ('cdin'): "
+                             "logged so the panel can say which input is "
+                             "engaged.  The grammar stays open-ended and an "
+                             "unknown token is shown as itself.  Empty for a "
+                             "hand-started bridge, which is nobody's selected "
+                             "source")
     parser.add_argument("--capture-source",
                         default=env("OMDRC_CDIN_CAPTURE_SOURCE", "auto"),
                         help="the capture card's input selector: 'auto' (the "

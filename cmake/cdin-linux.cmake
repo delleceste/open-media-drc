@@ -19,10 +19,9 @@ install(PROGRAMS scripts/omdrc-cdin-alsaloop DESTINATION libexec/omdrc/scripts)
 
 # The unit is installed but deliberately NOT enabled by user-install: a capture
 # input is an exclusive source on Linux (one seat on hw:Loopback,0,0), and
-# drc.sh starts and stops it as the source changes.  `drc.sh cdin` and
-# `drc.sh linein` select it — one unit, two sources, told apart by the
-# EnvironmentFile drc.sh writes into the state directory immediately before the
-# start.  Any rate action hands the loopback back to MPD.
+# drc.sh starts and stops it as the source changes.  `drc.sh cdin` selects it,
+# by way of the EnvironmentFile drc.sh writes into the state directory
+# immediately before the start.  Any rate action hands the loopback back to MPD.
 file(READ etc/systemd/user/omdrc-cdin.service.in _cdin)
 string(REPLACE "@REPO_DIR@/scripts/omdrc-cdin-alsaloop"
                "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/scripts/omdrc-cdin-alsaloop" _cdin "${_cdin}")

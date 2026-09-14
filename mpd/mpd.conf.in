@@ -2,7 +2,7 @@
 #
 #  Linux-specific mpd.conf (uses ALSA)
 #
-#  DAC      : hw:0,0   — direct, bit-perfect playback (OKTO-DAC output)
+#  DAC      : selected ALSA card — direct, bit-perfect playback (OKTO-DAC output)
 #  Loopback : hw:1     — snd-aloop capture side feeds brutefir (DRC outputs)
 #
 #  Template — rendered to mpd.conf by CMake (see cmake/).
@@ -42,12 +42,13 @@ resampler {
 }
 
 # Output 1 — direct to DAC, no room correction.
-# hw:0,0 addresses the raw hardware device: no dmix, no auto-resampling,
+# The audio-role helper keeps this raw hardware address aligned with the
+# selected DAC: no dmix, no auto-resampling,
 # bit-perfect.  Requires the DAC to be free (brutefir / DRC outputs stopped).
 audio_output {
         type "alsa"
         name "OKTO-DAC"
-        device "hw:0,0"
+        device "hw:0,0" # omdrc-managed-mpd-dac
         mixer_type        "none"
 }
 

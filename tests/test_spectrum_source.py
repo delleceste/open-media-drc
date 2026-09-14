@@ -120,14 +120,13 @@ class SourceRateTest(unittest.TestCase):
 
 
     def test_the_running_bridge_outranks_the_configured_cd_rate(self):
-        """`cdin` and `linein` are one bridge at two rates.
+        """The configured rate is only a fallback.
 
-        The setting can only name one of them, so a box whose selected source
-        is the analog input at 96 kHz would have every bin labelled as though
-        the samples were a CD's — a 1 kHz tone drawn at 459 Hz, with nothing
-        reporting an error.  The bridge logs the rate it actually started at,
-        and that is the one the FFT has to use; the setting is what answers
-        before any start has been logged.
+        A box whose bridge started at a different rate than the configured
+        one would have every bin labelled wrong — a 1 kHz tone drawn at the
+        wrong frequency, with nothing reporting an error.  The bridge logs
+        the rate it actually started at, and that is the one the FFT has to
+        use; the setting is what answers before any start has been logged.
         """
         with mock.patch.object(APP, "SPECTRUM_SOURCE", "cdin"), \
              mock.patch.object(APP, "SPECTRUM_CDIN_RATE", 44100), \

@@ -543,6 +543,13 @@ class CaptureRoleTest(unittest.TestCase):
                     '    device: "hw:1,0"; # omdrc-managed-dac\n  };\n};\n')
         self.assertIn("2 device lines", str(error.exception))
 
+    def test_mpd_direct_output_marker_follows_selected_dac(self):
+        text = 'audio_output {\n device "hw:0,0" # omdrc-managed-mpd-dac\n}\n'
+        changed, count = self.helper.MANAGED_MPD.subn(
+            r'\1"hw:2,0"\2', text)
+        self.assertEqual(count, 1)
+        self.assertIn('device "hw:2,0" # omdrc-managed-mpd-dac', changed)
+
     def test_an_unresolvable_capture_is_named_as_such(self):
         with mock.patch.object(self.helper, "linux_usb_cards", return_value=self.CARDS):
             with self.assertRaises(RuntimeError) as error:
@@ -574,7 +581,7 @@ class ExclusiveSourceTest(unittest.TestCase):
         self.text = DRC.read_text()
 
     def test_every_capture_source_is_exclusive(self):
-        """`cdin` and `linein` are one bridge on one loopback seat.
+        """The CD input holds one bridge on one loopback seat.
 
         The exclusivity is a property of that seat, not of the CD, so every
         branch that used to name "cdin" has to ask the set instead — a source
@@ -583,9 +590,9 @@ class ExclusiveSourceTest(unittest.TestCase):
         two programs mixed together.
         """
         self.assertIn("""valid_source() {
-  case "$1" in music|cdin|linein) return 0 ;; esac""", self.text)
+  case "$1" in music|cdin) return 0 ;; esac""", self.text)
         self.assertIn("""is_capture_source() {
-  case "$1" in cdin|linein) return 0 ;; esac""", self.text)
+  case "$1" in cdin) return 0 ;; esac""", self.text)
         # No branch may test the token directly any more.
         self.assertNotRegex(self.text, r'\[ "\$\w*source\w*" = "cdin" \]')
 
