@@ -146,6 +146,8 @@ class RepositoryFirstInstallTest(unittest.TestCase):
             self.assertIn("--geometry", publication)
             self.assertEqual(publication[publication.index("--geometry") + 1], "120.blue")
             self.assertEqual(publication[publication.index("--design") + 1], "Rscreen")
+            self.assertEqual(publication[publication.index("--attenuation") + 1], "8.0")
+            self.assertTrue(any("using fixed 8.0 dB" in line for line in job.output))
             self.assertNotIn("--live", publication)
             self.assertIn("--require-commit" if git else "--no-commit", publication)
             self.assertEqual("--allow-uncommitted" in publication, not git)
@@ -172,6 +174,32 @@ class RepositoryFirstInstallTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "uncommitted work"):
                     manager.install_filter(job, export)
             run.assert_not_called()
+
+    def test_wav_install_uses_fixed_attenuation_and_reports_it(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, design_root, _ = self.make_manager(root)
+            directory = root / "upload/filters"
+            directory.mkdir(parents=True)
+            job = manager._new_job("install")
+            calls = []
+
+            def fake_run(current, argv, timeout=None):
+                del current, timeout
+                calls.append(argv)
+                if "new_wav_filter_design.py" in " ".join(argv):
+                    self.publish_fixture(design_root)
+                elif "filter-publish" in argv:
+                    staged = Path(argv[argv.index("--staged") + 1])
+                    shutil.copytree(staged, manager.settings.site_root,
+                                    dirs_exist_ok=True)
+
+            with mock.patch.object(manager, "run_command", side_effect=fake_run):
+                manager.install_wav_filter(job, directory, "120.blue", "Rscreen")
+            publication = next(argv for argv in calls
+                               if "new_wav_filter_design.py" in " ".join(argv))
+            self.assertEqual(publication[publication.index("--attenuation") + 1], "8.0")
+            self.assertTrue(any("using fixed 8.0 dB" in line for line in job.output))
 
     def test_temporary_upload_parent_never_becomes_geometry(self):
         with tempfile.TemporaryDirectory() as name:
@@ -306,6 +334,7 @@ class RoutesTest(unittest.TestCase):
         self.assertIn(b"FLX-trimmed-48k.wav", response.data)
         self.assertIn(b"Publication authority", response.data)
         self.assertIn(b"[configuration] design_root", response.data)
+        self.assertIn(b"fixed <strong>8.0 dB attenuation</strong>", response.data)
 
     def test_filter_response_page_has_verified_room_sketch(self):
         text = (SRC / "templates/filter_response.html").read_text()

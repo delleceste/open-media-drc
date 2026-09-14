@@ -29,6 +29,7 @@ from typing import Callable, Iterator
 # every subsystem that drives the audio chain (see bitperfect.py) contends for
 # the same one.
 OPERATION_LOCK = threading.Lock()
+WEB_FILTER_ATTENUATION_DB = 8.0
 
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -532,7 +533,11 @@ class ConfigurationManager:
         argv = [shutil.which("python3") or "python3", str(script), str(directory),
                 "--site-root", str(design_root), "--yes",
                 "--archive-mdat", "--upload-provenance", "--geometry", geometry,
-                "--design", design, "--no-next"]
+                "--design", design, "--attenuation",
+                f"{WEB_FILTER_ATTENUATION_DB:.1f}", "--no-next"]
+        job.write(
+            f"ATTENUATION: using fixed {WEB_FILTER_ATTENUATION_DB:.1f} dB "
+            "for every generated BruteFIR configuration")
         if history:
             argv.extend(["--require-clean-site", "--require-commit"])
             job.write(f"AUTHORITY: publishing and committing {geometry}@{design} in {design_root}")
@@ -578,7 +583,11 @@ class ConfigurationManager:
         script = self.settings.tools_root / "new_wav_filter_design.py"
         argv = [shutil.which("python3") or "python3", str(script), str(directory),
                 "--site-root", str(design_root), "--yes", "--upload-provenance",
-                "--geometry", geometry, "--design", design, "--no-next"]
+                "--geometry", geometry, "--design", design, "--attenuation",
+                f"{WEB_FILTER_ATTENUATION_DB:.1f}", "--no-next"]
+        job.write(
+            f"ATTENUATION: using fixed {WEB_FILTER_ATTENUATION_DB:.1f} dB "
+            "for every generated BruteFIR configuration")
         if history:
             argv.extend(["--require-commit"])
             job.write(f"AUTHORITY: publishing and committing WAV-only {geometry}@{design} in {design_root}")

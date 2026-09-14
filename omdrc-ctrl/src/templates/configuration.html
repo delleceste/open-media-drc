@@ -24,6 +24,7 @@ pre{background:#010409;border:1px solid var(--line);border-radius:8px;padding:10
 <section class="card">
 <h2>Install room-correction measurements and filters</h2>
 <p class="hint">Publication authority: <code>{{ design_root }}</code>. Configure this server-side as <code>[configuration] design_root</code>. A Git-managed authority must be clean and the deployment commit must succeed; a plain directory is installed without Git history.</p>
+<p class="hint">Every generated BruteFIR configuration uses a fixed <strong>8.0 dB attenuation</strong>. The calculated headroom requirement is still checked and installation stops if 8.0 dB is insufficient.</p>
 <label class="checkline"><input id="wav-only" name="wav_only" type="checkbox" value="1" form="install-form">Import WAV filters only (no REW measurements or response exports)</label>
 <div id="rew-instructions">
 <p>In REW choose <strong>File → Export all measurements as text</strong>. Export unsmoothed measurements made at 48 kHz or below into a folder named <code>&lt;geometry&gt;.&lt;session&gt;.txts</code>, beside the matching <code>&lt;geometry&gt;.&lt;session&gt;.mdat</code>. Select their parent folder to fill both fields automatically, or select the <code>.txts</code> folder and then its exact matching <code>.mdat</code>.</p>
