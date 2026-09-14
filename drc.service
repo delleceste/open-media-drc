@@ -1,0 +1,17 @@
+[Unit]
+Description=DRC restore/save (user service)
+After=default.target
+
+# Template — generated to drc.service by install.sh from config.env.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+ExecStart=/bin/bash -c '\
+  ARG="$(cat /home/giacomo/devel/open-media-drc/last_arg 2>/dev/null || echo off)"; \
+  echo "[DRC] Restoring last_arg=$ARG"; \
+  exec /home/giacomo/devel/open-media-drc/drc.sh "$ARG"'
+
+[Install]
+WantedBy=default.target
