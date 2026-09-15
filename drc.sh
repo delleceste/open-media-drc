@@ -177,6 +177,8 @@ STATE_FILE="$STATE_DIR/last_arg"
 # but leaves STATE_FILE (the remembered rate) intact, so `restore` stays off
 # across a reboot yet can bring DRC back at the last rate when turned on.
 POWER_FILE="$STATE_DIR/last_power"
+# Positive dB attenuation used by BruteFIR cfoa; written by omdrc-ctrl.
+ATTENUATION_FILE="$STATE_DIR/brutefir-attenuation-db"
 # User-selected input mode.  The rate alone cannot distinguish ordinary
 # 44.1-kHz music from the explicit CD/S-PDIF mode.  This survives reboot and
 # lets restore bring the chain back before omdrc-cdin starts.
@@ -1287,6 +1289,21 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
 
   printf "%-17s %s\n" "Geometry:"    "$GEOMETRY"
   printf "%-17s %s\n" "Active config:" "$(state_label "$_st_drc")"
+  _st_attenuation=""
+  if [ -r "$ATTENUATION_FILE" ]; then
+    _st_attenuation=$(tr -d "[:space:]" < "$ATTENUATION_FILE")
+    # Migrate/display the short-lived gain-style negative representation.
+    _st_attenuation="${_st_attenuation#-}"
+  fi
+  if [[ "$_st_attenuation" =~ ^([2-9]|1[0-2])(\.[05])?$ ]]; then
+    if [ -n "$_st_bf_rate" ]; then
+      printf "%-17s %s dB (applied)\n" "Attenuation:" "$_st_attenuation"
+    else
+      printf "%-17s %s dB (saved; BruteFIR stopped)\n" "Attenuation:" "$_st_attenuation"
+    fi
+  else
+    printf "%-17s not set\n" "Attenuation:"
+  fi
   _st_source="music"
   [ -f "$SOURCE_FILE" ] && _st_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
   printf "%-17s %s\n" "Saved source:" "$_st_source"
@@ -1520,6 +1537,26 @@ start_brutefir() {
     if bf_running; then
       sleep 0.5
       if bf_running; then
+        # Restore the web panel gain override. The process can precede its CLI
+        # listener, so retry the connection instead of assuming a fixed delay.
+        local attenuation_file="$ATTENUATION_FILE"
+        if [ -r "$attenuation_file" ]; then
+          local gain attenuation cli_try
+          gain=$(tr -d "[:space:]" < "$attenuation_file")
+          if [[ "$gain" =~ ^-?([2-9]|1[0-2])(\.[05])?$ ]]; then
+            # Accept negative state written by the short-lived gain-style UI.
+            attenuation="${gain#-}"
+            for cli_try in 1 2 3 4 5; do
+              if exec 8<>/dev/tcp/127.0.0.1/3000 2>/dev/null; then
+                printf "cfoa drc_l left_out %s; cfoa drc_r right_out %s;\n" "$attenuation" "$attenuation" >&8
+                exec 8>&- 8<&-
+                echo "restored brutefir attenuation: ${attenuation} dB"
+                break
+              fi
+              sleep 0.2
+            done
+          fi
+        fi
         echo "brutefir running"
         return 0
       fi

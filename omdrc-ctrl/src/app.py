@@ -10,6 +10,7 @@ import queue
 import re
 import shutil
 import shlex
+import socket
 import subprocess
 import configparser
 import threading
@@ -3131,6 +3132,10 @@ _STATE_DIR = _resolve_state_dir()
 _DELTA_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-delta")
 _FLOOR_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-floor-db")
 _AUTO_SYNC_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-auto-sync")
+_BRUTEFIR_ATTENUATION_FILE = os.path.join(_STATE_DIR, "brutefir-attenuation-db")
+_BRUTEFIR_ATTENUATION_DEFAULT_DB = 2.0
+_BRUTEFIR_ATTENUATION_MIN_DB = 2.0
+_BRUTEFIR_ATTENUATION_MAX_DB = 12.0
 # Which renderer the toggle last selected.  Unlike the two sliders above this is
 # not read back by the panel to restore itself — the boot service reads it (see
 # scripts/omdrc-renderer, driven by etc/rc.d/omdrc_renderer or the systemd
@@ -3206,6 +3211,34 @@ def _write_state_str(path: str, val: str) -> None:
         os.replace(tmp, path)
     except OSError:
         pass
+
+
+def _brutefir_attenuation_db() -> float:
+    value = _read_state_float(_BRUTEFIR_ATTENUATION_FILE)
+    if value is None or not math.isfinite(value):
+        return _BRUTEFIR_ATTENUATION_DEFAULT_DB
+    # Migrate the short-lived UI version which stored gain as negative dB.
+    value = abs(value)
+    return max(_BRUTEFIR_ATTENUATION_MIN_DB,
+               min(_BRUTEFIR_ATTENUATION_MAX_DB, value))
+
+
+def _set_brutefir_attenuation(db: float) -> None:
+    """Set both stereo filter-to-output gains through BruteFIR's CLI."""
+    command = (f"cfoa drc_l left_out {db:.1f}; "
+               f"cfoa drc_r right_out {db:.1f}; quit\n")
+    with socket.create_connection(("127.0.0.1", 3000), timeout=1.0) as cli:
+        cli.settimeout(1.0)
+        cli.sendall(command.encode("ascii"))
+        chunks = []
+        try:
+            while chunk := cli.recv(4096):
+                chunks.append(chunk)
+        except socket.timeout:
+            pass
+        response = b"".join(chunks).decode("utf-8", "replace")
+    if re.search(r"(?i)\b(error|invalid|unknown|failed)\b", response):
+        raise RuntimeError(response.strip())
 
 
 # ── DRC display-sync delay ────────────────────────────────────────────────────
@@ -6924,6 +6957,35 @@ def drc_brutefir_rti():
         return jsonify(_brutefir_rti_status())
     except Exception as error:
         return jsonify({"available": False, "error": str(error)})
+
+
+
+@app.route("/drc/attenuation", methods=["GET", "POST"])
+def drc_attenuation():
+    """Read or set the persistent live BruteFIR output attenuation."""
+    running = _active_brutefir_process() is not None
+    if request.method == "GET":
+        return jsonify({"ok": True, "db": _brutefir_attenuation_db(), "running": running,
+                        "min_db": _BRUTEFIR_ATTENUATION_MIN_DB,
+                        "max_db": _BRUTEFIR_ATTENUATION_MAX_DB})
+    raw = (request.get_json(silent=True) or {}).get("db")
+    try:
+        db = float(raw)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "db must be a number"}), 400
+    if (not math.isfinite(db) or db < _BRUTEFIR_ATTENUATION_MIN_DB or
+            db > _BRUTEFIR_ATTENUATION_MAX_DB or db * 2 != round(db * 2)):
+        return jsonify({"ok": False, "error":
+                        "db must be between 2 and 12 in 0.5 dB steps"}), 400
+    try:
+        if running:
+            _set_brutefir_attenuation(db)
+        _write_state_float(_BRUTEFIR_ATTENUATION_FILE, db)
+        return jsonify({"ok": True, "db": round(db, 1), "running": running})
+    except OSError as error:
+        return jsonify({"ok": False, "error": f"BruteFIR CLI unavailable: {error}"}), 503
+    except RuntimeError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
 
 
 @app.route("/drc/filter-response")

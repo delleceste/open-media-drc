@@ -349,6 +349,10 @@
         }
         .btn-session:hover:not(:disabled) { border-color: var(--accent); }
         .btn-session:disabled { color: var(--muted); cursor: default; opacity: .6; }
+        .drc-attenuation { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
+        .drc-attenuation label { white-space: nowrap; color: var(--text); }
+        .drc-attenuation input { flex: 1; min-width: 90px; accent-color: var(--accent); }
+        .drc-attenuation output { min-width: 48px; text-align: right; color: var(--accent); }
         #spectrum-controls-toggle { cursor: pointer; }
         #spectrum-controls-toggle.on { border-color: var(--accent); color: var(--accent); }
         .spectrum-title-btns { display: flex; align-items: center; gap: 8px; }
@@ -1270,6 +1274,13 @@
             </span>
         </div>
         <div id="drc-transition-feedback" class="drc-feedback-line drc-feedback-meta" hidden></div>
+        <div class="drc-attenuation">
+            <label for="drc-attenuation-slider">Attenuation</label>
+            <input id="drc-attenuation-slider" type="range" min="2" max="12" step="0.5"
+                   value="2" disabled oninput="previewDrcAttenuation(this.value)"
+                   onchange="setDrcAttenuation(this.value)">
+            <output id="drc-attenuation-value" for="drc-attenuation-slider">2.0 dB</output>
+        </div>
     </div>
     {% endif %}
 
@@ -1738,6 +1749,42 @@ let designBusy = false;
 let designCurrent = '';
 let drcSessionBusy = false;
 let drcLastState = null;
+let drcAttenuationBusy = false;
+
+function formatAttenuation(value) {
+    return `${Number(value).toFixed(1)} dB`;
+}
+function previewDrcAttenuation(value) {
+    document.getElementById("drc-attenuation-value").textContent = formatAttenuation(value);
+}
+async function loadDrcAttenuation() {
+    try {
+        const d = await (await fetch("/drc/attenuation", {cache:"no-store"})).json();
+        if (!d.ok) return;
+        const slider = document.getElementById("drc-attenuation-slider");
+        slider.value = d.db;
+        slider.disabled = drcAttenuationBusy;
+        previewDrcAttenuation(d.db);
+        slider.title = d.running ? "Applied live and saved for future BruteFIR starts" : "DRC is off; saved for the next BruteFIR start";
+    } catch (_) {}
+}
+async function setDrcAttenuation(value) {
+    if (drcAttenuationBusy) return;
+    drcAttenuationBusy = true;
+    const slider = document.getElementById("drc-attenuation-slider");
+    slider.disabled = true;
+    try {
+        const d = await (await fetch("/drc/attenuation", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({db:Number(value)})})).json();
+        if (!d.ok) throw new Error(d.error || "attenuation change failed");
+        toast(d.running ? `BruteFIR attenuation ${formatAttenuation(d.db)}` : `attenuation ${formatAttenuation(d.db)} saved for next DRC start`, "ok");
+    } catch (error) {
+        toast(error.message || "attenuation change failed", "error");
+    } finally {
+        drcAttenuationBusy = false;
+        await loadDrcAttenuation();
+    }
+}
+
 
 function designLabel(value) {
     if (!value || value === 'default') return 'default';
@@ -2147,6 +2194,7 @@ async function restoreDrcSession() {
 }
 
 loadDesigns();
+loadDrcAttenuation();
 
 // Configuration can add/remove designs in another tab while this page stays
 // open. Refresh the pickers without requiring a controller restart or reload.
