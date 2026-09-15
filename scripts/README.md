@@ -32,8 +32,9 @@ must be reviewed offline, used as CMake provisioning input, or transferred to
 another playback machine. For an ordinary live install, use `/configuration`
 and skip this section entirely; the page invokes these tools for you.
 
-See the [TL;DR](../doc/FILTER_PROVENANCE_AND_RESPONSE.md#tldr) in
-`doc/FILTER_PROVENANCE_AND_RESPONSE.md` for the short version of what follows.
+See "The workflow" and "Live browser-driven installs" in
+`doc/open-media-drc-manual.md` for the guided walkthrough; what follows here
+is the same commands with the normative detail behind each check.
 
 In this alternative the two repositories have different ownership:
 

@@ -13,48 +13,14 @@ every input in a persistent design root, requires a deployment commit when that
 root is already a Git repository, supports a plain folder otherwise, and only
 then derives the installed runtime from that authoritative bundle.
 
-## TL;DR
-
-`DRC-120.blue` (or `.green`) is the measurement/experiment workspace: raw REW
-sessions, WIP candidates, everything a room design goes through before it's
-worth keeping. `omdrc-801N` is the published, verified bundle the engine
-actually installs from — only ever finished designs, nothing experimental.
-One command moves a finished design from the first to the second:
-
-```sh
-python3 scripts/new_filter_design.py ../DRC/DRC-120.blue/120.blue.Rscreen.txts
-```
-
-It reads geometry (`120.blue`) and design ID (`Rscreen`) from the path, checks
-the eight REW exports (unsmoothed, in-band, TXT matching its WAV), and asks
-for confirmation before writing or committing anything.
-
-On the design machine, verify and push what it just committed in `omdrc-801N`:
-
-```sh
-python3 scripts/verify_filter_bundle.py --all --require-sources
-git -C ~/devel/omdrc-801N push
-```
-
-On the playback machine, pull and install:
-
-```sh
-git -C ~/devel/omdrc-801N pull
-cmake --build build && sudo cmake --install build
-./drc.sh design @Rscreen
-```
-
-`/configuration` in the web UI runs the same `new_filter_design.py` step for
-you, but it does **not** go through CMake/`make install` to get the result
-onto a running machine: it hands the verified bundle to the privileged
-`omdrc-config-helper filter-publish` helper, which copies it straight into the
-already-installed site tree. Use the CLI-plus-CMake sequence above only for
-offline publication, or for provisioning a machine (or reinstalling from Git
-history) from scratch — it is a different route to an installed design, not a
-manual replay of what the web page does. For the full guarantees behind each
-of these steps (the manifest schema, the hash chain, what "verified" actually
-checks), see *Deployment command and transaction* and *Provenance bundle*
-below.
+For the guided walkthrough of deploying a design from a `DRC-120.blue`-like
+source into `omdrc-801N` — the commands, what the web install path does
+differently from the CLI/CMake one, and how to remove a design — see *Usage:
+drc.sh, filters, and configuration* and *Filter provenance and verification*
+in `doc/open-media-drc-manual.md` (rendered to `doc/open-media-drc-manual.pdf`;
+sections "The workflow" and "Live browser-driven installs"). This document is
+the normative reference behind that walkthrough: the manifest schema, the hash
+chain, and exactly what "verified" checks and does not check.
 
 There are two central rules:
 
