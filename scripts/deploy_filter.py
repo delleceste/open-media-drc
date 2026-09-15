@@ -83,6 +83,19 @@ TRACE_SPECS = (
 MAX_MEASUREMENT_RATE_HZ = 48000
 MAX_EXPORT_FREQUENCY_HZ = MAX_MEASUREMENT_RATE_HZ / 2.0
 
+# A third property, and the one the phase graph depends on entirely: the
+# exported phase must be referenced to REW's own t=0, the impulse arrival, and
+# not to the start of the recorded buffer.  REW leaves roughly a second of
+# pre-arrival buffer in a sweep measurement, so an export that took the plain
+# FFT of that buffer carries a ~1 s bulk delay -- one full 360 deg wrap per
+# hertz.  Nothing downstream can undo it, because the offset is not recorded
+# anywhere; the wrapped curve is unreadable; and fractional-octave smoothing of
+# it averages whole turns to about zero, which reads as a beautifully corrected
+# system rather than as broken data.  25 ms is 8.5 m of path difference, far
+# above the few milliseconds a genuine L/R or listening-position offset
+# contributes and far below the ~1 s a buffer-referenced export shows.
+MAX_BULK_DELAY_S = 0.025
+
 # BruteFIR's `attenuation:` is baked into every generated config from this
 # fixed value, not from the peak-gain FFT evaluation below.  That evaluation
 # (see `peak_gain_db`/`required_attenuation`) still runs on every deploy, but
@@ -394,6 +407,39 @@ def wrap_phase_deg(value: np.ndarray) -> np.ndarray:
     return (value + 180.0) % 360.0 - 180.0
 
 
+def bulk_delay_seconds(freqs: np.ndarray, phase_deg: np.ndarray) -> tuple[float, bool]:
+    """Constant delay carried by one export's phase, in seconds.
+
+    A pure delay tau advances the phase by -2*pi*f*tau, so on a uniform
+    frequency grid it is one constant step between neighbouring bins.  That
+    step is averaged as a unit vector rather than by unwrapping the phase:
+    room responses are noisy, and the reference error this exists to catch
+    wraps the phase thousands of times, which is exactly where ``np.unwrap``
+    gives up.  Accurate to a millisecond or so on a real, noisy export -- three
+    orders of magnitude finer than the reference error it separates.
+
+    Sampling the phase on a grid of `step` hertz makes a delay observable only
+    modulo 1/step, so the measurable range is |tau| < 1/(2*step): an impulse
+    buffer of 2.7 s on the 0.18 Hz grid these exports use, comfortably past
+    the ~1 s a sweep measurement leaves.
+
+    Returns ``(seconds, measurable)``; ``measurable`` is False for a grid that
+    is not uniform, where one bin-to-bin step carries no meaning.  Uniformity
+    is judged on the bulk of the steps rather than the worst one, so a single
+    odd bin -- a rounded or clipped top frequency, say -- does not decide it,
+    while a logarithmic grid, where almost every step differs, is rejected.
+    """
+    if freqs.size < 3:
+        return 0.0, False
+    steps = np.diff(freqs)
+    step = float(np.median(steps))
+    if step <= 0.0 or float(np.quantile(np.abs(steps - step), 0.99)) > 0.01 * step:
+        return 0.0, False
+    advance = np.radians(wrap_phase_deg(np.diff(phase_deg)))
+    mean_advance = float(np.angle(np.mean(np.exp(1j * advance))))
+    return -mean_advance / (2.0 * math.pi * step), True
+
+
 def db_phase(value: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return 20.0 * np.log10(np.maximum(np.abs(value), 1e-12)), np.degrees(np.angle(value))
 
@@ -516,17 +562,20 @@ def required_attenuation(peak_db: float, margin_db: float) -> float:
 def export_defects(parsed: dict) -> list[tuple[str, str]]:
     """(role, reason) for every export that must not be deployed.
 
-    Two properties are required of all eight, and a bundle that lacks either is
-    refused rather than annotated.  A smoothed export is a decision REW already
-    baked into the numbers: it cannot be undone here, so the page would draw a
-    smoothed curve while promising a measurement.  An export reaching past
-    24 kHz came from a measurement above 48 kHz, and the deployed filters are
-    resampled from one 48 kHz impulse -- a corrected curve drawn beside it would
-    describe a system that was never built.
+    Three properties are required of all eight, and a bundle that lacks any of
+    them is refused rather than annotated.  A smoothed export is a decision REW
+    already baked into the numbers: it cannot be undone here, so the page would
+    draw a smoothed curve while promising a measurement.  An export reaching
+    past 24 kHz came from a measurement above 48 kHz, and the deployed filters
+    are resampled from one 48 kHz impulse -- a corrected curve drawn beside it
+    would describe a system that was never built.  An export whose phase is
+    referenced to the start of the impulse buffer instead of to the arrival
+    plots a bulk delay the room does not have, and no later stage can tell that
+    delay from the response (see MAX_BULK_DELAY_S).
     """
     defects: list[tuple[str, str]] = []
     for role in TRACE_ROLES:
-        headers, freqs, _, _ = parsed[role]
+        headers, freqs, _, phase = parsed[role]
         smoothing = headers.get("smoothing", "").strip()
         if not smoothing:
             defects.append((role, "states no smoothing, so it cannot be shown to be "
@@ -541,6 +590,18 @@ def export_defects(parsed: dict) -> list[tuple[str, str]]:
                 f"reaches {top:,.1f} Hz, so it was measured at {2.0 * top:,.0f} Hz or "
                 f"more; {MAX_MEASUREMENT_RATE_HZ:,} Hz is the highest this pipeline "
                 "deploys"))
+        delay, measurable = bulk_delay_seconds(freqs, phase)
+        if not measurable:
+            defects.append((
+                role,
+                "is not on a uniform frequency grid, so the reference its phase was "
+                "written against cannot be established; re-export it linearly spaced"))
+        elif abs(delay) > MAX_BULK_DELAY_S:
+            defects.append((
+                role,
+                f"carries {delay * 1000.0:,.1f} ms of bulk delay in its phase, so it "
+                f"was referenced to the start of the impulse buffer rather than to "
+                f"the arrival; re-export it with the phase referenced to REW's t=0"))
     return defects
 
 

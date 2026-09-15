@@ -61,20 +61,24 @@ def write_float_wav(path: Path, rate: int, samples: np.ndarray) -> None:
 
 
 def build_design_dir(root: Path, *, aggregate="LR", corrected="filtered",
-                     rate=48000, delay=64, mdat=True, commit=False) -> Path:
+                     rate=48000, delay=64, mdat=True, commit=False,
+                     size=2048) -> Path:
     """A complete design directory in the layout REW and the projects use.
 
     ``DRC-<geometry>/<geometry>.<session>.txts`` beside
     ``<geometry>.<session>.mdat`` — the same shape a real measurement project
     has, so the naming, the session lookup and the identity rules are all
     exercised against it.
+
+    ``size`` is the impulse length behind the exports, and so sets their
+    frequency step (``rate / size``).  The default is deliberately coarse and
+    cheap; a test that needs a realistic bin spacing asks for more.
     """
     directory = root / "DRC-120.blue" / "120.blue.fixture-design.txts"
     directory.mkdir(parents=True)
     if mdat:
         (directory.parent / "120.blue.fixture-design.mdat").write_bytes(
             b"REW measurement session fixture")
-    size = 2048
     impulse = np.zeros(size, dtype=np.float64)
     impulse[delay] = 10.0 ** (-3.0 / 20.0)
     frequencies = np.fft.rfftfreq(size, 1.0 / rate)
@@ -593,11 +597,17 @@ class ExportQualityTest(unittest.TestCase):
         return paths, {role: deploy_filter.parse_rew_txt(paths[role])
                        for role in deploy_filter.TRACE_ROLES}
 
-    def rewrite(self, path, *, smoothing="None", top=None):
+    def rewrite(self, path, *, smoothing="None", top=None, delay_s=None,
+                logarithmic=False):
         headers, freqs, mags, phases = deploy_filter.parse_rew_txt(path)
         freqs = list(freqs)
         if top is not None:
             freqs[-1] = top
+        if logarithmic:
+            freqs = list(np.geomspace(freqs[0], freqs[-1], len(freqs)))
+        if delay_s is not None:
+            phases = deploy_filter.wrap_phase_deg(
+                phases - 360.0 * np.asarray(freqs) * delay_s)
         write_rew_txt(path, freqs, mags, phases,
                       measurement=headers.get("measurement", "M"), smoothing=smoothing)
 
@@ -629,6 +639,35 @@ class ExportQualityTest(unittest.TestCase):
         defects = deploy_filter.export_defects(parsed)
         self.assertEqual([role for role, _ in defects], ["original_right"])
         self.assertIn("60,000 Hz or more", defects[0][1])
+
+    def test_a_bulk_delay_in_the_phase_is_refused(self):
+        """The defect this check exists for, scaled to what the fixture's
+        frequency step can represent (see `bulk_delay_seconds`); the real ~1 s
+        of pre-arrival buffer is covered by BulkDelayTest below."""
+        directory = build_design_dir(self.root, size=8192)
+        paths, _ = self.parsed(directory)
+        self.rewrite(paths["corrected_sum"], delay_s=0.060)
+        _, parsed = self.parsed(directory)
+        defects = deploy_filter.export_defects(parsed)
+        self.assertEqual([role for role, _ in defects], ["corrected_sum"])
+        self.assertIn("60.0 ms of bulk delay", defects[0][1])
+
+    def test_a_few_milliseconds_of_offset_is_still_allowed(self):
+        """Genuine L/R and listening-position offsets must not stop a deploy."""
+        directory = build_design_dir(self.root)
+        paths, _ = self.parsed(directory)
+        self.rewrite(paths["original_left"], delay_s=0.004)
+        _, parsed = self.parsed(directory)
+        self.assertEqual(deploy_filter.export_defects(parsed), [])
+
+    def test_a_logarithmic_grid_cannot_be_checked_and_is_refused(self):
+        directory = build_design_dir(self.root)
+        paths, _ = self.parsed(directory)
+        self.rewrite(paths["original_right"], logarithmic=True)
+        _, parsed = self.parsed(directory)
+        defects = deploy_filter.export_defects(parsed)
+        self.assertEqual([role for role, _ in defects], ["original_right"])
+        self.assertIn("uniform frequency grid", defects[0][1])
 
     def test_exactly_24_khz_is_still_allowed(self):
         directory = build_design_dir(self.root)
@@ -662,6 +701,62 @@ class ExportQualityTest(unittest.TestCase):
         self.rewrite(paths["original_sum"], smoothing="1/3 octave")
         with self.assertRaisesRegex(deploy_filter.AuditError, "cannot be deployed"):
             deploy_filter.build_analysis(recipe, paths)
+
+
+class BulkDelayTest(unittest.TestCase):
+    """`bulk_delay_seconds` on the grids real exports are written on."""
+
+    GRID = np.arange(0.0, 24_000.0 + 1e-9, 0.3662109375)   # REW's 48 kHz / 128k
+
+    def phase_of(self, delay_s, freqs=None, noise_deg=0.0, seed=7):
+        freqs = self.GRID if freqs is None else freqs
+        phase = -360.0 * freqs * delay_s
+        if noise_deg:
+            phase = phase + np.random.default_rng(seed).normal(0.0, noise_deg, freqs.size)
+        return freqs, deploy_filter.wrap_phase_deg(phase)
+
+    def test_a_referenced_export_reads_as_no_delay(self):
+        freqs, phase = self.phase_of(0.0, noise_deg=20.0)
+        delay, measurable = deploy_filter.bulk_delay_seconds(freqs, phase)
+        self.assertTrue(measurable)
+        # Milliseconds is all the estimator claims through this much noise,
+        # and three orders of magnitude finer than what it has to separate.
+        self.assertAlmostEqual(delay, 0.0, places=3)
+
+    def test_one_second_of_pre_arrival_buffer_is_recovered(self):
+        """The 120.green v1.FDW6 defect: the phase referenced to the start of
+        REW's impulse buffer rather than to the arrival, through the noise a
+        real room response carries."""
+        freqs, phase = self.phase_of(1.0, noise_deg=20.0)
+        delay, measurable = deploy_filter.bulk_delay_seconds(freqs, phase)
+        self.assertTrue(measurable)
+        self.assertAlmostEqual(delay, 1.0, places=3)
+        self.assertGreater(abs(delay), deploy_filter.MAX_BULK_DELAY_S)
+
+    def test_the_estimate_aliases_beyond_half_the_step_reciprocal(self):
+        """The documented limit: a delay is only observable modulo 1/step, so
+        a grid must be finer than 1/(2*delay) to see it.  Every export this
+        pipeline accepts is, by four orders of magnitude."""
+        coarse = np.arange(0.0, 24_000.0 + 1e-9, 100.0)
+        freqs, phase = self.phase_of(1.0, freqs=coarse)
+        delay, measurable = deploy_filter.bulk_delay_seconds(freqs, phase)
+        self.assertTrue(measurable)
+        self.assertAlmostEqual(delay, 0.0, places=6)
+
+    def test_a_logarithmic_grid_is_not_measurable(self):
+        freqs = np.geomspace(20.0, 24_000.0, 5000)
+        _, phase = self.phase_of(1.0, freqs=freqs)
+        _, measurable = deploy_filter.bulk_delay_seconds(freqs, phase)
+        self.assertFalse(measurable)
+
+    def test_a_grid_with_one_odd_bin_is_still_measurable(self):
+        """A rounded or clipped top frequency must not disable the check."""
+        freqs = self.GRID.copy()
+        freqs[-1] = 24_000.0
+        _, phase = self.phase_of(1.0, freqs=freqs)
+        delay, measurable = deploy_filter.bulk_delay_seconds(freqs, phase)
+        self.assertTrue(measurable)
+        self.assertAlmostEqual(delay, 1.0, places=6)
 
 
 class FilterAlignmentTest(unittest.TestCase):
