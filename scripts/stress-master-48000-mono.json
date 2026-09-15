@@ -1,0 +1,10 @@
+{
+  "rate": 48000,
+  "seconds": 3.0,
+  "bits": 24,
+  "seed": 20260915,
+  "target_crest_db": 6.0,
+  "achieved_crest_db": 5.902901321228578,
+  "sample_peak_dbfs": 0.0,
+  "wav_sha256": "9361c6849510ace07611767a1c9ade31fd8bdd688c5ffeccc51adbdb4e7e9d95"
+}

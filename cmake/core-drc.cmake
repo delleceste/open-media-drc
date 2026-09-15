@@ -20,6 +20,10 @@ install(PROGRAMS
         scripts/glitch-debug.sh scripts/glitch-monitor.sh scripts/glitch-usbtap.sh
         glitch-analyze.py
         DESTINATION libexec/omdrc/scripts)
+# headroom_calc.py's real-program-convolution bound needs this fixture beside
+# it wherever it runs; see gen-stress-master-wav.py for what it is and why.
+install(FILES scripts/stress-master-48000-mono.wav
+        DESTINATION libexec/omdrc/scripts)
 
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc"
      "#!/bin/sh\nexec \"${CMAKE_INSTALL_PREFIX}/libexec/omdrc/drc.sh\" \"$@\"\n")

@@ -36,10 +36,47 @@ full scale.  Its peak absolute value can exceed 1.0 even when peak|H(f)|
 does not, and is a much better proxy for what a real attack/transient in
 music can trigger than the pure sine-response test.
 
+Neither bound above turned out to be enough.  Measured on 2026-09-15 against
+the same v1-fdw6 filter: peak|H(f)| said 0.0-1.3 dB, the step bound said
+1.4-2.2 dB, but the real track that had tripped BruteFIR's safety_limit
+clipped at +0.157 dBFS through a fixed 8 dB attenuation -- both magnitude
+bounds were off by miles.  The cause is the filter's EXCESS PHASE: it
+re-times frequency bands without changing their magnitude (confirmed by
+splitting H = Hmin*Hap and convolving each part separately -- the
+minimum-phase part alone raised the signal +1.05 dB, the excess-phase
+all-pass part ALONE, unity gain at every frequency by construction, raised
+it +7.91 dB), which collapses the cancellation between bands that gives a
+brickwall-limited master its low crest factor in the first place. No
+magnitude-domain metric -- not peak|H(f)|, not the step response, which is
+also a magnitude-domain measurement in disguise -- can ever see this.  The
+only bound that can is empirical: convolve a real, full-scale, low-crest
+program signal through the filter and measure the actual output peak.  We
+do that with a fabricated stress WAV (`gen-stress-master-wav.py`, see its
+docstring) built to have the same statistical properties as the master that
+triggered the incident -- brickwalled to a few dB of crest, energy tilted
+into 5-20 kHz, periodic broadband transients -- without being sampled from
+any copyrighted recording.
+
+This tool also reports the L1 norm sum|h[n]|, converted to dB.  That is the
+one bound that holds for *any* input with |input| <= 1 -- not just the
+fabricated stress master -- because it is the induced sup-norm-to-sup-norm
+operator norm of convolution by h: no signal that never exceeds full scale
+can ever make the output exceed sum|h[n]| in amplitude, and some signal gets
+arbitrarily close (alternate sign to match h's sign pattern sample for
+sample). Measured on the same filters, it reads 16-22.5 dB -- far above both
+what the music-convolution test needs and what 8 dB actually clears. It is
+printed as the theoretical ceiling for comparison, never folded into
+"Suggested": engineering an attenuation to that worst-of-all-possible-inputs
+figure would throw away most of the format's dynamic range for a signal
+shape (perfectly phase-aligned to the filter, at every sample, for the whole
+programme) no real recording produces. The empirical convolution bound above
+is the practical target.
+
 For a requested safety margin, the required BruteFIR attenuation is
 therefore:
 
-    attenuation_dB = max(0, peak_gain_dB, step_peak_dB) + safety_margin_dB
+    attenuation_dB = max(0, peak_gain_dB, step_peak_dB, music_conv_dB)
+                     + safety_margin_dB
 
 A practical safety margin of +1 dB is added on top.  The suggested
 brutefir `attenuation:` value is then rounded up to one decimal place.
@@ -56,12 +93,19 @@ import json
 import os
 from pathlib import Path
 import re
+import wave
 
 import numpy as np
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
 SAFETY_MARGIN_DB = 1.0   # extra dB added on top of the theoretical minimum
+
+# The fabricated stress master (see gen-stress-master-wav.py's docstring for
+# why a real, full-scale, low-crest program signal is required and how this
+# one was synthesised).  Shipped beside this script so the standalone
+# libexec install carries it too -- see cmake/core-drc.cmake.
+STRESS_WAV = Path(__file__).with_name('stress-master-48000-mono.wav')
 
 # Map each .raw file to its sample format.
 # FLOAT64_LE → numpy dtype '<f8'  (64-bit little-endian float, as written by sox)
@@ -148,7 +192,93 @@ def step_response_peak_db(h: np.ndarray) -> float:
     return 20.0 * np.log10(peak_linear)
 
 
-def suggested_attenuation(peak_db: float, margin_db: float, step_db: float = float('-inf')) -> float:
+def load_wav_mono_float(path: Path) -> tuple[np.ndarray, int]:
+    """Load a PCM WAV (any integer sample width, first channel only) as
+    normalised float64 in [-1, 1) plus its sample rate."""
+
+    with wave.open(str(path), 'rb') as w:
+        rate = w.getframerate()
+        channels = w.getnchannels()
+        width = w.getsampwidth()
+        raw = w.readframes(w.getnframes())
+
+    if width == 2:
+        samples = np.frombuffer(raw, dtype='<i2').astype(np.float64) / (2 ** 15)
+    elif width == 4:
+        samples = np.frombuffer(raw, dtype='<i4').astype(np.float64) / (2 ** 31)
+    elif width == 3:
+        # No native 24-bit dtype: widen each 3-byte little-endian sample to
+        # 4 bytes (sign-extended) before the usual integer normalisation.
+        b = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3)
+        padded = np.zeros((b.shape[0], 4), dtype=np.uint8)
+        padded[:, :3] = b
+        padded[:, 3] = np.where(b[:, 2] >= 0x80, 0xFF, 0x00)
+        # The 24-bit value occupies bits 0-23 of the sign-extended int32
+        # (not left-justified), so full scale is 2**23, not 2**31.
+        samples = padded.view('<i4').astype(np.float64).ravel() / (2 ** 23)
+    else:
+        raise ValueError(f'unsupported WAV sample width {width * 8}-bit: {path}')
+
+    if channels > 1:
+        samples = samples.reshape(-1, channels)[:, 0].copy()
+    return samples, rate
+
+
+def resample_fft(x: np.ndarray, orig_rate: int, new_rate: int) -> np.ndarray:
+    """Band-limited resample via zero-padding/truncating the rFFT spectrum.
+
+    Exact for the periodic, noise-like stress signal this is used on (no
+    ringing from a non-periodic edge worth worrying about at these lengths);
+    a no-op float shortcut when the rates already match.
+    """
+    if orig_rate == new_rate:
+        return x
+    new_len = int(round(len(x) * new_rate / orig_rate))
+    spec = np.fft.rfft(x)
+    new_bins = new_len // 2 + 1
+    if new_bins <= spec.size:
+        new_spec = spec[:new_bins]
+    else:
+        new_spec = np.zeros(new_bins, dtype=complex)
+        new_spec[:spec.size] = spec
+    resampled = np.fft.irfft(new_spec, new_len)
+    # rFFT/irFFT round-trip through a different length rescales energy by
+    # new_len/orig_len; undo that so amplitude (not just shape) is preserved.
+    return resampled * (new_len / len(x))
+
+
+def music_convolution_peak_db(h: np.ndarray, stress: np.ndarray) -> float:
+    """
+    Return the peak |output| (dB) of convolving the fabricated stress
+    master through the filter's impulse response h[n] -- the real, empirical
+    bound the module docstring explains no magnitude-domain test can supply.
+    """
+    n_fft = 1
+    total = len(h) + len(stress) - 1
+    while n_fft < total:
+        n_fft <<= 1
+    out = np.fft.irfft(np.fft.rfft(h, n=n_fft) * np.fft.rfft(stress, n=n_fft), n=n_fft)
+    peak_linear = np.max(np.abs(out))
+    if peak_linear <= 0:
+        return float('-inf')
+    return 20.0 * np.log10(peak_linear)
+
+
+def l1_norm_db(h: np.ndarray) -> float:
+    """
+    Return sum|h[n]| in dB: the worst-case gain over ANY input bounded by
+    full scale, not just the fabricated stress master (see module
+    docstring). Reported for comparison only -- not used to size
+    "Suggested", which would be needlessly conservative at this bound.
+    """
+    total = float(np.sum(np.abs(h)))
+    if total <= 0:
+        return float('-inf')
+    return 20.0 * np.log10(total)
+
+
+def suggested_attenuation(peak_db: float, margin_db: float, step_db: float = float('-inf'),
+                           music_db: float = float('-inf')) -> float:
     """
     Return the brutefir `attenuation:` value to use.
 
@@ -156,10 +286,11 @@ def suggested_attenuation(peak_db: float, margin_db: float, step_db: float = flo
     Existing attenuation in the filter contributes to the requested safety
     margin.  We round up to one decimal place to keep the conf file tidy.
 
-    Takes the worse of the steady-state (peak_db) and transient (step_db)
-    bounds -- either alone can under-estimate the required headroom.
+    Takes the worst of the steady-state (peak_db), transient (step_db) and
+    real-program-convolution (music_db) bounds -- any one alone can
+    under-estimate the required headroom (see module docstring).
     """
-    raw = max(peak_db, step_db) + margin_db
+    raw = max(peak_db, step_db, music_db) + margin_db
     # Ceiling to one decimal place, with no runtime gain above unity.
     return max(0.0, round(np.ceil(raw * 10) / 10, 1))
 
@@ -208,6 +339,22 @@ def main():
     # out (see OMDRC_SITE_ROOT above).
     data_root = root.parents[1] if len(root.parents) > 1 else site_root
     geometry = root.name
+
+    stress_native, stress_rate = (None, None)
+    if STRESS_WAV.is_file():
+        stress_native, stress_rate = load_wav_mono_float(STRESS_WAV)
+    else:
+        print(f"WARNING: stress master not found at {STRESS_WAV}; "
+              f"music-convolution bound skipped (see gen-stress-master-wav.py)")
+    stress_cache: dict[int, np.ndarray] = {}
+
+    def stress_at(rate: int) -> np.ndarray | None:
+        if stress_native is None:
+            return None
+        if rate not in stress_cache:
+            stress_cache[rate] = resample_fft(stress_native, stress_rate, rate)
+        return stress_cache[rate]
+
     results = []
     failed = False
     for rate_dir in rate_dirs:
@@ -220,12 +367,20 @@ def main():
         left_h, right_h = load_filter(str(left), dtype), load_filter(str(right), dtype)
         peaks = {'left': peak_gain_db(left_h), 'right': peak_gain_db(right_h)}
         steps = {'left': step_response_peak_db(left_h), 'right': step_response_peak_db(right_h)}
-        # Each channel's own worse-case bound is the max of its steady-state
-        # (sine) and transient (step) peaks; the pair's limiting channel is
-        # whichever of those four numbers is largest.
-        worst = {ch: max(peaks[ch], steps[ch]) for ch in ('left', 'right')}
+        stress = stress_at(int(rate_dir.name))
+        if stress is not None:
+            music = {'left': music_convolution_peak_db(left_h, stress),
+                      'right': music_convolution_peak_db(right_h, stress)}
+        else:
+            music = {'left': float('-inf'), 'right': float('-inf')}
+        l1 = {'left': l1_norm_db(left_h), 'right': l1_norm_db(right_h)}
+        # Each channel's own worst-case bound is the max of its steady-state
+        # (sine), transient (step) and real-program-convolution (music)
+        # peaks; the pair's limiting channel is whichever is largest.  L1 is
+        # reported separately -- see module docstring -- and never drives this.
+        worst = {ch: max(peaks[ch], steps[ch], music[ch]) for ch in ('left', 'right')}
         limiting = max(worst, key=worst.get)
-        required = suggested_attenuation(peaks[limiting], args.margin, steps[limiting])
+        required = suggested_attenuation(peaks[limiting], args.margin, steps[limiting], music[limiting])
         suffix = args.variant if args.variant else ''
         config = data_root / 'configs' / geometry / f'brutefir-{rate_dir.name}{suffix}.conf.in'
         configured = config_attenuation(config)
@@ -236,6 +391,8 @@ def main():
             'format': args.format, 'left_peak_db': round(peaks['left'], 6),
             'right_peak_db': round(peaks['right'], 6),
             'left_step_db': round(steps['left'], 6), 'right_step_db': round(steps['right'], 6),
+            'left_music_db': round(music['left'], 6), 'right_music_db': round(music['right'], 6),
+            'left_l1_db': round(l1['left'], 6), 'right_l1_db': round(l1['right'], 6),
             'limiting_channel': limiting,
             'safety_margin_db': args.margin, 'required_attenuation_db': required,
             'configured_attenuation_db': configured, 'passed': bool(passed),
@@ -248,32 +405,41 @@ def main():
         return 1 if failed else 0
 
     col_pair  = 20
-    col_ch    = 48
+    col_ch    = 24
     col_num   = 10
 
     header = (f"{'Pair':<{col_pair}} {'Channel file':<{col_ch}}"
-              f" {'Peak gain':>{col_num}} {'Step peak':>{col_num}} {'Limiting ch':>{col_num}} {'Suggested':>{col_num}}")
+              f" {'Peak gain':>{col_num}} {'Step peak':>{col_num}} {'Music conv':>{col_num}}"
+              f" {'L1 max':>{col_num}} {'Limiting':>{col_num}} {'Suggested':>{col_num}}")
     print(header)
-    print(f"{'':─<{col_pair}} {'':─<{col_ch}} {'(dB)':>{col_num}} {'(dB)':>{col_num}} {'':>{col_num}} {'atten (dB)':>{col_num}}")
+    print(f"{'':─<{col_pair}} {'':─<{col_ch}} {'(dB)':>{col_num}} {'(dB)':>{col_num}} {'(dB)':>{col_num}}"
+          f" {'(dB)':>{col_num}} {'ch':>{col_num}} {'atten (dB)':>{col_num}}")
 
     for item in results:
         label = f"{item['rate']} {item['variant']}"
         limiting = item['limiting_channel']
         print(f"{label:<{col_pair}} {'L.raw':<{col_ch}} {item['left_peak_db']:>+{col_num}.3f}"
-              f" {item['left_step_db']:>+{col_num}.3f}"
+              f" {item['left_step_db']:>+{col_num}.3f} {item['left_music_db']:>+{col_num}.3f}"
+              f" {item['left_l1_db']:>+{col_num}.3f}"
               f" {'← limits' if limiting == 'left' else '':>{col_num}} {item['required_attenuation_db']:>{col_num}.1f}")
         print(f"{'': <{col_pair}} {'R.raw':<{col_ch}} {item['right_peak_db']:>+{col_num}.3f}"
-              f" {item['right_step_db']:>+{col_num}.3f}"
+              f" {item['right_step_db']:>+{col_num}.3f} {item['right_music_db']:>+{col_num}.3f}"
+              f" {item['right_l1_db']:>+{col_num}.3f}"
               f" {'← limits' if limiting == 'right' else '':>{col_num}}")
         configured = item['configured_attenuation_db']
         if configured is not None:
             verdict = 'PASS' if item['passed'] else 'FAIL'
             print(f"{'': <{col_pair}} {'configured':<{col_ch}} {configured:>{col_num}.1f}"
-                  f" {verdict:>{col_num}}")
+                  f" {'': >{col_num}} {'': >{col_num}} {'': >{col_num}} {verdict:>{col_num}}")
         print()
 
     print(f"Safety margin applied: {args.margin} dB")
     print("'Suggested atten (dB)' → use this for BOTH channels in brutefir.conf `attenuation:`")
+    print("'Music conv' → real convolution of the fabricated stress master (gen-stress-master-wav.py)")
+    print("               through h[n]; this is what actually drives 'Suggested', not the")
+    print("               magnitude-only 'Peak gain'/'Step peak' columns (see module docstring).")
+    print("'L1 max' → theoretical ceiling for ANY bounded input, not folded into 'Suggested'"
+          "\n           (needlessly conservative -- see module docstring).")
     print("Note: attenuation in brutefir is a gain reduction applied before convolution output;"
           "\n      it is lossless in float64 — only clipping prevention matters, not level optimisation.")
     return 1 if failed else 0

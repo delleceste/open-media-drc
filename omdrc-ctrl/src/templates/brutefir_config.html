@@ -133,6 +133,8 @@
                     <thead><tr>
                         <th>Coefficient</th><th>Filename</th><th>Format</th>
                         <th class="number">Taps</th><th class="number">Peak gain</th>
+                        <th class="number">Step peak</th><th class="number">Music conv</th>
+                        <th class="number">L1 max</th>
                         <th class="number">Configured</th><th class="number">Safe</th><th>Result</th>
                     </tr></thead>
                     <tbody id="filters"></tbody>
@@ -183,6 +185,9 @@ function renderFilter(filter) {
         node('td', filter.format),
         node('td', filter.taps === undefined ? '—' : Number(filter.taps).toLocaleString(), 'number'),
         node('td', db(filter.peak_gain_db, true), 'number'),
+        node('td', db(filter.step_peak_db, true), 'number'),
+        node('td', db(filter.music_conv_db, true), 'number'),
+        node('td', db(filter.l1_max_db, true), 'number'),
         node('td', db(filter.configured_attenuation_db), 'number'),
         node('td', db(filter.safe_attenuation_db), 'number')
     );
@@ -239,7 +244,7 @@ function render(data) {
     filters.replaceChildren();
     data.filters.forEach(renderFilter);
     document.getElementById('calculation-note').innerHTML =
-        `<strong>How “safe” is calculated:</strong> each readable .raw file named by the running config is decoded as its declared BruteFIR format. Its worst FFT gain is measured from the current bytes, ${Number(data.safety_margin_db).toFixed(1)} dB is added, and the result is rounded upward to 0.1 dB. The headline safe attenuation is the worst requirement across the loaded filters. This is a live calculation; stored manifests are not used.`;
+        `<strong>How “safe” is calculated:</strong> each readable .raw file named by the running config is decoded as its declared BruteFIR format, live, from the current bytes — stored manifests are not used. Three bounds are measured: <em>Peak gain</em> (steady-state FFT peak, tight only for a sine), <em>Step peak</em> (the impulse step response, a transient bound magnitude tests miss) and <em>Music conv</em> (real convolution against a fabricated, clean-room "brickwall master" stress WAV — the only bound shown to catch a filter's excess-phase overshoot on real program material; see scripts/gen-stress-master-wav.py). The worst of the three gets ${Number(data.safety_margin_db).toFixed(1)} dB added and is rounded upward to 0.1 dB — that is "Safe". <em>L1 max</em> (sum of the impulse response's absolute values) is shown alongside for comparison only: it is the theoretical ceiling for <em>any</em> input that never exceeds full scale, far more conservative than real music needs, and is never folded into "Safe". The headline safe attenuation is the worst requirement across the loaded filters.`;
 }
 
 // Approaching-0-dBFS threshold: brutefir's peak line only ever reports a
