@@ -13,6 +13,15 @@ every input in a persistent design root, requires a deployment commit when that
 root is already a Git repository, supports a plain folder otherwise, and only
 then derives the installed runtime from that authoritative bundle.
 
+For the guided walkthrough of deploying a design from a `DRC-120.blue`-like
+source into `omdrc-801N` — the commands, what the web install path does
+differently from the CLI/CMake one, and how to remove a design — see *Usage:
+drc.sh, filters, and configuration* and *Filter provenance and verification*
+in `doc/open-media-drc-manual.md` (rendered to `doc/open-media-drc-manual.pdf`;
+sections "The workflow" and "Live browser-driven installs"). This document is
+the normative reference behind that walkthrough: the manifest schema, the hash
+chain, and exactly what "verified" checks and does not check.
+
 There are two central rules:
 
 > A graph is selected by the hashes of the coefficient files loaded by the

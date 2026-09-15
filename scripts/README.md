@@ -32,6 +32,10 @@ must be reviewed offline, used as CMake provisioning input, or transferred to
 another playback machine. For an ordinary live install, use `/configuration`
 and skip this section entirely; the page invokes these tools for you.
 
+See "The workflow" and "Live browser-driven installs" in
+`doc/open-media-drc-manual.md` for the guided walkthrough; what follows here
+is the same commands with the normative detail behind each check.
+
 In this alternative the two repositories have different ownership:
 
 - the REW project repository owns the editable `.mdat`, `.txts`, and source
@@ -327,6 +331,6 @@ the two `.wav` files instead of the reports. Any 16/24/32-bit PCM WAV can
 replace the canonical input (e.g. 192k/24 material) — both tap scripts
 promote it identically and losslessly to the S32_LE wire container.
 
-See also `../glitch-debug.sh` (repo root) and
+See also `glitch-debug.sh` and
 [`doc/GLITCH-DETECTION.md`](../doc/GLITCH-DETECTION.md) for the runtime
 glitch-detection subsystem.
