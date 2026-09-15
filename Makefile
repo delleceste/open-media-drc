@@ -51,6 +51,8 @@ install:
 	$(INSTALL_SCRIPT) drc.sh drc-status.sh $(LIBEXECDIR)
 	$(INSTALL_SCRIPT) scripts/REW2raw.sh scripts/REW2raw-all-rates.sh \
 	                  scripts/verify-bitperfect.sh scripts/headroom_calc.py \
+	                  scripts/glitch-debug.sh scripts/glitch-monitor.sh \
+	                  scripts/glitch-usbtap.sh glitch-analyze.py \
 	                  $(LIBEXECDIR)/scripts
 #	The cross-OS tap suite backs the panel's /bitperfect page.  They must be
 #	installed together: the tap scripts resolve bitperfect-lib.py next to $$0.
@@ -64,14 +66,17 @@ install:
 	printf '#!/bin/sh\nexec %s/libexec/omdrc/drc-status.sh "$$@"\n' "$(PREFIX)" \
 	    > $(BINDIR)/omdrc-status
 	chmod 755 $(BINDIR)/omdrc $(BINDIR)/omdrc-status
-	$(INSTALL_DATA) omdrc.conf.sample $(ETCDIR)/omdrc.conf.sample
+	printf '#!/bin/sh\nexec %s/libexec/omdrc/scripts/glitch-debug.sh "$$@"\n' "$(PREFIX)" \
+	    > $(BINDIR)/omdrc-glitch
+	chmod 755 $(BINDIR)/omdrc-glitch
+	$(INSTALL_DATA) etc/open-media-drc/omdrc.conf.sample $(ETCDIR)/omdrc.conf.sample
 	$(INSTALL_DATA) configs/flat/brutefir-44100.conf \
 	                configs/flat/brutefir-48000.conf \
 	                configs/flat/brutefir-88200.conf \
 	                configs/flat/brutefir-96000.conf \
 	                configs/flat/brutefir-192000.conf \
 	                $(ETCDIR)/configs/flat
-	$(INSTALL_DATA) brutefir_defaults.conf $(ETCDIR)/brutefir_defaults.conf.sample
+	$(INSTALL_DATA) etc/open-media-drc/brutefir_defaults.conf $(ETCDIR)/brutefir_defaults.conf.sample
 	$(INSTALL_DATA) etc/devd/omdrc-audio.conf $(DEVDDIR)/omdrc-audio.conf.sample
 	$(INSTALL_DATA) etc/rc.conf.d/musicpd/omdrc_audio $(MUSICPDRCCONFDIR)
 	$(INSTALL_DATA) mpd/musicpd.conf.in mpd/mpd.conf.in $(EXAMPLESDIR)

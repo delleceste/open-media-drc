@@ -6,7 +6,7 @@
 #  Loopback : hw:1     — snd-aloop capture side feeds brutefir (DRC outputs)
 #
 #  Template — rendered to mpd.conf by CMake (see cmake/).
-#  Do not edit the generated file; edit this .in or config.env.
+#  Do not edit the generated file; edit this .in and reinstall.
 #
 #  Counterpart of mpd/musicpd.conf (FreeBSD / OSS).  The FreeBSD virtual_oss
 #  loopback (/dev/dsp.play <-> /dev/dsp.loop) is replaced here by the ALSA
@@ -15,7 +15,7 @@
 #
 
 follow_inside_symlinks  "yes"
-# State lives under the audio user's home (the run-from-repo model): /var is not
+# State lives under the installed audio user.s home: /var is not
 # writable by an unprivileged user.  Create with: mkdir -p ~/.local/share/mpd ~/.cache/mpd
 db_file         "@AUDIO_HOME@/.local/share/mpd/mpd.db"
 log_file        "@AUDIO_HOME@/.local/share/mpd/mpd.log"

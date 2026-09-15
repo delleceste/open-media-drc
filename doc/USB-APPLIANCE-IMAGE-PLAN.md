@@ -23,9 +23,9 @@ Bee (`i3-6100U`, 4G RAM) is not the target. Checked directly on bee:
 - `ada0` is a 112G disk, but FreeBSD only owns a 34G MBR slice (`ada0s4`,
   BSD-labelled 28G UFS + 5.6G swap). The other 74G is two stale
   `linux-data` partitions + linux-swap, still probed harmlessly at every boot
-  (`boot-after-audit.md`'s "R/W mount denied … dirty Linux filesystems").
-- Bee has already hit "Filesystem is not clean - run fsck" once
-  (`boot-before-audit.md`) — the classic UFS unclean-shutdown symptom, on a
+  and denied read-write mounting because the Linux filesystems are dirty.
+- Bee has already hit "Filesystem is not clean - run fsck" once — the classic
+  UFS unclean-shutdown symptom on a
   box that in practice gets power-cycled by a wall switch/remote rather than
   a clean `shutdown`.
 
@@ -44,8 +44,7 @@ files ahead of it uncommitted):
   This *is* "no filters, no custom brutefir configs," already designed for.
 - **`.gitattributes` `export-ignore`** already strips `filters/`,
   `configs/120.blue`, `configs/185`, every `freebsd-*-patch/`, `.claude/`,
-  `config.env`, and the investigation-journal `.md` files from `git archive`
-  output on a tag.
+  and the investigation-journal `.md` files from `git archive` output on a tag.
 - **`make install DESTDIR=… PREFIX=…`** (Phase 1.5 of
   `FREEBSD-PORT-PLAN.md`) installs host-neutral files + `.sample` configs,
   reading config at *runtime* instead of baking `@AUDIO_USER@` at render
@@ -101,7 +100,7 @@ build has to do these itself rather than getting them from stock `pkg`:
    branch directly — decide once the 4 uncommitted files on `master` are
    sorted out).
 2. `git archive` that tag → the tarball already stripped of site data,
-   patches, journals, `.claude/`, `config.env` via existing
+   patches, journals, `.claude/` via existing
    `export-ignore` rules.
 3. Land the Phase-0 gaps this image actually needs at build time (patched
    uaudio kmod, brutefir fork) even though they aren't upstream yet —

@@ -1,10 +1,8 @@
 # open-media-drc configuration — INSTALLED mode sample.
 #
-# Copy to ${PREFIX}/etc/open-media-drc/omdrc.conf (usually
-# /usr/local/etc/open-media-drc/omdrc.conf) and edit.  Read (sourced as shell)
-# by drc.sh / drc-status.sh when no config.env sits beside them; a repo
-# checkout keeps using its own config.env instead and ignores this file.
-# $OMDRC_CONF overrides the location in both modes.
+# Installed as ${PREFIX}/etc/open-media-drc/omdrc.conf.sample. Copy it to
+# omdrc.conf and edit; drc.sh and drc-status.sh read only the installed file
+# unless OMDRC_CONF explicitly names another system configuration.
 
 # Speaker geometry / filter set: $OMDRC_SITE_DIR/configs/$GEOMETRY/
 # brutefir-<rate>.conf.  Default "flat" = identity dirac-pulse filters, no

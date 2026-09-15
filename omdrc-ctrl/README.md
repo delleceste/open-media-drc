@@ -1492,8 +1492,7 @@ were not traversable.
 
 **Remembered across reboots.** A successful switch writes the target name to
 `last_renderer` in the shared state directory (beside `drc.sh`'s `last_arg` —
-the repo checkout in run-from-repo mode, `/var/db/omdrc` or
-`$XDG_STATE_HOME/omdrc` when installed). At boot `scripts/omdrc-renderer start`
+`/var/db/omdrc` for root or `${XDG_STATE_HOME:-~/.local/state}/omdrc` for the installed service user). At boot `scripts/omdrc-renderer start`
 reads it and brings that renderer up, so the box returns to the renderer it was
 left on:
 

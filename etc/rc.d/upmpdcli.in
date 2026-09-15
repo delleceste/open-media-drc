@@ -8,9 +8,7 @@
 #
 # FreeBSD rc.d service script for upmpdcli (UPnP/OpenHome front-end for MPD).
 #
-# Run-from-repo model: the daemon runs as @AUDIO_USER@ and reads its config
-# DIRECTLY from this checkout (@REPO_DIR@/upmpdcli/upmpdcli.conf) — nothing to
-# copy on update.  Override upmpdcli_config in /etc/rc.conf.d/upmpdcli if needed.
+# Installed service: CMake renders the daemon configuration for @AUDIO_USER@.
 
 PREFIX="@PREFIX@"
 BINDIR="${PREFIX}/bin"

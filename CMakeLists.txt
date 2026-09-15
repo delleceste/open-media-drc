@@ -7,10 +7,10 @@ project(open-media-drc VERSION 0.93.0 LANGUAGES NONE)
 #
 # Host values live in host.cmake (copied from host.cmake.sample) and are the
 # single source of box-specific config, rendered into each subproject via
-# configure_file(*.in @ONLY) — the CMake equivalent of the old config.env +
+# configure_file(*.in @ONLY) — the template-rendering replacement for the old config.env +
 # install.sh render step (that script has since been removed).
 
-# ── host values (config.env successor) ──────────────────────────────────────
+# ── host values ──────────────────────────────────────────────────────────────
 set(AUDIO_USER    "$ENV{USER}"          CACHE STRING "Login user that owns the services and brutefir")
 if(NOT AUDIO_USER)
   set(AUDIO_USER "nobody")

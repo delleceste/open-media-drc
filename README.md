@@ -236,7 +236,7 @@ The design scripts use the matching `OMDRC_SITE_ROOT` (or `--site-root`) — see
 This box's room data lives in
 [omdrc-801N](https://github.com/delleceste/omdrc-801N).
 
-`host.cmake` (the successor to `config.env`) is the single source of
+`host.cmake` is the single source of
 box-specific values. The CMake superproject renders every config from it and
 installs the DRC engine (`drc.sh` behind the `omdrc` / `omdrc-status`
 wrappers), the site data (brutefir configs + filters for `GEOMETRY` and for any
@@ -285,8 +285,8 @@ here, so this file **must** be deployed:
 
 ```sh
 mkdir -p ~/.config/BruteFIR
-cp brutefir_defaults.linux.conf ~/.config/BruteFIR/brutefir_defaults.conf   # Linux / ALSA
-# FreeBSD / OSS: cp brutefir_defaults.conf ~/.config/BruteFIR/brutefir_defaults.conf
+cp etc/open-media-drc/brutefir_defaults.linux.conf ~/.config/BruteFIR/brutefir_defaults.conf   # Linux / ALSA
+# FreeBSD / OSS: cp etc/open-media-drc/brutefir_defaults.conf ~/.config/BruteFIR/brutefir_defaults.conf
 ```
 
 > ⚠️ If this file is missing, BruteFIR (≥ 1.1) silently auto-generates a fallback
@@ -484,8 +484,8 @@ Signature: `drc.sh <rate>|resamp|restore|off|stop|status|session|geometry|design
 - `variant` — optional second argument (a config-filename suffix) selects an alternate
   filter set; superseded by `design`, and none is currently shipped
 
-State is split across three files (repo root in run-from-repo mode; `/var/db/omdrc`
-or `~/.local/state/omdrc` — override with `OMDRC_STATE_DIR` — when installed)
+State is kept under `/var/db/omdrc` for root or `~/.local/state/omdrc` for
+the audio user; override it with `OMDRC_STATE_DIR`
 so the on/off state and the remembered rate stay independent:
 
 - `last_arg` — the last *active rate* and optional variant (e.g. `192000`, `resamp`,
@@ -493,8 +493,8 @@ so the on/off state and the remembered rate stay independent:
   `off`**, so turning DRC back on restores the rate you last used. The geometry is not
   part of it — it lives in `last_geometry` below.
 - `last_geometry` — the filter set chosen at runtime, written by `drc.sh geometry <name>`
-  and by the web remote's filter-set picker. `GEOMETRY` in the config file (`config.env`
-  in this repo; default `flat` = shipped identity filters, this box sets `120.blue`) is
+  and by the web remote's filter-set picker. `GEOMETRY` in the installed `omdrc.conf` (default `flat` = shipped identity
+  filters; this box sets `120.blue`) is
   the **default**; this file, when present and naming a set that still exists under
   `configs/`, is the **current choice** and wins. A stale name (set removed since) is
   ignored, so the config default takes over again instead of every run failing on a
@@ -913,13 +913,8 @@ prints the `cp` commands into `/etc`. Two reasons, and they are not negotiable:
 Payload read at runtime — `mpd.conf`, `drc.sh`, the filters, BruteFIR's
 `~/.config/BruteFIR/brutefir_defaults.conf` — has no such constraint.
 
-> **Running from a checkout instead.** `drc.sh` and `drc-status.sh` enter *repo
-> mode* when `config.env` sits beside them: state files live next to the engine
-> and site data comes from the checkout, with no install at all. That is what
-> `config.env` is for, and it is the only thing it is for — an installed box is
-> configured by `host.cmake`. (The old `./install.sh`, which rendered the `*.in`
-> templates in place, has been removed: everything it produced is installed by
-> CMake, which covers a good deal more besides.)
+The runtime is installation-only: checkout-local configuration, state, and
+helper fallbacks are deliberately unsupported.
 
 ## Manual control
 
@@ -1332,7 +1327,7 @@ The web remote browses the whitelisted media root, shows ffmpeg thumbnails and
 OMDb-verified IMDb details, lets you pin favourite folders, and drives a hidden
 persistent mpv over its JSON IPC socket (play / seek / pause / volume / stop).
 It mirrors the deployment model of the audio control panel
-([`omdrc-ctrl`](omdrc-ctrl/README.md)): run-from-repo, LAN-only, FreeBSD rc.d
+([`omdrc-ctrl`](omdrc-ctrl/README.md)): system-installed, LAN-only, FreeBSD rc.d
 service (`omdrcvideo`), with the idle mpv autostarted by the KDE/Plasma session.
 
 **Full details:** [`video/webremote/README.md`](video/webremote/README.md)

@@ -277,7 +277,7 @@ Use this to skip straight to the right hypothesis.
 
 ## 7. Bug found on the Linux side while writing this
 
-`brutefir_defaults.linux.conf` in the repo hardcodes the output as:
+`etc/open-media-drc/brutefir_defaults.linux.conf` in the repo hardcodes the output as:
 
 ```
 device: "hw:0,0"; # omdrc-managed-dac

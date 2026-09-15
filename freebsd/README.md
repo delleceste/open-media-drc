@@ -23,15 +23,8 @@ Status / blockers before submission:
    poudriere (see 3).  The UPNP front-end and the video webremote remain
    deferred until the core port passes testing.
 
-Note on layouts: the port installs omdrc-ctrl to `share/omdrc-ctrl/` with its
-config as `etc/open-media-drc/commands.conf.sample`, and bakes no build-host
-path into it.  Run-from-repo is untouched by this and keeps using the CMake
-flow (`lib/omdrcctrl`, `etc/omdrcctrl`) — the two installation modes coexist
-and neither is aware of the other.
+The port and CMake flows both install runtime files under the selected prefix;
+checkout-local runtime operation is unsupported.
 
 To try it on the FreeBSD box: copy `audio/open-media-drc` into a ports tree
 checkout, `make makesum`, then `make stage && make check-plist`.
-
-Run-from-repo mode is unaffected by any of this: a checkout needs no setup
-step at all — drc.sh auto-detects which mode it is in by the presence of
-`config.env` beside it.

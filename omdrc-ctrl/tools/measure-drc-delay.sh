@@ -105,7 +105,7 @@ cleanup() {
   rm -rf "$MUSIC_DIR/$CAL_SUBDIR" 2>/dev/null || true
   mpc update "$CAL_SUBDIR" >/dev/null 2>&1 || true
   log "restoring previous DRC state via drc.sh restore"
-  "$REPO/drc.sh" restore >/dev/null 2>&1 || \
+  "omdrc" restore >/dev/null 2>&1 || \
     { mpc enable only "OKTO-DAC" >/dev/null 2>&1; mpc disable "OMDRC Spectrum" >/dev/null 2>&1; }
   rm -rf "$WORK"
 }
@@ -239,7 +239,7 @@ start_brutefir() {
 
 # ── main measurement ─────────────────────────────────────────────────────────
 log "MODE=$MODE RATE=$RATE GEOMETRY=$GEOMETRY VARIANT='${VARIANT:-}' DUR=${DUR}s"
-"$REPO/drc.sh" stop >/dev/null 2>&1 || true   # clean baseline (chain down, OKTO direct)
+"omdrc" stop >/dev/null 2>&1 || true   # clean baseline (chain down, OKTO direct)
 clean_chain                                   # ensure no stale virtual_oss/brutefir or cuse nodes
 make_chirp
 start_voss1

@@ -38,7 +38,7 @@ the DAC it feeds, so it contributes no third clock.
 hrtimer. That makes **two** independent pairs on Linux (CD ↔ aloop-timer, and
 aloop-timer ↔ DAC), and the second one is present even with no CD input in the
 chain, in plain MPD playback. It is normally invisible because both BruteFIR
-stanzas in `brutefir_defaults.linux.conf` set `ignore_xrun: true`, so it
+stanzas in `etc/open-media-drc/brutefir_defaults.linux.conf` set `ignore_xrun: true`, so it
 presents as an occasional discontinuity rather than as an error.
 
 `etc/modprobe.d/omdrc-snd-aloop.conf` fixes this with the module's

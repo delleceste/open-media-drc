@@ -19,18 +19,12 @@ if [ "$#" -eq 0 ]; then
     exit 2
 fi
 
-# Resolve our real path (normally the symlink ~/play-media.sh -> the repo) to
-# find the shared helper next to it.
-SELF=$(readlink -f "$0"); HERE=$(dirname "$SELF")
+# Installed launchers keep their shared helper beside the executable.
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 # --- DRC-aware audio routing: sets AUDIO_DEVICE / AUDIO_DELAY / SUB_DELAY -----
-# drc-audio.sh lives in lib/ in this checkout and NEXT TO this script once
-# installed (both land in $PREFIX/lib/omdrcvideo/), so try both layouts.
-if [ -f "$HERE/lib/drc-audio.sh" ]; then
-	. "$HERE/lib/drc-audio.sh"
-else
-	. "$HERE/drc-audio.sh"
-fi
+[ -r "$HERE/drc-audio.sh" ] || { echo "missing installed drc-audio.sh" >&2; exit 1; }
+. "$HERE/drc-audio.sh"
 
 # --- play (-- guards files/URLs that start with '-') -----------------------
 exec mpv --fs \

@@ -69,7 +69,7 @@ python3 -c 'import numpy' 2>/dev/null || die "python3 numpy not available"
 
 # ── preconditions: the realtime resamp chain must be live ────────────────────
 pgrep -f '(^|/)brutefir .*-daemon' >/dev/null 2>&1 || \
-  die "brutefir not running — bring the chain up:  daemon -f -o /tmp/drc-resamp.out -- $REPO/drc.sh resamp"
+  die "brutefir not running — bring the chain up:  daemon -f -o /tmp/drc-resamp.out -- omdrc resamp"
 pgrep -f 'virtual_oss .*dsp.loop' >/dev/null 2>&1 || \
   die "virtual_oss not running — bring the chain up (see above)"
 mpc outputs 2>/dev/null | grep -q "($DRC_OUT) is enabled" || \
@@ -147,7 +147,7 @@ log "SUMMARY over $REPEATS pass(es), ${SRC_RATE}Hz -> ${RATE}Hz, ${DUR}s each:"
 log "   total clicks=$tot_clicks  total dropouts=$tot_drop"
 if [ "$tot_clicks" -eq 0 ] && [ "$tot_drop" -eq 0 ]; then
   log "   -> MPD/soxr output is CLEAN at this tap; glitches (if heard) are"
-  log "      downstream (virtual_oss/brutefir/DAC). Cross-check: ./glitch-usbtap.sh"
+  log "      downstream (virtual_oss/brutefir/DAC). Cross-check: scripts/glitch-usbtap.sh"
 else
   log "   -> glitches present in MPD's resampled output -> MPD/soxr stage."
   log "   event log: $EVENTS"

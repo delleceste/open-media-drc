@@ -2,27 +2,17 @@
 set -euo pipefail
 
 # ── configuration ─────────────────────────────────────────────────────────────
-# Two ways to run, decided by where this script lives:
-#  * run-from-repo: a config.env sits next to the script (repo checkout).
-#    Site data (configs/, filters/) and state (last_arg, drc.log, …) live in
-#    the checkout, exactly as before.
-#  * installed (package/port): no config.env beside the script; settings come
-#    from ${PREFIX}/etc/open-media-drc/omdrc.conf, site data defaults to
-#    ${PREFIX}/etc/open-media-drc and state to /var/db/omdrc (root) or
-#    ~/.local/state/omdrc.
-# $OMDRC_CONF overrides the config file location in both modes.  The config
+# Configuration comes from the system-wide installation.  A checkout no longer
+# becomes a separate runtime from source-tree files.
+# $OMDRC_CONF may explicitly override the installed config location.  The config
 # file may set GEOMETRY, OMDRC_SITE_DIR, OMDRC_STATE_DIR (and the DAC_* knobs
 # below, which stay env-overridable).
 base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-/usr/local}"
 
-OMDRC_REPO_MODE=false
 OMDRC_CONF_FILE=""
 if [ -n "${OMDRC_CONF:-}" ] && [ -f "$OMDRC_CONF" ]; then
   OMDRC_CONF_FILE="$OMDRC_CONF"
-elif [ -f "$base_dir/config.env" ]; then
-  OMDRC_CONF_FILE="$base_dir/config.env"
-  OMDRC_REPO_MODE=true
 elif [ -f "$PREFIX/etc/open-media-drc/omdrc.conf" ]; then
   OMDRC_CONF_FILE="$PREFIX/etc/open-media-drc/omdrc.conf"
 fi
@@ -37,11 +27,7 @@ fi
 GEOMETRY="${GEOMETRY:-flat}"
 
 # Where configs/<GEOMETRY>/ and filters/<GEOMETRY>/ live.
-if $OMDRC_REPO_MODE; then
-  SITE_DIR="${OMDRC_SITE_DIR:-$base_dir}"
-else
-  SITE_DIR="${OMDRC_SITE_DIR:-$PREFIX/etc/open-media-drc}"
-fi
+SITE_DIR="${OMDRC_SITE_DIR:-$PREFIX/etc/open-media-drc}"
 
 # DAC warm-up before the MPD output is enabled.  The OKTO routes silence on a
 # *cold* open until its clock relocks, and the host does not wait for that relock
@@ -121,15 +107,12 @@ dac_unit() {
 }
 
 # ── paths / state ─────────────────────────────────────────────────────────────
-# Repo mode keeps state beside the script (as always).  Installed mode must not
-# write into packaged paths (pkg check -s flags modified files), so state goes
+# Runtime state must not be written into a source checkout or packaged paths (pkg check -s flags modified files), so state goes
 # to /var/db/omdrc when root, else ~/.local/state/omdrc.  Services and
 # interactive runs that must share state should pin OMDRC_STATE_DIR in the
 # config file.
 if [ -n "${OMDRC_STATE_DIR:-}" ]; then
   STATE_DIR="$OMDRC_STATE_DIR"
-elif $OMDRC_REPO_MODE; then
-  STATE_DIR="$base_dir"
 elif [ "$(id -u)" -eq 0 ]; then
   STATE_DIR="/var/db/omdrc"
 else

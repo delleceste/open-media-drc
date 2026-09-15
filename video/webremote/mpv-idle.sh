@@ -26,17 +26,10 @@ else
     AO="oss"; FALLBACK_DEVICE="oss//dev/dsp.play"
 fi
 
-# Reuse the shared DRC-aware audio selection (sets AUDIO_DEVICE/DELAY/SUB_DELAY,
-# and switches the DRC chain into resamp mode if needed). It lives in ../lib.
-# drc-audio.sh sits next to this script when installed, or in ../lib run-from-repo.
-DRC_LIB=""
-for _cand in "$HERE/drc-audio.sh" "$HERE/../lib/drc-audio.sh"; do
-    [ -r "$_cand" ] && { DRC_LIB="$_cand"; break; }
-done
+# The installed helper is deployed beside this script.
+DRC_LIB="$HERE/drc-audio.sh"
+[ -r "$DRC_LIB" ] || { echo "missing installed drc-audio.sh" >&2; exit 1; }
 if [ -n "$DRC_LIB" ]; then
-    # drc-audio.sh derives REPO from HERE (= the dir above it) for its run-from-repo
-    # drc.sh fallback; when installed it prefers the omdrc wrapper on PATH.
-    #
     # DRC_SKIP_RESAMP: READ the DRC state here, never write it.  drc-audio.sh
     # also switches the chain to resamp when it is not already auto-resampling,
     # which is right for play-media.sh / play-bluray.sh -- those are starting a
@@ -46,7 +39,7 @@ if [ -n "$DRC_LIB" ]; then
     # `omdrc off` came back auto-resampling, and so did a deliberate 44.1/96 kHz
     # native setting.  The saved DRC state must outlive a reboot, so the idle
     # launcher only reads it and binds mpv to whatever device matches.
-    DRC_SKIP_RESAMP=1 HERE="$(dirname "$DRC_LIB")/.." . "$DRC_LIB"
+    DRC_SKIP_RESAMP=1 HERE="$HERE" . "$DRC_LIB"
 
     # Bind the DRC path unconditionally, whatever the chain is doing right now.
     # Video always plays through DRC (see the header), and the web remote puts

@@ -3,11 +3,11 @@
 #  FreeBSD specific musicpd.conf (uses /dev/dsp.dac)
 #
 #  Template — rendered to musicpd.conf by CMake (see cmake/).
-#  Do not edit the generated file; edit this .in or config.env.
+#  Do not edit the generated file; edit this .in and reinstall.
 #
 
 follow_inside_symlinks  "yes"
-# State lives under the audio user's home (the run-from-repo model): /var/mpd is
+# State lives under the installed audio user.s home: /var/mpd is
 # owned by the mpd daemon user and not writable by @AUDIO_USER@.  Create with:
 #   mkdir -p ~/.local/share/mpd ~/.cache/mpd
 db_file         "@AUDIO_HOME@/.local/share/mpd/mpd.db"

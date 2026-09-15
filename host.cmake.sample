@@ -1,4 +1,4 @@
-# Host-specific values for open-media-drc — the config.env successor.
+# Host-specific values for open-media-drc — the system installation configuration.
 #
 # Copy to host.cmake, edit, then build the classical way:
 #     mkdir build && cd build

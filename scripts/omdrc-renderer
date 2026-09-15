@@ -41,13 +41,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 base_dir=$(cd "$here/.." && pwd)
 PREFIX="${PREFIX:-/usr/local}"
 
-OMDRC_REPO_MODE=false
 OMDRC_CONF_FILE=""
 if [ -n "${OMDRC_CONF:-}" ] && [ -f "$OMDRC_CONF" ]; then
 	OMDRC_CONF_FILE="$OMDRC_CONF"
-elif [ -f "$base_dir/config.env" ]; then
-	OMDRC_CONF_FILE="$base_dir/config.env"
-	OMDRC_REPO_MODE=true
 elif [ -f "$PREFIX/etc/open-media-drc/omdrc.conf" ]; then
 	OMDRC_CONF_FILE="$PREFIX/etc/open-media-drc/omdrc.conf"
 fi
@@ -58,8 +54,6 @@ fi
 
 if [ -n "${OMDRC_STATE_DIR:-}" ]; then
 	STATE_DIR="$OMDRC_STATE_DIR"
-elif $OMDRC_REPO_MODE; then
-	STATE_DIR="$base_dir"
 elif [ "$(id -u)" -eq 0 ]; then
 	STATE_DIR="/var/db/omdrc"
 elif [ -n "${XDG_STATE_HOME:-}" ]; then

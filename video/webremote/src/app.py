@@ -39,13 +39,8 @@ DISC_ENABLED = True
 DISC_DEV = "cd0"
 DISC_CACHE = "bd"
 DISC_SCRIPT = os.path.join(_HERE, os.pardir, "disc.sh")
-# The DRC audio library the desktop launchers source. Sourcing it puts the DRC
-# chain in resamp mode; mpv-idle.sh sources it with DRC_SKIP_RESAMP=1 and only
-# reads from it. Installed: beside disc.sh; run-from-repo: video/lib/.
-DRC_AUDIO_LIB = next(
-    (p for p in (os.path.join(_HERE, os.pardir, "drc-audio.sh"),
-                 os.path.join(_HERE, os.pardir, os.pardir, "lib", "drc-audio.sh"))
-     if os.path.isfile(p)), None)
+# The installed DRC audio library is deployed beside disc.sh.
+DRC_AUDIO_LIB = os.path.join(_HERE, os.pardir, "drc-audio.sh")
 AVSYNC_RANGE = 1.0
 AVSYNC_STEP = 0.01
 
@@ -628,7 +623,8 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument(
         "--config",
-        default=os.path.join(_HERE, os.pardir, "webremote.conf"),
+        default=os.path.join(os.environ.get("PREFIX", "/usr/local"),
+                             "etc", "omdrcvideo", "webremote.conf"),
     )
     args = parser.parse_args()
     load_config(args.config)

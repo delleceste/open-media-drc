@@ -7,11 +7,8 @@
 #   AUDIO_DELAY   -- mpv --audio-delay value (negative delays the VIDEO)
 #   SUB_DELAY     -- mpv --sub-delay value
 
-REPO="$HERE/.."   # open-media-drc repo root (run-from-repo: drc.sh lives here)
-# Installed layouts expose drc.sh behind the `omdrc` / `omdrc-status` wrappers on
-# PATH; run-from-repo has neither on PATH, so fall back to $REPO.
-DRC_SH="$(command -v omdrc 2>/dev/null || echo "$REPO/drc.sh")"
-DRC_STATUS_SH="$(command -v omdrc-status 2>/dev/null || echo "$REPO/drc-status.sh")"
+DRC_SH="$(command -v omdrc 2>/dev/null || true)"
+DRC_STATUS_SH="$(command -v omdrc-status 2>/dev/null || true)"
 
 # --- ensure the DRC chain is in resamp mode before playback ----------------
 # Movie audio is 48/96 kHz. The direct DAC runs bit-perfect (no resampling), so a

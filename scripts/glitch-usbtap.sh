@@ -31,7 +31,7 @@ set -u
 
 base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DUR="${1:-180}"
-LOG_FILE="${2:-${GLITCH_LOG:-$base_dir/glitch.log}}"
+LOG_FILE="${2:-${GLITCH_LOG:?GLITCH_LOG must be set or passed}}"
 GAP_FACTOR="${GLITCH_GAP_FACTOR:-2.5}"     # flag a gap > this × the nominal interval
 SHORT_FRAC="${GLITCH_SHORT_FRAC:-0.5}"     # flag SLEN below this fraction of nominal
                                            # (ignores the normal async feedback wobble)

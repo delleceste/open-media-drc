@@ -10,7 +10,7 @@
 #
 # musicpd_enable=YES
 #
-# Run-from-repo model: this script reads the config DIRECTLY from the git
+# Installed service: configuration paths are rendered by CMake.
 # checkout instead of a copy under /usr/local/etc, so there is nothing to
 # re-copy on update (git pull is enough).  mpd is started by root and drops to
 # the unprivileged "user"/"group" named inside the config file.

@@ -351,7 +351,6 @@ shares one location (see `doc/FREEBSD-PORT-PLAN.md` §1.4):
 | Condition | State directory |
 | --- | --- |
 | `$OMDRC_STATE_DIR` set | that path (services pin this) |
-| run-from-repo (`config.env` in the checkout) | beside the checkout |
 | running as root | `/var/db/omdrc` |
 | otherwise | `${XDG_STATE_HOME:-~/.local/state}/omdrc` |
 

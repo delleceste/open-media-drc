@@ -25,18 +25,12 @@ export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:$PATH
 DEV=cd0
 CACHE=bd
 
-# Resolve our real path (this file is normally the symlink ~/play-bluray.sh ->
-# the repo) so we can source the shared helper that sits next to it.
-SELF=$(readlink -f "$0"); HERE=$(dirname "$SELF")
+# Installed launchers keep their shared helper beside the executable.
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 # --- DRC-aware audio routing: sets AUDIO_DEVICE / AUDIO_DELAY / SUB_DELAY -----
-# drc-audio.sh lives in lib/ in this checkout and NEXT TO this script once
-# installed (both land in $PREFIX/lib/omdrcvideo/), so try both layouts.
-if [ -f "$HERE/lib/drc-audio.sh" ]; then
-	. "$HERE/lib/drc-audio.sh"
-else
-	. "$HERE/drc-audio.sh"
-fi
+[ -r "$HERE/drc-audio.sh" ] || { echo "missing installed drc-audio.sh" >&2; exit 1; }
+. "$HERE/drc-audio.sh"
 
 # --- read-ahead cache in front of the slow optical drive -------------------
 sudo kldload -n geom_cache

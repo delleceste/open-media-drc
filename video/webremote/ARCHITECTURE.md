@@ -17,7 +17,7 @@ The repo already establishes every pattern this needs:
 
 - **`omdrc-ctrl/`** — a Flask web control panel served from this host on the LAN
   (`0.0.0.0:9090`), mobile-first dark UI, **no app install**, deployed as a
-  FreeBSD `rc.d` service (`daemon(8)`), run-from-repo. Its own README states the
+  FreeBSD `rc.d` service (`daemon(8)`), system-installed. Its README states the
   security model plainly: *trusted local network only, never bind to a public
   interface.* The video remote reuses this skeleton verbatim.
 - **`video/play-media.sh` / `video/play-bluray.sh`** — already launch mpv with
@@ -42,7 +42,7 @@ browser** plus a thin **play/transport bridge** to mpv.
 | Decision | Choice | Rationale |
 |---|---|---|
 | How the app drives mpv | **One persistent idle mpv, driven over the JSON IPC socket** | Instant loads, reliable transport & status from a single known socket, no process-spawn races. DRC audio device + `-0.67 s` delay are set **once** at startup because video always runs in resamp mode. Even physical discs load into this same mpv — only their gcache read-ahead lifecycle is managed alongside (`disc.sh` up/down). |
-| Where it lives | **Separate Flask app under `video/webremote/`**, its own port, linked from `omdrc-ctrl` | Keeps video concerns in `video/`, independent update cadence, reuses the `rc.d` / run-from-repo skeleton. |
+| Where it lives | **Separate Flask app under `video/webremote/`**, its own port, linked from `omdrc-ctrl` | Keeps video concerns in `video/`, independent update cadence, reuses the `rc.d` service skeleton. |
 | Browser richness (v1) | **Folder browsing + file/rip detection + thumbnails + metadata + transport/live status** | Thumbnails/metadata are cached on disk so the headless box isn't hammered on every browse. |
 | Whitelisted media roots | **`/media/USBHD2/video` only** (for now) | Single root keeps the safe-path surface minimal; more roots are a one-line config addition later. |
 
@@ -241,7 +241,7 @@ max_width    = 320
 
 ---
 
-## Deployment (run-from-repo, mirrors omdrc-ctrl)
+## Deployment (system installation)
 
 - FreeBSD `rc.d` service via `daemon(8)` (`rc.d/omdrcvideo.in`), runs as the
   desktop user with `DISPLAY=:0` and `/usr/local/{s,}bin` on `PATH` — exactly the
@@ -254,7 +254,7 @@ max_width    = 320
   app only talks to its socket.
 - Linked from the `omdrc-ctrl` panel (a `LINK` widget to `http://<host>:9080`),
   so the phone has one entry point for both audio DRC and video.
-- `git pull` is the whole update path, consistent with the rest of the repo.
+- Updates take effect after rebuilding and reinstalling with CMake.
 
 ---
 

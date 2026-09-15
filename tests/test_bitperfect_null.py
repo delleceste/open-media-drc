@@ -234,14 +234,14 @@ class PlatformDefaults(unittest.TestCase):
         return m.group(1).strip()
 
     def test_freebsd_and_linux_defaults_match(self):
-        self.assertEqual(self.filter_length("brutefir_defaults.conf"),
-                         self.filter_length("brutefir_defaults.linux.conf"))
+        self.assertEqual(self.filter_length("etc/open-media-drc/brutefir_defaults.conf"),
+                         self.filter_length("etc/open-media-drc/brutefir_defaults.linux.conf"))
 
     def test_partitioning_fits_the_virtual_oss_buffer_cap(self):
         """8192 frames at 192 kHz is ~43 ms; virtual_oss is started with
         -s 200ms and caps around 250 ms. A partition close to that cap leaves
         the convolver no ring-buffer slack."""
-        partition = int(self.filter_length("brutefir_defaults.conf").split(",")[0])
+        partition = int(self.filter_length("etc/open-media-drc/brutefir_defaults.conf").split(",")[0])
         block_ms = partition / 192000 * 1000
         self.assertLess(block_ms, 100,
                         f"{partition}-frame partitions are {block_ms:.0f} ms "

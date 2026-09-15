@@ -28,8 +28,8 @@
 set -u
 
 base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="${GLITCH_LOG:-$base_dir/glitch.log}"
-STATE_FILE="${GLITCH_STATE:-$base_dir/.glitch-debug.enabled}"
+LOG_FILE="${GLITCH_LOG:?GLITCH_LOG must be set by glitch-debug}"
+STATE_FILE="${GLITCH_STATE:?GLITCH_STATE must be set by glitch-debug}"
 INTERVAL="${GLITCH_INTERVAL:-1}"
 BRUTEFIR_OUT="${GLITCH_BRUTEFIR_OUT:-/tmp/brutefir.out}"
 STATE_DIR="${TMPDIR:-/tmp}/glitch-monitor.$(id -u)"

@@ -5,9 +5,8 @@ Blu-ray discs and DVDs**, **local files**, and **network/stream URLs** on FreeBS
 with audio routed through the same virtual_oss/brutefir DRC chain and remote
 control from your phone via KDE Connect.
 
-Same philosophy as the rest of the repo: **run-from-repo**. The live files
-(`~/play-bluray.sh`, `~/play-media.sh`, `~/.config/mpv/*`) are symlinks into this
-directory, so a `git pull` is the whole update path.
+The video launchers and web remote are installed by the top-level CMake build.
+Checkout-local symlinks and direct execution are unsupported.
 
 > **Browse-and-play from the phone:** for a full **web remote** that browses the
 > media drives, shows thumbnails + IMDb info, and drives a persistent mpv (the

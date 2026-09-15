@@ -21,17 +21,12 @@
 
 : "${HERE:?lib.sh: caller must set HERE to the launcher directory}"
 
-# The engine: the installed omdrc wrapper when there is one, else this checkout.
-DRC="$(command -v omdrc 2>/dev/null || echo "$HERE/../drc.sh")"
+# The engine must come from the system installation.
+DRC="$(command -v omdrc 2>/dev/null || true)"
 
-# The DRC state is read from the engine (`drc.sh session`), never from state
-# files at a path guessed here.  It used to read "$HERE/../last_power" and
-# "$HERE/../last_arg", which are correct ONLY in repo mode: a packaged install
-# pins OMDRC_STATE_DIR in ${PREFIX}/etc/open-media-drc/omdrc.conf (on this box
-# ~/.local/state/omdrc) and the checkout's own copies are stale leftovers.  A
-# stale "off" made the exit trap conclude there was nothing to restore and leave
-# the chain DOWN after the browser quit.  Asking the engine cannot drift: it is
-# the same resolution `drc.sh restore` itself uses.
+[ -n "$DRC" ] || { echo "omdrc is not installed" >&2; exit 1; }
+
+# Read state through the installed engine; never guess a state-file path here.
 
 # /dev/dsp.dac is the DAC by role: FreeBSD pcm unit numbers follow attach
 # order, so /dev/dsp0 is only the DAC by luck on a multi-card box.  The

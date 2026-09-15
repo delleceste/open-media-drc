@@ -3217,7 +3217,6 @@ def _resolve_state_dir() -> str:
     shares one location (see doc/FREEBSD-PORT-PLAN.md 1.4):
 
         $OMDRC_STATE_DIR            explicit override — services pin this
-        run-from-repo (config.env)  beside the checkout, as drc.sh does
         root                        /var/db/omdrc
         otherwise                   ${XDG_STATE_HOME:-~/.local/state}/omdrc
 
@@ -3229,9 +3228,6 @@ def _resolve_state_dir() -> str:
     env_dir = os.environ.get("OMDRC_STATE_DIR")
     if env_dir:
         return env_dir
-    repo_root = os.path.abspath(os.path.join(_HERE, os.pardir, os.pardir))
-    if os.path.isfile(os.path.join(repo_root, "config.env")):
-        return repo_root
     if os.geteuid() == 0:
         return "/var/db/omdrc"
     xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(
@@ -6688,7 +6684,6 @@ def _drc_script() -> str | None:
     """The drc.sh entry point, derived from the configured drc_status command —
     its sibling in every supported layout:
 
-        run-from-repo  <repo>/drc-status.sh        -> <repo>/drc.sh
         installed      ${PREFIX}/bin/omdrc-status  -> ${PREFIX}/bin/omdrc
 
     In an installed tree drc.sh itself lives in libexec, not beside the status
@@ -6704,7 +6699,7 @@ def _drc_script() -> str | None:
         except (ValueError, IndexError):
             argv0 = cmd["cmd"].strip()
         directory, base = os.path.split(argv0)
-        candidates = [os.path.join(directory, "drc.sh")]
+        candidates = []
         if base.endswith("-status"):
             candidates.append(os.path.join(directory, base[:-len("-status")]))
         for path in candidates:
@@ -7693,19 +7688,15 @@ def _resolve_config_path() -> str:
 
         $OMDRCCTRL_CONF                              explicit override
         ${PREFIX}/etc/open-media-drc/commands.conf   packaged install
-        <app dir>/commands.conf                      run-from-repo / CMake
 
-    An explicit --config always wins over all of these, so the run-from-repo
-    launcher (which passes --config) is unaffected.  Kept distinct from drc.sh's
+    No checkout-local fallback is permitted. Kept distinct from drc.sh's
     $OMDRC_CONF, which names a different file (omdrc.conf)."""
     env_conf = os.environ.get("OMDRCCTRL_CONF")
     if env_conf:
         return env_conf
     packaged = os.path.join(os.environ.get("PREFIX", "/usr/local"),
                             "etc", "open-media-drc", "commands.conf")
-    if os.path.isfile(packaged):
-        return packaged
-    return os.path.join(_HERE, "commands.conf")
+    return packaged
 
 
 if __name__ == "__main__":

@@ -13,19 +13,19 @@ simply quiet — no glitches have ever been observed on the Linux path.
 
 ## The one switch
 
-Everything is driven by a single global switch, `glitch-debug.sh`, exposed as a
+Everything is driven by a single global switch, `omdrc-glitch`, exposed as a
 **Debug card at the bottom of the omdrc-ctrl web UI**. Turning it **On** drops a
 state file (`.glitch-debug.enabled`) and launches the lightweight monitor
 daemon; **Off** removes the state file (the daemon self-terminates) and kills it.
 
 ```
-./glitch-debug.sh on        # start monitoring
-./glitch-debug.sh status     # state, daemon, event count
-./glitch-debug.sh analyze    # periodicity report (see below)
-./glitch-debug.sh usbtap 30  # one 30 s last-hop USB capture (needs sudo)
-./glitch-debug.sh tail 40    # raw events
-./glitch-debug.sh clear      # truncate glitch.log
-./glitch-debug.sh off        # stop
+omdrc-glitch on        # start monitoring
+omdrc-glitch status     # state, daemon, event count
+omdrc-glitch analyze    # periodicity report (see below)
+omdrc-glitch usbtap 30  # one 30 s last-hop USB capture (needs sudo)
+omdrc-glitch tail 40    # raw events
+omdrc-glitch clear      # truncate glitch.log
+omdrc-glitch off        # stop
 ```
 
 All events land in `glitch.log` (one line each), gitignored:
@@ -101,7 +101,7 @@ Notes: needs root (`sudo usbdump`, same sudoers the UI uses for
 `service`/`reboot`); writes the pcap to `/var/tmp` (`GLITCH_TMP`) since a 5-minute
 capture is ~525 MB; the **capture** is I/O-bound (low CPU) — the CPU cost is the
 **decode** pass after the window closes. It is **CLI only** (not in the web UI,
-being heavy and root-only): `glitch-debug.sh usbtap [sec]`, default **180 s**,
+being heavy and root-only): `omdrc-glitch usbtap [sec]`, default **180 s**,
 any duration accepted. Each event is logged with a **sub-second epoch**, so the
 analyzer can resolve sub-second periodicity of USB events.
 
@@ -109,7 +109,7 @@ analyzer can resolve sub-second periodicity of USB events.
 
 ## Reading the verdict: periodic vs random
 
-`glitch-analyze.py` (`glitch-debug.sh analyze`, or the **Analyze** button) takes
+`glitch-analyze.py` (`omdrc-glitch analyze`, or the **Analyze** button) takes
 the inter-event intervals and reports, per stage, the **coefficient of
 variation** CV = stddev/mean:
 
@@ -140,7 +140,7 @@ interval analysis (CV = stddev/mean):
 
 | file | role |
 |------|------|
-| `glitch-debug.sh`   | the global switch / orchestrator |
+| `omdrc-glitch`   | the global switch / orchestrator |
 | `glitch-monitor.sh` | the always-on poller daemon |
 | `glitch-usbtap.sh`  | the bounded last-hop USB capture |
 | `glitch-analyze.py` | the periodicity classifier |

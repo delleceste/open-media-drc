@@ -17,24 +17,29 @@ install(PROGRAMS drc.sh drc-status.sh DESTINATION libexec/omdrc)
 install(PROGRAMS
         scripts/REW2raw.sh scripts/REW2raw-all-rates.sh
         scripts/verify-bitperfect.sh scripts/headroom_calc.py
+        scripts/glitch-debug.sh scripts/glitch-monitor.sh scripts/glitch-usbtap.sh
+        glitch-analyze.py
         DESTINATION libexec/omdrc/scripts)
 
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc"
      "#!/bin/sh\nexec \"${CMAKE_INSTALL_PREFIX}/libexec/omdrc/drc.sh\" \"$@\"\n")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc-status"
      "#!/bin/sh\nexec \"${CMAKE_INSTALL_PREFIX}/libexec/omdrc/drc-status.sh\" \"$@\"\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc-glitch"
+     "#!/bin/sh\nexec \"${CMAKE_INSTALL_PREFIX}/libexec/omdrc/scripts/glitch-debug.sh\" \"$@\"\n")
 install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/omdrc"
                  "${CMAKE_CURRENT_BINARY_DIR}/omdrc-status"
+                 "${CMAKE_CURRENT_BINARY_DIR}/omdrc-glitch"
         DESTINATION bin)
 
 # ── box config (rendered from host.cmake; guarded so a reinstall never clobbers
 #    a user-edited copy).  The EXISTS test needs DESTDIR; file(INSTALL) adds it. ─
-configure_file(omdrc.conf.in "${CMAKE_CURRENT_BINARY_DIR}/omdrc.conf" @ONLY)
-install(FILES omdrc.conf.sample DESTINATION ${_etc})
+configure_file(etc/open-media-drc/omdrc.conf.in "${CMAKE_CURRENT_BINARY_DIR}/omdrc.conf" @ONLY)
+install(FILES etc/open-media-drc/omdrc.conf.sample DESTINATION ${_etc})
 
 # BruteFIR runtime defaults — deployed per-user (into ~/.config/BruteFIR) by
 # `make user-install`, so keep a stable copy under the prefix.
-install(FILES brutefir_defaults.conf brutefir_defaults.linux.conf
+install(FILES etc/open-media-drc/brutefir_defaults.conf etc/open-media-drc/brutefir_defaults.linux.conf
         DESTINATION share/omdrc)
 install(CODE "
   set(_cfg \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/etc/open-media-drc/omdrc.conf\")

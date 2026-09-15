@@ -399,8 +399,8 @@ inherit devices from this file, so it **must** be deployed:
 
 ```sh
 mkdir -p ~/.config/BruteFIR
-cp brutefir_defaults.linux.conf ~/.config/BruteFIR/brutefir_defaults.conf  # Linux/ALSA
-cp brutefir_defaults.conf       ~/.config/BruteFIR/brutefir_defaults.conf  # FreeBSD/OSS
+cp etc/open-media-drc/brutefir_defaults.linux.conf ~/.config/BruteFIR/brutefir_defaults.conf  # Linux/ALSA
+cp etc/open-media-drc/brutefir_defaults.conf       ~/.config/BruteFIR/brutefir_defaults.conf  # FreeBSD/OSS
 ```
 
 If this file is missing, BruteFIR (>= 1.1) silently auto-generates a broken
@@ -561,7 +561,7 @@ Remove obsolete lifecycle files after the new service is installed and tested:
 
 ```sh
 install -d -o AUDIO_USER -g AUDIO_GROUP /home/AUDIO_USER/.config/BruteFIR
-install -m 644 brutefir_defaults.conf \
+install -m 644 etc/open-media-drc/brutefir_defaults.conf \
   /home/AUDIO_USER/.config/BruteFIR/brutefir_defaults.conf
 ```
 
@@ -2974,7 +2974,7 @@ clock of its own and by default invents one, an hrtimer --- which makes
 **two** independent pairs on Linux (CD <-> aloop-timer, aloop-timer <-> DAC),
 the second present even in plain MPD playback with no CD input at all, and
 normally invisible only because both BruteFIR stanzas in
-`brutefir_defaults.linux.conf` set `ignore_xrun: true`.
+`etc/open-media-drc/brutefir_defaults.linux.conf` set `ignore_xrun: true`.
 
 `etc/modprobe.d/omdrc-snd-aloop.conf` removes that second pair by pointing the
 module's `timer_source` at the DAC card:

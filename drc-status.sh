@@ -2,35 +2,22 @@
 # Print the active DRC config label, or 'off'.
 # Exits 1 and prints 'inconsistent' if multiple different configs are running.
 
-# Config resolution — keep in sync with drc.sh: $OMDRC_CONF, else config.env
-# beside the script (run-from-repo mode), else ${PREFIX}/etc/open-media-drc/
-# omdrc.conf (installed mode).  Supplies GEOMETRY and OMDRC_STATE_DIR.
-base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Config resolution — keep in sync with drc.sh: explicit $OMDRC_CONF, then
+# ${PREFIX}/etc/open-media-drc/omdrc.conf.
 PREFIX="${PREFIX:-/usr/local}"
 
-OMDRC_REPO_MODE=false
 if [ -n "${OMDRC_CONF:-}" ] && [ -f "$OMDRC_CONF" ]; then
     . "$OMDRC_CONF"
-elif [ -f "$base_dir/config.env" ]; then
-    . "$base_dir/config.env"
-    OMDRC_REPO_MODE=true
 elif [ -f "$PREFIX/etc/open-media-drc/omdrc.conf" ]; then
     . "$PREFIX/etc/open-media-drc/omdrc.conf"
 fi
 GEOMETRY="${GEOMETRY:-flat}"
 
-# Where configs/<GEOMETRY>/ lives — needed to validate the runtime geometry
-# override below.  Same resolution as drc.sh.
-if $OMDRC_REPO_MODE; then
-    SITE_DIR="${OMDRC_SITE_DIR:-$base_dir}"
-else
-    SITE_DIR="${OMDRC_SITE_DIR:-$PREFIX/etc/open-media-drc}"
-fi
+# Runtime geometry is validated only against installed site data.
+SITE_DIR="${OMDRC_SITE_DIR:-$PREFIX/etc/open-media-drc}"
 
 if [ -n "${OMDRC_STATE_DIR:-}" ]; then
     STATE_DIR="$OMDRC_STATE_DIR"
-elif $OMDRC_REPO_MODE; then
-    STATE_DIR="$base_dir"
 elif [ "$(id -u)" -eq 0 ]; then
     STATE_DIR="/var/db/omdrc"
 else

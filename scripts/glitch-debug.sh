@@ -19,8 +19,22 @@
 set -u
 
 base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_FILE="$base_dir/.glitch-debug.enabled"
-LOG_FILE="$base_dir/glitch.log"
+PREFIX="${PREFIX:-/usr/local}"
+if [ -n "${OMDRC_CONF:-}" ] && [ -f "$OMDRC_CONF" ]; then
+  . "$OMDRC_CONF"
+elif [ -f "$PREFIX/etc/open-media-drc/omdrc.conf" ]; then
+  . "$PREFIX/etc/open-media-drc/omdrc.conf"
+fi
+if [ -n "${OMDRC_STATE_DIR:-}" ]; then
+  STATE_DIR="$OMDRC_STATE_DIR"
+elif [ "$(id -u)" -eq 0 ]; then
+  STATE_DIR=/var/db/omdrc
+else
+  STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omdrc"
+fi
+mkdir -p "$STATE_DIR" || exit 1
+STATE_FILE="$STATE_DIR/.glitch-debug.enabled"
+LOG_FILE="$STATE_DIR/glitch.log"
 PIDFILE="/tmp/glitch-monitor.pid"
 MONITOR="$base_dir/glitch-monitor.sh"
 ANALYZER="$base_dir/glitch-analyze.py"

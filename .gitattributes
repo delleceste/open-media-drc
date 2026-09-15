@@ -1,7 +1,5 @@
-# Release tarball hygiene: `git archive` (what GitHub release tarballs and the
-# FreeBSD port's USE_GITHUB fetch use) excludes everything marked
-# export-ignore.  The working checkout keeps all of it — run-from-repo mode is
-# unaffected.
+# Release tarball hygiene: `git archive` excludes everything marked
+# export-ignore.
 
 # Room-specific site data (this box's measured filters and configs — users
 # generate their own; the shipped default is configs/flat)
@@ -27,10 +25,6 @@
 /OKTO-DAC8-FreeBSD-44k1-flicker.md export-ignore
 /OKTO-DAC8-silent-first-open.md export-ignore
 /MPD-CURL-CPU-SPIN-FreeBSD.md export-ignore
-
-# Host-personal values (this box's user/paths/account) — a tarball user
-# configures via omdrc.conf.sample instead; repo-mode needs a checkout anyway
-/config.env export-ignore
 
 # Tooling / local state
 /.claude export-ignore

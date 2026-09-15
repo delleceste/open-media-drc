@@ -43,7 +43,7 @@ load_rc_config "$name"
 : ${omdrc_renderer_prefix:="@PREFIX@"}
 : ${omdrc_renderer_script:="@REPO_DIR@/scripts/omdrc-renderer"}
 # State directory holding last_renderer.  Leave empty to let the helper resolve
-# it the way drc.sh does (checkout in run-from-repo mode, /var/db/omdrc as root
+# it the way drc.sh does (/var/db/omdrc as root
 # otherwise).  Set it when this service and omdrcctrl would resolve DIFFERENT
 # directories and the toggle's choice would never be seen here — a mixed box
 # where the panel is installed under ${PREFIX} (state: the service user's

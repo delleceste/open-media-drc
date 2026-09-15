@@ -1,11 +1,16 @@
 bin/omdrc
 bin/omdrc-status
+bin/omdrc-glitch
 libexec/omdrc/drc.sh
 libexec/omdrc/drc-status.sh
 libexec/omdrc/scripts/REW2raw.sh
 libexec/omdrc/scripts/REW2raw-all-rates.sh
 libexec/omdrc/scripts/verify-bitperfect.sh
 libexec/omdrc/scripts/headroom_calc.py
+libexec/omdrc/scripts/glitch-debug.sh
+libexec/omdrc/scripts/glitch-monitor.sh
+libexec/omdrc/scripts/glitch-usbtap.sh
+libexec/omdrc/scripts/glitch-analyze.py
 libexec/omdrc/scripts/bitperfect-lib.py
 libexec/omdrc/scripts/bitperfect_runner.py
 libexec/omdrc/scripts/bitperfect_material.py

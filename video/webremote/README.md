@@ -74,7 +74,7 @@ pkg install python3 py39-flask ffmpeg mpv libbluray   # FreeBSD
 
 ## Configuration — `webremote.conf`
 
-INI, read live from this checkout (run-from-repo). Key sections:
+INI, installed as `/etc/omdrcvideo/webremote.conf`. Key sections:
 
 ```ini
 [server]
