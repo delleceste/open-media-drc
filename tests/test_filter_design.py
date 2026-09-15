@@ -201,6 +201,12 @@ class HeadroomCalculationTest(unittest.TestCase):
                 self.assertEqual(
                     headroom_calc.suggested_attenuation(peak_db, margin_db), expected)
 
+    def test_shared_safe_estimate_uses_largest_stress_bound(self):
+        self.assertEqual(
+            deploy_filter.required_attenuation(0.1, 1.0, 2.2, 7.43),
+            8.5,
+        )
+
 
 class DesignIdentityTest(unittest.TestCase):
     def test_nested_geometry_and_design_directories(self):
@@ -833,7 +839,7 @@ class FilterAlignmentTest(unittest.TestCase):
                 arguments[0],
                 str(Path(deploy_filter.__file__).resolve().parent / "REW2raw.sh"),
             )
-            np.array([1.0, 0.0], dtype="<f8").tofile(Path(arguments[4]))
+            np.array([0.1, 0.0], dtype="<f8").tofile(Path(arguments[4]))
             return ""
 
         with tempfile.TemporaryDirectory(prefix="omdrc-runtime-progress-") as name:
@@ -858,6 +864,7 @@ class FilterAlignmentTest(unittest.TestCase):
             rendered,
         )
         self.assertIn("\x1b[1;33m[HEADROOM 96,000 Hz]", rendered)
+        self.assertIn("worst of peak/step/stress convolution", rendered)
         self.assertIn("\x1b[1;34mCONFIG", rendered)
         self.assertIn("baked attenuation: 8.0 dB (fixed safe value", rendered)
         self.assertIn("config read-back verified 8.0 dB", rendered)

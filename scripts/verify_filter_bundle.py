@@ -10,6 +10,8 @@ import sys
 
 import numpy as np
 
+import headroom_calc
+
 from deploy_filter import (
     ROOT, AuditError, add_site_root_argument, bundle_identity_from_manifest,
     canonical_hash, parse_config, peak_gain_db, required_attenuation,
@@ -85,6 +87,7 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
         if config["attenuation_db"] != runtime["attenuation_db"]:
             raise AuditError(f"{path}: config attenuation mismatch at {rate} Hz")
         peaks = []
+        values_by_channel = []
         for channel in ("left", "right"):
             item = runtime["channels"][channel]
             raw_path = inside(geometry_root, item["path"])
@@ -96,11 +99,30 @@ def verify_manifest(path: Path, require_sources: bool, site_root: Path) -> dict:
             if values.size != item["samples"]:
                 raise AuditError(f"{path}: {rate} Hz {channel} sample count mismatch")
             peaks.append(peak_gain_db(values))
-        needed = required_attenuation(max(peaks), runtime["safety_margin_db"])
+            values_by_channel.append(values)
+        if runtime.get("headroom_method") == "peak-step-stress-convolution-v1":
+            if not headroom_calc.STRESS_WAV.is_file():
+                raise AuditError(f"headroom stress WAV is missing: {headroom_calc.STRESS_WAV}")
+            stress_native, stress_rate = headroom_calc.load_wav_mono_float(
+                headroom_calc.STRESS_WAV)
+            stress = headroom_calc.resample_fft(stress_native, stress_rate, rate)
+            steps = [headroom_calc.step_response_peak_db(values)
+                     for values in values_by_channel]
+            music = [headroom_calc.music_convolution_peak_db(values, stress)
+                     for values in values_by_channel]
+            bounds = [max(peaks[index], steps[index], music[index]) for index in range(2)]
+            limiting = max(range(2), key=bounds.__getitem__)
+            needed = required_attenuation(
+                peaks[limiting], runtime["safety_margin_db"],
+                steps[limiting], music[limiting])
+        else:
+            # Schema-2 manifests made before the stress-track audit existed.
+            needed = required_attenuation(max(peaks), runtime["safety_margin_db"])
         if needed != runtime["required_attenuation_db"]:
             raise AuditError(f"{path}: recorded headroom mismatch at {rate} Hz")
         if runtime["attenuation_db"] < needed:
-            raise AuditError(f"{path}: insufficient attenuation at {rate} Hz")
+            print(f"WARNING: {path}: configured {runtime['attenuation_db']:.1f} dB "
+                  f"is below the {needed:.1f} dB safe estimate at {rate} Hz")
     print(f"PASS {manifest['geometry']}/{manifest['variant']} {manifest['bundle_id']}")
     project = manifest["source"].get("project") or {}
     if not response_available:

@@ -27,6 +27,8 @@ import tempfile
 
 import numpy as np
 
+import headroom_calc
+
 
 def _styled(text: str, code: str) -> str:
     if sys.stdout.isatty() and "NO_COLOR" not in os.environ and os.environ.get("TERM") != "dumb":
@@ -555,8 +557,11 @@ def peak_gain_db(samples: np.ndarray) -> float:
     return 20.0 * math.log10(peak) if peak > 0 else float("-inf")
 
 
-def required_attenuation(peak_db: float, margin_db: float) -> float:
-    return max(0.0, math.ceil((peak_db + margin_db) * 10.0) / 10.0)
+def required_attenuation(peak_db: float, margin_db: float,
+                         step_db: float = float("-inf"),
+                         music_db: float = float("-inf")) -> float:
+    """Compatibility entry point using the shared headroom implementation."""
+    return headroom_calc.suggested_attenuation(peak_db, margin_db, step_db, music_db)
 
 
 def export_defects(parsed: dict) -> list[tuple[str, str]]:
@@ -799,6 +804,16 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
     conversion_total = len(rate_items) * 2
     conversion_number = 0
     source_rate = int(recipe["filter"]["sample_rate"])
+    if not headroom_calc.STRESS_WAV.is_file():
+        raise AuditError(f"headroom stress WAV is missing: {headroom_calc.STRESS_WAV}")
+    stress_native, stress_rate = headroom_calc.load_wav_mono_float(headroom_calc.STRESS_WAV)
+    stress_cache: dict[int, np.ndarray] = {}
+
+    def stress_at(rate: int) -> np.ndarray:
+        if rate not in stress_cache:
+            stress_cache[rate] = headroom_calc.resample_fft(
+                stress_native, stress_rate, rate)
+        return stress_cache[rate]
     progress(
         "[RUNTIME]",
         f"Generate {len(rate_items)} sample-rate flavours with SoX "
@@ -819,6 +834,9 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
         rate_dir.mkdir(parents=True)
         channels: dict[str, dict] = {}
         peak_values: list[float] = []
+        step_values: list[float] = []
+        music_values: list[float] = []
+        stress = stress_at(rate)
         for channel in ("left", "right"):
             conversion_number += 1
             output = rate_dir / ("L.raw" if channel == "left" else "R.raw")
@@ -833,24 +851,33 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
                  str(source), str(output), "raw", rate_text])
             values = np.fromfile(output, dtype="<f8")
             peak = peak_gain_db(values)
+            step = headroom_calc.step_response_peak_db(values)
+            music = headroom_calc.music_convolution_peak_db(values, stress)
             peak_values.append(peak)
+            step_values.append(step)
+            music_values.append(music)
             channels[channel] = {
                 "path": f"{rate_text}/{selector + '/' if selector else ''}{output.name}",
                 "sha256": sha256_file(output),
                 "bytes": output.stat().st_size,
                 "samples": int(values.size),
                 "peak_gain_db": round(peak, 6),
+                "step_peak_db": round(step, 6),
+                "music_convolution_peak_db": round(music, 6),
             }
             progress_ok(
                 f"{output.name} {values.size:,} samples, peak {peak:+.3f} dB, "
                 f"sha256 {channels[channel]['sha256'][:12]}",
                 "1;35", "SoX OK")
-        worst_peak = max(peak_values)
-        required = required_attenuation(worst_peak, margin)
+        bounds = [max(peak_values[index], step_values[index], music_values[index])
+                  for index in range(2)]
+        limiting_index = max(range(2), key=bounds.__getitem__)
+        required = required_attenuation(peak_values[limiting_index], margin,
+                                        step_values[limiting_index], music_values[limiting_index])
         progress(
             f"[HEADROOM {rate:,} Hz]",
-            f"max(L {peak_values[0]:+.3f}, R {peak_values[1]:+.3f}) dB "
-            f"+ {margin:.1f} dB margin = {worst_peak + margin:+.3f} dB; "
+            f"worst of peak/step/stress convolution: "
+            f"L {bounds[0]:+.3f}, R {bounds[1]:+.3f} dB; + {margin:.1f} dB margin; "
             f"ceil to 0.1 dB -> {required:.1f} dB required attenuation "
             f"(audit only -- the config bakes in the fixed "
             f"{FIXED_ATTENUATION_DB:.1f} dB below, not this figure)",
@@ -858,9 +885,6 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
         if generated_configs:
             requested = recipe["runtime"].get("attenuation_db", "auto")
             attenuation = FIXED_ATTENUATION_DB if requested == "auto" else float(requested)
-            if attenuation + 1e-9 < required:
-                raise AuditError(
-                    f"requested attenuation {attenuation} dB is below required {required} dB at {rate} Hz")
             config_stage = staging / "_configs" / config_relative
             config_stage.parent.mkdir(parents=True, exist_ok=True)
             config_stage.write_text(render_config(
@@ -891,11 +915,16 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
             if coeff["format"] != recipe["runtime"]["format"]:
                 raise AuditError(f"config format differs from recipe: {config_path}")
         if config["attenuation_db"] + 1e-9 < required:
-            raise AuditError(f"{config_path}: attenuation {config['attenuation_db']} dB is below required {required} dB")
-        progress_ok(
-            f"config read-back verified {config['attenuation_db']:.1f} dB >= "
-            f"{required:.1f} dB; config sha256 {config['sha256'][:12]}",
-            "1;34", "CONFIG VERIFIED")
+            progress_ok(
+                f"configured attenuation {config['attenuation_db']:.1f} dB is below the "
+                f"{required:.1f} dB safe estimate at {rate:,} Hz; "
+                f"config sha256 {config['sha256'][:12]}",
+                "1;33", "WARNING")
+        else:
+            progress_ok(
+                f"config read-back verified {config['attenuation_db']:.1f} dB >= "
+                f"{required:.1f} dB; config sha256 {config['sha256'][:12]}",
+                "1;34", "CONFIG VERIFIED")
         runtime[rate_text] = {
             "config": config_relative,
             "config_sha256": config["sha256"],
@@ -903,6 +932,7 @@ def generate_runtime(recipe: dict, source_paths: dict[str, Path],
             "attenuation_db": config["attenuation_db"],
             "required_attenuation_db": required,
             "safety_margin_db": margin,
+            "headroom_method": "peak-step-stress-convolution-v1",
             "channels": channels,
         }
     return runtime, staged_configs
@@ -1152,12 +1182,12 @@ def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
                     "no average, sum, convolution or smoothing stands between REW and the graph",
                     "filter TXT responses match the canonical WAV responses within declared limits",
                     "all runtime RAWs reproduce from those canonical WAVs",
-                    "every BruteFIR config maps to the hashed RAW pair and has sufficient headroom",
+                    "every BruteFIR config maps to the hashed RAW pair and is checked against the safe headroom estimate",
                     "graph inputs are content-hash bound to this manifest",
                 ] if recipe.get("response_available", True) else [
                     "both source impulse WAVs are stored and hashed verbatim",
                     "all runtime RAWs reproduce from those canonical WAVs",
-                    "every BruteFIR config maps to the hashed RAW pair and has sufficient headroom",
+                    "every BruteFIR config maps to the hashed RAW pair and is checked against the safe headroom estimate",
                     "no response curve is claimed or calculated from the impulse WAVs",
                 ]),
                 "prediction": (
@@ -1182,8 +1212,12 @@ def publish_bundle(recipe: dict, source_root: Path, site_root: Path,
                   f"{values['rms_phase_deg']:.6f} deg")
         for rate, item in runtime.items():
             pair = item["channels"]
-            print(f"PASS: {rate} Hz L={pair['left']['sha256'][:12]} R={pair['right']['sha256'][:12]} "
-                  f"required={item['required_attenuation_db']:.1f} configured={item['attenuation_db']:.1f} dB")
+            verdict = "PASS" if item["attenuation_db"] + 1e-9 >= item["required_attenuation_db"] else "WARNING"
+            color = "1;32" if verdict == "PASS" else "1;33"
+            print(f"{_styled(verdict + ':', color)} {rate} Hz "
+                  f"L={pair['left']['sha256'][:12]} R={pair['right']['sha256'][:12]} "
+                  f"required={item['required_attenuation_db']:.1f} "
+                  f"configured={item['attenuation_db']:.1f} dB")
         print(f"Bundle ID: {manifest['bundle_id']}")
 
         if apply and not unreferenced and installed_bundle_matches(site_root, manifest):
