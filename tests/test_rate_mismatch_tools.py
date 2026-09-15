@@ -223,18 +223,24 @@ class StatusRateLabel(unittest.TestCase):
     otherwise it is a bare [MISMATCH].  Both must keep the word MISMATCH, which
     bitperfect_runner.py keys on."""
 
-    def _status(self, last_arg: str) -> str:
+    def _status_output(self, last_arg: str, saved_attenuation: str | None = None) -> str:
         import os
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             site, state, shims = root / "site", root / "state", root / "bin"
             (site / "configs/flat").mkdir(parents=True)
-            (site / "configs/flat/brutefir-192000.conf").write_text("sampling_rate: 192000;\n")
+            active_conf = site / "configs/flat/brutefir-192000.conf"
+            active_conf.write_text(
+                'sampling_rate: 192000;\n'
+                'coeff "left" {\n  attenuation: 7.3;\n};\n'
+                'coeff "right" {\n  attenuation: 7.3;\n};\n')
             state.mkdir(); shims.mkdir()
             (state / "last_arg").write_text(last_arg + "\n")
             (state / "last_power").write_text("on\n")
+            if saved_attenuation is not None:
+                (state / "brutefir-attenuation-db").write_text(saved_attenuation + "\n")
             (shims / "ps").write_text(
-                "#!/bin/sh\necho 'brutefir /x/configs/flat/brutefir-192000.conf -daemon'\n")
+                f"#!/bin/sh\necho 'brutefir {active_conf} -daemon'\n")
             (shims / "mpc").write_text(
                 "#!/bin/sh\n"
                 "case \"$*\" in\n"
@@ -250,7 +256,20 @@ class StatusRateLabel(unittest.TestCase):
                        PATH=f"{shims}:{os.environ['PATH']}")
             out = subprocess.run([str(ROOT / "drc.sh"), "status"], env=env,
                                  capture_output=True, text=True, timeout=10).stdout
+        return out
+
+    def _status(self, last_arg: str) -> str:
+        out = self._status_output(last_arg)
         return next((l for l in out.splitlines() if l.startswith("Rate:")), "")
+
+    def test_first_run_attenuation_comes_from_running_configuration(self):
+        out = self._status_output("192000")
+        self.assertIn("Attenuation:      7.3 dB (from configuration; applied)", out)
+
+    def test_saved_attenuation_takes_precedence_over_configuration(self):
+        out = self._status_output("192000", saved_attenuation="5.6")
+        self.assertIn("Attenuation:      5.6 dB (applied)", out)
+        self.assertNotIn("from configuration", out)
 
     def test_native_mode_is_a_bare_mismatch(self):
         line = self._status("192000")

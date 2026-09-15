@@ -1257,6 +1257,7 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
 
   # brutefir: extract rate and optional variant from the running conf path
   _st_bf_args=$(ps -ax -o args= 2>/dev/null | awk '($1=="brutefir" || $1~/\/brutefir$/) && /\.conf/{print; exit}')
+  _st_bf_conf_path=$(echo "$_st_bf_args" | grep -o '[^ ]*brutefir-[0-9][^ /]*\.conf' | head -1) || true
   _st_bf_conf=$(echo "$_st_bf_args" | grep -o 'brutefir-[0-9][^ /]*\.conf' | head -1) || true
   _st_bf_rate=$(echo "$_st_bf_conf" | sed 's/brutefir-\([0-9]*\).*/\1/')
   _st_bf_var=$(echo "$_st_bf_conf"  | sed 's/brutefir-[0-9]*//;s/\.conf//')
@@ -1292,14 +1293,33 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
   printf "%-17s %s\n" "Geometry:"    "$GEOMETRY"
   printf "%-17s %s\n" "Active config:" "$(state_label "$_st_drc")"
   _st_attenuation=""
+  _st_attenuation_source=""
+  _st_attenuation_valid=false
   if [ -r "$ATTENUATION_FILE" ]; then
     _st_attenuation=$(tr -d "[:space:]" < "$ATTENUATION_FILE")
     # Migrate/display the short-lived gain-style negative representation.
     _st_attenuation="${_st_attenuation#-}"
+    _st_attenuation_source="saved"
+    [[ "$_st_attenuation" =~ ^([2-9]|1[0-2])(\.[0-9])?$ ]] && _st_attenuation_valid=true
+  elif [ -r "$_st_bf_conf_path" ]; then
+    # First run: until the web UI has written an override, the coefficient
+    # attenuation in the config loaded by the running process is authoritative.
+    # Use the largest value for deliberately asymmetric configurations, as the
+    # web endpoint does.
+    _st_attenuation=$(awk '/attenuation:[[:space:]]*[-0-9.]+/ {
+      value=$2; gsub(/;/, "", value)
+      if (!seen || value > maximum) maximum=value; seen=1
+    } END { if (seen) printf "%.1f", maximum }' "$_st_bf_conf_path")
+    _st_attenuation_source="configuration"
+    [[ "$_st_attenuation" =~ ^[0-9]+(\.[0-9]+)?$ ]] && _st_attenuation_valid=true
   fi
-  if [[ "$_st_attenuation" =~ ^([2-9]|1[0-2])(\.[0-9])?$ ]]; then
+  if $_st_attenuation_valid; then
     if [ -n "$_st_bf_rate" ]; then
-      printf "%-17s %s dB (applied)\n" "Attenuation:" "$_st_attenuation"
+      if [ "$_st_attenuation_source" = "configuration" ]; then
+        printf "%-17s %s dB (from configuration; applied)\n" "Attenuation:" "$_st_attenuation"
+      else
+        printf "%-17s %s dB (applied)\n" "Attenuation:" "$_st_attenuation"
+      fi
     else
       printf "%-17s %s dB (saved; BruteFIR stopped)\n" "Attenuation:" "$_st_attenuation"
     fi
