@@ -9,8 +9,6 @@
 /etc/rc.d/brutefir_drc
 /etc/rc.d/upmpdcli
 /etc/rc.d/omdrc_renderer
-/etc/systemd/user/upmpdcli.service
-/etc/systemd/user/omdrc-renderer.service
 /video/webremote/systemd/omdrcvideo.service
 /video/webremote/rc.d/omdrcvideo
 # Rendered by CMake from webremote.conf.in (holds the OMDb key); never tracked.
@@ -19,6 +17,8 @@
 /etc/systemd/system/drc-usb-audio.service
 /etc/systemd/system/omdrc-audio-roles.service
 /etc/systemd/system/upmpdcli.service
+/etc/systemd/system/omdrc-renderer.service
+/etc/systemd/system/qobuzconnect2mpd.service
 /etc/systemd/system/mpd.service.d/open-media-drc.conf
 /video/play-media.desktop
 /video/play-bluray.desktop

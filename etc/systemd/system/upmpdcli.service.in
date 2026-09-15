@@ -1,18 +1,23 @@
 [Unit]
-Description=upmpdcli UPnP/OpenHome MPD renderer (user service)
+Description=upmpdcli UPnP/OpenHome MPD renderer
 After=network-online.target sound.target
 Wants=network-online.target
 
 # Template — rendered to upmpdcli.service by CMake (see cmake/).
-# systemd --user unit: runs as the audio user (no User= line), reads its config
-# straight from the checkout.  This is the Linux scope-aligned renderer: both
-# upmpdcli and qobuzconnect2mpd run as --user services so omdrcctrl's renderer
-# toggle can drive them with `systemctl --user` (no sudo).  Symlink into
-# ~/.config/systemd/user/ and enable lingering so it survives logout / starts at
-# boot:  loginctl enable-linger @AUDIO_USER@
+# System-scope unit with User=@AUDIO_USER@ (matching mpd.service's own
+# /etc drop-in and omdrcctrl.service), not systemd --user: a --user unit's
+# After=/Wants=network-online.target is silently a no-op (that target does not
+# exist for `systemctl --user`), which let this start before DHCP/DNS were up
+# and, for qobuzconnect2mpd, left mDNS discovery permanently broken for the
+# whole run since it joins its multicast group once at startup with no retry.
+# System scope makes the ordering real and drops the need for omdrcctrl (a
+# system service reaching into a user session bus via XDG_RUNTIME_DIR/
+# DBUS_SESSION_BUS_ADDRESS) to do anything special beyond the scoped sudo
+# grant documented in omdrc-ctrl/README.md.
 
 [Service]
 Type=simple
+User=@AUDIO_USER@
 # upmpdcli is a third-party binary, so its path is whatever the host has,
 # not this project's install prefix: a distro package puts it in /usr/bin,
 # a source build in /usr/local/bin.  CMake substitutes the one find_program
@@ -38,4 +43,4 @@ Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

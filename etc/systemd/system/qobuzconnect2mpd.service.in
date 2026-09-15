@@ -1,0 +1,44 @@
+[Unit]
+Description=Qobuz Connect to MPD bridge
+After=network-online.target mpd.service
+Wants=network-online.target
+
+# Template — rendered to qobuzconnect2mpd.service by CMake (cmake/renderers.cmake).
+# System-scope unit with User=@AUDIO_USER@, mirroring upmpdcli.service and
+# omdrcctrl.service — not systemd --user. Two reasons, both hit in practice:
+#
+#  1. A --user unit's After=/Wants=network-online.target is silently a no-op
+#     (that target does not exist for `systemctl --user`), so this used to
+#     start before DHCP/DNS were up.  qobuzconnect2mpd fetches its Qobuz app
+#     credentials (bundle.js) and joins its mDNS multicast group exactly once
+#     at startup with no retry on failure, so that race did not self-heal: it
+#     left the phone unable to discover the endpoint, and every reconnect
+#     failing with HTTP 400, for the rest of the run.
+#  2. omdrcctrl's web toggle and this box's boot-time renderer restore both
+#     need to start/stop this unit; system scope needs the scoped sudoers
+#     grant in omdrc-ctrl/README.md instead of a user-session bus.
+#
+# XDG_STATE_HOME/XDG_CONFIG_HOME are set explicitly rather than left to the
+# binary's own $HOME-derived fallback: User= guarantees $HOME is still
+# correct here, but qobuzconnect2mpd's *state dir* (where its Qobuz OAuth
+# token is cached) is its own runtime lookup, not a systemd specifier, and a
+# future build that stops defaulting quietly could decide "no token here" and
+# re-run a real password login against Qobuz on every boot instead of erroring
+# — the kind of thing that gets an account rate-limited.  Keep qconnectstatedir
+# in qobuzconnect2mpd.conf pointed at the same path (FreeBSD pins it the same
+# explicit way, to /var/db/qobuzconnect2mpd).
+
+[Service]
+Type=simple
+User=@AUDIO_USER@
+Environment=HOME=@AUDIO_HOME@
+Environment=XDG_CONFIG_HOME=@AUDIO_HOME@/.config
+Environment=XDG_STATE_HOME=@AUDIO_HOME@/.local/state
+ExecStart=@QOBUZCONNECT2MPD_BIN@ -c @AUDIO_HOME@/.config/qobuzconnect2mpd/qobuzconnect2mpd.conf
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

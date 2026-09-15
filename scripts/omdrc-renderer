@@ -11,10 +11,10 @@
 # landing on the one enabled in rc.conf.
 #
 # It is what the boot services run:
-#   FreeBSD  etc/rc.d/omdrc_renderer          (root, after musicpd)
-#   Linux    etc/systemd/user/omdrc-renderer.service  (--user, oneshot)
-# Both renderers must then be left DISABLED in rc.conf / the systemd user
-# default target, or rc/systemd would start one behind this script's back.
+#   FreeBSD  etc/rc.d/omdrc_renderer                   (root, after musicpd)
+#   Linux    etc/systemd/system/omdrc-renderer.service (User=@AUDIO_USER@, oneshot)
+# Both renderers must then be left DISABLED (rc.conf, or `systemctl disable`),
+# or rc/systemd would start one behind this script's back.
 #
 # usage: omdrc-renderer start|stop|status|show|set <renderer>
 #
@@ -29,11 +29,14 @@ set -eu
 
 # ── paths / state ─────────────────────────────────────────────────────────────
 # Mirrors drc.sh's resolution so the whole stack shares one state directory
-# (see drc.sh "paths / state" and doc/FREEBSD-PORT-PLAN.md 1.4).  In an
-# installed (non-repo) setup omdrcctrl runs as an unprivileged service user
-# while this script runs as root at boot, and the two defaults then differ
-# (~/.local/state/omdrc vs /var/db/omdrc) — pin OMDRC_STATE_DIR in omdrc.conf
-# there so the toggle and the boot restore read the same file.
+# (see drc.sh "paths / state" and doc/FREEBSD-PORT-PLAN.md 1.4).  On FreeBSD,
+# an installed (non-repo) setup has omdrcctrl running as an unprivileged
+# service user while this script runs as root at boot, and the two defaults
+# then differ (~/.local/state/omdrc vs /var/db/omdrc) — pin OMDRC_STATE_DIR in
+# omdrc.conf there so the toggle and the boot restore read the same file. On
+# Linux this script's own unit also runs as User=@AUDIO_USER@ (not root), the
+# same identity as omdrcctrl, so the two already agree without pinning
+# anything.
 here=$(cd "$(dirname "$0")" && pwd)
 base_dir=$(cd "$here/.." && pwd)
 PREFIX="${PREFIX:-/usr/local}"
@@ -111,15 +114,16 @@ write_remembered() {
 # ── service control ───────────────────────────────────────────────────────────
 # FreeBSD: rc services driven with the "one" verbs, which work regardless of the
 # service's own rcvar — that is deliberate, both renderers stay disabled in
-# rc.conf and only this script decides which one runs.  Linux: systemd --user
-# units (the renderer/app layer runs in user scope so the omdrcctrl toggle can
-# drive it without sudo).
+# rc.conf and only this script decides which one runs.  Linux: systemd system
+# units with User=@AUDIO_USER@ (not --user — see the units' own header
+# comments), started/stopped the same way FreeBSD's rc.d grant already needs:
+# sudo when not already root.  Status queries need no privilege on either OS.
 SUDO=""
 [ "$(id -u)" -eq 0 ] || SUDO="sudo"
 
 svc_start() {
 	if $IS_LINUX; then
-		systemctl --user start "$1"
+		$SUDO systemctl start "$1.service"
 	else
 		$SUDO service "$1" onestart
 	fi
@@ -127,7 +131,7 @@ svc_start() {
 
 svc_stop() {
 	if $IS_LINUX; then
-		systemctl --user stop "$1"
+		$SUDO systemctl stop "$1.service"
 	else
 		$SUDO service "$1" onestop
 	fi
@@ -135,7 +139,7 @@ svc_stop() {
 
 svc_running() {
 	if $IS_LINUX; then
-		systemctl --user is-active --quiet "$1" && return 0
+		systemctl is-active --quiet "$1.service" && return 0
 		return 1
 	fi
 	service "$1" onestatus >/dev/null 2>&1 && return 0

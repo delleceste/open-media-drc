@@ -8,10 +8,14 @@ Type=Application
 Name=Chromium (No DRC)
 Comment=Chromium with BruteFIR/DRC bypassed so the browser plays to the DAC
 Exec=@OMDRC_BROWSER_NODRC_DIR@/chromium-nodrc.sh %U
-# The chromium port ships its icon as `chrome` (hicolor/*/apps/chrome.png);
-# there is no icon named `chromium`, which showed a blank launcher entry.
-Icon=chrome
+# Icon and WM class differ by OS (browser-audio.cmake sets both): on Linux
+# the distro package installs its icon as `chromium` and the running browser's
+# WM_CLASS is "chromium" too (verified with `xprop WM_CLASS` on Arch). The
+# FreeBSD port instead ships its icon as `chrome` (hicolor/*/apps/chrome.png,
+# no icon named `chromium` there), which previously left a blank entry on
+# Linux when this file hardcoded that value for both.
+Icon=@OMDRC_CHROMIUM_ICON@
 Terminal=false
 Categories=Network;WebBrowser;
 MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
-StartupWMClass=chrome
+StartupWMClass=@OMDRC_CHROMIUM_WMCLASS@

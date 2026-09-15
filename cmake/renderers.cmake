@@ -1,8 +1,15 @@
 # renderers.cmake — MPD + upmpdcli config and service integration.
 #
-# MPD is a headless system service.  The switchable renderer layer is user scope
-# on Linux (upmpdcli and external qobuzconnect2mpd must share the scope driven by
-# omdrcctrl/omdrc-renderer) and rc.d on FreeBSD.  Configs are rendered from
+# MPD is a headless system service.  On Linux the switchable renderer layer
+# (upmpdcli, external qobuzconnect2mpd, and the omdrc-renderer boot restorer)
+# are ALSO system-scope units with User=@AUDIO_USER@ — the same shape as
+# mpd.service's own /etc drop-in and omdrcctrl.service, not systemd --user.
+# A --user unit's network-online.target is silently a no-op (see each unit's
+# own header comment for what that broke in practice), and system scope needs
+# no user-session bus for omdrcctrl/omdrc-renderer to start or stop them —
+# just the scoped sudoers grant documented in omdrc-ctrl/README.md, which
+# mirrors the rc.d NOPASSWD grant FreeBSD already needs for the same job.
+# FreeBSD drives the renderers with rc.d directly.  Configs are rendered from
 # host.cmake and install-guarded.
 
 set(_etc     "etc/open-media-drc")
@@ -86,9 +93,9 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/mpd-omdrc-dropin.conf"
             DESTINATION share/omdrc/mpd.service.d RENAME open-media-drc.conf)
 
-    # upmpdcli user unit.  It must share scope with qobuzconnect2mpd because
-    # omdrc-renderer and the web UI switch both through `systemctl --user`.
-    file(READ etc/systemd/user/upmpdcli.service.in _s)
+    # upmpdcli system unit (User=@AUDIO_USER@ — see the template's own header
+    # for why this moved off systemd --user).
+    file(READ etc/systemd/system/upmpdcli.service.in _s)
     string(REPLACE "@REPO_DIR@/upmpdcli/upmpdcli.conf" "${_siteetc}/upmpdcli.conf" _s "${_s}")
     # ExecStart points at wherever upmpdcli actually is (dependencies.cmake
     # found it), not at this project's prefix: it is packaged by the distro on
@@ -97,17 +104,61 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     string(REPLACE "@UPMPDCLI_BIN@" "${_upmpdcli_bin}" _s "${_s}")
     _omdrc_common(_s)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" "${_s}")
-    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/user)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/system)
 
-    # omdrc-renderer user unit: enable THIS instead of a renderer, so the box
+    # omdrc-renderer system unit: enable THIS instead of a renderer, so the box
     # comes back on the renderer it was left on (see the unit's comment).
-    file(READ etc/systemd/user/omdrc-renderer.service.in _r)
+    file(READ etc/systemd/system/omdrc-renderer.service.in _r)
     string(REPLACE "@REPO_DIR@/scripts/omdrc-renderer" "${_renderer_helper}" _r "${_r}")
     _omdrc_common(_r)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc-renderer.service" "${_r}")
-    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omdrc-renderer.service" DESTINATION lib/systemd/user)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omdrc-renderer.service" DESTINATION lib/systemd/system)
 
-    install(CODE "message(STATUS \"renderers: mpd.conf + user-scope upmpdcli/omdrc-renderer units + mpd /etc drop-in installed (see the final checklist)\")")
+    # qobuzconnect2mpd system unit — only if the (optional, separately built)
+    # binary was actually found; a unit whose ExecStart cannot resolve is worse
+    # than no unit (see browser-audio.cmake's identical reasoning for launchers).
+    if(OMDRC_TOOL_QOBUZCONNECT2MPD)
+        file(READ etc/systemd/system/qobuzconnect2mpd.service.in _q)
+        string(REPLACE "@QOBUZCONNECT2MPD_BIN@" "${OMDRC_TOOL_QOBUZCONNECT2MPD}" _q "${_q}")
+        _omdrc_common(_q)
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qobuzconnect2mpd.service" "${_q}")
+        install(FILES "${CMAKE_CURRENT_BINARY_DIR}/qobuzconnect2mpd.service"
+                DESTINATION lib/systemd/system)
+        message(STATUS "  ${OMDRC_GREEN}qobuzconnect2mpd.service${OMDRC_RESET} <- ${OMDRC_TOOL_QOBUZCONNECT2MPD}")
+    else()
+        message(STATUS "  ${OMDRC_DIM}qobuzconnect2mpd.service <- qobuzconnect2mpd not found, skipped${OMDRC_RESET}")
+    endif()
+
+    # sudoers snippet for omdrcctrl's web toggle and omdrc-renderer (both run as
+    # AUDIO_USER, both need root to start/stop the two system units above).
+    # Staged under the prefix, like the udev rule / mpd drop-in below it — never
+    # written into /etc/sudoers.d directly, which is host state a packaged or
+    # DESTDIR build must not touch (see the unit's own header comment). Syntax-
+    # checked with visudo now so a bad substitution fails the install loudly
+    # instead of silently shipping a snippet that would break sudo entirely.
+    file(READ etc/sudoers.d/omdrcctrl-renderer.in _sd)
+    string(REPLACE "@PREFIX@" "${CMAKE_INSTALL_PREFIX}" _sd "${_sd}")
+    _omdrc_common(_sd)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrcctrl-renderer.sudoers" "${_sd}")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omdrcctrl-renderer.sudoers"
+            DESTINATION share/omdrc/sudoers.d
+            RENAME omdrcctrl-renderer
+            PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ)
+    find_program(OMDRC_VISUDO visudo)
+    if(OMDRC_VISUDO)
+        install(CODE "
+          execute_process(
+              COMMAND \"${OMDRC_VISUDO}\" -cf \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/share/omdrc/sudoers.d/omdrcctrl-renderer\"
+              RESULT_VARIABLE _omdrc_vc OUTPUT_VARIABLE _omdrc_vo ERROR_VARIABLE _omdrc_ve)
+          if(NOT _omdrc_vc EQUAL 0)
+              message(FATAL_ERROR \"renderers: rendered sudoers snippet failed visudo -c: \${_omdrc_vo}\${_omdrc_ve}\")
+          endif()
+        ")
+    else()
+        message(STATUS "  ${OMDRC_DIM}renderers: visudo not found, skipping sudoers syntax check${OMDRC_RESET}")
+    endif()
+
+    install(CODE "message(STATUS \"renderers: mpd.conf + system-scope upmpdcli/omdrc-renderer/qobuzconnect2mpd units + mpd /etc drop-in + sudoers snippet installed (see the final checklist)\")")
 else()  # FreeBSD
     # musicpd.conf (FreeBSD MPD package == musicpd)
     file(READ mpd/musicpd.conf.in _m)

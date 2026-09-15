@@ -65,6 +65,19 @@ set(_omdrc_browsers
     "chromium@chromium|chromium-browser|chrome"
     "chrome@google-chrome|google-chrome-stable")
 
+# chromium-nodrc.desktop.in's Icon/StartupWMClass are OS-specific: on Linux the
+# distro package's icon and the running browser's WM_CLASS are both "chromium"
+# (verified with `xprop WM_CLASS` on Arch); the FreeBSD port instead ships its
+# icon as "chrome" and has no icon named "chromium" (see browser-nodrc/lib.sh's
+# browser_resolve() comment on why the port's binary is named `chrome`).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(OMDRC_CHROMIUM_ICON "chromium")
+    set(OMDRC_CHROMIUM_WMCLASS "chromium")
+else()
+    set(OMDRC_CHROMIUM_ICON "chrome")
+    set(OMDRC_CHROMIUM_WMCLASS "chrome")
+endif()
+
 message(STATUS "${OMDRC_BOLD}browser-audio: No-DRC launcher entries${OMDRC_RESET}")
 set(_omdrc_desktop_installed FALSE)
 foreach(_entry ${_omdrc_browsers})

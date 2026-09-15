@@ -1,0 +1,23 @@
+# omdrcctrl-renderer — passwordless sudo for exactly the two renderer units'
+# start/stop, nothing else.  Needed because upmpdcli.service and
+# qobuzconnect2mpd.service are systemd SYSTEM units with User=@AUDIO_USER@ (not
+# systemd --user — see cmake/renderers.cmake and each unit's own header
+# comment for why), so the two things that switch between them —
+# omdrcctrl's web toggle and the omdrc-renderer boot restorer — both run as
+# @AUDIO_USER@ and need root to start/stop a system unit.  This is the Linux
+# equivalent of the FreeBSD rc.d NOPASSWD grant in omdrc-ctrl/README.md.
+#
+# Rendered by CMake (cmake/renderers.cmake) and staged under
+# @PREFIX@/share/omdrc/sudoers.d/omdrcctrl-renderer, syntax-checked with
+# `visudo -c` at install time — but NOT written into /etc/sudoers.d itself:
+# like the udev rule / mpd drop-in / modprobe.d files, that directory is
+# outside CMAKE_INSTALL_PREFIX and is host state a packaged or DESTDIR build
+# must not touch. Copy it into place as part of the first-install checklist:
+#
+#	sudo cp @PREFIX@/share/omdrc/sudoers.d/omdrcctrl-renderer /etc/sudoers.d/
+#	sudo chmod 0440 /etc/sudoers.d/omdrcctrl-renderer
+#	sudo visudo -c
+#
+@AUDIO_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl start qobuzconnect2mpd.service, \
+    /usr/bin/systemctl stop qobuzconnect2mpd.service, \
+    /usr/bin/systemctl start upmpdcli.service, /usr/bin/systemctl stop upmpdcli.service

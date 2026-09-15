@@ -284,12 +284,15 @@ sudo systemctl enable --now omdrcctrl
 sudo systemctl status omdrcctrl
 ```
 
-Renderer switching drives the `qobuzconnect2mpd` / `upmpdcli` `systemctl --user`
-services. The system service reaches that user bus by deriving
-`XDG_RUNTIME_DIR` from the service user's uid, which requires
-`/run/user/<uid>` to exist. If `AUDIO_USER` is not always logged in, enable
-lingering once so the runtime dir (and thus the toggle) survives
-logout:
+Renderer switching drives the `qobuzconnect2mpd` / `upmpdcli` systemd SYSTEM
+services (`User=AUDIO_USER`, not `systemctl --user`). `AUDIO_USER` needs
+passwordless sudo for exactly those two units' start/stop — see the sudoers
+snippet under [Renderer switching](#renderer-switching).
+
+omdrcvideo (the video web remote) is the one piece that stays `systemctl
+--user`, since it drives the desktop session's own idle mpv over that
+session's socket. If `AUDIO_USER` is not always logged in, enable lingering
+once so its runtime dir survives logout:
 
 ```bash
 sudo loginctl enable-linger myuser
@@ -1356,7 +1359,7 @@ OAuth panel so upmpdcli picks up a freshly stored token.
 
 ### `POST /qconnect/restart`
 
-Restarts qobuzconnect2mpd: on Linux via `systemctl --user stop`+`start`, on
+Restarts qobuzconnect2mpd: on Linux via `sudo systemctl stop`+`start`, on
 FreeBSD via `sudo service qobuzconnect2mpd onestop`+`onestart`. Enabled in the
 web UI only while qobuzconnect2mpd is the active renderer.
 
@@ -1370,8 +1373,8 @@ web UI only while qobuzconnect2mpd is the active renderer.
 ### `GET /qconnect/services`
 
 Returns the running state of the two mutually-exclusive renderers, polled by the
-web UI to keep the toggle in sync with reality (Linux: `systemctl --user
-is-active <name>`; FreeBSD: `service <name> onestatus`).
+web UI to keep the toggle in sync with reality (Linux: `systemctl
+is-active <name>`, unprivileged; FreeBSD: `service <name> onestatus`).
 
 `remembered` is the renderer recorded by the last successful switch — the one
 the boot service restores after a reboot (see `POST /qconnect/switch`). It is
@@ -1389,9 +1392,9 @@ the boot service restores after a reboot (see `POST /qconnect/switch`). It is
 Switches the active renderer. qobuzconnect2mpd and upmpdcli must never run at the
 same time, so the currently-running service is stopped first, MPD playback is
 stopped and its queue cleared (`mpc stop` / `mpc clear`), then the target is
-started. On Linux this is done with `systemctl --user start|stop` (both
-renderers are systemd `--user` services, so no privileges are needed); on
-FreeBSD with `sudo service <name> onestart|onestop`.
+started. On Linux this is done with `sudo systemctl start|stop` (both
+renderers are systemd system services with `User=AUDIO_USER`, needing the
+sudoers grant above); on FreeBSD with `sudo service <name> onestart|onestop`.
 
 ```json
 // request
@@ -1413,11 +1416,34 @@ failure — with the tail of its own log in `detail`, which the card shows in
 place rather than in a toast.  A failed switch is not remembered for the next
 boot.
 
-**Linux:** both `qobuzconnect2mpd` and `upmpdcli` must be installed as systemd
-`--user` services for `AUDIO_USER`. The omdrcctrl system service reaches that
-user's bus through `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`; no
-`sudoers` entry is required. Enable lingering for `AUDIO_USER` so the user bus
-exists on a headless system.
+**Linux:** both `qobuzconnect2mpd` and `upmpdcli` are systemd SYSTEM services
+with `User=AUDIO_USER` (like `mpd.service`'s own `/etc` drop-in and
+`omdrcctrl.service` itself) — deliberately not `systemd --user`. A `--user`
+unit's `After=network-online.target` is silently a no-op (that target does not
+exist for `systemctl --user`), which let the renderer start before DHCP/DNS
+were up; for `qobuzconnect2mpd` that is not cosmetic, since it fetches its
+Qobuz app credentials and joins its mDNS multicast group exactly once at
+startup with no retry, so a race there left the phone unable to discover the
+endpoint and every Qobuz login failing for the rest of that boot.
+
+Because they are system units, `AUDIO_USER` (the identity omdrcctrl and
+`omdrc-renderer` both run as) needs passwordless sudo for exactly their
+start/stop, mirroring the FreeBSD rc.d grant below rather than the old
+`XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` user-bus reach-around:
+
+```
+AUDIO_USER ALL=(root) NOPASSWD: /usr/bin/systemctl start qobuzconnect2mpd.service, \
+    /usr/bin/systemctl stop qobuzconnect2mpd.service, \
+    /usr/bin/systemctl start upmpdcli.service, /usr/bin/systemctl stop upmpdcli.service
+```
+
+No entry is needed for `is-active` or `status`: those are unprivileged reads
+against a system unit on every mainstream distro. Keep
+`qconnectstatedir = AUDIO_HOME/.local/state/qobuzconnect2mpd` explicit in
+`qobuzconnect2mpd.conf` — the same explicit-path discipline FreeBSD already
+uses for `/var/db/qobuzconnect2mpd` below — rather than relying on the
+binary's own `$HOME`-derived fallback to keep agreeing with
+`prepare-renderer-runtime.sh`'s chown target across every future build.
 
 **FreeBSD:** the service user must be able to run, password-free, the relevant
 commands. First align qobuzconnect2mpd with the same `AUDIO_USER` used by
@@ -1474,10 +1500,10 @@ left on:
 | | boot service | enable |
 |---|---|---|
 | FreeBSD | `etc/rc.d/omdrc_renderer` | `sysrc omdrc_renderer_enable=YES` |
-| Linux | `etc/systemd/user/omdrc-renderer.service` | `systemctl --user enable omdrc-renderer.service` |
+| Linux | `etc/systemd/system/omdrc-renderer.service` | `sudo systemctl enable --now omdrc-renderer.service` |
 
-Both renderers must then be left **disabled** in `rc.conf` / the systemd user
-default target — one enabled there would start at boot behind the restore
+Both renderers must then be left **disabled** in `rc.conf` / at the systemd
+system level — one enabled there would start at boot behind the restore
 service, leaving two front-ends driving MPD at once. Switching uses the `one`
 verbs (`service upmpdcli onestart`), which ignore the rcvar, so disabling costs
 nothing.

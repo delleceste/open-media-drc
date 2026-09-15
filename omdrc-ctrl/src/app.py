@@ -29,8 +29,9 @@ from audio_diagnostics import AudioDiagnosticsMonitor
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Service control differs by OS: Linux drives systemd --user units, FreeBSD the
-# rc(8) services.  See _service_running / _service_action / _unit_active.
+# Service control differs by OS: Linux drives systemd system units (User=
+# @AUDIO_USER@, via a scoped sudoers grant), FreeBSD the rc(8) services.  See
+# _service_running / _service_action / _unit_active.
 _IS_LINUX = platform.system() == "Linux"
 
 # The live spectrum analyzer taps an MPD `fifo` output.  That path is POSIX
@@ -79,10 +80,12 @@ QCONNECT_STATUS_FILE = os.environ.get("QCONNECT_STATUS_FILE", "/tmp/qconnect2mpd
 QCONNECT_LOG_FILE    = os.environ.get("QCONNECT_LOG_FILE",    "/tmp/qconnect2mpd.log")
 
 # qobuzconnect2mpd and upmpdcli are mutually exclusive renderers driving MPD;
-# only one may run at a time.  On Linux they are systemd --user services
-# (switched with `systemctl --user start|stop`, polled with `is-active`); on
-# FreeBSD they are rc services (`sudo service <name> onestart|onestop`, polled
-# with `service <name> onestatus`).  See _service_running / _service_action.
+# only one may run at a time.  On Linux they are systemd system services with
+# User=@AUDIO_USER@ (switched with `sudo systemctl start|stop`, needing the
+# scoped sudoers grant in omdrc-ctrl/README.md; polled with `is-active`, which
+# needs no privilege); on FreeBSD they are rc services (`sudo service <name>
+# onestart|onestop`, polled with `service <name> onestatus`).  See
+# _service_running / _service_action.
 QCONNECT_SERVICE   = "qobuzconnect2mpd"
 UPMPDCLI_SERVICE   = "upmpdcli"
 SWITCHABLE_SERVICES = (QCONNECT_SERVICE, UPMPDCLI_SERVICE)
@@ -942,11 +945,12 @@ def _env() -> dict:
         e["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
     e.setdefault("XDG_CONFIG_HOME", os.path.join(e["HOME"], ".config"))
     e.setdefault("DISPLAY", ":0")
-    # `systemctl --user` (renderer switching) needs the user session bus.
-    # omdrcctrl runs as a system-scope service (User=<user>), which inherits
-    # neither XDG_RUNTIME_DIR nor DBUS_SESSION_BUS_ADDRESS, so systemctl cannot
-    # find the bus ("$DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not
-    # defined").  Derive them from the uid when the runtime dir exists.
+    # `systemctl --user` (omdrcvideo, omdrc-cdin — the renderers moved to system
+    # scope, see _service_action) needs the user session bus.  omdrcctrl runs as
+    # a system-scope service (User=<user>), which inherits neither
+    # XDG_RUNTIME_DIR nor DBUS_SESSION_BUS_ADDRESS, so systemctl cannot find the
+    # bus ("$DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined").
+    # Derive them from the uid when the runtime dir exists.
     if _IS_LINUX:
         run_dir = e.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
         if os.path.isdir(run_dir):
@@ -977,9 +981,10 @@ def _find_dyn_details(cmd: dict, config_name: str) -> str | None:
 
 
 def _unit_active(unit: str) -> bool:
-    """True if a systemd unit is active.  Checks the --user scope first (the
-    renderers and web UIs run there after the Linux scope alignment) then the
-    system scope; on FreeBSD systemctl is absent, so both fail and this is False."""
+    """True if a systemd unit is active.  Checks the --user scope first (still
+    home to omdrcvideo and omdrc-cdin) then the system scope (the renderers and
+    omdrcctrl itself); on FreeBSD systemctl is absent, so both fail and this is
+    False."""
     for scope in (["--user"], []):
         try:
             r = subprocess.run(
@@ -2627,9 +2632,76 @@ _RAW_DTYPES: dict[str, str] = {
 }
 
 # Match scripts/headroom_calc.py and the publication audit: the live page adds
-# one dB above the worst raw-filter FFT gain, then rounds the required BruteFIR
-# attenuation upward to one decimal place.
+# one dB above the worst-case gain found across the three bounds below, then
+# rounds the required BruteFIR attenuation upward to one decimal place.
 _HEADROOM_SAFETY_MARGIN_DB = 1.0
+
+# The fabricated stress master headroom_calc.py convolves against each filter
+# (see scripts/gen-stress-master-wav.py's docstring for what it is and why a
+# real, full-scale, low-crest program signal is the only thing that bounds a
+# filter's excess-phase overshoot on real music -- magnitude-only tests miss
+# it entirely). Same production location core-drc.cmake installs
+# headroom_calc.py itself to; falls back to the dev checkout's scripts/.
+_STRESS_WAV_NAME = "stress-master-48000-mono.wav"
+_STRESS_WAV_PATH = Path(os.environ.get("PREFIX", "/usr/local")) / "libexec/omdrc/scripts" / _STRESS_WAV_NAME
+if not _STRESS_WAV_PATH.is_file():
+    _STRESS_WAV_PATH = Path(__file__).resolve().parents[2] / "scripts" / _STRESS_WAV_NAME
+
+_stress_wav_cache: dict | None = None
+_stress_resample_cache: dict[int, "object"] = {}
+
+
+def _load_stress_wav_native():
+    """Load the fabricated stress master once as (float64 samples, rate)."""
+    global _stress_wav_cache
+    if _stress_wav_cache is None:
+        import wave as wave_lib
+        import numpy as np
+        if not _STRESS_WAV_PATH.is_file():
+            _stress_wav_cache = False
+        else:
+            with wave_lib.open(str(_STRESS_WAV_PATH), "rb") as w:
+                rate = w.getframerate()
+                width = w.getsampwidth()
+                raw = w.readframes(w.getnframes())
+            if width == 3:
+                b = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3)
+                padded = np.zeros((b.shape[0], 4), dtype=np.uint8)
+                padded[:, :3] = b
+                padded[:, 3] = np.where(b[:, 2] >= 0x80, 0xFF, 0x00)
+                samples = padded.view("<i4").astype(np.float64).ravel() / (2 ** 23)
+            elif width == 2:
+                samples = np.frombuffer(raw, dtype="<i2").astype(np.float64) / (2 ** 15)
+            else:
+                samples = np.frombuffer(raw, dtype="<i4").astype(np.float64) / (2 ** 31)
+            _stress_wav_cache = (samples, rate)
+    return _stress_wav_cache or None
+
+
+def _stress_wav_at_rate(rate: int):
+    """The stress master resampled (band-limited FFT resample) to `rate`,
+    cached across requests -- see headroom_calc.py's resample_fft."""
+    import numpy as np
+    if rate not in _stress_resample_cache:
+        native = _load_stress_wav_native()
+        if native is None:
+            _stress_resample_cache[rate] = None
+        else:
+            samples, native_rate = native
+            if native_rate == rate:
+                _stress_resample_cache[rate] = samples
+            else:
+                new_len = int(round(len(samples) * rate / native_rate))
+                spec = np.fft.rfft(samples)
+                new_bins = new_len // 2 + 1
+                if new_bins <= spec.size:
+                    new_spec = spec[:new_bins]
+                else:
+                    new_spec = np.zeros(new_bins, dtype=complex)
+                    new_spec[:spec.size] = spec
+                resampled = np.fft.irfft(new_spec, new_len) * (new_len / len(samples))
+                _stress_resample_cache[rate] = resampled
+    return _stress_resample_cache[rate]
 
 
 def _sha256_file(path: str) -> str:
@@ -2876,14 +2948,25 @@ def _parse_brutefir_conf(path: str) -> dict:
     return {"rate": rate, "coeffs": coeffs}
 
 
-def _raw_filter_headroom(filename: str, fmt: str,
+def _raw_filter_headroom(filename: str, fmt: str, rate: int | None = None,
                          margin_db: float = _HEADROOM_SAFETY_MARGIN_DB) -> dict:
     """Calculate clipping-safe attenuation directly from one active RAW FIR.
 
     The calculation deliberately does not trust provenance metadata: it reads
-    the bytes named by the running config, finds the filter's peak FFT gain and
-    adds the requested safety margin.  Attenuation is a positive BruteFIR gain
-    reduction, rounded upward to the one-decimal precision used by our configs.
+    the bytes named by the running config and finds three bounds on its gain
+    (see scripts/headroom_calc.py's module docstring for why all three exist):
+
+    * peak_gain_db -- steady-state FFT peak |H(f)|, tight only for a sine;
+    * step_peak_db -- |cumsum(h)|max, a transient bound magnitude tests miss;
+    * music_conv_db -- real convolution against the fabricated stress master,
+      the only bound that has been shown (2026-09-15 incident) to catch the
+      filter's excess-phase overshoot on real program material.
+
+    "safe_attenuation_db" is the worst of the three plus the safety margin,
+    rounded upward to the one-decimal precision used by our configs.
+    l1_max_db (sum|h[n]|) is reported alongside for comparison only -- the
+    theoretical ceiling for ANY bounded input, never folded into the target
+    (needlessly conservative -- see headroom_calc.py).
     """
     import numpy as np
 
@@ -2904,11 +2987,32 @@ def _raw_filter_headroom(filename: str, fmt: str,
     fft_size = 1 << (max(1, int(samples.size)) - 1).bit_length()
     peak_linear = float(np.max(np.abs(np.fft.rfft(samples, n=fft_size))))
     peak_db = 20.0 * math.log10(peak_linear) if peak_linear > 0.0 else None
-    required = 0.0 if peak_db is None else max(
-        0.0, math.ceil((peak_db + margin_db) * 10.0) / 10.0)
+
+    step_linear = float(np.max(np.abs(np.cumsum(samples))))
+    step_db = 20.0 * math.log10(step_linear) if step_linear > 0.0 else None
+
+    l1_linear = float(np.sum(np.abs(samples)))
+    l1_db = 20.0 * math.log10(l1_linear) if l1_linear > 0.0 else None
+
+    music_db = None
+    if rate is not None:
+        stress = _stress_wav_at_rate(int(rate))
+        if stress is not None:
+            n_fft = 1 << (int(samples.size) + len(stress) - 1 - 1).bit_length()
+            out = np.fft.irfft(np.fft.rfft(samples, n=n_fft) *
+                                np.fft.rfft(stress, n=n_fft), n=n_fft)
+            music_linear = float(np.max(np.abs(out)))
+            music_db = 20.0 * math.log10(music_linear) if music_linear > 0.0 else None
+
+    worst_db = max((v for v in (peak_db, step_db, music_db) if v is not None), default=None)
+    required = 0.0 if worst_db is None else max(
+        0.0, math.ceil((worst_db + margin_db) * 10.0) / 10.0)
     return {
         "taps": int(samples.size),
         "peak_gain_db": round(peak_db, 6) if peak_db is not None else None,
+        "step_peak_db": round(step_db, 6) if step_db is not None else None,
+        "music_conv_db": round(music_db, 6) if music_db is not None else None,
+        "l1_max_db": round(l1_db, 6) if l1_db is not None else None,
         "safety_margin_db": float(margin_db),
         "safe_attenuation_db": round(required, 1),
     }
@@ -3065,7 +3169,7 @@ def _active_brutefir_configuration() -> dict:
             item["analysis_error"] = "filter file does not exist or is not readable"
         else:
             try:
-                headroom = _raw_filter_headroom(filename, coeff["format"])
+                headroom = _raw_filter_headroom(filename, coeff["format"], rate)
                 item.update(headroom)
                 item["safe"] = (
                     item["configured_attenuation_db"] + 1e-9 >=
@@ -3146,9 +3250,9 @@ _BRUTEFIR_ATTENUATION_MAX_DB = 12.0
 # Which renderer the toggle last selected.  Unlike the two sliders above this is
 # not read back by the panel to restore itself — the boot service reads it (see
 # scripts/omdrc-renderer, driven by etc/rc.d/omdrc_renderer or the systemd
-# --user omdrc-renderer.service) so the box comes back on the renderer it was
-# left on.  Name and format follow drc.sh's last_arg / last_power: one value,
-# one line, same state dir.
+# omdrc-renderer.service, User=@AUDIO_USER@) so the box comes back on the
+# renderer it was left on.  Name and format follow drc.sh's last_arg /
+# last_power: one value, one line, same state dir.
 _RENDERER_STATE_FILE = os.path.join(_STATE_DIR, "last_renderer")
 # The timestamp of the newest cdin failure the user has waved away.  A
 # watermark rather than a flag: failures NEWER than it still show, so
@@ -3832,7 +3936,7 @@ def _service_running(name: str) -> bool:
     the whole line keeps daemon(8) wrappers and greps from counting as hits.
     """
     if _IS_LINUX:
-        cmd = ["systemctl", "--user", "is-active", "--quiet", name]
+        cmd = ["systemctl", "is-active", "--quiet", name]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
                                env=_env())
@@ -3866,11 +3970,13 @@ def _proc_running(binname: str) -> bool:
 
 def _service_action(name: str, action: str):
     """Start or stop renderer service `name`.  `action` is the FreeBSD verb
-    (onestart / onestop); on Linux it maps to `systemctl --user start|stop`
-    (user scope — no sudo needed)."""
+    (onestart / onestop); on Linux it maps to `sudo systemctl start|stop`
+    (a system unit with User=@AUDIO_USER@, not user scope — needs the scoped
+    sudoers grant documented in omdrc-ctrl/README.md, the same shape FreeBSD
+    already needs for `service <name> onestart|onestop`)."""
     if _IS_LINUX:
         verb = "start" if action == "onestart" else "stop"
-        cmd = ["systemctl", "--user", verb, name]
+        cmd = ["sudo", "systemctl", verb, name]
     else:
         cmd = ["sudo", "service", name, action]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30,
@@ -4033,7 +4139,7 @@ def _service_failure_report(name: str) -> str:
         return ""
     try:
         r = subprocess.run(
-            ["systemctl", "--user", "status", "--no-pager", "--lines=20", name],
+            ["systemctl", "status", "--no-pager", "--lines=20", name],
             capture_output=True, text=True, timeout=10, env=_env())
     except (subprocess.TimeoutExpired, OSError) as e:
         return str(e)

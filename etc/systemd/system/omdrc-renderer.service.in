@@ -8,20 +8,26 @@ Wants=network-online.target
 # renderer omdrcctrl's toggle last recorded in the state file (last_renderer),
 # so a reboot comes back the way the box was left.
 #
-# systemd --user unit, like the two renderers it drives (the toggle switches
-# them with `systemctl --user`, no sudo).  Symlink into ~/.config/systemd/user/
-# and enable THIS instead of upmpdcli.service:
+# System-scope unit (After=/Wants=network-online.target is a real, working
+# ordering here — it silently is not under `systemctl --user`), but still
+# User=@AUDIO_USER@ rather than root: this script resolves its state directory
+# from `id -u`, and running it as root here while omdrcctrl (which records the
+# toggle) stays User=@AUDIO_USER@ would point the two at different state
+# directories (see this unit's own scripts/omdrc-renderer header comment).
+# Starting/stopping the two renderer units from a non-root User= therefore
+# needs the same scoped sudoers grant as omdrcctrl's web toggle — see
+# omdrc-ctrl/README.md.  Enable THIS instead of upmpdcli.service:
 #
-#	systemctl --user disable upmpdcli.service
-#	systemctl --user enable --now omdrc-renderer.service
+#	sudo systemctl disable upmpdcli.service
+#	sudo systemctl enable --now omdrc-renderer.service
 #
 # Leaving upmpdcli.service (or qobuzconnect2mpd.service) enabled would start it
 # at boot behind this unit's back, and both front-ends would drive MPD at once.
-# Needs lingering for boot (not login) start:  loginctl enable-linger @AUDIO_USER@
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+User=@AUDIO_USER@
 Environment=PREFIX=@PREFIX@
 # Uncomment (and match what omdrcctrl writes) if this unit and the panel would
 # resolve different state directories — e.g. an installed panel using
@@ -31,4 +37,4 @@ ExecStart=@REPO_DIR@/scripts/omdrc-renderer start
 ExecStop=@REPO_DIR@/scripts/omdrc-renderer stop
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

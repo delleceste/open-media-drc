@@ -117,23 +117,12 @@ if [ "$(uname)" = "Linux" ] && [ -f "$PREFIX/lib/systemd/user/omdrcvideo.service
         || echo "user-install: to survive logout, run: sudo loginctl enable-linger $(id -un)"
 fi
 
-# --- remembered renderer restore (Linux user scope) --------------------------
-# Both switchable renderers must be in the same --user scope.  Enable the
-# restore unit, never one renderer directly, or two front-ends can drive MPD.
-if [ "$(uname)" = "Linux" ] && \
-        [ -f "$PREFIX/lib/systemd/user/upmpdcli.service" ] && \
-        [ -f "$PREFIX/lib/systemd/user/omdrc-renderer.service" ]; then
-    _omdrc_link_unit upmpdcli.service
-    _omdrc_link_unit omdrc-renderer.service
-    systemctl --user daemon-reload 2>/dev/null || true
-    systemctl --user disable upmpdcli.service qobuzconnect2mpd.service \
-        2>/dev/null || true
-    if systemctl --user enable --now omdrc-renderer.service 2>/dev/null; then
-        echo "user-install: enabled remembered renderer restore"
-    else
-        echo "user-install: enable renderer later: systemctl --user enable --now omdrc-renderer"
-    fi
-fi
+# --- remembered renderer restore --------------------------------------------
+# upmpdcli, qobuzconnect2mpd and omdrc-renderer are now systemd SYSTEM units
+# (User=@AUDIO_USER@ — see their own header comments for why they moved off
+# --user), so enabling them needs root and is part of the system install
+# checklist (`sudo systemctl enable --now omdrc-renderer`, never a renderer
+# directly), not this unprivileged user-install step.
 
 # --- CD / S-PDIF input bridge (Linux; deliberately not enabled) --------------
 # The CD input is an exclusive source here (one seat on hw:Loopback,0,0) and
