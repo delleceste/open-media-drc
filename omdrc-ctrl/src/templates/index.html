@@ -157,11 +157,45 @@
         .btn-write.ok    { border-color: var(--green); color: var(--green); background: rgba(63,185,80,.08); }
         .btn-write.error { border-color: var(--red);   color: var(--red);   background: rgba(248,81,73,.08); }
 
-        /* DSP headroom gauge: shown only next to the currently applied DRC
-           rate's Apply button (see updateDspGauge()).  Linear, left-to-right,
-           filled fraction = 1 - BruteFIR's own real-time index (rti: in
-           /tmp/brutefir.out) -- full bar is comfortable scheduling headroom,
-           an empty/red bar means BruteFIR is at or past its deadline. */
+        /* DSP meters: shown only next to the currently applied DRC rate's
+           Apply button (see updateDspGaugePlacement()).  Two labelled linear
+           bars, both left-to-right:
+             RTI  -- filled fraction = 1 - BruteFIR's own real-time index
+                     (rti: in /tmp/brutefir.out), so a full green bar is
+                     comfortable scheduling headroom and an empty/red bar means
+                     BruteFIR is at or past its deadline;
+             Peak -- BruteFIR's own peak-hold, in dBFS, filled from
+                     PEAK_GAUGE_FLOOR_DB up to full scale; green well below
+                     0 dBFS, yellow as it closes in, red at/over it. */
+        .dsp-meters {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .dsp-meter {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .dsp-meter-label {
+            font-size: .68rem;
+            line-height: 1;
+            color: var(--muted);
+            letter-spacing: .04em;
+            white-space: nowrap;
+        }
+        .dsp-meter-value {
+            font-size: .68rem;
+            line-height: 1;
+            color: var(--muted);
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            min-width: 4.2em;
+            text-align: right;
+        }
+        .dsp-meter-value.warn { color: var(--yellow); }
+        .dsp-meter-value.bad  { color: var(--red); }
         .dsp-gauge {
             display: inline-block;
             width: 54px;
@@ -1247,8 +1281,22 @@
 
             {% if cmd.type == 'WRITE' %}
             {% if group_name == 'drc' %}
-            <span class="dsp-gauge" id="gauge-{{ cmd.id }}" title="DSP headroom (BruteFIR real-time index)" hidden>
-                <span class="dsp-gauge-fill" id="gauge-fill-{{ cmd.id }}"></span>
+            <span class="dsp-meters" id="gauge-{{ cmd.id }}" hidden>
+                <span class="dsp-meter" id="rti-meter-{{ cmd.id }}"
+                      title="DSP headroom (BruteFIR real-time index)">
+                    <span class="dsp-meter-label">RTI</span>
+                    <span class="dsp-gauge">
+                        <span class="dsp-gauge-fill" id="gauge-fill-{{ cmd.id }}"></span>
+                    </span>
+                </span>
+                <span class="dsp-meter" id="peak-meter-{{ cmd.id }}"
+                      title="Output peak (BruteFIR peak-hold, dBFS)">
+                    <span class="dsp-meter-label">Peak</span>
+                    <span class="dsp-meter-value" id="peak-value-{{ cmd.id }}">—</span>
+                    <span class="dsp-gauge">
+                        <span class="dsp-gauge-fill" id="peak-fill-{{ cmd.id }}"></span>
+                    </span>
+                </span>
             </span>
             {% endif %}
             <button class="btn-write"
@@ -1777,19 +1825,27 @@ function renderDrcFeedback(data) {
     updateDspGaugePlacement(active);
 }
 
-// ── DSP headroom gauge ──────────────────────────────────────────────────────
-// One gauge element sits beside every DRC rate's Apply button (rendered in
+// ── DSP meters: RTI headroom + output peak ──────────────────────────────────
+// One meter pair sits beside every DRC rate's Apply button (rendered in
 // the drc-group row markup above), but only the one for the currently
-// applied rate is ever shown — BruteFIR only has one real-time index to
-// report, and it describes whichever config is actually running.
+// applied rate is ever shown — BruteFIR only has one real-time index and one
+// peak-hold to report, and they describe whichever config is actually running.
 const DSP_GAUGE_WARN = 0.7;    // rti at/above this: getting close to the deadline
 const DSP_GAUGE_BAD  = 0.95;   // rti at/above this: essentially out of headroom
+// Peak bar: linear in dB from the floor up to full scale.  BruteFIR's peak
+// line is a session peak-hold it never resets (see _brutefir_peak_status in
+// app.py), so these colour "how close did it ever get", not a live level —
+// hence a warning well before 0 dBFS rather than right at it.
+const PEAK_GAUGE_FLOOR_DB = -30.0;   // bar bottom; below this the fill just sits empty
+const PEAK_GAUGE_WARN_DB  = -6.0;
+const PEAK_GAUGE_BAD_DB   = -1.0;
 const DRC_RATE_TO_GAUGE_ID = {
     44100: 'drc_44100', 48000: 'drc_48000', 88200: 'drc_88200',
     96000: 'drc_96000', 192000: 'drc_192000',
 };
 let dspGaugeCurrentId = '';
 let dspGaugeLastStatus = null;
+let dspPeakLastStatus = null;
 
 function updateDspGaugePlacement(active) {
     const nextId = (active && active.running) ? DRC_RATE_TO_GAUGE_ID[Number(active.rate)] : '';
@@ -1801,16 +1857,17 @@ function updateDspGaugePlacement(active) {
     if (current) {
         current.hidden = false;
         renderDspGauge(dspGaugeLastStatus);
+        renderPeakGauge(dspPeakLastStatus);
     }
 }
 
 function renderDspGauge(status) {
     if (!dspGaugeCurrentId) return;
-    const gauge = document.getElementById('gauge-' + dspGaugeCurrentId);
+    const meter = document.getElementById('rti-meter-' + dspGaugeCurrentId);
     const fill = document.getElementById('gauge-fill-' + dspGaugeCurrentId);
-    if (!gauge || !fill) return;
+    if (!meter || !fill) return;
     if (!status || !status.available || status.rti === null || status.rti === undefined) {
-        gauge.title = 'DSP headroom: no recent BruteFIR figure';
+        meter.title = 'Real-time index: no recent BruteFIR figure';
         fill.style.width = '0%';
         fill.className = 'dsp-gauge-fill';
         return;
@@ -1820,16 +1877,61 @@ function renderDspGauge(status) {
     fill.style.width = `${(headroom * 100).toFixed(0)}%`;
     fill.className = 'dsp-gauge-fill' +
         (rti >= DSP_GAUGE_BAD ? ' bad' : rti >= DSP_GAUGE_WARN ? ' warn' : '');
-    gauge.title = `DSP headroom: ${(headroom * 100).toFixed(0)}% (BruteFIR real-time index ${rti.toFixed(3)})`;
+    meter.title = `RTI — BruteFIR real-time index ${rti.toFixed(3)}: the filter block takes ` +
+        `${(rti * 100).toFixed(0)}% of the time available before it misses its deadline. ` +
+        `The bar shows the remaining DSP headroom, ${(headroom * 100).toFixed(0)}%.`;
+}
+
+function renderPeakGauge(status) {
+    if (!dspGaugeCurrentId) return;
+    const meter = document.getElementById('peak-meter-' + dspGaugeCurrentId);
+    const value = document.getElementById('peak-value-' + dspGaugeCurrentId);
+    const fill = document.getElementById('peak-fill-' + dspGaugeCurrentId);
+    if (!meter || !value || !fill) return;
+    if (!status || !status.available || status.error) {
+        meter.title = 'Output peak: no recent BruteFIR figure';
+        value.textContent = '—';
+        value.className = 'dsp-meter-value';
+        fill.style.width = '0%';
+        fill.className = 'dsp-gauge-fill';
+        return;
+    }
+    // peak_db is null until a sample has registered at all ("-Inf" in the log).
+    const peakDb = (status.peak_db === null || status.peak_db === undefined) ? null : Number(status.peak_db);
+    const clipped = !!status.clipped || (peakDb !== null && peakDb > 0);
+    const level = peakDb === null ? PEAK_GAUGE_FLOOR_DB : Math.min(0, peakDb);
+    const span = 0 - PEAK_GAUGE_FLOOR_DB;
+    const filled = Math.max(0, Math.min(1, (level - PEAK_GAUGE_FLOOR_DB) / span));
+    const state = (clipped || (peakDb !== null && peakDb >= PEAK_GAUGE_BAD_DB)) ? ' bad'
+                : (peakDb !== null && peakDb >= PEAK_GAUGE_WARN_DB) ? ' warn' : '';
+    fill.style.width = `${(filled * 100).toFixed(0)}%`;
+    fill.className = 'dsp-gauge-fill' + state;
+    value.textContent = peakDb === null
+        ? '−∞ dB'
+        : `${peakDb > 0 ? '+' : ''}${peakDb.toFixed(1)} dB`;
+    value.className = 'dsp-meter-value' + state;
+    const perChannel = (status.channels || [])
+        .map(c => `ch ${c.channel}: ${c.peak_db === null ? '−∞' : Number(c.peak_db).toFixed(1)} dB` +
+            (c.overflow_count > 0 ? ` (${c.overflow_count} over full scale)` : ''))
+        .join(' · ');
+    meter.title = (clipped
+        ? 'Peak — clipped since BruteFIR started'
+        : 'Peak — loudest output sample since BruteFIR started (peak-hold, never reset)') +
+        (perChannel ? ` — ${perChannel}` : '');
 }
 
 async function loadDspGauge() {
-    if (!dspGaugeCurrentId) return;   // DRC off, or a mode this gauge cannot place — nothing to poll for
+    if (!dspGaugeCurrentId) return;   // DRC off, or a mode these meters cannot place — nothing to poll for
     try {
-        const status = await (await fetch('/drc/brutefir-rti', {cache: 'no-store'})).json();
-        dspGaugeLastStatus = status;
-        renderDspGauge(status);
-    } catch { /* offline — leave the last known fill in place */ }
+        const [rti, peak] = await Promise.all([
+            fetch('/drc/brutefir-rti',  {cache: 'no-store'}).then(r => r.json()),
+            fetch('/drc/brutefir-peak', {cache: 'no-store'}).then(r => r.json()),
+        ]);
+        dspGaugeLastStatus = rti;
+        dspPeakLastStatus = peak;
+        renderDspGauge(rti);
+        renderPeakGauge(peak);
+    } catch { /* offline — leave the last known fills in place */ }
 }
 setInterval(loadDspGauge, 2000);
 
