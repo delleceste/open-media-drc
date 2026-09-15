@@ -1630,6 +1630,49 @@ warm_until_locked() {
   return 1
 }
 
+# How many MPD outputs are enabled right now.  0 also when MPD cannot be
+# reached at all, which the caller must treat the same as "none": a wedged MPD
+# needs the repair attempt just as much as one with genuinely nothing enabled.
+mpd_enabled_outputs() {
+  local n
+  n=$(mpc_bounded outputs 2>/dev/null | grep -c ' is enabled$') || n=0
+  printf '%s\n' "${n:-0}"
+}
+
+# Postcondition for every teardown: MPD must come out of it with somewhere to
+# play.  The teardown disables the DRC outputs BEFORE killing brutefir (see the
+# long note above stop_brutefir), so there is a window where MPD has nothing
+# enabled at all, and the branch after that window is what closes it by handing
+# MPD the direct DAC.  When that branch does not — a timed-out mpc (logged
+# output=fail), or a CD bridge that was meant to take the DAC and never started
+# (output=cdin) — MPD is left with every output disabled and answers its
+# clients with "All audio outputs are disabled".  upmpdcli and qobuzconnect2mpd
+# are only MPD clients, so this reads as "both renderers died" when neither was
+# touched; the box stays silent until some later run happens to enable an
+# output again.  So check the postcondition and repair it.
+ensure_mpd_has_output() {
+  if [ "$(mpd_enabled_outputs)" -gt 0 ]; then
+    return 0
+  fi
+  # MPD owning no output is the correct end state for exactly one case: the CD
+  # bridge has the DAC.  Tested against the RUNNING bridge rather than the
+  # intent — "the user last selected CD input" is what made an empty output
+  # list look deliberate while alsaloop was not actually up.
+  if $IS_LINUX && ${keep_cdin:-false} && pgrep_x "$OMDRC_CDIN_PROCESS"; then
+    return 0
+  fi
+  echo "MPD has no enabled output; re-enabling the direct DAC" >&2
+  if mpc_bounded enable only "OKTO-DAC" >/dev/null 2>&1; then
+    log_event "event=mpd_output result=repaired output=OKTO-DAC"
+    return 0
+  fi
+  log_event "event=mpd_output result=repair_failed output=none"
+  echo "warning: MPD still has no enabled output;" \
+       "run 'mpc enable only OKTO-DAC' to restore sound" >&2
+  return 1
+}
+
+
 # Tear the half-built chain down and re-enable the direct DAC so there is always
 # a working output (never leave the box silent with virtual_oss orphaned).
 rollback_to_direct() {
@@ -1765,6 +1808,11 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
     export OMDRC_START_CDIN=1
   fi
   restart_cdin
+  # Last: the bridge above is the one legitimate reason for MPD to end this
+  # run with no output, so the check has to come after it has started (or
+  # failed to).  Non-fatal — it reports and repairs, it does not abort a
+  # teardown that has already done its job.
+  ensure_mpd_has_output || true
   echo "DRC stopped"
   exit 0
 fi

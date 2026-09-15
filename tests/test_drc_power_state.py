@@ -20,6 +20,7 @@ with every MPD output disabled, silently.
 import os
 from pathlib import Path
 import pty
+import re
 import subprocess
 import tempfile
 import time
@@ -388,6 +389,31 @@ class DspHeadroomGaugeMarkupTest(unittest.TestCase):
         self.assertIn("function renderDspGauge(", page)
         self.assertIn("/drc/brutefir-rti", page)
         self.assertIn("updateDspGaugePlacement(active)", page)
+
+    def test_the_rti_bar_is_labelled(self):
+        """A bare bar says nothing; the label is what names the figure."""
+        page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
+        self.assertIn('<span class="dsp-meter-label">RTI</span>', page)
+        self.assertIn("real-time index", page.lower())
+
+    def test_peak_meter_shows_a_db_value_and_its_own_bar(self):
+        page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
+        self.assertIn('<span class="dsp-meter-label">Peak</span>', page)
+        self.assertIn("peak-value-{{ cmd.id }}", page)
+        self.assertIn("peak-fill-{{ cmd.id }}", page)
+        self.assertIn("function renderPeakGauge(", page)
+        self.assertIn("/drc/brutefir-peak", page)
+
+    def test_peak_bar_turns_amber_well_before_full_scale(self):
+        """Green all the way to 0 dBFS would hide the only moment that matters."""
+        page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
+        warn = re.search(r"const PEAK_GAUGE_WARN_DB\s*=\s*(-?[\d.]+)", page)
+        bad = re.search(r"const PEAK_GAUGE_BAD_DB\s*=\s*(-?[\d.]+)", page)
+        self.assertIsNotNone(warn)
+        self.assertIsNotNone(bad)
+        self.assertLessEqual(float(warn.group(1)), -3.0)
+        self.assertLess(float(warn.group(1)), float(bad.group(1)))
+        self.assertLessEqual(float(bad.group(1)), 0.0)
 
 
 if __name__ == "__main__":

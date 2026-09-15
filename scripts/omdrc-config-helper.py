@@ -485,6 +485,7 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
     # MPD's direct/no-DRC output must follow the same physical role. Card
     # numbers change when USB interfaces enumerate in a different order.
     mpd_conf = Path(prefix) / "etc/open-media-drc/mpd.conf"
+    mpd_dac_moved = False
     if mpd_conf.is_file():
         mpd_text = mpd_conf.read_text()
         mpd_changed, mpd_count = MANAGED_MPD.subn(
@@ -493,6 +494,7 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
             raise RuntimeError(
                 f"{mpd_conf} has {mpd_count} '# omdrc-managed-mpd-dac' device lines; "
                 "exactly one OKTO-DAC output must be managed")
+        mpd_dac_moved = mpd_changed != mpd_text
         atomic_text(mpd_conf, mpd_changed)
     manages_aloop = linux_aloop_timer(selected["number"])
     role_conf = Path(f"{prefix}/etc/open-media-drc/audio-roles.conf")
@@ -509,6 +511,31 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
                        f"capture_unit={chosen_capture['number'] if chosen_capture else ''}\n"
                        f"capture_desc={chosen_capture['name'] if chosen_capture else ''}\n"
                        f"capture_id={capture}\n")
+    # MPD reads audio_output only at startup, so rewriting the device line
+    # above changes nothing for the daemon that is already running: it keeps
+    # playing to whatever card it resolved when it started.  That stays
+    # invisible for as long as DRC is on — MPD only writes to the loopback
+    # then, and brutefir opens the DAC from its own defaults file — and
+    # surfaces solely as "No DRC plays nothing", because the direct output is
+    # the one line that moved.  Seen exactly so on this box: mpd started at
+    # 19:46:02 holding hw:0,0 and this helper rewrote the file to hw:2,0 at
+    # 19:47:28, leaving the direct output pointed at the wrong USB interface
+    # (the measurement card) for hours, with every other symptom absent.
+    #
+    # Restart only when the line actually moved, and before drc-usb-audio's
+    # `omdrc restore` below re-selects MPD's outputs, so that restore is
+    # talking to the daemon that will still be there afterwards.  Non-fatal:
+    # a box whose MPD is not systemd-managed must still finish reconciling.
+    if mpd_dac_moved:
+        result = run([SYSTEMCTL, "restart", "mpd.service"], check=False)
+        if result.returncode == 0:
+            print(f"RESTARTED: mpd.service (OKTO-DAC -> hw:{selected['number']},0)")
+        else:
+            print(f"WARNING: mpd.conf now says hw:{selected['number']},0 but "
+                  "mpd.service could not be restarted; MPD keeps its old "
+                  "device until it is restarted by hand "
+                  "(No DRC will play to the wrong card)")
+
     restore_active = (linux_reload_aloop_timer(selected["number"])
                       if manages_aloop else False)
     restart = restart or restore_active
