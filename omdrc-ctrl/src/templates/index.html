@@ -202,19 +202,30 @@
             height: 9px;
             border: 1px solid var(--border);
             border-radius: 5px;
-            background: var(--bg);
-            overflow: hidden;
+            background: linear-gradient(90deg, var(--green) 0%, var(--yellow) 68%, var(--red) 100%);
+            overflow: visible;
+            position: relative;
             vertical-align: middle;
         }
-        .dsp-gauge-fill {
-            display: block;
-            height: 100%;
-            width: 0%;
-            background: var(--green);
-            transition: width .3s linear, background-color .3s linear;
+        .dsp-gauge-needle {
+            position: absolute;
+            top: -3px; bottom: -3px;
+            left: 0%;
+            width: 2px;
+            border-radius: 1px;
+            background: #fff;
+            box-shadow: 0 0 0 1px #111, 0 0 4px rgba(0,0,0,.9);
+            transform: translateX(-1px);
+            transition: left .3s linear;
+            pointer-events: none;
         }
-        .dsp-gauge-fill.warn { background: var(--yellow); }
-        .dsp-gauge-fill.bad  { background: var(--red); }
+        .btn-peak-reset {
+            padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px;
+            background: var(--bg); color: var(--muted); font-size: .60rem;
+            line-height: 1.25; cursor: pointer; white-space: nowrap;
+        }
+        .btn-peak-reset:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+        .btn-peak-reset:disabled { opacity: .5; cursor: default; }
 
         /* ── LINK button ─────────────────────────────────────── */
         .btn-link {
@@ -1276,7 +1287,7 @@
         <div id="drc-transition-feedback" class="drc-feedback-line drc-feedback-meta" hidden></div>
         <div class="drc-attenuation">
             <label for="drc-attenuation-slider">Attenuation</label>
-            <input id="drc-attenuation-slider" type="range" min="2" max="12" step="0.5"
+            <input id="drc-attenuation-slider" type="range" min="2" max="12" step="0.1"
                    value="2" disabled oninput="previewDrcAttenuation(this.value)"
                    onchange="setDrcAttenuation(this.value)">
             <output id="drc-attenuation-value" for="drc-attenuation-slider">2.0 dB</output>
@@ -1297,7 +1308,7 @@
                       title="DSP headroom (BruteFIR real-time index)">
                     <span class="dsp-meter-label">RTI</span>
                     <span class="dsp-gauge">
-                        <span class="dsp-gauge-fill" id="gauge-fill-{{ cmd.id }}"></span>
+                        <span class="dsp-gauge-needle" id="gauge-fill-{{ cmd.id }}"></span>
                     </span>
                 </span>
                 <span class="dsp-meter" id="peak-meter-{{ cmd.id }}"
@@ -1305,8 +1316,10 @@
                     <span class="dsp-meter-label">Peak</span>
                     <span class="dsp-meter-value" id="peak-value-{{ cmd.id }}">—</span>
                     <span class="dsp-gauge">
-                        <span class="dsp-gauge-fill" id="peak-fill-{{ cmd.id }}"></span>
+                        <span class="dsp-gauge-needle" id="peak-fill-{{ cmd.id }}"></span>
                     </span>
+                    <button type="button" class="btn-peak-reset" id="peak-reset-{{ cmd.id }}"
+                            title="Reset BruteFIR peak hold" onclick="resetBrutefirPeak()">Reset</button>
                 </span>
             </span>
             {% endif %}
@@ -1765,7 +1778,10 @@ async function loadDrcAttenuation() {
         slider.value = d.db;
         slider.disabled = drcAttenuationBusy;
         previewDrcAttenuation(d.db);
-        slider.title = d.running ? "Applied live and saved for future BruteFIR starts" : "DRC is off; saved for the next BruteFIR start";
+        slider.title = d.source === "configuration"
+            ? "Initial value read from the active BruteFIR configuration"
+            : d.running ? "Applied live and saved for future BruteFIR starts"
+                        : "DRC is off; saved for the next BruteFIR start";
     } catch (_) {}
 }
 async function setDrcAttenuation(value) {
@@ -1915,15 +1931,14 @@ function renderDspGauge(status) {
     if (!meter || !fill) return;
     if (!status || !status.available || status.rti === null || status.rti === undefined) {
         meter.title = 'Real-time index: no recent BruteFIR figure';
-        fill.style.width = '0%';
-        fill.className = 'dsp-gauge-fill';
+        fill.style.left = '0%';
+        fill.style.opacity = '0';
         return;
     }
     const rti = Math.max(0, Math.min(1, status.rti));
     const headroom = 1 - rti;
-    fill.style.width = `${(headroom * 100).toFixed(0)}%`;
-    fill.className = 'dsp-gauge-fill' +
-        (rti >= DSP_GAUGE_BAD ? ' bad' : rti >= DSP_GAUGE_WARN ? ' warn' : '');
+    fill.style.left = `${(rti * 100).toFixed(1)}%`;
+    fill.style.opacity = '1';
     meter.title = `RTI — BruteFIR real-time index ${rti.toFixed(3)}: the filter block takes ` +
         `${(rti * 100).toFixed(0)}% of the time available before it misses its deadline. ` +
         `The bar shows the remaining DSP headroom, ${(headroom * 100).toFixed(0)}%.`;
@@ -1939,8 +1954,8 @@ function renderPeakGauge(status) {
         meter.title = 'Output peak: no recent BruteFIR figure';
         value.textContent = '—';
         value.className = 'dsp-meter-value';
-        fill.style.width = '0%';
-        fill.className = 'dsp-gauge-fill';
+        fill.style.left = '0%';
+        fill.style.opacity = '0';
         return;
     }
     // peak_db is null until a sample has registered at all ("-Inf" in the log).
@@ -1951,8 +1966,8 @@ function renderPeakGauge(status) {
     const filled = Math.max(0, Math.min(1, (level - PEAK_GAUGE_FLOOR_DB) / span));
     const state = (clipped || (peakDb !== null && peakDb >= PEAK_GAUGE_BAD_DB)) ? ' bad'
                 : (peakDb !== null && peakDb >= PEAK_GAUGE_WARN_DB) ? ' warn' : '';
-    fill.style.width = `${(filled * 100).toFixed(0)}%`;
-    fill.className = 'dsp-gauge-fill' + state;
+    fill.style.left = `${(filled * 100).toFixed(1)}%`;
+    fill.style.opacity = '1';
     value.textContent = peakDb === null
         ? '−∞ dB'
         : `${peakDb > 0 ? '+' : ''}${peakDb.toFixed(1)} dB`;
@@ -1965,6 +1980,27 @@ function renderPeakGauge(status) {
         ? 'Peak — clipped since BruteFIR started'
         : 'Peak — loudest output sample since BruteFIR started (peak-hold, never reset)') +
         (perChannel ? ` — ${perChannel}` : '');
+}
+
+let peakResetBusy = false;
+async function resetBrutefirPeak() {
+    if (peakResetBusy || !dspGaugeCurrentId) return;
+    peakResetBusy = true;
+    const button = document.getElementById("peak-reset-" + dspGaugeCurrentId);
+    if (button) button.disabled = true;
+    try {
+        const d = await (await fetch("/drc/brutefir-peak/reset", {method:"POST"})).json();
+        if (!d.ok) throw new Error(d.error || "peak reset failed");
+        dspPeakLastStatus = {available:false};
+        renderPeakGauge(dspPeakLastStatus);
+        toast("BruteFIR peak hold reset", "ok");
+        await loadDspGauge();
+    } catch (error) {
+        toast(error.message || "peak reset failed", "error");
+    } finally {
+        peakResetBusy = false;
+        if (button) button.disabled = false;
+    }
 }
 
 async function loadDspGauge() {

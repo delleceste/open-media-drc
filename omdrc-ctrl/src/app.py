@@ -2924,18 +2924,25 @@ def _raw_filter_headroom(filename: str, fmt: str,
 # may have been growing since the box last rebooted.
 _BRUTEFIR_PEAK_TAIL_BYTES = 2 * 1024 * 1024
 _BRUTEFIR_PEAK_ENTRY = re.compile(r'(\d+)/(\d+)/(-Inf|[+-]?\d+\.\d+)')
+_BRUTEFIR_PEAK_RESET_MARK: tuple[int, int, int] | None = None
 
 
 def _brutefir_last_peak_line(path: str = "/tmp/brutefir.out") -> str | None:
     """The most recent "peak: ..." line BruteFIR has ever printed to `path`
     since it last started, or None if it has not printed one yet."""
     try:
-        size = os.path.getsize(path)
+        stat = os.stat(path)
+        size = stat.st_size
     except OSError:
         return None
+    start = max(0, size - _BRUTEFIR_PEAK_TAIL_BYTES)
+    if path == "/tmp/brutefir.out" and _BRUTEFIR_PEAK_RESET_MARK:
+        device, inode, offset = _BRUTEFIR_PEAK_RESET_MARK
+        if (device, inode) == (stat.st_dev, stat.st_ino) and offset <= size:
+            start = max(start, offset)
     try:
         with open(path, "rb") as stream:
-            stream.seek(max(0, size - _BRUTEFIR_PEAK_TAIL_BYTES))
+            stream.seek(start)
             chunk = stream.read().decode(errors="replace")
     except OSError:
         return None
@@ -3223,22 +3230,47 @@ def _brutefir_attenuation_db() -> float:
                min(_BRUTEFIR_ATTENUATION_MAX_DB, value))
 
 
-def _set_brutefir_attenuation(db: float) -> None:
-    """Set both stereo filter-to-output gains through BruteFIR's CLI."""
-    command = (f"cfoa drc_l left_out {db:.1f}; "
-               f"cfoa drc_r right_out {db:.1f}; quit\n")
+def _configured_brutefir_attenuation_db() -> float | None:
+    """Coefficient attenuation from the active config, for first-run UI state."""
+    conf_path = _active_brutefir_conf()
+    if not conf_path:
+        return None
+    try:
+        values = [float(item["attenuation"])
+                  for item in _parse_brutefir_conf(conf_path)["coeffs"]]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not values:
+        return None
+    # Stereo configs normally match; maximum is the conservative display if a
+    # deliberately asymmetric config is installed.
+    return max(values)
+
+
+def _brutefir_cli(command: str) -> None:
+    """Run one BruteFIR CLI line and surface its textual errors."""
     with socket.create_connection(("127.0.0.1", 3000), timeout=1.0) as cli:
         cli.settimeout(1.0)
-        cli.sendall(command.encode("ascii"))
+        line = command.rstrip("\n; ") + "; quit"
+        cli.sendall((line + "\n").encode("ascii"))
         chunks = []
         try:
             while chunk := cli.recv(4096):
                 chunks.append(chunk)
         except socket.timeout:
             pass
-        response = b"".join(chunks).decode("utf-8", "replace")
+    response = b"".join(chunks).decode("utf-8", "replace")
     if re.search(r"(?i)\b(error|invalid|unknown|failed)\b", response):
         raise RuntimeError(response.strip())
+
+
+def _set_brutefir_attenuation(db: float) -> None:
+    """Set both stereo filter-to-output gains through BruteFIR's CLI."""
+    configured = _configured_brutefir_attenuation_db() or 0.0
+    output_attenuation = db - configured
+    command = (f"cfoa drc_l left_out {output_attenuation:.1f}; "
+               f"cfoa drc_r right_out {output_attenuation:.1f}")
+    _brutefir_cli(command)
 
 
 # ── DRC display-sync delay ────────────────────────────────────────────────────
@@ -6948,6 +6980,26 @@ def drc_brutefir_peak():
         return jsonify({"available": False, "error": str(error)})
 
 
+
+
+@app.route("/drc/brutefir-peak/reset", methods=["POST"])
+def drc_brutefir_peak_reset():
+    """Reset BruteFIR peak/overflow hold and hide pre-reset log records."""
+    global _BRUTEFIR_PEAK_RESET_MARK
+    if _active_brutefir_process() is None:
+        return jsonify({"ok": False, "error": "BruteFIR is not running"}), 409
+    try:
+        _brutefir_cli("rpk")
+        try:
+            stat = os.stat("/tmp/brutefir.out")
+            _BRUTEFIR_PEAK_RESET_MARK = (stat.st_dev, stat.st_ino, stat.st_size)
+        except OSError:
+            _BRUTEFIR_PEAK_RESET_MARK = None
+        return jsonify({"ok": True})
+    except OSError as error:
+        return jsonify({"ok": False, "error": f"BruteFIR CLI unavailable: {error}"}), 503
+    except RuntimeError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
 @app.route("/drc/brutefir-rti")
 def drc_brutefir_rti():
     """BruteFIR's own real-time index (DSP scheduling headroom), tailed from
@@ -6965,7 +7017,14 @@ def drc_attenuation():
     """Read or set the persistent live BruteFIR output attenuation."""
     running = _active_brutefir_process() is not None
     if request.method == "GET":
-        return jsonify({"ok": True, "db": _brutefir_attenuation_db(), "running": running,
+        saved = _read_state_float(_BRUTEFIR_ATTENUATION_FILE)
+        configured = _configured_brutefir_attenuation_db() if saved is None else None
+        db = (_brutefir_attenuation_db() if configured is None else
+              max(_BRUTEFIR_ATTENUATION_MIN_DB,
+                  min(_BRUTEFIR_ATTENUATION_MAX_DB, configured)))
+        return jsonify({"ok": True, "db": round(db, 1), "running": running,
+                        "source": "configuration" if saved is None and configured is not None else
+                                  "saved" if saved is not None else "default",
                         "min_db": _BRUTEFIR_ATTENUATION_MIN_DB,
                         "max_db": _BRUTEFIR_ATTENUATION_MAX_DB})
     raw = (request.get_json(silent=True) or {}).get("db")
@@ -6974,9 +7033,9 @@ def drc_attenuation():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "db must be a number"}), 400
     if (not math.isfinite(db) or db < _BRUTEFIR_ATTENUATION_MIN_DB or
-            db > _BRUTEFIR_ATTENUATION_MAX_DB or db * 2 != round(db * 2)):
+            db > _BRUTEFIR_ATTENUATION_MAX_DB or db * 10 != round(db * 10)):
         return jsonify({"ok": False, "error":
-                        "db must be between 2 and 12 in 0.5 dB steps"}), 400
+                        "db must be between 2 and 12 in 0.1 dB steps"}), 400
     try:
         if running:
             _set_brutefir_attenuation(db)

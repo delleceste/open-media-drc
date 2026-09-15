@@ -1107,6 +1107,9 @@ if [ $# -ge 1 ] && [ "$1" = "design" ]; then
   if [ -f "$POWER_FILE" ] && [ "$(cat "$POWER_FILE")" = "off" ]; then
     printf '%s%s\n' "$design_mode" "${wanted:+ $wanted}" > "$STATE_FILE"
     chmod 644 "$STATE_FILE" 2>/dev/null || true
+    design_history_file="$STATE_DIR/last_design.$GEOMETRY"
+    printf '%s\n' "$listed" > "$design_history_file"
+    chmod 644 "$design_history_file" 2>/dev/null || true
     log_event "event=design_switch_saved geometry=${GEOMETRY} rate=${design_rate} from=${previous} to=${listed} power=off"
     echo "saved filter design: $previous -> $listed (DRC is off; restore respects off, so it applies on the next activation)"
     exit 0
@@ -1163,17 +1166,21 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
     exit 1
   fi
 
+  # Capture the current geometry's selection before changing GEOMETRY, so the
+  # first switch after an upgrade also has useful per-geometry history.
+  previous_geo_state=""
+  [ -f "$STATE_FILE" ] && previous_geo_state=$(state_to_args "$(cat "$STATE_FILE")")
+  case "$previous_geo_state" in ""|off) previous_geo_state="192000" ;; esac
+  # shellcheck disable=SC2086
+  set -- $previous_geo_state
+  previous_geo_design="${2:-default}"
+  printf "%s\n" "$previous_geo_design" > "$STATE_DIR/last_design.$GEOMETRY"
+  chmod 644 "$STATE_DIR/last_design.$GEOMETRY" 2>/dev/null || true
+
   echo "$new_geo" > "$GEOMETRY_FILE"
   chmod 644 "$GEOMETRY_FILE" 2>/dev/null || true
   GEOMETRY="$new_geo"
   log_event "event=geometry set=${new_geo}"
-
-  # DRC off: record the choice only.  Turning DRC back on (or `restore`) picks
-  # the new set up from GEOMETRY_FILE, so there is nothing to reload now.
-  if [ -f "$POWER_FILE" ] && [ "$(cat "$POWER_FILE")" = "off" ]; then
-    echo "filter set: $new_geo (DRC is off — it applies when DRC is turned on)"
-    exit 0
-  fi
 
   geo_state=""
   [ -f "$STATE_FILE" ] && geo_state=$(state_to_args "$(cat "$STATE_FILE")")
@@ -1181,29 +1188,41 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
   # shellcheck disable=SC2086
   set -- $geo_state
   want_rate="$1"
-  want_variant="${2:-}"
-
-  # Filter sets are per-rate and not every set covers every rate (a set measured
-  # only at 192 kHz is normal), so the requested rate may simply not exist in the
-  # new set.  Degrade instead of failing: drop the variant first, then fall back
-  # to the set's highest rate — and say so, since the audible rate changes.
   need_rate="$want_rate"
   [ "$want_rate" = "resamp" ] && need_rate=192000
-  if [ ! -f "$SITE_DIR/configs/$new_geo/brutefir-${need_rate}${want_variant}.conf" ]; then
-    if [ -n "$want_variant" ] && \
-       [ -f "$SITE_DIR/configs/$new_geo/brutefir-${need_rate}.conf" ]; then
-      echo "filter set $new_geo has no ${want_variant} variant at ${need_rate} Hz — using the plain filter"
-      want_variant=""
-    else
-      fallback_rate=$(geometry_rates "$new_geo" | tail -n 1)
-      if [ -z "$fallback_rate" ]; then
-        echo "filter set $new_geo has no usable brutefir config" >&2
-        exit 1
-      fi
-      echo "filter set $new_geo has no ${need_rate} Hz config — switching to $(format_rate "$fallback_rate")"
-      want_rate="$fallback_rate"
-      want_variant=""
+
+  # Designs belong to a geometry. Prefer the design last used with the target
+  # geometry; otherwise select that geometry's first valid design. Never carry
+  # a selector over merely because it was active in the previous geometry.
+  available_designs=$(geometry_designs "$new_geo" "$need_rate")
+  if [ -z "$available_designs" ]; then
+    fallback_rate=$(geometry_rates "$new_geo" | tail -n 1)
+    if [ -z "$fallback_rate" ]; then
+      echo "filter set $new_geo has no usable brutefir config" >&2
+      exit 1
     fi
+    echo "filter set $new_geo has no ${need_rate} Hz config — switching to $(format_rate "$fallback_rate")"
+    want_rate="$fallback_rate"
+    need_rate="$fallback_rate"
+    available_designs=$(geometry_designs "$new_geo" "$need_rate")
+  fi
+
+  design_history_file="$STATE_DIR/last_design.$new_geo"
+  selected_design=""
+  [ -r "$design_history_file" ] && selected_design=$(cat "$design_history_file" 2>/dev/null || true)
+  if ! printf "%s\n" "$available_designs" | grep -qxF -- "$selected_design"; then
+    selected_design=$(printf "%s\n" "$available_designs" | head -n 1)
+  fi
+  [ "$selected_design" = "default" ] && want_variant="" || want_variant="$selected_design"
+  echo "filter design for $new_geo: $selected_design"
+
+  # Record a coherent geometry/rate/design tuple even while DRC is off.
+  if [ -f "$POWER_FILE" ] && [ "$(cat "$POWER_FILE")" = "off" ]; then
+    printf "%s%s\n" "$want_rate" "${want_variant:+ $want_variant}" > "$STATE_FILE"
+    printf "%s\n" "$selected_design" > "$design_history_file"
+    chmod 644 "$STATE_FILE" "$design_history_file" 2>/dev/null || true
+    echo "filter set: $new_geo (DRC is off — it applies when DRC is turned on)"
+    exit 0
   fi
 
   echo "switching to filter set $new_geo"
@@ -1295,7 +1314,7 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
     # Migrate/display the short-lived gain-style negative representation.
     _st_attenuation="${_st_attenuation#-}"
   fi
-  if [[ "$_st_attenuation" =~ ^([2-9]|1[0-2])(\.[05])?$ ]]; then
+  if [[ "$_st_attenuation" =~ ^([2-9]|1[0-2])(\.[0-9])?$ ]]; then
     if [ -n "$_st_bf_rate" ]; then
       printf "%-17s %s dB (applied)\n" "Attenuation:" "$_st_attenuation"
     else
@@ -1541,16 +1560,23 @@ start_brutefir() {
         # listener, so retry the connection instead of assuming a fixed delay.
         local attenuation_file="$ATTENUATION_FILE"
         if [ -r "$attenuation_file" ]; then
-          local gain attenuation cli_try
+          local gain attenuation configured_attenuation output_attenuation cli_try
           gain=$(tr -d "[:space:]" < "$attenuation_file")
-          if [[ "$gain" =~ ^-?([2-9]|1[0-2])(\.[05])?$ ]]; then
+          if [[ "$gain" =~ ^-?([2-9]|1[0-2])(\.[0-9])?$ ]]; then
             # Accept negative state written by the short-lived gain-style UI.
             attenuation="${gain#-}"
+            # Coefficient attenuation is already active; cfoa supplies only
+            # the difference needed to reach the persisted total.
+            configured_attenuation=$(awk '/attenuation:[[:space:]]*[-0-9.]+/ {
+              value=$2; gsub(/;/, "", value)
+              if (!seen || value > maximum) maximum=value; seen=1
+            } END { if (seen) printf "%.1f", maximum; else print "0.0" }' "$conf_file")
+            output_attenuation=$(awk -v wanted="$attenuation" -v base="$configured_attenuation" 'BEGIN { printf "%.1f", wanted - base }')
             for cli_try in 1 2 3 4 5; do
               if exec 8<>/dev/tcp/127.0.0.1/3000 2>/dev/null; then
-                printf "cfoa drc_l left_out %s; cfoa drc_r right_out %s;\n" "$attenuation" "$attenuation" >&8
+                printf "cfoa drc_l left_out %s; cfoa drc_r right_out %s; quit\n" "$output_attenuation" "$output_attenuation" >&8
                 exec 8>&- 8<&-
-                echo "restored brutefir attenuation: ${attenuation} dB"
+                echo "restored brutefir attenuation: ${attenuation} dB (cfoa ${output_attenuation} dB over configured ${configured_attenuation} dB)"
                 break
               fi
               sleep 0.2
@@ -2016,6 +2042,10 @@ fi
 state_args="${rate}${variant:+ ${variant}}"
 echo "$state_args" > "$STATE_FILE"
 chmod 644 "$STATE_FILE" 2>/dev/null || true
+# Remember the last successfully activated design for this geometry.
+design_history_file="$STATE_DIR/last_design.$GEOMETRY"
+printf "%s\n" "${variant:-default}" > "$design_history_file"
+chmod 644 "$design_history_file" 2>/dev/null || true
 # DRC is now running — record the on state alongside the rate so `restore`
 # brings it back (the off path above writes "off" here instead).
 echo "on" > "$POWER_FILE"
