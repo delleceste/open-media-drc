@@ -1594,6 +1594,12 @@ except the optional auditor below.
 
 ## The workflow
 
+Only two things here are manual: naming the exports by the convention above
+and committing them, and reading the tool's report before answering its
+confirmation prompt. Generating every rate's coefficients, baking the
+BruteFIR configs, computing headroom, writing the manifest, and committing
+the site repository are all done by the one command below.
+
 ```sh
 # 1. In the source repository: give the exports their imposed names, commit them
 #    together with the .mdat they came from.
