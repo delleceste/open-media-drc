@@ -318,6 +318,32 @@ class DrcPowerStateTest(unittest.TestCase):
         self.assertEqual(self._source(), "music")
         self.assertIn("config not found", result.stderr)
 
+    def test_returning_from_capture_refreshes_only_a_running_qobuz_renderer(self):
+        """Restoring MPD output must also restore Qobuz Connect discovery.
+
+        The renderer can remain alive throughout CD playback yet disappear
+        from the phone until it is restarted.  Keep that workaround confined
+        to the capture-to-music edge and run it only after MPD's output has
+        successfully reopened.
+        """
+        drc = (ROOT / "drc.sh").read_text(encoding="utf-8")
+        detect = drc.split('returning_from_capture=false', 1)[1].split(
+            'printf \'%s\\n\' "$source_mode"', 1)[0]
+        self.assertIn('is_capture_source "$previous_source"', detect)
+        self.assertIn('! is_capture_source "$source_mode"', detect)
+
+        refresh = drc.split("refresh_qconnect_after_capture() {", 1)[1].split(
+            "\n}", 1)[0]
+        self.assertIn('systemctl is-active --quiet qobuzconnect2mpd.service', refresh)
+        self.assertIn('systemctl stop', refresh)
+        self.assertIn('systemctl start', refresh)
+        self.assertNotIn('upmpdcli', refresh)
+
+        output = drc.split('elif mpc_bounded enable only "$mpd_output"; then', 1)[1].split(
+            "else", 1)[0]
+        self.assertLess(output.index('mpd_result="$mpd_output"'),
+                        output.index("refresh_qconnect_after_capture"))
+
     def test_transient_stop_does_not_change_the_saved_source(self):
         self._write_state()
         (self.state / "last_source").write_text("cdin\n", encoding="utf-8")

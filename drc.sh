@@ -560,6 +560,48 @@ systemctl_user() {
   run_bounded "$OMDRC_SERVICE_TIMEOUT" systemctl --user "$@"
 }
 
+# qobuzconnect2mpd publishes its Connect endpoint while it is attached to MPD.
+# Giving the audio path exclusively to a capture source leaves the daemon alive,
+# but some versions do not advertise themselves again when MPD's output comes
+# back.  Refresh only that already-running renderer when a successful rate action
+# has just returned from CD/S-PDIF; never start a renderer that the user stopped,
+# and do not disturb upmpdcli or ordinary rate changes.
+refresh_qconnect_after_capture() {
+  ${returning_from_capture:-false} || return 0
+
+  if $IS_LINUX; then
+    command -v systemctl >/dev/null 2>&1 || return 0
+    systemctl is-active --quiet qobuzconnect2mpd.service >/dev/null 2>&1 || return 0
+    echo "restarting qobuzconnect2mpd so it advertises the restored music input"
+    if sudo_bounded "$OMDRC_SERVICE_TIMEOUT" systemctl stop \
+        qobuzconnect2mpd.service >/dev/null 2>&1 && \
+       sudo_bounded "$OMDRC_SERVICE_TIMEOUT" systemctl start \
+        qobuzconnect2mpd.service >/dev/null 2>&1; then
+      log_event "event=renderer_refresh renderer=qobuzconnect2mpd result=ok reason=capture_to_music"
+    else
+      log_event "event=renderer_refresh renderer=qobuzconnect2mpd result=fail reason=capture_to_music"
+      echo "warning: qobuzconnect2mpd is running but could not be restarted" >&2
+    fi
+    return 0
+  fi
+
+  command -v service >/dev/null 2>&1 || return 0
+  if ! service qobuzconnect2mpd onestatus >/dev/null 2>&1 && \
+     ! pgrep -q -x qobuzconnect2mpd 2>/dev/null; then
+    return 0
+  fi
+  echo "restarting qobuzconnect2mpd so it advertises the restored music input"
+  if sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service qobuzconnect2mpd onestop \
+      >/dev/null 2>&1 && \
+     sudo_bounded "$OMDRC_SERVICE_TIMEOUT" service qobuzconnect2mpd onestart \
+      >/dev/null 2>&1; then
+    log_event "event=renderer_refresh renderer=qobuzconnect2mpd result=ok reason=capture_to_music"
+  else
+    log_event "event=renderer_refresh renderer=qobuzconnect2mpd result=fail reason=capture_to_music"
+    echo "warning: qobuzconnect2mpd is running but could not be restarted" >&2
+  fi
+}
+
 # Linux: stop the CD bridge and wait for alsaloop to actually let go.
 #
 # This is the counterpart of release_cdin, but it is a STOP rather than a
@@ -1472,9 +1514,15 @@ fi
 # music"; if validation or startup fails, restore/reconcile must retry music,
 # not resurrect the previously saved CD input at 44.1 kHz.  Explicit off and
 # transient stop deliberately leave the source choice untouched.
+returning_from_capture=false
 if [ "$mode" != "off" ] && [ "$mode" != "stop" ]; then
+  previous_source="music"
+  [ -f "$SOURCE_FILE" ] && previous_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
   source_mode="${OMDRC_SOURCE_MODE:-music}"
   valid_source "$source_mode" || source_mode=music
+  if is_capture_source "$previous_source" && ! is_capture_source "$source_mode"; then
+    returning_from_capture=true
+  fi
   printf '%s\n' "$source_mode" > "$SOURCE_FILE"
   chmod 644 "$SOURCE_FILE" 2>/dev/null || true
   log_event "event=source_saved source=${source_mode} reason=transition_intent"
@@ -2035,6 +2083,7 @@ if is_capture_source "${source_mode:-music}"; then
 # output). "mpc disable all" is not valid in mpc — use "enable only <name>".
 elif mpc_bounded enable only "$mpd_output"; then
   mpd_result="$mpd_output"
+  refresh_qconnect_after_capture
 else
   mpd_result="pending"
   echo "warning: DRC is healthy but MPD output selection is pending" >&2
