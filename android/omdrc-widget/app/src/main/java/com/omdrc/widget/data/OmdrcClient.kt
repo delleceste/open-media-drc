@@ -22,7 +22,7 @@ object OmdrcClient {
         } catch (e: Exception) {
             Log.w(TAG, "drc/brutefir-config unreachable: ${e.message}")
             return@withContext WidgetSnapshot(
-                drc = null, mpd = null, rti = null, peak = null,
+                drc = null, mpd = null, rti = null, peak = null, renderer = null,
                 fetchedAtMillis = now, reachable = false,
             )
         }
@@ -35,6 +35,27 @@ object OmdrcClient {
             // a DRC status fetch that did succeed.
             Log.w(TAG, "mpd/info unreachable: ${e.message}")
             null
+        }
+
+        val services = try {
+            RendererStatus.parse(get(host, port, "/qconnect/services"))
+        } catch (e: Exception) {
+            Log.w(TAG, "qconnect/services unreachable: ${e.message}")
+            null
+        }
+        // qobuzconnect2mpd's own self-reported track title - what the web
+        // dashboard's Renderer card shows - only fetched (and only
+        // meaningful) while it's the active renderer.
+        val renderer = if (services?.qobuzconnect2mpd == true) {
+            try {
+                val line1 = get(host, port, "/qconnect/status").optStringOrNull("line1")
+                services.copy(nowPlaying = line1?.takeIf { it.isNotBlank() })
+            } catch (e: Exception) {
+                Log.w(TAG, "qconnect/status unreachable: ${e.message}")
+                services
+            }
+        } else {
+            services
         }
 
         // RTI/peak only mean anything while BruteFIR is actually running -
@@ -60,7 +81,10 @@ object OmdrcClient {
             peak = null
         }
 
-        WidgetSnapshot(drc = drc, mpd = mpd, rti = rti, peak = peak, fetchedAtMillis = now, reachable = true)
+        WidgetSnapshot(
+            drc = drc, mpd = mpd, rti = rti, peak = peak, renderer = renderer,
+            fetchedAtMillis = now, reachable = true,
+        )
     }
 
     private fun get(host: String, port: Int, path: String): JSONObject {

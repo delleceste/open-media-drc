@@ -43,3 +43,6 @@ internal fun JSONObject.optDoubleOrNull(key: String): Double? =
 
 internal fun JSONObject.optBooleanOrNull(key: String): Boolean? =
     if (has(key) && !isNull(key)) getBoolean(key) else null
+
+internal fun JSONObject.optIntOrNull(key: String): Int? =
+    if (has(key) && !isNull(key)) getInt(key) else null

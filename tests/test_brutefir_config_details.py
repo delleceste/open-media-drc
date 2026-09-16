@@ -45,6 +45,13 @@ class BrutefirConfigDetailsTest(unittest.TestCase):
         self.assertEqual(data["db"], 8.0)
         self.assertEqual(data["source"], "configuration")
 
+    def test_safety_limit_is_read_from_active_brutefir_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "brutefir.conf"
+            config.write_text("safety_limit: 6.5;\n", encoding="utf-8")
+            self.assertEqual(
+                APP._configured_brutefir_safety_limit_db(str(config)), 6.5)
+
     def test_attenuation_endpoint_uses_selected_configuration_while_stopped(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "brutefir-192000@multipos.fdw6.conf"

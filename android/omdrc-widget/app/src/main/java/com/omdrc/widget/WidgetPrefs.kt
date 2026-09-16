@@ -4,6 +4,7 @@ import android.content.Context
 import com.omdrc.widget.data.DrcStatus
 import com.omdrc.widget.data.MpdStatus
 import com.omdrc.widget.data.PeakStatus
+import com.omdrc.widget.data.RendererStatus
 import com.omdrc.widget.data.RtiStatus
 import com.omdrc.widget.data.WidgetSnapshot
 
@@ -51,7 +52,14 @@ object WidgetPrefs {
             snapshot.mpd?.let { mpd ->
                 editor.putString("mpd_state", mpd.state)
                 editor.putString("mpd_song", mpd.song)
-                editor.putString("path_status", mpd.pathStatusText)
+                mpd.sampleRate?.let { editor.putInt("sample_rate", it) }
+                mpd.bitDepth?.let { editor.putInt("bit_depth", it) }
+                mpd.brutefirRate?.let { editor.putInt("brutefir_rate", it) }
+            }
+            snapshot.renderer?.let { renderer ->
+                editor.putBoolean("qobuzconnect2mpd", renderer.qobuzconnect2mpd)
+                editor.putBoolean("upmpdcli", renderer.upmpdcli)
+                editor.putString("now_playing", renderer.nowPlaying)
             }
             // rti/peak are null (not just absent) whenever DRC isn't
             // running - clear any previously-cached figures so an old
@@ -89,7 +97,9 @@ object WidgetPrefs {
             ok = true,
             state = p.getString("mpd_state", null),
             song = p.getString("mpd_song", null),
-            pathStatusText = p.getString("path_status", null),
+            sampleRate = if (p.contains("sample_rate")) p.getInt("sample_rate", 0) else null,
+            bitDepth = if (p.contains("bit_depth")) p.getInt("bit_depth", 0) else null,
+            brutefirRate = if (p.contains("brutefir_rate")) p.getInt("brutefir_rate", 0) else null,
         ) else null
         val rti = if (p.contains("rti_available")) RtiStatus(
             available = p.getBoolean("rti_available", false),
@@ -100,11 +110,17 @@ object WidgetPrefs {
             peakDb = if (p.contains("peak_db")) p.getFloat("peak_db", 0f).toDouble() else null,
             clipped = p.getBoolean("peak_clipped", false),
         ) else null
+        val renderer = if (p.contains("qobuzconnect2mpd") || p.contains("upmpdcli")) RendererStatus(
+            qobuzconnect2mpd = p.getBoolean("qobuzconnect2mpd", false),
+            upmpdcli = p.getBoolean("upmpdcli", false),
+            nowPlaying = p.getString("now_playing", null),
+        ) else null
         return WidgetSnapshot(
             drc = drc,
             mpd = mpd,
             rti = rti,
             peak = peak,
+            renderer = renderer,
             fetchedAtMillis = p.getLong("fetched_at", 0L),
             reachable = p.getBoolean("reachable", false),
         )

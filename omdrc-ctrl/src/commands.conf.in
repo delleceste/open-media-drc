@@ -59,6 +59,18 @@ topcpu_interval = 5
 sndstat_interval = 5
 # Refresh interval in seconds for the BruteFIR CPU panel.
 brutefir_interval = 5
+# BruteFIR RTI/Peak gauge poll ladder, in whole seconds, comma-separated.
+# Polling starts at the first step; once a poll comes back reporting the
+# exact same RTI and peak reading as the previous one dsp_gauge_settle_count
+# times in a row, the next poll waits for the next (slower) step instead,
+# down to the last one. Any actual change in either reading resets it
+# straight back to the first (fastest) step, so a spike is still caught
+# within one poll.
+dsp_gauge_poll_steps = 1,5,8
+# How many consecutive unchanged polls it takes to step down to the next
+# (slower) interval.  A single quiet reading does not prove the level has
+# actually settled -- this makes it hold for a while first.
+dsp_gauge_settle_count = 10
 
 # -- Configuration workflows -----------------------------------------------
 [configuration]
@@ -213,6 +225,13 @@ drc_delay_delta_max_ms = 2000
 [qconnect]
 status_file = /tmp/qconnect2mpd-status.txt
 log_file    = /tmp/qconnect2mpd.log
+# Seconds between browser polls of /qconnect/status (now-playing, activity).
+# The Renderer card's track-position readout still ticks forward every
+# second client-side between polls and only corrects itself against the
+# server on this cadence, so a slower value here does not make the visible
+# clock choppy -- it only controls how quickly a pause/seek/track-change
+# elsewhere is noticed.
+status_resync_seconds = 3
 
 # -- Log viewer -------------------------------------------------------------
 # Sources for the Logs card: one "<id> = <path>" per log, in display order.
@@ -226,7 +245,7 @@ log_file    = /tmp/qconnect2mpd.log
 mpd                      = @AUDIO_HOME@/.local/share/mpd/mpd.log
 mpd.label                = MPD
 upmpdcli               = /tmp/upmpdcli.log
-upmpdcli-console       = /tmp/upmpdcli-console.log
+upmpdcli-console       = @UPMPDCLI_CONSOLE_LOG@
 upmpdcli-console.label = upmpdcli (plugins)
 qobuzconnect2mpd       = /tmp/qconnect2mpd.log
 brutefir               = /tmp/brutefir.out
@@ -319,8 +338,13 @@ max_events = 20
 [chain]
 enabled = yes
 # Seconds between polls.  Each one runs a single fstat/fuser over the device
-# list plus, at most, one `mpc status`.
-refresh = 4
+# list plus, at most, one `mpc status` -- and fstat/fuser is comfortably the
+# most expensive poll in the whole panel, so this baseline stays slow.  A DRC
+# rate change, CD-in toggle or DRC OFF triggers an immediate out-of-band
+# refresh from the browser regardless (see runWrite() in index.html), so this
+# interval only has to catch a change nothing else already reports: a stray
+# process taking a device from outside the chain.
+refresh = 10
 # Re-ask through `sudo -n` when omdrcctrl is not root.  fstat/fuser can only
 # report descriptors of processes the caller may debug, so without this the card
 # sees the chain (brutefir, MPD, omdrc-cdin all run as the panel's own user) but
@@ -502,7 +526,7 @@ refresh = 5
 cmd     = @OMDRC_DRC_STATUS@
 
 [drc_off]
-what    = DISABLE
+what    = OFF
 group   = drc
 type    = WRITE
 button  = Apply
@@ -563,7 +587,7 @@ process = brutefir
 # The CD capture source.  Selecting any rate above hands the loopback back to
 # MPD and stops the bridge.
 [drc_cdin]
-what    = CD input (@CDIN_RATE@ Hz)
+what    = CD in
 group   = drc
 type    = WRITE
 button  = Apply

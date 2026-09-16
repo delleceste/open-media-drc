@@ -12,4 +12,12 @@
     <string name="status_unreachable">Unreachable</string>
     <string name="status_unconfigured">Tap to set up</string>
     <string name="mpd_unknown">—</string>
+    <string name="notification_channel_name">DRC status</string>
+    <string name="notification_channel_description">A dismissable status snapshot shown when you open the app or tap the widget\'s refresh icon.</string>
+    <string name="notification_live_channel_name">DRC live updates</string>
+    <string name="notification_live_channel_description">Ongoing while live updates are running; tap Stop on the notification to end it.</string>
+    <string name="live_updates_connecting">Live updates</string>
+    <string name="live_updates_stop">Stop</string>
+    <string name="live_levels">Levels</string>
+    <string name="settings_change_server">Change server address</string>
 </resources>

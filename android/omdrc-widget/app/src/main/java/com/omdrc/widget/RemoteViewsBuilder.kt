@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.view.View
 import android.widget.RemoteViews
+import com.omdrc.widget.data.MpdStatus
 import com.omdrc.widget.data.WidgetSnapshot
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -37,7 +38,7 @@ object RemoteViewsBuilder {
             views.setTextViewText(R.id.title_text, context.getString(R.string.status_unconfigured))
             views.setTextViewText(R.id.subtitle_text, "")
         } else {
-            renderConfigured(context, views, host, port, snapshot)
+            renderConfigured(context, views, snapshot)
         }
 
         if (size == WidgetSize.LARGE) {
@@ -65,8 +66,6 @@ object RemoteViewsBuilder {
     private fun renderConfigured(
         context: Context,
         views: RemoteViews,
-        host: String,
-        port: Int,
         snapshot: WidgetSnapshot?,
     ) {
         if (snapshot == null) {
@@ -79,10 +78,12 @@ object RemoteViewsBuilder {
         if (!snapshot.reachable) {
             views.setImageViewResource(R.id.status_icon, R.drawable.ic_status_off)
             views.setTextViewText(R.id.title_text, context.getString(R.string.status_unreachable))
+            // No point repeating the host/port here - that's config, not
+            // status, and the user already knows what they typed in.
             val hasLastKnown = snapshot.drc != null
             views.setTextViewText(
                 R.id.subtitle_text,
-                if (hasLastKnown) "Last seen ${staleness(snapshot.fetchedAtMillis)}" else host,
+                if (hasLastKnown) "Last seen ${staleness(snapshot.fetchedAtMillis)}" else "",
             )
             return
         }
@@ -95,15 +96,14 @@ object RemoteViewsBuilder {
         if (drc == null || !drc.running) {
             views.setImageViewResource(R.id.status_icon, R.drawable.ic_status_off)
             views.setTextViewText(R.id.title_text, context.getString(R.string.status_drc_off))
-            views.setTextViewText(R.id.subtitle_text, drc?.error ?: "")
+            views.setTextViewText(R.id.subtitle_text, drc?.error ?: mpdStateLabel(snapshot.mpd))
             return
         }
 
-        val label = listOfNotNull(drc.geometry, drc.designId).joinToString(" · ")
-        views.setTextViewText(
-            R.id.title_text,
-            context.getString(R.string.status_drc_on) + if (label.isNotEmpty()) " · $label" else "",
-        )
+        // Deliberately just "DRC ON" - geometry/design/attenuation are
+        // config detail, not at-a-glance status; the icon already carries
+        // safe/unsafe.
+        views.setTextViewText(R.id.title_text, context.getString(R.string.status_drc_on))
 
         val icon = when (drc.headroomSafe) {
             true -> R.drawable.ic_status_safe
@@ -112,29 +112,35 @@ object RemoteViewsBuilder {
         }
         views.setImageViewResource(R.id.status_icon, icon)
 
-        val attenuation = drc.effectiveAttenuationDb?.let { db ->
-            val source = drc.effectiveAttenuationSource?.let { " ($it)" } ?: ""
-            "%.1f dB%s".format(db, source)
-        } ?: drc.error ?: ""
-        views.setTextViewText(R.id.subtitle_text, attenuation)
+        views.setTextViewText(R.id.subtitle_text, mpdStateLabel(snapshot.mpd))
     }
 
+    private fun mpdStateLabel(mpd: MpdStatus?): String = when (mpd?.state) {
+        "playing" -> "Playing"
+        "paused" -> "Paused"
+        "stopped" -> "Stopped"
+        else -> ""
+    }
+
+    /** Which renderer is feeding MPD, plus the song when one's playing -
+     *  the geometry/attenuation detail that used to live here moved out per
+     *  request; this is "what's actually happening" instead. */
     private fun mpdLine(context: Context, snapshot: WidgetSnapshot?): CharSequence {
-        val mpd = snapshot?.mpd ?: return context.getString(R.string.mpd_unknown)
-        return when (mpd.state) {
-            "playing" -> mpd.song ?: "Playing"
-            "paused" -> "Paused" + (mpd.song?.let { " · $it" } ?: "")
-            "stopped" -> "Stopped"
-            else -> context.getString(R.string.mpd_unknown)
-        }
+        val renderer = snapshot?.renderer
+        val mpd = snapshot?.mpd
+        // Prefer the renderer's own self-reported title (qobuzconnect2mpd's
+        // "line1", same as the dashboard's Renderer card) over MPD's tag
+        // data, which falls back to the raw stream URL for a local proxy
+        // stream MPD has no metadata for.
+        val song = if (mpd?.state == "playing") TrackTitle.titleOnly(renderer?.nowPlaying ?: mpd.displaySong) else null
+        val parts = listOfNotNull(renderer?.label, song)
+        return if (parts.isEmpty()) context.getString(R.string.mpd_unknown) else parts.joinToString(" · ")
     }
 
-    /** The same plain-language audio-path verdict the web dashboard shows
-     *  ("Bit-perfect passthrough" / "Full-resolution DRC · no resampling" /
-     *  "Resampling active") - meaningful whether DRC is on or off, so it's
-     *  not gated on snapshot.drc.running the way the meters line is. */
+    /** "24/96000 → 96000 Hz" source->output bitrate chain - only shown
+     *  while DRC is actually running, per request. */
     private fun renderChainLine(views: RemoteViews, snapshot: WidgetSnapshot?) {
-        val text = snapshot?.mpd?.pathStatusText
+        val text = ChainFormat.bitrateChain(snapshot?.mpd, snapshot?.drc?.running == true)
         if (text.isNullOrEmpty()) {
             views.setViewVisibility(R.id.chain_text, View.GONE)
         } else {

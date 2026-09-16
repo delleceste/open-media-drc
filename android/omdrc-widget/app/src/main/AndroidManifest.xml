@@ -3,6 +3,20 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Runtime-requested on API 33+ (see MainActivity); the status
+         notification is purely a convenience and the app works fine if the
+         user declines it. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- LiveStatusService: an explicitly user-started foreground service
+         (see that class) that keeps polling and pushing live widget
+         updates until its notification's Stop action is tapped.
+         dataSync, not connectedDevice: connectedDevice is reserved for
+         Bluetooth/NFC/USB/UWB companion-device links and requires one of
+         those specific permissions - a SecurityException at runtime for a
+         plain network poll like this one. dataSync is the correct type for
+         "periodically sync data over the network". -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:allowBackup="false"
@@ -37,6 +51,13 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".LevelsActivity"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.OmdrcWidget" />
+
         <!--
           One receiver handles everything: the system's APPWIDGET_UPDATE
           lifecycle broadcasts (dispatched by AppWidgetProvider's own
@@ -60,6 +81,11 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/omdrc_widget_info" />
         </receiver>
+
+        <service
+            android:name=".LiveStatusService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
     </application>
 </manifest>

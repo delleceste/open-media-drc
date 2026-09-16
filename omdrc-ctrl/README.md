@@ -425,7 +425,7 @@ than sources:
 mpd                      = @AUDIO_HOME@/.local/share/mpd/mpd.log
 mpd.label                = MPD
 upmpdcli               = /tmp/upmpdcli.log
-upmpdcli-console       = /tmp/upmpdcli-console.log
+upmpdcli-console       = /run/open-media-drc/upmpdcli-console.log
 upmpdcli-console.label = upmpdcli (plugins)
 qobuzconnect2mpd       = /tmp/qconnect2mpd.log
 brutefir               = /tmp/brutefir.out
@@ -445,10 +445,11 @@ written yet" rather than as an error.
 its cdplugin subprocesses (Qobuz among them) log to the stderr they inherit,
 which is where the Qobuz login verdict appears. The upmpdcli service scripts
 installed by the superproject redirect that stderr to
-`/tmp/upmpdcli-console.log` — on FreeBSD with `daemon -o` (override with
-`upmpdcli_logfile` in `/etc/rc.conf.d/upmpdcli`), on Linux with
-`StandardError=append:`. Without that redirection the plugin output goes to
-`/dev/null` and the Qobuz rules below have nothing to match.
+`/run/open-media-drc/upmpdcli-console.log` on Linux (in a systemd-managed
+runtime directory), or `/tmp/upmpdcli-console.log` on FreeBSD with `daemon -o`
+(override with `upmpdcli_logfile` in `/etc/rc.conf.d/upmpdcli`). Without that
+redirection the plugin output goes to `/dev/null` and the Qobuz rules below
+have nothing to match.
 
 ### Reserved sections: `[alert:<id>]`
 
@@ -1118,7 +1119,7 @@ script captures, not in a log file it never got as far as writing.
 ```json
 { "ok": true, "content": "2026-05-15 14:32:01 [OUT] ...",
   "renderer": "upmpdcli", "source": "upmpdcli-console",
-  "label": "upmpdcli (plugins)", "path": "/tmp/upmpdcli-console.log" }
+  "label": "upmpdcli (plugins)", "path": "/run/open-media-drc/upmpdcli-console.log" }
 ```
 
 ---
@@ -1130,7 +1131,7 @@ Lists the logs configured in `[logs]`, with the state of each file.
 ```json
 { "ok": true, "sources": [
   { "id": "upmpdcli-console", "label": "upmpdcli (plugins)",
-    "path": "/tmp/upmpdcli-console.log", "exists": true,
+    "path": "/run/open-media-drc/upmpdcli-console.log", "exists": true,
     "size": 4213, "mtime": 1787035072 } ] }
 ```
 
@@ -1152,7 +1153,7 @@ GET /logs/tail?source=upmpdcli-console&bytes=65536
 
 ```json
 { "ok": true, "id": "upmpdcli-console", "label": "upmpdcli (plugins)",
-  "path": "/tmp/upmpdcli-console.log", "content": "…", "truncated": false,
+  "path": "/run/open-media-drc/upmpdcli-console.log", "content": "…", "truncated": false,
   "matches": [2], "exists": true, "size": 4213, "mtime": 1787035072 }
 ```
 
@@ -1405,7 +1406,7 @@ sudoers grant above); on FreeBSD with `sudo service <name> onestart|onestop`.
   "renderer": "upmpdcli",
   "detail": "ld-elf.so.1: Shared object \"libnpupnp.so.13\" not found ...",
   "log_source": "upmpdcli-console", "log_label": "upmpdcli (plugins)",
-  "log_path": "/tmp/upmpdcli-console.log" }
+  "log_path": "/run/open-media-drc/upmpdcli-console.log" }
 ```
 
 A zero exit from the service script is not proof of a running renderer: both are
@@ -1429,12 +1430,17 @@ endpoint and every Qobuz login failing for the rest of that boot.
 Because they are system units, `AUDIO_USER` (the identity omdrcctrl and
 `omdrc-renderer` both run as) needs passwordless sudo for exactly their
 start/stop, mirroring the FreeBSD rc.d grant below rather than the old
-`XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` user-bus reach-around:
+`XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` user-bus reach-around. The same
+grant covers `mpd.service`, for the Restart button on the MPD panel: MPD can
+wedge without crashing (observed once under memory pressure — its accept()
+loop starved while the process itself stayed up, so `Restart=on-failure`
+never triggered), and the only recovery is a manual restart:
 
 ```
 AUDIO_USER ALL=(root) NOPASSWD: /usr/bin/systemctl start qobuzconnect2mpd.service, \
     /usr/bin/systemctl stop qobuzconnect2mpd.service, \
-    /usr/bin/systemctl start upmpdcli.service, /usr/bin/systemctl stop upmpdcli.service
+    /usr/bin/systemctl start upmpdcli.service, /usr/bin/systemctl stop upmpdcli.service, \
+    /usr/bin/systemctl start mpd.service, /usr/bin/systemctl stop mpd.service
 ```
 
 No entry is needed for `is-active` or `status`: those are unprivileged reads

@@ -1,11 +1,17 @@
 # omdrcctrl-renderer — passwordless sudo for exactly the two renderer units'
-# start/stop, nothing else.  Needed because upmpdcli.service and
-# qobuzconnect2mpd.service are systemd SYSTEM units with User=@AUDIO_USER@ (not
-# systemd --user — see cmake/renderers.cmake and each unit's own header
-# comment for why), so the two things that switch between them —
-# omdrcctrl's web toggle and the omdrc-renderer boot restorer — both run as
-# @AUDIO_USER@ and need root to start/stop a system unit.  This is the Linux
-# equivalent of the FreeBSD rc.d NOPASSWD grant in omdrc-ctrl/README.md.
+# start/stop, plus mpd.service's, nothing else.  Needed because upmpdcli.service,
+# qobuzconnect2mpd.service and mpd.service are systemd SYSTEM units with
+# User=@AUDIO_USER@ (not systemd --user — see cmake/renderers.cmake and each
+# unit's own header comment for why), so the things that manage them —
+# omdrcctrl's web toggle and restart buttons and the omdrc-renderer boot
+# restorer — all run as @AUDIO_USER@ and need root to start/stop a system unit.
+# mpd.service is included because a wedged MPD (seen once: memory pressure
+# from an unrelated restart storm left its accept() loop starved, with no
+# crash and nothing for Restart= to react to) has no other recovery short of
+# a manual `sudo systemctl restart mpd` — the Restart button on the MPD panel
+# needs the same grant `renderer_restart` already has for the two renderers.
+# This is the Linux equivalent of the FreeBSD rc.d NOPASSWD grant in
+# omdrc-ctrl/README.md.
 #
 # Rendered by CMake (cmake/renderers.cmake) and staged under
 # @PREFIX@/share/omdrc/sudoers.d/omdrcctrl-renderer, syntax-checked with
@@ -20,4 +26,5 @@
 #
 @AUDIO_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl start qobuzconnect2mpd.service, \
     /usr/bin/systemctl stop qobuzconnect2mpd.service, \
-    /usr/bin/systemctl start upmpdcli.service, /usr/bin/systemctl stop upmpdcli.service
+    /usr/bin/systemctl start upmpdcli.service, /usr/bin/systemctl stop upmpdcli.service, \
+    /usr/bin/systemctl start mpd.service, /usr/bin/systemctl stop mpd.service

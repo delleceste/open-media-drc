@@ -10,6 +10,7 @@ data class WidgetSnapshot(
     val mpd: MpdStatus?,
     val rti: RtiStatus?,
     val peak: PeakStatus?,
+    val renderer: RendererStatus?,
     val fetchedAtMillis: Long,
     val reachable: Boolean,
 )

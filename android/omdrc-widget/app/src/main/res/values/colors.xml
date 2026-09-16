@@ -6,4 +6,6 @@
     <color name="status_safe">#4CAF50</color>
     <color name="status_unsafe">#E5484D</color>
     <color name="status_off">#8A8A94</color>
+    <color name="icon_background">#FFFFFF</color>
+    <color name="icon_glyph">#000000</color>
 </resources>

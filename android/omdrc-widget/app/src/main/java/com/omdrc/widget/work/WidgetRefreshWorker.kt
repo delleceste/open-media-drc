@@ -15,6 +15,8 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import android.util.Log
 import com.omdrc.widget.RefreshEngine
+import com.omdrc.widget.StatusNotifier
+import com.omdrc.widget.WidgetPrefs
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "OmdrcWidget"
@@ -30,9 +32,21 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
 
     override suspend fun doWork(): Result {
         val targetId = inputData.getInt(KEY_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
-        Log.d(TAG, "doWork start, targetId=$targetId")
+        val notify = inputData.getBoolean(KEY_NOTIFY, false)
+        Log.d(TAG, "doWork start, targetId=$targetId, notify=$notify")
         if (targetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
             RefreshEngine.refreshWidget(applicationContext, targetId)
+            // Only ever posted for a manual, user-triggered refresh of one
+            // specific widget - never for the background alarm/periodic
+            // path or a bulk "refresh all", so it never becomes passive
+            // noise (see StatusNotifier).
+            if (notify) {
+                val hostPort = WidgetPrefs.load(applicationContext, targetId)
+                val snapshot = WidgetPrefs.loadSnapshot(applicationContext, targetId)
+                if (hostPort != null && snapshot != null) {
+                    StatusNotifier.show(applicationContext, hostPort.first, hostPort.second, snapshot)
+                }
+            }
         } else {
             RefreshEngine.refreshAll(applicationContext)
         }
@@ -42,14 +56,19 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
 
     companion object {
         private const val KEY_APPWIDGET_ID = "appWidgetId"
+        private const val KEY_NOTIFY = "notify"
         private const val PERIODIC_WORK_NAME = "omdrc_periodic_refresh"
         private val NETWORK_CONSTRAINTS = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        /** appWidgetId == null means "refresh every configured widget instance". */
-        fun enqueueOneTime(context: Context, appWidgetId: Int?) {
-            val data = workDataOf(KEY_APPWIDGET_ID to (appWidgetId ?: AppWidgetManager.INVALID_APPWIDGET_ID))
+        /** appWidgetId == null means "refresh every configured widget instance".
+         *  notify only applies when a specific appWidgetId is given. */
+        fun enqueueOneTime(context: Context, appWidgetId: Int?, notify: Boolean = false) {
+            val data = workDataOf(
+                KEY_APPWIDGET_ID to (appWidgetId ?: AppWidgetManager.INVALID_APPWIDGET_ID),
+                KEY_NOTIFY to notify,
+            )
             val request = OneTimeWorkRequestBuilder<WidgetRefreshWorker>()
                 .setInputData(data)
                 .setConstraints(NETWORK_CONSTRAINTS)
@@ -60,7 +79,7 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
             val uniqueName = "omdrc_oneoff_${appWidgetId ?: "all"}"
-            Log.d(TAG, "enqueueOneTime: $uniqueName")
+            Log.d(TAG, "enqueueOneTime: $uniqueName notify=$notify")
             WorkManager.getInstance(context).enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
         }
 

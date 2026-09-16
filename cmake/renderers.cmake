@@ -97,6 +97,9 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
 
     # upmpdcli system unit (User=@AUDIO_USER@ — see the template's own header
     # for why this moved off systemd --user).
+    set(_upmpdcli_runner "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/run-upmpdcli")
+    install(PROGRAMS scripts/run-upmpdcli.sh
+            DESTINATION libexec/omdrc RENAME run-upmpdcli)
     file(READ etc/systemd/system/upmpdcli.service.in _s)
     string(REPLACE "@REPO_DIR@/upmpdcli/upmpdcli.conf" "${_siteetc}/upmpdcli.conf" _s "${_s}")
     # ExecStart points at wherever upmpdcli actually is (dependencies.cmake
@@ -104,6 +107,7 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     # Arch (/usr/bin) and built into /usr/local/bin from source, and a unit that
     # names the wrong one fails at exec on every start.
     string(REPLACE "@UPMPDCLI_BIN@" "${_upmpdcli_bin}" _s "${_s}")
+    string(REPLACE "@UPMPDCLI_RUNNER@" "${_upmpdcli_runner}" _s "${_s}")
     _omdrc_common(_s)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" "${_s}")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/system)

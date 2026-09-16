@@ -27,7 +27,7 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
                 Log.d(TAG, "manual refresh requested for widget $id")
                 if (id != AppWidgetManager.INVALID_APPWIDGET_ID) {
                     RefreshEngine.showChecking(context, id)
-                    WidgetRefreshWorker.enqueueOneTime(context, id)
+                    WidgetRefreshWorker.enqueueOneTime(context, id, notify = true)
                 }
             }
             ACTION_ALARM_TICK -> {

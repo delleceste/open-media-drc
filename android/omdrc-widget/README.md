@@ -56,6 +56,11 @@ CMake/Make build (nothing here is wired into `CMakeLists.txt`/`Makefile`).
    a live view like the web dashboard's own 5s polling.
 4. Tap the widget body, or launch the app itself, to open the full
    dashboard in a single reused WebView window.
+5. Expand the app's live-status notification and tap **Levels** to open the
+   fast stereo LEVELS meters in a small Picture-in-Picture window. The native
+   meter connects to `/spectrum/stream?mode=vu`; dismissing the PiP window
+   closes that stream, allowing the server-side analyzer to stop immediately
+   when it has no other listeners.
 
 ## Known gaps (deliberately out of scope for this first pass)
 

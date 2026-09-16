@@ -11,9 +11,18 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "scripts/prepare-renderer-runtime.sh"
+UPMPDCLI_UNIT = ROOT / "etc/systemd/system/upmpdcli.service.in"
 
 
 class RendererRuntimePermissionTests(unittest.TestCase):
+    def test_upmpdcli_console_redirection_happens_after_exec(self):
+        unit = UPMPDCLI_UNIT.read_text(encoding="utf-8")
+        self.assertIn("RuntimeDirectory=open-media-drc", unit)
+        self.assertIn("@UPMPDCLI_RUNNER@", unit)
+        directives = [line for line in unit.splitlines() if not line.startswith("#")]
+        self.assertFalse(any(line.startswith("StandardOutput=") for line in directives))
+        self.assertFalse(any(line.startswith("ExecStartPre=") for line in directives))
+
     def test_helper_converges_all_writable_paths(self):
         account = pwd.getpwuid(os.getuid())
         with tempfile.TemporaryDirectory() as temporary:
@@ -31,7 +40,6 @@ class RendererRuntimePermissionTests(unittest.TestCase):
             token.chmod(0o600)
             for name in (
                 "upmpdcli.log",
-                "upmpdcli-console.log",
                 "qconnect2mpd.log",
                 "qconnect2mpd-status.txt",
             ):

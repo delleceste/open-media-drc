@@ -12,6 +12,7 @@ object AppPrefs {
     private const val PREFS_NAME = "omdrc_app_prefs"
     private const val KEY_HOST = "default_host"
     private const val KEY_PORT = "default_port"
+    private const val KEY_LAST_FOREGROUND = "last_foreground_millis"
     const val DEFAULT_PORT = 9090
 
     fun defaultHost(context: Context): String? =
@@ -26,6 +27,16 @@ object AppPrefs {
             .putInt(KEY_PORT, port)
             .apply()
     }
+
+    /** Marks "the dashboard was just visible" - read by LiveStatusService
+     *  to auto-stop itself after a period with the app not reopened, rather
+     *  than polling forever once you've walked away. */
+    fun touchForeground(context: Context) {
+        prefs(context).edit().putLong(KEY_LAST_FOREGROUND, System.currentTimeMillis()).apply()
+    }
+
+    fun lastForegroundMillis(context: Context): Long =
+        prefs(context).getLong(KEY_LAST_FOREGROUND, 0L)
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
