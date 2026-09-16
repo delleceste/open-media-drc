@@ -1748,6 +1748,112 @@ means the curves must not be trusted. The scripts' **NEXT** block is the
 host-specific version of this sequence and names the correct working directory
 for each step in a split engine/site layout.
 
+## Why publication and runtime are separate
+
+Your understanding is correct. The missing idea is that these are three different lifecycle stages, not simply three arbitrary copies:
+
+```text
+REW working project
+    ↓ publish
+authoritative, self-contained filter bundle
+    ↓ deploy
+minimal runtime installation
+```
+
+For your setup:
+
+| Stage | Example | Purpose |
+|---|---|---|
+| Working source | `~/DRC-120.green` | Editable REW project, measurements, experiments |
+| Published bundle | `~/omdrc-801N` or `~/.local/share/omdrc/site-data` | Frozen, verified, reproducible release |
+| Runtime | `/usr/local/etc/open-media-drc` | Files required for actual playback |
+
+The middle stage exists because the working project and runtime installation are both unsuitable as the permanent published record.
+
+The REW project is mutable. You may reopen the `.mdat`, change measurements, rerun FDW processing, replace exports, or delete intermediate files. Therefore, it cannot by itself prove exactly which inputs produced the currently installed filter.
+
+The published bundle freezes one specific release:
+
+- Exact uploaded `.mdat`
+- Exact TXT/WAV exports
+- Generated RAW coefficients at every rate
+- BruteFIR configuration templates
+- Response analysis
+- Hashes linking all these files
+- Source-project commit and metadata
+- Bundle identity such as `a14299a241ff`
+
+That is analogous to a release artifact produced from a source tree. It is not merely a blind backup of the original directory.
+
+Why not put everything in `/usr/local`?
+
+Because `/usr/local/etc/open-media-drc` has a deliberately narrower role:
+
+- It contains only what playback and the runtime UI need.
+- It is system-owned and normally requires privileged writes.
+- It deliberately excludes large development evidence such as archived `.mdat`, complete exports, recipes, and other source material.
+- It can be atomically replaced, upgraded, or removed without destroying the authoritative bundle.
+- A narrowly privileged helper can install verified files without giving the web application general write access to `/usr/local`.
+- If the runtime installation is damaged or deleted, it can be regenerated from the store.
+- If an installation fails halfway, the already-published bundle remains intact.
+
+For example, your green `.mdat` is about 61 MB. BruteFIR does not need it to play audio. Keeping that and every source export under `/usr/local` would make the runtime tree a mixture of active system configuration, development material, uploads, and archival evidence.
+
+Why does the web workflow use `.local/share`?
+
+A browser upload does not necessarily come from a stable local Git repository. It might come from another computer, a temporary directory, or an uncommitted REW project. The server therefore needs somewhere persistent to retain the complete published bundle before installing its runtime subset.
+
+`~/.local/share/omdrc/site-data` was chosen as the default user-owned publication store because:
+
+- It is writable without root.
+- It persists after the upload job ends.
+- It can hold the complete evidence bundle.
+- It need not be Git-managed.
+- Only the verified runtime subset crosses the privilege boundary into `/usr/local`.
+
+So the web path is:
+
+```text
+browser upload / REW project
+        ↓
+~/.local/share/omdrc/site-data
+  complete published bundle
+        ↓ verified privileged deployment
+/usr/local/etc/open-media-drc
+  runtime subset
+```
+
+The repository path is conceptually identical:
+
+```text
+~/DRC-120.green
+        ↓ publication
+~/omdrc-801N
+  complete published, Git-tracked bundle
+        ↓ installation
+/usr/local/etc/open-media-drc
+  runtime subset
+```
+
+Therefore, `omdrc-801N` and `.local/share/omdrc/site-data` occupy the same architectural layer. They are two alternative implementations of the published design store:
+
+- `omdrc-801N`: Git-backed authority
+- `.local/share/...`: non-Git authority used by the web installer
+
+The real problem on this machine is not that the middle layer exists. It is that you currently have **two different middle-layer stores**. Given your preference for `omdrc-801N` as the official, Git-tracked source, the cleaner policy would be to configure the web installer to publish into `omdrc-801N` too. Then the architecture becomes:
+
+```text
+REW projects / web uploads
+            ↓
+       ~/omdrc-801N
+  one Git-tracked authority
+            ↓
+/usr/local/etc/open-media-drc
+       runtime only
+```
+
+That preserves the useful source → release → runtime separation while eliminating the confusing split between two publication stores.
+
 ## Live browser-driven installs {#sec:live-installs}
 
 The sequence above is the offline/Git path. `omdrc-ctrl`'s **`/configuration`**
