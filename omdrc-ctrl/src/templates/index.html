@@ -227,6 +227,40 @@
         .btn-peak-reset:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
         .btn-peak-reset:disabled { opacity: .5; cursor: default; }
 
+        /* On a phone the active DRC row has three distinct jobs.  Give the
+           label and meters their own rows while the Apply button owns the
+           right column across both, so RTI can never collide with the rate. */
+        @media (max-width:560px) {
+            .drc-write-row {
+                display:grid;
+                grid-template-columns:minmax(0,1fr) auto;
+                grid-template-rows:auto auto;
+                column-gap:10px;
+                row-gap:9px;
+                align-items:center;
+            }
+            .drc-write-row > .row-label {
+                grid-column:1;
+                grid-row:1;
+            }
+            .drc-write-row > .drc-write-controls { display:contents; }
+            .drc-write-row .dsp-meters {
+                grid-column:1;
+                grid-row:2;
+                justify-self:start;
+                flex-wrap:nowrap;
+                gap:6px;
+                min-width:0;
+            }
+            .drc-write-row .dsp-meter { gap:3px; }
+            .drc-write-row .dsp-gauge { width:42px; }
+            .drc-write-row .btn-write {
+                grid-column:2;
+                grid-row:1 / span 2;
+                align-self:center;
+            }
+        }
+
         /* ── LINK button ─────────────────────────────────────── */
         .btn-link {
             min-width: 72px;
@@ -1290,16 +1324,16 @@
             <input id="drc-attenuation-slider" type="range" min="2" max="12" step="0.1"
                    value="2" disabled oninput="previewDrcAttenuation(this.value)"
                    onchange="setDrcAttenuation(this.value)">
-            <output id="drc-attenuation-value" for="drc-attenuation-slider">2.0 dB</output>
+            <output id="drc-attenuation-value" for="drc-attenuation-slider">—</output>
         </div>
     </div>
     {% endif %}
 
     {% for cmd in cmds %}
-    <div class="row">
+    <div class="row{% if group_name == 'drc' and cmd.type == 'WRITE' %} drc-write-row{% endif %}">
         <span class="row-label">{{ cmd.what }}</span>
 
-        <div class="row-right">
+        <div class="row-right{% if group_name == 'drc' and cmd.type == 'WRITE' %} drc-write-controls{% endif %}">
 
             {% if cmd.type == 'WRITE' %}
             {% if group_name == 'drc' %}
@@ -1773,7 +1807,10 @@ function previewDrcAttenuation(value) {
 async function loadDrcAttenuation() {
     try {
         const d = await (await fetch("/drc/attenuation", {cache:"no-store"})).json();
-        if (!d.ok) return;
+        if (!d.ok) {
+            document.getElementById("drc-attenuation-value").textContent = "—";
+            return;
+        }
         const slider = document.getElementById("drc-attenuation-slider");
         slider.value = d.db;
         slider.disabled = drcAttenuationBusy;

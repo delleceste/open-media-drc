@@ -3171,10 +3171,6 @@ def _active_brutefir_configuration() -> dict:
             try:
                 headroom = _raw_filter_headroom(filename, coeff["format"], rate)
                 item.update(headroom)
-                item["safe"] = (
-                    item["configured_attenuation_db"] + 1e-9 >=
-                    item["safe_attenuation_db"]
-                )
             except (OSError, ValueError) as error:
                 item["analysis_error"] = str(error)
         filters.append(item)
@@ -3187,6 +3183,14 @@ def _active_brutefir_configuration() -> dict:
     configured_values = sorted({item["configured_attenuation_db"] for item in filters})
     configured_attenuation = (
         configured_values[0] if len(configured_values) == 1 else None)
+    saved_attenuation = _saved_brutefir_attenuation_db()
+    effective_attenuation = (saved_attenuation if saved_attenuation is not None
+                             else configured_attenuation)
+    effective_source = "saved" if saved_attenuation is not None else "configuration"
+    for item in analysed:
+        item["safe"] = (
+            effective_attenuation is not None and
+            effective_attenuation + 1e-9 >= item["safe_attenuation_db"])
     headroom_safe = headroom_complete and all(item.get("safe") for item in analysed)
 
     result = {
@@ -3203,6 +3207,8 @@ def _active_brutefir_configuration() -> dict:
         "safety_margin_db": _HEADROOM_SAFETY_MARGIN_DB,
         "configured_attenuation_db": configured_attenuation,
         "configured_attenuations_db": configured_values,
+        "effective_attenuation_db": effective_attenuation,
+        "effective_attenuation_source": effective_source,
         "safe_attenuation_db": safe_attenuation,
         "headroom_safe": headroom_safe,
         "filters": filters,
@@ -3240,7 +3246,6 @@ _DELTA_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-delta")
 _FLOOR_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-floor-db")
 _AUTO_SYNC_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-auto-sync")
 _BRUTEFIR_ATTENUATION_FILE = os.path.join(_STATE_DIR, "brutefir-attenuation-db")
-_BRUTEFIR_ATTENUATION_DEFAULT_DB = 2.0
 _BRUTEFIR_ATTENUATION_MIN_DB = 2.0
 _BRUTEFIR_ATTENUATION_MAX_DB = 12.0
 # Which renderer the toggle last selected.  Unlike the two sliders above this is
@@ -3320,19 +3325,47 @@ def _write_state_str(path: str, val: str) -> None:
         pass
 
 
-def _brutefir_attenuation_db() -> float:
+def _saved_brutefir_attenuation_db() -> float | None:
+    """A user-selected total attenuation, or None before the first change."""
     value = _read_state_float(_BRUTEFIR_ATTENUATION_FILE)
     if value is None or not math.isfinite(value):
-        return _BRUTEFIR_ATTENUATION_DEFAULT_DB
+        return None
     # Migrate the short-lived UI version which stored gain as negative dB.
     value = abs(value)
     return max(_BRUTEFIR_ATTENUATION_MIN_DB,
                min(_BRUTEFIR_ATTENUATION_MAX_DB, value))
 
 
-def _configured_brutefir_attenuation_db() -> float | None:
-    """Coefficient attenuation from the active config, for first-run UI state."""
-    conf_path = _active_brutefir_conf()
+def _selected_brutefir_conf() -> str | None:
+    """Running config, or the immutable config selected for the next restore."""
+    active = _active_brutefir_conf()
+    if active:
+        return active
+    script = _drc_script()
+    if not script:
+        return None
+    try:
+        session = _drc_saved_session(script)
+        geometry = str(session["geometry"])
+        rate = int(session["rate"])
+        design = str(session["design"])
+    except (OSError, RuntimeError, KeyError, TypeError, ValueError,
+            subprocess.SubprocessError):
+        return None
+    selector = "" if design == "default" else design
+    config_root = (CONFIGURATION.site_root / "configs").resolve()
+    candidate = (config_root / geometry /
+                 f"brutefir-{rate}{selector}.conf").resolve()
+    try:
+        candidate.relative_to(config_root)
+    except ValueError:
+        return None
+    return str(candidate) if candidate.is_file() else None
+
+
+def _configured_brutefir_attenuation_db(conf_path: str | None = None) -> float | None:
+    """Coefficient attenuation from the selected immutable config file."""
+    conf_path = conf_path or _selected_brutefir_conf()
     if not conf_path:
         return None
     try:
@@ -3345,6 +3378,15 @@ def _configured_brutefir_attenuation_db() -> float | None:
     # Stereo configs normally match; maximum is the conservative display if a
     # deliberately asymmetric config is installed.
     return max(values)
+
+
+def _effective_brutefir_attenuation_db() -> tuple[float | None, str | None]:
+    """Total attenuation currently applied, or selected for the next start."""
+    saved = _saved_brutefir_attenuation_db()
+    if saved is not None:
+        return saved, "saved"
+    configured = _configured_brutefir_attenuation_db()
+    return configured, "configuration" if configured is not None else None
 
 
 def _brutefir_cli(command: str) -> None:
@@ -3366,7 +3408,9 @@ def _brutefir_cli(command: str) -> None:
 
 def _set_brutefir_attenuation(db: float) -> None:
     """Set both stereo filter-to-output gains through BruteFIR's CLI."""
-    configured = _configured_brutefir_attenuation_db() or 0.0
+    configured = _configured_brutefir_attenuation_db(_active_brutefir_conf())
+    if configured is None:
+        raise RuntimeError("cannot read attenuation from the active BruteFIR configuration")
     output_attenuation = db - configured
     command = (f"cfoa drc_l left_out {output_attenuation:.1f}; "
                f"cfoa drc_r right_out {output_attenuation:.1f}")
@@ -7118,14 +7162,16 @@ def drc_attenuation():
     """Read or set the persistent live BruteFIR output attenuation."""
     running = _active_brutefir_process() is not None
     if request.method == "GET":
-        saved = _read_state_float(_BRUTEFIR_ATTENUATION_FILE)
-        configured = _configured_brutefir_attenuation_db() if saved is None else None
-        db = (_brutefir_attenuation_db() if configured is None else
-              max(_BRUTEFIR_ATTENUATION_MIN_DB,
-                  min(_BRUTEFIR_ATTENUATION_MAX_DB, configured)))
+        db, source = _effective_brutefir_attenuation_db()
+        if db is None:
+            return jsonify({
+                "ok": False, "running": running,
+                "error": "cannot determine attenuation from saved state or the selected BruteFIR configuration",
+            }), 503
+        db = max(_BRUTEFIR_ATTENUATION_MIN_DB,
+                 min(_BRUTEFIR_ATTENUATION_MAX_DB, db))
         return jsonify({"ok": True, "db": round(db, 1), "running": running,
-                        "source": "configuration" if saved is None and configured is not None else
-                                  "saved" if saved is not None else "default",
+                        "source": source,
                         "min_db": _BRUTEFIR_ATTENUATION_MIN_DB,
                         "max_db": _BRUTEFIR_ATTENUATION_MAX_DB})
     raw = (request.get_json(silent=True) or {}).get("db")

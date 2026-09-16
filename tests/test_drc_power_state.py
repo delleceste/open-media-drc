@@ -396,6 +396,13 @@ class DspHeadroomGaugeMarkupTest(unittest.TestCase):
         self.assertIn('<span class="dsp-meter-label">RTI</span>', page)
         self.assertIn("real-time index", page.lower())
 
+    def test_mobile_drc_row_keeps_meters_below_label_and_button_at_right(self):
+        page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
+        self.assertIn("drc-write-row", page)
+        self.assertIn("drc-write-controls", page)
+        self.assertRegex(page, r"\.drc-write-row \.dsp-meters\s*\{[^}]*grid-row:2")
+        self.assertRegex(page, r"\.drc-write-row \.btn-write\s*\{[^}]*grid-row:1 / span 2")
+
     def test_peak_meter_shows_a_db_value_and_its_own_bar(self):
         page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="dsp-meter-label">Peak</span>', page)

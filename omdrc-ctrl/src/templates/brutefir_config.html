@@ -104,18 +104,23 @@
         </section>
 
         <section class="summary">
-            <div class="metric configured">
+            <div class="metric configured" id="effective-card">
                 <div class="metric-label">1 · Attenuation set in BruteFIR</div>
+                <div class="metric-value" id="effective-att">—</div>
+                <div class="metric-note" id="effective-note"></div>
+            </div>
+            <div class="metric configured">
+                <div class="metric-label">2 · Attenuation in BruteFIR configuration files</div>
                 <div class="metric-value" id="configured-att">—</div>
                 <div class="metric-note" id="configured-note"></div>
             </div>
             <div class="metric safe unknown" id="safe-card">
-                <div class="metric-label">2 · Safe attenuation, calculated now</div>
+                <div class="metric-label">3 · Safe attenuation, calculated now</div>
                 <div class="metric-value" id="safe-att">—</div>
                 <div class="metric-note" id="safe-note"></div>
             </div>
             <div class="metric peak unknown" id="peak-card">
-                <div class="metric-label">3 · Live peak, reported by BruteFIR</div>
+                <div class="metric-label">4 · Live peak, reported by BruteFIR</div>
                 <div class="metric-value" id="peak-value">—</div>
                 <div class="metric-note" id="peak-note"></div>
             </div>
@@ -211,11 +216,18 @@ function render(data) {
     addIdentity('Sample rate', data.rate ? `${Number(data.rate).toLocaleString()} Hz` : 'not declared');
     addIdentity('Configuration file', data.config_path);
 
+    const effective = document.getElementById('effective-att');
+    const effectiveNote = document.getElementById('effective-note');
+    effective.textContent = db(data.effective_attenuation_db);
+    effectiveNote.textContent = data.effective_attenuation_source === 'saved'
+        ? 'The slider value sent to BruteFIR and saved for rate changes, DRC restarts and reboot.'
+        : 'No slider override is saved; this is the attenuation supplied by the active configuration.';
+
     const configured = document.getElementById('configured-att');
     const configuredNote = document.getElementById('configured-note');
     if (data.configured_attenuation_db !== null) {
         configured.textContent = db(data.configured_attenuation_db);
-        configuredNote.textContent = 'The common attenuation value read from the active coefficient blocks.';
+        configuredNote.textContent = 'The common immutable value read from the active coefficient blocks.';
     } else {
         configured.textContent = 'mixed';
         configuredNote.textContent = `Values in use: ${(data.configured_attenuations_db || []).map(v => db(v)).join(' · ')}`;
@@ -232,11 +244,11 @@ function render(data) {
     } else if (data.headroom_safe) {
         safeCard.classList.add('good');
         safeValue.textContent = db(data.safe_attenuation_db);
-        safeNote.textContent = '✓ Every configured attenuation meets its live calculated requirement.';
+        safeNote.textContent = '✓ The effective attenuation applied to BruteFIR meets every calculated requirement.';
     } else {
         safeCard.classList.add('bad');
         safeValue.textContent = db(data.safe_attenuation_db);
-        safeNote.textContent = '✕ At least one configured attenuation is below its live calculated requirement.';
+        safeNote.textContent = '✕ The effective attenuation applied to BruteFIR is below at least one calculated requirement.';
     }
 
     document.getElementById('command-line').textContent = data.command_line;

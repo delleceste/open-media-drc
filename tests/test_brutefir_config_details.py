@@ -19,6 +19,70 @@ SPEC.loader.exec_module(APP)
 
 
 class BrutefirConfigDetailsTest(unittest.TestCase):
+    def test_attenuation_endpoint_has_no_hard_coded_fallback(self):
+        with mock.patch.object(APP, "_BRUTEFIR_ATTENUATION_FILE", "/missing/state"), \
+             mock.patch.object(APP, "_selected_brutefir_conf", return_value=None):
+            response = APP.app.test_client().get("/drc/attenuation")
+
+        data = response.get_json()
+        self.assertFalse(data["ok"])
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("selected BruteFIR configuration", data["error"])
+
+    def test_attenuation_endpoint_uses_active_configuration_on_first_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "brutefir-192000@multipos.fdw6.conf"
+            config.write_text(
+                'coeff "c-l" { filename: "left.raw"; attenuation: 8.0; };\n'
+                'coeff "c-r" { filename: "right.raw"; attenuation: 8.0; };\n',
+                encoding="utf-8")
+            process = {"config": str(config)}
+            with mock.patch.object(APP, "_BRUTEFIR_ATTENUATION_FILE", "/missing/state"), \
+                 mock.patch.object(APP, "_active_brutefir_process", return_value=process):
+                response = APP.app.test_client().get("/drc/attenuation")
+
+        data = response.get_json()
+        self.assertEqual(data["db"], 8.0)
+        self.assertEqual(data["source"], "configuration")
+
+    def test_attenuation_endpoint_uses_selected_configuration_while_stopped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "brutefir-192000@multipos.fdw6.conf"
+            config.write_text(
+                'coeff "c-l" { filename: "left.raw"; attenuation: 6.4; };\n'
+                'coeff "c-r" { filename: "right.raw"; attenuation: 6.4; };\n',
+                encoding="utf-8")
+            with mock.patch.object(APP, "_BRUTEFIR_ATTENUATION_FILE", "/missing/state"), \
+                 mock.patch.object(APP, "_active_brutefir_process", return_value=None), \
+                 mock.patch.object(APP, "_selected_brutefir_conf", return_value=str(config)):
+                response = APP.app.test_client().get("/drc/attenuation")
+
+        data = response.get_json()
+        self.assertEqual(data["db"], 6.4)
+        self.assertEqual(data["source"], "configuration")
+        self.assertFalse(data["running"])
+
+    def test_slider_saves_total_and_sends_only_delta_from_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "brutefir-192000.conf"
+            config.write_text(
+                'coeff "c-l" { filename: "left.raw"; attenuation: 8.0; };\n'
+                'coeff "c-r" { filename: "right.raw"; attenuation: 8.0; };\n',
+                encoding="utf-8")
+            state = root / "attenuation"
+            process = {"config": str(config)}
+            with mock.patch.object(APP, "_BRUTEFIR_ATTENUATION_FILE", str(state)), \
+                 mock.patch.object(APP, "_active_brutefir_process", return_value=process), \
+                 mock.patch.object(APP, "_brutefir_cli") as cli:
+                response = APP.app.test_client().post(
+                    "/drc/attenuation", json={"db": 4.0})
+
+            self.assertEqual(state.read_text(encoding="utf-8"), "4.0\n")
+        self.assertTrue(response.get_json()["ok"])
+        cli.assert_called_once_with(
+            "cfoa drc_l left_out -4.0; cfoa drc_r right_out -4.0")
+
     def test_headroom_is_calculated_from_the_current_raw_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "L.raw"
@@ -52,7 +116,8 @@ coeff "c-r" {{ filename: "{right}"; format: "FLOAT64_LE"; attenuation: 7.1; }};
                 "argv": ["/usr/local/bin/brutefir", str(config), "-daemon"],
                 "config": str(config),
             }
-            with mock.patch.object(APP, "_active_brutefir_process", return_value=process):
+            with mock.patch.object(APP, "_BRUTEFIR_ATTENUATION_FILE", "/missing/state"), \
+                 mock.patch.object(APP, "_active_brutefir_process", return_value=process):
                 response = APP.app.test_client().get("/drc/brutefir-config")
 
         data = response.get_json()
@@ -62,11 +127,34 @@ coeff "c-r" {{ filename: "{right}"; format: "FLOAT64_LE"; attenuation: 7.1; }};
         self.assertEqual(data["geometry"], "120.blue")
         self.assertEqual(data["design_id"], "test-design")
         self.assertEqual(data["configured_attenuation_db"], 7.1)
+        self.assertEqual(data["effective_attenuation_db"], 7.1)
+        self.assertEqual(data["effective_attenuation_source"], "configuration")
         self.assertEqual(data["safe_attenuation_db"], 7.1)
         self.assertTrue(data["headroom_safe"])
         self.assertEqual([item["filename"] for item in data["filters"]],
                          [str(left), str(right)])
         self.assertTrue(all(item["is_raw"] for item in data["filters"]))
+
+    def test_config_page_separates_saved_effective_and_file_attenuation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = root / "filter.raw"
+            np.asarray([2.0, 0.0], dtype="<f8").tofile(raw)
+            config = root / "brutefir-48000.conf"
+            config.write_text(
+                f'coeff "c-l" {{ filename: "{raw}"; attenuation: 8.0; }};\n',
+                encoding="utf-8")
+            state = root / "attenuation"
+            state.write_text("4.0\n", encoding="utf-8")
+            process = {"command_line": f"brutefir {config}", "config": str(config)}
+            with mock.patch.object(APP, "_BRUTEFIR_ATTENUATION_FILE", str(state)), \
+                 mock.patch.object(APP, "_active_brutefir_process", return_value=process):
+                data = APP.app.test_client().get("/drc/brutefir-config").get_json()
+
+        self.assertEqual(data["effective_attenuation_db"], 4.0)
+        self.assertEqual(data["effective_attenuation_source"], "saved")
+        self.assertEqual(data["configured_attenuation_db"], 8.0)
+        self.assertFalse(data["headroom_safe"])
 
     def test_process_match_ignores_commands_that_only_mention_brutefir(self):
         lines = [
@@ -86,6 +174,7 @@ coeff "c-r" {{ filename: "{right}"; format: "FLOAT64_LE"; attenuation: 7.1; }};
         self.assertIn('href="/brutefir-config" target="_blank"', page)
         self.assertIn("Geometry: ${data.geometry} · Filter design: ${design}", details)
         self.assertIn("Attenuation set in BruteFIR", details)
+        self.assertIn("Attenuation in BruteFIR configuration files", details)
         self.assertIn("Safe attenuation, calculated now", details)
         self.assertIn("Live peak, reported by BruteFIR", details)
 
