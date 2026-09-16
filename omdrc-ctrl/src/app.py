@@ -3412,8 +3412,10 @@ def _set_brutefir_attenuation(db: float) -> None:
     if configured is None:
         raise RuntimeError("cannot read attenuation from the active BruteFIR configuration")
     output_attenuation = db - configured
-    command = (f"cfoa drc_l left_out {output_attenuation:.1f}; "
-               f"cfoa drc_r right_out {output_attenuation:.1f}")
+    # BruteFIR accepts unquoted numeric indices here, but symbolic filter and
+    # output names must be quoted or it reports "Invalid number" for each.
+    command = (f'cfoa "drc_l" "left_out" {output_attenuation:.1f}; '
+               f'cfoa "drc_r" "right_out" {output_attenuation:.1f}')
     _brutefir_cli(command)
 
 
@@ -7163,6 +7165,7 @@ def drc_attenuation():
     running = _active_brutefir_process() is not None
     if request.method == "GET":
         db, source = _effective_brutefir_attenuation_db()
+        configured = _configured_brutefir_attenuation_db()
         if db is None:
             return jsonify({
                 "ok": False, "running": running,
@@ -7172,9 +7175,30 @@ def drc_attenuation():
                  min(_BRUTEFIR_ATTENUATION_MAX_DB, db))
         return jsonify({"ok": True, "db": round(db, 1), "running": running,
                         "source": source,
+                        "configured_db": (round(configured, 1)
+                                          if configured is not None else None),
                         "min_db": _BRUTEFIR_ATTENUATION_MIN_DB,
                         "max_db": _BRUTEFIR_ATTENUATION_MAX_DB})
-    raw = (request.get_json(silent=True) or {}).get("db")
+    payload = request.get_json(silent=True) or {}
+    if payload.get("restore_default") is True:
+        configured = _configured_brutefir_attenuation_db()
+        if configured is None:
+            return jsonify({"ok": False, "error":
+                            "cannot read attenuation from the selected BruteFIR configuration"}), 503
+        try:
+            if running:
+                _set_brutefir_attenuation(configured)
+            try:
+                os.unlink(_BRUTEFIR_ATTENUATION_FILE)
+            except FileNotFoundError:
+                pass
+            return jsonify({"ok": True, "db": round(configured, 1),
+                            "running": running, "source": "configuration"})
+        except OSError as error:
+            return jsonify({"ok": False, "error": f"BruteFIR CLI unavailable: {error}"}), 503
+        except RuntimeError as error:
+            return jsonify({"ok": False, "error": str(error)}), 502
+    raw = payload.get("db")
     try:
         db = float(raw)
     except (TypeError, ValueError):

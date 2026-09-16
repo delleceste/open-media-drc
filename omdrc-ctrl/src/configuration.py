@@ -701,7 +701,7 @@ class ConfigurationManager:
             elif source:
                 location = "design store only"
             else:
-                location = "runtime-only legacy"
+                location = "runtime only — absent from configured design store"
             rows.append({"geometry": geometry, "design": design,
                          "description": data.get("description", design),
                          "bundle_id": data.get("bundle_id", ""),
@@ -747,8 +747,8 @@ class ConfigurationManager:
             self.run_command(job, command)
         else:
             job.write(
-                f"NOTICE: {geometry}@{design} is a runtime-only legacy design; "
-                "removing the orphaned installed copy")
+                f"NOTICE: {geometry}@{design} is absent from the configured "
+                "design store; removing the runtime-only copy")
         if design_root.resolve() == self.settings.site_root.resolve():
             return
         if live_manifest.is_file():

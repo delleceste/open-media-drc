@@ -174,9 +174,11 @@
             flex-wrap: wrap;
         }
         .dsp-meter {
-            display: inline-flex;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto auto;
             align-items: center;
             gap: 4px;
+            min-width: 0;
         }
         .dsp-meter-label {
             font-size: .68rem;
@@ -197,16 +199,19 @@
         .dsp-meter-value.warn { color: var(--yellow); }
         .dsp-meter-value.bad  { color: var(--red); }
         .dsp-gauge {
-            display: inline-block;
-            width: 54px;
+            display: block;
+            width: 100%;
+            min-width: 54px;
             height: 9px;
             border: 1px solid var(--border);
             border-radius: 5px;
-            background: linear-gradient(90deg, var(--green) 0%, var(--yellow) 68%, var(--red) 100%);
+            background: var(--green);
             overflow: visible;
             position: relative;
             vertical-align: middle;
         }
+        .dsp-meter.warn .dsp-gauge { background: var(--yellow); }
+        .dsp-meter.bad .dsp-gauge { background: var(--red); }
         .dsp-gauge-needle {
             position: absolute;
             top: -3px; bottom: -3px;
@@ -227,38 +232,66 @@
         .btn-peak-reset:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
         .btn-peak-reset:disabled { opacity: .5; cursor: default; }
 
-        /* On a phone the active DRC row has three distinct jobs.  Give the
-           label and meters their own rows while the Apply button owns the
-           right column across both, so RTI can never collide with the rate. */
-        @media (max-width:560px) {
-            .drc-write-row {
-                display:grid;
-                grid-template-columns:minmax(0,1fr) auto;
-                grid-template-rows:auto auto;
-                column-gap:10px;
-                row-gap:9px;
-                align-items:center;
-            }
-            .drc-write-row > .row-label {
-                grid-column:1;
-                grid-row:1;
-            }
-            .drc-write-row > .drc-write-controls { display:contents; }
-            .drc-write-row .dsp-meters {
-                grid-column:1;
-                grid-row:2;
-                justify-self:start;
-                flex-wrap:nowrap;
-                gap:6px;
-                min-width:0;
-            }
-            .drc-write-row .dsp-meter { gap:3px; }
-            .drc-write-row .dsp-gauge { width:42px; }
-            .drc-write-row .btn-write {
-                grid-column:2;
-                grid-row:1 / span 2;
-                align-self:center;
-            }
+        /* DRC rate/mode presets: one compact rectangular button per option
+           (button text is the option's own name, e.g. "DISABLE"), laid out
+           in a real CSS grid so every column shares one width — unlike
+           flex-wrap, that stays true across wrapped rows — while each
+           button's height stays just tall enough for its own label. */
+        .drc-preset-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+            align-items: start;
+            gap: 8px;
+            margin: 10px 0;
+        }
+        .drc-preset-tile { position: relative; }
+        .btn-drc-preset {
+            width: 100%;
+            min-height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            white-space: normal;
+            line-height: 1.2;
+            font-size: .76rem;
+            padding: 8px 10px;
+            border-radius: 8px;
+        }
+        .btn-drc-preset.applied {
+            border-color: var(--green);
+            color: var(--green);
+            background: rgba(63,185,80,.16);
+            box-shadow: inset 0 0 0 1px var(--green), 0 0 8px rgba(63,185,80,.22);
+        }
+        .btn-preset-details {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            font-size: .65rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+        }
+        .btn-preset-details:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* RTI + Peak meters: one shared line below the preset grid (BruteFIR
+           only ever has one real-time index and one peak-hold to report, for
+           whichever preset is actually running), rather than duplicated
+           per-preset. */
+        .dsp-meters.dsp-meters-shared {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            width: 100%;
+            gap: 8px;
+            margin: 4px 0 10px;
         }
 
         /* ── LINK button ─────────────────────────────────────── */
@@ -398,6 +431,7 @@
         .drc-attenuation label { white-space: nowrap; color: var(--text); }
         .drc-attenuation input { flex: 1; min-width: 90px; accent-color: var(--accent); }
         .drc-attenuation output { min-width: 48px; text-align: right; color: var(--accent); }
+        .drc-attenuation .btn-session { padding: 3px 7px; font-size: 11px; white-space: nowrap; }
         #spectrum-controls-toggle { cursor: pointer; }
         #spectrum-controls-toggle.on { border-color: var(--accent); color: var(--accent); }
         .spectrum-title-btns { display: flex; align-items: center; gap: 8px; }
@@ -412,6 +446,35 @@
         body.spectrum-only { padding: 10px; }
         body.spectrum-only #spectrum-card { margin: 0; }
         body.spectrum-only .detach-btn { display: none !important; }
+        body.spectrum-only .tab-bar { display: none !important; }
+
+        /* ── tabs: "Listen" / "System", swipeable on touch ─────── */
+        .tab-bar {
+            display: flex;
+            gap: 8px;
+            margin: 2px 0 14px;
+            position: sticky;
+            top: 0;
+            background: var(--bg);
+            z-index: 5;
+            padding: 6px 0;
+        }
+        .tab-btn {
+            flex: 1;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--muted);
+            padding: 9px;
+            font-size: .82rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
 
         /* ── toast ───────────────────────────────────────────── */
         #toast {
@@ -1086,6 +1149,29 @@
             background: var(--accent);
             color: #fff;
         }
+        .view-toggle {
+            display: flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .view-seg {
+            border: none;
+            background: var(--bg);
+            color: var(--muted);
+            padding: 5px 9px;
+            font-size: .72rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .view-seg + .view-seg { border-left: 1px solid var(--border); }
+        .view-seg:not(.active) { opacity: .55; }
+        .view-seg.active {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,.3);
+        }
         .spectrum-plot {
             padding: 8px 0 13px;
             border-top: 1px solid var(--border);
@@ -1201,6 +1287,19 @@
         .vu-seg.active {
             background: var(--accent);
             color: #fff;
+        }
+        .vu-balance {
+            display: flex;
+            gap: 16px;
+            padding: 0 0 9px;
+            color: var(--muted);
+            font-size: .72rem;
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+        }
+        .vu-balance-item span:first-child { margin-right: 5px; }
+        .vu-balance strong {
+            color: var(--text);
+            font-weight: 600;
         }
         .vu-bars {
             display: grid;
@@ -1319,44 +1418,25 @@
             </span>
         </div>
         <div id="drc-transition-feedback" class="drc-feedback-line drc-feedback-meta" hidden></div>
-        <div class="drc-attenuation">
+        <div id="drc-attenuation-control" class="drc-attenuation" hidden>
             <label for="drc-attenuation-slider">Attenuation</label>
             <input id="drc-attenuation-slider" type="range" min="2" max="12" step="0.1"
                    value="2" disabled oninput="previewDrcAttenuation(this.value)"
                    onchange="setDrcAttenuation(this.value)">
             <output id="drc-attenuation-value" for="drc-attenuation-slider">—</output>
+            <button id="drc-attenuation-restore" class="btn-session" disabled
+                    onclick="restoreDrcAttenuation()">Default</button>
         </div>
     </div>
     {% endif %}
 
-    {% for cmd in cmds %}
-    <div class="row{% if group_name == 'drc' and cmd.type == 'WRITE' %} drc-write-row{% endif %}">
+    {% for cmd in cmds if not (group_name == 'drc' and cmd.type == 'WRITE') %}
+    <div class="row">
         <span class="row-label">{{ cmd.what }}</span>
 
-        <div class="row-right{% if group_name == 'drc' and cmd.type == 'WRITE' %} drc-write-controls{% endif %}">
+        <div class="row-right">
 
             {% if cmd.type == 'WRITE' %}
-            {% if group_name == 'drc' %}
-            <span class="dsp-meters" id="gauge-{{ cmd.id }}" hidden>
-                <span class="dsp-meter" id="rti-meter-{{ cmd.id }}"
-                      title="DSP headroom (BruteFIR real-time index)">
-                    <span class="dsp-meter-label">RTI</span>
-                    <span class="dsp-gauge">
-                        <span class="dsp-gauge-needle" id="gauge-fill-{{ cmd.id }}"></span>
-                    </span>
-                </span>
-                <span class="dsp-meter" id="peak-meter-{{ cmd.id }}"
-                      title="Output peak (BruteFIR peak-hold, dBFS)">
-                    <span class="dsp-meter-label">Peak</span>
-                    <span class="dsp-meter-value" id="peak-value-{{ cmd.id }}">—</span>
-                    <span class="dsp-gauge">
-                        <span class="dsp-gauge-needle" id="peak-fill-{{ cmd.id }}"></span>
-                    </span>
-                    <button type="button" class="btn-peak-reset" id="peak-reset-{{ cmd.id }}"
-                            title="Reset BruteFIR peak hold" onclick="resetBrutefirPeak()">Reset</button>
-                </span>
-            </span>
-            {% endif %}
             <button class="btn-write"
                     id="btn-{{ cmd.id }}"
                     data-confirm="{{ cmd.confirm | default('no') }}"
@@ -1399,8 +1479,64 @@
     </div>
     {% endfor %}
 
+    {% if group_name == 'drc' %}
+    <div class="drc-preset-grid">
+        {% for cmd in cmds if cmd.type == 'WRITE' and cmd.id != 'drc_resamp' %}
+        <div class="drc-preset-tile">
+            <button class="btn-write btn-drc-preset"
+                    id="btn-{{ cmd.id }}"
+                    data-confirm="{{ cmd.confirm | default('no') }}"
+                    data-confirm-message="{{ cmd.confirm_message | default('') }}"
+                    data-what="{{ cmd.what }}"
+                    onclick="handleWrite('{{ cmd.id }}')">
+                {{ cmd.what }}
+            </button>
+            {% if 'details_link' in cmd %}
+            <a class="btn-preset-details"
+               href="{{ cmd.details_link }}"
+               target="_blank"
+               rel="noopener noreferrer"
+               title="Details"
+               onclick="event.stopPropagation()">ⓘ</a>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="dsp-meters dsp-meters-shared" id="dsp-meters-shared" hidden>
+        <span class="dsp-meter" id="rti-meter"
+              title="DSP headroom (BruteFIR real-time index)">
+            <span class="dsp-meter-label">RTI</span>
+            <span class="dsp-gauge">
+                <span class="dsp-gauge-needle" id="gauge-fill"></span>
+            </span>
+        </span>
+        <span class="dsp-meter" id="peak-meter"
+              title="Output peak (BruteFIR peak-hold, dBFS)">
+            <span class="dsp-meter-label">Peak</span>
+            <span class="dsp-gauge">
+                <span class="dsp-gauge-needle" id="peak-fill"></span>
+            </span>
+            <span class="dsp-meter-value" id="peak-value">—</span>
+            <button type="button" class="btn-peak-reset" id="peak-reset"
+                    title="Reset BruteFIR peak hold" onclick="resetBrutefirPeak()">Reset</button>
+        </span>
+    </div>
+    {% endif %}
+
 </div>
 {% endmacro %}
+
+<!-- Three swipeable pages: "Listen", "System", and an on-demand "Spectrum".
+     The analyzer subscribes only while its page is visible. Kept out
+     of the spectrum-only popout/PiP view (see body.spectrum-only). -->
+<div class="tab-bar" id="tab-bar">
+    <button type="button" class="tab-btn" data-tab="0" onclick="switchTab(0)">Listen</button>
+    <button type="button" class="tab-btn" data-tab="1" onclick="switchTab(1)">System</button>
+    <button type="button" class="tab-btn" data-tab="2" onclick="switchTab(2)">Spectrum</button>
+</div>
+<div id="tab-pages">
+<section class="tab-page" data-tab="0">
 
 <!-- Digital Room Correction first: it is what the box exists for -->
 {% for group_name, group_label, cmds in groups if group_name == 'drc' %}
@@ -1456,7 +1592,6 @@
     <div id="qobuz-oauth-panel" style="display:none" aria-live="polite"></div>
 </div>
 
-<!-- Live spectrum analyzer -->
 <!-- CD input: omdrc-cdin, the S/PDIF capture bridge.  The panel watches it
      rather than driving it — it runs continuously and gives the output device
      back on its own whenever there is no disc — so the card is normally one
@@ -1546,6 +1681,10 @@
 </div>
 {% endif %}
 
+</section>
+<section class="tab-page" data-tab="2">
+
+<!-- Live spectrum analyzer: its SSE connection exists only while this tab is shown. -->
 <div class="card" id="spectrum-card">
     <div class="card-title title-row">
         <span>Spectrum <span class="refresh-note">{{ spectrum.refresh_hz }} Hz</span></span>
@@ -1567,11 +1706,15 @@
             <button type="button" data-mode="music" onclick="setSpectrumMode('music')">Music</button>
             <button type="button" data-mode="precision" onclick="setSpectrumMode('precision')">Precision</button>
         </div>
+        <div class="view-toggle" id="spectrum-view-toggle" title="Show the spectrum bands, the level meters, or both">
+            <button type="button" class="view-seg" data-view="bands" onclick="toggleSpectrumView('bands')">Bands</button>
+            <button type="button" class="view-seg" data-view="levels" onclick="toggleSpectrumView('levels')">Levels</button>
+        </div>
         <button type="button" id="spectrum-controls-toggle" class="btn-details active"
                 aria-expanded="false" onclick="toggleSpectrumControls()">Sliders</button>
         <a class="btn-details active" href="/details-spectrum">Details</a>
     </div>
-    <div class="spectrum-plot">
+    <div class="spectrum-plot" id="spectrum-plot">
         <div class="spectrum-label"><strong>Bands</strong><span id="spectrum-source-label">{{ spectrum.bands }} bands · {{ spectrum.sample_rate }} Hz FIFO</span></div>
         <div class="spectrum-grid">
             <div>
@@ -1618,13 +1761,17 @@
         </label>
         </div>
     </div>
-    <div class="vu-wrap">
+    <div class="vu-wrap" id="vu-wrap">
         <div class="vu-title-row">
             <div class="spectrum-label" style="margin:0"><strong>VU</strong></div>
             <div class="vu-switch" id="vu-switch">
                 <button class="vu-seg" type="button" data-mode="bars" onclick="setVuMode('bars')">Bars</button>
                 <button class="vu-seg" type="button" data-mode="needles" onclick="setVuMode('needles')">Needles</button>
             </div>
+        </div>
+        <div class="vu-balance" id="vu-balance" title="Channel imbalance: which side is louder, and by how much">
+            <span class="vu-balance-item"><span>Now</span><strong id="vu-balance-inst">–</strong></span>
+            <span class="vu-balance-item"><span>30s</span><strong id="vu-balance-30s">–</strong></span>
         </div>
         <div class="vu-bars" id="vu-bars" {% if spectrum.vu_mode != 'bars' %}style="display:none"{% endif %}>
             <div class="vu-row"><span>L</span><div class="vu-track"><div class="vu-fill" id="vu-bar-l"></div></div><span id="vu-db-l">-∞</span></div>
@@ -1637,6 +1784,9 @@
     </div>
     </div>{# #spectrum-body #}
 </div>
+
+</section>
+<section class="tab-page" data-tab="1">
 
 <!-- MPD info panel -->
 <div class="card">
@@ -1654,18 +1804,6 @@
    if group_name not in ('drc', 'system') %}
 {{ render_group(group_name, group_label, cmds) }}
 {% endfor %}
-
-<!-- Confirm dialog -->
-<div id="overlay">
-    <div class="dialog">
-        <h3 id="dlg-title"></h3>
-        <p  id="dlg-msg"></p>
-        <div class="dialog-btns">
-            <button id="dlg-cancel" onclick="hideConfirm()">Cancel</button>
-            <button id="dlg-ok">Confirm</button>
-        </div>
-    </div>
-</div>
 
 <!-- Brutefir CPU panel -->
 <div class="card" id="bf-card">
@@ -1764,6 +1902,22 @@
     </div>
 </div>
 
+</section>
+</div>{# #tab-pages #}
+
+<!-- Confirm dialog: outside the tab pages so it can pop up regardless of
+     which one is active (e.g. the DISABLE preset's confirm, on Tab 0). -->
+<div id="overlay">
+    <div class="dialog">
+        <h3 id="dlg-title"></h3>
+        <p  id="dlg-msg"></p>
+        <div class="dialog-btns">
+            <button id="dlg-cancel" onclick="hideConfirm()">Cancel</button>
+            <button id="dlg-ok">Confirm</button>
+        </div>
+    </div>
+</div>
+
 <footer><a href="/configuration">Configuration</a> · <a href="/bitperfect">Bit-perfect check</a> · <a href="/readme">README</a></footer>
 
 <div id="toast"></div>
@@ -1812,14 +1966,35 @@ async function loadDrcAttenuation() {
             return;
         }
         const slider = document.getElementById("drc-attenuation-slider");
+        const restore = document.getElementById("drc-attenuation-restore");
         slider.value = d.db;
         slider.disabled = drcAttenuationBusy;
+        restore.disabled = drcAttenuationBusy || d.source === "configuration";
+        restore.title = d.configured_db === null
+            ? "Configured attenuation is unavailable"
+            : `Restore ${formatAttenuation(d.configured_db)} from the BruteFIR configuration`;
         previewDrcAttenuation(d.db);
         slider.title = d.source === "configuration"
             ? "Initial value read from the active BruteFIR configuration"
             : d.running ? "Applied live and saved for future BruteFIR starts"
                         : "DRC is off; saved for the next BruteFIR start";
     } catch (_) {}
+}
+async function restoreDrcAttenuation() {
+    if (drcAttenuationBusy) return;
+    drcAttenuationBusy = true;
+    document.getElementById("drc-attenuation-slider").disabled = true;
+    document.getElementById("drc-attenuation-restore").disabled = true;
+    try {
+        const d = await (await fetch("/drc/attenuation", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({restore_default:true})})).json();
+        if (!d.ok) throw new Error(d.error || "attenuation restore failed");
+        toast(`BruteFIR attenuation restored to ${formatAttenuation(d.db)}`, "ok");
+    } catch (error) {
+        toast(error.message || "attenuation restore failed", "error");
+    } finally {
+        drcAttenuationBusy = false;
+        await loadDrcAttenuation();
+    }
 }
 async function setDrcAttenuation(value) {
     if (drcAttenuationBusy) return;
@@ -1839,9 +2014,12 @@ async function setDrcAttenuation(value) {
 }
 
 
-function designLabel(value) {
+function designLabel(value, geometry = geoCurrent) {
     if (!value || value === 'default') return 'default';
-    return value.startsWith('@') ? value.slice(1) : value;
+    let label = value.startsWith('@') ? value.slice(1) : value;
+    const prefix = geometry ? `${geometry}.` : '';
+    if (prefix && label.startsWith(prefix)) label = label.slice(prefix.length);
+    return label;
 }
 
 function shortIdentity(value, length = 12) {
@@ -1855,14 +2033,27 @@ function setDrcTransition(message = '') {
     line.hidden = !message;
 }
 
+function markAppliedDrcPreset(active) {
+    const appliedId = active?.running && active.rate
+        ? `drc_${Number(active.rate)}` : 'drc_off';
+    document.querySelectorAll('.btn-drc-preset').forEach(button => {
+        const applied = button.id === `btn-${appliedId}`;
+        button.classList.toggle('applied', applied);
+        button.setAttribute('aria-current', applied ? 'true' : 'false');
+    });
+}
+
 function renderDrcFeedback(data) {
     const panel = document.getElementById('drc-session-panel');
     const activeLine = document.getElementById('drc-active-feedback');
     const savedLine = document.getElementById('drc-saved-feedback');
     const restore = document.getElementById('drc-session-restore');
+    const attenuation = document.getElementById('drc-attenuation-control');
     if (!panel || !activeLine || !savedLine || !restore) return;
     drcLastState = data;
     const active = data.active || {};
+    markAppliedDrcPreset(active);
+    if (attenuation) attenuation.hidden = !active.running;
     const session = data.session || {};
     const verification = active.verification || {};
     panel.classList.remove('verified', 'mismatch', 'warning', 'busy');
@@ -1872,31 +2063,10 @@ function renderDrcFeedback(data) {
     else panel.classList.add('warning');
 
     if (active.running) {
-        const selector = designLabel(active.design);
-        const named = active.description && active.description !== active.design_id
-            ? `${active.description} (${selector})` : selector;
-        const rate = active.rate ? `${Number(active.rate).toLocaleString()} Hz` : 'unknown rate';
-        // The input goes next to the rate because it is what explains it:
-        // 96,000 Hz alone reads the same whether it is a hi-res file through
-        // MPD or the analog input.  Absent means MPD, the resting state.
-        const input = (active.input || {}).label;
-        const fedBy = input ? ` · ${input}` : '';
-        activeLine.textContent =
-            `Active: ${named} · ${rate}${fedBy} · ${active.config || 'unknown config'}`;
-        const facts = [];
-        if (verification.status === 'verified') facts.push('verified');
-        else facts.push(`NOT VERIFIED: ${verification.message || verification.status || 'unknown'}`);
-        if (active.bundle_id) facts.push(`bundle ${shortIdentity(active.bundle_id)}`);
-        const project = active.source_project || {};
-        if (project.name) {
-            facts.push(project.kind === 'browser-upload' && project.archive_history === 'required'
-                ? 'from browser upload · archived in site history'
-                : project.commit
-                ? `from ${project.name} @ ${project.commit.slice(0, 12)}`
-                : `from ${project.name} (uncommitted)`);
-        }
-        activeLine.textContent += ` · ${facts.join(' · ')}`;
-        activeLine.title = verification.message || '';
+        const selector = String(active.design || 'default').replace(/^@/, '');
+        const rate = active.rate ? String(Number(active.rate)) : '?';
+        activeLine.textContent = `Active: ${rate}@${selector}`;
+        activeLine.title = '';
     } else {
         activeLine.textContent = 'Active: DRC off · BruteFIR has no loaded filter';
         activeLine.title = verification.message || '';
@@ -1906,7 +2076,7 @@ function renderDrcFeedback(data) {
         const savedRate = session.mode === 'resamp'
             ? 'auto-resample at 192,000 Hz'
             : `${Number(session.rate).toLocaleString()} Hz`;
-        savedLine.textContent = `Auto-saved session: ${session.power} · ${session.geometry} · ${designLabel(session.design)} · ${savedRate}`;
+        savedLine.textContent = `Auto-saved session: ${session.power} · ${session.geometry} · ${designLabel(session.design, session.geometry)} · ${savedRate}`;
         // Named only when it is not music: a capture source is the one part of
         // the saved session that the rate alone cannot reveal — 96,000 Hz reads
         // the same whether it is the analog input or a hi-res file — and it is
@@ -1926,10 +2096,9 @@ function renderDrcFeedback(data) {
 }
 
 // ── DSP meters: RTI headroom + output peak ──────────────────────────────────
-// One meter pair sits beside every DRC rate's Apply button (rendered in
-// the drc-group row markup above), but only the one for the currently
-// applied rate is ever shown — BruteFIR only has one real-time index and one
-// peak-hold to report, and they describe whichever config is actually running.
+// One shared meter pair sits on its own line below the preset grid — only
+// ever describing whichever rate is actually running, since BruteFIR only
+// has one real-time index and one peak-hold to report at a time.
 const DSP_GAUGE_WARN = 0.7;    // rti at/above this: getting close to the deadline
 const DSP_GAUGE_BAD  = 0.95;   // rti at/above this: essentially out of headroom
 // Peak bar: linear in dB from the floor up to full scale.  BruteFIR's peak
@@ -1938,42 +2107,41 @@ const DSP_GAUGE_BAD  = 0.95;   // rti at/above this: essentially out of headroom
 // hence a warning well before 0 dBFS rather than right at it.
 const PEAK_GAUGE_FLOOR_DB = -30.0;   // bar bottom; below this the fill just sits empty
 const PEAK_GAUGE_WARN_DB  = -6.0;
-const PEAK_GAUGE_BAD_DB   = -1.0;
-const DRC_RATE_TO_GAUGE_ID = {
-    44100: 'drc_44100', 48000: 'drc_48000', 88200: 'drc_88200',
-    96000: 'drc_96000', 192000: 'drc_192000',
-};
-let dspGaugeCurrentId = '';
+const PEAK_GAUGE_BAD_DB   = 0.0;
+// Rates BruteFIR actually reports an RTI/peak figure for; anything else
+// (off, cdin, an unrecognised mode) has no meaningful meter to show.
+const DRC_GAUGE_RATES = new Set([44100, 48000, 88200, 96000, 192000]);
+let dspGaugeVisible = false;
 let dspGaugeLastStatus = null;
 let dspPeakLastStatus = null;
 
 function updateDspGaugePlacement(active) {
-    const nextId = (active && active.running) ? DRC_RATE_TO_GAUGE_ID[Number(active.rate)] : '';
-    if (nextId === dspGaugeCurrentId) return;
-    const previous = document.getElementById('gauge-' + dspGaugeCurrentId);
-    if (previous) previous.hidden = true;
-    dspGaugeCurrentId = nextId || '';
-    const current = dspGaugeCurrentId ? document.getElementById('gauge-' + dspGaugeCurrentId) : null;
-    if (current) {
-        current.hidden = false;
+    const nextVisible = !!((active && active.running) && DRC_GAUGE_RATES.has(Number(active.rate)));
+    if (nextVisible === dspGaugeVisible) return;
+    dspGaugeVisible = nextVisible;
+    const panel = document.getElementById('dsp-meters-shared');
+    if (panel) panel.hidden = !dspGaugeVisible;
+    if (dspGaugeVisible) {
         renderDspGauge(dspGaugeLastStatus);
         renderPeakGauge(dspPeakLastStatus);
     }
 }
 
 function renderDspGauge(status) {
-    if (!dspGaugeCurrentId) return;
-    const meter = document.getElementById('rti-meter-' + dspGaugeCurrentId);
-    const fill = document.getElementById('gauge-fill-' + dspGaugeCurrentId);
+    if (!dspGaugeVisible) return;
+    const meter = document.getElementById('rti-meter');
+    const fill = document.getElementById('gauge-fill');
     if (!meter || !fill) return;
     if (!status || !status.available || status.rti === null || status.rti === undefined) {
         meter.title = 'Real-time index: no recent BruteFIR figure';
+        meter.className = 'dsp-meter';
         fill.style.left = '0%';
         fill.style.opacity = '0';
         return;
     }
     const rti = Math.max(0, Math.min(1, status.rti));
     const headroom = 1 - rti;
+    meter.className = 'dsp-meter' + (rti >= DSP_GAUGE_BAD ? ' bad' : rti >= DSP_GAUGE_WARN ? ' warn' : '');
     fill.style.left = `${(rti * 100).toFixed(1)}%`;
     fill.style.opacity = '1';
     meter.title = `RTI — BruteFIR real-time index ${rti.toFixed(3)}: the filter block takes ` +
@@ -1982,13 +2150,14 @@ function renderDspGauge(status) {
 }
 
 function renderPeakGauge(status) {
-    if (!dspGaugeCurrentId) return;
-    const meter = document.getElementById('peak-meter-' + dspGaugeCurrentId);
-    const value = document.getElementById('peak-value-' + dspGaugeCurrentId);
-    const fill = document.getElementById('peak-fill-' + dspGaugeCurrentId);
+    if (!dspGaugeVisible) return;
+    const meter = document.getElementById('peak-meter');
+    const value = document.getElementById('peak-value');
+    const fill = document.getElementById('peak-fill');
     if (!meter || !value || !fill) return;
     if (!status || !status.available || status.error) {
         meter.title = 'Output peak: no recent BruteFIR figure';
+        meter.className = 'dsp-meter';
         value.textContent = '—';
         value.className = 'dsp-meter-value';
         fill.style.left = '0%';
@@ -2001,8 +2170,9 @@ function renderPeakGauge(status) {
     const level = peakDb === null ? PEAK_GAUGE_FLOOR_DB : Math.min(0, peakDb);
     const span = 0 - PEAK_GAUGE_FLOOR_DB;
     const filled = Math.max(0, Math.min(1, (level - PEAK_GAUGE_FLOOR_DB) / span));
-    const state = (clipped || (peakDb !== null && peakDb >= PEAK_GAUGE_BAD_DB)) ? ' bad'
+    const state = (clipped || (peakDb !== null && peakDb > PEAK_GAUGE_BAD_DB)) ? ' bad'
                 : (peakDb !== null && peakDb >= PEAK_GAUGE_WARN_DB) ? ' warn' : '';
+    meter.className = 'dsp-meter' + state;
     fill.style.left = `${(filled * 100).toFixed(1)}%`;
     fill.style.opacity = '1';
     value.textContent = peakDb === null
@@ -2021,9 +2191,9 @@ function renderPeakGauge(status) {
 
 let peakResetBusy = false;
 async function resetBrutefirPeak() {
-    if (peakResetBusy || !dspGaugeCurrentId) return;
+    if (peakResetBusy || !dspGaugeVisible) return;
     peakResetBusy = true;
-    const button = document.getElementById("peak-reset-" + dspGaugeCurrentId);
+    const button = document.getElementById("peak-reset");
     if (button) button.disabled = true;
     try {
         const d = await (await fetch("/drc/brutefir-peak/reset", {method:"POST"})).json();
@@ -2041,7 +2211,7 @@ async function resetBrutefirPeak() {
 }
 
 async function loadDspGauge() {
-    if (!dspGaugeCurrentId) return;   // DRC off, or a mode these meters cannot place — nothing to poll for
+    if (!dspGaugeVisible) return;   // DRC off, or a mode these meters cannot place — nothing to poll for
     try {
         const [rti, peak] = await Promise.all([
             fetch('/drc/brutefir-rti',  {cache: 'no-store'}).then(r => r.json()),
@@ -2131,7 +2301,7 @@ async function loadDesigns() {
         if (missing) {
             const option = document.createElement('option');
             option.value = d.design;
-            option.textContent = `${designLabel(d.design)} (unavailable)`;
+            option.textContent = `${designLabel(d.design, d.active?.geometry)} (unavailable)`;
             option.disabled = true;
             option.selected = true;
             sel.appendChild(option);
@@ -2139,11 +2309,11 @@ async function loadDesigns() {
         for (const design of list) {
             const option = document.createElement('option');
             option.value = design;
-            option.textContent = designLabel(design);
-            if (d.active && d.active.design === design && d.active.description &&
-                    d.active.description !== d.active.design_id) {
-                option.textContent = `${d.active.description} · ${designLabel(design)}`;
-            }
+            // Selector filenames are authoritative UI labels.  Manifest
+            // descriptions may repeat both geometry and design (for example
+            // "120.green 120.green.multipos.fdw6 correction") and do not
+            // belong in this compact chooser.
+            option.textContent = designLabel(design, d.active?.geometry);
             option.selected = design === d.design;
             sel.appendChild(option);
         }
@@ -2226,7 +2396,7 @@ async function switchDesign(target) {
 async function restoreDrcSession() {
     if (drcSessionBusy || !drcLastState || !drcLastState.session) return;
     const saved = drcLastState.session;
-    const summary = `${saved.power}, ${saved.geometry}, ${designLabel(saved.design)}, ${saved.label || saved.rate + ' Hz'}`;
+    const summary = `${saved.power}, ${saved.geometry}, ${designLabel(saved.design, saved.geometry)}, ${saved.label || saved.rate + ' Hz'}`;
     if (!window.confirm(`Restore the saved DRC session?\n\n${summary}`)) return;
     drcSessionBusy = true;
     setDrcTransition(`Restoring saved session: ${summary}…`);
@@ -3469,6 +3639,21 @@ let spectrumFloorPost = null;   // debounce handle for POSTing the floor
 let spectrumReconnect = null;   // retry handle for a dropped SSE stream
 let currentVuMode = SPECTRUM_VU_MODE;
 let lastVu = {};
+// ── Bands/Levels visibility ────────────────────────────────────────────────
+// Independent toggles (not a radio pair) so either or both panels can show.
+const SPECTRUM_VIEW_KEYS = { bands: 'omdrcctrl.spectrum.view.bands', levels: 'omdrcctrl.spectrum.view.levels' };
+let spectrumViewState = {
+    bands: storedBool(SPECTRUM_VIEW_KEYS.bands, true),
+    levels: storedBool(SPECTRUM_VIEW_KEYS.levels, true),
+};
+// ── channel-imbalance readout ──────────────────────────────────────────────
+// "Now" reads the same eased levels the meters show, so the number never
+// disagrees with what the bars/needles display.  "30s" is a true energy
+// average over the raw incoming RMS (unaffected by the meter's release
+// ballistics), so a brief transient doesn't swing the integrated reading.
+const VU_BALANCE_WINDOW_MS = 30000;
+const VU_BALANCE_GATE_DB = -60;   // below this (for both channels) there's no real signal to compare
+let vuBalanceHistory = [];        // [{t, l, r}] raw per-frame RMS dB, pruned to the last 30s
 // ── VU ballistics (analog-style needle/bar decay) ─────────────────────────────
 // Rises are shown instantly (transients must pop).  Falls are rate-limited so the
 // meters glide down like a weighted needle instead of snapping to zero when the
@@ -3666,12 +3851,37 @@ function showSpectrumBody(show) {
     if (!body) return;
     body.style.display = show ? 'block' : 'none';
     if (show) {
+        applySpectrumView();
+        renderVu();
+    }
+}
+
+// Bands and Levels are independent toggles — either, or both, can be shown.
+function applySpectrumView() {
+    const plot = document.getElementById('spectrum-plot');
+    const vu = document.getElementById('vu-wrap');
+    if (plot) plot.style.display = spectrumViewState.bands ? '' : 'none';
+    if (vu) vu.style.display = spectrumViewState.levels ? '' : 'none';
+    document.querySelectorAll('#spectrum-view-toggle .view-seg').forEach(btn => {
+        btn.classList.toggle('active', spectrumViewState[btn.dataset.view]);
+    });
+    // A chart built while its canvas was display:none has zero size — (re)build
+    // it now that the panel is actually visible.
+    if (spectrumViewState.bands && spectrumBodyVisible()) {
         initSpectrumChart();
         if (spectrumCharts.left) spectrumCharts.left.resize();
         if (spectrumCharts.right) spectrumCharts.right.resize();
         drawBandSpectrum(lastSpectrumBands, lastSpectrumLeft, lastSpectrumRight);
-        renderVu();
     }
+}
+
+function toggleSpectrumView(which) {
+    const other = which === 'bands' ? 'levels' : 'bands';
+    const next = !spectrumViewState[which];
+    if (!next && !spectrumViewState[other]) return;   // keep at least one panel visible
+    spectrumViewState[which] = next;
+    storeBool(SPECTRUM_VIEW_KEYS[which], next);
+    applySpectrumView();
 }
 
 // New frame → set the per-band targets and make sure the release is running.
@@ -3849,7 +4059,57 @@ function updateVu(vu) {
         left_peak:  Number(lastVu.left_peak  ?? VU_FLOOR_DB),
         right_peak: Number(lastVu.right_peak ?? VU_FLOOR_DB),
     };
+    pushVuBalanceSample(vuTarget.left_rms, vuTarget.right_rms);
     if (!vuRaf) { vuLastTs = 0; vuRaf = requestAnimationFrame(vuStep); }
+}
+
+function pushVuBalanceSample(l, r) {
+    const t = performance.now();
+    vuBalanceHistory.push({ t, l, r });
+    const cutoff = t - VU_BALANCE_WINDOW_MS;
+    while (vuBalanceHistory.length && vuBalanceHistory[0].t < cutoff) vuBalanceHistory.shift();
+}
+
+function dbToPower(db) {
+    return Math.pow(10, Number(db) / 10);
+}
+
+// Energy-weighted average over the buffered window: each sample is weighted by
+// the time until the next one (capped, so a long gap — e.g. the stream having
+// stopped — can't dominate the average once it ages back into view).
+function windowedBalanceDb() {
+    const hist = vuBalanceHistory;
+    if (hist.length < 2) return null;
+    const now = performance.now();
+    let sumW = 0, sumLP = 0, sumRP = 0;
+    for (let i = 0; i < hist.length; i++) {
+        const cur = hist[i];
+        const nextT = i + 1 < hist.length ? hist[i + 1].t : now;
+        const dt = Math.min(1000, Math.max(0, nextT - cur.t));
+        if (dt <= 0 || Math.max(cur.l, cur.r) < VU_BALANCE_GATE_DB) continue;
+        sumW += dt;
+        sumLP += dbToPower(cur.l) * dt;
+        sumRP += dbToPower(cur.r) * dt;
+    }
+    if (sumW < 2000) return null;   // need a couple seconds of real signal to mean anything
+    return 10 * Math.log10(sumLP / sumW) - 10 * Math.log10(sumRP / sumW);
+}
+
+function balanceLabel(diffDb) {
+    if (diffDb === null || !Number.isFinite(diffDb)) return '–';
+    if (Math.abs(diffDb) < 0.05) return '0.0dB';
+    return `${diffDb > 0 ? 'L' : 'R'}+${Math.abs(diffDb).toFixed(1)}dB`;
+}
+
+// Driven off the same eased levels the meters render, so "Now" never disagrees
+// with what the bars/needles are showing.
+function renderBalance(l, r) {
+    const instDb = (Number.isFinite(l) && Number.isFinite(r) && Math.max(l, r) >= VU_BALANCE_GATE_DB)
+        ? l - r : null;
+    const instEl = document.getElementById('vu-balance-inst');
+    const winEl = document.getElementById('vu-balance-30s');
+    if (instEl) instEl.textContent = balanceLabel(instDb);
+    if (winEl) winEl.textContent = balanceLabel(windowedBalanceDb());
 }
 
 // Snap the meters to a value with no animation (init / resize / disconnect).
@@ -3886,6 +4146,7 @@ function renderVu() {
         drawNeedleVu('vu-needle-l', 'L', l, vuDisp.left_peak);
         drawNeedleVu('vu-needle-r', 'R', r, vuDisp.right_peak);
     }
+    renderBalance(l, r);
 }
 
 function setVuMode(mode) {
@@ -4131,9 +4392,55 @@ window.addEventListener('resize', () => {
 });
 setVuMode(currentVuMode);
 paintSpectrumMode();
+applySpectrumView();
 renderDelayReadout();
 setSpectrumButton(false);
 clearSpectrum();
+
+// ── tabs: "Listen" / "System" / on-demand "Spectrum" ─────────────────────
+const TAB_STATE_KEY = 'omdrcctrl.activeTab';
+let activeTab = 0;
+
+function switchTab(i, persist = true) {
+    i = [0, 1, 2].includes(Number(i)) ? Number(i) : 0;
+    const leavingSpectrum = activeTab === 2 && i !== 2;
+    activeTab = i;
+    document.querySelectorAll('.tab-page').forEach(p => {
+        p.style.display = Number(p.dataset.tab) === i ? '' : 'none';
+    });
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.toggle('active', Number(b.dataset.tab) === i);
+    });
+    if (persist) { try { localStorage.setItem(TAB_STATE_KEY, String(i)); } catch {} }
+    if (leavingSpectrum) stopSpectrum(true);
+    if (i === 2 && !document.hidden) {
+        spectrumWanted = true;
+        startSpectrum();
+    }
+}
+
+// Swipe between tabs on touch. Ignored when the gesture starts on an
+// interactive control (slider, button, canvas…) so dragging the attenuation
+// or floor sliders never gets mistaken for a page swipe.
+(function initTabSwipe() {
+    const zone = document.getElementById('tab-pages');
+    if (!zone) return;
+    let sx = 0, sy = 0, tracking = false;
+    zone.addEventListener('touchstart', e => {
+        if (e.touches.length !== 1 ||
+            e.target.closest('input,button,a,select,canvas,textarea')) { tracking = false; return; }
+        sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true;
+    }, { passive: true });
+    zone.addEventListener('touchend', e => {
+        if (!tracking) return;
+        tracking = false;
+        const dx = e.changedTouches[0].clientX - sx;
+        const dy = e.changedTouches[0].clientY - sy;
+        if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+        const next = dx < 0 ? Math.min(2, activeTab + 1) : Math.max(0, activeTab - 1);
+        switchTab(next);
+    }, { passive: true });
+})();
 
 // Reveal the PiP button only where the browser supports Document PiP.
 if ('documentPictureInPicture' in window) {
@@ -4144,7 +4451,15 @@ if ('documentPictureInPicture' in window) {
 if (new URLSearchParams(location.search).get('view') === 'spectrum') {
     document.body.classList.add('spectrum-only');
     document.title = 'OMDRC Spectrum';
+    switchTab(2, false);   // force the tab holding #spectrum-card, regardless of any stored preference
     ensureSpectrumStarted();
+} else {
+    let startTab = 0;
+    try {
+        const stored = Number(localStorage.getItem(TAB_STATE_KEY));
+        startTab = [0, 1, 2].includes(stored) ? stored : 0;
+    } catch {}
+    switchTab(startTab, false);
 }
 
 // ── Audio devices panel ───────────────────────────────────────────────────

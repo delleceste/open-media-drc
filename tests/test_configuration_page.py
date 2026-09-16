@@ -253,7 +253,7 @@ class RepositoryFirstInstallTest(unittest.TestCase):
                 "OUT OF SYNC: design store differs from runtime")
             self.assertFalse(rows[("120.blue", "Rscreen")]["installed"])
             self.assertEqual(rows[("legacy", "old")]["location"],
-                             "runtime-only legacy")
+                             "runtime only — absent from configured design store")
 
     def test_design_list_accepts_runtime_subset_without_archived_sources(self):
         with tempfile.TemporaryDirectory() as name:

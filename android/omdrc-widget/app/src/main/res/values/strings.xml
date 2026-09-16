@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">omdrc status</string>
+    <string name="configure_widget_title">omdrc widget setup</string>
+    <string name="hint_host">Box IP or hostname (e.g. 192.168.1.50)</string>
+    <string name="hint_port">Port</string>
+    <string name="default_port">9090</string>
+    <string name="save">Save</string>
+    <string name="refresh_note">Refreshes automatically every few minutes; tap the refresh icon for an immediate check.</string>
+    <string name="status_drc_on">DRC ON</string>
+    <string name="status_drc_off">DRC OFF</string>
+    <string name="status_unreachable">Unreachable</string>
+    <string name="status_unconfigured">Tap to set up</string>
+    <string name="mpd_unknown">—</string>
+</resources>
