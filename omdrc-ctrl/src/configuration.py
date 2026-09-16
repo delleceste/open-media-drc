@@ -639,25 +639,40 @@ class ConfigurationManager:
                 found[(geometry, design)] = data
             return found
 
-        def complete(root: Path, data: dict) -> bool:
+        def complete(root: Path, data: dict, *, require_sources: bool) -> bool:
             geometry = data.get("geometry", "")
             geometry_root = Path("filters") / geometry
             expected = []
             try:
-                expected.extend(
-                    (geometry_root / Path(item["bundle_path"]), item["sha256"])
-                    for item in data["source"]["artifacts"].values())
-                measurement = data["source"].get("measurements") or {}
-                if measurement.get("bundle_path"):
-                    expected.append(
-                        (geometry_root / Path(measurement["bundle_path"]),
-                         measurement["sha256"]))
+                if require_sources:
+                    expected.extend(
+                        (geometry_root / Path(item["bundle_path"]), item["sha256"])
+                        for item in data["source"]["artifacts"].values())
+                    measurement = data["source"].get("measurements") or {}
+                    if measurement.get("bundle_path"):
+                        expected.append(
+                            (geometry_root / Path(measurement["bundle_path"]),
+                             measurement["sha256"]))
                 expected.append(
                     (geometry_root / Path(data["analysis"]["path"]),
                      data["analysis"]["sha256"]))
                 for runtime in data["runtime"]["rates"].values():
-                    expected.append((Path(runtime["config"]),
-                                     runtime["config_sha256"]))
+                    config_relative = Path(runtime["config"])
+                    if require_sources or not config_relative.name.endswith(".conf.in"):
+                        expected.append((config_relative, runtime["config_sha256"]))
+                    else:
+                        template_path = self._bundle_source(design_root, config_relative)
+                        if self._sha256(template_path) != runtime["config_sha256"]:
+                            return False
+                        template = template_path.read_text(encoding="utf-8")
+                        if "@REPO_DIR@" not in template:
+                            return False
+                        rendered_relative = config_relative.with_name(
+                            config_relative.name[:-len(".in")])
+                        rendered = self._bundle_source(
+                            root, rendered_relative).read_text(encoding="utf-8")
+                        if rendered != template.replace("@REPO_DIR@", str(root.resolve())):
+                            return False
                     expected.extend(
                         (geometry_root / Path(channel["path"]), channel["sha256"])
                         for channel in runtime["channels"].values())
@@ -677,8 +692,8 @@ class ConfigurationManager:
             session = (data.get("source", {}).get("measurements", {}))
             same = bool(source and live and
                         source.get("bundle_id") == live.get("bundle_id") and
-                        complete(design_root, source) and
-                        complete(self.settings.site_root, live))
+                        complete(design_root, source, require_sources=True) and
+                        complete(self.settings.site_root, live, require_sources=False))
             if source and same:
                 location = "authoritative + installed"
             elif source and live:

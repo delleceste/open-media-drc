@@ -255,6 +255,49 @@ class RepositoryFirstInstallTest(unittest.TestCase):
             self.assertEqual(rows[("legacy", "old")]["location"],
                              "runtime-only legacy")
 
+    def test_design_list_accepts_runtime_subset_without_archived_sources(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            manager, design_root, site_root = self.make_manager(root)
+            manifest_path = self.publish_fixture(design_root)
+            manifest = json.loads(manifest_path.read_text())
+            source_file = design_root / "filters/120.blue/source/Rscreen/L.txt"
+            source_file.parent.mkdir(parents=True)
+            source_file.write_bytes(b"source evidence\n")
+            manifest["source"]["artifacts"]["original_left"] = {
+                "bundle_path": "source/Rscreen/L.txt",
+                "sha256": hashlib.sha256(source_file.read_bytes()).hexdigest(),
+            }
+            config = design_root / "configs/120.blue/brutefir-48000@Rscreen.conf.in"
+            config.write_text("coeff: @REPO_DIR@/filters/120.blue/filter.raw\n")
+            manifest["runtime"]["rates"]["48000"] = {
+                "config": "configs/120.blue/brutefir-48000@Rscreen.conf.in",
+                "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+                "channels": {},
+            }
+            manifest_path.write_text(json.dumps(manifest) + "\n")
+
+            live_manifest = site_root / "filters/120.blue/provenance/Rscreen.json"
+            live_manifest.parent.mkdir(parents=True)
+            live_manifest.write_text(manifest_path.read_text())
+            live_analysis = site_root / "filters/120.blue/analysis/Rscreen.json"
+            live_analysis.parent.mkdir(parents=True)
+            shutil.copyfile(
+                design_root / "filters/120.blue/analysis/Rscreen.json",
+                live_analysis)
+            live_config = site_root / "configs/120.blue/brutefir-48000@Rscreen.conf"
+            live_config.parent.mkdir(parents=True)
+            live_config.write_text(
+                f"coeff: {site_root.resolve()}/filters/120.blue/filter.raw\n")
+
+            row = next(item for item in manager.designs()
+                       if item["geometry"] == "120.blue" and
+                       item["design"] == "Rscreen")
+            self.assertEqual(row["location"], "authoritative + installed")
+            self.assertTrue(row["installed"])
+            self.assertFalse(
+                (site_root / "filters/120.blue/source/Rscreen/L.txt").exists())
+
     def test_saved_design_is_selected_and_cannot_be_removed(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
