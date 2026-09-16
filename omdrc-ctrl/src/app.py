@@ -4113,15 +4113,19 @@ def _upmpdcli_qconnect_status() -> dict:
     """The {line1, line2, state, events} shape /qconnect/status serves for
     qobuzconnect2mpd's own status file, built instead from a direct MPD
     query -- upmpdcli has no equivalent daemon-side status file, but MPD's
-    queue already carries the same title/artist/format tags either renderer
+    queue already carries the same title/album/format tags either renderer
     puts there (see mpdctl.cxx's addtagid use in qobuzconnect2mpd, and the
     matching tags upmpdcli writes for its own queue entries).  elapsed/
     duration/playback_state travel as their own fields rather than baked
     into line1 -- see _qc_track_timing's docstring."""
     np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
     state_tag = {"play": "[playing]", "pause": "[paused]"}.get(np["state"], "[stopped]")
-    title = f"{np['artist']} - {np['title']}" if np["artist"] and np["title"] else np["title"]
-    line1 = f"{state_tag} {title}" if title else ""
+    # UPnP services sometimes stuff every contributor and role (performer,
+    # producer, lyricist, ...) into MPD's Artist tag.  That is valid metadata,
+    # but unusable as a now-playing headline.  Deliberately show only the two
+    # concise, structured fields requested by the UI: track and album.
+    track_album = " · ".join(part for part in (np["title"], np["album"]) if part)
+    line1 = f"{state_tag} {track_album}" if track_album else ""
 
     line2 = ""
     if np["state"] != "stop" and np["audio"]:
