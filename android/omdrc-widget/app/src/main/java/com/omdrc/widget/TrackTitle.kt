@@ -17,4 +17,10 @@ object TrackTitle {
         val separator = cleaned.indexOf(" - ")
         return if (separator >= 0) cleaned.substring(separator + 3).trim() else cleaned
     }
+
+    fun titleAndAlbum(raw: String?, title: String?, album: String?): String? {
+        val cleanTitle = title?.trim()?.takeIf { it.isNotEmpty() } ?: titleOnly(raw)
+        val cleanAlbum = album?.trim()?.takeIf { it.isNotEmpty() && it != cleanTitle }
+        return listOfNotNull(cleanTitle, cleanAlbum).takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
 }

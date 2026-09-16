@@ -132,7 +132,11 @@ object RemoteViewsBuilder {
         // "line1", same as the dashboard's Renderer card) over MPD's tag
         // data, which falls back to the raw stream URL for a local proxy
         // stream MPD has no metadata for.
-        val song = if (mpd?.state == "playing") TrackTitle.titleOnly(renderer?.nowPlaying ?: mpd.displaySong) else null
+        val song = if (mpd?.state == "playing") TrackTitle.titleAndAlbum(
+            renderer?.nowPlaying ?: mpd.displaySong,
+            mpd.title,
+            mpd.album,
+        ) else null
         val parts = listOfNotNull(renderer?.label, song)
         return if (parts.isEmpty()) context.getString(R.string.mpd_unknown) else parts.joinToString(" · ")
     }

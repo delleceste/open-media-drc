@@ -141,7 +141,11 @@ object StatusNotifier {
         snapshot.renderer?.label?.let { lines += "Renderer: $it" }
         ChainFormat.bitrateChain(snapshot.mpd, drc?.running == true)?.let { lines += "Chain: $it" }
         snapshot.mpd?.let { mpd ->
-            val song = TrackTitle.titleOnly(snapshot.renderer?.nowPlaying ?: mpd.displaySong)
+            val song = TrackTitle.titleAndAlbum(
+                snapshot.renderer?.nowPlaying ?: mpd.displaySong,
+                mpd.title,
+                mpd.album,
+            )
             when (mpd.state) {
                 "playing" -> lines += "Playing" + (song?.let { ": $it" } ?: "")
                 "paused" -> lines += "Paused" + (song?.let { ": $it" } ?: "")

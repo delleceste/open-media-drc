@@ -52,6 +52,8 @@ object WidgetPrefs {
             snapshot.mpd?.let { mpd ->
                 editor.putString("mpd_state", mpd.state)
                 editor.putString("mpd_song", mpd.song)
+                editor.putString("mpd_title", mpd.title)
+                editor.putString("mpd_album", mpd.album)
                 mpd.sampleRate?.let { editor.putInt("sample_rate", it) }
                 mpd.bitDepth?.let { editor.putInt("bit_depth", it) }
                 mpd.brutefirRate?.let { editor.putInt("brutefir_rate", it) }
@@ -97,6 +99,8 @@ object WidgetPrefs {
             ok = true,
             state = p.getString("mpd_state", null),
             song = p.getString("mpd_song", null),
+            title = p.getString("mpd_title", null),
+            album = p.getString("mpd_album", null),
             sampleRate = if (p.contains("sample_rate")) p.getInt("sample_rate", 0) else null,
             bitDepth = if (p.contains("bit_depth")) p.getInt("bit_depth", 0) else null,
             brutefirRate = if (p.contains("brutefir_rate")) p.getInt("brutefir_rate", 0) else null,

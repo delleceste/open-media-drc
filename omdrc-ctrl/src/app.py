@@ -1248,7 +1248,7 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
     build the renderer card for a renderer -- upmpdcli -- that keeps no
     status file of its own to read instead, unlike qobuzconnect2mpd."""
     import socket
-    info = {"title": "", "artist": "", "state": "", "elapsed": None,
+    info = {"title": "", "album": "", "artist": "", "state": "", "elapsed": None,
             "duration": None, "audio": ""}
     try:
         p = int(port) if port else 6600
@@ -1268,6 +1268,8 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
                     key, value = key.strip().lower(), value.strip()
                     if key == "title":
                         info["title"] = value
+                    elif key == "album":
+                        info["album"] = value
                     elif key == "artist":
                         info["artist"] = value
                     elif key == "state":
@@ -1296,6 +1298,8 @@ def _mpc_status(port: str | None = None) -> dict:
         "client": os.path.basename(cmd[0]),
         "state": "stopped",
         "song": "",
+        "title": "",
+        "album": "",
         "audio": "",
         "sample_rate": None,
         "bit_depth": None,
@@ -1325,10 +1329,17 @@ def _mpc_status(port: str | None = None) -> dict:
             break
 
     if not info["audio"] and info["state"] in ("playing", "paused"):
-        audio = _mpd_audio_via_protocol(port)
+        now_playing = _mpd_now_playing_via_protocol(port)
+        info["title"] = now_playing["title"]
+        info["album"] = now_playing["album"]
+        audio = now_playing["audio"] or _mpd_audio_via_protocol(port)
         if audio:
             info["audio"] = audio
             info.update(_parse_mpc_audio(audio))
+    elif info["state"] in ("playing", "paused"):
+        now_playing = _mpd_now_playing_via_protocol(port)
+        info["title"] = now_playing["title"]
+        info["album"] = now_playing["album"]
 
     return info
 
@@ -6667,6 +6678,8 @@ def mpd_info():
             "client":  mpc["client"] or "(not found)",
             "state":   mpc["state"],
             "song":    mpc["song"],
+            "title":   mpc["title"],
+            "album":   mpc["album"],
             "audio":   mpc["audio"],
             "sample_rate": mpc["sample_rate"],
             "bit_depth": mpc["bit_depth"],
