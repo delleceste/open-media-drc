@@ -456,11 +456,11 @@ Drop-ins always apply *on top of* the main unit, so a full unit override at
 `/etc/systemd/system/mpd.service` **cannot** override that `User=` --- it
 silently loses. The repo therefore ships a **counter-drop-in**
 (`etc/systemd/system/mpd.service.d/open-media-drc.conf`, rendered by
-`cmake/renderers.cmake` and installed to `$PREFIX/share/omdrc/mpd.service.d/`)
+`cmake/renderers.cmake` and installed to `$PREFIX/lib/systemd/system/mpd.service.d/`)
 that sets `User=` to the audio user and the installed config path; a drop-in in
-`/etc` beats one in `/usr/lib`. It must be a **real file copied
-into `/etc`, not a symlink** (early-boot parse, see above). Do not create a
-full `/etc/systemd/system/mpd.service`.
+`/usr/local/lib` beats one in the distribution's `/usr/lib` load path.
+`cmake --install` installs it directly; no manual `/etc` copy is needed. Do not
+create a full `/etc/systemd/system/mpd.service`.
 
 ### USB DAC hotplug (udev + systemd)
 
@@ -468,7 +468,7 @@ full `/etc/systemd/system/mpd.service`.
 |---|---|---|
 | `99-usb-audio-drc.rules` | `/etc/udev/rules.d/` | Triggers the service on DAC plug/unplug |
 | `etc/systemd/system/drc-usb-audio.service` | `/etc/systemd/system/` | Starts/stops DRC |
-| `mpd.service.d/open-media-drc.conf` | `/etc/systemd/system/mpd.service.d/` | MPD user/config drop-in |
+| `mpd.service.d/open-media-drc.conf` | `$PREFIX/lib/systemd/system/mpd.service.d/` | MPD user/config and post-start routing-reconcile drop-in |
 
 The udev rule matches any USB sound-card control device and pulls in
 `drc-usb-audio.service` (`Type=oneshot`, `RemainAfterExit=yes` so the

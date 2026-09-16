@@ -26,6 +26,18 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/drc-usb-audio.service"
             DESTINATION lib/systemd/system)
 
+    # MPD remembers disabled outputs across its own restart.  A separate
+    # oneshot (rather than ExecStartPost in mpd.service) keeps any BruteFIR
+    # process started by reconciliation in its own cgroup and reapplies the
+    # saved audio route after every MPD start.
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/etc/systemd/system/omdrc-mpd-reconcile.service.in" _mpd_reconcile)
+    string(REPLACE "@REPO_DIR@/drc.sh" "${CMAKE_INSTALL_PREFIX}/bin/omdrc" _mpd_reconcile "${_mpd_reconcile}")
+    string(REPLACE "@AUDIO_USER@" "${AUDIO_USER}" _mpd_reconcile "${_mpd_reconcile}")
+    string(REPLACE "@AUDIO_HOME@" "${AUDIO_HOME}" _mpd_reconcile "${_mpd_reconcile}")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc-mpd-reconcile.service" "${_mpd_reconcile}")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/omdrc-mpd-reconcile.service"
+            DESTINATION lib/systemd/system)
+
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/etc/systemd/system/omdrc-audio-roles.service.in" _roles_svc)
     string(REPLACE "@PREFIX@" "${CMAKE_INSTALL_PREFIX}" _roles_svc "${_roles_svc}")
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc-audio-roles.service" "${_roles_svc}")

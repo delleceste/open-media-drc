@@ -21,6 +21,21 @@ class DrcSessionTest(unittest.TestCase):
         self.assertIn("ExecStart=@REPO_DIR@/drc.sh restore", service)
         self.assertNotIn("last_arg", service)
 
+    def test_every_mpd_start_reconciles_the_saved_audio_route(self):
+        dropin = (ROOT / "etc/systemd/system/mpd.service.d/open-media-drc.conf.in").read_text(
+            encoding="utf-8")
+        service = (ROOT / "etc/systemd/system/omdrc-mpd-reconcile.service.in").read_text(
+            encoding="utf-8")
+
+        self.assertIn("Wants=omdrc-mpd-reconcile.service", dropin)
+        self.assertIn("After=mpd.service", service)
+        self.assertIn("ExecStart=@REPO_DIR@/drc.sh reconcile", service)
+        self.assertNotIn("RemainAfterExit=yes", service)
+
+        cmake = (ROOT / "cmake/renderers.cmake").read_text(encoding="utf-8")
+        self.assertIn("DESTINATION lib/systemd/system/mpd.service.d", cmake)
+        self.assertNotIn("DESTINATION share/omdrc/mpd.service.d", cmake)
+
     def test_session_reports_the_exact_persistent_restore_tuple(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

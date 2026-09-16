@@ -154,14 +154,14 @@ sudo pacman -S mpd            # Arch
 > This repo therefore ships a **counter-drop-in** instead of a full unit
 > override: `etc/systemd/system/mpd.service.d/open-media-drc.conf` (rendered by
 > `cmake/renderers.cmake` and installed to
-> `$PREFIX/share/omdrc/mpd.service.d/`).  It sets `User=<audio user>` and the
-> installed config path.  A drop-in in `/etc/systemd/system/` takes precedence
-> over one in `/usr/lib/systemd/system/`, so this correctly wins.
+> `$PREFIX/lib/systemd/system/mpd.service.d/`).  It sets `User=<audio user>` and the
+> installed config path.  With the normal `/usr/local` prefix, systemd loads
+> this higher-priority local drop-in instead of the distribution's `/usr/lib`
+> drop-in.
 >
-> The checklist printed by `make install` handles this — it copies the drop-in
-> to `/etc/systemd/system/mpd.service.d/` rather than a full unit file.  **Do not** copy or create a full
-> `/etc/systemd/system/mpd.service` — it will not help and will only add
-> confusion.
+> `cmake --install` installs the drop-in directly; no manual `/etc` copy is
+> needed. **Do not** copy or create a full `/etc/systemd/system/mpd.service` —
+> it will not help and will only add confusion.
 >
 > **This drop-in must be a real file copied into `/etc`, NOT a symlink into the
 > checkout.**  If `/home` is a separate mount (common), systemd loads
@@ -839,7 +839,7 @@ resets the service to inactive so the next plug-in works correctly.
 | File | Installed to | Purpose |
 |---|---|---|
 | `99-usb-audio-drc.rules` | `/etc/udev/rules.d/` | udev rule: triggers the service on DAC plug-in/unplug |
-| `$PREFIX/share/omdrc/mpd.service.d/open-media-drc.conf` | `/etc/systemd/system/mpd.service.d/omdrc.conf` | MPD drop-in: run as the audio user, read the installed config |
+| `$PREFIX/lib/systemd/system/mpd.service.d/open-media-drc.conf` | installed directly | MPD drop-in: run as the audio user, read the installed config, and reconcile routing after MPD starts |
 | `etc/systemd/system/drc-usb-audio.service` | `/etc/systemd/system/` | Starts/stops DRC on USB DAC attach/detach |
 
 All three are **copied** into the system path (not symlinked from the checkout): each
@@ -899,7 +899,7 @@ counterpart of `/usr/local/share/applications`, and so on.
 ### Why some files must be *copied* into /etc
 
 `make install` puts the boot-time glue under the prefix (`$PREFIX/lib/udev/rules.d`,
-`$PREFIX/lib/modprobe.d`, `$PREFIX/share/omdrc/mpd.service.d/`) and the checklist
+`$PREFIX/lib/modprobe.d`) and the checklist
 prints the `cp` commands into `/etc`. Two reasons, and they are not negotiable:
 
 - **Packaged installs must not own `/etc` files.** A pkg-managed file that the
