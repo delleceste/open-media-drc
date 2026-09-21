@@ -2146,11 +2146,12 @@ class SpectrumAnalyzer:
             tiers = _spectrum_tiers(fft_size, rate, multi_res)
             band_defs = _spectrum_band_defs(SPECTRUM_BANDS, rate / 2.0, SPECTRUM_MIN_FREQ)
             band_tier = _assign_band_tiers(band_defs, tiers, rate)
-            # VU ballistics are computed over a short trailing slice (~50 ms) of
-            # the captured buffer rather than the whole FFT window so the meters
-            # track the music instead of lagging behind by the FFT length
-            # (341 ms music / 1.36 s precision).
-            vu_window = max(256, min(fft_size, int(rate * 0.05)))
+            # RMS follows conventional VU timing: a 300-ms trailing measurement.
+            # Peak remains a fast 50-ms detector and also spans at least one UI
+            # frame below so a transient cannot fall between publications.
+            rms_window = max(256, int(rate * 0.300))
+            peak_window = max(256, int(rate * 0.050))
+            history_bytes = max(need_bytes, rms_window * frame_bytes)
             silence_bands = band_defs
 
             # FIFO ingestion must not wait for numpy/JSON/chart-frame work.  CD
@@ -2261,7 +2262,7 @@ class SpectrumAnalyzer:
                 makes a delay change take effect on the very next frame.
                 """
                 reach = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MAX_MS / 1000.0)
-                return (need_bytes + int(reach * rate) * frame_bytes
+                return (history_bytes + int(reach * rate) * frame_bytes
                         + chunk_bytes * 3)
 
             def publish_silence() -> None:
@@ -2458,13 +2459,25 @@ class SpectrumAnalyzer:
                     bands = []
                     l_bins = []
                     r_bins = []
-                # The VU slice covers the frame interval too, for the same
-                # reason the bands hop: a peak inside it must not fall between
-                # two meter updates.
-                vu_frames = max(vu_window, min(span_frames, len(left)))
-                l_vu, r_vu = left[-vu_frames:], right[-vu_frames:]
-                l_rms, l_peak = _spectrum_level_db(l_vu)
-                r_rms, r_peak = _spectrum_level_db(r_vu)
+                # RMS gets its own 300-ms history even when the FFT is shorter
+                # (notably 192 kHz music mode).  During the first 300 ms after a
+                # start it uses all history available rather than delaying the
+                # display merely to fill the averaging window.
+                rms_bytes = rms_window * frame_bytes
+                rms_raw = bytes(buf[max(0, end - rms_bytes):end])
+                rms_pcm = np.frombuffer(rms_raw, dtype="<i4").reshape(
+                    -1, SPECTRUM_CHANNELS)
+                l_rms, _ = _spectrum_level_db(
+                    rms_pcm[:, 0].astype(np.float32) / 2147483648.0)
+                r_rms, _ = _spectrum_level_db(
+                    rms_pcm[:, 1].astype(np.float32) / 2147483648.0)
+
+                # Peak covers the frame interval too, for the same reason the
+                # bands hop: a transient inside it must not fall between two
+                # meter updates.
+                peak_frames = min(len(left), max(peak_window, span_frames))
+                _, l_peak = _spectrum_level_db(left[-peak_frames:])
+                _, r_peak = _spectrum_level_db(right[-peak_frames:])
                 self._publish({
                     "ok": True,
                     "state": "running",

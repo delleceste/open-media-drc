@@ -158,15 +158,16 @@
         .btn-write.error { border-color: var(--red);   color: var(--red);   background: rgba(248,81,73,.08); }
 
         /* DSP meters: shown only next to the currently applied DRC rate's
-           Apply button (see updateDspGaugePlacement()).  Two labelled linear
-           bars, both left-to-right:
+           Apply button (see updateDspGaugePlacement()).  Two labelled bars,
+           both left-to-right:
              RTI  -- filled fraction = 1 - BruteFIR's own real-time index
                      (rti: in /tmp/brutefir.out), so a full green bar is
                      comfortable scheduling headroom and an empty/red bar means
                      BruteFIR is at or past its deadline;
              Peak -- BruteFIR's own peak-hold, in dBFS, filled from
-                     PEAK_GAUGE_FLOOR_DB up to full scale; green well below
-                     0 dBFS, yellow as it closes in, red at/over it. */
+                     PEAK_GAUGE_FLOOR_DB up to full scale.  Its expanded upper
+                     range gives the last few dB useful visual travel; green
+                     well below 0 dBFS, yellow near it, red at/over it. */
         .dsp-meters {
             display: inline-flex;
             align-items: center;
@@ -448,11 +449,24 @@
         }
         .btn-session:hover:not(:disabled) { border-color: var(--accent); }
         .btn-session:disabled { color: var(--muted); cursor: default; opacity: .6; }
-        .drc-attenuation { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
-        .drc-attenuation label { white-space: nowrap; color: var(--text); }
-        .drc-attenuation input { flex: 1; min-width: 90px; accent-color: var(--accent); }
-        .drc-attenuation output { min-width: 48px; text-align: right; color: var(--accent); }
-        .drc-attenuation .btn-session { padding: 3px 7px; font-size: 11px; white-space: nowrap; }
+        .drc-attenuation { margin-top: 8px; }
+        .btn-attenuation-toggle {
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            background: transparent;
+            color: inherit;
+            font: inherit;
+            font-weight: inherit;
+            cursor: pointer;
+        }
+        .btn-attenuation-toggle:hover { border-color: var(--accent); }
+        .btn-attenuation-toggle.modified { color: var(--red); }
+        .drc-attenuation-editor { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
+        .drc-attenuation-editor label { white-space: nowrap; color: var(--text); }
+        .drc-attenuation-editor input { flex: 1; min-width: 90px; accent-color: var(--accent); }
+        .drc-attenuation-editor output { min-width: 48px; text-align: right; color: var(--accent); }
+        .drc-attenuation-editor .btn-session { padding: 3px 7px; font-size: 11px; white-space: nowrap; }
         #spectrum-controls-toggle { cursor: pointer; }
         #spectrum-controls-toggle.on { border-color: var(--accent); color: var(--accent); }
         .spectrum-title-btns { display: flex; align-items: center; gap: 8px; }
@@ -1303,6 +1317,7 @@
             color: var(--muted);
         }
         .meter-track {
+            position: relative;
             height: 5px;
             border: 1px solid var(--border);
             border-radius: 3px;
@@ -1318,6 +1333,49 @@
             background: linear-gradient(90deg, #3fb950, #3fb950 90%, #d29922 95%, #f85149);
             transition: width .05s linear;
         }
+        .meter-rms-marker {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 2px;
+            transform: translateX(-1px);
+            background: #58a6ff;
+            box-shadow: 0 0 2px #0b0f14;
+            transition: left .05s linear;
+        }
+        .meter-scale-row {
+            display: grid;
+            grid-template-columns: 14px 1fr;
+            gap: 8px;
+            margin-top: -3px;
+        }
+        .meter-db-scale {
+            position: relative;
+            height: 16px;
+            color: var(--muted);
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            font-size: .56rem;
+        }
+        .meter-db-scale span {
+            position: absolute;
+            top: 3px;
+            transform: translateX(-50%);
+            white-space: nowrap;
+        }
+        .meter-db-scale span::before {
+            content: "";
+            position: absolute;
+            left: 50%;
+            top: -3px;
+            width: 1px;
+            height: 3px;
+            background: var(--muted);
+        }
+        .meter-db-scale .scale-first { transform: none; }
+        .meter-db-scale .scale-first::before { left: 0; }
+        .meter-db-scale .scale-last { transform: translateX(-100%); }
+        .meter-db-scale .scale-last::before { left: 100%; }
         .meters-needles {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -1412,13 +1470,18 @@
         </div>
         <div id="drc-transition-feedback" class="drc-feedback-line drc-feedback-meta" hidden></div>
         <div id="drc-attenuation-control" class="drc-attenuation" hidden>
-            <label for="drc-attenuation-slider">Attenuation</label>
-            <input id="drc-attenuation-slider" type="range" min="2" max="12" step="0.1"
-                   value="2" disabled oninput="previewDrcAttenuation(this.value)"
-                   onchange="setDrcAttenuation(this.value)">
-            <output id="drc-attenuation-value" for="drc-attenuation-slider">—</output>
-            <button id="drc-attenuation-restore" class="btn-session" disabled
-                    onclick="restoreDrcAttenuation()">Default</button>
+            <button id="drc-attenuation-toggle" class="btn-attenuation-toggle" type="button"
+                    aria-expanded="false" aria-controls="drc-attenuation-editor"
+                    onclick="toggleDrcAttenuationEditor()">Attenuation —</button>
+            <div id="drc-attenuation-editor" class="drc-attenuation-editor" hidden>
+                <label for="drc-attenuation-slider">Attenuation</label>
+                <input id="drc-attenuation-slider" type="range" min="2" max="12" step="0.1"
+                       value="2" disabled oninput="previewDrcAttenuation(this.value)"
+                       onchange="setDrcAttenuation(this.value)">
+                <output id="drc-attenuation-value" for="drc-attenuation-slider">—</output>
+                <button id="drc-attenuation-restore" class="btn-session" disabled
+                        onclick="restoreDrcAttenuation()">Default</button>
+            </div>
         </div>
     </div>
     {% endif %}
@@ -1577,8 +1640,14 @@
         </div>
     </div>
     <div class="meters-bars" id="meters-bars">
-        <div class="meter-row"><span class="meter-chan">L</span><div class="meter-track"><div class="meter-fill" id="meter-bar-l"></div></div></div>
-        <div class="meter-row"><span class="meter-chan">R</span><div class="meter-track"><div class="meter-fill" id="meter-bar-r"></div></div></div>
+        <div class="meter-row"><span class="meter-chan">L</span><div class="meter-track"><div class="meter-fill" id="meter-bar-l"></div><div class="meter-rms-marker" id="meter-rms-l"></div></div></div>
+        <div class="meter-row"><span class="meter-chan">R</span><div class="meter-track"><div class="meter-fill" id="meter-bar-r"></div><div class="meter-rms-marker" id="meter-rms-r"></div></div></div>
+        <div class="meter-scale-row" aria-hidden="true"><span></span><div class="meter-db-scale">
+            <span class="scale-first" data-db="-60">−60</span>
+            <span data-db="-20">−20</span><span data-db="-12">−12</span>
+            <span data-db="-6">−6</span><span data-db="-3">−3</span>
+            <span class="scale-last" data-db="0">0 dBFS</span>
+        </div></div>
     </div>
     <div class="meters-needles" id="meters-needles" style="display:none">
         <canvas class="meter-needle" id="meter-needle-l"></canvas>
@@ -1984,18 +2053,38 @@ function formatAttenuation(value) {
 function previewDrcAttenuation(value) {
     document.getElementById("drc-attenuation-value").textContent = formatAttenuation(value);
 }
+function setDrcAttenuationEditor(open) {
+    const editor = document.getElementById("drc-attenuation-editor");
+    const toggle = document.getElementById("drc-attenuation-toggle");
+    editor.hidden = !open;
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+function toggleDrcAttenuationEditor() {
+    const toggle = document.getElementById("drc-attenuation-toggle");
+    setDrcAttenuationEditor(toggle.getAttribute("aria-expanded") !== "true");
+}
 async function loadDrcAttenuation() {
     try {
         const d = await (await fetch("/drc/attenuation", {cache:"no-store"})).json();
+        const toggle = document.getElementById("drc-attenuation-toggle");
         if (!d.ok) {
             document.getElementById("drc-attenuation-value").textContent = "—";
+            toggle.textContent = "Attenuation —";
+            toggle.classList.remove("modified");
             return;
         }
         const slider = document.getElementById("drc-attenuation-slider");
         const restore = document.getElementById("drc-attenuation-restore");
+        const modified = d.configured_db !== null &&
+            Math.abs(Number(d.db) - Number(d.configured_db)) > 0.001;
         slider.value = d.db;
         slider.disabled = drcAttenuationBusy;
-        restore.disabled = drcAttenuationBusy || d.source === "configuration";
+        restore.disabled = drcAttenuationBusy || !modified;
+        toggle.textContent = `Attenuation ${formatAttenuation(d.db)}`;
+        toggle.classList.toggle("modified", modified);
+        toggle.title = modified
+            ? `Modified from the configured default of ${formatAttenuation(d.configured_db)}`
+            : "Using the attenuation stored in the BruteFIR configuration";
         restore.title = d.configured_db === null
             ? "Configured attenuation is unavailable"
             : `Restore ${formatAttenuation(d.configured_db)} from the BruteFIR configuration`;
@@ -2088,7 +2177,10 @@ function renderDrcFeedback(data) {
     if (!panel || !activeLine || !savedLine || !restore) return;
     drcLastState = data;
     const active = data.active || {};
-    if (attenuation) attenuation.hidden = !active.running;
+    if (attenuation) {
+        attenuation.hidden = !active.running;
+        if (!active.running) setDrcAttenuationEditor(false);
+    }
     const session = data.session || {};
     markAppliedDrcPreset(active, session);
     const verification = active.verification || {};
@@ -2151,6 +2243,19 @@ let dspGaugeVisible = false;
 let dspGaugeLastStatus = null;
 let dspPeakLastStatus = null;
 
+// A traditional moving-coil meter deflects linearly with signal voltage while
+// its face is labelled in dB.  Map the dB endpoints into that same voltage
+// domain: this gives the important upper range more travel without an arbitrary
+// display curve.  Subtracting the floor amplitude keeps the configured floor
+// exactly at the left endpoint rather than a few pixels into the scale.
+function voltageDbPct(db, floor, ceiling = 0) {
+    const clamped = Math.max(floor, Math.min(ceiling, Number(db)));
+    const amplitude = value => Math.pow(10, value / 20);
+    const floorAmplitude = amplitude(floor);
+    return (amplitude(clamped) - floorAmplitude) /
+        (amplitude(ceiling) - floorAmplitude) * 100;
+}
+
 function updateDspGaugePlacement(active) {
     const nextVisible = !!((active && active.running) && DRC_GAUGE_RATES.has(Number(active.rate)));
     if (nextVisible === dspGaugeVisible) return;
@@ -2211,15 +2316,14 @@ function renderPeakGauge(status) {
     const clipped = !!status.clipped || (peakDb !== null && peakDb > 0);
     const safetyDb = Number(status.safety_limit_db) > PEAK_GAUGE_BAD_DB
         ? Number(status.safety_limit_db) : 6.0;
-    const span = safetyDb - PEAK_GAUGE_FLOOR_DB;
-    const pct = db => Math.max(0, Math.min(100, (db - PEAK_GAUGE_FLOOR_DB) / span * 100));
+    const pct = db => voltageDbPct(db, PEAK_GAUGE_FLOOR_DB, safetyDb);
     meter.style.setProperty('--peak-good-pct', `${pct(PEAK_GAUGE_WARN_DB).toFixed(3)}%`);
     meter.style.setProperty('--peak-warn-pct', `${(pct(PEAK_GAUGE_BAD_DB) - pct(PEAK_GAUGE_WARN_DB)).toFixed(3)}%`);
     meter.style.setProperty('--peak-bad-left-pct', `${pct(PEAK_GAUGE_BAD_DB).toFixed(3)}%`);
     meter.style.setProperty('--peak-zero-pct', `${pct(0).toFixed(3)}%`);
     document.getElementById('peak-safety-label').textContent = `+${safetyDb.toFixed(1)} dB safety`;
     const level = peakDb === null ? PEAK_GAUGE_FLOOR_DB : Math.min(safetyDb, peakDb);
-    const filled = Math.max(0, Math.min(1, (level - PEAK_GAUGE_FLOOR_DB) / span));
+    const filled = pct(level) / 100;
     const state = (peakDb !== null && peakDb > PEAK_GAUGE_BAD_DB) ? ' bad'
                 : (peakDb !== null && peakDb >= PEAK_GAUGE_WARN_DB) ? ' warn' : '';
     meter.className = 'dsp-meter' + state;
@@ -3807,6 +3911,9 @@ let metersWanted = false;
 let metersReconnect = null;   // retry handle for a dropped SSE stream
 const METER_FLOOR_DB = -60;   // fixed floor for the L/R meters' own dB scale
 const METERS_STYLE_KEY = 'omdrcctrl.meters.style';
+document.querySelectorAll('.meter-db-scale [data-db]').forEach(tick => {
+    tick.style.left = `${voltageDbPct(Number(tick.dataset.db), METER_FLOOR_DB)}%`;
+});
 let currentVuMode = SPECTRUM_VU_MODE;
 try {
     const storedStyle = localStorage.getItem(METERS_STYLE_KEY);
@@ -4166,10 +4273,6 @@ function setSpectrumAutoSync(enabled) {
     });
 }
 
-function dbToPct(db, floor = spectrumFloorDb) {
-    return Math.max(0, Math.min(100, (db - floor) / (0 - floor) * 100));
-}
-
 function fmtDb(db) {
     return Number.isFinite(db) ? `${db.toFixed(1)}` : '-∞';
 }
@@ -4217,12 +4320,14 @@ function vuStep(ts) {
     vuRaf = settled ? null : requestAnimationFrame(vuStep);
 }
 
-// Draw the current (eased) displayed levels in whichever VU style is active.
+// Draw the current (eased) displayed levels in whichever meter style is active.
 function renderVu() {
     const l = vuDisp.left_rms, r = vuDisp.right_rms;
     if (currentVuMode === 'bars') {
-        document.getElementById('meter-bar-l').style.width = `${dbToPct(l, METER_FLOOR_DB)}%`;
-        document.getElementById('meter-bar-r').style.width = `${dbToPct(r, METER_FLOOR_DB)}%`;
+        document.getElementById('meter-bar-l').style.width = `${voltageDbPct(vuDisp.left_peak, METER_FLOOR_DB)}%`;
+        document.getElementById('meter-bar-r').style.width = `${voltageDbPct(vuDisp.right_peak, METER_FLOOR_DB)}%`;
+        document.getElementById('meter-rms-l').style.left = `${voltageDbPct(l, METER_FLOOR_DB)}%`;
+        document.getElementById('meter-rms-r').style.left = `${voltageDbPct(r, METER_FLOOR_DB)}%`;
     } else {
         drawNeedleVu('meter-needle-l', 'L', l, vuDisp.left_peak);
         drawNeedleVu('meter-needle-r', 'R', r, vuDisp.right_peak);
@@ -4260,16 +4365,15 @@ function drawNeedleVu(canvasId, label, rmsDb, peakDb) {
     ctx.fillRect(0, 0, w, h);
 
     const floor = METER_FLOOR_DB;
-    const angleFor = db => (NEEDLE_A0 + NEEDLE_SPAN * dbToPct(db, floor) / 100) * Math.PI / 180;
+    const angleFor = db => (NEEDLE_A0 + NEEDLE_SPAN * voltageDbPct(db, floor) / 100) * Math.PI / 180;
 
     const cx = w / 2, cy = h * 0.90, radius = Math.min(w * 0.46, h * 0.74);
     ctx.lineWidth = 1 * dpr;
     ctx.font = `${10 * dpr}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    // Five ticks spread evenly across the floor→0 range so the dial scale
-    // tracks the floor slider.
-    const ticks = [0, .25, .5, .75, 1].map(f => Math.round(floor * f));
+    // Familiar dBFS landmarks follow the same expanded scale as the needle.
+    const ticks = [-20, -12, -6, -3, 0];
     for (const db of ticks) {
         const a = angleFor(db);
         ctx.strokeStyle = '#8b949e';
@@ -4285,7 +4389,21 @@ function drawNeedleVu(canvasId, label, rmsDb, peakDb) {
     ctx.arc(cx, cy, radius, angleFor(floor), angleFor(0));
     ctx.stroke();
 
-    const angle = angleFor(Number(rmsDb));
+    // The analyzer supplies both values.  The earlier implementation accepted
+    // peakDb but never drew it, leaving the needle confined to the much narrower
+    // programme-RMS range.  Use the main needle for peak and retain RMS as a
+    // short cyan witness mark on the arc.
+    const rmsAngle = angleFor(Number(rmsDb));
+    ctx.strokeStyle = '#58a6ff';
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(rmsAngle) * radius * .77,
+               cy + Math.sin(rmsAngle) * radius * .77);
+    ctx.lineTo(cx + Math.cos(rmsAngle) * radius * .91,
+               cy + Math.sin(rmsAngle) * radius * .91);
+    ctx.stroke();
+
+    const angle = angleFor(Number(peakDb));
     ctx.strokeStyle = '#f85149';
     ctx.lineWidth = 2 * dpr;
     ctx.beginPath();
@@ -4300,8 +4418,9 @@ function drawNeedleVu(canvasId, label, rmsDb, peakDb) {
     ctx.font = `${13 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.fillText(label, cx, 16 * dpr);
     ctx.fillStyle = '#8b949e';
-    ctx.font = `${10 * dpr}px ui-monospace, monospace`;
-    ctx.fillText(`${fmtDb(Number(rmsDb))} dB`, cx, h - 11 * dpr);
+    ctx.font = `${9 * dpr}px ui-monospace, monospace`;
+    ctx.fillText(`P ${fmtDb(Number(peakDb))}  R ${fmtDb(Number(rmsDb))} dBFS`,
+                 cx, h - 11 * dpr);
 }
 
 function handleSpectrumFrame(d) {
