@@ -27,6 +27,7 @@ from configuration import ConfigurationManager, Settings as ConfigurationSetting
 from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 from audio_diagnostics import AudioDiagnosticsMonitor
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
+from drdb import identify as drdb_identify_version
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -1268,7 +1269,8 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
     status file of its own to read instead, unlike qobuzconnect2mpd."""
     import socket
     info = {"title": "", "album": "", "artist": "", "state": "", "elapsed": None,
-            "duration": None, "audio": ""}
+            "duration": None, "audio": "", "date": "", "label": "",
+            "track_no": None}
     try:
         p = int(port) if port else 6600
         with socket.create_connection(("localhost", p), timeout=3) as sock:
@@ -1297,8 +1299,21 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
                         info["elapsed"] = float(value)
                     elif key == "duration":
                         info["duration"] = float(value)
+                    elif key == "track":
+                        number = value.split("/")[0]
+                        info["track_no"] = int(number) if number.isdigit() else None
                     elif key == "audio":
                         info["audio"] = value
+                    # Date and Label name an edition where the rest only
+                    # describes the audio.  MusicPD carries both (addtagid
+                    # Date / Label); whether they arrive is up to the
+                    # renderer -- see _drdb_fingerprint.
+                    elif key == "originaldate":
+                        info["date"] = value
+                    elif key == "date" and not info["date"]:
+                        info["date"] = value
+                    elif key == "label":
+                        info["label"] = value
     except Exception:
         pass
     return info
@@ -4301,7 +4316,8 @@ def _drdb_now_playing() -> dict:
     "Artist - Title" line is then everything there is — which is why an album
     lookup has to tolerate an empty album and fall back to the artist's whole
     shelf."""
-    info = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+    port = _resolve_mpd_port()
+    info = _mpd_now_playing_via_protocol(port)
     artist, album, title = info["artist"], info["album"], info["title"]
     state = info["state"]
 
@@ -4324,10 +4340,33 @@ def _drdb_now_playing() -> dict:
             title = title or line1
         state = state or status["playback_state"]
 
+    clean_album = _drdb_plain(album)
     return {"artist": _drdb_main_artist(artist),
-            "album":  _drdb_plain(album),
+            "album":  clean_album,
             "title":  _drdb_plain(title),
-            "state":  state}
+            "state":  state,
+            **_drdb_fingerprint(info)}
+
+
+def _drdb_fingerprint(info: dict) -> dict:
+    """What the track on the wire says about which pressing it is.
+
+    Only the track playing -- or paused, or the last one played, whichever
+    MusicPD still calls current. The rest of the queue is a listener's doing,
+    not a pressing's, and counting it would judge a version by what was
+    queued after it. One track is enough: its length at its place in the
+    running order is where two masters of a record differ, and label and year
+    name an edition outright when the renderer publishes them."""
+    fmt = _parse_mpc_audio(info["audio"]) if info.get("audio") else {}
+    return {
+        "year":     info.get("date", ""),
+        "label":    info.get("label", ""),
+        "track_no": info.get("track_no"),
+        "duration": info.get("duration"),
+        "rate":     fmt.get("sample_rate"),
+        "bits":     fmt.get("bit_depth"),
+        "channels": fmt.get("channels"),
+    }
 
 
 @app.route("/dr-alternatives")
@@ -4361,6 +4400,44 @@ def drdb_search():
         return jsonify({"ok": True, **_drdb().search(artist, album)})
     except DrDbError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@app.route("/drdb/identify", methods=["POST"])
+def drdb_identify():
+    """One version, scored against what is on the wire.
+
+    The fingerprint is posted by the page rather than re-read here: a sweep
+    walks the list one version at a time, and the track that was playing when
+    it started is the one every version must be judged against."""
+    guard = _drdb_guard()
+    if guard:
+        return guard
+    body = request.get_json(silent=True) or {}
+    try:
+        album_id = int(body.get("id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "no album id"}), 400
+    playing = body.get("playing") or {}
+    if not isinstance(playing, dict):
+        return jsonify({"ok": False, "error": "bad fingerprint"}), 400
+    # A page can post anything; nothing here is trusted for its size.
+    fingerprint = {
+        "title":    str(playing.get("title", ""))[:300],
+        "album":    str(playing.get("album", ""))[:300],
+        "year":     str(playing.get("year", ""))[:32],
+        "label":    str(playing.get("label", ""))[:200],
+        "track_no": playing.get("track_no") if isinstance(playing.get("track_no"), int) else None,
+        "duration": playing.get("duration") if isinstance(playing.get("duration"), (int, float)) else None,
+        "rate":     playing.get("rate") if isinstance(playing.get("rate"), int) else None,
+        "bits":     playing.get("bits") if isinstance(playing.get("bits"), int) else None,
+        "channels": playing.get("channels") if isinstance(playing.get("channels"), int) else None,
+    }
+    try:
+        album = _drdb().album(album_id)
+    except DrDbError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+    return jsonify({"ok": True, "album": album,
+                    "match": drdb_identify_version(fingerprint, album)})
 
 
 @app.route("/drdb/album/<int:album_id>")

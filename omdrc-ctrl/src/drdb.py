@@ -419,3 +419,229 @@ class DrDb:
     def album(self, album_id: int) -> dict:
         return parse_album(self._fetch(f"/album/view/{int(album_id)}"),
                            int(album_id), self.settings.base_url)
+
+
+# ── which of these versions is playing ──────────────────────────────────────
+#
+# The database lists every pressing of a record; the renderer says what is on
+# the wire. Neither says which is which, and the tags cannot settle it: no
+# renderer here publishes a year or a label (upmpdcli sends Artist, Album,
+# Title and Track; qobuzconnect2mpd the first three), so an edition cannot be
+# named directly. What the queue does carry is the shape of the record — how
+# many tracks, in what order, and how long the one playing runs — and editions
+# differ there. The Alice In Chains Unplugged DVD rip runs Sludge Factory for
+# 7:00 because it keeps the dialogue between songs; the CD's is 4:37. A stream
+# measured at 4:37 is the CD.
+
+# Anything bracketed is an edition annotation or a live-venue note, not part of
+# the name a database entry and a queue entry would share.
+_BRACKETED = re.compile(r"[(\[][^()\[\]]*[)\]]")
+# "01-", "1. ", "03 - ": the track number DR-meter logs prefix their titles
+# with.
+_TRACK_PREFIX = re.compile(r"^\s*\d{1,3}\s*[-._)]\s*")
+_NOT_WORD = re.compile(r"[^a-z0-9]+")
+# Uploaders drop leading articles as often as they keep them -- this record's
+# "The Killer Is Me" is filed as "Killer Is Me" -- and the same cut is made on
+# both sides, so nothing that agreed before disagrees now.
+_LEADING_ARTICLE = re.compile(r"^(?:the|a|an)\s+")
+# A label reaches the two sides differently: Qobuz says "Columbia/Legacy",
+# the database entry says "Columbia". Compare the names they are built from,
+# not the strings -- and drop the words every label ends in.
+_LABEL_NOISE = re.compile(
+    r"\b(?:records?|recordings?|music|entertainment|group|ltd|limited|inc|"
+    r"llc|gmbh|sa|srl|bv|co|company|label|the)\b", re.I)
+_YEAR = re.compile(r"(\d{4})")
+# Edition markers in an album name that a 2-channel CD-rate stream cannot be.
+_SURROUND_EDITION = re.compile(r"\b(?:5\.1|dvd|blu-?ray|sacd|dts|dolby)\b", re.I)
+_VINYL_EDITION = re.compile(r"\b(?:vinyl|lp|pbthal)\b", re.I)
+
+
+def title_key(title: str) -> str:
+    """A track title reduced to what two catalogues would agree on."""
+    text = _TRACK_PREFIX.sub("", str(title or "").lower())
+    text = _BRACKETED.sub(" ", text)
+    text = _NOT_WORD.sub(" ", text).strip()
+    return _LEADING_ARTICLE.sub("", text)
+
+
+def label_names(label: str) -> set:
+    """The distinct imprint names in a label field."""
+    names = set()
+    for part in re.split(r"[/,;&|]|\s-\s", str(label or "")):
+        cleaned = _NOT_WORD.sub(" ", _LABEL_NOISE.sub(" ", part.lower())).strip()
+        if len(cleaned) >= 3:
+            names.add(cleaned)
+    return names
+
+
+def release_year(value) -> int | None:
+    """The year out of "1996", "1996-04-30" or "30/04/1996"."""
+    match = _YEAR.search(str(value or ""))
+    if not match:
+        return None
+    year = int(match.group(1))
+    return year if 1900 <= year <= 2100 else None
+
+
+def duration_seconds(text: str) -> int | None:
+    """"4:37" or "1:02:11" as seconds."""
+    parts = str(text or "").strip().split(":")
+    if not parts or not all(p.isdigit() for p in parts) or len(parts) > 3:
+        return None
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + int(part)
+    return seconds
+
+
+def identify(playing: dict, album: dict) -> dict:
+    """How well one database version matches the track on the wire.
+
+    Only that track is evidence: whatever else sits in the queue was put
+    there by a listener, not by a pressing. What a single track carries is
+    enough, because it is exactly where two masters of one record differ —
+    the same song runs 5:46 on the Unplugged CD and 6:06 on the DVD rip,
+    which keeps the dialogue. The tags that name an edition outright, label
+    and year, are used when the renderer publishes them.
+
+    Returns a score out of 100, a verdict, and the evidence in both
+    directions — the reasons are the point: "Down In A Hole runs 6:06 in this
+    version, 5:46 on the wire" is worth more than any number.
+    """
+    score = 0
+    for_, against = [], []
+    evidence = False
+
+    log = album.get("tracks") or []
+    log_keys = [title_key(track["title"]) for track in log]
+
+    # -- the track itself, by name and by length ------------------------------
+    matched_index = None
+    at_its_position = False
+    playing_key = title_key(playing.get("title", ""))
+    if playing_key and log_keys:
+        evidence = True
+        position = playing.get("track_no")
+        if (isinstance(position, int) and 1 <= position <= len(log_keys)
+                and log_keys[position - 1] == playing_key):
+            matched_index = position - 1
+            at_its_position = True
+            score += 12
+            for_.append(f"track {position} of this version is "
+                        f"“{log[matched_index]['title']}”")
+        elif playing_key in log_keys:
+            matched_index = log_keys.index(playing_key)
+            score += 8
+            for_.append(f"“{log[matched_index]['title']}” is on this version, "
+                        f"at track {matched_index + 1}")
+        else:
+            score -= 20
+            against.append("this version's track list does not name "
+                           f"“{playing.get('title')}”")
+
+    wire_seconds = playing.get("duration")
+    if matched_index is not None and isinstance(wire_seconds, (int, float)):
+        listed = duration_seconds(log[matched_index].get("duration"))
+        if listed:
+            evidence = True
+            delta = abs(listed - round(wire_seconds))
+            listed_text = log[matched_index]["duration"]
+            wire_text = f"{int(wire_seconds) // 60}:{int(wire_seconds) % 60:02d}"
+            title = log[matched_index]["title"]
+            if delta <= 3:
+                # The right length at the right place in the running order is
+                # the strongest thing one track can say.
+                score += 50 if at_its_position else 35
+                for_.append(f"“{title}” runs {listed_text} here and "
+                            f"{wire_text} on the wire")
+            elif delta <= 8:
+                score += 15
+                for_.append(f"“{title}” runs {listed_text} here, close to the "
+                            f"{wire_text} on the wire")
+            elif delta >= 20:
+                score -= 30
+                against.append(f"“{title}” runs {listed_text} here but "
+                               f"{wire_text} on the wire")
+
+    # -- what the stream itself rules out -------------------------------------
+    rate, bits = playing.get("rate"), playing.get("bits")
+    channels = playing.get("channels")
+    name = f"{album.get('album', '')} {album.get('source', '')}"
+    if rate:
+        evidence = True
+        hi_res = rate > 48000 or (bits or 0) > 16
+        if not hi_res and _SURROUND_EDITION.search(name) and (channels or 2) <= 2:
+            score -= 12
+            against.append("a surround or disc transfer, against a "
+                           f"{rate / 1000:g} kHz stereo stream")
+        elif not hi_res and _VINYL_EDITION.search(name):
+            score -= 8
+            against.append("a vinyl rip, against a "
+                           f"{rate / 1000:g} kHz/{bits or '?'} bit stream")
+        elif not hi_res and (album.get("source") or "").lower() in ("cd", "download"):
+            score += 6
+            for_.append(f"a {album.get('source', '').lower()} at "
+                        f"{rate / 1000:g} kHz, as the stream is")
+        elif hi_res and (album.get("source") or "").lower() == "cd":
+            score -= 6
+            against.append(f"a CD, against a {rate / 1000:g} kHz/"
+                           f"{bits or '?'} bit stream")
+
+    # -- the imprint and the year --------------------------------------------
+    #
+    # These name an edition directly, where everything above only describes
+    # the audio, so a match counts for a lot. A mismatch counts for little:
+    # the database's year is the year of the pressing someone measured, while
+    # a streaming service dates a record by whichever issue it licensed, and
+    # its label field routinely carries the reissue imprint ("Columbia/
+    # Legacy") where the database has the original ("Columbia").
+    wire_labels = label_names(playing.get("label", ""))
+    version_labels = label_names(album.get("label", ""))
+    if wire_labels and version_labels:
+        evidence = True
+        shared = wire_labels & version_labels
+        if shared:
+            score += 14
+            for_.append(f"same label ({sorted(shared)[0].title()})")
+        else:
+            score -= 5
+            against.append(f"released by {album.get('label')}, "
+                           f"not {playing.get('label')}")
+
+    wire_year = release_year(playing.get("year"))
+    version_year = release_year(album.get("year"))
+    if wire_year and version_year:
+        evidence = True
+        gap = abs(wire_year - version_year)
+        if gap == 0:
+            score += 14
+            for_.append(f"same year ({version_year})")
+        elif gap == 1:
+            score += 6
+            for_.append(f"issued {version_year}, one year off the {wire_year} "
+                        "the stream is tagged with")
+        else:
+            score -= 6
+            against.append(f"issued {version_year}, against the {wire_year} "
+                           "the stream is tagged with")
+
+    # -- the name ------------------------------------------------------------
+    queue_album = str(playing.get("album", "")).strip().lower()
+    version_album = str(album.get("album", "")).strip().lower()
+    if queue_album and version_album:
+        if queue_album == version_album:
+            score += 5
+        elif queue_album in version_album or version_album in queue_album:
+            score += 2
+
+    score = max(0, min(100, score))
+    if not evidence:
+        verdict = "unknown"
+    elif score >= 60:
+        verdict = "likely"
+    elif score >= 30:
+        verdict = "possible"
+    else:
+        verdict = "unlikely"
+    return {"score": score, "verdict": verdict, "for": for_, "against": against,
+            "matched_track": matched_index}

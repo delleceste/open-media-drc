@@ -52,6 +52,17 @@ th.dr-col{width:1%}
 .tracklist tr.playing td:first-child{box-shadow:inset 3px 0 0 var(--green)}
 details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
 pre.log{background:#010409;border:1px solid var(--line);border-radius:6px;padding:.6rem;font-family:var(--mono);font-size:.76rem;white-space:pre-wrap;max-height:22rem;overflow:auto;margin:.4rem 0 0}
+.verdict{display:inline-block;padding:.1rem .45rem;border-radius:99px;font-size:.72rem;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.verdict.likely{border-color:var(--green);color:#111;background:var(--green);font-weight:700}
+.verdict.possible{border-color:var(--yellow);color:var(--yellow)}
+.verdict.unlikely{opacity:.65}
+tr.album.likely{background:#10231a}
+tr.album.likely td:first-child{box-shadow:inset 3px 0 0 var(--green)}
+.why{margin:.1rem 0 .6rem;padding:0;list-style:none;font-size:.85rem}
+.why li{margin:.12rem 0;padding-left:1.1rem;position:relative}
+.why li.for::before{content:'+';position:absolute;left:0;color:var(--green);font-weight:700}
+.why li.against::before{content:'\2212';position:absolute;left:0;color:var(--red);font-weight:700}
+.fingerprint{color:var(--muted);font-size:.82rem;margin:.35rem 0 0}
 .legend{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin-top:.6rem}
 .status{font-size:.86rem;color:var(--muted);margin:.5rem 0 0}
 .status.err{color:var(--red)}
@@ -77,6 +88,7 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
     <button class="mini" id="btn-reload-np" onclick="loadNowPlaying(true)" title="Re-read the now-playing line">↻</button>
   </div>
   <p class="hint" id="np-hint" hidden></p>
+  <p class="fingerprint" id="np-fingerprint"></p>
   <div class="row" style="margin-top:.7rem">
     <label>Artist<input type="text" id="f-artist" autocomplete="off"></label>
     <label>Album<input type="text" id="f-album" autocomplete="off" placeholder="(empty: every album by this artist)"></label>
@@ -98,6 +110,7 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
         <th class="sortable" data-key="year" onclick="sortBy('year')">Year <span class="arrow"></span></th>
         <th class="sortable" data-key="codec" onclick="sortBy('codec')">Codec <span class="arrow"></span></th>
         <th class="sortable" data-key="source" onclick="sortBy('source')">Source <span class="arrow"></span></th>
+        <th class="sortable" data-key="score" onclick="sortBy('score')">Is it this one? <span class="arrow"></span></th>
         <th>Details</th>
       </tr>
     </thead>
@@ -169,28 +182,77 @@ function setStatus(text, isError) {
     el.classList.toggle('err', !!isError);
 }
 
-// "03-To Be Waiting", "03 - To Be Waiting", "3. To Be Waiting" all name the
-// same song as MusicPD's bare "To Be Waiting".  Track numbers, punctuation
-// and case are noise for the comparison; what is left is not.
-function normTitle(title) {
-    return String(title || '')
-        .toLowerCase()
-        .replace(/^\s*\d{1,3}\s*[-._)]\s*/, '')
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim();
+// What identification has to work with: the track playing, and nothing
+// around it. No renderer here publishes a label or a year unless it was
+// taught to, so the line says what is actually in hand rather than implying
+// more.
+function paintFingerprint() {
+    const el = document.getElementById('np-fingerprint');
+    if (!el) return;
+    const bits = [];
+    if (nowPlaying.rate) {
+        bits.push(`${nowPlaying.rate / 1000}\u2009kHz` +
+                  (nowPlaying.bits ? ` / ${nowPlaying.bits}\u2009bit` : ''));
+    }
+    if (nowPlaying.duration) bits.push(`runs ${fmtPos(nowPlaying.duration)}`);
+    if (nowPlaying.track_no) bits.push(`track ${nowPlaying.track_no}`);
+    if (nowPlaying.label) bits.push(`label ${nowPlaying.label}`);
+    if (nowPlaying.year) bits.push(nowPlaying.year);
+    el.textContent = bits.length ? `Matching on: ${bits.join(' \u00b7 ')}` : '';
 }
 
-function titleMatches(candidate, wanted) {
-    const a = normTitle(candidate), b = normTitle(wanted);
-    if (!a || !b) return false;
-    return a === b || a.includes(b) || b.includes(a);
+function fmtPos(seconds) {
+    const s = Math.round(seconds);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// One version is the answer: the best score, and only when it is good enough
+// to call likely. The rest carry their own verdict, so a near miss is visible
+// rather than hidden behind the winner.
+function bestId() {
+    let best = null;
+    details.forEach((detail, id) => {
+        const match = detail.match;
+        if (!match || match.verdict !== 'likely') return;
+        if (!best || match.score > details.get(best).match.score) best = id;
+    });
+    return best;
+}
+
+function rowClass(id) {
+    const detail = details.get(id);
+    if (!detail || !detail.match) return '';
+    if (id === bestId()) return ' likely';
+    return detail.match.verdict === 'possible' ? ' match' : '';
+}
+
+function verdictChip(id) {
+    const detail = details.get(id);
+    if (!detail || !detail.match) return '';
+    const match = detail.match;
+    if (match.verdict === 'unknown')
+        return '<span class="verdict" title="Nothing in this entry could be compared">no evidence</span>';
+    const label = id === bestId() ? 'likely this one'
+                : match.verdict === 'likely' ? 'strong match'
+                : match.verdict === 'possible' ? 'possible' : 'unlikely';
+    const cls = id === bestId() ? 'likely' : match.verdict;
+    return `<span class="verdict ${cls}" title="score ${match.score} of 100">${label}</span>`;
+}
+
+function whyList(match) {
+    if (!match) return '';
+    const items = (match.for || []).map(r => `<li class="for">${esc(r)}</li>`)
+        .concat((match.against || []).map(r => `<li class="against">${esc(r)}</li>`));
+    if (!items.length) return '';
+    return `<strong>Is this the one playing?</strong> <span class="verdict ${match.verdict}">${match.verdict}</span>
+            <ul class="why">${items.join('')}</ul>`;
 }
 
 async function loadNowPlaying(rerun, fillFields = true) {
     try {
         const d = await (await fetch('/drdb/now')).json();
         if (!d.ok) return;
-        nowPlaying = { artist: d.artist || '', album: d.album || '', title: d.title || '' };
+        nowPlaying = d;
         const track = document.getElementById('np-track');
         const sub   = document.getElementById('np-sub');
         track.textContent = nowPlaying.title
@@ -209,6 +271,7 @@ async function loadNowPlaying(rerun, fillFields = true) {
                 + 'so the search covers everything the database holds for the artist. '
                 + 'Use “Find the album” to pick out the versions that contain this song.';
         }
+        paintFingerprint();
         updateLocateButton();
         if (rerun && (nowPlaying.artist || nowPlaying.album)) search();
     } catch { /* the form still works by hand */ }
@@ -217,7 +280,7 @@ async function loadNowPlaying(rerun, fillFields = true) {
 function updateLocateButton() {
     const btn = document.getElementById('btn-locate');
     btn.hidden = !nowPlaying.title || rows.length === 0;
-    btn.textContent = locating ? 'Stop' : `Find the album with “${nowPlaying.title}”`;
+    btn.textContent = locating ? 'Stop' : 'Which one is playing?';
 }
 
 async function search() {
@@ -255,9 +318,15 @@ function sortBy(key) {
 }
 
 function sorted() {
-    const numeric = ['dr', 'dr_min', 'dr_max'].includes(sortKey);
+    const numeric = ['dr', 'dr_min', 'dr_max', 'score'].includes(sortKey);
+    // The score is not part of a row: it exists only for versions the sweep
+    // has already read, and an unread one sorts as an absence, not a zero.
+    const value = (row, key) => key === 'score'
+        ? (details.has(row.id) && details.get(row.id).match
+            ? details.get(row.id).match.score : null)
+        : row[key];
     return rows.slice().sort((a, b) => {
-        let x = a[sortKey], y = b[sortKey];
+        let x = value(a, sortKey), y = value(b, sortKey);
         if (numeric) {
             // A version with no DR on record sorts last whichever way the
             // column points: it is an absence, not a low number.
@@ -274,9 +343,7 @@ function sorted() {
 function render() {
     const body = document.getElementById('rows');
     body.innerHTML = sorted().map(row => {
-        const detail = details.get(row.id);
-        const match  = detail && detail.matches;
-        return `<tr class="album${match ? ' match' : ''}" id="row-${row.id}">
+        return `<tr class="album${rowClass(row.id)}" id="row-${row.id}">
             <td class="num">${badge(row.dr)}${thermometer(row.dr)}</td>
             <td class="num">${badge(row.dr_min, 'small')}</td>
             <td class="num">${badge(row.dr_max, 'small')}</td>
@@ -285,12 +352,13 @@ function render() {
             <td>${esc(row.year)}</td>
             <td>${esc(row.codec)}</td>
             <td>${esc(row.source)}</td>
+            <td class="num">${verdictChip(row.id)}</td>
             <td class="num">
                 <button class="mini" onclick="toggleDetail(${row.id})" id="btn-info-${row.id}">Info</button>
                 <a class="mini" href="${esc(row.url)}" target="_blank" rel="noopener noreferrer" title="Open on dr.loudness-war.info">↗</a>
             </td>
         </tr>
-        <tr class="detail" id="detail-${row.id}" hidden><td colspan="9" id="detail-body-${row.id}"></td></tr>`;
+        <tr class="detail" id="detail-${row.id}" hidden><td colspan="10" id="detail-body-${row.id}"></td></tr>`;
     }).join('');
 
     document.querySelectorAll('#results th.sortable').forEach(th => {
@@ -301,13 +369,20 @@ function render() {
     details.forEach((detail, id) => { if (detail.open) paintDetail(id); });
 }
 
+// The version's page, and the server's verdict on it. The fingerprint is
+// posted rather than re-read per row: a sweep takes a while, and every
+// version must be judged against the track that was playing when it started.
 async function fetchDetail(id) {
     if (details.has(id)) return details.get(id);
-    const d = await (await fetch(`/drdb/album/${id}`)).json();
+    const response = await fetch('/drdb/identify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, playing: nowPlaying }),
+    });
+    const d = await response.json();
     if (!d.ok) throw new Error(d.error || 'lookup failed');
     const detail = d.album;
-    detail.matches = nowPlaying.title
-        && (detail.tracks || []).some(t => titleMatches(t.title, nowPlaying.title));
+    detail.match = d.match;
     detail.open = false;
     details.set(id, detail);
     return detail;
@@ -323,7 +398,7 @@ async function toggleDetail(id) {
     try {
         const detail = await fetchDetail(id);
         detail.open = true;
-        paintDetail(id);
+        render();          // repaints the row's verdict, then this detail
     } catch (e) {
         body.innerHTML = `<span class="status err">${esc(e.message)}</span>`;
     }
@@ -351,8 +426,9 @@ function paintDetail(id) {
     const trackBadges = (detail.track_dr || []).length
         ? `<div class="tracks">${detail.track_dr.map(dr => badge(dr, 'small')).join('')}</div>` : '';
 
-    const trackRows = (detail.tracks || []).map(track => {
-        const playing = nowPlaying.title && titleMatches(track.title, nowPlaying.title);
+    const matchedTrack = detail.match ? detail.match.matched_track : null;
+    const trackRows = (detail.tracks || []).map((track, index) => {
+        const playing = matchedTrack !== null && index === matchedTrack;
         return `<tr class="${playing ? 'playing' : ''}">
             <td>${badge(track.dr, 'small')}</td>
             <td>${esc(track.title)}${playing ? ' — playing now' : ''}</td>
@@ -361,7 +437,7 @@ function paintDetail(id) {
             <td>RMS ${esc(track.rms)}</td></tr>`;
     }).join('');
 
-    body.innerHTML =
+    body.innerHTML = whyList(detail.match) +
         `<dl class="kv">${fields.map(([key, value]) =>
             `<dt>${esc(key)}</dt><dd>${key === 'Link' ? value : esc(value)}</dd>`).join('')}</dl>`
         + (trackBadges || trackRows
@@ -370,45 +446,52 @@ function paintDetail(id) {
         + (detail.log
             ? `<details><summary>DR meter log as uploaded</summary><pre class="log">${esc(detail.log)}</pre></details>`
             : '');
-    document.getElementById(`row-${id}`).classList.toggle('match', !!detail.matches);
 }
 
-// With no album tag the search covers the artist's whole shelf, and the only
-// way to tell which of those entries is this record is the track list inside
-// each album's own page.  This walks the list, in the order shown, until it
-// has checked what the settings allow.
+// Which of these pressings is on the wire. Each version's own page is read
+// and scored against the track playing -- where it sits in the running
+// order, how long it runs, the stream's rate, and the label and year when
+// the renderer publishes them. Bounded by the settings, and abandonable: it
+// is one HTTP request per version.
 async function toggleLocate() {
     if (locating) { locating = false; updateLocateButton(); return; }
     locating = true;
     updateLocateButton();
     const list = sorted().slice(0, MAX_DETAIL_LOOKUPS);
-    let found = 0, checked = 0, listless = 0;
+    let checked = 0, listless = 0;
     for (const row of list) {
         if (!locating) break;
-        setStatus(`Checking track lists… ${checked}/${list.length}` + (found ? ` — ${found} match${found === 1 ? '' : 'es'}` : ''));
+        setStatus(`Reading each version… ${checked}/${list.length}`);
         try {
             const detail = await fetchDetail(row.id);
             checked++;
             if (!(detail.tracks || []).length) listless++;
-            if (detail.matches) {
-                found++;
-                detail.open = true;
-            }
         } catch { checked++; }
         render();
     }
     locating = false;
     updateLocateButton();
-    // Not every entry was uploaded with a DR-meter log, and one without a log
-    // has no track list to search: saying so is the difference between "not
-    // this record" and "cannot tell".
+
+    const winner = bestId();
+    // Entries uploaded without a DR-meter log have no track list and no track
+    // times, so there is little to judge them on. Saying how many were in that
+    // state is the difference between "not this pressing" and "cannot tell".
     const blind = listless
-        ? ` ${listless} of the ${checked} checked list no tracks, so they could not be searched.`
+        ? ` ${listless} of the ${checked} were uploaded without a track list, so little could be checked on them.`
         : '';
-    setStatus((found
-        ? `${found} version${found === 1 ? '' : 's'} list “${nowPlaying.title}” — highlighted above.`
-        : `Checked ${checked} version${checked === 1 ? '' : 's'}: none of their track lists names “${nowPlaying.title}”.`)
-        + blind);
+    if (winner !== null) {
+        const detail = details.get(winner);
+        detail.open = true;
+        paintDetail(winner);
+        const row = rows.find(r => r.id === winner);
+        setStatus(`Most likely playing: ${row.album}${row.year ? ', ' + row.year : ''}`
+                  + `${row.source && row.source !== 'Unknown' ? ' (' + row.source + ')' : ''}`
+                  + ` — DR ${row.dr}. Its evidence is open below.` + blind);
+    } else {
+        setStatus(`Checked ${checked} version${checked === 1 ? '' : 's'}: none of them `
+                  + 'matches well enough to call it. The verdict column says how each one fared.'
+                  + blind);
+    }
 }
 
 document.getElementById('f-artist').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });

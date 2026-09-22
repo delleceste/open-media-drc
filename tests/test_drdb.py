@@ -364,8 +364,143 @@ class MetadataCleanupTest(unittest.TestCase):
         with patch.object(APP, "_mpd_now_playing_via_protocol", return_value=mpd), \
              patch.object(APP, "_resolve_mpd_port", return_value="6600"):
             got = APP._drdb_now_playing()
-        self.assertEqual(got, {"artist": "Alice In Chains", "album": "Unplugged",
-                               "title": "Nutshell", "state": "play"})
+        # The fingerprint fields travel alongside; these four are the lookup.
+        self.assertEqual(
+            {key: got[key] for key in ("artist", "album", "title", "state")},
+            {"artist": "Alice In Chains", "album": "Unplugged",
+             "title": "Nutshell", "state": "play"})
+
+
+class IdentifyTest(unittest.TestCase):
+    """Which pressing is on the wire.
+
+    Only the track playing (or paused, or last played) is evidence: the rest
+    of the queue is a listener's doing. One track is enough, because that is
+    where two masters differ -- modelled on the real case, Alice In Chains
+    Unplugged, whose "Down In A Hole" runs 5:46 on the CD and 6:06 on the DVD
+    rip, which keeps the dialogue between songs.
+    """
+
+    TRACKS = ["Nutshell", "Brother", "No Excuses", "Sludge Factory",
+              "Down In A Hole", "Angry Chair", "Rooster"]
+
+    def playing(self, **kwargs):
+        base = {"artist": "Alice In Chains", "album": "Unplugged",
+                "title": "Down In A Hole", "track_no": 5, "duration": 346.0,
+                "rate": 44100, "bits": 16, "channels": 2,
+                "year": "", "label": ""}
+        base.update(kwargs)
+        return base
+
+    def version(self, name, source, durations, log=True, **extra):
+        titles = [f"{i:02d}-{t}" for i, t in enumerate(self.TRACKS, 1)]
+        tracks = [{"dr": 8, "peak": "0.00 dB", "rms": "-9.00 dB",
+                   "duration": durations.get(i, "3:30"), "title": title}
+                  for i, title in enumerate(titles, 1)]
+        version = {"album": name, "source": source, "codec": "Lossless",
+                   "track_dr": [8] * len(titles),
+                   "tracks": tracks if log else []}
+        version.update(extra)
+        return version
+
+    def test_the_right_length_at_the_right_position_calls_it(self):
+        match = drdb.identify(self.playing(),
+                              self.version("MTV Unplugged", "CD", {5: "5:46"}))
+        self.assertEqual(match["verdict"], "likely")
+        self.assertEqual(match["matched_track"], 4)
+        self.assertTrue(any("5:46" in reason for reason in match["for"]))
+
+    def test_a_longer_cut_of_the_same_track_is_ruled_out(self):
+        dvd = drdb.identify(
+            self.playing(),
+            self.version("MTV Unplugged [5.1 Dolby Digital DVD]", "Unknown",
+                         {5: "6:26"}))
+        self.assertEqual(dvd["verdict"], "unlikely")
+        self.assertTrue(any("6:26" in reason for reason in dvd["against"]))
+        # ...and a surround transfer cannot be a 44.1 kHz stereo stream.
+        self.assertTrue(any("surround" in reason for reason in dvd["against"]))
+
+    def test_a_version_that_does_not_list_the_track_is_rejected(self):
+        match = drdb.identify(
+            self.playing(),
+            {"album": "Dirt", "source": "CD", "track_dr": [6] * 7,
+             "tracks": [{"dr": 6, "duration": "5:00", "peak": "", "rms": "",
+                         "title": f"{i:02d}-Something Else {i}"}
+                        for i in range(1, 8)]})
+        self.assertEqual(match["verdict"], "unlikely")
+        self.assertTrue(any("does not name" in r for r in match["against"]))
+
+    def test_label_and_year_can_name_an_edition_on_their_own(self):
+        # An entry uploaded without a DR-meter log has no track list and no
+        # track times; the tags that name the edition are all there is.
+        match = drdb.identify(
+            self.playing(label="Columbia/Legacy", year="1996"),
+            self.version("MTV Unplugged", "CD", {}, log=False,
+                         label="Columbia", year="1996"))
+        self.assertTrue(any("same label (Columbia)" in r for r in match["for"]))
+        self.assertTrue(any("same year (1996)" in r for r in match["for"]))
+        self.assertIn(match["verdict"], ("possible", "likely"))
+
+    def test_a_different_year_only_counts_against_a_little(self):
+        # A streaming service dates a record by the issue it licensed, so a
+        # mismatch here is weak evidence, not a refutation.
+        match = drdb.identify(
+            self.playing(year="2006"),
+            self.version("MTV Unplugged", "CD", {5: "5:46"}, year="1996"))
+        self.assertEqual(match["verdict"], "likely")
+        self.assertTrue(any("1996" in r for r in match["against"]))
+
+    def test_nothing_to_compare_is_reported_as_unknown(self):
+        match = drdb.identify(
+            {"title": "", "album": "", "duration": None, "rate": None,
+             "bits": None, "channels": None, "track_no": None,
+             "year": "", "label": ""},
+            {"album": "MTV Unplugged", "source": "CD", "track_dr": [],
+             "tracks": []})
+        self.assertEqual(match["verdict"], "unknown")
+        self.assertEqual(match["score"], 0)
+
+    def test_title_duration_label_and_year_helpers(self):
+        self.assertEqual(drdb.title_key("05-Down In A Hole (MTV Unplugged)"),
+                         "down in a hole")
+        self.assertEqual(drdb.title_key("The Killer Is Me"), "killer is me")
+        self.assertEqual(drdb.duration_seconds("4:37"), 277)
+        self.assertEqual(drdb.duration_seconds("1:02:11"), 3731)
+        self.assertIsNone(drdb.duration_seconds("later"))
+        self.assertEqual(drdb.label_names("Columbia/Legacy"),
+                         {"columbia", "legacy"})
+        self.assertTrue(drdb.label_names("Columbia/Legacy")
+                        & drdb.label_names("Columbia Records"))
+        self.assertEqual(drdb.release_year("1996-04-30"), 1996)
+        self.assertIsNone(drdb.release_year("no idea"))
+
+
+class FingerprintTest(unittest.TestCase):
+    """The fingerprint is the playing track, and nothing around it."""
+
+    def fingerprint(self, **info):
+        base = {"title": "Down In A Hole", "album": "Unplugged", "artist": "",
+                "state": "play", "elapsed": None, "duration": 346.0,
+                "audio": "44100:16:2", "date": "1996-04-30",
+                "label": "Columbia/Legacy", "track_no": 5}
+        base.update(info)
+        return APP._drdb_fingerprint(base)
+
+    def test_the_playing_track_is_the_whole_fingerprint(self):
+        got = self.fingerprint()
+        self.assertEqual(got, {"year": "1996-04-30", "label": "Columbia/Legacy",
+                               "track_no": 5, "duration": 346.0, "rate": 44100,
+                               "bits": 16, "channels": 2})
+
+    def test_a_renderer_that_publishes_no_edition_tags_still_fingerprints(self):
+        got = self.fingerprint(date="", label="")
+        self.assertEqual((got["year"], got["label"]), ("", ""))
+        self.assertEqual((got["rate"], got["bits"]), (44100, 16))
+
+    def test_no_stream_format_is_not_an_error(self):
+        got = self.fingerprint(audio="")
+        self.assertIsNone(got["rate"])
+        self.assertEqual(got["track_no"], 5)
 
 
 class EndpointTest(unittest.TestCase):
