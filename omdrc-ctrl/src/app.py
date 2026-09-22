@@ -26,6 +26,7 @@ if os.path.dirname(__file__) not in sys.path:
 from configuration import ConfigurationManager, Settings as ConfigurationSettings
 from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 from audio_diagnostics import AudioDiagnosticsMonitor
+from drdb import DrDb, DrDbError, Settings as DrDbSettings
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -609,6 +610,10 @@ _CONFIGURATION_CSRF = os.urandom(24).hex()
 BITPERFECT = BitPerfectSettings()
 _BITPERFECT_MANAGER: BitPerfectManager | None = None
 
+# Dynamic Range database lookups for the renderer card's "DR versions" button.
+DRDB = DrDbSettings()
+_DRDB_CLIENT: DrDb | None = None
+
 
 def _default_log_sources() -> list[dict]:
     """Logs worth showing on a stock install.  upmpdcli writes its own log to
@@ -719,6 +724,7 @@ def load_config(path: str) -> None:
     global CHAIN_ENABLED, CHAIN_INTERVAL, CHAIN_PRIVILEGED, CHAIN_DEVICES
     global CONFIGURATION, _CONFIGURATION_MANAGER
     global BITPERFECT, _BITPERFECT_MANAGER
+    global DRDB, _DRDB_CLIENT
     cfg = configparser.ConfigParser()
     if not cfg.read(path):
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -878,6 +884,19 @@ def load_config(path: str) -> None:
         )
         _BITPERFECT_MANAGER = None
 
+    if cfg.has_section("drdb"):
+        sec = cfg["drdb"]
+        DRDB = DrDbSettings(
+            enabled=sec.getboolean("enabled", fallback=DRDB.enabled),
+            base_url=sec.get("base_url", fallback=DRDB.base_url).strip().rstrip("/"),
+            timeout=sec.getfloat("timeout", fallback=DRDB.timeout),
+            cache_ttl=sec.getfloat("cache_ttl", fallback=DRDB.cache_ttl),
+            max_pages=max(1, sec.getint("max_pages", fallback=DRDB.max_pages)),
+            max_detail_lookups=max(1, sec.getint(
+                "max_detail_lookups", fallback=DRDB.max_detail_lookups)),
+        )
+        _DRDB_CLIENT = None
+
     if cfg.has_section("qobuz_oauth"):
         QOBUZ_OAUTH_SCRIPT = cfg.get("qobuz_oauth", "script", fallback=QOBUZ_OAUTH_SCRIPT)
         QOBUZ_UPMPDCLI_CONF = cfg.get("qobuz_oauth", "upmpdcli_config", fallback=QOBUZ_UPMPDCLI_CONF)
@@ -897,7 +916,7 @@ def load_config(path: str) -> None:
 
     _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth",
                  "qconnect_oauth", "cdin", "chain", "configuration",
-                 "bitperfect"}
+                 "bitperfect", "drdb"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
@@ -3856,6 +3875,7 @@ def index():
         cdin_log_id=_cdin_log_source_id(),
         chain_enabled=CHAIN_ENABLED,
         chain_interval=CHAIN_INTERVAL,
+        drdb_enabled=DRDB.enabled,
         csrf=_CONFIGURATION_CSRF,
     )
 
@@ -4174,6 +4194,112 @@ def qconnect_status():
         return jsonify({"ok": False, **_QC_STATUS_EMPTY})
     except OSError as e:
         return jsonify({"ok": False, **_QC_STATUS_EMPTY, "error": str(e)})
+
+
+# ── Dynamic Range database ──────────────────────────────────────────────────
+#
+# What is playing is one master of a record among several, and the community
+# database at dr.loudness-war.info knows what the others measure.  The
+# renderer card's button opens /dr-alternatives, which asks these endpoints
+# what the database holds for the artist and album on the now-playing line.
+#
+# Nothing here computes a DR value: the numbers are the ones the database was
+# given, by whoever measured that pressing.
+
+def _drdb() -> DrDb:
+    global _DRDB_CLIENT
+    if _DRDB_CLIENT is None:
+        _DRDB_CLIENT = DrDb(DRDB)
+    return _DRDB_CLIENT
+
+
+def _drdb_guard():
+    """None when the request may proceed, else a ready (response, status)."""
+    if not DRDB.enabled:
+        return jsonify({"ok": False, "error": "DR database lookups disabled"}), 404
+    return None
+
+
+# "[playing] Artist - Title": qobuzconnect2mpd's status line.  The state tag
+# is already stripped by _parse_qconnect_status; what is left is the only
+# metadata that renderer publishes.
+_QC_ARTIST_TITLE = re.compile(r"^(?P<artist>.+?)\s+-\s+(?P<title>.+)$")
+
+
+def _drdb_now_playing() -> dict:
+    """Artist / album / title for the track the renderer card is showing.
+
+    MusicPD's queue is the better source and is tried first: upmpdcli tags its
+    entries, so artist, album and title all arrive.  qobuzconnect2mpd in
+    `direct` mode queues a bare redirect token with no tags at all (see
+    httphandler.cxx, GET /qobuz-direct/<token>), and its status file's
+    "Artist - Title" line is then everything there is — which is why an album
+    lookup has to tolerate an empty album and fall back to the artist's whole
+    shelf."""
+    info = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+    artist, album, title = info["artist"], info["album"], info["title"]
+    state = info["state"]
+
+    if not (artist and title):
+        try:
+            with open(QCONNECT_STATUS_FILE, encoding="utf-8") as handle:
+                status = _parse_qconnect_status(handle.read().splitlines())
+        except OSError:
+            status = dict(_QC_STATUS_EMPTY)
+        line1 = _QC_LEAD_STATE.sub("", status["line1"]).strip()
+        match = _QC_ARTIST_TITLE.match(line1)
+        if match:
+            artist = artist or match.group("artist").strip()
+            title  = title  or match.group("title").strip()
+        elif line1:
+            title = title or line1
+        state = state or status["playback_state"]
+
+    return {"artist": artist, "album": album, "title": title, "state": state}
+
+
+@app.route("/dr-alternatives")
+def dr_alternatives_page():
+    if not DRDB.enabled:
+        return "DR database lookups disabled", 404
+    return render_template("dr_alternatives.html",
+                           base_url=DRDB.base_url,
+                           max_detail_lookups=DRDB.max_detail_lookups)
+
+
+@app.route("/drdb/now")
+def drdb_now():
+    guard = _drdb_guard()
+    if guard:
+        return guard
+    return jsonify({"ok": True, **_drdb_now_playing()})
+
+
+@app.route("/drdb/search")
+def drdb_search():
+    guard = _drdb_guard()
+    if guard:
+        return guard
+    artist = request.args.get("artist", "").strip()
+    album  = request.args.get("album", "").strip()
+    if not artist and not album:
+        playing = _drdb_now_playing()
+        artist, album = playing["artist"], playing["album"]
+    try:
+        return jsonify({"ok": True, **_drdb().search(artist, album)})
+    except DrDbError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@app.route("/drdb/album/<int:album_id>")
+def drdb_album(album_id):
+    guard = _drdb_guard()
+    if guard:
+        return guard
+    try:
+        return jsonify({"ok": True, "album": _drdb().album(album_id)})
+    except DrDbError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
 
 
 def _service_running(name: str) -> bool:

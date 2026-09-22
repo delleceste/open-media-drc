@@ -86,6 +86,36 @@ nothing else.
 The bit-perfect page and the configuration page share one operation lock: a
 filter publication and a tap run must never overlap on a single-DAC box.
 
+## DR versions page
+
+The renderer card's **DR ↗** button opens `/dr-alternatives`: every master of
+the record now playing that the community database at
+[dr.loudness-war.info](https://dr.loudness-war.info) knows about, sorted by
+album DR — the most dynamic pressing first, the loudness-war casualty last.
+Each row carries the album DR as the database's own coloured badge plus a
+0–20 thermometer, the minimum and maximum track DR, year, codec and source
+(CD, Vinyl, Download…), and an **Info** button that expands the album's own
+page inline: label, catalog number, bar code, country, the uploader's comment,
+every track's DR, and the DR-meter log the entry was submitted with.
+
+The numbers are measurements of *other people's copies*, not of the stream
+this box is playing. Nothing is analysed here; the page is a lookup.
+
+The search is seeded from the now-playing line. When the renderer tags
+MusicPD's queue (upmpdcli does) that is artist + album and the result is the
+handful of versions of one record. qobuzconnect2mpd in `direct` mode queues a
+bare redirect token with no tags at all, so only "Artist - Title" from its
+status file is available: the search then covers the artist's whole shelf, and
+**Find the album with "…"** reads candidate album pages in DR order until it
+finds the ones whose uploaded log names the playing track, highlighting them.
+Both fields are editable, so a wrong or missing tag is one correction away
+from a useful answer.
+
+Lookups happen only when the button is pressed, are cached for `cache_ttl`,
+and are paced so that leaning on the button cannot turn the panel into a
+scraper. Set `enabled = no` in [`[drdb]`](#reserved-section-drdb) on a box
+that must not talk to the internet — the button and the page then disappear.
+
 A lightweight web-based remote control panel for a Linux or FreeBSD desktop.
 Commands are defined in a plain-text INI config file; the server renders a
 mobile-friendly interface that can be opened in any browser on the local
@@ -196,12 +226,14 @@ omdrcctrl/
 ├── requirements.txt
 ├── src/
 │   ├── app.py               # Flask application
+│   ├── drdb.py              # dr.loudness-war.info lookups (DR versions page)
 │   ├── commands.conf.in     # command definitions template
 │   ├── omdrcctrl.sh.in       # launcher script template
 │   ├── templates/
 │   │   ├── index.html            # Jinja2 + vanilla-JS control panel
 │   │   ├── details.html          # markdown details page
 │   │   ├── brutefir_config.html  # live config and filter headroom page
+│   │   ├── dr_alternatives.html  # DR versions of the record playing
 │   │   └── filter_response.html  # DRC filter-response charts page
 │   └── static/
 │       └── chart.umd.min.js # vendored Chart.js (filter-response charts)
@@ -580,6 +612,33 @@ hint     = Qobuz accepted its OAuth-backed cloud session.
 The patterns match the sense rather than the exact upmpdcli 1.9 wording, so a
 reworded message in a later release still trips them. Dismissing a banner hides
 that exact line and repeat count; a fresh occurrence raises it again.
+
+### Reserved section: `[drdb]`
+
+Dynamic Range database lookups behind the renderer card's **DR ↗** button
+(see [DR versions page](#dr-versions-page)). Read-only, on demand, and off the
+audio path entirely.
+
+```ini
+[drdb]
+enabled            = yes
+base_url           = https://dr.loudness-war.info
+timeout            = 12
+cache_ttl          = 900
+max_pages          = 3
+max_detail_lookups = 24
+```
+
+| key | meaning |
+|---|---|
+| `enabled` | `no` removes the button, the page and the endpoints (404). |
+| `base_url` | Where the database lives. Configurable only so a mirror or a local copy can be used without a code change. |
+| `timeout` | Seconds to wait for one page. Someone is watching: a lookup should fail visibly rather than hang a request thread. |
+| `cache_ttl` | Seconds a fetched page stays usable. Re-pressing the button on the same record, or reopening an album's details, then costs no request. |
+| `max_pages` | Listing pages to walk, 25 albums each. They are requested already sorted by album DR descending, so a search cut short here still holds the best masters. |
+| `max_detail_lookups` | Upper bound on the album pages one **Find the album** sweep may read. |
+
+---
 
 ### Reserved section: `[qobuz_oauth]`
 
@@ -1384,6 +1443,59 @@ the boot service restores after a reboot (see `POST /qconnect/switch`). It is
 ```json
 { "ok": true, "qobuzconnect2mpd": true, "upmpdcli": false,
   "remembered": "qobuzconnect2mpd" }
+```
+
+---
+
+### `GET /drdb/now`
+
+Artist, album and title for the track the renderer card is showing, as the DR
+versions page seeds its search. MusicPD's queue tags are preferred;
+qobuzconnect2mpd's status line is the fallback, and `album` is then empty
+because that renderer publishes none.
+
+```json
+{ "ok": true, "artist": "Dinosaur Jr.", "album": "", "title": "No Friends",
+  "state": "play" }
+```
+
+---
+
+### `GET /drdb/search`
+
+Versions of one record in the Dynamic Range database, best master first.
+`artist` and `album` default to whatever `GET /drdb/now` reports; either may
+be empty, but not both. `truncated` says the listing hit `max_pages`.
+
+```json
+{ "ok": true, "artist": "Dinosaur Jr.", "album": "Green Mind",
+  "truncated": false,
+  "rows": [ { "id": 60311, "artist": "Dinosaur Jr.", "album": "Green Mind",
+              "year": "1991", "dr": 12, "dr_min": 11, "dr_max": 14,
+              "codec": "Lossless", "source": "Vinyl",
+              "url": "https://dr.loudness-war.info/album/view/60311" } ] }
+```
+
+A database that cannot be reached answers `502` with `{"ok": false, "error": ...}`.
+
+---
+
+### `GET /drdb/album/<id>`
+
+One version's detail page: its fields, its per-track DR, and the DR-meter log
+it was uploaded with, parsed into `tracks` (the only place track *names*
+appear, which is what lets the page tell whether a version contains the song
+now playing).
+
+```json
+{ "ok": true, "album": {
+    "id": 186383, "artist": "Dinosaur Jr.", "album": "Sweep It Into Space",
+    "year": "2021", "dr": 8, "dr_min": 7, "dr_max": 9,
+    "track_dr": [7, 8, 9, 8, 8, 8, 8, 8, 8, 8, 8, 8],
+    "codec": "Lossless", "source": "Download", "label": "Jagjaguwar",
+    "comment": "…", "log": "foobar2000 1.5.5 / Dynamic Range Meter 1.1.1…",
+    "tracks": [ { "dr": 7, "peak": "0.00 dB", "rms": "-8.34 dB",
+                  "duration": "4:12", "title": "01-I Ain't" } ] } }
 ```
 
 ---

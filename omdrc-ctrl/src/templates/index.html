@@ -1667,6 +1667,9 @@
             <button class="btn-log btn-mini" id="btn-act-lines"
                     onclick="toggleActivityLines()"
                     title="Activity detail: one line, or the last three">☰</button>
+{% if drdb_enabled %}
+            <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
+                    title="Other masters of this record, and what they measure, in the Dynamic Range database">DR ↗</button>{% endif %}
             <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
         </div>
     </div>
@@ -2010,7 +2013,7 @@
     </div>
 </div>
 
-<footer><a href="/configuration">Configuration</a> · <a href="/bitperfect">Bit-perfect check</a> · <a href="/readme">README</a></footer>
+<footer><a href="/configuration">Configuration</a> · <a href="/bitperfect">Bit-perfect check</a>{% if drdb_enabled %} · <a href="/dr-alternatives">DR versions</a>{% endif %} · <a href="/readme">README</a></footer>
 
 <div id="toast"></div>
 
@@ -3061,6 +3064,13 @@ function fmtColor(line2) {
     if (bits >= 24)                return '#e3b341';        // 24-bit 44/48 kHz
     if (bits < 24  && khz >= 48)   return '#d2a8ff';        // 16-bit 48 kHz
     return '';                                               // 16-bit 44 kHz — default
+}
+
+// The Dynamic Range database says what other masters of this record measure.
+// A named window rather than a fresh tab per press: the page re-reads the
+// now-playing line itself, so re-using it keeps one lookup page around.
+function openDrVersions() {
+    window.open('/dr-alternatives', 'omdrc-dr-versions');
 }
 
 async function fetchQcStatus() {

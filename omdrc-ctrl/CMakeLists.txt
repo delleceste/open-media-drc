@@ -105,7 +105,7 @@ endif()
 
 # Python application + docs + helper scripts
 install(FILES src/app.py src/configuration.py src/bitperfect.py
-              src/audio_diagnostics.py
+              src/audio_diagnostics.py src/drdb.py
               README.md SPECTRUM_ANALYZER.md
         DESTINATION lib/omdrcctrl)
 

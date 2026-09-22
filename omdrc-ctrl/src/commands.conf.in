@@ -72,6 +72,33 @@ dsp_gauge_poll_steps = 1,5,8
 # actually settled -- this makes it hold for a while first.
 dsp_gauge_settle_count = 10
 
+# -- Dynamic Range database -------------------------------------------------
+# The renderer card's "DR ↗" button looks the record up at dr.loudness-war.info
+# and lists the other masters people have measured, best first.  Read-only and
+# on demand: nothing is queried until the button is pressed.  Set enabled = no
+# on a box that must not talk to the internet -- the button and the page then
+# disappear.
+[drdb]
+enabled = yes
+# Where the database lives.  Kept configurable only so a mirror, or a local
+# copy of the site, can be pointed at without a code change.
+base_url = https://dr.loudness-war.info
+# Seconds to wait for one page.  A lookup is made while someone is watching:
+# it should fail visibly rather than hang the request thread.
+timeout = 12
+# Seconds a fetched page stays usable.  Pressing the button again on the same
+# record, or reopening an album's details, then costs no request at all.
+cache_ttl = 900
+# Listing pages to walk (25 albums each).  They are requested already sorted
+# by album DR descending, so a search cut short here still shows the best
+# masters the database holds.
+max_pages = 3
+# Upper bound on the album pages the "find the album" sweep may read in one
+# press.  That sweep exists because the Qobuz renderer publishes no album tag,
+# so the only way to place a track is to look inside each candidate's own
+# track list.
+max_detail_lookups = 24
+
 # -- Configuration workflows -----------------------------------------------
 [configuration]
 enabled = yes
