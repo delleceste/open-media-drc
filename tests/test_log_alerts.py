@@ -37,7 +37,7 @@ def _config(directory: Path, console: Path, token: str = "") -> Path:
     text = (ROOT / "omdrc-ctrl/src/commands.conf.in").read_text(encoding="utf-8")
     text = text.replace("@OMDRC_DRC_STATUS@", str(directory / "drc-status.sh"))
     text = text.replace("@OMDRC_DRC@", str(directory / "drc.sh"))
-    text = text.replace("/tmp/upmpdcli-console.log", str(console))
+    text = text.replace("@UPMPDCLI_CONSOLE_LOG@", str(console))
     text = text.replace("/tmp/qconnect2mpd.log", str(directory / "qconnect.log"))
     cache = directory / "qobuz-config"
     cache.write_text(token, encoding="utf-8")

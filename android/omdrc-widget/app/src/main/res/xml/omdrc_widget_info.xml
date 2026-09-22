@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  updatePeriodMillis is deliberately 0: the system's own update loop is
+  unreliable (batched/delayed beyond its already-coarse ~30 min floor) and
+  redundant with the AlarmManager + WorkManager scheduling this app drives
+  itself (see AlarmScheduler.kt / WidgetRefreshWorker.kt).
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:maxResizeWidth="250dp"
+    android:maxResizeHeight="170dp"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_small"
+    android:configure="com.omdrc.widget.WidgetConfigureActivity"
+    android:widgetCategory="home_screen" />

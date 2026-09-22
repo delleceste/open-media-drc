@@ -85,16 +85,21 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/mpd.conf" "${_m}")
     _omdrc_install_config("${CMAKE_CURRENT_BINARY_DIR}/mpd.conf" "${_etc}")
 
-    # mpd /etc drop-in (second /etc seam): override the distro unit's User=mpd.
+    # MPD drop-in: install beside the other system units.  /usr/local/lib has
+    # higher systemd load-path priority than the distro's /usr/lib, so this
+    # overrides User=mpd without a separate copy into /etc.
     file(READ etc/systemd/system/mpd.service.d/open-media-drc.conf.in _d)
     string(REPLACE "@REPO_DIR@/mpd/mpd.conf" "${_siteetc}/mpd.conf" _d "${_d}")
     _omdrc_common(_d)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/mpd-omdrc-dropin.conf" "${_d}")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/mpd-omdrc-dropin.conf"
-            DESTINATION share/omdrc/mpd.service.d RENAME open-media-drc.conf)
+            DESTINATION lib/systemd/system/mpd.service.d RENAME open-media-drc.conf)
 
     # upmpdcli system unit (User=@AUDIO_USER@ — see the template's own header
     # for why this moved off systemd --user).
+    set(_upmpdcli_runner "${CMAKE_INSTALL_PREFIX}/libexec/omdrc/run-upmpdcli")
+    install(PROGRAMS scripts/run-upmpdcli.sh
+            DESTINATION libexec/omdrc RENAME run-upmpdcli)
     file(READ etc/systemd/system/upmpdcli.service.in _s)
     string(REPLACE "@REPO_DIR@/upmpdcli/upmpdcli.conf" "${_siteetc}/upmpdcli.conf" _s "${_s}")
     # ExecStart points at wherever upmpdcli actually is (dependencies.cmake
@@ -102,6 +107,7 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
     # Arch (/usr/bin) and built into /usr/local/bin from source, and a unit that
     # names the wrong one fails at exec on every start.
     string(REPLACE "@UPMPDCLI_BIN@" "${_upmpdcli_bin}" _s "${_s}")
+    string(REPLACE "@UPMPDCLI_RUNNER@" "${_upmpdcli_runner}" _s "${_s}")
     _omdrc_common(_s)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" "${_s}")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/upmpdcli.service" DESTINATION lib/systemd/system)
@@ -158,7 +164,7 @@ if(OMDRC_SERVICE_MANAGER STREQUAL "systemd")
         message(STATUS "  ${OMDRC_DIM}renderers: visudo not found, skipping sudoers syntax check${OMDRC_RESET}")
     endif()
 
-    install(CODE "message(STATUS \"renderers: mpd.conf + system-scope upmpdcli/omdrc-renderer/qobuzconnect2mpd units + mpd /etc drop-in + sudoers snippet installed (see the final checklist)\")")
+    install(CODE "message(STATUS \"renderers: mpd.conf + system-scope upmpdcli/omdrc-renderer/qobuzconnect2mpd units + MPD drop-in + sudoers snippet installed (see the final checklist)\")")
 else()  # FreeBSD
     # musicpd.conf (FreeBSD MPD package == musicpd)
     file(READ mpd/musicpd.conf.in _m)

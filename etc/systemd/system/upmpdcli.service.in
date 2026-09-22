@@ -18,27 +18,27 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=@AUDIO_USER@
+RuntimeDirectory=open-media-drc
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 # upmpdcli is a third-party binary, so its path is whatever the host has,
 # not this project's install prefix: a distro package puts it in /usr/bin,
 # a source build in /usr/local/bin.  CMake substitutes the one find_program
 # located (cmake/renderers.cmake); hardcoding @PREFIX@/bin left the unit
 # pointing at a binary that was not there after a switch to the packaged
 # upmpdcli, and it died at exec on every start.
-ExecStart=@UPMPDCLI_BIN@ -c @REPO_DIR@/upmpdcli/upmpdcli.conf
+ExecStart=@UPMPDCLI_RUNNER@ /run/open-media-drc/upmpdcli-console.log @UPMPDCLI_BIN@ -c @REPO_DIR@/upmpdcli/upmpdcli.conf
 # upmpdcli's own log goes to logfilename in upmpdcli.conf; its cdplugin
 # subprocesses (Qobuz among them) log to the inherited stderr instead, which is
 # where the Qobuz login/OAuth verdict shows up.  Keep it in a file so
 # omdrcctrl's Logs panel and its alert rules can read it.
 #
-# truncate:, not append:.  The lines carry no timestamps and the Logs panel and
-# the renderer card both read a fixed tail, so an appended file lets a fixed
-# failure outlive its fix: a crash loop that wrote the same exec error 94 times
-# still filled the tail long after the binary path was corrected, and read as
-# the current run.  Starting clean costs the history across restarts, which for
-# a repeating failure was never worth reading anyway.  StandardError=inherit
-# sends stderr to the same descriptor, so the file is truncated once per start.
-StandardOutput=truncate:/tmp/upmpdcli-console.log
-StandardError=inherit
+# The runner opens and truncates this log as User=, after RuntimeDirectory has
+# been created.  Do not use StandardOutput=file:/append:/truncate: here:
+# systemd opens those targets before ExecStartPre and before this host creates
+# RuntimeDirectory, so any open error kills the service with 209/STDOUT and no
+# cleanup command can run.  The runner removes that failure class completely
+# while still collecting both upmpdcli and inherited plugin stderr in one file.
 Restart=on-failure
 RestartSec=5
 

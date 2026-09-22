@@ -107,3 +107,14 @@ bp-results/*.ref.raw
 freebsd-uaudio-patch/bench/wavs/
 freebsd-uaudio-patch/bench/__pycache__/
 freebsd-uaudio-patch/bench/*.csv
+
+# Android status-widget app: standard Gradle/Android Studio build artifacts
+# and local machine settings, never tracked.
+android/omdrc-widget/**/build/
+android/omdrc-widget/.gradle/
+android/omdrc-widget/.idea/
+android/omdrc-widget/local.properties
+android/omdrc-widget/gradle/wrapper/gradle-wrapper.jar
+android/omdrc-widget/*.iml
+android/omdrc-widget/**/*.iml
+android/omdrc-widget/**/*.keystore

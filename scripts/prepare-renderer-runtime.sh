@@ -96,8 +96,7 @@ done
 # /tmp normally starts empty and each daemon creates its own files.  Repair
 # files left by an earlier service identity, but do not create empty logs and
 # do not follow an unexpected symlink from a world-writable directory.
-for name in upmpdcli.log upmpdcli-console.log \
-	qconnect2mpd.log qconnect2mpd-status.txt; do
+for name in upmpdcli.log qconnect2mpd.log qconnect2mpd-status.txt; do
 	path="$runtime_dir/$name"
 	if [ -L "$path" ]; then
 		echo "$0: refusing to chown runtime symlink: $path" >&2

@@ -47,6 +47,12 @@ configure_file(
 # omdrc-status wrappers supplied by core-drc in the same top-level build.
 message(STATUS "Rendering commands.conf from src/commands.conf.in")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/commands.conf.in" _cc)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_UPMPDCLI_CONSOLE_LOG "/run/open-media-drc/upmpdcli-console.log")
+else()
+    set(_UPMPDCLI_CONSOLE_LOG "/tmp/upmpdcli-console.log")
+endif()
+string(REPLACE "@UPMPDCLI_CONSOLE_LOG@" "${_UPMPDCLI_CONSOLE_LOG}" _cc "${_cc}")
 string(REPLACE "@OMDRC_DRC_STATUS@" "${CMAKE_INSTALL_PREFIX}/bin/omdrc-status" _cc "${_cc}")
 string(REPLACE "@OMDRC_DRC@"        "${CMAKE_INSTALL_PREFIX}/bin/omdrc"        _cc "${_cc}")
 set(_OMDRC_CONFIG_SITE_ROOT "${CMAKE_INSTALL_PREFIX}/etc/open-media-drc")

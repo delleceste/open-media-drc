@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">omdrc status</string>
+    <string name="configure_widget_title">omdrc widget setup</string>
+    <string name="hint_host">Box IP or hostname (e.g. 192.168.1.50)</string>
+    <string name="hint_port">Port</string>
+    <string name="default_port">9090</string>
+    <string name="save">Save</string>
+    <string name="refresh_note">Refreshes automatically every few minutes; tap the refresh icon for an immediate check.</string>
+    <string name="status_drc_on">DRC ON</string>
+    <string name="status_drc_off">DRC OFF</string>
+    <string name="status_unreachable">Unreachable</string>
+    <string name="status_unconfigured">Tap to set up</string>
+    <string name="mpd_unknown">—</string>
+    <string name="notification_channel_name">DRC status</string>
+    <string name="notification_channel_description">A dismissable status snapshot shown when you open the app or tap the widget\'s refresh icon.</string>
+    <string name="notification_live_channel_name">DRC live updates</string>
+    <string name="notification_live_channel_description">Ongoing while live updates are running; tap Stop on the notification to end it.</string>
+    <string name="live_updates_connecting">Live updates</string>
+    <string name="live_updates_stop">Stop</string>
+    <string name="live_levels">Levels</string>
+    <string name="settings_change_server">Change server address</string>
+</resources>

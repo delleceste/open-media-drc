@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The box's control panel is deliberately unauthenticated plain HTTP on the
+  LAN (see omdrc-ctrl/src/app.py) and the host/port here are always entered
+  by the user at runtime, so a fixed domain-config allowlist isn't possible.
+  Permitting cleartext everywhere adds no exposure beyond what the box
+  already accepts from any device on the LAN.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

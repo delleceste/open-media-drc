@@ -45,6 +45,13 @@ class BrutefirConfigDetailsTest(unittest.TestCase):
         self.assertEqual(data["db"], 8.0)
         self.assertEqual(data["source"], "configuration")
 
+    def test_safety_limit_is_read_from_active_brutefir_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "brutefir.conf"
+            config.write_text("safety_limit: 6.5;\n", encoding="utf-8")
+            self.assertEqual(
+                APP._configured_brutefir_safety_limit_db(str(config)), 6.5)
+
     def test_attenuation_endpoint_uses_selected_configuration_while_stopped(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "brutefir-192000@multipos.fdw6.conf"
@@ -81,7 +88,30 @@ class BrutefirConfigDetailsTest(unittest.TestCase):
             self.assertEqual(state.read_text(encoding="utf-8"), "4.0\n")
         self.assertTrue(response.get_json()["ok"])
         cli.assert_called_once_with(
-            "cfoa drc_l left_out -4.0; cfoa drc_r right_out -4.0")
+            'cfoa "drc_l" "left_out" -4.0; cfoa "drc_r" "right_out" -4.0')
+
+    def test_restore_attenuation_applies_configuration_and_removes_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "brutefir-192000.conf"
+            config.write_text(
+                'coeff "c-l" { filename: "left.raw"; attenuation: 8.0; };\n'
+                'coeff "c-r" { filename: "right.raw"; attenuation: 8.0; };\n',
+                encoding="utf-8")
+            state = root / "attenuation"
+            state.write_text("10.0\n", encoding="utf-8")
+            process = {"config": str(config)}
+            with mock.patch.object(APP, "_BRUTEFIR_ATTENUATION_FILE", str(state)), \
+                 mock.patch.object(APP, "_active_brutefir_process", return_value=process), \
+                 mock.patch.object(APP, "_brutefir_cli") as cli:
+                response = APP.app.test_client().post(
+                    "/drc/attenuation", json={"restore_default": True})
+
+            self.assertFalse(state.exists())
+        self.assertTrue(response.get_json()["ok"])
+        self.assertEqual(response.get_json()["source"], "configuration")
+        cli.assert_called_once_with(
+            'cfoa "drc_l" "left_out" 0.0; cfoa "drc_r" "right_out" 0.0')
 
     def test_headroom_is_calculated_from_the_current_raw_bytes(self):
         with tempfile.TemporaryDirectory() as directory:

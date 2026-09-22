@@ -78,6 +78,7 @@ app = Flask(__name__, template_folder=os.path.join(_HERE, "templates"))
 # Set by [qconnect] section in commands.conf; env vars are the fallback.
 QCONNECT_STATUS_FILE = os.environ.get("QCONNECT_STATUS_FILE", "/tmp/qconnect2mpd-status.txt")
 QCONNECT_LOG_FILE    = os.environ.get("QCONNECT_LOG_FILE",    "/tmp/qconnect2mpd.log")
+QCONNECT_STATUS_RESYNC_S = 3   # seconds between browser polls of /qconnect/status
 
 # qobuzconnect2mpd and upmpdcli are mutually exclusive renderers driving MPD;
 # only one may run at a time.  On Linux they are systemd system services with
@@ -292,6 +293,11 @@ MONITOR_INTERVAL = 5     # seconds between MPD refreshes
 TOPCPU_INTERVAL = 3      # seconds between top-CPU refreshes
 SNDSTAT_INTERVAL = 5     # seconds between audio-device refreshes
 BRUTEFIR_INTERVAL = 5    # seconds between brutefir CPU refreshes
+# BruteFIR RTI/Peak gauge poll ladder (seconds) -- see loadDspGauge() in
+# index.html.  Steps to the next value once a reading has held unchanged for
+# DSP_GAUGE_SETTLE_COUNT consecutive polls, resets to the first on any change.
+DSP_GAUGE_POLL_STEPS = [1, 5, 8]
+DSP_GAUGE_SETTLE_COUNT = 10
 _TOPCPU_CACHE: dict | None = None
 _TOPCPU_CACHE_AT = 0.0
 
@@ -611,7 +617,7 @@ def _default_log_sources() -> list[dict]:
     return [
         {"id": "mpd",               "label": "MPD",                  "path": os.path.expanduser("~/.local/share/mpd/mpd.log")},
         {"id": "upmpdcli",         "label": "upmpdcli",           "path": "/tmp/upmpdcli.log"},
-        {"id": "upmpdcli-console", "label": "upmpdcli (plugins)", "path": "/tmp/upmpdcli-console.log"},
+        {"id": "upmpdcli-console", "label": "upmpdcli (plugins)", "path": "/run/open-media-drc/upmpdcli-console.log" if _IS_LINUX else "/tmp/upmpdcli-console.log"},
         {"id": "qobuzconnect2mpd", "label": "qobuzconnect2mpd",   "path": QCONNECT_LOG_FILE},
         {"id": "brutefir",         "label": "BruteFIR",           "path": "/tmp/brutefir.out"},
         {"id": "omdrc-cdin",       "label": "CD input",           "path": CDIN_LOG_FILE},
@@ -695,7 +701,8 @@ def load_config(path: str) -> None:
     global QCONNECT_OAUTH_BINARY, QCONNECT_OAUTH_CONFIG, QCONNECT_OAUTH_USER
     global QCONNECT_OAUTH_URL_TIMEOUT
     global TOPCPU_THRESHOLD, MONITOR_INTERVAL, TOPCPU_INTERVAL
-    global SNDSTAT_INTERVAL, BRUTEFIR_INTERVAL
+    global SNDSTAT_INTERVAL, BRUTEFIR_INTERVAL, DSP_GAUGE_POLL_STEPS, DSP_GAUGE_SETTLE_COUNT
+    global QCONNECT_STATUS_RESYNC_S
     global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
     global SPECTRUM_RATE, SPECTRUM_BITS, SPECTRUM_CHANNELS
     global SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
@@ -720,6 +727,8 @@ def load_config(path: str) -> None:
     if cfg.has_section("qconnect"):
         QCONNECT_STATUS_FILE = cfg.get("qconnect", "status_file", fallback=QCONNECT_STATUS_FILE)
         QCONNECT_LOG_FILE    = cfg.get("qconnect", "log_file",    fallback=QCONNECT_LOG_FILE)
+        QCONNECT_STATUS_RESYNC_S = max(1, cfg.getint(
+            "qconnect", "status_resync_seconds", fallback=QCONNECT_STATUS_RESYNC_S))
 
     # [monitor] is a settings section — read and skip it.
     if cfg.has_section("monitor"):
@@ -728,6 +737,16 @@ def load_config(path: str) -> None:
         TOPCPU_INTERVAL = max(1, cfg.getint("monitor", "topcpu_interval", fallback=TOPCPU_INTERVAL))
         SNDSTAT_INTERVAL = max(1, cfg.getint("monitor", "sndstat_interval", fallback=SNDSTAT_INTERVAL))
         BRUTEFIR_INTERVAL = max(1, cfg.getint("monitor", "brutefir_interval", fallback=BRUTEFIR_INTERVAL))
+        raw_steps = cfg.get("monitor", "dsp_gauge_poll_steps", fallback="")
+        if raw_steps.strip():
+            try:
+                steps = sorted({max(1, int(s.strip())) for s in raw_steps.split(",") if s.strip()})
+            except ValueError:
+                steps = []
+            if steps:
+                DSP_GAUGE_POLL_STEPS = steps
+        DSP_GAUGE_SETTLE_COUNT = max(1, cfg.getint(
+            "monitor", "dsp_gauge_settle_count", fallback=DSP_GAUGE_SETTLE_COUNT))
 
     if cfg.has_section("spectrum"):
         SPECTRUM_ENABLED = cfg.getboolean("spectrum", "enabled", fallback=SPECTRUM_ENABLED)
@@ -1223,6 +1242,49 @@ def _mpd_audio_via_protocol(port: str | None) -> str:
     return ""
 
 
+def _mpd_now_playing_via_protocol(port: str | None) -> dict:
+    """currentsong + status read from MPD in one round trip: title, artist,
+    playback state, position/duration and the decoded audio format.  Used to
+    build the renderer card for a renderer -- upmpdcli -- that keeps no
+    status file of its own to read instead, unlike qobuzconnect2mpd."""
+    import socket
+    info = {"title": "", "album": "", "artist": "", "state": "", "elapsed": None,
+            "duration": None, "audio": ""}
+    try:
+        p = int(port) if port else 6600
+        with socket.create_connection(("localhost", p), timeout=3) as sock:
+            with sock.makefile("r", encoding="utf-8", errors="replace") as f:
+                if not f.readline().startswith("OK"):
+                    return info
+                sock.sendall(b"command_list_begin\ncurrentsong\nstatus\n"
+                             b"command_list_end\n")
+                for line in f:
+                    line = line.rstrip("\n")
+                    if line == "OK" or line.startswith("ACK"):
+                        break
+                    key, sep, value = line.partition(":")
+                    if not sep:
+                        continue
+                    key, value = key.strip().lower(), value.strip()
+                    if key == "title":
+                        info["title"] = value
+                    elif key == "album":
+                        info["album"] = value
+                    elif key == "artist":
+                        info["artist"] = value
+                    elif key == "state":
+                        info["state"] = value
+                    elif key == "elapsed":
+                        info["elapsed"] = float(value)
+                    elif key == "duration":
+                        info["duration"] = float(value)
+                    elif key == "audio":
+                        info["audio"] = value
+    except Exception:
+        pass
+    return info
+
+
 def _mpc_status(port: str | None = None) -> dict:
     cmd = _mpc_client()
     if not cmd:
@@ -1236,6 +1298,8 @@ def _mpc_status(port: str | None = None) -> dict:
         "client": os.path.basename(cmd[0]),
         "state": "stopped",
         "song": "",
+        "title": "",
+        "album": "",
         "audio": "",
         "sample_rate": None,
         "bit_depth": None,
@@ -1265,10 +1329,17 @@ def _mpc_status(port: str | None = None) -> dict:
             break
 
     if not info["audio"] and info["state"] in ("playing", "paused"):
-        audio = _mpd_audio_via_protocol(port)
+        now_playing = _mpd_now_playing_via_protocol(port)
+        info["title"] = now_playing["title"]
+        info["album"] = now_playing["album"]
+        audio = now_playing["audio"] or _mpd_audio_via_protocol(port)
         if audio:
             info["audio"] = audio
             info.update(_parse_mpc_audio(audio))
+    elif info["state"] in ("playing", "paused"):
+        now_playing = _mpd_now_playing_via_protocol(port)
+        info["title"] = now_playing["title"]
+        info["album"] = now_playing["album"]
 
     return info
 
@@ -1755,6 +1826,7 @@ class SpectrumAnalyzer:
         self.lock = threading.Lock()
         self.cond = threading.Condition(self.lock)
         self.clients = 0
+        self.band_clients = 0   # subset of `clients` that actually want FFT bands
         self.seq = 0
         self.frame = {
             "ok": False,
@@ -1811,13 +1883,24 @@ class SpectrumAnalyzer:
     def _start_thread_locked(self, mode: str) -> None:
         # caller holds self.lock
         self.clients += 1
+        if mode != "vu":
+            self.band_clients += 1
         self.mode = mode
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
     def acquire(self, mode: str = "music") -> None:
-        mode = "precision" if mode == "precision" else "music"
+        # "vu" is a level-meters-only client: it never needs the FFT band
+        # analysis, only the RMS/peak numbers `_run_source` derives from a raw
+        # PCM slice regardless of mode.  `band_clients` counts how many
+        # attached clients DO want bands, so a lone VU listener can share the
+        # very same thread/FIFO tap the Spectrum tab uses without paying for
+        # a single rfft() — see the `self.band_clients > 0` gate in
+        # `_run_source`.  A "vu" join never overwrites `self.mode`: it must
+        # not silently turn off precision mode (or misreport it) for a bands
+        # client already attached.
+        mode = mode if mode in ("precision", "vu") else "music"
         # If a previous analyzer thread is still unwinding (its finally-block is
         # about to `mpc disable` the FIFO output), wait for it to finish before
         # starting a fresh one.  This serialises the output enable/disable so a
@@ -1834,7 +1917,9 @@ class SpectrumAnalyzer:
                     old = self.thread          # shutting down — wait outside lock
                 elif self.thread is not None:
                     self.clients += 1          # healthy thread — share it
-                    self.mode = mode
+                    if mode != "vu":
+                        self.band_clients += 1
+                        self.mode = mode
                     return
                 else:
                     self._start_thread_locked(mode)
@@ -1845,9 +1930,11 @@ class SpectrumAnalyzer:
         with self.lock:
             self._start_thread_locked(mode)
 
-    def release(self) -> None:
+    def release(self, wants_bands: bool = True) -> None:
         with self.lock:
             self.clients = max(0, self.clients - 1)
+            if wants_bands:
+                self.band_clients = max(0, self.band_clients - 1)
             if self.clients == 0:
                 self.stop_event.set()
                 self.cond.notify_all()
@@ -2059,11 +2146,12 @@ class SpectrumAnalyzer:
             tiers = _spectrum_tiers(fft_size, rate, multi_res)
             band_defs = _spectrum_band_defs(SPECTRUM_BANDS, rate / 2.0, SPECTRUM_MIN_FREQ)
             band_tier = _assign_band_tiers(band_defs, tiers, rate)
-            # VU ballistics are computed over a short trailing slice (~50 ms) of
-            # the captured buffer rather than the whole FFT window so the meters
-            # track the music instead of lagging behind by the FFT length
-            # (341 ms music / 1.36 s precision).
-            vu_window = max(256, min(fft_size, int(rate * 0.05)))
+            # RMS follows conventional VU timing: a 300-ms trailing measurement.
+            # Peak remains a fast 50-ms detector and also spans at least one UI
+            # frame below so a transient cannot fall between publications.
+            rms_window = max(256, int(rate * 0.300))
+            peak_window = max(256, int(rate * 0.050))
+            history_bytes = max(need_bytes, rms_window * frame_bytes)
             silence_bands = band_defs
 
             # FIFO ingestion must not wait for numpy/JSON/chart-frame work.  CD
@@ -2174,7 +2262,7 @@ class SpectrumAnalyzer:
                 makes a delay change take effect on the very next frame.
                 """
                 reach = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MAX_MS / 1000.0)
-                return (need_bytes + int(reach * rate) * frame_bytes
+                return (history_bytes + int(reach * rate) * frame_bytes
                         + chunk_bytes * 3)
 
             def publish_silence() -> None:
@@ -2355,18 +2443,41 @@ class SpectrumAnalyzer:
                 pcm = np.frombuffer(raw, dtype="<i4").reshape(-1, SPECTRUM_CHANNELS)
                 left = pcm[:, 0].astype(np.float32) / 2147483648.0
                 right = pcm[:, 1].astype(np.float32) / 2147483648.0
-                bands = band_defs
-                l_bins = _spectrum_multi_bins(
-                    left, band_defs, band_tier, tiers, span_frames)
-                r_bins = _spectrum_multi_bins(
-                    right, band_defs, band_tier, tiers, span_frames)
-                # The VU slice covers the frame interval too, for the same
-                # reason the bands hop: a peak inside it must not fall between
-                # two meter updates.
-                vu_frames = max(vu_window, min(span_frames, len(left)))
-                l_vu, r_vu = left[-vu_frames:], right[-vu_frames:]
-                l_rms, l_peak = _spectrum_level_db(l_vu)
-                r_rms, r_peak = _spectrum_level_db(r_vu)
+                # Skip the FFT entirely while nobody actually wants bands — a
+                # VU-only listener (the Levels meters) needs only the RMS/peak
+                # slice below, computed straight off the raw PCM with no
+                # rfft() at all.  `band_clients` is read unlocked: it is a
+                # soft real-time UI toggle like `self.mode` above, and being
+                # one frame (40ms) late to notice a join/leave is harmless.
+                if self.band_clients > 0:
+                    bands = band_defs
+                    l_bins = _spectrum_multi_bins(
+                        left, band_defs, band_tier, tiers, span_frames)
+                    r_bins = _spectrum_multi_bins(
+                        right, band_defs, band_tier, tiers, span_frames)
+                else:
+                    bands = []
+                    l_bins = []
+                    r_bins = []
+                # RMS gets its own 300-ms history even when the FFT is shorter
+                # (notably 192 kHz music mode).  During the first 300 ms after a
+                # start it uses all history available rather than delaying the
+                # display merely to fill the averaging window.
+                rms_bytes = rms_window * frame_bytes
+                rms_raw = bytes(buf[max(0, end - rms_bytes):end])
+                rms_pcm = np.frombuffer(rms_raw, dtype="<i4").reshape(
+                    -1, SPECTRUM_CHANNELS)
+                l_rms, _ = _spectrum_level_db(
+                    rms_pcm[:, 0].astype(np.float32) / 2147483648.0)
+                r_rms, _ = _spectrum_level_db(
+                    rms_pcm[:, 1].astype(np.float32) / 2147483648.0)
+
+                # Peak covers the frame interval too, for the same reason the
+                # bands hop: a transient inside it must not fall between two
+                # meter updates.
+                peak_frames = min(len(left), max(peak_window, span_frames))
+                _, l_peak = _spectrum_level_db(left[-peak_frames:])
+                _, r_peak = _spectrum_level_db(right[-peak_frames:])
                 self._publish({
                     "ok": True,
                     "state": "running",
@@ -3380,6 +3491,33 @@ def _configured_brutefir_attenuation_db(conf_path: str | None = None) -> float |
     return max(values)
 
 
+def _configured_brutefir_safety_limit_db(conf_path: str | None = None) -> float | None:
+    """Output safety ceiling effective for the active BruteFIR configuration.
+
+    Generated graph configs deliberately omit global defaults; BruteFIR reads
+    those from ~/.config/BruteFIR/brutefir_defaults.conf.
+    """
+    conf_path = conf_path or _active_brutefir_conf() or _selected_brutefir_conf()
+    paths = ([Path(conf_path)] if conf_path else []) + [
+        Path.home() / ".config/BruteFIR/brutefir_defaults.conf",
+    ]
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        match = re.search(r"(?m)^\s*safety_limit\s*:\s*([-+0-9.]+)\s*;", text)
+        if not match:
+            continue
+        try:
+            value = float(match.group(1))
+        except ValueError:
+            continue
+        if math.isfinite(value) and value > 0:
+            return value
+    return None
+
+
 def _effective_brutefir_attenuation_db() -> tuple[float | None, str | None]:
     """Total attenuation currently applied, or selected for the next start."""
     saved = _saved_brutefir_attenuation_db()
@@ -3412,8 +3550,10 @@ def _set_brutefir_attenuation(db: float) -> None:
     if configured is None:
         raise RuntimeError("cannot read attenuation from the active BruteFIR configuration")
     output_attenuation = db - configured
-    command = (f"cfoa drc_l left_out {output_attenuation:.1f}; "
-               f"cfoa drc_r right_out {output_attenuation:.1f}")
+    # BruteFIR accepts unquoted numeric indices here, but symbolic filter and
+    # output names must be quoted or it reports "Invalid number" for each.
+    command = (f'cfoa "drc_l" "left_out" {output_attenuation:.1f}; '
+               f'cfoa "drc_r" "right_out" {output_attenuation:.1f}')
     _brutefir_cli(command)
 
 
@@ -3703,6 +3843,9 @@ def index():
         topcpu_interval=TOPCPU_INTERVAL,
         sndstat_interval=SNDSTAT_INTERVAL,
         brutefir_interval=BRUTEFIR_INTERVAL,
+        dsp_gauge_poll_steps=DSP_GAUGE_POLL_STEPS,
+        dsp_gauge_settle_count=DSP_GAUGE_SETTLE_COUNT,
+        qconnect_status_resync=QCONNECT_STATUS_RESYNC_S,
         spectrum=_SPECTRUM.settings(),
         log_sources=[{"id": s["id"], "label": s["label"]} for s in LOG_SOURCES],
         log_alert_interval=LOG_ALERT_INTERVAL,
@@ -3901,6 +4044,36 @@ def read_command(cmd_id):
 # has no track any more (the controller replaced or cleared the queue).  Naming
 # the previous track there would make a busy renderer look like a stalled one.
 _QC_BARE_STATE = re.compile(r"^\[(?:playing|paused|stopped)\]$", re.I)
+# The same leading tag on a line that DOES carry a track -- read, not stripped:
+# it stays part of the visible line1 text.
+_QC_LEAD_STATE = re.compile(r"^\[(playing|paused|stopped)\]", re.I)
+# Both renderer status builders append a trailing "  [M:SS / M:SS]" position
+# to line1 (qobuzconnect2mpd's own qcmgr.cxx:writeStatusFile, and
+# _upmpdcli_qconnect_status below matching it).  Lifting it back out into its
+# own fields lets the browser tick the displayed position forward itself and
+# only resync it periodically (QCONNECT_STATUS_RESYNC_S) instead of polling
+# every second just to watch a clock advance.
+_QC_POS_SUFFIX = re.compile(r"  \[(\d+):(\d{2}) / (\d+):(\d{2})\]$")
+_QC_STATE_MAP = {"playing": "play", "paused": "pause", "stopped": "stop"}
+
+
+def _qc_playback_state(line1: str) -> str:
+    """"play"/"pause"/"stop"/"" from a status line's leading state tag -- the
+    same vocabulary MPD's own `state` field uses (see
+    _mpd_now_playing_via_protocol), so the client ticks both renderers'
+    status alike regardless of which one is active."""
+    m = _QC_LEAD_STATE.match(line1)
+    return _QC_STATE_MAP.get(m.group(1).lower(), "") if m else ""
+
+
+def _qc_track_timing(line1: str) -> tuple[str, float | None, float | None]:
+    """(line1-without-suffix, elapsed_s, duration_s).  No suffix -- an older
+    daemon build, or no track playing -- yields (line1, None, None)."""
+    m = _QC_POS_SUFFIX.search(line1)
+    if not m:
+        return line1, None, None
+    em, es, dm, ds = m.groups()
+    return line1[:m.start()], float(int(em) * 60 + int(es)), float(int(dm) * 60 + int(ds))
 
 
 def _parse_qconnect_status(lines: list[str]) -> dict:
@@ -3916,6 +4089,8 @@ def _parse_qconnect_status(lines: list[str]) -> dict:
     line1 = lines[0].strip() if len(lines) > 0 else ""
     if _QC_BARE_STATE.match(line1):
         line1 = ""
+    playback_state = _qc_playback_state(line1)
+    line1, elapsed, duration = _qc_track_timing(line1)
     line2  = None
     state  = ""
     events = []
@@ -3936,18 +4111,61 @@ def _parse_qconnect_status(lines: list[str]) -> dict:
         "events": events,
         # Legacy single activity line: the newest ring entry.
         "line3":  events[-1] if events else "",
+        "elapsed": elapsed,
+        "duration": duration,
+        "playback_state": playback_state,
     }
 
 
 _QC_STATUS_EMPTY = {"line1": "", "line2": "", "state": "", "events": [],
-                    "line3": ""}
+                    "line3": "", "elapsed": None, "duration": None,
+                    "playback_state": ""}
+
+
+def _upmpdcli_qconnect_status() -> dict:
+    """The {line1, line2, state, events} shape /qconnect/status serves for
+    qobuzconnect2mpd's own status file, built instead from a direct MPD
+    query -- upmpdcli has no equivalent daemon-side status file, but MPD's
+    queue already carries the same title/album/format tags either renderer
+    puts there (see mpdctl.cxx's addtagid use in qobuzconnect2mpd, and the
+    matching tags upmpdcli writes for its own queue entries).  elapsed/
+    duration/playback_state travel as their own fields rather than baked
+    into line1 -- see _qc_track_timing's docstring."""
+    np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+    state_tag = {"play": "[playing]", "pause": "[paused]"}.get(np["state"], "[stopped]")
+    # UPnP services sometimes stuff every contributor and role (performer,
+    # producer, lyricist, ...) into MPD's Artist tag.  That is valid metadata,
+    # but unusable as a now-playing headline.  Deliberately show only the two
+    # concise, structured fields requested by the UI: track and album.
+    track_album = " · ".join(part for part in (np["title"], np["album"]) if part)
+    line1 = f"{state_tag} {track_album}" if track_album else ""
+
+    line2 = ""
+    if np["state"] != "stop" and np["audio"]:
+        parsed = _parse_mpc_audio(np["audio"])
+        bits, rate, ch = parsed["bit_depth"], parsed["sample_rate"], parsed["channels"]
+        if rate:
+            parts = [f"{bits} bit"] if bits else []
+            parts.append(f"{rate / 1000:g} kHz")
+            chan = {1: "mono", 2: "stereo"}.get(ch, f"{ch}ch" if ch else "")
+            if chan:
+                parts.append(chan)
+            line2 = " / ".join(parts)
+
+    return {"line1": line1, "line2": line2, "state": "", "events": [],
+            "elapsed": np["elapsed"], "duration": np["duration"],
+            "playback_state": np["state"]}
 
 
 @app.route("/qconnect/status")
 def qconnect_status():
     """Now playing, plus what qobuzconnect2mpd is doing between the phone's
     play command and the first sound — resolving stream URLs, reconstructing
-    segments, waiting on MPD — or the error that stopped it."""
+    segments, waiting on MPD — or the error that stopped it.  upmpdcli keeps
+    no such status file, so its card is built from a direct MPD query
+    instead (see _upmpdcli_qconnect_status)."""
+    if _current_renderer() == UPMPDCLI_SERVICE:
+        return jsonify({"ok": True, **_upmpdcli_qconnect_status()})
     try:
         with open(QCONNECT_STATUS_FILE, encoding="utf-8") as f:
             lines = f.read().splitlines()
@@ -6395,6 +6613,26 @@ def renderer_restart():
         return jsonify({"ok": False, "error": str(e)})
 
 
+@app.route("/mpd/restart", methods=["POST"])
+def mpd_restart():
+    """Restart MPD itself.  Its own Restart=on-failure only fires on a crash;
+    a wedge that leaves the process up but its accept() loop starved (see
+    etc/sudoers.d/omdrcctrl-renderer.in) has no other recovery."""
+    try:
+        _service_action("mpd", "onestop")
+        if _service_running("mpd"):
+            return jsonify({"ok": False, "error": "could not stop mpd"})
+        r = _service_action("mpd", "onestart")
+        if r.returncode != 0 and not _service_running("mpd"):
+            return jsonify({"ok": False,
+                            "error": f"starting mpd: {(r.stderr or r.stdout).strip()}"})
+        return jsonify({"ok": True, "running": _service_running("mpd")})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 @app.route("/mpd/info")
 def mpd_info():
     try:
@@ -6457,6 +6695,8 @@ def mpd_info():
             "client":  mpc["client"] or "(not found)",
             "state":   mpc["state"],
             "song":    mpc["song"],
+            "title":   mpc["title"],
+            "album":   mpc["album"],
             "audio":   mpc["audio"],
             "sample_rate": mpc["sample_rate"],
             "bit_depth": mpc["bit_depth"],
@@ -6703,7 +6943,11 @@ def spectrum_floor():
 def spectrum_stream():
     if not SPECTRUM_ENABLED:
         return jsonify({"ok": False, "error": "spectrum analyzer disabled"}), 404
-    mode = "precision" if request.args.get("mode") == "precision" else "music"
+    # "vu" is the level-meters-only client (see SpectrumAnalyzer.acquire): it
+    # rides the same FIFO tap as the Spectrum tab but never costs an rfft().
+    raw_mode = request.args.get("mode")
+    mode = raw_mode if raw_mode in ("precision", "vu") else "music"
+    wants_bands = mode != "vu"
 
     def events():
         _SPECTRUM.acquire(mode)
@@ -6718,7 +6962,7 @@ def spectrum_stream():
         except GeneratorExit:
             pass
         finally:
-            _SPECTRUM.release()
+            _SPECTRUM.release(wants_bands)
 
     return Response(events(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -7120,7 +7364,9 @@ def drc_brutefir_peak():
     tails a bounded window of /tmp/brutefir.out.
     """
     try:
-        return jsonify(_brutefir_peak_status())
+        status = _brutefir_peak_status()
+        status["safety_limit_db"] = _configured_brutefir_safety_limit_db()
+        return jsonify(status)
     except Exception as error:
         return jsonify({"available": False, "error": str(error)})
 
@@ -7163,6 +7409,7 @@ def drc_attenuation():
     running = _active_brutefir_process() is not None
     if request.method == "GET":
         db, source = _effective_brutefir_attenuation_db()
+        configured = _configured_brutefir_attenuation_db()
         if db is None:
             return jsonify({
                 "ok": False, "running": running,
@@ -7172,9 +7419,30 @@ def drc_attenuation():
                  min(_BRUTEFIR_ATTENUATION_MAX_DB, db))
         return jsonify({"ok": True, "db": round(db, 1), "running": running,
                         "source": source,
+                        "configured_db": (round(configured, 1)
+                                          if configured is not None else None),
                         "min_db": _BRUTEFIR_ATTENUATION_MIN_DB,
                         "max_db": _BRUTEFIR_ATTENUATION_MAX_DB})
-    raw = (request.get_json(silent=True) or {}).get("db")
+    payload = request.get_json(silent=True) or {}
+    if payload.get("restore_default") is True:
+        configured = _configured_brutefir_attenuation_db()
+        if configured is None:
+            return jsonify({"ok": False, "error":
+                            "cannot read attenuation from the selected BruteFIR configuration"}), 503
+        try:
+            if running:
+                _set_brutefir_attenuation(configured)
+            try:
+                os.unlink(_BRUTEFIR_ATTENUATION_FILE)
+            except FileNotFoundError:
+                pass
+            return jsonify({"ok": True, "db": round(configured, 1),
+                            "running": running, "source": "configuration"})
+        except OSError as error:
+            return jsonify({"ok": False, "error": f"BruteFIR CLI unavailable: {error}"}), 503
+        except RuntimeError as error:
+            return jsonify({"ok": False, "error": str(error)}), 502
+    raw = payload.get("db")
     try:
         db = float(raw)
     except (TypeError, ValueError):

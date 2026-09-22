@@ -1625,7 +1625,7 @@ start_brutefir() {
             output_attenuation=$(awk -v wanted="$attenuation" -v base="$configured_attenuation" 'BEGIN { printf "%.1f", wanted - base }')
             for cli_try in 1 2 3 4 5; do
               if exec 8<>/dev/tcp/127.0.0.1/3000 2>/dev/null; then
-                printf "cfoa drc_l left_out %s; cfoa drc_r right_out %s; quit\n" "$output_attenuation" "$output_attenuation" >&8
+                printf 'cfoa "drc_l" "left_out" %s; cfoa "drc_r" "right_out" %s; quit\n' "$output_attenuation" "$output_attenuation" >&8
                 exec 8>&- 8<&-
                 echo "restored brutefir attenuation: ${attenuation} dB (cfoa ${output_attenuation} dB over configured ${configured_attenuation} dB)"
                 break

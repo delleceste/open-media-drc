@@ -1,8 +1,15 @@
 # Drop-in rendered by cmake/renderers.cmake.
 # Overrides /usr/lib/systemd/system/mpd.service.d/00-arch.conf (User=mpd)
-# and adds the repo config path — /etc/ drop-ins take precedence over
-# /usr/lib/ drop-ins regardless of filename order.
-# Deploy to /etc/systemd/system/mpd.service.d/omdrc.conf
+# and adds the installed config path.  The /usr/local/lib systemd load path
+# takes precedence over the distribution's /usr/lib path.
+# Installed by CMake beside the other system units.
+
+[Unit]
+# MPD persists output enablement in its state file.  If it is restarted during
+# the short DRC handoff window, that persisted state can contain no audible
+# output at all.  Run the level-triggered audio reconciler after every MPD
+# start so the saved session selects the direct or corrected output again.
+Wants=omdrc-mpd-reconcile.service
 
 [Service]
 User=@AUDIO_USER@

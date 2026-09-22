@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "omdrc-ctrl/src"
@@ -35,7 +36,9 @@ class StatusParseTest(unittest.TestCase):
             "11:24:03 queue received: 14 tracks, starting at item 0\n"
             "11:24:07 segment 7/52 (13%)\n"
         )
-        self.assertEqual(got["line1"], "[playing] Artist - Title  [0:12 / 4:02]")
+        self.assertEqual(got["line1"], "[playing] Artist - Title")
+        self.assertEqual(got["elapsed"], 12.0)
+        self.assertEqual(got["duration"], 242.0)
         self.assertEqual(got["line2"], "24 bit / 176.4 kHz / stereo")
         self.assertEqual(got["state"], "LOADING SEGMENT")
         self.assertEqual(got["events"], [
@@ -73,7 +76,8 @@ class StatusRouteTest(unittest.TestCase):
         self.addCleanup(lambda: Path(path).unlink(missing_ok=True))
         APP.QCONNECT_STATUS_FILE = path
         client = APP.app.test_client()
-        return json.loads(client.get("/qconnect/status").data)
+        with patch.object(APP, "_current_renderer", return_value=APP.QCONNECT_SERVICE):
+            return json.loads(client.get("/qconnect/status").data)
 
     def test_route_reports_phase_and_events(self):
         body = self._get("[stopped] \n\nstate=RESOLVING STREAM\n11:24:04 resolving stream URL 1/14 (7%)\n")
@@ -83,10 +87,29 @@ class StatusRouteTest(unittest.TestCase):
 
     def test_missing_status_file_is_reported_empty(self):
         APP.QCONNECT_STATUS_FILE = "/nonexistent/qconnect-status"
-        body = json.loads(APP.app.test_client().get("/qconnect/status").data)
+        with patch.object(APP, "_current_renderer", return_value=APP.QCONNECT_SERVICE):
+            body = json.loads(APP.app.test_client().get("/qconnect/status").data)
         self.assertFalse(body["ok"])
         self.assertEqual(body["events"], [])
         self.assertEqual(body["state"], "")
+
+
+class UpmpdcliStatusTest(unittest.TestCase):
+    def test_now_playing_omits_artist_credit_dump(self):
+        now = {
+            "title": "Nutshell (Live)",
+            "album": "Unplugged",
+            "artist": "Alice In Chains, Producer Name, Producer - Lyricist Name, Lyricist",
+            "state": "play",
+            "elapsed": 170.0,
+            "duration": 297.0,
+            "audio": "44100:24:2",
+        }
+        with patch.object(APP, "_mpd_now_playing_via_protocol", return_value=now):
+            got = APP._upmpdcli_qconnect_status()
+        self.assertEqual(got["line1"], "[playing] Nutshell (Live) · Unplugged")
+        self.assertNotIn("Producer", got["line1"])
+        self.assertNotIn("Lyricist", got["line1"])
 
 
 class PanelMarkupTest(unittest.TestCase):
