@@ -29,6 +29,7 @@ For both files use:
 - timing reference enabled;
 - no added harmonic distortion; the timing-reference content remains part of
   the generated file.
+- REW dither enabled in the Sweeps/measurements tab.
 
 The files have been checked: both are stereo Microsoft PCM, 24-bit, 44,100 Hz,
 851,968 frames and 19.319 seconds long. Their names and metadata show the same
@@ -37,13 +38,11 @@ program channel contains only the low-level timing-reference material, as
 expected. Keep these original WAVs unchanged. REW recommends including the
 timing reference in saved measurement sweeps. [REW generator documentation](https://www.roomeqwizard.com/help/help_en-GB/html/siggen.html)
 
-The WAV header does not record every REW generator checkbox. Therefore the
-existing files prove the PCM format, rate, level, duration and channel layout;
-they cannot independently prove whether a generator session had a dither box
-checked. Do not regenerate them unless necessary; if you do, record the REW
-version and generator settings with the new files. REW may include a short
-dithered pre-roll to let playback devices lock, depending on the generator
-settings.
+The dither setting is intentional and must be identical for both files and for
+any regenerated copies. The WAV header does not record every REW generator
+checkbox, so retain the REW project or a screenshot of the Sweeps/measurements
+tab with the files. REW may also include a short dithered pre-roll to let
+playback devices lock.
 
 The two sweeps are intentionally separate. REW’s ordinary measurement mode
 uses one selected input channel at a time; simultaneous multi-input capture is
