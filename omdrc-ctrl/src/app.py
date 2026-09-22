@@ -4358,10 +4358,18 @@ def _drdb_fingerprint(info: dict) -> dict:
     running order is where two masters of a record differ, and label and year
     name an edition outright when the renderer publishes them."""
     fmt = _parse_mpc_audio(info["audio"]) if info.get("audio") else {}
+    # A UPnP server numbers a multi-disc record disc*1000 + track: upmpdcli's
+    # Qobuz plugin queues Delicate Sound of Thunder as 1001..1005, 2001...
+    # Split back apart, or track 1005 matches nothing and the disc -- which is
+    # what tells a DR13 "Disc 1" entry from a DR14 "Disc 2" -- is lost.
+    track_no, disc = info.get("track_no"), None
+    if isinstance(track_no, int) and track_no >= 1000:
+        disc, track_no = track_no // 1000, track_no % 1000
     return {
         "year":     info.get("date", ""),
         "label":    info.get("label", ""),
-        "track_no": info.get("track_no"),
+        "disc":     disc,
+        "track_no": track_no,
         "duration": info.get("duration"),
         "rate":     fmt.get("sample_rate"),
         "bits":     fmt.get("bit_depth"),
@@ -4426,6 +4434,7 @@ def drdb_identify():
         "album":    str(playing.get("album", ""))[:300],
         "year":     str(playing.get("year", ""))[:32],
         "label":    str(playing.get("label", ""))[:200],
+        "disc":     playing.get("disc") if isinstance(playing.get("disc"), int) else None,
         "track_no": playing.get("track_no") if isinstance(playing.get("track_no"), int) else None,
         "duration": playing.get("duration") if isinstance(playing.get("duration"), (int, float)) else None,
         "rate":     playing.get("rate") if isinstance(playing.get("rate"), int) else None,

@@ -451,6 +451,8 @@ _LABEL_NOISE = re.compile(
     r"\b(?:records?|recordings?|music|entertainment|group|ltd|limited|inc|"
     r"llc|gmbh|sa|srl|bv|co|company|label|the)\b", re.I)
 _YEAR = re.compile(r"(\d{4})")
+# "(Disc 2)", "[CD 1]", ", Disc 2": a database entry for one disc of a set.
+_DISC_IN_NAME = re.compile(r"\b(?:disc|disk|cd)\s*(\d{1,2})\b", re.I)
 # Edition markers in an album name that a 2-channel CD-rate stream cannot be.
 _SURROUND_EDITION = re.compile(r"\b(?:5\.1|dvd|blu-?ray|sacd|dts|dolby)\b", re.I)
 _VINYL_EDITION = re.compile(r"\b(?:vinyl|lp|pbthal)\b", re.I)
@@ -586,6 +588,24 @@ def identify(playing: dict, album: dict) -> dict:
             score -= 6
             against.append(f"a CD, against a {rate / 1000:g} kHz/"
                            f"{bits or '?'} bit stream")
+
+    # -- which disc of the set ------------------------------------------------
+    #
+    # A double album is filed here one disc per entry, and they do not measure
+    # alike: Delicate Sound of Thunder is DR13 on disc 1 and DR14 on disc 2.
+    # The disc is only known when the renderer numbers tracks disc*1000 +
+    # track, so an entry naming no disc is not held against.
+    disc = playing.get("disc")
+    named_disc = _DISC_IN_NAME.search(str(album.get("album", "")))
+    if isinstance(disc, int) and disc > 0 and named_disc:
+        evidence = True
+        if int(named_disc.group(1)) == disc:
+            score += 10
+            for_.append(f"disc {disc} of the set, as the stream is")
+        else:
+            score -= 25
+            against.append(f"disc {named_disc.group(1)} of the set, "
+                           f"where the stream is disc {disc}")
 
     # -- the imprint and the year --------------------------------------------
     #

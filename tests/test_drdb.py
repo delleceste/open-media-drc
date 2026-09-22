@@ -386,8 +386,8 @@ class IdentifyTest(unittest.TestCase):
 
     def playing(self, **kwargs):
         base = {"artist": "Alice In Chains", "album": "Unplugged",
-                "title": "Down In A Hole", "track_no": 5, "duration": 346.0,
-                "rate": 44100, "bits": 16, "channels": 2,
+                "title": "Down In A Hole", "track_no": 5, "disc": None,
+                "duration": 346.0, "rate": 44100, "bits": 16, "channels": 2,
                 "year": "", "label": ""}
         base.update(kwargs)
         return base
@@ -450,6 +450,25 @@ class IdentifyTest(unittest.TestCase):
         self.assertEqual(match["verdict"], "likely")
         self.assertTrue(any("1996" in r for r in match["against"]))
 
+    def test_the_wrong_disc_of_a_set_is_ruled_out(self):
+        # A double album is filed one disc per entry and they do not measure
+        # alike: Delicate Sound of Thunder is DR13 on disc 1, DR14 on disc 2.
+        wrong = drdb.identify(
+            self.playing(disc=1),
+            self.version("Delicate Sound of Thunder [CD 2]", "CD", {5: "5:46"}))
+        right = drdb.identify(
+            self.playing(disc=1),
+            self.version("Delicate Sound Of Thunder (Disc 1)", "CD", {5: "5:46"}))
+        self.assertTrue(any("disc 2 of the set" in r for r in wrong["against"]))
+        self.assertTrue(any("disc 1 of the set" in r for r in right["for"]))
+        self.assertGreater(right["score"], wrong["score"])
+
+    def test_an_entry_naming_no_disc_is_not_held_against(self):
+        match = drdb.identify(self.playing(disc=1),
+                              self.version("MTV Unplugged", "CD", {5: "5:46"}))
+        self.assertFalse(any("disc" in r for r in match["against"]))
+        self.assertEqual(match["verdict"], "likely")
+
     def test_nothing_to_compare_is_reported_as_unknown(self):
         match = drdb.identify(
             {"title": "", "album": "", "duration": None, "rate": None,
@@ -489,8 +508,20 @@ class FingerprintTest(unittest.TestCase):
     def test_the_playing_track_is_the_whole_fingerprint(self):
         got = self.fingerprint()
         self.assertEqual(got, {"year": "1996-04-30", "label": "Columbia/Legacy",
-                               "track_no": 5, "duration": 346.0, "rate": 44100,
-                               "bits": 16, "channels": 2})
+                               "disc": None, "track_no": 5, "duration": 346.0,
+                               "rate": 44100, "bits": 16, "channels": 2})
+
+    def test_a_multi_disc_track_number_is_split_back_apart(self):
+        # upmpdcli's Qobuz plugin queues Delicate Sound of Thunder as
+        # 1001..1005 for disc 1: disc*1000 + track.
+        got = self.fingerprint(track_no=1005)
+        self.assertEqual((got["disc"], got["track_no"]), (1, 5))
+        self.assertEqual(self.fingerprint(track_no=2011)["disc"], 2)
+        self.assertEqual(self.fingerprint(track_no=2011)["track_no"], 11)
+
+    def test_a_plain_track_number_names_no_disc(self):
+        got = self.fingerprint(track_no=7)
+        self.assertEqual((got["disc"], got["track_no"]), (None, 7))
 
     def test_a_renderer_that_publishes_no_edition_tags_still_fingerprints(self):
         got = self.fingerprint(date="", label="")
