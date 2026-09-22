@@ -4224,6 +4224,71 @@ def _drdb_guard():
 # is already stripped by _parse_qconnect_status; what is left is the only
 # metadata that renderer publishes.
 _QC_ARTIST_TITLE = re.compile(r"^(?P<artist>.+?)\s+-\s+(?P<title>.+)$")
+# A UPnP server may put every credited person and their role in one Artist
+# tag -- upmpdcli's Qobuz plugin does, and a live Alice In Chains track
+# arrives as "Alice In Chains, M. Inez (Composer), Alex Coletti, Producer  -
+# Alice In Chains, Performer  - ...  - Toby Wright, Recording Engineer
+# (Performer)", 29 credits of it.  That is honest metadata and hopeless as a
+# search term: the database is indexed by the name on the sleeve.  The credits
+# are "Name, Role" joined by " - ", so the performer can be read back out of
+# them.
+_CREDIT_SEP      = re.compile(r"\s+-\s+")
+_TRAILING_PAREN  = re.compile(r"\s*\([^()]*\)\s*$")
+_MAIN_ROLES      = {"performer", "main artist", "mainartist", "artist",
+                    "main performer", "featured artist", "featuredartist"}
+# Version annotations a streaming catalogue appends to a title or an album:
+# "(Album Version)", "(Live at the Majestic Theatre, Brooklyn, NY - April
+# 1996)", "[Remastered 2011]".  The database indexes records, not editions,
+# and matches on substrings, so these only ever cost a match.
+_TRAILING_ANNOTATION = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\s*$")
+
+
+def _drdb_main_artist(artist: str) -> str:
+    """The name on the sleeve, out of whatever the renderer put in the tag.
+
+    An ordinary Artist tag is returned untouched -- including one holding
+    commas ("Crosby, Stills, Nash & Young") or a dash ("Belle & Sebastian -
+    live"), since a credits dump is recognised by having both: several
+    " - "-joined parts, at least one of them carrying a role after a comma."""
+    text = (artist or "").strip()
+    if not text:
+        return ""
+    # The role upmpdcli labels the whole field with, in trailing parentheses.
+    body = _TRAILING_PAREN.sub("", text).strip() or text
+    parts = [part.strip() for part in _CREDIT_SEP.split(body) if part.strip()]
+    if len(parts) < 2 or not any("," in part for part in parts):
+        return text
+
+    credits = []
+    for part in parts:
+        name, sep, role = part.rpartition(",")
+        credits.append((name.strip(), role.strip().lower()) if sep
+                       else (part, ""))
+    for name, role in credits:
+        if role in _MAIN_ROLES and name:
+            return name
+    # Nobody is credited as the performer: the first name of the first credit
+    # is the best guess left, and in practice it is the sleeve name.
+    first = credits[0][0].split(",")[0].strip()
+    return first or text
+
+
+def _drdb_plain(name: str) -> str:
+    """A title or album with its trailing edition annotations removed.  Only
+    trailing ones: "(Don't Fear) The Reaper" is a name, not an annotation."""
+    text = (name or "").strip()
+    while True:
+        shorter = _TRAILING_ANNOTATION.sub("", text).strip()
+        if not shorter or shorter == text:
+            return text
+        text = shorter
+
+
+# ...and the album qobuzconnect2mpd appends to it: "Artist - Title · Album"
+# (qcmgr.cxx, the metadata backfill).  Greedy on the title so a track whose
+# own name holds a middle dot keeps it — the album is what was appended last.
+# Older daemon builds wrote no album, so its absence is not an error.
+_QC_TITLE_ALBUM = re.compile(r"^(?P<title>.+)\s+\u00b7\s+(?P<album>.+)$")
 
 
 def _drdb_now_playing() -> dict:
@@ -4247,6 +4312,10 @@ def _drdb_now_playing() -> dict:
         except OSError:
             status = dict(_QC_STATUS_EMPTY)
         line1 = _QC_LEAD_STATE.sub("", status["line1"]).strip()
+        appended = _QC_TITLE_ALBUM.match(line1)
+        if appended:
+            line1 = appended.group("title").strip()
+            album = album or appended.group("album").strip()
         match = _QC_ARTIST_TITLE.match(line1)
         if match:
             artist = artist or match.group("artist").strip()
@@ -4255,7 +4324,10 @@ def _drdb_now_playing() -> dict:
             title = title or line1
         state = state or status["playback_state"]
 
-    return {"artist": artist, "album": album, "title": title, "state": state}
+    return {"artist": _drdb_main_artist(artist),
+            "album":  _drdb_plain(album),
+            "title":  _drdb_plain(title),
+            "state":  state}
 
 
 @app.route("/dr-alternatives")

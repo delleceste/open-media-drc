@@ -280,6 +280,24 @@ class NowPlayingTest(unittest.TestCase):
         # No album tag exists anywhere in that path: the lookup has to cope.
         self.assertEqual(got["album"], "")
 
+    def test_the_album_appended_to_the_status_line_is_read_back(self):
+        got = self.tags(self.mpd(state="play"),
+                        "[playing] Pink Floyd - Learning to Fly \u00b7 "
+                        "A Momentary Lapse of Reason  [5:16 / 5:27]\n"
+                        "16 bit / 44.1 kHz / stereo\nstate=PLAYING\n")
+        self.assertEqual(got["artist"], "Pink Floyd")
+        self.assertEqual(got["title"], "Learning to Fly")
+        self.assertEqual(got["album"], "A Momentary Lapse of Reason")
+
+    def test_a_title_holding_a_middle_dot_keeps_it(self):
+        # The album is what the daemon appended last, so the split takes the
+        # final separator, not the first.
+        got = self.tags(self.mpd(),
+                        "[playing] Squarepusher - Iambic \u00b7 9 Poetry \u00b7 "
+                        "Ultravisitor\n")
+        self.assertEqual(got["title"], "Iambic \u00b7 9 Poetry")
+        self.assertEqual(got["album"], "Ultravisitor")
+
     def test_a_title_holding_a_dash_keeps_its_tail(self):
         got = self.tags(self.mpd(), "[playing] Neu! - Hallogallo - remaster\n")
         self.assertEqual(got["artist"], "Neu!")
@@ -292,6 +310,62 @@ class NowPlayingTest(unittest.TestCase):
     def test_missing_status_file_is_not_an_error(self):
         got = self.tags(self.mpd())
         self.assertEqual(got["title"], "")
+
+
+class MetadataCleanupTest(unittest.TestCase):
+    """What a renderer puts in a tag is not always what the database is
+    indexed by.  These are the two shapes that cost a lookup its answer."""
+
+    # Verbatim from MusicPD while upmpdcli played an Alice In Chains track:
+    # 29 credits, each with its role, in the Artist tag.
+    CREDITS = (
+        "Alice In Chains, M. Inez (Composer), Alex Coletti, Producer  - "
+        "Alice In Chains, Performer  - Alice In Chains, Producer  - "
+        "Brian Kingman, 2nd Engineer  - Don C. Tyler, Edited By  - "
+        "J. Cantrell, Composer  - Jerry Cantrell, Guitar  - "
+        "Layne Staley, Vocal  - Toby Wright, Recording Engineer  (Performer)")
+
+    def test_the_performer_is_picked_out_of_a_credits_dump(self):
+        self.assertEqual(APP._drdb_main_artist(self.CREDITS), "Alice In Chains")
+
+    def test_credits_without_an_explicit_performer_fall_back_to_the_first(self):
+        self.assertEqual(
+            APP._drdb_main_artist(
+                "Miles Davis, Trumpet  - Bill Evans, Piano  - "
+                "Paul Chambers, Bass"),
+            "Miles Davis")
+
+    def test_an_ordinary_artist_tag_is_left_alone(self):
+        for artist in ("Pink Floyd", "Crosby, Stills, Nash & Young",
+                       "Dinosaur Jr.", "Simon & Garfunkel", ""):
+            self.assertEqual(APP._drdb_main_artist(artist), artist)
+
+    def test_edition_annotations_come_off_a_title(self):
+        self.assertEqual(
+            APP._drdb_plain("Nutshell (Live at the Majestic Theatre, "
+                            "Brooklyn, NY - April 1996) (Album Version)"),
+            "Nutshell")
+        self.assertEqual(APP._drdb_plain("The Dark Side of the Moon "
+                                         "[Remastered 2011]"),
+                         "The Dark Side of the Moon")
+
+    def test_a_name_that_only_looks_like_an_annotation_survives(self):
+        # Leading, so not an annotation -- and stripping one that is the
+        # whole name would leave nothing to search for.
+        self.assertEqual(APP._drdb_plain("(Don't Fear) The Reaper"),
+                         "(Don't Fear) The Reaper")
+        self.assertEqual(APP._drdb_plain("(Untitled)"), "(Untitled)")
+
+    def test_now_playing_is_cleaned_before_it_reaches_the_lookup(self):
+        mpd = {"title": "Nutshell (Live at the Majestic Theatre, Brooklyn, "
+                        "NY - April 1996) (Album Version)",
+               "album": "Unplugged", "artist": self.CREDITS, "state": "play",
+               "elapsed": None, "duration": None, "audio": ""}
+        with patch.object(APP, "_mpd_now_playing_via_protocol", return_value=mpd), \
+             patch.object(APP, "_resolve_mpd_port", return_value="6600"):
+            got = APP._drdb_now_playing()
+        self.assertEqual(got, {"artist": "Alice In Chains", "album": "Unplugged",
+                               "title": "Nutshell", "state": "play"})
 
 
 class EndpointTest(unittest.TestCase):
