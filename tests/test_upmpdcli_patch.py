@@ -23,9 +23,10 @@ DEPENDENCIES = ROOT / "cmake/dependencies.cmake"
 RENDERERS = ROOT / "cmake/renderers.cmake"
 
 # The DIDL property name the patch introduces and a stock upmpdcli never
-# mentions.  Functional, not a marker: an upstream release that merges the
-# patch answers yes to the same test.
-ANCHOR = "upnp:publisher"
+# mentions -- dc:publisher is the DIDL-Lite standard for a label, and stock
+# upmpdcli reads no publisher at all.  Functional, not a marker: an upstream
+# release that merges the patch answers yes to the same test.
+ANCHOR = "dc:publisher"
 
 
 class PatchFileTest(unittest.TestCase):
@@ -36,10 +37,16 @@ class PatchFileTest(unittest.TestCase):
         self.assertTrue(PATCH.is_file())
         self.assertTrue((PATCH_DIR / "README.md").is_file())
 
-    def test_it_touches_exactly_the_three_files_it_documents(self):
+    def test_it_touches_exactly_the_files_it_documents(self):
         touched = set(re.findall(r"^\+\+\+ b/(.+)$", self.text, re.M))
-        self.assertEqual(touched, {"src/mpdcli.cxx", "src/upmpdutils.cxx",
-                                   "src/upmpdutils.hxx"})
+        plugins = "src/mediaserver/cdplugins"
+        self.assertEqual(touched, {
+            # the renderer: keep what the control point sent, send it to MPD
+            "src/mpdcli.cxx", "src/upmpdutils.cxx", "src/upmpdutils.hxx",
+            # the Qobuz plugin: supply the label when the CP does not
+            f"{plugins}/pycommon/upmplgmodels.py",
+            f"{plugins}/pycommon/upmplgutils.py",
+            f"{plugins}/qobuz/session.py"})
 
     def test_it_carries_the_anchor_the_build_check_looks_for(self):
         added = [line for line in self.text.splitlines()

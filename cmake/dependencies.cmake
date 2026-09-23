@@ -51,7 +51,7 @@ omdrc_need_tool(upmpdcli  NOTE " (UPnP/OpenHome renderer)")
 # (upmpdcli/patches/). Nothing breaks without it and the stack runs fine, so
 # this warns and explains; it never fails the configure.
 #
-# The test is the DIDL property name `upnp:publisher`, which the patch
+# The test is the DIDL property name `dc:publisher`, which the patch
 # introduces and a stock build never mentions: a functional string rather than
 # a marker, so a local build of the patch and an upstream release that merges
 # it both answer yes. It reads the binary that find_program resolved, which is
@@ -66,7 +66,7 @@ function(omdrc_check_upmpdcli_edition_tags)
         return()
     endif()
     execute_process(
-        COMMAND grep -a -c "upnp:publisher" "${OMDRC_TOOL_UPMPDCLI}"
+        COMMAND grep -a -c "dc:publisher" "${OMDRC_TOOL_UPMPDCLI}"
         OUTPUT_VARIABLE _hits OUTPUT_STRIP_TRAILING_WHITESPACE
         ERROR_QUIET RESULT_VARIABLE _rc)
     if(NOT _rc EQUAL 0 AND NOT _rc EQUAL 1)

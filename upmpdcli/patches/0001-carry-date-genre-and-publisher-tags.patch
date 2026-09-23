@@ -1,4 +1,4 @@
-From 9f608ce9e564b7d9933ae6e277a4ff4d0ecb0b7c Mon Sep 17 00:00:00 2001
+From 7b1129a9d048d6856c18745bcd4643ce38d7b50f Mon Sep 17 00:00:00 2001
 From: Giacomo <delleceste@gmail.com>
 Date: Wed, 23 Sep 2026 09:45:35 +0200
 Subject: [PATCH] mpd: carry date, genre and publisher between the CP and MPD
@@ -14,14 +14,17 @@ The result is that a queue entry carries only what describes the
 recording, never what identifies the issue it came from. That matters to
 anything downstream which has to tell two releases of one record apart: a
 remastered CD and its vinyl reissue share artist, album, title and track
-number, and differ in year and label.
+number, and differ in year and label. The data is usually right there --
+a control point sending dc:date and dc:publisher gets both dropped on the
+floor.
 
 So keep them, and send them:
 
   - dirObjToUpSong() fills genre, dcdate and the new UpSong::publisher
-    (upnp:publisher) from the DIDL properties, which libupnpp already
-    parses into its property map -- no parsing work, just the three
-    getprop() calls.
+    from the DIDL properties, which libupnpp already parses into its
+    property map -- no parsing work, just getprop() calls. The publisher
+    is read from dc:publisher, the DIDL-Lite standard, falling back to
+    the non-standard upnp:publisher which some servers use.
   - send_tag_data() stores them as MPD's Date, Genre and Label tags.
     Skipped when empty, so nothing is sent that was not received, and an
     older MPD which does not know a tag name cannot cost us the tags
@@ -30,17 +33,66 @@ So keep them, and send them:
   - mapSong() reads Date and Label back, the counterpart of the above and
     the way a track played from MPD's own library gets its year and label
     out to the Control Point at all.
-  - UpSong::didl() emits upnp:publisher, so the round trip closes for the
+  - UpSong::didl() emits dc:publisher, so the round trip closes for the
     new field as it already does for dc:date.
+
+The Qobuz plugin fills the same field from the catalogue while it is
+there: Album gains a label, _parse_album() takes it from the API's
+album.label.name, and trackentries() emits dc:publisher beside the
+dc:date it already writes. A record's label is otherwise absent from
+everything the plugin serves.
 
 Tested against MPD 0.24: addtagid accepts Date, Genre and Label, and
 serves all three back in playlistinfo/currentsong.
 ---
- src/mpdcli.cxx     | 31 +++++++++++++++++++++++++++++++
- src/upmpdutils.cxx |  9 +++++++++
- src/upmpdutils.hxx |  2 ++
- 3 files changed, 42 insertions(+)
+ .../cdplugins/pycommon/upmplgmodels.py        |  2 ++
+ .../cdplugins/pycommon/upmplgutils.py         |  2 ++
+ src/mediaserver/cdplugins/qobuz/session.py    |  3 ++
+ src/mpdcli.cxx                                | 31 +++++++++++++++++++
+ src/upmpdutils.cxx                            | 14 +++++++++
+ src/upmpdutils.hxx                            |  2 ++
+ 6 files changed, 54 insertions(+)
 
+diff --git a/src/mediaserver/cdplugins/pycommon/upmplgmodels.py b/src/mediaserver/cdplugins/pycommon/upmplgmodels.py
+index 7ffbfca..82d6d2e 100644
+--- a/src/mediaserver/cdplugins/pycommon/upmplgmodels.py
++++ b/src/mediaserver/cdplugins/pycommon/upmplgmodels.py
+@@ -47,6 +47,8 @@ class Album(Model):
+     description = None
+     duration = -1
+     release_date = None
++    # Label/imprint which issued the record. dc:publisher in UPnP data.
++    label = None
+     available = True
+ 
+ 
+diff --git a/src/mediaserver/cdplugins/pycommon/upmplgutils.py b/src/mediaserver/cdplugins/pycommon/upmplgutils.py
+index fc815df..4c8ef61 100644
+--- a/src/mediaserver/cdplugins/pycommon/upmplgutils.py
++++ b/src/mediaserver/cdplugins/pycommon/upmplgutils.py
+@@ -296,6 +296,8 @@ def trackentries(httphp, pathprefix, objid, tracks, generate_track_nums=False):
+                 li["upnp:albumArtURI"] = track.album.image
+             if track.album.release_date:
+                 li["dc:date"] = track.album.release_date
++            if getattr(track.album, "label", None):
++                li["dc:publisher"] = track.album.label
+             # Do we really want to do this ? This would currently be the only way to display the,
+             # e.gh. Qobuz album description in upplay (because the description is not set in album
+             # lists used by the dir browser, only when querying a specific album), but it does not
+diff --git a/src/mediaserver/cdplugins/qobuz/session.py b/src/mediaserver/cdplugins/qobuz/session.py
+index 1b09891..5108a92 100644
+--- a/src/mediaserver/cdplugins/qobuz/session.py
++++ b/src/mediaserver/cdplugins/qobuz/session.py
+@@ -351,6 +351,9 @@ def _parse_album(json_obj, artist=None, artists=None):
+         # uplog(f"_parse_album: setting description {json_obj['description'][0:80]}...")
+         kwargs["description"] = json_obj["description"]
+ 
++    if "label" in json_obj and isinstance(json_obj["label"], dict):
++        kwargs["label"] = json_obj["label"].get("name")
++
+     try:
+         if "release_date_original" in json_obj:
+             # uplog(f"release_date_original: {json_obj['release_date_original']}")
 diff --git a/src/mpdcli.cxx b/src/mpdcli.cxx
 index 2f0e79a..18d6e6c 100644
 --- a/src/mpdcli.cxx
@@ -93,18 +145,18 @@ index 2f0e79a..18d6e6c 100644
  }
  
 diff --git a/src/upmpdutils.cxx b/src/upmpdutils.cxx
-index 6d6f16e..91aa2f2 100644
+index 6d6f16e..29171bd 100644
 --- a/src/upmpdutils.cxx
 +++ b/src/upmpdutils.cxx
 @@ -204,6 +204,7 @@ string UpSong::didl(bool noresource) const
      UPNPXML(artist, dc:creator);
      UPNPXML(artist, upnp:artist);
      UPNPXML(dcdate, dc:date);
-+    UPNPXML(publisher, upnp:publisher);
++    UPNPXML(publisher, dc:publisher);
      UPNPXML(dcdescription, dc:description);
      UPNPXML(artUri, upnp:albumArtURI);
  
-@@ -261,6 +262,14 @@ bool dirObjToUpSong(const UPnPDirObject& dobj, UpSong *ups)
+@@ -261,6 +262,19 @@ bool dirObjToUpSong(const UPnPDirObject& dobj, UpSong *ups)
      ups->artist = dobj.getprop("upnp:artist");
      ups->album = dobj.getprop("upnp:album");
      ups->title = dobj.m_title;
@@ -115,19 +167,24 @@ index 6d6f16e..91aa2f2 100644
 +    // apart, which title and album cannot.
 +    ups->genre = dobj.getprop("upnp:genre");
 +    ups->dcdate = dobj.getprop("dc:date");
-+    ups->publisher = dobj.getprop("upnp:publisher");
++    // dc:publisher is the DIDL-Lite standard; upnp:publisher is not in the
++    // spec but is used by some servers, so take it when the standard one is
++    // absent.
++    ups->publisher = dobj.getprop("dc:publisher");
++    if (ups->publisher.empty())
++        ups->publisher = dobj.getprop("upnp:publisher");
      string stmp;
      dobj.getrprop(0, "duration", stmp);
      if (!stmp.empty()) {
 diff --git a/src/upmpdutils.hxx b/src/upmpdutils.hxx
-index 14ae352..a2d1dd8 100644
+index 14ae352..99459c0 100644
 --- a/src/upmpdutils.hxx
 +++ b/src/upmpdutils.hxx
 @@ -45,6 +45,8 @@ public:
      std::string upnpClass;
      // Date as iso string YYYY-MM-dd. dc:date in UPnP data.
      std::string dcdate;
-+    // Label/imprint which issued the record. upnp:publisher in UPnP data.
++    // Label/imprint which issued the record. dc:publisher in UPnP data.
 +    std::string publisher;
      std::string dcdescription;
  
