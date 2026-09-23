@@ -127,6 +127,34 @@ provides no feedback. Every command here either shows its output directly
 
 ---
 
+## Measuring the DR of what is playing
+
+The DR versions page reports what *other people's* copies of a record measure.
+The renderer card's **Measure DR** button measures the copy on the wire.
+
+It fetches the record's tracks a second time — the tracks in the queue around
+the one playing that carry *exactly* its album tag, so a deluxe edition queued
+after the original is never averaged in with it — then decodes and measures
+each one and deletes it before fetching the next. At most one track is on disk
+at a time, in `/var/tmp/omdrc-dr-*`, and the directory goes when the job ends,
+fails or is cancelled; a directory a crashed panel left behind is removed when
+the next job starts. The card shows a progress bar while it works, then the
+album value (and one per disc of a set) with every track's DR as a badge;
+hovering a badge gives its exact value, peak and RMS.
+
+The meter (`drmeter.py`) is the TT Dynamic Range algorithm the database's logs
+use, and was checked sample-for-sample against dr14_tmeter on a Qobuz track:
+DR 9, peak −0.13 dB, RMS −10.89 dB from both, including the reference's
+quirks (44 160-sample blocks at 44.1 kHz, a partial last block measured over
+its own length, round-half-to-even). Decoding is ffmpeg's at the native rate,
+one 3-second block at a time, in a subprocess under `nice -n 19` so it never
+takes a cycle from the DRC convolution.
+
+Things to know: the second download shares the line with the stream MusicPD
+is playing (MusicPD's buffer covers a brief squeeze, a slow link may not
+cover a hi-res album); only streamed tracks can be fetched again; and it
+needs 1 GB free in `/var/tmp` to start.
+
 ## Features
 
 - **READ widgets** — run a shell command and display its output next to a
@@ -1496,6 +1524,23 @@ now playing).
     "comment": "…", "log": "foobar2000 1.5.5 / Dynamic Range Meter 1.1.1…",
     "tracks": [ { "dr": 7, "peak": "0.00 dB", "rms": "-8.34 dB",
                   "duration": "4:12", "title": "01-I Ain't" } ] } }
+```
+
+---
+
+### `POST /dr/measure` · `GET /dr/measure` · `POST /dr/measure/cancel`
+
+Start measuring the playing record, read the job, or stop it. One job at a
+time (`409` while one runs). The state never carries a track URL:
+
+```json
+{ "ok": true, "job": {
+    "status": "running", "album": "Get Yer Ya-Ya's Out!", "fraction": 0.34,
+    "current": 3, "message": "Carol: downloading 42%",
+    "album_dr": 8, "discs": {},
+    "tracks": [ { "title": "Jumpin' Jack Flash", "track": 1, "disc": null,
+                  "status": "done", "dr": 8, "dr_exact": 7.71,
+                  "peak_db": 0.0, "rms_db": -9.29, "error": "" } ] } }
 ```
 
 ---

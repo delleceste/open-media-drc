@@ -46,7 +46,9 @@ the PDF, then create the annotated `v*` tag on that commit.
    webremote), glitch detection, bit-perfect verification — the original
    proof, the five-path `/bitperfect` page, and its implementation
    (pipeline, artifacts, anchor, silence pad, renderer arbitration,
-   privilege, verdicts) — scripts/.
+   privilege, verdicts), dynamic range (the DR versions page, pressing
+   identification and its weights, and *Measure DR*: job, metrics,
+   validation, costs) — scripts/.
 7. **CD input** — `omdrc-cdin`, the S/PDIF capture bridge: why the lead
    is the only number that matters, the state machine and the two device
    tenancies, the transport simulator, the web card, and the ESI U24 XL

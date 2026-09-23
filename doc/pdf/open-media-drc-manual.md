@@ -2695,6 +2695,218 @@ upmpdcli-to-MPD-to-DAC path, with upmpdcli choosing what MPD plays.
 - `drc.sh cdin` re-execs without the design variant, so switching to CD
   input silently drops an active `@design`.
 
+## Dynamic range: which master, and what it measures {#sec:dynamic-range}
+
+A record exists in several masters, and they are not equally loud. The
+Alice In Chains *Unplugged* CD measures DR 8 while vinyl rips of it measure
+DR 12--13; the Rolling Stones' *Get Yer Ya-Ya's Out!* is DR 11 on the 2002 CD
+and DR 9 as the 2014 download. What a streaming service serves is one of
+those masters, and nothing on the stream says which. The panel answers the
+question three ways, each more direct than the last:
+
+1. **DR versions** (`/dr-alternatives`, the *DR ↗* button) --- every version
+   of the playing record listed in the community database at
+   [dr.loudness-war.info](https://dr.loudness-war.info), most dynamic first.
+2. **Which one is playing?** --- a button on that page that scores each
+   version against the track on the wire and names the most likely one.
+3. **Measure DR** (the renderer card) --- measures the copy on the wire
+   itself, with the same algorithm the database's entries were measured with.
+
+The first two report other people's measurements of other people's copies;
+the third is the only one that measures what you are hearing.
+
+### What the renderers tell the panel
+
+Everything below depends on metadata, and MusicPD's queue carries only what
+a renderer puts there. Both renderers are patched to publish more than their
+stock versions do:
+
+| Tag in MusicPD | upmpdcli | qobuzconnect2mpd | Used for |
+|---|---|---|---|
+| Artist, Album, Title, Track | stock | added (the queue held bare redirect tokens) | the database lookup; the running order |
+| `Date` | patch (`dc:date`) | added (`release_date_original`) | year evidence |
+| `Label` | patch (`dc:publisher`) | added (`album.label.name`) | label evidence |
+| `Genre` | patch (`upnp:genre`) | --- | display |
+| cover art | from upmpdcli's DIDL cache | `art=` line in the status file | the card's thumbnail |
+
+The upmpdcli change is `upmpdcli/patches/0001-carry-date-genre-and-publisher-tags.patch`,
+written to go upstream as a Framagit merge request; `cmake` warns, with the
+procedure, when the upmpdcli it finds was built without it. Two caveats hold
+for every stream: the year Qobuz supplies is the album's *original* release
+date, true of every reissue alike, and a multi-disc set arrives numbered
+`disc × 1000 + track` (track 1005 is disc 1, track 5).
+
+### Identifying the pressing
+
+*Which one is playing?* reads each listed version's own page and scores it
+against **the track playing, paused or last played --- never the rest of the
+queue**, which is a listener's doing and not a pressing's. One track is
+enough, because that is exactly where two masters of a record differ.
+
+Every signal that applies adds its points; a comparison one side cannot make
+adds nothing and is listed with a neutral dot, so an absence never reads as
+agreement. The score is clamped to 0--100.
+
+| Signal | When | Points | Why |
+|---|---|---:|---|
+| Running order | the playing title is at the same track number | +12 | the edition's own track list, from its uploaded DR log |
+| | the title is on this version, at another number | +8 | a reissue with bonus tracks, say |
+| | this version's track list does not name it | −20 | |
+| Track length | within 3 s, at the right track number | +45 | two rips of one pressing agree to the second |
+| | within 3 s, elsewhere in the list | +32 | |
+| | within 8 s | +20 | a few seconds out is a different transfer |
+| | 20 s or more apart | −30 | a different cut --- a DVD keeping the between-song talk |
+| Stream format | a CD entry, and the stream is above 44.1 kHz/16 bit | −40 | a CD cannot carry it; the same master's DR may still be right |
+| | the medium suits the stream's rate | +6 | CD or download at CD rate; download, SACD or Blu-ray when hi-res |
+| | a surround or disc transfer, stereo stream | −12 | |
+| | a vinyl rip, CD-rate stream | −8 | |
+| | the entry's title states another rate/depth | −15 | "48kHz-16bit", "16/48"; "448 Kbps" is a bitrate and ignored |
+| | the entry's title states the stream's rate/depth | +8 | |
+| Disc of a set | same disc | +10 | sets are filed one disc per entry |
+| | another disc | −25 | |
+| Label | an imprint name in common | +14 | "Columbia/Legacy" shares Columbia; "Records" and the like are ignored |
+| | both named, nothing in common | −5 | weak: services carry the reissue imprint |
+| Year | same year | +14 | |
+| | one year apart | +6 | |
+| | further apart | −6 | weak: the stream's year dates the album, not the transfer |
+| Album name | identical | +5 | |
+| | one contains the other | +2 | |
+
+The verdict ladder is: **55** or more *likely*, **30--54** *possible*,
+below that *unlikely*, and *no evidence* when nothing could be compared. The
+best score is *most likely* --- and so is every version within **12** points
+of it: the evidence does not separate them, so the page does not either.
+Country, catalog number and bar code are displayed but never scored, since
+nothing in a stream can confirm them.
+
+These numbers live in one table, `drdb.W`, which both the scorer and the
+page's own copy of this table read; tests fail if a weight is used without
+being documented or written into the scorer as a literal.
+
+### Measuring the DR of the stream {#sec:measure-dr}
+
+The **Measure DR** button on the renderer card fetches the playing record's
+tracks a second time, measures each one and deletes it before fetching the
+next. It runs in the background; the card shows a progress bar, the track in
+hand and its phase, the album value as it builds, and one colour-coded badge
+per track.
+
+#### How a job runs
+
+1. **Which tracks.** The run of queue entries around the one playing that
+   carry *exactly* its album tag, capped at 60. Exactly: *Get Yer Ya-Ya's
+   Out!* and *Get Yer Ya-Ya's Out! (40th Anniversary Deluxe Edition)* are
+   different masters --- "Carol" measures DR 8 on one and DR 9 on the other ---
+   and averaging them would produce a number neither has.
+2. **Fetch.** Each queue entry is an HTTP URL (upmpdcli's proxy, or
+   qobuzconnect2mpd's `/qobuz-direct/` token); both redirect to the CDN, which
+   reports the file's size and serves byte ranges. The download reports
+   progress by bytes. A connection that stalls for 30 s is retried up to four
+   times, **resuming** with a `Range` request from the bytes already on disk,
+   or starting the track over if the server ignores the range.
+3. **Measure.** `drmeter.py` runs in a subprocess under `nice -n 19` so it
+   never takes a cycle from the DRC convolution. ffmpeg decodes at the file's
+   native rate and channel count --- resampling would move the peaks --- to
+   32-bit float, and the meter consumes it one 3-second block at a time, so
+   a 24/192 track of any length needs a few megabytes of memory.
+4. **Delete.** The track's file is removed as soon as it is measured, before
+   the next download starts. At most one track is on disk at any moment.
+
+The work directory is `/var/tmp/omdrc-dr-*`; it is removed when the job
+ends, fails or is cancelled, and a directory a crashed panel left behind is
+removed when the next job starts. A job refuses to start with less than
+1 GB free there, or when the playing tracks are not streams. One track that
+will not download or decode is marked failed and does not stop the rest; the
+album value is then over the tracks that measured.
+
+#### The metrics
+
+The meter is the TT Dynamic Range algorithm, as used by the foobar2000
+Dynamic Range Meter 1.1.1 whose logs fill the database, and reproduced by
+dr14_tmeter:
+
+| Metric | Definition |
+|---|---|
+| Block | 3 s of samples per channel --- **3 × 44 160** at 44.1 kHz (a quirk of the reference meter, kept), 3 × rate otherwise; the last block is partial |
+| Block RMS | √(2 · Σx² / *n*) over the block's own length *n*; the factor 2 makes a full-scale sine read 0 dB |
+| Block peak | the largest \|*x*\| in the block |
+| RMS~upper~ | root mean square of the loudest **20 %** of block RMS values (at least one block) |
+| Reference peak | the **second-highest** block peak: one clipped transient cannot inflate the result |
+| DR (channel) | 20 · log₁₀(peak₂ / RMS~upper~) |
+| **Track DR** | mean over channels, rounded half to even (Python's `round`, as the reference) |
+| Exact DR | the same, unrounded --- shown in the badge's tooltip |
+| Peak | largest sample of the track, dBFS |
+| RMS | mean of the channels' RMS over the whole track (with the factor 2), dB |
+| **Album DR** | mean of the tracks' integer DR values, rounded --- the "Official DR value" a database log closes with |
+| Disc DR | the same per disc, shown when the record spans more than one |
+
+The DR scale is the database's own: 7 and below flat red, 14 and above flat
+green, with 8--13 graded between.
+
+#### Validation
+
+The meter was compared with dr14_tmeter's `compute_dr14` on the same Qobuz
+track, decoded identically:
+
+| | DR | Peak | RMS |
+|---|---:|---:|---:|
+| dr14_tmeter | 9 | −0.13 dB | −10.89 dB |
+| `drmeter.py` | 9 (9.04) | −0.13 dB | −10.89 dB |
+
+The unit tests pin the properties that agreement rests on: a steady sine
+measures DR 0 at any level (its peak is exactly √2 × RMS); one
+full-scale spike in otherwise steady material does not raise it (the
+second-highest peak ignores it); quiet passages under full-scale peaks give
+the range the formula predicts; a decode through ffmpeg matches the samples
+written. The job's tests check that one track at a time is on disk and that
+nothing survives success, failure, cancellation or a crash mid-download.
+
+#### A first measurement
+
+*Get Yer Ya-Ya's Out!* as Qobuz serves it, 16 bit/44.1 kHz, measured on this
+box:
+
+| # | Track | DR | Exact | RMS (dB) |
+|---:|---|---:|---:|---:|
+| 1 | Jumpin' Jack Flash | 9 | 9.05 | −10.77 |
+| 2 | Carol | 8 | 7.69 | −9.29 |
+| 3 | Stray Cat Blues | 9 | 8.94 | −10.54 |
+| 4 | Love In Vain | 10 | 9.81 | −12.76 |
+| 5 | Midnight Rambler | 9 | 9.45 | −11.60 |
+| 6 | Sympathy For The Devil | 8 | 8.04 | −9.45 |
+| 7 | Live With Me | 8 | 7.85 | −8.93 |
+| 8 | Little Queenie | 8 | 8.15 | −9.49 |
+| 9 | Honky Tonk Women | 9 | 8.80 | −10.82 |
+| | **Album** | **9** | | |
+
+Every track peaks at 0 dBFS. The database holds this album at DR 11 (2002
+CD) and DR 9 (2014 HDtracks download): the stream measures like the 2014
+master, not the 2002 one. (The tenth track was lost to a stalled CDN
+connection on this run, which is why downloads now resume.)
+
+#### Costs and limits
+
+- **Bandwidth.** The job is a second download beside the stream MusicPD is
+  playing. On this box it ran at about 350 KB/s, so a ten-track CD-rate
+  record took about twelve minutes. MusicPD's buffer absorbed the contention
+  here; a hi-res record on a slow line may not.
+- **Streams only.** A track MusicPD plays from its own library is not
+  fetched; the button refuses rather than guessing.
+- **One job at a time**, and its result lives in the panel's memory: it
+  stays on the card until the next job, but not across a panel restart.
+- **The record as queued.** If only part of an album is in the queue, the
+  album value is over that part.
+
+#### HTTP API
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /dr/measure` | start measuring the playing record (`409` while a job runs or nothing plays, `507` below 1 GB free) |
+| `GET /dr/measure` | the current or last job: status, fraction, message, per-track results, album and disc values |
+| `POST /dr/measure/cancel` | stop after the track in hand; its file is still deleted |
+
+The job's state never carries a track URL.
+
 ## scripts/ --- helper tools
 
 | Script | Purpose |
@@ -2715,6 +2927,7 @@ upmpdcli-to-MPD-to-DAC path, with upmpdcli choosing what MPD plays.
 | `bitperfect_runner.py` | Runs a tap through a chosen playback path (`aplay`, `mpd`, `mpd-http`, `upnp`, `live`); backs the `/bitperfect` page, emits `@@PHASE`/`@@STAT`/`@@RESULT` progress lines ([§Implementation](#sec:bitperfect-impl)) |
 | `bitperfect_material.py` | Decodes any WAV/FLAC into a run's reference, checks the alignment anchor is unambiguous, and resolves what a renderer is streaming for `--source live` |
 | `bitperfect-compare.py` | Compares two tap artifacts from either OS (`.wav`, `.wire.raw`, or the tiny committable `.txt` report) |
+| `omdrc-ctrl/src/drmeter.py` | The DR meter behind *Measure DR*; run on a file it prints that file's DR, peak and RMS as JSON ([§Measuring](#sec:measure-dr)) |
 | `systemd-user-install.sh` | Legacy: link + enable a `systemd --user` drc.service (Linux) |
 
 \newpage
