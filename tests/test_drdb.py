@@ -542,6 +542,45 @@ class IdentifyTest(unittest.TestCase):
         self.assertFalse(any("disc" in r for r in match["against"]))
         self.assertEqual(match["verdict"], "likely")
 
+    def test_a_comparison_nobody_could_make_is_said_out_loud(self):
+        """A signal absent from the list reads as a signal that agreed. When
+        one side has a label or a year and the other has none, the entry says
+        so instead of leaving a silence to interpret."""
+        # The renderer publishes no label (an unpatched upmpdcli, or a queue
+        # loaded before it was patched), but the entry names one.
+        no_wire_label = drdb.identify(
+            self.playing(),
+            self.version("MTV Unplugged", "CD", {5: "5:46"}, label="Columbia"))
+        self.assertTrue(any("released by Columbia" in r and "no label" in r
+                            for r in no_wire_label["unchecked"]))
+        self.assertFalse(any("Columbia" in r for r in no_wire_label["against"]))
+
+        # ...and the other way round.
+        no_entry_label = drdb.identify(
+            self.playing(label="Columbia/Legacy"),
+            self.version("MTV Unplugged", "CD", {5: "5:46"}))
+        self.assertTrue(any("names no label" in r
+                            for r in no_entry_label["unchecked"]))
+
+    def test_an_entry_with_no_track_list_says_so(self):
+        match = drdb.identify(
+            self.playing(),
+            self.version("MTV Unplugged", "Vinyl", {}, log=False))
+        self.assertTrue(any("without a track list" in r
+                            for r in match["unchecked"]))
+
+    def test_a_year_that_could_not_be_compared_is_flagged_too(self):
+        match = drdb.identify(self.playing(year="1996"),
+                              self.version("MTV Unplugged", "CD", {5: "5:46"}))
+        self.assertTrue(any("names no year" in r for r in match["unchecked"]))
+
+    def test_everything_comparable_leaves_nothing_unchecked(self):
+        match = drdb.identify(
+            self.playing(year="1996", label="Columbia"),
+            self.version("MTV Unplugged", "CD", {5: "5:46"},
+                         year="1996", label="Columbia"))
+        self.assertEqual(match["unchecked"], [])
+
     def test_nothing_to_compare_is_reported_as_unknown(self):
         match = drdb.identify(
             {"title": "", "album": "", "duration": None, "rate": None,

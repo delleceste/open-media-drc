@@ -52,16 +52,24 @@ th.dr-col{width:1%}
 .tracklist tr.playing td:first-child{box-shadow:inset 3px 0 0 var(--green)}
 details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
 pre.log{background:#010409;border:1px solid var(--line);border-radius:6px;padding:.6rem;font-family:var(--mono);font-size:.76rem;white-space:pre-wrap;max-height:22rem;overflow:auto;margin:.4rem 0 0}
+/* One ladder, one ramp: filled green for the answer, green outline for a
+   version that also fits, yellow for a maybe, grey for the rest. A filled
+   badge appears only at the top, so nothing below can look louder than it. */
 .verdict{display:inline-block;padding:.1rem .45rem;border-radius:99px;font-size:.72rem;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
-.verdict.likely{border-color:var(--green);color:#111;background:var(--green);font-weight:700}
+.verdict.top{border-color:var(--green);color:#111;background:var(--green);font-weight:700}
+.verdict.likely{border-color:var(--green);color:var(--green)}
 .verdict.possible{border-color:var(--yellow);color:var(--yellow)}
-.verdict.unlikely{opacity:.65}
+.verdict.unlikely{opacity:.6}
+.verdict.none{opacity:.5;font-style:italic}
 tr.album.likely{background:#10231a}
 tr.album.likely td:first-child{box-shadow:inset 3px 0 0 var(--green)}
 .why{margin:.1rem 0 .6rem;padding:0;list-style:none;font-size:.85rem}
 .why li{margin:.12rem 0;padding-left:1.1rem;position:relative}
 .why li.for::before{content:'+';position:absolute;left:0;color:var(--green);font-weight:700}
 .why li.against::before{content:'\2212';position:absolute;left:0;color:var(--red);font-weight:700}
+.why li.unchecked{color:var(--muted)}
+.why li.unchecked::before{content:'\00b7';position:absolute;left:0;color:var(--muted);font-weight:700}
+.why-note{color:var(--muted);font-size:.78rem;margin:.1rem 0 .7rem}
 .fingerprint{color:var(--muted);font-size:.82rem;margin:.35rem 0 0}
 .legend{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin-top:.6rem}
 .status{font-size:.86rem;color:var(--muted);margin:.5rem 0 0}
@@ -127,6 +135,16 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
     <span class="badge-dr small" style="background:#48ff00">13</span>
     <span class="badge-dr small" style="background:#00ff00">14+</span>
     <span>— the database's own colours: red is a squashed master, green a dynamic one.</span>
+  </div>
+  <div class="legend">
+    <span>Which one is playing:</span>
+    <span class="verdict top">most likely</span>
+    <span class="verdict likely">likely</span>
+    <span class="verdict possible">possible</span>
+    <span class="verdict unlikely">unlikely</span>
+    <span class="verdict none">no evidence</span>
+    <span>— in that order. Two versions the evidence cannot separate both read
+      “most likely”; hover a badge for its score out of 100.</span>
   </div>
   <div class="note" id="truncated" hidden>
     Only the first pages of a long list are shown. They are the highest-DR
@@ -243,8 +261,7 @@ function closeIds() {
 function rowClass(id) {
     const detail = details.get(id);
     if (!detail || !detail.match) return '';
-    if (id === bestId()) return ' likely';
-    if (closeIds().has(id)) return ' match';
+    if (id === bestId() || closeIds().has(id)) return ' likely';
     return detail.match.verdict === 'possible' ? ' match' : '';
 }
 
@@ -253,24 +270,31 @@ function verdictChip(id) {
     if (!detail || !detail.match) return '';
     const match = detail.match;
     if (match.verdict === 'unknown')
-        return '<span class="verdict" title="Nothing in this entry could be compared">no evidence</span>';
-    const contested = closeIds().size > 0;
-    const label = id === bestId() ? (contested ? 'best fit' : 'likely this one')
-                : closeIds().has(id) ? 'fits too'
-                : match.verdict === 'likely' ? 'strong match'
-                : match.verdict === 'possible' ? 'possible' : 'unlikely';
-    const cls = id === bestId() ? 'likely'
-              : closeIds().has(id) ? 'possible' : match.verdict;
+        return '<span class="verdict none" title="Nothing in this entry could be compared">no evidence</span>';
+    // A version within the margin of the winner is not second: the evidence
+    // does not separate them, so they carry the same badge and the reader
+    // decides. Ranking them would be arithmetic passed off as fact.
+    const top = id === bestId() || closeIds().has(id);
+    const [cls, label] =
+          top                            ? ['top', 'most likely']
+        : match.verdict === 'likely'     ? ['likely', 'likely']
+        : match.verdict === 'possible'   ? ['possible', 'possible']
+        : ['unlikely', 'unlikely'];
     return `<span class="verdict ${cls}" title="score ${match.score} of 100">${label}</span>`;
 }
 
-function whyList(match) {
+function whyList(match, id) {
     if (!match) return '';
+    // Three kinds of line, and the third matters as much as the others: a
+    // comparison nobody could make is not a comparison that passed.
     const items = (match.for || []).map(r => `<li class="for">${esc(r)}</li>`)
-        .concat((match.against || []).map(r => `<li class="against">${esc(r)}</li>`));
+        .concat((match.against || []).map(r => `<li class="against">${esc(r)}</li>`))
+        .concat((match.unchecked || []).map(r => `<li class="unchecked">${esc(r)}</li>`));
     if (!items.length) return '';
-    return `<strong>Is this the one playing?</strong> <span class="verdict ${match.verdict}">${match.verdict}</span>
-            <ul class="why">${items.join('')}</ul>`;
+    return `<strong>Is this the one playing?</strong> ${verdictChip(id)}
+            <ul class="why">${items.join('')}</ul>
+            <p class="why-note">Country, catalog number and bar code are listed
+               below but never scored: nothing in the stream can confirm them.</p>`;
 }
 
 async function loadNowPlaying(rerun, fillFields = true) {
@@ -462,7 +486,7 @@ function paintDetail(id) {
             <td>RMS ${esc(track.rms)}</td></tr>`;
     }).join('');
 
-    body.innerHTML = whyList(detail.match) +
+    body.innerHTML = whyList(detail.match, id) +
         `<dl class="kv">${fields.map(([key, value]) =>
             `<dt>${esc(key)}</dt><dd>${key === 'Link' ? value : esc(value)}</dd>`).join('')}</dl>`
         + (trackBadges || trackRows

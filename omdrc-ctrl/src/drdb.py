@@ -554,6 +554,11 @@ def identify(playing: dict, album: dict) -> dict:
     """
     score = 0
     for_, against = [], []
+    # Evidence that could not be weighed, and why. A signal that is simply
+    # absent from the list reads as a signal that agreed -- so when one side
+    # of a comparison has a value and the other does not, say so rather than
+    # leaving a silence the reader has to interpret.
+    unchecked = []
     evidence = False
 
     log = album.get("tracks") or []
@@ -563,6 +568,9 @@ def identify(playing: dict, album: dict) -> dict:
     matched_index = None
     at_its_position = False
     playing_key = title_key(playing.get("title", ""))
+    if playing_key and not log_keys:
+        unchecked.append("uploaded without a track list, so neither the "
+                         "running order nor the track times could be checked")
     if playing_key and log_keys:
         evidence = True
         position = playing.get("track_no")
@@ -699,9 +707,21 @@ def identify(playing: dict, album: dict) -> dict:
             score -= 5
             against.append(f"released by {album.get('label')}, "
                            f"not {playing.get('label')}")
+    elif version_labels:
+        unchecked.append(f"released by {album.get('label')} — the renderer "
+                         "publishes no label for the stream to compare it to")
+    elif wire_labels:
+        unchecked.append(f"the stream is on {playing.get('label')}; this "
+                         "entry names no label")
 
     wire_year = release_year(playing.get("year"))
     version_year = release_year(album.get("year"))
+    if wire_year and not version_year:
+        unchecked.append(f"the stream is tagged {wire_year}; this entry names "
+                         "no year")
+    elif version_year and not wire_year:
+        unchecked.append(f"issued {version_year} — the renderer publishes no "
+                         "year for the stream to compare it to")
     if wire_year and version_year:
         evidence = True
         gap = abs(wire_year - version_year)
@@ -740,4 +760,4 @@ def identify(playing: dict, album: dict) -> dict:
     else:
         verdict = "unlikely"
     return {"score": score, "verdict": verdict, "for": for_, "against": against,
-            "matched_track": matched_index}
+            "unchecked": unchecked, "matched_track": matched_index}
