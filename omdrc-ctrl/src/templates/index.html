@@ -1678,8 +1678,6 @@
         <button class="qc-seg" data-target="qobuzconnect2mpd" onclick="switchRenderer('qobuzconnect2mpd')">qobuzconnect2mpd</button>
         <button class="qc-seg" data-target="upmpdcli" onclick="switchRenderer('upmpdcli')">upmpdcli</button>
     </div>
-    <!-- Which renderer the boot service would start on the NEXT reboot -->
-    <div class="refresh-note" id="qc-boot"></div>
     <!-- A renderer that refuses to start says why here, and stays said: a
          toast is gone before you have read it, and the button silently
          flipping back is not an explanation. -->
@@ -3168,22 +3166,6 @@ function paintRenderers(active) {
     }
 }
 
-// The choice is recorded on every successful switch and replayed by the
-// omdrc_renderer boot service.  This is a statement about the NEXT boot, never
-// a report of what the last one started — the old "restored at boot: X" read as
-// history and so claimed the wrong thing the moment you switched renderer.  The
-// empty state was misleading too: with nothing recorded the boot service still
-// starts its default, so name that instead of saying nothing.
-function paintBootRenderer(boot, isDefault) {
-    bootRenderer = boot || null;
-    const el = document.getElementById('qc-boot');
-    if (!boot) { el.textContent = ''; el.title = ''; return; }
-    el.textContent = `next boot starts: ${boot}` + (isDefault ? ' (default)' : '');
-    el.title = isDefault
-        ? `No renderer recorded yet — the omdrc_renderer boot service falls back to ${boot}. Switching renderer records the choice.`
-        : `The omdrc_renderer boot service starts ${boot} after a reboot, because that is what the toggle last switched to.`;
-}
-
 async function syncRenderers() {
     if (qcSwitching) return;
     try {
@@ -3198,7 +3180,10 @@ async function syncRenderers() {
             qcLogRenderer = active;
             if (qcLogVisible) fetchQcLog();
         }
-        paintBootRenderer(d.boot, d.boot_is_default);
+        // The card does not print this: the boot service restores whatever the
+        // toggle last switched to, which the toggle already shows.  Kept only
+        // as the OAuth panel's fallback target when nothing is running.
+        bootRenderer = d.boot || null;
     } catch { /* ignore — status dot already signals offline */ }
 }
 
