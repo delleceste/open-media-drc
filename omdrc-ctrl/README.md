@@ -2038,7 +2038,9 @@ stays until dismissed or until a switch succeeds — a toast is gone before it
 can be read, and a button silently flipping back is not an explanation.
 
 The panel header always has three buttons, plus a conditional fourth:
-- **Restart** — calls `POST /qconnect/restart`; shows a toast on success/failure
+- **Restart** — is enabled for either active renderer and calls
+  `POST /renderer/restart` with that renderer as `target`; shows a toast on
+  success/failure
 - **Log** — toggles a scrollable log viewer (auto-refreshed every 5 s while
   open) with colour-coded lines: red for `[ERR]`, green for `[OUT]`.  It shows
   the log of the renderer the card is about, named above the text, and after a
