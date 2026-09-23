@@ -764,6 +764,26 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             max-width: 60%;
         }
+        .drm { margin: 0 0 12px; padding: 10px; border: 1px solid var(--border);
+               border-radius: 8px; background: var(--bg); }
+        .drm-head { display: flex; align-items: center; gap: 8px;
+                    font-size: .85rem; margin-bottom: 8px; }
+        .drm-head > span { flex: 1 1 auto; min-width: 0; overflow: hidden;
+                           text-overflow: ellipsis; white-space: nowrap; }
+        .drm-bar { height: 6px; border-radius: 99px; background: var(--surface);
+                   border: 1px solid var(--border); overflow: hidden; }
+        #drm-fill { height: 100%; width: 0; background: var(--accent);
+                    transition: width .6s ease; }
+        .drm-msg { color: var(--muted); font-size: .78rem; margin-top: 6px; }
+        .drm-result { margin-top: 8px; font-size: .85rem; }
+        .drm-album { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .drm-tracks { display: flex; flex-wrap: wrap; gap: 4px; }
+        .drb { display: inline-block; min-width: 1.8rem; text-align: center;
+               border: 1px solid #000; color: #000; font-weight: 700;
+               font-size: .75rem; line-height: 1; padding: 3px 4px; border-radius: 3px;
+               font-variant-numeric: tabular-nums; }
+        .drb.big { font-size: 1rem; padding: 5px 7px; }
+        .drb.none { background: var(--surface); color: var(--muted); border-color: var(--border); }
         #qconnect-log-panel {
             border-top: 1px solid var(--border);
             padding: 10px 0 4px;
@@ -1689,6 +1709,8 @@
             <button class="btn-log btn-mini" id="btn-act-lines"
                     onclick="toggleActivityLines()"
                     title="Activity detail: one line, or the last three">☰</button>
+            <button class="btn-log" id="btn-drm" onclick="drmStart()"
+                    title="Fetch this record's tracks again, measure their dynamic range, then delete them">Measure DR</button>
 {% if drdb_enabled %}
             <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
                     title="Other masters of this record, and what they measure, in the Dynamic Range database">DR ↗</button>{% endif %}
@@ -1730,6 +1752,18 @@
             </div>
         </div>
         <div id="qc-activity" aria-live="polite"></div>
+    </div>
+    <!-- DR measured here, of the copy on the wire (drmeter.py).  Hidden until
+         a measurement has been started. -->
+    <div id="drm" class="drm" hidden aria-live="polite">
+        <div class="drm-head">
+            <span id="drm-title">Measuring DR</span>
+            <button type="button" class="btn-log btn-mini" id="drm-cancel" onclick="drmCancel()">Cancel</button>
+            <button type="button" class="rend-err-close" id="drm-close" onclick="drmDismiss()" title="Hide" hidden>×</button>
+        </div>
+        <div class="drm-bar"><div id="drm-fill"></div></div>
+        <div class="drm-msg" id="drm-msg"></div>
+        <div class="drm-result" id="drm-result" hidden></div>
     </div>
     <div id="qconnect-log-panel" style="display:none">
         <div class="refresh-note" id="qc-log-source"></div>
@@ -2045,7 +2079,7 @@
     </div>
 </div>
 
-<footer><a href="/configuration">Configuration</a> · <a href="/bitperfect">Bit-perfect check</a>{% if drdb_enabled %} · <a href="/dr-alternatives">DR versions</a>{% endif %} · <a href="/readme">README</a></footer>
+<footer><a href="/configuration">Configuration</a> · <a href="/bitperfect">Bit-perfect check</a>{% if drdb_enabled %} · <a href="/dr-alternatives">DR versions</a>{% endif %} · <a href="/manual" target="_blank">Manual (PDF)</a> · <a href="/readme">README</a></footer>
 
 <div id="toast"></div>
 
@@ -3126,6 +3160,118 @@ function fmtColor(line2) {
     if (bits < 24  && khz >= 48)   return '#d2a8ff';        // 16-bit 48 kHz
     return '';                                               // 16-bit 44 kHz — default
 }
+
+// ── DR measured here ──────────────────────────────────────────────────────
+// The copy on the wire, not someone else's: the panel fetches the record's
+// tracks again, measures them one at a time and deletes each as it goes.
+let drmTimer = null;
+let drmDismissed = null;     // the job the listener closed; a new one reopens
+
+// The DR database's own colours: flat red at 7 and below, flat green from 14.
+function drColor(dr) {
+    if (dr === null || dr === undefined) return '';
+    if (dr <= 7)  return '#ff0000';
+    if (dr >= 14) return '#00ff00';
+    return { 8: '#ff4800', 9: '#ff9100', 10: '#ffd900',
+             11: '#d9ff00', 12: '#90ff00', 13: '#48ff00' }[dr];
+}
+
+function drBadge(dr, extra, title) {
+    const t = title ? ` title="${escHtml(title)}"` : '';
+    if (dr === null || dr === undefined)
+        return `<span class="drb none ${extra || ''}"${t}>–</span>`;
+    return `<span class="drb ${extra || ''}" style="background:${drColor(dr)}"${t}>`
+         + String(dr).padStart(2, '0') + '</span>';
+}
+
+function paintDrm(job) {
+    const box = document.getElementById('drm');
+    if (!job || (drmDismissed && drmDismissed === job.started)) {
+        box.hidden = true;
+        return;
+    }
+    box.hidden = false;
+    const running = job.status === 'queued' || job.status === 'running';
+    const n = job.tracks.length;
+    document.getElementById('drm-title').textContent = running
+        ? `Measuring DR · ${job.album || 'this record'} · ${n} track${n === 1 ? '' : 's'}`
+        : `DR measured here · ${job.album || 'this record'}`;
+    document.getElementById('drm-cancel').hidden = !running;
+    document.getElementById('drm-close').hidden = running;
+    document.getElementById('btn-drm').disabled = running;
+    document.getElementById('drm-fill').style.width =
+        `${Math.round((job.fraction || 0) * 100)}%`;
+    const where = job.current !== null && job.current !== undefined
+        ? `Track ${job.current + 1} of ${n} · ` : '';
+    document.getElementById('drm-msg').textContent =
+        running ? where + (job.message || '') : (job.message || job.status);
+
+    const result = document.getElementById('drm-result');
+    const measured = job.tracks.filter(t => t.dr !== null);
+    if (!measured.length) { result.hidden = true; return; }
+    result.hidden = false;
+    const discs = Object.entries(job.discs || {})
+        .map(([d, dr]) => `disc ${d} ${drBadge(dr)}`).join(' ');
+    const partial = running ? ' so far' : '';
+    result.innerHTML =
+        `<div class="drm-album">${drBadge(job.album_dr ?? null, 'big')}`
+        + `<span>album${partial}${discs ? ' · ' + discs : ''}</span></div>`
+        + `<div class="drm-tracks">` + job.tracks.map((t, i) => {
+            const name = `${t.track || i + 1}. ${t.title}`;
+            const tip = t.dr !== null
+                ? `${name} — DR${t.dr} (${t.dr_exact}), peak ${t.peak_db} dB, RMS ${t.rms_db} dB`
+                : `${name} — ${t.error || t.status}`;
+            return drBadge(t.dr, '', tip);
+          }).join('') + '</div>';
+}
+
+async function drmPoll() {
+    clearTimeout(drmTimer);
+    try {
+        const d = await (await fetch('/dr/measure')).json();
+        paintDrm(d.job);
+        if (d.job && (d.job.status === 'queued' || d.job.status === 'running'))
+            drmTimer = setTimeout(drmPoll, 1000);
+    } catch { drmTimer = setTimeout(drmPoll, 3000); }
+}
+
+async function drmStart() {
+    drmDismissed = null;
+    try {
+        const r = await fetch('/dr/measure', { method: 'POST' });
+        const d = await r.json();
+        if (!d.ok) {
+            // Said where the listener is looking, not in a toast that is gone
+            // before it has been read.
+            const box = document.getElementById('drm');
+            box.hidden = false;
+            document.getElementById('drm-title').textContent = 'Cannot measure DR';
+            document.getElementById('drm-msg').textContent = d.error || 'failed';
+            document.getElementById('drm-cancel').hidden = true;
+            document.getElementById('drm-close').hidden = false;
+            document.getElementById('drm-result').hidden = true;
+            document.getElementById('drm-fill').style.width = '0';
+            return;
+        }
+        paintDrm(d.job);
+        drmPoll();
+    } catch { /* the poll below reports whatever state the server holds */ }
+}
+
+async function drmCancel() {
+    try { await fetch('/dr/measure/cancel', { method: 'POST' }); } catch {}
+    drmPoll();
+}
+
+async function drmDismiss() {
+    try {
+        const d = await (await fetch('/dr/measure')).json();
+        drmDismissed = d.job ? d.job.started : null;
+    } catch {}
+    document.getElementById('drm').hidden = true;
+}
+
+drmPoll();
 
 // The Dynamic Range database says what other masters of this record measure.
 // A named window rather than a fresh tab per press: the page re-reads the

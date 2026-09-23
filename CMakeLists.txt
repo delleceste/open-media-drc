@@ -122,6 +122,12 @@ else()
   include(cmake/cdin-linux.cmake)      # the same bridge on Linux: alsaloop + a --user unit
 endif()
 
+# ── user manual ──────────────────────────────────────────────────────────────
+# The committed PDF, not a build product: rebuilding it needs pandoc + a LaTeX
+# toolchain (doc/pdf/build-pdf.sh) that an install host should not require.
+# The panel's /manual route finds it at this path relative to lib/omdrcctrl.
+install(FILES doc/open-media-drc-manual.pdf DESTINATION share/doc/open-media-drc)
+
 # ── `make user-install`: the per-user steps a root install cannot do ─────────
 # Run as the audio user after the system install: it deploys the --user services,
 # the desktop autostart, and the per-user BruteFIR defaults.

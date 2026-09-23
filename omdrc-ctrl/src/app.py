@@ -26,6 +26,7 @@ if os.path.dirname(__file__) not in sys.path:
 from configuration import ConfigurationManager, Settings as ConfigurationSettings
 from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 from audio_diagnostics import AudioDiagnosticsMonitor
+from drmeter import AlbumMeasurement
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
 from drdb import identify as drdb_identify_version
 from drdb import release_year as drdb_release_year
@@ -3994,6 +3995,18 @@ def readme_page():
     return render_template("details.html", title="omdrcctrl — README", content=html)
 
 
+@app.route("/manual")
+def manual_page():
+    # Installed: <prefix>/lib/omdrcctrl → <prefix>/share/doc/open-media-drc.
+    # Source tree: omdrc-ctrl/src → doc/ at the repo root.
+    for base in (os.path.join(_HERE, os.pardir, os.pardir, "share", "doc", "open-media-drc"),
+                 os.path.join(_HERE, os.pardir, os.pardir, "doc")):
+        if os.path.isfile(os.path.join(base, "open-media-drc-manual.pdf")):
+            return send_from_directory(os.path.abspath(base), "open-media-drc-manual.pdf",
+                                       mimetype="application/pdf", conditional=True)
+    return "Manual not found", 404
+
+
 @app.route("/details-spectrum")
 def spectrum_details_page():
     text = None
@@ -4569,6 +4582,209 @@ def drdb_search():
         return jsonify({"ok": True, **_drdb().search(artist, album)})
     except DrDbError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
+
+
+# ── Measuring the DR of what is playing ─────────────────────────────────────
+#
+# The DR versions page reports what other people's copies measure; this
+# measures the copy on the wire. The record's tracks are fetched a second time
+# -- the stream MusicPD is playing is not tapped -- decoded, measured, and
+# deleted one at a time (see drmeter.py). One job at a time; the last one's
+# result stays on the card until the next.
+
+DRMETER_WORKDIR = os.environ.get("OMDRC_DRMETER_WORKDIR", "/var/tmp")
+# A queue can hold hundreds of tracks; a record rarely holds more than this.
+DRMETER_MAX_TRACKS = 60
+# Refuse to start with less free space than this: one 24/192 track can be
+# a few hundred MB, and a full /var/tmp breaks more than this feature.
+DRMETER_MIN_FREE = 1024 * 1024 * 1024
+_DRMETER_READ = 256 * 1024
+
+_DR_JOB: AlbumMeasurement | None = None
+_DR_JOB_LOCK = threading.Lock()
+
+
+def _mpd_queue_entries(port: str | None) -> tuple[list[dict], int | None]:
+    """The queue as file/title/album/track dicts, and the current position."""
+    import socket
+    entries: list[dict] = []
+    current: dict | None = None
+    song = None
+    try:
+        p = int(port) if port else 6600
+        with socket.create_connection(("localhost", p), timeout=5) as sock:
+            with sock.makefile("r", encoding="utf-8", errors="replace") as f:
+                if not f.readline().startswith("OK"):
+                    return [], None
+                sock.sendall(b"command_list_begin\nstatus\nplaylistinfo\n"
+                             b"command_list_end\n")
+                for line in f:
+                    line = line.rstrip("\n")
+                    if line == "OK" or line.startswith("ACK"):
+                        break
+                    key, sep, value = line.partition(":")
+                    if not sep:
+                        continue
+                    key, value = key.strip().lower(), value.strip()
+                    if key == "song" and current is None:
+                        song = int(value) if value.isdigit() else None
+                    elif key == "file":
+                        current = {"file": value, "title": "", "album": "",
+                                   "track": None}
+                        entries.append(current)
+                    elif current is not None and key in ("title", "album"):
+                        current[key] = value
+                    elif current is not None and key == "track":
+                        number = value.split("/")[0]
+                        current["track"] = int(number) if number.isdigit() else None
+    except Exception:
+        return [], None
+    return entries, song
+
+
+def _drmeter_tracks(entries: list[dict], song: int | None) -> list[dict]:
+    """The record the playing track belongs to: the unbroken run of queue
+    entries around it carrying exactly its album tag.
+
+    Exactly: "Get Yer Ya-Ya's Out!" and "Get Yer Ya-Ya's Out! (40th
+    Anniversary Deluxe Edition)" are different masters, and measuring both as
+    one would average them into a number neither of them has."""
+    if song is None or not (0 <= song < len(entries)):
+        return []
+    album = entries[song]["album"].strip()
+    if not album:
+        run = [entries[song]]
+    else:
+        first = last = song
+        while first > 0 and entries[first - 1]["album"].strip() == album:
+            first -= 1
+        while last + 1 < len(entries) and entries[last + 1]["album"].strip() == album:
+            last += 1
+        run = entries[first:last + 1][:DRMETER_MAX_TRACKS]
+    tracks = []
+    for entry in run:
+        number, disc = entry["track"], None
+        if isinstance(number, int) and number >= 1000:
+            disc, number = number // 1000, number % 1000
+        tracks.append({"url": entry["file"], "title": _drdb_plain(entry["title"]),
+                       "track": number, "disc": disc})
+    return tracks
+
+
+DRMETER_ATTEMPTS = 4
+
+
+def _drmeter_download(url: str, dest: str, progress, cancelled) -> None:
+    """Fetch one track to `dest`, reporting progress by bytes.
+
+    A CDN connection that stalls for the read timeout is retried, resuming
+    from the bytes already on disk with a Range request rather than starting
+    over -- the first live run lost its last track to one such stall, and a
+    slow line is exactly where re-fetching a whole track hurts most."""
+    if urlsplit(url).scheme not in ("http", "https"):
+        raise RuntimeError("not a streamed track")
+    import urllib.request
+    done, total, last_error = 0, 0, None
+    with open(dest, "wb") as out:
+        for attempt in range(DRMETER_ATTEMPTS):
+            if cancelled():
+                return
+            headers = {"User-Agent": "omdrcctrl"}
+            if done:
+                headers["Range"] = f"bytes={done}-"
+            try:
+                request = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    if done and response.status != 206:
+                        # The server ignored the range: start this track over.
+                        out.seek(0)
+                        out.truncate()
+                        done = 0
+                    length = int(response.headers.get("Content-Length") or 0)
+                    if not total and length:
+                        total = done + length
+                    while not cancelled():
+                        chunk = response.read(_DRMETER_READ)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        done += len(chunk)
+                        if total:
+                            progress(done / total)
+                if cancelled() or not total or done >= total:
+                    return
+                last_error = f"connection closed at {done} of {total} bytes"
+            except Exception as error:                  # noqa: BLE001
+                last_error = str(error)
+            time.sleep(min(2 ** attempt, 10))
+    raise RuntimeError(f"{last_error} (after {DRMETER_ATTEMPTS} attempts)")
+
+
+def _drmeter_measure(path: str) -> dict:
+    """drmeter.py on one file, in a subprocess at the lowest CPU priority: it
+    shares the box with the DRC convolution, which must never lose a cycle."""
+    script = os.path.join(_HERE, "drmeter.py")
+    result = subprocess.run(["nice", "-n", "19", sys.executable, script, path],
+                            capture_output=True, text=True, timeout=900,
+                            env=_env())
+    try:
+        data = json.loads(result.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        raise RuntimeError((result.stderr or "no output").strip()[:200])
+    if "error" in data:
+        raise RuntimeError(data["error"])
+    return data
+
+
+def _drmeter_sweep_stale() -> None:
+    """Remove work directories a crashed or killed panel left behind."""
+    for stale in glob.glob(os.path.join(DRMETER_WORKDIR, "omdrc-dr-*")):
+        shutil.rmtree(stale, ignore_errors=True)
+
+
+@app.route("/dr/measure", methods=["GET"])
+def dr_measure_state():
+    job = _DR_JOB
+    return jsonify({"ok": True, "job": job.state() if job else None})
+
+
+@app.route("/dr/measure", methods=["POST"])
+def dr_measure_start():
+    global _DR_JOB
+    with _DR_JOB_LOCK:
+        if _DR_JOB and _DR_JOB.state()["status"] in ("queued", "running"):
+            return jsonify({"ok": False, "error": "a measurement is already running"}), 409
+        entries, song = _mpd_queue_entries(_resolve_mpd_port())
+        tracks = _drmeter_tracks(entries, song)
+        if not tracks:
+            return jsonify({"ok": False, "error": "nothing is playing"}), 409
+        if not all(urlsplit(t["url"]).scheme in ("http", "https") for t in tracks):
+            return jsonify({"ok": False,
+                            "error": "only streamed tracks can be fetched again"}), 409
+        try:
+            free = shutil.disk_usage(DRMETER_WORKDIR).free
+        except OSError as error:
+            return jsonify({"ok": False, "error": str(error)}), 500
+        if free < DRMETER_MIN_FREE:
+            return jsonify({"ok": False, "error":
+                            f"only {free // (1024 * 1024)} MB free in {DRMETER_WORKDIR}"}), 507
+        _drmeter_sweep_stale()
+        playing = entries[song]
+        _DR_JOB = AlbumMeasurement(
+            album=_drdb_plain(playing["album"]) or playing["album"],
+            artist="", tracks=tracks, download=_drmeter_download,
+            measure=_drmeter_measure, workdir_parent=DRMETER_WORKDIR)
+        threading.Thread(target=_DR_JOB.run, name="drmeter", daemon=True).start()
+        return jsonify({"ok": True, "job": _DR_JOB.state()})
+
+
+@app.route("/dr/measure/cancel", methods=["POST"])
+def dr_measure_cancel():
+    job = _DR_JOB
+    if not job:
+        return jsonify({"ok": False, "error": "no measurement"}), 404
+    job.cancel()
+    return jsonify({"ok": True})
 
 
 @app.route("/drdb/identify", methods=["POST"])
