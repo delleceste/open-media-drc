@@ -96,6 +96,21 @@ function(omdrc_check_upmpdcli_edition_tags)
         set(_origin "installed by the package manager as ${_owner}")
     endif()
 
+    # An existing open-media-drc config is kept on install. When Linux moves
+    # from a distro upmpdcli to a /usr/local source build, its pkgdatadir can
+    # still point at /usr/share/upmpdcli. The process then starts but cannot
+    # load description.xml, so control points never discover the renderer.
+    set(_linux_source_migration_note "")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND _owner_rc EQUAL 0 AND _owner)
+        string(CONCAT _linux_source_migration_note
+"\n  After installing the source build, check the preserved renderer config:"
+"\n    ${CMAKE_INSTALL_PREFIX}/etc/open-media-drc/upmpdcli.conf"
+"\n  Set pkgdatadir to the source build's data directory (normally"
+"\n  /usr/local/share/upmpdcli, not /usr/share/upmpdcli). Confirm it contains"
+"\n  description.xml, then restart upmpdcli. A stale path lets the service"
+"\n  run while leaving the renderer invisible to UPnP/OpenHome apps.\n")
+    endif()
+
     # message(WARNING) re-wraps its text, which would fold the commands below
     # into a paragraph nobody can paste. So: a one-line warning for the fact,
     # and the procedure as NOTICE, which prints verbatim.
@@ -118,6 +133,7 @@ function(omdrc_check_upmpdcli_edition_tags)
 "\n"
 "\n  then restart the renderer and re-run cmake, which resolves the binary"
 "\n  again for this check and for the service unit it renders."
+"${_linux_source_migration_note}"
 "\n  Silence this with -DOMDRC_WARN_UNPATCHED_UPMPDCLI=OFF.\n")
 endfunction()
 
