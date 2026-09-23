@@ -453,6 +453,15 @@ _LABEL_NOISE = re.compile(
 _YEAR = re.compile(r"(\d{4})")
 # "(Disc 2)", "[CD 1]", ", Disc 2": a database entry for one disc of a set.
 _DISC_IN_NAME = re.compile(r"\b(?:disc|disk|cd)\s*(\d{1,2})\b", re.I)
+# The transfer's own format, where an entry states it in its name:
+# "48kHz-16bit", "[2.0 LPCM 16/48 DVD]", "24/96". Rates are matched only with
+# an explicit kHz, so the "448 Kbps" of a Dolby Digital entry is not read as a
+# sample rate.
+_RATES = "44\\.1|48|88\\.2|96|176\\.4|192|352\\.8|384"
+_STATED_BITS_RATE = re.compile(rf"\b(16|24|32)\s*/\s*({_RATES})\b")
+_STATED_RATE_BITS = re.compile(rf"\b({_RATES})\s*/\s*(16|24|32)\b")
+_STATED_RATE = re.compile(rf"\b({_RATES})\s*k(?:Hz)?\b", re.I)
+_STATED_DEPTH = re.compile(r"\b(16|24|32)\s*-?\s*bits?\b", re.I)
 # Edition markers in an album name that a 2-channel CD-rate stream cannot be.
 _SURROUND_EDITION = re.compile(r"\b(?:5\.1|dvd|blu-?ray|sacd|dts|dolby)\b", re.I)
 _VINYL_EDITION = re.compile(r"\b(?:vinyl|lp|pbthal)\b", re.I)
@@ -464,6 +473,39 @@ def title_key(title: str) -> str:
     text = _BRACKETED.sub(" ", text)
     text = _NOT_WORD.sub(" ", text).strip()
     return _LEADING_ARTICLE.sub("", text)
+
+
+def stated_format(name: str) -> tuple:
+    """(rate_hz, bits) a database entry declares in its own title, or (None,
+    None). Uploaders write the transfer's format there when it is the point of
+    the entry -- "MTV Unplugged (DVD 5.1 Mix) 48kHz-16bit" is a different
+    transfer from the CD, and says so."""
+    text = str(name or "")
+    rate = bits = None
+    pair = _STATED_BITS_RATE.search(text)
+    if pair:
+        bits, rate = int(pair.group(1)), float(pair.group(2))
+    else:
+        pair = _STATED_RATE_BITS.search(text)
+        if pair:
+            rate, bits = float(pair.group(1)), int(pair.group(2))
+    if rate is None:
+        loose = _STATED_RATE.search(text)
+        if loose:
+            rate = float(loose.group(1))
+    if bits is None:
+        loose = _STATED_DEPTH.search(text)
+        if loose:
+            bits = int(loose.group(1))
+    return (int(rate * 1000) if rate else None, bits)
+
+
+def format_text(rate, bits) -> str:
+    """"96 kHz/24 bit", for a reason a listener can check."""
+    if not rate:
+        return ""
+    text = f"{rate / 1000:g} kHz"
+    return f"{text}/{bits} bit" if bits else text
 
 
 def label_names(label: str) -> set:
@@ -565,29 +607,55 @@ def identify(playing: dict, album: dict) -> dict:
                 against.append(f"“{title}” runs {listed_text} here but "
                                f"{wire_text} on the wire")
 
-    # -- what the stream itself rules out -------------------------------------
+    # -- what the stream's own format rules out ------------------------------
+    #
+    # A CD is 44.1 kHz/16 bit by definition, so a stream above that is not a
+    # rip of one -- an exclusion, not a hint, and the one place where the
+    # numbers settle it outright. The rest are weaker: an entry naming a
+    # surround or vinyl transfer is a different transfer from a stereo digital
+    # stream, and an entry naming its own format can be compared directly.
     rate, bits = playing.get("rate"), playing.get("bits")
     channels = playing.get("channels")
-    name = f"{album.get('album', '')} {album.get('source', '')}"
+    source = (album.get("source") or "").strip().lower()
+    name = str(album.get("album", ""))
     if rate:
         evidence = True
-        hi_res = rate > 48000 or (bits or 0) > 16
-        if not hi_res and _SURROUND_EDITION.search(name) and (channels or 2) <= 2:
-            score -= 12
-            against.append("a surround or disc transfer, against a "
-                           f"{rate / 1000:g} kHz stereo stream")
-        elif not hi_res and _VINYL_EDITION.search(name):
-            score -= 8
-            against.append("a vinyl rip, against a "
-                           f"{rate / 1000:g} kHz/{bits or '?'} bit stream")
-        elif not hi_res and (album.get("source") or "").lower() in ("cd", "download"):
+        wire = format_text(rate, bits)
+        cd_audio = rate == 44100 and (bits or 16) <= 16
+        if not cd_audio and source == "cd":
+            score -= 40
+            against.append(
+                f"a CD, which holds 44.1 kHz/16 bit, where the stream is "
+                f"{wire} — a hi-res issue of the same master would measure "
+                "much the same, but this entry is not it")
+        elif cd_audio and source in ("cd", "download"):
             score += 6
-            for_.append(f"a {album.get('source', '').lower()} at "
-                        f"{rate / 1000:g} kHz, as the stream is")
-        elif hi_res and (album.get("source") or "").lower() == "cd":
-            score -= 6
-            against.append(f"a CD, against a {rate / 1000:g} kHz/"
-                           f"{bits or '?'} bit stream")
+            for_.append(f"a {source} at {wire}, as the stream is")
+        elif not cd_audio and source in ("download", "web", "sacd", "blu-ray"):
+            score += 6
+            for_.append(f"a {source} issue, as a {wire} stream would be")
+
+        if _SURROUND_EDITION.search(f"{name} {source}") and (channels or 2) <= 2:
+            score -= 12
+            against.append(f"a surround or disc transfer, against a {wire} "
+                           "stereo stream")
+        elif _VINYL_EDITION.search(f"{name} {source}"):
+            score -= 8
+            against.append(f"a vinyl rip, against a {wire} stream")
+
+        stated_rate, stated_bits = stated_format(name)
+        if stated_rate and stated_rate != rate:
+            score -= 15
+            against.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
+                           f"where the stream is {wire}")
+        elif stated_rate and stated_bits and bits and stated_bits != bits:
+            score -= 15
+            against.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
+                           f"where the stream is {wire}")
+        elif stated_rate:
+            score += 8
+            for_.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
+                        "as the stream is")
 
     # -- which disc of the set ------------------------------------------------
     #

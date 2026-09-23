@@ -450,6 +450,55 @@ class IdentifyTest(unittest.TestCase):
         self.assertEqual(match["verdict"], "likely")
         self.assertTrue(any("1996" in r for r in match["against"]))
 
+    def test_a_cd_cannot_be_carrying_a_hi_res_stream(self):
+        # A CD is 44.1 kHz/16 bit by definition, so a stream above that is not
+        # a rip of one. The exclusion holds even when the track times agree to
+        # the second, which they will when the hi-res issue shares the CD's
+        # master -- and the reason says exactly that.
+        match = drdb.identify(
+            self.playing(rate=96000, bits=24),
+            self.version("MTV Unplugged", "CD", {5: "5:46"}))
+        self.assertNotEqual(match["verdict"], "likely")
+        self.assertTrue(any("holds 44.1 kHz/16 bit" in r for r in match["against"]))
+        self.assertTrue(any("would measure much the same" in r
+                            for r in match["against"]))
+
+    def test_a_cd_rate_stream_still_suits_a_cd_entry(self):
+        match = drdb.identify(self.playing(),
+                              self.version("MTV Unplugged", "CD", {5: "5:46"}))
+        self.assertEqual(match["verdict"], "likely")
+        self.assertTrue(any("44.1 kHz/16 bit, as the stream is" in r
+                            for r in match["for"]))
+
+    def test_a_hi_res_stream_suits_a_download_entry(self):
+        match = drdb.identify(
+            self.playing(rate=96000, bits=24),
+            self.version("MTV Unplugged", "Download", {5: "5:46"}))
+        self.assertTrue(any("as a 96 kHz/24 bit stream would be" in r
+                            for r in match["for"]))
+
+    def test_a_transfer_that_names_its_own_format_is_compared_to_the_stream(self):
+        off = drdb.identify(
+            self.playing(),
+            self.version("MTV Unplugged [2.0 LPCM 16/48 DVD]", "Unknown",
+                         {5: "5:46"}))
+        self.assertTrue(any("transferred at 48 kHz/16 bit" in r
+                            for r in off["against"]))
+
+    def test_a_bitrate_in_a_title_is_not_a_sample_rate(self):
+        # "448 Kbps" is Dolby Digital's bitrate; reading it as 448 kHz would
+        # rule the entry out for the wrong reason.
+        self.assertEqual(
+            drdb.stated_format("MTV Unplugged [5.1 Dolby Digital 448 Kbps DVD]"),
+            (None, None))
+        self.assertEqual(drdb.stated_format("MTV Unplugged (DVD 5.1 Mix) 48kHz-16bit"),
+                         (48000, 16))
+        self.assertEqual(drdb.stated_format("Aja (24/96 HDtracks)"), (96000, 24))
+        self.assertEqual(drdb.stated_format("Kind of Blue 192kHz"), (192000, None))
+        self.assertEqual(drdb.stated_format("MTV Unplugged"), (None, None))
+        self.assertEqual(drdb.format_text(96000, 24), "96 kHz/24 bit")
+        self.assertEqual(drdb.format_text(44100, None), "44.1 kHz")
+
     def test_the_wrong_disc_of_a_set_is_ruled_out(self):
         # A double album is filed one disc per entry and they do not measure
         # alike: Delicate Sound of Thunder is DR13 on disc 1, DR14 on disc 2.
