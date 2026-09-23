@@ -77,7 +77,11 @@
 #   * an explicit match always wins, and may be given either as a USB id
 #     (0x152a:0x88c5, optionally 0x152a:0x88c5:serial to separate two identical
 #     cards) or as any substring of the card's description as /dev/sndstat
-#     prints it ("OKTO RESEARCH DAC8STEREO");
+#     prints it ("OKTO RESEARCH DAC8STEREO").  Either role may list several,
+#     comma-separated, most preferred first ("0x152a:0x88c5,0x22e8:0xdac4"):
+#     the first one that is attached takes the role.  That is how a box that
+#     travels between two DACs keeps working at both without reconfiguration,
+#     and it is what the /configuration page writes -- see audio_pick;
 #   * with no match configured the playback-capable cards that are not the
 #     capture card are ranked -- a USB card that only plays beats a USB card
 #     that also records, which beats a non-USB card -- and the best is taken.
@@ -117,7 +121,8 @@ load_rc_config "$name"
 : ${omdrc_audio_drcsh:="${brutefir_drc_drcsh:-@REPO_DIR@/drc.sh}"}
 : ${omdrc_audio_statussh:="${brutefir_drc_statussh:-@REPO_DIR@/drc-status.sh}"}
 # Which card takes which role.  USB id (0x152a:0x88c5[:serial]) or a substring
-# of the description.  DAC empty = auto (see the header); capture empty = off.
+# of the description, or a comma-separated list of them, most preferred first.
+# DAC empty = auto (see the header); capture empty = off.
 : ${omdrc_audio_dac:="${omdrc_sndlink_dac:-}"}
 : ${omdrc_audio_capture:="${omdrc_sndlink_capture:-}"}
 # Per-card pcm settings, keyed by ROLE rather than by unit number.  The defaults
@@ -228,6 +233,64 @@ _sl_nl='
 audio_can_play() { [ $(( $1 & 2 )) -ne 0 ]; }
 audio_can_rec()  { [ $(( $1 & 4 )) -ne 0 ]; }
 
+# Find the card for a role from its configured list: comma-separated specs,
+# the explicit selection first and then every card applied before it (the web
+# page keeps the list that way).  This is the known-device policy of the
+# manual (sec:known-dac-policy):
+#
+#   * the first spec, the explicit selection, wins whenever it is attached;
+#   * otherwise EXACTLY ONE attached card matching the rest of the list takes
+#     the role -- the office DAC when the home one is not there, with no
+#     Apply -- and the list order does not rank them;
+#   * two or more such cards is ambiguous: the role stays empty and
+#     _sl_pick_ambiguous is set, because choosing between known DACs is the
+#     operator's job and a wrong choice sends everything to the wrong card.
+#
+# $1 = the list, $2 = a unit to rule out (the capture card, for the DAC
+# search), $3 = the capability test.  Sets _sl_pick_u, _sl_pick_d, _sl_pick_v,
+# _sl_pick_p and _sl_pick_s; fails when nothing (unique) matches.  Reads
+# ${_sl_cards}.
+audio_pick()
+{
+	_sl_pick_u="" _sl_pick_d="" _sl_pick_v="" _sl_pick_p="" _sl_pick_s=""
+	_sl_pick_ambiguous=""
+	_sl_skip=$2 _sl_can=$3 _sl_first=1 _sl_hits=""
+	_sl_ifs=$IFS
+	IFS=,
+	set -f
+	set -- $1
+	set +f
+	IFS=$_sl_ifs
+	for _sl_spec; do
+		# Trim, so "0x152a:0x88c5, 0x22e8:0xdac4" reads as meant.
+		_sl_spec="${_sl_spec#"${_sl_spec%%[![:space:]]*}"}"
+		_sl_spec="${_sl_spec%"${_sl_spec##*[![:space:]]}"}"
+		[ -n "${_sl_spec}" ] || continue
+		while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
+			[ -n "${_sl_u}" ] || continue
+			[ "${_sl_u}" != "${_sl_skip}" ] || continue
+			"${_sl_can}" "${_sl_m}" || continue
+			audio_match "${_sl_spec}" \
+			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}" || continue
+			case " ${_sl_hits} " in *" ${_sl_u} "*) continue ;; esac
+			_sl_hits="${_sl_hits} ${_sl_u}"
+			[ -z "${_sl_pick_u}" ] || { _sl_pick_ambiguous=1; continue; }
+			_sl_pick_u="${_sl_u}" _sl_pick_d="${_sl_d}"
+			_sl_pick_v="${_sl_vid}" _sl_pick_p="${_sl_pid}" _sl_pick_s="${_sl_ser}"
+		done <<-EOF
+		${_sl_cards}
+		EOF
+		# The explicit selection is attached: nothing else is considered.
+		[ -z "${_sl_first}" ] || [ -z "${_sl_pick_u}" ] || return 0
+		_sl_first=""
+	done
+	if [ -n "${_sl_pick_ambiguous}" ]; then
+		_sl_pick_u="" _sl_pick_d="" _sl_pick_v="" _sl_pick_p="" _sl_pick_s=""
+		return 1
+	fi
+	[ -n "${_sl_pick_u}" ]
+}
+
 # Decide the roles.  Sets DAC_UNIT/DAC_DESC and CAPTURE_UNIT/CAPTURE_DESC, empty
 # when the role is unfilled.  Capture is resolved first so that the DAC search
 # can rule that card out -- with no DAC match configured, the capture card is
@@ -237,38 +300,24 @@ audio_scan()
 	DAC_UNIT="" DAC_DESC="" CAPTURE_UNIT="" CAPTURE_DESC=""
 	_sl_cards=$(audio_cards)
 
-	if [ -n "${omdrc_audio_capture}" ]; then
-		while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
-			[ -n "${_sl_u}" ] || continue
-			[ -z "${CAPTURE_UNIT}" ] || continue
-			audio_can_rec "${_sl_m}" || continue
-			if audio_match "${omdrc_audio_capture}" \
-			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}"; then
-				CAPTURE_UNIT="${_sl_u}"
-				CAPTURE_DESC="${_sl_d}"
-			fi
-		done <<-EOF
-		${_sl_cards}
-		EOF
+	DAC_AMBIGUOUS="" CAPTURE_AMBIGUOUS=""
+	if [ -n "${omdrc_audio_capture}" ] &&
+	    { audio_pick "${omdrc_audio_capture}" "" audio_can_rec ||
+	      { CAPTURE_AMBIGUOUS="${_sl_pick_ambiguous}"; false; }; }; then
+		CAPTURE_UNIT="${_sl_pick_u}"
+		CAPTURE_DESC="${_sl_pick_d}"
 	fi
 
-	# An explicit match either hits or it does not; there is no second-best
-	# card to fall back to, and a spec that matches nothing must leave the
+	# An explicit list either hits or it does not; there is no second-best
+	# card to fall back to, and a list that matches nothing must leave the
 	# role empty rather than quietly pick something else.
 	if [ -n "${omdrc_audio_dac}" ]; then
-		while read -r _sl_u _sl_p _sl_m _sl_vid _sl_pid _sl_ser _sl_d; do
-			[ -n "${_sl_u}" ] || continue
-			[ -z "${DAC_UNIT}" ] || continue
-			[ "${_sl_u}" != "${CAPTURE_UNIT}" ] || continue
-			audio_can_play "${_sl_m}" || continue
-			if audio_match "${omdrc_audio_dac}" \
-			    "${_sl_d}" "${_sl_vid}" "${_sl_pid}" "${_sl_ser}"; then
-				DAC_UNIT="${_sl_u}"
-				DAC_DESC="${_sl_d}"
-			fi
-		done <<-EOF
-		${_sl_cards}
-		EOF
+		audio_pick "${omdrc_audio_dac}" "${CAPTURE_UNIT}" audio_can_play ||
+		    DAC_AMBIGUOUS="${_sl_pick_ambiguous}"
+		if [ -n "${_sl_pick_u}" ]; then
+			DAC_UNIT="${_sl_pick_u}"
+			DAC_DESC="${_sl_pick_d}"
+		fi
 		return 0
 	fi
 
@@ -497,6 +546,9 @@ audio_publish()
 		printf 'capture_unit=%s\n' "${CAPTURE_UNIT}"
 		printf 'capture_desc=%s\n' "${CAPTURE_DESC}"
 		printf 'capture_wanted=%s\n' "${omdrc_audio_capture}"
+		printf 'dac_wanted=%s\n' "${omdrc_audio_dac}"
+		printf 'dac_ambiguous=%s\n' "${DAC_AMBIGUOUS:-0}"
+		printf 'capture_ambiguous=%s\n' "${CAPTURE_AMBIGUOUS:-0}"
 	} > "${omdrc_audio_statefile}.new" 2>/dev/null &&
 	    mv -f "${omdrc_audio_statefile}.new" "${omdrc_audio_statefile}" \
 	        2>/dev/null || true
@@ -526,7 +578,10 @@ omdrc_audio_roles()
 	audio_report_guess
 	audio_publish
 
-	if [ -z "${DAC_UNIT}" ]; then
+	if [ -n "${DAC_AMBIGUOUS}" ]; then
+		audio_log "several known DACs attached and the selected one is not;"
+		audio_log "choose one on /configuration -- /dev/dsp.dac not created"
+	elif [ -z "${DAC_UNIT}" ]; then
 		audio_log "no playback card attached; /dev/dsp.dac not created"
 	fi
 	if [ -n "${omdrc_audio_capture}" ] && [ -z "${CAPTURE_UNIT}" ]; then
@@ -645,7 +700,10 @@ omdrc_audio_roles_status()
 	_sl_rc=0
 	_sl_default=$(${SYSCTL} -n hw.snd.default_unit 2>/dev/null)
 	printf '%-23s %s\n' 'hw.snd.default_unit' "${_sl_default:-unavailable}"
-	if [ -z "${DAC_UNIT}" ]; then
+	if [ -n "${DAC_AMBIGUOUS}" ]; then
+		echo "${name}: several known DACs attached, the selected one is not -- choose one on /configuration"
+		_sl_rc=1
+	elif [ -z "${DAC_UNIT}" ]; then
 		echo "${name}: no playback card -- /dev/dsp.dac is missing"
 		_sl_rc=1
 	fi
@@ -653,9 +711,11 @@ omdrc_audio_roles_status()
 		echo "${name}: default unit mismatch -- DAC role is pcm${DAC_UNIT}"
 		_sl_rc=1
 	fi
+	# Not a failure: a remembered capture interface that is somewhere else
+	# today (the office has no CD input) is the normal travelling-box state,
+	# and the DAC role does not depend on it.
 	if [ -n "${omdrc_audio_capture}" ] && [ -z "${CAPTURE_UNIT}" ]; then
 		echo "${name}: no card matches '${omdrc_audio_capture}' -- /dev/dsp.capture is missing"
-		_sl_rc=1
 	fi
 	[ "${_sl_rc}" = 0 ] && echo "${name}: roles assigned"
 	return "${_sl_rc}"

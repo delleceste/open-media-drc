@@ -66,6 +66,30 @@ def parse_identity(value: str, optional: bool = False) -> str:
     return value.lower()
 
 
+# How many cards each role remembers.  Enough for every DAC a box travels
+# between; bounded so a long history of experiments does not grow forever.
+REMEMBERED = 8
+
+
+def remember(saved: str, chosen: str, drop: tuple[str, ...] = ()) -> str:
+    """The role's new card list: `chosen` first, then what was saved before.
+
+    A role is a comma-separated list, most recently applied first, and the
+    reconciler takes the first entry that is attached (audio_pick in
+    omdrc_audio, linux_pick here).  So applying the office DAC does not forget
+    the home one: moving back is a plug-in, not another Apply.  `drop` removes
+    identities outright -- the other role's card, and capture cards the user
+    saw attached and chose to disable.  Hand-written description entries
+    ("ESI U24XL") are kept as they are; only USB ids are compared."""
+    gone = {item.lower() for item in (chosen, *drop) if item}
+    kept = [chosen] if chosen else []
+    for item in saved.split(","):
+        item = item.strip()
+        if item and item.lower() not in gone and item not in kept:
+            kept.append(item)
+    return ",".join(kept[:REMEMBERED])
+
+
 def atomic_text(path: Path, text: str, mode: int = 0o644,
                 owner: tuple[int, int] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,9 +108,17 @@ def atomic_text(path: Path, text: str, mode: int = 0o644,
             pass
 
 
-def freebsd_apply(dac: str, capture: str, timeout: int) -> None:
-    run(["/usr/sbin/sysrc", f"omdrc_audio_dac={dac}"])
-    run(["/usr/sbin/sysrc", f"omdrc_audio_capture={capture}"])
+def freebsd_apply(dac: str, capture: str, timeout: int,
+                  forget_capture: tuple[str, ...] = ()) -> None:
+    saved = {}
+    for key in ("omdrc_audio_dac", "omdrc_audio_capture"):
+        # Unset is exit 1 with the complaint on (merged) stdout: that is "".
+        result = run(["/usr/sbin/sysrc", "-n", key], check=False)
+        saved[key] = result.stdout.strip() if result.returncode == 0 else ""
+    dacs = remember(saved["omdrc_audio_dac"], dac, (capture,))
+    captures = remember(saved["omdrc_audio_capture"], capture, (dac, *forget_capture))
+    run(["/usr/sbin/sysrc", f"omdrc_audio_dac={dacs}"])
+    run(["/usr/sbin/sysrc", f"omdrc_audio_capture={captures}"])
     run(["/usr/sbin/service", "omdrc_audio", "reconcile"])
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -329,6 +361,64 @@ def filter_remove(selector: str, site_value: str, script_value: str) -> None:
          "--no-commit", "--yes", "--live"])
 
 
+def linux_pick(saved: str, role: str, exclude: str = "") -> str:
+    """The attached card a remembered role list resolves to, or "".
+
+    The known-device policy of the manual (sec:known-dac-policy), as
+    audio_pick applies it on FreeBSD: the first entry, the explicit
+    selection, wins when attached; otherwise exactly one attached card from
+    the rest of the list takes the role; two or more is refused, because
+    choosing between known cards is the operator's job.  Linux roles hold USB
+    ids only; anything else in the list is skipped."""
+    cards = linux_usb_cards()
+    hits = []
+    for position, item in enumerate(saved.split(",")):
+        item = item.strip().lower()
+        if not IDENTITY.fullmatch(item) or item == exclude:
+            continue
+        matches = [card for card in cards if identity_matches(item, card)]
+        if len(matches) > 1:
+            raise RuntimeError(f"configured {role} identity {item} matches "
+                               f"{len(matches)} attached ALSA cards")
+        if matches and position == 0:
+            return item
+        if matches:
+            hits.append(item)
+    if len(hits) > 1:
+        raise RuntimeError(
+            f"several known {role} cards are attached ({', '.join(hits)}) and the "
+            "selected one is not; choose one on /configuration")
+    return hits[0] if hits else ""
+
+
+def linux_pick_capture(saved: str) -> str:
+    """linux_pick for the capture role, which is never worth an error.
+
+    The CD input is optional: the interface may be at home, unplugged for
+    want of a USB port, or just not needed today.  Whatever stops it from
+    resolving -- absent, or ambiguous -- the DAC role and the chain must still
+    come up, so this reports and carries on without it."""
+    try:
+        capture = linux_pick(saved, "capture")
+    except RuntimeError as error:
+        print(f"NOTICE: {error}; continuing without the capture interface")
+        return ""
+    if saved and not capture:
+        print(f"NOTICE: no configured capture interface ({saved}) is attached; "
+              "continuing without it")
+    return capture
+
+
+def linux_saved_roles(prefix: str) -> dict[str, str]:
+    path = Path(f"{prefix}/etc/open-media-drc/audio-roles.conf")
+    saved = path.read_text() if path.is_file() else ""
+    roles = {}
+    for role in ("dac", "capture"):
+        match = re.search(rf'^OMDRC_AUDIO_{role.upper()}="([^"]*)"$', saved, re.M)
+        roles[role] = match.group(1) if match else ""
+    return roles
+
+
 def linux_resolve(identity: str, role: str) -> dict:
     matches = [card for card in linux_usb_cards() if identity_matches(identity, card)]
     if len(matches) != 1:
@@ -370,17 +460,12 @@ def linux_browser_alsa(prefix: str, dac: dict | None,
 def linux_browser_alsa_refresh() -> None:
     """Installation-time refresh without touching the DRC lifecycle."""
     prefix = os.environ.get("PREFIX", "/usr/local")
-    roles = Path(prefix) / "etc/open-media-drc/audio-roles.conf"
-    saved = roles.read_text() if roles.is_file() else ""
+    saved = linux_saved_roles(prefix)
     selected = {}
-    for role in ("dac", "capture"):
-        match = re.search(rf'^OMDRC_AUDIO_{role.upper()}="([^"]*)"$', saved, re.M)
-        identity = parse_identity(match.group(1), optional=True) if match else ""
-        cards = [card for card in linux_usb_cards()
-                 if identity and identity_matches(identity, card)]
-        if len(cards) > 1:
-            raise RuntimeError(f"configured {role} identity is ambiguous")
-        selected[role] = cards[0] if cards else None
+    capture = linux_pick_capture(saved["capture"])
+    for role, identity in (("capture", capture),
+                           ("dac", linux_pick(saved["dac"], "DAC", capture))):
+        selected[role] = linux_resolve(identity, role) if identity else None
     if selected["dac"] is None:
         print("NOTICE: browser output is unavailable; select an attached DAC on /configuration")
     linux_browser_alsa(prefix, selected["dac"], selected["capture"])
@@ -451,7 +536,11 @@ def linux_reload_aloop_timer(card: str) -> bool:
 
 
 def linux_apply(dac: str, timeout: int, restart: bool = True,
-                capture: str = "") -> None:
+                capture: str = "", dacs: str = "", captures: str = "") -> None:
+    """Point everything at `dac` and `capture`, and save the role lists.
+
+    `dacs`/`captures` are the remembered lists to store (see remember); they
+    default to just the cards being applied."""
     selected = linux_resolve(dac, "DAC")
     chosen_capture = linux_resolve(capture, "capture") if capture else None
     prefix = os.environ.get("PREFIX", "/usr/local")
@@ -498,8 +587,8 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
         atomic_text(mpd_conf, mpd_changed)
     manages_aloop = linux_aloop_timer(selected["number"])
     role_conf = Path(f"{prefix}/etc/open-media-drc/audio-roles.conf")
-    atomic_text(role_conf, f'OMDRC_AUDIO_DAC="{dac}"\n'
-                           f'OMDRC_AUDIO_CAPTURE="{capture}"\n')
+    atomic_text(role_conf, f'OMDRC_AUDIO_DAC="{dacs or dac}"\n'
+                           f'OMDRC_AUDIO_CAPTURE="{captures or capture}"\n')
     # /run/omdrc/audio.roles is what the CD bridge reads to find the capture
     # interface (scripts/omdrc-cdin-alsaloop), so the capture half has to be
     # published here for the same reason the DAC half is: nothing else on Linux
@@ -510,7 +599,9 @@ def linux_apply(dac: str, timeout: int, restart: bool = True,
                        f"dac_id={dac}\n"
                        f"capture_unit={chosen_capture['number'] if chosen_capture else ''}\n"
                        f"capture_desc={chosen_capture['name'] if chosen_capture else ''}\n"
-                       f"capture_id={capture}\n")
+                       f"capture_id={capture}\n"
+                       f"dac_wanted={dacs or dac}\n"
+                       f"capture_wanted={captures or capture}\n")
     # MPD reads audio_output only at startup, so rewriting the device line
     # above changes nothing for the daemon that is already running: it keeps
     # playing to whatever card it resolved when it started.  That stays
@@ -565,6 +656,9 @@ def main() -> int:
     apply = sub.add_parser("apply")
     apply.add_argument("--dac", required=True)
     apply.add_argument("--capture", default="")
+    # Attached capture cards the user chose to disable: forgotten, so they do
+    # not take the role back on the next plug-in.  Absent ones stay remembered.
+    apply.add_argument("--forget-capture", action="append", default=[])
     apply.add_argument("--timeout", type=int, default=120)
     reconcile = sub.add_parser("reconcile")
     reconcile.add_argument("--timeout", type=int, default=120)
@@ -596,30 +690,32 @@ def main() -> int:
         if not path.is_file():
             print(f"NOTICE: {path} does not exist; keeping the existing ALSA DAC device")
             return 0
-        saved = path.read_text()
-        match = re.search(r'^OMDRC_AUDIO_DAC="([^"]+)"$', saved, re.M)
-        if not match:
+        saved = linux_saved_roles(prefix)
+        if not saved["dac"]:
             raise RuntimeError(f"no configured DAC in {path}")
-        capture_match = re.search(r'^OMDRC_AUDIO_CAPTURE="([^"]*)"$', saved, re.M)
-        capture = parse_identity(capture_match.group(1), optional=True) \
-            if capture_match else ""
         # A capture card that is not plugged in must not take the DAC down with
         # it: the box still plays music, it just has no CD input this boot.
-        if capture and not [c for c in linux_usb_cards() if identity_matches(capture, c)]:
-            print(f"NOTICE: configured capture interface {capture} is not attached; "
-                  "publishing the DAC role only")
-            capture = ""
-        linux_apply(parse_identity(match.group(1)), args.timeout, restart=False,
-                    capture=capture)
+        capture = linux_pick_capture(saved["capture"])
+        dac = linux_pick(saved["dac"], "DAC", capture)
+        if not dac:
+            raise RuntimeError(f"none of the configured DACs ({saved['dac']}) "
+                               "is attached")
+        linux_apply(dac, args.timeout, restart=False, capture=capture,
+                    dacs=saved["dac"], captures=saved["capture"])
         return 0
     dac = parse_identity(args.dac)
     capture = parse_identity(args.capture, optional=True)
     if dac == capture:
         raise ValueError("DAC and capture identities must differ")
+    forget = tuple(parse_identity(item) for item in args.forget_capture)
     if platform.system() == "FreeBSD":
-        freebsd_apply(dac, capture, args.timeout)
+        freebsd_apply(dac, capture, args.timeout, forget)
     elif platform.system() == "Linux":
-        linux_apply(dac, args.timeout, capture=capture)
+        prefix = os.environ.get("PREFIX", "/usr/local")
+        saved = linux_saved_roles(prefix)
+        linux_apply(dac, args.timeout, capture=capture,
+                    dacs=remember(saved["dac"], dac, (capture,)),
+                    captures=remember(saved["capture"], capture, (dac, *forget)))
     else:
         raise RuntimeError(f"unsupported operating system: {platform.system()}")
     return 0

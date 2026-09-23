@@ -778,6 +778,15 @@ class ConfigurationManager:
         helper = shutil.which(self.settings.helper) or self.settings.helper
         argv = [helper, "apply", "--dac", dac, "--capture", capture,
                 "--timeout", str(self.settings.apply_timeout)]
+        # Each role remembers every card applied to it, so "Disabled" has to
+        # say which ones it means: the capture cards on screen.  One that is
+        # not plugged in right now (the home interface, applied from the
+        # office) stays remembered.
+        if not capture:
+            for card in identities.values():
+                if card.get("capture") and card["identity"] != dac \
+                        and not card.get("ambiguous"):
+                    argv += ["--forget-capture", card["identity"]]
         if os.geteuid() != 0:
             argv = ["sudo", "-n", *argv]
         self.run_command(job, argv, self.settings.apply_timeout + 15)

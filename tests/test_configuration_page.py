@@ -32,6 +32,86 @@ assert HELPER_SPEC.loader
 HELPER_SPEC.loader.exec_module(HELPER)
 
 
+class RememberedRolesTest(unittest.TestCase):
+    OKTO, DACMAGIC, ESI = "0x152a:0x88c5", "0x22e8:0xdac4", "0x0a92:0x0053"
+
+    def test_apply_puts_the_card_first_and_keeps_the_others(self):
+        self.assertEqual(HELPER.remember(self.OKTO, self.DACMAGIC),
+                         f"{self.DACMAGIC},{self.OKTO}")
+        self.assertEqual(HELPER.remember(f"{self.DACMAGIC},{self.OKTO}", self.OKTO),
+                         f"{self.OKTO},{self.DACMAGIC}")
+
+    def test_disabling_capture_keeps_an_absent_interface(self):
+        # At the office, with the ESI at home: "Disabled" must not forget it.
+        self.assertEqual(HELPER.remember(self.ESI, "", ()), self.ESI)
+        self.assertEqual(HELPER.remember(self.ESI, "", (self.ESI,)), "")
+
+    def test_the_other_roles_card_and_duplicates_are_dropped(self):
+        self.assertEqual(HELPER.remember(f"{self.ESI}, {self.OKTO} ,ESI U24XL",
+                                         self.DACMAGIC, (self.ESI,)),
+                         f"{self.DACMAGIC},{self.OKTO},ESI U24XL")
+        many = ",".join(f"0x0000:0x{n:04x}" for n in range(20))
+        self.assertEqual(len(HELPER.remember(many, self.OKTO).split(",")),
+                         HELPER.REMEMBERED)
+
+    def test_linux_pick_follows_the_same_policy(self):
+        card = lambda identity, number: {"identity": identity, "serial": "",
+                                         "number": number, "name": identity}
+        home = [card(self.ESI, "0"), card(self.OKTO, "1")]
+        with mock.patch.object(HELPER, "linux_usb_cards", return_value=home):
+            self.assertEqual(HELPER.linux_pick(f"{self.DACMAGIC},{self.OKTO}", "DAC"),
+                             self.OKTO)
+            self.assertEqual(HELPER.linux_pick(self.DACMAGIC, "DAC"), "")
+        both = home + [card(self.DACMAGIC, "2")]
+        with mock.patch.object(HELPER, "linux_usb_cards", return_value=both):
+            self.assertEqual(HELPER.linux_pick(f"{self.DACMAGIC},{self.OKTO}", "DAC"),
+                             self.DACMAGIC)
+            with self.assertRaisesRegex(RuntimeError, "several known"):
+                HELPER.linux_pick(f"0x1111:0x2222,{self.OKTO},{self.DACMAGIC}", "DAC")
+
+    def test_an_unresolvable_capture_never_fails_the_reconcile(self):
+        card = lambda identity, number: {"identity": identity, "serial": "",
+                                         "number": number, "name": identity}
+        other = "0x0a92:0x0099"
+        for attached in ([], [card(self.ESI, "0"), card(other, "1")]):
+            with mock.patch.object(HELPER, "linux_usb_cards", return_value=attached), \
+                    mock.patch("builtins.print"):
+                self.assertEqual(HELPER.linux_pick_capture(
+                    f"0x1111:0x2222,{self.ESI},{other}"), "")
+
+    def test_rc_script_takes_the_first_attached_card_of_the_list(self):
+        sh = shutil.which("sh")
+        if not sh:
+            self.skipTest("no sh")
+        for script in (ROOT / "etc/rc.d/omdrc_audio.in",
+                       ROOT / "freebsd/audio/open-media-drc/files/omdrc_audio.in"):
+            text = script.read_text()
+            functions = "".join(text[text.index(f"{name}()"):].split("\n}\n", 1)[0] + "\n}\n"
+                                for name in ("audio_match", "audio_pick"))
+            home = ("0 uaudio0 7 0x0a92 0x0053 - ESI U24XL\n"
+                    "1 uaudio1 7 0x152a 0x88c5 - OKTO RESEARCH DAC8STEREO\n")
+            program = (functions +
+                       "audio_can_play() { [ $(( $1 & 2 )) -ne 0 ]; }\n"
+                       'audio_pick "$1" "$2" audio_can_play && echo "$_sl_pick_u $_sl_pick_d"'
+                       ' || echo "none${_sl_pick_ambiguous:+ ambiguous}"\n')
+            pick = lambda specs, skip="", cards=home: subprocess.run(
+                [sh, "-c", f"_sl_cards='{cards}'\n" + program, "sh", specs, skip],
+                capture_output=True, text=True, check=True).stdout.strip()
+            both = home + "2 uaudio2 2 0x22e8 0xdac4 0000 Cambridge AudioDAC100\n"
+            # The selected card wins whenever it is attached...
+            self.assertEqual(pick(f"{self.DACMAGIC},{self.OKTO}", cards=both),
+                             "2 Cambridge AudioDAC100")
+            # ...but two other known cards is the operator's choice, not ours.
+            self.assertEqual(pick(f"0x1111:0x2222,{self.OKTO},{self.DACMAGIC}",
+                                  cards=both), "none ambiguous")
+            # The DacMagic was applied last, but it is at the office.
+            self.assertEqual(pick(f"{self.DACMAGIC},{self.OKTO}"),
+                             "1 OKTO RESEARCH DAC8STEREO", script)
+            self.assertEqual(pick(f"{self.OKTO},{self.ESI}", "1"), "0 ESI U24XL")
+            self.assertEqual(pick(f" ESI U24XL , {self.OKTO}"), "0 ESI U24XL")
+            self.assertEqual(pick(self.DACMAGIC), "none")
+
+
 class CardIdentityTest(unittest.TestCase):
     def test_serial_is_added_only_for_duplicate_vid_pid(self):
         rows = configuration._disambiguate([

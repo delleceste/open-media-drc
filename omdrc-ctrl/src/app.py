@@ -6798,9 +6798,18 @@ def _chain_problems(status: dict, bridge_node: dict | None,
                     f"and no omdrc_audio_dac in rc.conf "
                     f"(see `service omdrc_audio status`)",
         })
-    if roles.get("capture_wanted") and not roles.get("capture_unit"):
+    if roles.get("dac_ambiguous") == "1":
         problems.append({
             "severity": "warn",
+            "text": "several known DACs are attached and the selected one is "
+                    "not — no DAC was chosen; pick one on /configuration "
+                    "and Apply",
+        })
+    # Info, not a warning: every capture card ever applied is remembered, so
+    # one that is simply elsewhere today is expected, not a fault.
+    if roles.get("capture_wanted") and not roles.get("capture_unit"):
+        problems.append({
+            "severity": "info",
             "text": f"no card matches omdrc_audio_capture="
                     f"\"{roles['capture_wanted']}\" — the capture link is missing",
         })

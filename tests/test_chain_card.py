@@ -480,8 +480,15 @@ class AudioRoles(unittest.TestCase):
         status = self._with_roles(
             "dac_unit=1\ndac_desc=OKTO\ndac_guessed=0\n"
             "capture_unit=\ncapture_desc=\ncapture_wanted=ESI U24XL\n")
+        notes = [p["text"] for p in status["problems"] if p["severity"] == "info"]
+        self.assertTrue(any("no card matches" in w for w in notes))
+
+    def test_an_ambiguous_known_dac_is_reported(self):
+        status = self._with_roles(
+            "dac_unit=\ndac_desc=\ndac_guessed=0\ndac_ambiguous=1\n"
+            "capture_unit=\ncapture_desc=\ncapture_wanted=\n")
         warns = [p["text"] for p in status["problems"] if p["severity"] == "warn"]
-        self.assertTrue(any("no card matches" in w for w in warns))
+        self.assertTrue(any("several known DACs" in w for w in warns))
 
     def test_a_clean_assignment_says_nothing(self):
         status = self._with_roles(

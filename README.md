@@ -999,7 +999,8 @@ Configure `/etc/rc.conf`:
 musicpd_enable="YES"
 omdrc_audio_enable="YES"
 omdrc_audio_user="giacomo"
-omdrc_audio_dac="0x152a:0x88c5"        # recommended with more than one card
+omdrc_audio_dac="0x152a:0x88c5"        # recommended with more than one card;
+                                       # a comma list remembers several DACs
 omdrc_audio_capture="ESI U24XL"        # only for CD input
 omdrc_audio_capture_recsrc="auto"
 ```

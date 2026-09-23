@@ -2154,50 +2154,49 @@ drives two independent workflows, both through the same privileged helper,
 
 #### DAC switching and known-device policy {#sec:known-dac-policy}
 
-**Current implementation (important).** The installed system remembers one
-active DAC identity, not a history of DACs. Applying a different DAC replaces
-that identity: for example, applying a Cambridge Audio DAC after an OKTO makes
-Cambridge the saved DAC. If Cambridge is then absent and OKTO is reconnected,
-the operator must select OKTO on `/configuration` and Apply again. Merely having
-configured that OKTO in an earlier session does not currently make it an
-automatic candidate. USB card numbers such as `pcm0` or ALSA `card1` are never
-the saved identity; they are resolved afresh from USB VID/PID and, when needed,
-serial number.
+Each role keeps a list of every card that has been applied to it, the
+explicit selection first. On FreeBSD it is the comma-separated
+`omdrc_audio_dac` / `omdrc_audio_capture` value in `/etc/rc.conf`
+(`"0x22e8:0xdac4,0x152a:0x88c5"`); on Linux it is the same list in
+`OMDRC_AUDIO_DAC` / `OMDRC_AUDIO_CAPTURE` of `audio-roles.conf`. USB card
+numbers such as `pcm0` or ALSA `card1` are never saved; every reconcile
+resolves the identities afresh from USB VID/PID and, when needed, the serial
+number. Every boot and hotplug reconcile (`audio_pick` in `omdrc_audio`,
+`linux_pick` in the helper) applies these rules:
 
-The following is the required policy for a future known-DAC registry. It is a
-design requirement, not a description of the currently installed behavior:
+1. A card becomes known only when it is selected and successfully applied in
+   the web UI. Being plugged in never enrolls it.
+2. Apply puts the chosen card first in its role's list and keeps the cards
+   applied before it (at most eight). It removes the card from the other
+   role's list, so a playback-capable capture interface never becomes a known
+   DAC. For capture, *Disabled* forgets only the capture interfaces attached
+   at the time. One that is elsewhere, such as the home ESI when you Apply at
+   the office, stays in the list.
+3. When the explicit selection is attached, it takes the role.
+4. When the explicit selection is absent and **exactly one** other known card
+   is attached, that card takes the role. The OKTO/Cambridge swap between
+   home and office therefore needs no Apply. The list order does not rank the
+   other known cards.
+5. When the explicit selection is absent and two or more known cards are
+   attached, the choice is ambiguous and the role stays empty. The chain card
+   and `/configuration` ask the operator to choose (`dac_ambiguous=1` in
+   `audio.roles`). An Apply there makes that card the explicit selection.
+6. An attached card that is not in the list is never used for a role that has
+   a list. The unconfigured ranking in the `omdrc_audio` header applies only
+   when `omdrc_audio_dac` is empty.
+7. VID/PID identifies a model, and a serial suffix separates identical
+   devices. If identical attached devices expose no usable serial number,
+   Apply is refused and the operator must unplug all but the intended one.
+8. When no unique known card is found, nothing is redirected. The DRC chain,
+   the bit-perfect controls and the hardware volume are never sent to an
+   arbitrary playback card.
 
-1. A newly encountered DAC must be selected and successfully applied in the
-   web UI before it becomes known. Attachment alone must never enroll a device.
-2. A successful Apply stores the stable USB identity in the known-DAC registry
-   and records that DAC as the explicit active selection. Previously known DACs
-   remain in the registry.
-3. On a later boot or hotplug reconcile, if the explicit active DAC is absent
-   and exactly one other known DAC is attached and playback-capable, that DAC
-   may be selected automatically. No UI reconfiguration is required for the
-   ordinary at-home OKTO/Cambridge swap where only one is connected at a time.
-4. An attached but unknown DAC must not be guessed or silently enrolled. The
-   audio role remains unresolved until the operator selects and applies it in
-   the UI.
-5. If two or more known DACs are attached and there is no applicable explicit
-   selection, automatic selection is ambiguous and must stop. The UI must ask
-   the operator to choose. An explicit UI choice is authoritative for that
-   session; unplugging the alternatives removes the ambiguity for future
-   automatic reconciliation.
-6. VID/PID identifies a model. A serial suffix distinguishes multiple devices
-   of that model. If identical attached devices expose no usable serial number,
-   the system must refuse to guess and instruct the operator to unplug all but
-   the intended device before applying.
-7. Failure to identify a unique known DAC is fail-safe: do not redirect the DRC
-   chain, bit-perfect controls, or hardware-volume operations to an arbitrary
-   playback card. Capture-interface selection remains a separate role and does
-   not implicitly make a playback-capable capture interface a known DAC.
+A remembered capture interface that is not attached is normal for a box that
+travels, so it is reported as information, not as a fault.
 
-When this registry is introduced, migration should seed it with the single DAC
-identity active at upgrade time. Older identities that were overwritten cannot
-be reconstructed reliably from the current role file; each such DAC must be
-applied once to enroll it. Display names and transient card numbers are
-diagnostic information only and must not be used to infer registry membership.
+Upgrading keeps the single identity that is configured at upgrade time as a
+one-entry list. A DAC whose identity was overwritten before this change cannot
+be recovered, so each one has to be applied once to enroll it.
 
 The helper validates USB identities, selectors, canonical bundle IDs, hashes,
 config derivation, and destination roots before touching anything root-owned;
