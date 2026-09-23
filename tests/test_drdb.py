@@ -179,7 +179,7 @@ class AlgorithmTableTest(unittest.TestCase):
 
     def test_every_weight_the_scorer_uses_is_documented(self):
         body = self.SOURCE[self.SOURCE.index("def identify("):]
-        used = set(re.findall(r'W\["(\w+)"\]', body))
+        used = {key for key in drdb.W if f'"{key}"' in body}
         documented = {key for _s, _w, key, _y in drdb.ALGORITHM}
         thresholds = {"likely_from", "possible_from"}
         self.assertEqual(used - thresholds, documented)
@@ -196,7 +196,7 @@ class AlgorithmTableTest(unittest.TestCase):
         page = APP.app.test_client().get("/dr-alternatives").get_data(as_text=True)
         self.assertIn("How \u201cWhich one is playing?\u201d decides", page)
         self.assertIn("+%d" % drdb.W["time_exact"], page)
-        self.assertIn("%d" % drdb.W["cd_hires"], page)
+        self.assertIn("rules out", page)
         self.assertIn("const CLOSE_MARGIN = %d;" % drdb.W["tie_margin"], page)
 
 
@@ -433,12 +433,43 @@ class IdentifyTest(unittest.TestCase):
         version.update(extra)
         return version
 
+    def row(self, match, signal):
+        found = [r for r in match["evidence"] if r["signal"] == signal]
+        self.assertEqual(len(found), 1, f"expected one {signal} row: {match['evidence']}")
+        return found[0]
+
+    def test_every_row_names_both_sides_and_their_source(self):
+        """The point of the rows: "released by Columbia Records, not Pink
+        Floyd Records" did not say which side was which."""
+        match = drdb.identify(
+            self.playing(label="Pink Floyd Records", year="1988-11-22"),
+            self.version("MTV Unplugged", "CD", {5: "5:46"},
+                         label="Columbia Records", year="1995"))
+        label = self.row(match, "Label")
+        self.assertEqual((label["entry"], label["stream"]),
+                         ("Columbia Records", "Pink Floyd Records"))
+        self.assertEqual(label["entry_from"], "database: Label field")
+        self.assertEqual(label["stream_from"], "stream: Label tag")
+        for r in match["evidence"]:
+            self.assertTrue(r["entry_from"].startswith("database: "), r)
+            self.assertTrue(r["stream_from"].startswith("stream: "), r)
+        # ...and the sentence form says it too.
+        self.assertIn("Label: database Columbia Records \u00b7 stream Pink Floyd Records",
+                      " ".join(match["against"]))
+
+    def test_the_points_in_the_rows_are_the_score(self):
+        match = drdb.identify(self.playing(year="1996", label="Columbia"),
+                              self.version("MTV Unplugged", "CD", {5: "5:46"},
+                                           year="1996", label="Columbia"))
+        self.assertEqual(sum(r["points"] for r in match["evidence"]), match["score"])
+
     def test_the_right_length_at_the_right_position_calls_it(self):
         match = drdb.identify(self.playing(),
                               self.version("MTV Unplugged", "CD", {5: "5:46"}))
         self.assertEqual(match["verdict"], "likely")
         self.assertEqual(match["matched_track"], 4)
-        self.assertTrue(any("5:46" in reason for reason in match["for"]))
+        length = self.row(match, "Track length")
+        self.assertEqual((length["entry"], length["stream"], length["kind"]), ("5:46", "5:46", "for"))
 
     def test_a_longer_cut_of_the_same_track_is_ruled_out(self):
         dvd = drdb.identify(
@@ -446,9 +477,10 @@ class IdentifyTest(unittest.TestCase):
             self.version("MTV Unplugged [5.1 Dolby Digital DVD]", "Unknown",
                          {5: "6:26"}))
         self.assertEqual(dvd["verdict"], "unlikely")
-        self.assertTrue(any("6:26" in reason for reason in dvd["against"]))
+        length = self.row(dvd, "Track length")
+        self.assertEqual((length["entry"], length["stream"], length["kind"]), ("6:26", "5:46", "against"))
         # ...and a surround transfer cannot be a 44.1 kHz stereo stream.
-        self.assertTrue(any("surround" in reason for reason in dvd["against"]))
+        self.assertEqual(self.row(dvd, "Transfer")["kind"], "against")
 
     def test_a_version_that_does_not_list_the_track_is_rejected(self):
         match = drdb.identify(
@@ -458,7 +490,7 @@ class IdentifyTest(unittest.TestCase):
                          "title": f"{i:02d}-Something Else {i}"}
                         for i in range(1, 8)]})
         self.assertEqual(match["verdict"], "unlikely")
-        self.assertTrue(any("does not name" in r for r in match["against"]))
+        self.assertEqual(self.row(match, "Running order")["kind"], "against")
 
     def test_label_and_year_can_name_an_edition_on_their_own(self):
         # An entry uploaded without a DR-meter log has no track list and no
@@ -467,8 +499,9 @@ class IdentifyTest(unittest.TestCase):
             self.playing(label="Columbia/Legacy", year="1996"),
             self.version("MTV Unplugged", "CD", {}, log=False,
                          label="Columbia", year="1996"))
-        self.assertTrue(any("same label (Columbia)" in r for r in match["for"]))
-        self.assertTrue(any("same year (1996)" in r for r in match["for"]))
+        self.assertEqual(self.row(match, "Label")["kind"], "for")
+        self.assertIn("Columbia", self.row(match, "Label")["note"])
+        self.assertEqual(self.row(match, "Year")["kind"], "for")
         self.assertIn(match["verdict"], ("possible", "likely"))
 
     def test_a_different_year_only_counts_against_a_little(self):
@@ -478,7 +511,8 @@ class IdentifyTest(unittest.TestCase):
             self.playing(year="2006"),
             self.version("MTV Unplugged", "CD", {5: "5:46"}, year="1996"))
         self.assertEqual(match["verdict"], "likely")
-        self.assertTrue(any("1996" in r for r in match["against"]))
+        year = self.row(match, "Year")
+        self.assertEqual((year["entry"], year["stream"], year["kind"]), ("1996", "2006", "against"))
 
     def test_a_few_seconds_out_does_not_outweigh_a_matching_year(self):
         """The live case that exposed this: Delicate Sound of Thunder, where
@@ -501,8 +535,42 @@ class IdentifyTest(unittest.TestCase):
         # named instead of one being buried.
         self.assertLess(near["score"] - far["score"], 12)
         self.assertIn(far["verdict"], ("likely", "possible"))
-        self.assertTrue(any("same year (1988)" in r for r in far["for"]))
-        self.assertTrue(any("6:21" in r for r in near["for"]))
+        self.assertEqual(self.row(far, "Year")["kind"], "for")
+        self.assertEqual(self.row(near, "Track length")["entry"], "6:21")
+
+    def test_an_analog_source_cannot_be_the_stream(self):
+        """A vinyl rip measured a turntable's output; a stream is a digital
+        master. Even a perfect match on track time and year must not leave
+        it anywhere near the top: the live case marked a 1987 vinyl entry
+        "possible" while a digital stream played."""
+        for fmt in ({"rate": 44100, "bits": 16}, {"rate": 96000, "bits": 24}):
+            match = drdb.identify(
+                self.playing(year="1996", **fmt),
+                self.version("MTV Unplugged", "Vinyl", {5: "5:46"}, year="1996"))
+            medium = self.row(match, "Medium")
+            self.assertEqual((medium["entry"], medium["kind"]), ("Vinyl", "against"))
+            self.assertTrue(medium["veto"])
+            self.assertIn("analog source", medium["note"])
+            # A veto, not a weight: ruled out, whatever else agreed.
+            self.assertEqual((match["verdict"], match["score"]), ("excluded", 0))
+            self.assertEqual(self.row(match, "Track length")["kind"], "for")
+
+    def test_an_analog_source_named_only_in_the_title_is_caught(self):
+        for title in ("MTV Unplugged (vinyl)", "MTV Unplugged (Dutch) (PBTHAL)",
+                      "MTV Unplugged [Cassette]", "MTV Unplugged 180g LP"):
+            match = drdb.identify(self.playing(),
+                                  self.version(title, "Unknown", {5: "5:46"}))
+            medium = self.row(match, "Medium")
+            self.assertEqual(medium["entry_from"], "database: entry title", title)
+            self.assertTrue(medium["veto"], title)
+            self.assertEqual(match["verdict"], "excluded", title)
+
+    def test_a_digital_title_that_merely_contains_the_letters_is_not_analog(self):
+        # "lp" as a word, not inside "help" or "alpha".
+        match = drdb.identify(self.playing(),
+                              self.version("Help! (Remastered)", "CD", {5: "5:46"}))
+        self.assertFalse(self.row(match, "Medium")["veto"])
+        self.assertNotEqual(match["verdict"], "excluded")
 
     def test_a_cd_cannot_be_carrying_a_hi_res_stream(self):
         # A CD is 44.1 kHz/16 bit by definition, so a stream above that is not
@@ -512,32 +580,32 @@ class IdentifyTest(unittest.TestCase):
         match = drdb.identify(
             self.playing(rate=96000, bits=24),
             self.version("MTV Unplugged", "CD", {5: "5:46"}))
-        self.assertNotEqual(match["verdict"], "likely")
-        self.assertTrue(any("holds 44.1 kHz/16 bit" in r for r in match["against"]))
-        self.assertTrue(any("would measure much the same" in r
-                            for r in match["against"]))
+        self.assertEqual(match["verdict"], "excluded")
+        medium = self.row(match, "Medium")
+        self.assertEqual((medium["entry"], medium["stream"], medium["kind"]), ("CD", "96 kHz/24 bit", "against"))
+        self.assertIn("would measure much the same", medium["note"])
 
     def test_a_cd_rate_stream_still_suits_a_cd_entry(self):
         match = drdb.identify(self.playing(),
                               self.version("MTV Unplugged", "CD", {5: "5:46"}))
         self.assertEqual(match["verdict"], "likely")
-        self.assertTrue(any("44.1 kHz/16 bit, as the stream is" in r
-                            for r in match["for"]))
+        medium = self.row(match, "Medium")
+        self.assertEqual((medium["entry"], medium["stream"], medium["kind"]), ("CD", "44.1 kHz/16 bit", "for"))
 
     def test_a_hi_res_stream_suits_a_download_entry(self):
         match = drdb.identify(
             self.playing(rate=96000, bits=24),
             self.version("MTV Unplugged", "Download", {5: "5:46"}))
-        self.assertTrue(any("as a 96 kHz/24 bit stream would be" in r
-                            for r in match["for"]))
+        medium = self.row(match, "Medium")
+        self.assertEqual((medium["entry"], medium["kind"]), ("Download", "for"))
 
     def test_a_transfer_that_names_its_own_format_is_compared_to_the_stream(self):
         off = drdb.identify(
             self.playing(),
             self.version("MTV Unplugged [2.0 LPCM 16/48 DVD]", "Unknown",
                          {5: "5:46"}))
-        self.assertTrue(any("transferred at 48 kHz/16 bit" in r
-                            for r in off["against"]))
+        stated = self.row(off, "Stated format")
+        self.assertEqual((stated["entry"], stated["stream"], stated["kind"]), ("48 kHz/16 bit", "44.1 kHz/16 bit", "against"))
 
     def test_a_bitrate_in_a_title_is_not_a_sample_rate(self):
         # "448 Kbps" is Dolby Digital's bitrate; reading it as 448 kHz would
@@ -562,8 +630,8 @@ class IdentifyTest(unittest.TestCase):
         right = drdb.identify(
             self.playing(disc=1),
             self.version("Delicate Sound Of Thunder (Disc 1)", "CD", {5: "5:46"}))
-        self.assertTrue(any("disc 2 of the set" in r for r in wrong["against"]))
-        self.assertTrue(any("disc 1 of the set" in r for r in right["for"]))
+        self.assertEqual((self.row(wrong, "Disc")["entry"], self.row(wrong, "Disc")["kind"]), ("disc 2", "against"))
+        self.assertEqual(self.row(right, "Disc")["kind"], "for")
         self.assertGreater(right["score"], wrong["score"])
 
     def test_an_entry_naming_no_disc_is_not_held_against(self):
@@ -581,28 +649,29 @@ class IdentifyTest(unittest.TestCase):
         no_wire_label = drdb.identify(
             self.playing(),
             self.version("MTV Unplugged", "CD", {5: "5:46"}, label="Columbia"))
-        self.assertTrue(any("released by Columbia" in r and "no label" in r
-                            for r in no_wire_label["unchecked"]))
-        self.assertFalse(any("Columbia" in r for r in no_wire_label["against"]))
+        label = self.row(no_wire_label, "Label")
+        self.assertEqual((label["entry"], label["stream"], label["kind"]), ("Columbia", "not published", "unchecked"))
+        self.assertEqual(label["points"], 0)
 
         # ...and the other way round.
         no_entry_label = drdb.identify(
             self.playing(label="Columbia/Legacy"),
             self.version("MTV Unplugged", "CD", {5: "5:46"}))
-        self.assertTrue(any("names no label" in r
-                            for r in no_entry_label["unchecked"]))
+        label = self.row(no_entry_label, "Label")
+        self.assertEqual((label["entry"], label["stream"], label["kind"]), ("not stated", "Columbia/Legacy", "unchecked"))
 
     def test_an_entry_with_no_track_list_says_so(self):
         match = drdb.identify(
             self.playing(),
             self.version("MTV Unplugged", "Vinyl", {}, log=False))
-        self.assertTrue(any("without a track list" in r
-                            for r in match["unchecked"]))
+        order = self.row(match, "Running order")
+        self.assertEqual((order["entry"], order["kind"]), ("no track list uploaded", "unchecked"))
 
     def test_a_year_that_could_not_be_compared_is_flagged_too(self):
         match = drdb.identify(self.playing(year="1996"),
                               self.version("MTV Unplugged", "CD", {5: "5:46"}))
-        self.assertTrue(any("names no year" in r for r in match["unchecked"]))
+        year = self.row(match, "Year")
+        self.assertEqual((year["entry"], year["stream"], year["kind"]), ("not stated", "1996", "unchecked"))
 
     def test_everything_comparable_leaves_nothing_unchecked(self):
         match = drdb.identify(

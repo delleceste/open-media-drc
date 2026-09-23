@@ -62,6 +62,7 @@ pre.log{background:#010409;border:1px solid var(--line);border-radius:6px;paddin
 .verdict.possible{border-color:var(--yellow);color:var(--yellow)}
 .verdict.unlikely{opacity:.6}
 .verdict.none{opacity:.5;font-style:italic}
+.verdict.excluded{opacity:.6;text-decoration:line-through;border-style:dashed}
 tr.album.likely{background:#10231a}
 tr.album.likely td:first-child{box-shadow:inset 3px 0 0 var(--green)}
 .why{margin:.1rem 0 .6rem;padding:0;list-style:none;font-size:.85rem}
@@ -70,6 +71,17 @@ tr.album.likely td:first-child{box-shadow:inset 3px 0 0 var(--green)}
 .why li.against::before{content:'\2212';position:absolute;left:0;color:var(--red);font-weight:700}
 .why li.unchecked{color:var(--muted)}
 .why li.unchecked::before{content:'\00b7';position:absolute;left:0;color:var(--muted);font-weight:700}
+table.evidence{width:100%;font-size:.84rem;margin:.4rem 0 .2rem;border:1px solid var(--line);border-radius:6px}
+table.evidence th{font-size:.78rem}
+table.evidence td,table.evidence th{padding:.3rem .5rem;border-bottom:1px solid #21262d;vertical-align:top}
+.ev-src{display:block;font-weight:400;color:var(--muted);font-size:.72rem}
+.ev-from{color:var(--muted);font-size:.72rem;margin-top:.1rem}
+.ev-signal{font-weight:600;white-space:nowrap}
+.ev-pts{font-family:var(--mono);text-align:right;white-space:nowrap;width:1%}
+tr.ev.for .ev-pts{color:var(--green)}
+tr.ev.against .ev-pts{color:var(--red)}
+tr.ev.unchecked,tr.ev.neutral{color:var(--muted)}
+.ev-note{color:var(--muted);font-size:.78rem}
 .why-note{color:var(--muted);font-size:.78rem;margin:.1rem 0 .7rem}
 .algo td.pts{font-family:var(--mono);text-align:right;white-space:nowrap;width:1%}
 .algo td.pts.pos{color:var(--green)}
@@ -154,7 +166,8 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
     <span class="verdict possible">possible</span>
     <span class="verdict unlikely">unlikely</span>
     <span class="verdict none">no evidence</span>
-    <span>— in that order. Two versions the evidence cannot separate both read
+    <span class="verdict excluded">ruled out</span>
+    <span>— in that order; <i>ruled out</i> is a medium the stream cannot have come from. Two versions the evidence cannot separate both read
       “most likely”; hover a badge for its score out of 100.</span>
   </div>
   <div class="note" id="truncated" hidden>
@@ -181,7 +194,11 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
       <tr{% if signal %} class="group"{% endif %}>
         <td class="sig">{{ signal }}</td>
         <td>{{ when }}</td>
+        {% if pts is none %}
+        <td class="pts neg">rules out</td>
+        {% else %}
         <td class="pts {{ 'pos' if pts > 0 else 'neg' }}">{{ '%+d' % pts }}</td>
+        {% endif %}
         <td class="why">{{ why }}</td>
       </tr>
     {% endfor %}
@@ -191,6 +208,10 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
     <b>Verdict:</b> {{ weights.likely_from }} or more is <i>likely</i>,
     {{ weights.possible_from }}–{{ weights.likely_from - 1 }} <i>possible</i>,
     below that <i>unlikely</i>; <i>no evidence</i> when nothing could be compared.
+    A <i>rules out</i> row is a veto, not a weight: a medium the stream cannot
+    have come from marks the version <i>ruled out</i> whatever else agrees —
+    a vinyl rip shares the digital mix's track times, and points alone once left
+    one looking possible.
     The best score is <i>most likely</i>, and so is any version within
     {{ weights.tie_margin }} points of it — the evidence does not separate them,
     so the page does not either.
@@ -319,7 +340,7 @@ function closeIds() {
     const near = new Set();
     details.forEach((detail, id) => {
         if (id === best || !detail.match) return;
-        if (detail.match.verdict === 'unknown') return;
+        if (detail.match.verdict === 'unknown' || detail.match.verdict === 'excluded') return;
         if (detail.match.score >= top - CLOSE_MARGIN) near.add(id);
     });
     return near;
@@ -341,6 +362,8 @@ function verdictChip(id) {
     // A version within the margin of the winner is not second: the evidence
     // does not separate them, so they carry the same badge and the reader
     // decides. Ranking them would be arithmetic passed off as fact.
+    if (match.verdict === 'excluded')
+        return '<span class="verdict excluded" title="An impossible medium for this stream">ruled out</span>';
     const top = id === bestId() || closeIds().has(id);
     const [cls, label] =
           top                            ? ['top', 'most likely']
@@ -352,16 +375,33 @@ function verdictChip(id) {
 
 function whyList(match, id) {
     if (!match) return '';
-    // Three kinds of line, and the third matters as much as the others: a
-    // comparison nobody could make is not a comparison that passed.
-    const items = (match.for || []).map(r => `<li class="for">${esc(r)}</li>`)
-        .concat((match.against || []).map(r => `<li class="against">${esc(r)}</li>`))
-        .concat((match.unchecked || []).map(r => `<li class="unchecked">${esc(r)}</li>`));
-    if (!items.length) return '';
+    const rows = match.evidence || [];
+    if (!rows.length) return '';
+    // Every comparison has two sides, and the table says which is which --
+    // and where each value came from -- rather than a sentence that leaves
+    // the reader to guess.
+    const cell = (value, from) =>
+        `<td>${esc(value)}<div class="ev-from">${esc(from)}</div></td>`;
+    const body = rows.map(r => {
+        const pts = r.veto ? 'rules out' : r.kind === 'unchecked' ? '·' :
+                    r.points > 0 ? `+${r.points}` : r.points < 0 ? `\u2212${-r.points}` : '0';
+        return `<tr class="ev ${r.kind}">
+            <td class="ev-signal">${esc(r.signal)}</td>
+            ${cell(r.entry, r.entry_from.replace(/^database: /, ''))}
+            ${cell(r.stream, r.stream_from.replace(/^stream: /, ''))}
+            <td class="ev-pts">${pts}</td>
+            <td class="ev-note">${esc(r.note || '')}</td></tr>`;
+    }).join('');
     return `<strong>Is this the one playing?</strong> ${verdictChip(id)}
-            <ul class="why">${items.join('')}</ul>
-            <p class="why-note">Country, catalog number and bar code are listed
-               below but never scored: nothing in the stream can confirm them.</p>`;
+            <table class="evidence">
+              <thead><tr><th>Signal</th><th>This version <span class="ev-src">dr.loudness-war.info</span></th>
+                <th>The stream <span class="ev-src">renderer tags · MPD</span></th>
+                <th class="ev-pts">Points</th><th></th></tr></thead>
+              <tbody>${body}</tbody></table>
+            <p class="why-note">Stream tags are what the renderer put in MusicPD's queue, from
+               the service's catalogue; length and format are what MusicPD's decoder reports
+               about the audio playing. Country, catalog number and bar code are listed below
+               but never scored: nothing in the stream can confirm them.</p>`;
 }
 
 async function loadNowPlaying(rerun, fillFields = true) {

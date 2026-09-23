@@ -464,7 +464,12 @@ _STATED_RATE = re.compile(rf"\b({_RATES})\s*k(?:Hz)?\b", re.I)
 _STATED_DEPTH = re.compile(r"\b(16|24|32)\s*-?\s*bits?\b", re.I)
 # Edition markers in an album name that a 2-channel CD-rate stream cannot be.
 _SURROUND_EDITION = re.compile(r"\b(?:5\.1|dvd|blu-?ray|sacd|dts|dolby)\b", re.I)
-_VINYL_EDITION = re.compile(r"\b(?:vinyl|lp|pbthal)\b", re.I)
+# An analog source: what such an entry measured is a turntable's or a tape
+# deck's output, digitised by whoever uploaded it. A stream is a digital
+# master, so an entry like this cannot be what is playing. PBTHAL is a
+# well-known vinyl-rip group whose name uploaders put in the title.
+_ANALOG_SOURCE = re.compile(
+    r"\b(?:vinyl|lp|cassette|tape|reel|needle[- ]?drop|pbthal)\b", re.I)
 
 
 def title_key(title: str) -> str:
@@ -552,10 +557,14 @@ W = {
     "time_exact_off":  32,   # within 3 s, at another position
     "time_near":       20,   # within 8 s
     "time_far":       -30,   # 20 s or more apart
-    "cd_hires":       -40,   # a CD entry against a stream above 44.1 kHz/16 bit
+    # None marks a veto rather than a weight: a medium the stream physically
+    # cannot have come from rules the version out, whatever else agrees --
+    # a vinyl rip shares the digital mix's track times, so points alone
+    # left one "possible" beside a digital stream.
+    "cd_hires":       None,  # a CD entry against a stream above 44.1 kHz/16 bit
     "medium_fits":      6,   # CD/download at CD rate, or download/SACD... at hi-res
     "surround":       -12,   # a surround/DVD/SACD transfer against a stereo stream
-    "vinyl":           -8,   # a vinyl rip against a CD-rate stream
+    "analog":         None,  # a vinyl/cassette/tape transfer: a stream is digital
     "format_off":     -15,   # the entry states a rate/depth other than the stream's
     "format_same":      8,   # the entry states the stream's rate/depth
     "disc_same":       10,   # same disc of a set
@@ -590,7 +599,8 @@ ALGORITHM = [
     ("", "the medium suits the stream's rate", "medium_fits",
      "CD or download at CD rate; download, SACD or Blu-ray when hi-res"),
     ("", "a surround or disc transfer, stereo stream", "surround", ""),
-    ("", "a vinyl rip, CD-rate stream", "vinyl", ""),
+    ("", "the entry is an analog source: vinyl, LP, cassette, tape", "analog",
+     "it measured a turntable's or tape deck's output; a stream is a digital master"),
     ("", "the entry's title states another rate/depth", "format_off",
      "\u201c48kHz-16bit\u201d, \u201c16/48\u201d; \u201c448 Kbps\u201d is a bitrate and ignored"),
     ("", "the entry's title states the stream's rate/depth", "format_same", ""),
@@ -615,6 +625,14 @@ NOT_SCORED = ("Country, catalog number and bar code: nothing in a stream can "
               "confirm them.")
 
 
+# Where each side of a comparison comes from. The database side is the
+# version's own page on dr.loudness-war.info; the stream side is either a tag
+# the renderer put in MusicPD's queue (from the service's catalogue) or what
+# MusicPD's decoder reports about the audio actually playing.
+FROM_LOG = "database: uploaded DR log"
+FROM_DECODER = "stream: MPD's decoder"
+
+
 def identify(playing: dict, album: dict) -> dict:
     """How well one database version matches the track on the wire.
 
@@ -625,18 +643,28 @@ def identify(playing: dict, album: dict) -> dict:
     which keeps the dialogue. The tags that name an edition outright, label
     and year, are used when the renderer publishes them.
 
-    Returns a score out of 100, a verdict, and the evidence in both
-    directions — the reasons are the point: "Down In A Hole runs 6:06 in this
-    version, 5:46 on the wire" is worth more than any number.
+    Returns a score out of 100, a verdict, and the evidence as rows: each
+    names the signal, the value on each side and where that value came from,
+    and the points it carried. "Released by Columbia Records, not Pink Floyd
+    Records" does not say which is the database and which the stream; a row
+    always does.
     """
     score = 0
-    for_, against = [], []
-    # Evidence that could not be weighed, and why. A signal that is simply
-    # absent from the list reads as a signal that agreed -- so when one side
-    # of a comparison has a value and the other does not, say so rather than
-    # leaving a silence the reader has to interpret.
-    unchecked = []
+    rows: list[dict] = []
     evidence = False
+
+    def row(signal, entry, entry_from, stream, stream_from, key=None,
+            note="", kind=None):
+        nonlocal score
+        veto = bool(key) and W[key] is None
+        points = 0 if veto or not key else W[key]
+        score += points
+        if kind is None:
+            kind = ("against" if veto or points < 0 else
+                    "for" if points > 0 else "neutral")
+        rows.append({"signal": signal, "entry": entry, "entry_from": entry_from,
+                     "stream": stream, "stream_from": stream_from,
+                     "points": points, "veto": veto, "kind": kind, "note": note})
 
     log = album.get("tracks") or []
     log_keys = [title_key(track["title"]) for track in log]
@@ -645,28 +673,30 @@ def identify(playing: dict, album: dict) -> dict:
     matched_index = None
     at_its_position = False
     playing_key = title_key(playing.get("title", ""))
+    position = playing.get("track_no")
+    wire_track = (f"track {position}: “{playing.get('title')}”"
+                  if isinstance(position, int) else f"“{playing.get('title')}”")
     if playing_key and not log_keys:
-        unchecked.append("uploaded without a track list, so neither the "
-                         "running order nor the track times could be checked")
+        row("Running order", "no track list uploaded", FROM_LOG,
+            wire_track, "stream: Title/Track tags", kind="unchecked",
+            note="neither the running order nor the track times can be checked")
     if playing_key and log_keys:
         evidence = True
-        position = playing.get("track_no")
         if (isinstance(position, int) and 1 <= position <= len(log_keys)
                 and log_keys[position - 1] == playing_key):
             matched_index = position - 1
             at_its_position = True
-            score += W["position"]
-            for_.append(f"track {position} of this version is "
-                        f"“{log[matched_index]['title']}”")
+            row("Running order", f"track {position}: “{log[matched_index]['title']}”",
+                FROM_LOG, wire_track, "stream: Title/Track tags", "position")
         elif playing_key in log_keys:
             matched_index = log_keys.index(playing_key)
-            score += W["elsewhere"]
-            for_.append(f"“{log[matched_index]['title']}” is on this version, "
-                        f"at track {matched_index + 1}")
+            row("Running order",
+                f"track {matched_index + 1}: “{log[matched_index]['title']}”",
+                FROM_LOG, wire_track, "stream: Title/Track tags", "elsewhere",
+                note="on this version, at another track number")
         else:
-            score += W["not_listed"]
-            against.append("this version's track list does not name "
-                           f"“{playing.get('title')}”")
+            row("Running order", f"{len(log)} tracks, none of them this one",
+                FROM_LOG, wire_track, "stream: Title/Track tags", "not_listed")
 
     wire_seconds = playing.get("duration")
     if matched_index is not None and isinstance(wire_seconds, (int, float)):
@@ -676,25 +706,23 @@ def identify(playing: dict, album: dict) -> dict:
             delta = abs(listed - round(wire_seconds))
             listed_text = log[matched_index]["duration"]
             wire_text = f"{int(wire_seconds) // 60}:{int(wire_seconds) % 60:02d}"
-            title = log[matched_index]["title"]
+            args = ("Track length", listed_text, FROM_LOG,
+                    wire_text, "stream: MPD's decoder (duration)")
+            # The right length at the right place in the running order is the
+            # strongest thing one track can say -- but not so loud that
+            # nothing else can be heard over it. Two rips of one pressing
+            # agree to the second, so a few seconds out does mean a different
+            # transfer; it should not on its own outweigh an edition whose
+            # year and label match.
             if delta <= 3:
-                # The right length at the right place in the running order is
-                # the strongest thing one track can say -- but not so loud
-                # that nothing else can be heard over it. Two rips of one
-                # pressing agree to the second, so a few seconds out does mean
-                # a different transfer; it should not on its own outweigh an
-                # edition whose year and label match.
-                score += W["time_exact"] if at_its_position else W["time_exact_off"]
-                for_.append(f"“{title}” runs {listed_text} here and "
-                            f"{wire_text} on the wire")
+                row(*args, "time_exact" if at_its_position else "time_exact_off",
+                    note=f"{delta} s apart")
             elif delta <= 8:
-                score += W["time_near"]
-                for_.append(f"“{title}” runs {listed_text} here, close to the "
-                            f"{wire_text} on the wire")
+                row(*args, "time_near", note=f"{delta} s apart")
             elif delta >= 20:
-                score += W["time_far"]
-                against.append(f"“{title}” runs {listed_text} here but "
-                               f"{wire_text} on the wire")
+                row(*args, "time_far", note=f"{delta} s apart: a different cut")
+            else:
+                row(*args, note=f"{delta} s apart: too far to confirm, too near to rule out")
 
     # -- what the stream's own format rules out ------------------------------
     #
@@ -705,46 +733,49 @@ def identify(playing: dict, album: dict) -> dict:
     # stream, and an entry naming its own format can be compared directly.
     rate, bits = playing.get("rate"), playing.get("bits")
     channels = playing.get("channels")
-    source = (album.get("source") or "").strip().lower()
+    source_raw = (album.get("source") or "").strip()
+    source = source_raw.lower()
     name = str(album.get("album", ""))
     if rate:
         evidence = True
         wire = format_text(rate, bits)
         cd_audio = rate == 44100 and (bits or 16) <= 16
-        if not cd_audio and source == "cd":
-            score += W["cd_hires"]
-            against.append(
-                f"a CD, which holds 44.1 kHz/16 bit, where the stream is "
-                f"{wire} — a hi-res issue of the same master would measure "
-                "much the same, but this entry is not it")
+        medium = (source_raw or "not stated", "database: Source field", wire,
+                  FROM_DECODER)
+        analog_note = ("an analog source: it measured a turntable's or tape "
+                       "deck's output, and a stream is a digital master — its "
+                       "DR shows what that mastering achieves, but it is not "
+                       "what is playing")
+        if _ANALOG_SOURCE.search(source):
+            row("Medium", *medium, "analog", note=analog_note)
+        elif _ANALOG_SOURCE.search(name):
+            row("Medium", name, "database: entry title", wire, FROM_DECODER,
+                "analog", note=analog_note)
+        elif not cd_audio and source == "cd":
+            row("Medium", *medium, "cd_hires",
+                note="a CD holds 44.1 kHz/16 bit; a hi-res issue of the same "
+                     "master would measure much the same, but this entry is not it")
         elif cd_audio and source in ("cd", "download"):
-            score += W["medium_fits"]
-            for_.append(f"a {source} at {wire}, as the stream is")
+            row("Medium", *medium, "medium_fits", note="a medium this stream can come from")
         elif not cd_audio and source in ("download", "web", "sacd", "blu-ray"):
-            score += W["medium_fits"]
-            for_.append(f"a {source} issue, as a {wire} stream would be")
+            row("Medium", *medium, "medium_fits", note="a hi-res medium, as the stream is")
+        else:
+            row("Medium", *medium, note="says nothing either way")
 
+        transfer = (name, "database: entry title", f"{wire}, "
+                    + ({1: "mono", 2: "stereo"}.get(channels or 2, f"{channels} ch")),
+                    FROM_DECODER)
         if _SURROUND_EDITION.search(f"{name} {source}") and (channels or 2) <= 2:
-            score += W["surround"]
-            against.append(f"a surround or disc transfer, against a {wire} "
-                           "stereo stream")
-        elif _VINYL_EDITION.search(f"{name} {source}"):
-            score += W["vinyl"]
-            against.append(f"a vinyl rip, against a {wire} stream")
+            row("Transfer", *transfer, "surround", note="a surround or disc transfer")
 
         stated_rate, stated_bits = stated_format(name)
-        if stated_rate and stated_rate != rate:
-            score += W["format_off"]
-            against.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
-                           f"where the stream is {wire}")
-        elif stated_rate and stated_bits and bits and stated_bits != bits:
-            score += W["format_off"]
-            against.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
-                           f"where the stream is {wire}")
-        elif stated_rate:
-            score += W["format_same"]
-            for_.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
-                        "as the stream is")
+        if stated_rate:
+            stated = (format_text(stated_rate, stated_bits), "database: entry title",
+                      wire, FROM_DECODER)
+            if stated_rate != rate or (stated_bits and bits and stated_bits != bits):
+                row("Stated format", *stated, "format_off")
+            else:
+                row("Stated format", *stated, "format_same")
 
     # -- which disc of the set ------------------------------------------------
     #
@@ -753,16 +784,12 @@ def identify(playing: dict, album: dict) -> dict:
     # The disc is only known when the renderer numbers tracks disc*1000 +
     # track, so an entry naming no disc is not held against.
     disc = playing.get("disc")
-    named_disc = _DISC_IN_NAME.search(str(album.get("album", "")))
+    named_disc = _DISC_IN_NAME.search(name)
     if isinstance(disc, int) and disc > 0 and named_disc:
         evidence = True
-        if int(named_disc.group(1)) == disc:
-            score += W["disc_same"]
-            for_.append(f"disc {disc} of the set, as the stream is")
-        else:
-            score += W["disc_other"]
-            against.append(f"disc {named_disc.group(1)} of the set, "
-                           f"where the stream is disc {disc}")
+        row("Disc", f"disc {named_disc.group(1)}", "database: entry title",
+            f"disc {disc}", "stream: Track tag (disc × 1000 + track)",
+            "disc_same" if int(named_disc.group(1)) == disc else "disc_other")
 
     # -- the imprint and the year --------------------------------------------
     #
@@ -772,59 +799,52 @@ def identify(playing: dict, album: dict) -> dict:
     # a streaming service dates a record by whichever issue it licensed, and
     # its label field routinely carries the reissue imprint ("Columbia/
     # Legacy") where the database has the original ("Columbia").
-    wire_labels = label_names(playing.get("label", ""))
-    version_labels = label_names(album.get("label", ""))
+    version_label = str(album.get("label") or "").strip()
+    wire_label = str(playing.get("label") or "").strip()
+    wire_labels, version_labels = label_names(wire_label), label_names(version_label)
+    label = (version_label or "not stated", "database: Label field",
+             wire_label or "not published", "stream: Label tag")
     if wire_labels and version_labels:
         evidence = True
         shared = wire_labels & version_labels
         if shared:
-            score += W["label_same"]
-            for_.append(f"same label ({sorted(shared)[0].title()})")
+            row("Label", *label, "label_same",
+                note=f"“{sorted(shared)[0].title()}” in common")
         else:
-            score += W["label_other"]
-            against.append(f"released by {album.get('label')}, "
-                           f"not {playing.get('label')}")
-    elif version_labels:
-        unchecked.append(f"released by {album.get('label')} — the renderer "
-                         "publishes no label for the stream to compare it to")
-    elif wire_labels:
-        unchecked.append(f"the stream is on {playing.get('label')}; this "
-                         "entry names no label")
+            row("Label", *label, "label_other",
+                note="no imprint in common; weak, services carry reissue imprints")
+    elif version_labels or wire_labels:
+        row("Label", *label, kind="unchecked", note="only one side names a label")
 
     wire_year = release_year(playing.get("year"))
     version_year = release_year(album.get("year"))
-    if wire_year and not version_year:
-        unchecked.append(f"the stream is tagged {wire_year}; this entry names "
-                         "no year")
-    elif version_year and not wire_year:
-        unchecked.append(f"issued {version_year} — the renderer publishes no "
-                         "year for the stream to compare it to")
+    year = (str(version_year or "not stated"), "database: Year field",
+            str(wire_year or "not published"), "stream: Date tag")
     if wire_year and version_year:
         evidence = True
         gap = abs(wire_year - version_year)
-        if gap == 0:
-            score += W["year_same"]
-            for_.append(f"same year ({version_year})")
-        elif gap == 1:
-            score += W["year_near"]
-            for_.append(f"issued {version_year}, one year off the {wire_year} "
-                        "the stream is tagged with")
-        else:
-            score += W["year_other"]
-            against.append(f"issued {version_year}, against the {wire_year} "
-                           "the stream is tagged with")
+        key = "year_same" if gap == 0 else "year_near" if gap == 1 else "year_other"
+        row("Year", *year, key,
+            note="" if gap == 0 else
+            "weak: the stream's Date is the album's original release, not the transfer's")
+    elif wire_year or version_year:
+        row("Year", *year, kind="unchecked", note="only one side names a year")
 
     # -- the name ------------------------------------------------------------
-    queue_album = str(playing.get("album", "")).strip().lower()
-    version_album = str(album.get("album", "")).strip().lower()
-    if queue_album and version_album:
-        if queue_album == version_album:
-            score += W["album_same"]
-        elif queue_album in version_album or version_album in queue_album:
-            score += W["album_part"]
+    queue_album = str(playing.get("album", "")).strip()
+    if queue_album and name:
+        a, b = queue_album.lower(), name.strip().lower()
+        key = "album_same" if a == b else "album_part" if (a in b or b in a) else None
+        row("Album", name, "database: Album field", queue_album,
+            "stream: Album tag", key)
 
     score = max(0, min(100, score))
-    if not evidence:
+    vetoed = any(r["veto"] for r in rows)
+    if vetoed:
+        # Not a low score: an impossibility. The rows still show what agreed.
+        score = 0
+        verdict = "excluded"
+    elif not evidence:
         verdict = "unknown"
     elif score >= W["likely_from"]:
         # The right track, at the right position, with the right length and on
@@ -836,5 +856,15 @@ def identify(playing: dict, album: dict) -> dict:
         verdict = "possible"
     else:
         verdict = "unlikely"
-    return {"score": score, "verdict": verdict, "for": for_, "against": against,
-            "unchecked": unchecked, "matched_track": matched_index}
+
+    def line(r):
+        text = f"{r['signal']}: database {r['entry']} · stream {r['stream']}"
+        text += f" — {r['note']}" if r["note"] else ""
+        return text + (" (rules it out)" if r["veto"] else "")
+
+    return {"score": score, "verdict": verdict, "evidence": rows,
+            # The same rows as sentences, for anything reading this as text.
+            "for": [line(r) for r in rows if r["kind"] == "for"],
+            "against": [line(r) for r in rows if r["kind"] == "against"],
+            "unchecked": [line(r) for r in rows if r["kind"] == "unchecked"],
+            "matched_track": matched_index}

@@ -2756,10 +2756,10 @@ agreement. The score is clamped to 0--100.
 | | within 3 s, elsewhere in the list | +32 | |
 | | within 8 s | +20 | a few seconds out is a different transfer |
 | | 20 s or more apart | −30 | a different cut --- a DVD keeping the between-song talk |
-| Stream format | a CD entry, and the stream is above 44.1 kHz/16 bit | −40 | a CD cannot carry it; the same master's DR may still be right |
+| Stream format | a CD entry, and the stream is above 44.1 kHz/16 bit | **rules out** | a CD cannot carry it; the same master's DR may still be right |
 | | the medium suits the stream's rate | +6 | CD or download at CD rate; download, SACD or Blu-ray when hi-res |
 | | a surround or disc transfer, stereo stream | −12 | |
-| | a vinyl rip, CD-rate stream | −8 | |
+| | the entry is an analog source: vinyl, LP, cassette, tape | **rules out** | it measured a turntable's or tape deck's output; a stream is a digital master |
 | | the entry's title states another rate/depth | −15 | "48kHz-16bit", "16/48"; "448 Kbps" is a bitrate and ignored |
 | | the entry's title states the stream's rate/depth | +8 | |
 | Disc of a set | same disc | +10 | sets are filed one disc per entry |
@@ -2771,6 +2771,11 @@ agreement. The score is clamped to 0--100.
 | | further apart | −6 | weak: the stream's year dates the album, not the transfer |
 | Album name | identical | +5 | |
 | | one contains the other | +2 | |
+
+A **rules out** row is a veto, not a weight: a medium the stream cannot
+have come from marks the version *ruled out* whatever else agrees --- a vinyl
+rip shares the digital mix's track times, and points alone once left one
+looking possible beside a digital stream.
 
 The verdict ladder is: **55** or more *likely*, **30--54** *possible*,
 below that *unlikely*, and *no evidence* when nothing could be compared. The
