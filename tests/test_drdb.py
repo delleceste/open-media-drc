@@ -9,6 +9,7 @@ whose CSS class is only a colour bucket -- every value at or below 7 wears
 `badge-dr-07`, so the class can never be the number.
 """
 import importlib.util
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -168,6 +169,35 @@ class AlbumParseTest(unittest.TestCase):
         self.assertEqual(album["album"], "Bare")
         self.assertEqual(album["tracks"], [])
         self.assertEqual(album["log"], "")
+
+
+class AlgorithmTableTest(unittest.TestCase):
+    """The page documents the scorer from drdb.W and drdb.ALGORITHM. These
+    keep the documentation and the arithmetic from drifting apart."""
+
+    SOURCE = (SRC / "drdb.py").read_text(encoding="utf-8")
+
+    def test_every_weight_the_scorer_uses_is_documented(self):
+        body = self.SOURCE[self.SOURCE.index("def identify("):]
+        used = set(re.findall(r'W\["(\w+)"\]', body))
+        documented = {key for _s, _w, key, _y in drdb.ALGORITHM}
+        thresholds = {"likely_from", "possible_from"}
+        self.assertEqual(used - thresholds, documented)
+
+    def test_every_documented_weight_exists(self):
+        for _signal, _when, key, _why in drdb.ALGORITHM:
+            self.assertIn(key, drdb.W)
+
+    def test_no_number_is_hard_coded_in_the_scorer(self):
+        body = self.SOURCE[self.SOURCE.index("def identify("):]
+        self.assertEqual(re.findall(r"score [+-]= \d+", body), [])
+
+    def test_the_page_renders_the_table(self):
+        page = APP.app.test_client().get("/dr-alternatives").get_data(as_text=True)
+        self.assertIn("How \u201cWhich one is playing?\u201d decides", page)
+        self.assertIn("+%d" % drdb.W["time_exact"], page)
+        self.assertIn("%d" % drdb.W["cd_hires"], page)
+        self.assertIn("const CLOSE_MARGIN = %d;" % drdb.W["tie_margin"], page)
 
 
 class ClientTest(unittest.TestCase):

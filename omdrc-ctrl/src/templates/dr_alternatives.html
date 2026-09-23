@@ -70,6 +70,12 @@ tr.album.likely td:first-child{box-shadow:inset 3px 0 0 var(--green)}
 .why li.unchecked{color:var(--muted)}
 .why li.unchecked::before{content:'\00b7';position:absolute;left:0;color:var(--muted);font-weight:700}
 .why-note{color:var(--muted);font-size:.78rem;margin:.1rem 0 .7rem}
+.algo td.pts{font-family:var(--mono);text-align:right;white-space:nowrap;width:1%}
+.algo td.pts.pos{color:var(--green)}
+.algo td.pts.neg{color:var(--red)}
+.algo td.sig{font-weight:600;white-space:nowrap;width:1%}
+.algo td.why{color:var(--muted);font-size:.82rem}
+.algo tr.group td{border-top:1px solid var(--line)}
 .fingerprint{color:var(--muted);font-size:.82rem;margin:.35rem 0 0}
 .legend{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin-top:.6rem}
 .status{font-size:.86rem;color:var(--muted);margin:.5rem 0 0}
@@ -153,6 +159,39 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
   </div>
 </div>
 
+<div class="card" id="algorithm">
+  <h2 style="font-size:1.05rem;margin:0 0 .3rem">How “Which one is playing?” decides</h2>
+  <p class="hint">
+    Each version's own page is read and scored against the track on the wire —
+    the one playing, paused, or last played; never the rest of the queue. Every
+    signal that applies adds its points; a comparison one side cannot make adds
+    nothing and is listed with a <b>·</b> instead. The score is clamped to 0–100.
+  </p>
+  <table class="algo">
+    <thead><tr><th>Signal</th><th>When</th><th style="text-align:right">Points</th><th>Why</th></tr></thead>
+    <tbody>
+    {% for signal, when, key, why in algorithm %}
+      {% set pts = weights[key] %}
+      <tr{% if signal %} class="group"{% endif %}>
+        <td class="sig">{{ signal }}</td>
+        <td>{{ when }}</td>
+        <td class="pts {{ 'pos' if pts > 0 else 'neg' }}">{{ '%+d' % pts }}</td>
+        <td class="why">{{ why }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint" style="margin-top:.8rem">
+    <b>Verdict:</b> {{ weights.likely_from }} or more is <i>likely</i>,
+    {{ weights.possible_from }}–{{ weights.likely_from - 1 }} <i>possible</i>,
+    below that <i>unlikely</i>; <i>no evidence</i> when nothing could be compared.
+    The best score is <i>most likely</i>, and so is any version within
+    {{ weights.tie_margin }} points of it — the evidence does not separate them,
+    so the page does not either.
+  </p>
+  <p class="hint"><b>Not scored:</b> {{ not_scored }}</p>
+</div>
+
 <footer><a href="/">← Control panel</a> · data from <a href="{{ base_url }}" target="_blank" rel="noopener noreferrer">dr.loudness-war.info</a></footer>
 
 <script>
@@ -228,7 +267,7 @@ function fmtPos(seconds) {
 // 1995 reissue differ by four seconds on one track and by the year tag, and
 // those pull opposite ways. Within this margin the page names both rather
 // than pretending the arithmetic settled it.
-const CLOSE_MARGIN = 12;
+const CLOSE_MARGIN = {{ weights.tie_margin }};   // drdb.W, as the table below shows
 
 // One version is the answer: the best score, and only when it is good enough
 // to call likely. The rest carry their own verdict, so a near miss is visible

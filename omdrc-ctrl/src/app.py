@@ -29,6 +29,7 @@ from audio_diagnostics import AudioDiagnosticsMonitor
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
 from drdb import identify as drdb_identify_version
 from drdb import release_year as drdb_release_year
+from drdb import ALGORITHM as DRDB_ALGORITHM, NOT_SCORED as DRDB_NOT_SCORED, W as DRDB_WEIGHTS
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -4132,10 +4133,16 @@ def _parse_qconnect_status(lines: list[str]) -> dict:
     line2  = None
     state  = ""
     events = []
+    art_url = ""
     for raw in lines[1:]:
         entry = raw.strip()
         if entry.startswith("state="):
             state = entry[len("state="):].strip()
+            continue
+        # The cover URL, tagged so it is never taken for text: left untagged
+        # it would land in the activity ring and be printed on the card.
+        if entry.startswith("art="):
+            art_url = entry[len("art="):].strip()
             continue
         if line2 is None:           # first untagged line below the track
             line2 = entry
@@ -4152,10 +4159,12 @@ def _parse_qconnect_status(lines: list[str]) -> dict:
         "elapsed": elapsed,
         "duration": duration,
         "playback_state": playback_state,
-        # Filled by the route from MusicPD's tags: the status file carries no
-        # label or year, and no cover at all.
+        # Filled by the route: the edition from MusicPD's tags, the cover as a
+        # path on this panel. The URL itself stays server-side in art_url,
+        # which the route removes before anything reaches a browser.
         "art": "",
         "edition": "",
+        "art_url": art_url,
     }
 
 
@@ -4226,6 +4235,9 @@ def qconnect_status():
         with open(QCONNECT_STATUS_FILE, encoding="utf-8") as f:
             lines = f.read().splitlines()
         status = _parse_qconnect_status(lines)
+        art_url = status.pop("art_url", "")
+        if art_url:
+            status["art"] = "/qconnect/art?v=" + hashlib.sha1(art_url.encode()).hexdigest()[:10]
         # qobuzconnect2mpd's status file names the track and the format; the
         # edition reaches MusicPD's queue as tags instead (Label, Date), so
         # read them from there while something is playing.
@@ -4352,8 +4364,17 @@ def _fetch_art(url: str) -> tuple | None:
 def qconnect_art():
     """The cover of whatever is playing. Takes no parameters -- the `v` the
     card appends is only there so a new track busts the browser's cache."""
-    np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
-    url = _upmpdcli_didl_meta(np.get("file", "")).get("art", "")
+    if _current_renderer() == UPMPDCLI_SERVICE:
+        np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+        url = _upmpdcli_didl_meta(np.get("file", "")).get("art", "")
+    else:
+        # qobuzconnect2mpd writes the cover of the playing track into its
+        # status file as an art= line.
+        try:
+            with open(QCONNECT_STATUS_FILE, encoding="utf-8") as handle:
+                url = _parse_qconnect_status(handle.read().splitlines())["art_url"]
+        except OSError:
+            url = ""
     if not url:
         return "", 404
     got = _fetch_art(url)
@@ -4521,7 +4542,9 @@ def dr_alternatives_page():
         return "DR database lookups disabled", 404
     return render_template("dr_alternatives.html",
                            base_url=DRDB.base_url,
-                           max_detail_lookups=DRDB.max_detail_lookups)
+                           max_detail_lookups=DRDB.max_detail_lookups,
+                           algorithm=DRDB_ALGORITHM, weights=DRDB_WEIGHTS,
+                           not_scored=DRDB_NOT_SCORED)
 
 
 @app.route("/drdb/now")

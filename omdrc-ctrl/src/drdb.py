@@ -538,6 +538,83 @@ def duration_seconds(text: str) -> int | None:
     return seconds
 
 
+# ── the weights, in one place ───────────────────────────────────────────────
+#
+# identify() reads every number below from here, and the DR versions page
+# renders ALGORITHM from the same table, so what the page claims the scorer
+# does and what it does cannot drift apart. test_drdb checks that each weight
+# is both used and documented.
+W = {
+    "position":        12,   # the playing title sits at the stream's track number
+    "elsewhere":        8,   # the title is on the version, at another position
+    "not_listed":     -20,   # the version's track list does not name it
+    "time_exact":      45,   # within 3 s, at the right position
+    "time_exact_off":  32,   # within 3 s, at another position
+    "time_near":       20,   # within 8 s
+    "time_far":       -30,   # 20 s or more apart
+    "cd_hires":       -40,   # a CD entry against a stream above 44.1 kHz/16 bit
+    "medium_fits":      6,   # CD/download at CD rate, or download/SACD... at hi-res
+    "surround":       -12,   # a surround/DVD/SACD transfer against a stereo stream
+    "vinyl":           -8,   # a vinyl rip against a CD-rate stream
+    "format_off":     -15,   # the entry states a rate/depth other than the stream's
+    "format_same":      8,   # the entry states the stream's rate/depth
+    "disc_same":       10,   # same disc of a set
+    "disc_other":     -25,   # another disc of the set
+    "label_same":      14,   # an imprint name in common
+    "label_other":     -5,   # both named, none in common
+    "year_same":       14,
+    "year_near":        6,   # one year apart
+    "year_other":      -6,
+    "album_same":       5,
+    "album_part":       2,   # one album name contains the other
+    "likely_from":     55,   # verdict thresholds
+    "possible_from":   30,
+    "tie_margin":      12,   # the page names every version this close to the best
+}
+
+# (signal, when, weight key, why) -- the table at the foot of the page.
+ALGORITHM = [
+    ("Running order", "the playing title is at the same track number", "position",
+     "the edition's own track list, as uploaded with its DR log"),
+    ("", "the title is on this version, at another number", "elsewhere",
+     "a different running order: a reissue with bonus tracks, say"),
+    ("", "this version's track list does not name it", "not_listed", ""),
+    ("Track length", "within 3 s, at the right track number", "time_exact",
+     "two rips of one pressing agree to the second"),
+    ("", "within 3 s, elsewhere in the list", "time_exact_off", ""),
+    ("", "within 8 s", "time_near", "a few seconds out is a different transfer"),
+    ("", "20 s or more apart", "time_far",
+     "a different cut: a DVD keeping the between-song talk"),
+    ("Stream format", "a CD entry, and the stream is above 44.1 kHz/16 bit", "cd_hires",
+     "a CD cannot carry it; the same master's DR may still be right"),
+    ("", "the medium suits the stream's rate", "medium_fits",
+     "CD or download at CD rate; download, SACD or Blu-ray when hi-res"),
+    ("", "a surround or disc transfer, stereo stream", "surround", ""),
+    ("", "a vinyl rip, CD-rate stream", "vinyl", ""),
+    ("", "the entry's title states another rate/depth", "format_off",
+     "\u201c48kHz-16bit\u201d, \u201c16/48\u201d; \u201c448 Kbps\u201d is a bitrate and ignored"),
+    ("", "the entry's title states the stream's rate/depth", "format_same", ""),
+    ("Disc of a set", "same disc", "disc_same",
+     "disc from a disc\u00d71000+track number; the entry's name says Disc/CD N"),
+    ("", "another disc", "disc_other", "sets are filed one disc per entry"),
+    ("Label", "an imprint name in common", "label_same",
+     "\u201cColumbia/Legacy\u201d shares Columbia; words like Records are ignored"),
+    ("", "both named, nothing in common", "label_other",
+     "weak: services carry the reissue imprint"),
+    ("Year", "same year", "year_same",
+     "the stream's Date is the album's original release date"),
+    ("", "one year apart", "year_near", ""),
+    ("", "further apart", "year_other",
+     "weak, for the same reason: it dates the album, not the transfer"),
+    ("Album name", "identical", "album_same", ""),
+    ("", "one contains the other", "album_part", ""),
+]
+
+# Shown in the table but never scored, and said so.
+NOT_SCORED = ("Country, catalog number and bar code: nothing in a stream can "
+              "confirm them.")
+
+
 def identify(playing: dict, album: dict) -> dict:
     """How well one database version matches the track on the wire.
 
@@ -578,16 +655,16 @@ def identify(playing: dict, album: dict) -> dict:
                 and log_keys[position - 1] == playing_key):
             matched_index = position - 1
             at_its_position = True
-            score += 12
+            score += W["position"]
             for_.append(f"track {position} of this version is "
                         f"“{log[matched_index]['title']}”")
         elif playing_key in log_keys:
             matched_index = log_keys.index(playing_key)
-            score += 8
+            score += W["elsewhere"]
             for_.append(f"“{log[matched_index]['title']}” is on this version, "
                         f"at track {matched_index + 1}")
         else:
-            score -= 20
+            score += W["not_listed"]
             against.append("this version's track list does not name "
                            f"“{playing.get('title')}”")
 
@@ -607,15 +684,15 @@ def identify(playing: dict, album: dict) -> dict:
                 # pressing agree to the second, so a few seconds out does mean
                 # a different transfer; it should not on its own outweigh an
                 # edition whose year and label match.
-                score += 45 if at_its_position else 32
+                score += W["time_exact"] if at_its_position else W["time_exact_off"]
                 for_.append(f"“{title}” runs {listed_text} here and "
                             f"{wire_text} on the wire")
             elif delta <= 8:
-                score += 20
+                score += W["time_near"]
                 for_.append(f"“{title}” runs {listed_text} here, close to the "
                             f"{wire_text} on the wire")
             elif delta >= 20:
-                score -= 30
+                score += W["time_far"]
                 against.append(f"“{title}” runs {listed_text} here but "
                                f"{wire_text} on the wire")
 
@@ -635,37 +712,37 @@ def identify(playing: dict, album: dict) -> dict:
         wire = format_text(rate, bits)
         cd_audio = rate == 44100 and (bits or 16) <= 16
         if not cd_audio and source == "cd":
-            score -= 40
+            score += W["cd_hires"]
             against.append(
                 f"a CD, which holds 44.1 kHz/16 bit, where the stream is "
                 f"{wire} — a hi-res issue of the same master would measure "
                 "much the same, but this entry is not it")
         elif cd_audio and source in ("cd", "download"):
-            score += 6
+            score += W["medium_fits"]
             for_.append(f"a {source} at {wire}, as the stream is")
         elif not cd_audio and source in ("download", "web", "sacd", "blu-ray"):
-            score += 6
+            score += W["medium_fits"]
             for_.append(f"a {source} issue, as a {wire} stream would be")
 
         if _SURROUND_EDITION.search(f"{name} {source}") and (channels or 2) <= 2:
-            score -= 12
+            score += W["surround"]
             against.append(f"a surround or disc transfer, against a {wire} "
                            "stereo stream")
         elif _VINYL_EDITION.search(f"{name} {source}"):
-            score -= 8
+            score += W["vinyl"]
             against.append(f"a vinyl rip, against a {wire} stream")
 
         stated_rate, stated_bits = stated_format(name)
         if stated_rate and stated_rate != rate:
-            score -= 15
+            score += W["format_off"]
             against.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
                            f"where the stream is {wire}")
         elif stated_rate and stated_bits and bits and stated_bits != bits:
-            score -= 15
+            score += W["format_off"]
             against.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
                            f"where the stream is {wire}")
         elif stated_rate:
-            score += 8
+            score += W["format_same"]
             for_.append(f"transferred at {format_text(stated_rate, stated_bits)}, "
                         "as the stream is")
 
@@ -680,10 +757,10 @@ def identify(playing: dict, album: dict) -> dict:
     if isinstance(disc, int) and disc > 0 and named_disc:
         evidence = True
         if int(named_disc.group(1)) == disc:
-            score += 10
+            score += W["disc_same"]
             for_.append(f"disc {disc} of the set, as the stream is")
         else:
-            score -= 25
+            score += W["disc_other"]
             against.append(f"disc {named_disc.group(1)} of the set, "
                            f"where the stream is disc {disc}")
 
@@ -701,10 +778,10 @@ def identify(playing: dict, album: dict) -> dict:
         evidence = True
         shared = wire_labels & version_labels
         if shared:
-            score += 14
+            score += W["label_same"]
             for_.append(f"same label ({sorted(shared)[0].title()})")
         else:
-            score -= 5
+            score += W["label_other"]
             against.append(f"released by {album.get('label')}, "
                            f"not {playing.get('label')}")
     elif version_labels:
@@ -726,14 +803,14 @@ def identify(playing: dict, album: dict) -> dict:
         evidence = True
         gap = abs(wire_year - version_year)
         if gap == 0:
-            score += 14
+            score += W["year_same"]
             for_.append(f"same year ({version_year})")
         elif gap == 1:
-            score += 6
+            score += W["year_near"]
             for_.append(f"issued {version_year}, one year off the {wire_year} "
                         "the stream is tagged with")
         else:
-            score -= 6
+            score += W["year_other"]
             against.append(f"issued {version_year}, against the {wire_year} "
                            "the stream is tagged with")
 
@@ -742,20 +819,20 @@ def identify(playing: dict, album: dict) -> dict:
     version_album = str(album.get("album", "")).strip().lower()
     if queue_album and version_album:
         if queue_album == version_album:
-            score += 5
+            score += W["album_same"]
         elif queue_album in version_album or version_album in queue_album:
-            score += 2
+            score += W["album_part"]
 
     score = max(0, min(100, score))
     if not evidence:
         verdict = "unknown"
-    elif score >= 55:
+    elif score >= W["likely_from"]:
         # The right track, at the right position, with the right length and on
         # a medium the stream could have come from scores about 65, and one
         # weak signal pulling the other way should not take that below
         # "likely" -- the reasons are there to be read.
         verdict = "likely"
-    elif score >= 30:
+    elif score >= W["possible_from"]:
         verdict = "possible"
     else:
         verdict = "unlikely"

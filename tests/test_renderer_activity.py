@@ -302,5 +302,54 @@ class CoverProxyTest(unittest.TestCase):
         self.assertNotIn("cdn.invalid", got["art"])
 
 
+
+class QobuzCoverLineTest(unittest.TestCase):
+    """qobuzconnect2mpd writes the cover URL as an art= line in its status
+    file. It is for fetching, never for display: it must not reach the
+    activity ring, the format line, or the payload a browser receives."""
+
+    STATUS = ("[playing] Pink Floyd - Sorrow \u00b7 Delicate Sound of Thunder  [0:12 / 9:28]\n"
+              "16 bit / 44.1 kHz / stereo\n"
+              "state=PLAYING\n"
+              "art=https://static.qobuz.invalid/covers/xx_600.jpg\n"
+              "11:24:03 queue received: 3 tracks\n")
+
+    def test_the_url_is_parsed_but_not_shown(self):
+        got = parse(self.STATUS)
+        self.assertEqual(got["art_url"], "https://static.qobuz.invalid/covers/xx_600.jpg")
+        self.assertEqual(got["line2"], "16 bit / 44.1 kHz / stereo")
+        self.assertEqual(got["events"], ["11:24:03 queue received: 3 tracks"])
+        self.assertFalse(any("qobuz.invalid" in e for e in got["events"]))
+
+    def test_an_art_line_before_the_format_line_does_not_displace_it(self):
+        got = parse("[playing] A - B\nart=https://x.invalid/c.jpg\n24 bit / 96 kHz / stereo\n")
+        self.assertEqual(got["line2"], "24 bit / 96 kHz / stereo")
+
+    def test_the_route_sends_a_panel_path_and_never_the_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.txt"
+            path.write_text(self.STATUS, encoding="utf-8")
+            with patch.object(APP, "QCONNECT_STATUS_FILE", str(path)), \
+                 patch.object(APP, "_current_renderer", return_value="qobuzconnect2mpd"), \
+                 patch.object(APP, "_mpd_now_playing_via_protocol", return_value={}), \
+                 patch.object(APP, "_resolve_mpd_port", return_value="6600"):
+                body = APP.app.test_client().get("/qconnect/status").get_data(as_text=True)
+        self.assertNotIn("qobuz.invalid", body)
+        self.assertIn("/qconnect/art?v=", body)
+
+    def test_the_art_endpoint_reads_the_status_file_for_this_renderer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.txt"
+            path.write_text(self.STATUS, encoding="utf-8")
+            seen = []
+            with patch.object(APP, "QCONNECT_STATUS_FILE", str(path)), \
+                 patch.object(APP, "_current_renderer", return_value="qobuzconnect2mpd"), \
+                 patch.object(APP, "_fetch_art",
+                              lambda url: seen.append(url) or ("image/jpeg", b"jpg")):
+                response = APP.app.test_client().get("/qconnect/art")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen, ["https://static.qobuz.invalid/covers/xx_600.jpg"])
+
+
 if __name__ == "__main__":
     unittest.main()
