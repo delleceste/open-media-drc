@@ -93,6 +93,10 @@ tr.ev.unchecked,tr.ev.neutral{color:var(--muted)}
 .legend{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin-top:.6rem}
 .status{font-size:.86rem;color:var(--muted);margin:.5rem 0 0}
 .status.err{color:var(--red)}
+/* Work in progress -- the database being asked, the versions being read --
+   in the panel's own green, the colour of its "connected" status line, so a
+   wait reads as the page working rather than as the page's resting text. */
+.busy{color:var(--green)}
 .note{border-left:3px solid var(--yellow);padding:.5rem .7rem;margin:.6rem 0 0;background:#1c1a12;font-size:.86rem}
 footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
 </style>
@@ -128,7 +132,7 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
 </div>
 
 <div class="card" id="results-card">
-  <p class="hint" id="results-placeholder">Loading results…</p>
+  <p class="hint busy" id="results-placeholder">Loading results…</p>
   <div id="results-body" hidden>
   <table id="results">
     <thead>
@@ -275,17 +279,19 @@ function thermometer(dr) {
 
 // The results card stays on the page from the first paint, so the table grows
 // into a box that is already there instead of pushing the page down.
-function showResults(placeholder) {
+function showResults(placeholder, busy) {
     const el = document.getElementById('results-placeholder');
     el.textContent = placeholder || '';
     el.hidden = !placeholder;
+    el.classList.toggle('busy', !!busy);
     document.getElementById('results-body').hidden = !!placeholder;
 }
 
-function setStatus(text, isError) {
+function setStatus(text, isError, busy) {
     const el = document.getElementById('status');
     el.textContent = text || '';
     el.classList.toggle('err', !!isError);
+    el.classList.toggle('busy', !!busy && !isError);
 }
 
 // What identification has to work with: the track playing, and nothing
@@ -447,8 +453,8 @@ async function search() {
     if (locating) { locating = false; locateRun++; }
     const btn = document.getElementById('btn-search');
     btn.disabled = true;
-    setStatus('Asking the database…');
-    if (!rows.length) showResults('Loading results…');
+    setStatus('Asking the database…', false, true);
+    if (!rows.length) showResults('Loading results…', true);
     try {
         const query = new URLSearchParams({ artist, album });
         const d = await (await fetch(`/drdb/search?${query}`)).json();
@@ -628,7 +634,7 @@ async function toggleLocate() {
     let checked = 0, listless = 0;
     for (const row of list) {
         if (!locating || run !== locateRun) break;
-        setStatus(`Reading each version… ${checked}/${list.length}`);
+        setStatus(`Reading each version… ${checked}/${list.length}`, false, true);
         try {
             const detail = await fetchDetail(row.id);
             checked++;
