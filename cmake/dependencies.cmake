@@ -40,6 +40,88 @@ message(STATUS "open-media-drc: checking runtime dependencies")
 omdrc_need_tool(brutefir  NOTE " (DRC convolution engine)")
 omdrc_need_tool(mpc       NOTE " (MPD client; drc.sh and omdrcctrl drive MPD through it)")
 omdrc_need_tool(upmpdcli  NOTE " (UPnP/OpenHome renderer)")
+
+# ── can upmpdcli name the release it is playing? ─────────────────────────────
+#
+# upmpdcli hands MusicPD what the control point sent it -- artist, album,
+# title, track -- and drops the rest of the DIDL, so a queue entry names a
+# recording but never the issue it came from. The panel's DR versions page
+# needs the year and the label to tell a DR8 CD master from the DR13 vinyl of
+# the same record, so this project carries a patch that keeps them
+# (upmpdcli/patches/). Nothing breaks without it and the stack runs fine, so
+# this warns and explains; it never fails the configure.
+#
+# The test is the DIDL property name `upnp:publisher`, which the patch
+# introduces and a stock build never mentions: a functional string rather than
+# a marker, so a local build of the patch and an upstream release that merges
+# it both answer yes. It reads the binary that find_program resolved, which is
+# the one the rendered service unit will exec -- but that is a configure-time
+# answer about a file, not about whatever is running right now. The panel
+# knows the runtime truth: a current song with no Date tag.
+option(OMDRC_WARN_UNPATCHED_UPMPDCLI
+       "Warn when the upmpdcli found cannot publish release year and label" ON)
+
+function(omdrc_check_upmpdcli_edition_tags)
+    if(NOT OMDRC_TOOL_UPMPDCLI OR NOT OMDRC_WARN_UNPATCHED_UPMPDCLI)
+        return()
+    endif()
+    execute_process(
+        COMMAND grep -a -c "upnp:publisher" "${OMDRC_TOOL_UPMPDCLI}"
+        OUTPUT_VARIABLE _hits OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0 AND NOT _rc EQUAL 1)
+        # No grep, unreadable binary: say nothing rather than guess.
+        return()
+    endif()
+    if(_hits GREATER 0)
+        message(STATUS "  upmpdcli: publishes release year and label")
+        return()
+    endif()
+
+    # Which copy is this? A packaged binary cannot simply be rebuilt over:
+    # the next upgrade would put the stock one back.
+    set(_origin "a local build")
+    if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+        set(_owner_cmd pkg which -q "${OMDRC_TOOL_UPMPDCLI}")
+    elseif(EXISTS "/usr/bin/pacman")
+        set(_owner_cmd pacman -Qoq "${OMDRC_TOOL_UPMPDCLI}")
+    else()
+        set(_owner_cmd dpkg -S "${OMDRC_TOOL_UPMPDCLI}")
+    endif()
+    execute_process(COMMAND ${_owner_cmd} OUTPUT_VARIABLE _owner
+                    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
+                    RESULT_VARIABLE _owner_rc)
+    if(_owner_rc EQUAL 0 AND _owner)
+        string(REGEX REPLACE "\n.*" "" _owner "${_owner}")
+        set(_origin "installed by the package manager as ${_owner}")
+    endif()
+
+    # message(WARNING) re-wraps its text, which would fold the commands below
+    # into a paragraph nobody can paste. So: a one-line warning for the fact,
+    # and the procedure as NOTICE, which prints verbatim.
+    message(WARNING
+        "upmpdcli at ${OMDRC_TOOL_UPMPDCLI} publishes no release year or "
+        "label (${_origin}, without this project's patch)")
+    message(NOTICE
+"\n  MusicPD's queue will carry artist, album, title and track. Those name a"
+"\n  recording, not the issue it came from, so the DR versions page can rank"
+"\n  every pressing of a record but has little to go on when saying which one"
+"\n  you are hearing. Nothing else in the stack is affected."
+"\n"
+"\n  To fix it (full notes in upmpdcli/patches/README.md):"
+"\n"
+"\n    ver=1.9.18"
+"\n    curl -O https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-$ver.tar.gz"
+"\n    tar xf upmpdcli-$ver.tar.gz && cd upmpdcli-$ver"
+"\n    patch -p1 < ${CMAKE_SOURCE_DIR}/upmpdcli/patches/0001-carry-date-genre-and-publisher-tags.patch"
+"\n    meson setup build && ninja -C build && sudo ninja -C build install"
+"\n"
+"\n  then restart the renderer and re-run cmake, which resolves the binary"
+"\n  again for this check and for the service unit it renders."
+"\n  Silence this with -DOMDRC_WARN_UNPATCHED_UPMPDCLI=OFF.\n")
+endfunction()
+
+omdrc_check_upmpdcli_edition_tags()
 # qobuzconnect2mpd is built and installed separately.  HINTS are searched BEFORE
 # the system PATH, so a per-user build left in ~/.local/bin used to win over a
 # later system-wide install of the same program — and go on winning long after

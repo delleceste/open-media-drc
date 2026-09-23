@@ -134,6 +134,26 @@ done
 sudo ldconfig 2>/dev/null || true   # Linux: refresh the linker cache
 ```
 
+> **Patch upmpdcli before building it.** Stock upmpdcli hands MusicPD only
+> artist, album, title and track: enough to name a recording, never enough to
+> name the *issue* it came from, since a remastered CD and its vinyl reissue
+> agree on all four and differ in year and label. `upmpdcli/patches/` carries a
+> one-commit fix that keeps `dc:date`, `upnp:genre` and `upnp:publisher` from
+> the control point's own metadata and stores them as MPD's `Date`, `Genre` and
+> `Label`, which is what lets the panel's
+> [DR versions page](omdrc-ctrl/README.md#dr-versions-page) say *which* pressing
+> is playing rather than only which ones exist. Apply it in the loop above:
+>
+> ```sh
+> patch -p1 < ~/open-media-drc/upmpdcli/patches/0001-carry-date-genre-and-publisher-tags.patch
+> ```
+>
+> `cmake` warns, with this procedure, whenever the upmpdcli it finds was built
+> without it — including a distro-packaged one, where it also says which
+> package owns the binary. See
+> [`upmpdcli/patches/README.md`](upmpdcli/patches/README.md); the same commit is
+> written to go upstream as a Framagit merge request.
+
 **2. MPD** — from the OS package (recommended; same as a stock Arch/FreeBSD
 install). Make sure the **soxr** resampler and the ALSA (Linux) / OSS (FreeBSD)
 outputs are enabled in the package:

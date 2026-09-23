@@ -1,0 +1,134 @@
+From 9f608ce9e564b7d9933ae6e277a4ff4d0ecb0b7c Mon Sep 17 00:00:00 2001
+From: Giacomo <delleceste@gmail.com>
+Date: Wed, 23 Sep 2026 09:45:35 +0200
+Subject: [PATCH] mpd: carry date, genre and publisher between the CP and MPD
+
+dirObjToUpSong() keeps artist, album, title and track number from the
+Control Point's DIDL and drops everything else, so three fields upmpdcli
+already models never survive the trip: UpSong::dcdate and UpSong::genre
+are declared, written by UpSong::didl(), and genre is even read back from
+MPD in MPDCli::mapSong() -- but neither is ever filled on the way in, and
+send_tag_data() cannot send what was never kept.
+
+The result is that a queue entry carries only what describes the
+recording, never what identifies the issue it came from. That matters to
+anything downstream which has to tell two releases of one record apart: a
+remastered CD and its vinyl reissue share artist, album, title and track
+number, and differ in year and label.
+
+So keep them, and send them:
+
+  - dirObjToUpSong() fills genre, dcdate and the new UpSong::publisher
+    (upnp:publisher) from the DIDL properties, which libupnpp already
+    parses into its property map -- no parsing work, just the three
+    getprop() calls.
+  - send_tag_data() stores them as MPD's Date, Genre and Label tags.
+    Skipped when empty, so nothing is sent that was not received, and an
+    older MPD which does not know a tag name cannot cost us the tags
+    after it. Label goes last and behind LIBMPDCLIENT_CHECK_VERSION:
+    MPD_TAG_LABEL needs libmpdclient 2.17.
+  - mapSong() reads Date and Label back, the counterpart of the above and
+    the way a track played from MPD's own library gets its year and label
+    out to the Control Point at all.
+  - UpSong::didl() emits upnp:publisher, so the round trip closes for the
+    new field as it already does for dc:date.
+
+Tested against MPD 0.24: addtagid accepts Date, Genre and Label, and
+serves all three back in playlistinfo/currentsong.
+---
+ src/mpdcli.cxx     | 31 +++++++++++++++++++++++++++++++
+ src/upmpdutils.cxx |  9 +++++++++
+ src/upmpdutils.hxx |  2 ++
+ 3 files changed, 42 insertions(+)
+
+diff --git a/src/mpdcli.cxx b/src/mpdcli.cxx
+index 2f0e79a..18d6e6c 100644
+--- a/src/mpdcli.cxx
++++ b/src/mpdcli.cxx
+@@ -699,6 +699,21 @@ UpSong&  MPDCli::mapSong(UpSong& upsong, struct mpd_song *song)
+         upsong.genre = cp;
+     else
+         upsong.genre.clear();
++    // The counterpart of what send_tag_data() now stores, and the way a
++    // track played from MPD's own library gets its year out to the Control
++    // Point at all.
++    cp = mpd_song_get_tag(song, MPD_TAG_DATE, 0);
++    if (cp != 0)
++        upsong.dcdate = cp;
++    else
++        upsong.dcdate.clear();
++#if LIBMPDCLIENT_CHECK_VERSION(2,17,0)
++    cp = mpd_song_get_tag(song, MPD_TAG_LABEL, 0);
++    if (cp != 0)
++        upsong.publisher = cp;
++    else
++        upsong.publisher.clear();
++#endif
+ 
+     upsong.rsrc.duration_secs = mpd_song_get_duration(song);
+     upsong.mpdid = mpd_song_get_id(song);
+@@ -968,8 +983,24 @@ bool MPDCli::send_tag_data(int id, const UpSong& meta)
+         return false;
+     if (!send_tag(cid, MPD_TAG_TRACK, meta.tracknum))
+         return false;
++    // Metadata the Control Point may or may not have sent. Skipped when
++    // empty: there is nothing to store, and an older MPD which does not know
++    // a tag name answers with an error, which would cost us the tags after
++    // it. Date and Genre have been in MPD forever; Label is more recent, so
++    // it goes last as well as behind the libmpdclient guard.
++    if (!meta.dcdate.empty() && !send_tag(cid, MPD_TAG_DATE, meta.dcdate))
++        return false;
++    if (!meta.genre.empty() && !send_tag(cid, MPD_TAG_GENRE, meta.genre))
++        return false;
++#if LIBMPDCLIENT_CHECK_VERSION(2,17,0)
++    if (!meta.publisher.empty() &&
++        !send_tag(cid, MPD_TAG_LABEL, meta.publisher))
++        return false;
++#endif
+     if (!send_tag(cid, MPD_TAG_COMMENT, upmpdcli_comment))
+         return false;
++    LOGDEB1("MPDCli::send_tag_data: date [" << meta.dcdate << "] genre [" <<
++            meta.genre << "] publisher [" << meta.publisher << "]" << endl);
+     return true;
+ }
+ 
+diff --git a/src/upmpdutils.cxx b/src/upmpdutils.cxx
+index 6d6f16e..91aa2f2 100644
+--- a/src/upmpdutils.cxx
++++ b/src/upmpdutils.cxx
+@@ -204,6 +204,7 @@ string UpSong::didl(bool noresource) const
+     UPNPXML(artist, dc:creator);
+     UPNPXML(artist, upnp:artist);
+     UPNPXML(dcdate, dc:date);
++    UPNPXML(publisher, upnp:publisher);
+     UPNPXML(dcdescription, dc:description);
+     UPNPXML(artUri, upnp:albumArtURI);
+ 
+@@ -261,6 +262,14 @@ bool dirObjToUpSong(const UPnPDirObject& dobj, UpSong *ups)
+     ups->artist = dobj.getprop("upnp:artist");
+     ups->album = dobj.getprop("upnp:album");
+     ups->title = dobj.m_title;
++    // Metadata we model but used to drop here: the fields survive in the
++    // DIDL we emit (UpSong::didl()), and genre is read back from MPD in
++    // MPDCli::mapSong(), so losing them on the way in was an asymmetry, not
++    // a decision. They also let a client tell two issues of one record
++    // apart, which title and album cannot.
++    ups->genre = dobj.getprop("upnp:genre");
++    ups->dcdate = dobj.getprop("dc:date");
++    ups->publisher = dobj.getprop("upnp:publisher");
+     string stmp;
+     dobj.getrprop(0, "duration", stmp);
+     if (!stmp.empty()) {
+diff --git a/src/upmpdutils.hxx b/src/upmpdutils.hxx
+index 14ae352..a2d1dd8 100644
+--- a/src/upmpdutils.hxx
++++ b/src/upmpdutils.hxx
+@@ -45,6 +45,8 @@ public:
+     std::string upnpClass;
+     // Date as iso string YYYY-MM-dd. dc:date in UPnP data.
+     std::string dcdate;
++    // Label/imprint which issued the record. upnp:publisher in UPnP data.
++    std::string publisher;
+     std::string dcdescription;
+ 
+     // A raw didl fragment to be added to the output when converting to DIDL. For Media Server

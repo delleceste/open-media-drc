@@ -62,6 +62,10 @@ endfunction()
 
 # radiolist (read-only data referenced by upmpdcli.conf)
 install(FILES upmpdcli/radio_scripts/radiolist.conf DESTINATION share/omdrc/upmpdcli)
+# The upmpdcli patch, installed next to the radiolist so the procedure the
+# dependency check prints names a path that exists on the running host, not
+# one inside a checkout that may be long gone.
+install(DIRECTORY upmpdcli/patches DESTINATION share/omdrc/upmpdcli)
 
 # Renderer restore helper — starts the renderer recorded in $STATE_DIR/
 # last_renderer by omdrcctrl's toggle.  Shared by both boot services below, and
