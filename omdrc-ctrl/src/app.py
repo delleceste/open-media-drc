@@ -28,6 +28,7 @@ from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 from audio_diagnostics import AudioDiagnosticsMonitor
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
 from drdb import identify as drdb_identify_version
+from drdb import release_year as drdb_release_year
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -1270,7 +1271,7 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
     import socket
     info = {"title": "", "album": "", "artist": "", "state": "", "elapsed": None,
             "duration": None, "audio": "", "date": "", "label": "",
-            "track_no": None}
+            "track_no": None, "file": ""}
     try:
         p = int(port) if port else 6600
         with socket.create_connection(("localhost", p), timeout=3) as sock:
@@ -1287,7 +1288,9 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
                     if not sep:
                         continue
                     key, value = key.strip().lower(), value.strip()
-                    if key == "title":
+                    if key == "file":
+                        info["file"] = value
+                    elif key == "title":
                         info["title"] = value
                     elif key == "album":
                         info["album"] = value
@@ -4149,12 +4152,16 @@ def _parse_qconnect_status(lines: list[str]) -> dict:
         "elapsed": elapsed,
         "duration": duration,
         "playback_state": playback_state,
+        # Filled by the route from MusicPD's tags: the status file carries no
+        # label or year, and no cover at all.
+        "art": "",
+        "edition": "",
     }
 
 
 _QC_STATUS_EMPTY = {"line1": "", "line2": "", "state": "", "events": [],
                     "line3": "", "elapsed": None, "duration": None,
-                    "playback_state": ""}
+                    "playback_state": "", "art": "", "edition": ""}
 
 
 def _upmpdcli_qconnect_status() -> dict:
@@ -4187,9 +4194,23 @@ def _upmpdcli_qconnect_status() -> dict:
                 parts.append(chan)
             line2 = " / ".join(parts)
 
+    # The cover and the edition come from two different places for the same
+    # track: art exists only in the DIDL upmpdcli cached, label and year reach
+    # MusicPD's queue as tags when the renderer publishes them (see
+    # upmpdcli/patches/).  Either may be missing; the card just shows less.
+    meta = _upmpdcli_didl_meta(np.get("file", ""))
     return {"line1": line1, "line2": line2, "state": "", "events": [],
             "elapsed": np["elapsed"], "duration": np["duration"],
-            "playback_state": np["state"]}
+            "playback_state": np["state"],
+            # Served by this panel rather than linked: see _fetch_art. The
+            # token changes with the cover, so the browser refetches on a new
+            # album and caches within one.
+            "art": ("/qconnect/art?v=" +
+                    hashlib.sha1(meta["art"].encode()).hexdigest()[:10]
+                    if meta.get("art") else ""),
+            "edition": _edition_line(
+                np.get("label") or meta.get("label", ""),
+                np.get("date") or meta.get("year", ""))}
 
 
 @app.route("/qconnect/status")
@@ -4204,7 +4225,15 @@ def qconnect_status():
     try:
         with open(QCONNECT_STATUS_FILE, encoding="utf-8") as f:
             lines = f.read().splitlines()
-        return jsonify({"ok": True, **_parse_qconnect_status(lines)})
+        status = _parse_qconnect_status(lines)
+        # qobuzconnect2mpd's status file names the track and the format; the
+        # edition reaches MusicPD's queue as tags instead (Label, Date), so
+        # read them from there while something is playing.
+        if status["playback_state"] in ("play", "pause"):
+            np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+            status["edition"] = _edition_line(np.get("label", ""),
+                                              np.get("date", ""))
+        return jsonify({"ok": True, **status})
     except FileNotFoundError:
         return jsonify({"ok": False, **_QC_STATUS_EMPTY})
     except OSError as e:
@@ -4233,6 +4262,115 @@ def _drdb_guard():
     if not DRDB.enabled:
         return jsonify({"ok": False, "error": "DR database lookups disabled"}), 404
     return None
+
+
+# Where upmpdcli keeps the DIDL a control point sent it, one "<uri>=<didl>"
+# line per track.  It is the only place the cover art lives: art is not an MPD
+# tag, so nothing the renderer stores in the queue can carry it, and MPD's own
+# albumart command reads files in its library -- which a stream is not.
+UPMPDCLI_METACACHE = os.environ.get(
+    "UPMPDCLI_METACACHE",
+    os.path.join(os.path.expanduser("~"), ".cache/upmpdcli/metacache"))
+
+_DIDL_FIELDS = {"art": "upnp:albumArtURI", "label": "dc:publisher",
+                "year": "dc:date", "album": "upnp:album"}
+# The card polls every few seconds and the file is small but not free to
+# re-read: remember the last answer against the URI and the file's mtime.
+_METACACHE_SEEN: dict = {"uri": None, "mtime": None, "meta": {}}
+
+
+def _upmpdcli_didl_meta(uri: str) -> dict:
+    """Cover art, label and year for a queue entry, out of upmpdcli's cache."""
+    if not uri:
+        return {}
+    try:
+        mtime = os.path.getmtime(UPMPDCLI_METACACHE)
+    except OSError:
+        return {}
+    if _METACACHE_SEEN["uri"] == uri and _METACACHE_SEEN["mtime"] == mtime:
+        return _METACACHE_SEEN["meta"]
+
+    meta: dict = {}
+    try:
+        with open(UPMPDCLI_METACACHE, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                key, sep, value = line.partition("=")
+                if not sep or key.strip() != uri:
+                    continue
+                didl = unquote(value)
+                for name, tag in _DIDL_FIELDS.items():
+                    found = re.search(rf"<{tag}>([^<]*)</{tag}>", didl)
+                    if found and found.group(1).strip():
+                        meta[name] = found.group(1).strip()
+                break
+    except OSError:
+        return {}
+    _METACACHE_SEEN.update(uri=uri, mtime=mtime, meta=meta)
+    return meta
+
+
+# Covers are fetched by the panel, not by the browser. The box is on the
+# internet by definition -- it is streaming -- while whatever is looking at
+# the panel may be on a phone, a guest network or behind a DNS blocker, and an
+# <img> pointed at a service's CDN simply fails there. Fetching here also
+# means one request per album instead of one per viewer.
+_ART_CACHE: dict = {}
+_ART_CACHE_MAX = 4
+_ART_MAX_BYTES = 4 * 1024 * 1024
+_ART_TIMEOUT = 8
+
+
+def _fetch_art(url: str) -> tuple | None:
+    """(content_type, bytes) for a cover URL, or None.
+
+    The URL is never taken from the request: it comes from the DIDL upmpdcli
+    cached, and the scheme is checked anyway. A panel that fetched whatever a
+    caller named would be an open proxy into whatever the box can reach."""
+    if url in _ART_CACHE:
+        return _ART_CACHE[url]
+    if urlsplit(url).scheme not in ("http", "https"):
+        return None
+    import urllib.request
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "omdrcctrl"})
+        with urllib.request.urlopen(request, timeout=_ART_TIMEOUT) as response:
+            content_type = (response.headers.get("Content-Type") or "").split(";")[0]
+            if not content_type.startswith("image/"):
+                return None
+            data = response.read(_ART_MAX_BYTES + 1)
+    except Exception:
+        return None
+    if not data or len(data) > _ART_MAX_BYTES:
+        return None
+    while len(_ART_CACHE) >= _ART_CACHE_MAX:
+        _ART_CACHE.pop(next(iter(_ART_CACHE)))
+    _ART_CACHE[url] = (content_type, data)
+    return _ART_CACHE[url]
+
+
+@app.route("/qconnect/art")
+def qconnect_art():
+    """The cover of whatever is playing. Takes no parameters -- the `v` the
+    card appends is only there so a new track busts the browser's cache."""
+    np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+    url = _upmpdcli_didl_meta(np.get("file", "")).get("art", "")
+    if not url:
+        return "", 404
+    got = _fetch_art(url)
+    if not got:
+        return "", 502
+    content_type, data = got
+    return Response(data, mimetype=content_type,
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+def _edition_line(label: str, date: str) -> str:
+    """"Columbia · 1988" for the right of the now-playing line.  The year
+    alone, not the release date: the card has one line's worth of room and
+    the day a record came out is not what anyone is reading it for."""
+    year = drdb_release_year(date)
+    return " \u00b7 ".join(part for part in (label.strip(), str(year or ""))
+                            if part)
 
 
 # "[playing] Artist - Title": qobuzconnect2mpd's status line.  The state tag

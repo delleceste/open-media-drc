@@ -742,6 +742,28 @@
             color: var(--muted);
             font-size: .72rem;
         }
+        .qc-now { display: flex; gap: 10px; align-items: flex-start; }
+        .qc-now-text { flex: 1 1 auto; min-width: 0; }
+        /* The line the track name is on: the edition sits at its right end,
+           and drops below on a narrow screen rather than squeezing the title. */
+        .qc-now-head {
+            display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+        }
+        .qc-now-head > #qc-line1 { flex: 1 1 auto; min-width: 0; }
+        .qc-art {
+            width: 48px; height: 48px; flex: 0 0 auto;
+            border-radius: 4px; object-fit: cover;
+            background: var(--bg); border: 1px solid var(--border);
+        }
+        .qc-edition {
+            /* An auto left margin keeps it at the right end of the title's
+               line, and at the right end of its own line when a long title
+               pushes it down -- rather than squeezing the title to fit. */
+            flex: 0 0 auto; margin-left: auto;
+            color: var(--muted); font-size: .78rem;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            max-width: 60%;
+        }
         #qconnect-log-panel {
             border-top: 1px solid var(--border);
             padding: 10px 0 4px;
@@ -1693,8 +1715,20 @@
     <!-- Streaming-service connection status read out of the logs (ok rules) -->
     <div id="renderer-status" class="log-status" aria-live="polite"></div>
     <div style="padding:12px 0">
-        <div id="qc-line1" class="idle">—</div>
-        <div id="qc-line2"></div>
+        <!-- Cover, track, and the edition that cover belongs to.  The art is
+             the control point's own albumArtURI, loaded by the browser: it is
+             not an MPD tag, so nothing the renderer queues can carry it. -->
+        <div class="qc-now">
+            <img id="qc-art" class="qc-art" alt="" hidden
+                 onload="this.hidden = false" onerror="this.hidden = true">
+            <div class="qc-now-text">
+                <div class="qc-now-head">
+                    <div id="qc-line1" class="idle">—</div>
+                    <span id="qc-edition" class="qc-edition"></span>
+                </div>
+                <div id="qc-line2"></div>
+            </div>
+        </div>
         <div id="qc-activity" aria-live="polite"></div>
     </div>
     <div id="qconnect-log-panel" style="display:none">
@@ -2999,6 +3033,8 @@ const QC_PHASE_ERROR   = 'ERROR';
 // exactly on a tick just resyncs the anchor; drift never accumulates past
 // one resync interval.
 let qcTiming = { elapsed: null, duration: null, playbackState: '', syncedAtMs: 0 };
+let qcArtSrc = '';         // cover currently attempted, so a poll cannot
+                           // re-show one that failed to load
 let qcBaseLine1 = '';       // line1 with no position suffix, from the server
 let qcShowingTrack = false; // false while a phase override ("[ RESOLVING ]") owns the line
 
@@ -3054,6 +3090,27 @@ function paintQcStatus(d) {
     }
     l2.textContent = d.line2 || '';
     l2.style.color = d.line2 ? fmtColor(d.line2) : '';
+
+    // Cover and edition. Both are best-effort: a renderer that publishes no
+    // label, or a control point that sent no art, simply shows less rather
+    // than leaving a gap where something used to be.
+    //
+    // The element stays hidden until the image has actually loaded, and a
+    // failure keeps it that way: unhiding on every poll -- which is what this
+    // did at first -- leaves a 48px dark square that never fills in.
+    const art = document.getElementById('qc-art');
+    const wanted = (d.playback_state === 'stop') ? '' : (d.art || '');
+    if (!wanted) {
+        art.hidden = true;
+        art.removeAttribute('src');
+        qcArtSrc = '';
+    } else if (wanted !== qcArtSrc) {
+        qcArtSrc = wanted;
+        art.hidden = true;             // onload shows it, onerror leaves it
+        art.setAttribute('src', wanted);
+    }
+    document.getElementById('qc-edition').textContent =
+        (d.playback_state === 'stop') ? '' : (d.edition || '');
     const events = d.events || (d.line3 ? [d.line3] : []);
     setQcActivity(events, phase === QC_PHASE_ERROR);
 }

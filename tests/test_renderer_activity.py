@@ -130,5 +130,177 @@ class PanelMarkupTest(unittest.TestCase):
         self.assertIn("omdrcctrl.qc.activityLines", self.html)
 
 
+class NowPlayingExtrasTest(unittest.TestCase):
+    """The cover and the edition line on the renderer card.
+
+    Art is not an MPD tag and MusicPD's albumart command reads files in its
+    library, which a stream is not -- so the only copy of a cover URL for a
+    UPnP-queued track is the DIDL upmpdcli cached. Label and year travel the
+    other way, as queue tags, and either source may be missing.
+    """
+
+    DIDL = ('<DIDL-Lite><item><dc:title>Sorrow</dc:title>'
+            '<upnp:album>Delicate Sound of Thunder</upnp:album>'
+            '<dc:publisher>Pink Floyd Records</dc:publisher>'
+            '<dc:date>1988-11-22</dc:date>'
+            '<upnp:albumArtURI>http://example.invalid/cover_600.jpg'
+            '</upnp:albumArtURI></item></DIDL-Lite>')
+
+    def metacache(self, uri, didl=None):
+        directory = tempfile.mkdtemp()
+        path = Path(directory) / "metacache"
+        # upmpdcli writes one "<uri>=<didl>" line per track, with the '=' of
+        # the XML attributes percent-encoded inside the value.
+        body = (didl if didl is not None else self.DIDL).replace("=", "%3D")
+        path.write_text(f"{uri}={body}\n", encoding="utf-8")
+        return path
+
+    def meta(self, uri, cached_uri=None, didl=None):
+        path = self.metacache(cached_uri or uri, didl)
+        with patch.object(APP, "UPMPDCLI_METACACHE", str(path)), \
+             patch.dict(APP._METACACHE_SEEN,
+                        {"uri": None, "mtime": None, "meta": {}}):
+            return APP._upmpdcli_didl_meta(uri)
+
+    def test_the_cover_and_edition_are_read_from_the_cached_didl(self):
+        got = self.meta("http://host/proxy/qobuz/AB.flac")
+        self.assertEqual(got["art"], "http://example.invalid/cover_600.jpg")
+        self.assertEqual(got["label"], "Pink Floyd Records")
+        self.assertEqual(got["year"], "1988-11-22")
+
+    def test_a_track_the_cache_does_not_hold_yields_nothing(self):
+        self.assertEqual(self.meta("http://host/other.flac",
+                                   cached_uri="http://host/proxy/x.flac"), {})
+
+    def test_a_missing_cache_is_not_an_error(self):
+        with patch.object(APP, "UPMPDCLI_METACACHE", "/nonexistent/metacache"):
+            self.assertEqual(APP._upmpdcli_didl_meta("http://host/x.flac"), {})
+
+    def test_an_entry_without_art_still_gives_the_edition(self):
+        didl = self.DIDL.replace(
+            '<upnp:albumArtURI>http://example.invalid/cover_600.jpg'
+            '</upnp:albumArtURI>', '')
+        got = self.meta("http://host/x.flac", didl=didl)
+        self.assertNotIn("art", got)
+        self.assertEqual(got["label"], "Pink Floyd Records")
+
+    def test_the_edition_line_shows_the_year_not_the_release_date(self):
+        # One line's worth of room, and the day a record came out is not what
+        # anyone reads it for.
+        self.assertEqual(APP._edition_line("Columbia", "1988-11-22"),
+                         "Columbia · 1988")
+        self.assertEqual(APP._edition_line("", "1988-11-22"), "1988")
+        self.assertEqual(APP._edition_line("Columbia", ""), "Columbia")
+        self.assertEqual(APP._edition_line("", ""), "")
+
+    def test_the_card_payload_carries_both_fields_even_when_empty(self):
+        # The browser paints from these keys on every poll; a renderer that
+        # has neither must still answer the same shape.
+        empty = APP._QC_STATUS_EMPTY
+        self.assertEqual((empty["art"], empty["edition"]), ("", ""))
+        parsed = parse("[playing] Artist - Title  [0:12 / 4:02]\n24 bit\n")
+        self.assertEqual((parsed["art"], parsed["edition"]), ("", ""))
+
+
+
+class CoverProxyTest(unittest.TestCase):
+    """The panel fetches covers itself.
+
+    The box is on the internet by definition -- it is streaming -- while
+    whatever is looking at the panel may be on a phone, a guest network or
+    behind a DNS blocker. An <img> pointed at a service's CDN shows nothing
+    there, which is what a first version of this did.
+    """
+
+    def setUp(self):
+        APP._ART_CACHE.clear()
+
+    def tearDown(self):
+        APP._ART_CACHE.clear()
+
+    class Response:
+        def __init__(self, data=b"\xff\xd8\xff-jpeg-bytes",
+                     content_type="image/jpeg"):
+            self.headers = {"Content-Type": content_type}
+            self._data = data
+
+        def read(self, _limit=None):
+            return self._data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def test_a_cover_is_fetched_and_cached(self):
+        calls = []
+
+        def urlopen(request, timeout=None):
+            calls.append(request.full_url)
+            return self.Response()
+
+        with patch("urllib.request.urlopen", urlopen):
+            first = APP._fetch_art("http://cdn.invalid/cover.jpg")
+            second = APP._fetch_art("http://cdn.invalid/cover.jpg")
+        self.assertEqual(first, ("image/jpeg", b"\xff\xd8\xff-jpeg-bytes"))
+        self.assertEqual(second, first)
+        self.assertEqual(len(calls), 1)          # the second came from cache
+
+    def test_only_http_urls_are_fetched(self):
+        # The URL comes from upmpdcli's cache rather than from a request, but
+        # a panel that opened whatever it was handed would be a way into
+        # whatever the box can reach.
+        for url in ("file:///etc/passwd", "ftp://host/x.jpg", "", "/etc/passwd"):
+            with patch("urllib.request.urlopen",
+                       lambda *a, **k: self.fail("must not fetch " + url)):
+                self.assertIsNone(APP._fetch_art(url))
+
+    def test_something_that_is_not_an_image_is_refused(self):
+        with patch("urllib.request.urlopen",
+                   lambda *a, **k: self.Response(b"<html>", "text/html")):
+            self.assertIsNone(APP._fetch_art("http://cdn.invalid/oops"))
+
+    def test_a_fetch_that_fails_is_not_cached(self):
+        def boom(*_a, **_k):
+            raise OSError("no route to host")
+
+        with patch("urllib.request.urlopen", boom):
+            self.assertIsNone(APP._fetch_art("http://cdn.invalid/cover.jpg"))
+        self.assertEqual(APP._ART_CACHE, {})
+
+    def test_the_endpoint_answers_404_when_there_is_no_cover(self):
+        with patch.object(APP, "_mpd_now_playing_via_protocol",
+                          return_value={"file": "http://host/x.flac"}), \
+             patch.object(APP, "_resolve_mpd_port", return_value="6600"), \
+             patch.object(APP, "_upmpdcli_didl_meta", return_value={}):
+            self.assertEqual(APP.app.test_client().get("/qconnect/art").status_code, 404)
+
+    def test_the_endpoint_serves_the_bytes_with_their_type(self):
+        with patch.object(APP, "_mpd_now_playing_via_protocol",
+                          return_value={"file": "http://host/x.flac"}), \
+             patch.object(APP, "_resolve_mpd_port", return_value="6600"), \
+             patch.object(APP, "_upmpdcli_didl_meta",
+                          return_value={"art": "http://cdn.invalid/cover.jpg"}), \
+             patch("urllib.request.urlopen", lambda *a, **k: self.Response()):
+            response = APP.app.test_client().get("/qconnect/art")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "image/jpeg")
+        self.assertEqual(response.data, b"\xff\xd8\xff-jpeg-bytes")
+
+    def test_the_card_points_at_this_panel_not_the_cdn(self):
+        playing = {"title": "Sorrow", "album": "Delicate Sound of Thunder",
+                   "artist": "Pink Floyd", "state": "play", "elapsed": 1.0,
+                   "duration": 2.0, "audio": "44100:16:2",
+                   "file": "http://host/x.flac", "label": "", "date": ""}
+        with patch.object(APP, "_mpd_now_playing_via_protocol", return_value=playing), \
+             patch.object(APP, "_resolve_mpd_port", return_value="6600"), \
+             patch.object(APP, "_upmpdcli_didl_meta",
+                          return_value={"art": "http://cdn.invalid/cover.jpg"}):
+            got = APP._upmpdcli_qconnect_status()
+        self.assertTrue(got["art"].startswith("/qconnect/art?v="))
+        self.assertNotIn("cdn.invalid", got["art"])
+
+
 if __name__ == "__main__":
     unittest.main()
