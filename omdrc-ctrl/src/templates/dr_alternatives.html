@@ -206,6 +206,12 @@ function fmtPos(seconds) {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// Two pressings of one record can fit the same evidence: a 1988 CD and its
+// 1995 reissue differ by four seconds on one track and by the year tag, and
+// those pull opposite ways. Within this margin the page names both rather
+// than pretending the arithmetic settled it.
+const CLOSE_MARGIN = 12;
+
 // One version is the answer: the best score, and only when it is good enough
 // to call likely. The rest carry their own verdict, so a near miss is visible
 // rather than hidden behind the winner.
@@ -219,10 +225,26 @@ function bestId() {
     return best;
 }
 
+// Versions scoring within CLOSE_MARGIN of the winner: the evidence does not
+// separate them, and saying which is which is the reader's call.
+function closeIds() {
+    const best = bestId();
+    if (best === null) return new Set();
+    const top = details.get(best).match.score;
+    const near = new Set();
+    details.forEach((detail, id) => {
+        if (id === best || !detail.match) return;
+        if (detail.match.verdict === 'unknown') return;
+        if (detail.match.score >= top - CLOSE_MARGIN) near.add(id);
+    });
+    return near;
+}
+
 function rowClass(id) {
     const detail = details.get(id);
     if (!detail || !detail.match) return '';
     if (id === bestId()) return ' likely';
+    if (closeIds().has(id)) return ' match';
     return detail.match.verdict === 'possible' ? ' match' : '';
 }
 
@@ -232,10 +254,13 @@ function verdictChip(id) {
     const match = detail.match;
     if (match.verdict === 'unknown')
         return '<span class="verdict" title="Nothing in this entry could be compared">no evidence</span>';
-    const label = id === bestId() ? 'likely this one'
+    const contested = closeIds().size > 0;
+    const label = id === bestId() ? (contested ? 'best fit' : 'likely this one')
+                : closeIds().has(id) ? 'fits too'
                 : match.verdict === 'likely' ? 'strong match'
                 : match.verdict === 'possible' ? 'possible' : 'unlikely';
-    const cls = id === bestId() ? 'likely' : match.verdict;
+    const cls = id === bestId() ? 'likely'
+              : closeIds().has(id) ? 'possible' : match.verdict;
     return `<span class="verdict ${cls}" title="score ${match.score} of 100">${label}</span>`;
 }
 
@@ -480,13 +505,29 @@ async function toggleLocate() {
         ? ` ${listless} of the ${checked} were uploaded without a track list, so little could be checked on them.`
         : '';
     if (winner !== null) {
-        const detail = details.get(winner);
-        detail.open = true;
-        paintDetail(winner);
-        const row = rows.find(r => r.id === winner);
-        setStatus(`Most likely playing: ${row.album}${row.year ? ', ' + row.year : ''}`
-                  + `${row.source && row.source !== 'Unknown' ? ' (' + row.source + ')' : ''}`
-                  + ` — DR ${row.dr}. Its evidence is open below.` + blind);
+        const describe = id => {
+            const row = rows.find(r => r.id === id);
+            return `${row.album}${row.year ? ', ' + row.year : ''}`
+                 + `${row.source && row.source !== 'Unknown' ? ' (' + row.source + ')' : ''}`
+                 + ` — DR ${row.dr}`;
+        };
+        const near = [...closeIds()];
+        [winner, ...near].forEach(id => { details.get(id).open = true; });
+        render();
+        if (near.length) {
+            // A single verdict here would be arithmetic passed off as fact.
+            const drs = new Set([winner, ...near].map(
+                id => rows.find(r => r.id === id).dr));
+            setStatus(`${near.length + 1} versions fit: ${describe(winner)}; `
+                      + near.map(describe).join('; ') + '. '
+                      + (drs.size === 1
+                         ? `They all measure DR ${[...drs][0]}, so that is what you are hearing either way — `
+                         : 'They do not all measure the same, so which one matters — ')
+                      + 'their evidence is open below.' + blind);
+        } else {
+            setStatus(`Most likely playing: ${describe(winner)}. `
+                      + 'Its evidence is open below.' + blind);
+        }
     } else {
         setStatus(`Checked ${checked} version${checked === 1 ? '' : 's'}: none of them `
                   + 'matches well enough to call it. The verdict column says how each one fared.'

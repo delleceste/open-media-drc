@@ -594,12 +594,16 @@ def identify(playing: dict, album: dict) -> dict:
             title = log[matched_index]["title"]
             if delta <= 3:
                 # The right length at the right place in the running order is
-                # the strongest thing one track can say.
-                score += 50 if at_its_position else 35
+                # the strongest thing one track can say -- but not so loud
+                # that nothing else can be heard over it. Two rips of one
+                # pressing agree to the second, so a few seconds out does mean
+                # a different transfer; it should not on its own outweigh an
+                # edition whose year and label match.
+                score += 45 if at_its_position else 32
                 for_.append(f"“{title}” runs {listed_text} here and "
                             f"{wire_text} on the wire")
             elif delta <= 8:
-                score += 15
+                score += 20
                 for_.append(f"“{title}” runs {listed_text} here, close to the "
                             f"{wire_text} on the wire")
             elif delta >= 20:
@@ -725,7 +729,11 @@ def identify(playing: dict, album: dict) -> dict:
     score = max(0, min(100, score))
     if not evidence:
         verdict = "unknown"
-    elif score >= 60:
+    elif score >= 55:
+        # The right track, at the right position, with the right length and on
+        # a medium the stream could have come from scores about 65, and one
+        # weak signal pulling the other way should not take that below
+        # "likely" -- the reasons are there to be read.
         verdict = "likely"
     elif score >= 30:
         verdict = "possible"

@@ -450,6 +450,30 @@ class IdentifyTest(unittest.TestCase):
         self.assertEqual(match["verdict"], "likely")
         self.assertTrue(any("1996" in r for r in match["against"]))
 
+    def test_a_few_seconds_out_does_not_outweigh_a_matching_year(self):
+        """The live case that exposed this: Delicate Sound of Thunder, where
+        the 1995 reissue lists the playing track at 6:21 (the stream's length
+        to the second) and the 1988 original at 6:17, while the stream's Date
+        tag says 1988. Both fit; neither should be able to bury the other."""
+        stream = self.playing(title="Yet Another Movie", track_no=3,
+                              duration=381.2, year="1988-11-22")
+        reissue = self.version("Delicate Sound of Thunder [Disc 1]", "CD",
+                               {3: "6:21"}, year="1995")
+        original = self.version("Delicate Sound Of Thunder (Disc 1)", "CD",
+                                {3: "6:17"}, year="1988")
+        # Titles differ from the default fixture; give both the same list.
+        for version in (reissue, original):
+            version["tracks"][2]["title"] = "03-Yet Another Movie"
+        near = drdb.identify(stream, reissue)
+        far = drdb.identify(stream, original)
+        self.assertGreater(near["score"], far["score"])   # the exact time wins
+        # ...but by less than the margin the page calls a tie, so both are
+        # named instead of one being buried.
+        self.assertLess(near["score"] - far["score"], 12)
+        self.assertIn(far["verdict"], ("likely", "possible"))
+        self.assertTrue(any("same year (1988)" in r for r in far["for"]))
+        self.assertTrue(any("6:21" in r for r in near["for"]))
+
     def test_a_cd_cannot_be_carrying_a_hi_res_stream(self):
         # A CD is 44.1 kHz/16 bit by definition, so a stream above that is not
         # a rip of one. The exclusion holds even when the track times agree to
