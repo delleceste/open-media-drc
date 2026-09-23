@@ -102,6 +102,32 @@ class MeterTest(unittest.TestCase):
         self.assertIsNone(drmeter.album_dr([]))
 
 
+class RollingEstimateTest(unittest.TestCase):
+    def test_matches_the_full_meter_for_the_same_complete_blocks(self):
+        audio = sine(12, 0.25)
+        for second in (1, 4, 7, 10):
+            audio[second * RATE] = 1.0
+        estimate = drmeter.RollingEstimate(RATE, 2)
+        for start in range(0, len(audio), 2048):
+            estimate.feed(audio[start:start + 2048])
+        self.assertEqual(estimate.result()["dr"], run(audio)["dr"])
+        self.assertEqual(estimate.result()["seconds"], 12)
+
+    def test_waits_for_two_blocks_and_keeps_only_the_recent_minute(self):
+        estimate = drmeter.RollingEstimate(100, 2)
+        block = sine(3, 0.25, rate=100)
+        block[10] = 1.0
+        estimate.feed(block)
+        self.assertIsNone(estimate.result())
+        for _ in range(19):
+            estimate.feed(block)
+        self.assertGreater(estimate.result()["dr"], 10)
+        for _ in range(20):
+            estimate.feed(sine(3, 1.0, rate=100))
+        self.assertEqual(estimate.result()["dr"], 0)
+        self.assertEqual(estimate.result()["seconds"], 60)
+
+
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
                      "ffmpeg not installed")
 class DecodeTest(unittest.TestCase):

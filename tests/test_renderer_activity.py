@@ -168,6 +168,14 @@ class NowPlayingExtrasTest(unittest.TestCase):
         self.assertEqual(got["label"], "Pink Floyd Records")
         self.assertEqual(got["year"], "1988-11-22")
 
+    def test_creator_is_separate_from_composer_credits(self):
+        didl = ('<DIDL-Lite><item><dc:creator>The Rolling Stones</dc:creator>'
+                '<upnp:artist>The Rolling Stones</upnp:artist>'
+                '<upnp:artist role="Composer">Mick Jagger</upnp:artist>'
+                '</item></DIDL-Lite>')
+        got = self.meta("http://host/proxy/qobuz/AB.flac", didl=didl)
+        self.assertEqual(got["creator"], "The Rolling Stones")
+
     def test_a_track_the_cache_does_not_hold_yields_nothing(self):
         self.assertEqual(self.meta("http://host/other.flac",
                                    cached_uri="http://host/proxy/x.flac"), {})
@@ -273,6 +281,7 @@ class CoverProxyTest(unittest.TestCase):
         with patch.object(APP, "_mpd_now_playing_via_protocol",
                           return_value={"file": "http://host/x.flac"}), \
              patch.object(APP, "_resolve_mpd_port", return_value="6600"), \
+             patch.object(APP, "_current_renderer", return_value=APP.UPMPDCLI_SERVICE), \
              patch.object(APP, "_upmpdcli_didl_meta", return_value={}):
             self.assertEqual(APP.app.test_client().get("/qconnect/art").status_code, 404)
 
@@ -280,6 +289,7 @@ class CoverProxyTest(unittest.TestCase):
         with patch.object(APP, "_mpd_now_playing_via_protocol",
                           return_value={"file": "http://host/x.flac"}), \
              patch.object(APP, "_resolve_mpd_port", return_value="6600"), \
+             patch.object(APP, "_current_renderer", return_value=APP.UPMPDCLI_SERVICE), \
              patch.object(APP, "_upmpdcli_didl_meta",
                           return_value={"art": "http://cdn.invalid/cover.jpg"}), \
              patch("urllib.request.urlopen", lambda *a, **k: self.Response()):

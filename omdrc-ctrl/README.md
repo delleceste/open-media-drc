@@ -129,6 +129,16 @@ provides no feedback. Every command here either shows its output directly
 
 ## Measuring the DR of what is playing
 
+**Estimate DR** on the renderer card samples the MPD output already used by
+the Spectrum and Levels displays. While its toggle is on, it updates a
+red/yellow/green gauge every three seconds from up to the last 60 seconds of
+audio; the first number appears after six seconds. It keeps only block peak
+and RMS statistics, with no download or saved audio. The tap is a 48 kHz
+excerpt, so this is a quick guide to the passage you heard, not a full-track
+or album DR measurement. Closing or hiding the tab, or switching away from
+Listen, releases its listener. MPD's secondary FIFO output is disabled when
+Estimate DR, Spectrum and Levels all have no listeners.
+
 The DR versions page reports what *other people's* copies of a record measure.
 The renderer card's **Measure DR** button measures the copy on the wire.
 

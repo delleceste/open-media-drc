@@ -301,6 +301,24 @@ class NowPlayingTest(unittest.TestCase):
         self.assertEqual((got["artist"], got["album"], got["title"]),
                          ("Low", "Things We Lost In The Fire", "Sunflower"))
 
+    def test_album_artist_wins_over_track_credits(self):
+        got = self.tags(self.mpd(
+            artist="The Rolling Stones, Mick Jagger (Composer), The Rolling Stones",
+            album_artist="The Rolling Stones", album="Foreign Tongues",
+            title="Rough And Twisted", state="play"))
+        self.assertEqual(got["artist"], "The Rolling Stones")
+
+    def test_upmpdcli_creator_wins_when_mpd_has_no_album_artist(self):
+        mpd = self.mpd(
+            artist="The Rolling Stones, Mick Jagger (Composer), The Rolling Stones",
+            album="Foreign Tongues", title="Rough And Twisted", state="play",
+            file="http://host/qobuz/track/434161049")
+        with patch.object(APP, "_upmpdcli_didl_meta",
+                          return_value={"creator": "The Rolling Stones"}) as meta:
+            got = self.tags(mpd)
+        meta.assert_called_once_with(mpd["file"])
+        self.assertEqual(got["artist"], "The Rolling Stones")
+
     def test_untagged_queue_falls_back_to_the_status_line(self):
         got = self.tags(self.mpd(state="play"),
                         "[playing] Dinosaur Jr. - No Friends  [2:15 / 3:48]\n"

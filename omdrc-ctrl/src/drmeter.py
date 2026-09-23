@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections import deque
 import shutil
 import subprocess
 import sys
@@ -123,6 +124,61 @@ class Meter:
             "rate": self.rate,
             "channels": self.channels,
         }
+
+
+class RollingEstimate:
+    """TT-style DR of complete three-second PCM blocks in the last minute.
+
+    Only each block's energy and peak are retained, never the audio. This is
+    an excerpt estimate, not the full-track or album DR printed by Meter.
+    """
+
+    def __init__(self, rate: int, channels: int, seconds: int = 60) -> None:
+        if rate <= 0 or channels <= 0:
+            raise DrMeterError("invalid PCM format")
+        self.rate = rate
+        self.channels = channels
+        self.block = int(BLOCK_SECONDS * (rate + (60 if rate == 44100 else 0)))
+        self.blocks = deque(maxlen=max(2, int(seconds / BLOCK_SECONDS)))
+        self.count = 0
+        self.sum2 = np.zeros(channels, dtype=np.float64)
+        self.peak = np.zeros(channels, dtype=np.float64)
+
+    def feed(self, frames: np.ndarray) -> bool:
+        """Consume PCM and return true if a complete block was added."""
+        completed = False
+        offset = 0
+        while offset < len(frames):
+            part = frames[offset:offset + self.block - self.count]
+            values = part.astype(np.float64, copy=False)
+            self.sum2 += np.square(values).sum(axis=0)
+            self.peak = np.maximum(self.peak, np.max(np.abs(values), axis=0))
+            self.count += len(part)
+            offset += len(part)
+            if self.count == self.block:
+                self.blocks.append((2.0 * self.sum2 / self.block,
+                                    self.peak.copy()))
+                self.count = 0
+                self.sum2.fill(0)
+                self.peak.fill(0)
+                completed = True
+        return completed
+
+    def result(self) -> dict | None:
+        if len(self.blocks) < 2:
+            return None
+        rms2 = np.vstack([block[0] for block in self.blocks])
+        peaks = np.vstack([block[1] for block in self.blocks])
+        top = max(1, int(len(self.blocks) * TOP_FRACTION))
+        per_channel = []
+        for ch in range(self.channels):
+            rms_upper = math.sqrt(float(np.sort(rms2[:, ch])[-top:].mean()))
+            peak2 = float(np.sort(peaks[:, ch])[-2])
+            per_channel.append(20.0 * math.log10(peak2 / rms_upper)
+                               if rms_upper > 0 and peak2 > 0 else 0.0)
+        exact = float(np.mean(per_channel))
+        return {"dr": int(round(exact)), "dr_exact": round(exact, 2),
+                "seconds": int(len(self.blocks) * BLOCK_SECONDS)}
 
 
 def _db(value: float) -> float:

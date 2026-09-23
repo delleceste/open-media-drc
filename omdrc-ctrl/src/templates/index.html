@@ -778,6 +778,27 @@
         .drm-result { margin-top: 8px; font-size: .85rem; }
         .drm-album { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
         .drm-tracks { display: flex; flex-wrap: wrap; gap: 4px; }
+        .dr-estimate { margin: 0 0 12px; padding: 10px 12px;
+                       border: 1px solid var(--border); border-radius: 7px; }
+        .dr-estimate-head { display: flex; align-items: baseline; gap: 12px; }
+        .dr-estimate-head strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+        .dr-estimate-head span { color: var(--muted); font-size: .75rem; }
+        .dr-estimate-track { position: relative; height: 12px; margin: 9px 4px 3px;
+                             border-radius: 4px;
+                             background: linear-gradient(90deg,
+                                 var(--red) 0 57%, var(--yellow) 57% 86%,
+                                 var(--green) 86% 100%); }
+        .dr-estimate-needle { position: absolute; top: -4px; left: 0;
+                              height: 20px; width: 3px; background: var(--text);
+                              box-shadow: 0 0 3px #000; transform: translateX(-50%);
+                              transition: left .25s ease; }
+        .dr-estimate-scale { position: relative; height: 14px;
+                             color: var(--muted); font-size: .66rem; }
+        .dr-estimate-scale span { position: absolute; transform: translateX(-50%); }
+        .dr-estimate-scale span:first-child { left: 0; transform: none; }
+        .dr-estimate-scale span:last-child { right: 0; transform: none; }
+        .dr-estimate-note { margin-top: 6px; color: var(--muted);
+                            font-size: .7rem; line-height: 1.4; }
         .drb { display: inline-block; min-width: 1.8rem; text-align: center;
                border: 1px solid #000; color: #000; font-weight: 700;
                font-size: .75rem; line-height: 1; padding: 3px 4px; border-radius: 3px;
@@ -1711,6 +1732,9 @@
                     title="Activity detail: one line, or the last three">☰</button>
             <button class="btn-log" id="btn-drm" onclick="drmStart()"
                     title="Fetch this record's tracks again, measure their dynamic range, then delete them">Measure DR</button>
+            <button class="btn-log" id="btn-dr-estimate" onclick="toggleDrEstimate()"
+                    role="switch" aria-checked="false"
+                    title="Estimate DR from the last 60 seconds of MPD audio, without a download">Estimate DR</button>
 {% if drdb_enabled %}
             <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
                     title="Other masters of this record, and what they measure, in the Dynamic Range database">DR ↗</button>{% endif %}
@@ -1752,6 +1776,15 @@
             </div>
         </div>
         <div id="qc-activity" aria-live="polite"></div>
+    </div>
+    <div id="dr-estimate" class="dr-estimate" hidden aria-live="polite">
+        <div class="dr-estimate-head"><strong id="dr-estimate-value">—</strong>
+            <span id="dr-estimate-status">Collecting audio…</span></div>
+        <div class="dr-estimate-track" aria-hidden="true">
+            <div class="dr-estimate-needle" id="dr-estimate-needle" hidden></div>
+        </div>
+        <div class="dr-estimate-scale" aria-hidden="true"><span>0</span><span style="left:50%">7</span><span style="left:86%">12</span><span>14+</span></div>
+        <div class="dr-estimate-note">Recent excerpt at 48 kHz · a guide to this passage, not full-track or album DR</div>
     </div>
     <!-- DR measured here, of the copy on the wire (drmeter.py).  Hidden until
          a measurement has been started. -->
@@ -4118,6 +4151,9 @@ let spectrumReconnect = null;   // retry handle for a dropped SSE stream
 let metersSource = null;
 let metersWanted = false;
 let metersReconnect = null;   // retry handle for a dropped SSE stream
+let drEstimateSource = null;
+let drEstimateWanted = false;
+let drEstimateReconnect = null;
 const METER_FLOOR_DB = -60;   // fixed floor for the L/R meters' own dB scale
 const METERS_STYLE_KEY = 'omdrcctrl.meters.style';
 document.querySelectorAll('.meter-db-scale [data-db]').forEach(tick => {
@@ -4772,7 +4808,7 @@ function setMetersIdle(idle) {
 }
 
 function startMeters() {
-    if (!SPECTRUM_ENABLED || metersSource || document.hidden) return;
+    if (!SPECTRUM_ENABLED || metersSource || document.hidden || activeTab !== 0) return;
     setMetersButton(true);
     setMetersIdle(false);
     // mode=vu: the server-side analyzer skips the FFT band analysis entirely
@@ -4789,7 +4825,7 @@ function startMeters() {
         stopMeters(false);   // leaves the last-seen levels on screen while retrying
         if (metersReconnect) clearTimeout(metersReconnect);
         metersReconnect = setTimeout(() => {
-            if (metersWanted && !document.hidden) startMeters();
+            if (metersWanted && !document.hidden && activeTab === 0) startMeters();
         }, 1500);
     };
 }
@@ -4812,6 +4848,79 @@ function toggleMeters() {
     } else {
         metersWanted = true;
         startMeters();
+    }
+}
+
+// The rolling estimate joins the same MPD FIFO reader as Levels and Spectrum.
+// Its server-side client keeps only 20 three-second peak/RMS summaries.
+function paintDrEstimate(frame) {
+    const value = document.getElementById('dr-estimate-value');
+    const status = document.getElementById('dr-estimate-status');
+    const needle = document.getElementById('dr-estimate-needle');
+    const dr = frame.dr || {};
+    if (!frame.ok || dr.state !== 'ready' || !Number.isFinite(dr.dr)) {
+        value.textContent = '—';
+        needle.hidden = true;
+    }
+    if (!frame.ok) {
+        status.textContent = frame.error || 'Waiting for MPD audio';
+        return;
+    }
+    if (frame.source !== 'mpd' || dr.state === 'unavailable') {
+        status.textContent = 'Available while MPD plays a renderer stream';
+        return;
+    }
+    if (dr.state !== 'ready' || !Number.isFinite(dr.dr)) {
+        status.textContent = 'Collecting audio — first estimate after 6 seconds';
+        return;
+    }
+    const shown = Math.max(0, Math.round(dr.dr));
+    value.textContent = shown > 14 ? 'DR14+' : `DR${shown}`;
+    needle.hidden = false;
+    needle.style.left = `${Math.max(0, Math.min(100, shown / 14 * 100))}%`;
+    status.textContent = `${dr.seconds}s sampled · rolling 60s window`;
+}
+
+function startDrEstimate() {
+    if (!SPECTRUM_ENABLED || drEstimateSource || document.hidden || activeTab !== 0) return;
+    const btn = document.getElementById('btn-dr-estimate');
+    btn.setAttribute('aria-checked', 'true');
+    btn.textContent = 'Stop estimate';
+    document.getElementById('dr-estimate').hidden = false;
+    drEstimateSource = new EventSource('/spectrum/stream?mode=dr');
+    drEstimateSource.onmessage = ev => {
+        try { paintDrEstimate(JSON.parse(ev.data)); } catch {}
+    };
+    drEstimateSource.onerror = () => {
+        stopDrEstimate(false);
+        document.getElementById('dr-estimate-status').textContent =
+            'Stream disconnected — reconnecting';
+        drEstimateReconnect = setTimeout(() => {
+            if (drEstimateWanted && !document.hidden && activeTab === 0) startDrEstimate();
+        }, 1500);
+    };
+}
+
+function stopDrEstimate(clearWanted = true) {
+    if (clearWanted) drEstimateWanted = false;
+    if (drEstimateReconnect) { clearTimeout(drEstimateReconnect); drEstimateReconnect = null; }
+    if (drEstimateSource) { drEstimateSource.close(); drEstimateSource = null; }
+    const btn = document.getElementById('btn-dr-estimate');
+    btn.setAttribute('aria-checked', 'false');
+    btn.textContent = 'Estimate DR';
+    if (clearWanted)
+        document.getElementById('dr-estimate-status').textContent += ' · stopped';
+}
+
+function toggleDrEstimate() {
+    if (!SPECTRUM_ENABLED) return;
+    if (drEstimateWanted) stopDrEstimate();
+    else {
+        drEstimateWanted = true;
+        document.getElementById('dr-estimate-value').textContent = '—';
+        document.getElementById('dr-estimate-needle').hidden = true;
+        document.getElementById('dr-estimate-status').textContent = 'Collecting audio…';
+        startDrEstimate();
     }
 }
 
@@ -4851,14 +4960,17 @@ document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         if (spectrumSource) stopSpectrum(false);
         if (metersSource) stopMeters(false);
+        if (drEstimateSource) stopDrEstimate(false);
     } else {
         if (spectrumWanted) startSpectrum();
-        if (metersWanted) startMeters();
+        if (activeTab === 0 && metersWanted) startMeters();
+        if (activeTab === 0 && drEstimateWanted) startDrEstimate();
     }
 });
 window.addEventListener('pagehide', () => {
     if (spectrumSource) stopSpectrum(false);
     if (metersSource) stopMeters(false);
+    if (drEstimateSource) stopDrEstimate(false);
 });
 window.addEventListener('resize', () => {
     clearSpectrum();
@@ -4875,6 +4987,7 @@ setMetersIdle(true);
     const styleBtn = document.getElementById('meters-style-btn');
     if (powerBtn) powerBtn.disabled = disabled;
     if (styleBtn) styleBtn.disabled = disabled;
+    document.getElementById('btn-dr-estimate').disabled = disabled;
 }
 paintSpectrumMode();
 renderDelayReadout();
@@ -4897,6 +5010,13 @@ function switchTab(i, persist = true) {
     });
     if (persist) { try { localStorage.setItem(TAB_STATE_KEY, String(i)); } catch {} }
     if (leavingSpectrum) stopSpectrum(true);
+    if (i !== 0) {
+        if (metersSource) stopMeters(false);
+        if (drEstimateSource) stopDrEstimate(false);
+    } else if (!document.hidden) {
+        if (metersWanted) startMeters();
+        if (drEstimateWanted) startDrEstimate();
+    }
     if (i === 2 && !document.hidden) {
         spectrumWanted = true;
         startSpectrum();

@@ -596,6 +596,50 @@ class PublishDeduplicationTest(unittest.TestCase):
         an._publish({"ok": False, "state": "no-writer", "error": "gone"})
         self.assertNotEqual(an.snapshot()[0], seq)
 
+    def test_rolling_dr_frame_is_shared_without_fft_band_clients(self):
+        an = APP.SpectrumAnalyzer()
+        with mock.patch.object(an, "_run"):
+            an.acquire("dr")
+            self.assertEqual((an.clients, an.band_clients, an.dr_clients),
+                             (1, 0, 1))
+            an._publish({"ok": True, "state": "running", "source": "mpd"})
+            self.assertEqual(an.snapshot()[1]["dr"]["state"], "collecting")
+            an.release(wants_bands=False, wants_dr=True)
+            self.assertEqual(an.dr_clients, 0)
+
+    def test_fifo_stays_owned_until_the_last_stream_closes(self):
+        an = APP.SpectrumAnalyzer()
+        started = threading.Event()
+        stopped = threading.Event()
+
+        def run():
+            started.set()
+            an.stop_event.wait(3)
+            stopped.set()
+
+        with mock.patch.object(APP, "_SPECTRUM", an), \
+             mock.patch.object(APP, "SPECTRUM_ENABLED", True), \
+             mock.patch.object(an, "_run", side_effect=run):
+            client = APP.app.test_client()
+            streams = [client.get(f"/spectrum/stream?mode={mode}", buffered=False)
+                       for mode in ("dr", "vu", "music")]
+            try:
+                for stream in streams:
+                    next(stream.response)
+                self.assertTrue(started.wait(1))
+                self.assertEqual((an.clients, an.dr_clients, an.band_clients),
+                                 (3, 1, 1))
+                streams[0].close()
+                streams[1].close()
+                self.assertEqual(an.clients, 1)
+                self.assertFalse(an.stop_event.is_set())
+                streams[2].close()
+                self.assertEqual(an.clients, 0)
+                self.assertTrue(stopped.wait(1))
+            finally:
+                for stream in streams:
+                    stream.close()
+
 
 class CdinSourceStartTest(unittest.TestCase):
     def test_without_a_capture_pcm_nothing_is_spawned(self):

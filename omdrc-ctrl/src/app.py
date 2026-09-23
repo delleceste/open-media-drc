@@ -26,7 +26,7 @@ if os.path.dirname(__file__) not in sys.path:
 from configuration import ConfigurationManager, Settings as ConfigurationSettings
 from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 from audio_diagnostics import AudioDiagnosticsMonitor
-from drmeter import AlbumMeasurement
+from drmeter import AlbumMeasurement, RollingEstimate
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
 from drdb import identify as drdb_identify_version
 from drdb import release_year as drdb_release_year
@@ -1271,7 +1271,8 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
     build the renderer card for a renderer -- upmpdcli -- that keeps no
     status file of its own to read instead, unlike qobuzconnect2mpd."""
     import socket
-    info = {"title": "", "album": "", "artist": "", "state": "", "elapsed": None,
+    info = {"title": "", "album": "", "artist": "", "album_artist": "",
+            "state": "", "elapsed": None,
             "duration": None, "audio": "", "date": "", "label": "",
             "track_no": None, "file": ""}
     try:
@@ -1298,6 +1299,8 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
                         info["album"] = value
                     elif key == "artist":
                         info["artist"] = value
+                    elif key == "albumartist":
+                        info["album_artist"] = value
                     elif key == "state":
                         info["state"] = value
                     elif key == "elapsed":
@@ -1866,6 +1869,9 @@ class SpectrumAnalyzer:
         self.cond = threading.Condition(self.lock)
         self.clients = 0
         self.band_clients = 0   # subset of `clients` that actually want FFT bands
+        self.dr_clients = 0     # rolling DR shares this reader, without FFTs
+        self.dr_epoch = 0       # reset the excerpt when its first client joins
+        self.dr_state = {"state": "collecting", "dr": None, "seconds": 0}
         self.seq = 0
         self.frame = {
             "ok": False,
@@ -1922,7 +1928,11 @@ class SpectrumAnalyzer:
     def _start_thread_locked(self, mode: str) -> None:
         # caller holds self.lock
         self.clients += 1
-        if mode != "vu":
+        if mode == "dr":
+            self.dr_clients += 1
+            self.dr_epoch += 1
+            self.dr_state = {"state": "collecting", "dr": None, "seconds": 0}
+        elif mode != "vu":
             self.band_clients += 1
         self.mode = mode
         self.stop_event.clear()
@@ -1939,7 +1949,7 @@ class SpectrumAnalyzer:
         # `_run_source`.  A "vu" join never overwrites `self.mode`: it must
         # not silently turn off precision mode (or misreport it) for a bands
         # client already attached.
-        mode = mode if mode in ("precision", "vu") else "music"
+        mode = mode if mode in ("precision", "vu", "dr") else "music"
         # If a previous analyzer thread is still unwinding (its finally-block is
         # about to `mpc disable` the FIFO output), wait for it to finish before
         # starting a fresh one.  This serialises the output enable/disable so a
@@ -1956,7 +1966,13 @@ class SpectrumAnalyzer:
                     old = self.thread          # shutting down — wait outside lock
                 elif self.thread is not None:
                     self.clients += 1          # healthy thread — share it
-                    if mode != "vu":
+                    if mode == "dr":
+                        if self.dr_clients == 0:
+                            self.dr_epoch += 1
+                            self.dr_state = {"state": "collecting", "dr": None,
+                                             "seconds": 0}
+                        self.dr_clients += 1
+                    elif mode != "vu":
                         self.band_clients += 1
                         self.mode = mode
                     return
@@ -1969,11 +1985,13 @@ class SpectrumAnalyzer:
         with self.lock:
             self._start_thread_locked(mode)
 
-    def release(self, wants_bands: bool = True) -> None:
+    def release(self, wants_bands: bool = True, wants_dr: bool = False) -> None:
         with self.lock:
             self.clients = max(0, self.clients - 1)
             if wants_bands:
                 self.band_clients = max(0, self.band_clients - 1)
+            if wants_dr:
+                self.dr_clients = max(0, self.dr_clients - 1)
             if self.clients == 0:
                 self.stop_event.set()
                 self.cond.notify_all()
@@ -2008,6 +2026,8 @@ class SpectrumAnalyzer:
         FIFO publishes the same -120 dB frame for as long as the pause lasts.
         """
         with self.cond:
+            if self.dr_clients:
+                frame = {**frame, "dr": dict(self.dr_state)}
             if frame == self.frame:
                 return
             self.seq += 1
@@ -2201,6 +2221,7 @@ class SpectrumAnalyzer:
             # finally block, so no capture survives a collapsed/closed card.
             pcm_queue: queue.Queue[bytes] = queue.Queue(maxsize=64)
             reader_errors: list[OSError] = []
+            reader_drops = [0]
             reader_stop = threading.Event()
             # A non-blocking read on a FIFO says which of two very different
             # things is happening, and the analyzer used to conflate them:
@@ -2232,6 +2253,7 @@ class SpectrumAnalyzer:
                     try:
                         pcm_queue.put_nowait(data)
                     except queue.Full:
+                        reader_drops[0] += 1
                         # Keep wall-clock freshness if analysis is ever stalled
                         # for several seconds; normal operation never reaches
                         # this 6+ second cushion.
@@ -2285,6 +2307,24 @@ class SpectrumAnalyzer:
             # already open.  Source activity itself is cached for two seconds,
             # so checking twice a second is cheap and bounds hand-over latency.
             next_source_check = time.monotonic() + 0.5
+            dr_epoch_seen = -1
+            dr_estimate: RollingEstimate | None = None
+            dr_tail = bytearray()
+            dr_last_data_at = 0.0
+            dr_drops_seen = 0
+            dr_song_file = ""
+            dr_song_elapsed: float | None = None
+            dr_song_checked_at = 0.0
+            next_dr_song_check = 0.0
+
+            def reset_dr() -> None:
+                nonlocal dr_estimate, dr_last_data_at
+                dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS)
+                dr_tail.clear()
+                dr_last_data_at = 0.0
+                with self.lock:
+                    self.dr_state = {"state": "collecting", "dr": None,
+                                     "seconds": 0}
 
             def keep_bytes() -> int:
                 """History to retain: the FFT window, the LARGEST hold-back the
@@ -2343,6 +2383,18 @@ class SpectrumAnalyzer:
                 })
 
             while not self.stop_event.is_set():
+                dr_on = self.dr_clients > 0 and source.name == "mpd"
+                dr_only = dr_on and self.clients == self.dr_clients
+                if self.dr_clients and source.name != "mpd":
+                    with self.lock:
+                        self.dr_state = {"state": "unavailable", "dr": None,
+                                         "seconds": 0}
+                if dr_on and self.dr_epoch != dr_epoch_seen:
+                    dr_epoch_seen = self.dr_epoch
+                    dr_song_file = ""
+                    dr_song_elapsed = None
+                    next_dr_song_check = 0.0
+                    reset_dr()
                 # Transfer everything the dedicated reader has drained before
                 # computing the next display frame.
                 read_any = False
@@ -2375,14 +2427,54 @@ class SpectrumAnalyzer:
                     read_any = True
                     faulted = False
                     last_data_at = at
-                    buf.extend(data)
-                max_keep = keep_bytes()
-                if len(buf) > max_keep:
-                    del buf[:len(buf) - max_keep]
+                    if not dr_only:
+                        buf.extend(data)
+                    if dr_on and dr_estimate is not None:
+                        if ((dr_last_data_at and at - dr_last_data_at > silence_timeout)
+                                or reader_drops[0] != dr_drops_seen):
+                            reset_dr()
+                        dr_drops_seen = reader_drops[0]
+                        dr_last_data_at = at
+                        dr_tail.extend(data)
+                        usable = len(dr_tail) // frame_bytes * frame_bytes
+                        if usable:
+                            pcm = np.frombuffer(bytes(dr_tail[:usable]), dtype="<i4")
+                            pcm = pcm.reshape(-1, SPECTRUM_CHANNELS)
+                            if dr_estimate.feed(pcm.astype(np.float32) / 2147483648.0):
+                                result = dr_estimate.result()
+                                with self.lock:
+                                    self.dr_state = ({"state": "ready", **result}
+                                                     if result else
+                                                     {"state": "collecting", "dr": None,
+                                                      "seconds": 3})
+                            del dr_tail[:usable]
+                if dr_only:
+                    buf.clear()
+                else:
+                    max_keep = keep_bytes()
+                    if len(buf) > max_keep:
+                        del buf[:len(buf) - max_keep]
                 if not read_any:
-                    time.sleep(0.01)
+                    time.sleep(0.03 if dr_only else 0.01)
 
                 now = time.monotonic()
+                if dr_on and now >= next_dr_song_check:
+                    next_dr_song_check = now + 2.0
+                    song = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+                    song_file = song.get("file", "")
+                    elapsed = song.get("elapsed")
+                    if song_file and dr_song_file:
+                        changed = song_file != dr_song_file
+                        seeked = (isinstance(elapsed, (int, float))
+                                  and dr_song_elapsed is not None
+                                  and abs((elapsed - dr_song_elapsed)
+                                          - (now - dr_song_checked_at)) > 4.0)
+                        if changed or seeked:
+                            reset_dr()
+                    if song_file:
+                        dr_song_file = song_file
+                        dr_song_elapsed = elapsed
+                        dr_song_checked_at = now
                 if now >= next_source_check:
                     next_source_check = now + 0.5
                     if (SPECTRUM_SOURCE == "auto"
@@ -2420,6 +2512,15 @@ class SpectrumAnalyzer:
                             "source_label": source.label, "mode": self.mode,
                             "left": [], "right": [], "bands": [], "vu": {}})
                         continue
+                if dr_only:
+                    # No Spectrum or Levels listener: keep only the rolling
+                    # block statistics. Do no FFT, VU windowing, delay model,
+                    # or 25-Hz visualization frames for the DR toggle alone.
+                    self._publish({"ok": True, "state": "running", "error": "",
+                                   "rate": rate, "source": source.name,
+                                   "source_label": source.label,
+                                   "left": [], "right": [], "bands": [], "vu": {}})
+                    continue
                 if now < next_at:
                     continue
                 next_at = now + interval
@@ -4298,14 +4399,15 @@ UPMPDCLI_METACACHE = os.environ.get(
     os.path.join(os.path.expanduser("~"), ".cache/upmpdcli/metacache"))
 
 _DIDL_FIELDS = {"art": "upnp:albumArtURI", "label": "dc:publisher",
-                "year": "dc:date", "album": "upnp:album"}
+                "year": "dc:date", "album": "upnp:album",
+                "album_artist": "upnp:albumArtist", "creator": "dc:creator"}
 # The card polls every few seconds and the file is small but not free to
 # re-read: remember the last answer against the URI and the file's mtime.
 _METACACHE_SEEN: dict = {"uri": None, "mtime": None, "meta": {}}
 
 
 def _upmpdcli_didl_meta(uri: str) -> dict:
-    """Cover art, label and year for a queue entry, out of upmpdcli's cache."""
+    """Cover art and catalogue metadata for a queue entry in upmpdcli's cache."""
     if not uri:
         return {}
     try:
@@ -4512,8 +4614,16 @@ def _drdb_now_playing() -> dict:
             title = title or line1
         state = state or status["playback_state"]
 
+    # MPD's Artist may be a concatenation of every Qobuz credit, including
+    # composers. AlbumArtist is the intended record artist when present. For
+    # upmpdcli's Qobuz tracks, the cached DIDL has the clean dc:creator even
+    # when MPD has no AlbumArtist; a cache hit requires this exact track URI.
+    didl = (_upmpdcli_didl_meta(info.get("file", ""))
+            if not info.get("album_artist") else {})
+    record_artist = (info.get("album_artist") or didl.get("album_artist")
+                     or didl.get("creator") or artist)
     clean_album = _drdb_plain(album)
-    return {"artist": _drdb_main_artist(artist),
+    return {"artist": _drdb_main_artist(record_artist),
             "album":  clean_album,
             "title":  _drdb_plain(title),
             "state":  state,
@@ -7613,11 +7723,10 @@ def spectrum_floor():
 def spectrum_stream():
     if not SPECTRUM_ENABLED:
         return jsonify({"ok": False, "error": "spectrum analyzer disabled"}), 404
-    # "vu" is the level-meters-only client (see SpectrumAnalyzer.acquire): it
-    # rides the same FIFO tap as the Spectrum tab but never costs an rfft().
+    # VU and rolling DR share the FIFO reader without costing an FFT.
     raw_mode = request.args.get("mode")
-    mode = raw_mode if raw_mode in ("precision", "vu") else "music"
-    wants_bands = mode != "vu"
+    mode = raw_mode if raw_mode in ("precision", "vu", "dr") else "music"
+    wants_bands = mode not in ("vu", "dr")
 
     def events():
         _SPECTRUM.acquire(mode)
@@ -7625,14 +7734,22 @@ def spectrum_stream():
             seq, frame = _SPECTRUM.snapshot()
             yield f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
             while True:
-                seq, frame = _SPECTRUM.wait_next(seq)
+                next_seq, frame = _SPECTRUM.wait_next(seq, timeout=1.0)
+                if next_seq == seq:
+                    # A silent or paused source produces no changed frames.
+                    # Keep the connection writable so a closed/hidden tab is
+                    # noticed promptly and its last listener disables MPD's
+                    # otherwise idle 48-kHz FIFO output.
+                    yield ": keepalive\n\n"
+                    continue
+                seq = next_seq
                 yield f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
                 if _SPECTRUM.stop_event.is_set():
                     break
         except GeneratorExit:
             pass
         finally:
-            _SPECTRUM.release(wants_bands)
+            _SPECTRUM.release(wants_bands, wants_dr=mode == "dr")
 
     return Response(events(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
