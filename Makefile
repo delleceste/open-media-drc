@@ -115,7 +115,11 @@ install-ctrl:
 	                scripts/filter_workflow_next.py $(LIBEXECDIR)/filter-tools
 	$(INSTALL_SCRIPT) scripts/REW2raw.sh $(LIBEXECDIR)/filter-tools
 	$(INSTALL_SCRIPT) scripts/omdrc-config-helper.py $(LIBEXECDIR)/omdrc-config-helper
-	$(INSTALL_DATA) omdrc-ctrl/src/static/chart.umd.min.js $(CTRLDIR)/static
+	$(INSTALL_DATA) omdrc-ctrl/src/static/chart.umd.min.js \
+	                omdrc-ctrl/src/static/freebsd-beastie.png \
+	                omdrc-ctrl/src/static/freebsd-beastie.LICENSE \
+	                omdrc-ctrl/src/static/tux.png \
+	                omdrc-ctrl/src/static/tux.LICENSE $(CTRLDIR)/static
 	$(INSTALL_DATA) omdrc-ctrl/SPECTRUM_ANALYZER.md $(DOCSDIR)
 	$(INSTALL_DATA) omdrc-ctrl/README.md $(DOCSDIR)/OMDRC-CTRL.md
 	sed -e 's,@OMDRC_DRC_STATUS@,$(PREFIX)/bin/omdrc-status,g' \
