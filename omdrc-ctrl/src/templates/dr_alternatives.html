@@ -20,6 +20,7 @@ button.go{background:var(--blue);border-color:var(--blue);color:#fff}
 button.mini{padding:.15rem .45rem;font-size:.8rem}
 input[type=text]{background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:.35rem .5rem;font:inherit;font-size:.88rem;min-width:14rem}
 label{display:flex;flex-direction:column;gap:.25rem;font-size:.84rem;color:var(--muted)}
+label.check{flex-direction:row;align-items:center;gap:.4rem;margin-top:.6rem;cursor:pointer}
 .row{display:flex;gap:.8rem;flex-wrap:wrap;align-items:flex-end}
 .nowplaying{display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
 .nowplaying .track{font-size:1.05rem;font-weight:600}
@@ -109,10 +110,14 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
     <button class="go" id="btn-search" onclick="search()">Search</button>
     <button id="btn-locate" onclick="toggleLocate()" hidden></button>
   </div>
+  <label class="check"><input type="checkbox" id="auto-locate" onchange="storeBool(AUTO_LOCATE_KEY, this.checked)">
+    Find which one is playing after every search</label>
   <p class="status" id="status"></p>
 </div>
 
-<div class="card" id="results-card" hidden>
+<div class="card" id="results-card">
+  <p class="hint" id="results-placeholder">Loading results…</p>
+  <div id="results-body" hidden>
   <table id="results">
     <thead>
       <tr>
@@ -156,6 +161,7 @@ footer{color:var(--muted);font-size:.85rem;margin-top:1.5rem}
     Only the first pages of a long list are shown. They are the highest-DR
     entries the database holds for this search; narrow it with an album name
     to see the rest.
+  </div>
   </div>
 </div>
 
@@ -201,6 +207,19 @@ let sortKey = 'dr', sortDesc = true;
 let nowPlaying = { artist: '', album: '', title: '' };
 const details = new Map();     // album id -> parsed detail page
 let locating = false;
+let locateRun = 0;             // bumped by every sweep; a superseded one stops
+const AUTO_LOCATE_KEY = 'omdrc.drdb.autoLocate';
+
+function storedBool(key, fallback = false) {
+    try {
+        const value = localStorage.getItem(key);
+        return value === null ? fallback : value === 'true';
+    } catch { return fallback; }
+}
+
+function storeBool(key, value) {
+    try { localStorage.setItem(key, value ? 'true' : 'false'); } catch {}
+}
 
 function esc(s) {
     return String(s === null || s === undefined ? '' : s)
@@ -231,6 +250,15 @@ function thermometer(dr) {
     if (dr === null || dr === undefined) return '';
     const pct = Math.max(4, Math.min(100, (dr / 20) * 100));
     return `<span class="therm" title="DR ${dr} of 20"><i style="width:${pct}%;background:${drColor(dr)}"></i></span>`;
+}
+
+// The results card stays on the page from the first paint, so the table grows
+// into a box that is already there instead of pushing the page down.
+function showResults(placeholder) {
+    const el = document.getElementById('results-placeholder');
+    el.textContent = placeholder || '';
+    el.hidden = !placeholder;
+    document.getElementById('results-body').hidden = !!placeholder;
 }
 
 function setStatus(text, isError) {
@@ -368,35 +396,45 @@ async function loadNowPlaying(rerun, fillFields = true) {
 function updateLocateButton() {
     const btn = document.getElementById('btn-locate');
     btn.hidden = !nowPlaying.title || rows.length === 0;
-    btn.textContent = locating ? 'Stop' : 'Which one is playing?';
+    btn.textContent = locating ? 'Stop finding which one is playing' : 'Which one is playing?';
 }
 
 async function search() {
     const artist = document.getElementById('f-artist').value.trim();
     const album  = document.getElementById('f-album').value.trim();
     if (!artist && !album) { setStatus('Give an artist or an album to look up.', true); return; }
+    // A sweep over the old list would score versions no longer on the page.
+    if (locating) { locating = false; locateRun++; }
     const btn = document.getElementById('btn-search');
     btn.disabled = true;
     setStatus('Asking the database…');
+    if (!rows.length) showResults('Loading results…');
     try {
         const query = new URLSearchParams({ artist, album });
         const d = await (await fetch(`/drdb/search?${query}`)).json();
-        if (!d.ok) { setStatus(d.error || 'lookup failed', true); return; }
+        if (!d.ok) {
+            setStatus(d.error || 'lookup failed', true);
+            if (!rows.length) showResults('No results.');
+            return;
+        }
         rows = d.rows;
         details.clear();
         sortKey = 'dr'; sortDesc = true;
         render();
-        document.getElementById('results-card').hidden = rows.length === 0;
+        showResults(rows.length ? null : 'The database holds nothing for that search.');
         document.getElementById('truncated').hidden = !d.truncated;
         setStatus(rows.length
             ? `${rows.length} version${rows.length === 1 ? '' : 's'} in the database.`
             : 'The database holds nothing for that search.');
     } catch (e) {
         setStatus('network error', true);
+        if (!rows.length) showResults('No results.');
     } finally {
         btn.disabled = false;
         updateLocateButton();
     }
+    if (document.getElementById('auto-locate').checked
+        && nowPlaying.title && rows.length && !locating) toggleLocate();
 }
 
 function sortBy(key) {
@@ -544,19 +582,22 @@ function paintDetail(id) {
 async function toggleLocate() {
     if (locating) { locating = false; updateLocateButton(); return; }
     locating = true;
+    const run = ++locateRun;
     updateLocateButton();
     const list = sorted().slice(0, MAX_DETAIL_LOOKUPS);
     let checked = 0, listless = 0;
     for (const row of list) {
-        if (!locating) break;
+        if (!locating || run !== locateRun) break;
         setStatus(`Reading each version… ${checked}/${list.length}`);
         try {
             const detail = await fetchDetail(row.id);
             checked++;
             if (!(detail.tracks || []).length) listless++;
         } catch { checked++; }
+        if (run !== locateRun) return;     // a new search replaced the list
         render();
     }
+    if (run !== locateRun) return;
     locating = false;
     updateLocateButton();
 
@@ -564,9 +605,10 @@ async function toggleLocate() {
     // Entries uploaded without a DR-meter log have no track list and no track
     // times, so there is little to judge them on. Saying how many were in that
     // state is the difference between "not this pressing" and "cannot tell".
-    const blind = listless
+    const blind = (listless
         ? ` ${listless} of the ${checked} were uploaded without a track list, so little could be checked on them.`
-        : '';
+        : '')
+        + (checked < list.length ? ` Stopped after ${checked} of ${list.length}.` : '');
     if (winner !== null) {
         const describe = id => {
             const row = rows.find(r => r.id === id);
@@ -601,6 +643,8 @@ async function toggleLocate() {
 document.getElementById('f-artist').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
 document.getElementById('f-album').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
 
+document.getElementById('auto-locate').checked = storedBool(AUTO_LOCATE_KEY);
+
 (async function start() {
     // ?artist=&album= wins over the now-playing line, so a lookup can be
     // linked to, bookmarked or corrected without retyping; the now-playing
@@ -614,7 +658,10 @@ document.getElementById('f-album').addEventListener('keydown', e => { if (e.key 
     }
     await loadNowPlaying(false, !seeded);
     if (document.getElementById('f-artist').value || document.getElementById('f-album').value) search();
-    else setStatus('Nothing is playing — type an artist or an album.');
+    else {
+        setStatus('Nothing is playing — type an artist or an album.');
+        showResults('Results appear here after a search.');
+    }
 })();
 </script>
 </body>
