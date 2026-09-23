@@ -2197,7 +2197,13 @@ function renderDrcFeedback(data) {
         activeLine.textContent = `Active: ${rate}@${selector}`;
         activeLine.title = '';
     } else {
-        activeLine.textContent = 'Active: DRC off · BruteFIR has no loaded filter';
+        // Not running is all the server knows here: `drc.sh off` stops BruteFIR
+        // outright, it does not leave it up without a filter.  Only call that
+        // "DRC off" when off is what the session asked for — otherwise the
+        // chain was meant to be up and is not (a rollback, or mid-restart).
+        activeLine.textContent = session.power === 'off'
+            ? 'Active: DRC off · BruteFIR not running'
+            : 'Active: none · BruteFIR not running';
         activeLine.title = verification.message || '';
     }
 
