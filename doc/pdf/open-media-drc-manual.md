@@ -446,7 +446,7 @@ How the browser reaches the DAC while DRC is off is OS-specific: Linux section
 | `bitperfect-tap-linux.sh`, `bitperfect-tap-freebsd.sh` | Play a WAV to the DAC and record the bytes on the USB wire; same CLI and artifacts on both OSes |
 | `bitperfect_runner.py`, `bitperfect_material.py` | Run a tap through a chosen playback path and prepare its material; back the `/bitperfect` page (chapter \ref{sec:bitperfect}) |
 | `bitperfect-compare.py` | Compare two tap artifacts from either OS |
-| `omdrc-ctrl/src/drmeter.py` | The DR meter behind *Measure DR* (chapter \ref{sec:dynamic-range}) |
+| `omdrc-ctrl/src/drmeter.py` | The DR meter behind *Measure DR* and the live *Estimate DR* (chapter \ref{sec:dynamic-range}) |
 
 
 \newpage
@@ -1347,7 +1347,7 @@ Alice In Chains *Unplugged* CD measures DR 8 while vinyl rips of it measure
 DR 12--13; the Rolling Stones' *Get Yer Ya-Ya's Out!* is DR 11 on the 2002 CD
 and DR 9 as the 2014 download. What a streaming service serves is one of
 those masters, and nothing on the stream says which. The panel answers the
-question three ways, each more direct than the last:
+question four ways, each more direct than the last:
 
 1. **DR versions** (`/dr-alternatives`, the *DR ↗* button) --- every version
    of the playing record listed in the community database at
@@ -1356,9 +1356,13 @@ question three ways, each more direct than the last:
    version against the track on the wire and names the most likely one.
 3. **Measure DR** (the renderer card) --- measures the copy on the wire
    itself, with the same algorithm the database's entries were measured with.
+4. **Estimate DR** (the renderer card) --- a live, rolling reading of what
+   MusicPD is playing now, with no download (section
+   \ref{sec:live-dr}).
 
 The first two report other people's measurements of other people's copies;
-the third is the only one that measures what you are hearing.
+the last two measure what you are hearing --- *Measure DR* the whole record,
+*Estimate DR* the passage in progress.
 
 ## What the renderers tell the panel
 
@@ -1533,6 +1537,135 @@ success, failure, cancellation or a crash mid-download.
 
 The job's state never carries a track URL.
 
+
+## The live DR estimate {#sec:live-dr}
+
+*Measure DR* answers "which master is this?" after a download. **Estimate DR**
+answers a different question: how dynamic is what I am hearing *right now*,
+and how has that changed over the last minutes? It needs no download, uses no
+disk, and updates while the music plays.
+
+### What DR means
+
+Dynamic range here is the gap between the loud peaks and the sustained loud
+part of the music, in decibels. A steady tone has none (DR 0). A heavily
+compressed, "loud" master keeps its peaks close to its average level and reads
+low; a master that lets quiet passages breathe and peaks stand out reads high.
+It is a property of the *master*, not of your volume knob, and it is not a
+measure of quality: a DR 8 pressing can be a fine recording. Compare a
+record with its other masters, not one genre with another.
+
+The scale is the database's own (section \ref{sec:measure-dr}): DR 7 and
+below flat red, 14 and above flat green, graded in between. A live reading
+uses the colors of the same scale.
+
+### The algorithm
+
+The estimate uses the *same* algorithm as *Measure DR* --- the TT Dynamic
+Range meter --- applied to blocks of the audio as it plays:
+
+1. The audio is cut into **3-second blocks**. The length is fixed by the
+   standard and does not change with any setting.
+2. Each block gets an **RMS** (with the factor 2, so a full-scale sine is
+   0 dB) and a **peak**, per channel.
+3. Over the blocks in scope, the **RMS~upper~** is the root mean square of
+   the loudest 20 % of block RMS values, and the **reference peak** is the
+   *second-highest* block peak.
+4. **DR** per channel is 20 · log₁₀(reference peak / RMS~upper~); the reading
+   is the mean over channels. The gauge shows it rounded, and the exact value
+   to a hundredth in the status text.
+
+What differs from a whole-track measurement is the *scope*, not the formula.
+A track measurement takes every block of one track; the estimate takes the
+blocks of a rolling window. Two consequences follow. A window shorter than a
+track is a reading of that passage, and a passage can read lower or higher than
+its track. And a reading over very few blocks is noisy: the first number
+appears after **six seconds** (two blocks), and it settles as blocks
+accumulate.
+
+The audio is a 48 kHz tap on MusicPD's secondary output, so the estimate is
+computed on the resampled copy and does not use the 44.1 kHz block-length quirk
+of the reference meter. Expect it to land within a fraction of a point of the
+track's DR when the window covers the track; treat it as an indication, not as a
+value to cite against the database.
+
+Only per-block statistics are kept --- two numbers per channel per block. No
+audio is recorded or saved. The server keeps **one** history for every browser
+(up to 90 minutes, about 1 800 blocks); a second browser reuses it and adds
+almost no work.
+
+### What the panel shows
+
+Turn the estimate on with **Estimate DR** on the renderer card. The panel then
+shows:
+
+- **The gauge and its number** --- the DR of the blocks in the selected
+  window, back to the latest silence. A needle marks the value on the
+  red-to-green scale.
+- **The status line** --- how many seconds are sampled, the window, or
+  *Paused / Stopped --- waiting for audio* when MusicPD is not playing.
+- **The segment bar** --- the history, oldest on the left. The bar always
+  spans the full width of the panel. The audio collected so far is divided
+  evenly among the segments, so **every segment resizes as new blocks
+  arrive**. Each segment shows the DR of its own blocks, colored on the same
+  scale, with the rounded value printed inside; hovering it gives the time
+  range (seconds before the latest interval) and the exact DR. The number of
+  segments follows the panel width (about one per 24 px).
+- **The time labels** --- the left label is the time the bar covers so far
+  ("−4 min 30 s"), the right one is *Latest*.
+- **AVG** --- the mean of the individual 3-second DR values since the latest
+  silence in the window: a steadier figure than a single window's DR when the
+  music varies.
+
+#### Silence and pauses
+
+A complete block whose peak is below −80 dBFS is **silence**: its segment is
+left empty, and it ends the AVG run. Pausing or stopping MusicPD produces the
+same thing --- an empty 3-second slot for every 3 seconds of pause or stop, even
+though MusicPD sends no audio then. When playback resumes, the AVG and the
+gauge start afresh with the next audio; the earlier blocks stay in the
+history, before the gap. Seeking inside a track keeps the completed blocks.
+
+### Options in the panel
+
+| Control | Effect |
+|---|---|
+| **Estimate DR** / *Stop estimate* | starts or stops the listener. The history is kept in the server only while at least one browser is listening; the first listener to join starts it afresh |
+| **Show DR** / *Hide DR* | shows or hides the panel without stopping the estimate |
+| **Rolling window** slider | 1 to 90 minutes in 1-minute steps; the value is written to the right of the slider. The window is how much history the gauge and the bar cover. Long windows are the user's choice --- a 90-minute window mixes many tracks |
+| **Detect song change: On / Off** | *On*: when MusicPD moves to another track, this view starts at the track boundary --- the gauge, bar and AVG describe the current track only (up to the window). *Off*: the window follows a slice of audio across tracks, for a long stretch you care about as a whole rather than track by track |
+
+**Detect song change** is a per-browser view. The server keeps a single
+history across track changes and reports each boundary; whether a browser
+starts its window there is that browser's own choice. The window, the
+song-change setting, whether the panel is visible and whether the estimate is
+on are **saved in the browser** and restored on reload, so the panel returns
+as you left it. An active estimate keeps running when you switch between
+*Listen*, *System* and *Spectrum*; it stops when the browser tab is hidden or
+closed, so an idle tab does not keep MusicPD's tap open.
+
+### Configuration
+
+The panel refreshes at most every 5 seconds. This limits how often the display
+updates and the traffic it causes; the measurement blocks are still 3 seconds.
+The interval is `dr_refresh_seconds` in the `[spectrum]` section of
+`commands.conf` (default 5, minimum 3); restart `omdrcctrl` to apply it. The
+estimate also needs the spectrum tap itself (`[spectrum] enabled`); it uses
+MusicPD's secondary FIFO output, which is disabled when *Estimate DR*,
+Spectrum and Levels all have no listeners.
+
+### Costs and limits
+
+- **The history lives in the panel's memory.** Restarting `omdrcctrl`
+  empties it, and the bar starts again from nothing.
+- **The tap follows MusicPD.** Sources that do not go through MusicPD are not
+  estimated.
+- **An indication, not a citation.** Use *Measure DR* for a value to compare
+  with the database; use the estimate to see how dynamic a passage is and how
+  a track changes over time.
+- **Server cost is per block, not per browser.** Each 3-second block costs one
+  calculation and one serialization of the history for all connected
+  browsers; each browser then draws its own window.
 
 \newpage
 
@@ -3873,7 +4006,7 @@ Terms in alphabetical order. **OS** shows where the term applies: *both*,
 | **design / `@design`** | both | One immutable filter revision inside a geometry, with a provenance manifest | \ref{sec:provenance} |
 | **devd** | FreeBSD | FreeBSD's device event daemon; the project rule fires on `pcm` attach/detach | \ref{sec:fbsd-inventory} |
 | **`dmix`** | Linux | ALSA software mixer that lets browser streams share the DAC | \ref{sec:browser-audio} |
-| **DR (dynamic range)** | both | TT Dynamic Range value of a master; *Measure DR* measures the stream itself | \ref{sec:dynamic-range}, \ref{sec:measure-dr} |
+| **DR (dynamic range)** | both | TT Dynamic Range value of a master; *Measure DR* measures the stream itself, *Estimate DR* the passage playing now | \ref{sec:dynamic-range}, \ref{sec:measure-dr}, \ref{sec:live-dr} |
 | **DRC** | both | Digital Room Correction: FIR filtering applied before the DAC | \ref{sec:usage} |
 | **`drc.sh`** | both | The single control point of the DRC pipeline | \ref{sec:usage} |
 | **`drc.lock` / `device.lock`** | FreeBSD | The two non-nested locks guarding the chain transition and the role transaction | \ref{sec:fbsd-lifecycle} |
