@@ -136,7 +136,9 @@ from 1 to 20 minutes, and the bar below the gauge colors each time slice by
 its measured DR and prints its rounded value. The number of slices adapts to
 the panel width. A complete 3-second block below −80 dBFS peak leaves an empty
 slice; AVG is the mean of 3-second DR values since the latest such silence in
-the selected window. Track changes and seeks also restart the estimate. The first
+the selected window. MPD track changes restart the estimate; pause, seek,
+stop and resume preserve the completed audio blocks. The window therefore
+counts sampled audio time, not elapsed wall time. The first
 number appears after six seconds. It keeps only up to 20 minutes of 3-second
 block peak and RMS statistics, with no download or saved audio. The tap is a 48 kHz
 excerpt, so this is a quick guide to the passage you heard, not a full-track

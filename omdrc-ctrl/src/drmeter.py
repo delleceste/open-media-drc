@@ -164,6 +164,12 @@ class RollingEstimate:
                 completed = True
         return completed
 
+    def discard_partial(self) -> None:
+        """Drop an incomplete block after lost PCM, preserving completed ones."""
+        self.count = 0
+        self.sum2.fill(0)
+        self.peak.fill(0)
+
     def result(self) -> dict | None:
         if len(self.blocks) < 2:
             return None

@@ -1274,6 +1274,7 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
     info = {"title": "", "album": "", "artist": "", "album_artist": "",
             "state": "", "elapsed": None,
             "duration": None, "audio": "", "date": "", "label": "",
+            "songid": "",
             "track_no": None, "file": ""}
     try:
         p = int(port) if port else 6600
@@ -1303,6 +1304,8 @@ def _mpd_now_playing_via_protocol(port: str | None) -> dict:
                         info["album_artist"] = value
                     elif key == "state":
                         info["state"] = value
+                    elif key == "songid":
+                        info["songid"] = value
                     elif key == "elapsed":
                         info["elapsed"] = float(value)
                     elif key == "duration":
@@ -1863,6 +1866,14 @@ def _spectrum_level_db(samples) -> tuple[float, float]:
     return max(-120.0, min(0.0, rms_db)), max(-120.0, min(0.0, peak_db))
 
 
+def _dr_track_changed(previous_file: str, previous_id: str,
+                      current_file: str, current_id: str) -> bool:
+    """MPD queue identity changes are track changes; elapsed jumps are not."""
+    return bool(previous_file and current_file and
+                (previous_file != current_file or
+                 (previous_id and current_id and previous_id != current_id)))
+
+
 class SpectrumAnalyzer:
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -2320,18 +2331,15 @@ class SpectrumAnalyzer:
             dr_epoch_seen = -1
             dr_estimate: RollingEstimate | None = None
             dr_tail = bytearray()
-            dr_last_data_at = 0.0
             dr_drops_seen = 0
             dr_song_file = ""
-            dr_song_elapsed: float | None = None
-            dr_song_checked_at = 0.0
+            dr_song_id = ""
             next_dr_song_check = 0.0
 
             def reset_dr() -> None:
-                nonlocal dr_estimate, dr_last_data_at
+                nonlocal dr_estimate
                 dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS, 1200)
                 dr_tail.clear()
-                dr_last_data_at = 0.0
                 with self.lock:
                     self.dr_state = {"state": "collecting", "dr": None,
                                      "seconds": 0}
@@ -2407,7 +2415,7 @@ class SpectrumAnalyzer:
                 if dr_on and self.dr_epoch != dr_epoch_seen:
                     dr_epoch_seen = self.dr_epoch
                     dr_song_file = ""
-                    dr_song_elapsed = None
+                    dr_song_id = ""
                     next_dr_song_check = 0.0
                     reset_dr()
                 # Transfer everything the dedicated reader has drained before
@@ -2445,11 +2453,12 @@ class SpectrumAnalyzer:
                     if not dr_only:
                         buf.extend(data)
                     if dr_on and dr_estimate is not None:
-                        if ((dr_last_data_at and at - dr_last_data_at > silence_timeout)
-                                or reader_drops[0] != dr_drops_seen):
-                            reset_dr()
+                        if reader_drops[0] != dr_drops_seen:
+                            # Lost PCM invalidates only the unfinished block;
+                            # completed history stays across playback gaps.
+                            dr_estimate.discard_partial()
+                            dr_tail.clear()
                         dr_drops_seen = reader_drops[0]
-                        dr_last_data_at = at
                         dr_tail.extend(data)
                         usable = len(dr_tail) // frame_bytes * frame_bytes
                         if usable:
@@ -2479,19 +2488,13 @@ class SpectrumAnalyzer:
                     next_dr_song_check = now + 2.0
                     song = _mpd_now_playing_via_protocol(_resolve_mpd_port())
                     song_file = song.get("file", "")
-                    elapsed = song.get("elapsed")
-                    if song_file and dr_song_file:
-                        changed = song_file != dr_song_file
-                        seeked = (isinstance(elapsed, (int, float))
-                                  and dr_song_elapsed is not None
-                                  and abs((elapsed - dr_song_elapsed)
-                                          - (now - dr_song_checked_at)) > 4.0)
-                        if changed or seeked:
-                            reset_dr()
+                    song_id = song.get("songid", "")
+                    if _dr_track_changed(dr_song_file, dr_song_id,
+                                         song_file, song_id):
+                        reset_dr()
                     if song_file:
                         dr_song_file = song_file
-                        dr_song_elapsed = elapsed
-                        dr_song_checked_at = now
+                        dr_song_id = song_id
                 if now >= next_source_check:
                     next_source_check = now + 0.5
                     if (SPECTRUM_SOURCE == "auto"

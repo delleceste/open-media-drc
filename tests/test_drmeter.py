@@ -138,6 +138,16 @@ class RollingEstimateTest(unittest.TestCase):
         self.assertEqual(len(history[0][0]), 2)
         self.assertEqual(estimate.result()["seconds"], 1200)
 
+    def test_lost_pcm_discards_only_the_unfinished_block(self):
+        estimate = drmeter.RollingEstimate(100, 2)
+        block = sine(3, 0.25, rate=100)
+        estimate.feed(block)
+        estimate.feed(block[:100])
+        estimate.discard_partial()
+        estimate.feed(block)
+        self.assertEqual(len(estimate.history()), 2)
+        self.assertEqual(estimate.result()["seconds"], 6)
+
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
                      "ffmpeg not installed")

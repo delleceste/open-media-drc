@@ -1849,7 +1849,7 @@
             <output id="dr-estimate-window-label" for="dr-estimate-window">1 min</output>
         </label>
         <div id="dr-estimate-history" class="dr-estimate-history" role="img" aria-label="Dynamic range history, oldest on the left"></div>
-        <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">−1 min</span><span>Now</span></div>
+        <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">−1 min audio</span><span>Latest audio</span></div>
         <div class="dr-estimate-note"><span>Recent excerpt at 48 kHz · a guide to this passage, not full-track or album DR</span>
             <span id="dr-estimate-average" class="dr-estimate-average" title="Mean of complete 3-second DR values since the latest silence in this window">AVG —</span></div>
     </div>
@@ -5086,7 +5086,7 @@ function paintDrHistory() {
         const sample = blocks.slice(Math.max(0, start - left), Math.max(0, end - left));
         const silent = sample.some(drBlockSilent);
         const dr = sample.length && !silent ? drFromBlocks(sample) : null;
-        const period = `${Math.round((blockCount - end) * 3)}–${Math.round((blockCount - start) * 3)} s ago`;
+        const period = `${Math.round((blockCount - end) * 3)}–${Math.round((blockCount - start) * 3)} s of audio before the latest block`;
         const title = !sample.length ? 'Waiting for audio' : silent ?
             `${period}: silence` : `${period}: DR${dr.toFixed(1)}`;
         const color = dr === null ? null : drHistoryColor(dr);
@@ -5095,8 +5095,8 @@ function paintDrHistory() {
             ` style="background:${color.background};color:${color.foreground}"` : ''}>${label}</span>`);
     }
     track.innerHTML = cells.join('');
-    track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)}, oldest on the left; ${blocks.length * 3} seconds sampled`);
-    document.getElementById('dr-estimate-oldest').textContent = `−${drWindowLabel(drWindowSeconds)}`;
+    track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)} of audio, oldest on the left; ${blocks.length * 3} seconds sampled`);
+    document.getElementById('dr-estimate-oldest').textContent = `−${drWindowLabel(drWindowSeconds)} audio`;
     document.getElementById('dr-estimate-window-label').textContent = drWindowLabel(drWindowSeconds);
     const active = drActiveBlocks(blocks);
     const average = active.length ? active.reduce((sum, block) => sum + drFromBlocks([block]), 0) / active.length : null;
@@ -5147,7 +5147,7 @@ function paintDrEstimate(frame) {
     value.textContent = shown > 14 ? 'DR14+' : `DR${shown}`;
     needle.hidden = false;
     needle.style.left = `${Math.max(0, Math.min(100, shown / 14 * 100))}%`;
-    status.textContent = `${active.length * 3}s sampled · rolling ${drWindowLabel(drWindowSeconds)} window`;
+    status.textContent = `${active.length * 3}s sampled · rolling ${drWindowLabel(drWindowSeconds)} audio window`;
 }
 
 paintDrHistory();

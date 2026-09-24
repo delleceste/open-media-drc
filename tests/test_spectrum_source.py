@@ -572,6 +572,16 @@ class BandPeakHoldTest(unittest.TestCase):
         self.assertGreater(len(count(int(self.RATE / 10))), len(tiers))
 
 
+class DrTrackBoundaryTest(unittest.TestCase):
+    def test_seek_pause_and_resume_keep_the_same_track_history(self):
+        self.assertFalse(APP._dr_track_changed("song.flac", "42", "song.flac", "42"))
+        self.assertFalse(APP._dr_track_changed("song.flac", "42", "", ""))
+
+    def test_a_new_queue_item_resets_even_when_the_file_repeats(self):
+        self.assertTrue(APP._dr_track_changed("song.flac", "42", "song.flac", "43"))
+        self.assertTrue(APP._dr_track_changed("first.flac", "42", "second.flac", "43"))
+
+
 class PublishDeduplicationTest(unittest.TestCase):
     """An unchanged frame is not news, and re-sending it was visible.
 
