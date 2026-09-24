@@ -802,14 +802,20 @@
         .dr-estimate-window input { flex: 1; min-width: 0; accent-color: var(--accent); }
         .dr-estimate-window output { min-width: 3.5em; text-align: right;
                                      font-variant-numeric: tabular-nums; color: var(--text); }
-        .dr-estimate-history { display: flex; gap: 2px; height: 18px; margin: 5px 4px 0;
+        .dr-estimate-history { display: flex; gap: 2px; height: 21px; margin: 5px 4px 0;
                                overflow: hidden; border-radius: 3px; }
-        .dr-estimate-history > span { flex: 1 1 0; min-width: 0;
-                                      background: var(--surface); }
+        .dr-estimate-history > span { display: flex; flex: 1 1 0; min-width: 0;
+                                      align-items: center; justify-content: center;
+                                      background: var(--surface); font-size: .62rem;
+                                      font-weight: 800; font-variant-numeric: tabular-nums; }
         .dr-estimate-times { display: flex; justify-content: space-between;
                              margin: 3px 4px 0; color: var(--muted); font-size: .66rem; }
-        .dr-estimate-note { margin-top: 6px; color: var(--muted);
+        .dr-estimate-note { display: flex; flex-wrap: wrap; gap: 3px 12px;
+                            margin-top: 6px; color: var(--muted);
                             font-size: .7rem; line-height: 1.4; }
+        .dr-estimate-average { margin-left: auto; white-space: nowrap;
+                               color: var(--text); font-weight: 700;
+                               font-variant-numeric: tabular-nums; }
         .drb { display: inline-block; min-width: 1.8rem; text-align: center;
                border: 1px solid #000; color: #000; font-weight: 700;
                font-size: .75rem; line-height: 1; padding: 3px 4px; border-radius: 3px;
@@ -1844,7 +1850,8 @@
         </label>
         <div id="dr-estimate-history" class="dr-estimate-history" role="img" aria-label="Dynamic range history, oldest on the left"></div>
         <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">−1 min</span><span>Now</span></div>
-        <div class="dr-estimate-note">Recent excerpt at 48 kHz · a guide to this passage, not full-track or album DR</div>
+        <div class="dr-estimate-note"><span>Recent excerpt at 48 kHz · a guide to this passage, not full-track or album DR</span>
+            <span id="dr-estimate-average" class="dr-estimate-average" title="Mean of complete 3-second DR values since the latest silence in this window">AVG —</span></div>
     </div>
     <!-- DR measured here, of the copy on the wire (drmeter.py).  Hidden until
          a measurement has been started. -->
@@ -5039,17 +5046,29 @@ function drFromBlocks(blocks) {
     return sum / channels;
 }
 
+function drBlockSilent(block) {
+    // One complete block below -80 dBFS peak is treated as silence. This also
+    // catches dithered zeros without cutting ordinary quiet passages.
+    return block[1].every(peak => peak <= 0.0001);
+}
+
+function drActiveBlocks(blocks) {
+    const lastSilence = blocks.findLastIndex(drBlockSilent);
+    return blocks.slice(lastSilence + 1);
+}
+
 function drHistoryColor(dr) {
-    // Deep red through orange and yellow to progressively stronger greens.
-    const stops = [[0, 0, 72, 27], [5, 7, 79, 39], [8, 27, 88, 47],
-                   [10, 49, 88, 49], [12, 89, 65, 42], [14, 135, 61, 36]];
+    // Red through orange and yellow to progressively stronger greens.
+    const stops = [[0, 0, 72, 56], [5, 7, 79, 57], [8, 27, 88, 60],
+                   [10, 49, 88, 65], [12, 89, 65, 58], [14, 135, 61, 54]];
     const value = Math.max(0, Math.min(14, dr));
     let upper = stops.findIndex(s => s[0] >= value);
     if (upper <= 0) upper = 1;
     const a = stops[upper - 1], b = stops[upper];
     const fraction = (value - a[0]) / (b[0] - a[0]);
     const mix = i => a[i] + (b[i] - a[i]) * fraction;
-    return `hsl(${mix(1)} ${mix(2)}% ${mix(3)}%)`;
+    return {background: `hsl(${mix(1)} ${mix(2)}% ${mix(3)}%)`,
+            foreground: `hsl(${mix(1)} ${mix(2)}% 7%)`};
 }
 
 function paintDrHistory() {
@@ -5057,7 +5076,7 @@ function paintDrHistory() {
     const blockCount = drWindowSeconds / 3;
     const blocks = drEstimateBlocks.slice(-blockCount);
     // A wide one-minute panel can show all twenty 3-second blocks.
-    const steps = Math.max(1, Math.min(Math.floor(track.clientWidth / 20),
+    const steps = Math.max(1, Math.min(Math.floor(track.clientWidth / 24),
                                         blockCount));
     const left = blockCount - blocks.length;
     const cells = [];
@@ -5065,16 +5084,24 @@ function paintDrHistory() {
         const start = Math.floor(i * blockCount / steps);
         const end = Math.floor((i + 1) * blockCount / steps);
         const sample = blocks.slice(Math.max(0, start - left), Math.max(0, end - left));
-        const dr = sample.length ? drFromBlocks(sample) : null;
-        const title = dr === null ? 'Waiting for audio' :
-            `${Math.round((blockCount - end) * 3)}–${Math.round((blockCount - start) * 3)} s ago: DR${dr.toFixed(1)}`;
-        cells.push(`<span title="${title}"${dr === null ? '' :
-            ` style="background:${drHistoryColor(dr)}"`}></span>`);
+        const silent = sample.some(drBlockSilent);
+        const dr = sample.length && !silent ? drFromBlocks(sample) : null;
+        const period = `${Math.round((blockCount - end) * 3)}–${Math.round((blockCount - start) * 3)} s ago`;
+        const title = !sample.length ? 'Waiting for audio' : silent ?
+            `${period}: silence` : `${period}: DR${dr.toFixed(1)}`;
+        const color = dr === null ? null : drHistoryColor(dr);
+        const label = dr === null ? '' : String(Math.max(0, Math.min(99, Math.round(dr))));
+        cells.push(`<span title="${title}"${color ?
+            ` style="background:${color.background};color:${color.foreground}"` : ''}>${label}</span>`);
     }
     track.innerHTML = cells.join('');
     track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)}, oldest on the left; ${blocks.length * 3} seconds sampled`);
     document.getElementById('dr-estimate-oldest').textContent = `−${drWindowLabel(drWindowSeconds)}`;
     document.getElementById('dr-estimate-window-label').textContent = drWindowLabel(drWindowSeconds);
+    const active = drActiveBlocks(blocks);
+    const average = active.length ? active.reduce((sum, block) => sum + drFromBlocks([block]), 0) / active.length : null;
+    document.getElementById('dr-estimate-average').textContent =
+        average === null ? 'AVG —' : `AVG DR${average.toFixed(1)}`;
 }
 
 function setDrEstimateWindow(value) {
@@ -5098,7 +5125,8 @@ function paintDrEstimate(frame) {
     const needle = document.getElementById('dr-estimate-needle');
     const dr = frame.dr || {};
     const selected = drEstimateBlocks.slice(-drWindowSeconds / 3);
-    const exact = selected.length >= 2 ? drFromBlocks(selected) : null;
+    const active = drActiveBlocks(selected);
+    const exact = active.length >= 2 ? drFromBlocks(active) : null;
     if (!frame.ok || dr.state !== 'ready' || exact === null) {
         value.textContent = '—';
         needle.hidden = true;
@@ -5119,7 +5147,7 @@ function paintDrEstimate(frame) {
     value.textContent = shown > 14 ? 'DR14+' : `DR${shown}`;
     needle.hidden = false;
     needle.style.left = `${Math.max(0, Math.min(100, shown / 14 * 100))}%`;
-    status.textContent = `${selected.length * 3}s sampled · rolling ${drWindowLabel(drWindowSeconds)} window`;
+    status.textContent = `${active.length * 3}s sampled · rolling ${drWindowLabel(drWindowSeconds)} window`;
 }
 
 paintDrHistory();
