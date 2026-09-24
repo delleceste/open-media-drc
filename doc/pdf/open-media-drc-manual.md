@@ -23,277 +23,137 @@ header-includes:
 
 \newpage
 
+# Part I --- Common to Linux and FreeBSD {-}
+
+Everything in this part applies to both operating systems. Where a common
+topic has an OS-specific implementation, the text says so in one sentence and
+points to the section of Part II (Linux) or Part III (FreeBSD) that holds it.
+
+\newpage
+
 # Introduction
 
 **open-media-drc** is the complete software stack of a headless, high-quality
 music and video playback appliance with **Digital Room Correction (DRC)**. It
-runs on both **Linux** (reference: Arch) and **FreeBSD** (reference: 15.1 on an
+runs on **Linux** (reference: Arch) and **FreeBSD** (reference: 15.1 on an
 Intel NUC), driving an OKTO RESEARCH DAC8 STEREO USB DAC.
 
-The core idea: audio from any source --- UPnP/OpenHome streaming (Qobuz),
-local files, Blu-ray discs, network streams --- is routed through
-**BruteFIR**, a fast FIR convolution engine, which applies room-correction
-filters designed with Room EQ Wizard (REW) and DRC tooling, before reaching
-the DAC. When correction is off, the chain collapses to a verified
-**bit-perfect** direct path.
+Audio from any source --- UPnP/OpenHome streaming (Qobuz), local files,
+network streams, a CD transport --- is routed through **BruteFIR**, a fast FIR
+convolution engine that applies room-correction filters designed with Room EQ
+Wizard (REW), before reaching the DAC. When correction is off, the chain
+collapses to a verified **bit-perfect** direct path.
 
 ![The full audio playback chain, from control point to DAC. Solid arrows carry audio; dashed arrows are control.](build/chain-audio.pdf){width=88%}
 
-The design principles that shape everything in the repository:
+Design principles:
 
 * **Saved user intent plus actual device state drive DRC.** A present DAC and
   saved power-on intent mean DRC up at the saved source/rate/design; an absent
-  DAC means transient teardown without losing that intent; saved power-off
-  means direct output. Boot, hotplug, and manual requests reconcile this rule.
+  DAC means transient teardown that keeps the intent; saved power-off means
+  direct output. Boot, hotplug and manual requests all reconcile this rule.
 * **Only two resting states exist**: DRC fully up (BruteFIR processing), or
-  direct output. A failed start rolls back --- there is no resting state where
-  the loopback runs without BruteFIR.
-* **Run-from-repo.** The live configuration files and scripts are symlinks
-  into the git checkout wherever possible; `git pull` is the whole update
-  path. Only "deploy glue" parsed at early boot (systemd units, udev rules,
-  rc.d scripts, devd rules) is *copied* into system paths, because those are
-  parsed before a separately mounted `/home` is available.
-* **Verify, don't assume.** The repository ships tooling to *prove* the chain
-  is bit-perfect (a USB wire tap), to detect and classify glitches, and to
-  monitor the whole chain from a phone.
+  direct output. A failed start rolls back; the loopback never runs without
+  BruteFIR.
+* **Early-boot glue is copied, everything else can run from the checkout.**
+  Files parsed before a separately mounted `/home` exists (systemd units, udev
+  rules, rc.d scripts, devd rules) are real copies in system paths.
+* **Verify, don't assume.** The repository ships tooling to prove the chain is
+  bit-perfect (a USB wire tap), to detect glitches, and to monitor the chain
+  from a phone.
+
+## How to read this manual
+
+| Part | Read it if you run | Contents |
+|---|---|---|
+| **I. Common** (chapters 1--9) | either | components, common build, `drc.sh`, filters and their provenance, the web panel, bit-perfect and dynamic-range tools, CD input concept |
+| **II. Linux** (chapters 10--11) | **Linux** | packages, systemd/udev, `snd-aloop`, ALSA browser audio, the Linux CD bridge |
+| **III. FreeBSD** (chapters 12--19) | **FreeBSD** | packages, rc.d/devd, `virtual_oss`, video, the CD daemon, known issues, kernel patches, port plan |
+| **Appendices** | either | bit-perfect test assets and cross-OS comparison; source-document index; glossary |
+
+A Linux reader can skip Part III entirely, and a FreeBSD reader Part II; no
+chapter of one depends on the other. Part I stays OS-neutral and refers to
+the OS parts wherever an implementation differs.
 
 ## Repository map
 
-| Path | Contents |
-|---|---|
-| `drc.sh`, `drc-status.sh` | DRC orchestration and status |
-| `configs/<geometry>/` | Per-rate BruteFIR configurations |
-| `filters/<geometry>/<rate>/` | Raw FIR filter coefficients (FLOAT64_LE) |
-| `mpd/` | MPD configuration templates (`mpd.conf.in` Linux, `musicpd.conf.in` FreeBSD) |
-| `etc/` | Service glue: `systemd/`, `modules-load.d/` (Linux); `rc.d/`, `devd/` (FreeBSD) |
-| `omdrc-ctrl/` | Web control panel (Flask) |
-| `cdin/` | `omdrc-cdin`, the CD / S-PDIF capture bridge (FreeBSD only) |
-| `video/` | mpv playback launchers + phone web remote |
-| `browser-nodrc/` | Browser launchers that temporarily bypass DRC |
-| `scripts/` | Filter conversion, headroom, verification helpers |
-| `tests/` | Bit-perfect test signal |
-| `freebsd-uaudio-patch/` | FreeBSD kernel `uaudio(4)` patches (Appendix A) |
-| `freebsd-virtual-oss-patch/` | FreeBSD `virtual_oss` / `cuse` patches (Appendix A) |
-| `kodi-virtual-oss-patch/` | Kodi OSS-sink enumeration patch (Appendix A) |
-| `doc/` | Measurement plots, verification and glitch docs, this manual |
+| Path | OS | Contents |
+|---|---|---|
+| `drc.sh`, `drc-status.sh` | both | DRC orchestration and status |
+| `configs/<geometry>/` | both | Per-rate BruteFIR configurations |
+| `filters/<geometry>/<rate>/` | both | Raw FIR filter coefficients (FLOAT64_LE) |
+| `mpd/` | both | MPD templates (`mpd.conf.in` Linux, `musicpd.conf.in` FreeBSD) |
+| `omdrc-ctrl/` | both | Web control panel (Flask) |
+| `browser-nodrc/` | both | Browser launchers that temporarily bypass DRC |
+| `scripts/`, `tests/` | both | Filter conversion, headroom, verification helpers; bit-perfect test signal |
+| `etc/systemd/`, `etc/modules-load.d/`, `etc/modprobe.d/` | Linux | Service and module glue |
+| `etc/rc.d/`, `etc/devd/`, `etc/rc.conf.d/` | FreeBSD | Service and hotplug glue |
+| `cdin/` | FreeBSD | `omdrc-cdin`, the CD / S-PDIF capture daemon (Linux uses `alsaloop`) |
+| `video/` | FreeBSD | mpv playback launchers + phone web remote |
+| `freebsd-uaudio-patch/`, `freebsd-virtual-oss-patch/`, `kodi-virtual-oss-patch/` | FreeBSD | Kernel and userland patches |
+| `doc/` | both | Measurement plots, verification docs, this manual |
 
 \newpage
 
 # Components
 
-The playback chain is assembled from the following components, in signal
-order.
+The chain in signal order. The manual writes "MPD" for the player: the
+package and binary are `mpd` on Linux and `musicpd` on FreeBSD.
 
-## upmpdcli, libupnpp, libnpupnp (UPnP/OpenHome front-end)
+| Component | Role | OS-specific implementation |
+|---|---|---|
+| **upmpdcli** (+ libupnpp, libnpupnp) | Makes MPD a UPnP/OpenHome renderer, so a phone app, `upplay` or Qobuz Connect can drive it. Built from source | FreeBSD network caveats: section \ref{sec:upnpiface} |
+| **qobuzconnect2mpd** | Qobuz Connect front end; the alternative to upmpdcli --- one at a time | --- |
+| **MPD** | The player, with the soxr resampler. Three outputs (section \ref{sec:mpd-outputs}): direct DAC and two DRC loopback outputs | Linux: `mpd`, ALSA output. FreeBSD: `musicpd`, OSS output |
+| **Loopback** | A device MPD plays into and BruteFIR reads from | Linux: `snd-aloop`, section \ref{sec:linux-aloop}. FreeBSD: `virtual_oss`, section \ref{sec:fbsd-audio} |
+| **BruteFIR** (fork) | Float64 FIR convolution of the per-rate `L.raw`/`R.raw` filters, output to the DAC | Linux: ALSA I/O. FreeBSD: built-in OSS I/O |
+| **CD bridge** | Captures a CD transport's S/PDIF through an ESI U24 XL into the loopback; chapter \ref{sec:cdin} | Linux: `alsaloop`, chapter \ref{sec:cdin-linux}. FreeBSD: `omdrc-cdin`, chapter \ref{sec:cdin-freebsd} |
+| **drc.sh** | The single control point of the DRC pipeline (chapter \ref{sec:usage}) | Service glue: Linux section \ref{sec:linux-hotplug}, FreeBSD chapter \ref{sec:fbsd-lifecycle} |
+| **omdrc-ctrl** | Flask web panel on the LAN (port 9090) (section \ref{sec:omdrcctrl}) | Linux: section \ref{sec:linux-panel}. FreeBSD: section \ref{sec:fbsd-panel} |
+| **browser-nodrc** | Launchers that bypass DRC while a browser runs (section \ref{sec:browser-nodrc}) | Linux ALSA default: section \ref{sec:browser-audio} |
+| **video/** | mpv playback and a phone web remote | FreeBSD only: chapter \ref{sec:video} |
 
-`upmpdcli` turns MPD into a UPnP/OpenHome media renderer, so any control
-point (a phone app, `upplay`, Qobuz Connect) can drive playback. It is built
-from source, bottom-up, as three standard meson projects:
-**libnpupnp** (UPnP base library; needs libcurl, libmicrohttpd, expat),
-**libupnpp** (C++ wrapper), then **upmpdcli** itself (needs jsoncpp,
-libmpdclient). The optional Qobuz plugin needs python3 with `requests`.
-Prebuilt packages exist (FreeBSD port `upmpdcli`, Arch AUR); source builds
-are used here to track upstream.
+**BruteFIR** is built from `github.com/delleceste/brutefir`, a fork of Anders
+Torger's BruteFIR with FreeBSD OSS fixes (`bfio_oss` fragment size,
+`brutefir_loopback` `-L`, a passthrough-config default). It processes in
+float64, needs FFTW3 in single and double precision, is built with CMake and
+installs its modules to `/usr/local/lib/brutefir`.
 
-### A disconnected wired port makes it invisible {#sec:upnpiface}
+**drc.sh** starts and stops BruteFIR and the loopback, selects the MPD output,
+serializes concurrent runs, records persistent state and rolls back to direct
+output on failure.
 
-**Do not give an Ethernet port a static address in `rc.conf` on a box that is
-sometimes wired and sometimes wireless.** That single line is the whole bug.
+**omdrc-ctrl** offers DRC control buttons, audio-chain health with a
+bit-perfect verdict, a live spectrum analyzer and filter-response charts.
 
-libupnpp chooses its interface once, at startup, taking the first that is
-UP+RUNNING+MULTICAST *and has an address*. On FreeBSD `em(4)` keeps `RUNNING`
-set with no carrier, so a statically configured wired port stays fully
-qualified with no cable in it:
-
-```
-ifconfig_em0="inet 192.168.1.9 netmask 255.255.255.0"   # applied regardless
-em0: flags=8843<UP,BROADCAST,RUNNING,...>  status: no carrier
-```
-
-upmpdcli then binds the dead port and its SSDP advertisements never leave the
-host. The failure is unusually quiet: upmpdcli **starts, connects to MPD and
-keeps driving it**, so `ps` and the panel's renderer switch both report it
-healthy --- only BubbleUPnP, Kazoo and every other control point stop listing
-it. A box whose wired port *used to be* the live one breaks this way without
-being touched: move it to Wi-Fi and the stale static address is still there,
-still first in the selection, and now dead.
-
-The tell is one line in `/tmp/upmpdcli.log`:
-
-```
-LibUPnP: Using IPV4 192.168.1.9 port 49152     <- not the address you serve on
-```
-
-sometimes accompanied by the harder failure:
-
-```
-sendAvertisement failed: UpnpSendAdvertisement :-100: UPNP_E_INVALID_HANDLE
-Device would not start
-```
-
-which is intermittent --- the HTTP side can come up (the description is
-served) while multicast never works.
-
-**The fix is in `rc.conf`, not in `upmpdcli.conf`:**
-
-```sh
-ifconfig_em0="DHCP"      # NOT "inet 1.2.3.4 ..."
-```
-
-An unplugged DHCP interface never gets a lease, so it has no address, so
-libupnpp skips it and picks the interface that is actually connected --- with
-`upnpiface` left unset, and nothing to edit when you move between Ethernet and
-Wi-Fi. Plugging the cable back in still works: FreeBSD's own
-`/etc/devd/dhclient.conf` starts `dhclient` on `LINK_UP`.
-
-Verified on this box: with the static address removed, upmpdcli's automatic
-selection lands on the live interface by itself, and `upnp:rootdevice` and
-`ssdp:all` both return the renderer.
-
-Pinning `upnpiface` also works but is the wrong tool --- the pinned value goes
-stale the moment the box changes network, which is exactly the situation this
-arises in. Keep it as a last resort for a genuinely ambiguous host.
-
-### Leave `defaultrouter` unset when any interface uses DHCP {#sec:defaultrouter}
-
-`rc.d/routing` installs `defaultrouter` **unconditionally at boot**, with no
-regard for whether that gateway is reachable. On a box that is sometimes wired
-and sometimes wireless it therefore does the wrong thing exactly when it
-matters: with no cable, the default route still points at the wired gateway
-and Wi-Fi's DHCP-supplied route is overridden.
-
-With both interfaces on DHCP the connected one supplies the default route by
-itself, which is the behaviour wanted. Leave `defaultrouter` commented out.
-
-```sh
-# /etc/rc.conf
-ifconfig_em0="DHCP"
-wlans_iwm0="wlan0"
-ifconfig_wlan0="WPA  DHCP"
-#defaultrouter="192.168.1.1"      # leave unset; DHCP provides it
-```
-
-Note that `synchronous_dhclient` defaults to `NO`, so an unplugged DHCP
-interface does not delay boot: `dhclient` is started by devd when a link
-actually comes up.
-
-## MPD --- Music Player Daemon
-
-The actual player. Installed **from the OS package**:
-
-> **Naming: MPD is packaged as `mpd` on Linux, but as `musicpd` on
-> FreeBSD.** The FreeBSD package/port is `audio/musicpd`, the daemon binary
-> is `musicpd`, the service is `service musicpd ...`, and the bundled
-> command-line client is `musicpc` (aliasing `mpc`). Everywhere this manual
-> says "MPD", read `mpd` on Linux and `musicpd` on FreeBSD.
-
-MPD must have the **soxr** resampler and the ALSA (Linux) / OSS (FreeBSD)
-output plugins enabled --- both stock packages do. MPD is configured with
-three outputs (section \ref{sec:mpd-outputs}): the direct DAC output and two
-DRC loopback outputs.
-
-## The CD / S-PDIF capture bridge
-
-The second source, and the only live one: a CD transport's S/PDIF output,
-captured through an ESI U24 XL and written into the same loopback MPD uses.
-On FreeBSD this is `omdrc-cdin`, a purpose-written daemon: a `memcpy` through
-a ring whose *lead* absorbs the permanent few-ppm difference between the
-disc's crystal and the DAC's --- no resampler, so the bit-perfect claim
-survives the CD path too --- and it holds the loopback only while audio is
-actually on the wire. The source-selection policy is nevertheless exclusive:
-the CD-input control remembers and disables MPD's audible output before the
-bridge starts, then restores that exact output after it stops. This is explicit
-on FreeBSD because `virtual_oss` would otherwise mix both writers. On Linux the
-same job is `alsaloop(1)` from `alsa-utils`, steering `snd-aloop`'s rate-shift
-control instead of a hand-rolled ring; its single-substream loopback enforces
-the same exclusivity at the device level. Full treatment, including the ESI
-configuration both platforms depend on, in chapter \ref{sec:cdin}.
-
-## The loopback: snd-aloop (Linux) / virtual_oss (FreeBSD)
-
-BruteFIR needs to receive the player's audio. That is done with a loopback
-device MPD plays into and BruteFIR reads from:
-
-* **Linux**: the `snd-aloop` ALSA kernel module (loaded via
-  `etc/modules-load.d/`), pinned to the DAC's clock with the `timer_source`
-  module parameter (`etc/modprobe.d/`) rather than its default free-running
-  hrtimer --- otherwise the loopback is a second, independent drift pair on
-  top of whatever else is clocked against the DAC (section
-  \ref{sec:cdin-linux}).
-* **FreeBSD**: **`virtual_oss`**, a userland OSS mixing/routing daemon from
-  the base system, which creates character devices through the **`cuse(3)`**
-  kernel facility. `drc.sh` starts it per rate with a play node
-  (`/dev/dsp.play`, where MPD writes) and a synchronized loopback node
-  (`/dev/dsp.loop`, where BruteFIR reads): the `-L` loopback. The `cuse`
-  kernel module must be loaded.
-
-## BruteFIR (delleceste fork)
-
-The convolution engine, built from **`github.com/delleceste/brutefir`** ---
-a fork of Anders Torger's classic BruteFIR adding FreeBSD OSS fixes
-(`bfio_oss` fragment-size fix, `brutefir_loopback` `-L` fix, and a
-passthrough-config default). It processes audio entirely in **float64**,
-convolving the per-rate `L.raw`/`R.raw` FIR filters and writing to the DAC.
-Requires FFTW3 in both single and double precision; ALSA on Linux (OSS
-support is built in on FreeBSD). Built with CMake; modules install to
-`/usr/local/lib/brutefir`.
-
-## open-media-drc proper: drc.sh and the configuration tree
-
-`drc.sh` is the single control point of the DRC pipeline: it starts and
-stops BruteFIR and the loopback, selects the MPD output, primes the DAC on
-rate changes, serializes concurrent runs, records persistent state, and
-rolls back to direct output on failure. Section \ref{sec:usage} covers it in
-full.
-
-## omdrc-ctrl --- web control panel
-
-A lightweight Flask web app serving a mobile-friendly, dark, touch-first
-control panel on the LAN (default port 9090). It exposes DRC control
-buttons, full audio-chain health monitoring with a bit-perfect verdict, a
-live spectrum analyzer, and DRC filter-response charts. Section
-\ref{sec:omdrcctrl}.
-
-## video/ --- mpv playback and the phone web remote
-
-Blu-ray discs, DVDs, files and streams played through mpv with audio routed
-through the same DRC chain, controlled either from KDE Connect (MPRIS) or
-from a dedicated phone web remote (the mpv-only Kodi replacement). Section
-\ref{sec:video}.
-
-## browser-nodrc --- DRC bypass for browsers
-
-Web browsers cannot easily route into the DRC loopback, and BruteFIR holds
-the DAC single-open while DRC runs. `browser-nodrc/` provides one launcher
-per browser (Firefox, Chromium, Chrome) that snapshots the DRC state, runs
-`drc.sh off`, launches the browser in the foreground, and restores the exact
-pre-launch state from an EXIT trap --- even if the browser crashes. On Linux,
-the browser uses a managed ALSA default which follows the DAC and capture
-interface selected on `/configuration`; it never relies on USB card index 0.
-Section \ref{sec:browser-audio} describes the complete lifecycle.
+**browser-nodrc** exists because BruteFIR holds the DAC single-open while DRC
+runs and browsers cannot route into the loopback.
 
 \newpage
 
-# Installation
+# Installation: the common build {#sec:install}
 
-## Dependencies
+Installation has two layers. This chapter is the OS-neutral build; the OS
+integration (packages, services, hotplug, loopback) is Linux chapter
+\ref{sec:linux-install} or FreeBSD chapter \ref{sec:fbsd-install}. Install
+your OS's packages first, then do steps 1--5 here, then finish in your OS
+chapter.
 
-Build tools for all from-source components: a C/C++ compiler, **meson +
-ninja** (upmpdcli stack), **cmake** (BruteFIR fork, omdrc-ctrl),
-**pkg-config**, and git.
+Build tools for the from-source components: a C/C++ compiler, **meson +
+ninja** (upmpdcli stack), **cmake** (BruteFIR, omdrc-ctrl), **pkg-config**
+and git. Runtime dependencies:
 
-| Component | Runtime deps | FreeBSD pkg | Arch pacman |
-|---|---|---|---|
-| libnpupnp 6.3.0 | libcurl, libmicrohttpd, expat | `curl libmicrohttpd expat2` | `curl libmicrohttpd expat` |
-| libupnpp 1.0.4 | libnpupnp + the above | (above) | (above) |
-| upmpdcli 1.9.17 | libupnpp, jsoncpp, libmpdclient | `jsoncpp libmpdclient` | `jsoncpp libmpdclient` |
-| upmpdcli Qobuz plugin | python3 + requests | `python3 py311-requests` | `python python-requests` |
-| MPD | soxr resampler + ALSA/OSS output | **`musicpd`** | **`mpd`** |
-| BruteFIR (fork) | FFTW3 single+double; ALSA on Linux | `fftw3 fftw3-float` | `fftw alsa-lib` |
-| Loopback | --- | `virtual_oss` (+ `cuse`) | `snd-aloop` kernel module |
-| omdrc-ctrl | python3, flask>=2.3, markdown>=3.5, numpy>=1.21 (optional) | `py311-flask py311-Markdown py311-numpy` | `python-flask python-markdown python-numpy` |
+| Component | Needs |
+|---|---|
+| libnpupnp 6.3.0 | libcurl, libmicrohttpd, expat |
+| libupnpp 1.0.4 | libnpupnp |
+| upmpdcli 1.9.17 | libupnpp, jsoncpp, libmpdclient; the optional Qobuz plugin needs python3 + `requests` |
+| MPD | soxr resampler and the OS audio output plugin |
+| BruteFIR (fork) | FFTW3 single + double precision |
+| omdrc-ctrl | python3, flask >= 2.3, markdown >= 3.5, numpy >= 1.21 (optional) |
 
-## Build and install order
+Package names per OS are in section \ref{sec:linux-packages} (Linux) and
+section \ref{sec:fbsd-packages} (FreeBSD).
 
 **1. The upmpdcli stack** (bottom-up; each a standard meson project):
 
@@ -304,17 +164,11 @@ for p in libnpupnp-6.3.0 libupnpp-1.0.4 upmpdcli-1.9.17; do
   ninja -C build
   sudo ninja -C build install
 done
-sudo ldconfig 2>/dev/null || true   # Linux: refresh the linker cache
 ```
 
-**2. MPD** --- from the OS package:
+**2. MPD** comes from the OS package (Linux `mpd`, FreeBSD `musicpd`).
 
-```sh
-sudo pkg install musicpd      # FreeBSD
-sudo pacman -S mpd            # Arch Linux
-```
-
-**3. BruteFIR** --- from the fork:
+**3. BruteFIR** from the fork:
 
 ```sh
 git clone https://github.com/delleceste/brutefir ~/Downloads/brutefir
@@ -323,791 +177,67 @@ cmake -B build && cmake --build build
 sudo cmake --install build    # modules -> /usr/local/lib/brutefir
 ```
 
-**4. open-media-drc (DRC engine + web UIs + DAC hotplug)** --- the classical
-CMake build:
+**4. open-media-drc** (DRC engine, web UIs, DAC-hotplug glue):
 
 ```sh
 git clone --recursive https://github.com/delleceste/open-media-drc ~/DRC/open-media-drc
 cd ~/DRC/open-media-drc
-cp host.cmake.sample host.cmake   # AUDIO_USER (defaults to the invoking user),
-$EDITOR host.cmake                #   GEOMETRY, GEOMETRIES, OMDRC_SITE_DATA_DIRS,
-                                  #   MUSIC_DIR, VIDEO_DIR, OMDB_API_KEY
+cp host.cmake.sample host.cmake   # AUDIO_USER, GEOMETRY, GEOMETRIES,
+$EDITOR host.cmake                #   OMDRC_SITE_DATA_DIRS, MUSIC_DIR,
+                                  #   VIDEO_DIR, OMDB_API_KEY
 mkdir build && cd build
 cmake .. -C ../host.cmake
 make
 sudo make install                 # -> $PREFIX (default /usr/local)
 ```
 
-**`host.cmake` is read only by `-C`, and only for cache entries that do not
-exist yet.** A plain `cmake ..` configures the whole project from the built-in
-defaults, and adding `-C` afterwards cannot repair that build directory --- CMake
-skips an initial-cache assignment whose entry is already set. The symptom is
-silent: everything configures, with the wrong values. The project therefore
-detects it, because `host.cmake` sets a marker the check looks for:
+`host.cmake` is the single source of box-specific values. It is an initial
+CMake cache, so it is read **only by `-C` and only for entries that do not
+exist yet**: adding `-C` to a build directory that was already configured
+silently keeps the defaults. The project detects this and warns; start a
+fresh build directory:
 
 ```text
-CMake Warning at CMakeLists.txt:50 (message):
-  host.cmake exists but this build directory was not initialised from it, so
-  the built-in defaults are in effect.  Adding -C now will not help; start a
-  fresh build directory:
-
-      rm -rf build && mkdir build && cd build && cmake -C ../host.cmake ..
+rm -rf build && mkdir build && cd build && cmake -C ../host.cmake ..
 ```
 
-A `host.cmake` copied from a version of the sample that predates the marker
-will trip this warning; add the one line the sample carries near the top.
-
-`host.cmake` (the successor to the old `config.env`) is the single source of
-box-specific values; CMake renders every config from it and installs the DRC
-engine (`drc.sh` behind the `omdrc` / `omdrc-status` wrappers), the site data
-(brutefir configs + impulse-response filters for `GEOMETRY` and every set listed
-in `GEOMETRIES`, each looked up along `OMDRC_SITE_DATA_DIRS` and reported at
-configure time), both
-web UIs (omdrcctrl :9090 as a **system** service running as the audio user;
-omdrcvideo :9080 as a **`--user`** service, since it drives the desktop-session
-mpv), and the DAC-hotplug glue. The install prints the OS-specific enable steps
-and the one or two files that must be copied into `/etc` (next section).
-
-CMake covers the whole stack: engine, DAC-hotplug glue, both web UIs, the MPD +
-upmpdcli renderer configs/units, the `browser-nodrc` launchers and the video
-`play-media` / `play-bluray` launchers with their `.desktop` entries, the Linux
-`snd-aloop` module config, the Linux browser ALSA default, and the Linux CD-input
-bridge. Desktop-session
-entries install under the prefix and `make user-install` links the ones that
-must live in the user's session (the mpv-idle autostart); menu entries go
-straight to `$PREFIX/share/applications`.
-
-On a live Linux host, `make install` also appends one marked include to the
-audio user's existing ALSA configuration. It uses `~/.asoundrc`, unless the
-later-loaded `~/.config/alsa/asoundrc` already exists, and preserves a one-time
-`.omdrc-before-browser-alsa` backup. A `DESTDIR` package build installs the
-template but deliberately does not touch a real home directory. Section
-\ref{sec:browser-audio} gives the installed paths and recovery procedure.
-
-An older `./install.sh` rendered the `*.in` templates in place so everything ran
-straight from the checkout (`git pull` = update). It has been **removed**: it
-produced nothing CMake does not, and the deploy instructions it printed were a
-second copy of the `make install` checklist that drifted out of date. Running
-from a checkout is still supported and needs no install step at all --- `drc.sh`
-and `drc-status.sh` enter *repo mode* when `config.env` sits beside them, taking
-their state and site data from the checkout instead of `${PREFIX}/etc`.
-
-**5. BruteFIR defaults** --- BruteFIR reads float precision, partition size
-and the I/O devices from `~/.config/BruteFIR/brutefir_defaults.conf`. The
-per-rate configs deliberately leave their `input`/`output` blocks empty and
-inherit devices from this file, so it **must** be deployed:
-
-```sh
-mkdir -p ~/.config/BruteFIR
-cp etc/open-media-drc/brutefir_defaults.linux.conf ~/.config/BruteFIR/brutefir_defaults.conf  # Linux/ALSA
-cp etc/open-media-drc/brutefir_defaults.conf       ~/.config/BruteFIR/brutefir_defaults.conf  # FreeBSD/OSS
-```
-
-If this file is missing, BruteFIR (>= 1.1) silently auto-generates a broken
-fallback `~/.brutefir_defaults`, every start fails with *"Parse error: path
-not set ... module 'file'"*, and `drc.sh` rolls back to direct output --- so
-DRC never comes up at boot.
-
-**6. Renderer runtime state** --- MPD, upmpdcli and qobuzconnect2mpd all write
-persistent state (database, pid, cache, tokens) and drop logs into `/tmp`. On
-a real host install `make install` runs
-`scripts/prepare-renderer-runtime.sh` (wired in by
-`cmake/install-renderer-runtime.cmake.in`, and again from
-`cmake/renderers.cmake`) to converge every one of those paths onto
-`AUDIO_USER` --- the same user BruteFIR and MPD already share for the audio
-devices --- instead of leaving a reinstall, a user rename, or
-qobuzconnect2mpd's own dedicated service account to produce mismatched
-ownership that is discovered only when a renderer fails to start. The script
-takes `AUDIO_USER`, `AUDIO_HOME`, the qobuzconnect2mpd state directory and the
-runtime/log directory, refuses a handful of dangerously broad roots, and
-skips (rather than chowns) an unexpected symlink under `/tmp`. It is skipped
-entirely under `DESTDIR` packaging, since that is staging rather than the
-target host.
-
-## Files that must live in /etc
-
-The CMake install copies everything into `$PREFIX` (default `/usr/local`); the
-update path is `git pull` followed by `cmake --build build && sudo cmake
---install build`, not an in-place edit of the checkout. Two files are read
-*before* `$PREFIX` is in the relevant search path, so they are handled
-specially:
-
-* **Linux udev rule** --- udev only scans `/etc/udev/rules.d` and
-  `/usr/lib/udev`, never `/usr/local/lib/udev`. The install places
-  `99-usb-audio-drc.rules` under `$PREFIX/lib/udev/rules.d` and prints the
-  one-line copy into `/etc/udev/rules.d` (then `udevadm control --reload`).
-* **MPD `/etc` drop-in** --- overriding the distro `mpd` unit's `User=mpd`
-  requires a real file in `/etc/systemd/system/mpd.service.d/` (a drop-in in
-  `/etc` beats one in `/usr/lib`; see the caveat below).
-
-Everything else stays under `$PREFIX` and needs no `/etc` copy: the systemd
-units (`$PREFIX/lib/systemd/{system,user}`, which systemd *does* scan), the
-FreeBSD rc.d scripts and devd rule (`$PREFIX/etc/{rc.d,devd}`, scanned
-natively), `drc.sh`, the filters and configs. The BruteFIR defaults still go to
-`~/.config/BruteFIR/` (below).
-
-## Linux specifics
-
-### The MPD `User=` drop-in caveat (Arch)
-
-The Arch `mpd` package ships a systemd drop-in
-(`/usr/lib/systemd/system/mpd.service.d/00-arch.conf`) setting `User=mpd`.
-Drop-ins always apply *on top of* the main unit, so a full unit override at
-`/etc/systemd/system/mpd.service` **cannot** override that `User=` --- it
-silently loses. The repo therefore ships a **counter-drop-in**
-(`etc/systemd/system/mpd.service.d/open-media-drc.conf`, rendered by
-`cmake/renderers.cmake` and installed to `$PREFIX/lib/systemd/system/mpd.service.d/`)
-that sets `User=` to the audio user and the installed config path; a drop-in in
-`/usr/local/lib` beats one in the distribution's `/usr/lib` load path.
-`cmake --install` installs it directly; no manual `/etc` copy is needed. Do not
-create a full `/etc/systemd/system/mpd.service`.
-
-### USB DAC hotplug (udev + systemd)
-
-| File | Installed to | Purpose |
-|---|---|---|
-| `99-usb-audio-drc.rules` | `/etc/udev/rules.d/` | Triggers the service on DAC plug/unplug |
-| `etc/systemd/system/drc-usb-audio.service` | `/etc/systemd/system/` | Starts/stops DRC |
-| `mpd.service.d/open-media-drc.conf` | `$PREFIX/lib/systemd/system/mpd.service.d/` | MPD user/config and post-start routing-reconcile drop-in |
-
-The udev rule matches any USB sound-card control device and pulls in
-`drc-usb-audio.service` (`Type=oneshot`, `RemainAfterExit=yes` so the
-several `controlC*` events of one plug never start duplicate BruteFIR
-instances). `ExecStart` is `drc.sh restore` after a 1 s settle;
-`ExecStop` is `drc.sh stop`. Because udev synthesizes ADD events for
-already-present devices at boot, the same service covers boot and hotplug.
-
-Manual control: `sudo systemctl start|stop drc-usb-audio.service`,
-`journalctl -fu drc-usb-audio.service`.
-
-## FreeBSD installation and lifecycle {#sec:freebsd-lifecycle}
-
-This section is the authoritative FreeBSD installation and init-system
-reference. It covers every FreeBSD init or devd artifact owned by this
-repository. Port templates and their rendered copies are one logical script,
-so they appear in one row rather than as duplicates.
-
-### Installation procedure
-
-**1. Install runtime packages and load cuse.**
-
-```sh
-pkg install bash brutefir virtual_oss musicpd mpc
-sysrc kld_list+="cuse"
-kldload cuse
-```
-
-Install the optional controller/video Python dependencies and renderer packages
-for the features actually used. The login audio user must be a member of the
-groups that grant access to sound and USB devices. BruteFIR must never be
-started as root: an interactive `drc.sh` could not stop a root-owned instance.
-
-**2. Install the project.**
-
-Set the box values in `host.cmake` (copied from `host.cmake.sample`), then:
-
-```sh
-mkdir -p build && cd build
-cmake .. -C ../host.cmake
-make && sudo make install
-make user-install          # as the audio user, after the system install
-```
-
-To run from the repository instead, no install step is needed: put a
-`config.env` beside `drc.sh` and it enters repo mode, reading its state and site
-data from the checkout.
-
-For the package layout, use the FreeBSD port under
-`freebsd/audio/open-media-drc`. The installed `omdrc_audio` script points at
-`/usr/local/libexec/omdrc/drc.sh`; the run-from-repository script points at
-this checkout.
-
-The early-boot files must be regular copies in the system paths, not symlinks
-into a possibly separate `/home` filesystem:
-
-```sh
-install -m 755 etc/rc.d/omdrc_audio /usr/local/etc/rc.d/omdrc_audio
-install -m 644 etc/devd/omdrc-audio.conf /usr/local/etc/devd/omdrc-audio.conf
-sh scripts/prepare-musicpd-rc-conf-dir.sh \
-  /usr/local/etc/rc.conf.d/musicpd
-install -m 644 etc/rc.conf.d/musicpd/omdrc_audio \
-  /usr/local/etc/rc.conf.d/musicpd/omdrc_audio
-```
-
-FreeBSD's `rc.subr` permits `rc.conf.d/musicpd` to be either a single file or
-a directory. The preparation helper makes the directory form. If the path was
-already a file, it is moved unchanged, with its mode preserved, to
-`musicpd/00-local.conf`; then the independent `omdrc_audio` fragment is
-installed beside it. The helper is idempotent. The direct Make installer and
-CMake installer call it automatically, while the FreeBSD package performs the
-same conversion in its `PRE-INSTALL` script before package extraction. This
-avoids both an upgrade failure from `mkdir` on a file and the loss or rewriting
-of an administrator's existing MPD settings.
-
-Copy the other enabled rc.d scripts from the table below in the same way.
-After an update, refresh these copies. Runtime configurations may remain
-symlinked to the checkout once their containing filesystem is available.
-
-Remove obsolete lifecycle files after the new service is installed and tested:
-
-```sh
-# Historical names; they must not coexist with omdrc_audio.
-# /usr/local/etc/rc.d/{drc_usb_audio,brutefir_drc,omdrc_sndlink}
-# /usr/local/etc/devd/omdrc-sndlink.conf
-# /usr/local/libexec/omdrc-hotplug
-```
-
-**3. Install the user-owned BruteFIR defaults and MPD configuration.**
-
-```sh
-install -d -o AUDIO_USER -g AUDIO_GROUP /home/AUDIO_USER/.config/BruteFIR
-install -m 644 etc/open-media-drc/brutefir_defaults.conf \
-  /home/AUDIO_USER/.config/BruteFIR/brutefir_defaults.conf
-```
-
-Merge the three named outputs from `mpd/musicpd.conf.in`: `OKTO-DAC`,
-`DRC-native`, and `DRC-resamp`. All FreeBSD physical output paths must use
-`/dev/dsp.dac`; do not substitute a numbered `/dev/dsp0`.
-
-**4. Configure the lifecycle in rc.conf.**
-
-A core installation with the controller and renderer restore service uses:
-
-```sh
-musicpd_enable="YES"
-musicpd_config="/home/giacomo/open-media-drc/mpd/musicpd.conf"
-
-omdrc_audio_enable="YES"
-omdrc_audio_user="giacomo"
-omdrc_audio_dac="0x152a:0x88c5"       # strongly recommended with >1 card
-omdrc_audio_capture="ESI U24XL"       # omit when CD input is unused
-omdrc_audio_capture_recsrc="auto"
-
-omdrc_renderer_enable="YES"
-upmpdcli_enable="NO"
-qobuzconnect2mpd_enable="NO"
-qobuzconnect2mpd_user="giacomo"
-qobuzconnect2mpd_group="giacomo"
-qobuzconnect2mpd_homedir="/var/db/qobuzconnect2mpd"
-
-omdrcctrl_enable="YES"
-omdrcctrl_user="giacomo"
-omdrcvideo_enable="YES"
-omdrcvideo_user="giacomo"
-```
-
-Remove any numbered default-device assignment such as
-`hw.snd.default_unit=0` from `/etc/sysctl.conf`. The global OID survives a
-re-attach, but its **value is a pcm unit number**, so only the role resolver can
-know the correct value. Other genuinely global sound tunables remain in
-`/etc/sysctl.conf`.
-
-For CD input, also set `omdrc_cdin_enable="YES"` and
-`omdrc_cdin_user="giacomo"`. The detailed CD knobs are documented in
-section \ref{sec:cdin}.
-
-These are all project lifecycle key families:
-
-| Key family | Purpose |
-|---|---|
-| `musicpd_enable`, `musicpd_config` | MPD boot and configuration |
-| `omdrc_audio_enable`, `omdrc_audio_user`, `omdrc_audio_drcsh`, `omdrc_audio_statussh` | master audio lifecycle and user boundary |
-| `omdrc_audio_dac`, `omdrc_audio_capture` | stable card identities |
-| `omdrc_audio_dac_sysctls`, `omdrc_audio_capture_sysctls`, `omdrc_audio_capture_recsrc` | per-role settings reapplied after every attach |
-| `omdrc_audio_rundir`, `omdrc_audio_lockfile`, `omdrc_audio_statefile` | root boot-lifetime device transaction state |
-| `omdrc_cdin_*` | optional CD bridge, fully listed in section \ref{sec:cdin} |
-| `omdrc_renderer_enable`, `omdrc_renderer_prefix`, `omdrc_renderer_script`, `omdrc_renderer_statedir` | restore the last selected renderer |
-| `upmpdcli_enable`, `upmpdcli_user`, `upmpdcli_homedir`, `upmpdcli_config`, `upmpdcli_pidfile`, `upmpdcli_logfile`, `upmpdcli_flags` | UPnP renderer worker |
-| `omdrcctrl_enable`, `omdrcctrl_user`, `omdrcctrl_env`, `omdrcctrl_pidfile`, `omdrcctrl_logfile` | web controller |
-| `omdrcvideo_enable`, `omdrcvideo_user`, `omdrcvideo_env`, `omdrcvideo_pidfile`, `omdrcvideo_logfile` | video web remote |
-
-The old `drc_usb_audio_*`, `brutefir_drc_*`, and
-`omdrc_sndlink_*` families are accepted only as one-release migration
-fallbacks by `omdrc_audio`. Copy their local values to the new keys and
-remove them. Enabling an old copied script creates a second lifecycle owner
-and is unsupported.
-
-**5. Validate ordering and activate.**
-
-```sh
-rcorder /etc/rc.d/* /usr/local/etc/rc.d/* | \
-  egrep 'devd$|omdrc_audio$|musicpd$|omdrc_cdin$|omdrc_renderer$'
-service devd restart
-service omdrc_audio roles
-service omdrc_audio status
-service omdrc_audio reconcile
-sysctl hw.snd.default_unit       # must equal the pcm unit reported as dac
-mpc outputs                     # desired output enabled after musicpd starts
-```
-
-`omdrc_audio` requires `devd`, so the cold-plug scan runs after devd is
-listening. A card that finishes attaching after the scan produces a pcm event.
-The service deliberately does not require MPD: a slow MPD must not prevent the
-physical DRC chain from becoming healthy.
-
-### Complete FreeBSD init and devd inventory
-
-![Linux's current udev/systemd edge and the redesigned FreeBSD devd/rc.d level reconciliation.](build/chain-hotplug.pdf){width=88%}
-
-| Script/configuration | rcorder relation or event | Function | Enable directly? |
-|---|---|---|---|
-| `musicpd` | `REQUIRE: mixer LOGIN avahi_daemon` | Starts MPD with the repository's FreeBSD configuration | Yes |
-| `rc.conf.d/musicpd/omdrc_audio` | successful `musicpd` `start_postcmd` | Issues one bounded audio reconcile after MPD is actually available | No; sourced by `musicpd` |
-| `omdrc_audio` | `REQUIRE: FILESYSTEMS devd`; `shutdown` | Single owner of card roles and DRC lifecycle | Yes |
-| `omdrc_cdin` | `REQUIRE: omdrc_audio`; `shutdown` | Optional continuous S/PDIF capture bridge | Yes, only with CD input |
-| `omdrc_renderer` | `REQUIRE: NETWORKING FILESYSTEMS musicpd`; `shutdown` | Restores whichever renderer the UI last selected | Yes |
-| `upmpdcli` | `REQUIRE: NETWORKING FILESYSTEMS musicpd`; `shutdown` | UPnP/OpenHome worker controlled by `omdrc_renderer` | No when renderer restore is used |
-| `omdrcctrl` | `REQUIRE: NETWORKING LOGIN`; `shutdown` | Starts the web controller as the audio user | Yes when installed |
-| `omdrcvideo` | `REQUIRE: NETWORKING LOGIN`; `shutdown` | Starts the video web remote; it does not start mpv | Yes when installed |
-| `omdrc-audio.conf` | devd `pcm[0-9]+` attach and detach | Detaches one level-triggered `omdrc_audio reconcile` request | Installed in devd; no rcvar |
-
-#### musicpd
-
-The project `musicpd` script selects the rendered `musicpd_config`, asks
-rc.subr to derive the pidfile from that file, and launches the FreeBSD
-`musicpd` binary. MPD drops to the user/group declared inside its
-configuration. It owns no DRC transition and no project lock. The dependency
-token is consistently `musicpd`: both `omdrc_renderer` and `upmpdcli`
-require the name this script actually provides.
-
-#### rc.conf.d/musicpd/omdrc_audio
-
-This is a service-specific `rc.subr` configuration fragment, not another
-daemon and not another init service. It sets `musicpd`'s `start_postcmd` to a
-small function that runs only after MPD has started successfully:
-
-```sh
-omdrc_musicpd_poststart()
-{
-    checkyesno omdrc_audio_enable 2>/dev/null || return 0
-    /usr/sbin/service omdrc_audio reconcile ||
-        warn "musicpd: omdrc_audio reconcile failed; retry it manually"
-    return 0
-}
-```
-
-All supported installation paths install this fragment: the FreeBSD CMake
-branch, the direct Make target, and the port/package. This is required because
-`omdrc_audio` normally runs before `musicpd`: the physical chain can be healthy
-while its bounded MPD selection remains pending. The successful MPD start is
-the factual readiness event that triggers one later reconcile. The hook itself
-has no lock, wait, daemon, or reverse call to `musicpd`.
-
-An existing single-file `rc.conf.d/musicpd` cannot coexist at the same path
-with the fragment directory. Before installing the hook, it is therefore
-migrated to `rc.conf.d/musicpd/00-local.conf`. `rc.subr` sources regular files
-from the directory in lexical order, so local settings remain active and the
-hook is added without editing them.
-
-The trigger exists because `omdrc_audio` deliberately does **not** require or
-wait for MPD. At early boot it can construct and verify virtual_oss and
-BruteFIR first; the final bounded `mpc` output switch then reports `pending` if
-MPD is still unavailable. A successful MPD start is the earliest factual
-readiness signal, so the hook retries once at that event rather than guessing
-with a delay, polling forever, or adding a readiness gate to the physical
-chain. The same hook runs after a manual `service musicpd restart`, which is
-another point at which MPD may have forgotten or disabled its outputs.
-
-The edge is strictly one-way:
-
-```
-musicpd successful start
-  -> service omdrc_audio reconcile
-  -> roles transaction (device.lock, then release)
-  -> drc.sh reconcile (drc.lock, bounded mpc)
-```
-
-No `omdrc_audio` path starts or restarts `musicpd`, so there is no recursive
-service cycle. The fragment takes no lock and creates no background process.
-The ordinary reconcile path supplies all serialization and deadlines. A
-reconcile failure is reported but the hook returns success: MPD is already
-running and must not be falsely reported as failed because an optional audio
-route needs later operator attention. When `omdrc_audio_enable` is not enabled,
-the hook is a no-op, preserving the master switch.
-
-#### omdrc_audio
-
-`omdrc_audio` replaces the former three-service/helper chain. Its rcvar,
-`omdrc_audio_enable`, is the only master switch. Its verbs are:
-
-| Verb | Meaning |
-|---|---|
-| `start` | boot cold-plug role pass, then full reconcile |
-| `roles` | root-only role links/settings transaction, no DRC transition |
-| `reconcile` | role transaction, release device lock, then user DRC reconcile |
-| `stop` | transient teardown; preserve desired power, rate, design, and source |
-| `status` | show role resolution and actual chain status |
-
-The service absorbs, rather than discards, two essential old responsibilities.
-From `brutefir_drc` it preserves `su -l`, so HOME and the login-class PATH
-are correct and BruteFIR remains owned by the same user who runs interactive
-commands. From `drc_usb_audio` it preserves the master rcvar and boot/hotplug
-entry point. It does not preserve the unreliable
-`/var/run/drc_usb_audio.active` marker; actual processes, configuration paths,
-rates, nodes, role links, and saved intent are authoritative.
-
-Role publication is an atomic temporary-file rename to
-`/var/run/omdrc/audio.roles`. Link changes use relative targets:
-
-```
-/dev/dsp.dac       -> dspN
-/dev/mixer.dac     -> mixerN
-/dev/dsp.capture   -> dspM
-/dev/mixer.capture -> mixerM
-```
-
-A pre-existing non-symlink at a role name is never overwritten. A detach pass
-removes only project-owned symlinks whose role is now unfilled. An explicit
-USB ID, optional serial, or description match wins; automatic DAC ranking is
-reported loudly when several playback candidates make the result a guess.
-There is no numbered-device fallback.
-
-The same serialized role transaction owns the kernel's bare-OSS default. It
-sets `hw.snd.default_unit` to `DAC_UNIT` with the absolute base-system
-`/sbin/sysctl`, reads the value back, logs a change or failure, and makes
-`service omdrc_audio status` fail visibly when the readback does not match the
-resolved DAC. This setting matters to applications outside the project that
-open `/dev/dsp`; project components themselves continue to use
-`/dev/dsp.dac`. A silent best-effort write is insufficient: on a two-card box,
-leaving the default at pcm0 can route an unrelated application into the ESI
-capture interface even while BruteFIR correctly holds the DAC on pcm1.
-
-Do not put `hw.snd.default_unit=N` in `/etc/sysctl.conf`. That file runs near
-the beginning of rc, before USB attach order and roles are known. A fixed
-number therefore creates two owners and can encode yesterday's enumeration.
-The role pass is the correct location because it already holds
-`device.lock`, has selected the card by stable identity, and runs again after
-each pcm attach/detach. It adds no lock and no independent race window.
-
-#### omdrc_cdin
-
-`omdrc_cdin` runs as the configured audio user. Internally it holds the capture
-role but opens its playback destination only while audio is present. At the
-source-policy level, however, a running bridge is exclusive: the controller
-remembers and disables MPD's audible output before Start and restores it after
-Stop, because `virtual_oss` would otherwise mix both sources.
-
-Before replacing `virtual_oss`, `drc.sh` stops the bridge and waits to a fixed
-deadline for its process to exit. Process exit is the release acknowledgement;
-it does not depend on a logfile that may have been rotated or unlinked. Failure
-aborts CUSE teardown and attempts to restore MPD's direct output. After a
-successful chain transition, a bridge that was running is restarted with
-`onestart` so a panel-started instance survives even when its rcvar is off.
-The service's `release` extra command still sends SIGHUP for direct diagnostic
-use, but it is no longer the transition handshake.
-
-#### omdrc_renderer
-
-`omdrc_renderer` reads `last_renderer` and starts exactly one renderer:
-upmpdcli or qobuzconnect2mpd. It retains the selection at shutdown. Both worker
-rcvars remain `NO`; the helper deliberately uses `onestart`/`onestop`.
-Enabling a worker independently races the owner and may leave two front-ends
-driving MPD.
-
-#### upmpdcli
-
-The repository's `upmpdcli` script is a worker service. It supplies the
-audio user's HOME and a PATH containing `/usr/local/bin`, creates the
-user-owned pid directory, and captures inherited plugin stderr for the
-controller's log view. Its `REQUIRE` token is `musicpd`, not the Linux
-package name `mpd`.
-
-#### omdrcctrl
-
-`omdrcctrl` runs the Flask controller as the configured non-root user.
-Its pre-command creates user-writable pid/log directories; its environment
-sets HOME, PATH, DISPLAY, and optionally the shared `OMDRC_STATE_DIR`.
-It reads `/var/run/omdrc/audio.roles` without spawning a status command.
-The DRC panel includes a distinct `CD input (44.1 kHz)` action.
-
-Its service identity is invariant across callers:
-`/var/run/omdrcctrl/omdrcctrl.pid` always names the `daemon(8)` supervisor.
-The former non-root branch silently selected
-`${TMPDIR:-/tmp}/omdrcctrl-USER.pid`; consequently an ordinary status probe
-reported the root-started service as stopped, and `onestart` could attempt a
-second instance. That branch was removed rather than hidden behind a custom
-`pgrep` status command. rc.subr already avoids a redundant `su` when the caller
-is the configured service user. `daemon -M 0644` makes the canonical PID
-readable for diagnostics while the containing directory and service lifecycle
-remain system-owned.
-
-#### omdrcvideo
-
-`omdrcvideo` starts only the video HTTP/API process. The persistent idle mpv
-belongs to the graphical login session and is not launched by rc. The rc script
-sets the non-root user, PATH, pidfile, and logfile and never participates in
-audio locking.
-
-It follows the same one-service/one-pidfile rule at
-`/var/run/omdrcvideo/omdrcvideo.pid`. Neither service derives identity from
-`TMPDIR` or the invoking UID. FreeBSD rc.d remains the system lifecycle
-interface (`sudo service ... start|stop|restart`); a development process must
-use a distinct port and direct launcher, not masquerade as a second instance of
-the system service.
-
-#### omdrc-audio.conf
-
-The only project devd configuration matches `pcm[0-9]+` at attach and
-detach:
-
-```
-attach 100 {
-    device-name "pcm[0-9]+";
-    action "/usr/sbin/daemon -f /usr/sbin/service omdrc_audio reconcile";
-};
-```
-
-The detach rule has the identical action. Matching `pcm` is a safety
-boundary. A UAC2 device exposes several USB interfaces but one sound card;
-matching USB class events caused several lifecycle runs for one plug.
-A broad USB detach rule could also react to a keyboard or storage device.
-At the pcm event, the kernel has allocated the unit and created its OSS nodes,
-so role resolution has facts to inspect and does not need a settle sleep.
-
-#### What devd serializes --- and what it does not
-
-The current FreeBSD 15.1 source implements a direct action in
-`sbin/devd/devd.cc::my_system()`. It forks a child which executes
-`/bin/sh -c command`, while the devd parent waits for that exact child PID with
-`wait4()`. Consequently, a genuinely synchronous rule such as:
-
-```
-action "/usr/sbin/service omdrc_audio reconcile";
-```
-
-would block devd until that complete reconcile returned. If a detach arrived
-while an attach reconcile was running, the detach event would remain pending;
-after the first action returned, devd would execute the second. The second
-reconcile would not be lost and the two devd-originated service calls would not
-overlap under this implementation.
-
-That is an implementation fact, not an API promise. `devd.conf(5)` documents
-that `action` names a command to execute, but it does not promise synchronous
-execution, non-overlap, or the present `fork()`/`wait4()` process model.
-Correctness must distinguish the FreeBSD 15.1 source behavior from a supported
-interface which could survive a future devd implementation change.
-
-Our installed action deliberately changes the process lifetime:
-
-```
-devd
-  -> sh -c "daemon -f service omdrc_audio reconcile"
-       -> daemon launcher
-            -> detached service omdrc_audio reconcile
-```
-
-devd waits for its exact shell child. The shell waits for the immediate
-`daemon` command, but `daemon` returns after creating the detached descendant;
-neither the shell nor devd follows that descendant and waits for the actual
-reconcile. In FreeBSD, `daemon` itself always performs the detachment and its
-`-f` option means **close inherited file descriptors** --- it is not a
-"foreground" or "detach" switch as similarly named tools may use on other
-systems.
-
-The resulting timing can be:
-
-```
-pcm attach A: devd starts daemon A -> reconcile A detaches -> launcher A exits
-pcm attach B: devd starts daemon B -> reconcile B detaches -> launcher B exits
-                                      reconcile A and B can now overlap
-```
-
-Thus devd still serializes the short top-level launcher commands, but it does
-not serialize their detached audio workers. This is intentional: a full
-reconcile may wait on bounded locks, MPD, BruteFIR, virtual_oss/CUSE, and
-hardware verification. Running it inline would freeze the machine-wide event
-loop and delay unrelated USB, network, input, storage, and ACPI events.
-
-The device lock makes overlapping workers safe. It is acquired *before* each
-worker scans pcm state, so a waiter does not later publish a snapshot collected
-before it waited. For example:
-
-```
-A takes device.lock; scans ESI only
-OKTO attaches; B starts and waits
-A publishes capture-only state; releases device.lock
-B takes device.lock; scans ESI + OKTO; publishes both roles and links
-```
-
-The inverse detach case is equally important. Without the lock, an old
-pre-detach scan could recreate `/dev/dsp.dac` after a newer worker removed it.
-With the lock, the later waiter scans after acquiring the lock and therefore
-observes the final device tree. Every request reconstructs complete level
-state; no attach or detach edge is interpreted directly as an instruction to
-start or stop DRC.
-
-A detached **rejecting singleton** is not equivalent to either the synchronous
-model or this queued-lock model. Consider a pidfile wrapper which exits when a
-worker already exists:
-
-```
-A starts and scans: DAC present
-DAC detaches
-B's top-level devd action runs, but its singleton refuses to start reconcile B
-A publishes its older "DAC present" result
-```
-
-devd did not lose the detach event: it successfully executed B's launcher.
-The application-level singleton discarded the reconciliation requested by that
-event. A correct coalescing singleton would need to set a pending/dirty flag
-and force A to run another complete scan before exiting. That reintroduces a
-marker, wake-up protocol, and worker lifecycle while the scan/update
-transaction still needs serialization. The present lock queues the waiter
-instead of rejecting it, so the second pass performs a fresh scan.
-
-Authoritative references are the FreeBSD 15.1
-[`devd.cc`](https://cgit.freebsd.org/src/tree/sbin/devd/devd.cc?h=releng/15.1)
-implementation, [`devd(8)`](https://man.freebsd.org/cgi/man.cgi?query=devd&sektion=8),
-[`devd.conf(5)`](https://man.freebsd.org/cgi/man.cgi?query=devd.conf&sektion=5),
-[`daemon(8)`](https://man.freebsd.org/cgi/man.cgi?query=daemon&sektion=8), and
-[`lockf(1)`](https://man.freebsd.org/cgi/man.cgi?query=lockf&sektion=1).
-
-### Locking, concurrency, and bounded waits
-
-Only two locks remain, with a strict non-nesting rule:
-
-| Lock | Owner | Protects | Lifetime |
-|---|---|---|---|
-| `/var/run/omdrc/device.lock` | root `omdrc_audio roles` | role discovery, four links, sysctls, recsrc, role publication | one short role transaction |
-| `STATE_DIR/drc.lock` | audio-user `drc.sh` | saved intent reads/writes and the physical chain transition | one mutating DRC command |
-
-Both FreeBSD calls use `lockf -k -s -t ...`. `-k` keeps one inode after
-release; lockf(1) specifically recommends it for concurrent callers because
-unlink/recreate mode cannot guarantee waiter ordering. File existence does
-not mean locked. `/var/run` is correct for root boot-lifetime device state;
-the DRC lock belongs beside persistent user state, and its path is never
-derived from TMPDIR. A desktop session and a boot login shell therefore
-cannot silently choose different locks.
-
-The order is:
-
-```
-devd or rc
-  -> omdrc_audio roles       [take device.lock; update facts; release]
-  -> su -l AUDIO_USER
-  -> drc.sh reconcile        [take drc.lock; converge; release]
-
-musicpd successful start
-  -> the same omdrc_audio reconcile path (the hook owns no lock)
-```
-
-No path takes `drc.lock` and then asks for `device.lock`, and
-`omdrc_audio` releases `device.lock` before entering the user reconciler.
-This removes the former three-lock nesting. Several simultaneous pcm events
-may wait for the short role transaction, then wait for `drc.lock`; the first
-repairs state and later calls become no-ops. Lock waits have finite timeouts.
-
-The apparent simplification "devd serializes, so delete the locks" is therefore
-incorrect for four independent reasons:
-
-1. `daemon -f` intentionally releases devd before the real worker finishes.
-2. Boot rc, the MPD post-start hook, administrators, the UI, and direct
-   `drc.sh` commands are not serialized by devd.
-3. A rejecting asynchronous singleton can discard the reconcile requested by
-   a busy attach/detach event even though devd delivered and executed the
-   top-level action; a queued level rescan must observe the final device tree.
-4. The manuals do not guarantee the current internal `wait4()` behavior.
-
-Removing `daemon` would make long audio waits compromise the entire device
-subsystem. Replacing the queued lock with debounce plus a dirty marker would
-add a marker, timer, and worker lifecycle while the scan/update transaction
-would still need serialization. Combining the locks would hold the short root
-device transaction across the long audio-user chain transition and recreate
-cross-privilege lock coupling. The implemented two non-nested locks are thus
-the simplest safe design, not leftover scaffolding.
-
-The command under FreeBSD's `lockf file command` is supervised by the lockf
-process. The lock is released when the orchestration command exits; BruteFIR
-and virtual_oss do not become lifecycle-lock owners. Linux uses an explicit
-flock descriptor and closes it in daemon children; the Linux audit is treated
-separately.
-
-External waits are bounded while `drc.lock` is held. Every `mpc` call goes
-through a timeout wrapper. A slow or unavailable MPD does not block boot and
-does not prevent a verified physical chain from becoming active; the pending
-output selection is logged, and `musicpd`'s successful-start hook supplies the
-specific next reconcile that retries it. There is no sleep or indefinite MPD
-readiness loop. Service calls
-used to restart the CD bridge also have a deadline and use non-interactive
-sudo. BruteFIR startup, exit, virtual_oss readiness, DAC warm-up, verification,
-and CD release all use explicit poll caps.
-
-Syslog is supplementary evidence, not lifecycle state. During the incident,
-syslogd still held a bound but unlinked `/var/run/log` socket; existing
-connected processes could retain descriptors while new `logger` calls failed
-silently. `omdrc_audio` therefore publishes factual role state directly and
-`drc.sh` appends to persistent `STATE_DIR/drc.log`; neither decides anything
-from syslog. Repair/restart syslogd before using log absence as evidence. The
-project audit found no broad `/var/run` deletion, and FreeBSD `cleanvar`
-explicitly excludes the `log` and `logpriv` socket names, so the unlink cause
-remains a separate system issue rather than an attributed project action.
-
-### Reconcile state and reboot persistence
-
-The reconciler compares saved intent with physical reality:
-
-* `last_power`: on/off;
-* `last_source`: music/cdin;
-* `last_arg`: native rate or resampling request and design;
-* actual BruteFIR config/process, virtual_oss process/rate/nodes, and DAC role.
-
-A matching chain is a no-op. A missing DAC causes a transient teardown while
-preserving intent. Desired off remains off. A partial or wrong-rate chain is
-rebuilt once. The old active marker is not consulted.
-
-The `off` verb writes `last_power=off` before touching BruteFIR, MPD, CD
-input, or CUSE. This ordering matters under `set -e`: a teardown failure must
-not leave the previous on intent, which would bring DRC back at reboot.
-`stop` is different: shutdown and detach use it as a transient teardown and
-do not change desired power.
-
-`restore` reads state only after acquiring the same DRC lock, eliminating the
-old time-of-check/time-of-use window. The explicit UI/CD verb is:
-
-```sh
-drc.sh cdin
-```
-
-It records `last_source=cdin` before requesting the 44.1 kHz chain. Reboot
-therefore restores CD mode at 44.1 kHz. An ordinary rate action is the explicit
-return-to-music action and writes `last_source=music` before DAC presence and
-configuration validation or any teardown/startup work. This is write-ahead
-intent, not a success marker: if the requested music transition fails, the
-next `restore` or hotplug `reconcile` retries music instead of resurrecting the
-stale CD input at 44.1 kHz. `off` and transient `stop` do not change the source.
-A geometry change in CD mode is refused if the target geometry has no 44100 Hz
-configuration. The status/UI distinguishes CD input from ordinary 44.1 kHz
-music.
-
-### The verified boot-recursion failure and its removal
-
-The old `omdrc_sndlink` script re-entered itself under `lockf` using
-`$0`. This was safe under `service(8)`, where `$0` was the absolute
-script, but false during normal boot: FreeBSD's `/etc/rc` sources each rc.d
-script, so `$0` remained `/etc/rc`. The lock command therefore launched:
-
-```
-/bin/sh /etc/rc oneupdate
-```
-
-That caused a second rc pass: duplicated host UUID/network/route and service
-startup, devd already-busy errors, and long wireless timeouts. It was bounded
-to one extra pass only because the inherited lock marker suppressed another
-re-entry, but one nested boot was enough to destabilize the machine.
-
-The emergency old-script correction used `rc_service`, because rc.subr sets
-it to the absolute rc.d path before sourcing the script. The migration removes
-that script entirely. `omdrc_audio` retains the safe form for its short locked
-`roles` re-entry:
-
-```sh
-/bin/sh "$rc_service" oneroles
-```
-
-The implementation falls back to the executing script path only outside rc.
-There is no call to `/etc/rc`, no dirty/debounce recursion, and no helper
-that can replay boot.
-
+CMake renders every config from `host.cmake` and installs: the DRC engine
+(`drc.sh` behind the `omdrc` / `omdrc-status` wrappers); the site data
+(configs + filters for `GEOMETRY` and every set in `GEOMETRIES`, each looked
+up along `OMDRC_SITE_DATA_DIRS` and reported at configure time); both web UIs
+(omdrcctrl :9090 as a **system** service running as the audio user, omdrcvideo
+:9080 as a **`--user`** service because it drives the desktop-session mpv);
+the DAC-hotplug glue; the MPD and upmpdcli renderer configs; the
+`browser-nodrc` launchers; the video launchers and `.desktop` entries; and the
+OS-specific pieces of Part II or III. `make user-install` links the entries
+that must live in the user's session; menu entries go straight to
+`$PREFIX/share/applications`. The install prints the OS-specific enable steps.
+
+Running from a checkout needs no install: put a `config.env` beside `drc.sh`
+and it enters *repo mode*, taking state and site data from the checkout.
+
+**5. BruteFIR defaults.** BruteFIR reads float precision, partition size and
+the I/O devices from `~/.config/BruteFIR/brutefir_defaults.conf`. The per-rate
+configs leave their `input`/`output` blocks empty and inherit devices from it,
+so it **must** be deployed; the template differs per OS (Linux section
+\ref{sec:linux-defaults}, FreeBSD section \ref{sec:fbsd-defaults}). Without
+it BruteFIR (>= 1.1) silently writes a broken `~/.brutefir_defaults`, every
+start fails with *"Parse error: path not set ... module 'file'"*, and `drc.sh`
+rolls back to direct output --- DRC never comes up at boot.
+
+**6. Renderer runtime state.** MPD, upmpdcli and qobuzconnect2mpd write
+persistent state and logs under `/tmp`. On a real host, `make install` runs
+`scripts/prepare-renderer-runtime.sh` to converge all of those paths onto
+`AUDIO_USER`, so a reinstall or user rename cannot leave mismatched ownership.
+It refuses dangerously broad roots, skips an unexpected symlink under `/tmp`,
+and is skipped under `DESTDIR` staging.
+
+The update path is `git pull`, then `cmake --build build && sudo cmake
+--install build`; do not edit installed files in place.
+
+Then continue with Part II (Linux) or Part III (FreeBSD).
+
+\newpage
 
 # Usage: drc.sh, filters, and configuration {#sec:usage}
 
@@ -1129,6 +259,7 @@ drc.sh <rate>|resamp|cdin|reconcile|restore|off|stop|status|session [variant]
 | `status`, `session` | Report actual chain state or the exact persistent restore tuple |
 | `geometry`, `design` | Show/list/switch the persistent room geometry or audited filter design |
 | `variant` | Optional second argument (a config-filename suffix): selects an alternate filter set; superseded by `design` |
+
 
 ![drc.sh verbs and the persistent lifecycle state.](build/drc-states.pdf){width=95%}
 
@@ -1152,30 +283,39 @@ state in run-from-repo mode, or the configured/installed user state path):
 * **`last_geometry`** --- the current geometry override. Design remains part
   of `last_arg`, so the full tuple can be restored without guessing.
 
-The configuration's `GEOMETRY` is the default; `drc.sh geometry <name>` records
-a runtime override in `last_geometry`.
 
-What a required rebuild does, in order: stop any running BruteFIR and wait for
-the DAC to be released; make bounded MPD release requests; stop a running CD
-bridge and verify process exit as its output-release acknowledgement; (FreeBSD)
-restart `virtual_oss`
-at the target rate and wait for `/dev/dsp.loop`; prime the DAC if the rate
-changed; start BruteFIR and **verify it stays up**; make a bounded attempt to
-enable the matching MPD output; record the state. If BruteFIR cannot come up,
-`drc.sh` **rolls
-back** --- stops the loopback and re-enables the direct output --- leaving a
-clean, audible system equivalent to `off`.
+The configuration's `GEOMETRY` is the default; `drc.sh geometry <name>`
+records a runtime override in `last_geometry`.
 
-**The priming quirk**: the OKTO DAC routes silence on the *first* stream
-opened at a new sample rate; a second open fixes it. On a detected rate
-change `drc.sh` opens BruteFIR once, tears it down, then starts it for real.
-(The kernel-level fix for this is the clock-before-alt patch, Appendix
-\ref{sec:uaudio-patches}; with it installed, `DAC_PRIME_CYCLES` defaults
-to 0.)
+A required rebuild does, in order: stop BruteFIR and wait for the DAC to be
+released; make bounded MPD release requests; stop a running CD bridge and
+verify its process exit as the output-release acknowledgement; restart the
+loopback at the target rate; prime the DAC if the rate changed (FreeBSD,
+section \ref{sec:fbsd-prime}); start BruteFIR and **verify it stays up**;
+make a bounded attempt to enable the matching MPD output; record the state.
+If BruteFIR cannot come up, `drc.sh` **rolls back** --- stops the loopback and
+re-enables the direct output --- leaving a clean, audible system equivalent to
+`off`.
 
-`drc.sh status` (and `drc-status.sh`) reports the *actual, observed* state
---- config, loopback/ALSA rate, BruteFIR, MPD output and rate --- derived from
-what is running, not from `last_arg`.
+`drc.sh status` (and `drc-status.sh`) reports the *actual, observed* state ---
+config, loopback rate, BruteFIR, MPD output and rate --- derived from what is
+running, not from `last_arg`.
+
+## Reconcile: saved intent versus reality
+
+`drc.sh reconcile` --- run at boot, on DAC hotplug and after MPD starts ---
+compares the saved intent (`last_power`, `last_source`, `last_arg`) with what
+is physically there: the BruteFIR config and process, the loopback process,
+rate and nodes, and the DAC role. A matching chain is a no-op. A missing DAC
+causes a transient teardown that keeps the intent; desired off stays off; a
+partial or wrong-rate chain is rebuilt once.
+
+`off` writes `last_power=off` *before* touching BruteFIR, MPD, the CD bridge or
+the loopback: under `set -e` a teardown failure must not leave the previous
+"on" intent, which would bring DRC back at the next boot. `stop` is different:
+shutdown and detach use it as a transient teardown and it leaves the desired
+power alone. `restore` reads state only after taking the DRC lock, closing the
+time-of-check/time-of-use window.
 
 ## MPD outputs {#sec:mpd-outputs}
 
@@ -1263,176 +403,51 @@ The measured result of the current filter set (`120.blue`, v1.5.0):
 
 ![Phase response: corrected vs uncorrected.](../current.phase.png){width=84%}
 
-## Browser and ALSA management {#sec:browser-audio}
+## Browsers: the No DRC launchers {#sec:browser-nodrc}
 
-### Why the browser has a separate path
-
-While DRC runs, BruteFIR owns the raw DAC. A browser cannot share that hardware
-handle and cannot conveniently send its audio through the MPD -> `snd-aloop` ->
-BruteFIR route. Browser audio also needs normal desktop mixing: Chromium can
-have overlapping streams from tabs, UI sounds and an audio process that closes
-the device later than the page that created it. The supported path therefore
-stops DRC for the whole browser session and gives a small ALSA mixer exclusive
-use of the selected DAC:
-
-```
-browser -> ALSA default -> plug -> dmix (48 kHz, S32_LE) -> selected DAC
-```
-
-MPD and BruteFIR continue to name raw `hw:` devices explicitly. They bypass
-this default and its mixer, so installing the browser configuration does not
-insert resampling into music playback or the DRC chain. `dmix` shares browser
-streams with other browser streams; it cannot share the DAC with MPD or
-BruteFIR while either process has the raw device open.
-
-Linux uses ALSA directly for this path. No sndio daemon is involved, and the
-configuration does not require a running PulseAudio or PipeWire server. The
-FreeBSD launchers use the native OSS/sndio or per-process ALSA-to-OSS handling
-documented in the FreeBSD chapter; the Linux files described below are not
-installed there.
-
-### Installation and ownership
-
-On Linux, `cmake/browser-audio.cmake` installs the browser launchers and menu
-entries, then `cmake/browser-alsa-linux.cmake` installs the ALSA template:
-
-```
-$PREFIX/share/open-media-drc/asoundrc.linux.conf.in
-```
-
-A live `make install` asks the configuration helper to render the saved audio
-roles into:
-
-```
-$PREFIX/etc/open-media-drc/browser-alsa.conf
-```
-
-It then adds this marked block after the audio user's existing ALSA settings:
-
-```
-# BEGIN open-media-drc browser ALSA
-</usr/local/etc/open-media-drc/browser-alsa.conf>
-# END open-media-drc browser ALSA
-```
-
-The destination is `~/.config/alsa/asoundrc` when that file already exists,
-because alsa-lib loads it after `~/.asoundrc`; otherwise the destination is
-`~/.asoundrc`. Existing content is retained byte-for-byte and the installer
-creates a one-time sibling backup named
-`.omdrc-before-browser-alsa`. Reinstallation replaces the marked block instead
-of appending duplicates. It refuses a malformed or edited partial block rather
-than guessing how to rewrite the user's file. A root install restores ownership
-of the edited file to `AUDIO_USER`.
-
-With `DESTDIR` set, installation stages the template only. It does not inspect
-the build host's cards or write into `AUDIO_HOME`. Run a live install on the
-target to create the include. Set `OMDRC_INSTALL_BROWSER_ALSA=OFF` at CMake
-configuration time to leave desktop ALSA unmanaged; this does not remove a
-block installed earlier.
-
-### Following the `/configuration` device selection
-
-The stable source of truth is the USB identity selected on `/configuration`,
-not an ALSA card number and not a DAC name stored in `host.cmake`. On Linux the
-helper maintains three related views of the same selection:
-
-| File | Contents and lifetime |
-|---|---|
-| `$PREFIX/etc/open-media-drc/audio-roles.conf` | Persistent DAC and capture USB identities (`vid:pid[:serial]`) |
-| `/run/omdrc/audio.roles` | Current-boot ALSA card numbers and descriptions, regenerated during Apply and hotplug reconcile |
-| `$PREFIX/etc/open-media-drc/browser-alsa.conf` | Current ALSA card IDs used by browser playback and capture |
-
-When the operator presses **Apply**, `omdrc-config-helper` resolves the chosen
-USB identities against the attached cards. It updates BruteFIR, MPD, the
-runtime roles and the browser ALSA configuration as one device-selection
-operation, then restarts the DRC lifecycle service. Selecting another DAC
-therefore changes the browser's output as well; no CMake reconfiguration,
-manual `.asoundrc` edit or attempt to pin that DAC at card 0 is required.
-
-On boot or USB hotplug, `omdrc-audio-roles.service` runs the same reconcile
-path. ALSA indexes may change from `card0` to `card2`, but the persistent USB
-identity is resolved again and the generated browser file receives the current
-ALSA card ID, such as `DAC8STEREO`. The generated hardware address has the form
-`hw:CARD=<id>,DEV=0`, which is independent of the numeric index assigned during
-that boot.
-
-If the saved DAC is absent, the helper generates an unavailable sentinel output
-instead of falling back to card 0. This prevents browser audio from being sent
-to an unrelated capture interface or HDMI output. If the optional capture card
-is absent, browser capture uses ALSA's `null` PCM until an attached capture
-interface is selected or reconciled. Multiple identical USB devices still need
-a usable serial number or an unambiguous Apply with the others unplugged, as
-described in section \ref{sec:known-dac-policy}.
-
-The generated mixer is fixed at stereo, 48000 Hz and `S32_LE`. A selected DAC
-must support that mode. The `plug` layer converts ordinary browser formats and
-sample rates before they enter `dmix`; this conversion is intentional for
-desktop streaming audio and is outside the bit-perfect MPD/DRC paths.
-
-### Launcher lifecycle
-
-Each installed menu entry runs one foreground launcher from
-`$PREFIX/libexec/omdrc/browser-nodrc/`. The launcher:
+While DRC runs, BruteFIR owns the raw DAC. A browser cannot share that handle
+and cannot conveniently reach the loopback, so the supported path stops DRC
+for the whole browser session. `browser-nodrc/` installs one launcher and one
+**No DRC** menu entry per browser (Firefox, Chromium, Chrome). Each runs in
+the foreground and:
 
 1. reads `omdrc session` and remembers the exact power and mode state;
 2. arms `EXIT`, `INT` and `TERM` traps;
 3. runs `omdrc off`, stopping BruteFIR and enabling the direct MPD output;
-4. waits for the selected DAC to be released;
+4. waits for the DAC to be released;
 5. runs the browser in the foreground; and
-6. on browser exit, releases browser audio and reapplies the state from step 1.
+6. on exit, releases browser audio and reapplies the state from step 1.
 
-The trap deliberately reapplies the captured mode rather than calling plain
-`omdrc restore`: `off` has just recorded persistent power-off state, which a
-plain restore would correctly honour and thus leave DRC down. If DRC was already
-off before launch, the launcher leaves it off afterward.
+The trap reapplies the captured mode rather than calling plain `omdrc
+restore`, because `off` has just recorded power-off, which a plain restore
+would honour and leave DRC down. If DRC was already off before launch, it
+stays off.
 
-Firefox uses `--no-remote` so the launcher owns a new foreground instance.
-Chrome and Chromium cannot use that model reliably: when one is already
-running, a second invocation merely hands it a URL and exits. Their launchers
-detect that condition and leave DRC unchanged. Fully quit an existing Chromium
-or Chrome process before starting the **No DRC** entry; otherwise the old
-process keeps both its original audio configuration and its original DRC
+Firefox runs with `--no-remote` so the launcher owns a new instance. Chrome and
+Chromium cannot: when one is already running, a second invocation merely hands
+it a URL and exits, so their launchers detect that and leave DRC unchanged.
+**Fully quit an existing Chromium or Chrome before using its No DRC entry**;
+otherwise the old process keeps both its audio configuration and its old DRC
 relationship.
 
-Chromium should use its ALSA backend and the `default` PCM. A command-line
-`--alsa-output-device=default` makes the choice explicit on builds that accept
-it. Firefox must be built with ALSA support; if it keeps selecting an absent
-sound server, set the string preference `media.cubeb.backend` to `alsa` in
-`about:config`, then restart it. Backend preferences and an ALSA configuration
-are normally read when the browser/audio process starts, so a running browser
-must be fully restarted after selecting another DAC.
+How the browser reaches the DAC while DRC is off is OS-specific: Linux section
+\ref{sec:browser-audio}, FreeBSD section \ref{sec:fbsd-browser}.
 
-### Verification and recovery
+## Helper scripts
 
-After installation or a device change, close every browser process, launch the
-browser through its **No DRC** menu entry and play two tabs at once. Verify the
-selection and the open hardware endpoint with:
+| Script | Purpose |
+|---|---|
+| `REW2raw.sh` | REW WAV -> BruteFIR raw FLOAT64_LE at a target rate, with the `Fs_source/Fs_target` coefficient scale (no peak normalisation) |
+| `REW2raw-all-rates.sh` | Batch: `L.raw`/`R.raw`/`sox.txt` for every rate directory under a filter root; prompts before overwriting unless `-y` |
+| `headroom_calc.py` | Minimum `attenuation:` per config from worst-case FFT gain + safety margin |
+| `new_filter_design.py`, `remove_filter_design.py`, `deploy_filter.py`, `verify_filter_bundle.py`, `console_ui.py`, `filter_workflow_next.py`, `rew_mdat_audit.py` | The filter-design commands, described in section \ref{sec:prov-scripts} |
+| `verify-bitperfect.sh` | The original single-host bit-perfect proof (FreeBSD, section \ref{sec:fbsd-verify}) |
+| `bitperfect-lib.py` | Shared engine of the tap scripts and the panel: promotion to the S32 wire container, USB capture decoders, alignment, verdict, report, byte-view readers |
+| `bitperfect-tap-linux.sh`, `bitperfect-tap-freebsd.sh` | Play a WAV to the DAC and record the bytes on the USB wire; same CLI and artifacts on both OSes |
+| `bitperfect_runner.py`, `bitperfect_material.py` | Run a tap through a chosen playback path and prepare its material; back the `/bitperfect` page (chapter \ref{sec:bitperfect}) |
+| `bitperfect-compare.py` | Compare two tap artifacts from either OS |
+| `omdrc-ctrl/src/drmeter.py` | The DR meter behind *Measure DR* (chapter \ref{sec:dynamic-range}) |
 
-```sh
-cat /usr/local/etc/open-media-drc/audio-roles.conf
-cat /run/omdrc/audio.roles
-sed -n '1,120p' /usr/local/etc/open-media-drc/browser-alsa.conf
-cat /proc/asound/cards
-cat /proc/asound/<selected-card-id>/pcm0p/sub0/hw_params
-```
-
-The last file should show a two-channel 48000 Hz `S32_LE` playback stream on the
-selected DAC. The ESI or other capture interface's playback PCM should remain
-closed. If the browser is silent, check in this order:
-
-1. Confirm that it was launched through **No DRC** and that no earlier browser
-   process remains.
-2. Confirm that `/run/omdrc/audio.roles` and `browser-alsa.conf` describe the
-   same DAC selected on `/configuration`.
-3. Check `/proc/asound/*/pcm*p/sub*/hw_params` for MPD, BruteFIR or another
-   process still holding the raw DAC.
-4. Fully restart the browser after any Apply or USB reconnection.
-5. Check the Chromium or Firefox backend selection described above.
-
-To stop project management of the ALSA default, restore the one-time backup or
-remove only the three-line marked include block, then configure future builds
-with `-DOMDRC_INSTALL_BROWSER_ALSA=OFF`. The generated file under the prefix is
-otherwise harmless when nothing includes it.
 
 \newpage
 
@@ -1493,15 +508,7 @@ set(OMDRC_SITE_DATA_DIRS "${CMAKE_SOURCE_DIR};$ENV{HOME}/devel/omdrc-801N"
 ```
 
 At configure time CMake prints which directory supplied each set, so the
-substitution is never silent:
-
-```text
--- core-drc: filter set search path
---     /home/giacomo/devel/open-media-drc (this checkout)
---     /home/giacomo/devel/omdrc-801N
---   120.blue (default) <- /home/giacomo/devel/omdrc-801N
---   flat <- /home/giacomo/devel/open-media-drc
-```
+substitution is never silent.
 
 A missing *extra* set is a warning and is skipped; a missing default `GEOMETRY`
 is a fatal error, because installing it would record a geometry in `omdrc.conf`
@@ -1550,35 +557,31 @@ on the playback machine.
 
 ## What is hashed
 
-The manifest records, for every source export, RAW file, config template and the
-analysis file: the logical role, relative path, byte size, format, sample
-rate/count where applicable, and SHA-256. Around that it records where the
-design came from --- the source project's repository, remote, branch, HEAD
-commit and subject, the repository-relative path of the export directory, a Git
-blob id per input, and whether everything was committed --- together with the
-REW `.mdat` those exports were taken from, by name, size, SHA-256 and blob id.
-It then records the aggregate convention taken from the filenames, parsed REW
-header metadata (measurement name, date, notes, smoothing, frequency step,
-timing reference, REW version), the TXT-versus-WAV validation results,
-per-channel headroom with safety margin and required attenuation, and the exact
-rate-to-config mapping with the expected BruteFIR format and attenuation.
+The manifest records, for every source export, RAW file, config template and
+the analysis file: logical role, relative path, byte size, format, sample
+rate/count where applicable, and SHA-256. It also records where the design
+came from --- the source project's repository, branch, HEAD commit, a Git blob
+id per input, whether everything was committed, and the REW `.mdat` the
+exports were taken from (name, size, SHA-256, blob id) --- plus parsed REW
+header metadata, the TXT-versus-WAV validation results, per-channel headroom
+and required attenuation, and the exact rate-to-config mapping with the
+expected BruteFIR format and attenuation.
 
-The `bundle_id` on top is the SHA-256 of a canonical identity object containing
-a hash of the complete source block --- export directory, project, session and
-every artifact record --- plus every source artifact hash, the runtime config and
-RAW hashes and settings, and the analysis hash. Editing any provenance value the
-UI displays therefore invalidates the bundle rather than quietly changing a
-label; that includes the project commit and the `.mdat` hash.
+The `bundle_id` is the SHA-256 of a canonical identity object: a hash of the
+complete source block, every source artifact hash, the runtime config and RAW
+hashes and settings, and the analysis hash. Editing any provenance value the
+UI displays therefore invalidates the bundle instead of quietly changing a
+label.
 
-A hash proves bytes; it cannot say where they came from or bring them back. The
-commit id does that. It is the only part of the chain that is not
-self-verifying, which is why the deployment refuses to run until the exports and
+A hash proves bytes; it cannot say where they came from or bring them back.
+The commit id does that. It is the only part of the chain that is not
+self-verifying, which is why deployment refuses to run until the exports and
 the `.mdat` are committed.
 
-## The scripts
+## The scripts {#sec:prov-scripts}
 
-All of them are offline. None starts REW, and none opens a `.mdat` project
-except the optional auditor below.
+All of them are offline. None starts REW, and none opens a `.mdat` except the
+optional auditor.
 
 | Script | Role |
 |---|---|
@@ -1594,11 +597,10 @@ except the optional auditor below.
 
 ## The workflow
 
-Only two things here are manual: naming the exports by the convention above
-and committing them, and reading the tool's report before answering its
-confirmation prompt. Generating every rate's coefficients, baking the
-BruteFIR configs, computing headroom, writing the manifest, and committing
-the site repository are all done by the one command below.
+Two things are manual: naming the exports by the convention and committing
+them, and reading the tool's report before answering its confirmation prompt.
+Everything else --- coefficients for every rate, BruteFIR configs, headroom,
+manifest, the site-repository commit --- is one command:
 
 ```sh
 # 1. In the source repository: give the exports their imposed names, commit them
@@ -1615,80 +617,67 @@ python3 scripts/verify_filter_bundle.py --all --require-sources
 git -C ~/devel/omdrc-801N push
 ```
 
-Nothing on the command line says what a file is: `L.txt`, `R.txt`, `LR.txt` (or
-`L+R.txt`), `FLX-trimmed.txt`, `FRX-trimmed.txt`, the two impulse WAVs, and
-`L.filtered.txt`, `R.filtered.txt`, `LR.filtered.txt` (or `L+R.filtered.txt`, or
-`L+R.remeasured.txt` when the room was measured again with the DRC running). A
-missing name, a duplicate spelling or a mismatched aggregate style stops the run
-in colour before anything is written.
+Nothing on the command line says what a file is: the names are the role
+assignment. They are `L.txt`, `R.txt`, `LR.txt` (or `L+R.txt`),
+`FLX-trimmed.txt`, `FRX-trimmed.txt`, the two impulse WAVs, and
+`L.filtered.txt`, `R.filtered.txt`, `LR.filtered.txt` (or `L+R.filtered.txt`,
+or `L+R.remeasured.txt` for a re-measurement with DRC running). A missing
+name, a duplicate spelling or a mismatched aggregate style stops the run
+before anything is written.
 
-Three checks run before anything is hashed or written, and none of them has an
-override. Every text export must be **unsmoothed** (`* Smoothing: None`; one
-that states no smoothing is refused too, since it cannot be shown to be
-unsmoothed) --- REW's smoothing is baked into the numbers and cannot be undone
-downstream, while the browser's Smoothing selector is a separate, reversible
-view. Every text export must come from a **measurement at 48 kHz or below**,
-checked as *it must not reach past 24 kHz*, because the runtime coefficients are
-all resampled from one 48 kHz impulse. And each **filter TXT must be the
-exported response of its WAV**: one integer causal delay and one constant export
-gain are detected, then the residual magnitude and phase errors must stay inside
-the declared limits --- the only DSP in the pipeline, and what makes the plotted
-FLX/FRX curve a statement about the bytes BruteFIR will load.
+Three checks run first, and none has an override:
 
-The command reports the eight curves the web remote will plot, the project and
-session behind them, the two filters with their TXT/WAV residuals and every path
-it will write, and then asks. `--dry-run` runs every check, including the SoX
-conversions, and stops without asking.
+* every text export must be **unsmoothed** (`* Smoothing: None`; an export
+  stating no smoothing is refused too) --- REW's smoothing is baked into the
+  numbers, while the browser's Smoothing selector is a separate, reversible
+  view;
+* every export must come from a **measurement at 48 kHz or below** (it must
+  not reach past 24 kHz), because all runtime coefficients are resampled from
+  one 48 kHz impulse;
+* each **filter TXT must be the exported response of its WAV**: one integer
+  causal delay and one constant export gain are detected, and the residual
+  magnitude and phase errors must stay inside the declared limits. This is
+  what makes the plotted FLX/FRX curve a statement about the bytes BruteFIR
+  will load.
 
-The safety controls are intentionally narrow. `--yes` supplies confirmation but
-skips no check. `--replace-design` permits differing bytes under an existing
-design id but does not permit partial publication. `--allow-uncommitted` records
-the source-recoverability gap as `clean: false`, which remains visible to the
-verifier and UI. `--no-commit` gives up the automatic room-history commit but
-does not alter bundle verification. `--site-root` selects the site checkout for
-the scripts; it is separate from CMake's `OMDRC_SITE_DATA_DIRS` search path.
-The web frontend requires a clean site work tree and a successful deployment
-commit when its configured design root is Git-managed; only a plain directory
-uses the explicit uncommitted/no-history mode.
+The command then reports the eight curves the panel will plot, the project and
+session behind them, the two filters with their residuals and every path it
+will write, and asks. `--dry-run` runs every check, including the SoX
+conversions, and stops.
 
-Publication is a transaction. Without confirmation every check runs in temporary
-storage and nothing is touched; the dry run also reports which runtime files
-*would* change. On confirmation the order is fixed: source copies first, then the
-analysis, then the runtime RAW pairs, and the manifest **last**. The manifest is
-the commit marker --- readers ignore an incomplete deployment until it exists and
-verifies every preceding hash. Replacing bytes that already exist additionally
-requires `--replace-design`, so an accidental overwrite of a deployed design
-cannot happen silently.
+The flags are narrow. `--yes` supplies confirmation but skips no check.
+`--replace-design` permits differing bytes under an existing design id, never
+partial publication. `--allow-uncommitted` records the source-recoverability
+gap as `clean: false`, visible to the verifier and UI. `--no-commit` skips the
+room-history commit. `--site-root` selects the site checkout (separate from
+CMake's `OMDRC_SITE_DATA_DIRS`).
 
-A design owns `filters/<geo>/source/<design>/` and every
-`filters/<geo>/<rate>/@<design>/`, so after publication those directories hold
-exactly what the new manifest names --- a redeployment that renames its inputs
-prunes what the previous one left there. Pruning runs after the manifest, so a
-failure leaves harmless leftovers rather than a manifest naming a deleted file.
-A bare `filters/<geo>/<rate>/` is shared with the `default` set and is never
+Publication is a transaction: source copies first, then the analysis, then the
+runtime RAW pairs, and the manifest **last**. The manifest is the commit
+marker --- readers ignore an incomplete deployment until it exists and
+verifies every preceding hash. A design owns `filters/<geo>/source/<design>/`
+and every `filters/<geo>/<rate>/@<design>/`, so a redeployment prunes what the
+previous one left there (after the manifest, so a failure leaves harmless
+leftovers). A bare `<rate>/` directory belongs to `default` and is never
 touched.
 
-Removal inverts all of this:
+Removal is the exact inverse:
 
 ```sh
 python3 scripts/remove_filter_design.py --list
 python3 scripts/remove_filter_design.py 120.blue@rscreen-20260812
 ```
 
-It deletes the manifest, the recipe, the analysis file, the source copies, every
-`@design` coefficient directory and every `brutefir-<rate>@<design>.conf.in`,
-and nothing else. The manifest goes **first**: while it exists it is the claim
-that the rest is present, so removing it is what makes the design cease to exist
-for every reader. The reserved `default` set is refused, because a geometry
-falls back to it. The removal becomes one commit in the room repository, and the
-design stays recoverable from the deployment commit that introduced it.
+It deletes the manifest **first** (removing it is what makes the design cease
+to exist for every reader), then the recipe, analysis, source copies, every
+`@design` coefficient directory and config template, and nothing else. The
+reserved `default` set is refused, because a geometry falls back to it.
 
-Step 2 ends with one commit in the room repository, staging
-`filters/<geometry>` and `configs/<geometry>` and naming the geometry, design,
-bundle id, project commit, session hash and rates. That commit is the deployment
-history: `git log` lists every filter set that was ever live, and
-`git checkout <commit> -- filters/<geo> configs/<geo>` brings any of them back
-byte for byte. `--no-commit` skips it. Verification never depends on it.
+Each publication or removal ends with one commit in the room repository naming
+the geometry, design, bundle id, project commit, session hash and rates.
+`git log` lists every filter set that was ever live, and
+`git checkout <commit> -- filters/<geo> configs/<geo>` restores any of them
+byte for byte. Verification never depends on it.
 
 ## Deploying the verified identity
 
@@ -1730,12 +719,12 @@ read-only verifier before anything can be installed. The install contains the
 RAWs, rendered configs, manifests and analysis JSON; source exports and recipes
 remain development-only in the site repository.
 
-Restart the panel, select the installed geometry and immutable design, and then
-verify what is actually running:
+
+Restart the panel with your OS's service manager (Linux section
+\ref{sec:linux-panel}, FreeBSD section \ref{sec:fbsd-panel}), select the
+installed geometry and immutable design, and verify what is actually running:
 
 ```sh
-# FreeBSD; use systemctl restart omdrcctrl on Linux
-sudo service omdrcctrl restart
 /usr/local/bin/omdrc geometry 120.blue
 /usr/local/bin/omdrc design --list
 /usr/local/bin/omdrc design @rscreen-20260812
@@ -1750,156 +739,69 @@ for each step in a split engine/site layout.
 
 ## Why publication and runtime are separate
 
-Your understanding is correct. The missing idea is that these are three different lifecycle stages, not simply three arbitrary copies:
-
-```text
-REW working project
-    ↓ publish
-authoritative, self-contained filter bundle
-    ↓ deploy
-minimal runtime installation
-```
-
-For your setup:
+There are three lifecycle stages, not three arbitrary copies:
 
 | Stage | Example | Purpose |
 |---|---|---|
 | Working source | `~/DRC-120.green` | Editable REW project, measurements, experiments |
 | Published bundle | `~/omdrc-801N` or `~/.local/share/omdrc/site-data` | Frozen, verified, reproducible release |
-| Runtime | `/usr/local/etc/open-media-drc` | Files required for actual playback |
+| Runtime | `/usr/local/etc/open-media-drc` | Only the files playback and the UI need |
 
-The middle stage exists because the working project and runtime installation are both unsuitable as the permanent published record.
+* The REW project is mutable --- you can reopen the `.mdat`, rerun FDW
+  processing or replace exports --- so it cannot by itself prove which inputs
+  produced the installed filter. The bundle freezes one release: the exact
+  `.mdat`, exports, RAW coefficients at every rate, config templates,
+  analysis, hashes, source commit and bundle id.
+* The runtime tree is deliberately narrow: system-owned, replaceable
+  atomically, regenerable from the bundle, and free of bulky evidence (one
+  `.mdat` is about 61 MB and BruteFIR does not need it). A narrowly privileged
+  helper installs verified files without giving the web application write
+  access to `/usr/local`.
+* A browser upload has no stable local Git repository, so the web workflow
+  publishes into a user-owned store, `~/.local/share/omdrc/site-data` by
+  default: writable without root, persistent, not necessarily Git-managed.
+  Only the verified runtime subset crosses the privilege boundary.
 
-The REW project is mutable. You may reopen the `.mdat`, change measurements, rerun FDW processing, replace exports, or delete intermediate files. Therefore, it cannot by itself prove exactly which inputs produced the currently installed filter.
-
-The published bundle freezes one specific release:
-
-- Exact uploaded `.mdat`
-- Exact TXT/WAV exports
-- Generated RAW coefficients at every rate
-- BruteFIR configuration templates
-- Response analysis
-- Hashes linking all these files
-- Source-project commit and metadata
-- Bundle identity such as `a14299a241ff`
-
-That is analogous to a release artifact produced from a source tree. It is not merely a blind backup of the original directory.
-
-Why not put everything in `/usr/local`?
-
-Because `/usr/local/etc/open-media-drc` has a deliberately narrower role:
-
-- It contains only what playback and the runtime UI need.
-- It is system-owned and normally requires privileged writes.
-- It deliberately excludes large development evidence such as archived `.mdat`, complete exports, recipes, and other source material.
-- It can be atomically replaced, upgraded, or removed without destroying the authoritative bundle.
-- A narrowly privileged helper can install verified files without giving the web application general write access to `/usr/local`.
-- If the runtime installation is damaged or deleted, it can be regenerated from the store.
-- If an installation fails halfway, the already-published bundle remains intact.
-
-For example, your green `.mdat` is about 61 MB. BruteFIR does not need it to play audio. Keeping that and every source export under `/usr/local` would make the runtime tree a mixture of active system configuration, development material, uploads, and archival evidence.
-
-Why does the web workflow use `.local/share`?
-
-A browser upload does not necessarily come from a stable local Git repository. It might come from another computer, a temporary directory, or an uncommitted REW project. The server therefore needs somewhere persistent to retain the complete published bundle before installing its runtime subset.
-
-`~/.local/share/omdrc/site-data` was chosen as the default user-owned publication store because:
-
-- It is writable without root.
-- It persists after the upload job ends.
-- It can hold the complete evidence bundle.
-- It need not be Git-managed.
-- Only the verified runtime subset crosses the privilege boundary into `/usr/local`.
-
-So the web path is:
+`omdrc-801N` (Git-backed) and `.local/share/omdrc/site-data` occupy the same
+layer, so having both means two authorities. Point the web installer's
+`design_root` at the Git-tracked site repository and there is one:
 
 ```text
-browser upload / REW project
-        ↓
-~/.local/share/omdrc/site-data
-  complete published bundle
-        ↓ verified privileged deployment
-/usr/local/etc/open-media-drc
-  runtime subset
+REW projects / web uploads --> ~/omdrc-801N (one Git-tracked authority)
+                           --> /usr/local/etc/open-media-drc (runtime only)
 ```
-
-The repository path is conceptually identical:
-
-```text
-~/DRC-120.green
-        ↓ publication
-~/omdrc-801N
-  complete published, Git-tracked bundle
-        ↓ installation
-/usr/local/etc/open-media-drc
-  runtime subset
-```
-
-Therefore, `omdrc-801N` and `.local/share/omdrc/site-data` occupy the same architectural layer. They are two alternative implementations of the published design store:
-
-- `omdrc-801N`: Git-backed authority
-- `.local/share/...`: non-Git authority used by the web installer
-
-The real problem on this machine is not that the middle layer exists. It is that you currently have **two different middle-layer stores**. Given your preference for `omdrc-801N` as the official, Git-tracked source, the cleaner policy would be to configure the web installer to publish into `omdrc-801N` too. Then the architecture becomes:
-
-```text
-REW projects / web uploads
-            ↓
-       ~/omdrc-801N
-  one Git-tracked authority
-            ↓
-/usr/local/etc/open-media-drc
-       runtime only
-```
-
-That preserves the useful source → release → runtime separation while eliminating the confusing split between two publication stores.
 
 ## Live browser-driven installs {#sec:live-installs}
 
-The sequence above is the offline/Git path. `omdrc-ctrl`'s **`/configuration`**
+The sequence above is the offline/Git path. The panel's **`/configuration`**
 page (section \ref{sec:omdrcctrl}) drives the same audit/build engine from a
-browser on the trusted LAN, with no git checkout or shell access to the box,
-and is the normal way an operator installs or removes a room-correction
-design. The command-line procedure remains for offline publication and
-machine provisioning; it is not a follow-up step after a web install, because
-the web page already invokes the identical pipeline.
+browser on the trusted LAN and is the normal way to install or remove a
+design. The command line remains for offline publication and provisioning; it
+is not a follow-up to a web install.
 
-The browser uploads one REW-exported `.txts` directory plus its matching
-`.mdat`. `omdrc-ctrl/src/configuration.py` stages the upload under a private
-per-job directory, rejecting anything but an exact-basename pair, a mixed
-export folder, or a mismatched `.mdat` --- selecting the common parent of the
-pair fills the session field automatically, but a browser cannot inspect `../`
-after access was granted only to the `.txts` directory, so selecting the
-export directory itself leaves one explicit `.mdat` choice, and both browser
-and server require its basename to match.
+The browser uploads one REW `.txts` directory plus its `.mdat`.
+`omdrc-ctrl/src/configuration.py` stages them in a private per-job directory
+and rejects anything but an exact-basename pair, a mixed export folder or a
+mismatched `.mdat`. (Selecting the common parent fills the session field
+automatically; selecting the `.txts` directory itself leaves one explicit
+`.mdat` choice, since a browser cannot inspect `../`.)
+`new_filter_design.py` gained the flags this needs: `--live` publishes runnable
+`.conf` files instead of `.conf.in` templates, `--coefficient-root` bakes an
+absolute live path when staging happens elsewhere, `--archive-mdat` copies the
+full `.mdat` into the bundle, and `--upload-provenance` records the upload's
+own name instead of a temporary path.
 
-`new_filter_design.py` gained the flags this needs: `--live` publishes
-runnable `.conf` files (instead of `.conf.in` templates) into `--site-root`
-rather than the repo checkout; `--coefficient-root` bakes an absolute live
-path into those configs when staging happens outside the real site;
-`--archive-mdat` copies the full `.mdat` into the deployed source bundle
-instead of only hashing it; `--upload-provenance` records a browser upload's
-own name as its provenance instead of a temporary staging path.
-
-Every web publication first enters the persistent `[configuration] design_root`.
-The Configuration page displays this server-configured path. If that directory
-is already a Git work tree, it must be clean before publication and the
-deployment commit is required before runtime installation, exactly as in the
-manual sequence above; the frontend does not pass `--allow-uncommitted` in this
-case. Otherwise it is an ordinary managed folder and the explicit
-uncommitted/no-history mode is used. When
-the live site is not writable by the unprivileged web process, the design is
-staged and handed to `scripts/omdrc-config-helper.py`, the same privileged
-helper that pins audio hardware roles (section \ref{sec:configuration-page}): it re-verifies
-every claimed hash before copying anything and writes the manifest **last**,
-so a reader can never observe a claim before the bytes behind it exist ---
-`site_root` is derived runtime state, not a second authority. A repeated
-install of an already-live, byte-identical bundle is a verified no-op
-(`installed_bundle_matches()` in `deploy_filter.py`) rather than a re-write.
-Progress streams back to the browser over Server-Sent Events. Installation
-never activates a design, and a running or saved design must be switched away
-before removal --- both enforced the same way whether triggered from the page
-or the command line.
+Every web publication first enters the persistent `[configuration]
+design_root`. If that is a Git work tree it must be clean, and the deployment
+commit is required before runtime installation, exactly as in the manual
+sequence; otherwise it is a plain managed folder using the explicit
+uncommitted mode. When the live site is not writable by the web process, the
+staged design goes to `scripts/omdrc-config-helper.py` (the same helper that
+pins audio roles, section \ref{sec:configuration-page}), which re-verifies
+every claimed hash before copying and writes the manifest **last**. Reinstalling
+a byte-identical live bundle is a verified no-op. Progress streams back over
+Server-Sent Events. Installation never activates a design, and an active or
+saved design must be switched away before removal.
 
 ## Verification at install time
 
@@ -1963,11 +865,10 @@ that matters --- coefficients, format, attenuation and rate are all re-checked
 against the bytes in use --- but a post-install hand-edit to a rendered config's
 routing or device settings is outside the chain.
 
+
 \newpage
 
-# Tools
-
-## omdrc-ctrl --- the web control panel {#sec:omdrcctrl}
+# The web panel: omdrc-ctrl {#sec:omdrcctrl}
 
 A Flask app serving a dark, touch-friendly control panel to any browser on
 the LAN (default `0.0.0.0:9090`). Originally a replacement for KDE Connect's
@@ -1989,34 +890,25 @@ feedback-less "Run command" plugin. Everything is driven by a plain INI file,
 
 * **MPD panel** --- the audio-health centrepiece for a headless server: daemon
   state, playback state and song, the stream MPD reports (rate/bits/
-  channels), the **DAC feed** (ALSA `hw_params` read from `/proc/asound` on
-  Linux; the `virtual_oss` rate on FreeBSD), the BruteFIR rate, a green/red
-  **SAMPLE RATE MATCH / RESAMPLING** comparison, and a plain-language
-  **bit-perfect verdict**: *Bit-perfect passthrough* (DRC off, all rates
-  equal), *Full-resolution DRC, no resampling* (BruteFIR at native rate), or
-  *Resampling active*.
-* **Qobuz Connect panel** --- current track via qobuzconnect2mpd, with
-  restart button and colour-coded log viewer; plus a renderer switch
-  (qobuzconnect2mpd vs upmpdcli --- never both) driven per-OS
-  (`systemctl --user` on Linux, `sudo service ... onestart/onestop` on
-  FreeBSD).
-* **CD input panel** --- what the FreeBSD `omdrc-cdin` daemon or Linux
-  `alsaloop` supervisor is doing, read entirely
-  from its log: an availability LED, the state in one line, the newest failure
-  in another, the `[stats]` line as chips, and a Start/Stop source hand-off.
-  Start remembers and disables MPD's audible output; Stop restores it. The
-  Spectrum FIFO is deliberately outside this gate. The card is the size of
-  its news --- one line while no disc is playing, full size while one is
-  (chapter \ref{sec:cdin}).
+  channels), the **DAC feed** (the rate the DAC actually receives), the
+  BruteFIR rate, a green/red **SAMPLE RATE MATCH / RESAMPLING** comparison,
+  and a plain-language **bit-perfect verdict**: *Bit-perfect passthrough*
+  (DRC off, all rates equal), *Full-resolution DRC, no resampling* (BruteFIR
+  at native rate), or *Resampling active*.
+* **Qobuz Connect panel** --- current track via qobuzconnect2mpd, with a
+  restart button and colour-coded log viewer, plus a renderer switch
+  (qobuzconnect2mpd vs upmpdcli --- never both) that drives the OS service
+  manager.
+* **CD input panel** --- what the CD bridge is doing, read entirely from its
+  log (chapter \ref{sec:cdin}).
 * **BruteFIR CPU** --- per-process CPU for every brutefir instance (matched by
-  `argv[0]`, because on Linux brutefir renames its `comm`).
-* **Audio Devices** --- `/dev/sndstat` on FreeBSD with `fmt 0x...` bitfields
-  decoded to `AFMT_*`/`PCM_CAP_*` labels; collapsible.
-* **Advanced** (FreeBSD only) --- `sysctl dev.pcm.<DAC unit>` (resolved from
-  `/dev/dsp.dac`) and `sysctl hw.usb.uaudio` diagnostics.
-* **Top CPU** --- processes above a configurable threshold.
-* **Debug card** --- the glitch-detection switch (section
-  \ref{sec:glitch}).
+  `argv[0]`); **Top CPU** --- processes above a configurable threshold.
+* **Debug card** --- the glitch-detection switch (FreeBSD, section
+  \ref{sec:fbsd-glitch}).
+
+Some cards exist on one OS only (device listings, DAC diagnostics); they are
+in section \ref{sec:linux-panel} (Linux) and section \ref{sec:fbsd-panel}
+(FreeBSD).
 
 **DRC filter response page** --- charts the *live* filters loaded by the
 running BruteFIR: magnitude (dB), delay-compensated wrapped phase, and
@@ -2024,103 +916,61 @@ residual group delay, computed on demand by FFT (NumPy) from the active
 config's `L.raw`/`R.raw`. Chart.js is vendored, so the page works offline.
 The filter files are only ever read, never modified.
 
-**Live spectrum analyzer** --- an optional card fed from a FIFO of raw
-S32_LE stereo. It FFTs whatever arrives and knows nothing about who wrote
-it, which is what lets more than one part of the chain feed it. `source`
-picks the producer: `mpd` (a secondary `OMDRC Spectrum` fifo output),
-`cdin` (the CD / S-PDIF bridge), or `auto` --- the default --- which takes
-`cdin` while a disc is actually playing through the bridge and `mpd`
-otherwise. CD audio never passes through MPD, so without the `cdin` source
-the analyzer is simply blank for the whole of a disc. The rate travels
-*with* the source, because CD is 44.1 kHz where the MPD FIFO is 48 kHz and
-analysing at the wrong rate mislabels every bin while reporting no error.
+**Live spectrum analyzer** --- an optional card fed from a FIFO of raw S32_LE
+stereo. It FFTs whatever arrives and knows nothing about the writer, so more
+than one part of the chain can feed it. `source` picks the producer: `mpd` (a
+secondary `OMDRC Spectrum` fifo output), `cdin` (the CD bridge), or `auto`
+(default), which takes `cdin` while a disc is playing and `mpd` otherwise.
+CD audio never passes through MPD, so without the `cdin` source the analyzer
+is blank for a whole disc. The rate travels with the source (CD is 44.1 kHz,
+the MPD FIFO 48 kHz): analysing at the wrong rate mislabels every bin without
+any error. How CD samples reach the FIFO is OS-specific (section
+\ref{sec:linux-panel} or \ref{sec:fbsd-panel}).
 
-How the CD PCM reaches the FIFO differs by operating system. On FreeBSD
-`omdrc-cdin` tees it itself from the period it is about to write, opened
-non-blocking and dropping rather than ever delaying a write to the DAC;
-the reader's presence is the entire protocol, so nothing happens until the
-panel opens the FIFO. On Linux `alsaloop(1)` is opaque and the supervisor
-never sees a sample, so omdrcctrl reads the *same capture device* a second
-time through an ALSA `dsnoop` and writes the FIFO itself --- deliberately
-an independent reader, so that a stalled analyzer misses samples instead
-of stalling the CD.
-
-* Started/stopped from the page; the source is enabled only while at least
-  one browser is streaming (Server-Sent Events; multiple clients share one
-  capture thread), force-disabled at startup for crash recovery.
-* 24 logarithmic bands from 31.5 Hz, 25 Hz refresh, Music (16384-point) vs
-  Precision (65536-point) FFT windows, VU bars or needles measured over a
-  ~50 ms trailing window, one Floor slider driving graphs and meters.
-* Each band peak-holds across the complete publication interval, so short
-  transients cannot fall between FFT windows. Rises are immediate; the browser
-  animates only the release at `fall_db_per_s` (30 dB/s by default), including
-  after the server stops publishing unchanged frames.
+* Started and stopped from the page; the source is enabled only while a
+  browser is streaming (Server-Sent Events; clients share one capture thread)
+  and is force-disabled at startup for crash recovery.
+* 24 logarithmic bands from 31.5 Hz, 25 Hz refresh, Music (16384-point) or
+  Precision (65536-point) FFT windows, VU bars or needles over a ~50 ms
+  window, one Floor slider for graphs and meters.
+* Each band peak-holds across the publication interval, so short transients
+  cannot fall between FFT windows. Rises are immediate; the browser animates
+  only the release at `fall_db_per_s` (30 dB/s by default).
 * **DRC sync**: the tap is at the top of the DRC path, so the display is held
-  back by a clock-anchored estimate of the whole running chain: `virtual_oss`
-  blocks, filter group delay, the convolver partition, BruteFIR I/O partitions,
-  and DAC/USB output delay. The card shows the term-by-term breakdown and
-  base/delta/total values. **Auto sync delay** periodically follows rate,
-  process and filter changes; with it off, `drc_delay_trim_ms` replaces the
-  modelled buffering terms. The Sync slider is persistent and takes effect on
-  the next frame because the buffer reserves its full travel.
-* With `source = auto`, an open card follows MPD-to-CD and CD-to-MPD hand-offs
-  without closing the browser stream. MPD owns and creates its FIFO; the
-  analyzer never replaces that inode. Writer loss and FIFO replacement are
-  detected, stale pre-pause history is dropped on resume, and a disconnected
-  browser stream reconnects automatically.
-
-The delay model exposes these configuration terms:
-
-| Stage | Derived value |
-|---|---|
-| virtual_oss | `drc_voss_blocks` times the running process's `-s` duration |
-| filter | peak index of the active impulse response divided by sample rate |
-| convolver | one BruteFIR `filter_length` partition |
-| BruteFIR I/O | `drc_brutefir_io_partitions` additional partitions |
-| physical output | `drc_output_delay_ms` for the OSS/DAC buffer and USB path |
-
-The defaults are three virtual_oss blocks, two additional BruteFIR I/O
-partitions, and 150 ms of output delay. The built-in `dirac pulse` coefficient
-has zero group delay, but still pays the convolver partition. Because
-virtual_oss's `-s 200ms` is a duration, that term stays constant across sample
-rates; the partition terms shrink as the rate rises. When the DRC chain is
-down, every term is zero. This is a configuration-derived estimate, not an
-acoustic measurement; `omdrc-ctrl/tools/measure-drc-delay.sh` remains the
-disruptive end-to-end calibration path.
-
-Hold-back is anchored to elapsed time rather than a fixed offset from the last
-byte received. The read point therefore drains the buffered tail when a writer
-stops, and non-blocking CD-FIFO drops cannot permanently walk the display out
-of sync. After a silence gap, retained PCM is discarded before the source
-resumes so the analyzer cannot show the previous track while the new one is
-still travelling through the chain.
-
-The analyzer enables MPD's Spectrum output first and then opens the FIFO inode
-MPD created. It never creates or replaces that path: MPD keeps its existing
-descriptor open and would otherwise silently write an unlinked inode until it
-is restarted. The CD FIFO has the opposite ownership --- omdrcctrl creates it,
-and the appearance of a reader tells the bridge to tee samples. Identical
-frames are suppressed, so paused playback produces no SSE traffic.
+  back by a clock-anchored estimate of the whole running chain (loopback
+  blocks, filter group delay, convolver partition, BruteFIR I/O partitions,
+  DAC/USB output delay). The card shows the term-by-term breakdown; **Auto
+  sync delay** follows rate, process and filter changes, and with it off
+  `drc_delay_trim_ms` replaces the modelled buffering. The Sync slider is
+  persistent. The estimate is configuration-derived, not acoustic;
+  `omdrc-ctrl/tools/measure-drc-delay.sh` is the disruptive end-to-end
+  calibration.
+* With `source = auto` an open card follows MPD-to-CD hand-offs without
+  closing the browser stream. Writer loss and FIFO replacement are detected,
+  stale pre-pause history is dropped on resume, and a disconnected browser
+  stream reconnects.
+* **FIFO ownership**: MPD owns and creates its FIFO; the analyzer enables
+  MPD's Spectrum output first and opens the inode MPD created, never
+  replacing it (MPD would silently keep writing an unlinked inode until
+  restarted). The CD FIFO is the opposite: omdrcctrl creates it, and the
+  appearance of a reader tells the bridge to tee samples. Identical frames are
+  suppressed, so paused playback produces no SSE traffic.
 
 **Install**: omdrcctrl has no standalone deployment. Configure and install the
-top-level open-media-drc project so the panel, core wrappers, site data, and
-state share one host configuration (systemd system unit on Linux, rc.d script
-on FreeBSD). On FreeBSD: `sysrc omdrcctrl_enable=YES && service omdrcctrl
-start`; the rc.d script uses `daemon(8)`, drops privileges via the standard
-rc.subr `${name}_user`, and keeps its pidfile in a subdirectory of
-`/var/run` created by `start_precmd` (plain `/var/run/*.pid` would be
-root-only).
+top-level project so the panel, wrappers, site data and state share one host
+configuration; the service definition is in section \ref{sec:linux-panel}
+(Linux) or \ref{sec:fbsd-panel} (FreeBSD).
 
 **Security**: the server executes arbitrary shell commands from
 `commands.conf` as the service user --- trusted LAN only, never a public
 interface.
 
-### Configuration page --- filter installs and audio hardware roles {#sec:configuration-page}
+## Configuration page --- filter installs and audio hardware roles {#sec:configuration-page}
 
 `/configuration` lets an operator on the trusted LAN install or remove
 room-correction designs and pin physical audio cards by USB identity, with no
 git checkout or shell access to the box. `omdrc-ctrl/src/configuration.py`
-drives two independent workflows, both through the same privileged helper,
+drives two independent workflows through one privileged helper,
 `scripts/omdrc-config-helper.py`, installed with the panel:
 
 ```
@@ -2128,41 +978,26 @@ drives two independent workflows, both through the same privileged helper,
 ```
 
 * **Filter installs** --- upload a REW `.txts`/`.mdat` pair and publish it as a
-  live, verified bundle. This is the normal live-install path described in
-  full in section \ref{sec:live-installs}; the page invokes the same
-  audit/build engine the command-line procedure does, streaming progress back
-  over Server-Sent Events.
+  live, verified bundle; the page invokes the same audit/build engine as the
+  command line, streaming progress over Server-Sent Events (section
+  \ref{sec:live-installs}).
 * **Audio hardware roles** --- pick the DAC and (where a bridge exists) the
   capture interface from the cards actually attached, by USB identity
-  (`vid:pid[:serial]`), rather than editing `rc.conf`/`sysrc` or a systemd
-  unit by hand. `apply_audio()` refuses a DAC that is not attached or cannot
-  play, and refuses either role when two identical cards have no serial number
-  to disambiguate --- unplug one before applying. On FreeBSD, Apply updates
-  the two `omdrc_audio_*` role keys, reconciles the `omdrc_audio` rc.d
-  service, and verifies the resulting `/dev/dspX` nodes exist. On Linux it
-  writes `<prefix>/etc/open-media-drc/audio-roles.conf`
-  (`OMDRC_AUDIO_DAC` / `OMDRC_AUDIO_CAPTURE`, the USB identities, surviving a
-  reboot) and resolves the saved identity to the current ALSA card number into
-  `/run/omdrc/audio.roles` on every hotplug restore, so nothing in the CD
-  bridge or the panel's chain diagram has to hard-code a card number that USB
-  attach order can change. The same Apply/reconcile operation regenerates
-  `<prefix>/etc/open-media-drc/browser-alsa.conf` with stable ALSA card IDs, so
-  the managed browser default follows both selected roles without assuming the
-  DAC is `card0`. A configured capture card that is not plugged in this boot is
-  dropped with a notice rather than failing the whole reconcile. See section
-  \ref{sec:browser-audio}.
+  (`vid:pid[:serial]`), instead of editing OS configuration by hand.
+  `apply_audio()` refuses a DAC that is not attached or cannot play, and
+  refuses either role when two identical cards have no serial number to
+  disambiguate --- unplug one before applying. A configured capture card that
+  is not plugged in this boot is dropped with a notice rather than failing the
+  reconcile. What Apply writes and reconciles is OS-specific: Linux section
+  \ref{sec:linux-roles}, FreeBSD section \ref{sec:fbsd-roles}.
 
-#### DAC switching and known-device policy {#sec:known-dac-policy}
+### DAC switching and known-device policy {#sec:known-dac-policy}
 
-Each role keeps a list of every card that has been applied to it, the
-explicit selection first. On FreeBSD it is the comma-separated
-`omdrc_audio_dac` / `omdrc_audio_capture` value in `/etc/rc.conf`
-(`"0x22e8:0xdac4,0x152a:0x88c5"`); on Linux it is the same list in
-`OMDRC_AUDIO_DAC` / `OMDRC_AUDIO_CAPTURE` of `audio-roles.conf`. USB card
-numbers such as `pcm0` or ALSA `card1` are never saved; every reconcile
-resolves the identities afresh from USB VID/PID and, when needed, the serial
-number. Every boot and hotplug reconcile (`audio_pick` in `omdrc_audio`,
-`linux_pick` in the helper) applies these rules:
+Each role keeps a list of every card applied to it, the explicit selection
+first. USB card numbers (`pcm0`, ALSA `card1`) are never saved; every reconcile
+resolves the identities afresh from USB VID/PID and, when needed, the serial.
+Where the list is stored is OS-specific (the roles sections above). Every boot
+and hotplug reconcile applies these rules:
 
 1. A card becomes known only when it is selected and successfully applied in
    the web UI. Being plugged in never enrolls it.
@@ -2182,8 +1017,8 @@ number. Every boot and hotplug reconcile (`audio_pick` in `omdrc_audio`,
    and `/configuration` ask the operator to choose (`dac_ambiguous=1` in
    `audio.roles`). An Apply there makes that card the explicit selection.
 6. An attached card that is not in the list is never used for a role that has
-   a list. The unconfigured ranking in the `omdrc_audio` header applies only
-   when `omdrc_audio_dac` is empty.
+   a list. Automatic ranking of unknown cards applies only when the role has
+   no list at all.
 7. VID/PID identifies a model, and a serial suffix separates identical
    devices. If identical attached devices expose no usable serial number,
    Apply is refused and the operator must unplug all but the intended one.
@@ -2192,22 +1027,16 @@ number. Every boot and hotplug reconcile (`audio_pick` in `omdrc_audio`,
    arbitrary playback card.
 
 A remembered capture interface that is not attached is normal for a box that
-travels, so it is reported as information, not as a fault.
-
-Upgrading keeps the single identity that is configured at upgrade time as a
-one-entry list. A DAC whose identity was overwritten before this change cannot
-be recovered, so each one has to be applied once to enroll it.
+travels, so it is reported as information, not as a fault. Upgrading keeps the
+single identity configured at upgrade time as a one-entry list; a DAC whose
+identity was overwritten earlier must be applied once to enroll it.
 
 The helper validates USB identities, selectors, canonical bundle IDs, hashes,
-config derivation, and destination roots before touching anything root-owned;
-`configuration.py` itself runs as the unprivileged web user throughout.
-
-A finished job keeps only its log. Both large working trees --- the browser's
-upload and the staged site the helper publishes from --- are discarded when
-the job ends, and payloads orphaned by an earlier run of the panel are swept
-at startup. Before that, every install leaked its payload permanently: five
-of them had accumulated 901 MB under
-`~/.local/state/omdrc/configuration` and filled the root filesystem.
+config derivation and destination roots before touching anything root-owned;
+`configuration.py` itself runs as the unprivileged web user throughout. A
+finished job keeps only its log: the browser's upload and the staged site are
+discarded when the job ends, and payloads orphaned by an earlier run are swept
+at panel startup.
 
 ### Bit-perfect check page {#sec:bitperfect-page-ref}
 
@@ -2219,148 +1048,28 @@ shares this page's operation lock, CSRF token and Origin rule. Fully
 described in [The `/bitperfect` page](#sec:bitperfect-page) and
 [its implementation](#sec:bitperfect-impl).
 
-## Video: mpv playback + phone web remote {#sec:video}
 
-![Video playback and control paths.](build/chain-video.pdf){width=92%}
+\newpage
 
-### Playback launchers
+# Bit-perfect verification {#sec:bitperfect}
 
-* **`play-bluray.sh`** --- physical Blu-ray discs. Kodi cannot read a
-  physical BD on FreeBSD (raw `/dev/cd0` wants 2048-byte-aligned reads; the
-  kernel cannot mount UDF 2.50), so mpv + libbluray read the raw device.
-  Because the USB drive only sustains full speed in ~1 MB chunks and raw
-  `cd0` has no kernel read-ahead, the script fronts the drive with a **GEOM
-  cache** (`gcache create -b 1048576 -s 268435456 bd cd0` ->
-  `/dev/cache/bd`), and probes `bd_list_titles` to play the *genuinely
-  longest* title (mpv has no BD menu support; `e`/`E` cycle titles at
-  runtime).
-* **`play-media.sh`** --- local files, playlists, and network/stream URLs
-  (m3u8, yt-dlp sites); same DRC audio routing, no gcache.
-
-Both source `lib/drc-audio.sh`, which ensures the chain is in **resamp
-mode** before playing --- necessary because the direct DAC is bit-perfect
-(`bitperfect=1` on the DAC's unit): a 48 kHz movie on a higher-clocked DAC would
-play ~2x fast. With DRC up, mpv plays to `oss//dev/dsp.play` and delays the
-**video** by `DRC_VIDEO_DELAY` (default **0.67 s**) to match the audio-path
-latency; subtitles ride with the picture automatically.
-
-The 0.67 s is derived, not guessed (full derivation in
-`video/AV-SYNC-DELAY.md`): the FIR filter's impulse peak sits at sample
-96000 of 524288 taps at 192 kHz = **0.500 s group delay** (the coefficient
-list *is* the impulse response; the peak is when a transient emerges), plus
-one BruteFIR partition (32768 samples at 192 kHz = **0.171 s**), plus a
-little `virtual_oss` buffering.
-
-DVDs are simpler: they mount fine (UDF 1.x) and are low-bitrate, so
-`mpv dvd:// --dvd-device=/dev/cd0`; commercial discs need `libdvdcss`.
-
-**Remote control**: the `mpv-mpris` package auto-loads into every mpv, so
-KDE Connect's Android *Media control* (and `playerctl`, Plasma widgets)
-drive whatever is playing --- play/pause/seek/volume/metadata.
-
-### The web remote (`video/webremote/`)
-
-KDE Connect controls what is *already playing*; the web remote is what
-*starts* a title. A separate Flask app (port 9080, LAN-only, rc.d service
-`omdrcvideo`) serving a phone UI to:
-
-* **Browse** the whitelisted media roots (realpath containment --- no `..`
-  or symlink escape), with entries classified server-side: folder, Blu-ray
-  rip (`BDMV/index.bdmv`), DVD rip (`VIDEO_TS`), or playable file. Grid
-  (poster thumbnails) or compact list.
-* **Thumbnails** via ffmpeg frame grabs, disk-cached by path+mtime, with a
-  background prewarm thread and bounded concurrency.
-* **IMDb info** --- title deduced from the name and, with an OMDb API key,
-  verified and enriched (year, director, cast, plot, rating).
-* **Play** on a **persistent idle mpv** over its JSON IPC socket
-  (`/tmp/mpv-socket`) --- hidden until something plays, DRC audio configured
-  once at startup, `audio-channels=stereo` so 5.1/7.1 sources downmix.
-  Blu-ray rips get the longest-title probe; a **Play Blu-ray disc** button
-  reuses the gcache lifecycle for physical discs, loading into the same mpv.
-* **Transport** --- seek, +-10/30 s, play/pause, mute, stop, audio and
-  subtitle track menus; **favourites** pinned to the main page.
-
-The idle mpv is autostarted by the KDE/Plasma session, from
-`~/.config/autostart/mpv-idle.desktop` (linked to the installed entry by
-`make user-install`); a `git pull` + `service omdrcvideo restart` is the whole
-update path.
-
-## Glitch detection {#sec:glitch}
-
-Implemented for FreeBSD (on Linux the same scripts run but the
-FreeBSD-specific sources are simply quiet). One global switch ---
-`glitch-debug.sh on|off|status|analyze|usbtap|tail|clear` --- also exposed as
-the Debug card in omdrc-ctrl.
-
-![The glitch-detection layers and where each taps the chain.](build/glitch-layers.pdf){width=95%}
-
-* **`glitch-monitor.sh`** (always-on, lightweight): polls every second and
-  logs new anomalies from four sources --- BruteFIR warnings (missed
-  real-time deadlines), kernel `uaudio`/USB errors, the MPD log, and any
-  increasing `dev.pcm.*` under/over/err/xrun counter --- into a unified
-  `glitch.log`.
-* **`glitch-usbtap.sh`** (definitive, heavier, CLI-only): taps the OKTO's
-  isochronous OUT endpoint 0x01 with `usbdump`, downstream of every software
-  stage. Header-only analysis scales to multi-minute captures; it flags
-  **timing gaps** (> 2.5x the nominal ~4 ms interval) and **short frames**
-  (SLEN < 0.5x nominal), while the constant +-few-samples feedback wobble of
-  asynchronous USB is counted separately and never flagged. Blind spot: a
-  full-length block of zeros (silence insertion) needs payload inspection
-  --- use `verify-bitperfect.sh` for that.
-* **`glitch-analyze.py`**: classifies inter-event intervals per stage by the
-  coefficient of variation --- CV ~ 0 **PERIODIC** (a buffer/clock cycle),
-  CV ~ 1 **RANDOM/Poisson** (CPU/scheduling), CV > 1.5 **BURSTY** (something
-  waking up) --- plus autocorrelation and correlation against DRC rate
-  switches in `drc.log`.
-
-## Bit-perfect verification
-
-`scripts/verify-bitperfect.sh` *proves* the DAC receives bytes unchanged.
-Two levels:
-
-1. **Structural** (kernel-certified): with `hw.snd.verbose=2`,
-   `/dev/sndstat` must show the play channel `BITPERFECT` with the feeder
-   graph exactly `{userland} -> feeder_root -> {hardware}` --- any
-   `feeder_rate`/`feeder_volume`/format node means the kernel is altering
-   bytes. Preconditions: `bitperfect=1` and `play.vchans=0` on the DAC's unit
-   --- which is what `omdrc_audio_dac_sysctls` asserts on every attach.
-2. **Empirical wire tap** (gold standard): play a deterministic test signal
-   (near-silent ~-90 dBFS per-sample counter in the low 16 bits, distinct
-   L/R --- maximally sensitive to truncation, dither, volume, resampling,
-   channel swap) while capturing the USB isochronous OUT endpoint 0x01 with
-   `usbdump`; decode, align, and byte-compare. The embedded OSS writer
-   aborts loudly if the kernel coerces format/channels/rate. Verified on
-   this host at 44.1/48/88.2 kHz: hundreds of kB contiguous identical bytes,
-   and on the live MPD both direct (**BIT-PERFECT**) and through
-   `virtual_oss` (**VALUE-EXACT**, 0 slips).
-
-The subtle part is clock domains: a producer must be **flow-controlled by
-the sink's clock** (blocked writes). MPD is; a free-running test writer is
-not, and drifts. `virtual_oss` itself is bit-transparent with a
-flow-controlled producer. The one caveat: BruteFIR bridges the loopback's
-software clock to the DAC crystal without resampling, so an inaudible
-one-sample slip occurs every several minutes on the DRC path --- values are
-never altered. The DRC path is *intentionally* not byte-equal (that is the
-correction); to test its plumbing, use a unit-impulse filter with
-attenuation 0.
-
-The test asset (`tests/`) is a 44.1 kHz S32 WAV whose PCM payload is
-byte-identical to the reference raw --- MPD cannot play headerless raw.
+Bit-perfection is proved, not assumed: a tap records the USB isochronous OUT
+stream at the **last host-controlled point** --- the URBs handed to the USB
+host controller --- and the bytes are compared with a reference. The control
+panel's **Bit-perfect check** page runs that tap through the paths music
+actually takes and shows the compared bytes. The test signal and the
+cross-OS comparison are in Appendix A; the
+original single-host proof tool is FreeBSD-only (section
+\ref{sec:fbsd-verify}).
 
 ## The `/bitperfect` page {#sec:bitperfect-page}
 
-`verify-bitperfect.sh` above proves one segment: *host to USB wire*, with
-the tool itself as the player. That is the right control experiment, and it
-is not how the box plays music. Music arrives through **upmpdcli** or
-**qobuzconnect2mpd**, both of which drive **MPD**, and every one of those
-layers can break bit-perfection in a way the direct test would never see ---
-MPD resampling, a decoder promoting samples differently, or a renderer
-quietly setting MPD's volume or replaygain.
-
-The control panel's **Bit-perfect check** page
-(`http://<box>:9090/bitperfect`) runs the same tap and the same verdict
-engine, varies *who plays*, and --- the part no command line offers --- shows
-the compared bytes.
+Music arrives through **upmpdcli** or **qobuzconnect2mpd**, both of which
+drive **MPD**, and every layer can break bit-perfection in a way a direct
+test never sees --- MPD resampling, a decoder promoting samples differently,
+or a renderer quietly setting MPD's volume or replaygain. The page
+(`http://<box>:9090/bitperfect`) runs the tap and verdict engine while varying
+*who plays* and, uniquely, shows the compared bytes.
 
 ### The five paths, and which question each answers
 
@@ -2389,13 +1098,10 @@ destroys bit-perfection without altering a byte of the file it was handed.
 
 ### The live Qobuz reference: the renderer's own buffer
 
-`live` needs a reference for a stream nobody has a copy of. It does not ask
-for one. **The renderer already wrote the exact bytes it fed MPD to local
-storage**, so that file *is* the reference --- genuine byte equality against
-the real service, not a comparison against a "same" track that might be a
-different master.
-
-On this box `qobuzconnect2mpd` stages a **complete FLAC per track**:
+`live` needs a reference for a stream nobody has a copy of, and does not ask
+for one: **the renderer already wrote the exact bytes it fed MPD to local
+storage**, so that file *is* the reference --- real byte equality against the
+real service. `qobuzconnect2mpd` stages a complete FLAC per track:
 
 ```
 /tmp/qobuzconnect2mpd-<uid>/cache/track_<id>_<fmt>_<pid>_<n>.flac
@@ -2405,18 +1111,15 @@ Resolution happens at run time and never trusts a hard-coded path:
 
 1. `mpc current` --- if MPD reports a local file, that is the reference;
 2. otherwise the open file descriptors of the MPD and renderer processes
-   (`/proc/PID/fd` on Linux, `fstat(1)` on FreeBSD) --- renderer-agnostic;
+   (renderer-agnostic, read with the OS's own tool);
 3. otherwise the known buffer locations, **filtered to files that changed
-   during the tap window**. That filter is not a nicety: the cache keeps
-   completed tracks for hours, and comparing this capture against a stale
-   one would report a fault that never happened.
+   during the tap window** --- the cache keeps completed tracks for hours, and
+   comparing against a stale one would report a fault that never happened.
 
-A directory of numbered *segments* is concatenated in **numeric** order
-(lexical order would put `part10` before `part2` and manufacture
-corruption); a directory of whole tracks is never concatenated. If the
-buffer turns out to be a **lossy** container the run is reported as
-*decode-path transparent*, not bit-perfect: the DAC legitimately receives
-the decoder's output rather than the file's bytes.
+Numbered *segments* are concatenated in **numeric** order (lexical order would
+put `part10` before `part2`); whole tracks are never concatenated. A **lossy**
+buffer is reported as *decode-path transparent*, not bit-perfect: the DAC
+legitimately receives the decoder's output.
 
 ### Checking any track, not only the generated asset
 
@@ -2470,44 +1173,29 @@ scripts/bitperfect-lib.py leadin PREFIX.wire.raw 5648 2 0 32
 
 ### Seeing the bytes
 
-A verdict says *whether*. The byte view says *where* and *what*, at two zoom
-levels served by two subcommands added to `bitperfect-lib.py`:
+A verdict says *whether*; the byte view says *where* and *what*, at two zoom
+levels served by `bitperfect-lib.py window` and `scan`:
 
-- **The colour map** paints the whole stream, one cell per slice: green
-  where the wire carried exactly the reference bytes, red where it did not,
-  grey where the capture did not reach. Every byte of the overlap is really
-  compared --- only the level row underneath is estimated. It makes the
-  *shape* of a fault legible: an isolated red cell is a bit flip, a red tail
-  is an underrun, dense speckle is a converting feeder in the path. Clicking
-  jumps the hex view there.
-- **The side-by-side hex view** shows the reference beside the tapped wire,
-  one row per frame --- byte offset, hex, and the decoded per-channel
-  integers for both --- with the differing byte positions highlighted in
-  *both* columns at once. A single slider drives the offset across the whole
-  file with the two views locked, so dragging it is a continuous consistency
-  check; `first mismatch` and `random spot check` jump to the interesting
-  places.
+- **The colour map** paints the whole stream, one cell per slice: green where
+  the wire carried exactly the reference bytes, red where it did not, grey
+  where the capture did not reach. It makes the *shape* of a fault legible: an
+  isolated red cell is a bit flip, a red tail an underrun, dense speckle a
+  converting feeder in the path. Clicking jumps the hex view there.
+- **The side-by-side hex view** shows reference and tapped wire, one row per
+  frame (offset, hex, decoded per-channel integers), with differing byte
+  positions highlighted in both columns and one slider driving both. `first
+  mismatch` and `random spot check` jump to interesting places.
 
-Both read only the artifacts `finalize` already wrote, so they cannot
-disagree with the verdict --- a property `tests/test_bitperfect_window.py`
-pins down on captures whose faults are known to the byte.
+Both read only the artifacts `finalize` already wrote, so they cannot disagree
+with the verdict (`tests/test_bitperfect_window.py` pins this on captures with
+faults known to the byte). A third subcommand, `leadin`, shows what alignment
+discards: everything before the first reference byte. The collapsible
+**Before the stream** panel reads it from `PREFIX.wire.raw`; a run of zeros
+right before the anchor is the ring's priming silence, while a non-zero byte
+came from somewhere else and is worth a look. It also works after an
+`ALIGNMENT FAILED` verdict, when no aligned pair exists.
 
-A third subcommand, `leadin`, opens the box at its left edge. Alignment
-discards everything the tap saw before the first reference byte --- attach
-noise, then whatever the audio stack emitted ahead of the music --- and the
-verdict says nothing about those bytes. **Before the stream**, a collapsible
-panel under the hex view, reads them back out of `PREFIX.wire.raw`, which
-every path already writes. There is no reference column: before the stream
-starts there is nothing to compare against. Rows ahead of the anchor are
-marked *trimmed*, so a view spanning the boundary shows exactly where the
-compared stream began, and the summary separates the two things living in
-that head --- a run of zeros immediately before the anchor is the ring's
-priming silence, while a non-zero byte anywhere in it came from somewhere
-else and is worth looking at. Unlike the other two, it does not need the
-aligned pair: the untrimmed wire is precisely what is still worth reading
-after an `ALIGNMENT FAILED` verdict, when no aligned pair exists.
-
-## Bit-perfect verification: implementation {#sec:bitperfect-impl}
+## Implementation {#sec:bitperfect-impl}
 
 ### The pipeline
 
@@ -2565,25 +1253,20 @@ zeros in front of them. A "skip the zeros" rule would eat a quiet intro.
 
 What is *played* is not what is *compared*: playback gets a few seconds of
 digital silence appended, the reference does not, and `finalize` cuts by
-arithmetic (`cap[start : start + len(ref)]`) rather than by detecting
-silence.
+arithmetic (`cap[start : start + len(ref)]`) rather than by detecting silence.
+Two measured reasons:
 
-Two independent reasons, both measured:
-
-- `usbdump` buffers its pcap and loses whatever is unflushed when it is
-  terminated (hence also `SIGINT`, not `SIGTERM`);
-- **MPD does not drain its output buffer on close.** A 10 s WAV reached the
-  wire 129744 bytes (0.74 s) short --- identically across runs, and
-  regardless of how long the tap kept recording afterwards, which is what
-  proves it is the player discarding its tail rather than the tap stopping
-  early. The direct OSS writer has no such gap because it
+- `usbdump` buffers its pcap and loses whatever is unflushed when terminated
+  (hence `SIGINT`, not `SIGTERM`);
+- **MPD does not drain its output buffer on close**: a 10 s WAV reached the
+  wire 129744 bytes (0.74 s) short, identically across runs and regardless of
+  how long the tap kept recording --- the player discarding its tail, not the
+  tap stopping early. The direct OSS writer has no such gap because it
   `SNDCTL_DSP_SYNC`s first.
 
 The pad cannot mask a defect: the comparison window is still exactly
-`len(ref)` bytes, so every reference byte is still checked, and a bit
-flipped mid-stream is still reported at its exact offset. What the pad
-removes is only the ability of a late capture cut to masquerade as a
-playback fault.
+`len(ref)` bytes, so a bit flipped mid-stream is still reported at its exact
+offset.
 
 ### Renderer arbitration
 
@@ -2645,56 +1328,19 @@ feeder, say) leaves no such run anywhere and the search fails before any
 comparison. When exit 2 appears, open `PREFIX.wire.raw`: junk or zeros point
 at the tap, plausible-looking audio points at a converting feeder.
 
-### What running it exposed
-
-Two pre-existing defects surfaced the first time the page was driven against
-real hardware, both worth knowing independently of the page:
-
-- `bitperfect-tap-freebsd.sh` tapped `dev.uaudio.0`. On a box with a capture
-  interface that is **not** the DAC: here `uaudio0` is the ESI U24 XL and
-  the OKTO DAC8 is `uaudio1`, so the script recorded the wrong USB device
-  and reported `NO CAPTURE` against a perfectly healthy chain. It now
-  resolves the uaudio unit from the play device
-  (`/dev/dsp.dac` to `pcm<N>.%parent`), as `glitch-usbtap.sh` always did.
-  Same family as the `omdrc_sndlink` rename that once pointed the whole
-  chain at the capture card.
-- The `/configuration` page's job state root kept every filter install's
-  upload *and* its staged site copy forever. Five installs had accumulated
-  901 MB in `~/.local/state/omdrc/configuration` and filled the root
-  filesystem. Finished jobs now discard their payload and keep only
-  `job.json`, and the manager sweeps what earlier runs orphaned at startup.
-
-### Measured results
-
-On the OKTO DAC8 (FreeBSD 15.1-RELEASE-p2, `usbus0` devaddr 3):
-
-| Path | Material | Verdict |
-|---|---|---|
-| `aplay` | 44100 / 32-bit | **BIT-PERFECT** --- tap WAV file hash identical to the input |
-| `mpd` | 44100 / 32-bit | **BIT-PERFECT** |
-| `mpd-http` | 44100 / 32-bit | **BIT-PERFECT** |
-| `mpd-http` | 96000 / 24-bit FLAC | **BIT-PERFECT**, DAC clock followed (`feedback_rate` 96002) |
-| `upnp` | 44100 / 32-bit, driven through upmpdcli over OpenHome | **BIT-PERFECT** |
-
-The 96 kHz FLAC run carries the most information: it proves the FLAC decode
-is transparent *and* that the reference's 24-to-32 promotion matches MPD's
-own promotion exactly, which is the one place the two could have disagreed.
-The `upnp` run is the one that certifies the renderer itself: the whole
-upmpdcli-to-MPD-to-DAC path, with upmpdcli choosing what MPD plays.
-
-`live` remains unverified against hardware --- see
-[Status and what is still owed](#sec:bitperfect-owed).
-
 ### Status and what is still owed {#sec:bitperfect-owed}
 
-- **`live`** needs a human to start Qobuz playback, so it has not been run
-  end to end. Its buffer resolver is unit-tested against the exact layout
-  observed on this box, including the stale-buffer and
+- **`live`** needs a human to start Qobuz playback, so it has not been run end
+  to end against hardware. Its buffer resolver is unit-tested against the
+  exact layout observed on the FreeBSD box, including the stale-buffer and
   never-concatenate-whole-tracks rules.
-- `drc.sh cdin` re-execs without the design variant, so switching to CD
-  input silently drops an active `@design`.
+- `drc.sh cdin` re-execs without the design variant, so switching to CD input
+  silently drops an active `@design`.
 
-## Dynamic range: which master, and what it measures {#sec:dynamic-range}
+
+\newpage
+
+# Dynamic range: which master, and what it measures {#sec:dynamic-range}
 
 A record exists in several masters, and they are not equally loud. The
 Alice In Chains *Unplugged* CD measures DR 8 while vinyl rips of it measure
@@ -2714,7 +1360,8 @@ question three ways, each more direct than the last:
 The first two report other people's measurements of other people's copies;
 the third is the only one that measures what you are hearing.
 
-### What the renderers tell the panel
+## What the renderers tell the panel
+
 
 Everything below depends on metadata, and MusicPD's queue carries only what
 a renderer puts there. Both renderers are patched to publish more than their
@@ -2735,7 +1382,8 @@ for every stream: the year Qobuz supplies is the album's *original* release
 date, true of every reissue alike, and a multi-disc set arrives numbered
 `disc × 1000 + track` (track 1005 is disc 1, track 5).
 
-### Identifying the pressing
+## Identifying the pressing
+
 
 *Which one is playing?* reads each listed version's own page and scores it
 against **the track playing, paused or last played --- never the rest of the
@@ -2787,7 +1435,7 @@ These numbers live in one table, `drdb.W`, which both the scorer and the
 page's own copy of this table read; tests fail if a weight is used without
 being documented or written into the scorer as a literal.
 
-### Measuring the DR of the stream {#sec:measure-dr}
+## Measuring the DR of the stream {#sec:measure-dr}
 
 The **Measure DR** button on the renderer card fetches the playing record's
 tracks a second time, measures each one and deletes it before fetching the
@@ -2795,7 +1443,7 @@ next. It runs in the background; the card shows a progress bar, the track in
 hand and its phase, the album value as it builds, and one colour-coded badge
 per track.
 
-#### How a job runs
+### How a job runs
 
 1. **Which tracks.** The run of queue entries around the one playing that
    carry *exactly* its album tag, capped at 60. Exactly: *Get Yer Ya-Ya's
@@ -2823,7 +1471,7 @@ removed when the next job starts. A job refuses to start with less than
 will not download or decode is marked failed and does not stop the rest; the
 album value is then over the tracks that measured.
 
-#### The metrics
+### The metrics
 
 The meter is the TT Dynamic Range algorithm, as used by the foobar2000
 Dynamic Range Meter 1.1.1 whose logs fill the database, and reproduced by
@@ -2847,48 +1495,22 @@ dr14_tmeter:
 The DR scale is the database's own: 7 and below flat red, 14 and above flat
 green, with 8--13 graded between.
 
-#### Validation
+### Validation and an example
 
 The meter was compared with dr14_tmeter's `compute_dr14` on the same Qobuz
-track, decoded identically:
+track, decoded identically: DR 9 against 9 (9.04), peak −0.13 dB and RMS
+−10.89 dB identical. The unit tests pin the properties that agreement rests
+on: a steady sine measures DR 0 at any level; one full-scale spike in
+otherwise steady material does not raise it; quiet passages under full-scale
+peaks give the range the formula predicts; a decode through ffmpeg matches the
+samples written; and one track at a time is on disk, with nothing surviving
+success, failure, cancellation or a crash mid-download.
 
-| | DR | Peak | RMS |
-|---|---:|---:|---:|
-| dr14_tmeter | 9 | −0.13 dB | −10.89 dB |
-| `drmeter.py` | 9 (9.04) | −0.13 dB | −10.89 dB |
+*Get Yer Ya-Ya's Out!* as Qobuz serves it (16 bit/44.1 kHz) measures album DR
+9 (tracks 8--10, every track peaking at 0 dBFS). The database holds it at DR
+11 (2002 CD) and DR 9 (2014 HDtracks download): the stream is the 2014 master.
 
-The unit tests pin the properties that agreement rests on: a steady sine
-measures DR 0 at any level (its peak is exactly √2 × RMS); one
-full-scale spike in otherwise steady material does not raise it (the
-second-highest peak ignores it); quiet passages under full-scale peaks give
-the range the formula predicts; a decode through ffmpeg matches the samples
-written. The job's tests check that one track at a time is on disk and that
-nothing survives success, failure, cancellation or a crash mid-download.
-
-#### A first measurement
-
-*Get Yer Ya-Ya's Out!* as Qobuz serves it, 16 bit/44.1 kHz, measured on this
-box:
-
-| # | Track | DR | Exact | RMS (dB) |
-|---:|---|---:|---:|---:|
-| 1 | Jumpin' Jack Flash | 9 | 9.05 | −10.77 |
-| 2 | Carol | 8 | 7.69 | −9.29 |
-| 3 | Stray Cat Blues | 9 | 8.94 | −10.54 |
-| 4 | Love In Vain | 10 | 9.81 | −12.76 |
-| 5 | Midnight Rambler | 9 | 9.45 | −11.60 |
-| 6 | Sympathy For The Devil | 8 | 8.04 | −9.45 |
-| 7 | Live With Me | 8 | 7.85 | −8.93 |
-| 8 | Little Queenie | 8 | 8.15 | −9.49 |
-| 9 | Honky Tonk Women | 9 | 8.80 | −10.82 |
-| | **Album** | **9** | | |
-
-Every track peaks at 0 dBFS. The database holds this album at DR 11 (2002
-CD) and DR 9 (2014 HDtracks download): the stream measures like the 2014
-master, not the 2002 one. (The tenth track was lost to a stalled CDN
-connection on this run, which is why downloads now resume.)
-
-#### Costs and limits
+### Costs and limits
 
 - **Bandwidth.** The job is a second download beside the stream MusicPD is
   playing. On this box it ran at about 350 KB/s, so a ten-track CD-rate
@@ -2901,7 +1523,7 @@ connection on this run, which is why downloads now resume.)
 - **The record as queued.** If only part of an album is in the queue, the
   album value is over that part.
 
-#### HTTP API
+### HTTP API
 
 | Endpoint | Purpose |
 |---|---|
@@ -2911,28 +1533,6 @@ connection on this run, which is why downloads now resume.)
 
 The job's state never carries a track URL.
 
-## scripts/ --- helper tools
-
-| Script | Purpose |
-|---|---|
-| `REW2raw.sh` | REW WAV -> brutefir raw FLOAT64_LE at a target rate, with the theoretically correct `Fs_source/Fs_target` coefficient scale (no peak normalisation) |
-| `REW2raw-all-rates.sh` | Batch: `L.raw`/`R.raw`/`sox.txt` for every numeric rate directory under a filter root; prompts before overwriting unless `-y` |
-| `headroom_calc.py` | Minimum `attenuation:` per config from worst-case FFT gain + safety margin |
-| `new_filter_design.py` | Publishes a design from one directory of REW exports, and records it in the room's history |
-| `remove_filter_design.py` | Removes one deployed design completely and records that in the room's history |
-| `deploy_filter.py` | The offline audit/build engine underneath: rates, validation, analysis, manifest |
-| `verify_filter_bundle.py` | Read-only re-verification of committed bundles (used by CMake and CI) |
-| `console_ui.py` | Shared stages, colour, confirmation and failure formatting for design commands |
-| `filter_workflow_next.py` | Shared operator handoff printed by the commands above |
-| `rew_mdat_audit.py` | Optional archival audit of REW project traces against exports |
-| `verify-bitperfect.sh` | The original bit-perfect proof tool; sources: built-in writer or `mpd:OUTPUT`; taps: `usb` or `loop:/dev/dsp.X` |
-| `bitperfect-lib.py` | Shared engine for the tap scripts and the panel: WAV to S32 wire-container promotion, usbmon reader, usbdump decoder, alignment, verdict, report --- plus `window`/`scan`, which read the two compared streams back for the byte view |
-| `bitperfect-tap-linux.sh` / `-freebsd.sh` | Play a WAV to the DAC and record the exact bytes on the USB wire; same CLI and artifacts on both OSes, for cross-OS comparison |
-| `bitperfect_runner.py` | Runs a tap through a chosen playback path (`aplay`, `mpd`, `mpd-http`, `upnp`, `live`); backs the `/bitperfect` page, emits `@@PHASE`/`@@STAT`/`@@RESULT` progress lines ([§Implementation](#sec:bitperfect-impl)) |
-| `bitperfect_material.py` | Decodes any WAV/FLAC into a run's reference, checks the alignment anchor is unambiguous, and resolves what a renderer is streaming for `--source live` |
-| `bitperfect-compare.py` | Compares two tap artifacts from either OS (`.wav`, `.wire.raw`, or the tiny committable `.txt` report) |
-| `omdrc-ctrl/src/drmeter.py` | The DR meter behind *Measure DR*; run on a file it prints that file's DR, peak and RMS as JSON ([§Measuring](#sec:measure-dr)) |
-| `systemd-user-install.sh` | Legacy: link + enable a `systemd --user` drc.service (Linux) |
 
 \newpage
 
@@ -2940,264 +1540,65 @@ The job's state never carries a track URL.
 
 A CD transport is the second source the chain accepts, and the only one that
 is not a file: it arrives as a live S/PDIF signal, clocked by the disc, on a
-USB capture interface. On FreeBSD `omdrc-cdin` (`cdin/`) bridges it into the
-same `virtual_oss` entry point MPD uses; on Linux `alsaloop(1)` from
-`alsa-utils` does the equivalent job into `snd-aloop`. Either way a disc gets
-exactly the same room correction as everything else.
+USB capture interface. A bridge writes it into the same loopback MPD uses, so
+a disc gets exactly the same room correction as everything else. It takes the
+seat `mpv` takes for video: a non-MPD writer into the loopback BruteFIR reads.
 
-![The CD path. Both ends of the bridge block on their own device, so the ring fill between them is the drift signal; there is no resampler anywhere in it.](build/chain-cdin.pdf){width=98%}
+This chapter holds what is common to both systems. The bridge itself is
+**`alsaloop`** on Linux (chapter \ref{sec:cdin-linux}) and the purpose-written
+**`omdrc-cdin`** daemon on FreeBSD (chapter \ref{sec:cdin-freebsd}); the
+web card below is the same on both, because both emit the same log grammar.
 
-It takes the seat `mpv` already takes for video (`video/lib/drc-audio.sh`):
-a non-MPD writer into the loopback that BruteFIR reads.
+## Two clocks, no resampler
 
-Most of this chapter --- the FreeBSD `omdrc-cdin` daemon, the lead/drift
-arithmetic, the state machine, the transport simulator and the stats line ---
-describes the daemon that had to be written because FreeBSD ships nothing
-that reconciles two free-running audio clocks. Linux does ship that
-reconciler, so section \ref{sec:cdin-linux} covers the Linux bridge on its
-own terms: what topology problem it has that FreeBSD does not. Both platforms
-now present the same user-visible rule: CD input is an exclusive source. The
-web panel's CD input card is unchanged either way --- it parses the common log
-grammar, and the Linux supervisor emits the same grammar, so one card serves
-both operating systems.
+Capture is slaved to the CD's crystal and the DAC runs on its own; the two
+differ by a few ppm **forever**. Neither bridge resamples: the data path is
+bit-identical to what the transport sent, which the bit-perfect tools can
+verify. The drift is absorbed elsewhere, by a mechanism each bridge chapter
+describes.
 
-## Why a bridge is needed at all
+## CD input is an exclusive source
 
-Capture is slaved to the CD's crystal, the DAC runs on its own, and the two
-differ by a few ppm **forever**. Samples arrive at `f_cd` and must leave at
-`f_dac`. FreeBSD ships no `alsaloop` equivalent, which is what made this look
-blocked --- but the missing piece was a tool, not a kernel facility: a
-blocking `read()` runs at the CD's clock, a blocking `write()` runs at the
-DAC's, so **the ring fill between them is the drift signal**. No OSS clock
-ioctl is needed to measure it.
+Selecting CD input remembers whichever MPD output is enabled (`OKTO-DAC`,
+`DRC-native` or `DRC-resamp`) and disables all of them; stopping the bridge
+restores exactly that output. The `OMDRC Spectrum` FIFO is not an audible
+output and is left alone. Each bridge chapter says how the rule is enforced.
 
-**There is no resampler.** The data path is a `memcpy`, so what reaches
-BruteFIR is bit-identical to what the transport sent --- and that is
-verifiable with `scripts/verify-bitperfect.sh`, which would be meaningless if
-a resampler sat in the path. Drift is absorbed by the *lead* instead.
+`drc.sh` carries the choice in its persistent state:
 
-### The lead is the only number that matters
+* `drc.sh cdin` records `last_source=cdin` and requests the 44.1 kHz chain, so
+  a reboot restores CD mode at 44.1 kHz.
+* An ordinary rate action is the explicit return to music: it writes
+  `last_source=music` *before* validation or any teardown, as write-ahead
+  intent. If the music transition fails, the next `restore` or hotplug
+  `reconcile` retries music instead of resurrecting stale CD mode.
+* `off` and the transient `stop` do not change the source.
+* A geometry change in CD mode is refused if the target geometry has no
+  44100 Hz configuration.
 
-The lead --- how much audio is buffered ahead of the output --- is
-simultaneously three things:
+## The capture interface: ESI U24 XL
 
-* the **drift margin**: how long before the buffer runs out;
-* the **startup delay**: you cannot pre-fill a lead you have not waited for;
-* the **transport lag**: every Play/Stop/Skip is heard this much later.
+The capture interface is an ESI U24 XL (USB Audio Class 1.0, USB 2.0 Full
+Speed, 32/44.1/48 kHz, 24-bit maximum). The vendor documentation (ESI
+KB00307EN) settles two things:
 
-They cannot be tuned separately. The upper bound is arithmetic:
-`time-to-splice = lead / drift`, so at a pessimistic **50 ppm** a **2000 ms**
-lead covers about **11 hours** of continuous gapless audio. A disc is at most
-80 minutes, therefore **drift cannot cause a discontinuity inside a disc**.
+* **it slaves to the incoming S/PDIF automatically** --- when the source is
+  clock master, "the U24 XL will receive clock from the source and
+  automatically will be slave"; there is no manual clock switch;
+* **the sample rate is not auto-detected**: depth and rate must be set to match
+  the incoming signal. The bridge sets 44100 Hz, so a non-44.1 source would be
+  captured at the wrong rate rather than refused.
 
-The *lower* bound is not set by drift at all. It is set by transport seeks and
-USB stalls: some players briefly **drop carrier** across a pregap or index
-boundary, which is a sub-second input stall that the lead has to absorb.
-That, not drift, is why the default is 2000 ms rather than the ~50 ms drift
-alone would need. Below ~250 ms the daemon warns that nothing is left to
-absorb a seek.
+It is class compliant, so the OS's generic USB audio driver handles it with no
+vendor driver. **Do not update the interface firmware**: a Linux report has
+S/PDIF capture working on the original firmware and becoming "completely
+distorted" after an upgrade.
 
-Calibrate it on the real transport with a full disc:
-
-```
-omdrc-cdin --in /dev/dsp.capture --out /dev/dsp.play --lead 2000 -d -s 10 \
-    -l /tmp/cdin.log
-```
-
-`starves` must stay 0 --- each one is an audible dropout. After about five
-minutes the `drift` field reports the measured ppm and the projected headroom,
-which replaces the 50 ppm assumption with the actual hardware. Step `--lead`
-down (1500, 1000, 750...) until the first value that produces **any** starve;
-that is below the floor the transport imposes, so go back up one step and keep
-a margin. Record the value: it becomes `omdrc_cdin_lead`.
-
-## The three states, and the two very different tenancies
-
-![The daemon's state machine. The output device is held only in PLAYING; the capture device is held for the whole session.](build/cdin-states.pdf){width=78%}
-
-The daemon can remain up across CD player power and carrier changes, and that
-is safe at the OSS-device level because of what it does with the *output*
-device:
-
-| State | On the wire | The daemon | `/dev/dsp.play` |
-|---|---|---|---|
-| `NO_CARRIER` | no frames at all | retries the capture device | not held |
-| `IDLE` | frames, all exact zeros | counts the silence | **released** |
-| `PLAYING` | audio | ring -> output | held |
-
-The **capture** device is held for the life of a session: it is the
-interface's own node, nobody else wants it, and it is the only thing that can
-tell us whether a carrier exists. The **output** device is `virtual_oss`'s
-client node, and it is taken only for the duration of actual music.
-
-That asymmetry is not politeness. `drc.sh` restarts `virtual_oss` on every
-rate change, and an open cuse client handle at that moment is what wedges the
-teardown *permanently*: `cuse_server_free()` spins uninterruptibly until every
-client handle is gone, SIGKILL does not touch it, and only a reboot recovers
-the machine (section \ref{sec:voss-patches}). A daemon holding `/dev/dsp.play`
-around the clock would put a fresh instance of that hazard under every single
-rate change. The deployed source-selection policy is stricter than this
-internal tenancy: while the bridge service is selected, MPD's audible output
-is disabled even during silence. `virtual_oss` is a mixer, so relying on the
-device open alone would allow MPD and the disc to be audible together.
-
-For the remaining CUSE exposure --- a rate change while the bridge is running
---- `drc.sh` stops the service and treats process exit as the release
-acknowledgement:
-
-```
-service omdrc_cdin onestop
-# wait until pgrep -x omdrc-cdin no longer finds the process
-```
-
-The old path sent `SIGHUP` and inferred release from new logfile lines. That
-failed when the log was rotated or unlinked. A successful transition restarts
-the bridge after rebuilding `virtual_oss`, including an instance originally
-started with `onestart` while its rcvar is disabled. If the bridge does not
-exit, teardown is refused; `drc.sh` attempts to restore MPD's direct output so
-the failed transition does not leave the machine needlessly silent.
-
-**Choosing `--idle-after`** (default 15000 ms) has one failure mode at each
-end and a wide safe band between them: too short and Red Book's 2 s
-inter-track pause releases the device mid-disc, so every track change costs a
-lead to resume; too long and a stopped player keeps holding the chain.
-`--idle-after 0` disables the gate entirely, which is occasionally useful when
-measuring. Note this is silence *on the wire*: a player that drops carrier
-instead of sending zeros never reaches the gate at all --- the read fails and
-it lands in `NO_CARRIER`, which is the state that reopens the device.
-
-**Resuming does not lose the first note.** The ring keeps rolling through the
-silence, so an episode begins by *trimming* it to one lead rather than
-clearing it and waiting for a fresh pre-fill. The music still emerges one lead
-later, but the period that carried the first sample is still in the buffer.
-
-## What the transport does to the stream
-
-A CD player's S/PDIF output is **always 44.1 kHz**. Transport actions change
-*what* is sent, never *how fast* --- so there is no re-lock, ever:
-
-| Action | On the wire | Daemon behaviour |
-|---|---|---|
-| **Pause** | carrier alive, digital silence (most players) | plays the silence through; lead unchanged |
-| **Skip track** | brief mute (0.1--1 s), then audio | a short silence, heard one lead later |
-| **Fast fwd / rewind** | chopped scan snippets or mute, rate unchanged | ordinary audio or ordinary silence |
-| **Stop / tray / power** | carrier drops | `read()` stalls or errors, session ends, device reopened |
-
-Only the carrier drop matters, and only because the wall clock keeps running
-while no frames arrive: the lead drains by exactly the dropout's length and
-never recovers.
-
-### Every row of that table is testable without a CD player
-
-Point `--in` at a **directory** and its `*.wav` files become the tracks of a
-disc, played in name order; a single file is a one-track disc. Between tracks
-the rig emits `--gap` milliseconds of exact digital silence (default 2000, Red
-Book's inter-track pause) --- which is what the silence gate looks for, so a
-`--gap` longer than `--idle-after` exercises the release/re-acquire cycle with
-no hardware at all. `--transport` then scripts the buttons as `AT:EVENT` pairs,
-`AT` being seconds into the stream:
-
-```
-omdrc-cdin -i DISC -o /dev/dsp.dac -d -s 5 \
-    --transport "20:skip,35:pause=4,55:dropout=800,70:seek=+30,105:stop"
-```
-
-`dropout=N` is the important one --- it drops the carrier for N milliseconds
---- and `--in-ppm` is its counterpart for the *clock*: it offsets the
-simulated source's pace, which makes the design's central claim testable in
-seconds instead of the full day real hardware would take. Both failure modes
-behave as the arithmetic predicts and are worth recognising in the stats:
-
-* **lead exhausted** --- `starves` increments, then `in` and `out` converge to
-  the *same* wrong rate. That equality is the backpressure signature: with no
-  buffer left, the DAC is paced by the source instead of by its own clock;
-* **ring saturated** --- `lead` pins at the ring capacity and `drops` climbs at
-  the drift rate; audio is being discarded, one discontinuity per drop.
-
-The rig emulates the CD player's clock, not the disk's seek time, so the disc
-is prefetched on its own thread (4 s deep) and the paced read is served from
-RAM --- with the read inline, one 3 s stall on an external USB drive drained a
-2 s lead and starved playback, which is a property of the rig and not of the
-design under test. If the medium genuinely cannot sustain realtime the daemon
-says so, and a schedule that slips more than 100 ms is shifted forward rather
-than firing every overdue deadline at once (hardware cannot replay frames it
-missed, and a burst would permanently inflate the lead). Both are counted and
-surface as `rig stalls N slips N`, shown only when non-zero.
-
-## Reading the stats line
-
-```
-[stats] lead 1635 ms (min 1625, max 1649)  drift +38.7 ppm (+/-387.0),
-        ring fills in 46 h  in 44100.206 Hz  out 44088.817 Hz
-        frames 4054016/3980288  drops 0 B  starves 0  silence 0%  up 90 s
-```
-
-* **`lead` is the ring only.** It settles *below* `--lead`, because the
-  pre-fill hands the first few hundred ms straight to the output device's own
-  buffer. End-to-end latency is this figure plus that buffer, plus
-  `virtual_oss`'s 200 ms and BruteFIR's filter group delay; the startup delay
-  actually waited is `--lead`.
-* **`drift` is measured from the change in `lead`**, not from the frame
-  counters: those carry each device's constant buffer offset, which at ppm
-  scale would swamp the figure and which cancels in a difference. The `+/-` is
-  the period quantisation over elapsed time --- while it exceeds the estimate,
-  the estimate means nothing. It needs minutes and tightens for hours.
-* **`in` / `out` are measured from the instant playback began**, and the
-  window restarts at every discontinuity, so a dropout does not leave the
-  cumulative average reading low for the rest of the session.
-* **`starves`** counts events, not periods: one continuous starvation is 1.
-* **`drift ref dropped (lead jumped)`** means the estimate was thrown away and
-  restarted because the lead moved for a reason that is not the clocks. A
-  3.3 s jump inside a 60 s window once read as `+54361 ppm`, which is a stall
-  wearing a drift figure's clothes.
-
-## Running it as a service
-
-```
-# /etc/rc.conf
-omdrc_cdin_enable="YES"
-omdrc_audio_capture="ESI U24XL"   # names the ESI; that is what creates
-                                    # /dev/dsp.capture, which cdin then uses
-```
-
-| rc.conf variable | Default | Meaning |
-|---|---|---|
-| `omdrc_cdin_in` | `/dev/dsp.capture` | capture device (or a WAV file/directory, for the rig); the link comes from `omdrc_audio_capture` |
-| `omdrc_cdin_out` | `/dev/dsp.play` | playback device; `/dev/dsp.dac` writes the DAC directly, bypassing BruteFIR |
-| `omdrc_cdin_bits` | `24` | source width --- the U24 XL's capture endpoint is 24-bit and nothing else (see below) |
-| `omdrc_cdin_lead` | `2000` | lead in ms; drift margin, startup delay and transport lag at once |
-| `omdrc_cdin_idle_after` | `15000` | digital silence before the output device is released; `0` disables the gate |
-| `omdrc_cdin_logfile` | `/tmp/omdrc-cdin.log` | **must match** `log_file` in `commands.conf`'s `[cdin]` --- this file *is* the web card |
-| `omdrc_cdin_stats` | `10` | seconds between `[stats]` lines |
-| `omdrc_cdin_user` | `AUDIO_USER` | run user; the same one that owns BruteFIR and MPD, because they take turns on the same devices |
-| `omdrc_cdin_flags` | | anything else: `--out-bits`, `--period`, `--retry`, `-v` |
-
-The rc script is installed by the CMake superproject
-(`cdin/CMakeLists.txt`, a subproject of the top-level build). It uses
-`daemon(8)`, drops privileges via the standard `rc.subr` `${name}_user`, and
-adds one non-standard verb, `release` (the diagnostic `SIGHUP` above). A `--` separates
-the daemon supervisor's arguments from the bridge's arguments; the public
-`omdrc_cdin_flags` value is moved out of rc.subr's reserved `${name}_flags`
-namespace before startup. Started unprivileged with
-`service omdrc_cdin onestart` it clears `${name}_user` --- so `rc.subr` does
-not try to `su` to it --- and uses a pidfile under `/tmp`.
-
-The panel owns this service even when `omdrc_cdin_enable="NO"`. Selecting the
-CD source explicitly may start it with `onestart`; an incidental rate change
-never starts a bridge that was already stopped. When a running bridge must
-follow a rebuilt virtual output, `drc.sh` uses bounded `onestop`, waits for the
-process to disappear, then uses bounded `onestart`. This preserves a
-panel-started instance: `onerestart` would stop it and then let the disabled
-rcvar reject the start half. The timeout runs in foreground mode so its
-process-group cleanup cannot kill daemon(8)'s successfully detached
-supervisor.
-
-Log lines are a **contract**, not just prose: the web panel parses them, so
-`state <name>: <why>` and
-`<device> <path>: <available|unavailable|acquired|released>` keep their shape.
-Availability and holding are separate axes: `unavailable` means nothing can
-play and is the red light, while `acquired`/`released` is the ordinary rhythm
-of a daemon doing its job and is never a fault.
+The card has two inputs, only one live, chosen by a mixer setting that does
+**not** survive a reboot or a replug --- it comes up on the *analog RCA* input,
+so the bridge records silence from a healthy transport until the S/PDIF input
+is selected. The OS-specific way to set it on every attach is in section
+\ref{sec:linux-esi} (Linux) and section \ref{sec:fbsd-trap1} (FreeBSD).
 
 ## The web panel card
 
@@ -3251,31 +1652,257 @@ list. Four rules decide what goes where:
   when nothing is trying to open it. With no daemon and no log at all, the
   card hides itself.
 
-Three buttons: refresh, **Log** (opens the whole `omdrc-cdin` log in the Logs
-card), and **Stop**/**Start**, which performs a source hand-off around the rc
-service. Start records whichever of `OKTO-DAC`, `DRC-native`, or `DRC-resamp`
-is enabled, then disables all three before starting CD input; a failure to gate
-MPD aborts the start. Stop waits for the bridge to release its output and then
-restores exactly the recorded MPD output. The `OMDRC Spectrum` FIFO is not an
-audible output and is deliberately left alone. A failed or timed-out start
-also restores MPD.
+Three buttons: refresh, **Log** (opens the whole bridge log in the Logs card),
+and **Stop**/**Start**, a source hand-off around the bridge service. Start
+records whichever of `OKTO-DAC`, `DRC-native` or `DRC-resamp` is enabled, then
+disables all three before starting; a failure to gate MPD aborts the start.
+Stop waits for the bridge to release its output and restores exactly the
+recorded output. A failed or timed-out start also restores MPD. The service
+name is the OS's own (`omdrc_cdin` rc.d on FreeBSD, `omdrc-cdin.service` on
+Linux); the FreeBSD `sudoers` grant the button needs is in section
+\ref{sec:fbsd-cdcard}.
 
-The exit status of `service ... onestart` is not trusted --- it forks a
-`daemon(8)` and returns before the daemon can die on a missing device --- so
-the process is polled with `pgrep -x` until it agrees.
-On FreeBSD the button needs a `sudoers` grant; without one, set
-`control = no` rather than leaving a button that can only fail:
+
+\newpage
+
+# Part II --- Linux {-}
+
+Everything a Linux (Arch) host needs beyond Part I: packages, systemd and
+udev integration, the `snd-aloop` loopback, ALSA audio roles, browser audio,
+the panel's Linux behaviour and the CD bridge. **On FreeBSD, skip to Part
+III**; nothing in Part I depends on this part.
+
+\newpage
+
+# Linux: installation and lifecycle {#sec:linux-install}
+
+Do the common build (chapter \ref{sec:install}) with these Linux specifics.
+
+## Packages {#sec:linux-packages}
+
+| Component | Arch package |
+|---|---|
+| libnpupnp, libupnpp | `curl libmicrohttpd expat` |
+| upmpdcli | `jsoncpp libmpdclient` |
+| upmpdcli Qobuz plugin | `python python-requests` |
+| MPD | `mpd` |
+| BruteFIR (fork) | `fftw alsa-lib` |
+| Loopback | `snd-aloop` (kernel module, no package) |
+| CD bridge | `alsa-utils` (`alsaloop`, `amixer`) |
+| omdrc-ctrl | `python-flask python-markdown python-numpy` |
+
+```sh
+sudo pacman -S mpd                # MPD, chapter 3 step 2
+sudo ldconfig                     # after installing the upmpdcli stack
+```
+
+### BruteFIR defaults {#sec:linux-defaults}
+
+```sh
+mkdir -p ~/.config/BruteFIR
+cp etc/open-media-drc/brutefir_defaults.linux.conf \
+   ~/.config/BruteFIR/brutefir_defaults.conf     # ALSA I/O
+```
+
+## Files that must live in /etc
+
+The CMake install copies everything into `$PREFIX` (default `/usr/local`).
+Two files are read *before* `$PREFIX` is on the relevant search path:
+
+* **udev rule** --- udev scans only `/etc/udev/rules.d` and `/usr/lib/udev`,
+  never `/usr/local/lib/udev`. The install places `99-usb-audio-drc.rules`
+  under `$PREFIX/lib/udev/rules.d` and prints the one-line copy into
+  `/etc/udev/rules.d` (then `udevadm control --reload`).
+* **MPD `User=` drop-in** --- described next; the repository installs it
+  directly, so it needs no manual copy.
+
+The systemd units live in `$PREFIX/lib/systemd/{system,user}`, which systemd
+*does* scan. After the install, the printed checklist enables `mpd`,
+`omdrcctrl` and `omdrc-renderer`.
+
+### The MPD `User=` drop-in caveat (Arch)
+
+The Arch `mpd` package ships a systemd drop-in
+(`/usr/lib/systemd/system/mpd.service.d/00-arch.conf`) setting `User=mpd`.
+Drop-ins always apply *on top of* the main unit, so a full unit override at
+`/etc/systemd/system/mpd.service` **cannot** override that `User=` --- it
+silently loses. The repo therefore ships a **counter-drop-in**
+(`etc/systemd/system/mpd.service.d/open-media-drc.conf`, rendered by
+`cmake/renderers.cmake` and installed to `$PREFIX/lib/systemd/system/mpd.service.d/`)
+that sets `User=` to the audio user and the installed config path; a drop-in in
+`/usr/local/lib` beats one in the distribution's `/usr/lib` load path.
+`cmake --install` installs it directly; no manual `/etc` copy is needed. Do not
+create a full `/etc/systemd/system/mpd.service`.
+
+## USB DAC hotplug (udev + systemd) {#sec:linux-hotplug}
+
+![Linux hotplug path: udev synthesizes ADD events at boot, so one service covers boot and hotplug.](build/hotplug-linux.pdf){width=70%}
+
+| File | Installed to | Purpose |
+|---|---|---|
+| `99-usb-audio-drc.rules` | `/etc/udev/rules.d/` | Triggers the service on DAC plug/unplug |
+| `etc/systemd/system/drc-usb-audio.service` | `/etc/systemd/system/` | Starts/stops DRC |
+| `mpd.service.d/open-media-drc.conf` | `$PREFIX/lib/systemd/system/mpd.service.d/` | MPD user/config and post-start routing-reconcile drop-in |
+
+The udev rule matches any USB sound-card control device and pulls in
+`drc-usb-audio.service` (`Type=oneshot`, `RemainAfterExit=yes` so the
+several `controlC*` events of one plug never start duplicate BruteFIR
+instances). `ExecStart` is `drc.sh restore` after a 1 s settle;
+`ExecStop` is `drc.sh stop`. Because udev synthesizes ADD events for
+already-present devices at boot, the same service covers boot and hotplug.
+
+Manual control: `sudo systemctl start|stop drc-usb-audio.service`,
+`journalctl -fu drc-usb-audio.service`.
+
+## The loopback: snd-aloop {#sec:linux-aloop}
+
+MPD plays into `hw:Loopback,0,0` and BruteFIR reads `hw:Loopback,0,1`. The
+`snd-aloop` module is loaded at boot by `etc/modules-load.d/`.
+
+`snd-aloop` has no clock of its own and by default invents one, an hrtimer.
+That makes **two** independent drift pairs on Linux (CD <-> loopback timer, and
+loopback timer <-> DAC), the second present even in plain MPD playback. It is
+normally invisible only because both BruteFIR stanzas in
+`etc/open-media-drc/brutefir_defaults.linux.conf` set `ignore_xrun: true`.
+
+`etc/modprobe.d/omdrc-snd-aloop.conf` removes the second pair by pointing the
+module's `timer_source` at the DAC card:
 
 ```
-omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service omdrc_cdin onestart, \
-    /usr/sbin/service omdrc_cdin onestop
+options snd-aloop index=1 id=Loopback pcm_substreams=2 timer_source="hw:0,0,0"
 ```
 
-## The Linux bridge: alsaloop instead of a daemon {#sec:cdin-linux}
+The loopback then advances at the DAC's rate, so CD-to-DAC drift is the only
+drift left --- a prerequisite for the CD correction in chapter
+\ref{sec:cdin-linux}, not an optimisation. `omdrc-config-helper` rewrites the
+marked line to whichever DAC is selected on `/configuration`; the module loads
+at boot, so a change takes effect on the next boot.
 
-*As of this writing, everything in this section is built and reasoned but has
-not run on the Linux box yet* --- see "What has not been measured" below
-before trusting it on real hardware.
+## Audio roles {#sec:linux-roles}
+
+The source of truth is the USB identity selected on `/configuration`, not an
+ALSA card number and not a DAC name in `host.cmake`. Three files hold it:
+
+| File | Contents and lifetime |
+|---|---|
+| `$PREFIX/etc/open-media-drc/audio-roles.conf` | Persistent DAC and capture USB identities (`vid:pid[:serial]`) |
+| `/run/omdrc/audio.roles` | Current-boot ALSA card numbers and descriptions, regenerated during Apply and hotplug reconcile |
+| `$PREFIX/etc/open-media-drc/browser-alsa.conf` | Current ALSA card IDs used by browser playback and capture |
+
+On **Apply**, `omdrc-config-helper` resolves the chosen identities against the
+attached cards and updates BruteFIR, MPD, the runtime roles and the browser
+ALSA configuration as one operation, then restarts the DRC lifecycle service.
+On boot or USB hotplug, `omdrc-audio-roles.service` runs the same reconcile:
+ALSA indexes may move from `card0` to `card2`, but the persistent identity is
+resolved again and every generated file receives the current card. Selecting
+another DAC therefore needs no CMake reconfiguration, no `.asoundrc` edit and
+no attempt to pin the DAC at card 0.
+
+The known-device list of section \ref{sec:known-dac-policy} is the
+`OMDRC_AUDIO_DAC` / `OMDRC_AUDIO_CAPTURE` value in `audio-roles.conf`, applied
+by `linux_pick` in the helper. If two identical cards expose no serial, unplug
+one before Apply.
+
+## Browser audio: the managed ALSA default {#sec:browser-audio}
+
+The No DRC launchers (section \ref{sec:browser-nodrc}) stop DRC and hand the
+DAC to a small ALSA mixer:
+
+```
+browser -> ALSA default -> plug -> dmix (48 kHz, S32_LE) -> selected DAC
+```
+
+MPD and BruteFIR name raw `hw:` devices explicitly, so they bypass this
+default and its mixer: the browser configuration inserts no resampling into
+music or the DRC chain. `dmix` shares browser streams with each other but not
+the DAC with MPD or BruteFIR while either holds the raw device. ALSA is used
+directly; no sndio daemon, PulseAudio or PipeWire is needed.
+
+**Installation.** `cmake/browser-alsa-linux.cmake` installs
+`$PREFIX/share/open-media-drc/asoundrc.linux.conf.in`. A live `make install`
+renders the saved roles into `$PREFIX/etc/open-media-drc/browser-alsa.conf` and
+adds this marked block after the audio user's existing ALSA settings:
+
+```
+# BEGIN open-media-drc browser ALSA
+</usr/local/etc/open-media-drc/browser-alsa.conf>
+# END open-media-drc browser ALSA
+```
+
+The destination is `~/.config/alsa/asoundrc` when it exists (alsa-lib loads
+it after `~/.asoundrc`), otherwise `~/.asoundrc`. Existing content is kept
+byte for byte, a one-time backup `.omdrc-before-browser-alsa` is made,
+reinstallation replaces the marked block instead of duplicating it, and a
+malformed or hand-edited partial block is refused rather than guessed at. With
+`DESTDIR` only the template is staged and no home directory is touched. Set
+`OMDRC_INSTALL_BROWSER_ALSA=OFF` to leave desktop ALSA unmanaged (this does not
+remove an earlier block).
+
+**Device selection.** The generated file names the DAC by ALSA card ID (for
+example `hw:CARD=DAC8STEREO,DEV=0`), independent of the boot's numeric index,
+and is regenerated by Apply and hotplug reconcile. If the saved DAC is absent
+the output is an unavailable sentinel --- never card 0, which could be an
+unrelated capture interface or HDMI. Without a capture card, browser capture
+uses ALSA's `null` PCM. The mixer is fixed at stereo, 48000 Hz, `S32_LE`, so
+the DAC must support that mode; `plug` converts ordinary browser formats and
+rates before `dmix` (intentional for desktop audio, outside the bit-perfect
+paths).
+
+**Backends.** Chromium should use its ALSA backend and the `default` PCM
+(`--alsa-output-device=default` makes it explicit). Firefox needs ALSA
+support; if it keeps choosing an absent sound server, set `media.cubeb.backend`
+to `alsa` in `about:config`. Restart the browser fully after selecting
+another DAC.
+
+**Verification and recovery.** Close every browser, launch through **No DRC**,
+play two tabs, then:
+
+```sh
+cat /usr/local/etc/open-media-drc/audio-roles.conf
+cat /run/omdrc/audio.roles
+sed -n '1,120p' /usr/local/etc/open-media-drc/browser-alsa.conf
+cat /proc/asound/<selected-card-id>/pcm0p/sub0/hw_params
+```
+
+The last file must show a two-channel 48000 Hz `S32_LE` stream on the selected
+DAC, and the capture interface's playback PCM must stay closed. If the browser
+is silent, check in order: it was launched through **No DRC** with no earlier
+process left; `audio.roles` and `browser-alsa.conf` name the DAC selected on
+`/configuration`; `/proc/asound/*/pcm*p/sub*/hw_params` shows MPD, BruteFIR or
+something else holding the raw DAC; the browser was restarted after Apply or a
+reconnect; the backend selection above. To stop managing ALSA, restore the
+backup or delete only the three-line marked block.
+
+## The panel on Linux {#sec:linux-panel}
+
+* **Service**: `omdrcctrl` is a systemd **system** unit running as the audio
+  user (`sudo systemctl restart omdrcctrl`); the renderer switch drives
+  `systemctl --user`.
+* **DAC feed** in the MPD panel is the ALSA `hw_params` read from
+  `/proc/asound`.
+* **BruteFIR CPU** is matched by `argv[0]`, because on Linux brutefir renames
+  its `comm`.
+* **Spectrum from the CD**: `alsaloop` is opaque and the supervisor never sees
+  a sample, so omdrcctrl reads the *same capture device* a second time through
+  an ALSA `dsnoop` and writes the FIFO itself. It is an independent reader on
+  purpose: a stalled analyzer misses samples instead of stalling the CD.
+* **Glitch detection** (section \ref{sec:fbsd-glitch}) is implemented for
+  FreeBSD; on Linux its scripts run but the FreeBSD-specific sources stay
+  quiet.
+* **Bit-perfect tap**: `bitperfect-tap-linux.sh` reads usbmon's binary
+  interface, so it has no capture-size limit; it escalates with `sudo -n`.
+* `scripts/systemd-user-install.sh` is a legacy helper that links and enables
+  a `systemd --user` `drc.service`.
+
+
+\newpage
+
+# Linux: CD input with alsaloop {#sec:cdin-linux}
+
+*Everything in this chapter is built and reasoned but has not run on the Linux
+box yet* --- see "What has not been measured" at the end before trusting it on
+real hardware. Full detail: `doc/CDIN-LINUX.md`. The concept, the exclusive
+source rule and the web card are in chapter \ref{sec:cdin}.
 
 ```
 CD player --S/PDIF 44.1k--> ESI U24 XL --USB--> hw:<cap>,0
@@ -3290,191 +1917,488 @@ CD player --S/PDIF 44.1k--> ESI U24 XL --USB--> hw:<cap>,0
                                                   hw:0,0      (Okto DAC8)
 ```
 
-On FreeBSD there is exactly **one** pair of independent clocks: the CD's
-crystal and the DAC's; `virtual_oss` sits between them and is itself clocked
-by the DAC it feeds, so it contributes no third clock. `snd-aloop` has no
-clock of its own and by default invents one, an hrtimer --- which makes
-**two** independent pairs on Linux (CD <-> aloop-timer, aloop-timer <-> DAC),
-the second present even in plain MPD playback with no CD input at all, and
-normally invisible only because both BruteFIR stanzas in
-`etc/open-media-drc/brutefir_defaults.linux.conf` set `ignore_xrun: true`.
-
-`etc/modprobe.d/omdrc-snd-aloop.conf` removes that second pair by pointing the
-module's `timer_source` at the DAC card:
-
-```
-options snd-aloop index=1 id=Loopback pcm_substreams=2 timer_source="hw:0,0,0"
-```
-
-The loopback then advances at the DAC's rate, the topology becomes the same
-shape as the FreeBSD one, and CD-to-DAC drift is the only drift left --- a
-prerequisite for the correction below, not an optimisation: correcting one
-drift pair while a second runs free would only move the problem.
-`omdrc-config-helper` rewrites the marked line to whichever DAC is selected on
-`/configuration` (section \ref{sec:configuration-page}); the module loads at
-boot, so a change takes effect on the next boot.
+Linux ships the clock reconciler FreeBSD lacks, so no daemon is written:
+`alsaloop(1)` from `alsa-utils` is supervised by `omdrc-cdin.service`. With
+the loopback pinned to the DAC clock (section \ref{sec:linux-aloop}), CD-to-DAC
+is the only drift pair left.
 
 **Drift correction** uses alsaloop's `playshift` mode, which steers
 `snd-aloop`'s `PCM Rate Shift 100000` control so the loopback consumes at
-exactly the rate the CD delivers --- **there is no resampler in the data
-path**, the same bit-perfect property the FreeBSD design protects. Other
-`--sync` modes exist for diagnosis (`OMDRC_CDIN_SYNC`, or `--sync`):
-`samplerate` (continuous libsamplerate resample, **not** bit-perfect, for when
-the shift control misbehaves), `simple` (insert/drop samples), `none`
-(measure the raw drift). `captshift` is not useful here: it needs a rate-shift
-control on the *capture* card, which a USB interface does not have. The
-supervisor reads the shift control back every stats interval and reports it
-as the `drift` field in ppm --- a direct measurement of the correction being
-applied, rather than an inference from buffer level.
+exactly the rate the CD delivers --- **no resampler is in the data path**. The
+supervisor reads the shift control back every stats interval and reports it as
+the `drift` field in ppm, a direct measurement of the correction applied.
+Other `--sync` modes (`OMDRC_CDIN_SYNC`) are for diagnosis: `samplerate`
+(libsamplerate, **not** bit-perfect, the fallback if the shift control
+misbehaves), `simple` (insert/drop samples), `none` (measure raw drift).
+`captshift` is useless here: a USB interface has no rate-shift control.
 
-**The CD input is an exclusive source on both platforms**, for different
-low-level reasons. FreeBSD must enforce the rule explicitly because
-`virtual_oss` mixes clients: the card gates MPD's audible outputs around the
-bridge service. Linux's `hw:Loopback,0,0` is a **single substream**, so
-alsaloop and MPD's `DRC-native`/`DRC-resamp` outputs cannot both hold it;
-whichever opens second gets `EBUSY`. Consequently:
+**Exclusive source.** `hw:Loopback,0,0` is a **single substream**, so alsaloop
+and MPD's `DRC-native`/`DRC-resamp` outputs cannot both hold it; whichever
+opens second gets `EBUSY`. Consequently:
 
-* `drc.sh cdin` disables every MPD output, brings the chain up at 44.1 kHz,
-  and starts `omdrc-cdin.service`. MPD has no output while the CD input is
-  selected --- that is the correct state, not a limitation worked around, and
-  the direct `OKTO-DAC` output is no help either because BruteFIR holds the
-  DAC.
-* Any rate action (`drc.sh 44100`, `192000`, `resamp`, ...) records `music` as
-  the source, stops the bridge, **waits for the `alsaloop` process itself to
-  be gone** (not just for `systemctl stop` to return --- that happens before
-  the kernel has closed the substream, and reopening too early is an `EBUSY`
-  that reaches the user as "MPD will not play"), then enables the MPD output.
+* `drc.sh cdin` disables every MPD output, brings the chain up at 44.1 kHz and
+  starts `omdrc-cdin.service`. MPD has no output while CD input is selected;
+  that is the correct state, and the direct `OKTO-DAC` output is no help
+  because BruteFIR holds the DAC.
+* Any rate action (`drc.sh 44100`, `192000`, `resamp`, ...) records `music`,
+  stops the bridge, **waits for the `alsaloop` process itself to be gone**
+  (`systemctl stop` returns before the kernel has closed the substream, and
+  reopening too early is an `EBUSY` that surfaces as "MPD will not play"),
+  then enables the MPD output.
 * The unit is **not** enabled at boot; `drc.sh restore`/`reconcile` bring back
-  whichever source was saved.
-* `drc.sh off`/`stop` return the box to MPD direct and leave the bridge down.
-  FreeBSD moves its bridge to the DAC instead on `off`; Linux cannot, because
-  the off path hands that same DAC to MPD's direct output and the DAC is
-  single-open. Re-select the CD input with `drc.sh cdin`.
+  the saved source.
+* `drc.sh off`/`stop` return to MPD direct and leave the bridge down (FreeBSD
+  moves its bridge to the DAC instead; here the DAC is single-open and MPD's
+  direct output needs it). Re-select CD with `drc.sh cdin`.
 
-The one thing that does carry over: when the DRC chain is down, the bridge
-writes straight to the DAC instead of the loopback, exactly as
-`cdin/src/outsel.h` describes for FreeBSD. The output device is settled once
-at startup --- alsaloop negotiates a format against it and cannot re-take the
-decision while running --- so the service is restarted whenever the chain
-moves.
+When the DRC chain is down, the bridge writes straight to the DAC instead of
+the loopback. The output is settled once at startup (alsaloop negotiates a
+format against it and cannot re-decide while running), so the service is
+restarted whenever the chain moves.
 
-**Selecting the capture interface** uses the same `/configuration` Audio
-hardware section as the DAC, on both roles now. Applying writes
-`<prefix>/etc/open-media-drc/audio-roles.conf` (survives a reboot) and
-`/run/omdrc/audio.roles` (resolved ALSA card numbers, does not); the ESI's
-input selector --- the card has two inputs, only one live, chosen by a mixer
-setting that does **not** survive a reboot (`cdin/ESI-U24XL.md`) --- has a
-Linux equivalent in an `amixer` capture-source switch, e.g.
-`amixer -c <card> cset name='PCM Capture Source' 1`, whose exact control name
-is card- and kernel-dependent and belongs in an `ExecStartPre=` systemd
-drop-in on `omdrc-cdin.service` so it survives a reboot the way the FreeBSD
-`omdrc_audio_capture_recsrc` rc.conf var does.
+## The ESI input selector on Linux {#sec:linux-esi}
 
-**Requirements**: `alsa-utils` (`alsaloop`, `amixer`); `snd-aloop` with
-`timer_source` support (mainline since 4.x); a capture interface that takes
-its clock from the incoming S/PDIF carrier the way the ESI U24 XL does
-automatically (ESI KB00307EN).
+Choose the capture interface in the `/configuration` Audio hardware section,
+as for the DAC (section \ref{sec:linux-roles}). The selection persists in
+`audio-roles.conf`; `/run/omdrc/audio.roles` holds the resolved card number
+for this boot.
 
-**What has not been measured**: whether `timer_source="hw:0,0,0"` is accepted
-in that spelling and actually pins the loopback's `hw_ptr` to the DAC's rate,
-and whether `--sync=playshift` finds the shift control on the real hardware
-(the supervisor logs a warning naming the control if not, and
-`--sync=samplerate` is the documented fallback). Full detail in
-`doc/CDIN-LINUX.md`.
+The card's input selector does not survive a reboot. Its Linux equivalent is
+an `amixer` capture-source switch, for example
+`amixer -c <card> cset name='PCM Capture Source' 1`. The control name is card-
+and kernel-dependent; put the command in an `ExecStartPre=` drop-in on
+`omdrc-cdin.service` so it is reapplied on every start.
 
-## The ESI U24 XL: what has to be configured, and three traps
+## Requirements and what has not been measured
 
-The capture interface is an ESI U24 XL (USB Audio Class 1.0, USB 2.0 Full
-Speed, 32/44.1/48 kHz, 24-bit maximum). Two things the vendor documentation
-settles, so they are no longer assumptions:
+**Requirements**: `alsa-utils`; `snd-aloop` with `timer_source` support
+(mainline since 4.x); a capture interface that takes its clock from the
+incoming S/PDIF carrier, as the U24 XL does.
 
-* **it slaves to the incoming S/PDIF automatically** --- ESI KB00307EN: when
-  the source is clock master "the U24 XL will receive clock from the source
-  and automatically will be slave", and there is no manual clock switch. The
-  behaviour this design needs is the only behaviour it has;
-* **the sample rate is not auto-detected.** Bit depth and rate must be set to
-  match the incoming signal. Here that is `SNDCTL_DSP_SPEED` = 44100, which
-  the daemon sets --- but it means a non-44.1 source would be captured at the
-  wrong rate rather than refused.
+**Not yet measured**: whether `timer_source="hw:0,0,0"` is accepted in that
+spelling and actually pins the loopback's `hw_ptr` to the DAC rate, and
+whether `--sync=playshift` finds the shift control on real hardware (the
+supervisor logs a warning naming the control if not; `--sync=samplerate` is
+the documented fallback).
 
-It is class compliant, so `uaudio(4)` drives it natively and there is no
-vendor driver and no Linux quirk to port (ALSA reaches its input selector
-through the same generic UAC1 parsing FreeBSD has). **Do not update the
-interface firmware:** a Linux report has S/PDIF capture working on the
-original firmware and becoming "completely distorted" after an upgrade.
 
-Everything below was observed on FreeBSD 15.1-RELEASE-p2 and is documented at
-length in `cdin/ESI-U24XL.md`.
+\newpage
 
-### Unit numbers: nothing may depend on them
+# Part III --- FreeBSD {-}
 
-FreeBSD hands out `pcm` units in attach order, USB attach order is port order,
-and on this box the U24 XL sits on a lower-numbered root-hub port than the DAC,
-so it wins that race at every boot. Whichever card wins, the chain used to
-address the DAC by unit and nothing else --- BruteFIR wrote `/dev/dsp0`, MPD's
-direct output was `/dev/dsp0`, `drc.sh` read the clock from
-`dev.pcm.0.feedback_rate` --- so DRC would play into the S/PDIF interface and
-`cdin` would capture from the DAC.
+Everything a FreeBSD (15.1) host needs beyond Part I: packages, rc.d and devd
+integration, stable sound-device roles, the OSS/`virtual_oss` audio stack, the
+panel's FreeBSD behaviour, video, the CD daemon, known issues, kernel patches
+and the port plan. **On Linux, skip Part III entirely**; nothing in Part I
+depends on it.
 
-**There is no declarative way to pin the number**, which is worth knowing
-before reaching for one. Unit wiring hints (`hint.pcm.1.at="uaudio0"`) rely on
-`BUS_HINT_DEVICE_UNIT`, which only `acpi(4)`, `pci(4)` and `isa(4)` implement
---- `uaudio(4)` does not, so the hint is silently ignored, and worse,
-`devclass_alloc_unit()` *skips* any unit carrying an `at` hint when numbering
-an unwired device, so hinting `pcm0` would take unit 0 away from the DAC as
-well. `hw.snd.default_unit` only selects among the units that already exist; it
-does not control enumeration. And `devd` is a userland consumer of events the
-kernel has already acted on: by the time the ATTACH notification arrives the
-unit is allocated and `/dev/dspN` exists, and it has no equivalent of udev's
-`NAME=`/`SYMLINK=`.
+\newpage
 
-There is nevertheless one legitimate use of `hw.snd.default_unit`: pointing
-the unqualified `/dev/dsp` used by unrelated OSS applications at whichever
-card currently owns the DAC role. Because its value is still a volatile pcm
-number, `/etc/sysctl.conf` must not set it to a literal `0` or `1`.
-`omdrc_audio` writes it inside the locked role transaction after identity-based
-discovery and verifies the readback:
+# FreeBSD: installation {#sec:fbsd-install}
+
+Do the common build (chapter \ref{sec:install}) with these FreeBSD specifics.
+Services and hotplug are in chapter \ref{sec:fbsd-lifecycle}.
+
+## Packages {#sec:fbsd-packages}
+
+| Component | `pkg` package |
+|---|---|
+| libnpupnp, libupnpp | `curl libmicrohttpd expat2` |
+| upmpdcli | `jsoncpp libmpdclient` |
+| upmpdcli Qobuz plugin | `python3 py311-requests` |
+| MPD | **`musicpd`** |
+| BruteFIR | `fftw3 fftw3-float` |
+| Loopback | `virtual_oss` (+ the `cuse` kernel module) |
+| omdrc-ctrl | `py311-flask py311-Markdown py311-numpy` |
+
+**Naming.** MPD is `audio/musicpd`: the binary is `musicpd`, the service is
+`service musicpd ...` and the bundled client is `musicpc` (aliasing `mpc`).
+Service names, rc.d filenames, rc.conf keys and hook names use underscores
+(`omdrc_audio`, `omdrc_audio_enable`); standalone devd files use hyphens
+(`omdrc-audio.conf`). The separators are not interchangeable in `service`,
+`rcorder` or `PROVIDE`/`REQUIRE` tokens. Services are enabled with `sysrc
+<name>_enable=YES` and run manually with `service <name> onestart|onestop`.
 
 ```sh
-/sbin/sysctl "hw.snd.default_unit=${DAC_UNIT}"
-got=$(/sbin/sysctl -n hw.snd.default_unit)
-[ "$got" = "$DAC_UNIT" ] || warn "default unit mismatch"
+pkg install bash brutefir virtual_oss musicpd mpc
+sysrc kld_list+="cuse"
+kldload cuse
 ```
 
-This is ancillary to the stable links rather than a replacement for them.
-BruteFIR, MPD and cdin continue to use `/dev/dsp.dac` or
-`/dev/dsp.capture`; a later kernel or application change to the bare default
-cannot swap those project roles. Status prints both the discovered DAC unit and
-the default-unit readback so the distinction is auditable.
+The login audio user must be in the groups that grant access to sound and USB
+devices. BruteFIR must never run as root: an interactive `drc.sh` could not
+stop a root-owned instance.
 
-So stop trying to fix the number and stop using it. `devfs` accepts symlinks
---- that is exactly how `devfs.conf`'s `link` directive works, a plain `ln -fs`
-inside `/dev` run by `/etc/rc.d/devfs` --- and the `omdrc_audio` service
-maintains two of them by **role**:
+## Installing the project
+
+Set the box values in `host.cmake`, then:
+
+```sh
+mkdir -p build && cd build
+cmake .. -C ../host.cmake
+make && sudo make install
+make user-install          # as the audio user, after the system install
+```
+
+For a package layout use the FreeBSD port `freebsd/audio/open-media-drc`; the
+installed `omdrc_audio` points at `/usr/local/libexec/omdrc/drc.sh`, the
+run-from-repository script at this checkout.
+
+**Early-boot files must be regular copies** in system paths, not symlinks into
+a possibly separate `/home`:
+
+```sh
+install -m 755 etc/rc.d/omdrc_audio /usr/local/etc/rc.d/omdrc_audio
+install -m 644 etc/devd/omdrc-audio.conf /usr/local/etc/devd/omdrc-audio.conf
+sh scripts/prepare-musicpd-rc-conf-dir.sh /usr/local/etc/rc.conf.d/musicpd
+install -m 644 etc/rc.conf.d/musicpd/omdrc_audio \
+  /usr/local/etc/rc.conf.d/musicpd/omdrc_audio
+```
+
+Copy the other enabled rc.d scripts from the inventory (section
+\ref{sec:fbsd-inventory}) the same way, and refresh the copies after every
+update. `rc.subr` accepts `rc.conf.d/musicpd` as a file *or* a directory; the
+helper makes the directory form, moving an existing file unchanged (mode
+preserved) to `musicpd/00-local.conf`, so an administrator's MPD settings
+survive. It is idempotent, and the Make and CMake installers and the package's
+`PRE-INSTALL` script all run it.
+
+Remove obsolete lifecycle files once the new service is tested; they must not
+coexist with `omdrc_audio`: `/usr/local/etc/rc.d/{drc_usb_audio,brutefir_drc,omdrc_sndlink}`,
+`/usr/local/etc/devd/omdrc-sndlink.conf`, `/usr/local/libexec/omdrc-hotplug`.
+
+### BruteFIR defaults and MPD configuration {#sec:fbsd-defaults}
+
+```sh
+install -d -o AUDIO_USER -g AUDIO_GROUP /home/AUDIO_USER/.config/BruteFIR
+install -m 644 etc/open-media-drc/brutefir_defaults.conf \
+  /home/AUDIO_USER/.config/BruteFIR/brutefir_defaults.conf      # OSS I/O
+```
+
+Merge the three named outputs from `mpd/musicpd.conf.in`: `OKTO-DAC`,
+`DRC-native`, `DRC-resamp`. All FreeBSD physical output paths must use
+`/dev/dsp.dac`, never a numbered `/dev/dsp0` (section \ref{sec:fbsd-roles}).
+
+## Configuring rc.conf
+
+A core installation with the controller and renderer restore service:
+
+```sh
+musicpd_enable="YES"
+musicpd_config="/home/giacomo/open-media-drc/mpd/musicpd.conf"
+
+omdrc_audio_enable="YES"
+omdrc_audio_user="giacomo"
+omdrc_audio_dac="0x152a:0x88c5"       # strongly recommended with >1 card
+omdrc_audio_capture="ESI U24XL"       # omit when CD input is unused
+omdrc_audio_capture_recsrc="auto"
+
+omdrc_renderer_enable="YES"
+upmpdcli_enable="NO"
+qobuzconnect2mpd_enable="NO"
+qobuzconnect2mpd_user="giacomo"
+qobuzconnect2mpd_group="giacomo"
+qobuzconnect2mpd_homedir="/var/db/qobuzconnect2mpd"
+
+omdrcctrl_enable="YES"
+omdrcctrl_user="giacomo"
+omdrcvideo_enable="YES"
+omdrcvideo_user="giacomo"
+```
+
+Remove any numbered default-device assignment such as `hw.snd.default_unit=0`
+from `/etc/sysctl.conf`: its **value is a pcm unit number**, so only the role
+resolver can know it (section \ref{sec:fbsd-roles}). Genuinely global sound
+tunables may stay there. For CD input also set `omdrc_cdin_enable="YES"` and
+`omdrc_cdin_user="giacomo"`; the knobs are in section \ref{sec:fbsd-cdservice}.
+
+Project key families:
+
+| Key family | Purpose |
+|---|---|
+| `musicpd_enable`, `musicpd_config` | MPD boot and configuration |
+| `omdrc_audio_enable`, `omdrc_audio_user`, `omdrc_audio_drcsh`, `omdrc_audio_statussh` | master audio lifecycle and user boundary |
+| `omdrc_audio_dac`, `omdrc_audio_capture` | stable card identities |
+| `omdrc_audio_dac_sysctls`, `omdrc_audio_capture_sysctls`, `omdrc_audio_capture_recsrc` | per-role settings reapplied after every attach |
+| `omdrc_audio_rundir`, `omdrc_audio_lockfile`, `omdrc_audio_statefile` | root boot-lifetime device transaction state |
+| `omdrc_cdin_*` | optional CD bridge, fully listed in section \ref{sec:cdin} |
+| `omdrc_renderer_enable`, `omdrc_renderer_prefix`, `omdrc_renderer_script`, `omdrc_renderer_statedir` | restore the last selected renderer |
+| `upmpdcli_enable`, `upmpdcli_user`, `upmpdcli_homedir`, `upmpdcli_config`, `upmpdcli_pidfile`, `upmpdcli_logfile`, `upmpdcli_flags` | UPnP renderer worker |
+| `omdrcctrl_enable`, `omdrcctrl_user`, `omdrcctrl_env`, `omdrcctrl_pidfile`, `omdrcctrl_logfile` | web controller |
+| `omdrcvideo_enable`, `omdrcvideo_user`, `omdrcvideo_env`, `omdrcvideo_pidfile`, `omdrcvideo_logfile` | video web remote |
+
+The old `drc_usb_audio_*`, `brutefir_drc_*` and `omdrc_sndlink_*` families are
+accepted by `omdrc_audio` only as one-release migration fallbacks: copy their
+values to the new keys and remove them. Enabling an old copied script creates
+a second lifecycle owner and is unsupported.
+
+## Validate ordering and activate
+
+```sh
+rcorder /etc/rc.d/* /usr/local/etc/rc.d/* | \
+  egrep 'devd$|omdrc_audio$|musicpd$|omdrc_cdin$|omdrc_renderer$'
+service devd restart
+service omdrc_audio roles
+service omdrc_audio status
+service omdrc_audio reconcile
+sysctl hw.snd.default_unit       # must equal the pcm unit reported as dac
+mpc outputs                     # desired output enabled after musicpd starts
+```
+
+`omdrc_audio` requires `devd`, so the cold-plug scan runs after devd is
+listening; a card that finishes attaching later produces a pcm event. It
+deliberately does not require MPD: a slow MPD must not stop the physical DRC
+chain from becoming healthy.
+
+## Network: keep DHCP on every interface {#sec:upnpiface}
+
+**Do not give an Ethernet port a static address in `rc.conf` on a box that is
+sometimes wired and sometimes wireless.** libupnpp chooses its interface once,
+at startup: the first that is UP+RUNNING+MULTICAST *and has an address*.
+`em(4)` keeps `RUNNING` set with no carrier, so a statically configured wired
+port stays fully qualified with no cable in it:
+
+```
+ifconfig_em0="inet 192.168.1.9 netmask 255.255.255.0"   # applied regardless
+em0: flags=8843<UP,BROADCAST,RUNNING,...>  status: no carrier
+```
+
+upmpdcli then binds the dead port and its SSDP advertisements never leave the
+host. The failure is quiet: upmpdcli **starts, connects to MPD and keeps
+driving it**, so `ps` and the panel's renderer switch report it healthy; only
+the control points stop listing it. A box whose wired port *used to be* the
+live one breaks the same way without being touched. The tell is one line in
+`/tmp/upmpdcli.log`, sometimes followed by an intermittent
+`UPNP_E_INVALID_HANDLE` / `Device would not start`:
+
+```
+LibUPnP: Using IPV4 192.168.1.9 port 49152     <- not the address you serve on
+```
+
+**The fix is in `rc.conf`, not `upmpdcli.conf`:**
+
+```sh
+ifconfig_em0="DHCP"      # NOT "inet 1.2.3.4 ..."
+```
+
+An unplugged DHCP interface gets no lease and so no address; libupnpp skips it
+and picks the connected one with `upnpiface` unset, and plugging the cable
+back in works because FreeBSD's `/etc/devd/dhclient.conf` starts `dhclient` on
+`LINK_UP`. Pinning `upnpiface` is the wrong tool --- the pinned value goes
+stale the moment the box changes network --- and stays a last resort.
+
+### Leave `defaultrouter` unset when any interface uses DHCP {#sec:defaultrouter}
+
+`rc.d/routing` installs `defaultrouter` **unconditionally at boot**, so with no
+cable the default route still points at the wired gateway and Wi-Fi's
+DHCP-supplied route is overridden. With both interfaces on DHCP the connected
+one supplies the route itself:
+
+```sh
+# /etc/rc.conf
+ifconfig_em0="DHCP"
+wlans_iwm0="wlan0"
+ifconfig_wlan0="WPA  DHCP"
+#defaultrouter="192.168.1.1"      # leave unset; DHCP provides it
+```
+
+`synchronous_dhclient` defaults to `NO`, so an unplugged DHCP interface does
+not delay boot.
+
+
+\newpage
+
+# FreeBSD: services, device roles and lifecycle {#sec:fbsd-lifecycle}
+
+This chapter is the reference for every FreeBSD init and devd artifact the
+repository owns. Port templates and their rendered copies are one logical
+script, so each appears once.
+
+## Service inventory {#sec:fbsd-inventory}
+
+![FreeBSD hotplug: devd fires on the `pcm` device and a level-triggered reconcile follows; a successful `musicpd` start triggers one late reconcile.](build/hotplug-freebsd.pdf){width=80%}
+
+| Script/configuration | rcorder relation or event | Function | Enable directly? |
+|---|---|---|---|
+| `musicpd` | `REQUIRE: mixer LOGIN avahi_daemon` | Starts MPD with the repository's FreeBSD configuration | Yes |
+| `rc.conf.d/musicpd/omdrc_audio` | successful `musicpd` `start_postcmd` | Issues one bounded audio reconcile after MPD is actually available | No; sourced by `musicpd` |
+| `omdrc_audio` | `REQUIRE: FILESYSTEMS devd`; `shutdown` | Single owner of card roles and DRC lifecycle | Yes |
+| `omdrc_cdin` | `REQUIRE: omdrc_audio`; `shutdown` | Optional continuous S/PDIF capture bridge | Yes, only with CD input |
+| `omdrc_renderer` | `REQUIRE: NETWORKING FILESYSTEMS musicpd`; `shutdown` | Restores whichever renderer the UI last selected | Yes |
+| `upmpdcli` | `REQUIRE: NETWORKING FILESYSTEMS musicpd`; `shutdown` | UPnP/OpenHome worker controlled by `omdrc_renderer` | No when renderer restore is used |
+| `omdrcctrl` | `REQUIRE: NETWORKING LOGIN`; `shutdown` | Starts the web controller as the audio user | Yes when installed |
+| `omdrcvideo` | `REQUIRE: NETWORKING LOGIN`; `shutdown` | Starts the video web remote; it does not start mpv | Yes when installed |
+| `omdrc-audio.conf` | devd `pcm[0-9]+` attach and detach | Detaches one level-triggered `omdrc_audio reconcile` request | Installed in devd; no rcvar |
+
+### musicpd
+
+The project `musicpd` script selects the rendered `musicpd_config`, has
+rc.subr derive the pidfile from it, and launches the FreeBSD `musicpd` binary;
+MPD drops to the user/group declared in its own configuration. It owns no DRC
+transition and no project lock. The dependency token is `musicpd`: both
+`omdrc_renderer` and `upmpdcli` require the name this script actually
+provides.
+
+### rc.conf.d/musicpd/omdrc_audio
+
+Not another daemon: a service-specific `rc.subr` fragment that sets
+`musicpd`'s `start_postcmd` to a function running only after MPD started
+successfully:
+
+```sh
+omdrc_musicpd_poststart()
+{
+    checkyesno omdrc_audio_enable 2>/dev/null || return 0
+    /usr/sbin/service omdrc_audio reconcile ||
+        warn "musicpd: omdrc_audio reconcile failed; retry it manually"
+    return 0
+}
+```
+
+`omdrc_audio` normally runs before `musicpd` and deliberately does not wait
+for it, so the physical chain can be healthy while its bounded MPD output
+selection is still `pending`. A successful MPD start is the earliest factual
+readiness signal, so the hook retries once at that event instead of using a
+delay, endless polling or a readiness gate. It runs after a manual `service
+musicpd restart` too, when MPD may have forgotten its outputs. The edge is
+strictly one-way:
+
+```
+musicpd successful start
+  -> service omdrc_audio reconcile
+  -> roles transaction (device.lock, then release)
+  -> drc.sh reconcile (drc.lock, bounded mpc)
+```
+
+No `omdrc_audio` path starts `musicpd`, so there is no service cycle. The hook
+takes no lock and creates no process; a reconcile failure is reported but the
+hook still returns success, since MPD itself is running; with
+`omdrc_audio_enable` off it is a no-op. The FreeBSD CMake branch, the direct
+Make target and the package all install it.
+
+### omdrc_audio
+
+`omdrc_audio` replaced the former three-service chain; `omdrc_audio_enable` is
+the only master switch. Verbs:
+
+| Verb | Meaning |
+|---|---|
+| `start` | boot cold-plug role pass, then full reconcile |
+| `roles` | root-only role links/settings transaction, no DRC transition |
+| `reconcile` | role transaction, release device lock, then user DRC reconcile |
+| `stop` | transient teardown; preserve desired power, rate, design, and source |
+| `status` | show role resolution and actual chain status |
+
+It keeps `su -l` from the old `brutefir_drc` (correct HOME and login PATH, and
+BruteFIR owned by the user who runs interactive commands) and the master
+rcvar and boot/hotplug entry of `drc_usb_audio`. The unreliable
+`/var/run/drc_usb_audio.active` marker is gone: actual processes, config
+paths, rates, nodes, role links and saved intent are authoritative.
+
+**Never re-enter an rc.d script through `$0`.** `/etc/rc` *sources* each
+script, so during boot `$0` is `/etc/rc`; the old `omdrc_sndlink` re-entered
+itself under `lockf` with `$0` and so ran `/bin/sh /etc/rc oneupdate`, a
+second complete rc pass that duplicated network and service startup and
+destabilised the boot. `omdrc_audio` re-enters for its short locked `roles`
+step with `/bin/sh "$rc_service" oneroles` (rc.subr sets `rc_service` to the
+absolute script path) and falls back to the script path only outside rc.
+
+### omdrc_cdin, omdrc_renderer, upmpdcli
+
+* `omdrc_cdin` runs as the audio user. Before replacing `virtual_oss`,
+  `drc.sh` stops the bridge and waits to a fixed deadline for its *process* to
+  exit --- process exit is the release acknowledgement, not a logfile that may
+  be rotated. Failure aborts CUSE teardown and tries to restore MPD's direct
+  output. After a successful transition a bridge that was running is
+  restarted with `onestart`, so a panel-started instance survives even with
+  the rcvar off. The `release` extra command only sends `SIGHUP` for
+  diagnostics.
+* `omdrc_renderer` reads `last_renderer` and starts exactly one renderer,
+  upmpdcli or qobuzconnect2mpd, via `onestart`/`onestop`; it keeps the
+  selection at shutdown. Both worker rcvars stay `NO`: enabling one
+  independently races the owner and may leave two front-ends driving MPD.
+* `upmpdcli` is a worker: it supplies the audio user's HOME and a PATH
+  containing `/usr/local/bin`, creates the user-owned pid directory and
+  captures plugin stderr for the panel's log view. Its `REQUIRE` token is
+  `musicpd`, not `mpd`.
+
+### omdrcctrl and omdrcvideo
+
+Both run as the configured non-root user through `daemon(8)`; rc.subr drops
+privileges via `${name}_user`, and a `start_precmd` creates user-writable
+pid/log directories (a plain `/var/run/*.pid` would be root-only). The
+environment sets HOME, PATH, DISPLAY and optionally the shared
+`OMDRC_STATE_DIR`. `omdrcctrl` reads `/var/run/omdrc/audio.roles` without
+spawning a status command. `omdrcvideo` starts only the HTTP/API process; the
+persistent idle mpv belongs to the graphical login session.
+
+Their identity does not depend on the caller: `/var/run/omdrcctrl/omdrcctrl.pid`
+(and `/var/run/omdrcvideo/omdrcvideo.pid`) always names the `daemon(8)`
+supervisor, never a `TMPDIR` path. An earlier non-root branch chose
+`${TMPDIR:-/tmp}/omdrcctrl-USER.pid`, so an ordinary status probe reported the
+root-started service as stopped and `onestart` could start a second instance;
+it was removed. `daemon -M 0644` makes the PID readable for diagnostics. Use
+`sudo service ... start|stop|restart` as the system interface; a development
+process needs a distinct port and direct launcher.
+
+### omdrc-audio.conf (devd)
+
+The only project devd rule matches the **`pcm`** device at attach and detach:
+
+```
+attach 100 {
+    device-name "pcm[0-9]+";
+    action "/usr/sbin/daemon -f /usr/sbin/service omdrc_audio reconcile";
+};
+```
+
+The detach rule has the identical action. Matching `pcm` is a safety boundary:
+a UAC2 device exposes several USB interfaces but one sound card, and matching
+USB class events ran several lifecycle runs per plug (a broad USB detach rule
+would also react to a keyboard or a disk). Matching the USB device instead
+fires *before* its `pcm` child exists and would need a retry loop. At the
+`pcm` event the kernel has already allocated the unit and created its OSS
+nodes, so role resolution needs no settle sleep.
+
+## Stable device roles {#sec:fbsd-roles}
+
+`pcm` units are handed out in attach order, and USB attach order is port
+order. On the reference box the ESI U24 XL sits on a lower root-hub port than
+the DAC and wins the race at every boot, so a chain that addressed the DAC by
+unit played into the S/PDIF interface while `cdin` captured from the DAC.
+
+**There is no declarative way to pin the number.** A unit hint
+(`hint.pcm.1.at="uaudio0"`) needs `BUS_HINT_DEVICE_UNIT`, which only `acpi(4)`,
+`pci(4)` and `isa(4)` implement; `uaudio(4)` ignores it silently, and
+`devclass_alloc_unit()` even skips any unit carrying an `at` hint, so hinting
+`pcm0` would take unit 0 from the DAC. `hw.snd.default_unit` only selects among
+existing units, and `devd` sees an event after the kernel has already acted
+and has no `NAME=`/`SYMLINK=`. So the number is not used. `devfs` accepts
+symlinks, and `omdrc_audio` maintains two pairs by **role**:
 
 | link | is | created |
 |---|---|---|
 | `/dev/dsp.dac`, `/dev/mixer.dac` | the DAC everything plays to | always |
 | `/dev/dsp.capture`, `/dev/mixer.capture` | the CD/S-PDIF input | only when a capture card is named |
 
-Everything opens the DAC by name: BruteFIR's output device, MPD's `OKTO-DAC`
-output, `cdin --out`, the mpv launchers, `verify-bitperfect.sh`. A box with one
-sound card needs no configuration for this to be right, and a box with two
-stops caring which one enumerated first.
+Everything opens the DAC by name: BruteFIR's output, MPD's `OKTO-DAC` output,
+`cdin --out`, the mpv launchers, `verify-bitperfect.sh`. A one-card box needs
+no configuration; a two-card box stops caring which enumerated first. Links
+use relative targets (`/dev/dsp.dac -> dspN`); a pre-existing non-symlink at a
+role name is never overwritten, and a detach pass removes only project-owned
+links whose role is now unfilled. Role publication is an atomic rename to
+`/var/run/omdrc/audio.roles`.
 
-```
+```sh
 sysrc omdrc_audio_enable=YES
 sysrc omdrc_audio_capture="ESI U24XL"   # only if you use the CD input
 service omdrc_audio status              # prints the roles, exits 1 if unfilled
 ```
 
-**Roles are decided by identity, never by number.** The DAC is not simply "the
-card that is not the capture card": a plain desktop has onboard HDA on `pcm0`
-and the USB DAC on `pcm1`, and capability cannot separate them either --- an
-OKTO DAC8 reports `(play/rec)` exactly like a capture interface does
-(`dev.pcm.N.mode` is a bitmask, `PLAY 0x02 | REC 0x04`, and it reads 7). So an
-explicit match always wins, given either as a USB id or as a substring of the
-description `/dev/sndstat` prints:
+**Roles are decided by identity, never by number.** Capability cannot tell a
+DAC from a capture interface (an OKTO DAC8 reports `play/rec` like one), so an
+explicit match always wins, as a USB id or a substring of the `/dev/sndstat`
+description:
 
 ```
 sysrc omdrc_audio_dac="0x152a:0x88c5"          # vendor:product
@@ -3484,146 +2408,728 @@ sysrc omdrc_audio_dac="OKTO RESEARCH"          # or just the name
 
 With no match configured, playback-capable cards are ranked: a pure-playback
 USB DAC beats a USB play/record interface, which beats non-USB playback. If
-several candidates remain, the service reports that it guessed and prints the
-exact `omdrc_audio_dac` lines that can pin the intended card.
-The ids come from the card's USB parent, which the service reaches through
+several candidates remain the service says it guessed and prints the
+`omdrc_audio_dac` lines that would pin the intended card. IDs come from
 `dev.pcm.N.%parent` -> `dev.uaudio.N.%pnpinfo`.
 
-**Two triggers, one code path.** The rc.d service performs the cold-plug pass
-after devd is listening; a later attach/detach comes from
-`etc/devd/omdrc-audio.conf`, which fires on the **pcm** device rather than a USB
-interface. Both invoke the same complete reconcile operation:
+**Two triggers, one code path**: the rc.d service does the cold-plug pass, and
+the devd rule handles later attach/detach. Both run the same complete level
+reconcile, so one rule covers both roles, detach, a moved card and
+coalesced or reordered events.
 
-```
-attach 100 {
-	device-name "pcm[0-9]+";
-	action "/usr/sbin/daemon -f /usr/sbin/service omdrc_audio reconcile";
-};
-```
-
-By the time the kernel announces `+pcm1 at ...` (`devaddq()`,
-`sys/kern/kern_devctl.c`) the unit is allocated and `/dev/dsp1` exists, so one
-pass reads the card's identity and links it with nothing to poll for. devd is
-not blocked because daemon(8) detaches the request. Matching
-the USB device instead --- `system USB`, `subsystem DEVICE`, `type ATTACH` with
-`vendor`/`product` --- fires *before* its `pcm` child exists and would need a
-retry loop to find it. `reconcile` is a full level rescan, so the same rule
-covers both roles, detach, a card that moved, and coalesced/reordered events.
-
-**The one thing a symlink cannot cover is a sysctl OID.** `dev.pcm.<unit>.*` is
-keyed by the number we are trying to forget, and `drc.sh` reads the DAC's clock
-from it. That is not a blocker, it is two lines: the unit is read back off the
-link.
+**The one thing a symlink cannot cover is a sysctl OID.** `dev.pcm.<unit>.*`
+is keyed by the number being avoided, so the unit is read back off the link:
 
 ```sh
 t=$(readlink /dev/dsp.dac)                     # -> "dsp0"
 sysctl -n "dev.pcm.${t#dsp}.feedback_rate"
 ```
 
-`drc.sh` has this as `dac_unit()`, the web panel as `_dac_unit()`, and
-`glitch-usbtap.sh` uses it to find the DAC's `uaudio` parent to tap. Everything
-that does *not* need the number uses `dac_dev()`, which is `/dev/dsp.dac` when
-the link exists and `/dev/dsp0` when it does not --- so a single-DAC box that
-never enabled the service, and Linux, where the chain is ALSA, keep working
-unchanged.
+`drc.sh` has this as `dac_unit()`, the panel as `_dac_unit()`, and
+`glitch-usbtap.sh` uses it to find the DAC's `uaudio` parent. Everything that
+does not need the number uses `dac_dev()`: `/dev/dsp.dac` when the link
+exists, else `/dev/dsp0`.
 
-The per-card `pcm` settings ride with the service, keyed by **role**:
+**Per-role `pcm` settings** ride with the service:
 
 ```
 omdrc_audio_dac_sysctls="bitperfect=1 play.vchans=0"
 omdrc_audio_capture_sysctls="bitperfect=1 rec.vchans=0"
 ```
 
-`/etc/sysctl.conf` is the wrong home for them for three independent reasons:
-`dev.pcm.<unit>.*` is keyed by the one thing that is not stable here;
-`/etc/rc.d/sysctl` runs at rc position 3, long before anything knows which card
-is which; and a re-attach re-creates the whole `dev.pcm.<unit>.*` tree from
-driver defaults, discarding anything applied earlier. That last point is why
-these are applied from the devd hook and not only at boot: unplug the DAC and
-plug it back in, and `bitperfect` is back to `1` before BruteFIR reopens it.
-Most global `hw.snd.*` and `hw.usb.uaudio.*` tunables are not unit-keyed and
-survive a re-attach, so they stay in `/etc/sysctl.conf`.
-`hw.snd.default_unit` is the deliberate exception: although the OID is global,
-its value names a role-dependent pcm unit and belongs to `omdrc_audio`.
+`/etc/sysctl.conf` is the wrong home: `dev.pcm.<unit>.*` is keyed by the
+unstable number, `/etc/rc.d/sysctl` runs long before anything knows which card
+is which, and a re-attach re-creates the whole `dev.pcm.<unit>.*` tree from
+driver defaults --- which is why they are reapplied on every attach, so a
+replugged DAC has `bitperfect=1` again before BruteFIR reopens it. Global
+`hw.snd.*` and `hw.usb.uaudio.*` tunables survive a re-attach and stay in
+`/etc/sysctl.conf`.
 
-Hotplug is now covered rather than refused, and nothing is ever replugged to
-achieve it --- the previous design detached the capture card and USB-reset both
-so the kernel would renumber them in the wanted order, which cost the capture
-card its mixer state at every boot and could not be done at all while the chain
-was playing.
+**`hw.snd.default_unit` is the deliberate exception.** The role transaction
+sets it to the DAC's unit with the absolute `/sbin/sysctl`, reads it back, logs
+a change or failure, and makes `service omdrc_audio status` fail when the
+readback differs from the resolved DAC. It matters to applications outside the
+project that open bare `/dev/dsp`: on a two-card box, leaving the default at
+pcm0 can route an unrelated application into the ESI capture interface while
+BruteFIR correctly holds the DAC. Project components keep using
+`/dev/dsp.dac`. Never put a literal value in `/etc/sysctl.conf`: it runs near
+the start of rc, before USB attach order is known, and would create a second
+owner encoding yesterday's enumeration.
 
-### Trap 1: the S/PDIF input is called `pcm2`, and must be selected
+**Apply and the known-device list.** On FreeBSD the web page's Apply updates
+the two `omdrc_audio_*` role keys, reconciles `omdrc_audio` and verifies that
+the resulting `/dev/dspX` nodes exist. The known-device list of section
+\ref{sec:known-dac-policy} is the comma-separated `omdrc_audio_dac` /
+`omdrc_audio_capture` value in `/etc/rc.conf`
+(`"0x22e8:0xdac4,0x152a:0x88c5"`), reconciled by `audio_pick` in
+`omdrc_audio`; the automatic ranking above applies only when
+`omdrc_audio_dac` is empty.
 
-The card has two inputs and only one is live at a time. Which one is a
-**mixer** setting, not a `cdin` setting, and on a fresh boot the card comes up
-on the *analog RCA* input --- so `cdin` records silence from a perfectly
-healthy CD transport until the recording source is switched:
+## What devd serializes --- and what it does not
+
+FreeBSD 15.1's `devd` (`sbin/devd/devd.cc::my_system()`) forks `/bin/sh -c
+command` for a direct action and waits for that child. A synchronous
+`action "/usr/sbin/service omdrc_audio reconcile"` would therefore block devd
+until the whole reconcile returned, and two events would queue rather than
+overlap. That is an implementation fact, not an API promise: `devd.conf(5)`
+does not guarantee it.
+
+The installed action changes the lifetime on purpose. `daemon(8)` detaches
+the worker (its `-f` means *close inherited descriptors*, not "foreground"),
+so devd and the shell wait only for the short launcher:
+
+```
+devd -> sh -c "daemon -f service omdrc_audio reconcile"
+          -> daemon launcher -> detached service omdrc_audio reconcile
+```
+
+devd thus serializes the launchers but not the workers, and two reconciles
+can overlap. That is intended: a reconcile may wait on locks, MPD, BruteFIR,
+virtual_oss/CUSE and hardware verification, and running it inline would freeze
+the machine-wide event loop (USB, network, input, storage, ACPI).
+
+The device lock makes the overlap safe because it is taken *before* a worker
+scans pcm state, so a waiter never publishes a snapshot older than its wait:
+
+```
+A takes device.lock; scans ESI only
+OKTO attaches; B starts and waits
+A publishes capture-only state; releases device.lock
+B takes device.lock; scans ESI + OKTO; publishes both roles and links
+```
+
+The detach case is symmetric: without the lock an old pre-detach scan could
+recreate `/dev/dsp.dac` after a newer worker removed it. Every request
+rebuilds complete level state; no attach or detach edge is read as an
+instruction to start or stop DRC.
+
+A **rejecting singleton** (a pidfile wrapper that exits when a worker exists)
+would be wrong: A scans with the DAC present, the DAC detaches, B's launcher
+runs but is refused, and A publishes its stale "present". A coalescing
+singleton would need a dirty flag and a rescan protocol; the lock simply queues
+the waiter, so the second pass scans fresh.
+
+References: FreeBSD 15.1
+[`devd.cc`](https://cgit.freebsd.org/src/tree/sbin/devd/devd.cc?h=releng/15.1),
+[`devd(8)`](https://man.freebsd.org/cgi/man.cgi?query=devd&sektion=8),
+[`devd.conf(5)`](https://man.freebsd.org/cgi/man.cgi?query=devd.conf&sektion=5),
+[`daemon(8)`](https://man.freebsd.org/cgi/man.cgi?query=daemon&sektion=8),
+[`lockf(1)`](https://man.freebsd.org/cgi/man.cgi?query=lockf&sektion=1).
+
+## Locking and bounded waits
+
+Two locks remain, with a strict non-nesting rule:
+
+| Lock | Owner | Protects | Lifetime |
+|---|---|---|---|
+| `/var/run/omdrc/device.lock` | root `omdrc_audio roles` | role discovery, four links, sysctls, recsrc, role publication | one short role transaction |
+| `STATE_DIR/drc.lock` | audio-user `drc.sh` | saved intent reads/writes and the physical chain transition | one mutating DRC command |
+
+Both use `lockf -k -s -t ...`; `-k` keeps one inode after release, which
+`lockf(1)` recommends for concurrent callers, and file existence does not mean
+locked. `/var/run` suits root boot-lifetime state; the DRC lock lives beside
+persistent user state and is never derived from `TMPDIR`, so a desktop session
+and a boot login shell cannot choose different locks. The lock is released when
+the orchestration command exits; BruteFIR and virtual_oss never become owners.
+The order is:
+
+```
+devd or rc
+  -> omdrc_audio roles       [take device.lock; update facts; release]
+  -> su -l AUDIO_USER
+  -> drc.sh reconcile        [take drc.lock; converge; release]
+
+musicpd successful start
+  -> the same omdrc_audio reconcile path (the hook owns no lock)
+```
+
+No path takes `drc.lock` and then asks for `device.lock`, and `omdrc_audio`
+releases `device.lock` before entering the user reconciler. Several
+simultaneous pcm events wait for the short role transaction, then for
+`drc.lock`; the first repairs state and later calls become no-ops.
+
+"devd serializes, so delete the locks" is wrong: `daemon -f` deliberately
+releases devd before the worker finishes; boot rc, the MPD hook,
+administrators, the UI and direct `drc.sh` calls are not serialized by devd; a
+rejecting singleton can drop a requested reconcile; and the manuals do not
+promise devd's current `wait4()` behaviour. Merging the two locks would hold a
+short root transaction across the long audio-user transition. Two non-nested
+locks are the simplest safe design.
+
+Every external wait taken under `drc.lock` is bounded. Each `mpc` call goes
+through a timeout wrapper, so a slow or absent MPD blocks neither boot nor a
+verified physical chain; the pending selection is logged and the MPD-start hook
+retries it. BruteFIR startup and exit, virtual_oss readiness, DAC warm-up,
+verification and CD release all use explicit poll caps, and service calls that
+restart the CD bridge have a deadline and use non-interactive sudo.
+
+Syslog is evidence, not state: `omdrc_audio` publishes role state directly and
+`drc.sh` appends to the persistent `STATE_DIR/drc.log`; neither decides from
+syslog. (During one incident syslogd held a bound but unlinked `/var/run/log`,
+so new `logger` calls failed silently.) Repair syslogd before using log absence
+as evidence.
+
+
+\newpage
+
+# FreeBSD: the OSS audio stack, panel and diagnostics {#sec:fbsd-audio}
+
+## OSS, virtual_oss and cuse
+
+FreeBSD's native audio API is OSS. The loopback is **`virtual_oss`**, a
+userland OSS mixing/routing daemon from the base system that creates character
+devices through the **`cuse(3)`** kernel facility. `drc.sh` starts it per rate
+with a play node `/dev/dsp.play` (MPD writes) and a synchronized loopback node
+`/dev/dsp.loop` (BruteFIR reads; the `-L` loopback). The `cuse` module must be
+loaded (`kld_list`). BruteFIR's OSS I/O is built in; the fork's OSS fixes
+matter here.
+
+Key sysctls for the bit-perfect direct path:
+
+```
+bitperfect=1     # first opener's format becomes the hardware format
+play.vchans=0    # no virtual-channel mixer/resampler
+```
+
+They are applied to the DAC's unit by `omdrc_audio` on every attach
+(`omdrc_audio_dac_sysctls`, section \ref{sec:fbsd-roles}). They also make the
+DAC **single-open**: exactly one client at a time --- BruteFIR when DRC is on,
+otherwise MPD's direct output or a browser.
+
+## DAC priming {#sec:fbsd-prime}
+
+The OKTO DAC routes silence on the *first* stream opened at a new sample rate;
+a second open fixes it. On a detected rate change `drc.sh` therefore opens
+BruteFIR once, tears it down, then starts it for real. The kernel-level fix is
+the clock-before-alt patch (section \ref{sec:uaudio-patches}); with it
+installed, `DAC_PRIME_CYCLES` defaults to 0.
+
+## The panel on FreeBSD {#sec:fbsd-panel}
+
+* **Service**: `sysrc omdrcctrl_enable=YES && service omdrcctrl start`. The
+  rc.d details (`daemon(8)`, pidfile, privilege drop) are in section
+  \ref{sec:fbsd-inventory}.
+* **DAC feed** in the MPD panel is the `virtual_oss` rate.
+* **Audio Devices** card: `/dev/sndstat` with `fmt 0x...` bitfields decoded to
+  `AFMT_*`/`PCM_CAP_*` labels (collapsible). **Advanced** card: `sysctl
+  dev.pcm.<DAC unit>` (resolved from `/dev/dsp.dac`) and `sysctl
+  hw.usb.uaudio` diagnostics.
+* **Renderer switch** runs `sudo service ... onestart/onestop`.
+* **Spectrum from the CD**: `omdrc-cdin` tees the samples itself from the
+  period it is about to write, into a FIFO opened non-blocking that drops
+  rather than ever delaying a write to the DAC. The reader's presence is the
+  whole protocol, so nothing happens until the panel opens the FIFO.
+* **Glitch Debug card**: section \ref{sec:fbsd-glitch}.
+
+The spectrum **DRC-sync delay model** derives these terms from configuration:
+
+| Stage | Derived value |
+|---|---|
+| virtual_oss | `drc_voss_blocks` times the running process's `-s` duration |
+| filter | peak index of the active impulse response divided by sample rate |
+| convolver | one BruteFIR `filter_length` partition |
+| BruteFIR I/O | `drc_brutefir_io_partitions` additional partitions |
+| physical output | `drc_output_delay_ms` for the OSS/DAC buffer and USB path |
+
+Defaults: three `virtual_oss` blocks, two additional BruteFIR I/O partitions
+and 150 ms of output delay. The built-in `dirac pulse` has zero group delay but
+still pays the convolver partition. `virtual_oss`'s `-s 200ms` is a duration,
+so that term is constant across rates while the partition terms shrink as the
+rate rises; with the chain down every term is zero. Hold-back is anchored to
+elapsed time rather than to the last byte received, so the read point drains
+the buffered tail when a writer stops and non-blocking CD-FIFO drops cannot
+walk the display out of sync; after a silence gap retained PCM is discarded
+before the source resumes.
+
+## Glitch detection {#sec:fbsd-glitch}
+
+One global switch --- `glitch-debug.sh on|off|status|analyze|usbtap|tail|clear`
+--- also exposed as the Debug card in omdrc-ctrl.
+
+![The glitch-detection layers and where each taps the chain.](build/glitch-layers.pdf){width=95%}
+
+* **`glitch-monitor.sh`** (always-on, lightweight): polls every second and
+  logs new anomalies from four sources --- BruteFIR warnings (missed
+  real-time deadlines), kernel `uaudio`/USB errors, the MPD log, and any
+  increasing `dev.pcm.*` under/over/err/xrun counter --- into a unified
+  `glitch.log`.
+* **`glitch-usbtap.sh`** (definitive, heavier, CLI-only): taps the OKTO's
+  isochronous OUT endpoint 0x01 with `usbdump`, downstream of every software
+  stage. Header-only analysis scales to multi-minute captures; it flags
+  **timing gaps** (> 2.5x the nominal ~4 ms interval) and **short frames**
+  (SLEN < 0.5x nominal), while the constant +-few-samples feedback wobble of
+  asynchronous USB is counted separately and never flagged. Blind spot: a
+  full-length block of zeros (silence insertion) needs payload inspection
+  --- use `verify-bitperfect.sh` for that.
+* **`glitch-analyze.py`**: classifies inter-event intervals per stage by the
+  coefficient of variation --- CV ~ 0 **PERIODIC** (a buffer/clock cycle),
+  CV ~ 1 **RANDOM/Poisson** (CPU/scheduling), CV > 1.5 **BURSTY** (something
+  waking up) --- plus autocorrelation and correlation against DRC rate
+  switches in `drc.log`.
+
+## Verifying bit-perfect on FreeBSD {#sec:fbsd-verify}
+
+`scripts/verify-bitperfect.sh` *proves* the DAC receives bytes unchanged. Two
+levels:
+
+1. **Structural** (kernel-certified): with `hw.snd.verbose=2`,
+   `/dev/sndstat` must show the play channel `BITPERFECT` with the feeder
+   graph exactly `{userland} -> feeder_root -> {hardware}` --- any
+   `feeder_rate`/`feeder_volume`/format node means the kernel is altering
+   bytes. Preconditions: `bitperfect=1` and `play.vchans=0` on the DAC's unit
+   --- which is what `omdrc_audio_dac_sysctls` asserts on every attach.
+2. **Empirical wire tap** (gold standard): play a deterministic test signal
+   (near-silent ~-90 dBFS per-sample counter in the low 16 bits, distinct
+   L/R --- maximally sensitive to truncation, dither, volume, resampling,
+   channel swap) while capturing the USB isochronous OUT endpoint 0x01 with
+   `usbdump`; decode, align, and byte-compare. The embedded OSS writer
+   aborts loudly if the kernel coerces format/channels/rate. Verified on
+   this host at 44.1/48/88.2 kHz: hundreds of kB contiguous identical bytes,
+   and on the live MPD both direct (**BIT-PERFECT**) and through
+   `virtual_oss` (**VALUE-EXACT**, 0 slips).
+
+The subtle part is clock domains: a producer must be **flow-controlled by the
+sink's clock** (blocked writes). MPD is; a free-running test writer is not, and
+drifts. `virtual_oss` itself is bit-transparent with a flow-controlled
+producer. The one caveat: BruteFIR bridges the loopback's software clock to the
+DAC crystal without resampling, so an inaudible one-sample slip occurs every
+several minutes on the DRC path --- values are never altered. The DRC path is
+*intentionally* not byte-equal (that is the correction); to test its plumbing,
+use a unit-impulse filter with attenuation 0.
+
+`bitperfect-tap-freebsd.sh` resolves the DAC's `uaudio` unit from the play
+device (`/dev/dsp.dac` to `pcm<N>.%parent`), as `glitch-usbtap.sh` does. It
+once tapped `dev.uaudio.0`, which on the reference box is the ESI U24 XL (the
+DAC8 is `uaudio1`), and reported `NO CAPTURE` against a healthy chain.
+
+Measured through the panel on the OKTO DAC8 (FreeBSD 15.1-RELEASE-p2,
+`usbus0` devaddr 3):
+
+| Path | Material | Verdict |
+|---|---|---|
+| `aplay` | 44100 / 32-bit | **BIT-PERFECT** --- tap WAV file hash identical to the input |
+| `mpd` | 44100 / 32-bit | **BIT-PERFECT** |
+| `mpd-http` | 44100 / 32-bit | **BIT-PERFECT** |
+| `mpd-http` | 96000 / 24-bit FLAC | **BIT-PERFECT**, DAC clock followed (`feedback_rate` 96002) |
+| `upnp` | 44100 / 32-bit, driven through upmpdcli over OpenHome | **BIT-PERFECT** |
+
+The 96 kHz FLAC run carries the most information: it proves the FLAC decode is
+transparent *and* that the reference's 24-to-32 promotion matches MPD's own,
+the one place the two could have disagreed. The `upnp` run certifies the
+renderer itself: the whole upmpdcli-to-MPD-to-DAC path with upmpdcli choosing
+what MPD plays.
+
+## Browser audio on FreeBSD {#sec:fbsd-browser}
+
+The No DRC launchers (section \ref{sec:browser-nodrc}) stop DRC and let the
+browser open the DAC. No ALSA file is installed here; the backend depends on
+the browser (`browser-nodrc/lib.sh`):
+
+* **Chromium / Chrome** have no OSS output; their backends are PulseAudio,
+  sndio and ALSA, in that probe order. The launcher starts a **playback-only
+  `sndiod`** (`-m play -s default`) on `rsnd/<unit>`, pinned to the rate the
+  DAC already runs so its clock is not switched; Chromium then picks sndio by
+  itself. `sndiod` lives only for the browser session and is stopped before
+  DRC is restored, because it holds the DAC; an already-running system
+  `sndiod` is reused and left alone. A `chrome://flags` *Audio Backend*
+  choice pinned in the profile overrides this and silences the browser (the
+  launcher warns).
+* **Firefox** uses its cubeb OSS backend directly.
+* `BROWSER_AUDIO=alsa` selects an ALSA shim for the Chromium family. On
+  FreeBSD "ALSA" is a userland shim over `libasound_module_pcm_oss.so`, handed
+  to the browser only through `ALSA_CONFIG_PATH`, pinned to the DAC's current
+  rate and format with `plug` resampling.
+
+
+\newpage
+
+# FreeBSD: video --- mpv playback and the phone web remote {#sec:video}
+
+Video is documented for FreeBSD only (`video/README.md`).
+
+![Video playback and control paths.](build/chain-video.pdf){width=92%}
+
+## Playback launchers
+
+* **`play-bluray.sh`** --- physical Blu-ray discs. Kodi cannot read a
+  physical BD on FreeBSD (raw `/dev/cd0` wants 2048-byte-aligned reads; the
+  kernel cannot mount UDF 2.50), so mpv + libbluray read the raw device.
+  Because the USB drive only sustains full speed in ~1 MB chunks and raw
+  `cd0` has no kernel read-ahead, the script fronts the drive with a **GEOM
+  cache** (`gcache create -b 1048576 -s 268435456 bd cd0` ->
+  `/dev/cache/bd`), and probes `bd_list_titles` to play the *genuinely
+  longest* title (mpv has no BD menu support; `e`/`E` cycle titles at
+  runtime).
+* **`play-media.sh`** --- local files, playlists, and network/stream URLs
+  (m3u8, yt-dlp sites); same DRC audio routing, no gcache.
+
+Both source `lib/drc-audio.sh`, which ensures the chain is in **resamp
+mode** before playing --- necessary because the direct DAC is bit-perfect
+(`bitperfect=1` on the DAC's unit): a 48 kHz movie on a higher-clocked DAC would
+play ~2x fast. With DRC up, mpv plays to `oss//dev/dsp.play` and delays the
+**video** by `DRC_VIDEO_DELAY` (default **0.67 s**) to match the audio-path
+latency; subtitles ride with the picture automatically.
+
+The 0.67 s is derived, not guessed (full derivation in
+`video/AV-SYNC-DELAY.md`): the FIR filter's impulse peak sits at sample
+96000 of 524288 taps at 192 kHz = **0.500 s group delay** (the coefficient
+list *is* the impulse response; the peak is when a transient emerges), plus
+one BruteFIR partition (32768 samples at 192 kHz = **0.171 s**), plus a
+little `virtual_oss` buffering.
+
+DVDs are simpler: they mount fine (UDF 1.x) and are low-bitrate, so
+`mpv dvd:// --dvd-device=/dev/cd0`; commercial discs need `libdvdcss`.
+
+**Remote control**: the `mpv-mpris` package auto-loads into every mpv, so
+KDE Connect's Android *Media control* (and `playerctl`, Plasma widgets)
+drive whatever is playing --- play/pause/seek/volume/metadata.
+
+## The web remote (`video/webremote/`)
+
+KDE Connect controls what is *already playing*; the web remote is what
+*starts* a title. A separate Flask app (port 9080, LAN-only, rc.d service
+`omdrcvideo`) serving a phone UI to:
+
+* **Browse** the whitelisted media roots (realpath containment --- no `..`
+  or symlink escape), with entries classified server-side: folder, Blu-ray
+  rip (`BDMV/index.bdmv`), DVD rip (`VIDEO_TS`), or playable file. Grid
+  (poster thumbnails) or compact list.
+* **Thumbnails** via ffmpeg frame grabs, disk-cached by path+mtime, with a
+  background prewarm thread and bounded concurrency.
+* **IMDb info** --- title deduced from the name and, with an OMDb API key,
+  verified and enriched (year, director, cast, plot, rating).
+* **Play** on a **persistent idle mpv** over its JSON IPC socket
+  (`/tmp/mpv-socket`) --- hidden until something plays, DRC audio configured
+  once at startup, `audio-channels=stereo` so 5.1/7.1 sources downmix.
+  Blu-ray rips get the longest-title probe; a **Play Blu-ray disc** button
+  reuses the gcache lifecycle for physical discs, loading into the same mpv.
+* **Transport** --- seek, +-10/30 s, play/pause, mute, stop, audio and
+  subtitle track menus; **favourites** pinned to the main page.
+
+The idle mpv is autostarted by the KDE/Plasma session, from
+`~/.config/autostart/mpv-idle.desktop` (linked to the installed entry by
+`make user-install`); a `git pull` + `service omdrcvideo restart` is the whole
+update path.
+
+## Video-related FreeBSD constraints
+
+* Physical Blu-ray: no kernel UDF 2.50 mount; raw `/dev/cd0` needs
+  sector-aligned reads and has no read-ahead --- hence mpv + libbluray +
+  gcache. Kodi's internal player cannot do it.
+* Kodi's OSS sink does not enumerate cuse userspace devices at all --- the
+  in-tree Kodi patch fixes that (section \ref{sec:kodi-patch}).
+
+
+\newpage
+
+# FreeBSD: CD input with omdrc-cdin {#sec:cdin-freebsd}
+
+FreeBSD ships nothing that reconciles two free-running audio clocks, so
+`omdrc-cdin` (`cdin/`) was written: it bridges the S/PDIF capture device into
+the same `virtual_oss` entry point MPD uses. The concept, the exclusive-source
+rule and the web card are in chapter \ref{sec:cdin}.
+
+![The CD path. Both ends of the bridge block on their own device, so the ring fill between them is the drift signal; there is no resampler anywhere in it.](build/chain-cdin.pdf){width=98%}
+
+## Why a bridge is needed at all
+
+Capture is slaved to the CD's crystal, the DAC runs on its own, and the two
+differ by a few ppm **forever**. The missing piece was a tool, not a kernel
+facility: a blocking `read()` runs at the CD's clock and a blocking `write()`
+at the DAC's, so **the ring fill between them is the drift signal**. No OSS
+clock ioctl is needed to measure it.
+
+**There is no resampler.** The data path is a `memcpy`, so what reaches
+BruteFIR is bit-identical to what the transport sent --- verifiable with
+`scripts/verify-bitperfect.sh`, which would be meaningless with a resampler in
+the path. Drift is absorbed by the *lead* instead.
+
+### The lead is the only number that matters
+
+The lead --- how much audio is buffered ahead of the output --- is
+simultaneously three things:
+
+* the **drift margin**: how long before the buffer runs out;
+* the **startup delay**: you cannot pre-fill a lead you have not waited for;
+* the **transport lag**: every Play/Stop/Skip is heard this much later.
+
+They cannot be tuned separately. The upper bound is arithmetic:
+`time-to-splice = lead / drift`, so at a pessimistic **50 ppm** a **2000 ms**
+lead covers about **11 hours** of continuous gapless audio. A disc is at most
+80 minutes, therefore **drift cannot cause a discontinuity inside a disc**.
+
+The *lower* bound is not set by drift at all. It is set by transport seeks and
+USB stalls: some players briefly **drop carrier** across a pregap or index
+boundary, which is a sub-second input stall that the lead has to absorb.
+That, not drift, is why the default is 2000 ms rather than the ~50 ms drift
+alone would need. Below ~250 ms the daemon warns that nothing is left to
+absorb a seek.
+
+Calibrate it on the real transport with a full disc:
+
+```
+omdrc-cdin --in /dev/dsp.capture --out /dev/dsp.play --lead 2000 -d -s 10 \
+    -l /tmp/cdin.log
+```
+
+`starves` must stay 0 --- each one is an audible dropout. After about five
+minutes the `drift` field reports the measured ppm and the projected headroom,
+which replaces the 50 ppm assumption with the actual hardware. Step `--lead`
+down (1500, 1000, 750...) until the first value that produces **any** starve;
+that is below the floor the transport imposes, so go back up one step and keep
+a margin. Record the value: it becomes `omdrc_cdin_lead`.
+
+## The three states, and the two very different tenancies
+
+![The daemon's state machine. The output device is held only in PLAYING; the capture device is held for the whole session.](build/cdin-states.pdf){width=78%}
+
+| State | On the wire | The daemon | `/dev/dsp.play` |
+|---|---|---|---|
+| `NO_CARRIER` | no frames at all | retries the capture device | not held |
+| `IDLE` | frames, all exact zeros | counts the silence | **released** |
+| `PLAYING` | audio | ring -> output | held |
+
+The **capture** device is held for the life of a session: it is the
+interface's own node, nobody else wants it, and it is the only thing that can
+tell whether a carrier exists. The **output** device is `virtual_oss`'s client
+node and is taken only while music plays.
+
+That asymmetry is not politeness. `drc.sh` restarts `virtual_oss` on every
+rate change, and an open cuse client handle at that moment wedges the
+teardown *permanently*: `cuse_server_free()` spins uninterruptibly, SIGKILL
+does not touch it, and only a reboot recovers (section \ref{sec:voss-patches}).
+A daemon holding `/dev/dsp.play` around the clock would put that hazard under
+every rate change. (The deployed source policy is stricter still: MPD's
+audible output stays disabled while the bridge is selected, even in silence,
+because `virtual_oss` mixes clients.)
+
+For the remaining exposure --- a rate change while the bridge runs --- `drc.sh`
+stops the service and takes process exit as the release acknowledgement:
+
+```
+service omdrc_cdin onestop
+# wait until pgrep -x omdrc-cdin no longer finds the process
+```
+
+After the chain is rebuilt the bridge is restarted, including one started with
+`onestart` while its rcvar is off. If the bridge does not exit, teardown is
+refused and `drc.sh` restores MPD's direct output so the machine is not left
+silent.
+
+**Choosing `--idle-after`** (default 15000 ms) has one failure mode at each
+end and a wide safe band between them: too short and Red Book's 2 s
+inter-track pause releases the device mid-disc, so every track change costs a
+lead to resume; too long and a stopped player keeps holding the chain.
+`--idle-after 0` disables the gate entirely, which is occasionally useful when
+measuring. Note this is silence *on the wire*: a player that drops carrier
+instead of sending zeros never reaches the gate at all --- the read fails and
+it lands in `NO_CARRIER`, which is the state that reopens the device.
+
+**Resuming does not lose the first note.** The ring keeps rolling through the
+silence, so an episode begins by *trimming* it to one lead rather than
+clearing it and waiting for a fresh pre-fill. The music still emerges one lead
+later, but the period that carried the first sample is still in the buffer.
+
+## What the transport does to the stream
+
+A CD player's S/PDIF output is **always 44.1 kHz**. Transport actions change
+*what* is sent, never *how fast*, so there is no re-lock, ever:
+
+| Action | On the wire | Daemon behaviour |
+|---|---|---|
+| **Pause** | carrier alive, digital silence (most players) | plays the silence through; lead unchanged |
+| **Skip track** | brief mute (0.1--1 s), then audio | a short silence, heard one lead later |
+| **Fast fwd / rewind** | chopped scan snippets or mute, rate unchanged | ordinary audio or ordinary silence |
+| **Stop / tray / power** | carrier drops | `read()` stalls or errors, session ends, device reopened |
+
+Only the carrier drop matters, because the wall clock keeps running while no
+frames arrive: the lead drains by exactly the dropout's length and never
+recovers.
+
+### Every row of that table is testable without a CD player
+
+Point `--in` at a **directory** and its `*.wav` files become the tracks of a
+disc, played in name order; a single file is a one-track disc. Between tracks
+the rig emits `--gap` ms of exact digital silence (default 2000, Red Book's
+inter-track pause), which is what the silence gate looks for. `--transport`
+scripts the buttons as `AT:EVENT` pairs, `AT` being seconds into the stream:
+
+```
+omdrc-cdin -i DISC -o /dev/dsp.dac -d -s 5 \
+    --transport "20:skip,35:pause=4,55:dropout=800,70:seek=+30,105:stop"
+```
+
+`dropout=N` drops the carrier for N ms; `--in-ppm` offsets the simulated
+source's clock, making the design's central claim testable in seconds instead
+of the day real hardware needs. The two failure modes behave as the arithmetic
+predicts:
+
+* **lead exhausted** --- `starves` increments, then `in` and `out` converge to
+  the *same* wrong rate. That equality is the backpressure signature: with no
+  buffer left, the DAC is paced by the source instead of its own clock;
+* **ring saturated** --- `lead` pins at the ring capacity and `drops` climbs at
+  the drift rate; audio is discarded, one discontinuity per drop.
+
+The rig emulates the CD player's clock, not the disk's seek time, so the disc
+is prefetched on its own thread (4 s deep). A schedule that slips more than
+100 ms is shifted forward rather than firing every overdue deadline at once;
+both effects are counted and shown as `rig stalls N slips N` only when
+non-zero.
+
+## Reading the stats line
+
+```
+[stats] lead 1635 ms (min 1625, max 1649)  drift +38.7 ppm (+/-387.0),
+        ring fills in 46 h  in 44100.206 Hz  out 44088.817 Hz
+        frames 4054016/3980288  drops 0 B  starves 0  silence 0%  up 90 s
+```
+
+* **`lead` is the ring only.** It settles *below* `--lead`, because the
+  pre-fill hands the first few hundred ms straight to the output device's own
+  buffer. End-to-end latency is this figure plus that buffer, plus
+  `virtual_oss`'s 200 ms and BruteFIR's filter group delay; the startup delay
+  actually waited is `--lead`.
+* **`drift` is measured from the change in `lead`**, not from the frame
+  counters: those carry each device's constant buffer offset, which at ppm
+  scale would swamp the figure and which cancels in a difference. The `+/-` is
+  the period quantisation over elapsed time --- while it exceeds the estimate,
+  the estimate means nothing. It needs minutes and tightens for hours.
+* **`in` / `out` are measured from the instant playback began**, and the
+  window restarts at every discontinuity, so a dropout does not leave the
+  cumulative average reading low for the rest of the session.
+* **`starves`** counts events, not periods: one continuous starvation is 1.
+* **`drift ref dropped (lead jumped)`** means the estimate was thrown away and
+  restarted because the lead moved for a reason that is not the clocks. A
+  3.3 s jump inside a 60 s window once read as `+54361 ppm`, which is a stall
+  wearing a drift figure's clothes.
+
+## Running it as a service {#sec:fbsd-cdservice}
+
+```
+# /etc/rc.conf
+omdrc_cdin_enable="YES"
+omdrc_audio_capture="ESI U24XL"   # names the ESI; that is what creates
+                                    # /dev/dsp.capture, which cdin then uses
+```
+
+| rc.conf variable | Default | Meaning |
+|---|---|---|
+| `omdrc_cdin_in` | `/dev/dsp.capture` | capture device (or a WAV file/directory, for the rig); the link comes from `omdrc_audio_capture` |
+| `omdrc_cdin_out` | `/dev/dsp.play` | playback device; `/dev/dsp.dac` writes the DAC directly, bypassing BruteFIR |
+| `omdrc_cdin_bits` | `24` | source width --- the U24 XL's capture endpoint is 24-bit and nothing else (see below) |
+| `omdrc_cdin_lead` | `2000` | lead in ms; drift margin, startup delay and transport lag at once |
+| `omdrc_cdin_idle_after` | `15000` | digital silence before the output device is released; `0` disables the gate |
+| `omdrc_cdin_logfile` | `/tmp/omdrc-cdin.log` | **must match** `log_file` in `commands.conf`'s `[cdin]` --- this file *is* the web card |
+| `omdrc_cdin_stats` | `10` | seconds between `[stats]` lines |
+| `omdrc_cdin_user` | `AUDIO_USER` | run user; the same one that owns BruteFIR and MPD, because they take turns on the same devices |
+| `omdrc_cdin_flags` | | anything else: `--out-bits`, `--period`, `--retry`, `-v` |
+
+The rc script is installed by the CMake superproject
+(`cdin/CMakeLists.txt`, a subproject of the top-level build). It uses
+`daemon(8)`, drops privileges via the standard `rc.subr` `${name}_user`, and
+adds one non-standard verb, `release` (the diagnostic `SIGHUP` above). A `--` separates
+the daemon supervisor's arguments from the bridge's arguments; the public
+`omdrc_cdin_flags` value is moved out of rc.subr's reserved `${name}_flags`
+namespace before startup. Started unprivileged with
+`service omdrc_cdin onestart` it clears `${name}_user` --- so `rc.subr` does
+not try to `su` to it --- and uses a pidfile under `/tmp`.
+
+The panel owns this service even when `omdrc_cdin_enable="NO"`. Selecting the
+CD source explicitly may start it with `onestart`; an incidental rate change
+never starts a bridge that was already stopped. When a running bridge must
+follow a rebuilt virtual output, `drc.sh` uses bounded `onestop`, waits for the
+process to disappear, then uses bounded `onestart`. This preserves a
+panel-started instance: `onerestart` would stop it and then let the disabled
+rcvar reject the start half. The timeout runs in foreground mode so its
+process-group cleanup cannot kill daemon(8)'s successfully detached
+supervisor.
+
+Log lines are a **contract**, not just prose: the web panel parses them, so
+`state <name>: <why>` and
+`<device> <path>: <available|unavailable|acquired|released>` keep their shape.
+Availability and holding are separate axes: `unavailable` means nothing can
+play and is the red light, while `acquired`/`released` is the ordinary rhythm
+of a daemon doing its job and is never a fault.
+
+### The panel card on FreeBSD {#sec:fbsd-cdcard}
+
+The exit status of `service ... onestart` is not trusted --- it forks a
+`daemon(8)` and returns before the daemon can die on a missing device --- so
+the panel polls with `pgrep -x` until it agrees. The Start/Stop button needs a
+`sudoers` grant; without one, set `control = no` rather than leave a button
+that can only fail:
+
+```
+omdrcctrl ALL=(root) NOPASSWD: /usr/sbin/service omdrc_cdin onestart, \
+    /usr/sbin/service omdrc_cdin onestop
+```
+
+## The ESI U24 XL on FreeBSD: three traps {#sec:fbsd-esi}
+
+The hardware facts are in chapter \ref{sec:cdin}. Everything below was
+observed on FreeBSD 15.1-RELEASE-p2 and is documented at length in
+`cdin/ESI-U24XL.md`. Role links and the `omdrc_audio_capture` setting are in
+section \ref{sec:fbsd-roles}.
+
+### Trap 1: the S/PDIF input is called `pcm2`, and must be selected {#sec:fbsd-trap1}
+
+The card comes up on the *analog RCA* input after a boot, so `cdin` records
+silence from a healthy transport until the recording source is switched:
 
 ```
 mixer -f /dev/mixer.capture pcm2.recsrc=set   # mixer.capture pairs with dsp.capture
 mixer -f /dev/mixer.capture -s                # print just the active source
 ```
 
-Only devices flagged `rec` can be a recording source; on this card those are
-`line` and `pcm2`, which are the two positions of the card's single USB
-selector unit (`sysctl dev.pcm.<unit>.mixer.selector_0`): `line` = position 1 =
-analog RCA, `pcm2` = position 2 = digital S/PDIF. They are mutually exclusive,
-so `set`, `add` and `toggle` all end with exactly one source. The name is not
-arbitrary: `uaudio` maps `UATE_SPDIF` to `SOUND_MIXER_ALTPCM`
-(`uaudio_tt_to_feature[]`), and index 10 of `SOUND_DEVICE_NAMES` is `pcm2`.
-The `dig1..3` names are only fallbacks for colliding selector pins, and the
-pre-14 syntax `mixer =rec dig1` no longer exists.
+Only devices flagged `rec` can be a source; here `line` (selector position 1,
+analog RCA) and `pcm2` (position 2, digital S/PDIF) are the two positions of
+the card's single USB selector unit
+(`sysctl dev.pcm.<unit>.mixer.selector_0`), mutually exclusive, so `set`,
+`add` and `toggle` all end with one source. The name is not arbitrary:
+`uaudio` maps `UATE_SPDIF` to `SOUND_MIXER_ALTPCM`, whose index in
+`SOUND_DEVICE_NAMES` is `pcm2`. The `dig1..3` names are fallbacks for
+colliding selector pins; the pre-14 syntax `mixer =rec dig1` no longer exists.
 
-**The setting does not survive a reboot**, and a replug resets it too ---
-`/etc/rc.d/mixer` only saves state for `mixer0` unless `mixer_enable="YES"` is
-set, and the U24 XL must be attached at boot for that to see it. So
-`omdrc_audio` asserts it, on every attach, right after it links the card:
+The setting survives neither a reboot nor a replug (`/etc/rc.d/mixer` saves
+state only for `mixer0` unless `mixer_enable="YES"`, and needs the U24 XL
+attached at boot). `omdrc_audio` therefore asserts it on every attach, right
+after linking the card:
 
 ```
 omdrc_audio_capture_recsrc="auto"   # the default
 ```
 
-`auto` prefers the digital input *by inspection* rather than by hardcoding this
-card: `mixer(8)` tags every device that can be a recording source `rec` and the
-active one `src` (`printdev()`, `usr.sbin/mixer/mixer.c`), so the service looks
-for `pcm2`, then `dig1..3`, among the sources the card actually offers, and
-leaves a card that has none of them alone. Name a device (`line`) to force the
-analog input instead, or `none` to keep hands off entirely. The command is
-idempotent and costs one USB control transfer.
+`auto` prefers the digital input *by inspection*: `mixer(8)` tags every
+possible source `rec` and the active one `src`, so the service looks for
+`pcm2`, then `dig1..3`, among the sources the card offers and leaves a card
+with none of them alone. Name a device (`line`) to force analog, or `none` to
+keep hands off. The command is idempotent and costs one USB control transfer.
 
 ### Trap 2: `pcm2 = 0.00:0.00` is not a muted capture gain
 
-`mixer -f /dev/mixer.capture` shows `pcm2` at `0.00` next to three devices at `0.75`,
-which reads as a zeroed record level. It is not: there is no gain to raise and
-raising it does nothing. Sweeping it moves no hardware node, while sweeping
-`line` moves them immediately, and there is no software fallback either
+`mixer -f /dev/mixer.capture` shows `pcm2` at `0.00` beside three devices at
+`0.75`, which reads as a zeroed record level. It is not: there is no gain to
+raise. Sweeping it moves no hardware node, and there is no software fallback
 (`sys/dev/sound/pcm/mixer.c` applies feeder volume only to `SOUND_MIXER_PCM`,
-which is the playback path). The `0.00` is a display artifact: there is no
-`[SOUND_MIXER_PCM2]` entry in `snd_mixerdefaults[]`, so it zero-initialises,
-exactly as `line` shows `0.75` only because it *is* in that table at 75.
-Nothing was measured from the card in either case.
-
-The practical consequence is the correct one for this chain: the capture level
-on the S/PDIF input is whatever the transport sends, bit for bit, with no gain
-stage touching the samples.
+the playback path). The `0.00` is a display artifact --- there is no
+`[SOUND_MIXER_PCM2]` entry in `snd_mixerdefaults[]`. The capture level on
+S/PDIF is whatever the transport sends, bit for bit.
 
 ### Trap 3: a "44100 Hz" open that is neither 44.1 kHz nor bit-perfect
 
-This is the expensive one, because every layer reports success. By default
-FreeBSD puts a **virtual channel** in front of the card. The hardware then
-runs at `dev.pcm.N.rec.vchanrate` --- 48000, always --- and a kernel
-`feeder_rate` resamples to whatever the application asked for. `SNDCTL_DSP_SPEED`
-returns 44100, `SETFMT` returns the requested width, every ioctl succeeds, and
-`cdin` is satisfied. What actually happens is that the card delivers 44100
-frames per second into a stream the kernel believes is 48000:
+Every layer reports success. By default FreeBSD puts a **virtual channel** in
+front of the card: the hardware runs at `dev.pcm.N.rec.vchanrate` (48000,
+always) and a kernel `feeder_rate` resamples to whatever the application
+asked for. `SNDCTL_DSP_SPEED` returns 44100 and every ioctl succeeds, while the
+card actually delivers 44100 frames per second into a stream the kernel
+believes is 48000:
 
 > 44100 x 44100/48000 = **40517 Hz** arriving at the application.
 
-`cdin` then reads 40.5k frames/s and writes 44.1k to the DAC. The lead drains
-at 3.6k frames/s, so a 2000 ms lead is gone in about 25 seconds, after which
-the DAC underruns continuously and the music is audibly destroyed. It looks
-exactly like catastrophic clock drift and it is not drift at all. The only
-place it is visible:
+`cdin` reads 40.5k frames/s and writes 44.1k to the DAC, so the lead drains at
+3.6k frames/s: a 2000 ms lead is gone in about 25 seconds and the DAC then
+underruns continuously. It looks exactly like catastrophic clock drift and is
+not. The only place it shows:
 
 ```
 sysctl hw.snd.verbose=2 && cat /dev/sndstat
@@ -3633,43 +3139,33 @@ dsp1.record.0[dsp1.virtual_record.0]: spd 44100/48000 ...
   ... -> feeder_rate(q:4  48000 -> 44100) -> {userland}    <-- the lie
 ```
 
-The cure is the `omdrc_audio_capture_sysctls` above ---
-`rec.vchans=0 bitperfect=1` --- after which the same command prints the whole
-capture path as `{hardware} -> feeder_root(0x00210000) -> {userland}`: one
-`memcpy` from the USB transfer to the read buffer, at the rate the transport
-is really running.
+The cure is `omdrc_audio_capture_sysctls` (`rec.vchans=0 bitperfect=1`), after
+which the same command prints `{hardware} -> feeder_root(0x00210000) ->
+{userland}`: one `memcpy` from the USB transfer to the read buffer, at the rate
+the transport really runs.
 
 ### The consequence: capture is 24-bit
 
 With the format feeder gone, the card's own width is the only one it accepts,
-and the U24 XL's capture endpoint offers exactly one --- 24-bit S-LE, at
-either 44100 or 48000 Hz. So `omdrc_cdin_bits` is **24**, and the two ends of
-the bridge do not share a format: downstream runs S32_LE
-(`virtual_oss -b 32`, BruteFIR `sample: "S32_LE"`), and with `bitperfect=1`
-the kernel's format feeder is gone by design, so the output device does not
-convert --- it refuses the width. `cdin` therefore negotiates and converts
-itself (`cdin/src/convert.c`): the output is opened at the **source** width
-first, because no conversion is always truest; if the device refuses, a wider
-one is tried, **never** a narrower one. Widening is left-justification, which
-for little-endian PCM is pure byte placement (`24 -> 32` moves bytes and adds
-a zero) --- no arithmetic means no rounding, no dither, nothing to get wrong,
-so the bit-perfect claim survives it. Narrowing is never offered; it would
-need truncation or dither, which is what this daemon exists to avoid.
-`--out-bits N` forces the width instead of negotiating it.
+and the U24 XL's capture endpoint offers exactly one --- 24-bit S-LE at 44100
+or 48000 Hz. So `omdrc_cdin_bits` is **24**, and the two ends of the bridge do
+not share a format: downstream runs S32_LE (`virtual_oss -b 32`, BruteFIR
+`sample: "S32_LE"`), and with `bitperfect=1` the output device refuses a width
+instead of converting it. `cdin` negotiates and converts itself
+(`cdin/src/convert.c`): the output is opened at the **source** width first; if
+refused, a wider one is tried, **never** a narrower one. Widening is
+left-justification, pure byte placement for little-endian PCM (`24 -> 32` adds a
+zero byte), so there is no rounding or dither and the bit-perfect claim
+survives. `--out-bits N` forces the width.
 
-24-bit capture also needed one fix inside `cdin`, and the arithmetic is worth
-recording because it looks like a bug in the device. `SNDCTL_DSP_SETFRAGMENT`
-encodes the fragment size as an exponent, so only powers of two can be
-*expressed*. A 24-bit stereo frame is 6 bytes, so 1024 frames is 6144 bytes =
-`2^11 x 3` --- and no other period rescues it, since `6N = 2^k` would need 3 to
-divide a power of two. **Every** period is inexpressible at 24-bit stereo. The
-fix was to stop treating the fragment as the transfer size: it is the device's
-*interrupt granularity*, i.e. how much the driver accumulates before waking a
-blocked `read()`, and the read itself asks for whatever it wants and blocks
-until that much has arrived. `cdin` now asks for the largest power of two that
-fits inside the period (4096 bytes for a 6144-byte period) and goes on reading
-its own 1024-frame periods. The device is woken slightly more often than
-strictly needed; not one byte of audio changes.
+24-bit capture also needed a fix inside `cdin`. `SNDCTL_DSP_SETFRAGMENT`
+encodes the fragment size as an exponent, so only powers of two are
+expressible, and a 24-bit stereo frame is 6 bytes: every period is `6N` bytes,
+never a power of two. The fix was to stop treating the fragment as the transfer
+size --- it is the device's *interrupt granularity*. `cdin` now asks for the
+largest power of two that fits inside the period (4096 bytes for a 6144-byte
+period) and keeps reading its own 1024-frame periods. Not one byte of audio
+changes.
 
 ### Checklist when the CD input captures silence
 
@@ -3689,291 +3185,185 @@ strictly needed; not one byte of audio changes.
 ## Status and what is still owed
 
 The bridge, its state machine, the lazy output open, the width negotiation,
-the rc.d service and the web card are all in place, and the simulated
-transport has exercised a 12-track 16-bit disc end to end against a
-bit-perfect `/dev/dsp0` with `starves 0`, `drops 0` and the lead inside a
-one-period band throughout --- including across track gaps, skips, seeks, a
-4 s pause and an 800 ms scripted carrier dropout, which cost exactly 800 ms of
-lead and starved nothing. Three unit-test suites cover the places where a bug
-would be silent rather than loud: `test_ring` (wrap-around, the drop-oldest
-policy, every blocking path's wake-up, the trim-to-the-lead), `test_convert`
-(the widening, pinned by the *value* relation `src << (dst_bits - src_bits)`
-plus canary bytes, because a wrong byte index does not crash and does not
-warn) and `test_gate` (the silence threshold and the fact that one non-zero
-sample resets the whole run).
+the rc.d service and the web card are in place. The simulated transport has run
+a 12-track 16-bit disc end to end against a bit-perfect `/dev/dsp0` with
+`starves 0`, `drops 0` and the lead inside a one-period band --- across track
+gaps, skips, seeks, a 4 s pause and an 800 ms carrier dropout (which cost
+exactly 800 ms of lead and starved nothing). Three unit-test suites cover
+places where a bug would be silent: `test_ring`, `test_convert` (the widening,
+pinned by the *value* relation `src << (dst_bits - src_bits)` plus canary
+bytes) and `test_gate`.
 
-What is **not** yet proven is everything on the far side of `/dev/dspN` with a
-real transport attached:
+**Not yet proven** with a real transport attached:
 
-* **carrier loss**: stop the CD, then unplug the coax. Does `read()` block,
-  short-read, or error? The state machine assumes a short read or an error
-  means `NO_CARRIER`, and that a player which merely *mutes* keeps delivering
-  zeros and is caught by the silence gate. If a stopped player blocks the read
-  forever instead, the daemon needs a read timeout to notice;
+* **carrier loss**: does `read()` block, short-read or error when the CD stops
+  or the coax is unplugged? The state machine assumes a short read or error
+  means `NO_CARRIER`; if a stopped player blocks the read forever, the daemon
+  needs a read timeout;
 * **the real drift**: `omdrc-cdin --in /dev/dsp.capture --out none -d -s 30`
-  reports the capture rate against the host clock; compare it with the OKTO's
-  `feedback_rate`. Their difference is the drift the lead must cover;
-* **loopback pacing**: `virtual_oss` runs with `-f /dev/null`, so it owns no
-  hardware clock. Confirm that a writer to `/dev/dsp.play` is throttled at the
-  DAC rate by BruteFIR draining `/dev/dsp.loop`, and check what happens when
-  BruteFIR is *not* running --- writes may block forever;
-* **the shared-clock patch with two USB audio devices streaming**
-  (section \ref{sec:uaudio-patches}); ideally put the ESI on a different root
-  hub.
+  against the OKTO's `feedback_rate` gives the drift the lead must cover;
+* **loopback pacing**: `virtual_oss` runs with `-f /dev/null` and owns no
+  hardware clock; confirm a writer to `/dev/dsp.play` is throttled by
+  BruteFIR draining `/dev/dsp.loop`, and see what happens when BruteFIR is
+  *not* running (writes may block forever);
+* **the shared-clock patch with two USB audio devices streaming** (section
+  \ref{sec:uaudio-patches}); ideally put the ESI on a different root hub.
 
-Phase 2b --- drift resync during the inter-track silence, by padding or
-trimming with a zero-crossing / 10 ms crossfade splice as the fallback --- is
-not needed inside a disc, since drift cannot cause a discontinuity in 80
-minutes, but it is needed for a session that never stops. The seams are marked
-`TODO(phase2b)` in the source.
+Drift resync during inter-track silence (phase 2b) is not needed inside a disc
+--- drift cannot cause a discontinuity in 80 minutes --- but is needed for a
+session that never stops. The seams are marked `TODO(phase2b)` in the source.
+
 
 \newpage
 
-# FreeBSD peculiarities
+# FreeBSD: known issues and their status {#sec:fbsd-issues}
 
-A summary of everything FreeBSD-specific, in one place.
-
-## Naming and packages
-
-* **MPD is `musicpd`**: package `audio/musicpd`, binary `musicpd`, service
-  `musicpd`, client `musicpc` (vs `mpd`/`mpc` on Linux). omdrc-ctrl detects
-  and uses the right client automatically.
-* Services are rc.d scripts under `/usr/local/etc/rc.d/`, enabled with
-  `sysrc <name>_enable=YES`, run manually with
-  `service <name> onestart/onestop`. Hotplug is devd, not udev.
-* Service names, rc.d filenames, rc.conf keys, and service-specific hook names
-  use underscores (`omdrc_audio`, `omdrc_audio_enable`); standalone devd
-  configuration filenames use hyphens (`omdrc-audio.conf`). The separators are
-  not interchangeable in `service`, `rcorder`, or `PROVIDE`/`REQUIRE` tokens.
-
-## OSS instead of ALSA; virtual_oss and cuse
-
-FreeBSD's native audio API is OSS. The loopback is `virtual_oss` (userland,
-base system) creating cuse character devices: `/dev/dsp.play` (MPD writes)
-and `/dev/dsp.loop` (BruteFIR reads, synchronized `-L` mode). The `cuse`
-kernel module must be loaded (`kld_list` or `etc/rc.d` glue). BruteFIR's OSS
-I/O is built in (no ALSA needed); the fork's OSS fixes matter here.
-
-Key sysctls for the bit-perfect direct path:
-
-```
-bitperfect=1     # first opener's format becomes the hardware format
-play.vchans=0    # no virtual-channel mixer/resampler
-```
-
-Applied to the DAC's unit by `omdrc_audio` (`omdrc_audio_dac_sysctls`), on
-every attach --- a re-attach rebuilds `dev.pcm.<unit>.*` from driver defaults,
-so a replug would otherwise silently lose them.
-
-These also mean the DAC is **single-open**: exactly one client at a time
-(BruteFIR when DRC is on; MPD's direct output or a browser otherwise).
-
-## Known FreeBSD issues and their status
-
-* **A statically configured wired port that has no cable.** `em(4)` keeps
-  `RUNNING` set without a carrier, so a static `ifconfig_em0="inet ..."`
-  stays fully configured on a dead link. libupnpp then binds it and upmpdcli
-  becomes undiscoverable while still running and still driving MPD; a static
-  `defaultrouter` compounds it by overriding the route Wi-Fi learned. Both
-  are `rc.conf` bugs, not upmpdcli bugs: use `DHCP` on the wired port and
-  leave `defaultrouter` unset --- see [A disconnected wired port makes it
-  invisible](#sec:upnpiface).
+* **Static address on a wired port with no cable**: libupnpp binds the dead
+  port and upmpdcli becomes undiscoverable while still running; a static
+  `defaultrouter` compounds it. Both are `rc.conf` bugs: section
+  \ref{sec:upnpiface}.
 * **OKTO 44.1 kHz-family flicker** (bug #295933): the DAC continuously drops
-  and re-acquires USB streaming lock on 44.1/88.2/176.4/352.8 kHz, while the
-  48 kHz family is stable and Linux plays everything fine. Root cause: the
-  device has one UAC2 Clock Source **shared** between playback and capture,
-  and `uaudio(4)` lets the vestigial capture side reprogram it to its 48 kHz
-  default under the active playback. Fixed by the shared-clock patch
-  (Appendix \ref{sec:uaudio-patches}).
-* **Rate-change cold-open silence**: on the first open after *any* rate
-  change the DAC shows the right rate and streams healthy USB but routes no
-  audio; a second open fixes it. Stock `uaudio` programs the clock *after*
-  selecting the streaming alt-setting (Linux does the opposite). Worked
-  around by `drc.sh` priming; properly fixed by the clock-before-alt patch.
+  and re-acquires USB streaming lock on 44.1/88.2/176.4/352.8 kHz while the
+  48 kHz family is stable (Linux plays everything). The device has one UAC2
+  Clock Source **shared** by playback and capture, and `uaudio(4)` lets the
+  vestigial capture side reprogram it to 48 kHz under active playback. Fixed
+  by the shared-clock patch (section \ref{sec:uaudio-patches}).
+* **Rate-change cold-open silence**: on the first open after *any* rate change
+  the DAC shows the right rate and healthy USB but routes no audio; a second
+  open fixes it. Stock `uaudio` programs the clock *after* selecting the
+  alt-setting (Linux does the opposite). Worked around by `drc.sh` priming
+  (section \ref{sec:fbsd-prime}); fixed by the clock-before-alt patch.
 * **virtual_oss livelock** ("155% CPU", frozen chain): a
   `SNDCTL_DSP_SETTRIGGER` on a read-only fd could strand the synchronized
-  engine in a wait that nothing wakes. Fixed by the settrigger patch
-  (Appendix \ref{sec:voss-patches}).
+  engine in a wait nothing wakes. Fixed by the settrigger patch (section
+  \ref{sec:voss-patches}).
 * **cuse teardown wedge** (bug #296291): stopping virtual_oss could leave it
-  unkillable in `D<E` state, pinning `cuse.ko`, reboot required --- a kernel
-  refcount leak in `cuse_client_open()`'s `is_closing` error path
-  (regression from commit `634e578ac7b0`, in 15.1). Kernel fix written
-  (Appendix \ref{sec:voss-patches}).
-* **`pcm` unit numbers are attach order, and nothing declarative can change
-  them**: no unit-wiring hint (`uaudio(4)` does not implement
-  `BUS_HINT_DEVICE_UNIT`), and no devd rule can pre-empt it (the unit is
-  allocated before the event is delivered). With a second USB audio device
-  present, the DAC can lose `/dev/dsp0`. Handled by not depending on the
-  number: `omdrc_audio` keeps `/dev/dsp.dac` on the right card at boot and on
-  every hotplug, and the few sysctl readers resolve the unit from that link
-  (chapter \ref{sec:cdin}).
+  unkillable in `D<E`, pinning `cuse.ko` until reboot --- a kernel refcount
+  leak in `cuse_client_open()`'s `is_closing` path (regression from
+  `634e578ac7b0`, in 15.1). Kernel fix written (section
+  \ref{sec:voss-patches}).
+* **`pcm` unit numbers are attach order** and nothing declarative can change
+  them, so with a second USB audio device the DAC can lose `/dev/dsp0`.
+  Handled by not depending on the number: section \ref{sec:fbsd-roles}.
 * **A capture open can succeed at the wrong rate**: with a record virtual
   channel in front of the card the hardware runs at `rec.vchanrate` (48000)
-  and `feeder_rate` resamples, while every ioctl reports the rate that was
-  asked for. A 44.1 kHz S/PDIF source then arrives at ~40517 Hz and looks like
-  catastrophic clock drift. `rec.vchans=0` plus `bitperfect=1` is the cure
-  (chapter \ref{sec:cdin}).
+  while every ioctl reports the requested rate, so a 44.1 kHz S/PDIF source
+  arrives at ~40517 Hz and looks like catastrophic drift. `rec.vchans=0` plus
+  `bitperfect=1` is the cure (section \ref{sec:fbsd-esi}).
 * **musicpd 100% CPU on HTTP streams**: a libcurl leftover-fd spin --- curl
-  registers an event fd into MPD's I/O loop and never removes it, so the
-  loop burns a core in `poll()`. **Audio is unaffected**; MPD upstream has
-  triaged it third-party (issues #2244/#2229); the right venue is libcurl.
+  registers an event fd into MPD's I/O loop and never removes it. **Audio is
+  unaffected**; MPD upstream has triaged it third-party (#2244/#2229); the
+  venue is libcurl.
 * **One wire format per attach**: `uaudio` fixes s32le at attach and pads
-  16-bit content to 32 bits on the wire, so the DAC panel shows 24 bits on
-  16-bit tracks. Bit-perfect (zero-padding is lossless), just unlike Linux's
-  per-stream alt switching. Knobs: `hw.usb.uaudio.default_bits`/
-  `default_rate`.
-
-## Video-related FreeBSD constraints
-
-* Physical Blu-ray: no kernel UDF 2.50 mount; raw `/dev/cd0` needs
-  sector-aligned reads and has no read-ahead --- hence mpv + libbluray +
-  gcache (section \ref{sec:video}). Kodi's internal player cannot do it.
-* Kodi's OSS sink does not enumerate cuse userspace devices at all --- the
-  in-tree Kodi patch fixes that (Appendix \ref{sec:kodi-patch}).
-
-## Toward a real FreeBSD port
-
-The path from the run-from-repo model to an official
-`audio/open-media-drc` port is planned in four phases --- upstreaming the
-patches, splitting engine from site data, the port itself, and submission.
-The full plan is Appendix \ref{sec:appendix-b}.
+  16-bit content to 32 bits, so the DAC panel shows 24 bits on 16-bit tracks.
+  Bit-perfect (zero-padding is lossless), just unlike Linux's per-stream alt
+  switching. Knobs: `hw.usb.uaudio.default_bits`/`default_rate`.
 
 \newpage
 
-# Appendix A --- FreeBSD patches in detail {#sec:appendix-a}
+# FreeBSD: kernel and userland patches {#sec:fbsd-patches}
 
 Local fixes kept in-tree while the official FreeBSD fixes are pending. All
 `/usr/src` patches apply with `-p1` against `releng/15.1`.
 
 ![The patched layers at a glance.](build/patches-map.pdf){width=90%}
 
-> **Upgrade caveat (applies to every kernel/userland patch below):**
-> `freebsd-update` or `make installkernel` overwrites patched binaries with
-> stock ones. After any OS/kernel update, re-apply the patches and rebuild.
-> A `.ko` is ABI-specific to its kernel --- never keep prebuilt binaries,
-> always rebuild from the patches.
+> **Upgrade caveat (every kernel/userland patch below):** `freebsd-update` or
+> `make installkernel` overwrites patched binaries with stock ones. After any
+> OS/kernel update, re-apply the patches and rebuild. A `.ko` is ABI-specific
+> to its kernel --- never keep prebuilt binaries.
 
 ## uaudio(4) patches (`freebsd-uaudio-patch/`) {#sec:uaudio-patches}
 
-Target device: OKTO RESEARCH DAC8 STEREO (USB `0x152a:0x88c5`, Thesycon
-UAC2 firmware, USB High-Speed). Two patches are applied in order on top of
-stock `releng/15.1`; a third, built but not yet installed, closes what those
-two left unfinished; a fourth is an unbuilt candidate.
+Target device: OKTO RESEARCH DAC8 STEREO (USB `0x152a:0x88c5`, Thesycon UAC2
+firmware, USB High-Speed). Patches 1 and 2 apply in order on stock
+`releng/15.1`; patch 3 is built but not installed; patch 4 is an unbuilt
+candidate.
 
 ### 1. `uaudio-clock-before-alt.c.patch` --- rate-change cold-open silence
 
-**Problem.** On the first open after *any* sample-rate change the DAC opens
-the stream, shows the correct rate, streams healthy USB (feedback present,
-no underruns) --- and routes silence. A second open at the same rate fixes
-it, which is why `drc.sh` had to prime (and why users had to "run drc.sh
-several times").
+**Problem.** On the first open after any sample-rate change the DAC shows the
+correct rate and healthy USB (feedback present, no underruns) but routes
+silence; a second open at the same rate fixes it, which is why `drc.sh` primed.
 
-**Root cause.** Stock `uaudio_configure_msg_sub()` starts a stream as:
-`SET_INTERFACE` to the streaming alt-setting (arming the device), *then*
-`SET_CUR` the sample rate on the UAC2 Clock Source (possibly a crystal
-switch, yanked under the armed interface), then start transfers. Linux does
-the opposite: park at alt 0, program the clock idle, then select the alt.
-The Thesycon firmware latches its stream configuration at `SET_INTERFACE`
-time, so FreeBSD's order arms the stream against the *old* clock. This also
-explains why the open/close prime works: every close parks at alt 0.
+**Root cause.** Stock `uaudio_configure_msg_sub()` does `SET_INTERFACE` to the
+streaming alt-setting (arming the device), *then* `SET_CUR` of the rate on the
+UAC2 Clock Source (possibly a crystal switch under the armed interface), then
+starts transfers. Linux does the opposite. The Thesycon firmware latches its
+stream configuration at `SET_INTERFACE`, so FreeBSD arms the stream against the
+*old* clock. This also explains why open/close priming works: every close
+parks at alt 0.
 
-**The fix.** For UAC2 devices in the `CHAN_OP_START` path: park the
-streaming interface at alt 0; program the clock while idle (legal --- the
-UAC2 clock lives on the AudioControl interface); on a genuine rate change
-sleep `hw.usb.uaudio.clock_settle_ms` (default 100 ms, runtime-tunable,
-clamped to 2000) for crystal relock; then `SET_INTERFACE` and start. UAC1
-devices are untouched (their rate control lives on the streaming endpoint).
+**Fix.** For UAC2 devices in `CHAN_OP_START`: park at alt 0; program the clock
+while idle (legal --- the UAC2 clock lives on the AudioControl interface); on
+a genuine rate change sleep `hw.usb.uaudio.clock_settle_ms` (default 100 ms,
+tunable, clamped to 2000) for crystal relock; then `SET_INTERFACE` and start.
+UAC1 devices are untouched.
 
-**Status.** Built + installed since 2026-07-06; listening reports say
-different-rate tracks now lock first try. Replaces the host-side
-`DAC_PRIME_CYCLES` prime for all clients (drc.sh, MPD-direct, browsers).
-If a crossing is ever silent, raise `sysctl hw.usb.uaudio.clock_settle_ms`.
+**Status.** Built and installed since 2026-07-06; different-rate tracks lock
+first try. It replaces the host-side `DAC_PRIME_CYCLES` prime for all clients.
+If a crossing is ever silent, raise `clock_settle_ms`.
 
 ### 2. `uaudio-shared-clock-fix.c.patch` --- the 44.1 kHz flicker (bug #295933)
 
-**Problem.** Continuous drop/re-acquire of USB streaming lock on the
-44.1 kHz rate family; the 48 kHz family is stable; Linux plays everything.
-
 **Root cause.** The DAC exposes **one UAC2 Clock Source shared between
-playback and capture**. On async playback, `uaudio` auto-starts the record
-channel purely as a jitter-information source --- at its own nominal rate
-(48 kHz default), whose `SET_CUR` clobbers the shared clock out from under
-active 44.1 kHz-family playback.
+playback and capture**. On async playback `uaudio` auto-starts the record
+channel purely as a jitter-information source at its own nominal rate
+(48 kHz), and its `SET_CUR` clobbers the shared clock under active 44.1 kHz
+playback.
 
-**The fix** --- three cooperating, device-agnostic changes:
+**Fix** --- three cooperating, device-agnostic changes: (a) **rate-align the
+jitter record stream** so the rec-side `SET_CUR` is a same-value no-op and its
+framing stays valid; (b) a **shared-clock guard** that skips a `SET_CUR` to a
+clock shared by both directions when the other direction runs at a different
+rate; (c) **always submit the explicit-feedback SYNC transfer**, so
+`dev.pcm.<unit>.feedback_rate` stays live for `drc.sh`'s chain-sanity check. A
+guard-only version was rejected: without (a) the rec channel expects 48 kHz
+framing while the device delivers 44.1, the jitter estimate pins at its
+negative clamp and the play callback strips samples continuously. This fix
+replaces the retired VID/PID-gated capture-disable workaround; `pcm0
+(play/rec)` in sndstat is the expected state again.
 
-a. **Rate-align the jitter record stream**: before the auto-started record
-   channel starts, set its alt to the one matching the playback rate, so the
-   rec-side `SET_CUR` becomes a same-value no-op *and* the rec channel's
-   framing stays consistent (valid jitter feedback instead of
-   catastrophically wrong).
-b. **Shared-clock guard**: before any UAC2 `SET_CUR` to a clock shared by
-   both directions, skip it if the other direction is running at a different
-   rate --- the first active stream owns the clock.
-c. **Always submit the explicit-feedback SYNC transfer**, so
-   `dev.pcm.<unit>.feedback_rate` stays live as a diagnostic (drc.sh's
-   chain-sanity signal) even with capture present.
+**Status.** Applied 2026-07-07, `-Werror`-clean alone and on top of patch 1.
+Upstream: bug #295933 / PR 2323, landed as `755685dd665e` (MFC
+`6886e8a9a0aa`); superseded by patch 3.
 
-A guard-only version was audited and rejected: without (a), the rec channel
-expects 48 kHz framing while the device correctly delivers 44.1 kHz, the
-jitter estimate pins at its negative clamp, and the play callback strips
-samples continuously --- worse than the flicker. This fix **replaces** the
-retired VID/PID-gated capture-disable workaround; `pcm0 (play/rec)` in
-sndstat is the *expected* state again.
+### 3. `uaudio-clock-transaction.c.patch` --- residual 44.1 kHz silent open
 
-**Status.** Applied to `/usr/src` 2026-07-07, builds `-Werror`-clean alone
-and on top of patch 1; the combined module was pending install +
-listening test at the time of writing. Upstream: bug #295933 / PR 2323,
-landed as `755685dd665e` (MFC `6886e8a9a0aa`) --- superseded by patch 3 below.
-
-### 3. `uaudio-clock-transaction.c.patch` --- the residual 44.1 kHz silent open (2026-08-26 follow-up)
-
-**Problem.** Patch 2 landed upstream as `755685dd665e`, but a follow-up audit
-of the OKTO still occasionally refusing 44.1 kHz found the shared-clock guard
-incomplete: it skips a `SET_CUR` only on a rate *mismatch*, and the same
-commit's own jitter-stream rate alignment guarantees a *match* --- so the
-capture pass issues a second, same-value `SET_CUR` to the shared clock right
-after playback is armed and streaming. Confirmed on the wire with
-`hw.usb.uaudio.debug=6`: two `SET_CUR` to clock 41, one settle, on every open.
-Upstream is worse off than this host, having no clock-before-alt reorder
-(patch 1), so its second write lands under two armed interfaces rather than
-one. Separately measured: `uaudio(4)` auto-streams the OKTO's vestigial
-capture interface for the lifetime of every playback --- 251.9 isochronous
+**Problem.** The landed guard skips a `SET_CUR` only on a rate *mismatch*, and
+its own jitter-stream alignment guarantees a *match*, so the capture pass
+issues a second same-value `SET_CUR` right after playback is armed (confirmed
+with `hw.usb.uaudio.debug=6`: two `SET_CUR` to clock 41 and one settle per
+open). Upstream lacks the clock-before-alt reorder, so its second write lands
+under two armed interfaces. Separately measured: `uaudio` auto-streams the
+OKTO's vestigial capture interface for every playback --- 251.9 isochronous
 completions/s against 125.4 playback interrupts/s, half the device's
 isochronous bandwidth --- to recompute a number the explicit feedback endpoint
 already reports.
 
-**The fix.** (a) Never write a UAC2 clock another stream owns; (b) read it
-back with `GET_CUR` first and skip a redundant write, as Linux does; (c) stop
-borrowing the vestigial capture stream for jitter when the playback alt has an
-explicit feedback endpoint, gated by `hw.usb.uaudio.prefer_feedback`; (d) do
-not start the jitter capture stream at a stale rate.
+**Fix.** (a) Never write a UAC2 clock another stream owns; (b) `GET_CUR` first
+and skip a redundant write, as Linux does; (c) stop borrowing the vestigial
+capture stream for jitter when the playback alt has an explicit feedback
+endpoint (`hw.usb.uaudio.prefer_feedback`); (d) do not start the jitter
+capture at a stale rate. **Not claimed:** that this causes the intermittent
+silent open --- it did not reproduce in 42 controlled cycles (21 into 44.1).
 
-**Not claimed:** that this causes the intermittent silent-open symptom that
-prompted the audit --- it did not reproduce in 42 controlled open/play/close
-cycles (21 of them into 44.1 kHz). The defects stand on the code, the USB
-trace and the isochronous counters, independently of that symptom.
-
-**Status.** Built `-Werror`-clean with and without `USB_DEBUG`, on top of
-patches 1 and 2. **Not installed, not listening-tested.** Split for upstream
-submission as `uaudio-upstream-0001-shared-clock-write-discipline.c.patch`
-and `uaudio-upstream-0002-prefer-explicit-feedback.c.patch` in
-`upstream-series/` --- `git am`-clean on `main` after `755685dd665e`, with a
-PR description and Bugzilla comment ready to send (same route as before: a
-GitHub PR, committed by `christos@`; CC `hselasky@` on the isochronous-policy
-item). Full audit, device-generality analysis and A/B test plan in
-`uaudio-clock-transaction.md`; what remains declared-but-not-patched in
-`SUBMISSION-295933.md`. `bench/` holds a DAC lock bench (per-rate test tones,
-repeated open/play/close, verdict from the DAC's analog output or by ear) and
-`bench/uaudio-affects.py`, which decides from USB descriptors alone whether
-any device is affected.
+**Status.** Built `-Werror`-clean with and without `USB_DEBUG` on top of 1 and
+2; **not installed, not listening-tested.** Split for upstream as
+`upstream-series/uaudio-upstream-0001-shared-clock-write-discipline.c.patch`
+and `...-0002-prefer-explicit-feedback.c.patch` (`git am`-clean on `main` after
+`755685dd665e`; a GitHub PR committed by `christos@`, CC `hselasky@`). Audit
+and A/B plan: `uaudio-clock-transaction.md`; open items:
+`SUBMISSION-295933.md`; `bench/` holds a DAC lock bench and
+`bench/uaudio-affects.py`, which decides from USB descriptors whether a device
+is affected.
 
 ### 4. `uaudio-feedback-follow.c.patch` --- candidate (unbuilt)
 
-Sketch to make playback follow the device's reported feedback rate smoothly
-(Linux-style), targeting an occasional tick. Touches the same sync-callback
-region as patch 3, so it **needs rebasing**, and becomes live only once the
-vestigial capture stream stops being auto-started (patch 3, item c).
+A sketch to make playback follow the device's feedback rate smoothly
+(Linux-style). It touches the same sync-callback region as patch 3, so it needs
+rebasing, and becomes live only once the vestigial capture stream stops being
+auto-started.
 
 ### Applying and building
 
@@ -4012,66 +3402,52 @@ only listening counts. Revert with the `.orig` copy + kldunload/kldload.
 
 ## virtual_oss / cuse patches (`freebsd-virtual-oss-patch/`) {#sec:voss-patches}
 
-Two related bug clusters, both root-caused live on this box.
-
 ### 1. Runtime livelock: `virtual_oss-settrigger-sync-deadlock.patch`
 
 **Symptom.** Minutes after a chain (re)start, playback freezes: MPD stops
-advancing, BruteFIR starves, `virtual_oss` burns 150--200% CPU, both clients
-stuck in `cuse-cli` waits. Stopping anything from this state walks into the
-teardown minefield below.
+advancing, BruteFIR starves, `virtual_oss` burns 150--200% CPU and both clients
+sit in `cuse-cli` waits.
 
-**Root cause** (captured with procstat + gdb on the live process): a pair of
-userland bugs in `usr.sbin/virtual_oss`:
+**Root cause** (procstat + gdb on the live process), two userland bugs in
+`usr.sbin/virtual_oss`: (1) `SNDCTL_DSP_SETTRIGGER` ignores the fd's open mode,
+so BruteFIR's one call triggering both directions flips `tx_enabled = 1` on the
+read-only `/dev/dsp.loop` fd that can never write; (2) the synchronized
+loopback engine's wait loops check `tx_enabled` **once, outside the wait**, and
+the trigger/halt paths never wake the engine, so once it parks waiting for play
+data from a client that will never write, nothing re-evaluates the premise. The
+arming window is microseconds wide against a 200 ms block cadence, hence
+intermittent.
 
-1. `SNDCTL_DSP_SETTRIGGER` ignores the fd's open mode: BruteFIR's OSS layer
-   triggers both directions with one call (harmless on kernel pcm), flipping
-   `tx_enabled = 1` on the read-only `/dev/dsp.loop` fd that can never
-   write.
-2. The synchronized-loopback engine wait loops check `tx_enabled` **once,
-   outside the wait**, and the trigger/halt ioctl paths never wake the
-   engine --- so once the engine parks waiting for play data from a client
-   that will never write, nothing ever re-evaluates the premise. The arming
-   window is microseconds wide against a 200 ms block cadence --- hence
-   intermittent.
-
-**The fix** (four changes, upstreamable): SETTRIGGER honours the open mode
+**Fix** (four changes, upstreamable): SETTRIGGER honours the open mode
 (`fflags`); trigger/halt ioctls `atomic_wakeup()` the engine; the sync wait
-loops re-check `tx_enabled`/`rx_enabled`; and a new `tx_written` latch so
-the engine never sleeps waiting for a client that has never written.
+loops re-check `tx_enabled`/`rx_enabled`; and a `tx_written` latch stops the
+engine sleeping for a client that has never written.
 
 ### 2. Teardown deadlock: userland device destroy + kernel refleak
 
-**Symptom.** Stopping `virtual_oss` intermittently wedges it forever in
-`D<E` / `MWCHAN W` (SIGKILL-immune), pins `cuse.ko` (kldunload hangs too), a
-new virtual_oss cannot recreate the devices --- reboot required. Every DRC
-rate change was a reboot risk.
+**Symptom.** Stopping `virtual_oss` intermittently wedges it in `D<E` /
+`MWCHAN W` (SIGKILL-immune), pins `cuse.ko` and blocks recreating the devices
+until reboot. Every DRC rate change was a reboot risk.
 
-**Two layers:**
-
-* **Userland**: `virtual_oss` never destroyed its cuse devices on exit, so
-  the kernel's `cuse_server_free()` busy-waited in `pause("W", hz)` for
-  client refs that were never released. Patches
+* **Userland**: `virtual_oss` never destroyed its cuse devices on exit, so the
+  kernel's `cuse_server_free()` busy-waited for client refs never released.
   `virtual_oss-teardown-int.h.patch` + `virtual_oss-teardown-main.c.patch`
   keep each `cuse_dev_create()` handle and call `cuse_dev_destroy()` on all
-  DSP/WAV/loopback devices before exit. (Upstream committed an equivalent as
-  `0bd5ef6b4363`.)
-* **Kernel** (the real fix --- bug #296291): a regression from commit
-  `634e578ac7b0` (Nov 2025, in 15.1). In `cuse_client_open()`, the
-  `is_closing` / `si_drv1==NULL` error path returns with `pcs->refs`
-  incremented, the client left linked in `hcli`, and the destructor never
-  registered --- **every open racing into the teardown window leaks one
-  server ref**, and `cuse_server_free()` waits forever. Proven live with a
-  diagnostic `cuse.ko` + dtrace + kgdb (refs frozen at 4, three leaked
-  clients on `dsp.loop`). Fix: `cuse-client-open-refleak-fix.patch` calls
-  `cuse_client_free(pcc)` on both error paths; committed on branch
-  `fix/cuse-client-open-refleak-296291`, compile-tested, `Fixes:
-  634e578ac7b0`, `PR: 296291`. The userland destroy mitigates the normal
-  exit but does nothing for `kill -9` --- the kernel leak stays latent
+  DSP/WAV/loopback devices before exit (upstream committed an equivalent as
+  `0bd5ef6b4363`).
+* **Kernel** (the real fix, bug #296291): a regression from `634e578ac7b0`
+  (Nov 2025, in 15.1). In `cuse_client_open()` the `is_closing` /
+  `si_drv1==NULL` error path returns with `pcs->refs` incremented, the client
+  still linked in `hcli` and no destructor registered, so **every open racing
+  into the teardown window leaks one server ref** and `cuse_server_free()`
+  waits forever (proven live with a diagnostic `cuse.ko`, dtrace and kgdb).
+  `cuse-client-open-refleak-fix.patch` calls `cuse_client_free(pcc)` on both
+  error paths; committed on branch `fix/cuse-client-open-refleak-296291`,
+  compile-tested, `Fixes: 634e578ac7b0`, `PR: 296291`. The userland destroy
+  mitigates normal exit but not `kill -9`; the kernel leak stays latent
   without this.
-* A diagnostic-only `cuse-teardown-diag.c.patch` logs the stuck refcount
-  every ~5 s from the `pause("W")` loop (pure printf; remove once the kernel
-  fix lands).
+* A diagnostic-only `cuse-teardown-diag.c.patch` logs the stuck refcount every
+  ~5 s (remove once the kernel fix lands).
 
 ### Applying and building
 
@@ -4097,26 +3473,22 @@ stay near-idle CPU and always exit cleanly (no `D<E` in
 
 ## Kodi OSS sink patch (`kodi-virtual-oss-patch/`) {#sec:kodi-patch}
 
-**Problem.** Kodi's audio settings only ever offered the hardware DAC.
+**Problem.** Kodi's settings only ever offered the hardware DAC:
 `CAESinkOSS::EnumerateDevicesEx()` counts kernel PCM cards via
-`SNDCTL_SYSINFO`; cuse userspace devices are not kernel cards, so
-`/dev/dsp.play` was never listed --- and the settings filler silently
-*resets* any configured value it cannot match against the enumerated list,
-so hand-editing `guisettings.xml` never stuck.
+`SNDCTL_SYSINFO`, and cuse userspace devices are not kernel cards, so
+`/dev/dsp.play` was never listed. The settings filler also silently *resets*
+any value it cannot match, so editing `guisettings.xml` never stuck.
 
-**The fix.** After the kernel-card loop, parse the *"Installed devices from
+**Fix.** After the kernel-card loop, parse the *"Installed devices from
 userspace:"* section of `/dev/sndstat` (the only place cuse devices are
-advertised) and add each node, probed exactly like a kernel card
-(`SNDCTL_ENGINEINFO` for formats/channels/rates, non-blocking open,
-graceful fallbacks so a busy device is still listed, dedup against kernel
-cards). Generic --- any userspace OSS device is listed.
+advertised) and add each node, probed like a kernel card (`SNDCTL_ENGINEINFO`,
+non-blocking open, graceful fallbacks, dedup). Generic: any userspace OSS
+device is listed. Verified on `multimedia/kodi` 22.0a3: *"dsp.play virtual_oss
+device"* appears in Settings > System > Audio, selecting it persists and Kodi
+feeds the DRC chain. `virtual_oss` must be running when Kodi initialises
+audio.
 
-**Result** (verified on `multimedia/kodi` 22.0a3): *"dsp.play virtual_oss
-device"* appears in Settings > System > Audio, selecting it persists, and
-Kodi feeds the DRC chain. `virtual_oss` must be running when Kodi
-initialises audio.
-
-**Apply** via the ports tree:
+**Apply** through the ports tree:
 
 ```sh
 sudo cp patch-xbmc_cores_AudioEngine_Sinks_AESinkOSS.cpp \
@@ -4127,172 +3499,136 @@ sudo make deinstall && sudo make install   # same version -> reinstall is a no-o
 strings /usr/local/lib/kodi/kodi.bin | grep -c "from userspace"   # must print 1
 ```
 
-Upstreaming: to the FreeBSD port (`files/` patch, PR to the maintainer)
-and/or Kodi upstream (`AESinkOSS.cpp` PR; pre-empt the "why parse sndstat
-text" question --- cuse devices are unreachable via the mixer ioctls).
+Upstream: the FreeBSD port (`files/` patch) and/or Kodi (`AESinkOSS.cpp`; be
+ready to answer "why parse sndstat text" --- cuse devices are unreachable via
+the mixer ioctls).
+
 
 \newpage
 
-# Appendix B --- The FreeBSD port plan {#sec:appendix-b}
+# FreeBSD: the port plan and a clean image {#sec:fbsd-port}
 
-Status: **plan only, nothing applied.** Linux packaging is explicitly out
-of scope for now (one OS at a time). Source: `doc/FREEBSD-PORT-PLAN.md`.
+Status: **plan only, nothing applied.** Source: `doc/FREEBSD-PORT-PLAN.md`;
+Linux packaging is out of scope for now.
 
-## Why the repo cannot be ported as-is
+## Why the repository cannot be ported as-is
 
-A FreeBSD port installs *identical, immutable* files on every machine,
-under hier(7) paths, from a versioned release tarball. The run-from-repo
-model violates that on every axis --- deliberately, because it optimizes
-for a zero-config personal appliance:
+A port installs identical, immutable files under hier(7) paths from a tagged
+tarball. Run-from-repo violates that on every axis, deliberately:
 
-1. **Files are rendered per-host**: the build bakes host values
-   (`@AUDIO_USER@`, `@AUDIO_HOME@`, `@REPO_DIR@`) into the live files ---
-   originally `install.sh` from `config.env`, now CMake from `host.cmake`; a
-   package must install the same bytes everywhere and configure at runtime.
-2. **The tree is written at runtime**: `drc.sh` keeps `last_arg`,
-   `last_power`, `drc.log` beside itself; `pkg check -s` flags modified
-   packaged files --- state must live in `/var/db/`.
-3. **Room-specific data is mixed with software**: `configs/120.blue`,
-   `filters/*` (~50 MB) are personal measurement products; a port must ship
-   neutral defaults. `OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT` now resolve
-   these in a separate checkout beside the engine.
-4. **rc.d scripts shadow other ports**: `etc/rc.d/musicpd` and `upmpdcli`
-   would replace scripts owned by `audio/musicpd` / `net/upmpdcli`; the
-   stock scripts' rc.conf knobs must be used instead.
-5. **Dependency on a personal BruteFIR fork**: `RUN_DEPENDS` must resolve
-   to ports.
-6. **Kernel/userland patches**: a port cannot patch the base system
-   (uaudio, cuse) and should not carry patches for another port
-   (virtual_oss) --- these must land upstream first.
-7. **Missing packaging basics**: no LICENSE, no tagged releases (the `v*`
-   tag series this manual belongs to is the first step), and the tarball
-   would ship debugging journals and kernel patches.
+1. **Files are rendered per host**: CMake bakes `@AUDIO_USER@`, `@AUDIO_HOME@`
+   and `@REPO_DIR@` from `host.cmake`; a package must install the same bytes
+   everywhere and configure at runtime.
+2. **The tree is written at runtime** (`last_arg`, `last_power`, `drc.log`):
+   `pkg check -s` flags it; state belongs in `/var/db/`.
+3. **Room data is mixed with software** (`configs/120.blue`, ~50 MB of
+   `filters/*`): a port ships neutral defaults. `OMDRC_SITE_DATA_DIRS` /
+   `OMDRC_SITE_ROOT` already resolve room data from a separate checkout.
+4. **rc.d scripts shadow other ports** (`musicpd`, `upmpdcli`): the stock
+   scripts' rc.conf knobs must be used instead.
+5. **A personal BruteFIR fork** must become a port dependency.
+6. **Kernel/userland patches**: a port cannot patch the base system, nor
+   another port (`virtual_oss`); they must land upstream first.
+7. **Packaging basics are missing**: no LICENSE, tagged releases only just
+   begun (the `v*` series), and the tarball would ship debugging journals and
+   kernel patches.
 
-Run-from-repo does not have to die: the repo becomes a normal upstream that
-*also* supports `make install PREFIX=... DESTDIR=...`; run-from-repo stays
-the development/appliance mode and the port is a thin consumer of tagged
+Run-from-repo does not have to die: the repository becomes a normal upstream
+that *also* supports `make install PREFIX=... DESTDIR=...`, stays the
+development/appliance mode, and the port is a thin consumer of tagged
 releases.
 
 ## Phase 0 --- Upstream the out-of-tree pieces (prerequisite, in flight)
 
-* **uaudio patches** (shared-clock fix, clock-before-alt) to FreeBSD base
-  --- in progress: bug 295933 / PR 2323.
-* **cuse refleak fix** to base --- in progress: bug 296291.
-* **virtual_oss SETTRIGGER deadlock patch** to upstream
-  `hselasky/virtual_oss`, so `audio/virtual_oss` inherits it.
-* **BruteFIR fork** --- options in order of preference: (a) upstream the
-  delta to Anders Torger (upstream is dormant --- unlikely); (b) submit the
-  delta as `files/` patches to the existing `audio/brutefir` port (viable
-  if the delta stays small and FreeBSD-relevant); (c) release the fork as
-  its own project + port (`audio/brutefir-omdrc`) --- most work, only if
-  (b) is refused.
-* **kodi-virtual-oss-patch**: not shippable by this port --- upstream to
-  Kodi or to `multimedia/kodi`'s `files/`, or drop from the tarball.
+* **uaudio patches** (shared-clock, clock-before-alt) to FreeBSD base: bug
+  295933 / PR 2323, in progress.
+* **cuse refleak fix** to base: bug 296291, in progress.
+* **virtual_oss SETTRIGGER patch** to upstream `hselasky/virtual_oss`, so
+  `audio/virtual_oss` inherits it.
+* **BruteFIR fork**, in order of preference: (a) upstream the delta to Anders
+  Torger (dormant, unlikely); (b) `files/` patches to `audio/brutefir` (viable
+  if the delta stays small); (c) its own project and port
+  (`audio/brutefir-omdrc`), only if (b) is refused.
+* **kodi-virtual-oss-patch**: upstream to Kodi or to `multimedia/kodi`'s
+  `files/`, or drop from the tarball.
 
-## Phase 1 --- Make the repo package-friendly
+## Phase 1 --- Make the repository package-friendly
 
-Worth doing even if the port never happens; it makes the repo usable by
-anyone, not just this box/room.
+Worth doing even without a port.
 
-* **1.1 Engine / site-data split.** Engine (shipped): drc.sh,
-  drc-status.sh, omdrc-ctrl, video/webremote, browser-nodrc, own rc.d/devd
-  glue, sample MPD/upmpdcli snippets, docs. Site data (not shipped): the
-  `configs/` and `filters/` measurement products, room README sections,
-  measurement plots --- moved to `examples/rooms/` or a separate private
-  overlay checked out beside the engine (`OMDRC_SITE_DIR`).
-* **1.2 FLAT default filters** (first --- small and independent): ship a
-  `configs/flat/` geometry as default, one conf per rate, using BruteFIR's
-  built-in identity coefficient `filename: "dirac pulse"` with
-  `attenuation: 0.0` --- no binary filters needed, and
-  `verify-bitperfect.sh` can pass through the flat chain as a plumbing
-  self-test. Keep `filter_length` and I/O identical to the room configs so
-  swapping in real filters is a filename change.
-* **1.3 Runtime configuration instead of render-time baking**: drc.sh and
-  friends read a config at runtime (`$OMDRC_CONF` ->
-  `${PREFIX}/etc/open-media-drc/omdrc.conf` -> `<script-dir>/config.env`,
-  the last keeping run-from-repo unchanged); rc.d defaults flip to
-  installed paths via the port's `SUB_FILES`; brutefir confs rendered
-  on the fly to a state-dir tempfile so packaged confs are host-neutral.
-* **1.4 State out of the tree**: `last_arg`, `last_power`, `drc.log` to
-  `/var/db/omdrc/` in installed mode (beside the script as fallback);
-  `/tmp/brutefir.out`, `/tmp/virtual_oss.pid` to the same state/run dir.
-* **1.5 Install target** (`make install` with `DESTDIR`/`PREFIX`):
-  scripts to `${PREFIX}/libexec/omdrc/` + a `${PREFIX}/bin/omdrc` wrapper;
-  `omdrc.conf.sample` + flat configs to `${PREFIX}/etc/open-media-drc/`;
-  devd conf; MPD/upmpdcli snippets to `share/examples/`; omdrc-ctrl to
-  `share/omdrc-ctrl/`; docs to `share/doc/open-media-drc/`. rc.d scripts
-  for our own services are installed by the port via `USE_RC_SUBR`.
-* **1.6 Housekeeping**: pick a LICENSE (BSD-2-Clause fits the ecosystem);
-  tagged releases whose tarballs exclude `freebsd-*-patch/`, investigation
-  journals and site data (`git archive` + `export-ignore`); split the
-  README into a user quickstart vs `doc/DEVELOPMENT.md`.
+* **Engine / site-data split.** Ship the engine (drc.sh, omdrc-ctrl,
+  webremote, browser-nodrc, rc.d/devd glue, sample snippets, docs); keep room
+  data (`configs/`, `filters/`, plots) in a separate overlay.
+* **FLAT default filters** (first --- small and independent): a `configs/flat/`
+  geometry using BruteFIR's built-in `filename: "dirac pulse"` with
+  `attenuation: 0.0`, so no binary filters are needed and
+  `verify-bitperfect.sh` can pass through it as a plumbing self-test.
+* **Runtime configuration instead of render-time baking**: read
+  `$OMDRC_CONF` -> `${PREFIX}/etc/open-media-drc/omdrc.conf` ->
+  `<script-dir>/config.env`; render BruteFIR configs on the fly into a
+  state-dir tempfile so packaged configs are host-neutral.
+* **State out of the tree**: `last_arg`, `last_power`, `drc.log` and the
+  `/tmp` pid/output files to `/var/db/omdrc/` in installed mode.
+* **Install target** (`DESTDIR`/`PREFIX`): scripts to `${PREFIX}/libexec/omdrc/`
+  with a `${PREFIX}/bin/omdrc` wrapper; sample config and flat configs to
+  `${PREFIX}/etc/open-media-drc/`; snippets to `share/examples/`; docs to
+  `share/doc/open-media-drc/`; our rc.d scripts via `USE_RC_SUBR`.
+* **Housekeeping**: a LICENSE (BSD-2-Clause fits); tagged releases whose
+  tarballs exclude `freebsd-*-patch/`, journals and site data (`git archive` +
+  `export-ignore`); split the README into a quickstart and
+  `doc/DEVELOPMENT.md`.
 
 ## Phase 2 --- The port itself
 
 `audio/open-media-drc` (working name): `USE_GITHUB=yes`, tagged
-`DISTVERSION`, `NO_BUILD` for the shell core, `USES=python:run shebangfix`
-for omdrc-ctrl. `RUN_DEPENDS`: brutefir (per the Phase 0 decision),
-virtual_oss, musicpd, sox/soxr. `OPTIONS_DEFINE`: `CTRL` (web UI:
-py-flask/Markdown/numpy), `VIDEO` (webremote: mpv), `UPNP` (upmpdcli).
-`USE_RC_SUBR` for `omdrc_audio` (plus `omdrcctrl` with the CTRL option) ---
-**not** musicpd
-or upmpdcli; a pkg-message documents the rc.conf lines pointing the stock
-scripts at our configs. `@sample` entries for every config. Validate with
-`portlint -AC`, `portclippy`, `poudriere testport`, and `pkg check -s`
-after a service run (catches leftover in-tree writes).
+`DISTVERSION`, `NO_BUILD` for the shell core, `USES=python:run shebangfix`.
+`RUN_DEPENDS`: brutefir (per Phase 0), virtual_oss, musicpd, sox/soxr.
+`OPTIONS_DEFINE`: `CTRL` (py-flask/Markdown/numpy), `VIDEO` (mpv), `UPNP`
+(upmpdcli). `USE_RC_SUBR` for `omdrc_audio` (and `omdrcctrl` with `CTRL`) ---
+**not** musicpd or upmpdcli; a pkg-message documents the rc.conf lines that
+point the stock scripts at our configs. Validate with `portlint -AC`,
+`portclippy`, `poudriere testport` and `pkg check -s` after a service run.
 
 ## Phase 3 --- Submission and maintenance
 
-Submit as a Bugzilla PR (Ports & Packages), `MAINTAINER=
-delleceste@gmail.com`. Niche integration ports are accepted when clean and
-maintained --- the bar is quality, not popularity. Expect review rounds on
-rc script style, sample handling, and the brutefir dependency; having the
-Phase 0 fixes merged upstream is the strongest argument the stack works on
-stock FreeBSD. Ongoing: bump the port per release, watch fallout from
+Submit as a Bugzilla PR (Ports & Packages) with `MAINTAINER=
+delleceste@gmail.com`; niche integration ports are accepted when clean and
+maintained. Expect review rounds on rc style, sample handling and the brutefir
+dependency; merged Phase 0 fixes are the strongest argument that the stack
+works on stock FreeBSD. Ongoing: bump per release and watch fallout from
 musicpd/upmpdcli/virtual_oss updates.
 
-## Recommended order of value
-
-1. **Phase 0 upstreaming** --- benefits every FreeBSD USB-audio user,
-   already in flight, and a hard prerequisite anyway.
-2. **Phase 1.2 (flat filters)** --- small, immediate, makes the repo usable
-   by others today even without a port.
-3. **Rest of Phase 1** --- worthwhile for the repo's own health regardless.
-4. **Phases 2--3** --- only once the BruteFIR question is settled and there
-   is evidence of an audience; a port is a maintenance promise.
+**Order of value**: Phase 0 upstreaming (helps every FreeBSD USB-audio user,
+and a prerequisite anyway); the flat filters; the rest of Phase 1; Phases 2--3
+only once the BruteFIR question is settled and there is an audience --- a port
+is a maintenance promise.
 
 ## A clean installable image (planned, not built)
 
-`doc/USB-APPLIANCE-IMAGE-PLAN.md` scopes a USB stick that installs FreeBSD
-with `open-media-drc` preinstalled --- no room filters, no per-geometry
-BruteFIR configs, no personal data, no git history, no build artifacts ---
-ready for a specific room's `configs/<geo>` + `filters/<geo>` to be dropped in
-afterward, the way a fresh port install would be configured. Target hardware
-is a fanless Intel/AMD-integrated-audio box dedicated to the appliance;
-**bee is explicitly out of scope**, staying the dev/measurement machine with
-its own disk/filesystem issues (root UFS, 99% full, a legacy partition layout
-sharing the disk).
+`doc/USB-APPLIANCE-IMAGE-PLAN.md` scopes a USB stick that installs FreeBSD with
+`open-media-drc` preinstalled --- no room filters, no per-geometry configs, no
+personal data, no git history, no build artifacts --- ready for a room's
+`configs/<geo>` + `filters/<geo>` to be dropped in. Target: a fanless
+Intel/AMD-integrated-audio box dedicated to the appliance; **bee is out of
+scope** and stays the dev/measurement machine (root UFS 99% full, a legacy
+partition layout).
 
-The plan builds on work already mid-flight rather than starting over:
-`OMDRC_SITE_DATA_DIRS` + `GEOMETRY=flat` already gives a built-in generic mode
-(BruteFIR's identity coefficient, no filter files needed); `.gitattributes`
-`export-ignore` already strips filters, per-room configs, the FreeBSD patch
-trees and the investigation-journal Markdown from `git archive` output on a
-tag; and Phase 1.5 of Appendix B's own port plan (`make install
-DESTDIR=... PREFIX=...`, reading config at runtime rather than baking
-`@AUDIO_USER@` in at render time) is what should land on the image rather
-than bee's live CMake install, which bakes `host.cmake` values at configure
-time. Status is plan-only:
-nothing has been built from it yet.
+It builds on work already in flight: `OMDRC_SITE_DATA_DIRS` + `GEOMETRY=flat`
+gives a generic mode with no filter files; `.gitattributes` `export-ignore`
+already strips filters, per-room configs, the patch trees and the journals from
+`git archive` output; and the install target with runtime config (Phase 1) is
+what should land on the image, not bee's live CMake install with its baked
+`host.cmake` values. Nothing has been built from it yet.
+
 
 \newpage
 
-# Appendix C --- Bit-perfect test assets and cross-OS comparison {#sec:appendix-bitperfect}
+# Appendix A --- Bit-perfect test assets and cross-OS comparison {#sec:appendix-bitperfect .unnumbered}
 
-The Tools chapter covers the single-host proof
-([the page](#sec:bitperfect-page), [its implementation](#sec:bitperfect-impl)).
-This appendix documents the test assets and the cross-OS procedure that proves
-the Linux and FreeBSD boxes send the DAC the *very same bytes*.
+Chapter \ref{sec:bitperfect} covers the single-host proof. This appendix
+documents the test assets and the procedure that proves the Linux and FreeBSD
+boxes send the DAC the *very same bytes*. It is the one place where both
+systems are compared side by side.
 
 ## Test assets (`tests/`)
 
@@ -4321,10 +3657,9 @@ swap shows up immediately.
 
 ## Other rates and sample widths
 
-The generator takes `--rate`, `--bits` (16/24/32) and `--frames`
-(= seconds x rate), so any format the DAC advertises can be tested. Both tap
-scripts read rate and width from the WAV header --- feeding them a different
-file is the whole configuration:
+The generator takes `--rate`, `--bits` (16/24/32) and `--frames` (= seconds x
+rate). Both tap scripts read rate and width from the WAV header, so a
+different file is the whole configuration:
 
 ```sh
 python3 tests/gen-bitperfect-wav.py --rate 192000 --bits 24 --frames 5760000 \
@@ -4332,19 +3667,13 @@ python3 tests/gen-bitperfect-wav.py --rate 192000 --bits 24 --frames 5760000 \
 ./scripts/bitperfect-tap-linux.sh tests/bitperfect-test-192000-s24-stereo-30s.wav
 ```
 
-The sample *values* are the same counter at every width (they never exceed
-`0xFFFF`), so only the container changes --- which means a 16/24-bit asset
-additionally exercises the **lossless promotion to the 32-bit USB wire
-container** (`<<8` for 24-bit, `<<16` for 16-bit) that any bit-perfect player
-must perform for a DAC accepting only 32-bit containers. A 16/24-bit input
-therefore does not change the playback path at all: `prep` promotes first and
-the player always emits S32_LE.
-
-Two consequences: **each format has its own sha256** (a 24-bit file stores 3
-bytes per sample, so it is a different file), and a cross-OS comparison must
-use the **same width on both machines** --- differently shifted wire values
-never byte-match. The report's `ref bytes` hash is that of the promoted
-stream, so it too differs per width at the same rate.
+The sample *values* are the same counter at every width (never above
+`0xFFFF`), so only the container changes. A 16/24-bit asset therefore also
+exercises the **lossless promotion to the 32-bit USB wire container** (`<<8`
+for 24-bit, `<<16` for 16-bit) that any bit-perfect player must perform for a
+DAC accepting only 32-bit containers; `prep` promotes first, so the player
+always emits S32_LE. Consequences: **each format has its own sha256**, and a
+cross-OS comparison must use the **same width on both machines**.
 
 | Rate | Bits | Frames | Size | sha256 (first 16) |
 |---|---|---|---|---|
@@ -4354,17 +3683,14 @@ stream, so it too differs per width at the same rate.
 | 192000 | 24 | 1920000 (10 s) | 11520044 | `01317af6523ec67f` |
 | 96000 | 24 | 960000 (10 s) | 5760044 | `b572faabdee3b623` |
 
-Any other combination is equally valid: the generator prints the sha256 of
-whatever it writes --- generate once, note the hash, match it on the other
-machine (full hashes in `tests/README.md`). `.gitignore` excludes the
-generated assets by name (the 44100/32-bit and 44100/24-bit 30 s files and the
-192000/24-bit 10 s one), so add any further WAV you keep, or drop it under
+The generator prints the sha256 of whatever it writes: generate once, note the
+hash, match it on the other machine (full hashes in `tests/README.md`).
+`.gitignore` excludes the generated assets by name; drop other WAVs under
 `bp-results/` (ignored except for `*.txt`).
 
 ## Verification status
 
-Both taps are executed and passing --- the FreeBSD side is no longer a
-written-but-unrun script:
+Both taps are executed and passing:
 
 | Host | Runs | Result |
 |---|---|---|
@@ -4373,27 +3699,17 @@ written-but-unrun script:
 
 `bitperfect-compare.py` reports **MATCH** across the two hosts for the
 44100/32-bit asset; the 24-bit pairs have no committed Linux counterpart yet,
-so those stand as local per-host proofs. The comparator itself has been
-exercised on every path (wav/wav, wav/txt, txt/txt, refusal of raw/txt) plus a
-deliberately bit-flipped payload, which it reports as MISMATCH at the exact
-offset.
-
-The FreeBSD tap's first run exposed a real defect --- a capture truncated by
-~17 ms because `usbdump` discards its unflushed buffer on exit. The fix is a
-500 ms **silence pad**: the player plays `ref.raw` plus half a second of
-zeros, while the verdict still compares the unpadded reference, so the loss
-lands in silence nothing depends on. The pad is removed by *arithmetic* (take
-`len(ref)` bytes from the alignment point), never by silence detection ---
-the test signal is itself near-silent, so a zero-seeking trim would eat real
-payload.
+so they stand as per-host proofs. The comparator has been exercised on every
+input pair (wav/wav, wav/txt, txt/txt, refusal of raw/txt) plus a deliberately
+bit-flipped payload, which it reports as MISMATCH at the exact offset.
 
 ## Cross-OS byte comparison
 
-Each OS taps its own USB isochronous OUT endpoint while playing the (locally
-regenerated) common WAV, then the reports are compared. Only the tiny
+Each OS taps its own USB isochronous OUT endpoint while playing the locally
+regenerated common WAV, then the reports are compared. Only the tiny
 `bp-results/*.txt` reports are committed --- they carry the tap payload's
-length and sha256, which proves byte-identity without moving the 10 MB streams
-through git.
+length and sha256, proving byte-identity without moving 10 MB streams through
+git.
 
 ```sh
 # Linux box:
@@ -4413,92 +3729,89 @@ git pull
     bp-results/bitperfect-test-44100-s32-stereo-30s-freebsd.txt
 ```
 
-Identical length and sha256 on both reports proves the two operating systems
-deliver bit-identical audio to the DAC. Step-by-step commands and the
-mismatch-forensics path are in `scripts/README.md` and
-`doc/BIT-PERFECT-VERIFICATION.md` (*Cross-OS comparison*).
-
-**A single run already proves the local path.** Each tap compares its capture
-against the reference derived from the input file *on that machine* and exits
-0 on **BIT-PERFECT** --- a complete file -> USB proof by itself.
-`bitperfect-compare.py` is a separate, optional step answering the further
-question of whether two hosts agree.
+Identical length and sha256 on both reports proves the two systems deliver
+bit-identical audio to the DAC. The mismatch-forensics path is in
+`scripts/README.md` and `doc/BIT-PERFECT-VERIFICATION.md`. **A single run
+already proves the local path**: each tap compares its capture against the
+reference derived from the input file on that machine and exits 0 on
+**BIT-PERFECT**; the comparison is the optional further step.
 
 **What the report records.** Each `PREFIX.txt` names and hashes every stage
-(`input file`, `ref bytes`, `wire raw`, `tap wav`, `verdict`), so a run is
-auditable from the ~600-byte report alone. Only three of those are
-reproducible: `input file`, `ref bytes` and `tap wav`. **`wire raw` is not**
---- it is the untrimmed capture, so its length varies between otherwise
-identical runs (a few packets more or fewer recorded before the tap stops),
-and Linux and FreeBSD captures of the same input legitimately differ
-(10584816 vs 10772776 bytes at 44100/32-bit). It is provenance only; the
-field the comparator uses is `tap wav`. Note also that `PREFIX.wav` equals
-the input WAV only for a **32-bit** input: for 16/24-bit it carries the
-promoted 32-bit container, so it is longer and differently valued --- the
-invariant that always holds is the `tap wav` payload hash, not the file hash.
+(`input file`, `ref bytes`, `wire raw`, `tap wav`, `verdict`). Only `input
+file`, `ref bytes` and `tap wav` are reproducible; **`wire raw` is not** --- it
+is the untrimmed capture, whose length varies between identical runs and
+legitimately differs between Linux and FreeBSD (10584816 vs 10772776 bytes at
+44100/32-bit). It is provenance only; the comparator uses `tap wav`.
+`PREFIX.wav` equals the input WAV only for a **32-bit** input: 16/24-bit input
+yields the promoted 32-bit container, so the invariant is the `tap wav`
+payload hash, not the file hash.
 
-**What surrounds the audio.** The capture is always longer than the
-reference, and everything outside is measurably all-zero: a head of
-stream-priming zeros --- **exactly 16 ms at both 44100 and 192000 Hz**, a
-fixed-duration buffer prime rather than a timing accident --- and a tail of
-the 500 ms pad plus ~19 ms the kernel keeps transmitting after the writer
-closes. On a **BIT-PERFECT** verdict both capture boundaries necessarily fell
-outside the audio; when they fall inside, the tool names it (`HEAD LOST` at
-the start, `INCOMPLETE` at the end) rather than hiding it. One qualification:
-"inaudible" describes the sample *values*. Opening or closing an isochronous
-stream, and any rate change around it, can still produce an audible artifact
-from the DAC's analogue side (mute relay, PLL relock --- see
-`OKTO-DAC8-FreeBSD-44k1-flicker.md`); that comes from stream start/stop, not
-from the zeros.
+**What surrounds the audio.** The capture is always longer than the reference,
+and everything outside is measurably all-zero: a head of stream-priming zeros
+--- **exactly 16 ms at both 44100 and 192000 Hz**, a fixed-duration buffer
+prime --- and a tail of the 500 ms pad plus ~19 ms the kernel keeps
+transmitting after the writer closes. On a **BIT-PERFECT** verdict both
+capture boundaries fell outside the audio; when they fall inside, the tool
+says so (`HEAD LOST`, `INCOMPLETE`). "Inaudible" describes the sample
+*values*: opening or closing an isochronous stream, and any rate change around
+it, can still cause an audible artifact from the DAC's analogue side (mute
+relay, PLL relock --- see `OKTO-DAC8-FreeBSD-44k1-flicker.md`), from stream
+start/stop and not from the zeros.
 
-**Start with the canonical 44100 Hz asset on FreeBSD.** The FreeBSD tap
-decodes `usbdump -vv` *text*, so parsing cost scales with the capture: 30 s
-at 44100 Hz is ~10.5 MB of payload arriving as tens of MB of hex-dump text
-(fine), while 30 s at 192 kHz is ~46 MB of payload as several hundred MB of
-text --- slow, and it stresses the pcap capture too. Prove the path at 44100
-first, then shorten the high-rate run (`--frames 1920000` = 10 s at
-192 kHz). The Linux side reads usbmon's binary interface and has no such
-limit.
+**FreeBSD tap cost.** The FreeBSD tap decodes `usbdump -vv` *text*, so parsing
+scales with the capture: 30 s at 44100 Hz is ~10.5 MB of payload as tens of MB
+of hex-dump text (fine); 30 s at 192 kHz is ~46 MB as several hundred MB of
+text --- slow, and it stresses the pcap capture. Prove the path at 44100 first,
+then shorten the high-rate run (`--frames 1920000` = 10 s at 192 kHz). The
+Linux tap reads usbmon's binary interface and has no such limit.
 
 \newpage
 
-# Appendix D --- Source document index
+# Appendix B --- Source document index {#sec:appendix-index .unnumbered}
 
-This manual is generated from the repository's source files --- the Markdown
-docs below plus the CMake build for the Installation chapter. For the full
-detail behind each section:
+This manual is a synthesis of the repository's Markdown documentation and the
+CMake build, grouped by the same split as the manual itself.
+
+**Common (Part I and appendices)**
 
 | Topic | Source document |
 |---|---|
 | Chain overview, install, drc.sh, hotplug | `README.md` |
 | Install / build (CMake superproject, host values) | `CMakeLists.txt`, `host.cmake.sample` |
-| Build modules: DRC engine + site data | `cmake/core-drc.cmake` |
-| Build modules: DAC-hotplug + brutefir services | `cmake/hotplug.cmake` |
-| Build modules: MPD + upmpdcli renderers | `cmake/renderers.cmake` |
-| Browser launchers and Linux ALSA management | `browser-nodrc/README.md`, `cmake/browser-audio.cmake`, `cmake/browser-alsa-linux.cmake` |
-| Build modules: runtime dependency audit | `cmake/dependencies.cmake` |
-| Build modules: per-user setup (`make user-install`) | `cmake/user-install.sh.in` |
+| Build modules: engine + site data; DAC hotplug + brutefir services; MPD + upmpdcli renderers; dependency audit; per-user setup | `cmake/core-drc.cmake`, `cmake/hotplug.cmake`, `cmake/renderers.cmake`, `cmake/dependencies.cmake`, `cmake/user-install.sh.in` |
 | Web-UI subproject builds | `omdrc-ctrl/CMakeLists.txt`, `video/webremote/CMakeLists.txt` |
+| Browser launchers | `cmake/browser-audio.cmake` |
 | Filter/config layout, drc.sh modes, agent rules | `FILTERS_AND_DRC.md` |
 | Filter provenance, hashes, verification, the design scripts | `doc/FILTER_PROVENANCE_AND_RESPONSE.md` |
 | Site-data split (`OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT`) | `scripts/README.md`, `host.cmake.sample`, `cmake/core-drc.cmake` |
 | Helper scripts | `scripts/README.md`, `README.md` |
-| Web control panel | `omdrc-ctrl/README.md` |
-| CD / S-PDIF input bridge (FreeBSD) | `cdin/README.md` |
-| CD / S-PDIF input bridge (Linux) | `doc/CDIN-LINUX.md` |
-| ESI U24 XL configuration and traps | `cdin/ESI-U24XL.md` |
-| Web control panel: `/configuration` page | `omdrc-ctrl/README.md`, `omdrc-ctrl/src/configuration.py` |
-| USB appliance image plan | `doc/USB-APPLIANCE-IMAGE-PLAN.md` |
-| Stable sound-device names and lifecycle | `etc/rc.d/omdrc_audio`, `etc/devd/omdrc-audio.conf` |
+| Web control panel and `/configuration` page | `omdrc-ctrl/README.md`, `omdrc-ctrl/src/configuration.py` |
 | Spectrum analyzer | `omdrc-ctrl/SPECTRUM_ANALYZER.md` |
-| Video playback + Blu-ray | `video/README.md` |
-| A/V sync delay derivation | `video/AV-SYNC-DELAY.md` |
-| Web remote (install/API) | `video/webremote/README.md` |
-| Web remote (design) | `video/webremote/ARCHITECTURE.md` |
-| Glitch detection | `doc/GLITCH-DETECTION.md` |
 | Bit-perfect verification, the `/bitperfect` page and its implementation | `doc/BIT-PERFECT-VERIFICATION.md`, `scripts/README.md`, `omdrc-ctrl/README.md` |
 | Test signal | `tests/README.md` |
+| VBA vs all-pass comparison | `doc/xtras/FVBA.vs.ALLPASS.md` |
+
+**Linux (Part II)**
+
+| Topic | Source document |
+|---|---|
+| Browser ALSA management | `browser-nodrc/README.md`, `cmake/browser-alsa-linux.cmake` |
+| CD / S-PDIF bridge (alsaloop) | `doc/CDIN-LINUX.md` |
+| Service and module glue | `etc/systemd/`, `etc/modules-load.d/`, `etc/modprobe.d/` |
+
+**FreeBSD (Part III)**
+
+| Topic | Source document |
+|---|---|
+| Stable sound-device names and lifecycle | `etc/rc.d/omdrc_audio`, `etc/devd/omdrc-audio.conf` |
+| CD / S-PDIF bridge | `cdin/README.md` |
+| ESI U24 XL configuration and traps | `cdin/ESI-U24XL.md` |
+| Video playback + Blu-ray | `video/README.md` |
+| A/V sync delay derivation | `video/AV-SYNC-DELAY.md` |
+| Web remote (install/API, design) | `video/webremote/README.md`, `video/webremote/ARCHITECTURE.md` |
+| Glitch detection | `doc/GLITCH-DETECTION.md` |
 | FreeBSD port plan | `doc/FREEBSD-PORT-PLAN.md` |
+| USB appliance image plan | `doc/USB-APPLIANCE-IMAGE-PLAN.md` |
 | uaudio patches (index + install) | `freebsd-uaudio-patch/README.md` |
 | 44.1 kHz flicker analysis | `freebsd-uaudio-patch/FreeBSD-uaudio-shared-clock-bug.md` |
 | Shared-clock fix design | `freebsd-uaudio-patch/uaudio-shared-clock-fix.md` |
@@ -4514,23 +3827,84 @@ detail behind each section:
 | 44.1 kHz flicker observations | `OKTO-DAC8-FreeBSD-44k1-flicker.md` |
 | MPD/curl CPU spin | `MPD-CURL-CPU-SPIN-FreeBSD.md` |
 | Kodi OSS sink patch | `kodi-virtual-oss-patch/README.md` |
-| VBA vs all-pass comparison | `doc/xtras/FVBA.vs.ALLPASS.md` |
 
 ## Keeping this manual up to date
 
-This manual is a **synthesis** of the source documents above, not a
-transclusion: rebuilding the PDF does *not* pull in changes to the source
-`.md` files automatically. When a source document changes:
+This manual is a **synthesis**, not a transclusion: rebuilding the PDF does not
+pull in changes to the source `.md` files. When a source document changes:
 
-1. Update the corresponding section of the master document,
-   `doc/pdf/open-media-drc-manual.md` (the table above is the
-   section-to-source mapping).
-2. If the chain topology changed, adjust the graphviz sources in
-   `doc/pdf/diagrams/*.dot`.
-3. Re-run `doc/pdf/build-pdf.sh` (requires pandoc, pdflatex, graphviz) to
+1. Update the corresponding section of `doc/pdf/open-media-drc-manual.md`
+   (the tables above are the section-to-source mapping).
+2. If the chain topology changed, adjust `doc/pdf/diagrams/*.dot`.
+3. Re-run `doc/pdf/build-pdf.sh` (pandoc, pdflatex or Chromium, graphviz) to
    regenerate `doc/open-media-drc-manual.pdf`.
 
-Editing constraints for the master document (pdflatex): keep it ASCII ---
-no box-drawing characters or Unicode arrows/symbols; diagrams are added as
-`![caption](build/<name>.pdf){width=NN%}`. Full details in
-`doc/pdf/README.md`.
+**Keep the OS split.** A fact that holds on one OS only goes in Part II
+(Linux) or Part III (FreeBSD), never inline in Part I, which points to it
+instead. Editing constraints (pdflatex): keep the file ASCII, with no
+box-drawing characters or Unicode arrows; diagrams are added as
+`![caption](build/<name>.pdf){width=NN%}`. Details in `doc/pdf/README.md`.
+
+
+\newpage
+
+# Appendix C --- Glossary {#sec:glossary .unnumbered}
+
+Terms in alphabetical order. **OS** shows where the term applies: *both*,
+*Linux* or *FreeBSD*. References point to the section that explains it.
+
+| Term | OS | Meaning | See |
+|---|---|---|---|
+| **alsaloop** | Linux | `alsa-utils` tool that bridges the CD capture card into `snd-aloop`, correcting drift with the rate-shift control | \ref{sec:cdin-linux} |
+| **analysis file** | both | Precomputed response traces of a design (`analysis/<design>.json`), shown only when the bundle verifies | \ref{sec:provenance}, \ref{sec:live-installs} |
+| **attenuation** | both | Per-config BruteFIR gain reduction that prevents clipping where a filter has gain above 0 dB; computed by `headroom_calc.py` | \ref{sec:usage} |
+| **bit-perfect** | both | The DAC receives the source bytes unchanged: no resampling, volume, dither or format conversion | \ref{sec:bitperfect}, \ref{sec:fbsd-verify} |
+| **`bitperfect=1`** | FreeBSD | `dev.pcm` sysctl: the first opener's format becomes the hardware format, so no kernel feeder alters bytes | \ref{sec:fbsd-audio}, \ref{sec:fbsd-roles} |
+| **bounded wait** | both | Every external call under a lock has a timeout, so a slow MPD cannot stall boot or the chain | \ref{sec:fbsd-lifecycle} |
+| **browser-nodrc** | both | Launchers that stop DRC, run a browser and restore the exact prior state | \ref{sec:browser-nodrc} |
+| **BruteFIR** | both | The float64 FIR convolution engine (delleceste fork) that applies the room filters | \ref{sec:install} |
+| **bundle / `bundle_id`** | both | One design's self-contained, hash-bound set of files; the id is the SHA-256 of its canonical identity | \ref{sec:provenance} |
+| **capture role** | both | The card carrying the CD/S-PDIF input, chosen by USB identity | \ref{sec:known-dac-policy}, \ref{sec:fbsd-roles}, \ref{sec:linux-roles} |
+| **CD input (`cdin`)** | both | Second source: a CD transport's S/PDIF captured through the ESI U24 XL into the loopback | \ref{sec:cdin} |
+| **`omdrc-cdin`** | FreeBSD | Purpose-written capture daemon; a `memcpy` ring whose lead absorbs drift | \ref{sec:cdin-freebsd} |
+| **`config.env` / repo mode** | both | A `config.env` beside `drc.sh` makes it run from the checkout instead of the installed tree | \ref{sec:install} |
+| **cuse** | FreeBSD | Kernel facility (`cuse(3)`) through which `virtual_oss` creates character devices; its teardown bug is a known wedge | \ref{sec:fbsd-audio}, \ref{sec:voss-patches} |
+| **`default` design** | both | The reserved historical design that keeps un-suffixed paths and cannot be removed | \ref{sec:provenance} |
+| **design / `@design`** | both | One immutable filter revision inside a geometry, with a provenance manifest | \ref{sec:provenance} |
+| **devd** | FreeBSD | FreeBSD's device event daemon; the project rule fires on `pcm` attach/detach | \ref{sec:fbsd-inventory} |
+| **`dmix`** | Linux | ALSA software mixer that lets browser streams share the DAC | \ref{sec:browser-audio} |
+| **DR (dynamic range)** | both | TT Dynamic Range value of a master; *Measure DR* measures the stream itself | \ref{sec:dynamic-range}, \ref{sec:measure-dr} |
+| **DRC** | both | Digital Room Correction: FIR filtering applied before the DAC | \ref{sec:usage} |
+| **`drc.sh`** | both | The single control point of the DRC pipeline | \ref{sec:usage} |
+| **`drc.lock` / `device.lock`** | FreeBSD | The two non-nested locks guarding the chain transition and the role transaction | \ref{sec:fbsd-lifecycle} |
+| **ESI U24 XL** | both | USB S/PDIF capture interface used for CD input | \ref{sec:cdin}, \ref{sec:fbsd-esi}, \ref{sec:linux-esi} |
+| **geometry** | both | A physical setup (speaker and listening position); a directory under `configs/` and `filters/` | \ref{sec:provenance} |
+| **glitch detection** | FreeBSD | Monitor, USB tap and analyzer that classify dropouts | \ref{sec:fbsd-glitch} |
+| **`host.cmake`** | both | Initial CMake cache holding every box-specific value; read only by `-C` on a fresh build directory | \ref{sec:install} |
+| **hotplug** | both | Reacting to DAC plug/unplug: udev + systemd (Linux), devd + rc.d (FreeBSD) | \ref{sec:linux-hotplug}, \ref{sec:fbsd-inventory} |
+| **known-device list** | both | Cards previously applied to a role; drives automatic DAC swapping | \ref{sec:known-dac-policy} |
+| **lead** | FreeBSD | Audio buffered ahead of the output: drift margin, startup delay and transport lag at once | \ref{sec:cdin-freebsd} |
+| **loopback** | both | Device MPD writes and BruteFIR reads: `snd-aloop` (Linux), `virtual_oss` (FreeBSD) | \ref{sec:linux-aloop}, \ref{sec:fbsd-audio} |
+| **manifest** | both | JSON of hashes and metadata for a design; written last as the commit marker | \ref{sec:provenance} |
+| **MPD / `musicpd`** | both | The player; `mpd` on Linux, `musicpd` on FreeBSD | \ref{sec:mpd-outputs}, \ref{sec:fbsd-packages} |
+| **MPD outputs** | both | `OKTO-DAC` (direct), `DRC-native`, `DRC-resamp` | \ref{sec:mpd-outputs} |
+| **`omdrc-config-helper`** | both | Privileged helper that installs verified designs and pins audio roles | \ref{sec:configuration-page} |
+| **omdrc-ctrl / `omdrcctrl`** | both | The Flask web control panel (port 9090) | \ref{sec:omdrcctrl}, \ref{sec:linux-panel}, \ref{sec:fbsd-panel} |
+| **`omdrc_audio`** | FreeBSD | The rc.d service that owns device roles and the DRC lifecycle | \ref{sec:fbsd-inventory}, \ref{sec:fbsd-roles} |
+| **priming** | FreeBSD | Opening the DAC once at a new rate so the real open does not route silence | \ref{sec:fbsd-prime} |
+| **provenance** | both | The hash chain from REW exports to the coefficients BruteFIR loaded | \ref{sec:provenance} |
+| **reconcile** | both | Level-triggered comparison of saved intent with reality; repairs only a mismatch | \ref{sec:usage}, \ref{sec:fbsd-lifecycle} |
+| **REW** | both | Room EQ Wizard, the measurement tool the filters are designed in | \ref{sec:provenance} |
+| **roles** | both | Stable DAC and capture assignments by USB identity, never by card number | \ref{sec:linux-roles}, \ref{sec:fbsd-roles} |
+| **`snd-aloop`** | Linux | ALSA loopback kernel module, pinned to the DAC clock with `timer_source` | \ref{sec:linux-aloop} |
+| **`sndiod`** | FreeBSD | Playback-only sndio server used for Chromium during a No DRC session | \ref{sec:fbsd-browser} |
+| **site data / site root** | both | Room `configs/` and `filters/`, kept in a separate repository via `OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT` | \ref{sec:provenance} |
+| **source policy (`last_source`)** | both | Persistent choice of `music` or `cdin`; CD input is exclusive | \ref{sec:cdin}, \ref{sec:usage} |
+| **spectrum analyzer** | both | Panel card fed from a FIFO of MPD or CD audio | \ref{sec:omdrcctrl} |
+| **`uaudio(4)`** | FreeBSD | Kernel USB audio driver; the patches fix the OKTO clock behaviour | \ref{sec:uaudio-patches}, \ref{sec:fbsd-issues} |
+| **udev rule** | Linux | `99-usb-audio-drc.rules`, copied to `/etc/udev/rules.d` | \ref{sec:linux-install}, \ref{sec:linux-hotplug} |
+| **upmpdcli** | both | UPnP/OpenHome front end that makes MPD a renderer | \ref{sec:install}, \ref{sec:upnpiface} |
+| **`/bitperfect` page** | both | Panel page that runs the USB tap through five playback paths and shows the bytes | \ref{sec:bitperfect-page}, \ref{sec:bitperfect-impl} |
+| **variant** | both | Legacy config-filename suffix selecting an alternate filter set; always unverified | \ref{sec:provenance} |
+| **virtual_oss** | FreeBSD | Userland OSS mixer/router providing `/dev/dsp.play` and `/dev/dsp.loop` | \ref{sec:fbsd-audio} |
+| **wire tap** | both | Capture of the USB isochronous OUT endpoint (usbmon on Linux, usbdump on FreeBSD) | \ref{sec:bitperfect}, \ref{sec:bitperfect-impl} |

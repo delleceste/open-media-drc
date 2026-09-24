@@ -1,0 +1,16 @@
+// USB DAC hotplug, Linux: udev + systemd.
+digraph hotplug_linux {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    plug [label="USB DAC plugged in / powered on", fillcolor="#fdf3d8"];
+    boot [label="System boot\n(DAC may already be on)", fillcolor="#fdf3d8"];
+    udev [label="udev rule\n99-usb-audio-drc.rules\nSUBSYSTEM=sound, controlC*"];
+    svc  [label="systemd\ndrc-usb-audio.service\n(oneshot, RemainAfterExit)"];
+    run  [label="drc.sh restore / stop", fillcolor="#dff0df"];
+
+    plug -> udev -> svc -> run;
+    boot -> svc [label="udev synthesizes\nADD at boot"];
+}

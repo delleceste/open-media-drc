@@ -1,0 +1,19 @@
+// USB DAC hotplug plus late-MPD reconciliation, FreeBSD: devd + rc.d.
+digraph hotplug_freebsd {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#4a6d94"];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    plug [label="USB DAC plugged in / powered on", fillcolor="#fdf3d8"];
+    boot [label="System boot\n(DAC may already be on)", fillcolor="#fdf3d8"];
+    devd  [label="devd rule\nomdrc-audio.conf\n(pcm attach/detach, detached)"];
+    mpdok [label="musicpd successful start/restart"];
+    mpdhook [label="rc.conf.d/musicpd/omdrc_audio\none post-start reconcile; no lock"];
+    rcd   [label="rc.d: omdrc_audio reconcile\nrole links/settings + verified default unit\nunder device.lock, then su -l", fillcolor="#e8e0f4"];
+    reconcile [label="drc.sh reconcile\nreads power + source + rate + reality,\nrebuilds only on mismatch,\nbounded MPD switch", fillcolor="#dff0df"];
+
+    plug -> devd -> rcd -> reconcile;
+    mpdok -> mpdhook -> rcd;
+    boot -> rcd [label="rc.conf:\nomdrc_audio_enable"];
+}

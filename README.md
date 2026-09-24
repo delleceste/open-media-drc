@@ -26,15 +26,16 @@ the supplied `host.cmake` to describe that host. The build installs to
    Meson, Ninja, pkg-config, git, MPD, FFTW3 (single and double precision),
    and the Python dependencies for the controller (`flask`, `markdown`, and
    optionally `numpy`). Linux additionally needs ALSA and `snd-aloop`;
-   FreeBSD needs `virtual_oss` and `cuse`. The exact package names and the
-   UPnP dependency list are in the [manual installation section](doc/pdf/open-media-drc-manual.md#installation).
+   FreeBSD needs `virtual_oss` and `cuse`. The exact package names are in the manual's
+   [Linux](doc/pdf/open-media-drc-manual.md#linux-installation-and-lifecycle-seclinux-install) and
+   [FreeBSD](doc/pdf/open-media-drc-manual.md#freebsd-installation-secfbsd-install) installation chapters.
 
 2. Build the external playback components in signal order: `libnpupnp`,
    `libupnpp`, `upmpdcli`, then the
    [delleceste BruteFIR fork](https://github.com/delleceste/brutefir).
    MPD itself is normally installed from the operating-system package. The
    commands and required upmpdcli metadata patch are documented in the
-   [manual](doc/pdf/open-media-drc-manual.md#build-and-install-order).
+   [manual](doc/pdf/open-media-drc-manual.md#installation-the-common-build-secinstall).
 
 3. Clone and configure this repository. Start with a fresh build directory;
    `host.cmake` is an initial CMake cache, so it must be supplied on the first
@@ -61,8 +62,10 @@ the supplied `host.cmake` to describe that host. The build installs to
    udev, and enabling `mpd`, `omdrcctrl`, and `omdrc-renderer`. On FreeBSD it
    includes enabling the installed rc.d services and loading `cuse`. Keep
    early-boot files as copies in system paths, not symlinks into a home
-   directory. See [Linux specifics](doc/pdf/open-media-drc-manual.md#linux-specifics)
-   and [FreeBSD installation](doc/pdf/open-media-drc-manual.md#freebsd-installation-and-lifecycle).
+   directory. See the Linux chapter
+   ([installation and lifecycle](doc/pdf/open-media-drc-manual.md#linux-installation-and-lifecycle-seclinux-install))
+   or the FreeBSD chapters
+   ([installation](doc/pdf/open-media-drc-manual.md#freebsd-installation-secfbsd-install)).
 
 ## Everyday operation
 
@@ -81,7 +84,7 @@ Use a native rate only when it matches the source. `resamp` is the convenient
 choice for mixed-rate playlists. `omdrc restore` reapplies the saved intent,
 and `omdrc cdin` selects the 44.1 kHz CD/S/PDIF path where that source is
 configured. The full command reference is in the
-[usage chapter](doc/pdf/open-media-drc-manual.md#usage-drcsh-filters-and-configuration).
+[usage chapter](doc/pdf/open-media-drc-manual.md#usage-drcsh-filters-and-configuration-secusage).
 
 ## What is installed
 

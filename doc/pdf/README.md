@@ -28,41 +28,46 @@ the PDF, then create the annotated `v*` tag on that commit.
 
 ## Structure of the manual (fixed, by request)
 
-1. **Introduction** — what the stack is, design principles, chain diagram,
-   repository map.
-2. **Components** — every component in signal order; explicitly notes that
-   **MPD is packaged as `musicpd` on FreeBSD** (`mpd` on Linux).
-3. **Installation** — deps, build order, Linux vs FreeBSD differences
-   (systemd/udev vs rc.d/devd, copy-vs-symlink rule, MPD drop-in caveat).
-4. **Usage** — drc.sh verbs/options/state, MPD outputs, filters/configs
-   layout, filter-generation workflow, browser-nodrc.
-5. **Filter provenance and verification** — the three repositories and
-   the site-data split (`OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT`),
-   geometry/design/variant, the bundle layout, what is hashed and how
-   `bundle_id` is derived, the design scripts, the publication
-   transaction, and verification at install time and at runtime.
-6. **Tools** — omdrc-ctrl (web UI, spectrum analyzer, filter response,
-   configuration page, bit-perfect check page), video (launchers +
-   webremote), glitch detection, bit-perfect verification — the original
-   proof, the five-path `/bitperfect` page, and its implementation
-   (pipeline, artifacts, anchor, silence pad, renderer arbitration,
-   privilege, verdicts), dynamic range (the DR versions page, pressing
-   identification and its weights, and *Measure DR*: job, metrics,
-   validation, costs) — scripts/.
-7. **CD input** — `omdrc-cdin`, the S/PDIF capture bridge: why the lead
-   is the only number that matters, the state machine and the two device
-   tenancies, the transport simulator, the web card, and the ESI U24 XL
-   configuration it depends on (unit order, input selector, `rec.vchans`).
-8. **FreeBSD peculiarities** — one-place summary of everything
-   FreeBSD-specific, including known bugs and the port plan.
-9. **Appendix A** — detailed description of every FreeBSD patch (uaudio,
-   virtual_oss/cuse, Kodi): what it does, root cause, how to apply/build/
-   install/verify/revert.
-10. **Appendix B** — the FreeBSD port plan (from `doc/FREEBSD-PORT-PLAN.md`).
-11. **Appendix C** — bit-perfect test assets and the cross-OS byte-comparison
-   procedure (from `tests/README.md`, `scripts/README.md`).
-12. **Appendix D** — mapping of manual sections to the source `.md` files,
-    plus the update procedure for this manual.
+The manual is split **by operating system** so a reader can skip the other
+OS's material entirely. Part I never depends on Part II or III and only
+*points* to them.
+
+**Part I --- Common** (OS-neutral)
+
+1. **Introduction** --- what the stack is, design principles, chain diagram,
+   how to read the manual, repository map (with an OS column).
+2. **Components** --- every component in signal order, with a per-OS pointer
+   column; notes that MPD is `mpd` on Linux and `musicpd` on FreeBSD.
+3. **Installation: the common build** --- build tools, upmpdcli/BruteFIR/CMake
+   steps, `host.cmake`, BruteFIR defaults requirement, renderer runtime state.
+4. **Usage** --- drc.sh verbs and state, reconcile, MPD outputs, filters/configs
+   layout, filter-generation workflow, the No DRC browser launchers, helper
+   scripts.
+5. **Filter provenance and verification** --- repositories, bundle, hashing,
+   the design scripts, publication/removal, deployment, live installs.
+6. **The web panel** --- omdrc-ctrl, spectrum analyzer, configuration page,
+   known-device policy.
+7. **Bit-perfect verification** --- the `/bitperfect` page and its
+   implementation.
+8. **Dynamic range** --- DR versions, pressing identification, *Measure DR*.
+9. **CD input** --- concept, exclusive-source rule, ESI U24 XL facts, web card.
+
+**Part II --- Linux**: 10 installation and lifecycle (packages, /etc files,
+MPD drop-in, udev/systemd hotplug, `snd-aloop`, audio roles, browser ALSA,
+the panel on Linux); 11 CD input with `alsaloop`.
+
+**Part III --- FreeBSD**: 12 installation (packages, rc.conf, network);
+13 services, device roles and lifecycle (rc.d/devd, locks); 14 OSS audio
+stack, panel, glitch detection, bit-perfect on FreeBSD, browsers; 15 video;
+16 CD input with `omdrc-cdin` (incl. the ESI traps); 17 known issues;
+18 kernel/userland patches; 19 port plan and image.
+
+**Appendices** --- A: bit-perfect test assets and cross-OS comparison;
+B: source-document index (split Common / Linux / FreeBSD) and the update
+procedure; C: glossary (each term tagged with its OS and section references).
+
+The rule when editing: an OS-specific fact goes in Part II or III, never
+inline in Part I.
 
 ## Updating after documentation changes
 
