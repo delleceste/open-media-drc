@@ -2970,12 +2970,15 @@ async function pollStatus() {
 pollStatus();
 setInterval(pollStatus, 5000);
 
-// fetch all READ widgets on load; set up auto-refresh intervals
+// Fetch READ widgets on load, except those on the hidden System tab.
 document.querySelectorAll('.read-out').forEach(el => {
     const id      = el.id.replace('out-', '');
     const refresh = parseInt(el.dataset.refresh, 10) || 0;
-    fetchRead(id);
-    if (refresh > 0) setInterval(() => fetchRead(id), refresh * 1000);
+    const onSystemTab = el.closest('.tab-page')?.dataset.tab === '1';
+    if (!onSystemTab) fetchRead(id);
+    if (refresh > 0) setInterval(() => {
+        if (!onSystemTab || systemViewVisible()) fetchRead(id);
+    }, refresh * 1000);
 });
 
 // ── Qobuz Connect panel ────────────────────────────────────────────────────
@@ -2995,14 +2998,29 @@ function setRefreshLabel(id, seconds) {
 }
 
 // ── collapsible cards ──────────────────────────────────────────────────────
-// A collapsed card hides its body and pauses its auto-refresh so no polling
-// (and no server-side ps/sndstat work) happens while it is hidden.
+// A collapsed card hides its body and pauses its auto-refresh. System cards
+// also pause while their tab or the browser page is hidden.
 const COLLAPSIBLE_CARDS = ['bf', 'ram', 'sndstat',
                            ...(UAUDIO_ENABLED ? ['uaudio'] : []),
                            'advanced', 'topcpu'];
 const CARD_STATE_PREFIX = 'omdrcctrl.card.collapsed.';
 const collapsedCards = {};
 const autoRefreshControls = {};
+const SYSTEM_REFRESH_CARDS = ['mpd', 'bf', 'ram', 'sndstat', 'uaudio', 'topcpu', 'advanced'];
+
+function systemViewVisible() {
+    return activeTab === 1 && !document.hidden;
+}
+
+function refreshVisibleSystemCards() {
+    if (!systemViewVisible()) return;
+    for (const name of SYSTEM_REFRESH_CARDS) {
+        if (autoRefreshControls[name]) autoRefreshControls[name]();
+    }
+    document.querySelectorAll('.tab-page[data-tab="1"] .read-out').forEach(el =>
+        fetchRead(el.id.replace('out-', '')));
+    if (logsVisible) fetchLog();
+}
 
 function storedBool(key, fallback = false) {
     try {
@@ -3049,7 +3067,8 @@ function startAutoRefresh(name, intervalMs, fetchFn) {
     let running = false;
 
     async function runNow() {
-        if (running) return;
+        if (running || collapsedCards[name] ||
+            (SYSTEM_REFRESH_CARDS.includes(name) && !systemViewVisible())) return;
         running = true;
         remaining = seconds;
         setRefreshLabel(labelId, remaining);
@@ -3068,7 +3087,8 @@ function startAutoRefresh(name, intervalMs, fetchFn) {
     if (btn) btn.onclick = runNow;
     if (!collapsedCards[name]) runNow();
     setInterval(() => {
-        if (running || collapsedCards[name]) return;   // paused while collapsed
+        if (running || collapsedCards[name] ||
+            (SYSTEM_REFRESH_CARDS.includes(name) && !systemViewVisible())) return;
         remaining -= 1;
         if (remaining <= 0) {
             runNow();
@@ -4012,10 +4032,12 @@ function setLogsVisible(visible) {
     btn.textContent = visible ? 'Hide' : 'Show';
     clearInterval(logTimer);
     logTimer = null;
-    if (visible) {
+    if (visible && systemViewVisible()) {
         fetchLog();
-        logTimer = setInterval(fetchLog, 5000);
     }
+    if (visible) logTimer = setInterval(() => {
+        if (systemViewVisible()) fetchLog();
+    }, 5000);
 }
 
 function toggleLogs()        { setLogsVisible(!logsVisible); }
@@ -5091,6 +5113,7 @@ document.addEventListener('visibilitychange', () => {
         if (activeTab === 0 && metersWanted) startMeters();
         if (activeTab === 0 && drEstimateWanted) startDrEstimate();
         if (activeTab === 0) autoRefreshControls.chain?.();
+        refreshVisibleSystemCards();
     }
 });
 window.addEventListener('pagehide', () => {
@@ -5127,6 +5150,7 @@ let activeTab = 0;
 function switchTab(i, persist = true) {
     i = [0, 1, 2].includes(Number(i)) ? Number(i) : 0;
     const enteringListen = activeTab !== 0 && i === 0;
+    const enteringSystem = activeTab !== 1 && i === 1;
     const leavingSpectrum = activeTab === 2 && i !== 2;
     activeTab = i;
     document.querySelectorAll('.tab-page').forEach(p => {
@@ -5149,6 +5173,7 @@ function switchTab(i, persist = true) {
         startSpectrum();
     }
     if (enteringListen) autoRefreshControls.chain?.();
+    if (enteringSystem) refreshVisibleSystemCards();
 }
 
 // Swipe between tabs on touch. Ignored when the gesture starts on an
@@ -5376,8 +5401,10 @@ async function fetchAdvancedInfo(btn) {
         if (btn_) { btn_.disabled = false; btn_.textContent = '↻'; }
     }
 }
-autoRefreshControls.advanced = () => fetchAdvancedInfo();
-if (!collapsedCards.advanced) fetchAdvancedInfo();
+autoRefreshControls.advanced = () => {
+    if (!collapsedCards.advanced && systemViewVisible()) fetchAdvancedInfo();
+};
+autoRefreshControls.advanced();
 
 // ── Top CPU processes panel ───────────────────────────────────────────────
 async function fetchTopCpu() {
