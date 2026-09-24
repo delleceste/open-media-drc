@@ -129,7 +129,7 @@ provides no feedback. Every command here either shows its output directly
 
 ## Measuring the DR of what is playing
 
-**Estimate DR** on the renderer card samples the MPD output already used by
+**Estimate** (DR) on the renderer card samples the MPD output already used by
 the Spectrum and Levels displays. While its toggle is on, it shows a
 red/yellow/green gauge with the DR of the selected rolling window, computed
 with the standard algorithm on 3-second blocks (top-20 % RMS against the
@@ -160,10 +160,10 @@ indication of the passage you heard, not a full-track or album DR
 measurement. Switching to System or Spectrum keeps an active DR estimate
 running; hiding or closing the browser tab releases its listener. MPD's
 secondary FIFO output is disabled when
-Estimate DR, Spectrum and Levels all have no listeners.
+Estimate, Spectrum and Levels all have no listeners.
 
 The DR versions page reports what *other people's* copies of a record measure.
-The renderer card's **Measure DR** button measures the copy on the wire.
+The renderer card's **Measure** button measures the copy on the wire.
 
 It fetches the record's tracks a second time — the tracks in the queue around
 the one playing that carry *exactly* its album tag, so a deluxe edition queued

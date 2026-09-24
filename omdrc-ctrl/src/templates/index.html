@@ -96,13 +96,14 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
             gap: 8px;
         }
         .title-actions {
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 6px;
-            flex-shrink: 0;
         }
         .collapsible-title { cursor: pointer; user-select: none; }
         .card-chevron {
@@ -469,7 +470,7 @@
         .drc-attenuation-editor .btn-session { padding: 3px 7px; font-size: 11px; white-space: nowrap; }
         #spectrum-controls-toggle { cursor: pointer; }
         #spectrum-controls-toggle.on { border-color: var(--accent); color: var(--accent); }
-        .spectrum-title-btns { display: flex; align-items: center; gap: 8px; }
+        .spectrum-title-btns { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
         .detach-btn { cursor: pointer; padding: 5px 9px; font-size: .74rem; }
         /* PiP button is revealed by JS only where the browser supports it. */
         #spectrum-pip-btn { display: none; }
@@ -564,6 +565,9 @@
         #write-status.show { display: block; }
 
         /* ── Qobuz Connect panel ─────────────────────────────── */
+        /* .title-row / .title-actions wrap, so a narrow (portrait) screen
+           shows every button instead of the card clipping the overflow. */
+        .qc-card-title { flex-wrap: wrap; gap: 8px; }
         .qc-card-title {
             display: flex;
             align-items: center;
@@ -1566,7 +1570,7 @@
 
 {% macro render_group(group_name, group_label, cmds) %}
 <div class="card">
-    <div class="card-title"{% if group_name == 'drc' %} style="display:flex;justify-content:space-between;align-items:baseline"{% endif %}>
+    <div class="card-title"{% if group_name == 'drc' %} style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px 8px"{% endif %}>
         <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/brutefir-config" target="_blank" rel="noopener noreferrer">Configuration ↗</a><span class="response-action"><a id="filter-response-link" class="btn-details active" href="/filter-response">Filter response ↗</a><small id="filter-response-note" class="response-unavailable" hidden>Not available for this WAV-only configuration</small></span></span>{% endif %}
     </div>
     {% if group_name == 'drc' %}
@@ -1803,17 +1807,18 @@
             <button class="btn-log btn-mini" id="btn-act-lines"
                     onclick="toggleActivityLines()"
                     title="Activity detail: one line, or the last three">☰</button>
-            <button class="btn-log" id="btn-drm" onclick="drmStart()"
-                    title="Fetch this record's tracks again, measure their dynamic range, then delete them">Measure DR</button>
             <button class="btn-log" id="btn-dr-estimate" onclick="toggleDrEstimate()"
                     role="switch" aria-checked="false"
-                    title="Estimate DR from the selected rolling window, without a download">Estimate DR</button>
+                    title="Estimate DR from the selected rolling window, without a download. Lit while running; tap again to stop">Estimate</button>
             <button class="btn-log" id="btn-dr-visibility" onclick="toggleDrEstimateVisibility()"
-                    aria-expanded="false" aria-controls="dr-estimate">Show DR</button>
+                    aria-expanded="false" aria-controls="dr-estimate"
+                    title="Show or hide the DR panel; estimation keeps running while hidden">Show</button>
 {% if drdb_enabled %}
             <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
                     title="Other masters of this record, and what they measure, in the Dynamic Range database">DR ↗</button>{% endif %}
             <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
+            <button class="btn-log" id="btn-drm" onclick="drmStart()"
+                    title="Fetch this record's tracks again, measure their dynamic range, then delete them">Measure</button>
         </div>
     </div>
     <!-- Mutually-exclusive renderer toggle -->
@@ -2110,7 +2115,7 @@
 
 <!-- Audio devices panel -->
 <div class="card" id="sndstat-card">
-    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px 8px">
         <span class="collapsible-title" onclick="toggleCard('sndstat')"><span class="card-chevron" id="sndstat-chevron">▾</span>Audio devices <span class="refresh-note" id="sndstat-refresh-label">refresh: {{ sndstat_interval }}s</span></span>
         <button class="btn-refresh" id="sndstat-refresh-btn" title="Refresh">↻</button>
     </div>
@@ -2134,7 +2139,7 @@
 
 <!-- Advanced diagnostics panel -->
 <div class="card" id="advanced-card">
-    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px 8px">
         <span class="collapsible-title" onclick="toggleCard('advanced')"><span class="card-chevron" id="advanced-chevron">▾</span>Advanced <span class="refresh-note" id="advanced-refresh-label">manual</span></span>
         <button id="advanced-refresh-btn"
                 onclick="fetchAdvancedInfo(this)"
@@ -5064,10 +5069,10 @@ function saveDrSetting(key, value) {
 function paintDrControls() {
     const power = document.getElementById('btn-dr-estimate');
     power.setAttribute('aria-checked', String(drEstimateWanted));
-    power.textContent = drEstimateWanted ? 'Stop estimate' : 'Estimate DR';
+    power.classList.toggle('active', drEstimateWanted);
     const visibility = document.getElementById('btn-dr-visibility');
     visibility.setAttribute('aria-expanded', String(drEstimateVisible));
-    visibility.textContent = drEstimateVisible ? 'Hide DR' : 'Show DR';
+    visibility.textContent = drEstimateVisible ? 'Hide' : 'Show';
     document.getElementById('dr-estimate').hidden = !drEstimateVisible;
     const detect = document.getElementById('dr-detect-song-change');
     detect.setAttribute('aria-checked', String(drDetectSongChange));
