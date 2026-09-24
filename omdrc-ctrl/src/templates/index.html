@@ -812,9 +812,9 @@
         .dr-estimate-history > span > b { position: relative; font: inherit; }
         .dr-estimate-history > span { position: relative; display: flex; flex: 1 1 0; min-width: 0;
                                       align-items: flex-end; justify-content: center;
-                                      padding-bottom: 2px; box-sizing: border-box;
-                                      font-size: .62rem;
-                                      font-weight: 500; font-variant-numeric: tabular-nums; }
+                                      padding-bottom: 1px; box-sizing: border-box;
+                                      font-size: .56rem; line-height: 1;
+                                      font-weight: 300; font-variant-numeric: tabular-nums; }
         .dr-estimate-history > span { cursor: pointer; }
         .dr-estimate-history > span.gap { flex: 0 0 12px;
             background: repeating-linear-gradient(135deg, var(--surface) 0 3px,
@@ -5173,11 +5173,11 @@ let drCellMeasure = {key: '', px: 24};
 function drMinCellPx(track) {
     try {
         const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-        const size = .62 * rem, family = getComputedStyle(track).fontFamily;
+        const size = .56 * rem, family = getComputedStyle(track).fontFamily;
         const key = `${size}|${family}`;
         if (drCellMeasure.key !== key) {
             const ctx = document.createElement('canvas').getContext('2d');
-            ctx.font = `800 ${size}px ${family}`;
+            ctx.font = `300 ${size}px ${family}`;
             drCellMeasure = {key, px: Math.max(8, 1.1 * ctx.measureText('XX').width)};
         }
     } catch {}
