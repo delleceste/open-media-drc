@@ -802,6 +802,8 @@
         .dr-estimate-window input { flex: 1; min-width: 0; accent-color: var(--accent); }
         .dr-estimate-window output { min-width: 3.5em; text-align: right;
                                      font-variant-numeric: tabular-nums; color: var(--text); }
+        .dr-estimate-options { display: flex; justify-content: flex-end;
+                               margin: 2px 0 6px; }
         .dr-estimate-history { display: flex; gap: 2px; height: 21px; margin: 5px 4px 0;
                                overflow: hidden; border-radius: 3px; }
         .dr-estimate-history > span { display: flex; flex: 1 1 0; min-width: 0;
@@ -1794,7 +1796,9 @@
                     title="Fetch this record's tracks again, measure their dynamic range, then delete them">Measure DR</button>
             <button class="btn-log" id="btn-dr-estimate" onclick="toggleDrEstimate()"
                     role="switch" aria-checked="false"
-                    title="Estimate DR from the last 60 seconds of MPD audio, without a download">Estimate DR</button>
+                    title="Estimate DR from the selected rolling window, without a download">Estimate DR</button>
+            <button class="btn-log" id="btn-dr-visibility" onclick="toggleDrEstimateVisibility()"
+                    aria-expanded="false" aria-controls="dr-estimate">Show DR</button>
 {% if drdb_enabled %}
             <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
                     title="Other masters of this record, and what they measure, in the Dynamic Range database">DR ↗</button>{% endif %}
@@ -1848,8 +1852,11 @@
             <input id="dr-estimate-window" type="range" min="60" max="1200" step="60" value="60" oninput="setDrEstimateWindow(this.value)">
             <output id="dr-estimate-window-label" for="dr-estimate-window">1 min</output>
         </label>
+        <div class="dr-estimate-options"><button type="button" class="btn-log btn-mini"
+            id="dr-detect-song-change" role="switch" aria-checked="true"
+            onclick="toggleDrSongChange()">Detect song change: On</button></div>
         <div id="dr-estimate-history" class="dr-estimate-history" role="img" aria-label="Dynamic range history, oldest on the left"></div>
-        <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">−1 min audio</span><span>Latest audio</span></div>
+        <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">−1 min</span><span>Latest</span></div>
         <div class="dr-estimate-note"><span>Recent excerpt at 48 kHz · a guide to this passage, not full-track or album DR</span>
             <span id="dr-estimate-average" class="dr-estimate-average" title="Mean of complete 3-second DR values since the latest silence in this window">AVG —</span></div>
     </div>
@@ -4242,6 +4249,8 @@ let metersWanted = false;
 let metersReconnect = null;   // retry handle for a dropped SSE stream
 let drEstimateSource = null;
 let drEstimateWanted = false;
+let drEstimateVisible = false;
+let drDetectSongChange = true;
 let drEstimateReconnect = null;
 const METER_FLOOR_DB = -60;   // fixed floor for the L/R meters' own dB scale
 const METERS_STYLE_KEY = 'omdrcctrl.meters.style';
@@ -5017,15 +5026,63 @@ function toggleMeters() {
 // Each complete 3-second block contributes peak/RMS statistics. The browser
 // selects a window and groups those blocks to fit the available timeline width.
 const DR_WINDOW_KEY = 'omdrc-dr-window-seconds';
+const DR_ACTIVE_KEY = 'omdrc-dr-active';
+const DR_VISIBLE_KEY = 'omdrc-dr-visible';
+const DR_DETECT_KEY = 'omdrc-dr-detect-song-change';
 let drEstimateBlocks = [];
 let drEstimateFrame = null;
+let drTrackAgeBlocks = 0;
 let drWindowSeconds = 60;
 try {
     const saved = Number(localStorage.getItem(DR_WINDOW_KEY));
     if (Number.isInteger(saved) && saved >= 60 && saved <= 1200 && saved % 60 === 0)
         drWindowSeconds = saved;
+    drEstimateWanted = localStorage.getItem(DR_ACTIVE_KEY) === 'true';
+    drEstimateVisible = localStorage.getItem(DR_VISIBLE_KEY) === 'true';
+    drDetectSongChange = localStorage.getItem(DR_DETECT_KEY) !== 'false';
 } catch {}
 document.getElementById('dr-estimate-window').value = drWindowSeconds;
+
+function saveDrSetting(key, value) {
+    try { localStorage.setItem(key, String(value)); } catch {}
+}
+
+function paintDrControls() {
+    const power = document.getElementById('btn-dr-estimate');
+    power.setAttribute('aria-checked', String(drEstimateWanted));
+    power.textContent = drEstimateWanted ? 'Stop estimate' : 'Estimate DR';
+    const visibility = document.getElementById('btn-dr-visibility');
+    visibility.setAttribute('aria-expanded', String(drEstimateVisible));
+    visibility.textContent = drEstimateVisible ? 'Hide DR' : 'Show DR';
+    document.getElementById('dr-estimate').hidden = !drEstimateVisible;
+    const detect = document.getElementById('dr-detect-song-change');
+    detect.setAttribute('aria-checked', String(drDetectSongChange));
+    detect.textContent = `Detect song change: ${drDetectSongChange ? 'On' : 'Off'}`;
+    if (!drEstimateWanted && !drEstimateFrame)
+        document.getElementById('dr-estimate-status').textContent = 'Stopped';
+}
+
+function toggleDrEstimateVisibility() {
+    drEstimateVisible = !drEstimateVisible;
+    saveDrSetting(DR_VISIBLE_KEY, drEstimateVisible);
+    paintDrControls();
+    if (drEstimateVisible) paintDrHistory();
+}
+
+function toggleDrSongChange() {
+    drDetectSongChange = !drDetectSongChange;
+    saveDrSetting(DR_DETECT_KEY, drDetectSongChange);
+    paintDrControls();
+    if (drEstimateFrame)
+        paintDrEstimate({...drEstimateFrame, dr_blocks: drEstimateBlocks});
+    else paintDrHistory();
+}
+
+function drSelectedBlocks() {
+    const windowBlocks = drWindowSeconds / 3;
+    const count = drDetectSongChange ? Math.min(windowBlocks, drTrackAgeBlocks) : windowBlocks;
+    return count > 0 ? drEstimateBlocks.slice(-count) : [];
+}
 
 function drWindowLabel(seconds) {
     return `${seconds / 60} min`;
@@ -5074,7 +5131,7 @@ function drHistoryColor(dr) {
 function paintDrHistory() {
     const track = document.getElementById('dr-estimate-history');
     const blockCount = drWindowSeconds / 3;
-    const blocks = drEstimateBlocks.slice(-blockCount);
+    const blocks = drSelectedBlocks();
     // A wide one-minute panel can show all twenty 3-second blocks.
     const steps = Math.max(1, Math.min(Math.floor(track.clientWidth / 24),
                                         blockCount));
@@ -5086,7 +5143,7 @@ function paintDrHistory() {
         const sample = blocks.slice(Math.max(0, start - left), Math.max(0, end - left));
         const silent = sample.some(drBlockSilent);
         const dr = sample.length && !silent ? drFromBlocks(sample) : null;
-        const period = `${Math.round((blockCount - end) * 3)}–${Math.round((blockCount - start) * 3)} s of audio before the latest block`;
+        const period = `${Math.round((blockCount - end) * 3)}–${Math.round((blockCount - start) * 3)} s before the latest interval`;
         const title = !sample.length ? 'Waiting for audio' : silent ?
             `${period}: silence` : `${period}: DR${dr.toFixed(1)}`;
         const color = dr === null ? null : drHistoryColor(dr);
@@ -5095,8 +5152,8 @@ function paintDrHistory() {
             ` style="background:${color.background};color:${color.foreground}"` : ''}>${label}</span>`);
     }
     track.innerHTML = cells.join('');
-    track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)} of audio, oldest on the left; ${blocks.length * 3} seconds sampled`);
-    document.getElementById('dr-estimate-oldest').textContent = `−${drWindowLabel(drWindowSeconds)} audio`;
+    track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)} of intervals, oldest on the left`);
+    document.getElementById('dr-estimate-oldest').textContent = `−${drWindowLabel(drWindowSeconds)}`;
     document.getElementById('dr-estimate-window-label').textContent = drWindowLabel(drWindowSeconds);
     const active = drActiveBlocks(blocks);
     const average = active.length ? active.reduce((sum, block) => sum + drFromBlocks([block]), 0) / active.length : null;
@@ -5106,7 +5163,7 @@ function paintDrHistory() {
 
 function setDrEstimateWindow(value) {
     drWindowSeconds = Math.max(60, Math.min(1200, Number(value) || 60));
-    try { localStorage.setItem(DR_WINDOW_KEY, String(drWindowSeconds)); } catch {}
+    saveDrSetting(DR_WINDOW_KEY, drWindowSeconds);
     if (drEstimateFrame)
         paintDrEstimate({...drEstimateFrame, dr_blocks: drEstimateBlocks});
     else paintDrHistory();
@@ -5119,12 +5176,14 @@ function paintDrEstimate(frame) {
         frame.dr?.state === drEstimateFrame.dr?.state) return;
     drEstimateFrame = frame;
     if (Array.isArray(frame.dr_blocks)) drEstimateBlocks = frame.dr_blocks;
+    if (Number.isInteger(frame.dr?.track_age_blocks))
+        drTrackAgeBlocks = frame.dr.track_age_blocks;
     paintDrHistory();
     const value = document.getElementById('dr-estimate-value');
     const status = document.getElementById('dr-estimate-status');
     const needle = document.getElementById('dr-estimate-needle');
     const dr = frame.dr || {};
-    const selected = drEstimateBlocks.slice(-drWindowSeconds / 3);
+    const selected = drSelectedBlocks();
     const active = drActiveBlocks(selected);
     const exact = active.length >= 2 ? drFromBlocks(active) : null;
     if (!frame.ok || dr.state !== 'ready' || exact === null) {
@@ -5140,27 +5199,29 @@ function paintDrEstimate(frame) {
         return;
     }
     if (dr.state !== 'ready' || exact === null) {
-        status.textContent = 'Collecting audio — first estimate after 6 seconds';
+        status.textContent = dr.playback_state === 'pause' ?
+            'Paused — waiting for audio' : dr.playback_state === 'stop' ?
+            'Stopped — waiting for audio' :
+            'Collecting audio — first estimate after 6 seconds';
         return;
     }
     const shown = Math.max(0, Math.round(exact));
     value.textContent = shown > 14 ? 'DR14+' : `DR${shown}`;
     needle.hidden = false;
     needle.style.left = `${Math.max(0, Math.min(100, shown / 14 * 100))}%`;
-    status.textContent = `${active.length * 3}s sampled · rolling ${drWindowLabel(drWindowSeconds)} audio window`;
+    status.textContent = `${active.length * 3}s sampled · rolling ${drWindowLabel(drWindowSeconds)} window`;
 }
 
+paintDrControls();
 paintDrHistory();
 if (window.ResizeObserver)
     new ResizeObserver(paintDrHistory).observe(document.getElementById('dr-estimate-history'));
 else window.addEventListener('resize', paintDrHistory);
 
 function startDrEstimate() {
-    if (!SPECTRUM_ENABLED || drEstimateSource || document.hidden || activeTab !== 0) return;
-    const btn = document.getElementById('btn-dr-estimate');
-    btn.setAttribute('aria-checked', 'true');
-    btn.textContent = 'Stop estimate';
-    document.getElementById('dr-estimate').hidden = false;
+    if (!SPECTRUM_ENABLED || drEstimateSource || document.hidden ||
+        document.body.classList.contains('spectrum-only')) return;
+    paintDrControls();
     drEstimateSource = new EventSource('/spectrum/stream?mode=dr');
     let chainRefreshed = false;
     drEstimateSource.onmessage = ev => {
@@ -5178,20 +5239,21 @@ function startDrEstimate() {
         document.getElementById('dr-estimate-status').textContent =
             'Stream disconnected — reconnecting';
         drEstimateReconnect = setTimeout(() => {
-            if (drEstimateWanted && !document.hidden && activeTab === 0) startDrEstimate();
+            if (drEstimateWanted && !document.hidden) startDrEstimate();
         }, 1500);
     };
 }
 
 function stopDrEstimate(clearWanted = true) {
-    if (clearWanted) drEstimateWanted = false;
+    if (clearWanted) {
+        drEstimateWanted = false;
+        saveDrSetting(DR_ACTIVE_KEY, false);
+    }
     if (drEstimateReconnect) { clearTimeout(drEstimateReconnect); drEstimateReconnect = null; }
     if (drEstimateSource) { drEstimateSource.close(); drEstimateSource = null; }
-    const btn = document.getElementById('btn-dr-estimate');
-    btn.setAttribute('aria-checked', 'false');
-    btn.textContent = 'Estimate DR';
+    paintDrControls();
     if (clearWanted)
-        document.getElementById('dr-estimate-status').textContent += ' · stopped';
+        document.getElementById('dr-estimate-status').textContent = 'Stopped';
 }
 
 function toggleDrEstimate() {
@@ -5199,6 +5261,10 @@ function toggleDrEstimate() {
     if (drEstimateWanted) stopDrEstimate();
     else {
         drEstimateWanted = true;
+        drEstimateVisible = true;
+        saveDrSetting(DR_ACTIVE_KEY, true);
+        saveDrSetting(DR_VISIBLE_KEY, true);
+        paintDrControls();
         document.getElementById('dr-estimate-value').textContent = '—';
         document.getElementById('dr-estimate-needle').hidden = true;
         document.getElementById('dr-estimate-status').textContent = 'Collecting audio…';
@@ -5246,7 +5312,7 @@ document.addEventListener('visibilitychange', () => {
     } else {
         if (spectrumWanted) startSpectrum();
         if (activeTab === 0 && metersWanted) startMeters();
-        if (activeTab === 0 && drEstimateWanted) startDrEstimate();
+        if (drEstimateWanted) startDrEstimate();
         if (activeTab === 0) autoRefreshControls.chain?.();
         refreshVisibleSystemCards();
     }
@@ -5272,6 +5338,7 @@ setMetersIdle(true);
     const styleBtn = document.getElementById('meters-style-btn');
     if (styleBtn) styleBtn.disabled = disabled;
     document.getElementById('btn-dr-estimate').disabled = disabled;
+    document.getElementById('btn-dr-visibility').disabled = disabled;
 }
 paintSpectrumMode();
 renderDelayReadout();
@@ -5298,11 +5365,10 @@ function switchTab(i, persist = true) {
     if (leavingSpectrum) stopSpectrum(true);
     if (i !== 0) {
         if (metersSource) stopMeters(false);
-        if (drEstimateSource) stopDrEstimate(false);
     } else if (!document.hidden) {
         if (metersWanted) startMeters();
-        if (drEstimateWanted) startDrEstimate();
     }
+    if (!document.hidden && drEstimateWanted) startDrEstimate();
     if (i === 2 && !document.hidden) {
         spectrumWanted = true;
         startSpectrum();

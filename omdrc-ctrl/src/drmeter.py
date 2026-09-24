@@ -140,6 +140,7 @@ class RollingEstimate:
         self.channels = channels
         self.block = int(BLOCK_SECONDS * (rate + (60 if rate == 44100 else 0)))
         self.blocks = deque(maxlen=max(2, int(seconds / BLOCK_SECONDS)))
+        self.total_blocks = 0
         self.count = 0
         self.sum2 = np.zeros(channels, dtype=np.float64)
         self.peak = np.zeros(channels, dtype=np.float64)
@@ -158,6 +159,7 @@ class RollingEstimate:
             if self.count == self.block:
                 self.blocks.append((2.0 * self.sum2 / self.block,
                                     self.peak.copy()))
+                self.total_blocks += 1
                 self.count = 0
                 self.sum2.fill(0)
                 self.peak.fill(0)
@@ -169,6 +171,17 @@ class RollingEstimate:
         self.count = 0
         self.sum2.fill(0)
         self.peak.fill(0)
+
+    def add_gap(self) -> None:
+        """Add one empty time slot for a paused or stopped source."""
+        self.discard_partial()
+        self.blocks.append((np.zeros(self.channels), np.zeros(self.channels)))
+        self.total_blocks += 1
+
+    def mark_track_start(self) -> int:
+        """Return the boundary without discarding the shared rolling history."""
+        self.discard_partial()
+        return self.total_blocks
 
     def result(self) -> dict | None:
         if len(self.blocks) < 2:

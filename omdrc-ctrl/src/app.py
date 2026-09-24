@@ -1882,7 +1882,8 @@ class SpectrumAnalyzer:
         self.band_clients = 0   # subset of `clients` that actually want FFT bands
         self.dr_clients = 0     # rolling DR shares this reader, without FFTs
         self.dr_epoch = 0       # reset the excerpt when its first client joins
-        self.dr_state = {"state": "collecting", "dr": None, "seconds": 0}
+        self.dr_state = {"state": "collecting", "dr": None, "seconds": 0,
+                         "track_age_blocks": 0}
         self.dr_history: list = []
         self.dr_revision = 0
         self.seq = 0
@@ -1944,7 +1945,8 @@ class SpectrumAnalyzer:
         if mode == "dr":
             self.dr_clients += 1
             self.dr_epoch += 1
-            self.dr_state = {"state": "collecting", "dr": None, "seconds": 0}
+            self.dr_state = {"state": "collecting", "dr": None, "seconds": 0,
+                             "track_age_blocks": 0}
             self.dr_history = []
             self.dr_revision += 1
         elif mode != "vu":
@@ -1985,7 +1987,7 @@ class SpectrumAnalyzer:
                         if self.dr_clients == 0:
                             self.dr_epoch += 1
                             self.dr_state = {"state": "collecting", "dr": None,
-                                             "seconds": 0}
+                                             "seconds": 0, "track_age_blocks": 0}
                             self.dr_history = []
                             self.dr_revision += 1
                         self.dr_clients += 1
@@ -2334,16 +2336,38 @@ class SpectrumAnalyzer:
             dr_drops_seen = 0
             dr_song_file = ""
             dr_song_id = ""
+            dr_playback_state = ""
+            dr_track_start_total = 0
+            dr_gap_next_at = 0.0
+            dr_gap_marked = False
             next_dr_song_check = 0.0
 
             def reset_dr() -> None:
-                nonlocal dr_estimate
+                nonlocal dr_estimate, dr_track_start_total, dr_gap_next_at, dr_gap_marked
                 dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS, 1200)
+                dr_track_start_total = 0
+                dr_gap_next_at = 0.0
+                dr_gap_marked = False
                 dr_tail.clear()
                 with self.lock:
                     self.dr_state = {"state": "collecting", "dr": None,
-                                     "seconds": 0}
+                                     "seconds": 0, "track_age_blocks": 0}
                     self.dr_history = []
+                    self.dr_revision += 1
+
+            def publish_dr() -> None:
+                if dr_estimate is None:
+                    return
+                result = dr_estimate.result()
+                age = max(0, dr_estimate.total_blocks - dr_track_start_total)
+                with self.lock:
+                    self.dr_state = ({"state": "ready", **result,
+                                      "track_age_blocks": age,
+                                      "playback_state": dr_playback_state} if result else
+                                     {"state": "collecting", "dr": None,
+                                      "seconds": 0, "track_age_blocks": age,
+                                      "playback_state": dr_playback_state})
+                    self.dr_history = dr_estimate.history()
                     self.dr_revision += 1
 
             def keep_bytes() -> int:
@@ -2408,7 +2432,7 @@ class SpectrumAnalyzer:
                 if self.dr_clients and source.name != "mpd":
                     with self.lock:
                         self.dr_state = {"state": "unavailable", "dr": None,
-                                         "seconds": 0}
+                                         "seconds": 0, "track_age_blocks": 0}
                         if self.dr_history:
                             self.dr_history = []
                             self.dr_revision += 1
@@ -2434,7 +2458,9 @@ class SpectrumAnalyzer:
                     except queue.Empty:
                         break
                     at = time.monotonic()
-                    if last_data_at and at - last_data_at > silence_timeout:
+                    gap_since_last_pcm = bool(last_data_at and
+                                              at - last_data_at > silence_timeout)
+                    if gap_since_last_pcm:
                         # Resuming after a real gap, so the retained history is
                         # the tail of whatever played BEFORE it — and the
                         # hold-back reads exactly that far back.  Without this
@@ -2453,6 +2479,11 @@ class SpectrumAnalyzer:
                     if not dr_only:
                         buf.extend(data)
                     if dr_on and dr_estimate is not None:
+                        if gap_since_last_pcm and not dr_gap_marked:
+                            dr_estimate.add_gap()
+                            dr_tail.clear()
+                            publish_dr()
+                        dr_gap_marked = False
                         if reader_drops[0] != dr_drops_seen:
                             # Lost PCM invalidates only the unfinished block;
                             # completed history stays across playback gaps.
@@ -2465,14 +2496,7 @@ class SpectrumAnalyzer:
                             pcm = np.frombuffer(bytes(dr_tail[:usable]), dtype="<i4")
                             pcm = pcm.reshape(-1, SPECTRUM_CHANNELS)
                             if dr_estimate.feed(pcm.astype(np.float32) / 2147483648.0):
-                                result = dr_estimate.result()
-                                with self.lock:
-                                    self.dr_state = ({"state": "ready", **result}
-                                                     if result else
-                                                     {"state": "collecting", "dr": None,
-                                                      "seconds": 3})
-                                    self.dr_history = dr_estimate.history()
-                                    self.dr_revision += 1
+                                publish_dr()
                             del dr_tail[:usable]
                 if dr_only:
                     buf.clear()
@@ -2485,16 +2509,32 @@ class SpectrumAnalyzer:
 
                 now = time.monotonic()
                 if dr_on and now >= next_dr_song_check:
-                    next_dr_song_check = now + 2.0
+                    next_dr_song_check = now + 0.5
                     song = _mpd_now_playing_via_protocol(_resolve_mpd_port())
                     song_file = song.get("file", "")
                     song_id = song.get("songid", "")
+                    dr_playback_state = song.get("state", "")
                     if _dr_track_changed(dr_song_file, dr_song_id,
                                          song_file, song_id):
-                        reset_dr()
+                        # Keep the shared ring intact; each browser decides
+                        # whether to start its window at this boundary.
+                        dr_track_start_total = dr_estimate.mark_track_start()
+                        dr_tail.clear()
+                        publish_dr()
                     if song_file:
                         dr_song_file = song_file
                         dr_song_id = song_id
+                    if dr_playback_state in ("pause", "stop"):
+                        if not dr_gap_next_at:
+                            dr_gap_next_at = now
+                        while now >= dr_gap_next_at:
+                            dr_estimate.add_gap()
+                            dr_tail.clear()
+                            publish_dr()
+                            dr_gap_marked = True
+                            dr_gap_next_at += 3.0
+                    else:
+                        dr_gap_next_at = 0.0
                 if now >= next_source_check:
                     next_source_check = now + 0.5
                     if (SPECTRUM_SOURCE == "auto"
@@ -2521,9 +2561,9 @@ class SpectrumAnalyzer:
                     # tee — and calling that a fault while the bars are moving
                     # is how the red banner came to flash over live music.
                     stalled_for = now - max(last_data_at, attached_at)
-                    if stalled_for > 3.0 and (
+                    if stalled_for > 3.0 and source.expects_data() and (
                             (no_writer_since and now - no_writer_since > 3.0)
-                            or (stalled_for > 5.0 and source.expects_data())):
+                            or stalled_for > 5.0):
                         faulted = True
                         self._publish({
                             "ok": False, "state": "no-writer",

@@ -136,14 +136,18 @@ from 1 to 20 minutes, and the bar below the gauge colors each time slice by
 its measured DR and prints its rounded value. The number of slices adapts to
 the panel width. A complete 3-second block below −80 dBFS peak leaves an empty
 slice; AVG is the mean of 3-second DR values since the latest such silence in
-the selected window. MPD track changes restart the estimate; pause, seek,
-stop and resume preserve the completed audio blocks. The window therefore
-counts sampled audio time, not elapsed wall time. The first
+the selected window. Pausing or stopping MPD also inserts empty time slots,
+and AVG resumes with the next audio. **Detect song change** starts a new view
+of the rolling window on each MPD track; switching it off follows a longer
+slice across tracks. Seeking preserves the completed blocks. The window,
+song-change setting, panel visibility and active state are saved in this
+browser and restored on reload. The first
 number appears after six seconds. It keeps only up to 20 minutes of 3-second
 block peak and RMS statistics, with no download or saved audio. The tap is a 48 kHz
 excerpt, so this is a quick guide to the passage you heard, not a full-track
-or album DR measurement. Closing or hiding the tab, or switching away from
-Listen, releases its listener. MPD's secondary FIFO output is disabled when
+or album DR measurement. Switching to System or Spectrum keeps an active DR
+estimate running; hiding or closing the browser tab releases its listener.
+MPD's secondary FIFO output is disabled when
 Estimate DR, Spectrum and Levels all have no listeners.
 
 The DR versions page reports what *other people's* copies of a record measure.

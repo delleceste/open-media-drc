@@ -148,6 +148,20 @@ class RollingEstimateTest(unittest.TestCase):
         self.assertEqual(len(estimate.history()), 2)
         self.assertEqual(estimate.result()["seconds"], 6)
 
+    def test_track_boundary_keeps_history_and_pause_adds_an_empty_slot(self):
+        estimate = drmeter.RollingEstimate(100, 2)
+        block = sine(3, 0.25, rate=100)
+        estimate.feed(block)
+        estimate.feed(block[:100])
+        boundary = estimate.mark_track_start()
+        self.assertEqual(boundary, 1)
+        self.assertEqual(len(estimate.history()), 1)
+        estimate.add_gap()
+        self.assertEqual(estimate.history()[-1][1], [0.0, 0.0])
+        estimate.feed(block)
+        self.assertEqual(estimate.total_blocks - boundary, 2)
+        self.assertEqual(len(estimate.history()), 3)
+
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
                      "ffmpeg not installed")
