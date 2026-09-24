@@ -715,7 +715,7 @@ def load_config(path: str) -> None:
     global QCONNECT_STATUS_RESYNC_S
     global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
     global SPECTRUM_RATE, SPECTRUM_BITS, SPECTRUM_CHANNELS
-    global SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
+    global DR_PUBLISH_SECONDS, SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
     global SPECTRUM_VU_MODE, SPECTRUM_FLOOR_DB, SPECTRUM_MIN_FREQ
     global SPECTRUM_FALL_DB_PER_S
     global SPECTRUM_DRC_DELAY_TRIM_MS, SPECTRUM_DRC_DELAY_DELTA_MS, SPECTRUM_DRC_DELAY_AUTO_SYNC
@@ -767,6 +767,7 @@ def load_config(path: str) -> None:
         SPECTRUM_BITS = cfg.getint("spectrum", "bits", fallback=SPECTRUM_BITS)
         SPECTRUM_CHANNELS = max(1, cfg.getint("spectrum", "channels", fallback=SPECTRUM_CHANNELS))
         SPECTRUM_REFRESH_HZ = max(1.0, cfg.getfloat("spectrum", "refresh_hz", fallback=SPECTRUM_REFRESH_HZ))
+        DR_PUBLISH_SECONDS = max(3.0, cfg.getfloat("spectrum", "dr_refresh_seconds", fallback=DR_PUBLISH_SECONDS))
         SPECTRUM_FFT_SIZE = max(4096, cfg.getint("spectrum", "fft_size", fallback=SPECTRUM_FFT_SIZE))
         SPECTRUM_PRECISION_FFT_SIZE = max(
             SPECTRUM_FFT_SIZE,

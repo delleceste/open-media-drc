@@ -810,8 +810,8 @@
                                       font-weight: 800; font-variant-numeric: tabular-nums; }
         .dr-estimate-times { position: relative; height: 1em; margin: 3px 4px 0;
                              color: var(--muted); font-size: .66rem; font-variant-numeric: tabular-nums; }
-        .dr-estimate-times span { position: absolute; top: 0; white-space: nowrap; }
-        .dr-estimate-times .latest { right: 0; }
+        .dr-estimate-times span { position: absolute; top: 0; left: 0; white-space: nowrap; }
+        .dr-estimate-times .latest { left: auto; right: 0; }
         .dr-estimate-note { display: flex; flex-wrap: wrap; gap: 3px 12px;
                             margin-top: 6px; color: var(--muted);
                             font-size: .7rem; line-height: 1.4; }
@@ -5137,20 +5137,19 @@ function drHistoryColor(dr) {
 
 function paintDrHistory() {
     const track = document.getElementById('dr-estimate-history');
-    const blockCount = drWindowSeconds / 3;
     const blocks = drSelectedBlocks();
-    // A wide one-minute panel can show all twenty 3-second blocks.
-    const steps = Math.max(1, Math.min(Math.floor(track.clientWidth / 24),
-                                        blockCount));
-    const left = blockCount - blocks.length;
+    const count = blocks.length;
+    // The bar always spans the full width: the audio collected so far is
+    // divided among the segments, so every segment resizes as blocks arrive.
+    const steps = Math.max(1, Math.min(Math.floor(track.clientWidth / 24), count));
     const cells = [];
     for (let i = 0; i < steps; i++) {
-        const start = Math.floor(i * blockCount / steps);
-        const end = Math.floor((i + 1) * blockCount / steps);
-        const sample = blocks.slice(Math.max(0, start - left), Math.max(0, end - left));
+        const start = Math.floor(i * count / steps);
+        const end = Math.floor((i + 1) * count / steps);
+        const sample = blocks.slice(start, end);
         const silent = sample.some(drBlockSilent);
         const dr = sample.length && !silent ? drFromBlocks(sample) : null;
-        const period = `${Math.round((blockCount - end) * 3)}–${Math.round((blockCount - start) * 3)} s before the latest interval`;
+        const period = `${Math.round((count - end) * 3)}–${Math.round((count - start) * 3)} s before the latest interval`;
         const title = !sample.length ? 'Waiting for audio' : silent ?
             `${period}: silence` : `${period}: DR${dr.toFixed(1)}`;
         const color = dr === null ? null : drHistoryColor(dr);
@@ -5160,10 +5159,9 @@ function paintDrHistory() {
     }
     track.innerHTML = cells.join('');
     track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)} of intervals, oldest on the left`);
-    // The label rides the left edge of the data and shows how much is shown.
+    // The left label shows how much audio the bar covers.
     const oldest = document.getElementById('dr-estimate-oldest');
-    oldest.textContent = blocks.length ? `−${drElapsedLabel(blocks.length * 3)}` : '';
-    oldest.style.left = `min(${(1 - blocks.length / blockCount) * 100}%, calc(100% - 9em))`;
+    oldest.textContent = count ? `−${drElapsedLabel(count * 3)}` : '';
     document.getElementById('dr-estimate-window-label').textContent = drWindowLabel(drWindowSeconds);
     const active = drActiveBlocks(blocks);
     const average = active.length ? active.reduce((sum, block) => sum + drFromBlocks([block]), 0) / active.length : null;
