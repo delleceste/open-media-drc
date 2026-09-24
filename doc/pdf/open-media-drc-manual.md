@@ -1612,7 +1612,7 @@ shows:
   rounded value printed inside. The colored height is proportional to the
   segment's mean RMS level, full height at 0 dB and empty at −40 dB, so a
   loud, compressed section stands out from a quiet one. The
-  number of segments follows the panel width (about one per 24 px).
+  number of segments follows the panel width (each at least 1.1 times the width of two wide characters, so a wide panel or a long window draws a fine curve of the level).
 - **Segment details** --- hover a segment, or **tap** it on a touch screen
   (which has no hover), to see its time range (seconds before the latest
   interval), exact DR and level on a line under the bar. Tapping it again

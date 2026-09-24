@@ -5165,6 +5165,23 @@ function drHistoryColor(dr) {
             foreground: `hsl(${mix(1)} ${mix(2)}% 7%)`};
 }
 
+// Narrowest useful segment: 1.1 times the width of two wide characters in the
+// segment's own font, so a long window draws a fine curve of the level.
+let drCellMeasure = {key: '', px: 24};
+function drMinCellPx(track) {
+    try {
+        const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        const size = .62 * rem, family = getComputedStyle(track).fontFamily;
+        const key = `${size}|${family}`;
+        if (drCellMeasure.key !== key) {
+            const ctx = document.createElement('canvas').getContext('2d');
+            ctx.font = `800 ${size}px ${family}`;
+            drCellMeasure = {key, px: Math.max(8, 1.1 * ctx.measureText('XX').width)};
+        }
+    } catch {}
+    return drCellMeasure.px;
+}
+
 function paintDrHistory() {
     const track = document.getElementById('dr-estimate-history');
     const blocks = drSelectedBlocks();
@@ -5184,7 +5201,7 @@ function paintDrHistory() {
     const gapRuns = runs.filter(r => r.silent).length;
     const audioBlocks = runs.reduce((n, r) => n + (r.silent ? 0 : r.end - r.start), 0);
     const budget = Math.max(runs.length - gapRuns,
-                            Math.floor((track.clientWidth - gapRuns * 14) / 24));
+                            Math.floor((track.clientWidth - gapRuns * 14) / (drMinCellPx(track) + 2)));
     const parts = [];
     for (const run of runs) {
         if (run.silent) { parts.push(run); continue; }
