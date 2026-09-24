@@ -568,8 +568,8 @@
         /* .title-row / .title-actions wrap, so a narrow (portrait) screen
            shows every button instead of the card clipping the overflow. */
         .qc-card-title { flex-wrap: wrap; gap: 8px; }
-        .dr-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-        .dr-group-label { font-size: .7rem; font-weight: 700; letter-spacing: .08em; color: var(--muted); }
+        .dr-card .card-title { border-bottom: 0; }
+        .dr-card .dr-estimate, .dr-card .drm { margin: 0 0 12px; }
         .qc-card-foot { display: flex; justify-content: flex-end; gap: 6px;
                         padding: 10px 0 12px; border-top: 1px solid var(--border); }
         .qc-card-title {
@@ -1807,16 +1807,6 @@
         <div class="title-actions">
             <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
             <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
-            <span class="dr-group"><span class="dr-group-label">DR</span>
-                <button class="btn-log" id="btn-dr-estimate" onclick="toggleDrEstimate()"
-                        role="switch" aria-checked="false"
-                        title="Estimate DR from the selected rolling window, without a download. Lit while running and the panel is open; tap again to stop and close it">Estimate</button>
-    {% if drdb_enabled %}
-                <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
-                        title="Other masters of this record, and what they measure, in the Dynamic Range database">Compare ↗</button>{% endif %}
-                <button class="btn-log" id="btn-drm" onclick="drmStart()"
-                        title="Fetch this record's tracks again, measure their dynamic range, then delete them">Meas.</button>
-            </span>
         </div>
     </div>
     <!-- Mutually-exclusive renderer toggle -->
@@ -1855,6 +1845,38 @@
         </div>
         <div id="qc-activity" aria-live="polite"></div>
     </div>
+    <div id="qconnect-log-panel" style="display:none">
+        <div class="refresh-note" id="qc-log-source"></div>
+        <pre id="qc-log-content" class="qc-log"></pre>
+    </div>
+    <!-- Qobuz OAuth sign-in, driven from here so the box needs no keyboard -->
+    <div id="qobuz-oauth-panel" style="display:none" aria-live="polite"></div>
+    <!-- Rarely used, so kept out of the header row -->
+    <div class="qc-card-foot">
+        <button class="btn-log" id="btn-restart" onclick="restartRenderer()" disabled>Restart renderer</button>
+        <button class="btn-log" id="btn-log" onclick="toggleLog()">Renderer log</button>
+        <button class="btn-log btn-mini" id="btn-act-lines"
+                onclick="toggleActivityLines()"
+                title="Activity detail: one line, or the last three">☰</button>
+    </div>
+</div>
+
+<!-- Dynamic range: about the audio, not the renderer, so its own card.
+     Estimate opens the panel and runs the analysis; closing it stops both. -->
+<div class="card dr-card" id="dr-card">
+    <div class="card-title title-row">
+        <span>Dynamic range</span>
+        <div class="title-actions">
+            <button class="btn-log" id="btn-dr-estimate" onclick="toggleDrEstimate()"
+                    role="switch" aria-checked="false"
+                    title="Estimate DR from the selected rolling window, without a download. Lit while running and the panel is open; tap again to stop and close it">Estimate</button>
+{% if drdb_enabled %}
+            <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
+                    title="Other masters of this record, and what they measure, in the Dynamic Range database">Compare ↗</button>{% endif %}
+            <button class="btn-log" id="btn-drm" onclick="drmStart()"
+                    title="Fetch this record's tracks again, measure their dynamic range, then delete them">Meas.</button>
+        </div>
+    </div>
     <div id="dr-estimate" class="dr-estimate" hidden aria-live="polite">
         <div class="dr-estimate-head"><strong id="dr-estimate-value">—</strong>
             <div class="dr-estimate-gauge">
@@ -1887,20 +1909,6 @@
         <div class="drm-bar"><div id="drm-fill"></div></div>
         <div class="drm-msg" id="drm-msg"></div>
         <div class="drm-result" id="drm-result" hidden></div>
-    </div>
-    <div id="qconnect-log-panel" style="display:none">
-        <div class="refresh-note" id="qc-log-source"></div>
-        <pre id="qc-log-content" class="qc-log"></pre>
-    </div>
-    <!-- Qobuz OAuth sign-in, driven from here so the box needs no keyboard -->
-    <div id="qobuz-oauth-panel" style="display:none" aria-live="polite"></div>
-    <!-- Rarely used, so kept out of the header row -->
-    <div class="qc-card-foot">
-        <button class="btn-log" id="btn-restart" onclick="restartRenderer()" disabled>Restart renderer</button>
-        <button class="btn-log" id="btn-log" onclick="toggleLog()">Renderer log</button>
-        <button class="btn-log btn-mini" id="btn-act-lines"
-                onclick="toggleActivityLines()"
-                title="Activity detail: one line, or the last three">☰</button>
     </div>
 </div>
 

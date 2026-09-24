@@ -88,7 +88,7 @@ filter publication and a tap run must never overlap on a single-DAC box.
 
 ## DR versions page
 
-The renderer card's **DR ▸ Compare ↗** button opens `/dr-alternatives`: every master of
+The Dynamic range card's **Compare ↗** button opens `/dr-alternatives`: every master of
 the record now playing that the community database at
 [dr.loudness-war.info](https://dr.loudness-war.info) knows about, sorted by
 album DR — the most dynamic pressing first, the loudness-war casualty last.
@@ -129,7 +129,7 @@ provides no feedback. Every command here either shows its output directly
 
 ## Measuring the DR of what is playing
 
-**DR ▸ Estimate** on the renderer card samples the MPD output already used by
+**Estimate** on the Dynamic range card samples the MPD output already used by
 the Spectrum and Levels displays. Its toggle opens the panel and starts the
 analysis; turning it off closes both, and it is always off after a page load, so
 nothing is computed that is not on screen. While it is on, it shows a
@@ -165,7 +165,7 @@ secondary FIFO output is disabled when
 DR estimate, Spectrum and Levels all have no listeners.
 
 The DR versions page reports what *other people's* copies of a record measure.
-The renderer card's **DR ▸ Meas.** button measures the copy on the wire.
+The Dynamic range card's **Meas.** button measures the copy on the wire.
 
 It fetches the record's tracks a second time — the tracks in the queue around
 the one playing that carry *exactly* its album tag, so a deluxe edition queued
@@ -678,7 +678,7 @@ that exact line and repeat count; a fresh occurrence raises it again.
 
 ### Reserved section: `[drdb]`
 
-Dynamic Range database lookups behind the renderer card's **DR ▸ Compare ↗** button
+Dynamic Range database lookups behind the Dynamic range card's **Compare ↗** button
 (see [DR versions page](#dr-versions-page)). Read-only, on demand, and off the
 audio path entirely.
 
