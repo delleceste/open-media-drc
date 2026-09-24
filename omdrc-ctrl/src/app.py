@@ -312,6 +312,7 @@ SPECTRUM_ENABLED = False
 SPECTRUM_OUTPUT_NAME = "OMDRC Spectrum"
 SPECTRUM_FIFO = "/tmp/omdrc-spectrum.fifo"
 SPECTRUM_RATE = 48000
+DR_PUBLISH_SECONDS = 5.0    # display refresh for the live DR panel
 SPECTRUM_BITS = 32
 SPECTRUM_CHANNELS = 2
 SPECTRUM_REFRESH_HZ = 25.0
@@ -1886,6 +1887,7 @@ class SpectrumAnalyzer:
                          "track_age_blocks": 0}
         self.dr_history: list = []
         self.dr_revision = 0
+        self._dr_json = (-1, "[]")     # history serialized once per revision
         self.seq = 0
         self.frame = {
             "ok": False,
@@ -2029,9 +2031,13 @@ class SpectrumAnalyzer:
         with self.lock:
             return self.seq, dict(self.frame)
 
-    def dr_history_snapshot(self) -> tuple[int, list]:
+    def dr_history_json(self) -> tuple[int, str]:
+        """The history as JSON, built once per revision and shared by clients."""
         with self.lock:
-            return self.dr_revision, self.dr_history
+            if self._dr_json[0] != self.dr_revision:
+                self._dr_json = (self.dr_revision, json.dumps(
+                    self.dr_history, separators=(",", ":")))
+            return self._dr_json
 
     def wait_next(self, last_seq: int, timeout: float = 5.0) -> tuple[int, dict]:
         with self.cond:
@@ -2340,11 +2346,12 @@ class SpectrumAnalyzer:
             dr_track_start_total = 0
             dr_gap_next_at = 0.0
             dr_gap_marked = False
+            dr_published_at = 0.0
             next_dr_song_check = 0.0
 
             def reset_dr() -> None:
                 nonlocal dr_estimate, dr_track_start_total, dr_gap_next_at, dr_gap_marked
-                dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS, 1200)
+                dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS, 5400)
                 dr_track_start_total = 0
                 dr_gap_next_at = 0.0
                 dr_gap_marked = False
@@ -2355,9 +2362,16 @@ class SpectrumAnalyzer:
                     self.dr_history = []
                     self.dr_revision += 1
 
-            def publish_dr() -> None:
+            def publish_dr(throttle: bool = False) -> None:
+                # Blocks stay 3 s long (the DR standard); only the display
+                # refresh is limited, and a later publish carries every block.
+                nonlocal dr_published_at
                 if dr_estimate is None:
                     return
+                now_dr = time.monotonic()
+                if throttle and now_dr - dr_published_at < DR_PUBLISH_SECONDS:
+                    return
+                dr_published_at = now_dr
                 result = dr_estimate.result()
                 age = max(0, dr_estimate.total_blocks - dr_track_start_total)
                 with self.lock:
@@ -2496,7 +2510,7 @@ class SpectrumAnalyzer:
                             pcm = np.frombuffer(bytes(dr_tail[:usable]), dtype="<i4")
                             pcm = pcm.reshape(-1, SPECTRUM_CHANNELS)
                             if dr_estimate.feed(pcm.astype(np.float32) / 2147483648.0):
-                                publish_dr()
+                                publish_dr(throttle=True)
                             del dr_tail[:usable]
                 if dr_only:
                     buf.clear()
@@ -7839,10 +7853,14 @@ def spectrum_stream():
         def payload(frame):
             nonlocal dr_revision
             if mode == "dr":
-                revision, history = _SPECTRUM.dr_history_snapshot()
+                revision, history = _SPECTRUM.dr_history_json()
                 if revision != dr_revision:
-                    frame = {**frame, "dr_blocks": history}
                     dr_revision = revision
+                    body = json.dumps(frame, separators=(",", ":"))
+                    # Splice the shared serialization instead of encoding
+                    # the whole history again for every connected client.
+                    sep = "," if len(body) > 2 else ""
+                    return f'data: {body[:-1]}{sep}"dr_blocks":{history}}}\n\n'
             return f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
 
         try:

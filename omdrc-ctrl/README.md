@@ -132,7 +132,7 @@ provides no feedback. Every command here either shows its output directly
 **Estimate DR** on the renderer card samples the MPD output already used by
 the Spectrum and Levels displays. While its toggle is on, it updates a
 red/yellow/green gauge every three seconds. A slider selects a rolling window
-from 1 to 20 minutes, and the bar below the gauge colors each time slice by
+from 1 to 90 minutes, and the bar below the gauge colors each time slice by
 its measured DR and prints its rounded value. The number of slices adapts to
 the panel width. A complete 3-second block below −80 dBFS peak leaves an empty
 slice; AVG is the mean of 3-second DR values since the latest such silence in
@@ -142,9 +142,10 @@ of the rolling window on each MPD track; switching it off follows a longer
 slice across tracks. Seeking preserves the completed blocks. The window,
 song-change setting, panel visibility and active state are saved in this
 browser and restored on reload. The first
-number appears after six seconds. It keeps only up to 20 minutes of 3-second
+number appears after six seconds. The panel refreshes at most every five seconds; the
+3-second blocks and the DR algorithm are unchanged. It keeps only up to 90 minutes of 3-second
 block peak and RMS statistics, with no download or saved audio. The tap is a 48 kHz
-excerpt, so this is a quick guide to the passage you heard, not a full-track
+excerpt, so this is an indication of the passage you heard, not a full-track
 or album DR measurement. Switching to System or Spectrum keeps an active DR
 estimate running; hiding or closing the browser tab releases its listener.
 MPD's secondary FIFO output is disabled when

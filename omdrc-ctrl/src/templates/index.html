@@ -797,21 +797,21 @@
         .dr-estimate-scale span { position: absolute; transform: translateX(-50%); }
         .dr-estimate-scale span:first-child { left: 0; transform: none; }
         .dr-estimate-scale span:last-child { right: 0; transform: none; }
-        .dr-estimate-window { display: flex; align-items: center; gap: 10px;
+        .dr-estimate-window { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
                               margin: 9px 0 4px; color: var(--muted); font-size: .74rem; }
-        .dr-estimate-window input { flex: 1; min-width: 0; accent-color: var(--accent); }
-        .dr-estimate-window output { min-width: 3.5em; text-align: right;
+        .dr-estimate-window input { flex: 1; min-width: 90px; accent-color: var(--accent); }
+        .dr-estimate-window output { min-width: 5.5em; text-align: right;
                                      font-variant-numeric: tabular-nums; color: var(--text); }
-        .dr-estimate-options { display: flex; justify-content: flex-end;
-                               margin: 2px 0 6px; }
         .dr-estimate-history { display: flex; gap: 2px; height: 21px; margin: 5px 4px 0;
                                overflow: hidden; border-radius: 3px; }
         .dr-estimate-history > span { display: flex; flex: 1 1 0; min-width: 0;
                                       align-items: center; justify-content: center;
                                       background: var(--surface); font-size: .62rem;
                                       font-weight: 800; font-variant-numeric: tabular-nums; }
-        .dr-estimate-times { display: flex; justify-content: space-between;
-                             margin: 3px 4px 0; color: var(--muted); font-size: .66rem; }
+        .dr-estimate-times { position: relative; height: 1em; margin: 3px 4px 0;
+                             color: var(--muted); font-size: .66rem; font-variant-numeric: tabular-nums; }
+        .dr-estimate-times span { position: absolute; top: 0; white-space: nowrap; }
+        .dr-estimate-times .latest { right: 0; }
         .dr-estimate-note { display: flex; flex-wrap: wrap; gap: 3px 12px;
                             margin-top: 6px; color: var(--muted);
                             font-size: .7rem; line-height: 1.4; }
@@ -1848,16 +1848,16 @@
             <div class="dr-estimate-needle" id="dr-estimate-needle" hidden></div>
         </div>
         <div class="dr-estimate-scale" aria-hidden="true"><span>0</span><span style="left:50%">7</span><span style="left:86%">12</span><span>14+</span></div>
-        <label class="dr-estimate-window" for="dr-estimate-window">Rolling window
-            <input id="dr-estimate-window" type="range" min="60" max="1200" step="60" value="60" oninput="setDrEstimateWindow(this.value)">
-            <output id="dr-estimate-window-label" for="dr-estimate-window">1 min</output>
-        </label>
-        <div class="dr-estimate-options"><button type="button" class="btn-log btn-mini"
-            id="dr-detect-song-change" role="switch" aria-checked="true"
-            onclick="toggleDrSongChange()">Detect song change: On</button></div>
+        <div class="dr-estimate-window">
+            <label for="dr-estimate-window">Rolling window</label>
+            <input id="dr-estimate-window" type="range" min="60" max="5400" step="60" value="60" oninput="setDrEstimateWindow(this.value)">
+            <output id="dr-estimate-window-label" for="dr-estimate-window">1 minute</output>
+            <button type="button" class="btn-log btn-mini" id="dr-detect-song-change"
+                role="switch" aria-checked="true" onclick="toggleDrSongChange()">Detect song change: On</button>
+        </div>
         <div id="dr-estimate-history" class="dr-estimate-history" role="img" aria-label="Dynamic range history, oldest on the left"></div>
-        <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">−1 min</span><span>Latest</span></div>
-        <div class="dr-estimate-note"><span>Recent excerpt at 48 kHz · a guide to this passage, not full-track or album DR</span>
+        <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">—</span><span class="latest">Latest</span></div>
+        <div class="dr-estimate-note"><span>Recent excerpt at 48 kHz · indicative of what you just heard, not full-track or album DR</span>
             <span id="dr-estimate-average" class="dr-estimate-average" title="Mean of complete 3-second DR values since the latest silence in this window">AVG —</span></div>
     </div>
     <!-- DR measured here, of the copy on the wire (drmeter.py).  Hidden until
@@ -5035,7 +5035,7 @@ let drTrackAgeBlocks = 0;
 let drWindowSeconds = 60;
 try {
     const saved = Number(localStorage.getItem(DR_WINDOW_KEY));
-    if (Number.isInteger(saved) && saved >= 60 && saved <= 1200 && saved % 60 === 0)
+    if (Number.isInteger(saved) && saved >= 60 && saved <= 5400 && saved % 60 === 0)
         drWindowSeconds = saved;
     drEstimateWanted = localStorage.getItem(DR_ACTIVE_KEY) === 'true';
     drEstimateVisible = localStorage.getItem(DR_VISIBLE_KEY) === 'true';
@@ -5085,7 +5085,14 @@ function drSelectedBlocks() {
 }
 
 function drWindowLabel(seconds) {
-    return `${seconds / 60} min`;
+    const minutes = seconds / 60;
+    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+}
+
+function drElapsedLabel(seconds) {
+    const h = Math.floor(seconds / 3600), m = Math.floor(seconds % 3600 / 60), s = seconds % 60;
+    if (h) return `${h} h ${String(m).padStart(2, '0')} min`;
+    return m ? (s ? `${m} min ${s} s` : `${m} min`) : `${s} s`;
 }
 
 function drFromBlocks(blocks) {
@@ -5153,7 +5160,10 @@ function paintDrHistory() {
     }
     track.innerHTML = cells.join('');
     track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)} of intervals, oldest on the left`);
-    document.getElementById('dr-estimate-oldest').textContent = `−${drWindowLabel(drWindowSeconds)}`;
+    // The label rides the left edge of the data and shows how much is shown.
+    const oldest = document.getElementById('dr-estimate-oldest');
+    oldest.textContent = blocks.length ? `−${drElapsedLabel(blocks.length * 3)}` : '';
+    oldest.style.left = `min(${(1 - blocks.length / blockCount) * 100}%, calc(100% - 9em))`;
     document.getElementById('dr-estimate-window-label').textContent = drWindowLabel(drWindowSeconds);
     const active = drActiveBlocks(blocks);
     const average = active.length ? active.reduce((sum, block) => sum + drFromBlocks([block]), 0) / active.length : null;
@@ -5162,7 +5172,7 @@ function paintDrHistory() {
 }
 
 function setDrEstimateWindow(value) {
-    drWindowSeconds = Math.max(60, Math.min(1200, Number(value) || 60));
+    drWindowSeconds = Math.max(60, Math.min(5400, Number(value) || 60));
     saveDrSetting(DR_WINDOW_KEY, drWindowSeconds);
     if (drEstimateFrame)
         paintDrEstimate({...drEstimateFrame, dr_blocks: drEstimateBlocks});
