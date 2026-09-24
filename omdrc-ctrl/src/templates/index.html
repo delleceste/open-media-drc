@@ -1001,6 +1001,18 @@
         .chain-node.idle    { opacity: .55; }
         .chain-node.absent  { opacity: .5; border-style: dashed; }
         .chain-node.live    { border-color: var(--green); }
+        .chain-node.fifo, .chain-node.fifo-consumer {
+            padding: 3px 7px; border-radius: 5px;
+        }
+        .chain-node.fifo .chain-node-title,
+        .chain-node.fifo-consumer .chain-node-title { font-size: .66rem; }
+        .chain-node.fifo-consumer .chain-node-sub { display: none; }
+        .chain-listener-count {
+            border-radius: 8px; padding: 1px 5px;
+            background: #30363d; color: var(--text);
+            font: .6rem ui-monospace, "SFMono-Regular", monospace;
+            white-space: nowrap;
+        }
         /* An unexpected holder is the whole reason this card exists: a stray
            PulseAudio or a leftover mpv sitting on a device is drawn in red
            wherever it turns up, never quietly folded into the chain. */
@@ -5655,6 +5667,13 @@ function chainNodeEl(n) {
         body.appendChild(sub);
     }
     el.appendChild(body);
+    if (n.kind === 'fifo' || n.kind === 'fifo-consumer') {
+        const count = document.createElement('span');
+        count.className = 'chain-listener-count';
+        count.textContent = n.listeners;
+        count.title = `${n.listeners} ${n.kind === 'fifo' ? 'FIFO ' : ''}listener${n.listeners === 1 ? '' : 's'}`;
+        el.appendChild(count);
+    }
     el.title = chainNodeTitle(n);
     return el;
 }

@@ -50,7 +50,7 @@ def _holder(pid, cmd, mode, user="giacomo"):
 
 
 def _status(devices=None, holders=None, activity=None, running=None,
-            services=(), privileged=True) -> dict:
+            services=(), privileged=True, mpd_outputs=()) -> dict:
     if running is None:
         running = (APP.CDIN_PROCESS,)
     devices = {k: dict(v) for k, v in (devices or FREEBSD).items()}
@@ -58,6 +58,7 @@ def _status(devices=None, holders=None, activity=None, running=None,
          mock.patch.object(APP, "_device_holders",
                            return_value=(holders or {}, privileged, True)), \
          mock.patch.object(APP, "_chain_activity", return_value=activity or {}), \
+         mock.patch.object(APP, "_mpd_outputs", return_value=list(mpd_outputs)), \
          mock.patch.object(APP, "_process_running", lambda name: name in running), \
          mock.patch.object(APP, "_service_running", lambda name: name in services):
         return APP._chain_status()
@@ -263,6 +264,32 @@ class Graph(unittest.TestCase):
 
     def test_a_renderer_with_no_mpd_to_feed_is_not_drawn(self):
         self.assertIsNone(_node(_status(services=("upmpdcli",)), "app:upmpdcli"))
+
+    def test_enabled_mpd_fifo_shows_listener_branches(self):
+        outputs = [{"name": APP.SPECTRUM_OUTPUT_NAME, "enabled": True}]
+        with mock.patch.object(APP, "SPECTRUM_ENABLED", True), \
+             mock.patch.object(APP._SPECTRUM, "clients", 4), \
+             mock.patch.object(APP._SPECTRUM, "band_clients", 2), \
+             mock.patch.object(APP._SPECTRUM, "dr_clients", 1):
+            status = _status(running=("musicpd",), activity={"mpd": True},
+                             mpd_outputs=outputs)
+        fifo = _node(status, "spectrum:fifo")
+        self.assertEqual(fifo["listeners"], 4)
+        self.assertIsNotNone(_edge(status, "app:musicpd", fifo["id"]))
+        for consumer in ("spectrum:spectrum", "spectrum:level", "spectrum:dr-calc"):
+            self.assertIsNotNone(_node(status, consumer))
+            self.assertIsNotNone(_edge(status, fifo["id"], consumer))
+        self.assertEqual(_node(status, "spectrum:spectrum")["listeners"], 2)
+        self.assertEqual(_node(status, "spectrum:level")["listeners"], 1)
+        self.assertEqual(_node(status, "spectrum:dr-calc")["listeners"], 1)
+
+    def test_disabled_mpd_fifo_is_absent_even_with_listeners(self):
+        outputs = [{"name": APP.SPECTRUM_OUTPUT_NAME, "enabled": False}]
+        with mock.patch.object(APP, "SPECTRUM_ENABLED", True), \
+             mock.patch.object(APP._SPECTRUM, "clients", 1), \
+             mock.patch.object(APP._SPECTRUM, "band_clients", 1):
+            status = _status(running=("musicpd",), mpd_outputs=outputs)
+        self.assertIsNone(_node(status, "spectrum:fifo"))
 
     @unittest.skipUnless(APP._IS_LINUX, "snd-aloop's static nodes are Linux-only")
     def test_snd_aloop_does_not_linger_after_drc_is_switched_off(self):

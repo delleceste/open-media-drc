@@ -6674,6 +6674,33 @@ def _chain_status() -> dict:
                     "active": mpd_node["active"], "feeder": True,
                 })
 
+    fifo_node = None
+    fifo_consumers = []
+    if mpd_node is not None and any(
+            output["name"] == SPECTRUM_OUTPUT_NAME and output["enabled"]
+            for output in _mpd_outputs(_resolve_mpd_port())):
+        with _SPECTRUM.lock:
+            listeners = _SPECTRUM.clients
+            spectrum_listeners = _SPECTRUM.band_clients
+            dr_listeners = _SPECTRUM.dr_clients
+        level_listeners = max(0, listeners - spectrum_listeners - dr_listeners)
+        fifo_node = {
+            "id": "spectrum:fifo", "kind": "fifo", "title": "FIFO",
+            "sub": SPECTRUM_OUTPUT_NAME,
+            "listeners": listeners, "active": bool(mpd_node["active"]),
+        }
+        for name, count in (("SPECTRUM", spectrum_listeners),
+                            ("LEVEL", level_listeners),
+                            ("DR calc", dr_listeners)):
+            if count:
+                fifo_consumers.append({
+                    "id": f"spectrum:{name.lower().replace(' ', '-')}",
+                    "kind": "fifo-consumer", "title": name,
+                    "listeners": count,
+                    "sub": f"{count} listener{'s' if count != 1 else ''}",
+                    "active": bool(mpd_node["active"]),
+                })
+
     # Anything downstream is carrying audio exactly when some source is.  An
     # unexpected holder counts as producing: we cannot ask it, and a squatter
     # that turns out to be silent is still the thing to go and kill.
@@ -6791,8 +6818,8 @@ def _chain_status() -> dict:
     rows: list[list[dict]] = [
         [n for n in ([capture_node] if capture_node else []) + feeders],
         sources,
-        [bridge_node] if bridge_node else [],
-        filters,
+        ([bridge_node] if bridge_node else []) + ([fifo_node] if fifo_node else []),
+        filters + fifo_consumers,
         [dac_node] if dac_node else [],
     ]
     for index, row in enumerate([r for r in rows if r]):
@@ -6812,6 +6839,10 @@ def _chain_status() -> dict:
 
     for feeder in feeders:
         link(feeder, mpd_node, "mpd protocol", feeder["active"])
+    if fifo_node:
+        link(mpd_node, fifo_node, "", fifo_node["active"])
+        for consumer in fifo_consumers:
+            link(fifo_node, consumer, "", consumer["active"])
     for node in sources:
         if capture_node and "capture" in node["roles"]:
             link(capture_node, node, "", capture_node["state"] == "active")
