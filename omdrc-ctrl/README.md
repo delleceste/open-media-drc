@@ -133,31 +133,32 @@ provides no feedback. Every command here either shows its output directly
 the Spectrum and Levels displays. While its toggle is on, it shows a
 red/yellow/green gauge with the DR of the selected rolling window, computed
 with the standard algorithm on 3-second blocks (top-20 % RMS against the
-second-highest peak). A slider selects the window from 1 to 90 minutes, and
-the bar below the gauge divides the collected audio into segments across the
-full panel width, so every segment resizes as blocks arrive. Each segment is
-colored by its DR and prints the rounded value; its colored height is
-proportional to its mean RMS level (full height 0 dB, empty −40 dB). Hover a
-segment, or tap it on a touch screen, to read its time range, exact DR and
-level. The left label under the bar is the time the bar covers so far.
+second-highest peak). A slider selects the window from 1 to 90 minutes. The
+bar below the gauge divides the window into segments that each last one
+twentieth of it, on a fixed time grid, so a finished segment never changes.
+The panel width decides how many of the newest segments fit: a narrow phone
+screen shows the recent part, and rotating to landscape reveals older ones.
+Each segment is colored by its DR and prints the rounded value at its base;
+its colored height is proportional to its mean RMS level (full height 0 dB,
+empty −40 dB). Hover a segment, or tap it on a touch screen, to read its time
+range, exact DR and level. The left label under the bar is the time the bar
+covers.
 
 A complete 3-second block below −80 dBFS peak is silence. Pausing or stopping
-MPD adds **one** empty segment, drawn narrow and hatched; the history before
-it stays, and the gauge restarts with the next audio. **AVG** is the mean of
-the per-block DR values (each block's own peak against its own RMS) since the
-latest silence; it is a different statistic from the gauge and is not
-comparable with standard DR. **Detect song change** starts a new view of the
-window on each MPD track; switching it off follows a longer slice across
-tracks. Seeking preserves the completed blocks. The window, song-change
-setting, panel visibility and active state are saved in this browser and
-restored on reload. The first number appears after six seconds. The panel
-refreshes at most every `dr_refresh_seconds` (default 5) while the blocks stay
-3 seconds long. Only up to 90 minutes of block peak and RMS statistics are
-kept, with no download or saved audio. The tap is MPD's FIFO output at
-44.1 kHz, so this is an indication of the passage you heard, not a full-track
-or album DR measurement. Switching to System or Spectrum keeps an active DR
-estimate running; hiding or closing the browser tab releases its listener.
-MPD's secondary FIFO output is disabled when
+MPD adds **one** empty segment, drawn narrow and hatched, however long it
+lasts; the history before it stays, and the gauge restarts with the next
+audio. **Detect song change** starts a new view of the window on each MPD
+track; switching it off follows a longer slice across tracks. Seeking
+preserves the completed blocks. The window, song-change setting, panel
+visibility and active state are saved in this browser and restored on reload.
+The first number appears after six seconds. The panel refreshes at most every
+`dr_refresh_seconds` (default 5) while the blocks stay 3 seconds long. Only up
+to 90 minutes of block peak and RMS statistics are kept, with no download or
+saved audio. The tap is MPD's FIFO output at 44.1 kHz, so this is an
+indication of the passage you heard, not a full-track or album DR
+measurement. Switching to System or Spectrum keeps an active DR estimate
+running; hiding or closing the browser tab releases its listener. MPD's
+secondary FIFO output is disabled when
 Estimate DR, Spectrum and Levels all have no listeners.
 
 The DR versions page reports what *other people's* copies of a record measure.

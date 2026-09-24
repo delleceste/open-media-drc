@@ -1605,26 +1605,23 @@ shows:
   red-to-green scale.
 - **The status line** --- how many seconds are sampled, the window, or
   *Paused / Stopped --- waiting for audio* when MusicPD is not playing.
-- **The segment bar** --- the history, oldest on the left. The bar always
-  spans the full width of the panel. The audio collected so far is divided
-  among the segments, so **every segment resizes as new blocks arrive**. Each
-  segment shows the DR of its own blocks, colored on the same scale, with the
-  rounded value printed inside. The colored height is proportional to the
-  segment's mean RMS level, full height at 0 dB and empty at −40 dB, so a
-  loud, compressed section stands out from a quiet one. The
-  number of segments follows the panel width (each at least 1.1 times the width of two wide characters, so a wide panel or a long window draws a fine curve of the level).
+- **The segment bar** --- the history, oldest on the left, spanning the full
+  width of the panel. The window is divided into segments that each last one
+  twentieth of it (3 seconds for a 1-minute window, 4.5 minutes for a
+  90-minute one), on a fixed time grid, so a finished segment never changes.
+  The panel's width decides how many of the newest segments fit: a phone in
+  portrait shows the recent part, and rotating to landscape reveals older
+  segments in the same colors and heights. Each segment shows the DR of its
+  own blocks, colored on the same scale, with the rounded value at its base.
+  Its colored height is proportional to its mean RMS level, full height at
+  0 dB and empty at −40 dB, so a loud, compressed section stands out from a
+  quiet one. The newest segment grows until its time is complete.
 - **Segment details** --- hover a segment, or **tap** it on a touch screen
   (which has no hover), to see its time range (seconds before the latest
   interval), exact DR and level on a line under the bar. Tapping it again
   clears the selection.
-- **The time labels** --- the left label is the time the bar covers so far
+- **The time labels** --- the left label is the time the bar covers
   ("−4 min 30 s"), the right one is *Latest*.
-- **AVG** --- the mean of the per-block DR values since the latest silence in
-  the window, where each block is taken on its own: its peak against its own
-  RMS. That is a different statistic from the gauge, which compares the
-  window's highest peaks with its loudest 20 % of blocks, so AVG usually reads
-  higher. It is **not** comparable with standard DR or with the database; use
-  the gauge for that.
 
 #### Silence, pauses and stops
 
@@ -1633,7 +1630,7 @@ or a stop is drawn as **one** narrow, hatched segment, in a disabled color,
 between the audio before and after it. Pausing or stopping MusicPD adds that
 single empty segment however long it lasts, so a long stop does not push the
 earlier history out of the window. The history before it stays until the
-next play. When playback resumes, the gauge and AVG start afresh with the next
+next play. When playback resumes, the gauge starts afresh with the next
 audio; if the song changes, **Detect song change** starts the view at the new
 track. Seeking inside a track keeps the completed blocks.
 
@@ -1644,7 +1641,7 @@ track. Seeking inside a track keeps the completed blocks.
 | **Estimate DR** / *Stop estimate* | starts or stops the listener. The history is kept in the server only while at least one browser is listening; the first listener to join starts it afresh |
 | **Show DR** / *Hide DR* | shows or hides the panel without stopping the estimate |
 | **Rolling window** slider | 1 to 90 minutes in 1-minute steps; the value is written to the right of the slider. The window is how much history the gauge and the bar cover. Long windows are the user's choice --- a 90-minute window mixes many tracks |
-| **Detect song change: On / Off** | *On*: when MusicPD moves to another track, this view starts at the track boundary --- the gauge, bar and AVG describe the current track only (up to the window); the earlier history is kept on the server for views with the switch off. *Off*: the window follows a slice of audio across tracks, for a long stretch you care about as a whole rather than track by track |
+| **Detect song change: On / Off** | *On*: when MusicPD moves to another track, this view starts at the track boundary --- the gauge and bar describe the current track only (up to the window); the earlier history is kept on the server for views with the switch off. *Off*: the window follows a slice of audio across tracks, for a long stretch you care about as a whole rather than track by track |
 
 **Detect song change** is a per-browser view. The server keeps a single
 history across track changes and reports each boundary; whether a browser
