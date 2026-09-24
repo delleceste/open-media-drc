@@ -1467,10 +1467,13 @@
         .balance-track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #0b0f14; }
         .balance-pointer { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 3px; transform: translateX(-50%); border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px #0b0f14, 0 0 4px #fff; transition: left .3s ease; }
         .meters-card.idle .balance-track { opacity: .4; }
-        .balance-scale { position: relative; height: 18px; margin: 0 3px; font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .6rem; color: var(--muted); }
-        .balance-scale span { position: absolute; top: 3px; transform: translateX(-50%); }
+        .balance-scale { position: relative; height: 22px; margin: 0 3px; font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .6rem; color: var(--muted); }
+        .balance-scale span { position: absolute; top: 8px; transform: translateX(-50%); white-space: nowrap; }
+        .balance-scale span::before { content: ""; position: absolute; left: 50%; top: -7px; width: 1px; height: 4px; background: var(--muted); }
         .balance-scale span:first-child { transform: none; }
+        .balance-scale span:first-child::before { left: 0; }
         .balance-scale span:last-child { transform: translateX(-100%); }
+        .balance-scale span:last-child::before { left: 100%; }
 
         /* ── footer ──────────────────────────────────────────── */
         footer {
@@ -1746,8 +1749,12 @@
             <div class="balance-pointer" id="balance-pointer"></div>
         </div>
         <div class="balance-scale" aria-hidden="true">
-            <span style="left:0%">L 6</span><span style="left:25%">3</span>
-            <span style="left:50%">0 dB</span><span style="left:75%">3</span>
+            <span style="left:0%">L 6</span><span style="left:8.333%"></span>
+            <span style="left:16.667%">4</span><span style="left:25%"></span>
+            <span style="left:33.333%">2</span><span style="left:41.667%"></span>
+            <span style="left:50%">0 dB</span><span style="left:58.333%"></span>
+            <span style="left:66.667%">2</span><span style="left:75%"></span>
+            <span style="left:83.333%">4</span><span style="left:91.667%"></span>
             <span style="left:100%">6 R</span>
         </div>
     </div>
