@@ -1602,7 +1602,8 @@ shows:
 
 - **The gauge and its number** --- the DR of the blocks in the selected
   window, back to the latest silence. A needle marks the value on the
-  red-to-green scale.
+  red-to-green scale. The number, the gauge and the status line share the
+  top row of the panel; on a narrow screen the status wraps below.
 - **The status line** --- how many seconds are sampled, the window, or
   *Paused / Stopped --- waiting for audio* when MusicPD is not playing.
 - **The segment bar** --- the history, oldest on the left, spanning the full

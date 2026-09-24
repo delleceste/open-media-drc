@@ -780,10 +780,11 @@
         .drm-tracks { display: flex; flex-wrap: wrap; gap: 4px; }
         .dr-estimate { margin: 0 0 12px; padding: 10px 12px;
                        border: 1px solid var(--border); border-radius: 7px; }
-        .dr-estimate-head { display: flex; align-items: baseline; gap: 12px; }
+        .dr-estimate-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+        .dr-estimate-gauge { flex: 1 1 140px; min-width: 120px; }
         .dr-estimate-head strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
-        .dr-estimate-head span { color: var(--muted); font-size: .75rem; }
-        .dr-estimate-track { position: relative; height: 12px; margin: 9px 4px 3px;
+        .dr-estimate-head > span { color: var(--muted); font-size: .75rem; }
+        .dr-estimate-track { position: relative; height: 12px; margin: 5px 4px 1px;
                              border-radius: 4px;
                              background: linear-gradient(90deg,
                                  var(--red) 0 57%, var(--yellow) 57% 86%,
@@ -1853,11 +1854,13 @@
     </div>
     <div id="dr-estimate" class="dr-estimate" hidden aria-live="polite">
         <div class="dr-estimate-head"><strong id="dr-estimate-value">—</strong>
+            <div class="dr-estimate-gauge">
+                <div class="dr-estimate-track" aria-hidden="true">
+                    <div class="dr-estimate-needle" id="dr-estimate-needle" hidden></div>
+                </div>
+                <div class="dr-estimate-scale" aria-hidden="true"><span>0</span><span style="left:50%">7</span><span style="left:86%">12</span><span>14+</span></div>
+            </div>
             <span id="dr-estimate-status">Collecting audio…</span></div>
-        <div class="dr-estimate-track" aria-hidden="true">
-            <div class="dr-estimate-needle" id="dr-estimate-needle" hidden></div>
-        </div>
-        <div class="dr-estimate-scale" aria-hidden="true"><span>0</span><span style="left:50%">7</span><span style="left:86%">12</span><span>14+</span></div>
         <div class="dr-estimate-window">
             <label for="dr-estimate-window">Rolling window</label>
             <input id="dr-estimate-window" type="range" min="60" max="5400" step="60" value="60" oninput="setDrEstimateWindow(this.value)">
