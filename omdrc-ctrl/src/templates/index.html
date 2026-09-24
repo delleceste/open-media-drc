@@ -1457,9 +1457,15 @@
         .balance-heading label { font-size: .72rem; color: var(--muted); }
         .balance-heading select { margin-left: 5px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 3px; }
         .balance-readout { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .72rem; white-space: nowrap; }
-        .balance-track { position: relative; height: 12px; margin: 0 3px; border: 1px solid var(--border); border-radius: 3px; background: #0b0f14; }
-        .balance-track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); }
-        .balance-pointer { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 3px; transform: translateX(-50%); border-radius: 2px; background: #58a6ff; box-shadow: 0 0 3px #58a6ff; transition: left .3s ease; }
+        .balance-track {
+            position: relative; height: 12px; margin: 0 3px;
+            border: 1px solid var(--border); border-radius: 3px;
+            background: linear-gradient(90deg,
+                var(--red) 0%, var(--yellow) 20%, var(--green) 42%,
+                var(--green) 58%, var(--yellow) 80%, var(--red) 100%);
+        }
+        .balance-track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #0b0f14; }
+        .balance-pointer { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 3px; transform: translateX(-50%); border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px #0b0f14, 0 0 4px #fff; transition: left .3s ease; }
         .meters-card.idle .balance-track { opacity: .4; }
         .balance-scale { position: relative; height: 18px; margin: 0 3px; font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .6rem; color: var(--muted); }
         .balance-scale span { position: absolute; top: 3px; transform: translateX(-50%); }
