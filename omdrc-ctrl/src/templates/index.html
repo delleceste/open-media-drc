@@ -804,10 +804,17 @@
                                      font-variant-numeric: tabular-nums; color: var(--text); }
         .dr-estimate-history { display: flex; gap: 2px; height: 21px; margin: 5px 4px 0;
                                overflow: hidden; border-radius: 3px; }
-        .dr-estimate-history > span { display: flex; flex: 1 1 0; min-width: 0;
+        .dr-estimate-history > span > i { position: absolute; left: 3px; right: 3px; height: 2px;
+                                          margin-top: -1px; background: currentColor; opacity: .55;
+                                          border-radius: 1px; pointer-events: none; }
+        .dr-estimate-history > span { position: relative; display: flex; flex: 1 1 0; min-width: 0;
                                       align-items: center; justify-content: center;
                                       background: var(--surface); font-size: .62rem;
                                       font-weight: 800; font-variant-numeric: tabular-nums; }
+        .dr-estimate-history > span { cursor: pointer; }
+        .dr-estimate-history > span.selected { outline: 2px solid var(--text); outline-offset: -2px; }
+        .dr-estimate-detail { margin: 4px 4px 0; color: var(--text); font-size: .7rem;
+                              font-variant-numeric: tabular-nums; }
         .dr-estimate-times { position: relative; height: 1em; margin: 3px 4px 0;
                              color: var(--muted); font-size: .66rem; font-variant-numeric: tabular-nums; }
         .dr-estimate-times span { position: absolute; top: 0; left: 0; white-space: nowrap; }
@@ -1857,6 +1864,7 @@
         </div>
         <div id="dr-estimate-history" class="dr-estimate-history" role="img" aria-label="Dynamic range history, oldest on the left"></div>
         <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">—</span><span class="latest">Latest</span></div>
+        <div id="dr-estimate-detail" class="dr-estimate-detail" aria-live="polite" hidden></div>
         <div class="dr-estimate-note"><span>Recent excerpt at 48 kHz · indicative of what you just heard, not full-track or album DR</span>
             <span id="dr-estimate-average" class="dr-estimate-average" title="Mean of complete 3-second DR values since the latest silence in this window">AVG —</span></div>
     </div>
@@ -5032,6 +5040,7 @@ const DR_DETECT_KEY = 'omdrc-dr-detect-song-change';
 let drEstimateBlocks = [];
 let drEstimateFrame = null;
 let drTrackAgeBlocks = 0;
+let drSelectedFromRight = null;   // tapped segment, counted from the newest
 let drWindowSeconds = 60;
 try {
     const saved = Number(localStorage.getItem(DR_WINDOW_KEY));
@@ -5089,10 +5098,28 @@ function drWindowLabel(seconds) {
     return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
 }
 
+// Tapping a segment shows its details, since touch screens have no hover.
+document.getElementById('dr-estimate-history').addEventListener('click', event => {
+    const cell = event.target.closest('span[data-r]');
+    if (!cell) return;
+    const r = Number(cell.dataset.r);
+    drSelectedFromRight = drSelectedFromRight === r ? null : r;
+    paintDrHistory();
+});
+
 function drElapsedLabel(seconds) {
     const h = Math.floor(seconds / 3600), m = Math.floor(seconds % 3600 / 60), s = seconds % 60;
     if (h) return `${h} h ${String(m).padStart(2, '0')} min`;
     return m ? (s ? `${m} min ${s} s` : `${m} min`) : `${s} s`;
+}
+
+const DR_LEVEL_FLOOR_DB = -40;
+
+// Mean RMS level of some blocks in dB, 0 dB being a full-scale sine.
+function drLevelDb(blocks) {
+    let sum = 0, n = 0;
+    for (const block of blocks) for (const v of block[0]) { sum += v; n++; }
+    return n && sum > 0 ? 10 * Math.log10(sum / n) : -Infinity;
 }
 
 function drFromBlocks(blocks) {
@@ -5143,6 +5170,7 @@ function paintDrHistory() {
     // divided among the segments, so every segment resizes as blocks arrive.
     const steps = Math.max(1, Math.min(Math.floor(track.clientWidth / 24), count));
     const cells = [];
+    let selectedText = null;
     for (let i = 0; i < steps; i++) {
         const start = Math.floor(i * count / steps);
         const end = Math.floor((i + 1) * count / steps);
@@ -5150,14 +5178,24 @@ function paintDrHistory() {
         const silent = sample.some(drBlockSilent);
         const dr = sample.length && !silent ? drFromBlocks(sample) : null;
         const period = `${Math.round((count - end) * 3)}–${Math.round((count - start) * 3)} s before the latest interval`;
+        const level = dr === null ? -Infinity : drLevelDb(sample);
         const title = !sample.length ? 'Waiting for audio' : silent ?
-            `${period}: silence` : `${period}: DR${dr.toFixed(1)}`;
+            `${period}: silence` : `${period}: DR${dr.toFixed(1)}, level ${level.toFixed(1)} dB`;
+        // A line at the segment's RMS level: top is 0 dB, bottom the floor.
+        const top = Math.max(0, Math.min(1, level / DR_LEVEL_FLOOR_DB)) * 100;
+        const mark = dr === null ? '' : `<i style="top:${top.toFixed(1)}%"></i>`;
         const color = dr === null ? null : drHistoryColor(dr);
         const label = dr === null ? '' : String(Math.max(0, Math.min(99, Math.round(dr))));
-        cells.push(`<span title="${title}"${color ?
-            ` style="background:${color.background};color:${color.foreground}"` : ''}>${label}</span>`);
+        const fromRight = steps - 1 - i;
+        if (fromRight === drSelectedFromRight) selectedText = title;
+        cells.push(`<span data-r="${fromRight}" title="${title}"${fromRight === drSelectedFromRight ? ' class="selected"' : ''}${color ?
+            ` style="background:${color.background};color:${color.foreground}"` : ''}>${label}${mark}</span>`);
     }
     track.innerHTML = cells.join('');
+    const detail = document.getElementById('dr-estimate-detail');
+    if (selectedText === null) drSelectedFromRight = null;   // it scrolled out of range
+    detail.hidden = selectedText === null;
+    detail.textContent = selectedText || '';
     track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)} of intervals, oldest on the left`);
     // The left label shows how much audio the bar covers.
     const oldest = document.getElementById('dr-estimate-oldest');

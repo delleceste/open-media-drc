@@ -91,6 +91,6 @@ audio_output {
         type "fifo"
         name "OMDRC Spectrum"
         path "/tmp/omdrc-spectrum.fifo"
-        format "48000:32:2"
+        format "44100:32:2"
         enabled "no"
 }
