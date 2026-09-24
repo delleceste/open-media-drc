@@ -803,13 +803,15 @@
         .dr-estimate-window output { min-width: 5.5em; text-align: right;
                                      font-variant-numeric: tabular-nums; color: var(--text); }
         .dr-estimate-history { display: flex; gap: 2px; height: 21px; margin: 5px 4px 0;
-                               overflow: hidden; border-radius: 3px; }
+                               overflow: hidden; border-radius: 3px;
+                               background: color-mix(in srgb, var(--muted) 22%, var(--surface));
+                               box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted) 40%, transparent); }
         .dr-estimate-history > span > i { position: absolute; left: 0; right: 0; bottom: 0;
                                           pointer-events: none; }
         .dr-estimate-history > span > b { position: relative; font: inherit; }
         .dr-estimate-history > span { position: relative; display: flex; flex: 1 1 0; min-width: 0;
                                       align-items: center; justify-content: center;
-                                      background: var(--surface); font-size: .62rem;
+                                      font-size: .62rem;
                                       font-weight: 800; font-variant-numeric: tabular-nums; }
         .dr-estimate-history > span { cursor: pointer; }
         .dr-estimate-history > span.gap { flex: 0 0 12px;
