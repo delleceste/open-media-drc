@@ -88,7 +88,7 @@ filter publication and a tap run must never overlap on a single-DAC box.
 
 ## DR versions page
 
-The renderer card's **DR ↗** button opens `/dr-alternatives`: every master of
+The renderer card's **DR ▸ Compare ↗** button opens `/dr-alternatives`: every master of
 the record now playing that the community database at
 [dr.loudness-war.info](https://dr.loudness-war.info) knows about, sorted by
 album DR — the most dynamic pressing first, the loudness-war casualty last.
@@ -129,8 +129,10 @@ provides no feedback. Every command here either shows its output directly
 
 ## Measuring the DR of what is playing
 
-**Estimate** (DR) on the renderer card samples the MPD output already used by
-the Spectrum and Levels displays. While its toggle is on, it shows a
+**DR ▸ Estimate** on the renderer card samples the MPD output already used by
+the Spectrum and Levels displays. Its toggle opens the panel and starts the
+analysis; turning it off closes both, and it is always off after a page load, so
+nothing is computed that is not on screen. While it is on, it shows a
 red/yellow/green gauge with the DR of the selected rolling window, computed
 with the standard algorithm on 3-second blocks (top-20 % RMS against the
 second-highest peak). A slider selects the window from 1 to 90 minutes. The
@@ -160,10 +162,10 @@ indication of the passage you heard, not a full-track or album DR
 measurement. Switching to System or Spectrum keeps an active DR estimate
 running; hiding or closing the browser tab releases its listener. MPD's
 secondary FIFO output is disabled when
-Estimate, Spectrum and Levels all have no listeners.
+DR estimate, Spectrum and Levels all have no listeners.
 
 The DR versions page reports what *other people's* copies of a record measure.
-The renderer card's **Measure** button measures the copy on the wire.
+The renderer card's **DR ▸ Meas.** button measures the copy on the wire.
 
 It fetches the record's tracks a second time — the tracks in the queue around
 the one playing that carry *exactly* its album tag, so a deluxe edition queued
@@ -676,7 +678,7 @@ that exact line and repeat count; a fresh occurrence raises it again.
 
 ### Reserved section: `[drdb]`
 
-Dynamic Range database lookups behind the renderer card's **DR ↗** button
+Dynamic Range database lookups behind the renderer card's **DR ▸ Compare ↗** button
 (see [DR versions page](#dr-versions-page)). Read-only, on demand, and off the
 audio path entirely.
 
@@ -2116,10 +2118,10 @@ stays until dismissed or until a switch succeeds — a toast is gone before it
 can be read, and a button silently flipping back is not an explanation.
 
 The panel header always has three buttons, plus a conditional fourth:
-- **Restart** — is enabled for either active renderer and calls
+- **Restart renderer** — is enabled for either active renderer and calls
   `POST /renderer/restart` with that renderer as `target`; shows a toast on
   success/failure
-- **Log** — toggles a scrollable log viewer (auto-refreshed every 5 s while
+- **Renderer log** — toggles a scrollable log viewer (auto-refreshed every 5 s while
   open) with colour-coded lines: red for `[ERR]`, green for `[OUT]`.  It shows
   the log of the renderer the card is about, named above the text, and after a
   failed switch it stays on the renderer that would not start

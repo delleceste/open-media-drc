@@ -568,6 +568,10 @@
         /* .title-row / .title-actions wrap, so a narrow (portrait) screen
            shows every button instead of the card clipping the overflow. */
         .qc-card-title { flex-wrap: wrap; gap: 8px; }
+        .dr-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+        .dr-group-label { font-size: .7rem; font-weight: 700; letter-spacing: .08em; color: var(--muted); }
+        .qc-card-foot { display: flex; justify-content: flex-end; gap: 6px;
+                        padding: 10px 0 12px; border-top: 1px solid var(--border); }
         .qc-card-title {
             display: flex;
             align-items: center;
@@ -1802,23 +1806,17 @@
         <span>Renderer <span class="refresh-note" id="qc-refresh-label">refresh: {{ qconnect_status_resync }}s</span></span>
         <div class="title-actions">
             <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
-            <button class="btn-log" id="btn-restart" onclick="restartRenderer()" disabled>Restart</button>
-            <button class="btn-log" id="btn-log" onclick="toggleLog()">Log</button>
-            <button class="btn-log btn-mini" id="btn-act-lines"
-                    onclick="toggleActivityLines()"
-                    title="Activity detail: one line, or the last three">☰</button>
-            <button class="btn-log" id="btn-dr-estimate" onclick="toggleDrEstimate()"
-                    role="switch" aria-checked="false"
-                    title="Estimate DR from the selected rolling window, without a download. Lit while running; tap again to stop">Estimate</button>
-            <button class="btn-log" id="btn-dr-visibility" onclick="toggleDrEstimateVisibility()"
-                    aria-expanded="false" aria-controls="dr-estimate"
-                    title="Show or hide the DR panel; estimation keeps running while hidden">Show</button>
-{% if drdb_enabled %}
-            <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
-                    title="Other masters of this record, and what they measure, in the Dynamic Range database">DR ↗</button>{% endif %}
             <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
-            <button class="btn-log" id="btn-drm" onclick="drmStart()"
-                    title="Fetch this record's tracks again, measure their dynamic range, then delete them">Measure</button>
+            <span class="dr-group"><span class="dr-group-label">DR</span>
+                <button class="btn-log" id="btn-dr-estimate" onclick="toggleDrEstimate()"
+                        role="switch" aria-checked="false"
+                        title="Estimate DR from the selected rolling window, without a download. Lit while running and the panel is open; tap again to stop and close it">Estimate</button>
+    {% if drdb_enabled %}
+                <button class="btn-log" id="btn-drdb" onclick="openDrVersions()"
+                        title="Other masters of this record, and what they measure, in the Dynamic Range database">Compare ↗</button>{% endif %}
+                <button class="btn-log" id="btn-drm" onclick="drmStart()"
+                        title="Fetch this record's tracks again, measure their dynamic range, then delete them">Meas.</button>
+            </span>
         </div>
     </div>
     <!-- Mutually-exclusive renderer toggle -->
@@ -1896,6 +1894,14 @@
     </div>
     <!-- Qobuz OAuth sign-in, driven from here so the box needs no keyboard -->
     <div id="qobuz-oauth-panel" style="display:none" aria-live="polite"></div>
+    <!-- Rarely used, so kept out of the header row -->
+    <div class="qc-card-foot">
+        <button class="btn-log" id="btn-restart" onclick="restartRenderer()" disabled>Restart renderer</button>
+        <button class="btn-log" id="btn-log" onclick="toggleLog()">Renderer log</button>
+        <button class="btn-log btn-mini" id="btn-act-lines"
+                onclick="toggleActivityLines()"
+                title="Activity detail: one line, or the last three">☰</button>
+    </div>
 </div>
 
 <!-- CD input: omdrc-cdin, the S/PDIF capture bridge.  The panel watches it
@@ -3492,7 +3498,7 @@ async function restartRenderer() {
     }
     setTimeout(() => {
         qcRestarting = false;
-        btn.textContent = 'Restart';
+        btn.textContent = 'Restart renderer';
         syncRenderers();   // re-evaluate enabled state from live status
     }, 2000);
 }
@@ -5044,8 +5050,6 @@ function toggleMeters() {
 // Each complete 3-second block contributes peak/RMS statistics. The browser
 // selects a window and groups those blocks to fit the available timeline width.
 const DR_WINDOW_KEY = 'omdrc-dr-window-seconds';
-const DR_ACTIVE_KEY = 'omdrc-dr-active';
-const DR_VISIBLE_KEY = 'omdrc-dr-visible';
 const DR_DETECT_KEY = 'omdrc-dr-detect-song-change';
 let drEstimateBlocks = [];
 let drEstimateFrame = null;
@@ -5056,8 +5060,8 @@ try {
     const saved = Number(localStorage.getItem(DR_WINDOW_KEY));
     if (Number.isInteger(saved) && saved >= 60 && saved <= 5400 && saved % 60 === 0)
         drWindowSeconds = saved;
-    drEstimateWanted = localStorage.getItem(DR_ACTIVE_KEY) === 'true';
-    drEstimateVisible = localStorage.getItem(DR_VISIBLE_KEY) === 'true';
+    // Estimating starts off after every load, like the level meters: no
+    // computation without a panel showing its result.
     drDetectSongChange = localStorage.getItem(DR_DETECT_KEY) !== 'false';
 } catch {}
 document.getElementById('dr-estimate-window').value = drWindowSeconds;
@@ -5070,22 +5074,14 @@ function paintDrControls() {
     const power = document.getElementById('btn-dr-estimate');
     power.setAttribute('aria-checked', String(drEstimateWanted));
     power.classList.toggle('active', drEstimateWanted);
-    const visibility = document.getElementById('btn-dr-visibility');
-    visibility.setAttribute('aria-expanded', String(drEstimateVisible));
-    visibility.textContent = drEstimateVisible ? 'Hide' : 'Show';
-    document.getElementById('dr-estimate').hidden = !drEstimateVisible;
+    drEstimateVisible = drEstimateWanted;
+    power.setAttribute('aria-expanded', String(drEstimateWanted));
+    document.getElementById('dr-estimate').hidden = !drEstimateWanted;
     const detect = document.getElementById('dr-detect-song-change');
     detect.setAttribute('aria-checked', String(drDetectSongChange));
     detect.textContent = `Detect song change: ${drDetectSongChange ? 'On' : 'Off'}`;
     if (!drEstimateWanted && !drEstimateFrame)
         document.getElementById('dr-estimate-status').textContent = 'Stopped';
-}
-
-function toggleDrEstimateVisibility() {
-    drEstimateVisible = !drEstimateVisible;
-    saveDrSetting(DR_VISIBLE_KEY, drEstimateVisible);
-    paintDrControls();
-    if (drEstimateVisible) paintDrHistory();
 }
 
 function toggleDrSongChange() {
@@ -5343,7 +5339,6 @@ function startDrEstimate() {
 function stopDrEstimate(clearWanted = true) {
     if (clearWanted) {
         drEstimateWanted = false;
-        saveDrSetting(DR_ACTIVE_KEY, false);
     }
     if (drEstimateReconnect) { clearTimeout(drEstimateReconnect); drEstimateReconnect = null; }
     if (drEstimateSource) { drEstimateSource.close(); drEstimateSource = null; }
@@ -5358,8 +5353,6 @@ function toggleDrEstimate() {
     else {
         drEstimateWanted = true;
         drEstimateVisible = true;
-        saveDrSetting(DR_ACTIVE_KEY, true);
-        saveDrSetting(DR_VISIBLE_KEY, true);
         paintDrControls();
         document.getElementById('dr-estimate-value').textContent = '—';
         document.getElementById('dr-estimate-needle').hidden = true;
@@ -5434,7 +5427,6 @@ setMetersIdle(true);
     const styleBtn = document.getElementById('meters-style-btn');
     if (styleBtn) styleBtn.disabled = disabled;
     document.getElementById('btn-dr-estimate').disabled = disabled;
-    document.getElementById('btn-dr-visibility').disabled = disabled;
 }
 paintSpectrumMode();
 renderDelayReadout();
