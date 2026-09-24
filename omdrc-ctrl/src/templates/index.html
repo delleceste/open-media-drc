@@ -1452,6 +1452,19 @@
             border-radius: 6px;
             transition: opacity .15s;
         }
+        .balance-meter { border-top: 1px solid var(--border); padding: 10px 0 3px; }
+        .balance-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+        .balance-heading label { font-size: .72rem; color: var(--muted); }
+        .balance-heading select { margin-left: 5px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 3px; }
+        .balance-readout { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .72rem; white-space: nowrap; }
+        .balance-track { position: relative; height: 12px; margin: 0 3px; border: 1px solid var(--border); border-radius: 3px; background: #0b0f14; }
+        .balance-track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); }
+        .balance-pointer { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 3px; transform: translateX(-50%); border-radius: 2px; background: #58a6ff; box-shadow: 0 0 3px #58a6ff; transition: left .3s ease; }
+        .meters-card.idle .balance-track { opacity: .4; }
+        .balance-scale { position: relative; height: 18px; margin: 0 3px; font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .6rem; color: var(--muted); }
+        .balance-scale span { position: absolute; top: 3px; transform: translateX(-50%); }
+        .balance-scale span:first-child { transform: none; }
+        .balance-scale span:last-child { transform: translateX(-100%); }
 
         /* ── footer ──────────────────────────────────────────── */
         footer {
@@ -1712,6 +1725,25 @@
     <div class="meters-needles" id="meters-needles" style="display:none">
         <canvas class="meter-needle" id="meter-needle-l"></canvas>
         <canvas class="meter-needle" id="meter-needle-r"></canvas>
+    </div>
+    <div class="balance-meter" title="Balance compares left and right average RMS power over the selected time. Silence is excluded; the scale is ±6 dB.">
+        <div class="balance-heading">
+            <label for="balance-window">Balance · average
+                <select id="balance-window" onchange="setBalanceWindow(this.value)">
+                    <option value="5">5 s</option><option value="15">15 s</option>
+                    <option value="30">30 s</option><option value="60">60 s</option>
+                </select>
+            </label>
+            <output class="balance-readout" id="balance-readout" aria-live="off">—</output>
+        </div>
+        <div class="balance-track" role="img" id="balance-track" aria-label="Channel balance: no signal">
+            <div class="balance-pointer" id="balance-pointer"></div>
+        </div>
+        <div class="balance-scale" aria-hidden="true">
+            <span style="left:0%">L 6</span><span style="left:25%">3</span>
+            <span style="left:50%">0 dB</span><span style="left:75%">3</span>
+            <span style="left:100%">6 R</span>
+        </div>
     </div>
 </div>
 
@@ -4153,6 +4185,16 @@ let drEstimateWanted = false;
 let drEstimateReconnect = null;
 const METER_FLOOR_DB = -60;   // fixed floor for the L/R meters' own dB scale
 const METERS_STYLE_KEY = 'omdrcctrl.meters.style';
+const BALANCE_WINDOW_KEY = 'omdrcctrl.meters.balanceWindow';
+const BALANCE_WINDOWS = [5, 15, 30, 60];
+const BALANCE_SCALE_DB = 6;
+let balanceWindow = 15;
+try {
+    const saved = Number(localStorage.getItem(BALANCE_WINDOW_KEY));
+    if (BALANCE_WINDOWS.includes(saved)) balanceWindow = saved;
+} catch {}
+let balanceSamples = [];
+let balanceLastAt = 0;
 document.querySelectorAll('.meter-db-scale [data-db]').forEach(tick => {
     tick.style.left = `${voltageDbPct(Number(tick.dataset.db), METER_FLOOR_DB)}%`;
 });
@@ -4590,6 +4632,56 @@ function toggleMetersStyle() {
     setMetersStyle(currentVuMode === 'bars' ? 'needles' : 'bars');
 }
 
+function paintBalance(db) {
+    const valid = Number.isFinite(db);
+    const text = !valid ? '—' : Math.abs(db) < 0.05 ? 'Center 0.0 dB'
+        : `${db < 0 ? 'L' : 'R'} ${Math.abs(db).toFixed(1)} dB`;
+    document.getElementById('balance-readout').textContent = text;
+    document.getElementById('balance-pointer').style.left = `${valid ? 50 + 50 * Math.max(-1, Math.min(1, db / BALANCE_SCALE_DB)) : 50}%`;
+    document.getElementById('balance-track').setAttribute('aria-label', valid ? `Channel balance: ${text}` : 'Channel balance: no signal');
+}
+
+function clearBalance() {
+    balanceSamples = [];
+    balanceLastAt = 0;
+    paintBalance(NaN);
+}
+
+function paintBalanceAverage(now) {
+    const start = now - balanceWindow * 1000;
+    while (balanceSamples.length && balanceSamples[0].at < now - 60000) balanceSamples.shift();
+    // Add powers before taking the logarithm: averaging dB values would give
+    // quiet passages the same influence as loud ones.
+    let left = 0, right = 0;
+    for (const sample of balanceSamples) {
+        if (sample.at < start) continue;
+        left += sample.left;
+        right += sample.right;
+    }
+    if (!left && !right) { paintBalance(NaN); return; }
+    paintBalance(10 * Math.log10(Math.max(right, 1e-12) / Math.max(left, 1e-12)));
+}
+
+function setBalanceWindow(value) {
+    const selected = Number(value);
+    if (!BALANCE_WINDOWS.includes(selected)) return;
+    balanceWindow = selected;
+    document.getElementById('balance-window').value = String(selected);
+    try { localStorage.setItem(BALANCE_WINDOW_KEY, String(selected)); } catch {}
+    paintBalanceAverage(performance.now());
+}
+
+function updateBalance(vu) {
+    const now = performance.now();
+    if (balanceLastAt && now - balanceLastAt > 1000) balanceSamples = [];
+    balanceLastAt = now;
+    const l = Number(vu?.left_rms), r = Number(vu?.right_rms);
+    if (Number.isFinite(l) && Number.isFinite(r) && Math.max(l, r) > METER_FLOOR_DB) {
+        balanceSamples.push({ at: now, left: 10 ** (l / 10), right: 10 ** (r / 10) });
+    }
+    paintBalanceAverage(now);
+}
+
 // Needle gauge angular sweep: a wide arc so the needle travels a long way
 // between the floor (left) and 0 dBFS (right).
 const NEEDLE_A0 = -150;     // degrees, floor end
@@ -4819,6 +4911,8 @@ function startMeters() {
         try {
             const d = JSON.parse(ev.data);
             updateVu(d.ok ? (d.vu || {}) : {});
+            if (d.ok) updateBalance(d.vu || {});
+            else clearBalance();
         } catch {}
     };
     metersSource.onerror = () => {
@@ -4838,6 +4932,7 @@ function stopMeters(clearWanted = true) {
         metersSource = null;
     }
     setMetersButton(metersWanted);
+    clearBalance();
     if (clearWanted) { setMetersIdle(true); snapVu({}); }
 }
 
@@ -4980,6 +5075,8 @@ window.addEventListener('resize', () => {
 // The meters always start off, with no stream at all, regardless of how the
 // listener left them last session — see toggleMeters().
 setMetersStyle(currentVuMode);
+document.getElementById('balance-window').value = String(balanceWindow);
+clearBalance();
 setMetersButton(false);
 setMetersIdle(true);
 {
