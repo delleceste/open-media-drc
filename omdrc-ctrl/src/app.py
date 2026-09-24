@@ -1872,6 +1872,8 @@ class SpectrumAnalyzer:
         self.dr_clients = 0     # rolling DR shares this reader, without FFTs
         self.dr_epoch = 0       # reset the excerpt when its first client joins
         self.dr_state = {"state": "collecting", "dr": None, "seconds": 0}
+        self.dr_history: list = []
+        self.dr_revision = 0
         self.seq = 0
         self.frame = {
             "ok": False,
@@ -1932,6 +1934,8 @@ class SpectrumAnalyzer:
             self.dr_clients += 1
             self.dr_epoch += 1
             self.dr_state = {"state": "collecting", "dr": None, "seconds": 0}
+            self.dr_history = []
+            self.dr_revision += 1
         elif mode != "vu":
             self.band_clients += 1
         self.mode = mode
@@ -1971,6 +1975,8 @@ class SpectrumAnalyzer:
                             self.dr_epoch += 1
                             self.dr_state = {"state": "collecting", "dr": None,
                                              "seconds": 0}
+                            self.dr_history = []
+                            self.dr_revision += 1
                         self.dr_clients += 1
                     elif mode != "vu":
                         self.band_clients += 1
@@ -2009,6 +2015,10 @@ class SpectrumAnalyzer:
     def snapshot(self) -> tuple[int, dict]:
         with self.lock:
             return self.seq, dict(self.frame)
+
+    def dr_history_snapshot(self) -> tuple[int, list]:
+        with self.lock:
+            return self.dr_revision, self.dr_history
 
     def wait_next(self, last_seq: int, timeout: float = 5.0) -> tuple[int, dict]:
         with self.cond:
@@ -2319,12 +2329,14 @@ class SpectrumAnalyzer:
 
             def reset_dr() -> None:
                 nonlocal dr_estimate, dr_last_data_at
-                dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS)
+                dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS, 1200)
                 dr_tail.clear()
                 dr_last_data_at = 0.0
                 with self.lock:
                     self.dr_state = {"state": "collecting", "dr": None,
                                      "seconds": 0}
+                    self.dr_history = []
+                    self.dr_revision += 1
 
             def keep_bytes() -> int:
                 """History to retain: the FFT window, the LARGEST hold-back the
@@ -2389,6 +2401,9 @@ class SpectrumAnalyzer:
                     with self.lock:
                         self.dr_state = {"state": "unavailable", "dr": None,
                                          "seconds": 0}
+                        if self.dr_history:
+                            self.dr_history = []
+                            self.dr_revision += 1
                 if dr_on and self.dr_epoch != dr_epoch_seen:
                     dr_epoch_seen = self.dr_epoch
                     dr_song_file = ""
@@ -2447,6 +2462,8 @@ class SpectrumAnalyzer:
                                                      if result else
                                                      {"state": "collecting", "dr": None,
                                                       "seconds": 3})
+                                    self.dr_history = dr_estimate.history()
+                                    self.dr_revision += 1
                             del dr_tail[:usable]
                 if dr_only:
                     buf.clear()
@@ -7774,9 +7791,20 @@ def spectrum_stream():
 
     def events():
         _SPECTRUM.acquire(mode)
+        dr_revision = -1
+
+        def payload(frame):
+            nonlocal dr_revision
+            if mode == "dr":
+                revision, history = _SPECTRUM.dr_history_snapshot()
+                if revision != dr_revision:
+                    frame = {**frame, "dr_blocks": history}
+                    dr_revision = revision
+            return f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
+
         try:
             seq, frame = _SPECTRUM.snapshot()
-            yield f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
+            yield payload(frame)
             while True:
                 next_seq, frame = _SPECTRUM.wait_next(seq, timeout=1.0)
                 if next_seq == seq:
@@ -7787,7 +7815,7 @@ def spectrum_stream():
                     yield ": keepalive\n\n"
                     continue
                 seq = next_seq
-                yield f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
+                yield payload(frame)
                 if _SPECTRUM.stop_event.is_set():
                     break
         except GeneratorExit:

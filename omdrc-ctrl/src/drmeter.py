@@ -127,7 +127,7 @@ class Meter:
 
 
 class RollingEstimate:
-    """TT-style DR of complete three-second PCM blocks in the last minute.
+    """TT-style DR of complete three-second PCM blocks in a bounded window.
 
     Only each block's energy and peak are retained, never the audio. This is
     an excerpt estimate, not the full-track or album DR printed by Meter.
@@ -179,6 +179,10 @@ class RollingEstimate:
         exact = float(np.mean(per_channel))
         return {"dr": int(round(exact)), "dr_exact": round(exact, 2),
                 "seconds": int(len(self.blocks) * BLOCK_SECONDS)}
+
+    def history(self) -> list[list[list[float]]]:
+        """Compact per-block [RMS squared, peak] pairs for the live timeline."""
+        return [[rms2.tolist(), peak.tolist()] for rms2, peak in self.blocks]
 
 
 def _db(value: float) -> float:

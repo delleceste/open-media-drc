@@ -131,9 +131,11 @@ provides no feedback. Every command here either shows its output directly
 
 **Estimate DR** on the renderer card samples the MPD output already used by
 the Spectrum and Levels displays. While its toggle is on, it updates a
-red/yellow/green gauge every three seconds from up to the last 60 seconds of
-audio; the first number appears after six seconds. It keeps only block peak
-and RMS statistics, with no download or saved audio. The tap is a 48 kHz
+red/yellow/green gauge every three seconds. A slider selects a rolling window
+from 1 to 20 minutes, and the bar below the gauge colors each time slice by
+its measured DR. The number of slices adapts to the panel width. The first
+number appears after six seconds. It keeps only up to 20 minutes of 3-second
+block peak and RMS statistics, with no download or saved audio. The tap is a 48 kHz
 excerpt, so this is a quick guide to the passage you heard, not a full-track
 or album DR measurement. Closing or hiding the tab, or switching away from
 Listen, releases its listener. MPD's secondary FIFO output is disabled when

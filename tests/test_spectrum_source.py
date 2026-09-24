@@ -624,8 +624,10 @@ class PublishDeduplicationTest(unittest.TestCase):
             streams = [client.get(f"/spectrum/stream?mode={mode}", buffered=False)
                        for mode in ("dr", "vu", "music")]
             try:
-                for stream in streams:
-                    next(stream.response)
+                first_frames = [next(stream.response) for stream in streams]
+                self.assertIn(b'"dr_blocks":[]', first_frames[0])
+                self.assertNotIn(b'"dr_blocks"', first_frames[1])
+                self.assertNotIn(b'"dr_blocks"', first_frames[2])
                 self.assertTrue(started.wait(1))
                 self.assertEqual((an.clients, an.dr_clients, an.band_clients),
                                  (3, 1, 1))

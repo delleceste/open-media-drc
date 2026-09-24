@@ -127,6 +127,17 @@ class RollingEstimateTest(unittest.TestCase):
         self.assertEqual(estimate.result()["dr"], 0)
         self.assertEqual(estimate.result()["seconds"], 60)
 
+    def test_history_retains_twenty_minutes_of_block_statistics(self):
+        estimate = drmeter.RollingEstimate(100, 2, seconds=1200)
+        block = sine(3, 0.25, rate=100)
+        for _ in range(401):
+            estimate.feed(block)
+        history = estimate.history()
+        self.assertEqual(len(history), 400)
+        self.assertEqual(len(history[0]), 2)
+        self.assertEqual(len(history[0][0]), 2)
+        self.assertEqual(estimate.result()["seconds"], 1200)
+
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
                      "ffmpeg not installed")

@@ -797,6 +797,17 @@
         .dr-estimate-scale span { position: absolute; transform: translateX(-50%); }
         .dr-estimate-scale span:first-child { left: 0; transform: none; }
         .dr-estimate-scale span:last-child { right: 0; transform: none; }
+        .dr-estimate-window { display: flex; align-items: center; gap: 10px;
+                              margin: 9px 0 4px; color: var(--muted); font-size: .74rem; }
+        .dr-estimate-window input { flex: 1; min-width: 0; accent-color: var(--accent); }
+        .dr-estimate-window output { min-width: 3.5em; text-align: right;
+                                     font-variant-numeric: tabular-nums; color: var(--text); }
+        .dr-estimate-history { display: flex; gap: 2px; height: 18px; margin: 5px 4px 0;
+                               overflow: hidden; border-radius: 3px; }
+        .dr-estimate-history > span { flex: 1 1 0; min-width: 0;
+                                      background: var(--surface); }
+        .dr-estimate-times { display: flex; justify-content: space-between;
+                             margin: 3px 4px 0; color: var(--muted); font-size: .66rem; }
         .dr-estimate-note { margin-top: 6px; color: var(--muted);
                             font-size: .7rem; line-height: 1.4; }
         .drb { display: inline-block; min-width: 1.8rem; text-align: center;
@@ -1827,6 +1838,12 @@
             <div class="dr-estimate-needle" id="dr-estimate-needle" hidden></div>
         </div>
         <div class="dr-estimate-scale" aria-hidden="true"><span>0</span><span style="left:50%">7</span><span style="left:86%">12</span><span>14+</span></div>
+        <label class="dr-estimate-window" for="dr-estimate-window">Rolling window
+            <input id="dr-estimate-window" type="range" min="60" max="1200" step="60" value="60" oninput="setDrEstimateWindow(this.value)">
+            <output id="dr-estimate-window-label" for="dr-estimate-window">1 min</output>
+        </label>
+        <div id="dr-estimate-history" class="dr-estimate-history" role="img" aria-label="Dynamic range history, oldest on the left"></div>
+        <div class="dr-estimate-times" aria-hidden="true"><span id="dr-estimate-oldest">−1 min</span><span>Now</span></div>
         <div class="dr-estimate-note">Recent excerpt at 48 kHz · a guide to this passage, not full-track or album DR</div>
     </div>
     <!-- DR measured here, of the copy on the wire (drmeter.py).  Hidden until
@@ -4990,14 +5007,99 @@ function toggleMeters() {
     }
 }
 
-// The rolling estimate joins the same MPD FIFO reader as Levels and Spectrum.
-// Its server-side client keeps only 20 three-second peak/RMS summaries.
+// Each complete 3-second block contributes peak/RMS statistics. The browser
+// selects a window and groups those blocks to fit the available timeline width.
+const DR_WINDOW_KEY = 'omdrc-dr-window-seconds';
+let drEstimateBlocks = [];
+let drEstimateFrame = null;
+let drWindowSeconds = 60;
+try {
+    const saved = Number(localStorage.getItem(DR_WINDOW_KEY));
+    if (Number.isInteger(saved) && saved >= 60 && saved <= 1200 && saved % 60 === 0)
+        drWindowSeconds = saved;
+} catch {}
+document.getElementById('dr-estimate-window').value = drWindowSeconds;
+
+function drWindowLabel(seconds) {
+    return `${seconds / 60} min`;
+}
+
+function drFromBlocks(blocks) {
+    if (!blocks.length) return null;
+    const channels = blocks[0][0].length;
+    let sum = 0;
+    for (let ch = 0; ch < channels; ch++) {
+        const rms2 = blocks.map(b => b[0][ch]).sort((a, b) => b - a);
+        const peaks = blocks.map(b => b[1][ch]).sort((a, b) => b - a);
+        const top = Math.max(1, Math.floor(blocks.length * .2));
+        const rms = Math.sqrt(rms2.slice(0, top).reduce((a, b) => a + b, 0) / top);
+        const peak = peaks[Math.min(1, peaks.length - 1)];
+        sum += rms > 0 && peak > 0 ? 20 * Math.log10(peak / rms) : 0;
+    }
+    return sum / channels;
+}
+
+function drHistoryColor(dr) {
+    // Deep red through orange and yellow to progressively stronger greens.
+    const stops = [[0, 0, 72, 27], [5, 7, 79, 39], [8, 27, 88, 47],
+                   [10, 49, 88, 49], [12, 89, 65, 42], [14, 135, 61, 36]];
+    const value = Math.max(0, Math.min(14, dr));
+    let upper = stops.findIndex(s => s[0] >= value);
+    if (upper <= 0) upper = 1;
+    const a = stops[upper - 1], b = stops[upper];
+    const fraction = (value - a[0]) / (b[0] - a[0]);
+    const mix = i => a[i] + (b[i] - a[i]) * fraction;
+    return `hsl(${mix(1)} ${mix(2)}% ${mix(3)}%)`;
+}
+
+function paintDrHistory() {
+    const track = document.getElementById('dr-estimate-history');
+    const blockCount = drWindowSeconds / 3;
+    const blocks = drEstimateBlocks.slice(-blockCount);
+    // A wide one-minute panel can show all twenty 3-second blocks.
+    const steps = Math.max(1, Math.min(Math.floor(track.clientWidth / 20),
+                                        blockCount));
+    const left = blockCount - blocks.length;
+    const cells = [];
+    for (let i = 0; i < steps; i++) {
+        const start = Math.floor(i * blockCount / steps);
+        const end = Math.floor((i + 1) * blockCount / steps);
+        const sample = blocks.slice(Math.max(0, start - left), Math.max(0, end - left));
+        const dr = sample.length ? drFromBlocks(sample) : null;
+        const title = dr === null ? 'Waiting for audio' :
+            `${Math.round((blockCount - end) * 3)}–${Math.round((blockCount - start) * 3)} s ago: DR${dr.toFixed(1)}`;
+        cells.push(`<span title="${title}"${dr === null ? '' :
+            ` style="background:${drHistoryColor(dr)}"`}></span>`);
+    }
+    track.innerHTML = cells.join('');
+    track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)}, oldest on the left; ${blocks.length * 3} seconds sampled`);
+    document.getElementById('dr-estimate-oldest').textContent = `−${drWindowLabel(drWindowSeconds)}`;
+    document.getElementById('dr-estimate-window-label').textContent = drWindowLabel(drWindowSeconds);
+}
+
+function setDrEstimateWindow(value) {
+    drWindowSeconds = Math.max(60, Math.min(1200, Number(value) || 60));
+    try { localStorage.setItem(DR_WINDOW_KEY, String(drWindowSeconds)); } catch {}
+    if (drEstimateFrame)
+        paintDrEstimate({...drEstimateFrame, dr_blocks: drEstimateBlocks});
+    else paintDrHistory();
+}
+
 function paintDrEstimate(frame) {
+    if (!Array.isArray(frame.dr_blocks) && drEstimateFrame &&
+        frame.ok === drEstimateFrame.ok && frame.source === drEstimateFrame.source &&
+        frame.error === drEstimateFrame.error &&
+        frame.dr?.state === drEstimateFrame.dr?.state) return;
+    drEstimateFrame = frame;
+    if (Array.isArray(frame.dr_blocks)) drEstimateBlocks = frame.dr_blocks;
+    paintDrHistory();
     const value = document.getElementById('dr-estimate-value');
     const status = document.getElementById('dr-estimate-status');
     const needle = document.getElementById('dr-estimate-needle');
     const dr = frame.dr || {};
-    if (!frame.ok || dr.state !== 'ready' || !Number.isFinite(dr.dr)) {
+    const selected = drEstimateBlocks.slice(-drWindowSeconds / 3);
+    const exact = selected.length >= 2 ? drFromBlocks(selected) : null;
+    if (!frame.ok || dr.state !== 'ready' || exact === null) {
         value.textContent = '—';
         needle.hidden = true;
     }
@@ -5009,16 +5111,21 @@ function paintDrEstimate(frame) {
         status.textContent = 'Available while MPD plays a renderer stream';
         return;
     }
-    if (dr.state !== 'ready' || !Number.isFinite(dr.dr)) {
+    if (dr.state !== 'ready' || exact === null) {
         status.textContent = 'Collecting audio — first estimate after 6 seconds';
         return;
     }
-    const shown = Math.max(0, Math.round(dr.dr));
+    const shown = Math.max(0, Math.round(exact));
     value.textContent = shown > 14 ? 'DR14+' : `DR${shown}`;
     needle.hidden = false;
     needle.style.left = `${Math.max(0, Math.min(100, shown / 14 * 100))}%`;
-    status.textContent = `${dr.seconds}s sampled · rolling 60s window`;
+    status.textContent = `${selected.length * 3}s sampled · rolling ${drWindowLabel(drWindowSeconds)} window`;
 }
+
+paintDrHistory();
+if (window.ResizeObserver)
+    new ResizeObserver(paintDrHistory).observe(document.getElementById('dr-estimate-history'));
+else window.addEventListener('resize', paintDrHistory);
 
 function startDrEstimate() {
     if (!SPECTRUM_ENABLED || drEstimateSource || document.hidden || activeTab !== 0) return;
