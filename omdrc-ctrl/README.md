@@ -130,22 +130,31 @@ provides no feedback. Every command here either shows its output directly
 ## Measuring the DR of what is playing
 
 **Estimate DR** on the renderer card samples the MPD output already used by
-the Spectrum and Levels displays. While its toggle is on, it updates a
-red/yellow/green gauge every three seconds. A slider selects a rolling window
-from 1 to 90 minutes, and the bar below the gauge colors each time slice by
-its measured DR and prints its rounded value. The number of slices adapts to
-the panel width. A complete 3-second block below −80 dBFS peak leaves an empty
-slice; AVG is the mean of 3-second DR values since the latest such silence in
-the selected window. Pausing or stopping MPD also inserts empty time slots,
-and AVG resumes with the next audio. **Detect song change** starts a new view
-of the rolling window on each MPD track; switching it off follows a longer
-slice across tracks. Seeking preserves the completed blocks. The window,
-song-change setting, panel visibility and active state are saved in this
-browser and restored on reload. The first
-number appears after six seconds. The panel refreshes at most every five seconds; the
-3-second blocks and the DR algorithm are unchanged. It keeps only up to 90 minutes of 3-second
-block peak and RMS statistics, with no download or saved audio. The tap is a 48 kHz
-excerpt, so this is an indication of the passage you heard, not a full-track
+the Spectrum and Levels displays. While its toggle is on, it shows a
+red/yellow/green gauge with the DR of the selected rolling window, computed
+with the standard algorithm on 3-second blocks (top-20 % RMS against the
+second-highest peak). A slider selects the window from 1 to 90 minutes, and
+the bar below the gauge divides the collected audio into segments across the
+full panel width, so every segment resizes as blocks arrive. Each segment is
+colored by its DR and prints the rounded value; its colored height is
+proportional to its mean RMS level (full height 0 dB, empty −40 dB). Hover a
+segment, or tap it on a touch screen, to read its time range, exact DR and
+level. The left label under the bar is the time the bar covers so far.
+
+A complete 3-second block below −80 dBFS peak is silence. Pausing or stopping
+MPD adds **one** empty segment, drawn narrow and hatched; the history before
+it stays, and the gauge restarts with the next audio. **AVG** is the mean of
+the per-block DR values (each block's own peak against its own RMS) since the
+latest silence; it is a different statistic from the gauge and is not
+comparable with standard DR. **Detect song change** starts a new view of the
+window on each MPD track; switching it off follows a longer slice across
+tracks. Seeking preserves the completed blocks. The window, song-change
+setting, panel visibility and active state are saved in this browser and
+restored on reload. The first number appears after six seconds. The panel
+refreshes at most every `dr_refresh_seconds` (default 5) while the blocks stay
+3 seconds long. Only up to 90 minutes of block peak and RMS statistics are
+kept, with no download or saved audio. The tap is MPD's FIFO output at
+44.1 kHz, so this is an indication of the passage you heard, not a full-track
 or album DR measurement. Switching to System or Spectrum keeps an active DR
 estimate running; hiding or closing the browser tab releases its listener.
 MPD's secondary FIFO output is disabled when
@@ -922,7 +931,7 @@ default and uses an MPD FIFO output as a passive stream copy:
 enabled = no
 mpd_output_name = OMDRC Spectrum
 fifo_path = /tmp/omdrc-spectrum.fifo
-sample_rate = 48000
+sample_rate = 44100
 bits = 32
 channels = 2
 refresh_hz = 25
@@ -1919,7 +1928,7 @@ state. The feature may be present but disabled:
   "enabled": false,
   "output_name": "OMDRC Spectrum",
   "fifo": "/tmp/omdrc-spectrum.fifo",
-  "sample_rate": 48000,
+  "sample_rate": 44100,
   "refresh_hz": 5,
   "frame": { "ok": false, "state": "idle", "error": "not started" }
 }
@@ -1944,7 +1953,7 @@ live frames:
 {
   "ok": true,
   "state": "running",
-  "rate": 48000,
+  "rate": 44100,
   "mode": "music",
   "fft_size": 16384,
   "drc_delay": 0.671,

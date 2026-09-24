@@ -2540,14 +2540,14 @@ class SpectrumAnalyzer:
                         dr_song_file = song_file
                         dr_song_id = song_id
                     if dr_playback_state in ("pause", "stop"):
+                        # One empty slot per pause or stop, not one per 3 s:
+                        # a long stop must not push the history out of the window.
                         if not dr_gap_next_at:
                             dr_gap_next_at = now
-                        while now >= dr_gap_next_at:
                             dr_estimate.add_gap()
                             dr_tail.clear()
                             publish_dr()
                             dr_gap_marked = True
-                            dr_gap_next_at += 3.0
                     else:
                         dr_gap_next_at = 0.0
                 if now >= next_source_check:

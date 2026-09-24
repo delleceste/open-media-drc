@@ -923,7 +923,7 @@ secondary `OMDRC Spectrum` fifo output), `cdin` (the CD bridge), or `auto`
 (default), which takes `cdin` while a disc is playing and `mpd` otherwise.
 CD audio never passes through MPD, so without the `cdin` source the analyzer
 is blank for a whole disc. The rate travels with the source (CD is 44.1 kHz,
-the MPD FIFO 48 kHz): analysing at the wrong rate mislabels every bin without
+the MPD FIFO 44.1 kHz): analysing at the wrong rate mislabels every bin without
 any error. How CD samples reach the FIFO is OS-specific (section
 \ref{sec:linux-panel} or \ref{sec:fbsd-panel}).
 
@@ -1583,11 +1583,12 @@ its track. And a reading over very few blocks is noisy: the first number
 appears after **six seconds** (two blocks), and it settles as blocks
 accumulate.
 
-The audio is a 48 kHz tap on MusicPD's secondary output, so the estimate is
-computed on the resampled copy and does not use the 44.1 kHz block-length quirk
-of the reference meter. Expect it to land within a fraction of a point of the
-track's DR when the window covers the track; treat it as an indication, not as a
-value to cite against the database.
+The audio is a 44.1 kHz tap on MusicPD's secondary output. Material at 44.1 kHz
+passes through unchanged and uses the reference meter's block length; other
+rates are resampled to 44.1 kHz first. Expect the estimate to land within a
+fraction of a point of the track's DR when the window covers the track (not
+measured); treat it as an indication, not as a value to cite against the
+database.
 
 Only per-block statistics are kept --- two numbers per channel per block. No
 audio is recorded or saved. The server keeps **one** history for every browser
@@ -1606,25 +1607,35 @@ shows:
   *Paused / Stopped --- waiting for audio* when MusicPD is not playing.
 - **The segment bar** --- the history, oldest on the left. The bar always
   spans the full width of the panel. The audio collected so far is divided
-  evenly among the segments, so **every segment resizes as new blocks
-  arrive**. Each segment shows the DR of its own blocks, colored on the same
-  scale, with the rounded value printed inside; hovering it gives the time
-  range (seconds before the latest interval) and the exact DR. The number of
-  segments follows the panel width (about one per 24 px).
+  among the segments, so **every segment resizes as new blocks arrive**. Each
+  segment shows the DR of its own blocks, colored on the same scale, with the
+  rounded value printed inside. The colored height is proportional to the
+  segment's mean RMS level, full height at 0 dB and empty at −40 dB, so a
+  loud, compressed section stands out from a quiet one. The
+  number of segments follows the panel width (about one per 24 px).
+- **Segment details** --- hover a segment, or **tap** it on a touch screen
+  (which has no hover), to see its time range (seconds before the latest
+  interval), exact DR and level on a line under the bar. Tapping it again
+  clears the selection.
 - **The time labels** --- the left label is the time the bar covers so far
   ("−4 min 30 s"), the right one is *Latest*.
-- **AVG** --- the mean of the individual 3-second DR values since the latest
-  silence in the window: a steadier figure than a single window's DR when the
-  music varies.
+- **AVG** --- the mean of the per-block DR values since the latest silence in
+  the window, where each block is taken on its own: its peak against its own
+  RMS. That is a different statistic from the gauge, which compares the
+  window's highest peaks with its loudest 20 % of blocks, so AVG usually reads
+  higher. It is **not** comparable with standard DR or with the database; use
+  the gauge for that.
 
-#### Silence and pauses
+#### Silence, pauses and stops
 
-A complete block whose peak is below −80 dBFS is **silence**: its segment is
-left empty, and it ends the AVG run. Pausing or stopping MusicPD produces the
-same thing --- an empty 3-second slot for every 3 seconds of pause or stop, even
-though MusicPD sends no audio then. When playback resumes, the AVG and the
-gauge start afresh with the next audio; the earlier blocks stay in the
-history, before the gap. Seeking inside a track keeps the completed blocks.
+A complete block whose peak is below −80 dBFS is **silence**. Silence, a pause
+or a stop is drawn as **one** narrow, hatched segment, in a disabled color,
+between the audio before and after it. Pausing or stopping MusicPD adds that
+single empty segment however long it lasts, so a long stop does not push the
+earlier history out of the window. The history before it stays until the
+next play. When playback resumes, the gauge and AVG start afresh with the next
+audio; if the song changes, **Detect song change** starts the view at the new
+track. Seeking inside a track keeps the completed blocks.
 
 ### Options in the panel
 
@@ -1633,7 +1644,7 @@ history, before the gap. Seeking inside a track keeps the completed blocks.
 | **Estimate DR** / *Stop estimate* | starts or stops the listener. The history is kept in the server only while at least one browser is listening; the first listener to join starts it afresh |
 | **Show DR** / *Hide DR* | shows or hides the panel without stopping the estimate |
 | **Rolling window** slider | 1 to 90 minutes in 1-minute steps; the value is written to the right of the slider. The window is how much history the gauge and the bar cover. Long windows are the user's choice --- a 90-minute window mixes many tracks |
-| **Detect song change: On / Off** | *On*: when MusicPD moves to another track, this view starts at the track boundary --- the gauge, bar and AVG describe the current track only (up to the window). *Off*: the window follows a slice of audio across tracks, for a long stretch you care about as a whole rather than track by track |
+| **Detect song change: On / Off** | *On*: when MusicPD moves to another track, this view starts at the track boundary --- the gauge, bar and AVG describe the current track only (up to the window); the earlier history is kept on the server for views with the switch off. *Off*: the window follows a slice of audio across tracks, for a long stretch you care about as a whole rather than track by track |
 
 **Detect song change** is a per-browser view. The server keeps a single
 history across track changes and reports each boundary; whether a browser

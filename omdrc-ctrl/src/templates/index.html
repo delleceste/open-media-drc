@@ -804,14 +804,17 @@
                                      font-variant-numeric: tabular-nums; color: var(--text); }
         .dr-estimate-history { display: flex; gap: 2px; height: 21px; margin: 5px 4px 0;
                                overflow: hidden; border-radius: 3px; }
-        .dr-estimate-history > span > i { position: absolute; left: 3px; right: 3px; height: 2px;
-                                          margin-top: -1px; background: currentColor; opacity: .55;
-                                          border-radius: 1px; pointer-events: none; }
+        .dr-estimate-history > span > i { position: absolute; left: 0; right: 0; bottom: 0;
+                                          pointer-events: none; }
+        .dr-estimate-history > span > b { position: relative; font: inherit; }
         .dr-estimate-history > span { position: relative; display: flex; flex: 1 1 0; min-width: 0;
                                       align-items: center; justify-content: center;
                                       background: var(--surface); font-size: .62rem;
                                       font-weight: 800; font-variant-numeric: tabular-nums; }
         .dr-estimate-history > span { cursor: pointer; }
+        .dr-estimate-history > span.gap { flex: 0 0 12px;
+            background: repeating-linear-gradient(135deg, var(--surface) 0 3px,
+                        color-mix(in srgb, var(--muted) 35%, var(--surface)) 3px 5px); }
         .dr-estimate-history > span.selected { outline: 2px solid var(--text); outline-offset: -2px; }
         .dr-estimate-detail { margin: 4px 4px 0; color: var(--text); font-size: .7rem;
                               font-variant-numeric: tabular-nums; }
@@ -5166,31 +5169,58 @@ function paintDrHistory() {
     const track = document.getElementById('dr-estimate-history');
     const blocks = drSelectedBlocks();
     const count = blocks.length;
-    // The bar always spans the full width: the audio collected so far is
-    // divided among the segments, so every segment resizes as blocks arrive.
-    const steps = Math.max(1, Math.min(Math.floor(track.clientWidth / 24), count));
+    // The bar always spans the full width. Audio is divided among the
+    // segments, so every segment resizes as blocks arrive; a stop, pause or
+    // silence is one narrow disabled-looking segment of its own, and the
+    // history before it stays.
+    const runs = [];
+    for (let i = 0; i < count;) {
+        const silent = drBlockSilent(blocks[i]);
+        let j = i;
+        while (j < count && drBlockSilent(blocks[j]) === silent) j++;
+        runs.push({start: i, end: j, silent});
+        i = j;
+    }
+    const gapRuns = runs.filter(r => r.silent).length;
+    const audioBlocks = runs.reduce((n, r) => n + (r.silent ? 0 : r.end - r.start), 0);
+    const budget = Math.max(runs.length - gapRuns,
+                            Math.floor((track.clientWidth - gapRuns * 14) / 24));
+    const parts = [];
+    for (const run of runs) {
+        if (run.silent) { parts.push(run); continue; }
+        const len = run.end - run.start;
+        const n = Math.max(1, Math.min(len, Math.round(budget * len / audioBlocks)));
+        for (let k = 0; k < n; k++)
+            parts.push({start: run.start + Math.floor(k * len / n),
+                        end: run.start + Math.floor((k + 1) * len / n), silent: false});
+    }
+    if (!parts.length) parts.push({start: 0, end: 0, silent: false});
     const cells = [];
     let selectedText = null;
-    for (let i = 0; i < steps; i++) {
-        const start = Math.floor(i * count / steps);
-        const end = Math.floor((i + 1) * count / steps);
-        const sample = blocks.slice(start, end);
-        const silent = sample.some(drBlockSilent);
-        const dr = sample.length && !silent ? drFromBlocks(sample) : null;
-        const period = `${Math.round((count - end) * 3)}–${Math.round((count - start) * 3)} s before the latest interval`;
+    parts.forEach((part, i) => {
+        const sample = blocks.slice(part.start, part.end);
+        const dr = sample.length && !part.silent ? drFromBlocks(sample) : null;
+        const period = `${Math.round((count - part.end) * 3)}–${Math.round((count - part.start) * 3)} s before the latest interval`;
         const level = dr === null ? -Infinity : drLevelDb(sample);
-        const title = !sample.length ? 'Waiting for audio' : silent ?
-            `${period}: silence` : `${period}: DR${dr.toFixed(1)}, level ${level.toFixed(1)} dB`;
-        // A line at the segment's RMS level: top is 0 dB, bottom the floor.
-        const top = Math.max(0, Math.min(1, level / DR_LEVEL_FLOOR_DB)) * 100;
-        const mark = dr === null ? '' : `<i style="top:${top.toFixed(1)}%"></i>`;
+        const title = !sample.length ? 'Waiting for audio' : part.silent ?
+            `${period}: stopped, paused or silent` :
+            `${period}: DR${dr.toFixed(1)}, level ${level.toFixed(1)} dB`;
+        // The colored fill is as tall as the segment's RMS level: the full
+        // height is 0 dB, none is the floor.
+        const fill = dr === null ? 0 :
+            Math.max(8, Math.min(100, (1 - Math.max(level, DR_LEVEL_FLOOR_DB) / DR_LEVEL_FLOOR_DB) * 100));
         const color = dr === null ? null : drHistoryColor(dr);
         const label = dr === null ? '' : String(Math.max(0, Math.min(99, Math.round(dr))));
-        const fromRight = steps - 1 - i;
-        if (fromRight === drSelectedFromRight) selectedText = title;
-        cells.push(`<span data-r="${fromRight}" title="${title}"${fromRight === drSelectedFromRight ? ' class="selected"' : ''}${color ?
-            ` style="background:${color.background};color:${color.foreground}"` : ''}>${label}${mark}</span>`);
-    }
+        // The number sits mid-segment: dark on the fill, normal text above a short one.
+        const ink = color && fill >= 55 ? color.foreground : 'var(--text)';
+        const fromRight = parts.length - 1 - i;
+        const selected = fromRight === drSelectedFromRight;
+        if (selected) selectedText = title;
+        const style = color ? `flex:${part.end - part.start} 1 0;color:${ink}` : '';
+        cells.push(`<span data-r="${fromRight}" title="${title}" class="${part.silent ? 'gap' : ''}${selected ? ' selected' : ''}"${style ?
+            ` style="${style}"` : ''}>${color ?
+            `<i style="height:${fill.toFixed(1)}%;background:${color.background}"></i>` : ''}<b>${label}</b></span>`);
+    });
     track.innerHTML = cells.join('');
     const detail = document.getElementById('dr-estimate-detail');
     if (selectedText === null) drSelectedFromRight = null;   // it scrolled out of range
