@@ -1343,40 +1343,9 @@
             .spectrum-grid { grid-template-columns: 1fr 1fr; }
             .spectrum-chart-wrap { height: 230px; }
         }
-        /* ── level meters (Listen view): independent of the Spectrum tab,
-           always visible, idle — no stream at all — until the power button
-           turns them on. .idle just dims the track; the fill itself is
-           width:0 either way, since there is nothing to show. */
-        .meters-power {
-            display: inline-flex;
-            align-items: center;
-            width: 30px;
-            height: 18px;
-            padding: 2px;
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            background: var(--bg);
-            cursor: pointer;
-        }
-        .meters-power-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: var(--muted);
-            transition: transform .15s, background .15s;
-        }
-        .meters-power[aria-checked="true"] {
-            border-color: var(--green);
-            background: rgba(63,185,80,.12);
-        }
-        .meters-power[aria-checked="true"] .meters-power-dot {
-            background: var(--green);
-            transform: translateX(12px);
-        }
-        .meters-power:disabled {
-            opacity: .4;
-            cursor: not-allowed;
-        }
+        /* ── level meters (Listen view): the control stays accessible while
+           the card is hidden, and the stream starts only when opened. */
+        .meters-toggle-row { display: flex; justify-content: flex-end; margin: -5px 0 10px; }
         .meters-bars {
             display: grid;
             gap: 7px;
@@ -1697,21 +1666,20 @@
 {{ render_group(group_name, group_label, cmds) }}
 {% endfor %}
 
-<!-- Level meters: L/R, independent of the Spectrum tab. Always visible, but
-     idle — no SSE connection at all — until the power button turns them on,
-     so the common case (never opened) costs nothing. -->
-<div class="card meters-card idle" id="meters-card">
+<!-- Level meters: L/R, independent of the Spectrum tab. The card appears
+     only while requested; its control remains available in the Listen view. -->
+<div class="meters-toggle-row"{% if not spectrum.enabled %} hidden{% endif %}>
+    <button type="button" class="btn-log" id="meters-power-btn"
+            aria-expanded="false" aria-controls="meters-card"
+            onclick="toggleMeters()">Show levels</button>
+</div>
+<div class="card meters-card idle" id="meters-card" hidden>
     <div class="card-title title-row">
         <span>Levels</span>
         <div class="title-actions">
             <button type="button" class="btn-log btn-mini" id="meters-style-btn"
                     title="Switch between bar meters and needle meters"
                     onclick="toggleMetersStyle()">Needles</button>
-            <button type="button" class="meters-power" id="meters-power-btn"
-                    role="switch" aria-checked="false"
-                    title="Turn the level meters on" onclick="toggleMeters()">
-                <span class="meters-power-dot"></span>
-            </button>
         </div>
     </div>
     <div class="meters-bars" id="meters-bars">
@@ -4811,7 +4779,10 @@ function ensureSpectrumStarted() {
 function setMetersButton(active) {
     const btn = document.getElementById('meters-power-btn');
     if (!btn) return;
-    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    btn.setAttribute('aria-expanded', active ? 'true' : 'false');
+    btn.textContent = active ? 'Hide levels' : 'Show levels';
+    btn.classList.toggle('active', active);
+    document.getElementById('meters-card').hidden = !active;
 }
 
 function setMetersIdle(idle) {
@@ -4849,16 +4820,17 @@ function stopMeters(clearWanted = true) {
         metersSource.close();
         metersSource = null;
     }
-    setMetersButton(false);
+    setMetersButton(metersWanted);
     if (clearWanted) { setMetersIdle(true); snapVu({}); }
 }
 
 function toggleMeters() {
     if (!SPECTRUM_ENABLED) return;
-    if (metersSource) {
+    if (metersWanted) {
         stopMeters(true);
     } else {
         metersWanted = true;
+        setMetersButton(true);
         startMeters();
     }
 }
@@ -4995,9 +4967,7 @@ setMetersButton(false);
 setMetersIdle(true);
 {
     const disabled = !SPECTRUM_ENABLED;
-    const powerBtn = document.getElementById('meters-power-btn');
     const styleBtn = document.getElementById('meters-style-btn');
-    if (powerBtn) powerBtn.disabled = disabled;
     if (styleBtn) styleBtn.disabled = disabled;
     document.getElementById('btn-dr-estimate').disabled = disabled;
 }
