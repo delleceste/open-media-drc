@@ -6818,14 +6818,20 @@ def _chain_status() -> dict:
     rows: list[list[dict]] = [
         [n for n in ([capture_node] if capture_node else []) + feeders],
         sources,
-        ([bridge_node] if bridge_node else []) + ([fifo_node] if fifo_node else []),
-        filters + fifo_consumers,
+        [bridge_node] if bridge_node else [],
+        filters,
         [dac_node] if dac_node else [],
     ]
     for index, row in enumerate([r for r in rows if r]):
         for node in row:
             node["row"] = index
-    nodes = [n for row in rows for n in row]
+    # The FIFO is a second MPD output, not a stage on the DAC route.  Its
+    # nodes travel in the graph data but are drawn as a side branch of MPD.
+    if fifo_node:
+        fifo_node["row"] = mpd_node["row"]
+        for consumer in fifo_consumers:
+            consumer["row"] = mpd_node["row"]
+    nodes = [n for row in rows for n in row] + ([fifo_node] if fifo_node else []) + fifo_consumers
     by_id = {n["id"]: n for n in nodes}
 
     edges = []

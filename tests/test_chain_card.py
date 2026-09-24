@@ -283,6 +283,21 @@ class Graph(unittest.TestCase):
         self.assertEqual(_node(status, "spectrum:level")["listeners"], 1)
         self.assertEqual(_node(status, "spectrum:dr-calc")["listeners"], 1)
 
+    def test_fifo_is_a_side_output_of_mpd_not_the_dac_route(self):
+        outputs = [{"name": APP.SPECTRUM_OUTPUT_NAME, "enabled": True}]
+        with mock.patch.object(APP._SPECTRUM, "clients", 1), \
+             mock.patch.object(APP._SPECTRUM, "band_clients", 0), \
+             mock.patch.object(APP._SPECTRUM, "dr_clients", 0):
+            status = _status(
+                holders={"/dev/dsp.dac": [_holder("601", "musicpd", "w")]},
+                activity={"mpd": True}, mpd_outputs=outputs)
+        self.assertIsNotNone(_edge(status, "app:601", "dev:dac"))
+        self.assertIsNotNone(_edge(status, "app:601", "spectrum:fifo"))
+        self.assertIsNotNone(_edge(status, "spectrum:fifo", "spectrum:level"))
+        self.assertIsNone(_edge(status, "spectrum:level", "dev:dac"))
+        self.assertEqual(_node(status, "spectrum:fifo")["row"],
+                         _node(status, "app:601")["row"])
+
     def test_disabled_mpd_fifo_is_absent_even_with_listeners(self):
         outputs = [{"name": APP.SPECTRUM_OUTPUT_NAME, "enabled": False}]
         with mock.patch.object(APP, "SPECTRUM_ENABLED", True), \

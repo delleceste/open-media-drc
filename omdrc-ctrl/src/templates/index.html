@@ -970,6 +970,8 @@
             display: flex; flex-direction: column; gap: 30px;
         }
         .chain-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+        .chain-graph.has-fifo .chain-rows { width: calc(100% - 150px); }
+        .chain-row.has-fifo { min-height: 124px; }
 
         .chain-node {
             display: flex; align-items: center; gap: 7px;
@@ -1007,6 +1009,21 @@
         .chain-node.fifo .chain-node-title,
         .chain-node.fifo-consumer .chain-node-title { font-size: .66rem; }
         .chain-node.fifo-consumer .chain-node-sub { display: none; }
+        .chain-node.mpd-with-fifo { position: relative; align-self: flex-start; }
+        .chain-fifo-branch {
+            position: absolute; left: calc(100% + 23px); top: 0;
+            width: 120px; display: flex; flex-direction: column;
+            align-items: flex-start; gap: 8px;
+        }
+        .chain-fifo-branch::before {
+            content: '→'; position: absolute; right: calc(100% + 5px); top: 3px;
+            color: var(--muted); font-size: 1rem;
+        }
+        .chain-fifo-branch.live::before { color: var(--green); }
+        .chain-fifo-consumers {
+            display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+            padding-left: 10px; border-left: 1px solid var(--border);
+        }
         .chain-listener-count {
             border-radius: 8px; padding: 1px 5px;
             background: #30363d; color: var(--text);
@@ -5692,9 +5709,15 @@ function orderChainRows(byRow, edges) {
 
 function renderChainGraph(d) {
     const rows = document.getElementById('chain-rows');
+    const graph = document.getElementById('chain-graph');
     rows.textContent = '';
+    const fifo = d.nodes.find(n => n.kind === 'fifo');
+    const fifoSource = fifo && d.edges.find(e => e.to === fifo.id)?.from;
+    const consumers = d.nodes.filter(n => n.kind === 'fifo-consumer');
+    graph.classList.toggle('has-fifo', !!fifoSource);
     const byRow = new Map();
     d.nodes.forEach(n => {
+        if (n.kind === 'fifo' || n.kind === 'fifo-consumer') return;
         if (!byRow.has(n.row)) byRow.set(n.row, []);
         byRow.get(n.row).push(n);
     });
@@ -5702,7 +5725,25 @@ function renderChainGraph(d) {
     [...byRow.keys()].sort((a, b) => a - b).forEach(r => {
         const row = document.createElement('div');
         row.className = 'chain-row';
-        byRow.get(r).forEach(n => row.appendChild(chainNodeEl(n)));
+        byRow.get(r).forEach(n => {
+            const el = chainNodeEl(n);
+            if (n.id === fifoSource) {
+                row.classList.add('has-fifo');
+                el.classList.add('mpd-with-fifo');
+                const branch = document.createElement('div');
+                branch.className = 'chain-fifo-branch' + (fifo.active ? ' live' : '');
+                branch.setAttribute('aria-label', 'MPD secondary FIFO output');
+                branch.appendChild(chainNodeEl(fifo));
+                if (consumers.length) {
+                    const list = document.createElement('div');
+                    list.className = 'chain-fifo-consumers';
+                    consumers.forEach(consumer => list.appendChild(chainNodeEl(consumer)));
+                    branch.appendChild(list);
+                }
+                el.appendChild(branch);
+            }
+            row.appendChild(el);
+        });
         rows.appendChild(row);
     });
     drawChainArcs();
@@ -5729,6 +5770,9 @@ function drawChainArcs() {
     };
 
     d.edges.forEach(e => {
+        // The FIFO is positioned beside MPD; its arrow and consumers are
+        // drawn inside that side branch, while SVG follows the DAC route.
+        if (e.to === 'spectrum:fifo' || e.from === 'spectrum:fifo') return;
         const a = box(e.from), b = box(e.to);
         if (!a || !b || b.top <= a.bottom) return;
         const x1 = a.cx, y1 = a.bottom + 1, x2 = b.cx, y2 = b.top - 5;
