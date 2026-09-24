@@ -1607,16 +1607,18 @@ shows:
 - **The status line** --- how many seconds are sampled, the window, or
   *Paused / Stopped --- waiting for audio* when MusicPD is not playing.
 - **The segment bar** --- the history, oldest on the left, spanning the full
-  width of the panel. The window is divided into segments that each last one
-  twentieth of it (3 seconds for a 1-minute window, 4.5 minutes for a
-  90-minute one), on a fixed time grid, so a finished segment never changes.
-  The panel's width decides how many of the newest segments fit: a phone in
-  portrait shows the recent part, and rotating to landscape reveals older
-  segments in the same colors and heights. Each segment shows the DR of its
-  own blocks, colored on the same scale, with the rounded value at its base.
+  width of the panel and covering the whole window. The audio collected so
+  far is divided among as many segments as fit (each at least about 1.1 times
+  the width of two wide characters), so a wider panel shows the same history in
+  finer segments and a narrow one in coarser segments: a 90-minute window on a
+  wide screen draws a fine curve of the level over the whole listening. All
+  segments are recalculated whenever a new block arrives or the panel is
+  resized, so their values shift slightly as the audio moves through them.
+  Each segment shows the DR of its own blocks, colored on the same scale, with
+  the rounded value at its base.
   Its colored height is proportional to its mean RMS level, full height at
   0 dB and empty at −40 dB, so a loud, compressed section stands out from a
-  quiet one. The newest segment grows until its time is complete.
+  quiet one.
 - **Segment details** --- hover a segment, or **tap** it on a touch screen
   (which has no hover), to see its time range (seconds before the latest
   interval), exact DR and level on a line under the bar. Tapping it again

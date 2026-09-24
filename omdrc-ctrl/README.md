@@ -134,10 +134,11 @@ the Spectrum and Levels displays. While its toggle is on, it shows a
 red/yellow/green gauge with the DR of the selected rolling window, computed
 with the standard algorithm on 3-second blocks (top-20 % RMS against the
 second-highest peak). A slider selects the window from 1 to 90 minutes. The
-bar below the gauge divides the window into segments that each last one
-twentieth of it, on a fixed time grid, so a finished segment never changes.
-The panel width decides how many of the newest segments fit: a narrow phone
-screen shows the recent part, and rotating to landscape reveals older ones.
+bar below the gauge always spans the full panel width and shows the whole
+window: the audio collected so far is divided among as many segments as fit,
+so a wider panel (landscape) shows the same history in finer segments and a
+narrow one in coarser ones. All segments are recalculated whenever a new block
+arrives or the panel is resized.
 Each segment is colored by its DR and prints the rounded value at its base;
 its colored height is proportional to its mean RMS level (full height 0 dB,
 empty −40 dB). Hover a segment, or tap it on a touch screen, to read its time

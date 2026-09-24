@@ -2376,14 +2376,11 @@ class SpectrumAnalyzer:
                 result = dr_estimate.result()
                 age = max(0, dr_estimate.total_blocks - dr_track_start_total)
                 with self.lock:
-                    total = dr_estimate.total_blocks
                     self.dr_state = ({"state": "ready", **result,
                                       "track_age_blocks": age,
-                                      "total_blocks": total,
                                       "playback_state": dr_playback_state} if result else
                                      {"state": "collecting", "dr": None,
                                       "seconds": 0, "track_age_blocks": age,
-                                      "total_blocks": total,
                                       "playback_state": dr_playback_state})
                     self.dr_history = dr_estimate.history()
                     self.dr_revision += 1

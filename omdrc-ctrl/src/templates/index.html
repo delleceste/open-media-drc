@@ -781,7 +781,7 @@
         .dr-estimate { margin: 0 0 12px; padding: 10px 12px;
                        border: 1px solid var(--border); border-radius: 7px; }
         .dr-estimate-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
-        .dr-estimate-gauge { flex: 1 1 140px; min-width: 120px; }
+        .dr-estimate-gauge { flex: 1 1 200px; min-width: 170px; }
         .dr-estimate-head strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
         .dr-estimate-head > span { color: var(--muted); font-size: .75rem; }
         .dr-estimate-track { position: relative; height: 12px; margin: 5px 4px 1px;
@@ -798,12 +798,12 @@
         .dr-estimate-scale span { position: absolute; transform: translateX(-50%); }
         .dr-estimate-scale span:first-child { left: 0; transform: none; }
         .dr-estimate-scale span:last-child { right: 0; transform: none; }
-        .dr-estimate-window { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-                              margin: 9px 0 4px; color: var(--muted); font-size: .74rem; }
+        .dr-estimate-window { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap;
+                              margin: 9px 0 8px; color: var(--muted); font-size: .74rem; }
         .dr-estimate-window input { flex: 1; min-width: 90px; accent-color: var(--accent); }
         .dr-estimate-window output { min-width: 5.5em; text-align: right;
                                      font-variant-numeric: tabular-nums; color: var(--text); }
-        .dr-estimate-history { display: flex; gap: 2px; height: 21px; margin: 5px 4px 0;
+        .dr-estimate-history { display: flex; gap: 0; height: 21px; margin: 5px 4px 0;
                                overflow: hidden; border-radius: 3px;
                                background: color-mix(in srgb, var(--muted) 22%, var(--surface));
                                box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted) 40%, transparent); }
@@ -5045,7 +5045,6 @@ const DR_DETECT_KEY = 'omdrc-dr-detect-song-change';
 let drEstimateBlocks = [];
 let drEstimateFrame = null;
 let drTrackAgeBlocks = 0;
-let drTotalBlocks = 0;            // blocks ever measured; anchors the segment grid
 let drSelectedFromRight = null;   // tapped segment, counted from the newest
 let drWindowSeconds = 60;
 try {
@@ -5120,7 +5119,6 @@ function drElapsedLabel(seconds) {
 }
 
 const DR_LEVEL_FLOOR_DB = -40;
-const DR_SEGMENTS_PER_WINDOW = 20;
 
 // Mean RMS level of some blocks in dB, 0 dB being a full-scale sine.
 function drLevelDb(blocks) {
@@ -5190,9 +5188,10 @@ function paintDrHistory() {
     const track = document.getElementById('dr-estimate-history');
     const blocks = drSelectedBlocks();
     const count = blocks.length;
-    // The bar always spans the full width. A stop, pause or silence is one
-    // narrow disabled-looking segment of its own, and the history before it
-    // stays.
+    // The bar always spans the full width and holds the whole window: the
+    // audio is divided among as many segments as fit, so a wider panel shows
+    // the same history in finer segments. A stop, pause or silence is one
+    // narrow disabled-looking segment of its own, and the history before it stays.
     const runs = [];
     for (let i = 0; i < count;) {
         const silent = drBlockSilent(blocks[i]);
@@ -5201,31 +5200,19 @@ function paintDrHistory() {
         runs.push({start: i, end: j, silent});
         i = j;
     }
-    // Every segment lasts window / 20, on a grid counted from the first block
-    // ever seen, so a finished segment never changes and rotating the screen
-    // only reveals or hides the older ones.
-    const segBlocks = Math.max(1, Math.round(drWindowSeconds / 3 / DR_SEGMENTS_PER_WINDOW));
-    const first = Math.max(0, drTotalBlocks - count);
-    const all = [];
+    const gapRuns = runs.filter(r => r.silent).length;
+    const audioBlocks = runs.reduce((n, r) => n + (r.silent ? 0 : r.end - r.start), 0);
+    const budget = Math.max(runs.length - gapRuns,
+                            Math.floor((track.clientWidth - gapRuns * 14) / drMinCellPx(track)));
+    const parts = [];
     for (const run of runs) {
-        if (run.silent) { all.push(run); continue; }
-        for (let s = run.start; s < run.end;) {
-            const gridEnd = (Math.floor((first + s) / segBlocks) + 1) * segBlocks - first;
-            const e = Math.min(run.end, gridEnd);
-            all.push({start: s, end: e, silent: false});
-            s = e;
-        }
+        if (run.silent) { parts.push(run); continue; }
+        const len = run.end - run.start;
+        const n = Math.max(1, Math.min(len, Math.round(budget * len / audioBlocks)));
+        for (let k = 0; k < n; k++)
+            parts.push({start: run.start + Math.floor(k * len / n),
+                        end: run.start + Math.floor((k + 1) * len / n), silent: false});
     }
-    // Keep the newest segments that fit the width; the rest wait off-screen.
-    const cellPx = drMinCellPx(track) + 2;
-    let room = track.clientWidth, from = all.length;
-    while (from > 0) {
-        const cost = all[from - 1].silent ? 14 : cellPx;
-        if (room < cost && from < all.length) break;
-        room -= cost;
-        from--;
-    }
-    const parts = all.slice(from);
     if (!parts.length) parts.push({start: 0, end: 0, silent: false});
     const cells = [];
     let selectedText = null;
@@ -5248,7 +5235,7 @@ function paintDrHistory() {
         const fromRight = parts.length - 1 - i;
         const selected = fromRight === drSelectedFromRight;
         if (selected) selectedText = title;
-        const style = color ? `color:${ink}` : '';
+        const style = color ? `flex:${part.end - part.start} 1 0;color:${ink}` : '';
         cells.push(`<span data-r="${fromRight}" title="${title}" class="${part.silent ? 'gap' : ''}${selected ? ' selected' : ''}"${style ?
             ` style="${style}"` : ''}>${color ?
             `<i style="height:${fill.toFixed(1)}%;background:${color.background}"></i>` : ''}<b>${label}</b></span>`);
@@ -5261,7 +5248,7 @@ function paintDrHistory() {
     track.setAttribute('aria-label', `Dynamic range over the last ${drWindowLabel(drWindowSeconds)} of intervals, oldest on the left`);
     // The left label shows how much audio the bar covers.
     const oldest = document.getElementById('dr-estimate-oldest');
-    oldest.textContent = count ? `−${drElapsedLabel((count - parts[0].start) * 3)}` : '';
+    oldest.textContent = count ? `−${drElapsedLabel(count * 3)}` : '';
     document.getElementById('dr-estimate-window-label').textContent = drWindowLabel(drWindowSeconds);
 }
 
@@ -5282,7 +5269,6 @@ function paintDrEstimate(frame) {
     if (Array.isArray(frame.dr_blocks)) drEstimateBlocks = frame.dr_blocks;
     if (Number.isInteger(frame.dr?.track_age_blocks))
         drTrackAgeBlocks = frame.dr.track_age_blocks;
-    if (frame.dr) drTotalBlocks = Number.isInteger(frame.dr.total_blocks) ? frame.dr.total_blocks : 0;
     paintDrHistory();
     const value = document.getElementById('dr-estimate-value');
     const status = document.getElementById('dr-estimate-status');
