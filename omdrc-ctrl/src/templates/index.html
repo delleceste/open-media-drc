@@ -999,6 +999,7 @@
         }
         .chain-node-ports .led { width: 7px; height: 7px; border-width: 0; }
         .chain-node.device  { border-color: #3d4650; }
+        .chain-node.device.dac .chain-node-title { white-space: normal; overflow: visible; }
         .chain-node.bridge  { border-style: dashed; }
         .chain-node.idle    { opacity: .55; }
         .chain-node.absent  { opacity: .5; border-style: dashed; }
@@ -4920,12 +4921,19 @@ function startMeters() {
     // for this connection and only computes RMS/peak (see spectrum_stream()
     // in app.py) — turning the meters on never costs an rfft().
     metersSource = new EventSource('/spectrum/stream?mode=vu');
+    let chainRefreshed = false;
     metersSource.onmessage = ev => {
         try {
             const d = JSON.parse(ev.data);
             updateVu(d.ok ? (d.vu || {}) : {});
             if (d.ok) updateBalance(d.vu || {});
             else clearBalance();
+            // The first attached MPD frame means its second output is open.
+            // Refresh the diagram now, instead of waiting for its next poll.
+            if (!chainRefreshed && d.ok && d.source === 'mpd') {
+                chainRefreshed = true;
+                autoRefreshControls.chain?.();
+            }
         } catch {}
     };
     metersSource.onerror = () => {
@@ -4997,8 +5005,16 @@ function startDrEstimate() {
     btn.textContent = 'Stop estimate';
     document.getElementById('dr-estimate').hidden = false;
     drEstimateSource = new EventSource('/spectrum/stream?mode=dr');
+    let chainRefreshed = false;
     drEstimateSource.onmessage = ev => {
-        try { paintDrEstimate(JSON.parse(ev.data)); } catch {}
+        try {
+            const d = JSON.parse(ev.data);
+            paintDrEstimate(d);
+            if (!chainRefreshed && d.ok && d.source === 'mpd') {
+                chainRefreshed = true;
+                autoRefreshControls.chain?.();
+            }
+        } catch {}
     };
     drEstimateSource.onerror = () => {
         stopDrEstimate(false);
@@ -5074,6 +5090,7 @@ document.addEventListener('visibilitychange', () => {
         if (spectrumWanted) startSpectrum();
         if (activeTab === 0 && metersWanted) startMeters();
         if (activeTab === 0 && drEstimateWanted) startDrEstimate();
+        if (activeTab === 0) autoRefreshControls.chain?.();
     }
 });
 window.addEventListener('pagehide', () => {
@@ -5109,6 +5126,7 @@ let activeTab = 0;
 
 function switchTab(i, persist = true) {
     i = [0, 1, 2].includes(Number(i)) ? Number(i) : 0;
+    const enteringListen = activeTab !== 0 && i === 0;
     const leavingSpectrum = activeTab === 2 && i !== 2;
     activeTab = i;
     document.querySelectorAll('.tab-page').forEach(p => {
@@ -5130,6 +5148,7 @@ function switchTab(i, persist = true) {
         spectrumWanted = true;
         startSpectrum();
     }
+    if (enteringListen) autoRefreshControls.chain?.();
 }
 
 // Swipe between tabs on touch. Ignored when the gesture starts on an
@@ -5713,6 +5732,7 @@ function chainSetLed(id, node) {
 function chainNodeEl(n) {
     const el = document.createElement('div');
     const classes = ['chain-node', n.kind];
+    if (n.kind === 'device' && n.role === 'dac') classes.push('dac');
     if (n.kind === 'device' && !n.present) classes.push('absent');
     if (n.kind === 'bridge' && !n.present) classes.push('absent');
     if (n.idle) classes.push('idle');
@@ -5857,6 +5877,9 @@ function renderChainGraph(d) {
         rows.appendChild(row);
     });
     drawChainArcs();
+    // A previously hidden tab, font swap, or layout change can move boxes
+    // after the synchronous measurement above.
+    requestAnimationFrame(drawChainArcs);
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -5992,6 +6015,10 @@ window.addEventListener('resize', () => {
     clearTimeout(chainResizeTimer);
     chainResizeTimer = setTimeout(drawChainArcs, 120);
 });
+if (window.ResizeObserver) {
+    new ResizeObserver(() => requestAnimationFrame(drawChainArcs))
+        .observe(document.getElementById('chain-rows'));
+}
 
 startAutoRefresh('chain', CHAIN_INTERVAL_MS, fetchChain);
 {% endif %}

@@ -6328,6 +6328,7 @@ def _device_holders(paths: list[str]) -> tuple[dict[str, list[dict]], bool, bool
 
 _SNDSTAT_CARD = re.compile(r"^pcm(?P<unit>\d+):\s*<(?P<desc>[^>]*)>")
 _ALSA_SPEC = re.compile(r"^(?:plug)?(?:hw|default):?(?P<card>[^,:]+)(?:[,:](?P<dev>\d+))?$")
+_ALSA_CARD_DESC = re.compile(r"^\s*(?P<unit>\d+)\s+\[[^]]+\]:\s+.*?\s+-\s+(?P<desc>.+)$")
 
 
 def _sndstat_cards() -> dict[str, str]:
@@ -6346,14 +6347,20 @@ def _sndstat_cards() -> dict[str, str]:
 
 
 def _alsa_card_name(card: str) -> str:
-    for name in (f"/proc/asound/card{card}/id", f"/proc/asound/card{card}/../cards"):
-        try:
-            with open(name) as f:
-                first = f.read().strip().splitlines()
-                if first:
-                    return first[0].strip()
-        except OSError:
-            continue
+    """The card's readable description, with its short ALSA ID as fallback."""
+    try:
+        with open("/proc/asound/cards", errors="replace") as f:
+            for line in f:
+                match = _ALSA_CARD_DESC.match(line)
+                if match and match.group("unit") == card:
+                    return match.group("desc").strip()
+    except OSError:
+        pass
+    try:
+        with open(f"/proc/asound/card{card}/id", errors="replace") as f:
+            return f.read().strip()
+    except OSError:
+        pass
     return ""
 
 

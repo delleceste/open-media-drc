@@ -547,6 +547,14 @@ class AudioRoles(unittest.TestCase):
 
 
 class AlsaNames(unittest.TestCase):
+    def test_card_description_names_the_connected_dac(self):
+        cards = (" 0 [C2             ]: USB-Audio - Cambridge AudioDAC100 USB 2\n"
+                 " 1 [Loopback       ]: Loopback - Loopback\n"
+                 " 2 [OKTO           ]: USB-Audio - OKTO DAC8 PRO\n")
+        with mock.patch("builtins.open", mock.mock_open(read_data=cards)):
+            self.assertEqual(APP._alsa_card_name("0"), "Cambridge AudioDAC100 USB 2")
+            self.assertEqual(APP._alsa_card_name("2"), "OKTO DAC8 PRO")
+
     def test_hw_specs_become_dev_snd_nodes(self):
         self.assertEqual(APP._alsa_node("hw:1,0", "p"), "/dev/snd/pcmC1D0p")
         self.assertEqual(APP._alsa_node("hw:1,1", "c"), "/dev/snd/pcmC1D1c")
