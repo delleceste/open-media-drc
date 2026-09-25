@@ -62,6 +62,23 @@ Design principles:
   bit-perfect (a USB wire tap), to detect glitches, and to monitor the chain
   from a phone.
 
+## Documentation history
+
+These milestones summarize changes in commits that updated this manual:
+
+| Date | Documentation changes |
+|---|---|
+| 2026-09-24 | Split the manual into common, Linux and FreeBSD parts; added the glossary and source index; documented the live DR estimate and its DR bar. |
+| 2026-09-15 to 2026-09-23 | Documented filter provenance and publication, deployment steps, runtime configuration, MPD routing recovery, DR measurement and pressing identification. |
+| 2026-08-18 to 2026-08-31 | Added CD input and audio lifecycle material, bit-perfect verification, spectrum analyzer updates, browser audio routing and the CMake migration. |
+| 2026-07-30 to 2026-08-14 | Updated installation for the CMake superproject; added bit-perfect test assets, filter provenance material and FreeBSD documentation. |
+| 2026-07-16 | Added the generated PDF manual and its build pipeline. |
+
+The PDF version stamp follows the repository's project tags, rather than a
+separate manual version. For example, `v0.93.0-143-g199fbcb` means the build
+is 143 commits after tag `v0.93.0`, at commit `199fbcb`. A `-dirty` suffix
+means the working tree has uncommitted changes.
+
 ## How to read this manual
 
 | Part | Read it if you run | Contents |
@@ -1078,7 +1095,7 @@ or a renderer quietly setting MPD's volume or replaygain. The page
 | `aplay` | the panel, via the per-OS tap script, delegated to unchanged | host to USB, no renderer. The control. |
 | `mpd` | the panel: MPD plays a local file staged into `music_directory` | MPD to DAC: the segment both renderers share |
 | `mpd-http` | the panel: MPD fetches an HTTP URL it serves | MPD's curl input plugin and streaming decoder --- structurally the path a Qobuz stream takes, but with a *known* file, so the verdict is real byte equality |
-| `upnp` | the panel: upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** to MPD to DAC path (needs upmpdcli to be discoverable --- see [§\ref{sec:upnpiface}](#sec:upnpiface)) |
+| `upnp` | the panel: upmpdcli is found by SSDP and told to play it itself | the whole **upmpdcli** to MPD to DAC path (needs upmpdcli to be discoverable --- see [the UPnP interface section](#sec:upnpiface)) |
 | `live` | **you, in the Qobuz app** --- the panel only arms the tap and waits | the whole **qobuzconnect2mpd** path, against the renderer's own buffer |
 
 `live` is the one row where the panel is not the playback initiator, and that
@@ -1349,7 +1366,7 @@ and DR 9 as the 2014 download. What a streaming service serves is one of
 those masters, and nothing on the stream says which. The panel answers the
 question four ways, each more direct than the last:
 
-1. **DR versions** (`/dr-alternatives`, the *DR ↗* button) --- every version
+1. **DR versions** (`/dr-alternatives`, the *DR* button) --- every version
    of the playing record listed in the community database at
    [dr.loudness-war.info](https://dr.loudness-war.info), most dynamic first.
 2. **Which one is playing?** --- a button on that page that scores each
@@ -1384,7 +1401,7 @@ written to go upstream as a Framagit merge request; `cmake` warns, with the
 procedure, when the upmpdcli it finds was built without it. Two caveats hold
 for every stream: the year Qobuz supplies is the album's *original* release
 date, true of every reissue alike, and a multi-disc set arrives numbered
-`disc × 1000 + track` (track 1005 is disc 1, track 5).
+`disc * 1000 + track` (track 1005 is disc 1, track 5).
 
 ## Identifying the pressing
 
@@ -1402,24 +1419,24 @@ agreement. The score is clamped to 0--100.
 |---|---|---:|---|
 | Running order | the playing title is at the same track number | +12 | the edition's own track list, from its uploaded DR log |
 | | the title is on this version, at another number | +8 | a reissue with bonus tracks, say |
-| | this version's track list does not name it | −20 | |
+| | this version's track list does not name it | -20 | |
 | Track length | within 3 s, at the right track number | +45 | two rips of one pressing agree to the second |
 | | within 3 s, elsewhere in the list | +32 | |
 | | within 8 s | +20 | a few seconds out is a different transfer |
-| | 20 s or more apart | −30 | a different cut --- a DVD keeping the between-song talk |
+| | 20 s or more apart | -30 | a different cut --- a DVD keeping the between-song talk |
 | Stream format | a CD entry, and the stream is above 44.1 kHz/16 bit | **rules out** | a CD cannot carry it; the same master's DR may still be right |
 | | the medium suits the stream's rate | +6 | CD or download at CD rate; download, SACD or Blu-ray when hi-res |
-| | a surround or disc transfer, stereo stream | −12 | |
+| | a surround or disc transfer, stereo stream | -12 | |
 | | the entry is an analog source: vinyl, LP, cassette, tape | **rules out** | it measured a turntable's or tape deck's output; a stream is a digital master |
-| | the entry's title states another rate/depth | −15 | "48kHz-16bit", "16/48"; "448 Kbps" is a bitrate and ignored |
+| | the entry's title states another rate/depth | -15 | "48kHz-16bit", "16/48"; "448 Kbps" is a bitrate and ignored |
 | | the entry's title states the stream's rate/depth | +8 | |
 | Disc of a set | same disc | +10 | sets are filed one disc per entry |
-| | another disc | −25 | |
+| | another disc | -25 | |
 | Label | an imprint name in common | +14 | "Columbia/Legacy" shares Columbia; "Records" and the like are ignored |
-| | both named, nothing in common | −5 | weak: services carry the reissue imprint |
+| | both named, nothing in common | -5 | weak: services carry the reissue imprint |
 | Year | same year | +14 | |
 | | one year apart | +6 | |
-| | further apart | −6 | weak: the stream's year dates the album, not the transfer |
+| | further apart | -6 | weak: the stream's year dates the album, not the transfer |
 | Album name | identical | +5 | |
 | | one contains the other | +2 | |
 
@@ -1483,12 +1500,12 @@ dr14_tmeter:
 
 | Metric | Definition |
 |---|---|
-| Block | 3 s of samples per channel --- **3 × 44 160** at 44.1 kHz (a quirk of the reference meter, kept), 3 × rate otherwise; the last block is partial |
-| Block RMS | √(2 · Σx² / *n*) over the block's own length *n*; the factor 2 makes a full-scale sine read 0 dB |
+| Block | 3 s of samples per channel --- **3 times 44 160** at 44.1 kHz (a quirk of the reference meter, kept), 3 times the sample rate otherwise; the last block is partial |
+| Block RMS | square root of (2 * sum of squared samples / *n*) over the block's own length *n*; the factor 2 makes a full-scale sine read 0 dB |
 | Block peak | the largest \|*x*\| in the block |
 | RMS~upper~ | root mean square of the loudest **20 %** of block RMS values (at least one block) |
 | Reference peak | the **second-highest** block peak: one clipped transient cannot inflate the result |
-| DR (channel) | 20 · log₁₀(peak₂ / RMS~upper~) |
+| DR (channel) | 20 times the base-10 logarithm of (second-highest block peak / RMS~upper~) |
 | **Track DR** | mean over channels, rounded half to even (Python's `round`, as the reference) |
 | Exact DR | the same, unrounded --- shown in the badge's tooltip |
 | Peak | largest sample of the track, dBFS |
@@ -1502,8 +1519,8 @@ green, with 8--13 graded between.
 ### Validation and an example
 
 The meter was compared with dr14_tmeter's `compute_dr14` on the same Qobuz
-track, decoded identically: DR 9 against 9 (9.04), peak −0.13 dB and RMS
-−10.89 dB identical. The unit tests pin the properties that agreement rests
+track, decoded identically: DR 9 against 9 (9.04), peak -0.13 dB and RMS
+-10.89 dB identical. The unit tests pin the properties that agreement rests
 on: a steady sine measures DR 0 at any level; one full-scale spike in
 otherwise steady material does not raise it; quiet passages under full-scale
 peaks give the range the formula predicts; a decode through ffmpeg matches the
@@ -1571,7 +1588,7 @@ Range meter --- applied to blocks of the audio as it plays:
 3. Over the blocks in scope, the **RMS~upper~** is the root mean square of
    the loudest 20 % of block RMS values, and the **reference peak** is the
    *second-highest* block peak.
-4. **DR** per channel is 20 · log₁₀(reference peak / RMS~upper~); the reading
+4. **DR** per channel is 20 · log~10~(reference peak / RMS~upper~); the reading
    is the mean over channels. The gauge shows it rounded, and the exact value
    to a hundredth in the status text.
 
@@ -1617,18 +1634,18 @@ shows:
   Each segment shows the DR of its own blocks, colored on the same scale, with
   the rounded value at its base.
   Its colored height is proportional to its mean RMS level, full height at
-  0 dB and empty at −40 dB, so a loud, compressed section stands out from a
+  0 dB and empty at -40 dB, so a loud, compressed section stands out from a
   quiet one.
 - **Segment details** --- hover a segment, or **tap** it on a touch screen
   (which has no hover), to see its time range (seconds before the latest
   interval), exact DR and level on a line under the bar. Tapping it again
   clears the selection.
 - **The time labels** --- the left label is the time the bar covers
-  ("−4 min 30 s"), the right one is *Latest*.
+  ("-4 min 30 s"), the right one is *Latest*.
 
 #### Silence, pauses and stops
 
-A complete block whose peak is below −80 dBFS is **silence**. Silence, a pause
+A complete block whose peak is below -80 dBFS is **silence**. Silence, a pause
 or a stop is drawn as **one** narrow, hatched segment, in a disabled color,
 between the audio before and after it. Pausing or stopping MusicPD adds that
 single empty segment however long it lasts, so a long stop does not push the
