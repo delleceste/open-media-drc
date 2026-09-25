@@ -70,13 +70,19 @@ function weigh(img) {
         w[y * N + x] = v;
         sw += v; sx += v * (x + .5) / N; sy += v * (y + .5) / N;
     }
-    if (sw < 1e-3) return { cx: .5, cy: .5, spread: 1 };
+    if (sw < 1e-3) return { cx: .5, cy: .5, spread: 1, lum: null };
     const cx = sx / sw, cy = sy / sw;
     let sv = 0;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
         sv += w[y * N + x] * (((x + .5) / N - cx) ** 2 + ((y + .5) / N - cy) ** 2);
     }
-    return { cx, cy, spread: Math.sqrt(sv / sw) };
+    // perceived brightness per cell, 0..1, for the meters' contrast (pages/now.js)
+    const lum = new Float32Array(N * N);
+    for (let k = 0; k < N * N; k++) {
+        const lin = c => { c /= 255; return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; };
+        lum[k] = .2126 * lin(px[k * 4]) + .7152 * lin(px[k * 4 + 1]) + .0722 * lin(px[k * 4 + 2]);
+    }
+    return { cx, cy, spread: Math.sqrt(sv / sw), lum, n: N };
 }
 
 // ── vertical level bars ──────────────────────────────────────────────────────

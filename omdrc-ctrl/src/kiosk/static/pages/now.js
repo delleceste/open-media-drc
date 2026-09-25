@@ -125,6 +125,8 @@ P.applyLayout = () => {
     // 'square' = the whole cover where the audio chain would be (level display off)
     P.coverMode = P.coverWanted() && P.artReady ? (off ? 'square' : 'behind') : '';
     const square = P.coverMode === 'square';
+    // the big cover is on screen: the small one beside the title would only repeat it
+    P.el.firstChild.classList.toggle('cover-big', square);
     P.chainBox.hidden = !off || square;
     P.coverSqBox.hidden = !square;
     P.coverToggle.classList.toggle('on', P.coverWanted());
@@ -165,10 +167,10 @@ P.cycleWindow = ev => {
 
 // The DR estimator listens only while DR is on: turning it off closes its stream.
 // The server keeps DR history only while a listener is connected, so leaving Now
-// must not close the stream at once: it stays open for dr.keepMinutes (Config),
+// must not close the stream at once: it stays open for P.keepMinutes() (Config),
 // without repainting while away, and closes as soon as DR is switched off.
 P.syncDr = () => {
-    if (P.showDr && !P.drSub) P.drSub = K.drEstimate.listen(E => { if (P.visible) P.paintDr(E); });
+    if (P.showDr && !P.drSub) P.drSub = K.drEstimate.listen(E => { if (P.visible && !document.hidden) P.paintDr(E); });
     else if (!P.showDr) P.releaseDr();
 };
 P.releaseDr = () => {
@@ -270,13 +272,36 @@ P.wireSplitter = () => {
     sp.addEventListener('dblclick', e => { e.stopPropagation(); K.setPref('now.split', null); P.applySplit(); });
 };
 
+// One keep-alive, dr.keepMinutes (2, 5 or 10 min; anything else is 5), for both ways
+// of not looking at Now: another page, or the app in the background (core.js keeps the
+// DR stream through a hidden page).  At the end, in front: a dialog asks; in the
+// background: it just stops.  Coming back to Now in time cancels it and the bar is
+// repainted with what arrived meanwhile.
+P.keepMinutes = () => { const m = Number(K.pref('dr.keepMinutes', 5)); return [2, 5, 10].includes(m) ? m : 5; };
+document.addEventListener('visibilitychange', () => {
+    // back in front on Now after the background keep-alive ran out: start again
+    if (!document.hidden && P.visible && !P.drSub) { P.syncDr(); return; }
+    if (!P.drSub) return;
+    clearTimeout(P.drKeep); P.drKeep = null;
+    if (P.drAsk) { const a = P.drAsk; P.drAsk = null; a.close(true); }
+    if (document.hidden) {
+        P.drKeep = setTimeout(P.askKeepDr, P.keepMinutes() * 60000);
+    } else if (P.visible) {
+        P.paintDr(K.drEstimate);                  // on Now: no deadline
+    } else {
+        P.drKeep = setTimeout(P.askKeepDr, P.keepMinutes() * 60000);   // another page: start over
+    }
+});
+
 // The keep-alive ran out while away from Now: ask, and stop unless told otherwise
 // within a minute.  Keep = another period; Stop = close the stream (the history
 // starts over next time; the DR switch itself stays on).
 P.askKeepDr = async () => {
     P.drKeep = null;
-    if (!P.drSub || P.visible) return;
-    const minutes = Number(K.pref('dr.keepMinutes', 5));
+    if (!P.drSub || (P.visible && !document.hidden)) return;
+    // Not in front (another app, screen off): nobody to ask - just stop.
+    if (document.hidden) { P.releaseDr(); return; }
+    const minutes = P.keepMinutes();
     P.drAsk = K.confirm({
         title: 'Keep estimating DR?',
         message: `The dynamic range estimate has kept running for ${minutes} min since you left Now playing. Keep collecting it, or stop and let the history start over?`,
@@ -466,7 +491,7 @@ P.paintCover = () => {
     P.coverLayer.hidden = P.coverScrim.hidden = !behind;
     if (P.coverMode === 'square') { if (P.coverSqImg.getAttribute('src') !== P.artUrl) P.coverSqImg.src = P.artUrl; }
     else P.coverSqImg.removeAttribute('src');
-    if (!behind) { if (P.vu && P.vu.glass !== 1) P.vu.setGlass(1); return; }
+    if (!behind) { if (P.vu && P.vu.glass !== 1) { P.vu.setGlass(1); P.vu.setBackdrop(null); } return; }
     P.coverLayer.style.backgroundImage = `url("${P.artUrl}")`;
     P.placeCover();
     P.applyGlass(P.glass());
@@ -479,12 +504,41 @@ P.placeCover = () => {
     const p = K.cover.place(W, H, P.focal);
     P.coverLayer.style.backgroundSize = `${p.size}px ${p.size}px`;
     P.coverLayer.style.backgroundPosition = `${p.x}px ${p.y}px`;
+    P.coverPlace = p;
+    P.applyBackdrop();
+};
+
+// How bright the cover is behind each meter (from the analysis' 48x48 brightness grid),
+// under the dark veil and the face at the current opacity: the meters pick their ink
+// from it, light on dark and dark on light.
+P.coverLumUnder = el => {
+    const f = P.focal, p = P.coverPlace;
+    if (!f || !f.lum || !p) return 0;
+    const box = P.lvlBody.getBoundingClientRect(), r = el.getBoundingClientRect();
+    const n = f.n, cell = p.size / n;
+    const x0 = r.left - box.left - p.x, y0 = r.top - box.top - p.y;
+    let sum = 0, cnt = 0;
+    // the part of the face the scale and needle cross: the middle band
+    for (let y = y0 + r.height * .15; y < y0 + r.height * .95; y += cell) {
+        for (let x = x0 + r.width * .08; x < x0 + r.width * .92; x += cell) {
+            const i = Math.floor(x / cell), j = Math.floor(y / cell);
+            if (i >= 0 && j >= 0 && i < n && j < n) { sum += f.lum[j * n + i]; cnt++; }
+        }
+    }
+    return cnt ? sum / cnt : 0;
+};
+P.applyBackdrop = (live) => {
+    if (!P.vu || P.coverMode !== 'behind') return;
+    const a = live !== undefined ? live : P.glass(), FACE = .012;               // the face's own black, linear
+    P.vu.setBackdrop(P.vu.canvases.map(c =>
+        P.coverLumUnder(c) * (1 - a ** 1.5) * (1 - a) + FACE * a));
 };
 
 // The meters' faces at `a`, and a dark veil over the cover that closes as `a` nears 1,
 // so at the top of the range the cover is gone.
 P.applyGlass = a => {
     P.vu.setGlass(a);
+    P.applyBackdrop(a);
     P.coverScrim.style.opacity = String(a ** 1.5);
 };
 
@@ -611,10 +665,7 @@ P.hide = () => {
     P.chainPoll.stop();
     P.visible = false;
     if (P.drSub) {
-        const minutes = Number(K.pref('dr.keepMinutes', 5));
-        if (minutes === 0) P.releaseDr();
-        else if (minutes > 0) P.drKeep = setTimeout(P.askKeepDr, minutes * 60000);
-        // negative: keep it while the kiosk is open
+        P.drKeep = setTimeout(P.askKeepDr, P.keepMinutes() * 60000);
     }
     P.trackPoll.stop();
     P.tick.stop();

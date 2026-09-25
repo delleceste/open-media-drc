@@ -177,9 +177,13 @@ K.Poller = class {
 // host nothing.
 K.streams = (() => {
     const S = {};
+    // DR outlives a hidden page (app in the background, screen off): its history lives
+    // on the box only while a listener is attached, and pages/now.js ends it after the
+    // configured keep-alive.  Everything else stops the moment nothing can be seen.
+    const BACKGROUND = new Set(['dr']);
     const connect = mode => {
         const s = S[mode];
-        if (!s || s.es || document.hidden || !s.subs.size) return;
+        if (!s || s.es || (document.hidden && !BACKGROUND.has(mode)) || !s.subs.size) return;
         const es = new EventSource('/spectrum/stream?mode=' + encodeURIComponent(mode));
         s.es = es;
         es.onmessage = ev => {
@@ -206,7 +210,10 @@ K.streams = (() => {
         if (s.es) { s.es.close(); s.es = null; }
     };
     document.addEventListener('visibilitychange', () => {
-        for (const mode of Object.keys(S)) document.hidden ? teardown(mode) : connect(mode);
+        for (const mode of Object.keys(S)) {
+            if (!document.hidden) connect(mode);
+            else if (!BACKGROUND.has(mode)) teardown(mode);
+        }
     });
     return {
         open(mode, fn) {

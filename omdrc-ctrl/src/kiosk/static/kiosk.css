@@ -139,6 +139,7 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .now > * { flex: 0 0 auto; }
 .now-track { display: flex; gap: .7rem; align-items: center; min-height: 3rem; }
 .now-art { width: 3rem; height: 3rem; border-radius: .4rem; object-fit: cover; background: var(--surface2); flex: 0 0 auto; }
+.now.cover-big .now-art { display: none; }
 .now-meta { flex: 1; min-width: 0; }
 .now-title { font-size: 1.7rem; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-title.idle { color: var(--muted); font-weight: 500; }

@@ -79,7 +79,7 @@ P.setOn = (on, persist = false) => {
 
 // The estimator streams only while this page is showing AND the toggle is on.
 P.sync = () => {
-    const want = P.on && P.visible;
+    const want = P.on && P.visible && !document.hidden;   // the Now page's keep-alive covers the background
     if (want && !P.sub) P.sub = K.drEstimate.listen(P.paint);
     if (!want && P.sub) { P.sub.close(); P.sub = null; }
 };
@@ -139,6 +139,8 @@ P.measCancel = async () => { await K.api('/dr/measure/cancel', { method: 'POST' 
 
 P.show = () => { P.visible = true; P.setOn(K.pref('now.dr', true)); P.measPoll(); };
 P.hide = () => { P.visible = false; P.sync(); clearTimeout(P.jobTimer); };
+
+document.addEventListener('visibilitychange', () => P.sync && P.el && P.sync());
 
 K.registerPage(P);
 })();

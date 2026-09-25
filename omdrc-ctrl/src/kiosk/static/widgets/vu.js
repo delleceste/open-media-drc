@@ -57,6 +57,13 @@ K.VuMeter = class VuMeter {
         this.render();
     }
 
+    /** Brightness (linear, 0..1) of what shows behind each needle face, or null:
+     *  over a light cover the gauge switches to dark ink. */
+    setBackdrop(lums) {
+        this.backdrop = lums;
+        this.render();
+    }
+
     setMode(mode) {
         this.mode = mode === 'bars' ? 'bars' : 'needles';
         K.clear(this.host);
@@ -175,72 +182,135 @@ K.VuMeter = class VuMeter {
     }
 
     // ── needles ──────────────────────────────────────────────────────────────
+    // Dark gauge in the app's own style: black face, white scale and needle, red for the
+    // last 6 dB.  Inside the scale a glowing arc follows the peak (green -> amber -> red
+    // along the scale) over a softer band for the RMS; a small dot holds the recent peak.
     drawNeedle(canvas, label, rmsDb, peakDb) {
         const { w, h: H, dpr, ctx } = fit(canvas);
         ctx.clearRect(0, 0, w, H);
-        // lit amber face
-        const face = ctx.createRadialGradient(w / 2, H * .95, H * .05, w / 2, H * .95, Math.max(w, H) * .9);
-        face.addColorStop(0, '#f2d78a'); face.addColorStop(.55, '#c99a3c'); face.addColorStop(1, '#5a4218');
-        if (this.glass < 1) ctx.globalAlpha = this.glass;
-        ctx.fillStyle = face;
-        ctx.beginPath(); ctx.roundRect(0, 0, w, H, 10 * dpr); ctx.fill();
-        ctx.fillStyle = 'rgba(0,0,0,.18)';
-        ctx.beginPath(); ctx.roundRect(0, 0, w, H, 10 * dpr); ctx.fill();
-        ctx.globalAlpha = 1;
-        // See-through face: a faint lamp-coloured halo keeps the dark scale legible on the cover
-        if (this.glass < 1) { ctx.shadowColor = 'rgba(242,215,138,.85)'; ctx.shadowBlur = 4 * dpr; }
-
+        const see = this.glass < 1;                       // a cover shows through the face
+        // Ink: light on the black face; dark when a light cover dominates what is behind.
+        // Contrast of white vs black against that brightness decides (WCAG luminance).
+        const bg = see && this.backdrop ? (this.backdrop[label === 'L' ? 0 : 1] || 0) : 0;
+        const dark = (bg + .05) / .05 > 1.05 / (bg + .05);
+        const I = dark ? {
+            ink: '#0d1117', minor: '#3d444d', text: '#1f2328', dim: '#3d444d', red: '#cf222e', redText: '#a40e26',
+            track: 'rgba(0,0,0,.14)', halo: 'rgba(255,255,255,.8)', glow: 'rgba(255,255,255,.55)',
+            cap: '#f0f6fc', ring: '#0d1117', hold: '#0d1117',
+            lvl: ['#116329', '#1a7f37', '#9a6700', '#bc4c00', '#cf222e', '#a40e26'],
+        } : {
+            ink: '#f0f6fc', minor: '#8b949e', text: '#c9d1d9', dim: '#8b949e', red: '#f85149', redText: '#ff7b72',
+            track: 'rgba(255,255,255,.06)', halo: 'rgba(0,0,0,.85)', glow: 'rgba(240,246,252,.35)',
+            cap: '#0d1117', ring: '#f0f6fc', hold: '#f0f6fc',
+            lvl: ['#1f8f3a', '#3fb950', '#d8c23a', '#f0883e', '#f85149', '#ff3b30'],
+        };
         const A0 = -150, SPAN = 120;
         const ang = db => (A0 + SPAN * voltagePct(db, SCALE_FLOOR) / 100) * Math.PI / 180;
         const cx = w / 2, cy = H * .93, R = Math.min(w * .47, H * .73);
+        const at = (a, r) => [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+        const aFloor = ang(SCALE_FLOOR), aRed = ang(-6), aTop = ang(0);
+
+        // face: the app's black, a faint lift under the scale, a hairline border
+        ctx.globalAlpha = see ? this.glass : 1;
+        const face = ctx.createRadialGradient(cx, cy, R * .1, cx, cy, R * 1.25);
+        face.addColorStop(0, '#161c24'); face.addColorStop(1, '#0a0d12');
+        ctx.fillStyle = face;
+        ctx.beginPath(); ctx.roundRect(0, 0, w, H, 10 * dpr); ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1 * dpr;
+        ctx.beginPath(); ctx.roundRect(.5 * dpr, .5 * dpr, w - dpr, H - dpr, 10 * dpr); ctx.stroke();
+        // over a cover everything drawn below gets a dark halo, so it stays legible
+        const halo = on => { ctx.shadowColor = on && see ? I.halo : 'transparent'; ctx.shadowBlur = on && see ? 5 * dpr : 0; };
         ctx.lineCap = 'round';
-        // scale arc, with the last stretch in red
-        ctx.lineWidth = 2.5 * dpr;
-        ctx.strokeStyle = '#2a1e08';
-        ctx.beginPath(); ctx.arc(cx, cy, R, ang(SCALE_FLOOR), ang(-6)); ctx.stroke();
-        ctx.strokeStyle = '#b3261e'; ctx.lineWidth = 5 * dpr;
-        ctx.beginPath(); ctx.arc(cx, cy, R, ang(-6), ang(0)); ctx.stroke();
-        // ticks and numbers
-        ctx.font = `700 ${11 * dpr}px ui-monospace, monospace`;
+
+        // level colours along the scale (a conic gradient: colour follows the angle)
+        // (started a little before the floor, so a round line end there stays green)
+        const g0 = aFloor - .3;
+        const conic = ctx.createConicGradient(g0, cx, cy);
+        const stop = db => K.clamp((ang(db) - g0) / (2 * Math.PI), 0, 1);
+        conic.addColorStop(0, I.lvl[0]); conic.addColorStop(stop(-18), I.lvl[1]);
+        conic.addColorStop(stop(-9), I.lvl[2]); conic.addColorStop(stop(-4), I.lvl[3]);
+        conic.addColorStop(stop(-1), I.lvl[4]); conic.addColorStop(stop(0), I.lvl[5]);
+        conic.addColorStop(Math.min(1, stop(0) + .001), I.lvl[5]);
+
+        // track for the level arcs
+        const rLvl = R * .87, wLvl = Math.max(5, R * .075);
+        ctx.strokeStyle = I.track; ctx.lineWidth = wLvl;
+        ctx.beginPath(); ctx.arc(cx, cy, rLvl, aFloor, aTop); ctx.stroke();
+        // RMS: a soft band
+        if (rmsDb > SCALE_FLOOR) {
+            ctx.globalAlpha = dark ? .5 : .38; ctx.strokeStyle = conic; ctx.lineWidth = wLvl;
+            ctx.beginPath(); ctx.arc(cx, cy, rLvl, aFloor, ang(rmsDb)); ctx.stroke();
+            ctx.globalAlpha = 1;
+        }
+        // peak: the bright, glowing arc
+        if (peakDb > SCALE_FLOOR) {
+            ctx.save();
+            ctx.shadowColor = peakDb > -6 ? 'rgba(248,81,73,.8)' : 'rgba(63,185,80,.55)';
+            ctx.shadowBlur = 10 * dpr;
+            ctx.strokeStyle = conic; ctx.lineWidth = wLvl * .45;
+            ctx.beginPath(); ctx.arc(cx, cy, rLvl, aFloor, ang(peakDb)); ctx.stroke();
+            ctx.restore();
+        }
+        // peak hold: a small dot on the scale
+        const hold = (label === 'L' ? this.hold.left : this.hold.right).db;
+        if (hold > SCALE_FLOOR) {
+            const [hx, hy] = at(ang(hold), rLvl);
+            ctx.fillStyle = hold > -6 ? I.red : I.hold;
+            ctx.beginPath(); ctx.arc(hx, hy, wLvl * .32, 0, Math.PI * 2); ctx.fill();
+        }
+
+        // the scale: a white arc to -6 dB, then red; ticks outside, numbers inside
+        halo(true);
+        ctx.strokeStyle = I.ink; ctx.lineWidth = 2 * dpr;
+        ctx.beginPath(); ctx.arc(cx, cy, R, aFloor, aRed); ctx.stroke();
+        ctx.strokeStyle = I.red; ctx.lineWidth = 3.5 * dpr;
+        ctx.beginPath(); ctx.arc(cx, cy, R, aRed, aTop); ctx.stroke();
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        for (const [db, big] of [[-40, 0], [-30, 0], [-20, 1], [-12, 1], [-9, 0], [-6, 1], [-3, 1], [0, 1]]) {
-            const a = ang(db), inner = big ? .84 : .9;
-            ctx.strokeStyle = db >= -6 ? '#7a1610' : '#2a1e08';
+        for (const [db, big] of [[-40, 0], [-30, 0], [-20, 1], [-15, 0], [-12, 1], [-9, 0], [-6, 1], [-4, 0], [-3, 1], [-2, 0], [-1, 0], [0, 1]]) {
+            const a = ang(db);
+            const [x0, y0] = at(a, R * (big ? 1.1 : 1.06)), [x1, y1] = at(a, R * 1.005);
+            ctx.strokeStyle = db >= -6 ? I.red : big ? I.ink : I.minor;
             ctx.lineWidth = (big ? 2 : 1.2) * dpr;
-            ctx.beginPath();
-            ctx.moveTo(cx + Math.cos(a) * R * inner, cy + Math.sin(a) * R * inner);
-            ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R);
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
             if (big) {
-                ctx.fillStyle = db >= -6 ? '#7a1610' : '#2a1e08';
-                ctx.fillText(String(db), cx + Math.cos(a) * R * .70, cy + Math.sin(a) * R * .70);
+                const [tx, ty] = at(a, R * .70);
+                ctx.fillStyle = db >= -6 ? I.redText : I.text;
+                ctx.font = `${db === 0 ? 700 : 500} ${11.5 * dpr}px system-ui, sans-serif`;
+                ctx.fillText(String(db), tx, ty);
             }
         }
-        // RMS witness: a short arc segment just inside the scale
-        if (rmsDb > SCALE_FLOOR) {
-            ctx.strokeStyle = '#0b5fa5'; ctx.lineWidth = 4 * dpr;
-            ctx.beginPath(); ctx.arc(cx, cy, R * .93, ang(SCALE_FLOOR), ang(rmsDb)); ctx.stroke();
-        }
-        // needle (peak), with a soft shadow
-        ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
-        const a = ang(peakDb);
+
+        // needle: white, tapered, with a soft glow; pivot with a dark cap and white ring
+        const a = ang(peakDb), len = R * .98, base = 3.2 * dpr;
+        const nx = Math.cos(a), ny = Math.sin(a), px = -ny, py = nx;
         ctx.save();
-        ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 6 * dpr; ctx.shadowOffsetX = 2 * dpr;
-        ctx.strokeStyle = '#1a1206'; ctx.lineWidth = 2.4 * dpr;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * R * .96, cy + Math.sin(a) * R * .96); ctx.stroke();
+        ctx.shadowColor = I.glow; ctx.shadowBlur = 8 * dpr;
+        ctx.fillStyle = I.ink;
+        ctx.beginPath();
+        ctx.moveTo(cx + px * base, cy + py * base);
+        ctx.lineTo(cx + nx * len, cy + ny * len);
+        ctx.lineTo(cx - px * base, cy - py * base);
+        ctx.closePath(); ctx.fill();
         ctx.restore();
-        ctx.fillStyle = '#1a1206';
-        ctx.beginPath(); ctx.arc(cx, cy, 6 * dpr, 0, Math.PI * 2); ctx.fill();
-        // label + readout
-        if (this.glass < 1) { ctx.shadowColor = 'rgba(242,215,138,.85)'; ctx.shadowBlur = 4 * dpr; }
-        ctx.fillStyle = '#2a1e08';
+        ctx.fillStyle = I.cap;
+        ctx.beginPath(); ctx.arc(cx, cy, 7.5 * dpr, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = I.ring; ctx.lineWidth = 2 * dpr;
+        ctx.beginPath(); ctx.arc(cx, cy, 7.5 * dpr, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = peakDb > -6 ? I.red : (dark ? '#0969da' : '#58a6ff');
+        ctx.beginPath(); ctx.arc(cx, cy, 2.6 * dpr, 0, Math.PI * 2); ctx.fill();
+
+        // channel and readout
+        halo(true);
+        ctx.fillStyle = I.ink;
         ctx.font = `800 ${16 * dpr}px system-ui, sans-serif`;
         ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-        ctx.fillText(label, 10 * dpr, 8 * dpr);
-        ctx.font = `600 ${10.5 * dpr}px ui-monospace, monospace`;
+        ctx.fillText(label, 11 * dpr, 9 * dpr);
+        ctx.font = `500 ${10.5 * dpr}px ui-monospace, monospace`;
         ctx.textAlign = 'right';
-        ctx.fillText(`PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 10 * dpr, 10 * dpr);
-        ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+        ctx.fillStyle = I.dim;
+        ctx.fillText(`PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 11 * dpr, 11 * dpr);
+        halo(false);
     }
 };
 })();
