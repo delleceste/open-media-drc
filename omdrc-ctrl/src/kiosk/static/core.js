@@ -29,6 +29,7 @@ K.h = function h(tag, attrs, ...kids) {
 K.$ = (sel, root = document) => root.querySelector(sel);
 K.clear = el => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
 K.clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+K.portrait = () => matchMedia('(orientation: portrait)').matches;
 
 // ── preferences (per browser; the kiosk is one device) ───────────────────────
 K.pref = (key, dflt) => {

@@ -27,8 +27,8 @@
 <div id="saver" hidden><div id="saver-clock"></div><div id="saver-track"></div></div>
 
 {% for name in ['core.js', 'widgets/vu.js', 'widgets/spectrum.js', 'widgets/dr.js',
-                'widgets/balance.js', 'widgets/drcstate.js', 'widgets/track.js', 'widgets/keepawake.js', 'widgets/chainflow.js', 'widgets/display.js', 'widgets/sync.js',
-                'pages/now.js', 'pages/drc.js', 'pages/dr.js', 'pages/source.js',
+                'widgets/balance.js', 'widgets/drcstate.js', 'widgets/track.js', 'widgets/cover.js', 'widgets/keepawake.js', 'widgets/chainflow.js', 'widgets/display.js', 'widgets/sync.js',
+                'pages/now.js', 'pages/cover.js', 'pages/drc.js', 'pages/dr.js', 'pages/source.js',
                 'pages/chain.js', 'pages/system.js', 'pages/logs.js', 'pages/config.js',
                 'main.js'] %}
 <script src="{{ url_for('kiosk.static', filename=name, v=asset_version) }}"></script>

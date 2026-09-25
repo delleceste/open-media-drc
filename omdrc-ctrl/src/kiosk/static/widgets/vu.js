@@ -45,8 +45,16 @@ K.VuMeter = class VuMeter {
         KEYS.forEach(k => { this.disp[k] = this.tgt[k] = FLOOR; });
         this.hold = { left: { db: FLOOR, at: 0 }, right: { db: FLOOR, at: 0 } };
         this.raf = null; this.last = 0;
+        this.glass = 1;          // < 1 only with a cover behind the meters (pages/now.js)
         this.ro = new ResizeObserver(() => this.render());
         this.setMode(mode);
+    }
+
+    /** Opacity of the needle faces and bar tracks, 0..1: how much of a cover
+     *  behind them shows through.  Scale, needle and readouts stay opaque. */
+    setGlass(a) {
+        this.glass = K.clamp(a, 0, 1);
+        this.render();
     }
 
     setMode(mode) {
@@ -128,7 +136,9 @@ K.VuMeter = class VuMeter {
         rows.forEach(([label, peak, rms, hold], i) => {
             const cy = 5 * dpr + rowH * i + rowH / 2, y = cy - barH / 2;
             ctx.fillStyle = '#10151c';
+            if (this.glass < 1) ctx.globalAlpha = this.glass;
             ctx.beginPath(); ctx.roundRect(x0, y, span, barH, 4 * dpr); ctx.fill();
+            ctx.globalAlpha = 1;
             // segmented fill, like an LED ladder
             const seg = 5 * dpr, gap = 1.5 * dpr, fillTo = x(peak);
             ctx.save();
@@ -171,10 +181,14 @@ K.VuMeter = class VuMeter {
         // lit amber face
         const face = ctx.createRadialGradient(w / 2, H * .95, H * .05, w / 2, H * .95, Math.max(w, H) * .9);
         face.addColorStop(0, '#f2d78a'); face.addColorStop(.55, '#c99a3c'); face.addColorStop(1, '#5a4218');
+        if (this.glass < 1) ctx.globalAlpha = this.glass;
         ctx.fillStyle = face;
         ctx.beginPath(); ctx.roundRect(0, 0, w, H, 10 * dpr); ctx.fill();
         ctx.fillStyle = 'rgba(0,0,0,.18)';
         ctx.beginPath(); ctx.roundRect(0, 0, w, H, 10 * dpr); ctx.fill();
+        ctx.globalAlpha = 1;
+        // See-through face: a faint lamp-coloured halo keeps the dark scale legible on the cover
+        if (this.glass < 1) { ctx.shadowColor = 'rgba(242,215,138,.85)'; ctx.shadowBlur = 4 * dpr; }
 
         const A0 = -150, SPAN = 120;
         const ang = db => (A0 + SPAN * voltagePct(db, SCALE_FLOOR) / 100) * Math.PI / 180;
@@ -208,6 +222,7 @@ K.VuMeter = class VuMeter {
             ctx.beginPath(); ctx.arc(cx, cy, R * .93, ang(SCALE_FLOOR), ang(rmsDb)); ctx.stroke();
         }
         // needle (peak), with a soft shadow
+        ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
         const a = ang(peakDb);
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 6 * dpr; ctx.shadowOffsetX = 2 * dpr;
@@ -217,6 +232,7 @@ K.VuMeter = class VuMeter {
         ctx.fillStyle = '#1a1206';
         ctx.beginPath(); ctx.arc(cx, cy, 6 * dpr, 0, Math.PI * 2); ctx.fill();
         // label + readout
+        if (this.glass < 1) { ctx.shadowColor = 'rgba(242,215,138,.85)'; ctx.shadowBlur = 4 * dpr; }
         ctx.fillStyle = '#2a1e08';
         ctx.font = `800 ${16 * dpr}px system-ui, sans-serif`;
         ctx.textAlign = 'left'; ctx.textBaseline = 'top';
@@ -224,6 +240,7 @@ K.VuMeter = class VuMeter {
         ctx.font = `600 ${10.5 * dpr}px ui-monospace, monospace`;
         ctx.textAlign = 'right';
         ctx.fillText(`PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 10 * dpr, 10 * dpr);
+        ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
     }
 };
 })();

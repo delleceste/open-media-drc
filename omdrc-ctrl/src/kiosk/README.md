@@ -15,6 +15,7 @@ down.
 | Page | What it is |
 |---|---|
 | **Now** | Level meters (needles / bars / bars + spectrum), DR bar, channel balance, track + time, and one line saying which DRC is applied |
+| **Cover** | *Optional* (Config → Cover art → Cover page): the album cover, square and as large as the height allows, the track beside it, and optionally a narrow vertical DR or level column (top bar: DR / Lvl) where there is room |
 | **DRC** | Applied state, sample-rate presets, filter set and design, attenuation, BruteFIR peak/RTI, `drc.sh status` |
 | **DR** | Rolling DR estimate (off until enabled), measure this record, compare masters |
 | **Source** | Renderer switch/restart/activity, MPD state, CD input |
@@ -31,6 +32,25 @@ computed for the level meters: no `vu`/`music` analyzer stream is opened, balanc
 audio chain as a horizontal row of blocks instead, with the FIFO listeners hanging
 under MPD.  Everything else compacts and the DR bar takes the freed height.  Use
 it to keep the box's analyzer idle.
+
+## Cover art
+
+Off by default; with it off, every page is laid out exactly as without the
+feature (only the top bar gains the **Art** chip).  Switched on (**Art** in the
+top bar on Now, or Config → Cover art):
+
+* **With meters** (needles, bars, bars + spectrum): the cover fills the meter area
+  behind them, anchored at its top left and slid so its visual weight is in view.
+  `widgets/cover.js` measures that weight in the browser (the cover is served by
+  this panel, same origin): the cover shrunk to 48x48, each pixel weighted by its
+  distance from the border's median colour plus local contrast, and the weighted
+  centroid taken.  The meters are drawn see-through on top.  A **diagonal drag**
+  on the meters (top left to bottom right) makes them more opaque, up to hiding
+  the cover; the other way lighter.  A horizontal swipe still turns the page.
+* **Level display off**: the whole cover, square, takes the audio chain's place;
+  DR, balance and both splitters work as usual.  With DR and balance off too, the
+  cover alone fills the area, centred.
+* A track without a cover shows the layout as with the feature off.
 
 ## Inside the Android app
 

@@ -38,9 +38,14 @@ P.mount = el => {
     P.modeBtn = h('button', { class: 'chip lvl-mode', type: 'button', onclick: () => P.cycleMode() });
     P.drToggle = h('button', { class: 'chip tog', type: 'button', title: 'Dynamic range estimate on / off', onclick: () => P.flip('now.dr') }, 'DR');
     P.balToggle = h('button', { class: 'chip tog', type: 'button', title: 'Balance on / off', onclick: () => P.flip('now.balance') }, 'Bal');
-    P.topBtns = h('span', { class: 'top-toggles' }, P.drToggle, P.balToggle, P.modeBtn);
-    P.levelBox = h('div', { class: 'now-level' },
-        h('div', { class: 'lvl-body' }, P.meterHost, P.specCanvas));
+    P.coverToggle = h('button', { class: 'chip tog', type: 'button', title: 'Album cover behind the meters on / off', onclick: () => P.flipCover() }, 'Art');
+    P.topBtns = h('span', { class: 'top-toggles' }, P.coverToggle, P.drToggle, P.balToggle, P.modeBtn);
+    // The cover behind the meters (off unless switched on: see "cover art" below)
+    P.coverLayer = h('div', { class: 'cover-layer', hidden: true });
+    P.coverScrim = h('div', { class: 'cover-scrim', hidden: true });
+    P.coverReadout = h('div', { class: 'cover-readout', hidden: true });
+    P.lvlBody = h('div', { class: 'lvl-body' }, P.coverLayer, P.coverScrim, P.meterHost, P.specCanvas, P.coverReadout);
+    P.levelBox = h('div', { class: 'now-level' }, P.lvlBody);
 
     // With the level display off, the audio chain takes the meters' place: no
     // analyzer stream is opened for it, only a light poll of /audio/chain.
@@ -48,7 +53,10 @@ P.mount = el => {
     P.chainSummary = h('span', { class: 'cf-summary' });
     P.chainBox = h('div', { class: 'now-chain' },
         h('div', { class: 'cf-head' }, h('span', { class: 'lbl' }, 'Audio chain'), P.chainSummary), P.chainHost);
-    P.leftCell = h('div', { class: 'now-left' }, P.levelBox, P.chainBox);
+    // With the level display off and the cover on, the whole cover, square, takes the chain's place.
+    P.coverSqImg = h('img', { alt: '' });
+    P.coverSqBox = h('div', { class: 'now-cover', hidden: true }, P.coverSqImg);
+    P.leftCell = h('div', { class: 'now-left' }, P.levelBox, P.chainBox, P.coverSqBox);
 
     // DR block
     P.drValue = h('strong', { class: 'dr-value' }, '—');
@@ -91,6 +99,9 @@ P.mount = el => {
     P.wireSplitter();
     P.wireVSplit();
     P.wireResetTap();
+    P.wireCoverGesture();
+    new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
+    new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
     P.spec = new K.Spectrum(P.specCanvas);
 
@@ -110,7 +121,14 @@ P.applyLayout = () => {
     const off = P.mode === 'off';
     P.levelBox.className = `now-level mode-${P.mode}`;
     P.levelBox.hidden = off;
-    P.chainBox.hidden = !off;
+    // '' = no cover (the layout as without the feature), 'behind' = under the meters,
+    // 'square' = the whole cover where the audio chain would be (level display off)
+    P.coverMode = P.coverWanted() && P.artReady ? (off ? 'square' : 'behind') : '';
+    const square = P.coverMode === 'square';
+    P.chainBox.hidden = !off || square;
+    P.coverSqBox.hidden = !square;
+    P.coverToggle.classList.toggle('on', P.coverWanted());
+    P.el.firstChild.classList.toggle('cover-sq', square);
     P.modeBtn.textContent = MODE_LABEL[P.mode];
     if (!off) P.vu.setMode(P.mode === 'needles' ? 'needles' : 'bars');
     P.drToggle.classList.toggle('on', P.showDr);
@@ -125,7 +143,8 @@ P.applyLayout = () => {
     P.el.firstChild.classList.toggle('no-drbar', !P.showDr);
     // DR hidden but Balance on: no side column, the balance slides under the meters
     P.el.firstChild.classList.toggle('bal-below', !P.showDr && P.showBalance);
-    P.splitter.hidden = !P.showDr || P.mode === 'off';
+    P.splitter.hidden = !P.showDr || (P.mode === 'off' && !square);
+    P.paintCover();
     P.applySplit();
     P.applyCols();
     P.drWin.textContent = K.dr.windowLabel(K.drEstimate.windowSeconds).replace(' minutes', ' min').replace(' minute', ' min');
@@ -204,11 +223,18 @@ const SPLIT_MIN = 0.2, SPLIT_MAX = 0.85;
 P.splitRatio = () => {
     const saved = K.pref('now.split', null);
     if (typeof saved === 'number') return K.clamp(saved, SPLIT_MIN, SPLIT_MAX);
+    if (P.coverMode === 'square') return 0.72;         // the cover's row is a square: give it the height
     return (P.showBalance ? 0.55 : 0.68) + (P.mode === 'spectrum' ? 0.1 : 0);
 };
 P.applySplit = () => {
     const on = P.showDr && !P.splitter.hidden;
     const r = P.splitRatio();
+    if (P.coverMode === 'square' && !K.portrait()) {
+        // the level-off layout pins both heights with !important: only an !important inline value moves them
+        P.mainBox.style.setProperty('flex', on ? `${r} 1 0` : '', 'important');
+        P.drBarBox.style.setProperty('flex', on ? `${1 - r} 1 0` : '', 'important');
+        return;
+    }
     P.mainBox.style.flex = on ? `${r} 1 0` : '';
     P.drBarBox.style.flex = on ? `${1 - r} 1 0` : '';
 };
@@ -268,6 +294,11 @@ P.askKeepDr = async () => {
 P.applyCols = () => {
     const c = K.pref('now.col', null);
     const sideBySide = !P.side.hidden && !P.el.firstChild.classList.contains('bal-below');
+    if (P.coverMode === 'square' && sideBySide && typeof c !== 'number' && !K.portrait()) {
+        // the cover's column is as wide as the row is tall (a square), at most 62% of the width
+        const w = Math.round(Math.min(P.mainBox.clientHeight, P.mainBox.clientWidth * 0.62));
+        if (w > 0) { P.mainBox.style.gridTemplateColumns = `minmax(0, ${w}px) minmax(0, 1fr)`; return; }
+    }
     P.mainBox.style.gridTemplateColumns = sideBySide && typeof c === 'number'
         ? `minmax(0, ${c}fr) minmax(0, ${1 - c}fr)` : '';
 };
@@ -319,7 +350,10 @@ P.wireResetTap = () => {
 // Level stream and chain poll follow the chosen display: exactly one is running.
 P.syncMode = () => {
     P.openLevel();
-    if (P.mode === 'off') P.chainPoll.start(); else P.chainPoll.stop();
+    P.syncChain();
+};
+P.syncChain = () => {
+    if (P.mode === 'off' && P.coverMode !== 'square') P.chainPoll.start(); else P.chainPoll.stop();
 };
 
 P.pollChain = async () => {
@@ -376,7 +410,120 @@ P.pollTrack = async () => {
     P.state.className = 'chip state ' + t.state;
     if (t.art) { if (P.art.getAttribute('src') !== t.art) { P.art.hidden = true; P.art.setAttribute('src', t.art); } }
     else { P.art.hidden = true; P.art.removeAttribute('src'); }
+    if ((t.art || '') !== P.artUrl) P.setArt(t.art || '');
     P.paintTime();
+};
+
+// ── cover art ────────────────────────────────────────────────────────────────
+// Off by default ("Art" in the top bar).  Off, or on with no cover for the track,
+// the page is exactly the layout without it.  On:
+//  - with meters: the cover fills the level area behind them, anchored at its top
+//    left and slid so the cover's visual weight is in view (widgets/cover.js); the
+//    meters are drawn see-through on top.  A diagonal drag on the meters sets how
+//    see-through: towards the bottom right more opaque, up to hiding the cover.
+//  - level display off: the whole cover, square, where the audio chain would be;
+//    the splitters work as with the meters.
+const GLASS_MIN = 0.1, GLASS_DEFAULT = 0.55;
+P.artUrl = ''; P.artReady = false; P.focal = null; P.coverMode = '';
+P.coverWanted = () => !!K.pref('now.cover', false);
+P.glass = () => K.clamp(Number(K.pref('now.coverGlass', GLASS_DEFAULT)), GLASS_MIN, 1);
+
+P.flipCover = () => {
+    K.setPref('now.cover', !P.coverWanted());
+    if (P.coverWanted() && P.artUrl && !P.artReady) P.measureArt();
+    P.coverChanged();
+    if (P.coverWanted() && !P.artUrl) K.toast('No cover for this track: it shows when one is available');
+};
+
+// A new cover.  Only remembered while the feature is off: nothing is measured and
+// the layout is not touched.  On, it is measured before it is shown, so it never
+// jumps into place.
+P.setArt = url => {
+    P.artUrl = url; P.artReady = false; P.focal = null;
+    if (P.coverWanted()) P.measureArt();
+};
+P.measureArt = () => {
+    const url = P.artUrl;
+    if (P.coverMode) P.coverChanged();         // the previous cover goes at once
+    if (!url) return;
+    K.cover.analyze(url).then(f => {
+        if (P.artUrl !== url) return;              // the track changed meanwhile
+        P.focal = f; P.artReady = !!f;
+        P.coverChanged();
+    });
+};
+
+P.coverChanged = () => {
+    if (!P.el) return;
+    const was = P.coverMode;
+    P.applyLayout();
+    if ((was === 'square') !== (P.coverMode === 'square') && P.visible) P.syncChain();
+};
+
+P.paintCover = () => {
+    const behind = P.coverMode === 'behind';
+    P.levelBox.classList.toggle('has-cover', behind);
+    P.coverLayer.hidden = P.coverScrim.hidden = !behind;
+    if (P.coverMode === 'square') { if (P.coverSqImg.getAttribute('src') !== P.artUrl) P.coverSqImg.src = P.artUrl; }
+    else P.coverSqImg.removeAttribute('src');
+    if (!behind) { if (P.vu && P.vu.glass !== 1) P.vu.setGlass(1); return; }
+    P.coverLayer.style.backgroundImage = `url("${P.artUrl}")`;
+    P.placeCover();
+    P.applyGlass(P.glass());
+};
+
+P.placeCover = () => {
+    if (P.coverMode !== 'behind') return;
+    const W = P.lvlBody.clientWidth, H = P.lvlBody.clientHeight;
+    if (!W || !H) return;
+    const p = K.cover.place(W, H, P.focal);
+    P.coverLayer.style.backgroundSize = `${p.size}px ${p.size}px`;
+    P.coverLayer.style.backgroundPosition = `${p.x}px ${p.y}px`;
+};
+
+// The meters' faces at `a`, and a dark veil over the cover that closes as `a` nears 1,
+// so at the top of the range the cover is gone.
+P.applyGlass = a => {
+    P.vu.setGlass(a);
+    P.coverScrim.style.opacity = String(a ** 1.5);
+};
+
+P.wireCoverGesture = () => {
+    let g = null;
+    const el = P.lvlBody;
+    el.addEventListener('pointerdown', e => {
+        if (P.coverMode !== 'behind') return;
+        g = { id: e.pointerId, x: e.clientX, y: e.clientY, a: P.glass(), on: false };
+    });
+    el.addEventListener('pointermove', e => {
+        if (!g || e.pointerId !== g.id) return;
+        const dx = e.clientX - g.x, dy = e.clientY - g.y;
+        if (!g.on) {
+            // only a diagonal (top left <-> bottom right): a horizontal swipe is the pager's
+            const r = Math.abs(dx) / Math.max(1, Math.abs(dy));
+            if (Math.abs(dx) < 12 || Math.abs(dy) < 12) return;
+            if (Math.sign(dx) !== Math.sign(dy) || r < 0.5 || r > 1.4) { g = null; return; }
+            g.on = true;
+            try { el.setPointerCapture(e.pointerId); } catch {}
+            try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}
+        }
+        const diag = Math.hypot(el.clientWidth, el.clientHeight) * 0.6;
+        const a = K.clamp(g.a + (dx + dy) / Math.SQRT2 / diag, GLASS_MIN, 1);
+        g.last = a;
+        P.applyGlass(a);
+        clearTimeout(P.readoutTimer);
+        P.coverReadout.hidden = false;
+        P.coverReadout.textContent = a >= 0.99 ? 'Meters opaque · cover hidden' : `Meters ${Math.round(a * 100)} %`;
+    });
+    const end = e => {
+        if (!g || e.pointerId !== g.id) return;
+        if (g.on && g.last !== undefined) K.setPref('now.coverGlass', g.last);
+        if (g.on) try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
+        g = null;
+        P.readoutTimer = setTimeout(() => { P.coverReadout.hidden = true; }, 900);
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
 };
 
 // ── transport: tap = play/pause, hold = stop ────────────────────────────────
@@ -449,6 +596,7 @@ P.show = () => {
     clearTimeout(P.drKeep); P.drKeep = null;     // back before the keep-alive ran out
     if (P.drAsk) { const a = P.drAsk; P.drAsk = null; a.close(true); }   // back on Now: keep it
     P.applyLayout();
+    if (P.coverWanted() && P.artUrl && !P.artReady) P.measureArt();   // switched on in Config meanwhile
     K.setTopExtra(P.topBtns);
     P.syncMode();
     P.syncDr();

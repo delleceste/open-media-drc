@@ -247,7 +247,7 @@ function stopSaver() {
     if (K.saverDark) { K.saverDark = false; K.display.on(); }
     if (cur >= 0) safe(() => K.pages[cur].show && K.pages[cur].show());
 }
-K.applyPrefs = () => { armSaver(); K.awake.sync(); };
+K.applyPrefs = () => { armSaver(); K.awake.sync(); K.refreshPages(); };
 ['pointerdown', 'keydown', 'wheel'].forEach(ev => document.addEventListener(ev, () => {
     if (K.saverActive) { stopSaver(); armSaver(); return; }
     armSaver();
@@ -272,6 +272,32 @@ async function prepareOtherPages() {
     }
 }
 
+// ── optional pages ───────────────────────────────────────────────────────────
+// A page with optional() is in the pager and the tab bar only while that says so
+// (the Cover page: Config → Cover art).  Switching one on or off rebuilds the
+// order in place and keeps the current page on screen.
+const enabledPages = () => K.allPages.filter(p => !p.optional || p.optional());
+function buildPage(p) {
+    p.body = h('div', { class: 'page-body' });
+    p.section = h('section', { class: 'page', id: 'page-' + p.id, 'data-id': p.id }, p.body);
+    p.tab = h('button', { type: 'button', class: 'tab', onclick: () => K.showPage(p.id) }, p.label);
+}
+K.refreshPages = () => {
+    if (!K.allPages) return;
+    const next = enabledPages();
+    if (next.length === K.pages.length && next.every((p, i) => p === K.pages[i])) return;
+    const current = cur >= 0 ? K.pages[cur] : null;
+    for (const p of K.allPages) {
+        if (!p.section) buildPage(p);
+        if (!next.includes(p)) { p.section.remove(); p.tab.remove(); }
+    }
+    next.forEach(p => { pager.append(p.section); tabs.append(p.tab); });
+    K.pages = next;
+    cur = Math.max(0, next.indexOf(current));
+    [...tabs.children].forEach((b, n) => b.classList.toggle('on', n === cur));
+    pager.scrollTo({ left: cur * pager.clientWidth, behavior: 'instant' });
+};
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
     const [cfg, spec] = await Promise.all([K.api('/k/api/config'), K.api('/spectrum/settings')]);
@@ -280,10 +306,12 @@ async function boot() {
     else K.state.spectrum = { enabled: false };
 
     document.body.classList.toggle('in-app', K.inApp);
-    K.pages.forEach((p, i) => {
-        p.body = h('div', { class: 'page-body' });
-        pager.append(h('section', { class: 'page', id: 'page-' + p.id, 'data-id': p.id }, p.body));
-        tabs.append(h('button', { type: 'button', class: 'tab', onclick: () => K.showPage(p.id) }, p.label));
+    K.allPages = K.pages.slice();
+    K.pages = enabledPages();
+    K.pages.forEach(p => {
+        buildPage(p);
+        pager.append(p.section);
+        tabs.append(p.tab);
     });
     K.markReady();
 
