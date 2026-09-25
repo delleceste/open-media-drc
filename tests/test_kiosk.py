@@ -193,5 +193,14 @@ class ClickTestTests(unittest.TestCase):
         self.assertEqual((w.getframerate(), w.getnchannels()), (96000, 2))
         self.assertTrue(10 < w.getnframes() / 96000 < 13)
 
+    def test_the_clicks_are_quiet_enough_for_any_listening_volume(self):
+        import io, struct, wave
+        data = APP.app.test_client().get("/k/api/clicks.wav?rate=48000").data
+        w = wave.open(io.BytesIO(data))
+        raw = w.readframes(w.getnframes())
+        peak = max(abs(v) for v in struct.unpack("<%dh" % (len(raw) // 2), raw))
+        self.assertLessEqual(peak, 32767 * 10 ** (-29 / 20))     # at most -29 dBFS
+        self.assertGreater(peak, 32767 * 10 ** (-31 / 20))       # but there
+
 if __name__ == "__main__":
     unittest.main()

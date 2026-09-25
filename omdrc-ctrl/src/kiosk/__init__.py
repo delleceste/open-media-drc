@@ -99,13 +99,20 @@ def transport():
 CLICK_LEAD_S = 1.0
 CLICK_GAPS_MS = (700, 530, 860, 610, 940, 480, 770, 650, 890, 560, 720, 830, 590)
 CLICK_TAIL_S = 1.2
-CLICK_DBFS = -12.0
+# Quiet on purpose: a calibration runs at whatever volume the room is listening
+# at, and a train of bursts must never stress a tweeter.  -30 dBFS is 30 dB under
+# the loudest music; the music is paused meanwhile, so the phone still hears them
+# well above the room's silence (the page detects relative to it).
+CLICK_DBFS = -30.0
+CLICK_HZ = 1000
+CLICK_BURST_MS = 8
 _CLICK_URL_MARK = "/k/api/clicks.wav"
 _click_lock = threading.Lock()
 
 
 def click_track(rate: int) -> bytes:
-    """16-bit stereo WAV: silence, then short 2 kHz bursts (5 ms, Hann window)."""
+    """16-bit stereo WAV: silence, then short, soft tone bursts (CLICK_HZ for
+    CLICK_BURST_MS under a Hann window, peak CLICK_DBFS)."""
     rate = max(8000, min(384000, int(rate)))
     starts, t = [], CLICK_LEAD_S
     starts.append(t)
@@ -114,8 +121,8 @@ def click_track(rate: int) -> bytes:
         starts.append(t)
     total = int((t + CLICK_TAIL_S) * rate)
     amp = 32767 * 10 ** (CLICK_DBFS / 20)
-    burst_n = int(0.005 * rate)
-    burst = [amp * math.sin(2 * math.pi * 2000 * i / rate) * (0.5 - 0.5 * math.cos(2 * math.pi * i / burst_n))
+    burst_n = int(CLICK_BURST_MS / 1000.0 * rate)
+    burst = [amp * math.sin(2 * math.pi * CLICK_HZ * i / rate) * (0.5 - 0.5 * math.cos(2 * math.pi * i / burst_n))
              for i in range(burst_n)]
     samples = [0] * total
     for s in starts:
@@ -233,8 +240,14 @@ def clicktest():
         _click_lock.release()
         return jsonify({"ok": False, "error": str(error)}), 500
     duration = CLICK_LEAD_S + sum(CLICK_GAPS_MS) / 1000.0 + CLICK_TAIL_S
+    starts = [round(CLICK_LEAD_S * 1000)]
+    for gap in CLICK_GAPS_MS:
+        starts.append(starts[-1] + gap)
+    # everything the calibration log needs to know about what was played
     return jsonify({"ok": True, "rate": rate, "seconds": round(duration, 1),
-                    "restores": before.get("state", "stop")})
+                    "restores": before.get("state", "stop"),
+                    "level_dbfs": CLICK_DBFS, "tone_hz": CLICK_HZ, "burst_ms": CLICK_BURST_MS,
+                    "burst_starts_ms": starts})
 
 
 def init_app(app, commands=None, features=None, mpc=None, playback_rate=None, mpd_port=None):

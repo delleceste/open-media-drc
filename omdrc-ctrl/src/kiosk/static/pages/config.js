@@ -28,16 +28,20 @@ P.timingCard = () => {
         let res = null;
         if (clicks && !(await K.confirm({
             title: 'Precise calibration',
-            message: 'The box pauses what is playing, plays about 11 seconds of short clicks through the speakers, then puts the music back where it was. Check the volume is at a comfortable level, and hold the phone near the speakers.',
-            ok: 'Play the clicks' }))) return;
-        for (let attempt = 1; attempt <= (clicks ? 1 : 3); attempt++) {
-            const b = K.busy('');
-            res = await K.sync.calibrate({ seconds: clicks ? 14 : 10, clicks, onTick: left =>
-                b.text(clicks ? `Listening for ${left} s — the box is playing the clicks`
-                              : `Attempt ${attempt} of 3 · listening for ${left} s — hold the phone near the speakers while the music plays`) });
-            b.done();
-            if (res.ok || /microphone|app|click/.test(res.error || '')) break;
-        }
+            message: 'The box pauses what is playing, plays about 11 seconds of quiet tone bursts (−30 dBFS, safe at your normal listening volume) through the speakers, then puts the music back where it was. Keep your usual volume and hold the phone near the speakers.',
+            ok: 'Play the bursts' }))) return;
+        // the log is shown live while it runs, and stays up afterwards to be copied
+        const sheet = P.logSheet('Calibrating…');
+        const unsub = K.sync.onLog(line => sheet.append(line));
+        try {
+            for (let attempt = 1; attempt <= (clicks ? 1 : 3); attempt++) {
+                if (attempt > 1) sheet.append(`\n==================== attempt ${attempt} of 3 ====================\n`);
+                res = await K.sync.calibrate({ seconds: clicks ? 14 : 10, clicks, onTick: left =>
+                    sheet.status(clicks ? `Listening for ${left} s — the box is playing the bursts`
+                                        : `Attempt ${attempt} of 3 · listening for ${left} s — hold the phone near the speakers while the music plays`) });
+                if (res.ok || /microphone|app|click/.test(res.error || '')) break;
+            }
+        } finally { unsub(); }
         if (res.ok && res.lagMs >= 0) {
             set(res.lagMs);
             P.lastCal = `Calibrated: the meters led the sound by ${res.lagMs} ms (match ${res.r}); this device now waits ${res.lagMs} ms.`;
@@ -47,6 +51,7 @@ P.timingCard = () => {
             P.lastCal = `The meters arrive ${-res.lagMs} ms after the sound (match ${res.r}): this device cannot catch up. Lower the server's DRC sync delta by about that much, or accept the lag.`;
         } else P.lastCal = `Calibration failed: ${res.error}${res.r !== undefined ? ` (match ${res.r})` : ''}.`;
         result.textContent = P.lastCal;
+        sheet.status(P.lastCal, true);
     };
     return K.card('Meter timing',
         h('p', { class: 'muted small' }, 'Extra delay for this screen, on top of the box’s own chain delay: the meters and spectrum are drawn this long after they arrive. Stored on this device only.'),
@@ -62,7 +67,56 @@ P.timingCard = () => {
                     v => { K.setPref('sync.auto', v); P.render(); }),
                 h('p', { class: 'muted small' }, 'Uses the microphone for 8 s at most every two minutes, only on Now playing; Android shows its microphone indicator meanwhile.'))
             : h('p', { class: 'muted small' }, 'Automatic calibration needs the OMDRC Android app (it uses the phone’s microphone).'),
-        result);
+        result,
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', onclick: () => {
+            const text = K.sync.lastLog();
+            if (!text) { K.toast('No calibration has run on this device yet'); return; }
+            P.logSheet('Last calibration log (kept on this device)').set(text);
+        } }, 'Calibration log')));
+};
+
+// A sheet with the calibration log: live while a run appends to it, selectable,
+// with Copy (clipboard where the browser allows it on plain http, else a hidden
+// textarea and execCommand) and Select all for a manual long-press copy.
+P.logSheet = title => {
+    const status = h('div', { class: 'cal-status' }, '');
+    const pre = h('pre', { class: 'cal-log' });
+    const copy = async () => {
+        const text = pre.textContent;
+        let ok = false;
+        try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; } } catch {}
+        if (!ok) {
+            const ta = h('textarea', { class: 'cal-copy' });
+            ta.value = text;
+            document.body.append(ta);
+            ta.focus(); ta.select();
+            try { ok = document.execCommand('copy'); } catch {}
+            ta.remove();
+        }
+        K.toast(ok ? `Log copied (${text.length} characters)` : 'Copy did not work here: use Select all, then copy');
+    };
+    const selectAll = () => {
+        const r = document.createRange(); r.selectNodeContents(pre);
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    };
+    const close = () => scrim.remove();
+    const scrim = h('div', { class: 'scrim' }, h('div', { class: 'sheet cal-sheet' },
+        h('div', { class: 'cal-title' }, title), status, pre,
+        h('div', { class: 'btn-row' },
+            h('button', { class: 'btn primary', type: 'button', onclick: copy }, 'Copy'),
+            h('button', { class: 'btn', type: 'button', onclick: selectAll }, 'Select all'),
+            h('button', { class: 'btn', type: 'button', onclick: close }, 'Close'))));
+    document.getElementById('overlay-root').append(scrim);
+    return {
+        append(line) {
+            const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+            pre.append(line + '\n');
+            if (atEnd) pre.scrollTop = pre.scrollHeight;
+        },
+        set(text) { pre.textContent = text; },
+        status(text, done = false) { status.textContent = text; status.classList.toggle('done', done); },
+        close,
+    };
 };
 
 P.render = function render() {

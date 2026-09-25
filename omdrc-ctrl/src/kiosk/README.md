@@ -70,13 +70,23 @@ measured with the phone's microphone:
 * **Calibrate on the music**: 10 s of the mic's peak envelope is correlated with the
   arrival of the level frames (up to 3 attempts; weak or ambiguous matches rejected).
 * **Precise (plays clicks)**: the box pauses playback, MPD plays an 11 s click track
-  (`/k/api/clicks.wav`, 14 irregularly spaced 5 ms bursts at -12 dBFS, made at the
-  running rate so the DRC chain is not rebuilt) and then restores the queue and the
-  playing/paused position (`/k/api/clicktest`). Onsets are matched as events.
+  (`/k/api/clicks.wav`, 14 irregularly spaced 8 ms 1 kHz tone bursts at -30 dBFS,
+  quiet enough for any normal listening volume, made at the running rate so the DRC
+  chain is not rebuilt) and then restores the queue and the playing/paused position
+  (`/k/api/clicktest`). Onsets are matched as events, detected relative to the
+  room's own noise floor rather than a fixed level.
 * **Automatic** (off by default): at a track start or when playback resumes after
   silence, listen 8 s and fold confident results in (median of 3), at most every 2 min.
 
 Only a loudness envelope ever leaves the app's recorder.
+
+Every run writes a plain-text **calibration log**, shown live in a sheet while it
+runs and afterwards under Config → Meter timing → *Calibration log* (the last one
+is kept on the device), with **Copy** and **Select all**: each step with its time,
+the box's delay model (`/spectrum/settings`), what the click test reported, frame
+arrival and level statistics, the detector's onsets, candidates and correlation
+peaks, the verdict, and the raw level frames and microphone envelope.  It is meant
+to be pasted into a bug report as is.
 
 ## Rules the code keeps
 

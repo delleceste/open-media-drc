@@ -88,7 +88,12 @@ S.estimate = (frames, mic) => {
     const second = Math.max(-1, ...rs.filter((_, i) => Math.abs(lags[i] - lags[best]) > 150));
     const r = rs[best];
     const ok = r >= 0.4 && r - second >= 0.06;
+    // for the log: the five highest local maxima of the correlation curve
+    const peaks = rs.map((v, i) => ({ lag: lags[i], r: v }))
+        .filter((p, i) => (i === 0 || rs[i - 1] <= p.r) && (i === rs.length - 1 || rs[i + 1] <= p.r))
+        .sort((a, b) => b.r - a.r).slice(0, 5).map(p => `${p.lag} ms r=${p.r.toFixed(3)}`);
     return {
+        diag: { micLoudDb: +micLoud.toFixed(1), lagsTried: lags.length, correlationPeaks: peaks },
         ok, lagMs: Math.round(lag), r: +r.toFixed(2), margin: +(r - second).toFixed(2),
         error: ok ? '' : (r < 0.4 ? 'the sound and the meters did not match well enough (music with clear beats works best)'
                                   : 'the match was ambiguous (a very regular beat can line up in more than one place)'),
@@ -99,22 +104,32 @@ S.estimate = (frames, mic) => {
 // rings for a few hundred ms in a room, so instead of correlating the envelopes, find
 // each click's onset in both and the one offset that pairs most of them - with
 // irregular spacing only the right offset pairs many.
+// The clicks are quiet (-30 dBFS, so normal listening volume is safe for the
+// speakers) and the music is paused meanwhile, so both detectors work relative
+// to the silence around them rather than to a fixed level: an onset is a jump of
+// 10 dB (mic) / 15 dB (meters) over what came just before, above the room's
+// noise floor (the 20th percentile of the whole recording).
 S.estimateClicks = (frames, mic, expected = 14) => {
     if (!mic || !mic.db || mic.db.length < 50) return { ok: false, error: 'not enough data' };
     const f = frames.slice().sort((a, b) => a.t - b.t);
     const fOn = [];
     for (let i = 0; i < f.length; i++) {
         const prev = f[i - 1];
-        if (f[i].p > -40 && (!prev || prev.p < -55 || f[i].t - prev.t > 150)) fOn.push(f[i].t);
+        if (f[i].p > -50 && (!prev || prev.p < f[i].p - 15 || f[i].t - prev.t > 150)) fOn.push(f[i].t);
     }
+    const sorted = mic.db.slice().sort((a, b) => a - b);
+    const micFloor = sorted[Math.floor(sorted.length * 0.2)];
+    const micThreshold = Math.max(-80, micFloor + 10);
     const mOn = [];
     for (let i = 5; i < mic.db.length; i++) {
-        const floor = Math.min(...mic.db.slice(i - 5, i));
-        if (mic.db[i] > -45 && mic.db[i] - floor > 12 && (!mOn.length || mic.t0 + i * mic.step - mOn[mOn.length - 1] > 200))
+        const before = Math.min(...mic.db.slice(i - 5, i));
+        if (mic.db[i] > micThreshold && mic.db[i] - before > 10 && (!mOn.length || mic.t0 + i * mic.step - mOn[mOn.length - 1] > 200))
             mOn.push(mic.t0 + i * mic.step);
     }
-    if (fOn.length < expected / 2) return { ok: false, error: `the meters showed only ${fOn.length} of the ${expected} clicks` };
-    if (mOn.length < expected / 2) return { ok: false, error: `the microphone heard only ${mOn.length} of the ${expected} clicks - louder, or the phone nearer the speakers` };
+    const diag = { micFloorDb: +micFloor.toFixed(1), micThresholdDb: +micThreshold.toFixed(1),
+                   micMaxDb: +sorted[sorted.length - 1].toFixed(1), meterOnsets: fOn, micOnsets: mOn };
+    if (fOn.length < expected / 2) return { ok: false, diag, error: `the meters showed only ${fOn.length} of the ${expected} clicks` };
+    if (mOn.length < expected / 2) return { ok: false, diag, error: `the microphone heard only ${mOn.length} of the ${expected} clicks - raise the volume a little, or hold the phone nearer the speakers` };
     const TOL = 40;
     const pairs = lag => {
         const d = [];
@@ -137,15 +152,75 @@ S.estimateClicks = (frames, mic, expected = 14) => {
     const d = pairs(best.lag).sort((a, b) => a - b);
     const lag = d.length ? d[Math.floor(d.length / 2)] : 0;
     const ok = best.n >= Math.max(6, Math.ceil(expected * 0.6)) && best.n - second >= 4;
-    return { ok, lagMs: Math.round(lag), r: +(best.n / expected).toFixed(2), margin: best.n - second, matched: best.n,
+    const seen = new Set();
+    diag.candidates = scored.slice().sort((a, b) => b.n - a.n)
+        .filter(c => { const k = Math.round(c.lag / 20); if (seen.has(k)) return false; seen.add(k); return true; })
+        .slice(0, 6).map(c => `${Math.round(c.lag)} ms: ${c.n} paired`);
+    diag.pairedLagsMs = d.map(Math.round);
+    return { diag, ok, lagMs: Math.round(lag), r: +(best.n / expected).toFixed(2), margin: best.n - second, matched: best.n,
              error: ok ? '' : `only ${best.n} of ${expected} clicks lined up (next best ${second})` };
+};
+
+// ── the log ──────────────────────────────────────────────────────────────────
+// Every run, manual or automatic, writes a complete plain-text log: each step with
+// its time, the box's own delay model, the raw meter frames and microphone
+// envelope, what the detector found and the verdict - enough to diagnose a run
+// that went wrong from the text alone.  Shown live on Config (Meter timing), and
+// the last one is kept on this device.  Times are ms since the run started.
+const LOG = { lines: [], t0: 0, subs: new Set() };
+S.onLog = fn => { LOG.subs.add(fn); return () => LOG.subs.delete(fn); };
+S.lastLog = () => String(K.pref('sync.lastLog', '') || '');
+const rel = wall => Math.round(wall - LOG.t0);
+const logLine = text => {
+    const line = `${String(rel(Date.now())).padStart(6)} ms  ${text}`;
+    LOG.lines.push(line);
+    LOG.subs.forEach(f => { try { f(line); } catch {} });
+};
+const logRaw = text => {
+    LOG.lines.push(text);
+    LOG.subs.forEach(f => { try { f(text); } catch {} });
+};
+const logDiag = diag => {
+    if (!diag) return;
+    for (const [k, v] of Object.entries(diag)) {
+        const value = Array.isArray(v) && v.length && typeof v[0] === 'number' && v[0] > 1e12
+            ? v.map(rel).join(' ')                             // wall times -> ms since start
+            : Array.isArray(v) ? v.join(' | ') : String(v);
+        logLine(`  ${k}: ${value || '(none)'}`);
+    }
+};
+const stats = xs => {
+    if (!xs.length) return 'none';
+    const s = xs.slice().sort((a, b) => a - b), q = p => s[Math.min(s.length - 1, Math.floor(s.length * p))];
+    return `min ${s[0].toFixed(1)}  p20 ${q(.2).toFixed(1)}  median ${q(.5).toFixed(1)}  p90 ${q(.9).toFixed(1)}  max ${s[s.length - 1].toFixed(1)}`;
+};
+const endLog = () => {
+    const text = LOG.lines.join('\n');
+    K.setPref('sync.lastLog', text);
+    return text;
 };
 
 // ── one calibration run ──────────────────────────────────────────────────────
 S.running = false;
-S.calibrate = async ({ seconds = 10, onTick, clicks = false } = {}) => {
+S.calibrate = async ({ seconds = 10, onTick, clicks = false, why = 'manual' } = {}) => {
     if (S.running) return { ok: false, error: 'a calibration is already running' };
-    if (!S.canCalibrate()) return { ok: false, error: 'calibration needs the OMDRC Android app (microphone)' };
+    LOG.lines = []; LOG.t0 = Date.now();
+    logRaw(`OMDRC meter-timing calibration log - ${new Date(LOG.t0).toISOString()}`);
+    logRaw(`mode: ${clicks ? 'precise (click track)' : 'on the music'} | trigger: ${why} | listening ${seconds} s`);
+    logRaw(`page: ${location.host} | app bridge api ${window.OmdrcApp && window.OmdrcApp.apiVersion ? window.OmdrcApp.apiVersion() : 'none'} | ${navigator.userAgent}`);
+    logRaw(`this device's extra display delay before the run: ${S.delayMs()} ms`);
+    if (!S.canCalibrate()) {
+        logLine('ABORT: no microphone bridge (calibration needs the OMDRC Android app)');
+        endLog();
+        return { ok: false, error: 'calibration needs the OMDRC Android app (microphone)' };
+    }
+    const box = await K.api('/spectrum/settings', { timeout: 4000 });
+    if (box && box.ok !== false) {
+        logRaw(`box: analyzer ${box.enabled ? 'on' : 'OFF'}, source ${box.source_active || box.source_now || '?'}, ${box.refresh_hz} Hz frames, vu ${box.vu_mode}, ` +
+               `display delay base ${box.drc_delay_base_ms} ms + delta ${box.drc_delay_delta_ms} ms (auto-sync ${box.drc_delay_auto_sync ? 'on' : 'off'})`);
+        logRaw(`box delay terms (ms): ${JSON.stringify(box.drc_delay_terms_ms || {})}`);
+    } else logRaw(`box: /spectrum/settings failed (${(box && box.error) || 'no answer'})`);
+    logRaw('');
     const frames = [];
     const prevTap = K.streamTap;
     K.streamTap = (mode, d, t) => {
@@ -156,31 +231,71 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false } = {}) => {
         }
     };
     const hold = K.streams.open('vu', () => {});     // make sure level frames flow
+    logLine('level stream (vu) opened; waiting 1.5 s for it to settle');
     S.running = true;
+    let res = null;
     try {
         await new Promise(r => setTimeout(r, 1500));   // let the stream settle first
+        logLine(`settled: ${frames.length} level frames so far`);
         const mic = await new Promise(resolve => {
             const timer = setTimeout(() => resolve({ ok: false, error: 'the microphone did not answer' }), (seconds + 15) * 1000);
-            K.onMicEnvelope = res => { clearTimeout(timer); K.onMicEnvelope = null; resolve(res); };
+            K.onMicEnvelope = res => { clearTimeout(timer); K.onMicEnvelope = null; if (res && res.ok) LAST_MIC.value = res; resolve(res); };
             let left = seconds;
             const tick = setInterval(() => { left -= 1; if (onTick) onTick(Math.max(0, left)); if (left <= 0) clearInterval(tick); }, 1000);
             if (onTick) onTick(left);
+            logLine(`microphone: recording ${seconds * 1000} ms in ${STEP} ms steps (requested from the app)`);
             window.OmdrcApp.startMicEnvelope(seconds * 1000, STEP);
             // precise mode: the box plays its click track once the mic is listening
             if (clicks) setTimeout(async () => {
+                logLine('click test: asking the box to pause the music and play the click track');
                 const r = await K.api('/k/api/clicktest', { method: 'POST' });
+                logLine(`click test: box answered ${JSON.stringify(r)}`);
                 if (!r.ok) { clearTimeout(timer); K.onMicEnvelope = null; resolve({ ok: false, error: r.error || 'the click track could not be played' }); }
             }, 1000);
         });
+        logLine(mic.ok
+            ? `microphone: envelope received | source ${mic.source} | first step captured at ${rel(mic.t0)} ms | ${mic.db.length} steps of ${mic.step} ms`
+            : `microphone: FAILED | ${mic.error || 'unknown error'}`);
+        logLine('waiting 1.5 s for the last level frames');
         await new Promise(r => setTimeout(r, 1500));   // frames for the last instant of sound
-        if (!mic.ok) return { ok: false, error: mic.error || 'microphone error' };
-        return clicks ? S.estimateClicks(frames, mic) : S.estimate(frames, mic);
+        if (!mic.ok) { res = { ok: false, error: mic.error || 'microphone error' }; return res; }
+
+        const gaps = frames.slice(1).map((f, i) => f.t - frames[i].t);
+        logRaw('');
+        logLine(`level frames: ${frames.length} from ${frames.length ? rel(frames[0].t) : '-'} to ${frames.length ? rel(frames[frames.length - 1].t) : '-'} ms`);
+        logLine(`  arrival gaps (ms): ${stats(gaps)}`);
+        logLine(`  peak (dBFS): ${stats(frames.map(f => f.p))}`);
+        logLine(`microphone envelope (dBFS): ${stats(mic.db)}`);
+        res = clicks ? S.estimateClicks(frames, mic) : S.estimate(frames, mic);
+        logLine(`detector (${clicks ? 'click onsets' : 'envelope correlation'}):`);
+        logDiag(res.diag);
+        return res;
+    } catch (e) {
+        res = { ok: false, error: String(e && e.message || e) };
+        logLine(`EXCEPTION: ${res.error}`);
+        return res;
     } finally {
         S.running = false;
         hold.close();
         K.streamTap = prevTap;
+        logRaw('');
+        logLine(res && res.ok
+            ? `RESULT: the meters led the sound by ${res.lagMs} ms (match ${res.r}, margin ${res.margin})`
+            : `RESULT: failed | ${(res && res.error) || 'unknown'}${res && res.r !== undefined ? ` (match ${res.r})` : ''}`);
+        logRaw('');
+        logRaw(`--- level frames: arrival ms since start, peak dBFS (${frames.length}) ---`);
+        logRaw(frames.map(f => `${rel(f.t)}:${f.p.toFixed(1)}`).join(' '));
+        if (LAST_MIC.value) {
+            const m = LAST_MIC.value;
+            logRaw(`--- microphone envelope: first step at ${rel(m.t0)} ms, ${m.step} ms per value, peak dBFS (${m.db.length}) ---`);
+            logRaw(m.db.map(v => Number(v).toFixed(1)).join(' '));
+        }
+        LAST_MIC.value = null;
+        endLog();
     }
 };
+// the envelope of the run in progress, for the log's data section
+const LAST_MIC = { value: null };
 
 // ── automatic recalibration ──────────────────────────────────────────────────
 // A track starting, or playback resuming after a pause, is the clearest possible
@@ -203,14 +318,16 @@ S.autoRun = async why => {
     if (!S.autoEnabled() || S.running || Date.now() - lastAutoAt < AUTO_EVERY_MS) return;
     if (!(K.nowShown && K.nowShown())) return;
     lastAutoAt = Date.now();
-    const res = await S.calibrate({ seconds: 8 });
-    if (!res.ok || res.lagMs < 0 || res.r < 0.5) return;
+    const res = await S.calibrate({ seconds: 8, why: `automatic (${why})` });
+    const note = text => K.setPref('sync.lastLog', S.lastLog() + `\nAUTO: ${text}`);
+    if (!res.ok || res.lagMs < 0 || res.r < 0.5) { note('not used (failed, negative, or match below 0.5)'); return; }
     recent.push(res.lagMs);
     if (recent.length > 3) recent.shift();
     const median = recent.slice().sort((a, b) => a - b)[Math.floor(recent.length / 2)];
     if (Math.abs(median - S.delayMs()) > 15) {
+        note(`recent results ${recent.join(', ')} ms -> median ${median} ms applied (was ${S.delayMs()} ms)`);
         S.setDelayMs(median);
         K.toast(`Meter delay recalibrated (${why}): ${median} ms`);
-    }
+    } else note(`recent results ${recent.join(', ')} ms -> median ${median} ms, within 15 ms of ${S.delayMs()} ms: unchanged`);
 };
 })();
