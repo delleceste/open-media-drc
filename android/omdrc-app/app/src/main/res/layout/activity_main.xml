@@ -5,18 +5,23 @@
     android:layout_height="match_parent"
     android:background="@color/widget_background">
 
-    <WebView
-        android:id="@+id/web_view"
+    <!-- Swipe down to reload the page: also the way back after a network failure. -->
+    <com.omdrc.widget.VerticalSwipeRefreshLayout
+        android:id="@+id/swipe_refresh"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent">
 
-    <ProgressBar
-        android:id="@+id/progress_bar"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top"
-        android:max="100"
+        <WebView
+            android:id="@+id/web_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </com.omdrc.widget.VerticalSwipeRefreshLayout>
+
+    <com.omdrc.widget.LoadingRingView
+        android:id="@+id/loading_ring"
+        android:layout_width="170dp"
+        android:layout_height="170dp"
+        android:layout_gravity="center"
         android:visibility="gone" />
 
     <TextView

@@ -22,29 +22,32 @@ P.mount = el => {
     P.t2 = h('div', { class: 'now-sub' });
     P.fmt = h('span', { class: 'now-fmt' });
     P.state = h('button', { class: 'chip state', type: 'button', title: 'Tap: play / pause · hold: stop' });
-    P.transportHint = h('span', { class: 'now-hint' }, 'tap ▶/❚❚ · hold ■');
     P.time = h('div', { class: 'now-time' });
     P.prog = h('i');
     const trackBox = h('div', { class: 'now-track' }, P.art,
-        h('div', { class: 'now-meta' }, P.t1, P.t2, h('div', { class: 'now-tags' }, P.state, P.transportHint, P.fmt)),
-        h('div', { class: 'now-timebox' }, P.time, h('div', { class: 'now-prog' }, P.prog)));
+        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt)),
+        // play/pause/stop chip and the small time sit above the progress bar, at the right
+        h('div', { class: 'now-timebox' }, P.state, P.time, h('div', { class: 'now-prog' }, P.prog)));
 
     // level area
     P.meterHost = h('div', { class: 'lvl-meter' });
     P.specCanvas = h('canvas', { class: 'lvl-spectrum' });
-    P.src = h('span', { class: 'lvl-src' });
+    // these live in the top bar while this page is showing (see show()).  DR and Bal are
+    // shortcuts for the remembered switches (the DR page's Estimate, Config's Balance): off
+    // hides the card and also stops what feeds it.
     P.modeBtn = h('button', { class: 'chip lvl-mode', type: 'button', onclick: () => P.cycleMode() });
+    P.drToggle = h('button', { class: 'chip tog', type: 'button', title: 'Dynamic range estimate on / off', onclick: () => P.flip('now.dr') }, 'DR');
+    P.balToggle = h('button', { class: 'chip tog', type: 'button', title: 'Balance on / off', onclick: () => P.flip('now.balance') }, 'Bal');
+    P.topBtns = h('span', { class: 'top-toggles' }, P.drToggle, P.balToggle, P.modeBtn);
     P.levelBox = h('div', { class: 'now-level' },
-        h('div', { class: 'lvl-body' }, P.meterHost, P.specCanvas),
-        h('div', { class: 'lvl-foot' }, P.src, P.modeBtn));
+        h('div', { class: 'lvl-body' }, P.meterHost, P.specCanvas));
 
     // With the level display off, the audio chain takes the meters' place: no
     // analyzer stream is opened for it, only a light poll of /audio/chain.
     P.chainHost = h('div', { class: 'cf' });
     P.chainSummary = h('span', { class: 'cf-summary' });
-    P.chainModeBtn = h('button', { class: 'chip', type: 'button', onclick: () => P.cycleMode() });
     P.chainBox = h('div', { class: 'now-chain' },
-        h('div', { class: 'cf-head' }, h('span', { class: 'lbl' }, 'Audio chain'), P.chainSummary, P.chainModeBtn), P.chainHost);
+        h('div', { class: 'cf-head' }, h('span', { class: 'lbl' }, 'Audio chain'), P.chainSummary), P.chainHost);
     P.leftCell = h('div', { class: 'now-left' }, P.levelBox, P.chainBox);
 
     // DR block
@@ -99,10 +102,9 @@ P.applyLayout = () => {
     P.levelBox.hidden = off;
     P.chainBox.hidden = !off;
     P.modeBtn.textContent = MODE_LABEL[P.mode];
-    P.chainModeBtn.textContent = MODE_LABEL[P.mode];
     if (!off) P.vu.setMode(P.mode === 'needles' ? 'needles' : 'bars');
-    // balance is computed from the level frames, so it needs the level display
-    P.showBalance = P.showBalance && !off;
+    P.drToggle.classList.toggle('on', P.showDr);
+    P.balToggle.classList.toggle('on', P.showBalance);
     P.el.firstChild.classList.toggle('lvl-off', off);
     P.drBox.hidden = !P.showDr;
     P.drBarBox.hidden = !P.showDr;
@@ -111,6 +113,8 @@ P.applyLayout = () => {
     P.side.classList.toggle('single', P.showDr !== P.showBalance);   // one card alone: make it bigger
     P.el.firstChild.classList.toggle('no-side', P.side.hidden);
     P.el.firstChild.classList.toggle('no-drbar', !P.showDr);
+    // DR hidden but Balance on: no side column, the balance slides under the meters
+    P.el.firstChild.classList.toggle('bal-below', !P.showDr && P.showBalance);
     P.drWin.textContent = K.dr.windowLabel(K.drEstimate.windowSeconds).replace(' minutes', ' min').replace(' minute', ' min');
 };
 
@@ -127,24 +131,42 @@ P.cycleWindow = ev => {
     P.applyLayout();
 };
 
+// The DR estimator listens only while DR is on: turning it off closes its stream.
+P.syncDr = () => {
+    if (P.showDr && !P.drSub) P.drSub = K.drEstimate.listen(P.paintDr);
+    else if (!P.showDr && P.drSub) { P.drSub.close(); P.drSub = null; }
+};
+
+// A top-bar shortcut: flip the remembered switch, then start or stop what feeds the card.
+P.flip = key => {
+    K.setPref(key, !K.pref(key, true));
+    P.applyLayout();
+    if (key === 'now.balance') P.balance.clear();
+    P.syncMode();       // level stream: needed by the meters or by Balance, else closed
+    P.syncDr();         // DR stream: open only while DR is on
+};
+
 // ── level stream ─────────────────────────────────────────────────────────────
 P.openLevel = () => {
     if (P.level) { P.level.close(); P.level = null; }
-    if (P.mode === 'off') return;                 // nothing is computed for a display that is off
+    // Balance is computed from the level frames, so with the meters off the level stream runs
+    // only while Balance itself is switched on; with both off, nothing is opened at all.
+    if (P.mode === 'off' && !P.showBalance) return;
     P.vu.snap({}); P.spec.clear(); P.balance.clear();
-    P.src.textContent = K.state.spectrum.enabled ? '' : 'analyzer disabled';
+    P.modeBtn.title = K.state.spectrum.enabled ? '' : 'analyzer disabled';
     // Bars/needles need only the RMS/peak reader (no FFT); the spectrum mode
     // asks for the full frame, which carries the same levels.
     const stream = P.mode === 'spectrum' ? 'music' : 'vu';
     P.level = K.streams.open(stream, d => {
         if (d.ok && d.state === 'running') {
-            P.vu.update(d.vu);
+            if (P.mode !== 'off') P.vu.update(d.vu);
             if (P.showBalance) P.balance.update(d.vu);
             if (P.mode === 'spectrum') P.spec.update(d);
-            P.src.textContent = [d.source_label, d.rate ? `${d.rate} Hz` : ''].filter(Boolean).join(' · ');
+            P.modeBtn.title = [d.source_label, d.rate ? `${d.rate} Hz` : ''].filter(Boolean).join(' · ');
         } else {
-            P.vu.snap({}); P.spec.clear(); P.balance.clear();
-            P.src.textContent = d.state === 'idle' || !d.error ? (d.state || '') : d.error;
+            if (P.mode !== 'off') P.vu.snap({});
+            P.spec.clear(); P.balance.clear();
+            P.modeBtn.title = d.state === 'idle' || !d.error ? (d.state || '') : d.error;
         }
     });
 };
@@ -179,7 +201,7 @@ P.pollTrack = async () => {
     P.t1.textContent = t.ok ? (t.title || '—') : 'Nothing playing';
     P.t1.classList.toggle('idle', !t.ok);
     P.t2.textContent = [t.artist, [t.album, t.edition].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');
-    P.fmt.textContent = t.format;
+    P.fmt.textContent = P.shortFormat(t.format);
     P.fmt.style.color = K.formatColor(t.format);
     P.state.textContent = { play: '▶ Playing', pause: '❚❚ Paused', stop: '■ Stopped' }[t.state] || '▶ Play';
     P.state.className = 'chip state ' + t.state;
@@ -210,6 +232,12 @@ P.wireTransport = () => {
         P.transport(P.track.state === 'play' ? 'pause' : 'play');
     });
     P.state.addEventListener('contextmenu', e => e.preventDefault());   // long-press menu on touch browsers
+};
+
+// "24 bit / 192 kHz / stereo" -> "24/192" (bits/kHz; stereo is the norm and is left out)
+P.shortFormat = line => {
+    const m = String(line || '').match(/(\d+)\s*bit.*?([\d.]+)\s*kHz/i);
+    return m ? `${m[1]}/${+parseFloat(m[2]).toFixed(1)}` : String(line || '').replace(/\s*\/?\s*stereo/i, '');
 };
 
 P.paintTime = () => {
@@ -243,14 +271,15 @@ P.paintDrc = () => {
             chip('dim', `saved: ${s.session.geometry} · ${s.design}${s.session.rate ? ' · ' + K.fmtRate(Number(s.session.rate)) : ''}`);
         }
     }
-    K.clear(P.drcLine).append(...chips, h('span', { class: 'more' }, '›'));
+    K.clear(P.drcLine).append(h('i', { class: 'dot ' + K.drcLedClass(s), title: s.message || s.text }), ...chips, h('span', { class: 'more' }, '›'));
 };
 
 // ── lifecycle ────────────────────────────────────────────────────────────────
 P.show = () => {
     P.applyLayout();
+    K.setTopExtra(P.topBtns);
     P.syncMode();
-    if (P.showDr) P.drSub = K.drEstimate.listen(P.paintDr);
+    P.syncDr();
     P.trackPoll.start();
     P.tick.start(false);
     P.paintDrc();

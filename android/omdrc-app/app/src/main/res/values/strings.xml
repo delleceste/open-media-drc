@@ -23,5 +23,6 @@
     <string name="settings_title">OMDRC settings</string>
     <string name="settings_view_kiosk">Kiosk view (small screen)</string>
     <string name="settings_view_web">Full web page</string>
+    <string name="settings_hide_bars">Full screen (hide the Android status and navigation bars)</string>
     <string name="settings_keep_on">Keep the screen on while “Now playing” is shown</string>
 </resources>

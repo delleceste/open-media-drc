@@ -5,7 +5,7 @@
     --bg: #0d1117; --surface: #161b22; --surface2: #1c232c; --deep: #0a0e13;
     --border: #30363d; --text: #e6edf3; --muted: #8b949e;
     --accent: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922;
-    --top: 2.7rem; --tabs: 3.3rem;
+    --top: 2.4rem; --tabs: 3rem;
 }
 /* dvh, not vh: on a phone the browser's own bars are inside 100vh, so vh sizes
    the page for a screen taller than the one you can see.  The floor keeps text
@@ -17,7 +17,7 @@ html { font-size: max(11px, min(1.5625vw, 2.667vh)); font-size: max(11px, min(1.
 html, body { margin: 0; height: 100%; height: 100dvh; background: var(--bg); color: var(--text); overflow: hidden;
     font: 1rem/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
-body { display: grid; grid-template-rows: var(--top) 1fr var(--tabs); }
+body { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr var(--tabs); }
 button { font: inherit; color: inherit; }
 pre, .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .spacer { flex: 1; }
@@ -26,10 +26,18 @@ pre, .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .lbl { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; margin: .6rem 0 .3rem; }
 
 /* ── top bar & tabs ── */
-#topbar { display: flex; align-items: center; gap: .8rem; padding: 0 .9rem; border-bottom: 1px solid var(--border); background: var(--surface); }
+/* an overlay that slides in from the top when wanted (main.js, K.showBar) */
+#topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 40; height: var(--top); transform: translateY(-110%); transition: transform .25s ease; box-shadow: 0 .3rem 1rem rgba(0,0,0,.55);
+    display: flex; align-items: center; gap: .8rem; padding: 0 .9rem; min-width: 0; overflow: hidden; border-bottom: 1px solid var(--border); background: var(--surface); }
 .brand { font-weight: 800; letter-spacing: .14em; color: var(--accent); }
-.top-drc { display: flex; align-items: center; gap: .45rem; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.top-clock { font: 600 1rem ui-monospace, monospace; color: var(--muted); }
+body.bar-shown #topbar { transform: none; }
+#topbar > .spacer { flex: 1; }
+.top-extra { display: flex; align-items: center; gap: .5rem; }
+.top-toggles { display: flex; align-items: center; gap: .4rem; }
+.chip.tog { min-height: 1.7rem; color: var(--muted); }
+.top-bar-spacer {}
+#top-awake { font-size: 1rem; padding: 0 .55rem; }
+.chip.tog.on { color: var(--accent); border-color: var(--accent); background: rgba(88,166,255,.14); }
 .icon-btn { background: none; border: 1px solid var(--border); border-radius: .4rem; width: 2.1rem; height: 2.1rem; font-size: 1.1rem; }
 .top-alert { border: 0; border-radius: 1rem; min-width: 1.7rem; height: 1.7rem; font-weight: 700; padding: 0 .5rem; color: #000; }
 .top-alert.bad { background: var(--red); } .top-alert.warn { background: var(--yellow); }
@@ -56,7 +64,7 @@ pre, .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
     touch-action: pan-y; }   /* horizontal touch swipes are handled in main.js */
 #pager::-webkit-scrollbar { display: none; }
 .page { flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; height: 100%; min-width: 0; }
-.page-body { height: 100%; overflow-y: auto; overflow-x: hidden; padding: .6rem .8rem max(.9rem, env(safe-area-inset-bottom)); overscroll-behavior-y: contain; scrollbar-width: none; touch-action: pan-y; }
+.page-body { height: 100%; overflow-y: auto; overflow-x: hidden; padding: .4rem .8rem max(.6rem, env(safe-area-inset-bottom)); overscroll-behavior-y: contain; scrollbar-width: none; touch-action: pan-y; }
 
 /* ── building blocks ── */
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; align-items: start; }
@@ -124,28 +132,34 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 #saver { position: fixed; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; }
 #saver-clock { font-size: 8rem; font-weight: 200; color: #3a4048; font-variant-numeric: tabular-nums; }
 #saver-track { color: #59616b; font-size: 1.3rem; max-width: 90vw; text-align: center; }
+#saver.dark > * { display: none; }   /* display off: nothing lit, in case only the backlight stays on */
 
 /* ── Now ── */
-.now { height: 100%; min-height: 27rem; display: flex; flex-direction: column; gap: .55rem; }
+.now { height: 100%; min-height: 24rem; display: flex; flex-direction: column; gap: .35rem; }
 .now > * { flex: 0 0 auto; }
-.now-track { display: flex; gap: .8rem; align-items: center; min-height: 4.6rem; }
-.now-art { width: 4.6rem; height: 4.6rem; border-radius: .4rem; object-fit: cover; background: var(--surface2); flex: 0 0 auto; }
+.now-track { display: flex; gap: .7rem; align-items: center; min-height: 3rem; }
+.now-art { width: 3rem; height: 3rem; border-radius: .4rem; object-fit: cover; background: var(--surface2); flex: 0 0 auto; }
 .now-meta { flex: 1; min-width: 0; }
 .now-title { font-size: 1.7rem; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-title.idle { color: var(--muted); font-weight: 500; }
 .now-sub { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.now-tags { display: flex; gap: .55rem; align-items: center; font-size: .85rem; margin-top: .15rem; }
-.now-timebox { width: 9.5rem; text-align: right; flex: 0 0 auto; }
-.now-time { font: 1.15rem ui-monospace, monospace; }
-.now-prog { height: .3rem; background: var(--border); border-radius: .2rem; margin-top: .3rem; overflow: hidden; } .now-prog i { display: block; height: 100%; width: 0; background: var(--accent); }
-.now-main { display: grid; grid-template-columns: 1.55fr 1fr; gap: .6rem; min-height: 0; }
+.now-subrow { display: flex; align-items: baseline; gap: .7rem; }
+.now-subrow .now-sub { flex: 1; min-width: 0; }
+.now-fmt { flex: 0 0 auto; font: 700 .85rem ui-monospace, monospace; }
+/* chip + small time on one line, the progress bar under them */
+.now-timebox { display: grid; grid-template-columns: auto auto; justify-content: end; align-items: center; column-gap: .6rem; row-gap: .3rem; width: 13rem; flex: 0 0 auto; }
+.now-time { font: .8rem ui-monospace, monospace; color: var(--muted); white-space: nowrap; }
+.now-prog { grid-column: 1 / -1; height: .3rem; background: var(--border); border-radius: .2rem; overflow: hidden; } .now-prog i { display: block; height: 100%; width: 0; background: var(--accent); }
+.now-main { display: grid; grid-template-columns: 1.55fr 1fr; gap: .4rem; min-height: 0; }
 .now-main > * { min-width: 0; }
 .vu-needles .vu-needle, .vu-barmode .vu-bars { min-width: 0; }
 .now.no-side .now-main { grid-template-columns: 1fr; }
-.now-level { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; background: var(--deep); border: 1px solid var(--border); border-radius: .6rem; overflow: hidden; }
+.now-level { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; min-height: 0; background: var(--deep); border: 1px solid var(--border); border-radius: .6rem; overflow: hidden; }
 /* the meters fill whatever height is left: more when the DR bar or balance is hidden */
-.lvl-body { position: relative; width: 100%; height: 100%; min-height: 7rem; }
+/* the meters take a third of the spare height, the DR strip two thirds (spectrum mode: half each) */
+.lvl-body { position: relative; width: 100%; min-width: 0; height: 100%; min-height: 5.5rem; }
 .now-main { flex: 1 1 auto !important; }
+.now:has(.mode-spectrum:not([hidden])) .now-main { flex-grow: 2 !important; }
 .lvl-meter { position: absolute; inset: .4rem; display: flex; gap: .5rem; }
 .vu-canvas { display: block; }
 .vu-needles .vu-needle { flex: 1 1 0; width: 0; height: 100%; }
@@ -154,26 +168,26 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .mode-spectrum .lvl-meter { bottom: auto; height: 38%; }
 .mode-spectrum .lvl-spectrum { display: block; }
 .lvl-foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .25rem .5rem; border-top: 1px solid var(--border); font-size: .75rem; color: var(--muted); }
-.now-side { display: flex; flex-direction: column; gap: .6rem; min-height: 0; }
+.now-side { display: flex; flex-direction: column; gap: .35rem; min-height: 0; }
 .now-side .card { margin: 0; min-height: 0; }
-.now-side .card { padding: .4rem .7rem .5rem; }
+.now-side .card { padding: .25rem .6rem .3rem; }
 /* the side cards share the column's height, so hiding one lets the other fill it */
-.now-side.single .dr-value { font-size: 3.8rem; }
+.now-side.single .dr-value { font-size: 2.8rem; }
 .now-side.single .drg-track, .now-side.single .bal-track { height: 1.2rem; }
 .now-side.single .bal-readout { font-size: 1.5rem; }
 .now-side.single .dr-status { font-size: .95rem; }
 .now-side > .card { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; }
-.now-drbar { flex: 0 0 auto !important; display: flex; flex-direction: column; margin: 0; padding: .4rem .7rem .3rem; }
-.now-drbar .dr-bar { flex: 0 0 auto; height: 3.1rem; }
+.now-drbar { flex: 2 1 auto !important; max-height: 11rem; display: flex; flex-direction: column; margin: 0; padding: .3rem .6rem .2rem; }
+.now-drbar .dr-bar { flex: 1 1 auto; height: auto; min-height: 2.4rem; }
 .now-drbar .dr-times { align-items: baseline; gap: .8rem; } .now-drbar .dr-detail { margin: 0; flex: 1; text-align: center; }
 .dr-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
 .dr-head .lbl { margin: 0; } .dr-head .chip { margin-left: auto; }
-.dr-value { font-size: 2.4rem; line-height: 1; font-variant-numeric: tabular-nums; } .dr-value.big { font-size: 3.4rem; }
+.dr-value { font-size: 1.9rem; line-height: 1; font-variant-numeric: tabular-nums; } .dr-value.big { font-size: 3.4rem; }
 .dr-status { color: var(--muted); font-size: .8rem; }
-.drg { margin: .4rem 0 .2rem; }
+.drg { margin: .25rem 0 .1rem; }
 .drg-track { position: relative; height: .7rem; border-radius: .4rem; opacity: .9; }
 .drg-marker { position: absolute; top: -.25rem; width: .28rem; height: 1.2rem; margin-left: -.14rem; background: #fff; border-radius: .15rem; box-shadow: 0 0 .4rem #000; transition: left .3s; }
-.drg-scale { position: relative; height: 1rem; font-size: .68rem; color: var(--muted); }
+.drg-scale { position: relative; height: .85rem; font-size: .68rem; color: var(--muted); }
 .drg-scale span { position: absolute; transform: translateX(-50%); } .drg-scale span:first-child { transform: none; } .drg-scale span:last-child { transform: translateX(-100%); }
 .dr-bar { display: flex; gap: 1px; height: 3.3rem; background: var(--deep); border: 1px solid var(--border); border-radius: .4rem; overflow: hidden; }
 .dr-bar.tall { height: 7rem; }
@@ -188,20 +202,32 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .tap { cursor: pointer; }
 .tap:active { border-color: var(--accent); }
 .dr-bar.static > span { cursor: pointer; }
-.top-drc { background: none; border: 0; padding: .3rem .5rem; margin-left: -.3rem; border-radius: .4rem; color: inherit; font: inherit; cursor: pointer; }
-.top-drc:active { background: var(--surface2); }
 button.chip.state { color: inherit; }
-.now-hint { color: var(--muted); font-size: .72rem; }
 .dr-times { display: flex; justify-content: space-between; font-size: .7rem; color: var(--muted); margin-top: .2rem; }
-.now-bal .bal-head { display: flex; align-items: center; gap: .6rem; } .now-bal .lbl { margin: 0; } .bal-readout { font: .95rem ui-monospace, monospace; } .bal-head .chip { margin-left: auto; }
-.bal-track { position: relative; height: 1rem; margin: .5rem .2rem .2rem; background: var(--deep); border: 1px solid var(--border); border-radius: .5rem; }
-.bal-centre { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); }
-.bal-pointer { position: absolute; top: -.2rem; width: .55rem; height: 1.4rem; margin-left: -.27rem; border-radius: .3rem; background: var(--accent); transition: left .25s; }
-.bal-pointer.off { opacity: .25; } .bal-pointer.warn { background: var(--yellow); }
-.bal-scale { display: flex; justify-content: space-between; font-size: .68rem; color: var(--muted); }
-.now-drc { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; text-align: left; min-height: 3.2rem; padding: .6rem .9rem; margin-bottom: .2rem; border-radius: .6rem; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
+.now-bal .bal-head { display: flex; align-items: center; gap: .5rem; } .now-bal .lbl { margin: 0; } .bal-readout { font: .95rem ui-monospace, monospace; }
+/* Left = light grey, right = red, everywhere: the track, the bar, the readout and the L/R letters. */
+:root { --bal-l: #d3d9e0; --bal-r: #e5484d; --bal-mark: #2f7dff; }
+.bal-track { position: relative; height: 1.1rem; margin: .35rem .2rem .15rem; border: 1px solid var(--border); border-radius: .5rem; overflow: visible; }
+.bal-track.split { background: linear-gradient(90deg, var(--bal-l) 0 50%, var(--bal-r) 50% 100%); }
+.bal-track.bar { background: #000; }
+.bal-centre { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(0,0,0,.55); }
+.bal-track.bar .bal-centre { background: var(--muted); width: 1px; margin-left: 0; }
+/* split look: a blue marker (a third colour, distinct from grey and red), ringed dark */
+.bal-pointer { position: absolute; top: -.25rem; width: .7rem; height: 1.8rem; margin-left: -.35rem; border-radius: .3rem; background: var(--bal-mark); box-shadow: 0 0 0 2px #0d1117; transition: left .25s; }
+.bal-pointer.off { opacity: .3; }
+.bal-track.bar .bal-pointer { display: none; }
+/* bar look: grows from the centre towards the heavier channel */
+.bal-fill { display: none; position: absolute; top: 0; bottom: 0; border-radius: .3rem; transition: width .25s, left .25s; }
+.bal-track.bar .bal-fill { display: block; }
+.bal-fill.l { background: var(--bal-l); } .bal-fill.r { background: var(--bal-r); }
+.bal-readout.l { color: var(--bal-l); } .bal-readout.r { color: #ff7a7f; }
+.bal-scale { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); }
+.bal-scale .l { color: var(--bal-l); font-weight: 800; font-size: .85rem; } .bal-scale .r { color: var(--bal-r); font-weight: 800; font-size: .85rem; }
+.bal-head .chip { margin-left: 0; } .bal-head .chip:first-of-type { margin-left: auto; }
+.now-drc { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; text-align: left; min-height: 2.6rem; padding: .3rem .7rem; margin-bottom: 0; border-radius: .6rem; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
+.now-drc > .dot { width: .9rem; height: .9rem; }
 .now-drc .more { margin-left: auto; color: var(--muted); font-size: 1.3rem; }
-.now-drc .chip { min-height: 1.9rem; font-size: .9rem; white-space: normal; max-width: 100%; }
+.now-drc .chip { min-height: 1.7rem; font-size: .85rem; white-space: normal; max-width: 100%; }
 
 /* ── Now, level display off: the audio chain takes the meters' place ── */
 .now-left { display: grid; min-height: 0; } .now-left > * { min-width: 0; min-height: 0; }
@@ -225,12 +251,18 @@ button.chip.state { color: inherit; }
 .cf-branch.live .cf-consumer { border-color: #23632f; color: #7ee787; } .cf-consumer.none { color: var(--muted); }
 .cf-problem { margin-top: .45rem; font-size: .75rem; color: var(--muted); } .cf-msg { color: var(--muted); }
 /* level off: everything else compacts, and the DR bar takes the height the meters gave up */
+/* DR hidden, Balance on: meters across the full width, balance underneath */
+.now.bal-below .now-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+.now.bal-below .now-side { flex-direction: row; }
+.now.bal-below .now-side.single .bal-readout { font-size: 1.1rem; }
+.now.bal-below .now-side .now-bal { flex: 1 1 auto; justify-content: center; }
 .now.lvl-off .now-main { flex: 0 0 auto !important; grid-template-columns: 2.2fr 1fr; }
 .now.lvl-off.no-side .now-main { grid-template-columns: 1fr; }
-.now.lvl-off .now-drbar { flex: 1 1 auto !important; }
-.now.lvl-off .now-drbar .dr-bar { flex: 1 1 auto; height: auto; min-height: 3.1rem; }
+.now.lvl-off .now-drbar { flex: 1 1 auto !important; max-height: none; }
+.now.lvl-off.no-drbar .now-main { flex: 1 1 auto !important; }   /* no DR strip to take the spare height: the chain area does */
+.now.lvl-off.no-drbar .now-chain { justify-content: center; }
+.now.lvl-off .now-drbar .dr-bar { flex: 1 1 auto; height: auto; min-height: 2.4rem; }
 .in-app #top-full { display: none; }
-.in-app #topbar { padding-right: 56px; }     /* room for the app's own gear button */
 
 /* ── DRC ── */
 .preset-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem; }
@@ -279,19 +311,23 @@ input[type=range] { accent-color: var(--accent); }
 /* ── portrait / phone ── */
 @media (orientation: portrait) {
     .two-col, .two-col.logs { grid-template-columns: 1fr; }
-    .now { height: auto; }
+    .now { height: auto; min-height: 100%; }   /* at least the screen (the DR strip fills the spare), more if the content needs it */
     .now-main { grid-template-columns: 1fr; grid-auto-rows: auto; }
     .now-main { flex: 0 0 auto !important; }
-    .lvl-body { aspect-ratio: 2.3 / 1; height: auto; }
-    .mode-spectrum .lvl-body { aspect-ratio: 1.6 / 1; height: auto; }
+    .now-main { flex: 0 0 auto !important; }
+    .lvl-body { aspect-ratio: 2.6 / 1; height: auto; }
+    .mode-spectrum .lvl-body { aspect-ratio: 1.7 / 1; height: auto; }
     .now-side > .card { flex: 0 0 auto; }
-    .now.lvl-off .now-drbar .dr-bar { height: 6rem; flex: 0 0 auto; }
+    .now.lvl-off .now-drbar .dr-bar { height: auto; flex: 1 1 auto; min-height: 6rem; }
     .now.lvl-off .now-main { grid-template-columns: 1fr; }
     .cf-label { display: none; } .cf-edge { min-width: 2rem; padding: 0 .1rem; } .cf-title { font-size: .85rem; }
     .now-side { min-height: auto; }
-    .now-drbar { flex: 0 0 auto !important; }
-    .now-drbar .dr-bar { height: 4.2rem; flex: 0 0 auto; }
-    .now-timebox { display: none; }
+    .now-drbar { flex: 1 1 auto !important; max-height: none; }
+    .now-drbar .dr-bar { height: auto; flex: 1 1 auto; min-height: 3.6rem; }
+    /* the time row drops under the title and spans the width */
+    .now-track { flex-wrap: wrap; }
+    .now-timebox { width: 100%; grid-template-columns: auto auto 1fr; justify-content: stretch; }
+    .now-prog { grid-column: auto; }
     .now-title { font-size: 1.3rem; }
     .preset-grid { grid-template-columns: repeat(3, 1fr); }
 }

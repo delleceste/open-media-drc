@@ -21,9 +21,15 @@ a loading page let the phone sleep normally. (Settings â†’ "Keep the screen onâ€
 turns this off.) The kiosk page tells the app what it wants through a small
 JavaScript bridge (`window.OmdrcApp`, see `MainActivity.AppBridge`).
 
-The launcher name is now "OMDRC". The Android package / application id is still
+The app is always in landscape (either way up); the launcher name is now "OMDRC". The Android package / application id is still
 `com.omdrc.widget`, so an existing install upgrades in place and keeps its
 settings; the folder and project were renamed from `omdrc-widget`.
+
+While a page loads, a large ring in the middle of the screen shows the progress in
+percent. **Swipe down to reload** the page, for example after a network failure: in
+the kiosk view this works whenever the current page is scrolled to its top (the
+kiosk reports its own scroll position through the bridge), and a horizontal page
+swipe never triggers it.
 
 Apart from the kiosk's own controls (DRC presets, filter switching, play/pause),
 the app adds no controls of its own; the widget itself is read-only.

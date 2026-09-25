@@ -31,10 +31,13 @@
           also launches this activity, but with an explicit host/port extra for
           that widget instance instead of the app-wide default.
         -->
+        <!-- Always landscape (either way up, following the sensor), whatever the
+             phone's rotation setting: the kiosk view is laid out for it. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
             android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

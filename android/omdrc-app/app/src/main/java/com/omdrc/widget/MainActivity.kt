@@ -16,12 +16,14 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ProgressBar
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.WindowInsetsCompat
 import com.omdrc.widget.work.WidgetRefreshWorker
 
@@ -35,12 +37,22 @@ import com.omdrc.widget.work.WidgetRefreshWorker
 class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var progressBar: ProgressBar
+    private lateinit var loadingRing: LoadingRingView
+    private lateinit var swipeRefresh: SwipeRefreshLayout
+
+    /** The kiosk scrolls inside its own page, not the WebView: it tells us (AppBridge)
+     *  whether that page is scrolled down, so swipe-down scrolls it back up instead
+     *  of reloading. */
+    private var pageScrolled = false
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
     /** What the page last asked for over [AppBridge]: true only while the
      *  kiosk's "Now playing" page is on screen. */
     private var pageWantsScreenOn = false
+
+    /** The page in the WebView could not be loaded (box off, wrong address). */
+    private var loadFailed = false
+    private lateinit var settingsButton: View
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -70,13 +82,26 @@ class MainActivity : ComponentActivity() {
         // no longer lets an app targeting API 35 do that).
         val root = findViewById<View>(R.id.root_container)
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // System bars while they are showing, plus the camera cut-out either way
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
 
+        applySystemBars()
+
         webView = findViewById(R.id.web_view)
-        progressBar = findViewById(R.id.progress_bar)
+        loadingRing = findViewById(R.id.loading_ring)
+        swipeRefresh = findViewById(R.id.swipe_refresh)
+        swipeRefresh.setColorSchemeColors(0xFF58A6FF.toInt(), 0xFF3FB950.toInt(), 0xFFD8C23A.toInt())
+        swipeRefresh.setProgressBackgroundColorSchemeColor(0xFF161B22.toInt())
+        swipeRefresh.setOnChildScrollUpCallback { _, _ -> webView.scrollY > 0 || pageScrolled }
+        swipeRefresh.setOnRefreshListener {
+            swipeRefresh.isRefreshing = false        // the big ring shows the reload instead
+            if (loadFailed) loadDashboard() else webView.reload()
+        }
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -89,17 +114,34 @@ class MainActivity : ComponentActivity() {
                 // drop the screen-on flag until the kiosk page asks again.
                 pageWantsScreenOn = false
                 applyKeepScreenOn()
+                loadFailed = false
+                pageScrolled = false
+                updateSettingsButton()
+                loadingRing.start()
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?,
+                error: android.webkit.WebResourceError?,
+            ) {
+                // Only the page itself: without this the gear stays hidden and a
+                // wrong server address could not be corrected.
+                if (request?.isForMainFrame == true) {
+                    loadFailed = true
+                    updateSettingsButton()
+                    loadingRing.hide()
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                progressBar.visibility = View.GONE
+                if (!loadFailed) loadingRing.finish()
             }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                progressBar.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
-                progressBar.progress = newProgress
+                if (!loadFailed) loadingRing.setProgress(newProgress)
             }
 
             override fun onShowFileChooser(
@@ -124,9 +166,29 @@ class MainActivity : ComponentActivity() {
             if (webView.canGoBack()) webView.goBack() else finish()
         }
 
-        findViewById<View>(R.id.settings_button).setOnClickListener { showSettings() }
+        settingsButton = findViewById(R.id.settings_button)
+        settingsButton.setOnClickListener { showSettings() }
+        updateSettingsButton()
 
         loadDashboard()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Dialogs and the transient swipe-in bars drop immersive mode: put it back.
+        if (hasFocus) applySystemBars()
+    }
+
+    /** Fullscreen like a browser's fullscreen mode: hide the status and
+     *  navigation bars; swiping from an edge shows them briefly. */
+    private fun applySystemBars() {
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        if (AppPrefs.hideSystemBars(this)) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     override fun onStart() {
@@ -184,8 +246,24 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { showSettings() }
         }
 
+        /** The user's "keep the screen on while Now playing is shown" choice. */
         @JavascriptInterface
-        fun apiVersion(): Int = 1
+        fun keepScreenOn(): Boolean = AppPrefs.keepScreenOn(this@MainActivity)
+
+        /** The kiosk's top-right button: false lets Android switch the display off on its own timeout. */
+        @JavascriptInterface
+        fun setKeepScreenOn(on: Boolean) {
+            runOnUiThread { AppPrefs.setKeepScreenOn(this@MainActivity, on); applyKeepScreenOn() }
+        }
+
+        /** The kiosk's current page is scrolled down (true) or at its top (false). */
+        @JavascriptInterface
+        fun setPageScrolled(scrolled: Boolean) {
+            runOnUiThread { pageScrolled = scrolled }
+        }
+
+        @JavascriptInterface
+        fun apiVersion(): Int = 3
     }
 
     /** The gear button: which view to show, the screen-on rule, and the
@@ -193,10 +271,12 @@ class MainActivity : ComponentActivity() {
     private fun showSettings() {
         val kiosk = AppPrefs.viewMode(this) == AppPrefs.VIEW_KIOSK
         val keepOn = AppPrefs.keepScreenOn(this)
+        val hideBars = AppPrefs.hideSystemBars(this)
         val items = arrayOf(
             (if (kiosk) "● " else "○ ") + getString(R.string.settings_view_kiosk),
             (if (!kiosk) "● " else "○ ") + getString(R.string.settings_view_web),
             (if (keepOn) "☑ " else "☐ ") + getString(R.string.settings_keep_on),
+            (if (hideBars) "☑ " else "☐ ") + getString(R.string.settings_hide_bars),
             getString(R.string.settings_change_server),
         )
         AlertDialog.Builder(this)
@@ -206,7 +286,8 @@ class MainActivity : ComponentActivity() {
                     0 -> switchView(AppPrefs.VIEW_KIOSK)
                     1 -> switchView(AppPrefs.VIEW_WEB)
                     2 -> { AppPrefs.setKeepScreenOn(this, !keepOn); applyKeepScreenOn() }
-                    3 -> promptForHost { newHost, newPort ->
+                    3 -> { AppPrefs.setHideSystemBars(this, !hideBars); applySystemBars() }
+                    4 -> promptForHost { newHost, newPort ->
                         AppPrefs.setDefault(this, newHost, newPort)
                         webView.loadUrl(AppPrefs.dashboardUrl(this, newHost, newPort))
                         startLiveUpdates(newHost, newPort)
@@ -220,7 +301,16 @@ class MainActivity : ComponentActivity() {
     private fun switchView(mode: String) {
         if (AppPrefs.viewMode(this) == mode) return
         AppPrefs.setViewMode(this, mode)
+        updateSettingsButton()
         loadDashboard()
+    }
+
+    /** In the kiosk view the settings live on the kiosk's own Config page ("App
+     *  settings"), so the gear only shows for the full web page - which has no
+     *  such page - and whenever the page could not be loaded at all. */
+    private fun updateSettingsButton() {
+        val show = AppPrefs.viewMode(this) == AppPrefs.VIEW_WEB || loadFailed
+        settingsButton.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     /** Explicit, visible trade (permanent notification + continuous polling

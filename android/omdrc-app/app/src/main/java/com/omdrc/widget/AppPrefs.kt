@@ -15,6 +15,7 @@ object AppPrefs {
     private const val KEY_LAST_FOREGROUND = "last_foreground_millis"
     private const val KEY_VIEW = "view_mode"
     private const val KEY_KEEP_ON = "keep_screen_on"
+    private const val KEY_HIDE_BARS = "hide_system_bars"
     const val DEFAULT_PORT = 9090
 
     /** The small-screen kiosk UI served by omdrcctrl at /k/ (the default). */
@@ -44,6 +45,15 @@ object AppPrefs {
 
     fun setKeepScreenOn(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean(KEY_KEEP_ON, on).apply()
+    }
+
+    /** Hide the status and navigation bars (swipe from an edge to bring them back),
+     *  so the page gets the whole screen like a fullscreen browser. */
+    fun hideSystemBars(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_HIDE_BARS, true)
+
+    fun setHideSystemBars(context: Context, hide: Boolean) {
+        prefs(context).edit().putBoolean(KEY_HIDE_BARS, hide).apply()
     }
 
     fun setViewMode(context: Context, mode: String) {

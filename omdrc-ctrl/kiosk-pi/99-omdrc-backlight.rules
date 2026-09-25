@@ -1,0 +1,3 @@
+# Let the "video" group switch the DSI display's backlight, so the display helper
+# can run as a normal user service.  Install to /etc/udev/rules.d/ (see README.md).
+SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys%p/bl_power /sys%p/brightness", RUN+="/bin/chmod g+w /sys%p/bl_power /sys%p/brightness"

@@ -45,7 +45,9 @@ only while the Now page is on screen (`setPageWantsScreenOn`).  Config shows an
 * **No computation without visible feedback.**  A page starts its streams and
   pollers in `show()` and closes them in `hide()`; the pager only calls `show()`
   once a swipe has settled.  Leaving *Now* closes both analyzer streams.  The DR
-  estimate is off until switched on, and the screensaver hides the current page.
+  estimate follows one remembered switch, **Estimate** on the DR page (on by default):
+  off hides the DR value and bar on Now and stops the stream.  The screensaver hides
+  the current page.
 * **Nothing destructive on a bare tap.**  Reboot/power-off and any command marked
   `confirm = yes` in `commands.conf` ask first; filter/design switches and MPD
   restart confirm too.  Chain-rebuilding actions hold a modal spinner until the
@@ -69,6 +71,13 @@ kiosk/static/kiosk.css
 Adding a page is one file in `pages/` plus one entry in the script list of
 `kiosk_shell.html`.  Preferences (level style, screensaver, …) are per browser,
 in `localStorage` under `omdrc-kiosk.*`.
+
+## Switching the Pi's display off
+
+With `omdrc-display-helper` running on the Pi and the kiosk opened once with
+`?display=127.0.0.1:9097`, the top-right button becomes ⏻: the page goes black,
+stops its streams, and the helper switches the screen off; a tap wakes both.
+Install guide: `omdrc-ctrl/kiosk-pi/README.md`.
 
 ## Running it on the screen
 

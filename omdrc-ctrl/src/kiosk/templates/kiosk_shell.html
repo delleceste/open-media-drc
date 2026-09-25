@@ -11,10 +11,10 @@
 <header id="topbar">
     <button type="button" id="top-menu" aria-haspopup="dialog"><span>☰</span><span id="top-page">Now</span></button>
     <span class="brand">OMDRC</span>
-    <button type="button" id="top-drc" class="top-drc" title="Open the DRC page">…</button>
     <span class="spacer"></span>
     <button type="button" id="top-alert" class="top-alert" hidden title="Log alerts">!</button>
-    <span id="top-clock" class="top-clock"></span>
+    <span id="top-extra" class="top-extra"></span>
+    <button type="button" id="top-awake" class="chip tog" title="Screen stays on while Now playing is shown"></button>
     <button type="button" id="top-full" class="icon-btn" title="Fullscreen">⛶</button>
 </header>
 
@@ -27,7 +27,7 @@
 <div id="saver" hidden><div id="saver-clock"></div><div id="saver-track"></div></div>
 
 {% for name in ['core.js', 'widgets/vu.js', 'widgets/spectrum.js', 'widgets/dr.js',
-                'widgets/balance.js', 'widgets/drcstate.js', 'widgets/track.js', 'widgets/keepawake.js', 'widgets/chainflow.js',
+                'widgets/balance.js', 'widgets/drcstate.js', 'widgets/track.js', 'widgets/keepawake.js', 'widgets/chainflow.js', 'widgets/display.js',
                 'pages/now.js', 'pages/drc.js', 'pages/dr.js', 'pages/source.js',
                 'pages/chain.js', 'pages/system.js', 'pages/logs.js', 'pages/config.js',
                 'main.js'] %}

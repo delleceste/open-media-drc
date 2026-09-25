@@ -1,0 +1,14 @@
+# systemd --user unit for the Pi that runs the OMDRC kiosk.  See README.md here.
+[Unit]
+Description=OMDRC kiosk display helper (switch the Pi's screen off from the kiosk page)
+
+[Service]
+ExecStart=%h/.local/bin/omdrc-display-helper
+# Uncomment to force a method or a port (defaults: auto, 9097):
+#Environment=OMDRC_DISPLAY_METHOD=backlight
+#Environment=OMDRC_DISPLAY_PORT=9097
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

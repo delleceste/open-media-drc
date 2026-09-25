@@ -18,7 +18,7 @@ const P = { id: 'dr', label: 'DR', title: 'Dynamic range', on: false, sub: null,
 P.mount = el => {
     P.el = el;
     // estimate card
-    P.toggle = h('button', { class: 'btn big-toggle', type: 'button', role: 'switch', 'aria-checked': 'false', onclick: () => P.setOn(!P.on) }, 'Estimate');
+    P.toggle = h('button', { class: 'btn big-toggle', type: 'button', role: 'switch', 'aria-checked': 'false', onclick: () => P.setOn(!P.on, true) }, 'Estimate');
     P.value = h('strong', { class: 'dr-value big' }, '—');
     P.status = h('div', { class: 'dr-status' }, 'Off — press Estimate to start collecting');
     P.gaugeHost = h('div', { class: 'drg' });
@@ -38,7 +38,7 @@ P.mount = el => {
     P.estBody.hidden = true;
     const note = (title, ...text) => h('div', { class: 'explain' }, h('strong', {}, title + ' '), ...text);
     const estCard = K.card('Estimate', P.toggle,
-        note('What it is.', 'A live figure for what is playing now: the dynamic range of the last few minutes, worked out in 3-second blocks. The bar below is the same estimate you see on Now: each segment is a slice of the window (its height is how loud it was, its number is its DR, red = compressed to green = dynamic). Nothing is computed while this is off.'),
+        note('What it is.', 'A live figure for what is playing now: the dynamic range of the last few minutes, worked out in 3-second blocks. The bar below is the same estimate you see on Now: each segment is a slice of the window (its height is how loud it was, its number is its DR, red = compressed to green = dynamic). Turning it off also hides the DR value and bar on the Now page, and nothing is computed.'),
         P.estBody);
 
     // measurement card
@@ -64,11 +64,14 @@ P.paintWin = () => {
     P.detect.setAttribute('aria-checked', String(E.detect));
 };
 
-P.setOn = on => {
+// The one DR switch: `persist` is true for the user's own tap.  It is remembered, and it
+// is what the Now page follows: off hides the DR value and bar there and stops the stream.
+P.setOn = (on, persist = false) => {
     P.on = on;
+    if (persist) K.setPref('now.dr', on);
     P.toggle.classList.toggle('active', on);
     P.toggle.setAttribute('aria-checked', String(on));
-    P.toggle.textContent = on ? 'Estimate — running (tap to stop)' : 'Estimate';
+    P.toggle.textContent = on ? 'Estimate — on (tap to turn off)' : 'Estimate — off (tap to turn on)';
     P.estBody.hidden = !on;
     P.sync();
 };
@@ -133,7 +136,7 @@ P.measStart = async () => {
 };
 P.measCancel = async () => { await K.api('/dr/measure/cancel', { method: 'POST' }); P.measPoll(); };
 
-P.show = () => { P.visible = true; P.sync(); P.measPoll(); };
+P.show = () => { P.visible = true; P.setOn(K.pref('now.dr', true)); P.measPoll(); };
 P.hide = () => { P.visible = false; P.sync(); clearTimeout(P.jobTimer); };
 
 K.registerPage(P);

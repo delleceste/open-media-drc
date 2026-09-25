@@ -17,7 +17,9 @@ const pager = $('#pager'), tabs = $('#tabs');
 function activate(i) {
     if (i === cur || i < 0 || i >= K.pages.length) return;
     if (cur >= 0) safe(() => K.pages[cur].hide && K.pages[cur].hide());
+    K.setTopExtra(null);
     cur = i;
+    if (K.awake) K.awake.sync();
     const page = K.pages[i];
     if (!page.mounted) {
         page.mounted = true;
@@ -27,6 +29,7 @@ function activate(i) {
     [...tabs.children].forEach((b, n) => b.classList.toggle('on', n === i));
     $('#top-page').textContent = page.label;
     syncAppScreen();
+    reportScroll();
     try { history.replaceState(null, '', '#' + page.id); } catch {}
 }
 
@@ -108,11 +111,23 @@ pager.addEventListener('pointercancel', e => {
 // The app keeps the screen on only while this page asks for it: exactly while
 // "Now playing" is on screen (not behind the screensaver, not another page).
 K.inApp = !!window.OmdrcApp;
+K.nowShown = () => cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !document.hidden;
 function syncAppScreen() {
     if (!K.inApp) return;
     try { window.OmdrcApp.setPageWantsScreenOn(cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !document.hidden); } catch {}
 }
 document.addEventListener('visibilitychange', syncAppScreen);
+
+// The app reloads on a swipe down, but only when the page is at its top: the kiosk
+// scrolls inside its pages, which the WebView cannot see, so tell it.
+function reportScroll() {
+    if (!K.inApp || !window.OmdrcApp.setPageScrolled) return;
+    const body = cur >= 0 ? K.pages[cur].body : null;
+    try { window.OmdrcApp.setPageScrolled(!!body && body.scrollTop > 2); } catch {}
+}
+document.addEventListener('scroll', e => {
+    if (e.target.classList && e.target.classList.contains('page-body')) reportScroll();
+}, { capture: true, passive: true });
 
 // ── page menu (phones: replaces the bottom tab bar) ──────────────────────────
 $('#top-menu').addEventListener('click', () => {
@@ -124,20 +139,42 @@ $('#top-menu').addEventListener('click', () => {
 });
 
 // ── top bar ──────────────────────────────────────────────────────────────────
-function paintTopDrc() {
-    const s = K.drcState.summary();
-    const el = $('#top-drc');
-    K.clear(el);
-    const cls = !s.known ? 'warn' : s.power === 'on' ? (s.verification === 'verified' ? 'ok' : s.verification === 'mismatch' ? 'bad' : 'warn') : s.power === 'off' ? 'off' : 'warn';
-    el.append(h('i', { class: 'dot ' + cls }), s.text + (s.running && s.attenuation !== null ? ` · −${s.attenuation.toFixed(1)} dB` : ''));
-}
+// The DRC status LED lives in the DRC line at the bottom of Now (pages/now.js), not up here.
+K.drcLedClass = s => !s.known ? 'warn' : s.power === 'on'
+    ? (s.verification === 'verified' ? 'ok' : s.verification === 'mismatch' ? 'bad' : 'warn')
+    : s.power === 'off' ? 'off' : 'warn';
 
+// The top bar is an overlay that slides away, so every page has the whole screen.  A tap on
+// the page (not on a control, not a swipe) or the mouse near the top edge brings it back; it
+// hides again after a few seconds, or on the next such tap.
+const BAR_MS = 5000;
+let barTimer = null;
+K.showBar = (show = true) => {
+    document.body.classList.toggle('bar-shown', show);
+    clearTimeout(barTimer);
+    if (show) barTimer = setTimeout(() => K.showBar(false), BAR_MS);
+};
+const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar, [role=switch]';
+let tapStart = null;
+document.addEventListener('pointerdown', e => { tapStart = { x: e.clientX, y: e.clientY }; }, true);
+document.addEventListener('pointerup', e => {
+    const s = tapStart; tapStart = null;
+    if (!s || Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) return;   // a swipe or drag
+    if (K.saverActive || (e.target.closest && e.target.closest(CONTROLS))) return;
+    K.showBar(!document.body.classList.contains('bar-shown'));
+});
+document.addEventListener('mousemove', e => { if (e.clientY < 30) K.showBar(true); }, { passive: true });
+$('#topbar').addEventListener('pointerdown', () => K.showBar(true));   // using it keeps it up
+
+// The top bar has no clock any more (the phone/panel already shows one); only the
+// screensaver does.
 function paintClock() {
     const d = new Date();
-    const t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    $('#top-clock').textContent = t;
-    $('#saver-clock').textContent = t;
+    $('#saver-clock').textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+
+// A page may put one control in the top bar (the Now page's level-display button).
+K.setTopExtra = el => { const box = $('#top-extra'); K.clear(box); if (el) box.append(el); };
 
 async function pollAlerts() {
     const d = await K.api('/logs/alerts');
@@ -151,9 +188,17 @@ async function pollAlerts() {
     K.alertSubs.forEach(f => f());
 }
 
+// Fullscreen, and - where the browser allows it, which is only in fullscreen and not in Firefox or
+// iOS Safari - landscape.  The Android app locks landscape natively instead.
 K.toggleFullscreen = () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+    if (document.fullscreenElement) {
+        try { screen.orientation && screen.orientation.unlock(); } catch {}
+        document.exitFullscreen();
+    } else if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen()
+            .then(() => { try { return screen.orientation && screen.orientation.lock('landscape'); } catch {} })
+            .catch(() => {});
+    }
 };
 
 // ── screensaver ──────────────────────────────────────────────────────────────
@@ -170,9 +215,15 @@ async function paintSaverTrack() {
     const t = await K.fetchTrack();
     $('#saver-track').textContent = t.ok && t.state === 'play' ? [t.title, t.artist].filter(Boolean).join(' — ') : '';
 }
-function startSaver() {
+// dark = the Pi's "display off now": pure black, no clock, and the helper switches the
+// screen off.  Either way the current page is hidden, so nothing is computed meanwhile.
+function startSaver(dark = false) {
     K.saverActive = true;
+    K.saverDark = dark;
+    $('#saver').classList.toggle('dark', dark);
+    if (dark) K.display.off().then(d => { if (!d.ok) console.warn('display off:', d.error); });
     syncAppScreen();
+    if (K.awake) K.awake.sync();
     $('#saver').hidden = false;
     if (cur >= 0) safe(() => K.pages[cur].hide && K.pages[cur].hide());
     paintSaverTrack();
@@ -182,8 +233,10 @@ function stopSaver() {
     if (!K.saverActive) return;
     K.saverActive = false;
     syncAppScreen();
+    if (K.awake) K.awake.sync();
     $('#saver').hidden = true;
     clearInterval(saverPoll);
+    if (K.saverDark) { K.saverDark = false; K.display.on(); }
     if (cur >= 0) safe(() => K.pages[cur].show && K.pages[cur].show());
 }
 K.applyPrefs = () => { armSaver(); K.awake.sync(); };
@@ -209,13 +262,39 @@ async function boot() {
     });
     K.markReady();
 
-    K.drcState.onChange(paintTopDrc);
-    paintTopDrc();
     K.drcState.start();
     paintClock(); setInterval(paintClock, 10000);
     pollAlerts(); setInterval(() => { if (!document.hidden) pollAlerts(); }, 20000);
     $('#top-full').addEventListener('click', K.toggleFullscreen);
-    $('#top-drc').addEventListener('click', () => K.showPage('drc'));
+    // Top-right: release the screen.  Off = the OS may switch the display off after its own
+    // timeout (in the app that is the keep-awake flag, in a browser the wake lock / video).
+    const awakeBtn = $('#top-awake');
+    const wantsAwake = () => K.inApp ? !!window.OmdrcApp.keepScreenOn() : K.pref('awake.on', true);
+    const paintAwake = () => {
+        if (K.display.ok) {
+            awakeBtn.textContent = '⏻';
+            awakeBtn.classList.remove('on');
+            awakeBtn.title = `Switch the display off now (${K.display.method}) — tap the screen to wake it`;
+            return;
+        }
+        const on = wantsAwake();
+        awakeBtn.textContent = on ? '☀' : '☾';
+        awakeBtn.classList.toggle('on', on);
+        awakeBtn.title = on ? 'Screen stays on while Now playing is shown — tap to let it sleep'
+                            : 'Screen may switch off on its own timeout — tap to keep it on';
+    };
+    awakeBtn.addEventListener('click', () => {
+        if (K.display.ok) { startSaver(true); return; }    // on the Pi: switch the display off now
+        const next = !wantsAwake();
+        if (K.inApp) { try { window.OmdrcApp.setKeepScreenOn(next); } catch {} }
+        else { K.setPref('awake.on', next); K.awake.sync(); }
+        paintAwake();
+        K.toast(next ? 'Screen stays on while Now playing is shown' : 'Screen released: it may switch off on its own timeout');
+    });
+    document.addEventListener('visibilitychange', paintAwake);
+    K.paintAwake = paintAwake;
+    paintAwake();
+    K.display.probe().then(ok => { if (ok) paintAwake(); });   // the Pi's display helper, if configured
     $('#top-alert').addEventListener('click', () => K.showPage('logs'));
     armSaver(); K.awake.sync();
 

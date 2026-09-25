@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Switch the Raspberry Pi's own display off and on for the OMDRC kiosk page.
+
+The kiosk page is served by the DRC box, and a web page cannot switch a monitor
+off, so this tiny helper runs on the Pi, listens on 127.0.0.1 only, and does it
+when the page asks:
+
+    GET  /status        -> {"ok": true, "method": "backlight", "state": "on"}
+    POST /display/off   -> screen off (the page shows black and wakes on a tap)
+    POST /display/on    -> screen on
+
+Method (OMDRC_DISPLAY_METHOD, default "auto", tried in this order):
+    backlight   /sys/class/backlight/*/bl_power   official DSI touch display
+    wlopm       wlopm --off/--on '*'              Wayland (labwc, wayfire), DPMS
+    xset        xset dpms force off/on            X11
+    vcgencmd    vcgencmd display_power 0/1        legacy firmware KMS
+    none        do nothing (for testing)
+
+Only the Python standard library is used.
+"""
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("OMDRC_DISPLAY_PORT", "9097"))
+METHOD = os.environ.get("OMDRC_DISPLAY_METHOD", "auto").strip().lower()
+STATE = {"state": "on"}
+
+
+def _graphical_env() -> dict:
+    """A user service may start without the session's display variables."""
+    env = dict(os.environ)
+    runtime = env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    if not env.get("WAYLAND_DISPLAY"):
+        sockets = sorted(glob.glob(os.path.join(runtime, "wayland-[0-9]")))
+        if sockets:
+            env["WAYLAND_DISPLAY"] = os.path.basename(sockets[0])
+    if not env.get("DISPLAY") and os.path.exists("/tmp/.X11-unix/X0"):
+        env["DISPLAY"] = ":0"
+    return env
+
+
+def _backlights() -> list[str]:
+    return [p for p in glob.glob("/sys/class/backlight/*/bl_power") if os.access(p, os.W_OK)]
+
+
+def _pick_method() -> str:
+    if METHOD != "auto":
+        return METHOD
+    env = _graphical_env()
+    if _backlights():
+        return "backlight"
+    if env.get("WAYLAND_DISPLAY") and shutil.which("wlopm"):
+        return "wlopm"
+    if env.get("DISPLAY") and shutil.which("xset"):
+        return "xset"
+    if shutil.which("vcgencmd"):
+        return "vcgencmd"
+    return "none"
+
+
+def _run(argv: list[str]) -> tuple[bool, str]:
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=5, env=_graphical_env())
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, str(error)
+    return r.returncode == 0, (r.stderr or r.stdout).strip()
+
+
+def set_display(on: bool) -> tuple[bool, str]:
+    method = _pick_method()
+    if method == "backlight":
+        paths = _backlights()
+        if not paths:
+            return False, "no writable /sys/class/backlight/*/bl_power (see the udev rule in the README)"
+        for path in paths:
+            with open(path, "w") as f:
+                f.write("0" if on else "1")
+        return True, ""
+    if method == "wlopm":
+        return _run(["wlopm", "--on" if on else "--off", "*"])
+    if method == "xset":
+        return _run(["xset", "dpms", "force", "on" if on else "off"])
+    if method == "vcgencmd":
+        return _run(["vcgencmd", "display_power", "1" if on else "0"])
+    if method == "none":
+        return True, ""
+    return False, f"unknown method {method!r}"
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "omdrc-display-helper"
+
+    def _cors(self):
+        # The kiosk page comes from the DRC box, so it is a cross-origin request to
+        # localhost: allow it, including Chromium's local/private-network preflight.
+        self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin") or "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Vary", "Origin")
+
+    def _reply(self, code: int, body: dict):
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self._cors()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path.split("?")[0] == "/status":
+            self._reply(200, {"ok": True, "method": _pick_method(), "state": STATE["state"]})
+        else:
+            self._reply(404, {"ok": False, "error": "not found"})
+
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        if path not in ("/display/on", "/display/off"):
+            self._reply(404, {"ok": False, "error": "not found"})
+            return
+        on = path.endswith("/on")
+        ok, error = set_display(on)
+        if ok:
+            STATE["state"] = "on" if on else "off"
+        self._reply(200 if ok else 500, {"ok": ok, "method": _pick_method(), "state": STATE["state"],
+                                         **({"error": error} if error and not ok else {})})
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("omdrc-display-helper: " + (fmt % args) + "\n")
+
+
+def main():
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    sys.stderr.write(f"omdrc-display-helper: 127.0.0.1:{PORT}, method {_pick_method()}\n")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
