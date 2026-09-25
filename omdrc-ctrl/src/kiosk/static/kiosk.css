@@ -162,16 +162,18 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 /* with the splitter the two share the height by its ratio (inline flex), without a cap */
 .now-main[style*="flex"] { min-height: min-content; }
 .now-drbar[style*="flex"] { max-height: none; min-height: 4rem; }
-.splitter { flex: 0 0 auto !important; height: .9rem; margin: -.35rem 0; position: relative; z-index: 2; cursor: row-resize; touch-action: none;
+.now-drbar { position: relative; }
+/* overlays the gap above the DR strip (a generous touch target, no layout space) */
+.splitter { position: absolute; left: 30%; right: 30%; top: -.65rem; height: .95rem; z-index: 3; cursor: row-resize; touch-action: none;
     display: flex; align-items: center; justify-content: center; }
-.splitter i { width: 3.2rem; height: .32rem; border-radius: .2rem; background: #3b444f; box-shadow: 0 0 0 1px rgba(0,0,0,.4); transition: background .15s, width .15s; }
+.splitter i { width: 2.2rem; height: .18rem; border-radius: .1rem; background: #30363d; transition: background .15s, width .15s, height .15s; }
 .now-side { position: relative; }
-.vsplit { position: absolute; left: -.65rem; top: 0; bottom: 0; width: .9rem; z-index: 2; cursor: col-resize; touch-action: none;
+.vsplit { position: absolute; left: -.62rem; top: 20%; bottom: 20%; width: .85rem; z-index: 2; cursor: col-resize; touch-action: none;
     display: flex; align-items: center; justify-content: center; }
-.vsplit i { width: .32rem; height: 3.2rem; border-radius: .2rem; background: #3b444f; box-shadow: 0 0 0 1px rgba(0,0,0,.4); transition: background .15s, height .15s; }
-.vsplit:hover i, .vsplit.active i { background: var(--accent); height: 4.5rem; }
+.vsplit i { width: .18rem; height: 2.2rem; border-radius: .1rem; background: #30363d; transition: background .15s, height .15s, width .15s; }
+.vsplit:hover i, .vsplit.active i { background: var(--accent); height: 4rem; width: .26rem; }
 .now.bal-below .vsplit, .now.no-side .vsplit { display: none; }
-.splitter:hover i, .splitter.active i { background: var(--accent); width: 4.5rem; }
+.splitter:hover i, .splitter.active i { background: var(--accent); width: 4rem; height: .26rem; }
 .lvl-meter { position: absolute; inset: .4rem; display: flex; gap: .5rem; }
 .vu-canvas { display: block; }
 .vu-needles .vu-needle { flex: 1 1 0; width: 0; height: 100%; }

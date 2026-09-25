@@ -313,6 +313,9 @@ SPECTRUM_OUTPUT_NAME = "OMDRC Spectrum"
 SPECTRUM_FIFO = "/tmp/omdrc-spectrum.fifo"
 SPECTRUM_RATE = 48000
 DR_PUBLISH_SECONDS = 5.0    # display refresh for the live DR panel
+# After the last DR listener leaves, keep its history (and the analyzer) this long, so a
+# page reload, a network blip or a phone screen that went off briefly finds it intact.
+DR_HOLD_SECONDS = 60.0
 SPECTRUM_BITS = 32
 SPECTRUM_CHANNELS = 2
 SPECTRUM_REFRESH_HZ = 25.0
@@ -715,7 +718,7 @@ def load_config(path: str) -> None:
     global QCONNECT_STATUS_RESYNC_S
     global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
     global SPECTRUM_RATE, SPECTRUM_BITS, SPECTRUM_CHANNELS
-    global DR_PUBLISH_SECONDS, SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
+    global DR_PUBLISH_SECONDS, DR_HOLD_SECONDS, SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
     global SPECTRUM_VU_MODE, SPECTRUM_FLOOR_DB, SPECTRUM_MIN_FREQ
     global SPECTRUM_FALL_DB_PER_S
     global SPECTRUM_DRC_DELAY_TRIM_MS, SPECTRUM_DRC_DELAY_DELTA_MS, SPECTRUM_DRC_DELAY_AUTO_SYNC
@@ -768,6 +771,7 @@ def load_config(path: str) -> None:
         SPECTRUM_CHANNELS = max(1, cfg.getint("spectrum", "channels", fallback=SPECTRUM_CHANNELS))
         SPECTRUM_REFRESH_HZ = max(1.0, cfg.getfloat("spectrum", "refresh_hz", fallback=SPECTRUM_REFRESH_HZ))
         DR_PUBLISH_SECONDS = max(3.0, cfg.getfloat("spectrum", "dr_refresh_seconds", fallback=DR_PUBLISH_SECONDS))
+        DR_HOLD_SECONDS = max(0.0, cfg.getfloat("spectrum", "dr_hold_seconds", fallback=DR_HOLD_SECONDS))
         SPECTRUM_FFT_SIZE = max(4096, cfg.getint("spectrum", "fft_size", fallback=SPECTRUM_FFT_SIZE))
         SPECTRUM_PRECISION_FFT_SIZE = max(
             SPECTRUM_FFT_SIZE,
@@ -7840,6 +7844,22 @@ def spectrum_floor():
     return jsonify({"ok": True, "floor_db": round(floor, 1)})
 
 
+def _release_stream(mode: str, wants_bands: bool):
+    """Let go of an analyzer stream.  A DR stream is let go of only after
+    DR_HOLD_SECONDS: the rolling DR history lives only while a DR listener is
+    attached (the next first listener starts it afresh), so without the hold a
+    reload of the page would always lose it.  A listener that comes back within
+    the hold joins the still-running history and receives all of it at once."""
+    if mode == "dr" and DR_HOLD_SECONDS > 0:
+        timer = threading.Timer(DR_HOLD_SECONDS, _SPECTRUM.release,
+                                kwargs={"wants_bands": wants_bands, "wants_dr": True})
+        timer.daemon = True
+        timer.start()
+        return timer
+    _SPECTRUM.release(wants_bands, wants_dr=mode == "dr")
+    return None
+
+
 @app.route("/spectrum/stream")
 def spectrum_stream():
     if not SPECTRUM_ENABLED:
@@ -7885,7 +7905,7 @@ def spectrum_stream():
         except GeneratorExit:
             pass
         finally:
-            _SPECTRUM.release(wants_bands, wants_dr=mode == "dr")
+            _release_stream(mode, wants_bands)
 
     return Response(events(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

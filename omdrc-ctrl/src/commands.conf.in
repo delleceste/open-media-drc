@@ -185,6 +185,9 @@ refresh_hz = 25
 # Live DR panel: seconds between display refreshes (3-second DR blocks are
 # unchanged; minimum 3).
 dr_refresh_seconds = 5
+# Keep the live DR history this many seconds after its last viewer leaves, so a
+# page reload or a brief disconnection finds it intact (0 = drop it at once).
+dr_hold_seconds = 60
 fft_size = 16384
 precision_fft_size = 65536
 bands = 24

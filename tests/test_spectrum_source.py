@@ -617,6 +617,26 @@ class PublishDeduplicationTest(unittest.TestCase):
             an.release(wants_bands=False, wants_dr=True)
             self.assertEqual(an.dr_clients, 0)
 
+    def test_a_dr_stream_is_released_only_after_the_hold(self):
+        # A page reload closes the DR stream and opens a new one: within the hold
+        # the history must not be reset.
+        an = APP.SpectrumAnalyzer()
+        with mock.patch.object(an, "_run", side_effect=lambda: an.stop_event.wait(3)), \
+                mock.patch.object(APP, "_SPECTRUM", an), \
+                mock.patch.object(APP, "DR_HOLD_SECONDS", 0.2):
+            an.acquire("dr")
+            an.dr_history = [[[0.1, 0.1], [0.5, 0.5]]]
+            timer = APP._release_stream("dr", False)
+            self.assertIsNotNone(timer)
+            self.assertEqual(an.dr_clients, 1, "still held")
+            an.acquire("dr")                       # the reloaded page
+            self.assertEqual(len(an.dr_history), 1, "history kept across the reload")
+            timer.join(1)
+            self.assertEqual(an.dr_clients, 1, "only the old stream was let go")
+            APP._release_stream("vu", False)       # level streams are not held
+            an.release(wants_bands=False, wants_dr=True)
+            self.assertEqual(an.dr_clients, 0)
+
     def test_fifo_stays_owned_until_the_last_stream_closes(self):
         an = APP.SpectrumAnalyzer()
         started = threading.Event()
@@ -627,8 +647,10 @@ class PublishDeduplicationTest(unittest.TestCase):
             an.stop_event.wait(3)
             stopped.set()
 
+        # without the DR hold (see test_a_dr_stream_is_released_only_after_the_hold)
         with mock.patch.object(APP, "_SPECTRUM", an), \
              mock.patch.object(APP, "SPECTRUM_ENABLED", True), \
+             mock.patch.object(APP, "DR_HOLD_SECONDS", 0), \
              mock.patch.object(an, "_run", side_effect=run):
             client = APP.app.test_client()
             streams = [client.get(f"/spectrum/stream?mode={mode}", buffered=False)

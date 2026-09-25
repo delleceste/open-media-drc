@@ -85,7 +85,9 @@ P.mount = el => {
     // drag handle between the meters and the DR strip (see wireSplitter)
     P.splitter = h('div', { class: 'splitter', title: 'Drag to give the meters or the DR history more room · double-tap to reset' }, h('i'));
     P.mainBox = h('div', { class: 'now-main' }, P.leftCell, P.side);
-    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.splitter, P.drBarBox, P.drcLine));
+    // the handle overlays the gap above the DR strip: it takes no layout space
+    P.drBarBox.append(P.splitter);
+    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.drBarBox, P.drcLine));
     P.wireSplitter();
     P.wireVSplit();
     P.wireResetTap();
@@ -229,11 +231,13 @@ P.wireSplitter = () => {
         if (!drag || e.pointerId !== drag.id) return;
         drag = null;
         sp.classList.remove('active');
+        P.hintReset();
         try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
     };
     sp.addEventListener('pointerup', end);
     sp.addEventListener('pointercancel', end);
-    sp.addEventListener('dblclick', () => { K.setPref('now.split', null); P.applySplit(); });
+    sp.addEventListener('click', e => e.stopPropagation());   // it sits in the DR strip card, whose tap opens the DR page
+    sp.addEventListener('dblclick', e => { e.stopPropagation(); K.setPref('now.split', null); P.applySplit(); });
 };
 
 // The keep-alive ran out while away from Now: ask, and stop unless told otherwise
@@ -278,9 +282,17 @@ P.wireVSplit = () => {
         K.setPref('now.col', K.clamp((e.clientX - drag.left) / drag.width, 0.35, 0.8));
         P.applyCols();
     });
-    const end = e => { if (drag && e.pointerId === drag.id) { drag = null; sp.classList.remove('active'); } };
+    const end = e => { if (drag && e.pointerId === drag.id) { drag = null; sp.classList.remove('active'); P.hintReset(); } };
     sp.addEventListener('pointerup', end);
     sp.addEventListener('pointercancel', end);
+};
+
+// After a drag, remind once in a while how to undo it.
+P.hintReset = () => {
+    const now = Date.now();
+    if (P.hintAt && now - P.hintAt < 30000) return;
+    P.hintAt = now;
+    K.toast('Double-tap the meters to restore the default layout');
 };
 
 // Double tap on the meters: both splitters back to their defaults.
