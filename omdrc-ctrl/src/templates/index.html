@@ -570,8 +570,16 @@
         .qc-card-title { flex-wrap: wrap; gap: 8px; }
         .dr-card .card-title { border-bottom: 0; }
         .dr-card .dr-estimate, .dr-card .drm { margin: 0 0 12px; }
-        .qc-card-foot { display: flex; justify-content: flex-end; gap: 6px;
-                        padding: 10px 0 12px; border-top: 1px solid var(--border); }
+        .qc-tools { border: 1px solid var(--border); border-radius: 8px;
+                    margin-bottom: 8px; }
+        .qc-tools-toggle { display: block; width: 100%; padding: 5px 10px;
+                           border: 0; background: none; color: var(--muted);
+                           text-align: left; cursor: pointer; font-size: .7rem;
+                           font-weight: 700; letter-spacing: .12em;
+                           text-transform: uppercase; }
+        .qc-tools-toggle:hover { color: var(--accent); }
+        .qc-tools-detail { padding: 0 10px 10px; }
+        .qc-tools-actions { display: flex; flex-wrap: wrap; gap: 6px; }
         .qc-card-title {
             display: flex;
             align-items: center;
@@ -843,10 +851,7 @@
                font-variant-numeric: tabular-nums; }
         .drb.big { font-size: 1rem; padding: 5px 7px; }
         .drb.none { background: var(--surface); color: var(--muted); border-color: var(--border); }
-        #qconnect-log-panel {
-            border-top: 1px solid var(--border);
-            padding: 10px 0 4px;
-        }
+        #qconnect-log-panel { padding-top: 10px; }
         .qc-log {
             font-family: ui-monospace, "SFMono-Regular", monospace;
             font-size: .72rem;
@@ -1807,6 +1812,9 @@
         <div class="title-actions">
             <button class="btn-refresh" id="qc-refresh-btn" title="Refresh">↻</button>
             <button class="btn-log" id="btn-oauth" onclick="toggleOauth()" hidden>Qobuz sign-in</button>
+            <button class="btn-log btn-mini" id="btn-act-lines"
+                    onclick="toggleActivityLines()"
+                    title="Activity detail: one line, or the last three">☰</button>
         </div>
     </div>
     <!-- Mutually-exclusive renderer toggle -->
@@ -1845,19 +1853,22 @@
         </div>
         <div id="qc-activity" aria-live="polite"></div>
     </div>
-    <div id="qconnect-log-panel" style="display:none">
-        <div class="refresh-note" id="qc-log-source"></div>
-        <pre id="qc-log-content" class="qc-log"></pre>
-    </div>
     <!-- Qobuz OAuth sign-in, driven from here so the box needs no keyboard -->
     <div id="qobuz-oauth-panel" style="display:none" aria-live="polite"></div>
-    <!-- Rarely used, so kept out of the header row -->
-    <div class="qc-card-foot">
-        <button class="btn-log" id="btn-restart" onclick="restartRenderer()" disabled>Restart renderer</button>
-        <button class="btn-log" id="btn-log" onclick="toggleLog()">Renderer log</button>
-        <button class="btn-log btn-mini" id="btn-act-lines"
-                onclick="toggleActivityLines()"
-                title="Activity detail: one line, or the last three">☰</button>
+    <div class="qc-tools">
+        <button type="button" class="qc-tools-toggle" id="qc-tools-toggle"
+                onclick="toggleRendererTools()" aria-expanded="false"
+                aria-controls="qc-tools-detail"><span id="qc-tools-chevron">▸</span> Renderer tools</button>
+        <div class="qc-tools-detail" id="qc-tools-detail" hidden>
+            <div class="qc-tools-actions">
+                <button class="btn-log" id="btn-restart" onclick="restartRenderer()" disabled>Restart renderer</button>
+                <button class="btn-log" id="btn-log" onclick="toggleLog()">Renderer log</button>
+            </div>
+            <div id="qconnect-log-panel" style="display:none">
+                <div class="refresh-note" id="qc-log-source"></div>
+                <pre id="qc-log-content" class="qc-log"></pre>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -3447,6 +3458,15 @@ async function fetchQcStatus() {
 
 let qcLogVisible = false;
 let qcLogTimer   = null;
+
+function toggleRendererTools() {
+    const detail = document.getElementById('qc-tools-detail');
+    const open = detail.hidden;
+    if (!open && qcLogVisible) toggleLog();
+    detail.hidden = !open;
+    document.getElementById('qc-tools-toggle').setAttribute('aria-expanded', String(open));
+    document.getElementById('qc-tools-chevron').textContent = open ? '▾' : '▸';
+}
 
 async function fetchQcLog() {
     const el = document.getElementById('qc-log-content');

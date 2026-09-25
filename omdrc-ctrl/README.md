@@ -2117,14 +2117,18 @@ failure, the tail of that renderer's own log, and which log it came from.  It
 stays until dismissed or until a switch succeeds — a toast is gone before it
 can be read, and a button silently flipping back is not an explanation.
 
-The panel header always has three buttons, plus a conditional fourth:
+The panel has a collapsed **Renderer tools** box for the less frequently used
+controls. Opening it reveals:
 - **Restart renderer** — is enabled for either active renderer and calls
   `POST /renderer/restart` with that renderer as `target`; shows a toast on
   success/failure
 - **Renderer log** — toggles a scrollable log viewer (auto-refreshed every 5 s while
   open) with colour-coded lines: red for `[ERR]`, green for `[OUT]`.  It shows
   the log of the renderer the card is about, named above the text, and after a
-  failed switch it stays on the renderer that would not start
+  failed switch it stays on the renderer that would not start. Closing the
+  tools box also closes the log and stops its refresh.
+
+The panel header retains:
 - **☰ / —** — how much activity to show: the last three entries (☰) or only
   the current one (—).  Three is the default; the choice is remembered in
   `localStorage` under `omdrcctrl.qc.activityLines`
