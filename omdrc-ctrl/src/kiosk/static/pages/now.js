@@ -180,6 +180,8 @@ P.openLevel = () => {
     const stream = P.mode === 'spectrum' ? 'music' : 'vu';
     P.level = K.streams.open(stream, d => {
         if (d.ok && d.state === 'running') {
+            const v = d.vu || {};
+            if (Math.max(Number(v.left_peak ?? -120), Number(v.right_peak ?? -120)) > -60) K.markSound();
             if (P.mode !== 'off') P.vu.update(d.vu);
             if (P.showBalance) P.balance.update(d.vu);
             if (P.mode === 'spectrum') P.spec.update(d);
@@ -361,6 +363,7 @@ P.pollTrack = async () => {
     const t = await K.fetchTrack();
     P.track = t;
     P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
+    if (t.state === 'play' && !P.level) K.markSound();     // no level stream to listen to: trust the player
     P.t1.textContent = t.ok ? (t.title || '—') : 'Nothing playing';
     P.t1.classList.toggle('idle', !t.ok);
     P.t2.textContent = [t.artist, [t.album, t.edition].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');

@@ -184,7 +184,12 @@ K.streams = (() => {
         es.onmessage = ev => {
             let d;
             try { d = JSON.parse(ev.data); } catch { return; }
-            s.subs.forEach(f => f(d));
+            if (K.streamTap) K.streamTap(mode, d, Date.now());     // the meter-delay calibration
+            // Level and spectrum frames are drawn this device's extra delay after they
+            // arrive (widgets/sync.js); DR is not time-critical.
+            const wait = mode === 'dr' || !K.sync ? 0 : K.sync.delayMs();
+            if (wait > 0) setTimeout(() => s.subs.forEach(f => f(d)), wait);
+            else s.subs.forEach(f => f(d));
         };
         es.onerror = () => {
             es.close(); s.es = null;

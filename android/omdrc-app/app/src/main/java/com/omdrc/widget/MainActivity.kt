@@ -66,6 +66,37 @@ class MainActivity : ComponentActivity() {
     // foreground service doesn't need the permission to run, only to show
     // its notification), so a denial here just means that notification
     // stays hidden until the user grants it some other way.
+    // Microphone for the meter-delay calibration: asked for only when it is started.
+    private var pendingMic: Pair<Int, Int>? = null
+    private val micPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val p = pendingMic; pendingMic = null
+        if (granted && p != null) recordMic(p.first, p.second)
+        else sendMicResult("{\"ok\":false,\"error\":\"microphone permission denied\"}")
+    }
+
+    private fun sendMicResult(json: String) {
+        runOnUiThread { webView.evaluateJavascript("window.K && K.onMicEnvelope && K.onMicEnvelope($json)", null) }
+    }
+
+    private fun recordMic(durationMs: Int, stepMs: Int) {
+        Thread {
+            val json = try {
+                val r = MicEnvelope(durationMs, stepMs).record()
+                val o = org.json.JSONObject()
+                o.put("ok", true); o.put("t0", r.t0WallMs); o.put("step", r.stepMs); o.put("source", r.source)
+                val a = org.json.JSONArray()
+                for (v in r.db) a.put(Math.round(v * 10) / 10.0)
+                o.put("db", a)
+                o.toString()
+            } catch (e: Exception) {
+                org.json.JSONObject().put("ok", false).put("error", e.message ?: "microphone error").toString()
+            }
+            sendMicResult(json)
+        }.start()
+    }
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
@@ -262,8 +293,23 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { pageScrolled = scrolled }
         }
 
+        /** Record the microphone for [durationMs] and reply through K.onMicEnvelope(). */
         @JavascriptInterface
-        fun apiVersion(): Int = 3
+        fun startMicEnvelope(durationMs: Int, stepMs: Int) {
+            val d = durationMs.coerceIn(2000, 30000)
+            val s = stepMs.coerceIn(5, 50)
+            runOnUiThread {
+                if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO)
+                    == PackageManager.PERMISSION_GRANTED) recordMic(d, s)
+                else { pendingMic = d to s; micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+            }
+        }
+
+        @JavascriptInterface
+        fun micAvailable(): Boolean = packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)
+
+        @JavascriptInterface
+        fun apiVersion(): Int = 4
     }
 
     /** The gear button: which view to show, the screen-on rule, and the

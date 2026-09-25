@@ -111,7 +111,15 @@ pager.addEventListener('pointercancel', e => {
 // The app keeps the screen on only while this page asks for it: exactly while
 // "Now playing" is on screen (not behind the screensaver, not another page).
 K.inApp = !!window.OmdrcApp;
-K.nowShown = () => cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !document.hidden;
+// Sound: the Now page marks the time of the last frame with audio in it (or, with no
+// level stream, the last poll that said "playing").  After 30 s of silence the screen is
+// no longer held on, and comes back under the phone's own timeout.
+const SILENCE_MS = 30000;
+K.lastSoundAt = Date.now();
+K.markSound = () => { const was = K.silent(); K.lastSoundAt = Date.now(); if (was) { syncAppScreen(); if (K.awake) K.awake.sync(); } };
+K.silent = () => Date.now() - K.lastSoundAt > SILENCE_MS;
+K.nowShown = () => cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !document.hidden && !K.silent();
+setInterval(() => { syncAppScreen(); if (K.awake) K.awake.sync(); }, 5000);
 function syncAppScreen() {
     if (!K.inApp) return;
     try { window.OmdrcApp.setPageWantsScreenOn(cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !document.hidden); } catch {}

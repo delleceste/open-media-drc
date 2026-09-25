@@ -3897,6 +3897,7 @@ def _drc_display_delay_terms() -> dict:
         "brutefir_io": 0.0,
         "output": 0.0,
         "trim": 0.0,
+        "direct": 0.0,
         "auto": auto,
         "total": 0.0,
     }
@@ -3930,13 +3931,41 @@ def _drc_display_delay_terms() -> dict:
         # bare 150 ms would be a fiction.
         if auto and (terms["virtual_oss"] or terms["convolver"] or terms["group"]):
             terms["output"] = SPECTRUM_DRC_OUTPUT_DELAY_MS / 1000.0
+
+        # DRC off: MPD writes straight to the DAC, and what it has queued there is
+        # still ahead of the listener - half a second with a 0.5 s ALSA buffer.  This
+        # is measured (the kernel's own figure for the stream), so it applies whether
+        # "Auto sync delay" is on or not.
+        if not (terms["virtual_oss"] or terms["convolver"] or terms["group"]):
+            terms["direct"] = _direct_output_delay_seconds()
     except (OSError, ValueError, KeyError):
         return terms
 
     terms["total"] = max(0.0, terms["virtual_oss"] + terms["group"]
                          + terms["convolver"] + terms["brutefir_io"]
-                         + terms["output"] + terms["trim"])
+                         + terms["output"] + terms["trim"] + terms["direct"])
     return terms
+
+
+def _direct_output_delay_seconds() -> float:
+    """Current output delay of the running playback stream on a real card (Linux).
+
+    /proc/asound/cardN/pcmNp/subN/status reports `delay` - frames written but not
+    yet played - for a RUNNING stream; with the rate from hw_params next to it
+    that is the time until what was just written is heard.  Loopback cards belong
+    to the DRC chain and are skipped.  0 when nothing is running, or elsewhere."""
+    for status in sorted(glob.glob("/proc/asound/card*/pcm*p/sub*/status")):
+        card_dir = status.split("/pcm")[0]
+        if _read_text_quietly(os.path.join(card_dir, "id")).strip() == "Loopback":
+            continue
+        text = _read_text_quietly(status)
+        if "RUNNING" not in text:
+            continue
+        m = re.search(r"^delay\s*:\s*(-?\d+)", text, re.M)
+        r = re.search(r"^rate:\s*(\d+)", _read_text_quietly(os.path.join(os.path.dirname(status), "hw_params")), re.M)
+        if m and r and int(r.group(1)) > 0:
+            return max(0.0, int(m.group(1)) / int(r.group(1)))
+    return 0.0
 
 
 _DRC_TERMS_CACHE: tuple[float, tuple, dict] = (0.0, (), {})
@@ -3978,7 +4007,7 @@ def _drc_display_delay_seconds() -> float:
 # The order the panel lists the stages in, which is the order the audio meets
 # them.  `auto` is a flag, not a duration, and is carried alongside.
 _DRC_DELAY_TERM_ORDER = ("virtual_oss", "group", "convolver", "brutefir_io",
-                         "output", "trim", "total")
+                         "output", "trim", "direct", "total")
 
 
 def _drc_delay_terms_ms(terms: dict) -> dict:

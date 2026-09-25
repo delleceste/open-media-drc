@@ -637,6 +637,56 @@ class PublishDeduplicationTest(unittest.TestCase):
             an.release(wants_bands=False, wants_dr=True)
             self.assertEqual(an.dr_clients, 0)
 
+    def test_the_analyzer_stops_once_the_hold_has_run_out(self):
+        # Nothing may keep running on the box after the hold: with no other
+        # listener the analyzer thread (and so MPD's FIFO output) must stop.
+        an = APP.SpectrumAnalyzer()
+        stopped = threading.Event()
+
+        def run():
+            an.stop_event.wait(5)
+            stopped.set()
+
+        with mock.patch.object(an, "_run", side_effect=run), \
+                mock.patch.object(APP, "_SPECTRUM", an), \
+                mock.patch.object(APP, "DR_HOLD_SECONDS", 0.2):
+            an.acquire("dr")
+            timer = APP._release_stream("dr", False)
+            self.assertFalse(an.stop_event.is_set(), "held: still running")
+            timer.join(1)
+            self.assertEqual((an.clients, an.dr_clients), (0, 0))
+            self.assertTrue(an.stop_event.is_set())
+            self.assertTrue(stopped.wait(1), "the analyzer thread ended")
+
+    def test_repeated_reloads_leave_no_listener_behind(self):
+        an = APP.SpectrumAnalyzer()
+        with mock.patch.object(an, "_run", side_effect=lambda: an.stop_event.wait(5)), \
+                mock.patch.object(APP, "_SPECTRUM", an), \
+                mock.patch.object(APP, "DR_HOLD_SECONDS", 0.2):
+            timers = []
+            an.acquire("dr")
+            for _ in range(5):                    # five quick reloads
+                timers.append(APP._release_stream("dr", False))
+                an.acquire("dr")
+            self.assertEqual(an.dr_clients, 6)
+            for t in timers:
+                t.join(1)
+            self.assertEqual((an.clients, an.dr_clients), (1, 1), "only the live page")
+            timers = [APP._release_stream("dr", False)]
+            timers[0].join(1)
+            self.assertEqual((an.clients, an.dr_clients), (0, 0))
+            self.assertTrue(an.stop_event.is_set())
+
+    def test_a_zero_hold_releases_at_once(self):
+        an = APP.SpectrumAnalyzer()
+        with mock.patch.object(an, "_run", side_effect=lambda: an.stop_event.wait(5)), \
+                mock.patch.object(APP, "_SPECTRUM", an), \
+                mock.patch.object(APP, "DR_HOLD_SECONDS", 0):
+            an.acquire("dr")
+            self.assertIsNone(APP._release_stream("dr", False))
+            self.assertEqual((an.clients, an.dr_clients), (0, 0))
+            self.assertTrue(an.stop_event.is_set())
+
     def test_fifo_stays_owned_until_the_last_stream_closes(self):
         an = APP.SpectrumAnalyzer()
         started = threading.Event()

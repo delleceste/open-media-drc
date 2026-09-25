@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Only for "Calibrate meter delay": a few seconds, reduced to a loudness
+         envelope on the phone; no audio leaves it. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Runtime-requested on API 33+ (see MainActivity); the status
          notification is purely a convenience and the app works fine if the
