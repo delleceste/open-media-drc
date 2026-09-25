@@ -24,14 +24,19 @@ P.timingCard = () => {
     const set = ms => { K.sync.setDelayMs(ms); value.textContent = `${K.sync.delayMs()} ms`; };
     const step = d => h('button', { class: 'btn step', type: 'button', onclick: () => set(K.sync.delayMs() + d) }, (d > 0 ? '+' : '−') + Math.abs(d));
     const result = h('p', { class: 'muted small' }, P.lastCal || '');
-    const calibrate = async () => {
+    const calibrate = async (clicks = false) => {
         let res = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        if (clicks && !(await K.confirm({
+            title: 'Precise calibration',
+            message: 'The box pauses what is playing, plays about 11 seconds of short clicks through the speakers, then puts the music back where it was. Check the volume is at a comfortable level, and hold the phone near the speakers.',
+            ok: 'Play the clicks' }))) return;
+        for (let attempt = 1; attempt <= (clicks ? 1 : 3); attempt++) {
             const b = K.busy('');
-            res = await K.sync.calibrate({ seconds: 10, onTick: left =>
-                b.text(`Attempt ${attempt} of 3 · listening for ${left} s — hold the phone near the speakers while the music plays`) });
+            res = await K.sync.calibrate({ seconds: clicks ? 14 : 10, clicks, onTick: left =>
+                b.text(clicks ? `Listening for ${left} s — the box is playing the clicks`
+                              : `Attempt ${attempt} of 3 · listening for ${left} s — hold the phone near the speakers while the music plays`) });
             b.done();
-            if (res.ok || /microphone|app/.test(res.error || '')) break;
+            if (res.ok || /microphone|app|click/.test(res.error || '')) break;
         }
         if (res.ok && res.lagMs >= 0) {
             set(res.lagMs);
@@ -48,7 +53,14 @@ P.timingCard = () => {
         h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50),
             h('button', { class: 'btn', type: 'button', onclick: () => set(0) }, 'Reset')),
         K.sync.canCalibrate()
-            ? h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', onclick: calibrate }, 'Calibrate with the microphone'))
+            ? h('div', {},
+                h('div', { class: 'btn-row' },
+                    h('button', { class: 'btn primary', type: 'button', onclick: () => calibrate(false) }, 'Calibrate on the music'),
+                    h('button', { class: 'btn', type: 'button', onclick: () => calibrate(true) }, 'Precise (plays clicks)')),
+                h('div', { class: 'lbl' }, 'Recalibrate automatically when a track starts or playback resumes'),
+                K.segmented([{ value: true, label: 'On' }, { value: false, label: 'Off' }], !!K.pref('sync.auto', false),
+                    v => { K.setPref('sync.auto', v); P.render(); }),
+                h('p', { class: 'muted small' }, 'Uses the microphone for 8 s at most every two minutes, only on Now playing; Android shows its microphone indicator meanwhile.'))
             : h('p', { class: 'muted small' }, 'Automatic calibration needs the OMDRC Android app (it uses the phone’s microphone).'),
         result);
 };

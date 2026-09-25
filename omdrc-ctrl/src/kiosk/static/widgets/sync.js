@@ -41,7 +41,11 @@ S.estimate = (frames, mic) => {
         if (t <= f[0].t || t >= f[f.length - 1].t) return null;
         let lo = 0, hi = f.length - 1;
         while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (f[mid].t <= t) lo = mid; else hi = mid; }
-        const a = f[lo], b = f[hi], k = (t - a.t) / (b.t - a.t || 1);
+        const a = f[lo], b = f[hi];
+        // The server sends nothing while the level does not change (silence), so a
+        // long gap means "still a's level" until just before b, not a slow ramp.
+        if (b.t - a.t > 150) return clamp(t < b.t - 55 ? a.p : a.p + (b.p - a.p) * (t - (b.t - 55)) / 55);
+        const k = (t - a.t) / (b.t - a.t || 1);
         return clamp(a.p + (b.p - a.p) * k);
     };
     // remove the slow part (1 s moving mean): what lines up is the dynamics, not the loudness
@@ -91,8 +95,56 @@ S.estimate = (frames, mic) => {
     };
 };
 
+// Click track: match events, not shapes.  A click is a 50 ms blip on the meters but
+// rings for a few hundred ms in a room, so instead of correlating the envelopes, find
+// each click's onset in both and the one offset that pairs most of them - with
+// irregular spacing only the right offset pairs many.
+S.estimateClicks = (frames, mic, expected = 14) => {
+    if (!mic || !mic.db || mic.db.length < 50) return { ok: false, error: 'not enough data' };
+    const f = frames.slice().sort((a, b) => a.t - b.t);
+    const fOn = [];
+    for (let i = 0; i < f.length; i++) {
+        const prev = f[i - 1];
+        if (f[i].p > -40 && (!prev || prev.p < -55 || f[i].t - prev.t > 150)) fOn.push(f[i].t);
+    }
+    const mOn = [];
+    for (let i = 5; i < mic.db.length; i++) {
+        const floor = Math.min(...mic.db.slice(i - 5, i));
+        if (mic.db[i] > -45 && mic.db[i] - floor > 12 && (!mOn.length || mic.t0 + i * mic.step - mOn[mOn.length - 1] > 200))
+            mOn.push(mic.t0 + i * mic.step);
+    }
+    if (fOn.length < expected / 2) return { ok: false, error: `the meters showed only ${fOn.length} of the ${expected} clicks` };
+    if (mOn.length < expected / 2) return { ok: false, error: `the microphone heard only ${mOn.length} of the ${expected} clicks - louder, or the phone nearer the speakers` };
+    const TOL = 40;
+    const pairs = lag => {
+        const d = [];
+        for (const ft of fOn) {
+            let best = null;
+            for (const mt of mOn) { const e = mt - (ft + lag); if (Math.abs(e) <= TOL && (best === null || Math.abs(e) < Math.abs(best))) best = e; }
+            if (best !== null) d.push(lag + best);
+        }
+        return d;
+    };
+    let best = { n: 0, lag: 0 }, second = 0;
+    const scored = [];
+    for (const mt of mOn) for (const ft of fOn) {
+        const lag = mt - ft;
+        if (lag < LAG_MIN || lag > LAG_MAX) continue;
+        scored.push({ lag, n: pairs(lag).length });
+    }
+    scored.forEach(c => { if (c.n > best.n) best = c; });
+    scored.forEach(c => { if (Math.abs(c.lag - best.lag) > 100) second = Math.max(second, c.n); });
+    const d = pairs(best.lag).sort((a, b) => a - b);
+    const lag = d.length ? d[Math.floor(d.length / 2)] : 0;
+    const ok = best.n >= Math.max(6, Math.ceil(expected * 0.6)) && best.n - second >= 4;
+    return { ok, lagMs: Math.round(lag), r: +(best.n / expected).toFixed(2), margin: best.n - second, matched: best.n,
+             error: ok ? '' : `only ${best.n} of ${expected} clicks lined up (next best ${second})` };
+};
+
 // ── one calibration run ──────────────────────────────────────────────────────
-S.calibrate = async ({ seconds = 10, onTick } = {}) => {
+S.running = false;
+S.calibrate = async ({ seconds = 10, onTick, clicks = false } = {}) => {
+    if (S.running) return { ok: false, error: 'a calibration is already running' };
     if (!S.canCalibrate()) return { ok: false, error: 'calibration needs the OMDRC Android app (microphone)' };
     const frames = [];
     const prevTap = K.streamTap;
@@ -104,6 +156,7 @@ S.calibrate = async ({ seconds = 10, onTick } = {}) => {
         }
     };
     const hold = K.streams.open('vu', () => {});     // make sure level frames flow
+    S.running = true;
     try {
         await new Promise(r => setTimeout(r, 1500));   // let the stream settle first
         const mic = await new Promise(resolve => {
@@ -113,13 +166,51 @@ S.calibrate = async ({ seconds = 10, onTick } = {}) => {
             const tick = setInterval(() => { left -= 1; if (onTick) onTick(Math.max(0, left)); if (left <= 0) clearInterval(tick); }, 1000);
             if (onTick) onTick(left);
             window.OmdrcApp.startMicEnvelope(seconds * 1000, STEP);
+            // precise mode: the box plays its click track once the mic is listening
+            if (clicks) setTimeout(async () => {
+                const r = await K.api('/k/api/clicktest', { method: 'POST' });
+                if (!r.ok) { clearTimeout(timer); K.onMicEnvelope = null; resolve({ ok: false, error: r.error || 'the click track could not be played' }); }
+            }, 1000);
         });
         await new Promise(r => setTimeout(r, 1500));   // frames for the last instant of sound
         if (!mic.ok) return { ok: false, error: mic.error || 'microphone error' };
-        return S.estimate(frames, mic);
+        return clicks ? S.estimateClicks(frames, mic) : S.estimate(frames, mic);
     } finally {
+        S.running = false;
         hold.close();
         K.streamTap = prevTap;
+    }
+};
+
+// ── automatic recalibration ──────────────────────────────────────────────────
+// A track starting, or playback resuming after a pause, is the clearest possible
+// cue: a jump from silence to sound.  When it happens on the Now page (and the user
+// turned this on), listen for a few seconds and fold a confident result into the
+// delay - median of the last three, applied when it moves by more than 15 ms.
+const AUTO_EVERY_MS = 120000, SILENCE_DB = -55, SOUND_DB = -40, QUIET_FOR_MS = 1500;
+let quietSince = null, lastAutoAt = 0;
+const recent = [];
+S.autoEnabled = () => S.canCalibrate() && !!K.pref('sync.auto', false);
+S.onLevel = peak => {
+    const now = Date.now();
+    if (peak < SILENCE_DB) { if (quietSince === null) quietSince = now; return; }
+    const wasQuiet = quietSince !== null && now - quietSince >= QUIET_FOR_MS;
+    quietSince = null;
+    if (wasQuiet && peak > SOUND_DB) S.autoRun('playback started');
+};
+S.onTrackChange = () => S.autoRun('new track');
+S.autoRun = async why => {
+    if (!S.autoEnabled() || S.running || Date.now() - lastAutoAt < AUTO_EVERY_MS) return;
+    if (!(K.nowShown && K.nowShown())) return;
+    lastAutoAt = Date.now();
+    const res = await S.calibrate({ seconds: 8 });
+    if (!res.ok || res.lagMs < 0 || res.r < 0.5) return;
+    recent.push(res.lagMs);
+    if (recent.length > 3) recent.shift();
+    const median = recent.slice().sort((a, b) => a - b)[Math.floor(recent.length / 2)];
+    if (Math.abs(median - S.delayMs()) > 15) {
+        S.setDelayMs(median);
+        K.toast(`Meter delay recalibrated (${why}): ${median} ms`);
     }
 };
 })();

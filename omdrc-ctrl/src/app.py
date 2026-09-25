@@ -8988,7 +8988,7 @@ def _resolve_config_path() -> str:
 # Small-screen (7" touch) UI under /k/.  A pure client of the routes above,
 # kept in its own package; a broken kiosk must never take the main panel down.
 def _kiosk_mpc(args: list[str]) -> tuple[bool, str]:
-    """Run one mpc/musicpc command for the kiosk's transport buttons."""
+    """Run one mpc/musicpc command for the kiosk: (ok, stdout) or (False, error)."""
     cmd = _mpc_client()
     if not cmd:
         return False, "mpc/musicpc not found"
@@ -8998,14 +8998,35 @@ def _kiosk_mpc(args: list[str]) -> tuple[bool, str]:
                            capture_output=True, text=True, timeout=5, env=_env())
     except (subprocess.TimeoutExpired, OSError) as error:
         return False, str(error)
-    return r.returncode == 0, (r.stderr or r.stdout).strip() if r.returncode else ""
+    if r.returncode:
+        return False, (r.stderr or r.stdout).strip() or f"mpc exit {r.returncode}"
+    return True, r.stdout
+
+
+def _kiosk_playback_rate() -> int:
+    """The rate a calibration click track should be made at: the running DRC
+    chain's rate (so it is not rebuilt), else what MPD is playing, else 48 kHz."""
+    try:
+        active = _active_design_identity()
+        if active.get("running") and active.get("rate"):
+            return int(active["rate"])
+    except Exception:
+        pass
+    try:
+        rate = _mpc_status(_resolve_mpd_port()).get("sample_rate")
+        if rate:
+            return int(rate)
+    except Exception:
+        pass
+    return 48000
 
 
 try:
     import kiosk
     kiosk.init_app(app, commands=lambda: COMMANDS,
                    features=lambda: {"drdb": DRDB.enabled, "cdin": CDIN_ENABLED},
-                   mpc=_kiosk_mpc)
+                   mpc=_kiosk_mpc, playback_rate=_kiosk_playback_rate,
+                   mpd_port=_resolve_mpd_port)
 except Exception as _kiosk_error:               # pragma: no cover
     print(f"kiosk UI unavailable: {_kiosk_error}", file=sys.stderr)
 

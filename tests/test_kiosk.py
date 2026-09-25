@@ -10,6 +10,7 @@ import importlib.util
 import re
 from pathlib import Path
 import sys
+import threading
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +91,107 @@ class KioskTests(unittest.TestCase):
             if "K.Poller(" in text or "K.streams.open(" in text or "listen(" in text:
                 self.assertIn(".hide =", text, f"{path.name} starts work but has no hide()")
 
+
+
+class FakeMpd:
+    """Just enough of the MPD protocol for the click test: records every command."""
+
+    def __init__(self, state="play", song="3", elapsed="95.500"):
+        import socket
+        self.log, self.state, self.song, self.elapsed = [], state, song, elapsed
+        self.songid, self.next_id = "7", 100
+        self.srv = socket.socket()
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(8)
+        self.port = self.srv.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                conn, _ = self.srv.accept()
+            except OSError:
+                return
+            threading.Thread(target=self.client, args=(conn,), daemon=True).start()
+
+    def client(self, conn):
+        f = conn.makefile("r")
+        conn.sendall(b"OK MPD 0.23.0\n")
+        in_list = False
+        for line in f:
+            line = line.strip()
+            if line == "command_list_begin":
+                in_list, reply = True, ""
+                continue
+            if line == "command_list_end":
+                in_list = False
+                conn.sendall((reply + "OK\n").encode())
+                continue
+            self.log.append(line)
+            out = self.run(line)
+            if in_list:
+                reply += out
+            else:
+                conn.sendall((out + "OK\n").encode())
+
+    def run(self, line):
+        cmd = line.split(" ", 1)[0]
+        if cmd == "status":
+            return f"state: {self.state}\nsong: {self.song}\nsongid: {self.songid}\nelapsed: {self.elapsed}\n"
+        if cmd == "addid":
+            self.next_id += 1
+            return f"Id: {self.next_id}\n"
+        if cmd == "playid":
+            self.songid, self.state = line.split()[1], "play"
+            # the click track "ends" shortly after
+            threading.Timer(0.5, lambda: setattr(self, "state", "stop")).start()
+        if cmd == "pause":
+            self.state = "pause"
+        if cmd == "stop":
+            self.state = "stop"
+        return ""
+
+
+class ClickTestTests(unittest.TestCase):
+    def run_test(self, state):
+        import kiosk
+        mpd = FakeMpd(state=state)
+        saved = (kiosk._mpd_port, kiosk._playback_rate)
+        kiosk._mpd_port, kiosk._playback_rate = (lambda: mpd.port), (lambda: 44100)
+        try:
+            client = APP.app.test_client()
+            r = client.post("/k/api/clicktest")
+            self.assertEqual(r.status_code, 200, r.get_json())
+            self.assertEqual(r.get_json()["rate"], 44100)
+            for _ in range(60):                      # wait for the worker to finish
+                if kiosk._click_lock.acquire(blocking=False):
+                    kiosk._click_lock.release()
+                    break
+                import time; time.sleep(0.1)
+            return mpd.log
+        finally:
+            kiosk._mpd_port, kiosk._playback_rate = saved
+
+    def test_playing_music_is_paused_the_clicks_played_then_it_resumes_where_it_was(self):
+        log = self.run_test("play")
+        self.assertIn("pause 1", log)
+        add = next(c for c in log if c.startswith("addid"))
+        self.assertIn("/k/api/clicks.wav?rate=44100", add)
+        self.assertIn("playid 101", log)
+        self.assertIn("deleteid 101", log)
+        self.assertEqual(log[-1], "seek 3 95.500")        # back at the song and position, playing
+
+    def test_a_paused_song_is_put_back_paused_in_one_command_list(self):
+        log = self.run_test("pause")
+        self.assertNotIn("pause 1", log[:2])               # it was already paused
+        self.assertEqual(log[-2:], ["seek 3 95.500", "pause 1"])
+
+    def test_the_click_track_is_a_short_wav_at_the_requested_rate(self):
+        import io, wave
+        data = APP.app.test_client().get("/k/api/clicks.wav?rate=96000").data
+        w = wave.open(io.BytesIO(data))
+        self.assertEqual((w.getframerate(), w.getnchannels()), (96000, 2))
+        self.assertTrue(10 < w.getnframes() / 96000 < 13)
 
 if __name__ == "__main__":
     unittest.main()

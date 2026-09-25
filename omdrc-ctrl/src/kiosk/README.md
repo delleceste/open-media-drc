@@ -40,6 +40,24 @@ browser keep-awake fallback, and tells the app whether the screen should stay on
 only while the Now page is on screen (`setPageWantsScreenOn`).  Config shows an
 "App settings" button (`openSettings`).
 
+## Meter timing and calibration
+
+The box delays level/spectrum frames by its chain (DRC, or with DRC off the DAC's
+own buffer). On top of that each screen has its own extra delay (Config → Meter
+timing), kept in that device's browser storage. In the Android app it can be
+measured with the phone's microphone:
+
+* **Calibrate on the music**: 10 s of the mic's peak envelope is correlated with the
+  arrival of the level frames (up to 3 attempts; weak or ambiguous matches rejected).
+* **Precise (plays clicks)**: the box pauses playback, MPD plays an 11 s click track
+  (`/k/api/clicks.wav`, 14 irregularly spaced 5 ms bursts at -12 dBFS, made at the
+  running rate so the DRC chain is not rebuilt) and then restores the queue and the
+  playing/paused position (`/k/api/clicktest`). Onsets are matched as events.
+* **Automatic** (off by default): at a track start or when playback resumes after
+  silence, listen 8 s and fold confident results in (median of 3), at most every 2 min.
+
+Only a loudness envelope ever leaves the app's recorder.
+
 ## Rules the code keeps
 
 * **No computation without visible feedback.**  A page starts its streams and

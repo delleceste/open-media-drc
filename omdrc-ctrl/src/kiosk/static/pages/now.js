@@ -181,7 +181,9 @@ P.openLevel = () => {
     P.level = K.streams.open(stream, d => {
         if (d.ok && d.state === 'running') {
             const v = d.vu || {};
-            if (Math.max(Number(v.left_peak ?? -120), Number(v.right_peak ?? -120)) > -60) K.markSound();
+            const pk = Math.max(Number(v.left_peak ?? -120), Number(v.right_peak ?? -120));
+            if (pk > -60) K.markSound();
+            if (K.sync) K.sync.onLevel(pk);
             if (P.mode !== 'off') P.vu.update(d.vu);
             if (P.showBalance) P.balance.update(d.vu);
             if (P.mode === 'spectrum') P.spec.update(d);
@@ -361,6 +363,7 @@ P.paintDr = E => {
 // ── track ────────────────────────────────────────────────────────────────────
 P.pollTrack = async () => {
     const t = await K.fetchTrack();
+    if (P.track && t.ok && P.track.title !== t.title && K.sync) K.sync.onTrackChange();
     P.track = t;
     P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
     if (t.state === 'play' && !P.level) K.markSound();     // no level stream to listen to: trust the player
