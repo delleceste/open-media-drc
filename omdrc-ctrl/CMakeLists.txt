@@ -136,6 +136,10 @@ install(PROGRAMS ../scripts/REW2raw.sh
 install(PROGRAMS ../scripts/omdrc-config-helper.py
         DESTINATION libexec/omdrc RENAME omdrc-config-helper)
 
+# The small-screen kiosk UI (blueprint, templates and static files together)
+install(DIRECTORY src/kiosk DESTINATION lib/omdrcctrl
+        PATTERN "__pycache__" EXCLUDE)
+
 # Jinja2 templates
 install(DIRECTORY src/templates
         DESTINATION lib/omdrcctrl)

@@ -8,6 +8,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
+import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -35,6 +37,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    /** What the page last asked for over [AppBridge]: true only while the
+     *  kiosk's "Now playing" page is on screen. */
+    private var pageWantsScreenOn = false
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -75,7 +81,16 @@ class MainActivity : ComponentActivity() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
 
+        webView.addJavascriptInterface(AppBridge(), "OmdrcApp")
+
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                // A new document knows nothing about the old one's request:
+                // drop the screen-on flag until the kiosk page asks again.
+                pageWantsScreenOn = false
+                applyKeepScreenOn()
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.visibility = View.GONE
             }
@@ -109,13 +124,7 @@ class MainActivity : ComponentActivity() {
             if (webView.canGoBack()) webView.goBack() else finish()
         }
 
-        findViewById<View>(R.id.settings_button).setOnClickListener {
-            promptForHost { newHost, newPort ->
-                AppPrefs.setDefault(this, newHost, newPort)
-                webView.loadUrl("http://$newHost:$newPort/")
-                startLiveUpdates(newHost, newPort)
-            }
-        }
+        findViewById<View>(R.id.settings_button).setOnClickListener { showSettings() }
 
         loadDashboard()
     }
@@ -143,13 +152,75 @@ class MainActivity : ComponentActivity() {
         if (host == null) {
             promptForHost { newHost, newPort ->
                 AppPrefs.setDefault(this, newHost, newPort)
-                webView.loadUrl("http://$newHost:$newPort/")
+                webView.loadUrl(AppPrefs.dashboardUrl(this, newHost, newPort))
                 startLiveUpdates(newHost, newPort)
             }
             return
         }
-        webView.loadUrl("http://$host:$port/")
+        webView.loadUrl(AppPrefs.dashboardUrl(this, host, port))
         startLiveUpdates(host, port)
+    }
+
+    /** The screen stays on only while the kiosk view's "Now playing" page is
+     *  showing (and the setting allows it).  Every other page, the full web
+     *  page, and a page that is loading all let the phone sleep normally. */
+    private fun applyKeepScreenOn() {
+        val on = pageWantsScreenOn && AppPrefs.keepScreenOn(this) &&
+            AppPrefs.viewMode(this) == AppPrefs.VIEW_KIOSK
+        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    /** What the kiosk page can ask of the app.  Called from a WebView
+     *  thread, so everything hops to the UI thread. */
+    private inner class AppBridge {
+        @JavascriptInterface
+        fun setPageWantsScreenOn(on: Boolean) {
+            runOnUiThread { pageWantsScreenOn = on; applyKeepScreenOn() }
+        }
+
+        @JavascriptInterface
+        fun openSettings() {
+            runOnUiThread { showSettings() }
+        }
+
+        @JavascriptInterface
+        fun apiVersion(): Int = 1
+    }
+
+    /** The gear button: which view to show, the screen-on rule, and the
+     *  server address.  Choosing a view reloads the page in it. */
+    private fun showSettings() {
+        val kiosk = AppPrefs.viewMode(this) == AppPrefs.VIEW_KIOSK
+        val keepOn = AppPrefs.keepScreenOn(this)
+        val items = arrayOf(
+            (if (kiosk) "● " else "○ ") + getString(R.string.settings_view_kiosk),
+            (if (!kiosk) "● " else "○ ") + getString(R.string.settings_view_web),
+            (if (keepOn) "☑ " else "☐ ") + getString(R.string.settings_keep_on),
+            getString(R.string.settings_change_server),
+        )
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_title)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> switchView(AppPrefs.VIEW_KIOSK)
+                    1 -> switchView(AppPrefs.VIEW_WEB)
+                    2 -> { AppPrefs.setKeepScreenOn(this, !keepOn); applyKeepScreenOn() }
+                    3 -> promptForHost { newHost, newPort ->
+                        AppPrefs.setDefault(this, newHost, newPort)
+                        webView.loadUrl(AppPrefs.dashboardUrl(this, newHost, newPort))
+                        startLiveUpdates(newHost, newPort)
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun switchView(mode: String) {
+        if (AppPrefs.viewMode(this) == mode) return
+        AppPrefs.setViewMode(this, mode)
+        loadDashboard()
     }
 
     /** Explicit, visible trade (permanent notification + continuous polling

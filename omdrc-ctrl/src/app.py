@@ -20,7 +20,7 @@ from pathlib import Path
 import sys
 from urllib.parse import quote, unquote, urlsplit
 import markdown as md_lib
-from flask import Flask, Response, render_template, jsonify, request, send_from_directory
+from flask import Flask, Response, render_template, jsonify, redirect, request, send_from_directory
 if os.path.dirname(__file__) not in sys.path:
     sys.path.insert(0, os.path.dirname(__file__))
 from configuration import ConfigurationManager, Settings as ConfigurationSettings
@@ -4046,6 +4046,8 @@ def _os_label() -> str:
 
 @app.route("/")
 def index():
+    if request.args.get("view") == "mini":      # small touch screen: see kiosk/
+        return redirect("/k/")
     os_label = _os_label()
     return render_template(
         "index.html",
@@ -8932,6 +8934,31 @@ def _resolve_config_path() -> str:
     packaged = os.path.join(os.environ.get("PREFIX", "/usr/local"),
                             "etc", "open-media-drc", "commands.conf")
     return packaged
+
+
+# Small-screen (7" touch) UI under /k/.  A pure client of the routes above,
+# kept in its own package; a broken kiosk must never take the main panel down.
+def _kiosk_mpc(args: list[str]) -> tuple[bool, str]:
+    """Run one mpc/musicpc command for the kiosk's transport buttons."""
+    cmd = _mpc_client()
+    if not cmd:
+        return False, "mpc/musicpc not found"
+    port = _resolve_mpd_port()
+    try:
+        r = subprocess.run(cmd + (["-p", str(port)] if port else []) + list(args),
+                           capture_output=True, text=True, timeout=5, env=_env())
+    except (subprocess.TimeoutExpired, OSError) as error:
+        return False, str(error)
+    return r.returncode == 0, (r.stderr or r.stdout).strip() if r.returncode else ""
+
+
+try:
+    import kiosk
+    kiosk.init_app(app, commands=lambda: COMMANDS,
+                   features=lambda: {"drdb": DRDB.enabled, "cdin": CDIN_ENABLED},
+                   mpc=_kiosk_mpc)
+except Exception as _kiosk_error:               # pragma: no cover
+    print(f"kiosk UI unavailable: {_kiosk_error}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,14 @@ object AppPrefs {
     private const val KEY_HOST = "default_host"
     private const val KEY_PORT = "default_port"
     private const val KEY_LAST_FOREGROUND = "last_foreground_millis"
+    private const val KEY_VIEW = "view_mode"
+    private const val KEY_KEEP_ON = "keep_screen_on"
     const val DEFAULT_PORT = 9090
+
+    /** The small-screen kiosk UI served by omdrcctrl at /k/ (the default). */
+    const val VIEW_KIOSK = "kiosk"
+    /** The full desktop web page at /. */
+    const val VIEW_WEB = "web"
 
     fun defaultHost(context: Context): String? =
         prefs(context).getString(KEY_HOST, null)
@@ -27,6 +34,25 @@ object AppPrefs {
             .putInt(KEY_PORT, port)
             .apply()
     }
+
+    fun viewMode(context: Context): String =
+        if (prefs(context).getString(KEY_VIEW, VIEW_KIOSK) == VIEW_WEB) VIEW_WEB else VIEW_KIOSK
+
+    /** Keep the display on while the kiosk's "Now playing" page is showing. */
+    fun keepScreenOn(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_KEEP_ON, true)
+
+    fun setKeepScreenOn(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_KEEP_ON, on).apply()
+    }
+
+    fun setViewMode(context: Context, mode: String) {
+        prefs(context).edit().putString(KEY_VIEW, if (mode == VIEW_WEB) VIEW_WEB else VIEW_KIOSK).apply()
+    }
+
+    /** The page to open for [host]:[port] in the chosen view. */
+    fun dashboardUrl(context: Context, host: String, port: Int): String =
+        "http://$host:$port" + if (viewMode(context) == VIEW_WEB) "/" else "/k/"
 
     /** Marks "the dashboard was just visible" - read by LiveStatusService
      *  to auto-stop itself after a period with the app not reopened, rather

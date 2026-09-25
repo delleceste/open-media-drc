@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">omdrc status</string>
+    <string name="app_name">OMDRC</string>
     <string name="configure_widget_title">omdrc widget setup</string>
     <string name="hint_host">Box IP or hostname (e.g. 192.168.1.50)</string>
     <string name="hint_port">Port</string>
@@ -20,4 +20,8 @@
     <string name="live_updates_stop">Stop</string>
     <string name="live_levels">Levels</string>
     <string name="settings_change_server">Change server address</string>
+    <string name="settings_title">OMDRC settings</string>
+    <string name="settings_view_kiosk">Kiosk view (small screen)</string>
+    <string name="settings_view_web">Full web page</string>
+    <string name="settings_keep_on">Keep the screen on while “Now playing” is shown</string>
 </resources>

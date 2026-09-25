@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "omdrc-widget"
+rootProject.name = "omdrc-app"
 include(":app")
