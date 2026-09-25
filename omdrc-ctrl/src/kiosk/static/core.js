@@ -97,17 +97,33 @@ K.toast = (msg, type = 'ok') => {
 // ── overlays ─────────────────────────────────────────────────────────────────
 const root = () => document.getElementById('overlay-root');
 
-K.confirm = ({ title, message, ok = 'Confirm', danger = false }) => new Promise(resolve => {
-    const done = v => { scrim.remove(); resolve(v); };
-    const scrim = K.h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) done(false); } },
-        K.h('div', { class: 'sheet' },
-            K.h('h2', {}, title || 'Are you sure?'),
-            message ? K.h('p', {}, message) : null,
-            K.h('div', { class: 'sheet-actions' },
-                K.h('button', { class: 'btn', onclick: () => done(false) }, 'Cancel'),
-                K.h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), onclick: () => done(true) }, ok))));
-    root().append(scrim);
-});
+// Resolves true (ok) or false (cancel / tap outside).  With `timeoutS` the cancel
+// button counts down and is chosen when it reaches zero.  The returned promise also
+// has .close(value) so the caller can dismiss it (e.g. the situation went away).
+K.confirm = ({ title, message, ok = 'Confirm', cancel = 'Cancel', danger = false, timeoutS = 0 }) => {
+    let done;
+    const p = new Promise(resolve => {
+        let timer = null;
+        done = v => { if (!scrim.isConnected) return; clearInterval(timer); scrim.remove(); resolve(v); };
+        const cancelBtn = K.h('button', { class: 'btn', onclick: () => done(false) }, cancel);
+        const scrim = K.h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) done(false); } },
+            K.h('div', { class: 'sheet' },
+                K.h('h2', {}, title || 'Are you sure?'),
+                message ? K.h('p', {}, message) : null,
+                K.h('div', { class: 'sheet-actions' },
+                    cancelBtn,
+                    K.h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), onclick: () => done(true) }, ok))));
+        root().append(scrim);
+        if (timeoutS > 0) {
+            let left = timeoutS;
+            const paint = () => { cancelBtn.textContent = `${cancel} (${left})`; };
+            paint();
+            timer = setInterval(() => { left -= 1; if (left <= 0) done(false); else paint(); }, 1000);
+        }
+    });
+    p.close = v => done(v);
+    return p;
+};
 
 // A modal spinner for the long, chain-rebuilding operations (a filter switch
 // takes tens of seconds).  Touches are swallowed so nothing is pressed twice.

@@ -69,6 +69,7 @@ P.paintWin = () => {
 P.setOn = (on, persist = false) => {
     P.on = on;
     if (persist) K.setPref('now.dr', on);
+    if (persist && !on) { const now = K.pages.find(p => p.id === 'now'); if (now && now.releaseDr) now.releaseDr(); }
     P.toggle.classList.toggle('active', on);
     P.toggle.setAttribute('aria-checked', String(on));
     P.toggle.textContent = on ? 'Estimate — on (tap to turn off)' : 'Estimate — off (tap to turn on)';

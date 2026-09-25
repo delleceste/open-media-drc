@@ -67,7 +67,7 @@ document.addEventListener('keydown', e => {
 // page's own vertical scroll.  The finger drags the pager; on release it goes to
 // the next page if you moved a fifth of the width (at most 100 px) or flicked.
 let sw = null;
-const NO_SWIPE = 'input, select, textarea, .scrim';
+const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit';
 pager.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch' || e.target.closest(NO_SWIPE)) return;
     sw = { id: e.pointerId, x: e.clientX, y: e.clientY, left: pager.scrollLeft, mode: null, lastX: e.clientX, lastT: performance.now(), v: 0 };
@@ -154,7 +154,7 @@ K.showBar = (show = true) => {
     clearTimeout(barTimer);
     if (show) barTimer = setTimeout(() => K.showBar(false), BAR_MS);
 };
-const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar, [role=switch]';
+const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar, .splitter, .vsplit, [role=switch]';
 let tapStart = null;
 document.addEventListener('pointerdown', e => { tapStart = { x: e.clientX, y: e.clientY }; }, true);
 document.addEventListener('pointerup', e => {
@@ -247,6 +247,23 @@ K.applyPrefs = () => { armSaver(); K.awake.sync(); };
 
 // (keeping the screen on lives in widgets/keepawake.js; K.awake.sync() below)
 
+// ── background preparation ───────────────────────────────────────────────────
+// Pages are built the first time they are shown, and fetch their data then, so on
+// a slow network a first swipe showed an empty page that filled in afterwards.
+// Once the first page is up, build every other page and fetch its data once, one
+// page at a time.  No poller or stream is started: that still happens only in
+// show(), which also refreshes the data straight away.
+async function prepareOtherPages() {
+    for (const page of K.pages) {
+        if (page.mounted || document.hidden) continue;
+        page.mounted = true;
+        safe(() => page.mount(page.body), page);
+        const fetchOnce = page.prefetch || (page.poll && (() => page.poll.now()));
+        if (fetchOnce) { try { await fetchOnce(); } catch {} }
+        await new Promise(r => setTimeout(r, 250));       // spread the requests out
+    }
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
     const [cfg, spec] = await Promise.all([K.api('/k/api/config'), K.api('/spectrum/settings')]);
@@ -300,6 +317,7 @@ async function boot() {
 
     const wanted = (location.hash || '').slice(1) || new URLSearchParams(location.search).get('page') || K.pages[0].id;
     K.showPage(K.pages.some(p => p.id === wanted) ? wanted : K.pages[0].id, false);
+    setTimeout(prepareOtherPages, 1500);   // after the first page has painted
 }
 boot();
 })();

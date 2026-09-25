@@ -158,8 +158,20 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 /* the meters fill whatever height is left: more when the DR bar or balance is hidden */
 /* the meters take a third of the spare height, the DR strip two thirds (spectrum mode: half each) */
 .lvl-body { position: relative; width: 100%; min-width: 0; height: 100%; min-height: 5.5rem; }
-.now-main { flex: 1 1 auto !important; }
-.now:has(.mode-spectrum:not([hidden])) .now-main { flex-grow: 2 !important; }
+.now-main { flex: 1 1 auto; }
+/* with the splitter the two share the height by its ratio (inline flex), without a cap */
+.now-main[style*="flex"] { min-height: min-content; }
+.now-drbar[style*="flex"] { max-height: none; min-height: 4rem; }
+.splitter { flex: 0 0 auto !important; height: .9rem; margin: -.35rem 0; position: relative; z-index: 2; cursor: row-resize; touch-action: none;
+    display: flex; align-items: center; justify-content: center; }
+.splitter i { width: 3.2rem; height: .32rem; border-radius: .2rem; background: #3b444f; box-shadow: 0 0 0 1px rgba(0,0,0,.4); transition: background .15s, width .15s; }
+.now-side { position: relative; }
+.vsplit { position: absolute; left: -.65rem; top: 0; bottom: 0; width: .9rem; z-index: 2; cursor: col-resize; touch-action: none;
+    display: flex; align-items: center; justify-content: center; }
+.vsplit i { width: .32rem; height: 3.2rem; border-radius: .2rem; background: #3b444f; box-shadow: 0 0 0 1px rgba(0,0,0,.4); transition: background .15s, height .15s; }
+.vsplit:hover i, .vsplit.active i { background: var(--accent); height: 4.5rem; }
+.now.bal-below .vsplit, .now.no-side .vsplit { display: none; }
+.splitter:hover i, .splitter.active i { background: var(--accent); width: 4.5rem; }
 .lvl-meter { position: absolute; inset: .4rem; display: flex; gap: .5rem; }
 .vu-canvas { display: block; }
 .vu-needles .vu-needle { flex: 1 1 0; width: 0; height: 100%; }
@@ -177,7 +189,7 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .now-side.single .bal-readout { font-size: 1.5rem; }
 .now-side.single .dr-status { font-size: .95rem; }
 .now-side > .card { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; }
-.now-drbar { flex: 2 1 auto !important; max-height: 11rem; display: flex; flex-direction: column; margin: 0; padding: .3rem .6rem .2rem; }
+.now-drbar { flex: 2 1 auto; max-height: 11rem; display: flex; flex-direction: column; margin: 0; padding: .3rem .6rem .2rem; }
 .now-drbar .dr-bar { flex: 1 1 auto; height: auto; min-height: 2.4rem; }
 .now-drbar .dr-times { align-items: baseline; gap: .8rem; } .now-drbar .dr-detail { margin: 0; flex: 1; text-align: center; }
 .dr-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
@@ -204,6 +216,11 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .dr-bar.static > span { cursor: pointer; }
 button.chip.state { color: inherit; }
 .dr-times { display: flex; justify-content: space-between; font-size: .7rem; color: var(--muted); margin-top: .2rem; }
+.dr-mode { display: inline-flex; gap: .9rem; align-items: center; margin: 0 auto; }
+.dr-radio { display: inline-flex; align-items: center; gap: .3rem; background: none; border: 0; padding: .15rem .1rem; font: inherit; color: var(--muted); cursor: pointer; }
+.dr-radio::before { content: ''; width: .62rem; height: .62rem; border-radius: 50%; border: 1px solid #6e7681; box-sizing: border-box; }
+.dr-radio.on { color: var(--text); }
+.dr-radio.on::before { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 0 45%, transparent 50%); }
 .now-bal .bal-head { display: flex; align-items: center; gap: .5rem; } .now-bal .lbl { margin: 0; } .bal-readout { font: .95rem ui-monospace, monospace; }
 /* Left = light grey, right = red, everywhere: the track, the bar, the readout and the L/R letters. */
 :root { --bal-l: #d3d9e0; --bal-r: #e5484d; --bal-mark: #2f7dff; }
@@ -256,6 +273,7 @@ button.chip.state { color: inherit; }
 .now.bal-below .now-side { flex-direction: row; }
 .now.bal-below .now-side.single .bal-readout { font-size: 1.1rem; }
 .now.bal-below .now-side .now-bal { flex: 1 1 auto; justify-content: center; }
+.now.lvl-off .splitter { display: none !important; }
 .now.lvl-off .now-main { flex: 0 0 auto !important; grid-template-columns: 2.2fr 1fr; }
 .now.lvl-off.no-side .now-main { grid-template-columns: 1fr; }
 .now.lvl-off .now-drbar { flex: 1 1 auto !important; max-height: none; }
@@ -323,6 +341,10 @@ input[type=range] { accent-color: var(--accent); }
     .cf-label { display: none; } .cf-edge { min-width: 2rem; padding: 0 .1rem; } .cf-title { font-size: .85rem; }
     .now-side { min-height: auto; }
     .now-drbar { flex: 1 1 auto !important; max-height: none; }
+    .splitter { display: none !important; }
+    .vsplit { display: none !important; }
+    .now-main[style] { flex: 0 0 auto !important; }
+    .now-drbar[style] { flex: 1 1 auto !important; }
     .now-drbar .dr-bar { height: auto; flex: 1 1 auto; min-height: 3.6rem; }
     /* the time row drops under the title and spans the width */
     .now-track { flex-wrap: wrap; }

@@ -63,7 +63,7 @@ P.mount = el => {
     P.drBox = h('div', { class: 'now-dr card' },
         h('div', { class: 'dr-head' }, h('span', { class: 'lbl' }, 'DR'), P.drValue, P.drStatus, P.drWin), P.drGaugeHost);
     P.drBarBox = h('div', { class: 'now-drbar card' }, P.drBarHost,
-        h('div', { class: 'dr-times' }, P.drOldest, P.drDetail, h('span', {}, 'Latest')));
+        h('div', { class: 'dr-times' }, P.drOldest, P.drDetail, P.drModeBox(), h('span', {}, 'Latest')));
     P.gauge = K.drGauge(P.drGaugeHost);
     // On Now the bar is a shortcut, not a control: touching it opens the DR page
     // (Estimate / Measure), where its segments can be inspected.
@@ -75,12 +75,20 @@ P.mount = el => {
 
     P.balHost = h('div', { class: 'now-bal card' });
     P.balance = new K.Balance(P.balHost);
-    P.side = h('div', { class: 'now-side' }, P.drBox, P.balHost);
+    // vertical handle between the meters and the side column (side by side only)
+    P.vsplit = h('div', { class: 'vsplit', title: 'Drag to widen the meters or the DR/balance column · double-tap the meters to restore' }, h('i'));
+    P.side = h('div', { class: 'now-side' }, P.vsplit, P.drBox, P.balHost);
 
     // the DRC line
     P.drcLine = h('button', { class: 'now-drc', type: 'button', onclick: () => K.goto('drc') });
 
-    el.append(h('div', { class: 'now' }, trackBox, h('div', { class: 'now-main' }, P.leftCell, P.side), P.drBarBox, P.drcLine));
+    // drag handle between the meters and the DR strip (see wireSplitter)
+    P.splitter = h('div', { class: 'splitter', title: 'Drag to give the meters or the DR history more room · double-tap to reset' }, h('i'));
+    P.mainBox = h('div', { class: 'now-main' }, P.leftCell, P.side);
+    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.splitter, P.drBarBox, P.drcLine));
+    P.wireSplitter();
+    P.wireVSplit();
+    P.wireResetTap();
     P.vu = new K.VuMeter(P.meterHost, 'needles');
     P.spec = new K.Spectrum(P.specCanvas);
 
@@ -115,6 +123,9 @@ P.applyLayout = () => {
     P.el.firstChild.classList.toggle('no-drbar', !P.showDr);
     // DR hidden but Balance on: no side column, the balance slides under the meters
     P.el.firstChild.classList.toggle('bal-below', !P.showDr && P.showBalance);
+    P.splitter.hidden = !P.showDr || P.mode === 'off';
+    P.applySplit();
+    P.applyCols();
     P.drWin.textContent = K.dr.windowLabel(K.drEstimate.windowSeconds).replace(' minutes', ' min').replace(' minute', ' min');
 };
 
@@ -132,9 +143,17 @@ P.cycleWindow = ev => {
 };
 
 // The DR estimator listens only while DR is on: turning it off closes its stream.
+// The server keeps DR history only while a listener is connected, so leaving Now
+// must not close the stream at once: it stays open for dr.keepMinutes (Config),
+// without repainting while away, and closes as soon as DR is switched off.
 P.syncDr = () => {
-    if (P.showDr && !P.drSub) P.drSub = K.drEstimate.listen(P.paintDr);
-    else if (!P.showDr && P.drSub) { P.drSub.close(); P.drSub = null; }
+    if (P.showDr && !P.drSub) P.drSub = K.drEstimate.listen(E => { if (P.visible) P.paintDr(E); });
+    else if (!P.showDr) P.releaseDr();
+};
+P.releaseDr = () => {
+    clearTimeout(P.drKeep); P.drKeep = null;
+    if (P.drAsk) { P.drAsk.close(false); P.drAsk = null; }
+    if (P.drSub) { P.drSub.close(); P.drSub = null; }
 };
 
 // A top-bar shortcut: flip the remembered switch, then start or stop what feeds the card.
@@ -171,6 +190,116 @@ P.openLevel = () => {
     });
 };
 
+// ── meters / DR strip splitter ───────────────────────────────────────────────
+// r = the share of the flexible height for the meters row (the rest is the DR
+// strip).  The user's drag is remembered; until then Balance decides: without it
+// the side column is short, so the meters take more.
+const SPLIT_MIN = 0.2, SPLIT_MAX = 0.85;
+P.splitRatio = () => {
+    const saved = K.pref('now.split', null);
+    if (typeof saved === 'number') return K.clamp(saved, SPLIT_MIN, SPLIT_MAX);
+    return (P.showBalance ? 0.55 : 0.68) + (P.mode === 'spectrum' ? 0.1 : 0);
+};
+P.applySplit = () => {
+    const on = P.showDr && !P.splitter.hidden;
+    const r = P.splitRatio();
+    P.mainBox.style.flex = on ? `${r} 1 0` : '';
+    P.drBarBox.style.flex = on ? `${1 - r} 1 0` : '';
+};
+P.wireSplitter = () => {
+    const sp = P.splitter;
+    let drag = null;
+    sp.addEventListener('pointerdown', e => {
+        e.preventDefault(); e.stopPropagation();
+        const a = P.mainBox.getBoundingClientRect(), b = P.drBarBox.getBoundingClientRect();
+        drag = { id: e.pointerId, top: a.top, bottom: b.bottom };
+        try { sp.setPointerCapture(e.pointerId); } catch {}
+        sp.classList.add('active');
+        // the Android app must not read this drag as pull-to-reload
+        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}
+    });
+    sp.addEventListener('pointermove', e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const span = drag.bottom - drag.top;
+        if (span <= 0) return;
+        K.setPref('now.split', K.clamp((e.clientY - drag.top) / span, SPLIT_MIN, SPLIT_MAX));
+        P.applySplit();
+    });
+    const end = e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        drag = null;
+        sp.classList.remove('active');
+        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
+    };
+    sp.addEventListener('pointerup', end);
+    sp.addEventListener('pointercancel', end);
+    sp.addEventListener('dblclick', () => { K.setPref('now.split', null); P.applySplit(); });
+};
+
+// The keep-alive ran out while away from Now: ask, and stop unless told otherwise
+// within a minute.  Keep = another period; Stop = close the stream (the history
+// starts over next time; the DR switch itself stays on).
+P.askKeepDr = async () => {
+    P.drKeep = null;
+    if (!P.drSub || P.visible) return;
+    const minutes = Number(K.pref('dr.keepMinutes', 5));
+    P.drAsk = K.confirm({
+        title: 'Keep estimating DR?',
+        message: `The dynamic range estimate has kept running for ${minutes} min since you left Now playing. Keep collecting it, or stop and let the history start over?`,
+        ok: 'Keep estimating', cancel: 'Stop estimate', timeoutS: 60,
+    });
+    const keep = await P.drAsk;
+    if (!P.drAsk) return;                       // closed by coming back to Now, or released
+    P.drAsk = null;
+    if (keep) P.drKeep = setTimeout(P.askKeepDr, minutes * 60000);
+    else { P.releaseDr(); K.toast('DR estimate stopped'); }
+};
+
+// ── meters / side column splitter ────────────────────────────────────────────
+// c = the meters' share of the width.  Unset: the stylesheet's default columns.
+P.applyCols = () => {
+    const c = K.pref('now.col', null);
+    const sideBySide = !P.side.hidden && !P.el.firstChild.classList.contains('bal-below');
+    P.mainBox.style.gridTemplateColumns = sideBySide && typeof c === 'number'
+        ? `minmax(0, ${c}fr) minmax(0, ${1 - c}fr)` : '';
+};
+P.wireVSplit = () => {
+    const sp = P.vsplit;
+    let drag = null;
+    sp.addEventListener('pointerdown', e => {
+        e.preventDefault(); e.stopPropagation();
+        const r = P.mainBox.getBoundingClientRect();
+        drag = { id: e.pointerId, left: r.left, width: r.width };
+        try { sp.setPointerCapture(e.pointerId); } catch {}
+        sp.classList.add('active');
+    });
+    sp.addEventListener('pointermove', e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        K.setPref('now.col', K.clamp((e.clientX - drag.left) / drag.width, 0.35, 0.8));
+        P.applyCols();
+    });
+    const end = e => { if (drag && e.pointerId === drag.id) { drag = null; sp.classList.remove('active'); } };
+    sp.addEventListener('pointerup', end);
+    sp.addEventListener('pointercancel', end);
+};
+
+// Double tap on the meters: both splitters back to their defaults.
+P.resetSplits = () => {
+    K.setPref('now.split', null); K.setPref('now.col', null);
+    P.applySplit(); P.applyCols();
+    K.toast('Layout restored');
+};
+P.wireResetTap = () => {
+    let last = null;
+    P.leftCell.addEventListener('pointerup', e => {
+        const now = performance.now();
+        if (last && now - last.t < 350 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 30) {
+            last = null; P.resetSplits(); return;
+        }
+        last = { t: now, x: e.clientX, y: e.clientY };
+    });
+};
+
 // Level stream and chain poll follow the chosen display: exactly one is running.
 P.syncMode = () => {
     P.openLevel();
@@ -184,7 +313,29 @@ P.pollChain = async () => {
 };
 
 // ── DR ───────────────────────────────────────────────────────────────────────
+// Per song (the window restarts at each track change) or continuous (a rolling
+// window across tracks): the same setting as "Detect song change" on the DR page.
+P.drModeBox = () => {
+    const radio = (detect, text) => h('button', {
+        type: 'button', class: 'dr-radio', role: 'radio', dataset: { detect: String(detect) },
+        onclick: ev => { ev.stopPropagation(); K.drEstimate.setDetect(detect); P.paintDrMode(); },
+    }, text);
+    P.drModeEl = h('span', { class: 'dr-mode', role: 'radiogroup', 'aria-label': 'DR window' },
+        radio(true, 'Per song'), radio(false, 'Continuous'));
+    P.drModeEl.addEventListener('click', ev => ev.stopPropagation());   // not the "open DR page" shortcut
+    return P.drModeEl;
+};
+P.paintDrMode = () => {
+    if (!P.drModeEl) return;
+    P.drModeEl.querySelectorAll('.dr-radio').forEach(b => {
+        const on = String(K.drEstimate.detect) === b.dataset.detect;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', String(on));
+    });
+};
+
 P.paintDr = E => {
+    P.paintDrMode();
     const s = E.summary();
     P.drValue.textContent = s.value === null ? '—' : (s.value > 14 ? 'DR14+' : `DR${s.value}`);
     P.drValue.style.color = s.value === null ? '' : K.dr.color(s.value).bg;
@@ -276,10 +427,14 @@ P.paintDrc = () => {
 
 // ── lifecycle ────────────────────────────────────────────────────────────────
 P.show = () => {
+    P.visible = true;
+    clearTimeout(P.drKeep); P.drKeep = null;     // back before the keep-alive ran out
+    if (P.drAsk) { const a = P.drAsk; P.drAsk = null; a.close(true); }   // back on Now: keep it
     P.applyLayout();
     K.setTopExtra(P.topBtns);
     P.syncMode();
     P.syncDr();
+    if (P.drSub) P.paintDr(K.drEstimate);        // what was collected while away
     P.trackPoll.start();
     P.tick.start(false);
     P.paintDrc();
@@ -288,7 +443,13 @@ P.show = () => {
 P.hide = () => {
     if (P.level) { P.level.close(); P.level = null; }
     P.chainPoll.stop();
-    if (P.drSub) { P.drSub.close(); P.drSub = null; }
+    P.visible = false;
+    if (P.drSub) {
+        const minutes = Number(K.pref('dr.keepMinutes', 5));
+        if (minutes === 0) P.releaseDr();
+        else if (minutes > 0) P.drKeep = setTimeout(P.askKeepDr, minutes * 60000);
+        // negative: keep it while the kiosk is open
+    }
     P.trackPoll.stop();
     P.tick.stop();
 };

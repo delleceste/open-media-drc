@@ -4,7 +4,9 @@
 (() => {
 'use strict';
 const { h } = K;
-const WINDOWS = [1, 3, 5, 15, 30, 60];   // seconds; frames arrive ~18 times a second, each a 300 ms RMS
+// Seconds.  Frames arrive ~18 times a second and each already carries a 300 ms RMS, so
+// 0.3 s is simply the latest frame: as fast as the data allows, at no cost on the box.
+const WINDOWS = [0.3, 1, 3, 5, 15, 30, 60];
 const SCALE_DB = 6, FLOOR_DB = -60;
 
 K.Balance = class Balance {
@@ -26,7 +28,14 @@ K.Balance = class Balance {
             this.track,
             h('div', { class: 'bal-scale' }, h('span', { class: 'l' }, 'L'), h('span', {}, '−6'), h('span', {}, '0'), h('span', {}, '+6'), h('span', { class: 'r' }, 'R')));
         this.applyLook();
+        this.applySpeed();
         this.paint(NaN);
+    }
+    // the pointer/bar glide gets shorter with the window, so a fast window looks fast
+    applySpeed() {
+        const t = this.window <= 0.3 ? '.06s' : this.window <= 1 ? '.12s' : '.25s';
+        this.pointer.style.transitionDuration = t;
+        this.fill.style.transitionDuration = t;
     }
     applyLook() {
         this.track.classList.toggle('split', this.look === 'split');
@@ -42,6 +51,7 @@ K.Balance = class Balance {
         this.window = WINDOWS[(WINDOWS.indexOf(this.window) + 1) % WINDOWS.length];
         K.setPref('balance.window', this.window);
         this.winBtn.textContent = `${this.window} s`;
+        this.applySpeed();
         this.average(performance.now());
     }
     clear() { this.samples = []; this.lastAt = 0; this.paint(NaN); }
@@ -57,7 +67,9 @@ K.Balance = class Balance {
         this.average(now);
     }
     average(now) {
-        const start = now - this.window * 1000;
+        // never less than the latest frame, whatever the window
+        const last = this.samples.length ? this.samples[this.samples.length - 1].at : now;
+        const start = Math.min(now - this.window * 1000, last);
         while (this.samples.length && this.samples[0].at < now - 60000) this.samples.shift();
         let left = 0, right = 0;
         for (const s of this.samples) if (s.at >= start) { left += s.left; right += s.right; }
