@@ -26,10 +26,20 @@ The app is always in landscape (either way up); the launcher name is now "OMDRC"
 settings; the folder and project were renamed from `omdrc-widget`.
 
 While a page loads, a large ring in the middle of the screen shows the progress in
-percent. **Swipe down to reload** the page, for example after a network failure: in
-the kiosk view this works whenever the current page is scrolled to its top (the
-kiosk reports its own scroll position through the bridge), and a horizontal page
-swipe never triggers it.
+percent. **Swipe down to reload** the page: in the kiosk view this works whenever
+the current page is scrolled to its top (the kiosk reports its own scroll position
+through the bridge), and a horizontal page swipe never triggers it.
+
+If the page cannot be loaded (box off, panel down, wrong address, or a 5xx from the
+server), the WebView and its "Web page not available" page are hidden behind a
+native screen in the kiosk's colours: it names the address and the reason
+(refused, unknown host, timed out, ...) and retries by itself after 5, 10, 20 and
+then every 30 s while the app is in the foreground, so a box that is still booting
+comes back without a tap. The address is an editable field (`192.168.1.50`,
+`box.lan:9090` or a pasted `http://…/k/` URL all work) with **Connect**: after
+moving to another network the box usually has another IP, and this saves the new
+one, loads it and re-points the live status service. Automatic retries pause while
+the field is being edited; **Retry now** tries the current address at once.
 
 Apart from the kiosk's own controls (DRC presets, filter switching, play/pause),
 the app adds no controls of its own; the widget itself is read-only.

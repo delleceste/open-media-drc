@@ -52,6 +52,14 @@ class MainActivity : ComponentActivity() {
 
     /** The page in the WebView could not be loaded (box off, wrong address). */
     private var loadFailed = false
+    private lateinit var connError: ConnectionErrorPanel
+
+    /** The dashboard URL last asked for: what "Retry" loads again. */
+    private var lastUrl: String? = null
+
+    /** Set by [load], cleared by the onPageStarted it causes: while the error panel
+     *  is up only a load the app asked for may take it down. */
+    private var loadRequested = false
     private lateinit var settingsButton: View
 
     private val fileChooserLauncher = registerForActivityResult(
@@ -139,16 +147,39 @@ class MainActivity : ComponentActivity() {
 
         webView.addJavascriptInterface(AppBridge(), "OmdrcApp")
 
+        connError = ConnectionErrorPanel(
+            findViewById(R.id.conn_error),
+            AppPrefs.DEFAULT_PORT,
+            onRetry = { lastUrl?.let { load(it) } ?: loadDashboard() },
+            onConnect = { host, port -> useServer(host, port) },
+        )
+        // Edge-to-edge: the window does not shrink for the keyboard, so the error card
+        // pads itself above it (the root is already padded by the system bars).
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.conn_error)) { view, insets ->
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+            view.setPadding(0, 0, 0, maxOf(0, ime - bars))
+            connError.revealField()
+            insets
+        }
+
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 // A new document knows nothing about the old one's request:
                 // drop the screen-on flag until the kiosk page asks again.
                 pageWantsScreenOn = false
                 applyKeepScreenOn()
-                loadFailed = false
                 pageScrolled = false
+                val requested = loadRequested
+                loadRequested = false
+                if (connError.isShown) {
+                    if (!requested) return
+                    connError.connecting()      // the panel stays up until this load's outcome
+                } else {
+                    loadingRing.start()
+                }
+                loadFailed = false
                 updateSettingsButton()
-                loadingRing.start()
             }
 
             override fun onReceivedError(
@@ -159,14 +190,29 @@ class MainActivity : ComponentActivity() {
                 // Only the page itself: without this the gear stays hidden and a
                 // wrong server address could not be corrected.
                 if (request?.isForMainFrame == true) {
-                    loadFailed = true
-                    updateSettingsButton()
-                    loadingRing.hide()
+                    val description = error?.description?.toString()
+                    showLoadError(ConnectionErrorPanel.reasonFor(error?.errorCode ?: 0, description), description)
+                }
+            }
+
+            // The server answered, but with its own failure (panel restarting behind a
+            // proxy, a crash): same panel rather than a bare server error page.
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?,
+                errorResponse: android.webkit.WebResourceResponse?,
+            ) {
+                val code = errorResponse?.statusCode ?: return
+                if (request?.isForMainFrame == true && code >= 500) {
+                    showLoadError(ConnectionErrorPanel.Reason.HTTP, httpStatus = code)
                 }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                if (!loadFailed) loadingRing.finish()
+                if (loadFailed) return
+                loadingRing.finish()
+                webView.visibility = View.VISIBLE
+                connError.hide()
             }
         }
 
@@ -224,6 +270,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        connError.resume()
         // Resets LiveStatusService's idle clock every time the dashboard
         // becomes visible again, not just on first open.
         AppPrefs.touchForeground(this)
@@ -231,6 +278,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        connError.pause()
         // Leaving the dashboard is exactly when you might just have changed
         // something (enabled DRC, switched geometry, ...) and exactly when
         // you're about to glance at the widget next - refresh every
@@ -245,12 +293,44 @@ class MainActivity : ComponentActivity() {
         if (host == null) {
             promptForHost { newHost, newPort ->
                 AppPrefs.setDefault(this, newHost, newPort)
-                webView.loadUrl(AppPrefs.dashboardUrl(this, newHost, newPort))
+                load(AppPrefs.dashboardUrl(this, newHost, newPort))
                 startLiveUpdates(newHost, newPort)
             }
             return
         }
-        webView.loadUrl(AppPrefs.dashboardUrl(this, host, port))
+        load(AppPrefs.dashboardUrl(this, host, port))
+        startLiveUpdates(host, port)
+    }
+
+    private fun load(url: String) {
+        lastUrl = url
+        loadRequested = true
+        webView.loadUrl(url)
+    }
+
+    /** The page could not be loaded: hide the WebView (and with it the engine's own
+     *  error page) behind [ConnectionErrorPanel]. */
+    private fun showLoadError(reason: ConnectionErrorPanel.Reason, description: String? = null, httpStatus: Int = 0) {
+        loadFailed = true
+        updateSettingsButton()
+        loadingRing.hide()
+        webView.visibility = View.INVISIBLE
+        val address = lastUrl?.let {
+            val uri = Uri.parse(it)
+            "${uri.host ?: ""}:${if (uri.port > 0) uri.port else AppPrefs.defaultPort(this)}"
+        } ?: ""
+        connError.show(reason, address, description, httpStatus)
+    }
+
+    private fun changeServer() {
+        promptForHost { newHost, newPort -> useServer(newHost, newPort) }
+    }
+
+    /** A new server address, from the settings dialog or the error screen's field:
+     *  remembered, loaded, and the live status service re-pointed at it. */
+    private fun useServer(host: String, port: Int) {
+        AppPrefs.setDefault(this, host, port)
+        load(AppPrefs.dashboardUrl(this, host, port))
         startLiveUpdates(host, port)
     }
 
@@ -333,11 +413,7 @@ class MainActivity : ComponentActivity() {
                     1 -> switchView(AppPrefs.VIEW_WEB)
                     2 -> { AppPrefs.setKeepScreenOn(this, !keepOn); applyKeepScreenOn() }
                     3 -> { AppPrefs.setHideSystemBars(this, !hideBars); applySystemBars() }
-                    4 -> promptForHost { newHost, newPort ->
-                        AppPrefs.setDefault(this, newHost, newPort)
-                        webView.loadUrl(AppPrefs.dashboardUrl(this, newHost, newPort))
-                        startLiveUpdates(newHost, newPort)
-                    }
+                    4 -> changeServer()
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)

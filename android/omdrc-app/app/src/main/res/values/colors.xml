@@ -8,4 +8,15 @@
     <color name="status_off">#8A8A94</color>
     <color name="icon_background">#FFFFFF</color>
     <color name="icon_glyph">#000000</color>
+    <!-- The kiosk page's palette (omdrc-ctrl/src/kiosk/static/kiosk.css :root), for
+         native screens that stand in for it, like the connection error. -->
+    <color name="kiosk_bg">#0D1117</color>
+    <color name="kiosk_surface">#161B22</color>
+    <color name="kiosk_surface2">#1C232C</color>
+    <color name="kiosk_border">#30363D</color>
+    <color name="kiosk_text">#E6EDF3</color>
+    <color name="kiosk_muted">#8B949E</color>
+    <color name="kiosk_accent">#58A6FF</color>
+    <color name="kiosk_accent_strong">#1F6FEB</color>
+    <color name="kiosk_red">#F85149</color>
 </resources>

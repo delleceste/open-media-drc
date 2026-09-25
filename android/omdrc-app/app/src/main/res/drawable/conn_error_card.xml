@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kiosk's card look: surface fill, border outline (kiosk.css tokens). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kiosk_surface" />
+    <stroke android:width="1dp" android:color="@color/kiosk_border" />
+    <corners android:radius="14dp" />
+</shape>

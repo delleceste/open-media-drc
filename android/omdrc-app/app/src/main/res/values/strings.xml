@@ -25,4 +25,23 @@
     <string name="settings_view_web">Full web page</string>
     <string name="settings_hide_bars">Full screen (hide the Android status and navigation bars)</string>
     <string name="settings_keep_on">Keep the screen on while “Now playing” is shown</string>
+    <string name="conn_error_badge">NOT CONNECTED</string>
+    <string name="conn_error_title">Can\'t reach the OMDRC box</string>
+    <string name="conn_error_hint_lookup">The address could not be resolved. Check the server address, or use the box\'s IP.</string>
+    <string name="conn_error_hint_refused">The box answered but the panel is not running on this port. It may still be starting up.</string>
+    <string name="conn_error_hint_timeout">No answer. Is the box switched on, and is this device on the same network?</string>
+    <string name="conn_error_hint_http">The panel answered with an error. It may be restarting.</string>
+    <string name="conn_error_hint_other">Is the box switched on, and is this device on the same network?</string>
+    <string name="conn_error_reason_lookup">unknown host</string>
+    <string name="conn_error_reason_refused">connection refused</string>
+    <string name="conn_error_reason_timeout">timed out</string>
+    <string name="conn_error_reason_http">HTTP %1$d</string>
+    <string name="conn_error_retry">Retry now</string>
+    <string name="conn_error_address_label">SERVER ADDRESS</string>
+    <string name="conn_error_address_hint">192.168.1.50:9090</string>
+    <string name="conn_error_connect">Connect</string>
+    <string name="conn_error_bad_address">Enter the box\'s IP or hostname, optionally with :port</string>
+    <string name="conn_error_editing">Automatic retry paused while you edit the address</string>
+    <string name="conn_error_retrying_in">Retrying in %1$d s</string>
+    <string name="conn_error_connecting">Connecting…</string>
 </resources>
