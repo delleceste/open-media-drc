@@ -401,7 +401,7 @@ it stops.  The correction is split in two:
 | --- | --- |
 | Filter group delay | `argmax(|h|) / rate` of the active coefficient (0 for `dirac pulse`) |
 | Convolver | one `filter_length` partition |
-| Direct (DRC off, Linux) | the DAC's ALSA buffer: the kernel's `delay` for the running stream |
+| Direct (DRC off) | the DAC buffer MPD has filled: the kernel's `delay` for the running stream (Linux, `/proc/asound`), or the play channel's `swbuf.ready` + `hwbuf.ready` from `sndctl -v` (FreeBSD 15+) |
 | − margin | `drc_delay_margin_ms`, default 150 |
 
 **Each screen waits out the rest** with its own delay: the buffers nothing

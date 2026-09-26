@@ -17,6 +17,7 @@ back without disturbing the fields it already parses.
 """
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -269,6 +270,70 @@ class DrcDelayEstimateTest(unittest.TestCase):
 
     def test_a_chain_that_is_down_and_silent_holds_back_nothing(self):
         self.assertAlmostEqual(self.terms(conf=None)["total"], 0.0)
+
+
+class FreeBsdDirectDelayTest(unittest.TestCase):
+    """DRC off on FreeBSD: the DAC buffer comes from sndctl(8)'s channel fill,
+    software buffer (MPD's format) plus hardware buffer (the driver's)."""
+
+    SNDSTAT = "Installed devices:\npcm0: <DAC> on uaudio0 (play) default\n" \
+              "Installed devices from userspace:\ndsp.play: <virtual_oss device> (play/rec)\n"
+
+    @staticmethod
+    def sndctl(channels, from_user=0):
+        return json.dumps({"sndctl": {"devices": [
+            {"name": "pcm0", "from_user": from_user, "channels": channels}]}})
+
+    def delay(self, stdout):
+        run = mock.Mock(return_value=mock.Mock(stdout=stdout))
+        with mock.patch.object(APP.shutil, "which", return_value="/usr/sbin/sndctl"), \
+             mock.patch.object(APP, "_read_text_quietly", return_value=self.SNDSTAT), \
+             mock.patch.object(APP.subprocess, "run", run):
+            return APP._direct_output_delay_oss(), run
+
+    def test_counts_both_buffers_each_in_its_own_format(self):
+        chan = {"name": "dsp0.play.0", "pid": 2775,
+                "swbuf.format": "s16le:2.0", "swbuf.rate": 44100, "swbuf.ready": 4 * 22050,
+                "hwbuf.format": "s32le:2.0", "hwbuf.rate": 44100, "hwbuf.ready": 8 * 4410}
+        seconds, run = self.delay(self.sndctl([chan]))
+        self.assertAlmostEqual(seconds, 0.5 + 0.1)
+        self.assertEqual(run.call_args[0][0][-3:], ["-f", "/dev/dsp0", "-v"])
+
+    def test_a_closed_channel_or_a_userland_device_is_not_the_dac(self):
+        chan = {"name": "dsp0.play.0", "pid": -1,
+                "swbuf.format": "s32le:2.0", "swbuf.rate": 48000, "swbuf.ready": 8 * 4800}
+        self.assertEqual(self.delay(self.sndctl([chan]))[0], 0.0)
+        chan["pid"] = 42
+        self.assertEqual(self.delay(self.sndctl([chan], from_user=1))[0], 0.0)
+
+    def test_unreadable_sndctl_is_zero(self):
+        self.assertEqual(self.delay("sndctl: not json")[0], 0.0)
+
+    def test_each_os_reads_its_own_kernel(self):
+        with mock.patch.object(APP, "_direct_output_delay_alsa", return_value=0.5), \
+             mock.patch.object(APP, "_direct_output_delay_oss", return_value=0.2):
+            for system, expected in (("Linux", 0.5), ("FreeBSD", 0.2), ("Darwin", 0.0)):
+                with mock.patch.object(APP.platform, "system", return_value=system):
+                    self.assertEqual(APP._direct_output_delay_seconds(), expected, system)
+
+    def test_linux_alsa_path_is_unchanged(self):
+        files = {
+            "/proc/asound/card0/id": "Loopback\n",
+            "/proc/asound/card0/pcm0p/sub0/status": "state: RUNNING\ndelay       : 9999\n",
+            "/proc/asound/card0/pcm0p/sub0/hw_params": "rate: 44100 (44100/1)\n",
+            "/proc/asound/card1/id": "OKTO\n",
+            "/proc/asound/card1/pcm0p/sub0/status": "state: RUNNING\ndelay       : 22050\n",
+            "/proc/asound/card1/pcm0p/sub0/hw_params": "rate: 44100 (44100/1)\n",
+        }
+        statuses = sorted(k for k in files if k.endswith("/status"))
+        with mock.patch.object(APP.glob, "glob", return_value=statuses), \
+             mock.patch.object(APP, "_read_text_quietly", side_effect=lambda p: files.get(p, "")):
+            self.assertAlmostEqual(APP._direct_output_delay_alsa(), 0.5)
+
+    def test_frame_sizes(self):
+        self.assertEqual(APP._oss_frame_bytes("s32le:2.0"), 8)
+        self.assertEqual(APP._oss_frame_bytes("s24le:5.1"), 18)
+        self.assertEqual(APP._oss_frame_bytes("u8:1.0"), 1)
 
 
 class ResumeAfterSilenceTest(unittest.TestCase):

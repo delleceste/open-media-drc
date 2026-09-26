@@ -3679,8 +3679,8 @@ def _set_brutefir_attenuation(db: float) -> None:
 #                                        built-in `dirac pulse` — the shipped
 #                                        flat default — peaks at index 0.
 # + convolver      filter_length / rate  one partition, from `filter_length`
-# + direct         kernel `delay`        DRC off (Linux): what MPD has queued in
-#                                        the DAC's ALSA buffer, read live
+# + direct         kernel buffer fill    DRC off: what MPD has queued in the DAC:
+#                                        ALSA `delay` (Linux), sndctl (FreeBSD)
 # - margin         drc_delay_margin_ms   so the frames always arrive early
 #
 # Everything else — virtual_oss and BruteFIR's I/O buffers, the DAC and USB with
@@ -3793,12 +3793,22 @@ def _drc_display_delay_terms() -> dict:
 
 
 def _direct_output_delay_seconds() -> float:
-    """Current output delay of the running playback stream on a real card (Linux).
+    """Current output delay of the running playback stream on a real card: what
+    has been written to the DAC but not played yet, in seconds.  0 when nothing
+    is playing or the OS offers no figure."""
+    system = platform.system()
+    if system == "Linux":
+        return _direct_output_delay_alsa()
+    if system == "FreeBSD":
+        return _direct_output_delay_oss()
+    return 0.0
 
-    /proc/asound/cardN/pcmNp/subN/status reports `delay` - frames written but not
+
+def _direct_output_delay_alsa() -> float:
+    """/proc/asound/cardN/pcmNp/subN/status reports `delay` - frames written but not
     yet played - for a RUNNING stream; with the rate from hw_params next to it
     that is the time until what was just written is heard.  Loopback cards belong
-    to the DRC chain and are skipped.  0 when nothing is running, or elsewhere."""
+    to the DRC chain and are skipped."""
     for status in sorted(glob.glob("/proc/asound/card*/pcm*p/sub*/status")):
         card_dir = status.split("/pcm")[0]
         if _read_text_quietly(os.path.join(card_dir, "id")).strip() == "Loopback":
@@ -3810,6 +3820,62 @@ def _direct_output_delay_seconds() -> float:
         r = re.search(r"^rate:\s*(\d+)", _read_text_quietly(os.path.join(os.path.dirname(status), "hw_params")), re.M)
         if m and r and int(r.group(1)) > 0:
             return max(0.0, int(m.group(1)) / int(r.group(1)))
+    return 0.0
+
+
+def _oss_frame_bytes(fmt: str) -> int:
+    """Bytes per frame of a sound(4) format string such as ``s32le:2.0``
+    (sample format, then channels.LFE channels)."""
+    sample, _, chans = fmt.partition(":")
+    bits = re.search(r"(\d+)", sample)
+    width = int(bits.group(1)) // 8 if bits else 1          # mu-law / a-law
+    main, _, lfe = chans.partition(".")
+    try:
+        channels = int(main or 0) + int(lfe or 0)
+    except ValueError:
+        channels = 0
+    return max(1, width) * max(1, channels)
+
+
+def _oss_channel_delay_seconds(chan: dict) -> float:
+    """Queued audio of one sound(4) play channel: the software buffer (the
+    application's format and rate) plus the hardware buffer the driver is
+    draining."""
+    total = 0.0
+    for buf in ("swbuf", "hwbuf"):
+        rate = int(chan.get(f"{buf}.rate") or 0)
+        ready = int(chan.get(f"{buf}.ready") or 0)
+        if rate > 0 and ready > 0:
+            total += ready / _oss_frame_bytes(str(chan.get(f"{buf}.format", ""))) / rate
+    return total
+
+
+def _direct_output_delay_oss() -> float:
+    """FreeBSD: sndctl(8) (15.0+) reports each open channel's buffer fill -
+    `swbuf.ready` and `hwbuf.ready`, the bytes written and not yet played, the
+    counterpart of ALSA's `delay`.  Only hardware pcm devices count: userland
+    ones (virtual_oss) belong to the DRC chain.  The first open play channel
+    with anything queued is MPD's."""
+    sndctl = shutil.which("sndctl") or ("/usr/sbin/sndctl" if os.path.exists("/usr/sbin/sndctl") else None)
+    if not sndctl:
+        return 0.0
+    units = re.findall(r"^pcm(\d+):", _read_text_quietly("/dev/sndstat"), re.M)
+    for unit in units:
+        try:
+            r = subprocess.run([sndctl, "--libxo", "json", "-f", f"/dev/dsp{unit}", "-v"],
+                               capture_output=True, text=True, timeout=2)
+            devices = json.loads(r.stdout)["sndctl"]["devices"]
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+            continue
+        for dev in devices:
+            if dev.get("from_user"):
+                continue
+            for chan in dev.get("channels") or []:
+                if ".play." not in str(chan.get("name", "")) or int(chan.get("pid", -1)) <= 0:
+                    continue
+                delay = _oss_channel_delay_seconds(chan)
+                if delay > 0:
+                    return delay
     return 0.0
 
 
