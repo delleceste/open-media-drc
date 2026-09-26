@@ -325,35 +325,17 @@ SPECTRUM_BANDS = 24
 SPECTRUM_VU_MODE = "bars"
 SPECTRUM_FLOOR_DB = -40.0
 SPECTRUM_MIN_FREQ = 31.5
-# Manual fine-tune (ms) used INSTEAD of the automatic chain estimate when "Auto
-# sync delay" is off.  With auto sync on, every stage is derived from the live
-# chain (see `_drc_display_delay_terms()`) and this key is ignored.
-SPECTRUM_DRC_DELAY_TRIM_MS = 0.0
-# The two stages of the chain that publish no length anywhere, expressed in the
-# unit each stage actually works in so they stay right across sample rates.
-#
-# BruteFIR: the convolver itself costs exactly one partition, which is read from
-# `filter_length`.  On top of that it double-buffers its OSS input and output —
-# one partition in flight on each side — so the I/O costs a further two.
-SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS = 2.0
-# virtual_oss: `-s` sets the block it moves audio in (`200ms` on this box).  A
-# writer's client ring plus the mix block plus the `-L` loopback ring hold about
-# three of those between /dev/dsp.play and what BruteFIR reads from /dev/dsp.loop.
-SPECTRUM_DRC_VOSS_BLOCKS = 3.0
-# What is left downstream of BruteFIR: the DAC's own OSS buffer and the USB
-# pipeline.  Small, and the only term with no configuration to read it out of.
-SPECTRUM_DRC_OUTPUT_DELAY_MS = 150.0
-# Interactive "sync" slider: a runtime delta (ms) the listener adds on top of the
-# auto-measured base delay to line the display up with what they actually hear.
-# Neutral at 0, bounded by the two config-editable limits below, and remembered
-# across restarts in a small state file (see _DELTA_STATE_FILE).
-SPECTRUM_DRC_DELAY_DELTA_MS = 0.0
-SPECTRUM_DRC_DELAY_DELTA_MIN_MS = -1000.0
-SPECTRUM_DRC_DELAY_DELTA_MAX_MS = 2000.0
-# When enabled, a running analyzer re-reads the active DRC path every couple of
-# seconds.  That catches preset/rate changes; ordinary MPD track changes do not
-# alter the deterministic BruteFIR delay.
-SPECTRUM_DRC_DELAY_AUTO_SYNC = True
+# The box holds the level/spectrum frames back by the stages it can MEASURE
+# (the filter's group delay, BruteFIR's partition, the DAC buffer with DRC off),
+# minus this margin, so the frames always reach a screen a little early.  Each
+# screen then waits out the rest - network, drawing, the buffers nothing reports -
+# with its own calibrated delay (the kiosk's Config -> Meter timing).  A screen
+# can only wait, never anticipate, so the margin must cover the slowest network
+# and screen in use.
+SPECTRUM_DRC_DELAY_MARGIN_MS = 150.0
+# History the analyzer keeps beyond the hold-back in force, so an increase (DRC
+# switched on, a longer filter) shows on the next frame instead of stalling.
+_DELAY_RESERVE_S = 2.0
 
 # How the bars fall back once a band goes quiet, in dB per second.  Analysis is
 # peak-holding within each display frame (see `_spectrum_multi_bins`), so the
@@ -721,10 +703,7 @@ def load_config(path: str) -> None:
     global DR_PUBLISH_SECONDS, DR_HOLD_SECONDS, SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
     global SPECTRUM_VU_MODE, SPECTRUM_FLOOR_DB, SPECTRUM_MIN_FREQ
     global SPECTRUM_FALL_DB_PER_S
-    global SPECTRUM_DRC_DELAY_TRIM_MS, SPECTRUM_DRC_DELAY_DELTA_MS, SPECTRUM_DRC_DELAY_AUTO_SYNC
-    global SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS
-    global SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS, SPECTRUM_DRC_VOSS_BLOCKS
-    global SPECTRUM_DRC_OUTPUT_DELAY_MS
+    global SPECTRUM_DRC_DELAY_MARGIN_MS
     global SPECTRUM_SOURCE, SPECTRUM_CDIN_FIFO, SPECTRUM_CDIN_RATE
     global SPECTRUM_CDIN_CAPTURE_PCM
     global CDIN_ENABLED, CDIN_LOG_FILE, CDIN_PROCESS, CDIN_SERVICE
@@ -785,22 +764,8 @@ def load_config(path: str) -> None:
         SPECTRUM_MIN_FREQ = max(5.0, min(200.0, cfg.getfloat("spectrum", "min_frequency", fallback=SPECTRUM_MIN_FREQ)))
         SPECTRUM_FALL_DB_PER_S = max(3.0, min(240.0, cfg.getfloat(
             "spectrum", "fall_db_per_s", fallback=SPECTRUM_FALL_DB_PER_S)))
-        SPECTRUM_DRC_DELAY_TRIM_MS = cfg.getfloat("spectrum", "drc_delay_trim_ms", fallback=SPECTRUM_DRC_DELAY_TRIM_MS)
-        SPECTRUM_DRC_DELAY_DELTA_MIN_MS = cfg.getfloat(
-            "spectrum", "drc_delay_delta_min_ms", fallback=SPECTRUM_DRC_DELAY_DELTA_MIN_MS)
-        SPECTRUM_DRC_DELAY_DELTA_MAX_MS = cfg.getfloat(
-            "spectrum", "drc_delay_delta_max_ms", fallback=SPECTRUM_DRC_DELAY_DELTA_MAX_MS)
-        if SPECTRUM_DRC_DELAY_DELTA_MAX_MS < SPECTRUM_DRC_DELAY_DELTA_MIN_MS:
-            SPECTRUM_DRC_DELAY_DELTA_MIN_MS, SPECTRUM_DRC_DELAY_DELTA_MAX_MS = (
-                SPECTRUM_DRC_DELAY_DELTA_MAX_MS, SPECTRUM_DRC_DELAY_DELTA_MIN_MS)
-        SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS = max(0.0, cfg.getfloat(
-            "spectrum", "drc_brutefir_io_partitions",
-            fallback=SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS))
-        SPECTRUM_DRC_VOSS_BLOCKS = max(0.0, cfg.getfloat(
-            "spectrum", "drc_voss_blocks", fallback=SPECTRUM_DRC_VOSS_BLOCKS))
-        SPECTRUM_DRC_OUTPUT_DELAY_MS = max(0.0, cfg.getfloat(
-            "spectrum", "drc_output_delay_ms",
-            fallback=SPECTRUM_DRC_OUTPUT_DELAY_MS))
+        SPECTRUM_DRC_DELAY_MARGIN_MS = max(0.0, cfg.getfloat(
+            "spectrum", "drc_delay_margin_ms", fallback=SPECTRUM_DRC_DELAY_MARGIN_MS))
         SPECTRUM_SOURCE = cfg.get("spectrum", "source",
                                   fallback=SPECTRUM_SOURCE).strip().lower()
         if SPECTRUM_SOURCE not in ("auto", "mpd", "cdin"):
@@ -813,18 +778,11 @@ def load_config(path: str) -> None:
             "spectrum", "cdin_capture_pcm",
             fallback=SPECTRUM_CDIN_CAPTURE_PCM).strip()
 
-    # The slider positions are runtime settings, not config values: restore the
-    # last ones the listener dialled in (clamped to the config bounds/limits).
-    saved_delta = _read_state_float(_DELTA_STATE_FILE)
-    if saved_delta is not None:
-        SPECTRUM_DRC_DELAY_DELTA_MS = saved_delta
-    SPECTRUM_DRC_DELAY_DELTA_MS = _clamp_delta(SPECTRUM_DRC_DELAY_DELTA_MS)
+    # The floor slider is a runtime setting, not a config value: restore the last
+    # one the listener dialled in.
     saved_floor = _read_state_float(_FLOOR_STATE_FILE)
     if saved_floor is not None:
         SPECTRUM_FLOOR_DB = max(-90.0, min(-24.0, saved_floor))
-    saved_auto_sync = _read_state_bool(_AUTO_SYNC_STATE_FILE)
-    if saved_auto_sync is not None:
-        SPECTRUM_DRC_DELAY_AUTO_SYNC = saved_auto_sync
 
     # [logs] and [alert:<id>] are settings sections — read them here, and skip
     # them (like the other reserved ones) when collecting commands below.
@@ -1936,14 +1894,10 @@ class SpectrumAnalyzer:
             "min_frequency": SPECTRUM_MIN_FREQ,
             "mode": self.mode,
             "fall_db_per_s": SPECTRUM_FALL_DB_PER_S,
-            # DRC-sync slider: derived base delay, the listener's live delta and
-            # the bounds it can travel between (all milliseconds).
+            # What the frames are held back by (ms), stage by stage; each screen
+            # adds its own calibrated delay on top.
             "drc_delay_base_ms": round(terms.get("total", 0.0) * 1000.0, 1),
             "drc_delay_terms_ms": _drc_delay_terms_ms(terms),
-            "drc_delay_delta_ms": round(SPECTRUM_DRC_DELAY_DELTA_MS, 1),
-            "drc_delay_delta_min_ms": round(SPECTRUM_DRC_DELAY_DELTA_MIN_MS, 1),
-            "drc_delay_delta_max_ms": round(SPECTRUM_DRC_DELAY_DELTA_MAX_MS, 1),
-            "drc_delay_auto_sync": SPECTRUM_DRC_DELAY_AUTO_SYNC,
         }
 
     def _start_thread_locked(self, mode: str) -> None:
@@ -2310,7 +2264,6 @@ class SpectrumAnalyzer:
             # is why MPD straight to the DAC already looks in sync.
             delay_bytes = 0
             base_delay_s = 0.0
-            delay_auto_sync: bool | None = None
             next_delay_check = 0.0
             # PCM arrives a chunk at a time, so "no data for a moment" is normal
             # and must not be mistaken for the source having stopped.  Only
@@ -2390,20 +2343,16 @@ class SpectrumAnalyzer:
                     self.dr_revision += 1
 
             def keep_bytes() -> int:
-                """History to retain: the FFT window, the LARGEST hold-back the
-                listener can currently ask for, and room for the peak-hold hops.
+                """History to retain: the FFT window, the hold-back plus a
+                reserve, and room for the peak-hold hops.
 
-                Sizing this from the delay *in force* is what made the Sync
-                slider look inert.  The trim runs before the frame section that
-                recomputes the delay, so every increase found the buffer already
-                cut to the old, shorter length: `start` went negative, the
-                analyzer published `waiting` with no bands, and the plot sat
-                frozen for exactly as long as the increase — which, with a base
-                a second short of the truth, was every move that mattered.
-                Reserving the slider's full travel costs a few hundred KB and
-                makes a delay change take effect on the very next frame.
+                The trim runs before the frame section that recomputes the
+                delay, so an increase (DRC switched on, a longer filter) finds
+                the buffer cut to the old length: the plot waits for as long as
+                the increase.  The reserve covers the usual steps, so they take
+                effect on the very next frame; a few hundred KB.
                 """
-                reach = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MAX_MS / 1000.0)
+                reach = base_delay_s + _DELAY_RESERVE_S
                 return (history_bytes + int(reach * rate) * frame_bytes
                         + chunk_bytes * 3)
 
@@ -2424,8 +2373,6 @@ class SpectrumAnalyzer:
                     "fft_size": fft_size,
                     "drc_delay": round(delay_bytes / frame_bytes / rate, 3),
                     "drc_delay_base": round(base_delay_s, 3),
-                    "drc_delay_delta": round(SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0, 3),
-                    "drc_delay_auto_sync": SPECTRUM_DRC_DELAY_AUTO_SYNC,
                     "bands": [
                         {
                             "freq": round(b["freq"], 1),
@@ -2610,15 +2557,10 @@ class SpectrumAnalyzer:
                 # at every rate change and a preset switch reloads BruteFIR with a
                 # different filter.  The heavy part (reading the FIR to find its
                 # peak) is cached, so re-deriving on a slow cadence costs nothing.
-                if (delay_auto_sync is None
-                        or delay_auto_sync != SPECTRUM_DRC_DELAY_AUTO_SYNC
-                        or now >= next_delay_check):
+                if now >= next_delay_check:
                     base_delay_s = _drc_display_delay_seconds()
-                    delay_auto_sync = SPECTRUM_DRC_DELAY_AUTO_SYNC
                     next_delay_check = now + 2.0
-                # The slider is deliberately live on top of the derived base.
-                total_delay_s = max(0.0, base_delay_s + SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0)
-                delay_bytes = int(round(total_delay_s * rate)) * frame_bytes
+                delay_bytes = int(round(base_delay_s * rate)) * frame_bytes
                 # Audio to account for since the previous frame.  Clamped to two
                 # intervals so a scheduling hiccup cannot turn one frame into a
                 # long FFT sweep; the hop count is bounded again in the analysis.
@@ -2635,7 +2577,7 @@ class SpectrumAnalyzer:
                 # second until the buffered tail is genuinely finished.
                 quiet_s = max(0.0, (now - last_data_at) - drain_grace_s) if last_data_at else 0.0
                 drain_bytes = min(delay_bytes, int(quiet_s * rate) * frame_bytes)
-                if last_data_at and now - last_data_at > max(silence_timeout, total_delay_s):
+                if last_data_at and now - last_data_at > max(silence_timeout, base_delay_s):
                     publish_silence()
                     continue
                 end = len(buf) - delay_bytes + drain_bytes
@@ -2708,8 +2650,6 @@ class SpectrumAnalyzer:
                     "fft_size": fft_size,
                     "drc_delay": round(delay_bytes / frame_bytes / rate, 3),
                     "drc_delay_base": round(base_delay_s, 3),
-                    "drc_delay_delta": round(SPECTRUM_DRC_DELAY_DELTA_MS / 1000.0, 3),
-                    "drc_delay_auto_sync": SPECTRUM_DRC_DELAY_AUTO_SYNC,
                     "bands": [
                         {
                             "freq": round(b["freq"], 1),
@@ -2827,34 +2767,6 @@ def _virtual_oss_rate() -> int | None:
         return int(value) if value else None
     except ValueError:
         return None
-
-
-def _virtual_oss_block_seconds() -> float | None:
-    """Length of one virtual_oss transfer block, from its own `-s` argument.
-
-    `-s` is written either as a frame count (`-s 1024`) or as a duration
-    (`-s 200ms`, which is what drc.sh uses).  A frame count only becomes a
-    duration at the rate virtual_oss was started with, so `-r` is read too.
-    Returns None when virtual_oss is not running — the loopback is then not in
-    the path at all, and the caller must not charge the display for it.
-    """
-    args = _virtual_oss_args()
-    if not args:
-        return None
-    raw = (_argv_option(args, "-s") or "").strip().lower()
-    if not raw:
-        return None
-    m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(ms|s)?', raw)
-    if not m:
-        return None
-    value = float(m.group(1))
-    unit = m.group(2)
-    if unit == "ms":
-        return value / 1000.0
-    if unit == "s":
-        return value
-    rate = _virtual_oss_rate()
-    return (value / rate) if rate else None
 
 
 def _alsa_hw_params() -> dict | None:
@@ -3572,9 +3484,7 @@ def _resolve_state_dir() -> str:
 
 
 _STATE_DIR = _resolve_state_dir()
-_DELTA_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-delta")
 _FLOOR_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-floor-db")
-_AUTO_SYNC_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-auto-sync")
 _BRUTEFIR_ATTENUATION_FILE = os.path.join(_STATE_DIR, "brutefir-attenuation-db")
 _BRUTEFIR_ATTENUATION_MIN_DB = 2.0
 _BRUTEFIR_ATTENUATION_MAX_DB = 12.0
@@ -3603,11 +3513,6 @@ def _audio_diagnostics() -> AudioDiagnosticsMonitor:
     return _AUDIO_DIAGNOSTICS_MONITOR
 
 
-def _clamp_delta(ms: float) -> float:
-    return max(SPECTRUM_DRC_DELAY_DELTA_MIN_MS,
-               min(SPECTRUM_DRC_DELAY_DELTA_MAX_MS, float(ms)))
-
-
 def _read_state_float(path: str) -> float | None:
     """A single float saved by a previous run, or None if unset/unreadable."""
     try:
@@ -3615,18 +3520,6 @@ def _read_state_float(path: str) -> float | None:
             return float(fh.read().strip())
     except (OSError, ValueError):
         return None
-
-
-def _read_state_bool(path: str) -> bool | None:
-    """A one-line boolean saved by a previous run, or None if unset."""
-    value = _read_state_str(path)
-    if value is None:
-        return None
-    if value.lower() in ("1", "true", "yes", "on"):
-        return True
-    if value.lower() in ("0", "false", "no", "off"):
-        return False
-    return None
 
 
 def _write_state_float(path: str, val: float) -> None:
@@ -3779,36 +3672,29 @@ def _set_brutefir_attenuation(db: float) -> None:
 # ── DRC display-sync delay ────────────────────────────────────────────────────
 # The analyzer's tap is upstream of the whole playback chain — MPD's second FIFO
 # output, or omdrc-cdin teeing the period it is about to hand to /dev/dsp.play —
-# so the browser must hold the display back by everything between that tap and
-# the speaker.  Earlier versions counted only BruteFIR and were short by more
-# than a second, which is exactly what a listener sees as the plots running on
-# after the music has stopped.  Every stage now gets its own term:
+# so what is drawn must be held back by everything between that tap and the
+# speaker.  The box holds back only what it can MEASURE:
 #
-#   virtual_oss    blocks x `-s`         the writer's client ring, the mix block
-#                                        and the `-L` loopback ring, read out of
-#                                        the running process's own arguments.
-#                                        Written as a duration (`-s 200ms`), so
-#                                        this term does NOT scale with the rate.
-# + filter group   argmax(|h|) / rate    the impulse-response peak.  BruteFIR's
+#   filter group   argmax(|h|) / rate    the impulse-response peak.  BruteFIR's
 #                                        built-in `dirac pulse` — the shipped
-#                                        flat default — peaks at index 0, so
-#                                        this term is genuinely zero there and
-#                                        the convolver terms below are the whole
-#                                        of BruteFIR's contribution.
+#                                        flat default — peaks at index 0.
 # + convolver      filter_length / rate  one partition, from `filter_length`
-# + BruteFIR I/O   n x filter_length     its double-buffered OSS input and output
-# + output         drc_output_delay_ms   the DAC's OSS buffer and the USB pipeline
+# + direct         kernel `delay`        DRC off (Linux): what MPD has queued in
+#                                        the DAC's ALSA buffer, read live
+# - margin         drc_delay_margin_ms   so the frames always arrive early
 #
-# The first four are read from the live chain; only the last is a constant, and
-# every one of them is exposed to the panel so a wrong term can be seen rather
-# than guessed at.  Stages that are not running contribute nothing: with the
-# chain down (MPD straight to the DAC) the total is zero.  See
-# video/AV-SYNC-DELAY.md for the derivation and omdrc-ctrl/tools/ for the
-# cross-correlation harness that measures the real figure end to end.
+# Everything else — virtual_oss and BruteFIR's I/O buffers, the DAC and USB with
+# DRC on, the network, the screen — is left to each screen's own calibrated delay
+# (kiosk Config -> Meter timing), which measures it instead of modelling it.  A
+# screen can only wait, never anticipate: hence the margin, and hence no stage
+# that is merely estimated, since an over-estimate would put the frames behind
+# the sound where no screen can fix them.  The analyzer re-derives this every
+# 2 s while a stream is open, so a DRC switch, a filter or a rate change is
+# followed without a reconnect; with no stream open nothing is computed.
 #
 # The expensive part is reading the FIR to find its peak; that stays keyed on
-# the filter's mtime.  The rest is a couple of `ps` reads behind a short TTL,
-# because virtual_oss can restart at a new rate under a running analyzer.
+# the filter's mtime.  The rest is a `ps` read and a couple of /proc reads
+# behind a short TTL.
 
 _BRUTEFIR_DEFAULTS = os.path.join(
     os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
@@ -3875,40 +3761,11 @@ def _fir_group_delay_cached(fn: str, fmt: str, rate: int) -> float:
 
 
 def _drc_display_delay_terms() -> dict:
-    """Every stage between the analyzer's tap and the speaker, in seconds.
-
-    Returned term by term rather than pre-summed: the panel shows the breakdown,
-    and a chain estimate that is wrong is far easier to correct when it says
-    which stage it thinks is responsible.  `total` is the sum actually applied.
-
-    With "Auto sync delay" off the three *modelled* stages — virtual_oss, the
-    BruteFIR I/O buffers and the DAC — are replaced wholesale by the configured
-    `drc_delay_trim_ms`, so a listener who has measured their own chain can pin
-    that residual and ignore the model.  The two stages that are read straight
-    out of the filter (group delay and the convolver partition) are facts, not
-    estimates, and stand in both modes.  The interactive slider delta is a
-    separate correction on top, also in both modes.
-    """
-    auto = bool(SPECTRUM_DRC_DELAY_AUTO_SYNC)
-    terms = {
-        "virtual_oss": 0.0,
-        "group": 0.0,
-        "convolver": 0.0,
-        "brutefir_io": 0.0,
-        "output": 0.0,
-        "trim": 0.0,
-        "direct": 0.0,
-        "auto": auto,
-        "total": 0.0,
-    }
+    """The measured stages between the analyzer's tap and the speaker, in seconds,
+    and `total` = their sum minus the margin (never below zero): what the frames
+    are held back by.  Term by term, so the panel can show where it comes from."""
+    terms = {"group": 0.0, "convolver": 0.0, "direct": 0.0, "margin": 0.0, "total": 0.0}
     try:
-        if auto:
-            block = _virtual_oss_block_seconds()
-            if block:
-                terms["virtual_oss"] = SPECTRUM_DRC_VOSS_BLOCKS * block
-        else:
-            terms["trim"] = max(0.0, SPECTRUM_DRC_DELAY_TRIM_MS / 1000.0)
-
         conf = _active_brutefir_conf()
         if conf:
             parsed = _parse_brutefir_conf(conf)
@@ -3921,29 +3778,17 @@ def _drc_display_delay_terms() -> dict:
                 part = _brutefir_partition_size(_read_text_quietly(conf))
                 if part:
                     terms["convolver"] = part / rate
-                    if auto:
-                        terms["brutefir_io"] = (
-                            SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS * part / rate)
-
-        # The DAC term only exists while something is actually feeding it
-        # through the chain.  With virtual_oss and BruteFIR both down the tap
-        # is not upstream of anything the analyzer knows about, and reporting a
-        # bare 150 ms would be a fiction.
-        if auto and (terms["virtual_oss"] or terms["convolver"] or terms["group"]):
-            terms["output"] = SPECTRUM_DRC_OUTPUT_DELAY_MS / 1000.0
 
         # DRC off: MPD writes straight to the DAC, and what it has queued there is
-        # still ahead of the listener - half a second with a 0.5 s ALSA buffer.  This
-        # is measured (the kernel's own figure for the stream), so it applies whether
-        # "Auto sync delay" is on or not.
-        if not (terms["virtual_oss"] or terms["convolver"] or terms["group"]):
+        # still ahead of the listener - half a second with a 0.5 s ALSA buffer.
+        if not (terms["convolver"] or terms["group"]):
             terms["direct"] = _direct_output_delay_seconds()
     except (OSError, ValueError, KeyError):
         return terms
 
-    terms["total"] = max(0.0, terms["virtual_oss"] + terms["group"]
-                         + terms["convolver"] + terms["brutefir_io"]
-                         + terms["output"] + terms["trim"] + terms["direct"])
+    measured = terms["group"] + terms["convolver"] + terms["direct"]
+    terms["margin"] = min(measured, SPECTRUM_DRC_DELAY_MARGIN_MS / 1000.0)
+    terms["total"] = measured - terms["margin"]
     return terms
 
 
@@ -3978,15 +3823,13 @@ def _drc_display_delay_breakdown() -> dict:
     `settings()` runs on every page render and the analyzer re-derives on each
     source attachment; two `ps` scans per call is more than either needs.  The
     TTL covers only what has to be *discovered* (which processes are up, with
-    which arguments).  Everything the operator can change — the mode toggle,
-    the tunables a config reload rewrites — is part of the key, so a setting
-    never appears not to have taken for a couple of seconds.
+    which arguments).  The margin, which a config reload can change, is part of
+    the key, so a new value never appears not to have taken for a couple of
+    seconds.
     """
     global _DRC_TERMS_CACHE
 
-    key = (SPECTRUM_DRC_DELAY_AUTO_SYNC, SPECTRUM_DRC_DELAY_TRIM_MS,
-           SPECTRUM_DRC_BRUTEFIR_IO_PARTITIONS, SPECTRUM_DRC_VOSS_BLOCKS,
-           SPECTRUM_DRC_OUTPUT_DELAY_MS)
+    key = (SPECTRUM_DRC_DELAY_MARGIN_MS,)
     at, cached_key, cached = _DRC_TERMS_CACHE
     now = time.monotonic()
     if cached and cached_key == key and now - at < _DRC_TERMS_TTL:
@@ -3997,25 +3840,19 @@ def _drc_display_delay_breakdown() -> dict:
 
 
 def _drc_display_delay_seconds() -> float:
-    """Seconds to hold the tap-derived display back so it matches what is heard.
-
-    0 when nothing of the chain is up — the tap is then not ahead of the DAC by
-    anything this can account for."""
+    """Seconds to hold the tap-derived display back: the measured chain minus
+    the margin, so it still reaches every screen a little ahead of the sound."""
     return _drc_display_delay_breakdown().get("total", 0.0)
 
 
-# The order the panel lists the stages in, which is the order the audio meets
-# them.  `auto` is a flag, not a duration, and is carried alongside.
-_DRC_DELAY_TERM_ORDER = ("virtual_oss", "group", "convolver", "brutefir_io",
-                         "output", "trim", "direct", "total")
+# The order the panel lists the stages in, which is the order the audio meets them.
+_DRC_DELAY_TERM_ORDER = ("group", "convolver", "direct", "margin", "total")
 
 
 def _drc_delay_terms_ms(terms: dict) -> dict:
     """The breakdown in milliseconds, for the panel."""
-    out = {k: round(float(terms.get(k, 0.0)) * 1000.0, 1)
-           for k in _DRC_DELAY_TERM_ORDER}
-    out["auto"] = bool(terms.get("auto"))
-    return out
+    return {k: round(float(terms.get(k, 0.0)) * 1000.0, 1)
+            for k in _DRC_DELAY_TERM_ORDER}
 
 
 def _coeff_channel(coeff: dict) -> str:
@@ -7809,52 +7646,6 @@ def spectrum_settings():
         "frame": frame,
         **_SPECTRUM.settings(),
     })
-
-
-@app.route("/spectrum/drc-delay", methods=["POST"])
-def spectrum_drc_delay():
-    """Set (and remember) the DRC-sync slider delta in milliseconds."""
-    global SPECTRUM_DRC_DELAY_DELTA_MS
-    raw = request.form.get("delta_ms", request.args.get("delta_ms"))
-    if raw is None and request.is_json:
-        raw = (request.get_json(silent=True) or {}).get("delta_ms")
-    try:
-        delta = _clamp_delta(float(raw))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "delta_ms must be a number"}), 400
-    SPECTRUM_DRC_DELAY_DELTA_MS = delta
-    _write_state_float(_DELTA_STATE_FILE, delta)
-    terms = _drc_display_delay_breakdown()
-    base_ms = round(terms.get("total", 0.0) * 1000.0, 1)
-    return jsonify({
-        "ok": True,
-        "drc_delay_delta_ms": round(delta, 1),
-        "drc_delay_base_ms": base_ms,
-        "drc_delay_terms_ms": _drc_delay_terms_ms(terms),
-        "drc_delay_total_ms": round(max(0.0, base_ms + delta), 1),
-        "drc_delay_delta_min_ms": round(SPECTRUM_DRC_DELAY_DELTA_MIN_MS, 1),
-        "drc_delay_delta_max_ms": round(SPECTRUM_DRC_DELAY_DELTA_MAX_MS, 1),
-    })
-
-
-@app.route("/spectrum/drc-delay-auto-sync", methods=["POST"])
-def spectrum_drc_delay_auto_sync():
-    """Enable or freeze the live DRC-delay recalculation for a running card."""
-    global SPECTRUM_DRC_DELAY_AUTO_SYNC
-    raw = request.form.get("enabled", request.args.get("enabled"))
-    if raw is None and request.is_json:
-        raw = (request.get_json(silent=True) or {}).get("enabled")
-    if isinstance(raw, bool):
-        enabled = raw
-    elif str(raw).lower() in ("1", "true", "yes", "on"):
-        enabled = True
-    elif str(raw).lower() in ("0", "false", "no", "off"):
-        enabled = False
-    else:
-        return jsonify({"ok": False, "error": "enabled must be a boolean"}), 400
-    SPECTRUM_DRC_DELAY_AUTO_SYNC = enabled
-    _write_state_str(_AUTO_SYNC_STATE_FILE, "1" if enabled else "0")
-    return jsonify({"ok": True, "drc_delay_auto_sync": enabled})
 
 
 @app.route("/spectrum/floor", methods=["POST"])

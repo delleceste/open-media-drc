@@ -24,55 +24,154 @@ P.timingCard = () => {
     const set = ms => { K.sync.setDelayMs(ms); value.textContent = `${K.sync.delayMs()} ms`; };
     const step = d => h('button', { class: 'btn step', type: 'button', onclick: () => set(K.sync.delayMs() + d) }, (d > 0 ? '+' : '−') + Math.abs(d));
     const result = h('p', { class: 'muted small' }, P.lastCal || '');
-    const calibrate = async (clicks = false) => {
+    const onMusic = async () => {
         let res = null;
-        if (clicks && !(await K.confirm({
-            title: 'Precise calibration',
-            message: 'The box pauses what is playing, plays about 11 seconds of quiet tone bursts (−30 dBFS, safe at your normal listening volume) through the speakers, then puts the music back where it was. Keep your usual volume and hold the phone near the speakers.',
-            ok: 'Play the bursts' }))) return;
         // the log is shown live while it runs, and stays up afterwards to be copied
         const sheet = P.logSheet('Calibrating…');
         const unsub = K.sync.onLog(line => sheet.append(line));
         try {
-            for (let attempt = 1; attempt <= (clicks ? 1 : 3); attempt++) {
+            for (let attempt = 1; attempt <= 3; attempt++) {
                 if (attempt > 1) sheet.append(`\n==================== attempt ${attempt} of 3 ====================\n`);
-                res = await K.sync.calibrate({ seconds: clicks ? 14 : 10, clicks, onTick: left =>
-                    sheet.status(clicks ? `Listening for ${left} s — the box is playing the bursts`
-                                        : `Attempt ${attempt} of 3 · listening for ${left} s — hold the phone near the speakers while the music plays`) });
-                if (res.ok || /microphone|app|click/.test(res.error || '')) break;
+                res = await K.sync.calibrate({ seconds: 10, onTick: left =>
+                    sheet.status(`Attempt ${attempt} of 3 · listening for ${left} s — hold the phone near the speakers while the music plays`) });
+                if (res.ok || /microphone|app/.test(res.error || '')) break;
             }
         } finally { unsub(); }
-        if (res.ok && res.lagMs >= 0) {
-            set(res.lagMs);
-            P.lastCal = `Calibrated: the meters led the sound by ${res.lagMs} ms (match ${res.r}); this device now waits ${res.lagMs} ms.`;
-            K.toast(`Meter delay set to ${res.lagMs} ms`);
-        } else if (res.ok) {
-            set(0);
-            P.lastCal = `The meters arrive ${-res.lagMs} ms after the sound (match ${res.r}): this device cannot catch up. Lower the server's DRC sync delta by about that much, or accept the lag.`;
-        } else P.lastCal = `Calibration failed: ${res.error}${res.r !== undefined ? ` (match ${res.r})` : ''}.`;
+        P.lastCal = P.applyCal(res);
         result.textContent = P.lastCal;
+        value.textContent = `${K.sync.delayMs()} ms`;
         sheet.status(P.lastCal, true);
     };
     return K.card('Meter timing',
         h('p', { class: 'muted small' }, 'Extra delay for this screen, on top of the box’s own chain delay: the meters and spectrum are drawn this long after they arrive. Stored on this device only.'),
         h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50),
             h('button', { class: 'btn', type: 'button', onclick: () => set(0) }, 'Reset')),
-        K.sync.canCalibrate()
-            ? h('div', {},
-                h('div', { class: 'btn-row' },
-                    h('button', { class: 'btn primary', type: 'button', onclick: () => calibrate(false) }, 'Calibrate on the music'),
-                    h('button', { class: 'btn', type: 'button', onclick: () => calibrate(true) }, 'Precise (plays clicks)')),
-                h('div', { class: 'lbl' }, 'Recalibrate automatically when a track starts or playback resumes'),
-                K.segmented([{ value: true, label: 'On' }, { value: false, label: 'Off' }], !!K.pref('sync.auto', false),
-                    v => { K.setPref('sync.auto', v); P.render(); }),
-                h('p', { class: 'muted small' }, 'Uses the microphone for 8 s at most every two minutes, only on Now playing; Android shows its microphone indicator meanwhile.'))
-            : h('p', { class: 'muted small' }, 'Automatic calibration needs the OMDRC Android app (it uses the phone’s microphone).'),
+        h('div', { class: 'btn-row' },
+            h('button', { class: 'btn primary', type: 'button', onclick: () => P.tuneSheet() }, 'Tune with clicks'),
+            K.sync.canCalibrate() ? h('button', { class: 'btn', type: 'button', onclick: onMusic }, 'Calibrate on the music') : null),
+        h('p', { class: 'muted small' }, K.sync.canCalibrate()
+            ? 'Tune with clicks shows the level bars while the box plays a train of tone bursts: the phone measures and sets the delay, then plays them again so you can see the bars land on the sound.'
+            : 'Tune with clicks shows the level bars while the box plays a train of tone bursts; set the delay by eye. The OMDRC Android app can also measure it with the phone’s microphone.'),
+        K.sync.canCalibrate() ? h('div', {},
+            h('div', { class: 'lbl' }, 'Recalibrate automatically when a track starts or playback resumes'),
+            K.segmented([{ value: true, label: 'On' }, { value: false, label: 'Off' }], !!K.pref('sync.auto', false),
+                v => { K.setPref('sync.auto', v); P.render(); }),
+            h('p', { class: 'muted small' }, 'On the music, for 8 s at most every two minutes, only on Now playing; a blue light blinks over the meters meanwhile, and Android shows its microphone indicator.')) : null,
         result,
         h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', onclick: () => {
             const text = K.sync.lastLog();
             if (!text) { K.toast('No calibration has run on this device yet'); return; }
             P.logSheet('Last calibration log (kept on this device)').set(text);
         } }, 'Calibration log')));
+};
+
+// A calibration result into the delay; the sentence that says what happened.
+P.applyCal = res => {
+    if (res.ok && res.lagMs >= 0) {
+        K.sync.setDelayMs(res.lagMs);
+        return `Calibrated: the meters led the sound by ${res.lagMs} ms (match ${res.r}); this device now waits ${res.lagMs} ms.`;
+    }
+    if (res.ok) {
+        K.sync.setDelayMs(0);
+        return `The meters arrive ${-res.lagMs} ms after the sound (match ${res.r}): this device cannot catch up. Raise drc_delay_margin_ms in the box's [spectrum] configuration by about that much.`;
+    }
+    return `Calibration failed: ${res.error}${res.r !== undefined ? ` (match ${res.r})` : ''}.`;
+};
+
+// Tuning with the click track, meters in view.  The level bars run only while this
+// sheet is open.  Start: the clicks play with the current delay (the "before"), the
+// phone measures and sets the delay, then the clicks play again (the "after"),
+// measured once more, with frames timed when drawn.  Play again repeats the check.
+// Without the app's microphone the clicks just play and the delay is set by eye.
+const VERIFY_TOL_MS = 30;
+P.tuneSheet = () => {
+    const mic = K.sync.canCalibrate();
+    const meterHost = h('div', { class: 'tune-meter' });
+    const status = h('div', { class: 'cal-status' }, mic
+        ? 'Hold the phone near the speakers at your usual volume. The box stops what is playing and plays about 11 s of quiet tone bursts (−30 dBFS).'
+        : 'The box stops what is playing and plays about 11 s of quiet tone bursts (−30 dBFS). Watch the bars and adjust the delay until they flick with each click.');
+    const lines = h('div', { class: 'tune-results' });
+    const value = h('strong', { class: 'timing-value' }, `${K.sync.delayMs()} ms`);
+    const show = () => { value.textContent = `${K.sync.delayMs()} ms`; };
+    const step = d => h('button', { class: 'btn step', type: 'button', onclick: () => { K.sync.setDelayMs(K.sync.delayMs() + d); show(); } }, (d > 0 ? '+' : '−') + Math.abs(d));
+    const note = text => lines.append(h('div', {}, text));
+    let busy = false, closed = false;
+    const startBtn = h('button', { class: 'btn primary', type: 'button', onclick: () => run(true) }, mic ? 'Start' : 'Play the clicks');
+    const againBtn = h('button', { class: 'btn', type: 'button', hidden: true, onclick: () => run(false) }, 'Play again');
+    const logBtn = h('button', { class: 'btn', type: 'button', hidden: !mic, onclick: () => {
+        const text = K.sync.lastLog();
+        if (text) P.logSheet('Last calibration log (kept on this device)').set(text); else K.toast('No log yet');
+    } }, 'Log');
+    const closeBtn = h('button', { class: 'btn', type: 'button', onclick: () => close() }, 'Close');
+    const setBusy = b => { busy = b; startBtn.disabled = againBtn.disabled = closeBtn.disabled = b; };
+
+    const vu = new K.VuMeter(meterHost, 'bars');
+    const level = K.streams.open('vu', d => {
+        if (d.ok && d.state === 'running') vu.update(d.vu); else vu.snap({});
+    });
+
+    const verify = async label => {
+        status.textContent = `${label}: playing the bursts with ${K.sync.delayMs()} ms — watch the bars`;
+        const res = await K.sync.calibrate({ seconds: 14, verify: true, onTick: left =>
+            status.textContent = `${label}: playing the bursts with ${K.sync.delayMs()} ms — ${left} s` });
+        if (!res.ok) { note(`${label}: could not measure (${res.error}).`); return res; }
+        const off = res.lagMs, spread = res.spreadMs ? ` (clicks ${res.spreadMs.join(' to ')} ms)` : '';
+        note(Math.abs(off) <= VERIFY_TOL_MS
+            ? `${label}: in sync — the bars land within ${Math.abs(off)} ms of the sound${spread}.`
+            : `${label}: the bars are ${off > 0 ? `${off} ms ahead of` : `${-off} ms behind`} the sound${spread}.`);
+        return res;
+    };
+    const run = async first => {
+        if (busy) return;
+        setBusy(true);
+        try {
+            if (!mic) {
+                const r = await K.sync.playClicks({ onTick: left => { status.textContent = `Playing the bursts with ${K.sync.delayMs()} ms — ${left} s`; } });
+                status.textContent = r.ok ? 'Done. Adjust the delay and play again until the bars flick with each click.' : `Could not play: ${r.error}`;
+                return;
+            }
+            if (!first) {
+                const res = await verify('Check');
+                if (res.ok && Math.abs(res.lagMs) > VERIFY_TOL_MS && K.sync.delayMs() + res.lagMs >= 0) {
+                    K.sync.setDelayMs(K.sync.delayMs() + res.lagMs); show();
+                    note(`Corrected to ${K.sync.delayMs()} ms — Play again to see it.`);
+                }
+                status.textContent = 'Done.';
+                return;
+            }
+            // before: the clicks with the current delay, measured on arrival
+            status.textContent = `Before: playing the bursts with ${K.sync.delayMs()} ms — watch the bars`;
+            const res = await K.sync.calibrate({ seconds: 14, clicks: true, onTick: left =>
+                status.textContent = `Before: playing the bursts with ${K.sync.delayMs()} ms — ${left} s` });
+            P.lastCal = P.applyCal(res);
+            note(`Before: ${P.lastCal}`);
+            show();
+            if (!res.ok || closed) { status.textContent = 'Stopped.'; return; }
+            // after: the same clicks with the new delay
+            const after = await verify('After');
+            status.textContent = after.ok && Math.abs(after.lagMs) <= VERIFY_TOL_MS
+                ? 'Done. Play again whenever you want to re-check.'
+                : 'Done, but not in sync: Play again re-measures and corrects.';
+        } finally {
+            if (!closed) { setBusy(false); againBtn.hidden = false; }
+        }
+    };
+    // Close waits for a run to end; leaving the page (force) does not: the level
+    // bars stop at once, and a run in progress finishes on its own.
+    const close = (force = false) => {
+        if (busy && !force) return;
+        closed = true; P.tuneClose = null;
+        level.close(); vu.destroy(); scrim.remove();
+        if (P.left && !force) P.render();
+    };
+    P.tuneClose = close;
+    const scrim = h('div', { class: 'scrim' }, h('div', { class: 'sheet cal-sheet tune-sheet' },
+        h('div', { class: 'cal-title' }, 'Meter timing'),
+        meterHost,
+        h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50)),
+        status, lines,
+        h('div', { class: 'btn-row' }, startBtn, againBtn, logBtn, closeBtn)));
+    document.getElementById('overlay-root').append(scrim);
 };
 
 // A sheet with the calibration log: live while a run appends to it, selectable,
@@ -123,7 +222,7 @@ P.render = function render() {
     if (!P.left) return;
     const opt = (key, dflt, options) => K.segmented(options, K.pref(key, dflt), v => { K.setPref(key, v); P.render(); K.applyPrefs && K.applyPrefs(); });
 
-    K.clear(P.left).append(
+    K.clear(P.left).append(...[      // (append() would print a null as "null")
         window.OmdrcApp ? K.card('Android app',
             h('p', { class: 'muted small' }, 'View (kiosk or full web page), keeping the screen on while “Now playing” is showing, hiding the Android bars, and the server address are set in the app’s own settings.'),
             h('button', { class: 'btn', type: 'button', onclick: () => window.OmdrcApp.openSettings() }, 'App settings')) : null,
@@ -157,7 +256,7 @@ P.render = function render() {
                 : 'The phone or panel may switch its display off on its own timeout.'),
             !window.OmdrcApp && K.awake.enabled() && K.awake.mode !== 'wake lock' ? h('p', { class: 'muted small' }, P.awakeTip()) : null,
             h('div', { class: 'btn-row' }, window.OmdrcApp ? null : h('button', { class: 'btn', type: 'button', onclick: () => K.toggleFullscreen() }, 'Toggle fullscreen'),
-                h('button', { class: 'btn', type: 'button', onclick: () => location.reload() }, 'Reload kiosk'))));
+                h('button', { class: 'btn', type: 'button', onclick: () => location.reload() }, 'Reload kiosk')))].filter(Boolean));
 
     const link = (label, url) => h('button', { class: 'btn link', type: 'button', onclick: () => K.frame(url, label) }, label + ' ↗');
     K.clear(P.right).append(
@@ -174,6 +273,8 @@ P.render = function render() {
             h('p', { class: 'muted small' }, 'The desktop UI has everything, including the Qobuz sign-in flow.'),
             h('button', { class: 'btn', type: 'button', onclick: () => { location.href = '/'; } }, 'Open the full panel')));
 };
+
+P.hide = () => { if (P.tuneClose) P.tuneClose(true); };
 
 P.show = () => { P.render(); setTimeout(() => { if (P.left && P.left.isConnected) P.render(); }, 1500); };   // the keep-awake method settles just after load
 

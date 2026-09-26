@@ -94,19 +94,25 @@ def transport():
 # A precise, optional alternative to calibrating on the music: MPD plays a short
 # track of clicks through the normal path (so the meters and the speakers both get
 # it) while the phone listens; irregular spacing makes the match unambiguous.
-# Playback is paused for it and put back afterwards, queue and position included.
+#
+# It plays in a partition of its own, never in the main queue: that queue may
+# belong to the Qobuz Connect bridge, which treats any edit as foreign, forces
+# its own track back on and loses its session ("Current track not found in
+# queue").  The music is stopped (not resumed afterwards), the enabled outputs
+# are borrowed into the side partition for the clicks, then handed back.
 
 CLICK_LEAD_S = 1.0
 CLICK_GAPS_MS = (700, 530, 860, 610, 940, 480, 770, 650, 890, 560, 720, 830, 590)
 CLICK_TAIL_S = 1.2
 # Quiet on purpose: a calibration runs at whatever volume the room is listening
 # at, and a train of bursts must never stress a tweeter.  -30 dBFS is 30 dB under
-# the loudest music; the music is paused meanwhile, so the phone still hears them
+# the loudest music; the music is stopped meanwhile, so the phone still hears them
 # well above the room's silence (the page detects relative to it).
 CLICK_DBFS = -30.0
 CLICK_HZ = 1000
 CLICK_BURST_MS = 8
 _CLICK_URL_MARK = "/k/api/clicks.wav"
+_CLICK_PARTITION = "omdrc-cal"
 _click_lock = threading.Lock()
 
 
@@ -182,40 +188,82 @@ class _Mpd:
             out.setdefault(key.lower(), value)
         raise RuntimeError("MPD closed the connection")
 
+    def lines(self, command: str) -> list:
+        """Run one command; the reply's raw lines (for replies that repeat keys)."""
+        self.sock.sendall((command + "\n").encode())
+        out = []
+        for line in self.f:
+            line = line.rstrip("\n")
+            if line == "OK":
+                return out
+            if line.startswith("ACK"):
+                raise RuntimeError(line)
+            out.append(line)
+        raise RuntimeError("MPD closed the connection")
+
+    def outputs(self) -> list:
+        """This partition's outputs, one dict each."""
+        outs = []
+        for line in self.lines("outputs"):
+            key, _, value = line.partition(": ")
+            if key == "outputid":
+                outs.append({})
+            if outs:
+                outs[-1][key.lower()] = value
+        return outs
+
 
 def _quote(v: str) -> str:
     return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _run_click_test(url: str, before: dict):
+def _return_outputs(names):
+    """Hand borrowed outputs back to the default partition and drop the side one.
+    Also the cleanup for a run that died half way (names = whatever is there)."""
+    with _Mpd() as mpd:
+        for name in names:
+            try:
+                mpd.cmd("moveoutput " + _quote(name))
+            except Exception:
+                pass
+        try:
+            mpd.cmd("delpartition " + _quote(_CLICK_PARTITION))
+        except Exception:
+            pass                              # never created, or already gone
+
+
+def _stale_partition_outputs() -> list | None:
+    """Outputs left in the side partition by an interrupted run."""
+    with _Mpd() as mpd:
+        if "partition: " + _CLICK_PARTITION not in mpd.lines("listpartitions"):
+            return None
+        mpd.cmd("partition " + _quote(_CLICK_PARTITION))
+        names = [o.get("outputname") for o in mpd.outputs() if o.get("plugin") != "dummy"]
+        mpd.cmd("partition default")      # a client inside blocks delpartition
+        return names
+
+
+def _run_click_test(url: str, borrowed: list):
     try:
         with _Mpd() as mpd:
+            mpd.cmd("partition " + _quote(_CLICK_PARTITION))
             song_id = mpd.cmd("addid " + _quote(url))["id"]
             mpd.cmd("playid " + song_id)
             started, deadline = False, time.monotonic() + 30
             while time.monotonic() < deadline:
                 time.sleep(0.2)
                 st = mpd.cmd("status")
-                ours = st.get("songid") == song_id and st.get("state") == "play"
-                if ours:
+                if st.get("state") == "play":
                     started = True
                 elif started or time.monotonic() > deadline - 22:
                     break                     # finished, or it never started
+            mpd.cmd("stop")
+            mpd.cmd("partition default")  # a client inside blocks delpartition
     except Exception:
         pass
     finally:
         try:
-            with _Mpd() as mpd:
-                mpd.cmd("stop")
-                try:
-                    mpd.cmd("deleteid " + song_id)
-                except Exception:
-                    pass                      # consume mode may have removed it already
-                pos, elapsed = before.get("song"), before.get("elapsed")
-                if before.get("state") in ("play", "pause") and pos is not None:
-                    seek = f"seek {pos} {elapsed or '0'}"
-                    # paused: seek and pause as one command list, so nothing is heard
-                    mpd.cmd(seek) if before["state"] == "play" else mpd.cmd(seek, "pause 1")
+            _return_outputs(borrowed)
         except Exception:
             pass
         _click_lock.release()
@@ -223,20 +271,38 @@ def _run_click_test(url: str, before: dict):
 
 @bp.route("/api/clicktest", methods=["POST"])
 def clicktest():
-    """Pause what is playing, play the click track through MPD, then put it back.
-    Returns at once; the track takes about 11 s."""
+    """Stop what is playing and play the click track through MPD in a side
+    partition.  Returns at once; the track takes about 11 s."""
     if not _click_lock.acquire(blocking=False):
         return jsonify({"ok": False, "error": "a click test is already running"}), 409
+    borrowed = []
     try:
+        stale = _stale_partition_outputs()
+        if stale is not None:
+            _return_outputs(stale)
         with _Mpd() as mpd:
             before = mpd.cmd("status")
-            if before.get("state") == "play":
-                mpd.cmd("pause 1")
+            if before.get("state") != "stop":
+                mpd.cmd("stop")
+            names = [o["outputname"] for o in mpd.outputs()
+                     if o.get("outputenabled") == "1" and o.get("plugin") != "dummy"]
+            if not names:
+                raise RuntimeError("MPD has no enabled output to play the clicks on")
+            mpd.cmd("newpartition " + _quote(_CLICK_PARTITION))
+            mpd.cmd("partition " + _quote(_CLICK_PARTITION))
+            for name in names:
+                mpd.cmd("moveoutput " + _quote(name))
+                borrowed.append(name)
+            mpd.cmd("partition default")
         rate = int(_playback_rate() or 48000)
         host = request.host.split(":")[-1] if ":" in request.host else "80"
         url = f"http://127.0.0.1:{host}{_CLICK_URL_MARK}?rate={rate}&t={int(time.time())}"
-        threading.Thread(target=_run_click_test, args=(url, before), daemon=True).start()
+        threading.Thread(target=_run_click_test, args=(url, borrowed), daemon=True).start()
     except Exception as error:
+        try:
+            _return_outputs(borrowed)
+        except Exception:
+            pass
         _click_lock.release()
         return jsonify({"ok": False, "error": str(error)}), 500
     duration = CLICK_LEAD_S + sum(CLICK_GAPS_MS) / 1000.0 + CLICK_TAIL_S
@@ -245,7 +311,7 @@ def clicktest():
         starts.append(starts[-1] + gap)
     # everything the calibration log needs to know about what was played
     return jsonify({"ok": True, "rate": rate, "seconds": round(duration, 1),
-                    "restores": before.get("state", "stop"),
+                    "stopped": before.get("state", "stop"), "outputs": borrowed,
                     "level_dbfs": CLICK_DBFS, "tone_hz": CLICK_HZ, "burst_ms": CLICK_BURST_MS,
                     "burst_starts_ms": starts})
 

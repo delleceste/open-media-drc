@@ -69,14 +69,23 @@ measured with the phone's microphone:
 
 * **Calibrate on the music**: 10 s of the mic's peak envelope is correlated with the
   arrival of the level frames (up to 3 attempts; weak or ambiguous matches rejected).
-* **Precise (plays clicks)**: the box pauses playback, MPD plays an 11 s click track
-  (`/k/api/clicks.wav`, 14 irregularly spaced 8 ms 1 kHz tone bursts at -30 dBFS,
-  quiet enough for any normal listening volume, made at the running rate so the DRC
-  chain is not rebuilt) and then restores the queue and the playing/paused position
-  (`/k/api/clicktest`). Onsets are matched as events, detected relative to the
-  room's own noise floor rather than a fixed level.
+* **Tune with clicks**: a sheet with live level bars (the level stream runs only
+  while it is open) and the delay's ± buttons.  The box stops playback and MPD plays
+  an 11 s click track (`/k/api/clicks.wav`, 14 irregularly spaced 8 ms 1 kHz tone
+  bursts at -30 dBFS, quiet enough for any normal listening volume, made at the
+  running rate so the DRC chain is not rebuilt; `/k/api/clicktest`).  *Start* plays
+  it with the current delay ("before"), measures and applies the delay, then plays
+  it again ("after") timing the frames when they are *drawn*, delay included, so the
+  result is what is left over.  *Play again* repeats that check and offers the
+  correction beyond ±30 ms.  Onsets are matched as events, detected relative to the
+  room's own noise floor rather than a fixed level.  Without the app's microphone
+  the clicks just play, for setting the delay by eye.
+  The clicks play in a temporary MPD partition (`omdrc-cal`) that borrows the
+  enabled outputs and hands them back afterwards: the main queue is never touched,
+  because Qobuz Connect (qobuzconnect2mpd) owns it and reacts to any foreign edit.
 * **Automatic** (off by default): at a track start or when playback resumes after
   silence, listen 8 s and fold confident results in (median of 3), at most every 2 min.
+  A blue light blinks in the Now page's track header while any calibration runs.
 
 Only a loudness envelope ever leaves the app's recorder.
 
@@ -84,7 +93,7 @@ Every run writes a plain-text **calibration log**, shown live in a sheet while i
 runs and afterwards under Config → Meter timing → *Calibration log* (the last one
 is kept on the device), with **Copy** and **Select all**: each step with its time,
 the box's delay model (`/spectrum/settings`), what the click test reported, frame
-arrival and level statistics, the detector's onsets, candidates and correlation
+arrival (or drawing, when verifying) and level statistics, the detector's onsets, candidates and correlation
 peaks, the verdict, and the raw level frames and microphone envelope.  It is meant
 to be pasted into a bug report as is.
 

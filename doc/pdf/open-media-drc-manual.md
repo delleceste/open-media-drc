@@ -953,15 +953,15 @@ any error. How CD samples reach the FIFO is OS-specific (section
 * Each band peak-holds across the publication interval, so short transients
   cannot fall between FFT windows. Rises are immediate; the browser animates
   only the release at `fall_db_per_s` (30 dB/s by default).
-* **DRC sync**: the tap is at the top of the DRC path, so the display is held
-  back by a clock-anchored estimate of the whole running chain (loopback
-  blocks, filter group delay, convolver partition, BruteFIR I/O partitions,
-  DAC/USB output delay). The card shows the term-by-term breakdown; **Auto
-  sync delay** follows rate, process and filter changes, and with it off
-  `drc_delay_trim_ms` replaces the modelled buffering. The Sync slider is
-  persistent. The estimate is configuration-derived, not acoustic;
-  `omdrc-ctrl/tools/measure-drc-delay.sh` is the disruptive end-to-end
-  calibration.
+* **Meter timing**: the tap is at the top of the audio path, so the display
+  is held back, clock-anchored, by what the box can measure (filter group
+  delay and convolver partition with DRC on; the DAC buffer with DRC off)
+  minus `drc_delay_margin_ms` (150 ms), re-derived every 2 s while a meter is
+  open. Each screen waits out the rest with its own delay, stored in the
+  browser: the kiosk calibrates it with the phone's microphone and a click
+  track, or it is set by eye (kiosk Config → Meter timing; the panel's
+  **Screen delay**). A screen can only wait, so a calibration that finds the
+  meters late calls for a larger margin.
 * With `source = auto` an open card follows MPD-to-CD hand-offs without
   closing the browser stream. Writer loss and FIFO replacement are detected,
   stale pre-pause history is dropped on resume, and a disconnected browser
@@ -2782,21 +2782,15 @@ installed, `DAC_PRIME_CYCLES` defaults to 0.
   whole protocol, so nothing happens until the panel opens the FIFO.
 * **Glitch Debug card**: section \ref{sec:fbsd-glitch}.
 
-The spectrum **DRC-sync delay model** derives these terms from configuration:
-
-| Stage | Derived value |
-|---|---|
-| virtual_oss | `drc_voss_blocks` times the running process's `-s` duration |
-| filter | peak index of the active impulse response divided by sample rate |
-| convolver | one BruteFIR `filter_length` partition |
-| BruteFIR I/O | `drc_brutefir_io_partitions` additional partitions |
-| physical output | `drc_output_delay_ms` for the OSS/DAC buffer and USB path |
-
-Defaults: three `virtual_oss` blocks, two additional BruteFIR I/O partitions
-and 150 ms of output delay. The built-in `dirac pulse` has zero group delay but
-still pays the convolver partition. `virtual_oss`'s `-s 200ms` is a duration,
-so that term is constant across rates while the partition terms shrink as the
-rate rises; with the chain down every term is zero. Hold-back is anchored to
+The spectrum **meter-timing hold-back** on FreeBSD counts the filter's peak
+index divided by the sample rate and one BruteFIR `filter_length` partition,
+minus the margin. The `virtual_oss` rings (`-s 200ms` blocks, constant across
+rates), BruteFIR's I/O buffers and the OSS/DAC/USB output are not estimated:
+they are left to each screen's calibrated delay, and the DAC buffer with DRC
+off is not read (that term is Linux-only), so with the chain down the box holds
+back nothing and the screen's delay covers the OSS buffer. The built-in
+`dirac pulse` has zero group delay but still pays the convolver partition.
+Hold-back is anchored to
 elapsed time rather than to the last byte received, so the read point drains
 the buffered tail when a writer stops and non-blocking CD-FIFO drops cannot
 walk the display out of sync; after a silence gap retained PCM is discarded

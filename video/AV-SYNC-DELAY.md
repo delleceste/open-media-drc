@@ -250,8 +250,12 @@ partition term is rate-dependent:
 ```
 delay = argmax(|h|)/rate          (group delay, from the active L.raw — §2–3)
       + filter_length/rate         (one brutefir partition — §4.2)
-      + drc_delay_trim_ms          (loopback/output buffering — §4.3)
+      - drc_delay_margin_ms        (so the frames still arrive early)
 ```
+
+(The loopback/output buffering of §4.3 is no longer added on the box: each
+screen measures it into its own delay — see omdrc-ctrl/SPECTRUM_ANALYZER.md,
+"Meter timing".)
 
 It reads the **active** brutefir conf (sampling rate + coeff file) and
 `filter_length` from `~/.config/BruteFIR/brutefir_defaults.conf`, caches the

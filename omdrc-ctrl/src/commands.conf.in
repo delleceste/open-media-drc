@@ -203,54 +203,24 @@ floor_db = -40
 fall_db_per_s = 30
 # VU display below the analyzer: bars | needles
 vu_mode = bars
-# DRC sync.  The display is fed from a tap at the TOP of the chain — MPD's
+# Meter timing.  The display is fed from a tap at the TOP of the chain — MPD's
 # second FIFO output, or the CD bridge teeing what it is about to play — so it
-# has to be held back by everything between there and the speaker, or the plots
-# run ahead of the sound and keep going after it stops.  With Auto sync on, the
-# stages are derived from the chain that is actually running:
+# has to be held back by everything between there and the speaker.  The box
+# holds it back only by what it can MEASURE, re-derived every 2 s while a meter
+# or spectrum is open (DRC on/off, filter and rate changes are followed):
 #
-#   virtual_oss     drc_voss_blocks x its own `-s` argument
 #   filter group    the impulse-response peak of the active filter (0 for the
 #                   flat `dirac pulse` default, which is a real zero)
 #   convolver       one BruteFIR partition, from `filter_length`
-#   BruteFIR I/O    drc_brutefir_io_partitions more of them
-#   output          drc_output_delay_ms
+#   direct          DRC off (Linux): the DAC buffer, read from the kernel
 #
-# The panel shows the breakdown term by term, so a figure that looks wrong can
-# be traced to the stage responsible instead of guessed at.
-#
-# How many `-s` blocks of virtual_oss sit between a writer and what BruteFIR
-# reads back: the client ring, the mix block and the `-L` loopback ring.  With
-# drc.sh's `-s 200ms` this is the single largest term in the whole chain.
-drc_voss_blocks = 3
-# BruteFIR partitions of double-buffered OSS I/O, on top of the one partition
-# the convolver itself costs.  One in flight on the input side, one on output.
-drc_brutefir_io_partitions = 2
-# The DAC's own OSS buffer plus the USB pipeline (ms) — the one stage with no
-# configuration anywhere to read it out of.
-drc_output_delay_ms = 150
-# Auto sync off: `drc_voss_blocks`, `drc_brutefir_io_partitions` and
-# `drc_output_delay_ms` are all replaced by this one measured number (ms).  What
-# is READ from the filter — group delay and the convolver partition — still
-# counts, so a trim measured with omdrc-ctrl/tools/measure-drc-delay.sh is not
-# double-counted against a model of the same buffering.  Positive = hold the
-# display back more.
-drc_delay_trim_ms = 0
-# Bounds (ms) of the interactive "Sync" slider shown under the analyzer.  The
-# slider adds a live delta on top of the measured base delay so the listener can
-# nudge the display into sync with what they hear; its position is remembered
-# across restarts.  Defaults let it travel from -1 s (show sooner) to +2 s (hold
-# back more).
-#
-# The base is a model, and on this box it lands short.  With the chain down it
-# correctly yields zero — MPD straight to the DAC already looks in sync, which
-# is the calibration point saying the model's SHAPE is right — but with DRC up
-# the real lead is larger than the terms sum to.  Closing that gap is the
-# slider's job: set it once by ear and it sticks.  A slider move now takes
-# effect on the very next frame (the capture buffer reserves the slider's full
-# travel), where it used to blank the plot for as long as the increase.
-drc_delay_delta_min_ms = -1000
-drc_delay_delta_max_ms = 2000
+# minus the margin below, so the frames always reach a screen a little early.
+# Each screen waits out the rest with its own delay (kiosk: Config -> Meter
+# timing, calibrated with the phone's microphone or set by eye with the click
+# track; desktop panel: Screen delay under the analyzer's Sliders).  A screen
+# can only wait, never anticipate: if a calibration reports the meters arriving
+# AFTER the sound, raise the margin by about that much.
+drc_delay_margin_ms = 150
 
 # -- Qobuz Connect integration ---------------------------------------------
 # Paths to the files written by qobuzconnect2mpd.  Change these if you use

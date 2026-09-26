@@ -193,8 +193,12 @@ K.streams = (() => {
             // Level and spectrum frames are drawn this device's extra delay after they
             // arrive (widgets/sync.js); DR is not time-critical.
             const wait = mode === 'dr' || !K.sync ? 0 : K.sync.delayMs();
-            if (wait > 0) setTimeout(() => s.subs.forEach(f => f(d)), wait);
-            else s.subs.forEach(f => f(d));
+            const draw = () => {
+                if (K.drawTap) K.drawTap(mode, d, Date.now());     // the post-calibration check
+                s.subs.forEach(f => f(d));
+            };
+            if (wait > 0) setTimeout(draw, wait);
+            else draw();
         };
         es.onerror = () => {
             es.close(); s.es = null;

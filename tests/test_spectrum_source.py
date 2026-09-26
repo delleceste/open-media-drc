@@ -212,54 +212,19 @@ class FifoOwnershipTest(unittest.TestCase):
                 APP.os.close(fd)
 
 
-class VirtualOssBlockTest(unittest.TestCase):
-    """virtual_oss's `-s` block, the largest term in the display-sync delay.
-
-    It is read out of the running process because nothing else records it, and
-    drc.sh starts virtual_oss under `sudo -n` — so the same command line shows
-    up twice, once wrapped.  Getting the wrapper wrong silently loses the term
-    and under-delays the display by half a second.
-    """
-
-    WRAPPED = ("sudo -n virtual_oss -D /tmp/virtual_oss.pid -r 44100 -i 8 "
-               "-C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop")
-    BARE = WRAPPED.removeprefix("sudo -n ")
-
-    def block(self, *lines):
-        with mock.patch.object(APP, "_ps_arg_lines", return_value=list(lines)):
-            return APP._virtual_oss_block_seconds()
-
-    def test_duration_form_is_rate_independent(self):
-        self.assertAlmostEqual(self.block(self.BARE), 0.200)
-
-    def test_sudo_wrapper_is_stripped(self):
-        self.assertAlmostEqual(self.block(self.WRAPPED), 0.200)
-
-    def test_frame_count_form_is_divided_by_the_running_rate(self):
-        line = self.BARE.replace("-s 200ms", "-s 4410")
-        self.assertAlmostEqual(self.block(line), 0.100)
-
-    def test_no_virtual_oss_is_not_zero_but_absent(self):
-        # None, not 0.0: "the loopback is not in the path" and "the loopback
-        # costs nothing" are different claims, and only the first is true.
-        self.assertIsNone(self.block("mpd", "brutefir /etc/brutefir.conf"))
-
-
 class DrcDelayEstimateTest(unittest.TestCase):
-    """Every stage between the analyzer's tap and the speaker gets a term.
+    """The frames are held back by the MEASURED stages minus a margin.
 
-    The shipped flat profile is `dirac pulse`, whose group delay is genuinely
-    zero — so these numbers are entirely the buffering, which is exactly the
-    part the old estimate left out and the part a listener notices when the
-    plots run on after the music has stopped.
+    Each screen adds its own calibrated delay for everything else, and a screen
+    can only wait, never anticipate: so the box must never hold the frames back
+    by more than the sound really takes.  Nothing merely estimated is counted,
+    and the margin keeps even a fully measured chain on the early side.
     """
 
     PARTITION = 8192 / 44100          # 185.8 ms, one BruteFIR block at 44.1k
-    VOSS = 3 * 0.200                  # -s 200ms x the modelled ring blocks
-    OUTPUT = 0.150                    # DAC buffer + USB
+    MARGIN = 0.150
 
-    def terms(self, auto_sync, trim_ms, voss_line=VirtualOssBlockTest.BARE,
-              conf="/active.conf"):
+    def terms(self, conf="/active.conf", filter_length="8192,64", direct=0.0):
         APP._drc_delay_cache = {"key": None, "seconds": 0.0}
         APP._DRC_TERMS_CACHE = (0.0, (), {})
         parsed = {
@@ -271,54 +236,39 @@ class DrcDelayEstimateTest(unittest.TestCase):
             }],
         }
         fake_stat = mock.Mock(st_mtime=1.0)
-        lines = [voss_line] if voss_line else []
-        with mock.patch.object(APP, "SPECTRUM_DRC_DELAY_AUTO_SYNC", auto_sync), \
-             mock.patch.object(APP, "SPECTRUM_DRC_DELAY_TRIM_MS", trim_ms), \
-             mock.patch.object(APP, "_ps_arg_lines", return_value=lines), \
+        with mock.patch.object(APP, "SPECTRUM_DRC_DELAY_MARGIN_MS", self.MARGIN * 1000), \
              mock.patch.object(APP, "_active_brutefir_conf", return_value=conf), \
              mock.patch.object(APP, "_parse_brutefir_conf", return_value=parsed), \
              mock.patch.object(APP, "_read_text_quietly",
-                               return_value="filter_length: 8192,64;"), \
+                               return_value=f"filter_length: {filter_length};"), \
+             mock.patch.object(APP, "_direct_output_delay_seconds", return_value=direct), \
              mock.patch.object(APP.os, "stat", return_value=fake_stat):
             return APP._drc_display_delay_terms()
 
-    def estimate(self, auto_sync, trim_ms, voss_line=VirtualOssBlockTest.BARE,
-                 conf="/active.conf"):
-        return self.terms(auto_sync, trim_ms, voss_line, conf)["total"]
-
-    def test_builtin_dirac_still_costs_the_convolver_and_the_buffers(self):
-        terms = self.terms(True, 0)
-        self.assertAlmostEqual(terms["group"], 0.0)
+    def test_drc_on_counts_the_filter_and_the_partition_minus_the_margin(self):
+        terms = self.terms()
+        self.assertAlmostEqual(terms["group"], 0.0)          # dirac pulse peaks at 0
         self.assertAlmostEqual(terms["convolver"], self.PARTITION)
-        self.assertAlmostEqual(terms["brutefir_io"], 2 * self.PARTITION)
-        self.assertAlmostEqual(terms["virtual_oss"], self.VOSS)
-        self.assertAlmostEqual(terms["output"], self.OUTPUT)
+        self.assertAlmostEqual(terms["direct"], 0.0)         # the DAC buffer is not ours with DRC on
+        self.assertAlmostEqual(terms["total"], self.PARTITION - self.MARGIN)
 
-    def test_the_loopback_is_the_largest_single_term(self):
-        # The regression this whole model exists for: counting BruteFIR alone
-        # accounted for 186 ms of a delay well over a second.
-        terms = self.terms(True, 0)
-        self.assertGreater(terms["virtual_oss"], terms["convolver"])
-        self.assertGreater(terms["total"], 1.0)
+    def test_drc_off_counts_the_measured_dac_buffer_minus_the_margin(self):
+        terms = self.terms(conf=None, direct=0.5)
+        self.assertAlmostEqual(terms["direct"], 0.5)
+        self.assertAlmostEqual(terms["total"], 0.5 - self.MARGIN)
 
-    def test_auto_estimate_excludes_configured_static_trim(self):
-        self.assertAlmostEqual(
-            self.estimate(True, 250),
-            3 * self.PARTITION + self.VOSS + self.OUTPUT)
+    def test_nothing_estimated_is_counted(self):
+        # virtual_oss rings, BruteFIR I/O, the DAC with DRC on: all left to the
+        # screen's calibration, because an over-estimate cannot be undone there.
+        self.assertEqual(set(self.terms()), {"group", "convolver", "direct", "margin", "total"})
 
-    def test_one_shot_mode_replaces_the_modelled_stages_with_the_trim(self):
-        # Manual mode keeps what is READ from the filter (group delay and the
-        # convolver partition) and drops what is MODELLED, so a measured trim
-        # is not double-counted against an estimate of the same buffering.
-        terms = self.terms(False, 250)
-        self.assertAlmostEqual(terms["virtual_oss"], 0.0)
-        self.assertAlmostEqual(terms["brutefir_io"], 0.0)
-        self.assertAlmostEqual(terms["output"], 0.0)
-        self.assertAlmostEqual(terms["total"], self.PARTITION + 0.250)
+    def test_the_margin_never_makes_the_hold_back_negative(self):
+        terms = self.terms(filter_length="1024,64")          # 23 ms < the margin
+        self.assertAlmostEqual(terms["total"], 0.0)
+        self.assertAlmostEqual(terms["margin"], 1024 / 44100)
 
-    def test_a_chain_that_is_down_compensates_for_nothing(self):
-        self.assertAlmostEqual(
-            self.estimate(True, 0, voss_line="", conf=None), 0.0)
+    def test_a_chain_that_is_down_and_silent_holds_back_nothing(self):
+        self.assertAlmostEqual(self.terms(conf=None)["total"], 0.0)
 
 
 class ResumeAfterSilenceTest(unittest.TestCase):
@@ -401,7 +351,6 @@ class ResumeAfterSilenceTest(unittest.TestCase):
              mock.patch.object(APP, "SPECTRUM_CDIN_FIFO", fifo), \
              mock.patch.object(APP, "SPECTRUM_CDIN_RATE", self.RATE), \
              mock.patch.object(APP, "SPECTRUM_CDIN_CAPTURE_PCM", ""), \
-             mock.patch.object(APP, "SPECTRUM_DRC_DELAY_DELTA_MS", 0.0), \
              mock.patch.object(APP, "_drc_display_delay_seconds",
                                lambda: self.DELAY_S):
             analyzer.acquire("music")
@@ -427,51 +376,21 @@ class ResumeAfterSilenceTest(unittest.TestCase):
         self.assertGreater(at, self.DELAY_S)
 
 
-class SyncSliderReachTest(unittest.TestCase):
-    """Raising the Sync slider must apply on the next frame, not seconds later.
+class DelayReserveTest(unittest.TestCase):
+    """An increase of the hold-back must apply on the next frame, not seconds later.
 
-    The capture buffer used to be trimmed to the hold-back *currently in
-    force*, and the trim runs before the section that recomputes it.  Every
-    increase therefore found the history already cut short, `start` went
-    negative, and the analyzer published `waiting` with no bands for exactly as
-    long as the increase — a frozen plot.  Dragging the slider restarted that
-    stall at every intermediate value, so the control looked completely inert,
-    which is precisely how it was reported.  Reserving the slider's full travel
-    is what makes a move take effect immediately.
+    The capture buffer is trimmed before the section that recomputes the delay,
+    so an increase (DRC switched on, a longer filter) found the history already
+    cut short and the analyzer published `waiting` - a frozen plot - for as long
+    as the increase.  A fixed reserve beyond the hold-back in force covers it.
     """
 
-    RATE = 48000
-    FRAME_BYTES = 8            # stereo S32_LE
-    FFT = 16384
-
-    def keep(self, base_s, delta_max_ms):
-        """The retained-history rule, isolated from the capture loop."""
-        need = self.FFT * self.FRAME_BYTES
-        chunk = int(self.RATE / 25) * self.FRAME_BYTES
-        with mock.patch.object(APP, "SPECTRUM_DRC_DELAY_DELTA_MAX_MS", delta_max_ms):
-            reach = max(0.0, base_s + APP.SPECTRUM_DRC_DELAY_DELTA_MAX_MS / 1000.0)
-            return need + int(reach * self.RATE) * self.FRAME_BYTES + chunk * 3
-
-    def test_history_covers_the_whole_slider_travel(self):
-        base, delta_max = 0.5, 2000.0
-        held = self.keep(base, delta_max)
-        need = self.FFT * self.FRAME_BYTES
-        # Enough for the FFT window AND the largest hold-back reachable, so the
-        # read point stays inside the buffer wherever the slider is put.
-        self.assertGreaterEqual(held - need,
-                                (base + delta_max / 1000.0) * self.RATE * self.FRAME_BYTES)
-
-    def test_it_does_not_shrink_when_the_delta_is_at_zero(self):
-        # The old rule sized from the delay in force, so at delta 0 it reserved
-        # only the base — which is why the first increase always stalled.
-        self.assertEqual(self.keep(0.5, 2000.0), self.keep(0.5, 2000.0))
-        self.assertGreater(self.keep(0.5, 2000.0),
-                           self.FFT * self.FRAME_BYTES
-                           + int(0.5 * self.RATE) * self.FRAME_BYTES)
+    def test_the_reserve_covers_switching_drc_on(self):
+        self.assertGreaterEqual(APP._DELAY_RESERVE_S, 1.0)
 
     def test_the_reserve_stays_a_sane_size(self):
-        # A couple of MB, not a leak: this is the cost of an instant slider.
-        self.assertLess(self.keep(1.5, 2000.0), 4 * 1024 * 1024)
+        # A few MB at most at the highest rate, not a leak.
+        self.assertLess((1.5 + APP._DELAY_RESERVE_S) * 192000 * 8, 8 * 1024 * 1024)
 
 
 class BandPeakHoldTest(unittest.TestCase):

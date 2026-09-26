@@ -1389,16 +1389,22 @@
             color: var(--text);
             font-weight: 600;
         }
-        .spectrum-auto-sync {
+        .screen-delay {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
-            gap: 7px;
+            gap: 6px;
             padding-top: 10px;
             color: var(--muted);
             font-size: .74rem;
-            cursor: pointer;
         }
-        .spectrum-auto-sync input { accent-color: var(--accent); }
+        .screen-delay output {
+            font-family: ui-monospace, "SFMono-Regular", monospace;
+            color: var(--text);
+            min-width: 58px;
+            text-align: center;
+        }
+        .screen-delay .grow { flex: 1; }
         @media (orientation: landscape) and (min-width: 700px) {
             body { max-width: 960px; }
             .spectrum-grid { grid-template-columns: 1fr 1fr; }
@@ -2057,7 +2063,7 @@
                 </div>
             </div>
         </div>
-        <!-- Floor + Sync sliders: hidden until the "Sliders" toggle is pressed. -->
+        <!-- Floor slider + screen delay: hidden until the "Sliders" toggle is pressed. -->
         <div id="spectrum-controls" style="display:none">
         <label class="spectrum-floor">
             <span>Floor</span>
@@ -2066,26 +2072,23 @@
                    oninput="setSpectrumFloor(this.value)">
             <output id="spectrum-floor-value">{{ spectrum.floor_db }} dB</output>
         </label>
-        <label class="spectrum-floor spectrum-delay">
-            <span>Sync</span>
-            <input id="spectrum-delay" type="range"
-                   min="{{ spectrum.drc_delay_delta_min_ms | int }}"
-                   max="{{ spectrum.drc_delay_delta_max_ms | int }}"
-                   step="10" value="{{ spectrum.drc_delay_delta_ms | round | int }}"
-                   oninput="setSpectrumDelay(this.value)">
-            <output id="spectrum-delay-value"></output>
-        </label>
-        <div class="spectrum-delay-readout">
-            base <strong id="drc-base-ms">–</strong> ms
-            · delta <strong id="drc-delta-ms">–</strong> ms
-            · total <strong id="drc-total-ms">–</strong> ms
+        <!-- Meter timing: the box holds the frames back by its measured chain minus a
+             margin; this browser waits the rest (shared with the kiosk on this device). -->
+        <div class="screen-delay" title="Extra delay for this screen, kept in this browser: the meters and the spectrum are drawn this long after they arrive. The kiosk (/k/) in this browser uses the same value.">
+            <span>Screen delay</span>
+            <button type="button" class="btn-details" onclick="stepScreenDelay(-50)">−50</button>
+            <button type="button" class="btn-details" onclick="stepScreenDelay(-10)">−10</button>
+            <output id="screen-delay-value">0 ms</output>
+            <button type="button" class="btn-details" onclick="stepScreenDelay(10)">+10</button>
+            <button type="button" class="btn-details" onclick="stepScreenDelay(50)">+50</button>
+            <span class="grow"></span>
+            <button type="button" class="btn-details" id="screen-delay-clicks" onclick="playSyncClicks()"
+                    title="Stops the music and plays about 11 s of quiet tone bursts (−30 dBFS): set the delay until the bars flick with each click.">Play clicks</button>
         </div>
-        <label class="spectrum-auto-sync" title="Recalculate the DRC-path delay while this card is open; turn off when it is known to remain unchanged.">
-            <input id="spectrum-auto-sync" type="checkbox"
-                   {% if spectrum.drc_delay_auto_sync %}checked{% endif %}
-                   onchange="setSpectrumAutoSync(this.checked)">
-            Auto sync delay
-        </label>
+        <div class="spectrum-delay-readout">
+            box holds back <strong id="drc-base-ms">–</strong> ms (measured chain − margin)
+            · this screen waits <strong id="screen-delay-ms">–</strong> ms
+        </div>
         </div>
     </div>
     </div>{# #spectrum-body #}
@@ -4286,11 +4289,9 @@ let spectrumWanted = false;
 let spectrumCharts = { left: null, right: null };
 let spectrumFloorDb = {{ spectrum.floor_db }};
 let spectrumMode = 'music';
-// DRC-sync slider: measured base delay + a live listener delta (both ms).
+// What the box holds the frames back by (its measured chain minus a margin, ms);
+// this browser draws them a further screenDelayMs later (see drawLater).
 let spectrumDelayBaseMs = {{ spectrum.drc_delay_base_ms }};
-let spectrumDelayDeltaMs = {{ spectrum.drc_delay_delta_ms }};
-let spectrumAutoSync = {{ 'true' if spectrum.drc_delay_auto_sync else 'false' }};
-let spectrumDelayPost = null;   // debounce handle for POSTing the delta
 let spectrumFloorPost = null;   // debounce handle for POSTing the floor
 let spectrumReconnect = null;   // retry handle for a dropped SSE stream
 // ── level meters: fully independent of the Spectrum tab's SSE connection.
@@ -4613,68 +4614,54 @@ function setSpectrumFloor(value) {
     }, 250);
 }
 
-// ── DRC-sync slider ───────────────────────────────────────────────────────────
-// The slider adds a live delta on top of the measured base delay so the listener
-// can line the display up with what they hear.  The applied total is floored at
-// 0 (the server cannot show samples that have not been played yet).
-function fmtSigned(ms) {
-    const n = Math.round(Number(ms) || 0);
-    return (n >= 0 ? '+' : '') + n;
+// ── Meter timing ──────────────────────────────────────────────────────────────
+// The box holds the frames back by what it can measure minus a margin, so they
+// arrive a little early; this browser waits out the rest.  The value lives in this
+// browser under the kiosk's key, so /k/ on the same device uses it too (and its
+// calibration, in the Android app, sets it).
+const SCREEN_DELAY_KEY = 'omdrc-kiosk.sync.delayMs';
+function screenDelayMs() {
+    try { return Math.max(0, Number(JSON.parse(localStorage.getItem(SCREEN_DELAY_KEY))) || 0); }
+    catch { return 0; }
+}
+function stepScreenDelay(d) {
+    const v = Math.max(0, Math.min(3000, screenDelayMs() + d));
+    try { localStorage.setItem(SCREEN_DELAY_KEY, JSON.stringify(v)); } catch {}
+    renderDelayReadout();
+}
+// Level and spectrum frames are drawn this browser's delay after they arrive.
+function drawLater(fn) {
+    const wait = screenDelayMs();
+    if (wait > 0) setTimeout(fn, wait); else fn();
 }
 
 function renderDelayReadout() {
-    const total = Math.max(0, spectrumDelayBaseMs + spectrumDelayDeltaMs);
-    const out = document.getElementById('spectrum-delay-value');
-    if (out) out.textContent = `${fmtSigned(spectrumDelayDeltaMs)} ms`;
+    const own = screenDelayMs();
+    const v = document.getElementById('screen-delay-value');
+    if (v) v.textContent = `${own} ms`;
     const b = document.getElementById('drc-base-ms');
-    const d = document.getElementById('drc-delta-ms');
-    const t = document.getElementById('drc-total-ms');
+    const t = document.getElementById('screen-delay-ms');
     if (b) b.textContent = Math.round(spectrumDelayBaseMs);
-    if (d) d.textContent = fmtSigned(spectrumDelayDeltaMs);
-    if (t) t.textContent = Math.round(total);
+    if (t) t.textContent = own;
 }
 
-function setSpectrumDelay(value) {
-    spectrumDelayDeltaMs = Number(value);
-    renderDelayReadout();
-    // Debounce the POST so dragging the slider does not flood the server; the
-    // value is persisted server-side and applied to the shared capture thread.
-    if (spectrumDelayPost) clearTimeout(spectrumDelayPost);
-    spectrumDelayPost = setTimeout(() => {
-        const body = new URLSearchParams({ delta_ms: String(spectrumDelayDeltaMs) });
-        fetch('/spectrum/drc-delay', { method: 'POST', body })
-            .then(r => r.json())
-            .then(j => {
-                if (j && j.ok) {
-                    // Server clamps to the config bounds — reflect the truth back.
-                    spectrumDelayDeltaMs = j.drc_delay_delta_ms;
-                    spectrumDelayBaseMs = j.drc_delay_base_ms;
-                    const sl = document.getElementById('spectrum-delay');
-                    if (sl && Number(sl.value) !== spectrumDelayDeltaMs) sl.value = spectrumDelayDeltaMs;
-                    renderDelayReadout();
-                }
-            })
-            .catch(() => {});
-    }, 250);
-}
-
-function setSpectrumAutoSync(enabled) {
-    spectrumAutoSync = Boolean(enabled);
-    const box = document.getElementById('spectrum-auto-sync');
-    if (box) box.checked = spectrumAutoSync;
-    fetch('/spectrum/drc-delay-auto-sync', {
-        method: 'POST',
-        body: new URLSearchParams({ enabled: spectrumAutoSync ? '1' : '0' }),
-    }).then(r => r.json()).then(j => {
-        if (j && j.ok) {
-            spectrumAutoSync = Boolean(j.drc_delay_auto_sync);
-            if (box) box.checked = spectrumAutoSync;
-        }
-    }).catch(() => {
-        // Restore the server-rendered truth after a failed request rather than
-        // leaving a checkbox that promises a mode the capture thread lacks.
-        spectrumAutoSync = !spectrumAutoSync;
-        if (box) box.checked = spectrumAutoSync;
+// The kiosk's click track (stops the music), for setting the delay by eye.
+function playSyncClicks() {
+    const btn = document.getElementById('screen-delay-clicks');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    fetch('/k/api/clicktest', { method: 'POST' }).then(r => r.json()).then(j => {
+        if (!j || !j.ok) throw new Error((j && j.error) || 'the click track could not be played');
+        let left = Math.ceil(j.seconds || 12) + 1;
+        btn.textContent = `Clicks… ${left} s`;
+        const t = setInterval(() => {
+            left -= 1;
+            btn.textContent = left > 0 ? `Clicks… ${left} s` : 'Play clicks';
+            if (left <= 0) { clearInterval(t); btn.disabled = false; }
+        }, 1000);
+    }).catch(e => {
+        btn.textContent = 'Play clicks'; btn.disabled = false;
+        alert(`Click track: ${e.message || e}`);
     });
 }
 
@@ -4892,16 +4879,11 @@ function handleSpectrumFrame(d) {
         return;
     }
     const modeText = d.mode ? ` · ${d.mode}` : '';
-    // The live frame carries the freshly measured base delay (it tracks filter /
-    // rate / preset changes); keep the slider readout in step with it.
+    // The live frame carries the freshly derived hold-back (it follows DRC on/off,
+    // filter and rate changes); keep the readout in step with it.
     if (typeof d.drc_delay_base === 'number') {
         spectrumDelayBaseMs = d.drc_delay_base * 1000;
         renderDelayReadout();
-    }
-    if (typeof d.drc_delay_auto_sync === 'boolean') {
-        spectrumAutoSync = d.drc_delay_auto_sync;
-        const box = document.getElementById('spectrum-auto-sync');
-        if (box) box.checked = spectrumAutoSync;
     }
     // Name the producer: two sources at two different rates now feed this card,
     // and "48000 Hz" alone no longer says which one is being analysed.
@@ -4954,8 +4936,10 @@ function startSpectrum() {
     spectrumStatus('connecting...', 'var(--muted)');
     spectrumSource = new EventSource('/spectrum/stream?mode=' + encodeURIComponent(spectrumMode));
     spectrumSource.onmessage = ev => {
-        try { handleSpectrumFrame(JSON.parse(ev.data)); }
-        catch { spectrumStatus('bad spectrum frame', 'var(--red)'); }
+        let d;
+        try { d = JSON.parse(ev.data); }
+        catch { spectrumStatus('bad spectrum frame', 'var(--red)'); return; }
+        drawLater(() => handleSpectrumFrame(d));
     };
     spectrumSource.onerror = () => {
         stopSpectrum(false);
@@ -5032,9 +5016,11 @@ function startMeters() {
     metersSource.onmessage = ev => {
         try {
             const d = JSON.parse(ev.data);
-            updateVu(d.ok ? (d.vu || {}) : {});
-            if (d.ok) updateBalance(d.vu || {});
-            else clearBalance();
+            drawLater(() => {
+                updateVu(d.ok ? (d.vu || {}) : {});
+                if (d.ok) updateBalance(d.vu || {});
+                else clearBalance();
+            });
             // The first attached MPD frame means its second output is open.
             // Refresh the diagram now, instead of waiting for its next poll.
             if (!chainRefreshed && d.ok && d.source === 'mpd') {

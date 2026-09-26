@@ -421,3 +421,13 @@ input[type=range] { accent-color: var(--accent); }
     .now-title { font-size: 1.3rem; }
     .preset-grid { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* meter-timing tuning sheet (pages/config.js) */
+.sheet.tune-sheet { height: auto; max-height: 94vh; overflow: auto; }
+.tune-meter { height: clamp(6rem, 28vh, 12rem); background: var(--deep); border: 1px solid var(--border); border-radius: .6rem; overflow: hidden; }
+.tune-results { font-size: .85rem; display: flex; flex-direction: column; gap: .2rem; }
+
+/* a calibration in progress (pages/now.js): a small blinking blue light in the track header */
+.cal-led { flex: 0 0 auto; width: .7rem; height: .7rem; border-radius: 50%; background: #3b8cff;
+           box-shadow: 0 0 .5rem .15rem rgba(59,140,255,.7); animation: cal-blink 1s ease-in-out infinite; pointer-events: none; }
+@keyframes cal-blink { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }

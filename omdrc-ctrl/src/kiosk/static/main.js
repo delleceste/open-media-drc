@@ -162,7 +162,7 @@ K.showBar = (show = true) => {
     clearTimeout(barTimer);
     if (show) barTimer = setTimeout(() => K.showBar(false), BAR_MS);
 };
-const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar, .splitter, .vsplit, [role=switch]';
+const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar:not(.static), .splitter, .vsplit, [role=switch]';
 let tapStart = null;
 document.addEventListener('pointerdown', e => { tapStart = { x: e.clientX, y: e.clientY }; }, true);
 document.addEventListener('pointerup', e => {

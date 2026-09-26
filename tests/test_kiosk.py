@@ -94,12 +94,24 @@ class KioskTests(unittest.TestCase):
 
 
 class FakeMpd:
-    """Just enough of the MPD protocol for the click test: records every command."""
+    """Just enough of the MPD protocol for the click test: partitions, outputs and
+    a player per partition.  Records every command as "<partition>: <command>"."""
 
-    def __init__(self, state="play", song="3", elapsed="95.500"):
+    def __init__(self, state="play", song="3", elapsed="95.500",
+                 outputs=(("OKTO-DAC", True), ("DRC-native", False), ("OMDRC Spectrum", True)),
+                 stale=()):
         import socket
-        self.log, self.state, self.song, self.elapsed = [], state, song, elapsed
-        self.songid, self.next_id = "7", 100
+        self.log = []
+        self.song, self.elapsed = song, elapsed
+        self.players = {"default": {"state": state, "songid": "7"}}
+        self.outputs = [{"name": n, "enabled": e, "part": "default"} for n, e in outputs]
+        if stale:                           # left behind by an interrupted run
+            self.players["omdrc-cal"] = {"state": "stop", "songid": ""}
+            for o in self.outputs:
+                if o["name"] in stale:
+                    o["part"] = "omdrc-cal"
+        self.clients = {}                   # partition -> connections inside it
+        self.next_id = 100
         self.srv = socket.socket()
         self.srv.bind(("127.0.0.1", 0))
         self.srv.listen(8)
@@ -116,7 +128,8 @@ class FakeMpd:
 
     def client(self, conn):
         f = conn.makefile("r")
-        conn.sendall(b"OK MPD 0.23.0\n")
+        conn.sendall(b"OK MPD 0.24.0\n")
+        me = {"part": "default"}
         in_list = False
         for line in f:
             line = line.strip()
@@ -127,64 +140,117 @@ class FakeMpd:
                 in_list = False
                 conn.sendall((reply + "OK\n").encode())
                 continue
-            self.log.append(line)
-            out = self.run(line)
+            self.log.append(f"{me['part']}: {line}")
+            out = self.run(line, me)
             if in_list:
                 reply += out
+            elif out.startswith("ACK"):
+                conn.sendall(out.encode())
             else:
                 conn.sendall((out + "OK\n").encode())
+        me["part"] = None                   # the connection is gone
 
-    def run(self, line):
+    def arg(self, line):
+        return line.split(" ", 1)[1].strip().strip('"')
+
+    def run(self, line, me):
         cmd = line.split(" ", 1)[0]
+        part = me["part"]
+        player = self.players.get(part, {})
         if cmd == "status":
-            return f"state: {self.state}\nsong: {self.song}\nsongid: {self.songid}\nelapsed: {self.elapsed}\n"
+            return f"state: {player['state']}\nsong: {self.song}\nsongid: {player['songid']}\nelapsed: {self.elapsed}\n"
+        if cmd == "outputs":
+            out = ""
+            for i, o in enumerate(self.outputs):
+                mine = o["part"] == part
+                out += (f"outputid: {i}\noutputname: {o['name']}\nplugin: {'alsa' if mine else 'dummy'}\n"
+                        f"outputenabled: {1 if mine and o['enabled'] else 0}\n")
+            return out
+        if cmd == "listpartitions":
+            return "".join(f"partition: {n}\n" for n in self.players)
+        if cmd == "newpartition":
+            self.players[self.arg(line)] = {"state": "stop", "songid": ""}
+        if cmd == "partition":
+            me["part"] = self.arg(line)
+        if cmd == "delpartition":
+            name = self.arg(line)
+            if any(o["part"] == name for o in self.outputs):
+                return "ACK [5@0] {delpartition} partition still has outputs\n"
+            self.players.pop(name, None)
+        if cmd == "moveoutput":
+            for o in self.outputs:
+                if o["name"] == self.arg(line):
+                    o["part"] = part
         if cmd == "addid":
             self.next_id += 1
             return f"Id: {self.next_id}\n"
         if cmd == "playid":
-            self.songid, self.state = line.split()[1], "play"
+            player["songid"], player["state"] = line.split()[1], "play"
             # the click track "ends" shortly after
-            threading.Timer(0.5, lambda: setattr(self, "state", "stop")).start()
+            threading.Timer(0.5, lambda: player.__setitem__("state", "stop")).start()
         if cmd == "pause":
-            self.state = "pause"
+            player["state"] = "pause"
         if cmd == "stop":
-            self.state = "stop"
+            player["state"] = "stop"
         return ""
 
 
 class ClickTestTests(unittest.TestCase):
-    def run_test(self, state):
+    def run_test(self, state="play", **fake):
         import kiosk
-        mpd = FakeMpd(state=state)
+        mpd = FakeMpd(state=state, **fake)
         saved = (kiosk._mpd_port, kiosk._playback_rate)
         kiosk._mpd_port, kiosk._playback_rate = (lambda: mpd.port), (lambda: 44100)
         try:
             client = APP.app.test_client()
             r = client.post("/k/api/clicktest")
-            self.assertEqual(r.status_code, 200, r.get_json())
-            self.assertEqual(r.get_json()["rate"], 44100)
             for _ in range(60):                      # wait for the worker to finish
                 if kiosk._click_lock.acquire(blocking=False):
                     kiosk._click_lock.release()
                     break
                 import time; time.sleep(0.1)
-            return mpd.log
+            return r, mpd
         finally:
             kiosk._mpd_port, kiosk._playback_rate = saved
 
-    def test_playing_music_is_paused_the_clicks_played_then_it_resumes_where_it_was(self):
-        log = self.run_test("play")
-        self.assertIn("pause 1", log)
-        add = next(c for c in log if c.startswith("addid"))
+    def test_the_clicks_play_in_a_side_partition_and_the_main_queue_is_untouched(self):
+        # qobuzconnect2mpd owns the main queue and reacts to any foreign edit
+        r, mpd = self.run_test("play")
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["rate"], 44100)
+        self.assertEqual(r.get_json()["outputs"], ["OKTO-DAC", "OMDRC Spectrum"])   # the enabled ones
+        add = next(c for c in mpd.log if " addid " in c)
+        self.assertTrue(add.startswith("omdrc-cal: "), add)
         self.assertIn("/k/api/clicks.wav?rate=44100", add)
-        self.assertIn("playid 101", log)
-        self.assertIn("deleteid 101", log)
-        self.assertEqual(log[-1], "seek 3 95.500")        # back at the song and position, playing
+        self.assertIn("omdrc-cal: playid 101", mpd.log)
+        self.assertFalse([c for c in mpd.log if c.startswith("default: ") and
+                          c.split(": ", 1)[1].split()[0] in ("addid", "playid", "deleteid", "seek", "clear")])
 
-    def test_a_paused_song_is_put_back_paused_in_one_command_list(self):
-        log = self.run_test("pause")
-        self.assertNotIn("pause 1", log[:2])               # it was already paused
-        self.assertEqual(log[-2:], ["seek 3 95.500", "pause 1"])
+    def test_the_music_is_stopped_and_not_resumed(self):
+        for state in ("play", "pause"):
+            r, mpd = self.run_test(state)
+            self.assertIn("default: stop", mpd.log)
+            self.assertEqual(mpd.players["default"]["state"], "stop")
+            self.assertFalse([c for c in mpd.log if c.startswith("default: pause") or c.startswith("default: play")])
+            self.assertEqual(r.get_json()["stopped"], state)
+
+    def test_the_outputs_are_handed_back_and_the_partition_removed(self):
+        r, mpd = self.run_test("play")
+        self.assertTrue(all(o["part"] == "default" for o in mpd.outputs))
+        self.assertEqual(list(mpd.players), ["default"])
+        self.assertIn("default: delpartition \"omdrc-cal\"", mpd.log)
+
+    def test_an_interrupted_run_is_cleaned_up_first(self):
+        r, mpd = self.run_test("play", stale=("OKTO-DAC",))
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertIn("OKTO-DAC", r.get_json()["outputs"])    # recovered, then borrowed again
+        self.assertTrue(all(o["part"] == "default" for o in mpd.outputs))
+        self.assertEqual(list(mpd.players), ["default"])
+
+    def test_with_no_enabled_output_nothing_is_played(self):
+        r, mpd = self.run_test("play", outputs=(("OKTO-DAC", False),))
+        self.assertEqual(r.status_code, 500)
+        self.assertFalse([c for c in mpd.log if " addid " in c or " newpartition " in c])
 
     def test_the_click_track_is_a_short_wav_at_the_requested_rate(self):
         import io, wave

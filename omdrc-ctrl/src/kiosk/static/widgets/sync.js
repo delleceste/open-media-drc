@@ -1,11 +1,12 @@
 /* Meter timing: a per-device display delay, and its calibration with the phone's
  * microphone (Android app only - a page on plain http cannot open the mic).
  *
- * The server already holds the level/spectrum frames back by the chain's delay (the
- * DRC chain, or with DRC off the DAC's own buffer).  What is left - network, this
- * device, anything the model misses - differs per screen, so it is corrected here:
- * frames are drawn `sync.delayMs` after they arrive.  The value lives in this
- * device's browser storage, not on the box.
+ * The server holds the level/spectrum frames back by what it can measure (the
+ * filter and BruteFIR's partition, or with DRC off the DAC's buffer) minus a margin,
+ * so they always arrive a little early.  The rest - the buffers nothing reports, the
+ * network, this device - differs per screen, so it is corrected here: frames are
+ * drawn `sync.delayMs` after they arrive.  The value lives in this device's browser
+ * storage (the desktop panel in the same browser shares it), not on the box.
  *
  * Calibration: for ~10 s the app records the microphone and reduces it to a peak
  * envelope (10 ms steps, capture-time stamped); meanwhile the arrival time and peak
@@ -13,6 +14,10 @@
  * they correlate best is how long after a frame arrives its sound is heard - the
  * delay to apply.  A frame arriving after its sound (negative offset) cannot be
  * fixed here: the screen can only wait, never anticipate.
+ *
+ * Verification plays the same clicks but times each frame when it is DRAWN, delay
+ * included, so what it measures is what is left over - near 0 when the setting is
+ * right.  It changes nothing by itself.
  */
 (() => {
 'use strict';
@@ -201,12 +206,17 @@ const endLog = () => {
 };
 
 // ── one calibration run ──────────────────────────────────────────────────────
+// Whoever shows that a run is in progress (the LED on Now) listens here.
 S.running = false;
-S.calibrate = async ({ seconds = 10, onTick, clicks = false, why = 'manual' } = {}) => {
+const runWatchers = new Set();
+S.onRunning = fn => { runWatchers.add(fn); fn(S.running); return () => runWatchers.delete(fn); };
+const setRunning = v => { S.running = v; runWatchers.forEach(fn => { try { fn(v); } catch {} }); };
+S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why = 'manual' } = {}) => {
+    if (verify) clicks = true;
     if (S.running) return { ok: false, error: 'a calibration is already running' };
     LOG.lines = []; LOG.t0 = Date.now();
     logRaw(`OMDRC meter-timing calibration log - ${new Date(LOG.t0).toISOString()}`);
-    logRaw(`mode: ${clicks ? 'precise (click track)' : 'on the music'} | trigger: ${why} | listening ${seconds} s`);
+    logRaw(`mode: ${verify ? 'VERIFY (click track, frames timed when drawn)' : clicks ? 'precise (click track)' : 'on the music'} | trigger: ${why} | listening ${seconds} s`);
     logRaw(`page: ${location.host} | app bridge api ${window.OmdrcApp && window.OmdrcApp.apiVersion ? window.OmdrcApp.apiVersion() : 'none'} | ${navigator.userAgent}`);
     logRaw(`this device's extra display delay before the run: ${S.delayMs()} ms`);
     if (!S.canCalibrate()) {
@@ -217,13 +227,15 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, why = 'manual' } = 
     const box = await K.api('/spectrum/settings', { timeout: 4000 });
     if (box && box.ok !== false) {
         logRaw(`box: analyzer ${box.enabled ? 'on' : 'OFF'}, source ${box.source_active || box.source_now || '?'}, ${box.refresh_hz} Hz frames, vu ${box.vu_mode}, ` +
-               `display delay base ${box.drc_delay_base_ms} ms + delta ${box.drc_delay_delta_ms} ms (auto-sync ${box.drc_delay_auto_sync ? 'on' : 'off'})`);
+               `frames held back ${box.drc_delay_base_ms} ms (measured chain minus margin)`);
         logRaw(`box delay terms (ms): ${JSON.stringify(box.drc_delay_terms_ms || {})}`);
     } else logRaw(`box: /spectrum/settings failed (${(box && box.error) || 'no answer'})`);
     logRaw('');
     const frames = [];
-    const prevTap = K.streamTap;
-    K.streamTap = (mode, d, t) => {
+    // calibrating: when a frame arrives; verifying: when it is drawn, this device's delay included
+    const TAP = verify ? 'drawTap' : 'streamTap';
+    const prevTap = K[TAP];
+    K[TAP] = (mode, d, t) => {
         if (prevTap) prevTap(mode, d, t);
         if ((mode === 'vu' || mode === 'music' || mode === 'precision') && d.ok && d.vu) {
             const p = Math.max(Number(d.vu.left_peak ?? -120), Number(d.vu.right_peak ?? -120));
@@ -232,7 +244,7 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, why = 'manual' } = 
     };
     const hold = K.streams.open('vu', () => {});     // make sure level frames flow
     logLine('level stream (vu) opened; waiting 1.5 s for it to settle');
-    S.running = true;
+    setRunning(true);
     let res = null;
     try {
         await new Promise(r => setTimeout(r, 1500));   // let the stream settle first
@@ -247,7 +259,7 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, why = 'manual' } = 
             window.OmdrcApp.startMicEnvelope(seconds * 1000, STEP);
             // precise mode: the box plays its click track once the mic is listening
             if (clicks) setTimeout(async () => {
-                logLine('click test: asking the box to pause the music and play the click track');
+                logLine('click test: asking the box to stop the music and play the click track');
                 const r = await K.api('/k/api/clicktest', { method: 'POST' });
                 logLine(`click test: box answered ${JSON.stringify(r)}`);
                 if (!r.ok) { clearTimeout(timer); K.onMicEnvelope = null; resolve({ ok: false, error: r.error || 'the click track could not be played' }); }
@@ -256,8 +268,9 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, why = 'manual' } = 
         logLine(mic.ok
             ? `microphone: envelope received | source ${mic.source} | first step captured at ${rel(mic.t0)} ms | ${mic.db.length} steps of ${mic.step} ms`
             : `microphone: FAILED | ${mic.error || 'unknown error'}`);
-        logLine('waiting 1.5 s for the last level frames');
-        await new Promise(r => setTimeout(r, 1500));   // frames for the last instant of sound
+        const tail = 1500 + (verify ? S.delayMs() : 0);  // drawn frames trail by the delay
+        logLine(`waiting ${tail} ms for the last level frames`);
+        await new Promise(r => setTimeout(r, tail));   // frames for the last instant of sound
         if (!mic.ok) { res = { ok: false, error: mic.error || 'microphone error' }; return res; }
 
         const gaps = frames.slice(1).map((f, i) => f.t - frames[i].t);
@@ -275,11 +288,18 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, why = 'manual' } = 
         logLine(`EXCEPTION: ${res.error}`);
         return res;
     } finally {
-        S.running = false;
+        setRunning(false);
         hold.close();
-        K.streamTap = prevTap;
+        K[TAP] = prevTap;
         logRaw('');
-        logLine(res && res.ok
+        if (verify && res && res.diag && res.diag.pairedLagsMs && res.diag.pairedLagsMs.length) {
+            const d = res.diag.pairedLagsMs;
+            res.spreadMs = [d[0], d[d.length - 1]];
+        }
+        logLine(res && res.ok && verify
+            ? `RESULT (verify, delay ${S.delayMs()} ms): the drawn meters ${res.lagMs >= 0 ? `led the sound by ${res.lagMs}` : `trailed the sound by ${-res.lagMs}`} ms ` +
+              `(paired clicks from ${res.spreadMs ? res.spreadMs.join(' to ') : '?'} ms, match ${res.r})`
+            : res && res.ok
             ? `RESULT: the meters led the sound by ${res.lagMs} ms (match ${res.r}, margin ${res.margin})`
             : `RESULT: failed | ${(res && res.error) || 'unknown'}${res && res.r !== undefined ? ` (match ${res.r})` : ''}`);
         logRaw('');
@@ -296,6 +316,19 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, why = 'manual' } = 
 };
 // the envelope of the run in progress, for the log's data section
 const LAST_MIC = { value: null };
+
+// Just the click track, nothing measured: for watching the meters by eye (and the
+// only test there is without the app's microphone).  Resolves when it has played.
+S.playClicks = async ({ onTick } = {}) => {
+    const r = await K.api('/k/api/clicktest', { method: 'POST' });
+    if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'the click track could not be played' };
+    let left = Math.ceil(r.seconds || 12) + 1;
+    if (onTick) onTick(left);
+    await new Promise(done => {
+        const t = setInterval(() => { left -= 1; if (onTick) onTick(Math.max(0, left)); if (left <= 0) { clearInterval(t); done(); } }, 1000);
+    });
+    return { ok: true };
+};
 
 // ── automatic recalibration ──────────────────────────────────────────────────
 // A track starting, or playback resuming after a pause, is the clearest possible

@@ -24,8 +24,10 @@ P.mount = el => {
     P.state = h('button', { class: 'chip state', type: 'button', title: 'Tap: play / pause · hold: stop' });
     P.time = h('div', { class: 'now-time' });
     P.prog = h('i');
+    // a meter-timing calibration in progress (automatic ones included): a blinking blue light
+    P.calLed = h('i', { class: 'cal-led', hidden: true, title: 'Calibrating the meter timing' });
     const trackBox = h('div', { class: 'now-track' }, P.art,
-        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt)),
+        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt)), P.calLed,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
         h('div', { class: 'now-timebox' }, P.state, P.time, h('div', { class: 'now-prog' }, P.prog)));
 
@@ -73,13 +75,12 @@ P.mount = el => {
     P.drBarBox = h('div', { class: 'now-drbar card' }, P.drBarHost,
         h('div', { class: 'dr-times' }, P.drOldest, P.drDetail, P.drModeBox(), h('span', {}, 'Latest')));
     P.gauge = K.drGauge(P.drGaugeHost);
-    // On Now the bar is a shortcut, not a control: touching it opens the DR page
-    // (Estimate / Measure), where its segments can be inspected.
+    // On Now the bar is for looking at: a tap there is an ordinary tap on the page
+    // (it shows the top bar); its segments are inspected on the DR page.
     P.drBar = new K.DrBar(P.drBarHost, { interactive: false, onDetail: (text, count) => {
         P.drDetail.hidden = !text; P.drDetail.textContent = text || '';
         P.drOldest.textContent = count ? `−${K.dr.elapsedLabel(count * 3)}` : '';
     } });
-    [P.drBox, P.drBarBox].forEach(el => { el.classList.add('tap'); el.addEventListener('click', () => K.goto('dr')); });
 
     P.balHost = h('div', { class: 'now-bal card' });
     P.balance = new K.Balance(P.balHost);
@@ -104,6 +105,7 @@ P.mount = el => {
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
     P.spec = new K.Spectrum(P.specCanvas);
+    if (K.sync) K.sync.onRunning(on => { P.calLed.hidden = !on; });
 
     P.wireTransport();
     P.chainPoll = new K.Poller(P.pollChain, 4000);

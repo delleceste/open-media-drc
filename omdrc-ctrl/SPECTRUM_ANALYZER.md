@@ -181,9 +181,7 @@ min_frequency = 31.5
 floor_db = -40
 fall_db_per_s = 30
 vu_mode = bars
-drc_delay_trim_ms = 0
-drc_delay_delta_min_ms = -1000
-drc_delay_delta_max_ms = 2000
+drc_delay_margin_ms = 150
 ```
 
 Then make sure the matching MPD output exists in the MPD config — `mpd/mpd.conf`
@@ -339,12 +337,12 @@ tuned for music rather than measurement work.  A change made with the slider is
 remembered across restarts (persisted as `spectrum-floor-db` in the state
 directory — see [Runtime state](#runtime-state)), so `floor_db` in
 `commands.conf` is only the initial default until the slider is first moved.
-The Floor and Sync sliders live behind the **Sliders** toggle in the
-Music/Precision row.
+The Floor slider and the Screen delay (see [Meter timing](#meter-timing)) live
+behind the **Sliders** toggle in the Music/Precision row.
 
 ### Runtime state
 
-The slider positions are the only things the analyzer writes at runtime.  The
+The Floor slider's position is the only thing the analyzer writes at runtime.  The
 state directory is resolved exactly as `drc.sh` resolves it, so the whole stack
 shares one location (see `doc/FREEBSD-PORT-PLAN.md` §1.4):
 
@@ -360,7 +358,8 @@ script drops privileges to a service user, so the root branch is *not* taken
 under `service(8)`: pin `OMDRC_STATE_DIR` (in `rc.conf` or `omdrc.conf`) to give
 the service a writable, shared state directory.  Writes are best-effort — if the
 directory is not writable the sliders simply stop being remembered rather than
-failing the request.
+failing the request.  (Older versions also kept `spectrum-drc-delay-delta` and
+`spectrum-drc-delay-auto-sync` there; they are no longer read.)
 
 ## Detached window
 
@@ -379,49 +378,66 @@ in the card's title row drive this:
 
 Each detached view is just another analyzer client: it joins the same
 reference-counted, server-side SSE broadcast rather than starting a second
-capture.  The Sync delta and Floor are server-side settings, so every view — main
-page, popout and PiP — shows the same corrected, identically-scaled display.
+capture.  The Floor is a server-side setting, so every view — main page, popout
+and PiP — shows the same identically-scaled display; the Screen delay belongs to
+the browser, which is the same one for all three.
 
 With `source = auto`, an already-open card follows playback hand-offs in both
 directions: it closes the MPD FIFO and attaches the CD-in FIFO when the CD bridge
 becomes active, then returns to MPD when the bridge stops. The browser stream
 and card stay open throughout the hand-off.
 
-## DRC Sync
+## Meter timing
 
 The tap is at the **top** of the chain — MPD's second FIFO output, or the CD
 bridge teeing the period it is about to play — while the sound you hear has been
-through the loopback, BruteFIR and the DAC, all of which are late.  Left
-uncorrected the bars run ahead of the music, and keep going after it stops.  The
-analyzer therefore holds its analysis window back by the whole path delay.
+through the DAC's buffer and, with DRC on, the loopback and BruteFIR, all of which
+are late.  Left uncorrected the bars run ahead of the music, and keep going after
+it stops.  The correction is split in two:
 
-Every stage gets its own term, derived from the chain that is actually running:
+**The box holds the frames back by what it can measure**, minus a margin:
 
-| Stage | How it is obtained | At 44.1 kHz, flat, `-s 200ms` |
-| --- | --- | --- |
-| virtual_oss | `drc_voss_blocks` x its own `-s` argument, read off the running process | 600 ms |
-| Filter group delay | `argmax(|h|) / rate` of the active coefficient | 0 ms (`dirac pulse`) |
-| Convolver | one `filter_length` partition | 186 ms |
-| BruteFIR I/O | `drc_brutefir_io_partitions` more of them | 371 ms |
-| Output | `drc_output_delay_ms` — DAC buffer and USB | 150 ms |
+| Stage | How it is obtained |
+| --- | --- |
+| Filter group delay | `argmax(|h|) / rate` of the active coefficient (0 for `dirac pulse`) |
+| Convolver | one `filter_length` partition |
+| Direct (DRC off, Linux) | the DAC's ALSA buffer: the kernel's `delay` for the running stream |
+| − margin | `drc_delay_margin_ms`, default 150 |
 
-The panel prints the breakdown term by term, so an estimate that looks wrong can
-be traced to the stage responsible instead of guessed at.
+**Each screen waits out the rest** with its own delay: the buffers nothing
+reports (virtual_oss, BruteFIR's I/O, the DAC and USB with DRC on), the network
+and the screen itself.  That delay belongs to the browser, not the box — in the
+kiosk it is Config → Meter timing, measured with the phone's microphone in the
+Android app (a click track, before and after) or set by eye while the click
+track plays; in this panel it is **Screen delay** under the Sliders, with a
+**Play clicks** button.  The kiosk and the panel in the same browser share it.
 
-Two properties are worth calling out because they are easy to get backwards:
+Why the split, and why the margin: a screen can only *wait*, never anticipate.
+If the box held the frames back by the whole path — or by an estimate that came
+out long — they would reach the screen after the sound, and nothing on the
+screen could fix that.  So the box counts only what it measures, and keeps a
+margin on top so that even a fully measured path (DRC off, where the DAC buffer
+is the whole story) leaves the frames early enough for the slowest network.  A
+calibration that reports the meters arriving *after* the sound means the margin
+is too small for that screen.
 
-- **The loopback is usually the largest term, and it does not scale with rate.**
-  `drc.sh` starts virtual_oss with `-s 200ms`, a *duration*, so those 600 ms are
-  the same at 44.1 kHz and at 192 kHz — while the BruteFIR partitions shrink as
-  the rate rises.  An earlier version of this estimate counted BruteFIR alone
-  and was short by well over a second.
+The box's figure is re-derived every 2 s while a meter or spectrum stream is
+open, so switching DRC on or off, a new filter or a new rate is followed without
+a reconnect; with no stream open nothing is computed.  Reading the FIR to find
+its peak is cached on the filter's mtime, the rest is a short-TTL `ps` read and
+a couple of `/proc` reads.  The readout under the sliders shows both halves:
+`box holds back … ms · this screen waits … ms`, and `/spectrum/settings` carries
+the box's terms one by one (`drc_delay_terms_ms`).
+
+This replaced a model that also *estimated* the unreported buffers, an Auto sync
+checkbox, a `drc_delay_trim_ms` and a server-wide Sync slider: an estimate could
+only be tuned for one screen at a time, and the DRC-off case, measured exactly,
+left no room at all for the network — the meters there always trailed.
+
 - **`dirac pulse` really does have zero group delay.**  BruteFIR's built-in
   identity coefficient is an in-memory impulse, not a missing RAW file, and it
-  peaks at index 0 — so on the shipped flat profile the entire delay is
-  buffering.  The convolver partition is still charged.
-
-Stages that are not running contribute nothing: with the chain down (MPD
-straight to the DAC) the total is zero.
+  peaks at index 0 — so on the shipped flat profile the box's figure is the
+  partition alone.
 
 The hold-back is anchored to the **clock**, not to the end of the capture
 buffer.  That distinction only shows up when the music stops: a fixed byte
@@ -434,31 +450,6 @@ fraction of a second.  It also means a producer that drops frames (the CD
 bridge tees non-blocking, and says so in its `[stats]` line) cannot walk the
 display out of sync.
 
-With **Auto sync delay** off, the three *modelled* stages — virtual_oss, the
-BruteFIR I/O buffers and the output — are replaced wholesale by the configured
-`drc_delay_trim_ms`, so a figure measured with `tools/measure-drc-delay.sh` is
-not double-counted against a model of the same buffering.  What is *read* from
-the filter (group delay and the convolver partition) still counts in both modes.
-
-Reading the FIR to find its peak is cached on the filter's mtime; the rest is a
-short-TTL `ps` read, so the estimate follows a virtual_oss restart or a preset
-change under a card that never closed, at no per-frame cost.  The live value is
-shown by the `base` / `delta` / `total` readout under the sliders.
-
-**Auto sync delay** is the one checkbox below the Sync slider.  With it on, a
-running analyzer re-derives the estimate every couple of seconds, because the
-chain under an open card is not fixed: virtual_oss restarts at every rate change
-and a preset switch reloads BruteFIR with a different filter.  The expensive
-part is cached, so this costs nothing per frame.  Ordinary MPD, qobuzconnect2mpd
-and upmpdcli track changes do not change the answer.  The setting is remembered
-across restarts.
-
-This is a calculation from the active DRC configuration, not an acoustic or DAC
-loopback measurement. A real end-to-end measurement needs a separate post-DRC
-capture tap and an injected known signal; `tools/measure-drc-delay.sh` provides
-that disruptive calibration procedure. It is intentionally never run from the
-web card during music playback.
-
 ### Stale history is dropped at a resume
 
 The hold-back reads back into the capture buffer, and that buffer survives a
@@ -467,7 +458,7 @@ pause.  So a resume used to land the read point in the tail of whatever played
 the previous track, while the new music was still working its way down the
 chain.  To a listener that reads as "the bars move immediately and the sound
 arrives two seconds later" — the display looks early when it is in fact a whole
-track late, and no amount of Sync-slider adjustment can fix it, because the
+track late, and no amount of delay adjustment can fix it, because the
 error is *what* is being drawn and not *when*.
 
 PCM arriving after a gap longer than the silence timeout therefore clears the
@@ -475,53 +466,15 @@ retained history.  The bars then stay at the floor until real audio has been in
 flight for the length of the hold-back — which is also, to within a frame,
 when the first of it reaches the speakers.
 
-### What the no-DRC case tells you
+### An increase applies on the next frame
 
-With the chain down the model yields **zero** — no virtual_oss, no convolver,
-no BruteFIR I/O — and the analyzer holds nothing back.  That is exactly what a
-listener sees: MPD straight to the DAC already looks in sync.  It is worth
-stating plainly, because it is the one free calibration point available, and it
-says the model's *shape* is right.  MPD's own buffering does not put the tap
-ahead of the DAC; everything that does is added by the DRC chain, and every
-stage of that chain is enumerated above.
-
-What the model gets wrong is the *size*, not the set of terms: with DRC up the
-real lead measures larger than they sum to.  Closing that residual is the Sync
-slider's job.
-
-### Sync slider
-
-The measured delay is a good estimate, but the last few tens of milliseconds of
-runtime buffering vary between machines, and only the listener can judge when the
-bars line up with the sound.  A **Sync** slider under the analyzer adds a live
-**delta** on top of the measured **base** delay so it can be nudged by ear.  The
-row beside it prints all three figures in milliseconds:
-
-    base <measured> ms · delta <slider> ms · total <base+delta> ms
-
-The total applied hold-back is floored at 0 — you cannot show samples that have
-not been played yet — so a negative delta larger than the base has no further
-effect.  The slider position is remembered across restarts (persisted as
-`spectrum-drc-delay-delta` in the state directory — see
-[Runtime state](#runtime-state)) and is applied to the shared capture thread, so
-every connected browser sees the same corrected display.
-
-A slider move applies on the **very next frame**.  It did not always: the
-capture buffer was trimmed to the hold-back then in force, and the trim runs
-before the section that recomputes it, so every *increase* found the history
-already cut short and the analyzer published `waiting` with no bands for
-exactly as long as the increase.  Dragging the slider restarted that stall at
-every intermediate value, so the plot never moved and the control looked
-completely inert.  The buffer now reserves the slider's whole travel
-(`base + drc_delay_delta_max_ms`, a couple of MB), so the read point stays
-inside it wherever the slider is put.  The one wait that remains is inherent
+The capture buffer is trimmed before the section that recomputes the hold-back,
+so an increase (DRC switched on, a longer filter) used to find the history
+already cut short: the analyzer published `waiting` with no bands for as long as
+the increase.  The buffer keeps a fixed reserve (2 s) beyond the hold-back in
+force, so the read point stays inside it.  The one wait that remains is inherent
 and only at startup: the analyzer cannot show delayed audio it has not captured
-yet, so the first `base + delta` seconds of a fresh attachment read `waiting`.
-
-The travel limits are the two config-editable keys `drc_delay_delta_min_ms` and
-`drc_delay_delta_max_ms` (default `-1000` … `2000`, i.e. −1 s … +2 s).  Unlike
-`drc_delay_trim_ms`, which replaces the modelled stages when Auto sync is off,
-the slider delta is a runtime setting and is not written back to `commands.conf`.
+yet, so the first hold-back's worth of a fresh attachment reads `waiting`.
 
 ## Responsiveness
 
@@ -564,8 +517,8 @@ hidden/closed.  The band analysis measures about 2 ms per display frame for both
 channels on this box — roughly 5% of one core at 25 Hz, against 2.6% at the old
 10 Hz default, which is the whole CPU price of the responsiveness.  A frame that
 has nothing new to say is not published at all, so a paused source costs nothing
-on the wire either.  The delay estimate is re-derived on a two-second cadence
-only while a card is open, and behind a cache, so there is no background timer.
+on the wire either.  The hold-back is re-derived on a two-second cadence only
+while a card is open, and behind a cache, so there is no background timer.
 
 ## Limitations
 

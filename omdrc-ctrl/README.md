@@ -946,7 +946,7 @@ min_frequency = 31.5
 floor_db = -40
 fall_db_per_s = 30
 vu_mode = bars
-drc_delay_trim_ms = 0
+drc_delay_margin_ms = 150
 ```
 
 See [Live Spectrum Analyzer](SPECTRUM_ANALYZER.md) for the matching MPD output
@@ -961,9 +961,11 @@ setting — each band is peak-held across the whole frame interval, so a transie
 lands on the bar whenever inside the frame it arrived. See
 [Live Spectrum Analyzer → Responsiveness](SPECTRUM_ANALYZER.md#responsiveness).
 
-`drc_delay_trim_ms` is an optional static fine-tune (default `0`) used when
-Auto sync is off. It is excluded from the automatically estimated base; see
-[Live Spectrum Analyzer → DRC Sync](SPECTRUM_ANALYZER.md#drc-sync).
+`drc_delay_margin_ms` (default `150`) is how much less than the measured chain
+the box holds the frames back, so they always reach a screen early; each screen
+waits out the rest with its own delay. Raise it if a calibration reports the
+meters arriving after the sound; see
+[Live Spectrum Analyzer → Meter timing](SPECTRUM_ANALYZER.md#meter-timing).
 
 ### Keys common to all commands
 
@@ -2237,7 +2239,7 @@ the sliders. With the chain down every term is zero, which is why MPD straight
 to the DAC already looks in sync. The **Sync** slider closes the residual the
 model under-estimates, and a move now applies on the next frame — it used to
 freeze the plot for as long as the increase, which made the control look inert.
-See [Live Spectrum Analyzer → DRC Sync](SPECTRUM_ANALYZER.md#drc-sync).
+See [Live Spectrum Analyzer → Meter timing](SPECTRUM_ANALYZER.md#meter-timing).
 
 The Start button opens `/spectrum/stream`; Stop closes it. The browser also
 closes the stream automatically when the page is hidden or unloaded, which
