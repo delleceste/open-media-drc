@@ -7490,7 +7490,8 @@ def mpd_info():
         conf = None
 
         if running:
-            r2 = subprocess.run(["ps", "-p", pid, "-o", "pcpu=,args="],
+            # One -o per column: FreeBSD reads everything after "pcpu=" as its title.
+            r2 = subprocess.run(["ps", "-p", pid, "-o", "pcpu=", "-o", "args="],
                                 capture_output=True, text=True, timeout=3)
             for line in r2.stdout.splitlines():
                 parts = line.split(None, 1)

@@ -94,7 +94,7 @@ P.paintMpd = m => {
         const d = await K.api('/mpd/restart', { method: 'POST', timeout: 60000 });
         b.done(); K.toast(d.ok ? 'MPD restarted' : (d.error || 'restart failed'), d.ok ? 'ok' : 'error'); P.refresh();
     } }, 'Restart MPD')));
-    K.clear(P.mpdBody).append(...rows);
+    K.clear(P.mpdBody).append(...rows.filter(Boolean));     // append() prints a null as "null"
 };
 
 // ── CD input ─────────────────────────────────────────────────────────────────
