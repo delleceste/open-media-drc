@@ -78,7 +78,12 @@ measured with the phone's microphone:
   plays it with the current delay, measures and applies the delay (a failure stops
   here and leaves the delay alone); step 2 plays it again timing the frames when
   they are *drawn*, delay included, so the result is what is left over.  *Check
-  again* repeats step 2 and offers the correction beyond ±30 ms.  Onsets are matched as events, detected relative to the
+  again* repeats step 2 and corrects beyond ±30 ms.  Meters found arriving
+  *after* the sound cannot be fixed by waiting, so the calibration raises the box's
+  margin instead (`POST /spectrum/margin`, kept in the state dir and shared by every
+  screen): the frames leave that much sooner and this screen waits the last 20 ms.
+  *ⓘ How it works* (on the card and on the sheet) opens
+  `static/help/meter-timing.html`, the whole procedure with timing diagrams.  Onsets are matched as events, detected relative to the
   room's own noise floor rather than a fixed level.  Without the app's microphone
   the clicks just play, for setting the delay by eye.
   The clicks play in a temporary MPD partition (`omdrc-cal`) that borrows the

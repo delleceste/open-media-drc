@@ -37,7 +37,7 @@ P.timingCard = () => {
                 if (res.ok || /microphone|app/.test(res.error || '')) break;
             }
         } finally { unsub(); }
-        P.lastCal = P.applyCal(res);
+        P.lastCal = await P.applyCal(res);
         result.textContent = P.lastCal;
         value.textContent = `${K.sync.delayMs()} ms`;
         sheet.status(P.lastCal, true);
@@ -62,18 +62,47 @@ P.timingCard = () => {
             const text = K.sync.lastLog();
             if (!text) { K.toast('No calibration has run on this device yet'); return; }
             P.logSheet('Last calibration log (kept on this device)').set(text);
-        } }, 'Calibration log')));
+        } }, 'Calibration log')),
+        K.cardOpts({ actions: P.infoBtn() }));
+};
+
+// How the timing works and what the calibration does, with diagrams.
+P.infoBtn = () => h('button', { class: 'btn info-btn', type: 'button', title: 'How meter timing works',
+    'aria-label': 'How meter timing works', onclick: () => K.frame('/k/static/help/meter-timing.html', 'How meter timing works') }, 'ⓘ How it works');
+
+// Meters that reach this screen AFTER the sound: a screen can only wait, so the
+// box has to send them sooner.  It holds the frames back by the chain it measures
+// minus a margin; raising the margin by the lateness (plus a little, so the frames
+// land just early and this screen waits the rest) takes that much back, for every
+// screen - the others were early already and simply wait a little longer.
+// Returns {given, late, left}: ms taken back, ms this screen still waits, ms that
+// nothing can recover (the box was holding back less than the lateness).
+const TAKE_BACK_CUSHION_MS = 20;
+P.takeBack = async lateMs => {
+    const st = await K.api('/spectrum/settings');
+    if (!st.ok) return { error: st.error || 'the box did not answer' };
+    const held = Math.round(st.drc_delay_base_ms || 0);
+    const given = Math.min(held, lateMs + TAKE_BACK_CUSHION_MS);
+    if (given > 0) {
+        const r = await K.api('/spectrum/margin', { json: { margin_ms: (st.drc_delay_margin_ms || 0) + given } });
+        if (!r.ok) return { error: r.error || 'the box refused the change' };
+    }
+    return { given, wait: Math.max(0, given - lateMs), left: Math.max(0, lateMs - given) };
 };
 
 // A calibration result into the delay; the sentence that says what happened.
-P.applyCal = res => {
+P.applyCal = async res => {
     if (res.ok && res.lagMs >= 0) {
         K.sync.setDelayMs(res.lagMs);
         return `Calibrated: the meters led the sound by ${res.lagMs} ms (match ${res.r}); this device now waits ${res.lagMs} ms.`;
     }
     if (res.ok) {
-        K.sync.setDelayMs(0);
-        return `The meters arrive ${-res.lagMs} ms after the sound (match ${res.r}): this device cannot catch up. Raise drc_delay_margin_ms in the box's [spectrum] configuration by about that much.`;
+        const late = -res.lagMs, tb = await P.takeBack(late);
+        K.sync.setDelayMs(tb.wait || 0);
+        if (tb.error) return `The meters arrived ${late} ms after the sound (match ${res.r}), and the box could not be adjusted: ${tb.error}.`;
+        if (!tb.given) return `The meters arrived ${late} ms after the sound (match ${res.r}). The box is not holding them back at all, so this is the network or this screen being slow: nothing can be taken back.`;
+        return `The meters arrived ${late} ms after the sound (match ${res.r}): the box now sends them ${tb.given} ms sooner` +
+            (tb.left ? `, all it had; the last ${tb.left} ms is the network or this screen and cannot be recovered.` : `, and this device waits ${tb.wait} ms.`);
     }
     return `Calibration failed: ${res.error}${res.r !== undefined ? ` (match ${res.r})` : ''}.`;
 };
@@ -134,9 +163,19 @@ P.tuneSheet = () => {
             }
             if (!first) {
                 const res = await verify('Check', 'Checking');
-                if (res.ok && Math.abs(res.lagMs) > VERIFY_TOL_MS && K.sync.delayMs() + res.lagMs >= 0) {
-                    K.sync.setDelayMs(K.sync.delayMs() + res.lagMs); show();
-                    note(`Corrected to ${K.sync.delayMs()} ms — Check again to see it.`);
+                if (res.ok && Math.abs(res.lagMs) > VERIFY_TOL_MS) {
+                    if (K.sync.delayMs() + res.lagMs >= 0) {
+                        K.sync.setDelayMs(K.sync.delayMs() + res.lagMs);
+                        note(`Corrected to ${K.sync.delayMs()} ms — Check again to see it.`);
+                    } else {
+                        // later than this screen's own wait can absorb: the box sends sooner
+                        const late = -(K.sync.delayMs() + res.lagMs), tb = await P.takeBack(late);
+                        K.sync.setDelayMs(tb.wait || 0);
+                        note(tb.error ? `Could not adjust the box: ${tb.error}.`
+                            : tb.given ? `The box now sends the meters ${tb.given} ms sooner; this device waits ${K.sync.delayMs()} ms — Check again to see it.`
+                            : 'The box is not holding the meters back at all: the rest is the network or this screen.');
+                    }
+                    show();
                 }
                 status.textContent = !res.ok ? 'Check failed — the delay was not changed.'
                     : Math.abs(res.lagMs) <= VERIFY_TOL_MS ? 'Finished: in sync.' : 'Finished.';
@@ -148,7 +187,7 @@ P.tuneSheet = () => {
             status.textContent = `${title1}: listening while the bursts play with ${K.sync.delayMs()} ms…`;
             const res = await K.sync.calibrate({ seconds: 14, clicks: true, onTick: left =>
                 status.textContent = `${title1}: listening while the bursts play with ${K.sync.delayMs()} ms — ${left} s left` });
-            P.lastCal = P.applyCal(res);
+            P.lastCal = await P.applyCal(res);
             note(`Step 1 · ${P.lastCal}`);
             show();
             if (closed) return;
@@ -172,7 +211,7 @@ P.tuneSheet = () => {
     };
     P.tuneClose = close;
     const scrim = h('div', { class: 'scrim' }, h('div', { class: 'sheet cal-sheet tune-sheet' },
-        h('div', { class: 'cal-title' }, 'Meter timing'),
+        h('div', { class: 'cal-title tune-title' }, h('span', {}, 'Meter timing'), P.infoBtn()),
         meterHost,
         h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50)),
         status, lines,

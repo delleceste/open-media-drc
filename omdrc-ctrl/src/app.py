@@ -331,8 +331,11 @@ SPECTRUM_MIN_FREQ = 31.5
 # screen then waits out the rest - network, drawing, the buffers nothing reports -
 # with its own calibrated delay (the kiosk's Config -> Meter timing).  A screen
 # can only wait, never anticipate, so the margin must cover the slowest network
-# and screen in use.
+# and screen in use.  The config value is the starting point: a calibration that
+# finds the meters reaching a screen late raises it (POST /spectrum/margin), and
+# that value is kept in the state dir.
 SPECTRUM_DRC_DELAY_MARGIN_MS = 150.0
+SPECTRUM_DRC_DELAY_MARGIN_MAX_MS = 5000.0
 # History the analyzer keeps beyond the hold-back in force, so an increase (DRC
 # switched on, a longer filter) shows on the next frame instead of stalling.
 _DELAY_RESERVE_S = 2.0
@@ -783,6 +786,10 @@ def load_config(path: str) -> None:
     saved_floor = _read_state_float(_FLOOR_STATE_FILE)
     if saved_floor is not None:
         SPECTRUM_FLOOR_DB = max(-90.0, min(-24.0, saved_floor))
+    # Likewise the margin a calibration settled on.
+    saved_margin = _read_state_float(_MARGIN_STATE_FILE)
+    if saved_margin is not None:
+        SPECTRUM_DRC_DELAY_MARGIN_MS = max(0.0, min(SPECTRUM_DRC_DELAY_MARGIN_MAX_MS, saved_margin))
 
     # [logs] and [alert:<id>] are settings sections — read them here, and skip
     # them (like the other reserved ones) when collecting commands below.
@@ -1898,6 +1905,7 @@ class SpectrumAnalyzer:
             # adds its own calibrated delay on top.
             "drc_delay_base_ms": round(terms.get("total", 0.0) * 1000.0, 1),
             "drc_delay_terms_ms": _drc_delay_terms_ms(terms),
+            "drc_delay_margin_ms": round(SPECTRUM_DRC_DELAY_MARGIN_MS, 1),
         }
 
     def _start_thread_locked(self, mode: str) -> None:
@@ -3485,6 +3493,7 @@ def _resolve_state_dir() -> str:
 
 _STATE_DIR = _resolve_state_dir()
 _FLOOR_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-floor-db")
+_MARGIN_STATE_FILE = os.path.join(_STATE_DIR, "spectrum-drc-delay-margin-ms")
 _BRUTEFIR_ATTENUATION_FILE = os.path.join(_STATE_DIR, "brutefir-attenuation-db")
 _BRUTEFIR_ATTENUATION_MIN_DB = 2.0
 _BRUTEFIR_ATTENUATION_MAX_DB = 12.0
@@ -7729,6 +7738,29 @@ def spectrum_floor():
     SPECTRUM_FLOOR_DB = floor
     _write_state_float(_FLOOR_STATE_FILE, floor)
     return jsonify({"ok": True, "floor_db": round(floor, 1)})
+
+
+@app.route("/spectrum/margin", methods=["POST"])
+def spectrum_margin():
+    """Set (and remember) how much sooner than the sound the box sends the frames.
+
+    Meter calibration calls this when a screen finds the meters arriving AFTER
+    the sound, which the screen's own delay cannot fix: a bigger margin means a
+    smaller hold-back, for every screen (the others were early already and just
+    wait a little more).  It takes effect on the analyzer's next frames."""
+    global SPECTRUM_DRC_DELAY_MARGIN_MS
+    body = request.get_json(silent=True) or {}
+    raw = body.get("margin_ms", request.form.get("margin_ms"))
+    try:
+        margin = max(0.0, min(SPECTRUM_DRC_DELAY_MARGIN_MAX_MS, float(raw)))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "margin_ms must be a number"}), 400
+    SPECTRUM_DRC_DELAY_MARGIN_MS = margin
+    _write_state_float(_MARGIN_STATE_FILE, margin)
+    terms = _drc_display_delay_breakdown()
+    return jsonify({"ok": True, "margin_ms": round(margin, 1),
+                    "drc_delay_base_ms": round(terms.get("total", 0.0) * 1000.0, 1),
+                    "drc_delay_terms_ms": _drc_delay_terms_ms(terms)})
 
 
 def _release_stream(mode: str, wants_bands: bool):

@@ -212,14 +212,16 @@ vu_mode = bars
 #   filter group    the impulse-response peak of the active filter (0 for the
 #                   flat `dirac pulse` default, which is a real zero)
 #   convolver       one BruteFIR partition, from `filter_length`
-#   direct          DRC off (Linux): the DAC buffer, read from the kernel
+#   direct          DRC off: the DAC buffer, read from the kernel (ALSA
+#                   `delay` on Linux, sndctl's buffer fill on FreeBSD)
 #
 # minus the margin below, so the frames always reach a screen a little early.
 # Each screen waits out the rest with its own delay (kiosk: Config -> Meter
 # timing, calibrated with the phone's microphone or set by eye with the click
 # track; desktop panel: Screen delay under the analyzer's Sliders).  A screen
-# can only wait, never anticipate: if a calibration reports the meters arriving
-# AFTER the sound, raise the margin by about that much.
+# can only wait, never anticipate: when a calibration finds the meters arriving
+# AFTER the sound it raises the margin itself (kept in the state dir, which then
+# wins over this value); this is only the starting point.
 drc_delay_margin_ms = 150
 
 # -- Qobuz Connect integration ---------------------------------------------

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meter timing</title>
+<style>
+:root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --accent: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922; --violet: #bc8cff;
+}
+html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 58rem; margin: 0 auto; padding: 1rem 16px 3rem; }
+h1 { font-size: 1.6rem; margin: .4rem 0 .2rem; }
+h2 { font-size: 1.2rem; margin: 2.2rem 0 .5rem; padding-top: .8rem; border-top: 1px solid var(--border); }
+h3 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
+p, li { color: var(--text); }
+.lead { color: var(--muted); margin-top: 0; }
+.muted { color: var(--muted); }
+code { background: var(--surface); border: 1px solid var(--border); border-radius: .3rem; padding: 0 .3rem; font-size: .9em; }
+nav { display: flex; flex-wrap: wrap; gap: .4rem; margin: 1rem 0; }
+nav a { color: var(--accent); text-decoration: none; border: 1px solid var(--border); border-radius: 1rem; padding: .2rem .7rem; font-size: .9rem; }
+figure { margin: 1rem 0 1.4rem; background: var(--surface); border: 1px solid var(--border); border-radius: .6rem; padding: .8rem .8rem .6rem; }
+figcaption { color: var(--muted); font-size: .88rem; margin-top: .5rem; }
+a { color: var(--accent); }
+figure { overflow-x: auto; }
+svg { width: 100%; min-width: 680px; height: auto; display: block; }
+figcaption { position: sticky; left: 0; }
+svg text { fill: var(--text); font: 13px system-ui, sans-serif; }
+svg text.m { fill: var(--muted); font-size: 11px; }
+table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+.step { display: grid; grid-template-columns: 2.2rem 1fr; gap: .6rem; margin: .8rem 0; }
+.step b.n { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: var(--accent); color: var(--bg); }
+.note { border-left: 3px solid var(--yellow); padding: .3rem .8rem; background: var(--surface); border-radius: 0 .4rem .4rem 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Meter timing</h1>
+<p class="lead">How the level meters and the spectrum are lined up with the sound you hear, and what the calibration does.</p>
+<nav>
+    <a href="#problem">The problem</a><a href="#box">The box's part</a><a href="#screen">The screen's part</a>
+    <a href="#late">Meters that arrive late</a><a href="#clicks">Tune with clicks</a><a href="#steps">The two steps</a>
+    <a href="#music">On the music</a><a href="#stored">What is stored where</a><a href="#fails">When it fails</a>
+</nav>
+
+<h2 id="problem">The problem</h2>
+<p>The meters are computed from a copy of the audio that the box takes <em>before</em> the audio reaches the speakers.
+Between that copy (the <em>tap</em>) and your ears the sound still has to pass through the room-correction filter,
+BruteFIR's buffers and the DAC's buffer. The meter frames go a different way: over the network to this screen,
+which then has to draw them. Neither path takes the same time, so without correction the bars flick before
+or after the sound.</p>
+<figure>
+    <svg id="fig-path" viewBox="0 0 900 230" role="img" aria-label="The two paths from the tap: sound to the speaker, frames to the screen"></svg>
+    <figcaption>Two paths leave the tap. The meters are in sync when a frame is drawn at the moment its sound comes out of the speaker.</figcaption>
+</figure>
+
+<h2 id="box">The box's part: hold back what it can measure</h2>
+<p>The box knows some of the sound path exactly, and holds each frame back by that much before sending it:</p>
+<table>
+    <tr><th>Stage</th><th>How it is known</th></tr>
+    <tr><td>Filter group delay</td><td>the peak of the active filter's impulse response</td></tr>
+    <tr><td>BruteFIR partition</td><td><code>filter_length</code> of the running configuration, at its rate</td></tr>
+    <tr><td>DAC buffer, DRC off</td><td>read live from the kernel: ALSA's <code>delay</code> on Linux, the channel's buffer fill (<code>sndctl</code>) on FreeBSD</td></tr>
+</table>
+<p>It then subtracts a <strong>margin</strong> (150 ms to start with), so frames always leave a little <em>early</em>. The rest of the path
+(buffers nothing reports, the USB link, the network, the screen) is not guessed. Each screen measures it for itself.</p>
+<figure>
+    <svg id="fig-box" viewBox="0 0 900 190" role="img" aria-label="Timeline: tap, frame sent after the hold-back, sound heard later"></svg>
+    <figcaption>Example with DRC on: 450 ms measured, minus the 150 ms margin, so each frame leaves the box 300 ms after the tap. The sound comes out at about 600 ms.</figcaption>
+</figure>
+
+<h2 id="screen">The screen's part: wait the rest</h2>
+<p>A frame reaches this screen some time after it leaves the box. The screen then waits its own <strong>extra display delay</strong> before drawing it.
+That delay is what the calibration finds: the time between a frame arriving and its sound being heard.</p>
+<figure>
+    <svg id="fig-screen" viewBox="0 0 900 230" role="img" aria-label="Timeline: frame arrives, screen waits its delay, frame drawn with the sound"></svg>
+    <figcaption>The frame arrives at 380 ms. The screen waits 220 ms and draws it at 600 ms, together with the sound.</figcaption>
+</figure>
+<p class="note">A screen can only <em>wait</em>. It cannot draw a frame before it has arrived. That is why the box errs on the early side.</p>
+
+<h2 id="late">Meters that arrive late</h2>
+<p>If the network or the screen is slow, a frame can arrive <em>after</em> its sound. No waiting can fix that.
+The calibration then asks the box to send frames sooner: it raises the box's margin by the lateness plus 20 ms,
+so frames land just early again, and this screen waits those 20 ms. The box can only take back what it was holding.
+If it was holding back less than the lateness, the remainder is the network or the screen and cannot be recovered.</p>
+<figure>
+    <svg id="fig-late" viewBox="0 0 900 300" role="img" aria-label="Timeline: late frame before and after the box sends sooner"></svg>
+    <figcaption>Before: the frame arrives at 700 ms, 100 ms after the sound. After: the box sends it 120 ms sooner (at 180 ms), it arrives at 580 ms, and the screen waits 20 ms.</figcaption>
+</figure>
+<p>The margin is one value for the whole box, so every screen gets its frames sooner. Screens that were already early just wait a little
+longer; with automatic recalibration on, they adjust by themselves. Otherwise, run their calibration again.</p>
+
+<h2 id="clicks">Tune with clicks: how the measurement works</h2>
+<p>The box stops the music and plays about 11 s of short, quiet tone bursts: 14 bursts of 8 ms at 1 kHz, −30 dBFS.
+They play through the normal path, in a separate MPD partition, so the music queue (and Qobuz Connect) is not touched.
+The music is not resumed afterwards.
+Meanwhile the phone's microphone records, and the page records when each meter frame arrives.</p>
+<p>Each burst is found twice: as an <em>onset</em> in the microphone recording (a jump of 10 dB over the room's noise),
+and as an onset in the meter frames (a jump of 15 dB). The gaps between bursts are deliberately irregular (700, 530, 860, 610 ms, …),
+so only one time shift lines the two lists up. The page tries every shift, counts how many bursts pair up within ±40 ms,
+and keeps the best one. The median of those pairs is the measured offset.</p>
+<figure>
+    <svg id="fig-clicks" viewBox="0 0 900 250" role="img" aria-label="Click onsets seen by the meters and by the microphone, and the shift that pairs them"></svg>
+    <figcaption>The meters (blue) see each burst 190 ms before the microphone (green) hears it. Shifting the blue marks right by 190 ms pairs all 14. Because the spacing is irregular, any other shift pairs only a few.</figcaption>
+</figure>
+<p>The result is accepted when at least 9 of the 14 bursts pair up, and the best shift pairs at least 4 more than any other shift more than 100 ms away.</p>
+
+<h2 id="steps">The two steps</h2>
+<div class="step"><b class="n">1</b><div><strong>Measuring.</strong> The bursts play with this screen's current delay. Frames are timed when they
+<em>arrive</em>. If they arrive before the sound, the new delay is that gap. If they arrive after it, the box is asked to send them sooner
+(see <a href="#late">above</a>). If step 1 fails, nothing is changed.</div></div>
+<div class="step"><b class="n">2</b><div><strong>Checking.</strong> The bursts play again, and now frames are timed when they are <em>drawn</em>, this screen's delay
+included. What is measured is what is left over. Within ±30 ms counts as in sync.</div></div>
+<div class="step"><b class="n">↻</b><div><strong>Check again</strong> repeats step 2. When the result is outside ±30 ms it corrects the delay (or, when the
+meters are late, the box) by what it found, and says so; check once more to confirm.</div></div>
+<figure>
+    <svg id="fig-steps" viewBox="0 0 900 170" role="img" aria-label="Timeline of a run: step 1 and step 2, each about 14 seconds"></svg>
+    <figcaption>A full run takes about 35 s: the level stream settles, then two listening windows of 14 s, each covering one 11 s click track.</figcaption>
+</figure>
+<p>Without the OMDRC Android app there is no microphone: the clicks just play, and you set the delay with the ± buttons until the bars flick with each click.</p>
+
+<h2 id="music">Calibrate on the music, and automatic recalibration</h2>
+<p><strong>Calibrate on the music</strong> does the same measurement without stopping anything. It listens for 10 s and compares the <em>shape</em>
+of the loudness in the microphone recording with the meters, at every shift from −600 to +2500 ms, and keeps the best match. Music with clear beats
+works best. A very regular beat can match in more than one place, and is then rejected as ambiguous. It tries up to 3 times.</p>
+<p><strong>Automatic recalibration</strong> (off by default) does this on Now playing when a track starts or playback resumes: 8 s at most every two minutes.
+The delay becomes the median of the last 3 good results. Failed, weak (match below 0.5) or late results are ignored. A blue light blinks over the meters
+while it listens.</p>
+
+<h2 id="stored">What is stored where</h2>
+<table>
+    <tr><th>Value</th><th>Where</th><th>Who it affects</th></tr>
+    <tr><td>Extra display delay</td><td>this device's browser storage</td><td>this screen only</td></tr>
+    <tr><td>Box margin</td><td>the box's state directory (<code>spectrum-drc-delay-margin-ms</code>); <code>drc_delay_margin_ms</code> in the configuration is only the starting value</td><td>every screen</td></tr>
+    <tr><td>Measured stages</td><td>worked out live, every 2 s while a meter is open</td><td>every screen</td></tr>
+    <tr><td>Last calibration log</td><td>this device (Config → Meter timing → Calibration log)</td><td>for diagnosis</td></tr>
+</table>
+
+<h2 id="fails">When it fails</h2>
+<table>
+    <tr><th>Message</th><th>What to do</th></tr>
+    <tr><td>the microphone heard only N of the 14 clicks</td><td>Raise the volume a little, or hold the phone nearer the speakers.</td></tr>
+    <tr><td>the meters showed only N of the 14 clicks</td><td>The level stream did not reach this screen properly. Check the network and try again.</td></tr>
+    <tr><td>only N of 14 clicks lined up</td><td>Both saw the clicks, but the meter frames reached the screen too irregularly to pair them (usually a busy or sleepy Wi-Fi link). Try again. The log's arrival gaps show how irregular they were.</td></tr>
+    <tr><td>not holding them back at all</td><td>The frames arrive late even though the box sends them immediately. The network or the screen is slower than the whole sound path. Nothing can be taken back.</td></tr>
+</table>
+<p class="muted">The Log button shows everything a run saw: the box's delay terms, every meter frame with its arrival time, the microphone envelope,
+the detected onsets, the candidate shifts and the verdict.</p>
+</main>
+
+<script>
+// Timelines drawn to scale from the numbers the text uses.
+const NS = 'http://www.w3.org/2000/svg';
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { sound: css('--green'), frame: css('--accent'), wait: css('--yellow'), late: css('--red'),
+            muted: css('--muted'), border: css('--border'), text: css('--text'), violet: css('--violet'), bg: css('--bg') };
+const el = (svg, tag, attrs, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (text !== undefined) e.textContent = text;
+    svg.append(e);
+    return e;
+};
+const arrowDefs = svg => {
+    const defs = el(svg, 'defs', {});
+    for (const [id, c] of Object.entries(C)) {
+        const m = el(defs, 'marker', { id: 'a-' + svg.id + '-' + id, viewBox: '0 0 10 10', refX: 9, refY: 5,
+                                       markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' });
+        el(m, 'path', { d: 'M0,0 L10,5 L0,10 z', fill: c });
+    }
+};
+const arrow = (svg, x1, y1, x2, y2, color, w = 2, dash) => el(svg, 'line', {
+    x1, y1, x2, y2, stroke: C[color], 'stroke-width': w, 'marker-end': `url(#a-${svg.id}-${color})`,
+    ...(dash ? { 'stroke-dasharray': dash } : {}) });
+
+// A time axis: rows of labelled marks and spans on a shared ms scale.
+function timeline(id, { max, step, rows, left = 150, right = 20, top = 16, rowH = 38 }) {
+    const svg = document.getElementById(id);
+    const W = 900, x = t => left + (W - left - right) * t / max;
+    arrowDefs(svg);
+    const axisY = top + rows.length * rowH + 6;
+    for (let t = 0; t <= max; t += step) {
+        el(svg, 'line', { x1: x(t), y1: top - 4, x2: x(t), y2: axisY, stroke: C.border, 'stroke-width': 1 });
+        el(svg, 'text', { x: x(t), y: axisY + 16, 'text-anchor': 'middle', class: 'm' }, t >= 1000 && max > 3000 ? `${t / 1000} s` : `${t} ms`);
+    }
+    rows.forEach((r, i) => {
+        const y = top + i * rowH + rowH / 2;
+        el(svg, 'text', { x: 8, y: y + 4 }, r.label);
+        (r.spans || []).forEach(s => {
+            el(svg, 'rect', { x: x(s.from), y: y - 9, width: Math.max(1, x(s.to) - x(s.from)), height: 18, rx: 4,
+                              fill: C[s.color], 'fill-opacity': s.fill ?? .28, stroke: C[s.color], 'stroke-width': 1 });
+            if (s.text) el(svg, 'text', { x: (x(s.from) + x(s.to)) / 2, y: y + 4, 'text-anchor': 'middle' }, s.text);
+        });
+        (r.marks || []).forEach(m => {
+            if (m.shape === 'tick') el(svg, 'line', { x1: x(m.t), y1: y - 11, x2: x(m.t), y2: y + 11, stroke: C[m.color], 'stroke-width': 3 });
+            else el(svg, 'circle', { cx: x(m.t), cy: y, r: 6, fill: C[m.color] });
+            if (m.text) el(svg, 'text', { x: x(m.t) + (m.dx ?? 9), y: y - 12, 'text-anchor': m.anchor || 'start', class: 'm' }, m.text);
+        });
+    });
+    return { svg, x, y: i => top + i * rowH + rowH / 2 };
+}
+
+// 1. the two paths
+(() => {
+    const svg = document.getElementById('fig-path');
+    arrowDefs(svg);
+    const box = (x, y, w, label, sub, color) => {
+        el(svg, 'rect', { x, y, width: w, height: 46, rx: 8, fill: C[color], 'fill-opacity': .14, stroke: C[color] });
+        el(svg, 'text', { x: x + w / 2, y: y + (sub ? 20 : 28), 'text-anchor': 'middle' }, label);
+        if (sub) el(svg, 'text', { x: x + w / 2, y: y + 37, 'text-anchor': 'middle', class: 'm' }, sub);
+    };
+    box(10, 20, 110, 'MPD', 'the player', 'muted');
+    box(160, 20, 90, 'tap', 'copy taken', 'violet');
+    box(290, 20, 170, 'filter · BruteFIR', 'measured', 'sound');
+    box(500, 20, 170, 'DAC · USB · amp', 'partly measured', 'sound');
+    box(710, 20, 170, 'speaker', 'you hear it', 'sound');
+    arrow(svg, 120, 43, 158, 43, 'muted'); arrow(svg, 250, 43, 288, 43, 'sound');
+    arrow(svg, 460, 43, 498, 43, 'sound'); arrow(svg, 670, 43, 708, 43, 'sound');
+    box(160, 150, 150, 'analyzer', 'hold-back', 'frame');
+    box(350, 150, 150, 'network', 'Wi-Fi, TCP', 'frame');
+    box(540, 150, 150, 'this screen', 'waits its delay', 'wait');
+    box(730, 150, 150, 'drawn', 'bars move', 'frame');
+    arrow(svg, 205, 66, 205, 148, 'frame');
+    arrow(svg, 310, 173, 348, 173, 'frame'); arrow(svg, 500, 173, 538, 173, 'frame'); arrow(svg, 690, 173, 728, 173, 'frame');
+    el(svg, 'line', { x1: 795, y1: 68, x2: 805, y2: 148, stroke: C.muted, 'stroke-dasharray': '4 4' });
+    el(svg, 'text', { x: 812, y: 112, class: 'm' }, 'same moment');
+})();
+
+// 2. the box's hold-back
+timeline('fig-box', { max: 700, step: 100, rows: [
+    { label: 'Sound path', spans: [{ from: 0, to: 450, color: 'sound', text: 'measured 450 ms' },
+                                   { from: 450, to: 600, color: 'muted', text: 'unmeasured' }],
+      marks: [{ t: 0, color: 'violet', text: 'tap' }, { t: 600, color: 'sound', text: 'heard' }] },
+    { label: 'Box hold-back', spans: [{ from: 0, to: 300, color: 'frame', text: '450 − 150 margin' },
+                                      { from: 300, to: 450, color: 'wait', fill: .12, text: 'margin' }],
+      marks: [{ t: 300, color: 'frame', text: 'frame sent' }] },
+    { label: 'Frame early by', spans: [{ from: 300, to: 600, color: 'wait', fill: .18, text: '300 ms for the screen to use' }] },
+] });
+
+// 3. the screen waits
+timeline('fig-screen', { max: 700, step: 100, rows: [
+    { label: 'Sound', marks: [{ t: 0, color: 'violet', text: 'tap' }, { t: 600, color: 'sound', text: 'heard' }],
+      spans: [{ from: 0, to: 600, color: 'sound', fill: .12 }] },
+    { label: 'Box', spans: [{ from: 0, to: 300, color: 'frame', fill: .18, text: 'hold-back' }], marks: [{ t: 300, color: 'frame', text: 'sent' }] },
+    { label: 'Network', spans: [{ from: 300, to: 380, color: 'frame', fill: .35 }], marks: [{ t: 380, color: 'frame', text: 'arrives' }] },
+    { label: 'Screen waits', spans: [{ from: 380, to: 600, color: 'wait', text: 'delay 220 ms' }] },
+    { label: 'Drawn', marks: [{ t: 600, color: 'frame', text: 'drawn with the sound' }] },
+] });
+
+// 4. late frames, before and after
+(() => {
+    const t = timeline('fig-late', { max: 800, step: 100, rowH: 36, rows: [
+        { label: 'Sound', marks: [{ t: 600, color: 'sound', text: 'heard' }], spans: [{ from: 0, to: 600, color: 'sound', fill: .12 }] },
+        { label: 'Before: box', spans: [{ from: 0, to: 300, color: 'frame', fill: .18 }], marks: [{ t: 300, color: 'frame', text: 'sent' }] },
+        { label: 'slow network', spans: [{ from: 300, to: 700, color: 'frame', fill: .35 }],
+          marks: [{ t: 700, color: 'late', text: 'arrives 100 ms late' }] },
+        { label: 'After: box', spans: [{ from: 0, to: 180, color: 'frame', fill: .18 }, { from: 180, to: 300, color: 'late', fill: .2, text: '−120' }],
+          marks: [{ t: 180, color: 'frame', text: 'sent sooner', anchor: 'end', dx: -9 }] },
+        { label: 'slow network', spans: [{ from: 180, to: 580, color: 'frame', fill: .35 }], marks: [{ t: 580, color: 'frame', text: 'arrives' }] },
+        { label: 'Screen waits', spans: [{ from: 580, to: 600, color: 'wait', fill: .6 }], marks: [{ t: 600, color: 'frame', text: 'drawn with the sound (waits 20 ms)' }] },
+    ] });
+    el(t.svg, 'line', { x1: t.x(600), y1: 8, x2: t.x(600), y2: t.y(5) + 14, stroke: C.sound, 'stroke-dasharray': '5 4' });
+})();
+
+// 5. click onsets: meters vs microphone
+(() => {
+    const starts = [1000, 1700, 2230, 3090, 3700, 4640, 5120, 5890, 6540, 7430, 7990, 8710, 9540, 10130];
+    const jitter = [8, -12, 20, -5, 14, -18, 6, 25, -9, 11, -22, 3, 16, -7];
+    const LAG = 190, arrive = 300;
+    const t = timeline('fig-clicks', { max: 11000, step: 1000, rowH: 46, rows: [
+        { label: 'Played', marks: starts.map(s => ({ t: s, color: 'muted', shape: 'tick' })) },
+        { label: 'Meter frames', marks: starts.map((s, i) => ({ t: s + arrive + jitter[i], color: 'frame', shape: 'tick' })) },
+        { label: 'Microphone', marks: starts.map(s => ({ t: s + arrive + LAG, color: 'sound', shape: 'tick' })) },
+        { label: 'Shifted +190', marks: starts.map((s, i) => ({ t: s + arrive + jitter[i] + LAG, color: 'frame', shape: 'tick' })) },
+    ] });
+    const i = 3, xa = t.x(starts[i] + arrive + jitter[i]), xb = t.x(starts[i] + arrive + LAG);
+    arrow(t.svg, xa, t.y(1) + 14, xb, t.y(2) - 14, 'wait', 1.5);
+    el(t.svg, 'text', { x: xb + 8, y: (t.y(1) + t.y(2)) / 2 + 4, class: 'm' }, '190 ms: meters arrive this much before the sound');
+    el(t.svg, 'text', { x: t.x(5500), y: t.y(3) + 26, 'text-anchor': 'middle', class: 'm' }, 'every blue mark now sits on a green one (±40 ms): 14 of 14 paired');
+})();
+
+// 6. a run's timeline
+timeline('fig-steps', { max: 36000, step: 4000, rowH: 40, rows: [
+    { label: 'Level stream', spans: [{ from: 0, to: 1500, color: 'muted', text: 'settle' }, { from: 1500, to: 36000, color: 'frame', fill: .1, text: 'meter frames recorded' }] },
+    { label: 'Step 1', spans: [{ from: 1500, to: 15500, color: 'frame', text: 'Measuring (14 s)' }, { from: 3000, to: 14300, color: 'sound', fill: .25 }],
+      marks: [{ t: 16500, color: 'wait', text: 'delay set' }] },
+    { label: 'Step 2', spans: [{ from: 18000, to: 32000, color: 'wait', text: 'Checking (14 s)' }, { from: 19500, to: 30800, color: 'sound', fill: .25 }],
+      marks: [{ t: 33500, color: 'sound', text: 'in sync?' }] },
+] });
+</script>
+</body>
+</html>

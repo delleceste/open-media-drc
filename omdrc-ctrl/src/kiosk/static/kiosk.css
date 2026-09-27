@@ -349,6 +349,8 @@ button.chip.state { color: inherit; }
 /* calibration log sheet (pages/config.js): tall, monospace, selectable */
 .sheet.cal-sheet { width: min(60rem, 96vw); height: min(40rem, 92vh); display: flex; flex-direction: column; gap: .4rem; padding: .8rem 1rem; }
 .cal-title { font-weight: 700; }
+.cal-title.tune-title { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.btn.info-btn { min-height: 1.9rem; padding: .15rem .7rem; font-size: .85rem; font-weight: 500; color: var(--accent); }
 .cal-status { color: var(--muted); font-size: .85rem; min-height: 1.2em; } .cal-status.done { color: var(--text); }
 .cal-log { flex: 1 1 auto; min-height: 0; margin: 0; overflow: auto; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: .4rem;
     background: var(--deep); font: .72rem/1.35 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all;

@@ -213,6 +213,23 @@ class FifoOwnershipTest(unittest.TestCase):
                 APP.os.close(fd)
 
 
+class MarginEndpointTest(unittest.TestCase):
+    """A calibration that finds the meters late raises the margin itself."""
+
+    def test_sets_clamps_and_remembers_the_margin(self):
+        with tempfile.TemporaryDirectory() as d, \
+             mock.patch.object(APP, "_MARGIN_STATE_FILE", os.path.join(d, "m")), \
+             mock.patch.object(APP, "SPECTRUM_DRC_DELAY_MARGIN_MS", 150.0), \
+             mock.patch.object(APP, "_drc_display_delay_breakdown", return_value={"total": 0.1}):
+            client = APP.app.test_client()
+            r = client.post("/spectrum/margin", json={"margin_ms": 380}).get_json()
+            self.assertEqual((r["ok"], r["margin_ms"]), (True, 380.0))
+            self.assertEqual(APP.SPECTRUM_DRC_DELAY_MARGIN_MS, 380.0)
+            self.assertEqual(APP._read_state_float(os.path.join(d, "m")), 380.0)
+            self.assertEqual(client.post("/spectrum/margin", json={"margin_ms": -5}).get_json()["margin_ms"], 0.0)
+            self.assertEqual(client.post("/spectrum/margin", json={"margin_ms": "x"}).status_code, 400)
+
+
 class DrcDelayEstimateTest(unittest.TestCase):
     """The frames are held back by the MEASURED stages minus a margin.
 
