@@ -15,6 +15,7 @@ const { h } = K;
 const P = {
     id: 'qobuz', label: 'Qobuz', title: 'Qobuz search',
     optional: () => !!K.state.features.qobuz_search,
+    orientation: 'portrait',   // the app turns the phone upright here (main.js)
     status: null,              // /qobuz/status
     favourites: [],            // configured label groups' names
     selected: new Set(K.pref('qobuz.labels', [])),

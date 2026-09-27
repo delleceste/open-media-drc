@@ -30,6 +30,7 @@ function activate(i) {
     $('#top-page').textContent = page.label;
     syncAppScreen();
     reportScroll();
+    applyOrientation(page);
     try { history.replaceState(null, '', '#' + page.id); } catch {}
 }
 
@@ -128,14 +129,36 @@ document.addEventListener('visibilitychange', syncAppScreen);
 
 // The app reloads on a swipe down, but only when the page is at its top: the kiosk
 // scrolls inside its pages, which the WebView cannot see, so tell it.
-function reportScroll() {
+// "At the top" means every scrolling box under the finger is at its top, not only the
+// page: a page may scroll inside a column of its own (the Qobuz page's filters), and
+// dragging that back up must not reload.  Under an overlay (a sheet, the full player)
+// the app never reloads.  Reported on each touch, before the app judges the drag.
+function scrolledAt(el) {
+    for (; el && el !== document.body; el = el.parentElement)
+        if (el.scrollTop > 2 && el.scrollHeight > el.clientHeight) return true;
+    return false;
+}
+// A page may want the phone upright (the Qobuz search: a list and a keyboard).  The
+// Android app rotates on request (apiVersion 5); a browser only in fullscreen.
+function applyOrientation(page) {
+    const want = page.orientation || '';
+    if (K.inApp) {
+        try { if (window.OmdrcApp.setPageOrientation) window.OmdrcApp.setPageOrientation(want); } catch {}
+    } else if (document.fullscreenElement && screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock(want || 'landscape').catch(() => {});
+    }
+}
+
+function reportScroll(target) {
     if (!K.inApp || !window.OmdrcApp.setPageScrolled) return;
     const body = cur >= 0 ? K.pages[cur].body : null;
-    try { window.OmdrcApp.setPageScrolled(!!body && body.scrollTop > 2); } catch {}
+    const scrolled = $('#overlay-root').children.length > 0 || scrolledAt(target) || (!!body && body.scrollTop > 2);
+    try { window.OmdrcApp.setPageScrolled(scrolled); } catch {}
 }
 document.addEventListener('scroll', e => {
-    if (e.target.classList && e.target.classList.contains('page-body')) reportScroll();
+    if (e.target instanceof Element) reportScroll(e.target);
 }, { capture: true, passive: true });
+document.addEventListener('pointerdown', e => reportScroll(e.target), { capture: true, passive: true });
 
 // ── page menu (phones: replaces the bottom tab bar) ──────────────────────────
 $('#top-menu').addEventListener('click', () => {
@@ -171,7 +194,9 @@ document.addEventListener('pointerup', e => {
     if (K.saverActive || (e.target.closest && e.target.closest(CONTROLS))) return;
     K.showBar(!document.body.classList.contains('bar-shown'));
 });
-document.addEventListener('mousemove', e => { if (e.clientY < 30) K.showBar(true); }, { passive: true });
+// A real mouse only: after a tap Android's WebView sends a mousemove at the finger,
+// and a tap on a control near the top (the Qobuz search field) must not pull the bar in.
+document.addEventListener('pointermove', e => { if (e.pointerType === 'mouse' && e.clientY < 30) K.showBar(true); }, { passive: true });
 $('#topbar').addEventListener('pointerdown', () => K.showBar(true));   // using it keeps it up
 
 // The top bar has no clock any more (the phone/panel already shows one); only the

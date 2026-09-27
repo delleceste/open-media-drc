@@ -58,7 +58,10 @@ top bar on Now, or Config → Cover art):
 `android/omdrc-app` opens `/k/` by default.  When `window.OmdrcApp` exists the
 kiosk hides its own fullscreen button (the app owns the gear button), skips the
 browser keep-awake fallback, and tells the app whether the screen should stay on:
-only while the Now page is on screen (`setPageWantsScreenOn`).  Config shows an
+only while the Now page is on screen (`setPageWantsScreenOn`). A page may also ask for the phone
+upright (`setPageOrientation`, app API 5): the Qobuz page does, and every other
+page turns it back to landscape.  In a browser the same happens only in
+fullscreen, where the orientation can be locked.  Config shows an
 "App settings" button (`openSettings`).
 
 ## Meter timing and calibration

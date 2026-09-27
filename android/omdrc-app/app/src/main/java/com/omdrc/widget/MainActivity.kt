@@ -3,6 +3,7 @@ package com.omdrc.widget
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -170,6 +171,8 @@ class MainActivity : ComponentActivity() {
                 pageWantsScreenOn = false
                 applyKeepScreenOn()
                 pageScrolled = false
+                // and back to landscape until a page asks otherwise
+                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 val requested = loadRequested
                 loadRequested = false
                 if (connError.isShown) {
@@ -373,6 +376,18 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { pageScrolled = scrolled }
         }
 
+        /** The kiosk page on screen wants the phone upright ("portrait": the
+         *  Qobuz search, a list and a keyboard) or not (anything else: the
+         *  usual landscape, either way up). */
+        @JavascriptInterface
+        fun setPageOrientation(orientation: String) {
+            runOnUiThread {
+                val want = if (orientation == "portrait") ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                           else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                if (requestedOrientation != want) requestedOrientation = want
+            }
+        }
+
         /** Record the microphone for [durationMs] and reply through K.onMicEnvelope(). */
         @JavascriptInterface
         fun startMicEnvelope(durationMs: Int, stepMs: Int) {
@@ -389,7 +404,7 @@ class MainActivity : ComponentActivity() {
         fun micAvailable(): Boolean = packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)
 
         @JavascriptInterface
-        fun apiVersion(): Int = 4
+        fun apiVersion(): Int = 5
     }
 
     /** The gear button: which view to show, the screen-on rule, and the
