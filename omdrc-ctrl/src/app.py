@@ -8889,6 +8889,25 @@ except Exception as _kiosk_error:               # pragma: no cover
     print(f"kiosk UI unavailable: {_kiosk_error}", file=sys.stderr)
 
 
+def _no_delay_request_handler():
+    """werkzeug's handler with Nagle off.  The meters are a stream of small SSE
+    frames, one send() each; with Nagle a frame waits for the ACK of the one
+    before, and a phone on Wi-Fi delays its ACKs, so frames reached it 100-300 ms
+    late and in bursts - more spread than any calibration can pair clicks
+    across.  Harmless for everything else the panel serves."""
+    from werkzeug.serving import WSGIRequestHandler
+
+    class NoDelayHandler(WSGIRequestHandler):
+        def setup(self):
+            super().setup()
+            try:
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
+
+    return NoDelayHandler
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="OMDRC Control web interface")
@@ -8902,4 +8921,5 @@ if __name__ == "__main__":
     _SPECTRUM.ensure_disabled()
     if platform.system() == "FreeBSD":
         _audio_diagnostics().start()
-    app.run(host=args.host, port=args.port, threaded=True)
+    app.run(host=args.host, port=args.port, threaded=True,
+            request_handler=_no_delay_request_handler())
