@@ -443,10 +443,25 @@ input[type=range] { accent-color: var(--accent); }
 .qz-banner { display: flex; align-items: center; gap: .8rem; }
 .qz-banner > div { flex: 1; min-width: 0; }
 .qz-searchrow { display: flex; gap: .5rem; }
-.qz-input, .qz-year { min-width: 0; height: 2.8rem; padding: 0 .7rem; border-radius: .5rem; border: 1px solid var(--border);
+.qz-input { min-width: 0; height: 2.8rem; padding: 0 .7rem; border-radius: .5rem; border: 1px solid var(--border);
     background: var(--deep); color: var(--text); font: inherit; -webkit-user-select: text; user-select: text; }
 .qz-input { flex: 1; }
-.win-row input.qz-year { flex: 0 0 6.5rem; min-width: 0; }
+/* year spinners: drag up/down, tap for the picker */
+.qz-span { justify-content: flex-start; }
+.qz-yspin { flex: 0 0 6.5rem; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 4.2rem;
+    border: 1px solid var(--border); border-radius: .5rem; background: var(--deep); cursor: ns-resize; touch-action: none;
+    -webkit-user-select: none; user-select: none; }
+.qz-yspin.on { border-color: var(--accent); background: rgba(88,166,255,.1); }
+.qz-yspin:focus-visible { outline: 2px solid var(--accent); }
+.qz-yval { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.qz-yarrow { font-size: .55rem; color: var(--muted); line-height: 1; }
+.qz-ysheet { width: min(30rem, 94vw); }
+.qz-yrow { display: flex; align-items: center; justify-content: center; gap: .4rem; margin-bottom: .6rem; }
+.qz-yfield { width: 6.5rem; height: 3rem; text-align: center; font: 700 1.6rem system-ui, sans-serif; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--border); border-radius: .5rem; background: var(--deep); color: var(--text); -webkit-user-select: text; user-select: text; }
+.qz-ydecade { min-width: 6rem; text-align: center; font-weight: 600; color: var(--muted); }
+.qz-ygrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; margin-bottom: .9rem; }
+.btn.qz-ycell { padding: 0; font-variant-numeric: tabular-nums; }
 .qz-chips { display: flex; flex-wrap: wrap; gap: .4rem; }
 .chip.qz-chip { min-height: 2.3rem; font-size: .9rem; padding: 0 .8rem; cursor: pointer; }
 .qz-seen { margin-top: .45rem; } .qz-seen summary { cursor: pointer; margin-bottom: .4rem; }

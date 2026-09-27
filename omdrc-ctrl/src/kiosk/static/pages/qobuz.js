@@ -169,14 +169,124 @@ P.paintDate = () => {
                 onchange: e => { setPref('lastN', +e.target.value); P.searchSoon(); },
             }), out));
     } else if (mode === 'span') {
-        const year = (key, dflt) => h('input', {
-            type: 'number', class: 'qz-year', min: 1900, max: thisYear, step: 1, inputmode: 'numeric',
-            value: pref(key, dflt), placeholder: key === 'to' ? 'today' : '',
-            onchange: e => { const v = parseInt(e.target.value, 10); setPref(key, Number.isFinite(v) ? v : ''); P.searchSoon(); },
-        });
-        kids.push(h('div', { class: 'win-row' }, year('from', thisYear - 5), h('span', { class: 'muted' }, 'to'), year('to', '')));
+        kids.push(h('div', { class: 'win-row qz-span' },
+            P.yearSpinner('from'), h('span', { class: 'muted' }, 'to'), P.yearSpinner('to')));
     }
     K.clear(P.dateBox).append(...kids);
+};
+
+// ── year spinners (the from – to span) ───────────────────────────────────────
+// A year is changed by dragging it up or down, faster the further the finger
+// goes (a quarter of a screen is decades); a tap opens a picker instead.
+// "to" can also be "today" (no upper bound), one step above this year.
+const YEAR_MIN = 1900;
+const TODAY = thisYear + 1;                  // "to" only: the open end
+const yearOf = key => {
+    const v = parseInt(pref(key, key === 'from' ? thisYear - 5 : ''), 10);
+    return Number.isFinite(v) ? K.clamp(v, YEAR_MIN, thisYear) : key === 'from' ? thisYear - 5 : TODAY;
+};
+const yearText = y => y === TODAY ? 'today' : String(y);
+
+// Store one end, and move the other when the span would turn inside out.
+P.setYear = (key, y) => {
+    setPref(key, y === TODAY ? '' : y);
+    const from = yearOf('from'), to = yearOf('to');
+    if (to !== TODAY && from > to) setPref(key === 'from' ? 'to' : 'from', key === 'from' ? from : to);
+    P.paintDate();
+    P.searchSoon();
+};
+
+P.yearSpinner = key => {
+    const top = key === 'to' ? TODAY : thisYear;
+    const value = h('span', { class: 'qz-yval' }, yearText(yearOf(key)));
+    const box = h('div', {
+        class: 'qz-yspin tap', role: 'spinbutton', tabindex: 0,
+        'aria-label': key === 'from' ? 'From year' : 'To year', 'aria-valuenow': yearOf(key),
+        title: 'Drag up or down, or tap to pick',
+    }, h('span', { class: 'qz-yarrow' }, '▲'), value, h('span', { class: 'qz-yarrow' }, '▼'));
+    let drag = null;
+    const show = y => { value.textContent = yearText(y); box.setAttribute('aria-valuenow', y); };
+    box.addEventListener('pointerdown', e => {
+        e.stopPropagation();          // a diagonal drag must not turn the page
+        drag = { id: e.pointerId, y: e.clientY, start: yearOf(key), now: yearOf(key), moved: false };
+        try { box.setPointerCapture(e.pointerId); } catch {}
+        box.classList.add('on');
+    });
+    box.addEventListener('pointermove', e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const dy = drag.y - e.clientY;                   // up = later
+        if (Math.abs(dy) > 6) drag.moved = true;
+        // 1 year per 12 px at first, then faster: 50 px ≈ 5 years, 150 px ≈ 25
+        const steps = Math.sign(dy) * Math.floor(Math.pow(Math.abs(dy) / 12, 1.35));
+        drag.now = K.clamp(drag.start + steps, YEAR_MIN, top);
+        show(drag.now);
+    });
+    const end = e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const d = drag; drag = null;
+        box.classList.remove('on');
+        if (!d.moved) P.pickYear(key);
+        else if (d.now !== d.start) P.setYear(key, d.now);
+    };
+    box.addEventListener('pointerup', end);
+    box.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.id) { drag = null; box.classList.remove('on'); show(yearOf(key)); } });
+    box.addEventListener('wheel', e => {                  // a mouse on the desktop kiosk
+        e.preventDefault();
+        P.setYear(key, K.clamp(yearOf(key) + (e.deltaY < 0 ? 1 : -1), YEAR_MIN, top));
+    }, { passive: false });
+    box.addEventListener('keydown', e => {
+        const step = { ArrowUp: 1, ArrowDown: -1, PageUp: 10, PageDown: -10 }[e.key];
+        if (step) { e.preventDefault(); P.setYear(key, K.clamp(yearOf(key) + step, YEAR_MIN, top)); }
+        else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.pickYear(key); }
+    });
+    return box;
+};
+
+// The picker: the year large with ±1 and ±10, a decade of years to tap, and
+// for "to" a Today button.  Typing a year works too.
+P.pickYear = key => {
+    const top = key === 'to' ? TODAY : thisYear;
+    let year = yearOf(key);
+    let decade = Math.floor(Math.min(year, thisYear) / 10) * 10;
+    const field = h('input', {
+        type: 'text', class: 'qz-yfield', inputmode: 'numeric', maxlength: 4, 'aria-label': 'Year',
+        oninput: e => {
+            const v = parseInt(e.target.value, 10);
+            if (e.target.value.length === 4 && v >= YEAR_MIN && v <= thisYear) { year = v; decade = Math.floor(v / 10) * 10; paint(false); }
+        },
+        onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); done(true); } },
+    });
+    const grid = h('div', { class: 'qz-ygrid' });
+    const decadeLabel = h('span', { class: 'qz-ydecade' });
+    const step = n => { year = K.clamp(year + n, YEAR_MIN, top); if (year !== TODAY) decade = Math.floor(year / 10) * 10; paint(); };
+    const btn = (label, fn, cls = '') => h('button', { type: 'button', class: 'btn ' + cls, onclick: fn }, label);
+    function paint(setField = true) {
+        if (setField) field.value = year === TODAY ? '' : String(year);
+        field.placeholder = year === TODAY ? 'today' : '';
+        decadeLabel.textContent = `${decade}s`;
+        K.clear(grid).append(...Array.from({ length: 10 }, (_, i) => decade + i).map(y =>
+            h('button', { type: 'button', class: 'btn qz-ycell' + (y === year ? ' active' : ''), disabled: y < YEAR_MIN || y > thisYear,
+                onclick: () => { year = y; done(true); } }, y)));
+    }
+    const close = () => scrim.remove();
+    function done(apply) { close(); if (apply) P.setYear(key, year); }
+    const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) close(); } },
+        h('div', { class: 'sheet qz-ysheet' },
+            h('h2', {}, key === 'from' ? 'Released from' : 'Released until'),
+            h('div', { class: 'qz-yrow' }, btn('−10', () => step(-10), 'step'), btn('−1', () => step(-1), 'step'),
+                field, btn('+1', () => step(1), 'step'), btn('+10', () => step(10), 'step')),
+            h('div', { class: 'qz-yrow' },
+                btn('‹', () => { decade = Math.max(Math.floor(YEAR_MIN / 10) * 10, decade - 10); paint(false); }, 'step'),
+                decadeLabel,
+                btn('›', () => { decade = Math.min(Math.floor(thisYear / 10) * 10, decade + 10); paint(false); }, 'step')),
+            grid,
+            h('div', { class: 'sheet-actions' },
+                key === 'to' ? btn('Today', () => { year = TODAY; done(true); }) : null,
+                h('span', { class: 'spacer' }),
+                btn('Cancel', () => done(false)),
+                btn('Set', () => done(true), 'primary'))));
+    paint();
+    document.getElementById('overlay-root').append(scrim);
 };
 
 P.paintSort = () => {

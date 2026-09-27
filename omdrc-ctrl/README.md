@@ -172,7 +172,9 @@ Search and play answer 409 while upmpdcli is not running.
 
 The kiosk (`/k/`, and so the Android app) has a **Qobuz** page for it: the
 text field, the favourite labels as check boxes (plus any label met in the
-results), "last N years" or a from–to span, newest first or best match,
+results), "last N years" or a from–to span (each year a spinner: drag it up
+or down, faster the further you go, or tap it for a year picker), newest
+first or best match,
 result rows with ▶ and **+**, the track list on a tap, "Load more", and a
 player strip (previous, play/pause, stop, next, seek) on MPD. The strip
 opens into a full-screen player, as in Qobuz's app: the cover as large as the
