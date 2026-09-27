@@ -79,9 +79,9 @@ P.applyCal = res => {
 };
 
 // Tuning with the click track, meters in view.  The level bars run only while this
-// sheet is open.  Start: the clicks play with the current delay (the "before"), the
-// phone measures and sets the delay, then the clicks play again (the "after"),
-// measured once more, with frames timed when drawn.  Play again repeats the check.
+// sheet is open.  Start: step 1 plays the clicks with the current delay, and the
+// phone measures and sets the delay; step 2 plays them again with the new one,
+// measured once more, with frames timed when drawn.  Check again repeats step 2.
 // Without the app's microphone the clicks just play and the delay is set by eye.
 const VERIFY_TOL_MS = 30;
 P.tuneSheet = () => {
@@ -97,7 +97,7 @@ P.tuneSheet = () => {
     const note = text => lines.append(h('div', {}, text));
     let busy = false, closed = false;
     const startBtn = h('button', { class: 'btn primary', type: 'button', onclick: () => run(true) }, mic ? 'Start' : 'Play the clicks');
-    const againBtn = h('button', { class: 'btn', type: 'button', hidden: true, onclick: () => run(false) }, 'Play again');
+    const againBtn = h('button', { class: 'btn', type: 'button', hidden: true, onclick: () => run(false) }, 'Check again');
     const logBtn = h('button', { class: 'btn', type: 'button', hidden: !mic, onclick: () => {
         const text = K.sync.lastLog();
         if (text) P.logSheet('Last calibration log (kept on this device)').set(text); else K.toast('No log yet');
@@ -110,10 +110,12 @@ P.tuneSheet = () => {
         if (d.ok && d.state === 'running') vu.update(d.vu); else vu.snap({});
     });
 
-    const verify = async label => {
-        status.textContent = `${label}: playing the bursts with ${K.sync.delayMs()} ms — watch the bars`;
+    // Each run is one or two numbered steps, and the status line always says which
+    // one is running now; the lines below keep what each finished step found.
+    const verify = async (label, title) => {
+        status.textContent = `${title}: listening while the bursts play with ${K.sync.delayMs()} ms…`;
         const res = await K.sync.calibrate({ seconds: 14, verify: true, onTick: left =>
-            status.textContent = `${label}: playing the bursts with ${K.sync.delayMs()} ms — ${left} s` });
+            status.textContent = `${title}: listening while the bursts play with ${K.sync.delayMs()} ms — ${left} s left` });
         if (!res.ok) { note(`${label}: could not measure (${res.error}).`); return res; }
         const off = res.lagMs, spread = res.spreadMs ? ` (clicks ${res.spreadMs.join(' to ')} ms)` : '';
         note(Math.abs(off) <= VERIFY_TOL_MS
@@ -126,32 +128,36 @@ P.tuneSheet = () => {
         setBusy(true);
         try {
             if (!mic) {
-                const r = await K.sync.playClicks({ onTick: left => { status.textContent = `Playing the bursts with ${K.sync.delayMs()} ms — ${left} s`; } });
+                const r = await K.sync.playClicks({ onTick: left => { status.textContent = `Playing the bursts with ${K.sync.delayMs()} ms — ${left} s left`; } });
                 status.textContent = r.ok ? 'Done. Adjust the delay and play again until the bars flick with each click.' : `Could not play: ${r.error}`;
                 return;
             }
             if (!first) {
-                const res = await verify('Check');
+                const res = await verify('Check', 'Checking');
                 if (res.ok && Math.abs(res.lagMs) > VERIFY_TOL_MS && K.sync.delayMs() + res.lagMs >= 0) {
                     K.sync.setDelayMs(K.sync.delayMs() + res.lagMs); show();
-                    note(`Corrected to ${K.sync.delayMs()} ms — Play again to see it.`);
+                    note(`Corrected to ${K.sync.delayMs()} ms — Check again to see it.`);
                 }
-                status.textContent = 'Done.';
+                status.textContent = !res.ok ? 'Check failed — the delay was not changed.'
+                    : Math.abs(res.lagMs) <= VERIFY_TOL_MS ? 'Finished: in sync.' : 'Finished.';
                 return;
             }
-            // before: the clicks with the current delay, measured on arrival
-            status.textContent = `Before: playing the bursts with ${K.sync.delayMs()} ms — watch the bars`;
+            lines.replaceChildren();
+            // step 1: measure with the current delay, and set the new one
+            const title1 = 'Step 1 of 2 · Measuring';
+            status.textContent = `${title1}: listening while the bursts play with ${K.sync.delayMs()} ms…`;
             const res = await K.sync.calibrate({ seconds: 14, clicks: true, onTick: left =>
-                status.textContent = `Before: playing the bursts with ${K.sync.delayMs()} ms — ${left} s` });
+                status.textContent = `${title1}: listening while the bursts play with ${K.sync.delayMs()} ms — ${left} s left` });
             P.lastCal = P.applyCal(res);
-            note(`Before: ${P.lastCal}`);
+            note(`Step 1 · ${P.lastCal}`);
             show();
-            if (!res.ok || closed) { status.textContent = 'Stopped.'; return; }
-            // after: the same clicks with the new delay
-            const after = await verify('After');
-            status.textContent = after.ok && Math.abs(after.lagMs) <= VERIFY_TOL_MS
-                ? 'Done. Play again whenever you want to re-check.'
-                : 'Done, but not in sync: Play again re-measures and corrects.';
+            if (closed) return;
+            if (!res.ok) { status.textContent = 'Failed at step 1 — the delay was not changed. Start to try again, or open the Log.'; return; }
+            // step 2: the same clicks with the new delay, to confirm it
+            const after = await verify('Step 2', 'Step 2 of 2 · Checking');
+            status.textContent = !after.ok ? 'Finished, but step 2 could not check the new delay: Check again.'
+                : Math.abs(after.lagMs) <= VERIFY_TOL_MS ? 'Finished: in sync. Check again whenever you want.'
+                : 'Finished, but not in sync yet: Check again re-measures and corrects.';
         } finally {
             if (!closed) { setBusy(false); againBtn.hidden = false; }
         }

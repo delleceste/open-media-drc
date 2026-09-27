@@ -73,11 +73,12 @@ measured with the phone's microphone:
   while it is open) and the delay's ± buttons.  The box stops playback and MPD plays
   an 11 s click track (`/k/api/clicks.wav`, 14 irregularly spaced 8 ms 1 kHz tone
   bursts at -30 dBFS, quiet enough for any normal listening volume, made at the
-  running rate so the DRC chain is not rebuilt; `/k/api/clicktest`).  *Start* plays
-  it with the current delay ("before"), measures and applies the delay, then plays
-  it again ("after") timing the frames when they are *drawn*, delay included, so the
-  result is what is left over.  *Play again* repeats that check and offers the
-  correction beyond ±30 ms.  Onsets are matched as events, detected relative to the
+  running rate so the DRC chain is not rebuilt; `/k/api/clicktest`).  *Start* runs
+  two numbered steps, and the status line always names the one in progress: step 1
+  plays it with the current delay, measures and applies the delay (a failure stops
+  here and leaves the delay alone); step 2 plays it again timing the frames when
+  they are *drawn*, delay included, so the result is what is left over.  *Check
+  again* repeats step 2 and offers the correction beyond ±30 ms.  Onsets are matched as events, detected relative to the
   room's own noise floor rather than a fixed level.  Without the app's microphone
   the clicks just play, for setting the delay by eye.
   The clicks play in a temporary MPD partition (`omdrc-cal`) that borrows the
