@@ -73,21 +73,97 @@ def config():
     })
 
 
-# Transport for the Now page's play / pause / stop.  Only these three words are
-# accepted, and each maps to a fixed mpc command - nothing from the request is
-# ever passed on to a shell.
-_TRANSPORT = {"play": ["play"], "pause": ["pause"], "stop": ["stop"]}
+# Transport for the Now page and the Qobuz page's player strip.  Only these
+# words are accepted, and each maps to a fixed mpc command - nothing from the
+# request is ever passed on to a shell.  "seek" and "jump" are the ones with
+# an argument, and that goes through as a number we format ourselves.
+_TRANSPORT = {"play": ["play"], "pause": ["pause"], "stop": ["stop"],
+              "next": ["next"], "prev": ["prev"]}
+
+
+def _clock(seconds: int) -> str:
+    """H:MM:SS, the form every mpc/musicpc version takes for seek."""
+    return f"{seconds // 3600}:{seconds // 60 % 60:02d}:{seconds % 60:02d}"
 
 
 @bp.route("/api/transport", methods=["POST"])
 def transport():
-    action = str((request.get_json(silent=True) or {}).get("action", ""))
-    if action not in _TRANSPORT:
+    body = request.get_json(silent=True) or {}
+    action = str(body.get("action", ""))
+    if action == "seek":
+        try:
+            seconds = float(body.get("seconds"))
+        except (TypeError, ValueError):
+            seconds = math.nan
+        if not math.isfinite(seconds) or seconds < 0:
+            return jsonify({"ok": False, "error": "seek needs seconds >= 0"}), 400
+        args = ["seek", _clock(int(seconds))]
+    elif action == "jump":                # play the queue's n-th song (1-based)
+        pos = body.get("pos")
+        if not isinstance(pos, int) or isinstance(pos, bool) or pos < 1:
+            return jsonify({"ok": False, "error": "jump needs a queue position >= 1"}), 400
+        args = ["play", str(pos)]
+    elif action in _TRANSPORT:
+        args = _TRANSPORT[action]
+    else:
         return jsonify({"ok": False, "error": "unknown transport action"}), 400
     if _mpc is None:
         return jsonify({"ok": False, "error": "no MPD client configured"}), 503
-    ok, error = _mpc(_TRANSPORT[action])
+    ok, error = _mpc(args)
     return jsonify({"ok": ok, "error": error} if not ok else {"ok": True})
+
+
+QUEUE_LIMIT = 500
+
+
+def _queue_entries(lines: list) -> list:
+    """playlistinfo's lines as one dict per song (each starts at "file")."""
+    songs = []
+    for line in lines:
+        key, _, value = line.partition(": ")
+        if key == "file":
+            songs.append({})
+        if songs:
+            songs[-1][key.lower()] = value
+    return songs
+
+
+def _number(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@bp.route("/api/player")
+def player():
+    """What a player strip needs, straight from MPD: state, position and the
+    current song.  One short protocol connection and no subprocess, so a page
+    can poll it every couple of seconds (/mpd/info runs pgrep, ps and mpc)."""
+    try:
+        with _Mpd() as mpd:
+            st = mpd.cmd("status")
+            song = mpd.cmd("currentsong")
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)})
+    return jsonify({
+        "ok": True,
+        "state": st.get("state", "stop"),
+        "elapsed": _number(st.get("elapsed")),
+        "duration": _number(st.get("duration") or song.get("time")),
+        # 1-based place in the queue, and the queue's length
+        "pos": int(st["song"]) + 1 if st.get("song", "").isdigit() else None,
+        "length": int(st.get("playlistlength") or 0),
+        "songid": st.get("songid", ""),
+        # changes whenever the queue does: the full player re-reads it then
+        "version": st.get("playlist", ""),
+        "title": song.get("title", ""),
+        "artist": song.get("artist", ""),
+        "album": song.get("album", ""),
+        "date": song.get("date", ""),
+        "label": song.get("label", ""),
+        "file": song.get("file", ""),
+    })
 
 
 # ── click-track calibration ────────────────────────────────────────────────────
@@ -211,6 +287,33 @@ class _Mpd:
             if outs:
                 outs[-1][key.lower()] = value
         return outs
+
+
+@bp.route("/api/queue")
+def queue():
+    """MPD's queue (which is upmpdcli's playlist), for the full player: the
+    first QUEUE_LIMIT songs, with the one playing marked."""
+    try:
+        with _Mpd() as mpd:
+            st = mpd.cmd("status")
+            songs = _queue_entries(mpd.lines(f"playlistinfo 0:{QUEUE_LIMIT}"))
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)})
+    return jsonify({
+        "ok": True,
+        "version": st.get("playlist", ""),
+        "songid": st.get("songid", ""),
+        "length": int(st.get("playlistlength") or 0),
+        "songs": [{
+            "pos": int(s.get("pos", n)) + 1,
+            "id": s.get("id", ""),
+            "title": s.get("title", "") or s.get("file", "").rsplit("/", 1)[-1],
+            "artist": s.get("artist", ""),
+            "album": s.get("album", ""),
+            "duration": _number(s.get("duration") or s.get("time")),
+            "file": s.get("file", ""),
+        } for n, s in enumerate(songs)],
+    })
 
 
 def _quote(v: str) -> str:

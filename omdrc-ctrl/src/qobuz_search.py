@@ -404,6 +404,79 @@ class PlayedAlbums:
         return out
 
 
+# ── search-field completions ────────────────────────────────────────────────
+
+def read_word_list(path: str) -> list[str]:
+    """The completion list (qobuz_words.txt): one entry per line, "#"
+    comments, the first spelling of a repeated entry kept.  A missing file is
+    an empty list: completion is a convenience, never a failure."""
+    words, seen = [], set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        entry = re.sub(r"\s+", " ", line.split("#", 1)[0]).strip()
+        if entry and _fold(entry) not in seen:
+            seen.add(_fold(entry))
+            words.append(entry)
+    return words
+
+
+class SearchWords:
+    """Completions learned from what is played: the search text that found an
+    album, and the album's artist and composer ("Pink Floyd" is offered
+    once a Pink Floyd album has been played from a search).  A JSON file,
+    each entry {"text", "count", "last"}, newest first."""
+
+    def __init__(self, path: str, limit: int = 500) -> None:
+        self.path = path
+        self.limit = limit
+        self._lock = threading.Lock()
+        self._entries: list[dict] | None = None
+
+    def _load(self) -> list[dict]:
+        if self._entries is None:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    data = json.load(f)
+                self._entries = [e for e in data.get("words", [])
+                                 if isinstance(e, dict) and isinstance(e.get("text"), str)]
+            except (OSError, ValueError, AttributeError):
+                self._entries = []
+        return self._entries
+
+    def record(self, texts: list[str], when: str | None = None) -> bool:
+        """Put each text at the head of the list (counted again if known,
+        under its latest spelling).  False when the file cannot be written."""
+        texts = [re.sub(r"\s+", " ", t or "").strip() for t in texts]
+        texts = [t for t in texts if 1 < len(t) <= 120]
+        if not texts or not self.limit:
+            return False
+        when = when or dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        with self._lock:
+            entries = self._load()
+            for text in dict.fromkeys(reversed(texts)):   # the first ends up on top
+                old = next((e for e in entries if _fold(e["text"]) == _fold(text)), None)
+                entries[:] = [{"text": text, "count": (old or {}).get("count", 0) + 1,
+                               "last": when}] + [e for e in entries if e is not old]
+            del entries[self.limit:]
+            try:
+                os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+                tmp = f"{self.path}.tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({"words": entries}, f, ensure_ascii=False)
+                os.replace(tmp, self.path)
+            except OSError:
+                return False
+        return True
+
+    def recent(self) -> list[dict]:
+        with self._lock:
+            return [{"text": e["text"], "count": e.get("count", 1)} for e in self._load()]
+
+
 # ── client ──────────────────────────────────────────────────────────────────
 
 class QobuzCatalog:
@@ -520,6 +593,25 @@ class QobuzCatalog:
         raw = self._album_raw(str(album_id))
         return self.played.record(
             raw, album_performers((raw.get("tracks") or {}).get("items") or []))
+
+    def track(self, track_id: str) -> dict:
+        """One track and its album's card: what the player shows for the
+        track playing (the cover, above all), whoever queued it."""
+        track_id = str(track_id).strip()
+        if not track_id.isdigit():
+            raise QobuzError("bad track id")
+        raw = self._cached("track:" + track_id, self.settings.album_cache_ttl,
+                           lambda: self._call("track/get", {"track_id": track_id}))
+        return {
+            "id": track_id,
+            "title": (raw.get("title") or "").strip(),
+            "version": (raw.get("version") or "").strip(),
+            "work": (raw.get("work") or "").strip(),
+            "duration": raw.get("duration"),
+            "composer": _name(raw.get("composer")),
+            "performer": _name(raw.get("performer")),
+            "album": album_card(raw.get("album") or {}),
+        }
 
     def _album_raw(self, album_id: str) -> dict:
         return self._cached("album:" + album_id, self.settings.album_cache_ttl,

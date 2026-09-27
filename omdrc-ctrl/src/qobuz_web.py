@@ -12,6 +12,9 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     POST /qobuz/play               {"album_id", "mode": "replace"|"append",
                                     "start": track id}: queue it on upmpdcli
     GET /qobuz/played              the albums played from here, newest first
+    GET /qobuz/words               search-field completions: the shipped
+                                   list and the ones learned from plays
+    GET /qobuz/track/<id>          one track and its album (the player's cover)
 
 Playing goes through upmpdcli's OpenHome playlist (openhome.py), exactly as a
 control point browsing the box's own Qobuz library would do it: the queued
@@ -33,7 +36,8 @@ import time
 from flask import Blueprint, jsonify, request
 
 import openhome
-from qobuz_search import PlayedAlbums, QobuzCatalog, QobuzError, discover_app_id
+from qobuz_search import (PlayedAlbums, QobuzCatalog, QobuzError, SearchWords,
+                          discover_app_id, read_word_list)
 
 bp = Blueprint("qobuz", __name__, url_prefix="/qobuz")
 
@@ -61,6 +65,10 @@ _catalog_settings = None
 _app_id = ""
 _renderer = (0.0, False)
 _played: dict[str, PlayedAlbums] = {}       # one store per file, across reloads
+_learned: dict[str, SearchWords] = {}
+# The shipped completion list, next to this module; re-read when it changes.
+WORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qobuz_words.txt")
+_words = (None, [])                          # (mtime, entries)
 _openhome: openhome.Renderer | None = None
 
 
@@ -109,6 +117,25 @@ def played() -> PlayedAlbums:
             _played[path] = PlayedAlbums(path, _settings().played_limit)
         _played[path].limit = _settings().played_limit
         return _played[path]
+
+
+def learned() -> SearchWords:
+    path = os.path.join(_state_dir(), "qobuz-words.json")
+    with _lock:
+        if path not in _learned:
+            _learned[path] = SearchWords(path)
+        return _learned[path]
+
+
+def word_list() -> list[str]:
+    global _words
+    try:
+        mtime = os.stat(WORDS_FILE).st_mtime
+    except OSError:
+        return []
+    if _words[0] != mtime:
+        _words = (mtime, read_word_list(WORDS_FILE))
+    return _words[1]
 
 
 def catalog() -> QobuzCatalog:
@@ -292,7 +319,10 @@ def _queue(album: dict, mode: str, start: str) -> dict:
 
 @bp.route("/play", methods=["POST"])
 def play():
-    """{"album_id": "...", "mode": "replace" | "append", "start": "<track id>"}"""
+    """{"album_id": "...", "mode": "replace" | "append", "start": "<track id>",
+    "query": "<the search text that found it>"}.  With "query" (the search
+    page always sends it, empty or not) the text and the album's artist and
+    composer become search-field completions."""
     guard = _guard()
     if guard:
         return guard
@@ -309,6 +339,9 @@ def play():
     except openhome.OpenHomeError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
     answer["remembered"] = catalog().record_played(album_id)
+    if "query" in body:
+        answer["learned"] = learned().record(
+            [str(body.get("query") or ""), album["artist"], album["composer"]])
     return jsonify({"ok": True, "mode": mode, **answer})
 
 
@@ -319,5 +352,25 @@ def album(album_id):
         return guard
     try:
         return jsonify({"ok": True, "album": catalog().album(album_id)})
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/words")
+def words():
+    """Everything the search field completes from, sent once: a few tens of
+    KB, and the page matches as the user types without asking again."""
+    if not _settings().enabled:
+        return jsonify({"ok": False, "error": "Qobuz search disabled"}), 404
+    return jsonify({"ok": True, "words": word_list(), "learned": learned().recent()})
+
+
+@bp.route("/track/<track_id>")
+def track(track_id):
+    guard = _guard()
+    if guard:
+        return guard
+    try:
+        return jsonify({"ok": True, "track": catalog().track(track_id)})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502

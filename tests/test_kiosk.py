@@ -50,30 +50,68 @@ class KioskTests(unittest.TestCase):
         self.assertEqual([c["id"] for c in data["commands"]], ["drc_off"])
         self.assertNotIn("cmd", data["commands"][0])
         self.assertEqual(data["commands"][0]["confirm"], "yes")
-        self.assertEqual(set(data["features"]), {"drdb", "cdin"})
+        self.assertEqual(set(data["features"]), {"drdb", "cdin", "qobuz_search"})
 
     def test_view_mini_redirects_the_desktop_panel_to_the_kiosk(self):
         r = self.client.get("/?view=mini")
         self.assertEqual(r.status_code, 302)
         self.assertTrue(r.headers["Location"].endswith("/k/"))
 
-    def test_transport_maps_three_words_to_fixed_mpc_commands(self):
+    def test_transport_maps_fixed_words_to_fixed_mpc_commands(self):
         import kiosk
         seen = []
         saved = kiosk._mpc
         kiosk._mpc = lambda args: (seen.append(args) or (True, ""))
         try:
-            for word in ("play", "pause", "stop"):
+            for word in ("play", "pause", "stop", "next", "prev"):
                 r = self.client.post("/k/api/transport", json={"action": word})
                 self.assertEqual((r.status_code, r.get_json()["ok"]), (200, True), word)
-            self.assertEqual(seen, [["play"], ["pause"], ["stop"]])
-            for bad in ("next", "play; reboot", "", None):
+            self.assertEqual(seen, [["play"], ["pause"], ["stop"], ["next"], ["prev"]])
+            for bad in ("clear", "play; reboot", "", None):
                 r = self.client.post("/k/api/transport", json={"action": bad})
                 self.assertEqual(r.status_code, 400, bad)
-            self.assertEqual(len(seen), 3, "nothing but the three words reaches mpc")
+            self.assertEqual(len(seen), 5, "nothing but the known words reaches mpc")
             kiosk._mpc = lambda args: (False, "MPD is down")
             r = self.client.post("/k/api/transport", json={"action": "play"})
             self.assertEqual(r.get_json(), {"ok": False, "error": "MPD is down"})
+        finally:
+            kiosk._mpc = saved
+
+    def test_seek_passes_only_a_number_formatted_here(self):
+        """The player strip's seek: the request's seconds become an H:MM:SS
+        we format ourselves; anything that is not a non-negative number is
+        refused before mpc is run."""
+        import kiosk
+        seen = []
+        saved = kiosk._mpc
+        kiosk._mpc = lambda args: (seen.append(args) or (True, ""))
+        try:
+            for seconds, clock in ((0, "0:00:00"), (95.7, "0:01:35"), (3725, "1:02:05"), ("61", "0:01:01")):
+                r = self.client.post("/k/api/transport", json={"action": "seek", "seconds": seconds})
+                self.assertEqual(r.status_code, 200, seconds)
+                self.assertEqual(seen[-1], ["seek", clock])
+            for bad in (-1, "1:00; reboot", None, "nan", "inf", [3]):
+                r = self.client.post("/k/api/transport", json={"action": "seek", "seconds": bad})
+                self.assertEqual(r.status_code, 400, bad)
+            self.assertEqual(len(seen), 4)
+        finally:
+            kiosk._mpc = saved
+
+    def test_jump_plays_a_queue_position_and_nothing_else(self):
+        """The full player's queue: a tap plays song n (1-based), passed on as
+        a number we write, never as the request's text."""
+        import kiosk
+        seen = []
+        saved = kiosk._mpc
+        kiosk._mpc = lambda args: (seen.append(args) or (True, ""))
+        try:
+            r = self.client.post("/k/api/transport", json={"action": "jump", "pos": 3})
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(seen, [["play", "3"]])
+            for bad in (0, -1, "3", "3; reboot", 2.5, True, None):
+                r = self.client.post("/k/api/transport", json={"action": "jump", "pos": bad})
+                self.assertEqual(r.status_code, 400, bad)
+            self.assertEqual(len(seen), 1)
         finally:
             kiosk._mpc = saved
 
@@ -166,6 +204,14 @@ class FakeMpd:
                 out += (f"outputid: {i}\noutputname: {o['name']}\nplugin: {'alsa' if mine else 'dummy'}\n"
                         f"outputenabled: {1 if mine and o['enabled'] else 0}\n")
             return out
+        if cmd == "currentsong":            # what the player strip reads
+            return ("file: http://192.168.1.10:49149/qobuz/track/version/1/trackId/4636613\n"
+                    "Title: Adagio\nArtist: Nelsons\nAlbum: Bruckner 7\nDate: 2019\n"
+                    "Label: Deutsche Grammophon\nTime: 1301\nduration: 1301.200\n")
+        if cmd == "playlistinfo":
+            return ("file: http://h:49149/qobuz/track/version/1/trackId/11\nTitle: I. Allegro\n"
+                    "Artist: Nelsons\nduration: 1250.000\nPos: 0\nId: 7\n"
+                    "file: /music/b.flac\nPos: 1\nId: 8\n")
         if cmd == "listpartitions":
             return "".join(f"partition: {n}\n" for n in self.players)
         if cmd == "newpartition":
@@ -267,6 +313,55 @@ class ClickTestTests(unittest.TestCase):
         peak = max(abs(v) for v in struct.unpack("<%dh" % (len(raw) // 2), raw))
         self.assertLessEqual(peak, 32767 * 10 ** (-29 / 20))     # at most -29 dBFS
         self.assertGreater(peak, 32767 * 10 ** (-31 / 20))       # but there
+
+
+class PlayerTests(unittest.TestCase):
+    """/k/api/player, the Qobuz page's strip: MPD's own state over one protocol
+    connection (no pgrep/ps/mpc, so it can be polled)."""
+
+    def ask(self, **fake):
+        import kiosk
+        mpd = FakeMpd(**fake)
+        saved = kiosk._mpd_port
+        kiosk._mpd_port = lambda: mpd.port
+        try:
+            return APP.app.test_client().get("/k/api/player").get_json(), mpd
+        finally:
+            kiosk._mpd_port = saved
+
+    def test_reports_state_position_and_the_current_song(self):
+        d, mpd = self.ask(state="pause", song="3", elapsed="95.500")
+        self.assertTrue(d["ok"])
+        self.assertEqual((d["state"], d["elapsed"], d["duration"], d["pos"]), ("pause", 95.5, 1301.0, 4))
+        self.assertEqual((d["title"], d["artist"], d["album"], d["label"]),
+                         ("Adagio", "Nelsons", "Bruckner 7", "Deutsche Grammophon"))
+        self.assertEqual([c.split(": ", 1)[1] for c in mpd.log], ["status", "currentsong"])
+
+    def test_the_queue_marks_the_song_playing(self):
+        import kiosk
+        mpd = FakeMpd(state="play")
+        saved = kiosk._mpd_port
+        kiosk._mpd_port = lambda: mpd.port
+        try:
+            d = APP.app.test_client().get("/k/api/queue").get_json()
+        finally:
+            kiosk._mpd_port = saved
+        self.assertTrue(d["ok"], d)
+        self.assertEqual(d["songid"], "7")
+        self.assertEqual([(s["pos"], s["id"], s["title"], s["duration"]) for s in d["songs"]],
+                         [(1, "7", "I. Allegro", 1250.0), (2, "8", "b.flac", None)])
+
+    def test_no_mpd_is_an_answer_not_an_exception(self):
+        import kiosk
+        saved = kiosk._mpd_port
+        kiosk._mpd_port = lambda: 1              # nothing listens there
+        try:
+            d = APP.app.test_client().get("/k/api/player").get_json()
+        finally:
+            kiosk._mpd_port = saved
+        self.assertFalse(d["ok"])
+        self.assertTrue(d["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

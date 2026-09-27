@@ -286,16 +286,21 @@ class PlayRouteTest(OpenHomeCase):
         def fetch(endpoint, params):
             if endpoint == "album/get":
                 return albums[params["album_id"]]
+            if endpoint == "track/get":
+                return {"id": 11, "title": "I. Allegro moderato", "work": "Symphony No. 7",
+                        "performer": {"name": "Jakub Hrusa"}, "album": raw_album()}
             raise AssertionError(endpoint)
 
         self.catalog = qs.QobuzCatalog(qs.Settings(), fetch=fetch,
                                        played=qs.PlayedAlbums(self.tmp.name + "/p.json"))
+        self.words = qs.SearchWords(self.tmp.name + "/w.json")
         target = openhome.Renderer("http://192.0.2.7:49152/d.xml", "box", self.url)
         self.patches = [
             patch.object(qobuz_web, "catalog", return_value=self.catalog),
             patch.object(qobuz_web, "renderer", return_value=target),
             patch.object(qobuz_web, "_renderer_running", lambda: True),
             patch.object(qobuz_web, "_upmpdcli_options", lambda: {}),
+            patch.object(qobuz_web, "learned", return_value=self.words),
         ]
         for p in self.patches:
             p.start()
@@ -379,6 +384,89 @@ class PlayRouteTest(OpenHomeCase):
         with patch.object(qobuz_web, "played", return_value=self.catalog.played):
             data = self.client.get("/qobuz/played").get_json()
         self.assertEqual([(a["id"], a["played"]) for a in data["albums"]], [("a1", 1)])
+
+    def test_a_play_from_a_search_teaches_the_search_field(self):
+        """Played after searching "bruckner 7": the text, the album's artist
+        and its composer become completions, newest first."""
+        data = self.play(album_id="a1", mode="replace", query="bruckner 7").get_json()
+        self.assertTrue(data["learned"])
+        self.assertEqual([w["text"] for w in self.words.recent()],
+                         ["bruckner 7", "Bamberger Symphoniker", "Anton Bruckner"])
+
+    def test_a_play_without_a_search_teaches_nothing(self):
+        data = self.play(album_id="a1", mode="append").get_json()
+        self.assertNotIn("learned", data)
+        self.assertEqual(self.words.recent(), [])
+
+    def test_words_route_sends_the_list_and_what_was_learned(self):
+        self.words.record(["Pink Floyd"])
+        with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
+            f.write("# comment\nBeethoven\nsymphony\n")
+            f.flush()
+            with patch.object(qobuz_web, "WORDS_FILE", f.name):
+                data = self.client.get("/qobuz/words").get_json()
+        self.assertEqual(data["words"], ["Beethoven", "symphony"])
+        self.assertEqual(data["learned"], [{"text": "Pink Floyd", "count": 1}])
+
+    def test_track_route_gives_the_players_cover(self):
+        data = self.client.get("/qobuz/track/11").get_json()
+        self.assertTrue(data["ok"], data)
+        self.assertEqual(data["track"]["album"]["image_large"], "l.jpg")
+        self.assertEqual(data["track"]["work"], "Symphony No. 7")
+        self.assertEqual(self.client.get("/qobuz/track/12ab").status_code, 502)
+
+
+class SearchWordsTest(unittest.TestCase):
+    """The completions learned from plays (qobuz-words.json)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "sub" / "words.json")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_newest_first_counted_and_persisted(self):
+        store = qs.SearchWords(self.path)
+        store.record(["pink floyd", "Pink Floyd"])       # one entry, under the last spelling seen
+        store.record(["Bruckner"])
+        store.record(["PINK FLOYD"])
+        again = qs.SearchWords(self.path)
+        self.assertEqual(again.recent(), [{"text": "PINK FLOYD", "count": 3},
+                                          {"text": "Bruckner", "count": 1}])
+
+    def test_empty_and_single_letters_are_not_learned(self):
+        store = qs.SearchWords(self.path)
+        self.assertFalse(store.record(["", "  ", "x"]))
+        self.assertEqual(store.recent(), [])
+
+    def test_limited(self):
+        store = qs.SearchWords(self.path, limit=2)
+        store.record(["aa", "bb", "cc"])
+        self.assertEqual([w["text"] for w in store.recent()], ["aa", "bb"])
+
+    def test_an_unwritable_file_is_not_an_error(self):
+        store = qs.SearchWords("/nonexistent-dir/x/words.json")
+        with patch("os.makedirs", side_effect=OSError("read-only")):
+            self.assertFalse(store.record(["Pink Floyd"]))
+
+
+class WordListTest(unittest.TestCase):
+    def test_comments_blank_lines_and_repeats_are_dropped(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
+            f.write("# composers\nDvořák   # the real spelling\n\n  Bach \ndvořák\nbach\n")
+            f.flush()
+            self.assertEqual(qs.read_word_list(f.name), ["Dvořák", "Bach"])
+
+    def test_a_missing_file_is_an_empty_list(self):
+        self.assertEqual(qs.read_word_list("/nonexistent/words.txt"), [])
+
+    def test_the_shipped_list_is_a_real_classical_vocabulary(self):
+        words = qs.read_word_list(str(SRC / "qobuz_words.txt"))
+        self.assertGreater(len(words), 1500)
+        for expected in ("Beethoven", "Dvořák", "symphony", "violin concerto", "cello",
+                         "Goldberg Variations", "Berliner Philharmoniker", "Les Arts Florissants"):
+            self.assertIn(expected, words)
 
 
 if __name__ == "__main__":

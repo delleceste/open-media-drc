@@ -165,8 +165,30 @@ the search is only offered while upmpdcli is the running renderer.
 | `GET /qobuz/album/<id>` | one album: tracks, performers, description |
 | `POST /qobuz/play` | `{"album_id", "mode": "replace"\|"append", "start": "<track id>"}`: queue it on upmpdcli |
 | `GET /qobuz/played` | the albums played from here, newest first |
+| `GET /qobuz/words` | search-field completions: `words` (the shipped list) and `learned` |
+| `GET /qobuz/track/<id>` | one track and its album card (the player's cover) |
 
 Search and play answer 409 while upmpdcli is not running.
+
+The kiosk (`/k/`, and so the Android app) has a **Qobuz** page for it: the
+text field, the favourite labels as check boxes (plus any label met in the
+results), "last N years" or a from–to span, newest first or best match,
+result rows with ▶ and **+**, the track list on a tap, "Load more", and a
+player strip (previous, play/pause, stop, next, seek) on MPD. The strip
+opens into a full-screen player, as in Qobuz's app: the cover as large as the
+screen allows, the track, work, album, label and year, the transport, and the
+queue (a tap plays from there). The page is greyed out while upmpdcli is not
+running, with a hint to switch the renderer. Before the first search it lists
+the albums played recently.
+
+The search field **completes** as you type, from `qobuz_words.txt` (about
+2,600 composers, forms, named works, instruments and voices, conductors,
+soloists, singers, orchestras and ensembles; edit it freely, it is re-read
+when it changes) and from what you played after a search: ▶ or **+** on a
+result teaches the search text and the album's artist and composer, so after
+playing a Pink Floyd album "pi" offers Pink Floyd. Learned entries come
+first, most played first, and are kept in `qobuz-words.json` in the state
+directory. Accents and case don't matter ("dvor" finds Dvořák).
 
 A lightweight web-based remote control panel for a Linux or FreeBSD desktop.
 Commands are defined in a plain-text INI config file; the server renders a

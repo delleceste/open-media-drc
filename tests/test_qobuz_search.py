@@ -343,6 +343,23 @@ class AlbumTest(unittest.TestCase):
         self.assertEqual(out["track_list"][0]["work"], "Symphony No. 7")
         self.assertEqual(out["groups"], ["Pentatone"])
 
+    def test_track_brings_its_album_card(self):
+        calls = []
+
+        def fetch(endpoint, params):
+            calls.append((endpoint, params))
+            return {"id": 5, "title": "II. Adagio", "duration": 1400,
+                    "performer": {"name": "Some Orchestra"},
+                    "album": album("a1", "Symphony No. 7", "PENTATONE", "2024-11-15")}
+        cat = qs.QobuzCatalog(qs.Settings(), fetch=fetch)
+        out = cat.track("5")
+        self.assertEqual((out["title"], out["album"]["title"], out["album"]["image_large"]),
+                         ("II. Adagio", "Symphony No. 7", "https://img/a1_600.jpg"))
+        cat.track("5")
+        self.assertEqual(calls, [("track/get", {"track_id": "5"})], "cached")
+        with self.assertRaises(qs.QobuzError):
+            cat.track("5/../../user")
+
     def test_bad_album_id_is_refused(self):
         cat, calls = catalog({})
         with self.assertRaises(qs.QobuzError):

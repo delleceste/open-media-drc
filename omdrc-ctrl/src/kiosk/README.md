@@ -16,6 +16,7 @@ down.
 |---|---|
 | **Now** | Level meters (needles / bars / bars + spectrum), DR bar, channel balance, track + time, and one line saying which DRC is applied |
 | **Cover** | *Optional* (Config → Cover art → Cover page): the album cover, square and as large as the height allows, the track beside it, and optionally a narrow vertical DR or level column (top bar: DR / Lvl) where there is room |
+| **Qobuz** | *Optional* (`[qobuz_search] enabled`): album search with label check boxes and a release-date window, results newest first with ▶ (replace upmpdcli's queue and play) and **+** (append), a tap shows the tracks, and a player strip (previous, play/pause, stop, next, seek) that opens into a full-screen player with the cover and the queue. The search field completes from a classical word list and from what was played. Greyed out while upmpdcli is not the running renderer |
 | **DRC** | Applied state, sample-rate presets, filter set and design, attenuation, BruteFIR peak/RTI, `drc.sh status` |
 | **DR** | Rolling DR estimate (off until enabled), measure this record, compare masters |
 | **Source** | Renderer switch/restart/activity, MPD state, CD input |
@@ -121,7 +122,7 @@ to be pasted into a bug report as is.
 ## Layout of the package
 
 ```
-kiosk/__init__.py            blueprint, /k/, /k/api/config
+kiosk/__init__.py            blueprint, /k/, /k/api/config, /k/api/transport, /k/api/player, /k/api/queue
 kiosk/templates/kiosk_shell.html
 kiosk/static/core.js         DOM helper, API client, prefs, overlays, Poller, shared SSE streams
 kiosk/static/main.js         boot, pager, top bar, alerts, screensaver, wake lock

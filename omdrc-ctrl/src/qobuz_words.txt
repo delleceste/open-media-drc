@@ -1,0 +1,2724 @@
+# Search-field completions for the Qobuz album search (kiosk Qobuz page).
+#
+# One entry per line; "#" starts a comment.  An entry is offered when the
+# words being typed start it, or start one of its words ("tchai" finds
+# Tchaikovsky, "fant" finds Symphonie fantastique).  Accents don't matter to
+# the matching, so entries keep their real spelling: Qobuz finds either.
+# Albums played from the page add their artist, composer and the search text
+# on top of this list (qobuz-words.json in the state directory).
+
+# ── composers: medieval, renaissance ──
+Hildegard von Bingen
+Pérotin
+Machaut
+Dufay
+Ockeghem
+Josquin des Prez
+Obrecht
+Isaac
+Janequin
+Tallis
+Palestrina
+Lassus
+Victoria
+Byrd
+Gesualdo
+Dowland
+Gibbons
+Sweelinck
+Giovanni Gabrieli
+Andrea Gabrieli
+Morales
+Guerrero
+Cabezón
+Willaert
+Arcadelt
+Marenzio
+Luca Marenzio
+Thomas Weelkes
+Thomas Morley
+John Taverner
+John Sheppard
+Robert Carver
+Clemens non Papa
+Gombert
+Cipriano de Rore
+Jacob Obrecht
+Pierre de la Rue
+Antoine Brumel
+Loyset Compère
+Alonso Lobo
+Cardoso
+Duarte Lobo
+
+# ── baroque ──
+Monteverdi
+Frescobaldi
+Schütz
+Cavalli
+Carissimi
+Barbara Strozzi
+Froberger
+Buxtehude
+Biber
+Pachelbel
+Lully
+Charpentier
+Marc-Antoine Charpentier
+Corelli
+Purcell
+Alessandro Scarlatti
+Domenico Scarlatti
+Stradella
+Couperin
+François Couperin
+Louis Couperin
+Marais
+Marin Marais
+Sainte-Colombe
+Rameau
+Vivaldi
+Albinoni
+Torelli
+Telemann
+Bach
+Johann Sebastian Bach
+Carl Philipp Emanuel Bach
+C.P.E. Bach
+Wilhelm Friedemann Bach
+Johann Christian Bach
+Johann Christoph Bach
+Handel
+Händel
+Zelenka
+Heinichen
+Graupner
+Fasch
+Pisendel
+Quantz
+Hasse
+Pergolesi
+Leonardo Leo
+Porpora
+Vinci
+Leonardo Vinci
+Jommelli
+Durante
+Tartini
+Locatelli
+Geminiani
+Veracini
+Leclair
+Boismortier
+Campra
+Delalande
+Mondonville
+Royer
+Rebel
+Forqueray
+d'Anglebert
+Chambonnières
+Clérambault
+Marchand
+De Grigny
+Böhm
+Georg Böhm
+Reincken
+Bruhns
+Tunder
+Weckmann
+Kuhnau
+Muffat
+Fux
+Caldara
+Legrenzi
+Castello
+Merula
+Marini
+Uccellini
+Rossi
+Luigi Rossi
+Sigismondo d'India
+Caccini
+Peri
+Cesti
+Steffani
+Keiser
+Mattheson
+Stölzel
+Hotteterre
+Blow
+Locke
+Matthew Locke
+Jenkins
+Lawes
+William Lawes
+Avison
+Boyce
+Arne
+Soler
+Antonio Soler
+Seixas
+Sammartini
+Platti
+Galuppi
+Marcello
+Benedetto Marcello
+Alessandro Marcello
+Dall'Abaco
+Bonporti
+Brescianello
+
+# ── classical ──
+Haydn
+Joseph Haydn
+Michael Haydn
+Mozart
+Wolfgang Amadeus Mozart
+Leopold Mozart
+Gluck
+Salieri
+Boccherini
+Clementi
+Dussek
+Hummel
+Stamitz
+Cannabich
+Dittersdorf
+Vanhal
+Pleyel
+Kozeluch
+Myslivecek
+Cimarosa
+Paisiello
+Cherubini
+Méhul
+Grétry
+Gossec
+Saint-Georges
+Chevalier de Saint-Georges
+Kraus
+Joseph Martin Kraus
+Wranitzky
+Hoffmeister
+Krommer
+Danzi
+Reicha
+Ries
+Ferdinand Ries
+Wölfl
+Eberl
+Beethoven
+Ludwig van Beethoven
+
+# ── romantic ──
+Schubert
+Franz Schubert
+Weber
+Carl Maria von Weber
+Spohr
+Paganini
+Rossini
+Donizetti
+Bellini
+Mendelssohn
+Felix Mendelssohn
+Fanny Mendelssohn
+Fanny Hensel
+Chopin
+Schumann
+Robert Schumann
+Clara Schumann
+Liszt
+Berlioz
+Wagner
+Richard Wagner
+Verdi
+Giuseppe Verdi
+Glinka
+Alkan
+Field
+John Field
+Moscheles
+Kalkbrenner
+Thalberg
+Hérold
+Auber
+Meyerbeer
+Halévy
+Adam
+Adolphe Adam
+Offenbach
+Gounod
+Bizet
+Lalo
+Franck
+César Franck
+Saint-Saëns
+Delibes
+Massenet
+Chabrier
+Fauré
+Gabriel Fauré
+Duparc
+Chausson
+d'Indy
+Vincent d'Indy
+Widor
+Guilmant
+Vierne
+Dukas
+Paul Dukas
+Bruckner
+Anton Bruckner
+Brahms
+Johannes Brahms
+Joachim
+Joseph Joachim
+Bruch
+Max Bruch
+Reinecke
+Raff
+Rheinberger
+Goetz
+Hermann Goetz
+Wolf
+Hugo Wolf
+Mahler
+Gustav Mahler
+Alma Mahler
+Johann Strauss
+Johann Strauss II
+Josef Strauss
+Richard Strauss
+Lanner
+Suppé
+Lehár
+Kálmán
+Smetana
+Dvořák
+Antonín Dvořák
+Fibich
+Suk
+Josef Suk
+Janáček
+Leoš Janáček
+Novák
+Martinů
+Tchaikovsky
+Chaikovsky
+Mussorgsky
+Borodin
+Rimsky-Korsakov
+Balakirev
+Cui
+Arensky
+Lyadov
+Liadov
+Glazunov
+Taneyev
+Kalinnikov
+Scriabin
+Skryabin
+Rachmaninov
+Rachmaninoff
+Medtner
+Rubinstein
+Anton Rubinstein
+Grieg
+Edvard Grieg
+Svendsen
+Sinding
+Halvorsen
+Gade
+Niels Gade
+Nielsen
+Carl Nielsen
+Berwald
+Stenhammar
+Alfvén
+Sibelius
+Jean Sibelius
+Elgar
+Edward Elgar
+Parry
+Stanford
+Sullivan
+Delius
+Holst
+Vaughan Williams
+Ralph Vaughan Williams
+Bax
+Bridge
+Frank Bridge
+Ireland
+John Ireland
+Finzi
+Howells
+Moeran
+Coleridge-Taylor
+Ethel Smyth
+Butterworth
+Gurney
+Albéniz
+Granados
+Falla
+Manuel de Falla
+Turina
+Mompou
+Rodrigo
+Sarasate
+Tárrega
+Ponchielli
+Boito
+Catalani
+Puccini
+Giacomo Puccini
+Mascagni
+Leoncavallo
+Giordano
+Cilea
+Zandonai
+Busoni
+Martucci
+Sgambati
+Respighi
+Wolf-Ferrari
+Humperdinck
+Pfitzner
+Reger
+Max Reger
+Zemlinsky
+Korngold
+Schreker
+Schmidt
+Franz Schmidt
+Goldmark
+Hans Rott
+Draeseke
+Moszkowski
+Paderewski
+Wieniawski
+Moniuszko
+Karłowicz
+Noskowski
+Szymanowski
+Vieuxtemps
+Ysaÿe
+Eugène Ysaÿe
+Lekeu
+Guillaume Lekeu
+Magnard
+Albéric Magnard
+Roussel
+Albert Roussel
+Pierné
+Koechlin
+Charles Koechlin
+Schmitt
+Florent Schmitt
+Hahn
+Reynaldo Hahn
+Chaminade
+Cécile Chaminade
+Holmès
+Farrenc
+Louise Farrenc
+Viardot
+Pauline Viardot
+Boulanger
+Lili Boulanger
+Nadia Boulanger
+Tournemire
+Dupré
+Marcel Dupré
+Duruflé
+Maurice Duruflé
+Alain
+Jehan Alain
+Gottschalk
+MacDowell
+Amy Beach
+Ives
+Charles Ives
+Chadwick
+Foote
+
+# ── 20th century and after ──
+Debussy
+Claude Debussy
+Ravel
+Maurice Ravel
+Satie
+Erik Satie
+Poulenc
+Francis Poulenc
+Milhaud
+Darius Milhaud
+Honegger
+Arthur Honegger
+Auric
+Tailleferre
+Ibert
+Jacques Ibert
+Françaix
+Jolivet
+Messiaen
+Olivier Messiaen
+Dutilleux
+Henri Dutilleux
+Boulez
+Pierre Boulez
+Xenakis
+Grisey
+Murail
+Dusapin
+Saariaho
+Kaija Saariaho
+Mantovani
+Bruno Mantovani
+Connesson
+Guillaume Connesson
+Escaich
+Thierry Escaich
+Schoenberg
+Arnold Schoenberg
+Schönberg
+Berg
+Alban Berg
+Webern
+Anton Webern
+Krenek
+Hindemith
+Paul Hindemith
+Weill
+Kurt Weill
+Eisler
+Hanns Eisler
+Orff
+Carl Orff
+Egk
+Hartmann
+Karl Amadeus Hartmann
+Henze
+Hans Werner Henze
+Stockhausen
+Zimmermann
+Bernd Alois Zimmermann
+Lachenmann
+Rihm
+Wolfgang Rihm
+Widmann
+Jörg Widmann
+Stravinsky
+Igor Stravinsky
+Prokofiev
+Sergei Prokofiev
+Shostakovich
+Dmitri Shostakovich
+Khachaturian
+Kabalevsky
+Myaskovsky
+Miaskovsky
+Weinberg
+Mieczysław Weinberg
+Schnittke
+Alfred Schnittke
+Gubaidulina
+Sofia Gubaidulina
+Denisov
+Silvestrov
+Valentin Silvestrov
+Kancheli
+Giya Kancheli
+Ustvolskaya
+Rautavaara
+Einojuhani Rautavaara
+Pärt
+Arvo Pärt
+Tüür
+Vasks
+Pēteris Vasks
+Górecki
+Henryk Górecki
+Lutosławski
+Witold Lutosławski
+Penderecki
+Krzysztof Penderecki
+Kilar
+Bacewicz
+Grażyna Bacewicz
+Panufnik
+Bartók
+Béla Bartók
+Kodály
+Zoltán Kodály
+Dohnányi
+Ligeti
+György Ligeti
+Kurtág
+György Kurtág
+Eötvös
+Enescu
+George Enescu
+Hába
+Schulhoff
+Erwin Schulhoff
+Haas
+Pavel Haas
+Klein
+Gideon Klein
+Ullmann
+Viktor Ullmann
+Britten
+Benjamin Britten
+Walton
+William Walton
+Tippett
+Michael Tippett
+Rubbra
+Arnold
+Malcolm Arnold
+Rawsthorne
+Maxwell Davies
+Birtwistle
+Harrison Birtwistle
+Knussen
+Oliver Knussen
+Tavener
+John Tavener
+MacMillan
+James MacMillan
+Adès
+Thomas Adès
+Benjamin
+George Benjamin
+Turnage
+Rutter
+John Rutter
+Chilcott
+Jenkins
+Karl Jenkins
+Gabriel Jackson
+Gjeilo
+Ola Gjeilo
+Whitacre
+Eric Whitacre
+Lauridsen
+Morten Lauridsen
+Copland
+Aaron Copland
+Barber
+Samuel Barber
+Bernstein
+Leonard Bernstein
+Gershwin
+George Gershwin
+Korngold
+Erich Wolfgang Korngold
+Herrmann
+Bernard Herrmann
+Rózsa
+Miklós Rózsa
+Hanson
+Howard Hanson
+Piston
+Schuman
+William Schuman
+Harris
+Roy Harris
+Cowell
+Carter
+Elliott Carter
+Cage
+John Cage
+Feldman
+Morton Feldman
+Reich
+Steve Reich
+Glass
+Philip Glass
+Adams
+John Adams
+Riley
+Terry Riley
+Lang
+David Lang
+Wolfe
+Julia Wolfe
+Gordon
+Michael Gordon
+Higdon
+Jennifer Higdon
+Shaw
+Caroline Shaw
+Muhly
+Nico Muhly
+Mazzoli
+Missy Mazzoli
+Golijov
+Osvaldo Golijov
+Piazzolla
+Astor Piazzolla
+Ginastera
+Alberto Ginastera
+Villa-Lobos
+Heitor Villa-Lobos
+Chávez
+Carlos Chávez
+Revueltas
+Silvestre Revueltas
+Márquez
+Arturo Márquez
+Ponce
+Manuel Ponce
+Brouwer
+Leo Brouwer
+Barrios
+Agustín Barrios
+Takemitsu
+Toru Takemitsu
+Hosokawa
+Toshio Hosokawa
+Tan Dun
+Unsuk Chin
+Isang Yun
+Sculthorpe
+Peter Sculthorpe
+Nørgård
+Per Nørgård
+Abrahamsen
+Hans Abrahamsen
+Sørensen
+Bent Sørensen
+Lindberg
+Magnus Lindberg
+Salonen
+Esa-Pekka Salonen
+Aho
+Kalevi Aho
+Sallinen
+Tüür
+Erkki-Sven Tüür
+Thorvaldsdottir
+Anna Thorvaldsdottir
+Hillborg
+Anders Hillborg
+Nordheim
+Ruders
+Holmboe
+Langgaard
+Rued Langgaard
+Atterberg
+Kurt Atterberg
+Pettersson
+Allan Pettersson
+Larsson
+Lars-Erik Larsson
+Rosenberg
+Scelsi
+Giacinto Scelsi
+Nono
+Luigi Nono
+Berio
+Luciano Berio
+Maderna
+Dallapiccola
+Luigi Dallapiccola
+Petrassi
+Casella
+Alfredo Casella
+Malipiero
+Pizzetti
+Rota
+Nino Rota
+Morricone
+Ennio Morricone
+Sciarrino
+Salvatore Sciarrino
+Donatoni
+Bussotti
+Castelnuovo-Tedesco
+Einaudi
+Ludovico Einaudi
+Richter
+Max Richter
+Jóhannsson
+Jóhann Jóhannsson
+Arnalds
+Ólafur Arnalds
+Frahm
+Nils Frahm
+Hisaishi
+Joe Hisaishi
+Williams
+John Williams
+Zimmer
+Hans Zimmer
+
+# ── genres and forms ──
+symphony
+symphonies
+complete symphonies
+concerto
+concertos
+piano concerto
+piano concertos
+violin concerto
+violin concertos
+cello concerto
+viola concerto
+flute concerto
+oboe concerto
+clarinet concerto
+bassoon concerto
+horn concerto
+trumpet concerto
+harpsichord concerto
+organ concerto
+guitar concerto
+double concerto
+triple concerto
+concerto grosso
+concerti grossi
+sinfonia concertante
+sonata
+sonatas
+piano sonata
+piano sonatas
+violin sonata
+violin sonatas
+cello sonata
+cello sonatas
+flute sonata
+trio sonata
+trio sonatas
+sonatina
+string quartet
+string quartets
+complete string quartets
+string quintet
+string sextet
+string trio
+piano trio
+piano trios
+piano quartet
+piano quintet
+clarinet quintet
+wind quintet
+octet
+septet
+nonet
+divertimento
+serenade
+cassation
+notturno
+suite
+suites
+cello suites
+orchestral suites
+English suites
+French suites
+partita
+partitas
+overture
+overtures
+prelude
+preludes
+prelude and fugue
+fugue
+fugues
+toccata
+fantasia
+fantasy
+chaconne
+passacaglia
+variations
+theme and variations
+ricercar
+canon
+invention
+inventions
+étude
+études
+etudes
+nocturne
+nocturnes
+ballade
+ballades
+scherzo
+scherzi
+impromptu
+impromptus
+mazurka
+mazurkas
+polonaise
+polonaises
+waltz
+waltzes
+valses
+barcarolle
+berceuse
+rhapsody
+rhapsodies
+Hungarian Rhapsodies
+Hungarian Dances
+Slavonic Dances
+intermezzo
+intermezzi
+bagatelle
+bagatelles
+moment musical
+character pieces
+songs without words
+Lieder ohne Worte
+lied
+lieder
+songs
+song cycle
+art songs
+mélodies
+chansons
+madrigal
+madrigals
+motet
+motets
+anthem
+anthems
+mass
+masses
+missa
+Missa brevis
+Missa solemnis
+requiem
+Requiem
+Stabat Mater
+Magnificat
+Te Deum
+Gloria
+Vespers
+Vespro della Beata Vergine
+Lamentations
+Tenebrae
+Miserere
+Ave Maria
+Salve Regina
+Psalms
+Lamentationes
+oratorio
+oratorios
+cantata
+cantatas
+church cantatas
+secular cantatas
+passion
+Passion
+St Matthew Passion
+Matthäus-Passion
+St John Passion
+Johannes-Passion
+Christmas Oratorio
+Weihnachtsoratorium
+Easter Oratorio
+opera
+operas
+opera arias
+arias
+opera seria
+opera buffa
+Singspiel
+operetta
+zarzuela
+ballet
+ballets
+ballet suite
+incidental music
+symphonic poem
+tone poem
+film music
+soundtrack
+chamber music
+chamber symphony
+sinfonietta
+sinfonia
+concertino
+march
+marches
+dances
+Viennese waltzes
+New Year's Concert
+Neujahrskonzert
+organ works
+organ music
+piano works
+complete piano works
+keyboard works
+harpsichord works
+lute music
+guitar music
+consort music
+viol consort
+fantasias for viols
+Gregorian chant
+plainchant
+polyphony
+early music
+medieval
+renaissance
+baroque
+classical
+romantic
+late romantic
+impressionism
+modernism
+minimalism
+contemporary
+avant-garde
+twelve-tone
+neoclassical
+sacred music
+choral music
+choral works
+a cappella
+Christmas carols
+carols
+spirituals
+folk songs
+transcriptions
+arrangements
+encores
+live
+recital
+debut
+complete works
+complete recordings
+box set
+anthology
+original instruments
+period instruments
+historically informed
+
+# ── named works ──
+Goldberg Variations
+Well-Tempered Clavier
+Das wohltemperierte Klavier
+Art of Fugue
+Die Kunst der Fuge
+Musical Offering
+Brandenburg Concertos
+Mass in B minor
+h-moll-Messe
+Sonatas and Partitas
+Cello Suites
+Orchestral Suites
+Coffee Cantata
+Jesu, meine Freude
+Magnificat in D
+The Four Seasons
+Le quattro stagioni
+L'estro armonico
+La stravaganza
+Gloria RV 589
+Messiah
+Water Music
+Music for the Royal Fireworks
+Dixit Dominus
+Zadok the Priest
+Giulio Cesare
+Rinaldo
+Alcina
+Ariodante
+Orlando
+Serse
+Theodora
+Saul
+Israel in Egypt
+Judas Maccabaeus
+Dido and Aeneas
+King Arthur
+The Fairy-Queen
+Ode for St Cecilia's Day
+L'Orfeo
+L'incoronazione di Poppea
+Il ritorno d'Ulisse in patria
+Les Indes galantes
+Hippolyte et Aricie
+Castor et Pollux
+Platée
+Stabat Mater Pergolesi
+La serva padrona
+Leçons de Ténèbres
+Pièces de clavecin
+Pièces de viole
+Creation
+Die Schöpfung
+The Seasons
+Die Jahreszeiten
+Nelson Mass
+Farewell Symphony
+Surprise Symphony
+London Symphonies
+Paris Symphonies
+Sturm und Drang
+Emperor Quartet
+The Seven Last Words
+Die Zauberflöte
+The Magic Flute
+Don Giovanni
+Le nozze di Figaro
+The Marriage of Figaro
+Così fan tutte
+Die Entführung aus dem Serail
+Idomeneo
+La clemenza di Tito
+Mitridate
+Lucio Silla
+Jupiter Symphony
+Haffner Symphony
+Linz Symphony
+Prague Symphony
+Great Mass in C minor
+Requiem K. 626
+Eine kleine Nachtmusik
+Gran Partita
+Sinfonia concertante K. 364
+Clarinet Concerto K. 622
+Coronation Mass
+Exsultate, jubilate
+Eroica
+Pastoral Symphony
+Choral Symphony
+Ode to Joy
+Emperor Concerto
+Moonlight Sonata
+Pathétique
+Appassionata
+Waldstein
+Hammerklavier
+Tempest Sonata
+Les Adieux
+Diabelli Variations
+Kreutzer Sonata
+Spring Sonata
+Archduke Trio
+Ghost Trio
+Razumovsky Quartets
+Late Quartets
+Grosse Fuge
+Fidelio
+Egmont
+Coriolan
+Leonore
+Missa Solemnis
+Unfinished Symphony
+Great C major Symphony
+Winterreise
+Die schöne Müllerin
+Schwanengesang
+Trout Quintet
+Forellenquintett
+Death and the Maiden
+Der Tod und das Mädchen
+String Quintet in C
+Wanderer Fantasy
+Rosamunde
+Arpeggione Sonata
+Erlkönig
+Octet
+Symphonie fantastique
+Harold en Italie
+Les nuits d'été
+La damnation de Faust
+Les Troyens
+Roméo et Juliette
+L'enfance du Christ
+Italian Symphony
+Scottish Symphony
+Reformation Symphony
+A Midsummer Night's Dream
+Hebrides Overture
+Elijah
+Elias
+Paulus
+Violin Concerto in E minor
+Kinderszenen
+Carnaval
+Kreisleriana
+Davidsbündlertänze
+Fantasiestücke
+Dichterliebe
+Frauenliebe und -leben
+Liederkreis
+Spring Symphony
+Rhenish Symphony
+Das Paradies und die Peri
+Années de pèlerinage
+Transcendental Études
+Sonata in B minor
+Totentanz
+Faust Symphony
+Dante Symphony
+Les Préludes
+Mephisto Waltz
+Consolations
+Liebesträume
+Tristan und Isolde
+Der Ring des Nibelungen
+Das Rheingold
+Die Walküre
+Siegfried
+Götterdämmerung
+Parsifal
+Lohengrin
+Tannhäuser
+Der fliegende Holländer
+Die Meistersinger von Nürnberg
+Wesendonck Lieder
+Siegfried Idyll
+La traviata
+Rigoletto
+Il trovatore
+Aida
+Otello
+Falstaff
+Don Carlo
+Nabucco
+Macbeth
+Simon Boccanegra
+Un ballo in maschera
+La forza del destino
+Messa da Requiem
+Il barbiere di Siviglia
+La Cenerentola
+L'italiana in Algeri
+Guillaume Tell
+Semiramide
+Petite messe solennelle
+Stabat Mater Rossini
+Lucia di Lammermoor
+L'elisir d'amore
+Don Pasquale
+Norma
+La sonnambula
+I puritani
+Carmen
+Les pêcheurs de perles
+L'Arlésienne
+Faust
+Roméo et Juliette Gounod
+Manon
+Werther
+Thaïs
+Samson et Dalila
+Organ Symphony
+Carnival of the Animals
+Le carnaval des animaux
+Danse macabre
+Introduction and Rondo capriccioso
+Requiem Fauré
+Pavane
+Pelléas et Mélisande
+Symphony in D minor
+Violin Sonata in A
+Prélude, choral et fugue
+Symphonie espagnole
+Poème
+Ein deutsches Requiem
+A German Requiem
+Alto Rhapsody
+Academic Festival Overture
+Tragic Overture
+Haydn Variations
+Handel Variations
+Paganini Variations
+Liebeslieder-Walzer
+Four Serious Songs
+Vier ernste Gesänge
+Clarinet Quintet
+Horn Trio
+Double Concerto
+Romantic Symphony
+Symphony No. 7
+Symphony No. 8
+Symphony No. 9
+Te Deum Bruckner
+Titan
+Resurrection
+Auferstehung
+Symphony of a Thousand
+Das Lied von der Erde
+Kindertotenlieder
+Rückert-Lieder
+Lieder eines fahrenden Gesellen
+Des Knaben Wunderhorn
+Adagietto
+Also sprach Zarathustra
+Ein Heldenleben
+Don Juan
+Till Eulenspiegel
+Tod und Verklärung
+Death and Transfiguration
+Don Quixote
+Alpine Symphony
+Eine Alpensinfonie
+Metamorphosen
+Four Last Songs
+Vier letzte Lieder
+Der Rosenkavalier
+Salome
+Elektra
+Ariadne auf Naxos
+Die Frau ohne Schatten
+Capriccio
+Arabella
+Die Fledermaus
+The Blue Danube
+An der schönen blauen Donau
+Radetzky March
+Die lustige Witwe
+The Merry Widow
+Hansel and Gretel
+Hänsel und Gretel
+New World Symphony
+From the New World
+American Quartet
+Dumky Trio
+Rusalka
+Stabat Mater Dvořák
+Má vlast
+Vltava
+The Moldau
+The Bartered Bride
+Glagolitic Mass
+Sinfonietta
+Jenůfa
+Káťa Kabanová
+The Cunning Little Vixen
+The Makropulos Affair
+Intimate Letters
+Kreutzer Sonata Janáček
+On an Overgrown Path
+In the Mists
+Swan Lake
+The Nutcracker
+Sleeping Beauty
+Eugene Onegin
+The Queen of Spades
+Pathétique Symphony
+Manfred Symphony
+Romeo and Juliet
+1812 Overture
+Serenade for Strings
+Rococo Variations
+Souvenir de Florence
+Pictures at an Exhibition
+Night on Bald Mountain
+Boris Godunov
+Khovanshchina
+Scheherazade
+Capriccio espagnol
+Russian Easter Festival Overture
+Prince Igor
+Polovtsian Dances
+In the Steppes of Central Asia
+Rhapsody on a Theme of Paganini
+Piano Concerto No. 2
+Piano Concerto No. 3
+Symphonic Dances
+The Isle of the Dead
+All-Night Vigil
+Vespers Rachmaninov
+The Bells
+Peer Gynt
+Holberg Suite
+Lyric Pieces
+Piano Concerto in A minor
+Finlandia
+Kullervo
+Tapiola
+The Swan of Tuonela
+Karelia Suite
+Valse triste
+Lemminkäinen Suite
+Enigma Variations
+Pomp and Circumstance
+The Dream of Gerontius
+Cello Concerto in E minor
+Introduction and Allegro
+Sea Pictures
+Falstaff Elgar
+The Planets
+The Lark Ascending
+Fantasia on a Theme by Thomas Tallis
+A Sea Symphony
+A London Symphony
+Pastoral Symphony Vaughan Williams
+Serenade to Music
+Five Mystical Songs
+Jerusalem
+I was glad
+Tosca
+La bohème
+Madama Butterfly
+Turandot
+Manon Lescaut
+Gianni Schicchi
+Il trittico
+La fanciulla del West
+Cavalleria rusticana
+Pagliacci
+Andrea Chénier
+Adriana Lecouvreur
+Pines of Rome
+Fountains of Rome
+Roman Festivals
+Ancient Airs and Dances
+La mer
+Prélude à l'après-midi d'un faune
+Nocturnes Debussy
+Images
+Estampes
+Children's Corner
+Suite bergamasque
+Clair de lune
+Pelléas et Mélisande Debussy
+Syrinx
+Boléro
+Daphnis et Chloé
+La valse
+Ma mère l'Oye
+Mother Goose
+Gaspard de la nuit
+Le tombeau de Couperin
+Miroirs
+Pavane pour une infante défunte
+Shéhérazade
+L'enfant et les sortilèges
+Piano Concerto in G
+Concerto for the Left Hand
+Tzigane
+Gymnopédies
+Gnossiennes
+Les Biches
+Gloria Poulenc
+Dialogues des Carmélites
+La voix humaine
+Le boeuf sur le toit
+La création du monde
+Pacific 231
+Quartet for the End of Time
+Quatuor pour la fin du temps
+Turangalîla
+Turangalîla-Symphonie
+Vingt regards sur l'enfant-Jésus
+Catalogue d'oiseaux
+La Nativité du Seigneur
+Métaboles
+Tout un monde lointain
+Requiem Duruflé
+The Rite of Spring
+Le sacre du printemps
+The Firebird
+L'oiseau de feu
+Petrushka
+Pulcinella
+Apollon musagète
+Symphony of Psalms
+Oedipus Rex
+The Rake's Progress
+L'histoire du soldat
+Peter and the Wolf
+Romeo and Juliet Prokofiev
+Classical Symphony
+Lieutenant Kijé
+Alexander Nevsky
+Cinderella
+War Sonatas
+Leningrad Symphony
+Babi Yar
+Lady Macbeth of Mtsensk
+Preludes and Fugues
+Jazz Suite
+Festive Overture
+Spartacus
+Gayane
+Sabre Dance
+Concerto for Orchestra
+Music for Strings, Percussion and Celesta
+Bluebeard's Castle
+The Miraculous Mandarin
+Mikrokosmos
+Romanian Folk Dances
+Háry János
+Psalmus Hungaricus
+Dances of Galánta
+Lux aeterna
+Atmosphères
+Études Ligeti
+Le Grand Macabre
+Pierrot lunaire
+Verklärte Nacht
+Transfigured Night
+Gurre-Lieder
+Five Pieces for Orchestra
+Moses und Aron
+Wozzeck
+Lulu
+Violin Concerto Berg
+Lyric Suite
+Mathis der Maler
+Symphonic Metamorphosis
+Die Dreigroschenoper
+The Threepenny Opera
+Carmina Burana
+War Requiem
+Peter Grimes
+Billy Budd
+The Turn of the Screw
+A Midsummer Night's Dream Britten
+Four Sea Interludes
+Young Person's Guide to the Orchestra
+A Ceremony of Carols
+Serenade for Tenor, Horn and Strings
+Simple Symphony
+Belshazzar's Feast
+Façade
+A Child of Our Time
+Appalachian Spring
+Rodeo
+Fanfare for the Common Man
+Billy the Kid
+Adagio for Strings
+Knoxville: Summer of 1915
+West Side Story
+Candide
+Chichester Psalms
+Rhapsody in Blue
+An American in Paris
+Porgy and Bess
+Concerto in F
+The Unanswered Question
+Central Park in the Dark
+Music for 18 Musicians
+Different Trains
+Drumming
+Einstein on the Beach
+Glassworks
+Metamorphosis
+Koyaanisqatsi
+Nixon in China
+Harmonielehre
+Short Ride in a Fast Machine
+Shaker Loops
+In C
+Spiegel im Spiegel
+Fratres
+Tabula rasa
+Für Alina
+Cantus in Memory of Benjamin Britten
+Symphony of Sorrowful Songs
+Symphony No. 3 Górecki
+Threnody to the Victims of Hiroshima
+St Luke Passion
+Concerto Grosso No. 1
+The Protecting Veil
+Cantus Arcticus
+Libertango
+Adiós Nonino
+Las cuatro estaciones porteñas
+Bachianas Brasileiras
+Concierto de Aranjuez
+Fantasía para un gentilhombre
+Recuerdos de la Alhambra
+Iberia
+Goyescas
+Noches en los jardines de España
+Nights in the Gardens of Spain
+El amor brujo
+The Three-Cornered Hat
+El sombrero de tres picos
+Zigeunerweisen
+Carmen Fantasy
+Caprices
+24 Caprices
+Introduction et variations
+Danse sacrée et danse profane
+Canon in D
+Pachelbel's Canon
+Air on the G String
+Jesu, Joy of Man's Desiring
+Toccata and Fugue in D minor
+Miserere Allegri
+Spem in alium
+Lamentations of Jeremiah
+Missa Papae Marcelli
+Lachrimae
+Tenebrae Responsories
+Vespers Monteverdi
+Membra Jesu Nostri
+Rosary Sonatas
+Mystery Sonatas
+Musikalische Exequien
+Tafelmusik
+Les Barricades mystérieuses
+Le Rappel des Oiseaux
+
+# ── instruments, voices, ensembles ──
+piano
+solo piano
+piano duo
+piano four hands
+two pianos
+fortepiano
+harpsichord
+clavichord
+organ
+violin
+solo violin
+viola
+cello
+solo cello
+double bass
+viola da gamba
+viol
+flute
+recorder
+traverso
+baroque flute
+oboe
+oboe d'amore
+cor anglais
+English horn
+clarinet
+basset horn
+bassoon
+saxophone
+horn
+natural horn
+trumpet
+natural trumpet
+cornett
+trombone
+sackbut
+tuba
+brass
+brass ensemble
+woodwind
+wind ensemble
+harmoniemusik
+harp
+guitar
+classical guitar
+lute
+theorbo
+mandolin
+accordion
+bandoneon
+percussion
+marimba
+timpani
+celesta
+voice
+soprano
+mezzo-soprano
+contralto
+alto
+countertenor
+tenor
+baritone
+bass-baritone
+bass
+choir
+chorus
+boys' choir
+children's choir
+chamber choir
+vocal ensemble
+orchestra
+symphony orchestra
+philharmonic
+chamber orchestra
+string orchestra
+baroque orchestra
+radio symphony orchestra
+string quartet ensemble
+consort
+continuo
+basso continuo
+duo
+trio
+quartet
+quintet
+
+# ── conductors ──
+Karajan
+Herbert von Karajan
+Abbado
+Claudio Abbado
+Rattle
+Simon Rattle
+Kirill Petrenko
+Vasily Petrenko
+Nelsons
+Andris Nelsons
+Chailly
+Riccardo Chailly
+Muti
+Riccardo Muti
+Harnoncourt
+Nikolaus Harnoncourt
+Gardiner
+John Eliot Gardiner
+Herreweghe
+Philippe Herreweghe
+Jacobs
+René Jacobs
+Minkowski
+Marc Minkowski
+Christie
+William Christie
+Currentzis
+Teodor Currentzis
+Mäkelä
+Klaus Mäkelä
+Blomstedt
+Herbert Blomstedt
+Haitink
+Bernard Haitink
+Jansons
+Mariss Jansons
+Thielemann
+Christian Thielemann
+Barenboim
+Daniel Barenboim
+Bernstein
+Furtwängler
+Wilhelm Furtwängler
+Kleiber
+Carlos Kleiber
+Erich Kleiber
+Solti
+Georg Solti
+Mehta
+Zubin Mehta
+Dudamel
+Gustavo Dudamel
+Esa-Pekka Salonen
+Nézet-Séguin
+Yannick Nézet-Séguin
+Järvi
+Paavo Järvi
+Neeme Järvi
+Kristjan Järvi
+Honeck
+Manfred Honeck
+Welser-Möst
+Franz Welser-Möst
+Pappano
+Antonio Pappano
+Gergiev
+Valery Gergiev
+Jurowski
+Vladimir Jurowski
+Gatti
+Daniele Gatti
+Nagano
+Kent Nagano
+Celibidache
+Sergiu Celibidache
+Klemperer
+Otto Klemperer
+Szell
+George Szell
+Toscanini
+Arturo Toscanini
+Bruno Walter
+Böhm
+Karl Böhm
+Kubelík
+Rafael Kubelík
+Mravinsky
+Yevgeny Mravinsky
+Jochum
+Eugen Jochum
+Wand
+Günter Wand
+Giulini
+Carlo Maria Giulini
+Christoph von Dohnányi
+Mackerras
+Charles Mackerras
+Pinnock
+Trevor Pinnock
+Hogwood
+Christopher Hogwood
+Koopman
+Ton Koopman
+Masaaki Suzuki
+Savall
+Jordi Savall
+Alessandrini
+Rinaldo Alessandrini
+Antonini
+Giovanni Antonini
+Dantone
+Ottavio Dantone
+Fasolis
+Diego Fasolis
+Biondi
+Fabio Biondi
+Pichon
+Raphaël Pichon
+Haïm
+Emmanuelle Haïm
+Rousset
+Christophe Rousset
+Niquet
+Hervé Niquet
+Dausgaard
+Thomas Dausgaard
+Vänskä
+Osmo Vänskä
+Saraste
+Jukka-Pekka Saraste
+Oramo
+Sakari Oramo
+Rouvali
+Santtu-Matias Rouvali
+Hrůša
+Jakub Hrůša
+Bělohlávek
+Jiří Bělohlávek
+Mirga Gražinytė-Tyla
+Gražinytė-Tyla
+Alsop
+Marin Alsop
+Barbara Hannigan
+Rozhdestvensky
+Svetlanov
+Temirkanov
+Kondrashin
+Fedoseyev
+Pletnev
+Mikhail Pletnev
+Ashkenazy
+Vladimir Ashkenazy
+Boulez
+Dutoit
+Charles Dutoit
+Ozawa
+Seiji Ozawa
+Tilson Thomas
+Michael Tilson Thomas
+Levine
+James Levine
+Previn
+André Previn
+Maazel
+Lorin Maazel
+Sawallisch
+Wolfgang Sawallisch
+Tennstedt
+Klaus Tennstedt
+Sinopoli
+Giuseppe Sinopoli
+Norrington
+Roger Norrington
+Brüggen
+Frans Brüggen
+Leonhardt
+Gustav Leonhardt
+Kuijken
+Sigiswald Kuijken
+McCreesh
+Paul McCreesh
+Christophers
+Harry Christophers
+Phillips
+Peter Phillips
+Egarr
+Richard Egarr
+Manze
+Andrew Manze
+Heras-Casado
+Pablo Heras-Casado
+Roth
+François-Xavier Roth
+Rustioni
+Daniele Rustioni
+Luisi
+Fabio Luisi
+Noseda
+Gianandrea Noseda
+Gimeno
+Gustavo Gimeno
+Harding
+Daniel Harding
+Ticciati
+Robin Ticciati
+Gardner
+Edward Gardner
+Wigglesworth
+Mark Wigglesworth
+Storgårds
+John Storgårds
+Lintu
+Hannu Lintu
+Tarmo Peltokoski
+Bychkov
+Semyon Bychkov
+Chung
+Myung-whun Chung
+Sokhiev
+Tugan Sokhiev
+Nott
+Jonathan Nott
+Zinman
+David Zinman
+Janowski
+Marek Janowski
+Metzmacher
+Ingo Metzmacher
+Gielen
+Michael Gielen
+Dohnányi
+
+# ── pianists ──
+Argerich
+Martha Argerich
+Pollini
+Maurizio Pollini
+Zimerman
+Krystian Zimerman
+Brendel
+Alfred Brendel
+András Schiff
+Perahia
+Murray Perahia
+Uchida
+Mitsuko Uchida
+Lang Lang
+Yuja Wang
+Trifonov
+Daniil Trifonov
+Levit
+Igor Levit
+Kissin
+Evgeny Kissin
+Sokolov
+Grigory Sokolov
+Grimaud
+Hélène Grimaud
+Hamelin
+Marc-André Hamelin
+Andsnes
+Leif Ove Andsnes
+Paul Lewis
+Bavouzet
+Jean-Efflam Bavouzet
+Sviatoslav Richter
+Horowitz
+Vladimir Horowitz
+Arthur Rubinstein
+Gould
+Glenn Gould
+Gilels
+Emil Gilels
+Kempff
+Wilhelm Kempff
+Michelangeli
+Arturo Benedetti Michelangeli
+Arrau
+Claudio Arrau
+Lupu
+Radu Lupu
+Pires
+Maria João Pires
+Hewitt
+Angela Hewitt
+Fazil Say
+Víkingur Ólafsson
+Ólafsson
+Alexandre Kantorow
+Kantorow
+Lisiecki
+Jan Lisiecki
+Seong-Jin Cho
+Blechacz
+Rafał Blechacz
+Yunchan Lim
+Bruce Liu
+Beatrice Rana
+Khatia Buniatishvili
+Hough
+Stephen Hough
+Osborne
+Steven Osborne
+Anderszewski
+Piotr Anderszewski
+Volodos
+Arcadi Volodos
+Lugansky
+Nikolai Lugansky
+Berezovsky
+Boris Berezovsky
+Matsuev
+Denis Matsuev
+Pletnev
+Aimard
+Pierre-Laurent Aimard
+Tharaud
+Alexandre Tharaud
+Planès
+Alain Planès
+Queffélec
+Anne Queffélec
+Chamayou
+Bertrand Chamayou
+Fray
+David Fray
+Zacharias
+Christian Zacharias
+Buchbinder
+Rudolf Buchbinder
+Gulda
+Friedrich Gulda
+Badura-Skoda
+Paul Badura-Skoda
+Bilson
+Malcolm Bilson
+Staier
+Andreas Staier
+Bezuidenhout
+Kristian Bezuidenhout
+Lubimov
+Alexei Lubimov
+Melnikov
+Alexander Melnikov
+Cziffra
+Georges Cziffra
+Cortot
+Alfred Cortot
+Lipatti
+Dinu Lipatti
+Haskil
+Clara Haskil
+Schnabel
+Artur Schnabel
+Backhaus
+Wilhelm Backhaus
+Fischer
+Edwin Fischer
+Annie Fischer
+Nat
+Yves Nat
+Ashkenazy
+Barenboim
+Tiberghien
+Cédric Tiberghien
+Bronfman
+Yefim Bronfman
+Ax
+Emanuel Ax
+Goode
+Richard Goode
+Schiff
+Kovacevich
+Stephen Kovacevich
+Freire
+Nelson Freire
+Larrocha
+Alicia de Larrocha
+Tipo
+Maria Tipo
+Moravec
+Ivan Moravec
+Sudbin
+Yevgeny Sudbin
+Ohlsson
+Garrick Ohlsson
+Kocsis
+Zoltán Kocsis
+Ránki
+Dezső Ránki
+Jandó
+Jenő Jandó
+Kempf
+Freddy Kempf
+Lortie
+Louis Lortie
+Leonskaja
+Elisabeth Leonskaja
+Yudina
+Maria Yudina
+Nikolayeva
+Tatiana Nikolayeva
+Sofronitsky
+Neuhaus
+Heinrich Neuhaus
+Yefim Bronfman
+Rondeau
+Jean Rondeau
+Esfahani
+Mahan Esfahani
+Pierre Hantaï
+Hantaï
+Skip Sempé
+Rousset
+Scott Ross
+Blandine Verlet
+Ton Koopman
+Richard Egarr
+Justin Taylor
+
+# ── violinists, violists ──
+Anne-Sophie Mutter
+Mutter
+Hilary Hahn
+Julia Fischer
+Kopatchinskaja
+Patricia Kopatchinskaja
+Isabelle Faust
+Faust
+Ehnes
+James Ehnes
+Kavakos
+Leonidas Kavakos
+Batiashvili
+Lisa Batiashvili
+Janine Jansen
+Znaider
+Nikolaj Szeps-Znaider
+Repin
+Vadim Repin
+Vengerov
+Maxim Vengerov
+Perlman
+Itzhak Perlman
+Oistrakh
+David Oistrakh
+Heifetz
+Jascha Heifetz
+Menuhin
+Yehudi Menuhin
+Milstein
+Nathan Milstein
+Szeryng
+Henryk Szeryng
+Grumiaux
+Arthur Grumiaux
+Kremer
+Gidon Kremer
+Shaham
+Gil Shaham
+Joshua Bell
+Renaud Capuçon
+Capuçon
+Tetzlaff
+Christian Tetzlaff
+Ibragimova
+Alina Ibragimova
+Weithaas
+Antje Weithaas
+Carmignola
+Giuliano Carmignola
+Podger
+Rachel Podger
+Manze
+Beyer
+Amandine Beyer
+Plantier
+Kuusisto
+Pekka Kuusisto
+Benedetti
+Nicola Benedetti
+Kennedy
+Nigel Kennedy
+Chung
+Kyung-Wha Chung
+Mullova
+Viktoria Mullova
+Zimmermann
+Frank Peter Zimmermann
+Zukerman
+Pinchas Zukerman
+Kogan
+Leonid Kogan
+Midori
+Sarah Chang
+Ray Chen
+Hadelich
+Augustin Hadelich
+Vilde Frang
+Frang
+Baiba Skride
+Arabella Steinbacher
+Steinbacher
+María Dueñas
+Daniel Lozakovich
+Lozakovich
+Tabea Zimmermann
+Antoine Tamestit
+Tamestit
+Lawrence Power
+Kashkashian
+Kim Kashkashian
+Bashmet
+Yuri Bashmet
+
+# ── cellists ──
+Rostropovich
+Mstislav Rostropovich
+Jacqueline du Pré
+du Pré
+Yo-Yo Ma
+Queyras
+Jean-Guihen Queyras
+Gabetta
+Sol Gabetta
+Weilerstein
+Alisa Weilerstein
+Isserlis
+Steven Isserlis
+Mørk
+Truls Mørk
+Kanneh-Mason
+Sheku Kanneh-Mason
+Hecker
+Marie-Elisabeth Hecker
+Bailey
+Zuill Bailey
+Fournier
+Pierre Fournier
+Casals
+Pablo Casals
+Moser
+Johannes Moser
+Tortelier
+Paul Tortelier
+Starker
+János Starker
+Maisky
+Mischa Maisky
+Gutman
+Natalia Gutman
+Wispelwey
+Pieter Wispelwey
+Bylsma
+Anner Bylsma
+Gautier Capuçon
+Harrell
+Lynn Harrell
+Bertrand
+Emmanuelle Bertrand
+Kniazev
+Alexander Kniazev
+Hagen
+Clemens Hagen
+Pergamenschikow
+Kian Soltani
+Soltani
+Pablo Ferrández
+Edgar Moreau
+Nicolas Altstaedt
+Altstaedt
+Julia Hagen
+Leonard Elschenbroich
+Steven Isserlis
+Ophélie Gaillard
+Gaillard
+
+# ── other soloists ──
+Emmanuel Pahud
+Pahud
+Rampal
+Jean-Pierre Rampal
+Galway
+James Galway
+Holliger
+Heinz Holliger
+Albrecht Mayer
+Martin Fröst
+Fröst
+Sabine Meyer
+Andreas Ottensamer
+Ottensamer
+Sharon Kam
+Radek Baborák
+Stefan Dohr
+Alison Balsom
+Maurice André
+Håkan Hardenberger
+Hardenberger
+Tine Thing Helseth
+Lucienne Renaudin Vary
+Christian Lindberg
+Julian Bream
+Bream
+Segovia
+Andrés Segovia
+Miloš Karadaglić
+Sharon Isbin
+Xuefei Yang
+Pepe Romero
+Hopkinson Smith
+Thomas Dunford
+Rolf Lislevand
+Xavier de Maistre
+Anneleen Lenaerts
+Olivier Latry
+Latry
+Cameron Carpenter
+Marie-Claire Alain
+Wolfgang Rübsam
+Martin Grubinger
+Evelyn Glennie
+
+# ── singers ──
+Kaufmann
+Jonas Kaufmann
+Netrebko
+Anna Netrebko
+Bartoli
+Cecilia Bartoli
+DiDonato
+Joyce DiDonato
+Garanča
+Elīna Garanča
+Damrau
+Diana Damrau
+Goerne
+Matthias Goerne
+Gerhaher
+Christian Gerhaher
+Bostridge
+Ian Bostridge
+Padmore
+Mark Padmore
+Jaroussky
+Philippe Jaroussky
+Fagioli
+Franco Fagioli
+Orliński
+Jakub Józef Orliński
+Sabata
+Xavier Sabata
+Terfel
+Bryn Terfel
+Fischer-Dieskau
+Dietrich Fischer-Dieskau
+Callas
+Maria Callas
+Schwarzkopf
+Elisabeth Schwarzkopf
+Pavarotti
+Luciano Pavarotti
+Domingo
+Plácido Domingo
+Carreras
+Flórez
+Juan Diego Flórez
+Grigorian
+Asmik Grigorian
+Yoncheva
+Sonya Yoncheva
+Petersen
+Marlis Petersen
+Oropesa
+Lisette Oropesa
+Radvanovsky
+Sondra Radvanovsky
+Harteros
+Anja Harteros
+Stemme
+Nina Stemme
+Nylund
+Camilla Nylund
+Kožená
+Magdalena Kožená
+Von Otter
+Anne Sofie von Otter
+Kasarova
+Vesselina Kasarova
+Genaux
+Vivica Genaux
+Lemieux
+Marie-Nicole Lemieux
+Stutzmann
+Nathalie Stutzmann
+Piau
+Sandrine Piau
+Devieilhe
+Sabine Devieilhe
+Petibon
+Patricia Petibon
+Crowe
+Lucy Crowe
+Carolyn Sampson
+Sampson
+Emma Kirkby
+Kirkby
+Dorothea Röschmann
+Christiane Karg
+Anna Prohaska
+Prohaska
+Julia Lezhneva
+Lezhneva
+Nuria Rial
+Véronique Gens
+Gens
+Stéphanie d'Oustrac
+Lea Desandre
+Desandre
+Benjamin Bernheim
+Bernheim
+Javier Camarena
+Camarena
+Calleja
+Joseph Calleja
+Beczała
+Piotr Beczała
+Vogt
+Klaus Florian Vogt
+Villazón
+Rolando Villazón
+Alagna
+Roberto Alagna
+Grigolo
+Vittorio Grigolo
+Hampson
+Thomas Hampson
+Keenlyside
+Simon Keenlyside
+Hvorostovsky
+Dmitri Hvorostovsky
+Tézier
+Ludovic Tézier
+Pisaroni
+Luca Pisaroni
+Zeppenfeld
+Georg Zeppenfeld
+Prey
+Hermann Prey
+Wunderlich
+Fritz Wunderlich
+Pears
+Peter Pears
+Ferrier
+Kathleen Ferrier
+Baker
+Janet Baker
+Norman
+Jessye Norman
+Price
+Leontyne Price
+Tebaldi
+Renata Tebaldi
+Sutherland
+Joan Sutherland
+Caballé
+Montserrat Caballé
+Freni
+Mirella Freni
+Popp
+Lucia Popp
+Janowitz
+Gundula Janowitz
+Te Kanawa
+Kiri Te Kanawa
+Flagstad
+Kirsten Flagstad
+Nilsson
+Birgit Nilsson
+Ludwig
+Christa Ludwig
+Baltsa
+Agnes Baltsa
+Berganza
+Teresa Berganza
+De los Ángeles
+Victoria de los Ángeles
+Scholl
+Andreas Scholl
+Deller
+Alfred Deller
+Prégardien
+Christoph Prégardien
+Julian Prégardien
+Behle
+Daniel Behle
+Mauro Peter
+Andrè Schuen
+Konstantin Krimmel
+Benjamin Appl
+Samuel Hasselhorn
+Elsa Dreisig
+Golda Schultz
+Pretty Yende
+Nadine Sierra
+Jakub Orliński
+Fleming
+Renée Fleming
+Gheorghiu
+Angela Gheorghiu
+Opolais
+Kristine Opolais
+Jaho
+Ermonela Jaho
+Hannigan
+Barbara Hannigan
+
+# ── orchestras ──
+Berliner Philharmoniker
+Berlin Philharmonic
+Wiener Philharmoniker
+Vienna Philharmonic
+Wiener Symphoniker
+Royal Concertgebouw Orchestra
+Concertgebouworkest
+London Symphony Orchestra
+LSO
+London Philharmonic Orchestra
+Philharmonia Orchestra
+Royal Philharmonic Orchestra
+BBC Symphony Orchestra
+BBC Philharmonic
+BBC Scottish Symphony Orchestra
+City of Birmingham Symphony Orchestra
+CBSO
+Hallé
+Royal Liverpool Philharmonic
+Scottish Chamber Orchestra
+Academy of St Martin in the Fields
+English Chamber Orchestra
+Chamber Orchestra of Europe
+Mahler Chamber Orchestra
+Gustav Mahler Jugendorchester
+Lucerne Festival Orchestra
+Gewandhausorchester Leipzig
+Gewandhausorchester
+Staatskapelle Dresden
+Sächsische Staatskapelle Dresden
+Staatskapelle Berlin
+Bayerisches Staatsorchester
+Symphonieorchester des Bayerischen Rundfunks
+Bavarian Radio Symphony Orchestra
+Münchner Philharmoniker
+Munich Philharmonic
+NDR Elbphilharmonie Orchester
+WDR Sinfonieorchester
+SWR Symphonieorchester
+hr-Sinfonieorchester
+Frankfurt Radio Symphony
+Deutsches Symphonie-Orchester Berlin
+Rundfunk-Sinfonieorchester Berlin
+Konzerthausorchester Berlin
+Bamberger Symphoniker
+Bamberg Symphony
+Deutsche Kammerphilharmonie Bremen
+Kammerorchester Basel
+Tonhalle-Orchester Zürich
+Orchestre de la Suisse Romande
+Mozarteumorchester Salzburg
+Camerata Salzburg
+Orchestre de Paris
+Orchestre National de France
+Orchestre Philharmonique de Radio France
+Orchestre National de Lyon
+Orchestre National du Capitole de Toulouse
+Les Siècles
+Budapest Festival Orchestra
+Czech Philharmonic
+Česká filharmonie
+Prague Symphony Orchestra
+Wiener Staatsoper
+Filarmonica della Scala
+Orchestra del Teatro alla Scala
+Orchestra dell'Accademia Nazionale di Santa Cecilia
+Santa Cecilia
+Orchestra Mozart
+Rotterdam Philharmonic Orchestra
+Netherlands Radio Philharmonic
+Oslo Philharmonic
+Bergen Philharmonic
+Gothenburg Symphony
+Swedish Radio Symphony Orchestra
+Royal Stockholm Philharmonic
+Danish National Symphony Orchestra
+Finnish Radio Symphony Orchestra
+Helsinki Philharmonic
+Lahti Symphony Orchestra
+Mariinsky Orchestra
+Russian National Orchestra
+State Academic Symphony Orchestra of Russia
+St Petersburg Philharmonic
+Leningrad Philharmonic
+Israel Philharmonic
+NHK Symphony Orchestra
+Chicago Symphony Orchestra
+Boston Symphony Orchestra
+New York Philharmonic
+Cleveland Orchestra
+The Cleveland Orchestra
+Philadelphia Orchestra
+The Philadelphia Orchestra
+Los Angeles Philharmonic
+San Francisco Symphony
+Pittsburgh Symphony Orchestra
+Minnesota Orchestra
+Detroit Symphony Orchestra
+Seattle Symphony
+Montreal Symphony Orchestra
+Orchestre symphonique de Montréal
+Toronto Symphony Orchestra
+Sydney Symphony Orchestra
+Simón Bolívar Symphony Orchestra
+Metropolitan Opera Orchestra
+Orchestra of the Royal Opera House
+West-Eastern Divan Orchestra
+
+# ── period ensembles, choirs ──
+Les Arts Florissants
+Concerto Italiano
+Il Giardino Armonico
+Academy of Ancient Music
+English Baroque Soloists
+Monteverdi Choir
+Orchestre Révolutionnaire et Romantique
+Collegium Vocale Gent
+Bach Collegium Japan
+Freiburger Barockorchester
+Akademie für Alte Musik Berlin
+Le Concert des Nations
+La Capella Reial de Catalunya
+Hespèrion XXI
+Les Musiciens du Louvre
+Europa Galante
+Accademia Bizantina
+Pygmalion
+Le Concert d'Astrée
+Orchestra of the Age of Enlightenment
+Concentus Musicus Wien
+Amsterdam Baroque Orchestra
+Orchestra of the Eighteenth Century
+Tafelmusik Baroque Orchestra
+Kammerorchester Basel
+La Petite Bande
+Il Pomo d'Oro
+Les Talens Lyriques
+Le Poème Harmonique
+Ensemble Correspondances
+Le Concert Spirituel
+Les Ambassadeurs
+Les Epopées
+Ensemble Matheus
+I Barocchisti
+Venice Baroque Orchestra
+Ensemble Zefiro
+Holland Baroque
+Dunedin Consort
+The English Concert
+The King's Consort
+Gabrieli Consort
+The Sixteen
+The Tallis Scholars
+Vox Luminis
+Stile Antico
+Cinquecento
+Huelgas Ensemble
+Graindelavoix
+Ensemble Organum
+Ensemble Gilles Binchois
+Sequentia
+Hilliard Ensemble
+The Hilliard Ensemble
+The King's Singers
+Voces8
+Tenebrae
+Tenebrae Choir
+Choir of King's College, Cambridge
+King's College Choir
+Choir of St John's College, Cambridge
+Westminster Abbey Choir
+Rias Kammerchor
+RIAS Kammerchor
+Rundfunkchor Berlin
+Chor des Bayerischen Rundfunks
+Arnold Schoenberg Chor
+Wiener Sängerknaben
+Vienna Boys' Choir
+Thomanerchor Leipzig
+Dresdner Kreuzchor
+Accentus
+Les Éléments
+Balthasar-Neumann-Chor
+Balthasar-Neumann-Ensemble
+Cappella Amsterdam
+Nederlands Kamerkoor
+Netherlands Chamber Choir
+Swedish Radio Choir
+Estonian Philharmonic Chamber Choir
+Latvian Radio Choir
+MusicAeterna
+Ensemble intercontemporain
+Ensemble Modern
+Klangforum Wien
+London Sinfonietta
+Kronos Quartet
+Bang on a Can
+
+# ── chamber ensembles ──
+Hagen Quartet
+Emerson String Quartet
+Quatuor Ébène
+Belcea Quartet
+Takács Quartet
+Jerusalem Quartet
+Pavel Haas Quartet
+Artemis Quartet
+Quatuor Mosaïques
+Alban Berg Quartett
+Arcanto Quartett
+Danish String Quartet
+Chiaroscuro Quartet
+Juilliard String Quartet
+Amadeus Quartet
+Borodin Quartet
+Quartetto Italiano
+Tokyo String Quartet
+Guarneri Quartet
+Arditti Quartet
+Diotima Quartet
+Quatuor Diotima
+Quatuor Modigliani
+Quatuor Arod
+Quatuor Van Kuijk
+Quatuor Hermès
+Signum Quartet
+Casals Quartet
+Cuarteto Casals
+Doric String Quartet
+Elias String Quartet
+Heath Quartet
+Castalian String Quartet
+Calidore String Quartet
+Dover Quartet
+Esmé Quartet
+Schumann Quartett
+Kuss Quartet
+Minetti Quartett
+Aris Quartett
+Goldmund Quartett
+Leonkoro Quartet
+Quartetto di Cremona
+Trio Wanderer
+Beaux Arts Trio
+Florestan Trio
+Trio Jean Paul
+Busch Trio
+Van Baerle Trio
+Gryphon Trio
+Trio Zimmermann
+Nash Ensemble
+Scharoun Ensemble
+Melos Ensemble
