@@ -116,6 +116,58 @@ and are paced so that leaning on the button cannot turn the panel into a
 scraper. Set `enabled = no` in [`[drdb]`](#reserved-section-drdb) on a box
 that must not talk to the internet — the button and the page then disappear.
 
+## Qobuz album search
+
+Qobuz's own apps cannot filter a search by **label** or **release date**, the
+two questions a classical listener asks first ("this symphony, on Pentatone or
+Decca, released in the last two years"). The panel asks Qobuz the plain
+question, reads the label and date every album in the answer already carries,
+and filters and sorts (newest first) itself. The albums found are played
+through **upmpdcli**, whose Qobuz plugin streams them straight from Qobuz, so
+the search is only offered while upmpdcli is the running renderer.
+
+- **Credentials:** none of its own. It uses the token of upmpdcli's Qobuz plugin
+  (the panel's Qobuz sign-in) and the plugin's app id.
+- **Labels:** Qobuz spells one label many ways ("Decca Music Group Ltd.",
+  "Decca (UMO)", "Decca Classics"), so a label check box is a *group* that
+  matches every label containing its keyword as whole words. The groups are
+  set in [`[qobuz_search]`](#reserved-section-qobuz_search); a search also
+  reports every label name it met (`labels_seen`), spelled as Qobuz spells
+  it, and any name can be ticked (`label=`) before it is made a group.
+- **Depth:** a match is only found as deep as Qobuz's answer is read. The
+  search reads `scan` albums per query, and while fewer than `want` pass the
+  filters it reads twice as deep, up to `auto_scan`. Past that it answers with
+  `more: true`, and asking again with `scan=<next_scan>` reads on, like
+  scrolling on in Qobuz's app; pages already read come from cache. Each ticked
+  label also gets a query of its own, "`<text> <label>`", which reaches into
+  that label sooner.
+- **Dates** are Qobuz's release date of *that* album, so a reissue carries
+  the reissue's date.
+- **Playing:** ▶ replaces upmpdcli's playlist with the album and plays it
+  (optionally from one of its tracks); **+** appends it. Both go through
+  upmpdcli's OpenHome playlist, as a control point browsing the box's own
+  Qobuz library would: the queued URLs are the plugin's, so the box fetches
+  the music from Qobuz itself, and every track carries its metadata, from
+  which the patched upmpdcli sets MPD's `Date` and `Label` (see
+  [the upmpdcli patch](../upmpdcli/patches/README.md)). BubbleUPnP and other
+  control points see the same playlist. The renderer is found by SSDP and
+  must be on this machine.
+- **Played albums** are remembered (`qobuz-played.json` in the state
+  directory). A search always includes the ones whose title, artist,
+  composer, label or performers contain all its words, however deep Qobuz
+  ranks them, and marks every result played before with `played: <count>`.
+
+| endpoint | answers |
+|---|---|
+| `GET /qobuz/status` | `enabled`, `renderer` (upmpdcli running), `token` (plugin signed in) |
+| `GET /qobuz/labels` | the configured label groups |
+| `GET /qobuz/search` | `q`, `label` (repeatable or comma-separated), `last` (years back from today) or `from`/`to` (calendar years), `sort=date\|relevance`, `scan`, `enrich=0` (skip performers) |
+| `GET /qobuz/album/<id>` | one album: tracks, performers, description |
+| `POST /qobuz/play` | `{"album_id", "mode": "replace"\|"append", "start": "<track id>"}`: queue it on upmpdcli |
+| `GET /qobuz/played` | the albums played from here, newest first |
+
+Search and play answer 409 while upmpdcli is not running.
+
 A lightweight web-based remote control panel for a Linux or FreeBSD desktop.
 Commands are defined in a plain-text INI config file; the server renders a
 mobile-friendly interface that can be opened in any browser on the local
@@ -290,6 +342,9 @@ omdrcctrl/
 ├── src/
 │   ├── app.py               # Flask application
 │   ├── drdb.py              # dr.loudness-war.info lookups (DR versions page)
+│   ├── qobuz_search.py      # label/date-filtered Qobuz album search
+│   ├── qobuz_web.py         # its /qobuz/ endpoints
+│   ├── openhome.py          # OpenHome playlist client (queues on upmpdcli)
 │   ├── commands.conf.in     # command definitions template
 │   ├── omdrcctrl.sh.in       # launcher script template
 │   ├── templates/
@@ -700,6 +755,45 @@ max_detail_lookups = 24
 | `cache_ttl` | Seconds a fetched page stays usable. Re-pressing the button on the same record, or reopening an album's details, then costs no request. |
 | `max_pages` | Listing pages to walk, 25 albums each. They are requested already sorted by album DR descending, so a search cut short here still holds the best masters. |
 | `max_detail_lookups` | Upper bound on the album pages one **Find the album** sweep may read. |
+
+---
+
+### Reserved section: `[qobuz_search]`
+
+The [Qobuz album search](#qobuz-album-search). Read-only, on demand, and only
+while upmpdcli runs.
+
+```ini
+[qobuz_search]
+enabled    = yes
+app_id     =
+timeout    = 10
+cache_ttl  = 900
+scan       = 250
+want       = 20
+auto_scan  = 1000
+max_enrich = 30
+renderer   =
+played_limit = 1000
+labels =
+    Pentatone
+    Decca
+    Warner Classics: warner classics, erato
+```
+
+| key | meaning |
+|---|---|
+| `enabled` | `no` removes the endpoints (404). |
+| `app_id` | Qobuz app id. Empty: upmpdcli.conf's `qobuzappid`, else the one the plugin reads from Qobuz's web player (the `app_id=` in the Location of any plugin track URL). |
+| `timeout` | Seconds to wait for one Qobuz answer. |
+| `cache_ttl` | Seconds a page of search results stays cached. Album details are kept a day. |
+| `scan` | Albums read per query before answering. |
+| `want` | Fewer results than this: read deeper, doubling, up to `auto_scan`. |
+| `auto_scan` | How deep one search reads by itself; beyond it the answer offers `more`. |
+| `max_enrich` | Result cards whose performers are fetched (one album request each, cached). |
+| `renderer` | upmpdcli's `description.xml` URL for playing. Empty: found by SSDP on this machine (never on another host), picked by upmpdcli.conf's `friendlyname` when several run here. |
+| `played_limit` | Albums remembered as played; `0` remembers none. |
+| `labels` | Label groups, one per line: `Name` or `Name: keyword, keyword`. A group matches any label containing one of its keywords as whole words, ignoring case; with none, the name is the keyword. Empty: the built-in list. |
 
 ---
 

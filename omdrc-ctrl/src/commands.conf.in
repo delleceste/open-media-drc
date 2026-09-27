@@ -99,6 +99,60 @@ max_pages = 3
 # track list.
 max_detail_lookups = 24
 
+# -- Qobuz album search ----------------------------------------------------
+# Search Qobuz albums and filter them by label and release date, which
+# Qobuz's own apps cannot do.  It signs in with the token upmpdcli's Qobuz
+# plugin holds (the panel's Qobuz sign-in), so there is nothing to set up
+# beyond that, and is only offered while upmpdcli -- which plays what it
+# finds -- is the running renderer.  Set enabled = no to take it away.
+[qobuz_search]
+enabled = yes
+# Qobuz app id.  Empty: upmpdcli.conf's qobuzappid, else the one the plugin
+# reads from Qobuz's web player (the Location of any plugin track URL shows
+# it as app_id=...).
+app_id =
+# Seconds to wait for one Qobuz answer.
+timeout = 10
+# Seconds a search stays cached.
+cache_ttl = 900
+# Albums read per query before answering, most relevant first; the filters
+# apply after, so this is how deep into Qobuz's ranking a match is looked
+# for.  Each ticked label adds a query of its own ("<text> <label>").
+scan = 250
+# Fewer than `want` albums through the filters: keep reading, doubling the
+# depth, up to `auto_scan` albums per query.  Past that the page offers
+# "Load more", like scrolling on in Qobuz's own app.
+want = 20
+auto_scan = 1000
+# Result cards whose performers are fetched (one album/get each, cached).
+max_enrich = 30
+# upmpdcli's description.xml, for the Play and + buttons.  Empty: found on
+# this machine by SSDP (never a renderer on another host), picked by
+# upmpdcli.conf's friendlyname when several run here.
+renderer =
+# Albums remembered as played (state dir, qobuz-played.json).  A played
+# album is found again by any search whose words it contains.  0: none.
+played_limit = 1000
+# Label groups offered as check boxes, one per line: "Name" or
+# "Name: pattern, pattern".  Qobuz spells a label many ways ("Decca Music
+# Group Ltd.", "Decca (UMO)"), so a group matches any label containing one of
+# its patterns as whole words, ignoring case.  Empty: the built-in list.
+labels =
+    Pentatone
+    Decca
+    Deutsche Grammophon
+    Harmonia Mundi
+    Alpha: alpha classics
+    BIS: bis records, bis
+    Hyperion
+    Chandos
+    Channel Classics
+    ECM
+    Sony Classical
+    Warner Classics: warner classics, erato
+    Naxos
+    cpo
+
 # -- Configuration workflows -----------------------------------------------
 [configuration]
 enabled = yes

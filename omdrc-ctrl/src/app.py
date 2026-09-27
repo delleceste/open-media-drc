@@ -31,6 +31,7 @@ from drdb import DrDb, DrDbError, Settings as DrDbSettings
 from drdb import identify as drdb_identify_version
 from drdb import release_year as drdb_release_year
 from drdb import ALGORITHM as DRDB_ALGORITHM, NOT_SCORED as DRDB_NOT_SCORED, W as DRDB_WEIGHTS
+from qobuz_search import Settings as QobuzSearchSettings, settings_from_section as qobuz_search_settings
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -607,6 +608,9 @@ _BITPERFECT_MANAGER: BitPerfectManager | None = None
 DRDB = DrDbSettings()
 _DRDB_CLIENT: DrDb | None = None
 
+# Label- and date-filtered Qobuz album search (the search page).
+QOBUZ_SEARCH = QobuzSearchSettings()
+
 
 def _default_log_sources() -> list[dict]:
     """Logs worth showing on a stock install.  upmpdcli writes its own log to
@@ -715,6 +719,7 @@ def load_config(path: str) -> None:
     global CONFIGURATION, _CONFIGURATION_MANAGER
     global BITPERFECT, _BITPERFECT_MANAGER
     global DRDB, _DRDB_CLIENT
+    global QOBUZ_SEARCH
     cfg = configparser.ConfigParser()
     if not cfg.read(path):
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -872,6 +877,9 @@ def load_config(path: str) -> None:
         )
         _DRDB_CLIENT = None
 
+    if cfg.has_section("qobuz_search"):
+        QOBUZ_SEARCH = qobuz_search_settings(cfg["qobuz_search"], QOBUZ_SEARCH)
+
     if cfg.has_section("qobuz_oauth"):
         QOBUZ_OAUTH_SCRIPT = cfg.get("qobuz_oauth", "script", fallback=QOBUZ_OAUTH_SCRIPT)
         QOBUZ_UPMPDCLI_CONF = cfg.get("qobuz_oauth", "upmpdcli_config", fallback=QOBUZ_UPMPDCLI_CONF)
@@ -891,7 +899,7 @@ def load_config(path: str) -> None:
 
     _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth",
                  "qconnect_oauth", "cdin", "chain", "configuration",
-                 "bitperfect", "drdb"}
+                 "bitperfect", "drdb", "qobuz_search"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
@@ -8914,11 +8922,27 @@ def _kiosk_playback_rate() -> int:
 try:
     import kiosk
     kiosk.init_app(app, commands=lambda: COMMANDS,
-                   features=lambda: {"drdb": DRDB.enabled, "cdin": CDIN_ENABLED},
+                   features=lambda: {"drdb": DRDB.enabled, "cdin": CDIN_ENABLED,
+                                     "qobuz_search": QOBUZ_SEARCH.enabled},
                    mpc=_kiosk_mpc, playback_rate=_kiosk_playback_rate,
                    mpd_port=_resolve_mpd_port)
 except Exception as _kiosk_error:               # pragma: no cover
     print(f"kiosk UI unavailable: {_kiosk_error}", file=sys.stderr)
+
+# Label- and date-filtered Qobuz album search under /qobuz/, in its own module
+# for the same reason.  It searches with upmpdcli's Qobuz plugin credentials
+# and is only offered while upmpdcli, which plays the results, is running.
+try:
+    import qobuz_web
+    qobuz_web.init_app(app, settings=lambda: QOBUZ_SEARCH,
+                       upmpdcli_conf=_upmpdcli_conf_path,
+                       read_options=_upmpdcli_options,
+                       token_file=_qobuz_cache_config,
+                       plugin_dir=lambda: os.path.dirname(QOBUZ_OAUTH_SCRIPT),
+                       renderer_running=lambda: _service_running(UPMPDCLI_SERVICE),
+                       state_dir=lambda: _STATE_DIR)
+except Exception as _qobuz_web_error:           # pragma: no cover
+    print(f"Qobuz search unavailable: {_qobuz_web_error}", file=sys.stderr)
 
 
 def _no_delay_request_handler():
