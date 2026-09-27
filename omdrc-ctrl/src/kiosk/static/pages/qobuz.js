@@ -48,21 +48,27 @@ P.mount = el => {
     P.seenBox = h('div', {});
     P.dateBox = h('div', {});
     P.sortBox = h('div', {});
+    // Full width; the filters sit side by side where there is room, and fold
+    // into one summary line once results arrive (a tap opens them again).
+    P.fsum = h('button', { type: 'button', class: 'qz-fsum', onclick: () => P.openFilters(!P.filtersOpen) });
+    P.filters = h('div', { class: 'qz-filters' },
+        h('div', { class: 'qz-fgroup' }, h('div', { class: 'lbl' }, 'Labels'), P.labelsBox, P.seenBox),
+        h('div', { class: 'qz-fgroup' }, h('div', { class: 'lbl' }, 'Released'), P.dateBox,
+            h('div', { class: 'lbl' }, 'Order'), P.sortBox));
     P.form = h('div', { class: 'qz-form' },
         K.card(null,
             h('div', { class: 'qz-searchwrap' },
                 h('div', { class: 'qz-searchrow' }, P.input,
                     h('button', { type: 'button', class: 'btn primary', onclick: () => { P.input.blur(); P.search(); } }, 'Search')),
                 P.suggestBox),
-            h('div', { class: 'lbl' }, 'Labels'), P.labelsBox, P.seenBox,
-            h('div', { class: 'lbl' }, 'Released'), P.dateBox,
-            h('div', { class: 'lbl' }, 'Order'), P.sortBox));
+            P.fsum, P.filters));
     P.results = h('div', { class: 'qz-results' });
     P.player = h('div', { class: 'qz-player' });
     P.main = h('div', { class: 'qz-main' }, P.form, P.results);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.buildPlayer();
     P.paintDate(); P.paintSort(); P.paintLabels();
+    P.openFilters(true);
     P.poll = new K.Poller(P.refreshStatus, 10000);
     P.playerPoll = new K.Poller(P.refreshPlayer, 2000);
     P.recent();
@@ -124,6 +130,7 @@ P.loadLabels = async () => {
 // sent: the server takes an unknown name as a label keyword of its own.
 P.paintLabels = () => {
     const names = [...P.favourites, ...[...P.selected].filter(n => !P.favourites.some(f => f.toLowerCase() === n.toLowerCase()))];
+    P.paintSummary();
     const chip = name => h('button', {
         type: 'button', class: 'chip tog qz-chip' + (P.selected.has(name) ? ' on' : ''),
         onclick: () => P.toggleLabel(name),
@@ -174,6 +181,7 @@ P.paintDate = () => {
             P.yearSpinner('from'), h('span', { class: 'muted' }, 'to'), P.yearSpinner('to')));
     }
     K.clear(P.dateBox).append(...kids);
+    P.paintSummary();
 };
 
 // ── year spinners (the from – to span) ───────────────────────────────────────
@@ -290,7 +298,30 @@ P.pickYear = key => {
     document.getElementById('overlay-root').append(scrim);
 };
 
+// ── filter summary ───────────────────────────────────────────────────────────
+P.filterSummary = () => {
+    const mode = pref('date', 'any');
+    const to = yearOf('to');
+    const when = mode === 'last' ? (pref('lastN', 2) === 1 ? 'last year' : `last ${pref('lastN', 2)} years`)
+        : mode === 'span' ? `${yearOf('from')}–${to === TODAY ? 'today' : to}` : 'any time';
+    return [P.selected.size ? [...P.selected].join(', ') : 'all labels', when,
+        pref('sort', 'date') === 'date' ? 'newest first' : 'best match'].join(' · ');
+};
+
+P.paintSummary = () => {
+    if (!P.fsum) return;
+    K.clear(P.fsum).append(h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
+        h('span', { class: 'qz-fsum-mark' }, P.filtersOpen ? 'Hide filters ▴' : 'Filters ▾'));
+};
+
+P.openFilters = open => {
+    P.filtersOpen = open;
+    P.filters.hidden = !open;
+    P.paintSummary();
+};
+
 P.paintSort = () => {
+    P.paintSummary();
     K.clear(P.sortBox).append(K.segmented([
         { value: 'date', label: 'Newest first' }, { value: 'relevance', label: 'Best match' },
     ], pref('sort', 'date'), v => { setPref('sort', v); P.paintSort(); P.searchSoon(); }, 'small'));
@@ -340,9 +371,12 @@ P.search = async (scan = 0) => {
         P.paintError(d.error || 'search failed');
         return;
     }
+    const first = !P.last;
     P.last = d;
     P.paintSeen();
     P.paintResults();
+    // The first results fold the filters away: the list gets the screen.
+    if (first) P.openFilters(false);
 };
 
 P.paintWorking = text => {
