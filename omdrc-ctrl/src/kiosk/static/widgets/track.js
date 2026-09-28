@@ -52,9 +52,9 @@ K.formatColor = line => {
     if (!m) return '';
     const bits = parseInt(m[1], 10), khz = parseFloat(m[2]);
     if (bits >= 24 && khz >= 176) return 'var(--green)';
-    if (bits >= 24 && khz >= 88) return '#79c0ff';
-    if (bits >= 24) return '#e3b341';
-    if (khz >= 48) return '#d2a8ff';
+    if (bits >= 24 && khz >= 88) return 'var(--fmt-hires)';
+    if (bits >= 24) return 'var(--fmt-24)';
+    if (khz >= 48) return 'var(--fmt-48)';
     return '';
 };
 })();

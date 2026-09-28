@@ -47,6 +47,7 @@ K.VuMeter = class VuMeter {
         this.raf = null; this.last = 0;
         this.glass = 1;          // < 1 only with a cover behind the meters (pages/now.js)
         this.ro = new ResizeObserver(() => this.render());
+        K.onTheme(() => this.render());     // a still meter is not redrawn by itself
         this.setMode(mode);
     }
 
@@ -142,7 +143,7 @@ K.VuMeter = class VuMeter {
                       ['R', this.disp.right_peak, this.disp.right_rms, this.hold.right.db]];
         rows.forEach(([label, peak, rms, hold], i) => {
             const cy = 5 * dpr + rowH * i + rowH / 2, y = cy - barH / 2;
-            ctx.fillStyle = '#10151c';
+            ctx.fillStyle = K.css('--meter-face');
             if (this.glass < 1) ctx.globalAlpha = this.glass;
             ctx.beginPath(); ctx.roundRect(x0, y, span, barH, 4 * dpr); ctx.fill();
             ctx.globalAlpha = 1;
@@ -155,14 +156,14 @@ K.VuMeter = class VuMeter {
             ctx.restore();
             // RMS witness and peak-hold line
             if (rms > SCALE_FLOOR) {
-                ctx.fillStyle = '#e6edf3';
+                ctx.fillStyle = K.css('--meter-mark');
                 ctx.fillRect(x(rms) - 1.5 * dpr, y - 3 * dpr, 3 * dpr, barH + 6 * dpr);
             }
             if (hold > SCALE_FLOOR) {
-                ctx.fillStyle = hold > -1 ? '#ff5b52' : '#ffffff';
+                ctx.fillStyle = hold > -1 ? '#ff5b52' : K.css('--meter-hold');
                 ctx.fillRect(x(hold) - 1 * dpr, y, 2 * dpr, barH);
             }
-            ctx.fillStyle = '#8b949e';
+            ctx.fillStyle = K.css('--muted');
             ctx.font = `600 ${13 * dpr}px system-ui, sans-serif`;
             ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
             ctx.fillText(label, 6 * dpr, cy);
@@ -173,10 +174,10 @@ K.VuMeter = class VuMeter {
         const yScale = H - scaleH + 2 * dpr;
         for (const db of [-60, -40, -30, -20, -12, -6, -3, 0]) {
             const px = x(db);
-            ctx.strokeStyle = '#3b444f';
+            ctx.strokeStyle = K.css('--meter-tick');
             ctx.beginPath(); ctx.moveTo(px, yScale - 2 * dpr); ctx.lineTo(px, yScale + 3 * dpr); ctx.stroke();
             if (db === -40 || db === -30) continue;      // ticks only: too close to label
-            ctx.fillStyle = db >= -6 ? '#d29922' : '#8b949e';
+            ctx.fillStyle = db >= -6 ? K.css('--yellow') : K.css('--muted');
             ctx.fillText(db === 0 ? '0 dBFS' : String(db), K.clamp(px, 22 * dpr, w - 24 * dpr), yScale + 5 * dpr);
         }
     }
@@ -189,10 +190,11 @@ K.VuMeter = class VuMeter {
         const { w, h: H, dpr, ctx } = fit(canvas);
         ctx.clearRect(0, 0, w, H);
         const see = this.glass < 1;                       // a cover shows through the face
-        // Ink: light on the black face; dark when a light cover dominates what is behind.
-        // Contrast of white vs black against that brightness decides (WCAG luminance).
+        // Ink: light on the dark face, dark on the light theme's face; over a cover, dark
+        // when a light cover dominates what is behind.  Contrast of white vs black
+        // against that brightness decides (WCAG luminance).
         const bg = see && this.backdrop ? (this.backdrop[label === 'L' ? 0 : 1] || 0) : 0;
-        const dark = (bg + .05) / .05 > 1.05 / (bg + .05);
+        const dark = see ? (bg + .05) / .05 > 1.05 / (bg + .05) : K.theme() === 'light';
         const I = dark ? {
             ink: '#0d1117', minor: '#3d444d', text: '#1f2328', dim: '#3d444d', red: '#cf222e', redText: '#a40e26',
             track: 'rgba(0,0,0,.14)', halo: 'rgba(255,255,255,.8)', glow: 'rgba(255,255,255,.55)',
@@ -213,11 +215,11 @@ K.VuMeter = class VuMeter {
         // face: the app's black, a faint lift under the scale, a hairline border
         ctx.globalAlpha = see ? this.glass : 1;
         const face = ctx.createRadialGradient(cx, cy, R * .1, cx, cy, R * 1.25);
-        face.addColorStop(0, '#161c24'); face.addColorStop(1, '#0a0d12');
+        face.addColorStop(0, K.css('--gauge-face-a')); face.addColorStop(1, K.css('--gauge-face-b'));
         ctx.fillStyle = face;
         ctx.beginPath(); ctx.roundRect(0, 0, w, H, 10 * dpr); ctx.fill();
         ctx.globalAlpha = 1;
-        ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1 * dpr;
+        ctx.strokeStyle = K.css('--border'); ctx.lineWidth = 1 * dpr;
         ctx.beginPath(); ctx.roundRect(.5 * dpr, .5 * dpr, w - dpr, H - dpr, 10 * dpr); ctx.stroke();
         // over a cover everything drawn below gets a dark halo, so it stays legible
         const halo = on => { ctx.shadowColor = on && see ? I.halo : 'transparent'; ctx.shadowBlur = on && see ? 5 * dpr : 0; };

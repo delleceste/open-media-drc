@@ -3,7 +3,7 @@
     android:id="@+id/root_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/widget_background">
+    android:background="@color/kiosk_bg">
 
     <!-- Swipe down to reload the page: also the way back after a network failure. -->
     <com.omdrc.widget.VerticalSwipeRefreshLayout

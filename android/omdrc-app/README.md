@@ -29,6 +29,12 @@ is laid out for (Now in landscape, the others upright), and the kiosk's rotate
 button turns the page on screen the other way. The app watches the setting while
 it is open and starts in the orientation it was last in.
 
+**Light and dark.** The dashboard follows the phone's light/dark mode: its theme
+(`values` light, `values-night` dark) is what the WebView reports to the kiosk,
+whose *Automatic* theme then matches, and the app's own screens (splash, the
+connection error, the status bar icons) switch with it. The home-screen widget
+stays dark.
+
 The launcher name is now "OMDRC". The Android package / application id is still
 `com.omdrc.widget`, so an existing install upgrades in place and keeps its
 settings; the folder and project were renamed from `omdrc-widget`.

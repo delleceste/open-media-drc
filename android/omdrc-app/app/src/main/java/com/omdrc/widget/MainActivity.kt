@@ -185,7 +185,7 @@ class MainActivity : ComponentActivity() {
         lastPage = findViewById(R.id.last_page)
         swipeRefresh = findViewById(R.id.swipe_refresh)
         swipeRefresh.setColorSchemeColors(0xFF58A6FF.toInt(), 0xFF3FB950.toInt(), 0xFFD8C23A.toInt())
-        swipeRefresh.setProgressBackgroundColorSchemeColor(0xFF161B22.toInt())
+        swipeRefresh.setProgressBackgroundColorSchemeColor(ContextCompat.getColor(this, R.color.kiosk_surface))
         swipeRefresh.setOnChildScrollUpCallback { _, _ -> webView.scrollY > 0 || pageScrolled }
         swipeRefresh.setOnRefreshListener {
             swipeRefresh.isRefreshing = false        // the big ring shows the reload instead

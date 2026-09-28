@@ -17,7 +17,7 @@ import kotlin.math.min
 
 /**
  * The splash while the page loads: the whole screen black, lit from the middle by a
- * soft white glow, and on it a ring whose arc fills with the load progress, with the
+ * soft white glow (with the phone in light mode: pale, shaded towards the edges), and on it a ring whose arc fills with the load progress, with the
  * percentage in the centre.  It covers the page until the page is ready, then fades.  The arc eases towards
  * the reported value (WebView reports progress in coarse jumps) and its gradient
  * slowly rotates so a load that stalls still looks alive.
@@ -27,9 +27,13 @@ class LoadingRingView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private val density = resources.displayMetrics.density
+    /** The phone's dark mode, as the kiosk page follows it (values-night). */
+    private val night = (resources.configuration.uiMode and
+        android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+    private val ink = if (night) Color.WHITE else Color.rgb(31, 35, 40)
     private val stroke = 10f * density
     private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = stroke; color = Color.argb(60, 255, 255, 255)
+        style = Paint.Style.STROKE; strokeWidth = stroke; color = if (night) Color.argb(60, 255, 255, 255) else Color.argb(40, 31, 35, 40)
     }
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = stroke * 2.4f; strokeCap = Paint.Cap.ROUND
@@ -39,11 +43,11 @@ class LoadingRingView @JvmOverloads constructor(
         style = Paint.Style.STROKE; strokeWidth = stroke; strokeCap = Paint.Cap.ROUND
     }
     private val percent = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; textAlign = Paint.Align.CENTER; textSize = 40f * density
+        color = ink; textAlign = Paint.Align.CENTER; textSize = 40f * density
         isFakeBoldText = true
     }
     private val caption = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(170, 255, 255, 255); textAlign = Paint.Align.CENTER; textSize = 13f * density
+        color = Color.argb(170, Color.red(ink), Color.green(ink), Color.blue(ink)); textAlign = Paint.Align.CENTER; textSize = 13f * density
         letterSpacing = 0.15f
     }
     private val ringRadius = 85f * density - stroke * 1.4f
@@ -100,7 +104,8 @@ class LoadingRingView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
         backdrop.shader = RadialGradient(w / 2f, h / 2f, min(w, h) * 0.75f,
-            intArrayOf(Color.rgb(92, 96, 102), Color.rgb(38, 40, 44), Color.rgb(10, 10, 12), Color.BLACK),
+            if (night) intArrayOf(Color.rgb(92, 96, 102), Color.rgb(38, 40, 44), Color.rgb(10, 10, 12), Color.BLACK)
+            else intArrayOf(Color.WHITE, Color.rgb(246, 248, 250), Color.rgb(228, 232, 238), Color.rgb(208, 215, 222)),
             floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP)
     }
 

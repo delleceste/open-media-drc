@@ -42,6 +42,32 @@ K.setPref = (key, value) => {
     try { localStorage.setItem('omdrc-kiosk.' + key, JSON.stringify(value)); } catch {}
 };
 
+// ── theme ────────────────────────────────────────────────────────────────────
+// 'auto' (the default: the device's own light/dark setting, followed live), 'dark' or
+// 'light', per screen (Config -> Theme).  The shell's first script already set it
+// before the first paint; kiosk.css has the palettes.  What is drawn on canvases
+// reads its colours through K.css(), so it follows too.
+const LIGHT = matchMedia('(prefers-color-scheme: light)');
+let cssCache = {};
+K.themeSubs = new Set();
+K.onTheme = fn => K.themeSubs.add(fn);
+K.themeChoice = () => { const t = K.pref('theme', 'auto'); return t === 'dark' || t === 'light' ? t : 'auto'; };
+K.theme = () => document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+K.css = name => cssCache[name] ?? (cssCache[name] = getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+K.applyTheme = () => {
+    const choice = K.themeChoice();
+    const theme = choice === 'auto' ? (LIGHT.matches ? 'light' : 'dark') : choice;
+    const changed = document.documentElement.dataset.theme !== theme;
+    document.documentElement.dataset.theme = theme;
+    cssCache = {};
+    const meta = document.querySelector('meta[name=theme-color]');
+    if (meta) meta.content = K.css('--bg') || (theme === 'light' ? '#f3f5f8' : '#0d1117');
+    if (changed) K.themeSubs.forEach(fn => { try { fn(theme); } catch (e) { console.warn(e); } });
+};
+K.setTheme = choice => { K.setPref('theme', choice); K.applyTheme(); };
+LIGHT.addEventListener('change', () => { if (K.themeChoice() === 'auto') K.applyTheme(); });
+K.applyTheme();
+
 // ── formatting ───────────────────────────────────────────────────────────────
 K.fmtDb = db => Number.isFinite(db) ? db.toFixed(1) : '−∞';
 K.fmtClock = sec => {

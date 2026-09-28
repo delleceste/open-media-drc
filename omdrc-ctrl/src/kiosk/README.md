@@ -25,6 +25,18 @@ down.
 | **Logs** | Recognised alerts and a tail of every configured log |
 | **Config** | This screen's own settings, and the desktop pages opened inside the kiosk (configuration, bit-perfect, filter response, manual) |
 
+## Light and dark
+
+Config -> **Theme**: *Automatic* (the default) follows the device's own light or
+dark setting and switches when it does; *Dark* and *Light* fix it for that screen
+(kept in its browser storage, so the panel behind the amplifier can stay dark
+whatever its system says).  The shell's first script sets it before the first
+paint.  `kiosk.css` has both palettes (`:root` dark, `:root[data-theme=light]`),
+and whatever is drawn on canvases (meters, spectrum, the Cover page's column)
+reads its colours from them through `K.css()` and redraws on a switch; in light,
+the needles get a cream face with dark ink.  Inside the Android app, the app's
+own theme follows the phone and is what the WebView reports to the page.
+
 ## Level display, upright and in landscape
 
 The level display is chosen per orientation (Config → Now page, or the level

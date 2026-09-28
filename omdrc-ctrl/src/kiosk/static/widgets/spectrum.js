@@ -5,6 +5,7 @@ const FALL_DB_S = 30, CAP_HOLD_MS = 900, CAP_FALL_DB_S = 14;
 
 K.Spectrum = class Spectrum {
     constructor(canvas) {
+        K.onTheme(() => this.draw());
         this.canvas = canvas;
         this.bands = []; this.l = []; this.r = [];
         this.tl = []; this.tr = []; this.capL = []; this.capR = []; this.capAt = [];
@@ -78,12 +79,12 @@ K.Spectrum = class Spectrum {
                     ctx.fillRect(x, y(v), bw, top + plotH - y(v));
                 }
                 if (Number.isFinite(cap) && cap > fl) {
-                    ctx.fillStyle = '#e6edf3';
+                    ctx.fillStyle = K.css('--text');
                     ctx.fillRect(x, y(cap) - 2 * dpr, bw, 2 * dpr);
                 }
             });
             if (i % 3 === 0) {
-                ctx.fillStyle = '#8b949e';
+                ctx.fillStyle = K.css('--muted');
                 ctx.font = `${10 * dpr}px ui-monospace, monospace`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'top';
                 ctx.fillText(this.bands[i].label, i * slot + slot / 2 + 3 * dpr, H - labelH + 3 * dpr);

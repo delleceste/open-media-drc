@@ -273,6 +273,10 @@ P.render = function render() {
         window.OmdrcApp ? K.card('Android app',
             h('p', { class: 'muted small' }, 'View (kiosk or full web page), keeping the screen on while “Now playing” is showing, hiding the Android bars, and the server address are set in the app’s own settings.'),
             h('button', { class: 'btn', type: 'button', onclick: () => window.OmdrcApp.openSettings() }, 'App settings')) : null,
+        K.card('Theme',
+            K.segmented([{ value: 'auto', label: 'Automatic' }, { value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }],
+                K.themeChoice(), v => { K.setTheme(v); P.render(); }),
+            h('p', { class: 'muted small' }, 'Automatic follows this device’s own light or dark setting, and switches when it does. Kept for this screen only, so the panel behind the amplifier can stay dark whatever its system says.')),
         K.card('Now page',
             // one choice per orientation (pages/now.js): upright bars, landscape needles by default
             ...[[false, 'Level display in landscape'], [true, 'Level display upright']].map(([portrait, title]) => [

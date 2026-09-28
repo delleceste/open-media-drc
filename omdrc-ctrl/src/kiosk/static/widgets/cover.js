@@ -91,6 +91,7 @@ function weigh(img) {
 const FLOOR = -60, FALL = 45, HOLD_MS = 1500, HOLD_FALL = 24;
 K.VLevels = class VLevels {
     constructor(host) {
+        K.onTheme(() => this.draw());
         this.canvas = h('canvas', { class: 'vlv-canvas' });
         K.clear(host).append(this.canvas);
         this.tgt = { l: FLOOR, r: FLOOR, lr: FLOOR, rr: FLOOR };
@@ -140,19 +141,19 @@ K.VLevels = class VLevels {
         const scaleW = 22 * dpr, gap = 6 * dpr, bw = Math.max(6 * dpr, (w - scaleW - 3 * gap) / 2);
         ctx.font = `${9.5 * dpr}px ui-monospace, monospace`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
         for (const db of [0, -6, -12, -20, -40]) {
-            ctx.fillStyle = db >= -6 ? '#d29922' : '#8b949e';
+            ctx.fillStyle = db >= -6 ? K.css('--yellow') : K.css('--muted');
             ctx.fillText(String(db), scaleW - 3 * dpr, y(db));
         }
         [['L', this.disp.l, this.disp.lr, this.hold.l.db], ['R', this.disp.r, this.disp.rr, this.hold.r.db]].forEach(([label, pk, rms, hold], i) => {
             const x = scaleW + gap + i * (bw + gap);
-            ctx.fillStyle = '#10151c';
+            ctx.fillStyle = K.css('--meter-face');
             ctx.beginPath(); ctx.roundRect(x, top, bw, span, 3 * dpr); ctx.fill();
             const seg = 4 * dpr, sgap = 1.5 * dpr, to = y(pk);
             ctx.fillStyle = g;
             for (let sy = bottom - seg; sy + seg > to; sy -= seg + sgap) ctx.fillRect(x + 2 * dpr, Math.max(sy, to), bw - 4 * dpr, Math.min(seg, sy + seg - to));
-            if (rms > FLOOR) { ctx.fillStyle = '#e6edf3'; ctx.fillRect(x - 2 * dpr, y(rms) - 1.5 * dpr, bw + 4 * dpr, 3 * dpr); }
-            if (hold > FLOOR) { ctx.fillStyle = hold > -1 ? '#ff5b52' : '#ffffff'; ctx.fillRect(x, y(hold) - 1 * dpr, bw, 2 * dpr); }
-            ctx.fillStyle = '#8b949e'; ctx.font = `600 ${12 * dpr}px system-ui, sans-serif`;
+            if (rms > FLOOR) { ctx.fillStyle = K.css('--meter-mark'); ctx.fillRect(x - 2 * dpr, y(rms) - 1.5 * dpr, bw + 4 * dpr, 3 * dpr); }
+            if (hold > FLOOR) { ctx.fillStyle = hold > -1 ? '#ff5b52' : K.css('--meter-hold'); ctx.fillRect(x, y(hold) - 1 * dpr, bw, 2 * dpr); }
+            ctx.fillStyle = K.css('--muted'); ctx.font = `600 ${12 * dpr}px system-ui, sans-serif`;
             ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
             ctx.fillText(label, x + bw / 2, H - 2 * dpr);
         });

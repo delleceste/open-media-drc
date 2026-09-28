@@ -8,15 +8,17 @@
     <color name="status_off">#8A8A94</color>
     <color name="icon_background">#FFFFFF</color>
     <color name="icon_glyph">#000000</color>
-    <!-- The kiosk page's palette (omdrc-ctrl/src/kiosk/static/kiosk.css :root), for
-         native screens that stand in for it, like the connection error. -->
-    <color name="kiosk_bg">#0D1117</color>
-    <color name="kiosk_surface">#161B22</color>
-    <color name="kiosk_surface2">#1C232C</color>
-    <color name="kiosk_border">#30363D</color>
-    <color name="kiosk_text">#E6EDF3</color>
-    <color name="kiosk_muted">#8B949E</color>
-    <color name="kiosk_accent">#58A6FF</color>
+    <!-- The kiosk page's palette (omdrc-ctrl/src/kiosk/static/kiosk.css), for native
+         screens that stand in for it, like the connection error: its light theme here,
+         the dark one in values-night, so they follow the phone as the page does. -->
+    <color name="kiosk_bg">#F3F5F8</color>
+    <color name="kiosk_surface">#FFFFFF</color>
+    <color name="kiosk_surface2">#EEF1F5</color>
+    <color name="kiosk_border">#CFD6DE</color>
+    <color name="kiosk_text">#1F2328</color>
+    <color name="kiosk_muted">#59636E</color>
+    <color name="kiosk_accent">#0969DA</color>
     <color name="kiosk_accent_strong">#1F6FEB</color>
-    <color name="kiosk_red">#F85149</color>
+    <color name="kiosk_red">#CF222E</color>
+    <color name="kiosk_ripple">#1F000000</color>
 </resources>

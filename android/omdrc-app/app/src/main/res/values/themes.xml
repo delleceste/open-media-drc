@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.OmdrcWidget" parent="android:Theme.Material.NoActionBar" />
-    <!-- The dashboard: black from the first frame, as its splash (LoadingRingView) -->
-    <style name="Theme.OmdrcWidget.Main">
-        <item name="android:windowBackground">@android:color/black</item>
+    <!-- The dashboard follows the phone's light/dark mode, as the kiosk page does: this
+         light theme, values-night the dark one.  The theme is also what the WebView
+         reports to the page as prefers-color-scheme, so the kiosk's "Automatic" theme
+         turns light here.  The window is the page's colour from the first frame. -->
+    <style name="Theme.OmdrcWidget.Main" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/kiosk_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
