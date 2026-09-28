@@ -168,8 +168,14 @@ function scrolledAt(el) {
 // rotate button flips the page on screen and remembers that for it.  The Android
 // app rotates on request (apiVersion 5); a browser only in fullscreen, where the
 // orientation can be locked.  The 7" panel is neither, and never turns.
-K.canRotate = () => K.inApp ? !!window.OmdrcApp.setPageOrientation
+// With the phone's auto-rotate on (app apiVersion 6) the app follows the phone like
+// any other app and the pages adapt to how it is held (Now: needles in landscape,
+// bars upright, pages/now.js); the rotate button is then hidden.
+K.autoRotate = () => { try { return !!(K.inApp && window.OmdrcApp.autoRotate && window.OmdrcApp.autoRotate()); } catch { return false; } };
+K.canRotate = () => K.inApp ? !!window.OmdrcApp.setPageOrientation && !K.autoRotate()
     : !!(document.fullscreenElement && screen.orientation && screen.orientation.lock);
+// the app: auto-rotate was switched on or off while the kiosk is open
+K.onAutoRotate = () => applyOrientation(cur >= 0 ? K.pages[cur] : null);
 K.orientationOf = page => K.pref('orient.' + page.id, page.orientation || 'portrait');
 function applyOrientation(page) {
     if (!page) return;

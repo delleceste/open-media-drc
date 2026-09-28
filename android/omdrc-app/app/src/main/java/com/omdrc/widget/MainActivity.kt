@@ -5,9 +5,13 @@ import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
@@ -123,10 +127,32 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { }
 
-    /** The orientation of the last run (or of the last page shown): landscape at first. */
-    private fun rememberedOrientation(): Int =
-        if (AppPrefs.lastPortrait(this)) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-        else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    /** The phone's own auto-rotate setting.  On, the app follows the phone the way
+     *  every other app does, and the kiosk adapts to whichever way it is held (Now:
+     *  needles in landscape, bars upright); off, each kiosk page turns the phone the
+     *  way it is laid out for (setPageOrientation), as the rotate button asks. */
+    private fun autoRotate(): Boolean =
+        Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
+
+    private fun isPortrait(): Boolean =
+        resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+
+    /** The orientation to ask for: the phone's with auto-rotate, else the last page's
+     *  (or the last run's): landscape at first. */
+    private fun rememberedOrientation(): Int = when {
+        autoRotate() -> ActivityInfo.SCREEN_ORIENTATION_USER
+        AppPrefs.lastPortrait(this) -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        else -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
+    /** Auto-rotate switched on or off while the app is open: follow at once, and let
+     *  the kiosk show or hide its rotate button. */
+    private val autoRotateObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            requestedOrientation = rememberedOrientation()
+            webView.evaluateJavascript("window.K && K.onAutoRotate && K.onAutoRotate()", null)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -302,6 +328,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION), false, autoRotateObserver)
+        requestedOrientation = rememberedOrientation()      // the setting may have changed meanwhile
         connError.resume()
         // Resets LiveStatusService's idle clock every time the dashboard
         // becomes visible again, not just on first open.
@@ -322,6 +351,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        contentResolver.unregisterContentObserver(autoRotateObserver)
         connError.pause()
         // Leaving the dashboard is exactly when you might just have changed
         // something (enabled DRC, switched geometry, ...) and exactly when
@@ -402,7 +432,8 @@ class MainActivity : ComponentActivity() {
     /** The last screen of [url], if there is one for the orientation the app starts in. */
     private fun showLastPage(url: String): Boolean {
         if (AppPrefs.viewMode(this) != AppPrefs.VIEW_KIOSK) return false
-        val bitmap = LastPage.load(this, url, AppPrefs.lastPortrait(this)) ?: return false
+        val portrait = if (autoRotate()) isPortrait() else AppPrefs.lastPortrait(this)
+        val bitmap = LastPage.load(this, url, portrait) ?: return false
         lastPage.setImageBitmap(bitmap)
         lastPage.animate().cancel()
         lastPage.alpha = 1f
@@ -426,6 +457,11 @@ class MainActivity : ComponentActivity() {
         if (!pageReady || loadFailed) return
         val portrait = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
         val wantPortrait = requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_USER) {   // auto-rotate: nothing to wait for
+            loadingRing.removeCallbacks(splashFallback)
+            loadingRing.postDelayed({ loadingRing.finish(); endLastPage() }, 200)
+            return
+        }
         if (portrait != wantPortrait) return            // onConfigurationChanged calls again
         loadingRing.removeCallbacks(splashFallback)
         loadingRing.postDelayed({ loadingRing.finish(); endLastPage() }, 200)   // the page re-lays out after a turn
@@ -433,6 +469,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        // turned by hand: the next start begins this way up (and shows this way's last screen)
+        if (autoRotate()) AppPrefs.setLastPortrait(this, isPortrait())
         maybeEndSplash()
     }
 
@@ -475,10 +513,15 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun setPageOrientation(orientation: String) {
             runOnUiThread {
-                val want = if (orientation == "portrait") ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                           else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                if (requestedOrientation != want) requestedOrientation = want
-                AppPrefs.setLastPortrait(this@MainActivity, orientation == "portrait")
+                // with auto-rotate the phone decides; the page's wish is kept for when it is off
+                if (!autoRotate()) {
+                    val want = if (orientation == "portrait") ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                               else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    if (requestedOrientation != want) requestedOrientation = want
+                    AppPrefs.setLastPortrait(this@MainActivity, orientation == "portrait")
+                } else if (requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_USER) {
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER
+                }
             }
         }
 
@@ -497,8 +540,12 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun micAvailable(): Boolean = packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)
 
+        /** The phone rotates by itself (auto-rotate on): the kiosk hides its rotate button. */
         @JavascriptInterface
-        fun apiVersion(): Int = 5
+        fun autoRotate(): Boolean = this@MainActivity.autoRotate()
+
+        @JavascriptInterface
+        fun apiVersion(): Int = 6
     }
 
     /** The gear button: which view to show, the screen-on rule, and the
