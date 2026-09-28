@@ -699,6 +699,7 @@ P.wireSeekRing = () => {
         if (!onRing(e)) { clearTimeout(P.ringTimer); P.ring.hidden = true; return; }   // off the ring: put it away
         // step two: a slide that starts on the ring
         g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
+        P.ring.classList.add('active');           // drawn thick only while the finger is on it
         try { box.setPointerCapture(e.pointerId); } catch {}
         clearTimeout(P.ringTimer);
         P.paintRing(g.f);
@@ -717,6 +718,7 @@ P.wireSeekRing = () => {
         try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
         if (!g || e.pointerId !== g.id) return;
         const d = g; g = null;
+        P.ring.classList.remove('active');
         if (d.moved && e.type === 'pointerup' && P.base) P.seek(d.f * P.base.duration);
         hideLater(d.moved ? 1200 : RING_IDLE_MS);
     };

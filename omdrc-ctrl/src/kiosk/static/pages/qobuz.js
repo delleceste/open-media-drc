@@ -148,6 +148,26 @@ P.revealInput = () => {
 };
 addEventListener('resize', () => { if (P.input && document.activeElement === P.input) P.revealInput(); });
 
+// The field keeps the focus only while it is being used.  A focused field is what
+// Android brings the keyboard back for, on the next touch anywhere in the page (the
+// cover's seek ring cancels the touch's default, so the browser does not blur it
+// then); the keyboard then shrinks the page and the field is scrolled into view.
+// So: a touch outside the search box, or the keyboard closing (the Android back
+// gesture, which blurs nothing), ends the typing.
+document.addEventListener('pointerdown', e => {
+    if (P.input && document.activeElement === P.input && !(e.target.closest && e.target.closest('.qz-searchwrap')))
+        P.input.blur();
+}, { capture: true, passive: true });
+if (window.visualViewport) {
+    let tallest = visualViewport.height;
+    visualViewport.addEventListener('resize', () => {
+        const hgt = visualViewport.height;
+        // grown back by more than a keyboard row: the keyboard has gone
+        if (P.input && document.activeElement === P.input && hgt > tallest + 120) P.input.blur();
+        tallest = document.activeElement === P.input ? Math.min(tallest, hgt) : hgt;
+    });
+}
+
 // ── availability ─────────────────────────────────────────────────────────────
 P.refreshStatus = async () => {
     const s = await K.api('/qobuz/status', { timeout: 8000 });

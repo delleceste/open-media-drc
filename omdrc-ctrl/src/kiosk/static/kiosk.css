@@ -147,9 +147,13 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .seek-zone { touch-action: none; cursor: pointer; }
 .seek-ring { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.4); pointer-events: none; }
 .seek-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.sr-track { fill: none; stroke: rgba(255,255,255,.3); stroke-width: 2.2; }
-.sr-arc { fill: none; stroke: var(--accent); stroke-width: 2.8; stroke-linecap: round; }
-.sr-knob { fill: #fff; stroke: var(--accent); stroke-width: 1.2; }
+/* a thin pen at rest; thicker, with a bigger knob, while the finger slides on it */
+.sr-track { fill: none; stroke: rgba(255,255,255,.3); stroke-width: .9; transition: stroke-width .15s; }
+.sr-arc { fill: none; stroke: var(--accent); stroke-width: 1.3; stroke-linecap: round; transition: stroke-width .15s; }
+.sr-knob { fill: #fff; stroke: var(--accent); stroke-width: .8; r: 2.6px; transition: r .15s; }
+.seek-ring.active .sr-track { stroke-width: 2.2; }
+.seek-ring.active .sr-arc { stroke-width: 3.2; }
+.seek-ring.active .sr-knob { r: 4.8px; stroke-width: 1.2; }
 .sr-time { position: relative; padding: .2rem .7rem; border-radius: 1rem; background: rgba(13,17,23,.78); font: 600 1rem ui-monospace, monospace; white-space: nowrap; }
 .now-search { display: none; }                  /* upright only */
 .now.cover-big .now-art { display: none !important; }
