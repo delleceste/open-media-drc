@@ -16,6 +16,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.activity.ComponentActivity
@@ -58,7 +59,14 @@ class MainActivity : ComponentActivity() {
     /** The kiosk said its first page is painted (AppBridge.pageReady): the splash
      *  goes once the phone is also in the orientation that page asked for. */
     private var pageReady = false
-    private val splashFallback = Runnable { pageReady = true; if (!loadFailed) loadingRing.finish() }
+    private val splashFallback = Runnable { pageReady = true; if (!loadFailed) { loadingRing.finish(); endLastPage() } }
+
+    /** A cold start shows the kiosk's last screen (LastPage) instead of the splash;
+     *  the splash comes up over it only if the live page is slow to paint. */
+    private lateinit var lastPage: ImageView
+    private var showingLastPage = false
+    private var firstLoad = true
+    private val ringLater = Runnable { if (showingLastPage && !pageReady && !loadFailed) loadingRing.start() }
 
     /** The dashboard URL last asked for: what "Retry" loads again. */
     private var lastUrl: String? = null
@@ -148,6 +156,7 @@ class MainActivity : ComponentActivity() {
 
         webView = findViewById(R.id.web_view)
         loadingRing = findViewById(R.id.loading_ring)
+        lastPage = findViewById(R.id.last_page)
         swipeRefresh = findViewById(R.id.swipe_refresh)
         swipeRefresh.setColorSchemeColors(0xFF58A6FF.toInt(), 0xFF3FB950.toInt(), 0xFFD8C23A.toInt())
         swipeRefresh.setProgressBackgroundColorSchemeColor(0xFF161B22.toInt())
@@ -189,7 +198,7 @@ class MainActivity : ComponentActivity() {
                 if (connError.isShown) {
                     if (!requested) return
                     connError.connecting()      // the panel stays up until this load's outcome
-                } else {
+                } else if (!showingLastPage) {
                     loadingRing.start()
                 }
                 pageReady = false
@@ -261,7 +270,9 @@ class MainActivity : ComponentActivity() {
         }
 
         onBackPressedDispatcher.addCallback(this) {
-            if (webView.canGoBack()) webView.goBack() else finish()
+            // Back leaves the app like Home does: the page stays alive behind it, so
+            // coming back shows it as it was, with nothing to load.
+            if (webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
         }
 
         settingsButton = findViewById(R.id.settings_button)
@@ -297,6 +308,18 @@ class MainActivity : ComponentActivity() {
         AppPrefs.touchForeground(this)
     }
 
+    override fun onPause() {
+        super.onPause()
+        // The screen as it is left, for the next cold start (see LastPage).  Here and
+        // not in onStop: the page is still drawn, so the picture is not a blank one.
+        val url = lastUrl
+        if (url != null && pageReady && !loadFailed && !showingLastPage &&
+            AppPrefs.viewMode(this) == AppPrefs.VIEW_KIOSK && webView.visibility == View.VISIBLE) {
+            val portrait = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+            LastPage.save(this, webView, url, portrait)
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         connError.pause()
@@ -326,7 +349,14 @@ class MainActivity : ComponentActivity() {
     private fun load(url: String) {
         lastUrl = url
         loadRequested = true
-        if (!connError.isShown) loadingRing.start()   // the splash at once, not once the request is answered
+        if (!connError.isShown) {
+            // the first load of a fresh start: the last screen at once, if there is one
+            // of this page in this orientation; else the splash at once, not once the
+            // request is answered
+            if (firstLoad && showLastPage(url)) loadingRing.postDelayed(ringLater, 1200)
+            else loadingRing.start()
+        }
+        firstLoad = false
         webView.loadUrl(url)
     }
 
@@ -336,6 +366,7 @@ class MainActivity : ComponentActivity() {
         loadFailed = true
         updateSettingsButton()
         loadingRing.hide()
+        endLastPage(at = true)
         webView.visibility = View.INVISIBLE
         val address = lastUrl?.let {
             val uri = Uri.parse(it)
@@ -368,6 +399,27 @@ class MainActivity : ComponentActivity() {
 
     /** What the kiosk page can ask of the app.  Called from a WebView
      *  thread, so everything hops to the UI thread. */
+    /** The last screen of [url], if there is one for the orientation the app starts in. */
+    private fun showLastPage(url: String): Boolean {
+        if (AppPrefs.viewMode(this) != AppPrefs.VIEW_KIOSK) return false
+        val bitmap = LastPage.load(this, url, AppPrefs.lastPortrait(this)) ?: return false
+        lastPage.setImageBitmap(bitmap)
+        lastPage.animate().cancel()
+        lastPage.alpha = 1f
+        lastPage.visibility = View.VISIBLE
+        showingLastPage = true
+        return true
+    }
+
+    /** The live page is there (or failed): the picture goes, fading unless [at] once. */
+    private fun endLastPage(at: Boolean = false) {
+        loadingRing.removeCallbacks(ringLater)
+        if (!showingLastPage) return
+        showingLastPage = false
+        val done = { lastPage.visibility = View.GONE; lastPage.setImageDrawable(null) }
+        if (at) done() else lastPage.animate().alpha(0f).setDuration(220).withEndAction(done).start()
+    }
+
     /** The splash stays over the page until the kiosk is painted and the phone has
      *  turned the way the page wants, so neither the half-built page nor the turn is seen. */
     private fun maybeEndSplash() {
@@ -376,7 +428,7 @@ class MainActivity : ComponentActivity() {
         val wantPortrait = requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
         if (portrait != wantPortrait) return            // onConfigurationChanged calls again
         loadingRing.removeCallbacks(splashFallback)
-        loadingRing.postDelayed({ loadingRing.finish() }, 200)   // the page re-lays out after a turn
+        loadingRing.postDelayed({ loadingRing.finish(); endLastPage() }, 200)   // the page re-lays out after a turn
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {

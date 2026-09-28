@@ -26,7 +26,13 @@ The app is always in landscape (either way up); the launcher name is now "OMDRC"
 settings; the folder and project were renamed from `omdrc-widget`.
 
 While a page loads, a large ring in the middle of the screen shows the progress in
-percent. **Swipe down to reload** the page: in the kiosk view this works whenever
+percent. It is spared where it can be: **Back** leaves the app the way Home does,
+so the page stays alive and coming back shows it at once; and when the system has
+dropped the app (or it was swiped away), the kiosk's last screen, kept as a picture
+per orientation (`LastPage`), is shown at once while the page loads under it, the
+ring appearing only if that takes more than about a second.  The kiosk's scripts
+are cached for good (their URLs change with every deploy), so that load is short.
+**Swipe down to reload** the page: in the kiosk view this works whenever
 the current page is scrolled to its top (the kiosk reports its own scroll position
 through the bridge), and a horizontal page swipe never triggers it.
 

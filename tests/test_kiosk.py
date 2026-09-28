@@ -44,6 +44,17 @@ class KioskTests(unittest.TestCase):
             self.assertEqual(self.client.get(path).status_code, 200, path)
         self.assertEqual(self.client.get("/k/static/kiosk.css").status_code, 200)
 
+    def test_versioned_assets_are_cached_for_good_the_shell_is_not(self):
+        """The shell names each script with ?v=<asset version>, which a deploy
+        changes: those URLs may stay cached, so a restart of the Android app
+        does not ask about every file again.  The shell itself must not be."""
+        page = self.client.get("/k/")
+        self.assertNotIn("max-age=31536000", page.headers.get("Cache-Control", ""))
+        url = re.findall(r'src="(/k/static/core\.js\?v=[^"]+)"', page.get_data(as_text=True))[0]
+        self.assertIn("max-age=31536000", self.client.get(url).headers["Cache-Control"])
+        plain = self.client.get("/k/static/core.js").headers.get("Cache-Control", "")
+        self.assertNotIn("max-age=31536000", plain)
+
     def test_config_exposes_commands_but_never_their_command_line(self):
         data = self.client.get("/k/api/config").get_json()
         self.assertTrue(data["ok"])

@@ -26,7 +26,20 @@ from flask import Blueprint, Response, jsonify, render_template, request
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-bp = Blueprint(
+class _KioskBlueprint(Blueprint):
+    """The shell asks for every script and stylesheet with ?v=<asset version>,
+    which changes with any deploy (see _asset_version): such a URL never
+    changes content, so the browser (the Android app's WebView too) may keep
+    it for good instead of asking the box about each file on every start.
+    Anything asked for without v= keeps the default (revalidated)."""
+
+    YEAR = 365 * 24 * 3600
+
+    def get_send_file_max_age(self, filename):
+        return self.YEAR if request.args.get("v") else super().get_send_file_max_age(filename)
+
+
+bp = _KioskBlueprint(
     "kiosk", __name__,
     url_prefix="/k",
     template_folder="templates",

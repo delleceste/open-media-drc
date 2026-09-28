@@ -17,6 +17,18 @@
             android:layout_height="match_parent" />
     </com.omdrc.widget.VerticalSwipeRefreshLayout>
 
+    <!-- A cold start: the kiosk's last screen as it was left (LastPage), over the
+         page until the live one is painted.  Clickable, so no touch reaches the
+         page underneath meanwhile. -->
+    <ImageView
+        android:id="@+id/last_page"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="true"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+
     <!-- The splash: the whole screen, over the page until it is ready (clickable,
          so no touch reaches the page underneath). -->
     <com.omdrc.widget.LoadingRingView
