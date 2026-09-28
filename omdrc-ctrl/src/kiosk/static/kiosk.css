@@ -431,10 +431,12 @@ input[type=range] { accent-color: var(--accent); }
     .now-drbar[style] { flex: 0 0 auto !important; }
     .now-drbar .dr-bar { height: 3.4rem; flex: 0 0 auto; min-height: 0; }
     .now.lvl-off .now-drbar .dr-bar { height: 4.4rem; flex: 0 0 auto; min-height: 0; }
-    /* the cover a third of the height (narrower if the width asks), the details beside it,
-       play state and time at the bottom of that column */
+    /* the cover a third of the height (narrower if the width asks), the details beside it
+       with the whole column to themselves; play state and time on a row of their own under
+       the cover.  No progress bar: the ring on the cover shows and moves the position. */
     .now-track { --np-art: min(33dvh, 58vw); display: grid; grid-template-columns: var(--np-art) minmax(0, 1fr);
-        grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "art meta" "art led" "art time"; gap: .3rem .8rem; align-items: start; }
+        grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "art meta" "art led" "time time"; gap: .3rem .8rem; align-items: start; }
+    .now-prog { display: none; }
     .now.cover-big .now-track { grid-template-columns: minmax(0, 1fr); grid-template-areas: "meta" "led" "time"; }
     .now-art, .now-art.empty { display: block; grid-area: art; width: var(--np-art); height: var(--np-art); border-radius: .6rem; }
     .now-art.empty::after { content: '♪'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 4rem; color: var(--border); }
@@ -446,7 +448,7 @@ input[type=range] { accent-color: var(--accent); }
     .now-palbum { color: var(--muted); font-size: .9rem; -webkit-line-clamp: 3; }
     .now-partist:empty, .now-palbum:empty { display: none; }
     .now-track .cal-led { grid-area: led; }
-    .now-timebox { grid-area: time; width: 100%; grid-template-columns: auto minmax(0, 1fr); justify-content: stretch; }
+    .now-timebox { grid-area: time; width: 100%; grid-template-columns: auto minmax(0, 1fr); justify-content: stretch; margin-top: .2rem; }
     .now-time { text-align: right; }
     /* the Qobuz page's search box, moved down here (pages/qobuz.js); its filters open under it */
     .now-search { display: block; margin-top: auto; padding-top: .3rem; }

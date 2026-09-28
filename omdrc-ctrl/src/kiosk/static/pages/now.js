@@ -649,11 +649,16 @@ P.wireTransport = () => {
 };
 
 // ── seek ring (upright only) ─────────────────────────────────────────────────
-// A touch on the big cover brings up a ring inscribed in it: 12 o'clock is the
-// start of the track, clockwise to the end, the knob where it is now.  Moving the
-// finger round the ring moves the knob (it stops at the start and the end, it
-// never jumps across); lifting it seeks there.  A tap only shows the ring a moment.
+// Two steps, so a stray touch on the cover never moves the music: the first touch
+// (a tap, or a slide) only brings up a ring inscribed in the cover, 12 o'clock the
+// start of the track, clockwise to the end, the knob where it is now.  While the
+// ring is up, a slide that *starts on the ring* moves the knob round it (it stops
+// at the start and the end, it never jumps across) and lifting the finger seeks
+// there.  A touch anywhere else on the cover puts the ring away; untouched, it
+// goes by itself after a few seconds.
 const RING_R = 44;            // in the ring's 100 x 100 viewBox
+const RING_GRAB = 0.11;       // how far off the ring a slide may start, as a share of the cover's width
+const RING_IDLE_MS = 4000;    // the ring goes away this long after the last touch
 const RING_C = 2 * Math.PI * RING_R;
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
@@ -668,6 +673,13 @@ P.wireSeekRing = () => {
     P.ring.append(s, P.ringTime);
     const box = P.artBox;
     let g = null;
+    const hideLater = ms => { clearTimeout(P.ringTimer); P.ringTimer = setTimeout(() => { P.ring.hidden = true; }, ms); };
+    // is the finger on the ring (the circle's radius, give or take RING_GRAB)?
+    const onRing = e => {
+        const r = box.getBoundingClientRect();
+        const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+        return Math.abs(d - r.width * RING_R / 100) <= Math.max(18, r.width * RING_GRAB);
+    };
     const fracAt = e => {
         const r = box.getBoundingClientRect();
         const a = Math.atan2(e.clientX - (r.left + r.width / 2), -(e.clientY - (r.top + r.height / 2)));
@@ -676,11 +688,19 @@ P.wireSeekRing = () => {
     box.addEventListener('pointerdown', e => {
         if (!P.ringUsable()) return;
         e.preventDefault();
-        g = { id: e.pointerId, x: e.clientX, y: e.clientY, f: P.elapsedNow() / P.base.duration, moved: false };
-        try { box.setPointerCapture(e.pointerId); } catch {}
         try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}   // not pull-to-reload
+        const f = P.elapsedNow() / P.base.duration;
+        if (P.ring.hidden) {                       // step one: only show the ring
+            P.ring.hidden = false;
+            P.paintRing(f);
+            hideLater(RING_IDLE_MS);
+            return;
+        }
+        if (!onRing(e)) { clearTimeout(P.ringTimer); P.ring.hidden = true; return; }   // off the ring: put it away
+        // step two: a slide that starts on the ring
+        g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
+        try { box.setPointerCapture(e.pointerId); } catch {}
         clearTimeout(P.ringTimer);
-        P.ring.hidden = false;
         P.paintRing(g.f);
     });
     box.addEventListener('pointermove', e => {
@@ -694,11 +714,11 @@ P.wireSeekRing = () => {
         P.paintRing(g.f);
     });
     const end = e => {
+        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
         if (!g || e.pointerId !== g.id) return;
         const d = g; g = null;
-        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
         if (d.moved && e.type === 'pointerup' && P.base) P.seek(d.f * P.base.duration);
-        P.ringTimer = setTimeout(() => { P.ring.hidden = true; }, d.moved ? 1200 : 2500);
+        hideLater(d.moved ? 1200 : RING_IDLE_MS);
     };
     box.addEventListener('pointerup', end);
     box.addEventListener('pointercancel', end);

@@ -132,7 +132,8 @@ pager.addEventListener('pointercancel', e => {
 
 // ── the Android app's bridge (window.OmdrcApp), when we run inside it ──────────
 // The app keeps the screen on only while this page asks for it: exactly while
-// "Now playing" is on screen (not behind the screensaver, not another page).
+// "Now playing" is on screen (not behind the screensaver, not another page) and
+// there has been sound lately (see SILENCE_MS).
 K.inApp = !!window.OmdrcApp;
 // Sound: the Now page marks the time of the last frame with audio in it (or, with no
 // level stream, the last poll that said "playing").  After 30 s of silence the screen is
@@ -145,7 +146,9 @@ K.nowShown = () => cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !d
 setInterval(() => { syncAppScreen(); if (K.awake) K.awake.sync(); }, 5000);
 function syncAppScreen() {
     if (!K.inApp) return;
-    try { window.OmdrcApp.setPageWantsScreenOn(cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !document.hidden); } catch {}
+    // K.nowShown(): Now on screen, no screensaver, and sound within the last SILENCE_MS -
+    // still meters let the phone sleep again, in the app as in a browser.
+    try { window.OmdrcApp.setPageWantsScreenOn(K.nowShown()); } catch {}
 }
 document.addEventListener('visibilitychange', syncAppScreen);
 
