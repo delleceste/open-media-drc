@@ -16,7 +16,7 @@ down.
 |---|---|
 | **Now** | Level meters (needles / bars / bars + spectrum), DR bar, channel balance, track + time, and one line saying which DRC is applied |
 | **Cover** | *Optional* (Config → Cover art → Cover page): the album cover, square and as large as the height allows, the track beside it, and optionally a narrow vertical DR or level column (top bar: DR / Lvl) where there is room |
-| **Qobuz** | *Optional* (`[qobuz_search] enabled`): album search with label check boxes and a release-date window, results newest first with ▶ (replace upmpdcli's queue and play) and **+** (append), a tap shows the tracks, and a player strip (previous, play/pause, stop, next, seek) that opens into a full-screen player with the cover and the queue. The search field completes from a classical word list and from what was played. The form is full width; the filters fold into a one-line summary once results arrive. The magnifier in the top bar opens this page. − on a result lowers it (see the panel README). Greyed out while upmpdcli is not the running renderer |
+| **Qobuz** | *Optional* (`[qobuz_search] enabled`): album search with label check boxes and a release-date window (year spinners: drag, or tap for a picker); unfiltered, the results are Qobuz's own list in Qobuz's order ("Newest first" is a choice), read on as the list is scrolled; each with ▶ (replace upmpdcli's queue and play) and **+** (append), a tap shows the tracks, and a player strip (previous, play/pause, stop, next, seek) that opens into a full-screen player with the cover and the queue. The search field completes from a classical word list and from what was played. The form is full width; the filters fold into a one-line summary once results arrive. The magnifier in the top bar opens this page. − on a result lowers it (see the panel README). Greyed out while upmpdcli is not the running renderer |
 | **DRC** | Applied state, sample-rate presets, filter set and design, attenuation, BruteFIR peak/RTI, `drc.sh status` |
 | **DR** | Rolling DR estimate (off until enabled), measure this record, compare masters |
 | **Source** | Renderer switch/restart/activity, MPD state, CD input |
@@ -35,10 +35,17 @@ else is picked there.  Turning the phone switches between the two at once.
 ## Now, upright
 
 Upright, the cover takes a third of the height at the left with title, artist
-and album beside it; the meters span the full width, with DR and balance under
-them, then a short DR history strip and the DRC line.  A touch on the cover
-brings up a ring inscribed in it: 12 o'clock is the start of the track, and
-moving the finger round the ring and lifting it seeks there.  With the Qobuz search
+and album beside it (the whole column theirs); play state and time sit on a row
+of their own under the cover, with no progress bar.  The meters span the full
+width, with DR and balance under them, then a short DR history strip and the DRC
+line.  Seeking takes two steps, so a stray touch never moves the music: the
+first touch on the cover (tap or slide) only brings up a ring inscribed in it,
+12 o'clock the start of the track, drawn with a thin pen; a slide that then
+*starts on the ring* moves its knob round (the pen thickens while the finger is
+on it) and lifting the finger seeks there.  A touch elsewhere on the cover puts
+the ring away; untouched, it goes after 4 s.  The search field lets go of the
+focus on any touch outside the search box and when the keyboard closes, so the
+keyboard never comes back by itself.  With the Qobuz search
 enabled a search bar sits at the bottom; a tap goes straight to the Qobuz page
 with its field focused (the keyboard would cover a field at the bottom), and
 **Filters** opens that page's filters.
@@ -85,14 +92,26 @@ top bar on Now, or Config → Cover art):
 `android/omdrc-app` opens `/k/` by default.  When `window.OmdrcApp` exists the
 kiosk hides its own fullscreen button (the app owns the gear button), skips the
 browser keep-awake fallback, and tells the app whether the screen should stay on:
-only while the Now page is on screen (`setPageWantsScreenOn`). Every page is shown upright except
-**Now**, which is laid out for landscape; the top bar's rotate button turns the
-page on screen the other way and remembers that for it (`setPageOrientation`,
-app API 5).  In a browser the same happens only in fullscreen, where the
-orientation can be locked; the 7" panel never turns.  Config shows an
-"App settings" button (`openSettings`).  The app starts in the orientation last
-asked for, behind a black splash that stays until the kiosk calls `pageReady`
-(its first page painted) and the phone has turned the way that page wants.
+only while the Now page is on screen *and* there has been sound in the last 30 s
+(`setPageWantsScreenOn`); still meters hand the screen back to the phone's own
+timeout.
+
+Orientation: with the phone's **auto-rotate on** (app API 6, `autoRotate`) the
+app follows the phone like any other app and the pages adapt to how it is held
+(on Now, needles in landscape and bars upright); the rotate button is hidden.
+With auto-rotate off, every page is shown upright except **Now**, which is laid
+out for landscape; the top bar's rotate button turns the page on screen the other
+way and remembers that for it (`setPageOrientation`, app API 5).  In a browser
+the same happens only in fullscreen, where the orientation can be locked; the 7"
+panel never turns.  Config shows an "App settings" button (`openSettings`).
+
+Starting: the app starts in the orientation last asked for.  **Back** leaves it
+like Home, so the page stays alive and comes back as it was.  After the system
+has dropped the app, its last screen (a picture per orientation, taken when it
+went to the background) is shown at once while the page loads; the black splash
+with its ring comes up only if that takes more than 1.2 s, and stays until the
+kiosk calls `pageReady` (its first page painted).  The kiosk's scripts are asked
+for with `?v=<asset version>` and cached for a year, so such a load is short.
 
 ## Meter timing and calibration
 

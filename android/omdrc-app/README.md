@@ -16,12 +16,20 @@ playing.
 - **Full web page**: the desktop dashboard at `/`.
 
 The choice is remembered. In the kiosk view the app keeps the screen on **only
-while the "Now playing" page is showing**; every other page, the full web page and
+while the "Now playing" page is showing and something is playing** (30 s of
+still meters let the phone sleep again); every other page, the full web page and
 a loading page let the phone sleep normally. (Settings → "Keep the screen on…"
 turns this off.) The kiosk page tells the app what it wants through a small
 JavaScript bridge (`window.OmdrcApp`, see `MainActivity.AppBridge`).
 
-The app is always in landscape (either way up); the launcher name is now "OMDRC". The Android package / application id is still
+**Orientation.** With Android's auto-rotate on, the app follows the phone like any
+other app and the kiosk adapts to how it is held (on Now: needles in landscape,
+bars upright). With auto-rotate off, each kiosk page turns the phone the way it
+is laid out for (Now in landscape, the others upright), and the kiosk's rotate
+button turns the page on screen the other way. The app watches the setting while
+it is open and starts in the orientation it was last in.
+
+The launcher name is now "OMDRC". The Android package / application id is still
 `com.omdrc.widget`, so an existing install upgrades in place and keeps its
 settings; the folder and project were renamed from `omdrc-widget`.
 

@@ -68,6 +68,7 @@ These milestones summarize changes in commits that updated this manual:
 
 | Date | Documentation changes |
 |---|---|
+| 2026-09-27 to 2026-09-29 | Added the kiosk and Android app section (orientation and auto-rotate, keep-awake, fast start) and the Qobuz album search (Qobuz's own order, label and date filters, lowering, completions, the player). |
 | 2026-09-24 | Split the manual into common, Linux and FreeBSD parts; added the glossary and source index; documented the live DR estimate and its DR bar. |
 | 2026-09-15 to 2026-09-23 | Documented filter provenance and publication, deployment steps, runtime configuration, MPD routing recovery, DR measurement and pressing identification. |
 | 2026-08-18 to 2026-08-31 | Added CD input and audio lifecycle material, bit-perfect verification, spectrum analyzer updates, browser audio routing and the CMake migration. |
@@ -981,6 +982,123 @@ configuration; the service definition is in section \ref{sec:linux-panel}
 **Security**: the server executes arbitrary shell commands from
 `commands.conf` as the service user --- trusted LAN only, never a public
 interface.
+
+## The kiosk and the Android app {#sec:kiosk}
+
+The panel serves a second, touch-first UI at `http://<box>:9090/k/`: the
+**kiosk**. It is built for a 7" 1024x600 landscape screen and works on a
+phone, where the **Android app** (`android/omdrc-app`) opens it full screen in
+a reused WebView. The kiosk is a pure client of the panel's routes, in its own
+package; the only seam is one `init_app` call at the end of `app.py`.
+
+**Pages** (swipe, or the tab bar; the top bar's menu on a phone): Now, Cover
+(optional), Qobuz (optional, section \ref{sec:qobuz-search}), DRC, DR, Source,
+Chain, System, Logs, Config. The top bar slides in on a tap on empty page
+space and hides after a few seconds; a tap on any control (buttons, fields,
+chips, sliders, the cover) never pulls it in. It carries the page's own
+switches (on Now: level display, cover art, DR, balance), the search icon
+(when the Qobuz search is enabled), the rotate button, keep-awake and
+fullscreen.
+
+**Now, in landscape and upright.** In landscape Now shows needles (or bars,
+or bars plus spectrum) beside DR and balance. Upright, the cover takes a
+third of the height with title, artist and album beside it; play state and
+time sit on their own row under the cover; the meters span the full width
+with DR and balance under them. The **level display is chosen per
+orientation**: upright it is bars unless needles are picked while upright,
+in landscape needles unless something else is picked there, and turning the
+phone switches between the two at once. **Seeking** upright takes two steps,
+so a stray touch never moves the music: the first touch on the cover only
+brings up a thin ring inscribed in it (12 o'clock is the start of the
+track); a slide that then starts *on* the ring moves its knob round, drawn
+thicker while the finger is on it, and lifting the finger seeks there.
+
+**Orientation.** With the phone's auto-rotate on, the app follows the phone
+like any other app and every page adapts to how it is held; the rotate
+button is hidden. With auto-rotate off, Now is shown in landscape and every
+other page upright, and the rotate button turns the page on screen the other
+way (remembered per page). A browser can only lock the orientation in
+fullscreen; the 7" panel never turns.
+
+**Keeping the screen on.** Only while Now is on screen *and* there has been
+sound in the last 30 s: still meters hand the screen back to the phone's own
+timeout. The app keeps the screen on natively (the kiosk asks through the
+`window.OmdrcApp` bridge); a browser has no wake lock over plain `http`, so it
+falls back to a tiny silent video, which recent browsers may not honour.
+
+**Starting fast.** Back leaves the app like Home, so the page stays alive and
+comes back as it was. After the system has dropped the app, its last screen
+(a picture per orientation, taken when it went to the background) is shown at
+once while the page loads; the splash with its progress ring appears only if
+that takes more than about a second. The kiosk's scripts are requested with a
+version parameter that changes on every deploy and are cached for a year, so
+a cold load does not re-check each file.
+
+**Meters under network lag.** Every level frame carries the time the box
+sent it. The kiosk draws at most one frame per display refresh, the newest;
+frames that keep arriving more than 1.2 s late mean a backlog queued in the
+network, and the stream is reopened to drop it.
+
+## Qobuz album search {#sec:qobuz-search}
+
+Qobuz's own apps cannot filter a search by **label** or **release date**,
+the two questions a classical listener asks first. The panel adds that
+search, in the kiosk's Qobuz page (and at the bottom of Now, upright). What
+is found plays through **upmpdcli**, whose Qobuz plugin streams it from the
+box itself, never through the phone; the page is greyed out while upmpdcli
+is not the running renderer. It uses upmpdcli's own Qobuz credentials (the
+panel's Qobuz sign-in) and needs nothing of its own.
+
+**Results.** With no filter the answer is Qobuz's own release list for the
+text, in Qobuz's order, a page of 50 at a time; reaching the end of the list
+reads the next page, as scrolling does in Qobuz's app. Albums Qobuz lists but
+cannot stream are shown greyed. The filters only ever work on that list:
+
+* **Labels** --- favourite labels as check boxes, several at once. A label
+  is a keyword matched as whole words, so "Decca" matches "Decca Music Group
+  Ltd." and "Decca Classics". Any label met in the results can be ticked too.
+* **Released** --- any time, the last N years (a slider), or a from--to span
+  of calendar years (each year a spinner: drag it up or down, faster the
+  further the finger goes, or tap it for a year picker).
+* **Order** --- Qobuz order, or newest first.
+
+A filtered search reads deeper at once (250 albums per query, doubling to
+1000 while few match) and also sends one "text label" query per ticked label,
+which reaches that label's albums sooner; "Load more" reads on. The filters
+fold into a one-line summary once results arrive.
+
+**Each result** shows a small cover, title, artist, performers, label, year,
+a hi-res tag and how often it was played from here. Its buttons: **play**
+replaces upmpdcli's queue with the album and plays it; **+** appends it;
+**-** lowers it. A tap shows the tracks, each playable from there. Playing
+goes through upmpdcli's OpenHome playlist exactly as a control point browsing
+the box's own Qobuz library would, so each track carries its metadata (and,
+with the patched upmpdcli, MPD's Date and Label tags).
+
+**Lowering.** The **-** button moves the album to the end of every result
+list, folded under "N lowered results"; the bar that follows can undo it or
+lower the album's whole label or artist (the album artist or any performer,
+so a conductor) instead. The Lowered list, by the filters, restores entries
+or clears them. It is kept on the box (`qobuz-lowered.json` in the state
+directory), shared by every screen.
+
+**Completions.** The search field completes as you type, from a classical
+word list shipped with the panel (`qobuz_words.txt`: about 2,600 composers,
+forms, named works, instruments and voices, conductors, soloists, singers,
+orchestras and ensembles, editable) and from what was played after a search:
+the search text and the album's artist and composer are learned
+(`qobuz-words.json`), come first, and appear when the empty field is tapped.
+Accents and case do not matter.
+
+**The player.** A strip at the bottom of the page shows the track playing
+(from MPD, which is also upmpdcli's queue) with play/pause and, in landscape,
+previous, stop, next and a seek slider. It opens into a full-screen player:
+the cover as large as the screen allows, the track, work, album, label and
+year, the transport, and the queue, where a tap plays from that track.
+
+**Configuration** is the `[qobuz_search]` section of `commands.conf`
+(enabled, favourite labels, scan depths, cache times); the HTTP routes are
+under `/qobuz/` and listed in `omdrc-ctrl/README.md`.
 
 ## Configuration page --- filter installs and audio hardware roles {#sec:configuration-page}
 
@@ -3941,6 +4059,8 @@ CMake build, grouped by the same split as the manual itself.
 | Site-data split (`OMDRC_SITE_DATA_DIRS` / `OMDRC_SITE_ROOT`) | `scripts/README.md`, `host.cmake.sample`, `cmake/core-drc.cmake` |
 | Helper scripts | `scripts/README.md`, `README.md` |
 | Web control panel and `/configuration` page | `omdrc-ctrl/README.md`, `omdrc-ctrl/src/configuration.py` |
+| The kiosk and the Android app | `omdrc-ctrl/src/kiosk/README.md`, `android/omdrc-app/README.md` |
+| Qobuz album search | `omdrc-ctrl/README.md` (Qobuz album search), `omdrc-ctrl/src/qobuz_words.txt` |
 | Spectrum analyzer | `omdrc-ctrl/SPECTRUM_ANALYZER.md` |
 | Bit-perfect verification, the `/bitperfect` page and its implementation | `doc/BIT-PERFECT-VERIFICATION.md`, `scripts/README.md`, `omdrc-ctrl/README.md` |
 | Test signal | `tests/README.md` |
