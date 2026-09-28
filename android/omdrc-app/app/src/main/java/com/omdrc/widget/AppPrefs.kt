@@ -16,6 +16,7 @@ object AppPrefs {
     private const val KEY_VIEW = "view_mode"
     private const val KEY_KEEP_ON = "keep_screen_on"
     private const val KEY_HIDE_BARS = "hide_system_bars"
+    private const val KEY_PORTRAIT = "last_portrait"
     const val DEFAULT_PORT = 9090
 
     /** The small-screen kiosk UI served by omdrcctrl at /k/ (the default). */
@@ -54,6 +55,15 @@ object AppPrefs {
 
     fun setHideSystemBars(context: Context, hide: Boolean) {
         prefs(context).edit().putBoolean(KEY_HIDE_BARS, hide).apply()
+    }
+
+    /** The orientation the kiosk last asked for (setPageOrientation): the app
+     *  starts in it next time, instead of landscape and then turning. */
+    fun lastPortrait(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_PORTRAIT, false)
+
+    fun setLastPortrait(context: Context, portrait: Boolean) {
+        prefs(context).edit().putBoolean(KEY_PORTRAIT, portrait).apply()
     }
 
     fun setViewMode(context: Context, mode: String) {

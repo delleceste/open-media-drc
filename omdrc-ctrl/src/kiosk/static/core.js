@@ -181,27 +181,65 @@ K.streams = (() => {
     // on the box only while a listener is attached, and pages/now.js ends it after the
     // configured keep-alive.  Everything else stops the moment nothing can be seen.
     const BACKGROUND = new Set(['dr']);
+    // A slow or stalled network must never leave the meters playing catch-up:
+    //  - level/spectrum frames are drawn at most once per screen refresh, the newest
+    //    one; whatever arrived in between is dropped (DR is not: its frames carry the
+    //    history only when it changed, so every one of them counts);
+    //  - each frame says when the box sent it.  The lowest arrival - sent seen on
+    //    this connection is the network at its best (plus the clocks' offset); once
+    //    frames keep arriving LAG_MS later than that, they are coming out of a
+    //    backlog queued in the network, and the stream is opened again, which drops
+    //    it.  The new stream is opened before the old one is closed, so the box
+    //    never sees its last listener leave (that would turn its analyzer off).
+    const LAG_MS = 1200, LAG_FRAMES = 5;
     const connect = mode => {
         const s = S[mode];
         if (!s || s.es || (document.hidden && !BACKGROUND.has(mode)) || !s.subs.size) return;
+        open(mode);
+    };
+    const open = (mode, replacing = null) => {
+        const s = S[mode];
         const es = new EventSource('/spectrum/stream?mode=' + encodeURIComponent(mode));
         s.es = es;
+        if (replacing) setTimeout(() => replacing.close(), 1500);
+        let best = Infinity, late = 0;
+        const deliver = d => {
+            if (K.drawTap) K.drawTap(mode, d, Date.now());     // the post-calibration check
+            s.subs.forEach(f => f(d));
+        };
+        const draw = d => {
+            if (s.es !== es) return;                          // replaced or closed meanwhile
+            if (mode === 'dr') { deliver(d); return; }
+            s.next = d;
+            if (!s.raf) s.raf = requestAnimationFrame(() => { s.raf = 0; const x = s.next; s.next = null; if (x && s.es === es) deliver(x); });
+        };
         es.onmessage = ev => {
+            if (s.es !== es) return;
             let d;
             try { d = JSON.parse(ev.data); } catch { return; }
-            if (K.streamTap) K.streamTap(mode, d, Date.now());     // the meter-delay calibration
+            const now = Date.now();
+            if (K.streamTap) K.streamTap(mode, d, now);     // the meter-delay calibration
+            if (mode !== 'dr' && Number.isFinite(d.sent)) {
+                const lag = now - d.sent;
+                best = Math.min(best, lag);
+                late = lag - best > LAG_MS ? late + 1 : 0;
+                if (late >= LAG_FRAMES && !s.replacing) {
+                    s.replacing = true;
+                    setTimeout(() => { s.replacing = false; }, 5000);   // at most one reopen per 5 s
+                    open(mode, es);
+                    return;
+                }
+            }
             // Level and spectrum frames are drawn this device's extra delay after they
             // arrive (widgets/sync.js); DR is not time-critical.
             const wait = mode === 'dr' || !K.sync ? 0 : K.sync.delayMs();
-            const draw = () => {
-                if (K.drawTap) K.drawTap(mode, d, Date.now());     // the post-calibration check
-                s.subs.forEach(f => f(d));
-            };
-            if (wait > 0) setTimeout(draw, wait);
-            else draw();
+            if (wait > 0) setTimeout(() => draw(d), wait);
+            else draw(d);
         };
         es.onerror = () => {
-            es.close(); s.es = null;
+            es.close();
+            if (s.es !== es) return;                          // the one being replaced
+            s.es = null;
             s.subs.forEach(f => f({ ok: false, state: 'reconnecting', error: 'stream disconnected' }));
             clearTimeout(s.retry);
             s.retry = setTimeout(() => connect(mode), 1500);

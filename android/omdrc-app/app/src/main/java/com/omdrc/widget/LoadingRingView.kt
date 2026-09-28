@@ -5,6 +5,8 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.graphics.RectF
 import android.graphics.SweepGradient
 import android.util.AttributeSet
@@ -14,8 +16,9 @@ import android.view.animation.LinearInterpolator
 import kotlin.math.min
 
 /**
- * The page-load indicator: a large ring in the middle of the screen whose arc fills
- * with the load progress, with the percentage in the centre.  The arc eases towards
+ * The splash while the page loads: the whole screen black, lit from the middle by a
+ * soft white glow, and on it a ring whose arc fills with the load progress, with the
+ * percentage in the centre.  It covers the page until the page is ready, then fades.  The arc eases towards
  * the reported value (WebView reports progress in coarse jumps) and its gradient
  * slowly rotates so a load that stalls still looks alive.
  */
@@ -43,6 +46,8 @@ class LoadingRingView @JvmOverloads constructor(
         color = Color.argb(170, 255, 255, 255); textAlign = Paint.Align.CENTER; textSize = 13f * density
         letterSpacing = 0.15f
     }
+    private val ringRadius = 85f * density - stroke * 1.4f
+    private val backdrop = Paint()
     private val bounds = RectF()
     private val colors = intArrayOf(
         Color.parseColor("#1F6FEB"), Color.parseColor("#58A6FF"), Color.parseColor("#3FB950"),
@@ -91,10 +96,19 @@ class LoadingRingView @JvmOverloads constructor(
         animate().cancel(); easer.cancel(); spinner.cancel(); visibility = GONE
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w <= 0 || h <= 0) return
+        backdrop.shader = RadialGradient(w / 2f, h / 2f, min(w, h) * 0.75f,
+            intArrayOf(Color.rgb(92, 96, 102), Color.rgb(38, 40, 44), Color.rgb(10, 10, 12), Color.BLACK),
+            floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP)
+    }
+
     override fun onDraw(canvas: Canvas) {
+        canvas.drawPaint(backdrop)
         val cx = width / 2f
         val cy = height / 2f
-        val radius = min(width, height) / 2f - stroke * 1.4f
+        val radius = min(ringRadius, min(width, height) / 2f - stroke * 1.4f)
         bounds.set(cx - radius, cy - radius, cx + radius, cy + radius)
         canvas.drawCircle(cx, cy, radius, track)
 

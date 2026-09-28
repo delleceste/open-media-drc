@@ -32,6 +32,26 @@ button on Now, which changes the one on screen): upright it is **Bars** unless
 needles are picked while upright, in landscape **Needles** unless something
 else is picked there.  Turning the phone switches between the two at once.
 
+## Now, upright
+
+Upright, the cover takes a third of the height at the left with title, artist
+and album beside it; the meters span the full width, with DR and balance under
+them, then a short DR history strip and the DRC line.  A touch on the cover
+brings up a ring inscribed in it: 12 o'clock is the start of the track, and
+moving the finger round the ring and lifting it seeks there.  With the Qobuz search
+enabled a search bar sits at the bottom; a tap goes straight to the Qobuz page
+with its field focused (the keyboard would cover a field at the bottom), and
+**Filters** opens that page's filters.
+
+## Level and spectrum frames under network lag
+
+The box always sends the newest frame, stamped with when it was sent (`sent`).  On
+the screen, level and spectrum frames are drawn at most once per display refresh,
+the newest one only.  If frames keep arriving more than 1.2 s later than the best
+seen on the connection, they are coming from a backlog queued in the network, and
+the stream is reopened to drop it (the new one opens before the old one closes, so
+the analyzer never loses its last listener).  DR frames are exempt: each counts.
+
 ## Level display off
 
 Config → Now page → Level display has a fourth choice, **Off**.  Nothing is
@@ -70,7 +90,9 @@ only while the Now page is on screen (`setPageWantsScreenOn`). Every page is sho
 page on screen the other way and remembers that for it (`setPageOrientation`,
 app API 5).  In a browser the same happens only in fullscreen, where the
 orientation can be locked; the 7" panel never turns.  Config shows an
-"App settings" button (`openSettings`).
+"App settings" button (`openSettings`).  The app starts in the orientation last
+asked for, behind a black splash that stays until the kiosk calls `pageReady`
+(its first page painted) and the phone has turned the way that page wants.
 
 ## Meter timing and calibration
 

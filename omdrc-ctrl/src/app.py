@@ -7802,6 +7802,10 @@ def spectrum_stream():
 
         def payload(frame):
             nonlocal dr_revision
+            # When it was sent (ms, this host's clock): a screen that finds the frames
+            # reaching it ever later is reading a backlog queued in the network and
+            # reconnects to drop it (kiosk core.js, K.streams).
+            frame = {**frame, "sent": int(time.time() * 1000)}
             if mode == "dr":
                 revision, history = _SPECTRUM.dr_history_json()
                 if revision != dr_revision:

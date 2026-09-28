@@ -17,11 +17,13 @@
             android:layout_height="match_parent" />
     </com.omdrc.widget.VerticalSwipeRefreshLayout>
 
+    <!-- The splash: the whole screen, over the page until it is ready (clickable,
+         so no touch reaches the page underneath). -->
     <com.omdrc.widget.LoadingRingView
         android:id="@+id/loading_ring"
-        android:layout_width="170dp"
-        android:layout_height="170dp"
-        android:layout_gravity="center"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="true"
         android:visibility="gone" />
 
     <!-- Stands in for the WebView's own "Web page not available" page, in the

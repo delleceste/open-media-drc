@@ -139,8 +139,20 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .now { height: 100%; min-height: 24rem; display: flex; flex-direction: column; gap: .35rem; }
 .now > * { flex: 0 0 auto; }
 .now-track { display: flex; gap: .7rem; align-items: center; min-height: 3rem; }
-.now-art { width: 3rem; height: 3rem; border-radius: .4rem; object-fit: cover; background: var(--surface2); flex: 0 0 auto; }
-.now.cover-big .now-art { display: none; }
+.now-art { position: relative; width: 3rem; height: 3rem; border-radius: .4rem; overflow: hidden; background: var(--surface2); flex: 0 0 auto; }
+.now-art > img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.now-art.empty { display: none; }
+.now-partist, .now-palbum { display: none; }   /* upright only: the details one per line */
+/* the seek ring over the big cover (upright; pages/now.js) */
+.seek-zone { touch-action: none; cursor: pointer; }
+.seek-ring { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.4); pointer-events: none; }
+.seek-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sr-track { fill: none; stroke: rgba(255,255,255,.3); stroke-width: 2.2; }
+.sr-arc { fill: none; stroke: var(--accent); stroke-width: 2.8; stroke-linecap: round; }
+.sr-knob { fill: #fff; stroke: var(--accent); stroke-width: 1.2; }
+.sr-time { position: relative; padding: .2rem .7rem; border-radius: 1rem; background: rgba(13,17,23,.78); font: 600 1rem ui-monospace, monospace; white-space: nowrap; }
+.now-search { display: none; }                  /* upright only */
+.now.cover-big .now-art { display: none !important; }
 .now-meta { flex: 1; min-width: 0; }
 .now-title { font-size: 1.7rem; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-title.idle { color: var(--muted); font-weight: 500; }
@@ -411,17 +423,34 @@ input[type=range] { accent-color: var(--accent); }
     .now.lvl-off .now-main { grid-template-columns: 1fr; }
     .cf-label { display: none; } .cf-edge { min-width: 2rem; padding: 0 .1rem; } .cf-title { font-size: .85rem; }
     .now-side { min-height: auto; }
-    .now-drbar { flex: 1 1 auto !important; max-height: none; }
+    /* the DR strip keeps a modest height; the spare goes above the search bar */
+    .now-drbar, .now.lvl-off .now-drbar { flex: 0 0 auto !important; max-height: none; }
     .splitter { display: none !important; }
     .vsplit { display: none !important; }
     .now-main[style] { flex: 0 0 auto !important; }
-    .now-drbar[style] { flex: 1 1 auto !important; }
-    .now-drbar .dr-bar { height: auto; flex: 1 1 auto; min-height: 3.6rem; }
-    /* the time row drops under the title and spans the width */
-    .now-track { flex-wrap: wrap; }
-    .now-timebox { width: 100%; grid-template-columns: auto auto 1fr; justify-content: stretch; }
-    .now-prog { grid-column: auto; }
-    .now-title { font-size: 1.3rem; }
+    .now-drbar[style] { flex: 0 0 auto !important; }
+    .now-drbar .dr-bar { height: 3.4rem; flex: 0 0 auto; min-height: 0; }
+    .now.lvl-off .now-drbar .dr-bar { height: 4.4rem; flex: 0 0 auto; min-height: 0; }
+    /* the cover a third of the height (narrower if the width asks), the details beside it,
+       play state and time at the bottom of that column */
+    .now-track { --np-art: min(33dvh, 58vw); display: grid; grid-template-columns: var(--np-art) minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "art meta" "art led" "art time"; gap: .3rem .8rem; align-items: start; }
+    .now.cover-big .now-track { grid-template-columns: minmax(0, 1fr); grid-template-areas: "meta" "led" "time"; }
+    .now-art, .now-art.empty { display: block; grid-area: art; width: var(--np-art); height: var(--np-art); border-radius: .6rem; }
+    .now-art.empty::after { content: '♪'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 4rem; color: var(--border); }
+    .now-meta { grid-area: meta; display: flex; flex-direction: column; gap: .25rem; }
+    .now-title { font-size: 1.3rem; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+    .now-subrow { order: 3; } .now-subrow .now-sub { display: none; }
+    .now-partist, .now-palbum { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+    .now-partist { font-weight: 600; -webkit-line-clamp: 2; }
+    .now-palbum { color: var(--muted); font-size: .9rem; -webkit-line-clamp: 3; }
+    .now-partist:empty, .now-palbum:empty { display: none; }
+    .now-track .cal-led { grid-area: led; }
+    .now-timebox { grid-area: time; width: 100%; grid-template-columns: auto minmax(0, 1fr); justify-content: stretch; }
+    .now-time { text-align: right; }
+    /* the Qobuz page's search box, moved down here (pages/qobuz.js); its filters open under it */
+    .now-search { display: block; margin-top: auto; padding-top: .3rem; }
+    .now-search .qz-form > .card { margin-bottom: 0; }
     .preset-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
@@ -517,6 +546,12 @@ input[type=range] { accent-color: var(--accent); }
 .qz-num { text-align: right; }
 .btn.qz-tplay { min-height: 2.2rem; min-width: 2.6rem; padding: 0; }
 .btn.qz-more { width: 100%; margin: .6rem 0; display: flex; align-items: center; justify-content: center; gap: .6rem; }
+/* the head over results searched from Now (upright): ‹ back to Now */
+.qz-reshead { display: flex; align-items: center; gap: .6rem; margin: .1rem 0 .5rem; }
+.btn.qz-back { min-width: 2.8rem; padding: 0; font-size: 1.6rem; line-height: 1; }
+.qz-reshead-title { font-size: 1.2rem; font-weight: 700; }
+/* at the bottom of Now the completions open above the field */
+.qz-docked .qz-suggest { top: auto; bottom: calc(100% + .25rem); }
 /* search-field completions, under the field */
 .qz-searchwrap { position: relative; }
 .qz-suggest { display: none; position: absolute; left: 0; right: 0; top: calc(100% + .25rem); z-index: 5; max-height: 19rem; overflow-y: auto;

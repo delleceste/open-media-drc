@@ -90,7 +90,7 @@ document.addEventListener('keydown', e => {
 // page's own vertical scroll.  The finger drags the pager; on release it goes to
 // the next page if you moved a fifth of the width (at most 100 px) or flicked.
 let sw = null;
-const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit';
+const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit, .seek-zone';
 pager.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch' || e.target.closest(NO_SWIPE)) return;
     sw = { id: e.pointerId, x: e.clientX, y: e.clientY, left: pager.scrollLeft, mode: null, lastX: e.clientX, lastT: performance.now(), v: 0 };
@@ -227,7 +227,7 @@ K.showBar = (show = true) => {
     clearTimeout(barTimer);
     if (show) barTimer = setTimeout(() => K.showBar(false), BAR_MS);
 };
-const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar:not(.static), .splitter, .vsplit, [role=switch]';
+const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar:not(.static), .splitter, .vsplit, .seek-zone, [role=switch]';
 let tapStart = null;
 document.addEventListener('pointerdown', e => { tapStart = { x: e.clientX, y: e.clientY }; }, true);
 document.addEventListener('pointerup', e => {
@@ -429,6 +429,10 @@ async function boot() {
 
     const wanted = (location.hash || '').slice(1) || new URLSearchParams(location.search).get('page') || K.pages[0].id;
     K.showPage(K.pages.some(p => p.id === wanted) ? wanted : K.pages[0].id, false);
+    // the app's splash covers the page until now: tell it once this first page is painted
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { if (K.inApp && window.OmdrcApp.pageReady) window.OmdrcApp.pageReady(); } catch {}
+    }));
     setTimeout(prepareOtherPages, 1500);   // after the first page has painted
 }
 boot();

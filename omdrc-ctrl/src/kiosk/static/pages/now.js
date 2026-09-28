@@ -18,17 +18,26 @@ const P = {
 
 P.mount = el => {
     P.el = el;
-    P.art = h('img', { class: 'now-art', alt: '', hidden: true, onload: e => { e.target.hidden = false; }, onerror: e => { e.target.hidden = true; } });
+    P.art = h('img', { alt: '', hidden: true,
+        onload: e => { e.target.hidden = false; P.artBox.classList.remove('empty'); },
+        onerror: e => { e.target.hidden = true; P.artBox.classList.add('empty'); } });
+    // the cover's box: small beside the title in landscape, a third of the height upright,
+    // where a touch brings up the ring to seek along (see "seek ring" below)
+    P.ring = h('div', { class: 'seek-ring', hidden: true });
+    P.artBox = h('div', { class: 'now-art empty' }, P.art, P.ring);
     P.t1 = h('div', { class: 'now-title' }, '—');
     P.t2 = h('div', { class: 'now-sub' });
+    // upright, the details are one per line instead of the one line under the title
+    P.pArtist = h('div', { class: 'now-partist' });
+    P.pAlbum = h('div', { class: 'now-palbum' });
     P.fmt = h('span', { class: 'now-fmt' });
     P.state = h('button', { class: 'chip state', type: 'button', title: 'Tap: play / pause · hold: stop' });
     P.time = h('div', { class: 'now-time' });
     P.prog = h('i');
     // a meter-timing calibration in progress (automatic ones included): a blinking blue light
     P.calLed = h('i', { class: 'cal-led', hidden: true, title: 'Calibrating the meter timing' });
-    const trackBox = h('div', { class: 'now-track' }, P.art,
-        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt)), P.calLed,
+    const trackBox = h('div', { class: 'now-track' }, P.artBox,
+        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.pAlbum), P.calLed,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
         h('div', { class: 'now-timebox' }, P.state, P.time, h('div', { class: 'now-prog' }, P.prog)));
 
@@ -97,11 +106,15 @@ P.mount = el => {
     P.mainBox = h('div', { class: 'now-main' }, P.leftCell, P.side);
     // the handle overlays the gap above the DR strip: it takes no layout space
     P.drBarBox.append(P.splitter);
-    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.drBarBox, P.drcLine));
+    // upright, with the Qobuz search on: the Qobuz page's search box sits at the
+    // bottom (pages/qobuz.js moves it here and back; a search opens that page)
+    P.qzSlot = h('div', { class: 'now-search', hidden: true });
+    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.drBarBox, P.drcLine, P.qzSlot));
     P.wireSplitter();
     P.wireVSplit();
     P.wireResetTap();
     P.wireCoverGesture();
+    P.wireSeekRing();
     new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
@@ -131,7 +144,10 @@ K.setLevelMode = (mode, portrait = K.portrait()) => K.setPref(K.levelKey(portrai
 
 // The phone turned: the other orientation's choice, and the streams it needs.
 matchMedia('(orientation: portrait)').addEventListener('change', () => {
-    if (!P.mounted || K.levelMode() === P.mode) return;
+    if (!P.mounted) return;
+    P.artBox.classList.toggle('seek-zone', K.portrait());
+    if (P.visible) P.syncDock();
+    if (K.levelMode() === P.mode) { P.applyCols(); return; }   // the columns stack upright
     P.applyLayout();
     if (P.visible) P.syncMode();
 });
@@ -153,6 +169,8 @@ P.applyLayout = () => {
     P.chainBox.hidden = !off || square;
     P.coverSqBox.hidden = !square;
     P.coverToggle.classList.toggle('on', P.coverWanted());
+    P.qzSlot.hidden = !K.state.features.qobuz_search;   // shown upright only (kiosk.css)
+    P.artBox.classList.toggle('seek-zone', K.portrait());   // the seek ring's: no page swipe, no top bar
     P.el.firstChild.classList.toggle('cover-sq', square);
     P.modeBtn.textContent = MODE_LABEL[P.mode];
     if (!off) P.vu.setMode(P.mode === 'needles' ? 'needles' : 'bars');
@@ -341,7 +359,8 @@ P.askKeepDr = async () => {
 // c = the meters' share of the width.  Unset: the stylesheet's default columns.
 P.applyCols = () => {
     const c = K.pref('now.col', null);
-    const sideBySide = !P.side.hidden && !P.el.firstChild.classList.contains('bal-below');
+    // upright the columns stack (kiosk.css): a width dragged in landscape must not squeeze the meters
+    const sideBySide = !P.side.hidden && !P.el.firstChild.classList.contains('bal-below') && !K.portrait();
     if (P.coverMode === 'square' && sideBySide && typeof c !== 'number' && !K.portrait()) {
         // the cover's column is as wide as the row is tall (a square), at most 62% of the width
         const w = Math.round(Math.min(P.mainBox.clientHeight, P.mainBox.clientWidth * 0.62));
@@ -452,12 +471,14 @@ P.pollTrack = async () => {
     P.t1.textContent = t.ok ? (t.title || '—') : 'Nothing playing';
     P.t1.classList.toggle('idle', !t.ok);
     P.t2.textContent = [t.artist, [t.album, t.edition].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');
+    P.pArtist.textContent = t.artist || '';
+    P.pAlbum.textContent = [t.album, t.edition].filter(Boolean).join(' · ');
     P.fmt.textContent = P.shortFormat(t.format);
     P.fmt.style.color = K.formatColor(t.format);
     P.state.textContent = { play: '▶ Playing', pause: '❚❚ Paused', stop: '■ Stopped' }[t.state] || '▶ Play';
     P.state.className = 'chip state ' + t.state;
     if (t.art) { if (P.art.getAttribute('src') !== t.art) { P.art.hidden = true; P.art.setAttribute('src', t.art); } }
-    else { P.art.hidden = true; P.art.removeAttribute('src'); }
+    else { P.art.hidden = true; P.art.removeAttribute('src'); P.artBox.classList.add('empty'); }
     if ((t.art || '') !== P.artUrl) P.setArt(t.art || '');
     P.paintTime();
 };
@@ -627,6 +648,77 @@ P.wireTransport = () => {
     P.state.addEventListener('contextmenu', e => e.preventDefault());   // long-press menu on touch browsers
 };
 
+// ── seek ring (upright only) ─────────────────────────────────────────────────
+// A touch on the big cover brings up a ring inscribed in it: 12 o'clock is the
+// start of the track, clockwise to the end, the knob where it is now.  Moving the
+// finger round the ring moves the knob (it stops at the start and the end, it
+// never jumps across); lifting it seeks there.  A tap only shows the ring a moment.
+const RING_R = 44;            // in the ring's 100 x 100 viewBox
+const RING_C = 2 * Math.PI * RING_R;
+const SVG = 'http://www.w3.org/2000/svg';
+const svg = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+P.ringUsable = () => K.portrait() && !!P.base && Number.isFinite(P.base.duration) && P.base.duration > 0;
+P.wireSeekRing = () => {
+    const s = svg('svg', { viewBox: '0 0 100 100' });
+    s.append(svg('circle', { class: 'sr-track', cx: 50, cy: 50, r: RING_R }));
+    P.ringArc = svg('circle', { class: 'sr-arc', cx: 50, cy: 50, r: RING_R, transform: 'rotate(-90 50 50)', 'stroke-dasharray': `0 ${RING_C}` });
+    P.ringKnob = svg('circle', { class: 'sr-knob', cx: 50, cy: 50 - RING_R, r: 4.2 });
+    s.append(P.ringArc, P.ringKnob);
+    P.ringTime = h('div', { class: 'sr-time' });
+    P.ring.append(s, P.ringTime);
+    const box = P.artBox;
+    let g = null;
+    const fracAt = e => {
+        const r = box.getBoundingClientRect();
+        const a = Math.atan2(e.clientX - (r.left + r.width / 2), -(e.clientY - (r.top + r.height / 2)));
+        return (a / (2 * Math.PI) + 1) % 1;
+    };
+    box.addEventListener('pointerdown', e => {
+        if (!P.ringUsable()) return;
+        e.preventDefault();
+        g = { id: e.pointerId, x: e.clientX, y: e.clientY, f: P.elapsedNow() / P.base.duration, moved: false };
+        try { box.setPointerCapture(e.pointerId); } catch {}
+        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}   // not pull-to-reload
+        clearTimeout(P.ringTimer);
+        P.ring.hidden = false;
+        P.paintRing(g.f);
+    });
+    box.addEventListener('pointermove', e => {
+        if (!g || e.pointerId !== g.id) return;
+        if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) < 8) return;
+        g.moved = true;
+        // the nearest of a, a - 1, a + 1 to where the knob is: no jump across 12 o'clock
+        const a = fracAt(e);
+        const near = [a - 1, a, a + 1].reduce((b, c) => Math.abs(c - g.f) < Math.abs(b - g.f) ? c : b);
+        g.f = K.clamp(near, 0, 1);
+        P.paintRing(g.f);
+    });
+    const end = e => {
+        if (!g || e.pointerId !== g.id) return;
+        const d = g; g = null;
+        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
+        if (d.moved && e.type === 'pointerup' && P.base) P.seek(d.f * P.base.duration);
+        P.ringTimer = setTimeout(() => { P.ring.hidden = true; }, d.moved ? 1200 : 2500);
+    };
+    box.addEventListener('pointerup', end);
+    box.addEventListener('pointercancel', end);
+};
+P.paintRing = f => {
+    P.ringArc.setAttribute('stroke-dasharray', `${(f * RING_C).toFixed(2)} ${RING_C}`);
+    const a = f * 2 * Math.PI;
+    P.ringKnob.setAttribute('cx', (50 + RING_R * Math.sin(a)).toFixed(2));
+    P.ringKnob.setAttribute('cy', (50 - RING_R * Math.cos(a)).toFixed(2));
+    P.ringTime.textContent = P.base ? `${K.fmtClock(f * P.base.duration)} / ${K.fmtClock(P.base.duration)}` : '';
+};
+P.seek = async seconds => {
+    seconds = Math.floor(seconds);
+    P.base = { ...P.base, elapsed: seconds, at: performance.now() };   // optimistic; the next poll confirms
+    P.paintTime();
+    const d = await K.api('/k/api/transport', { json: { action: 'seek', seconds } });
+    if (!d.ok) K.toast(d.error || 'seek failed', 'error');
+    setTimeout(() => { if (P.trackPoll.running) P.trackPoll.now(); }, 700);
+};
+
 // "24 bit / 192 kHz / stereo" -> "24/192" (bits/kHz; stereo is the norm and is left out)
 P.shortFormat = line => {
     const m = String(line || '').match(/(\d+)\s*bit.*?([\d.]+)\s*kHz/i);
@@ -638,9 +730,13 @@ P.paintTime = () => {
     if (!b || !Number.isFinite(b.elapsed) || !Number.isFinite(b.duration) || b.duration <= 0) {
         P.time.textContent = ''; P.prog.style.width = '0%'; return;
     }
-    const e = K.clamp(b.elapsed + (b.playing ? (performance.now() - b.at) / 1000 : 0), 0, b.duration);
+    const e = P.elapsedNow();
     P.time.textContent = `${K.fmtClock(e)} / ${K.fmtClock(b.duration)}`;
     P.prog.style.width = `${(e / b.duration * 100).toFixed(1)}%`;
+};
+P.elapsedNow = () => {
+    const b = P.base;
+    return K.clamp(b.elapsed + (b.playing ? (performance.now() - b.at) / 1000 : 0), 0, b.duration);
 };
 
 // ── the DRC line ─────────────────────────────────────────────────────────────
@@ -667,6 +763,12 @@ P.paintDrc = () => {
     K.clear(P.drcLine).append(h('i', { class: 'dot ' + K.drcLedClass(s), title: s.message || s.text }), ...chips, h('span', { class: 'more' }, '›'));
 };
 
+// The Qobuz search box comes down here while this page is upright; in landscape the
+// slot is hidden and the Qobuz page takes the box back when it is shown.
+P.syncDock = () => {
+    if (K.qobuzDock && !P.qzSlot.hidden && K.portrait()) K.qobuzDock(P.qzSlot);
+};
+
 // ── lifecycle ────────────────────────────────────────────────────────────────
 P.show = () => {
     P.visible = true;
@@ -675,6 +777,7 @@ P.show = () => {
     P.applyLayout();
     if (P.coverWanted() && P.artUrl && !P.artReady) P.measureArt();   // switched on in Config meanwhile
     K.setTopExtra(P.topBtns);
+    P.syncDock();
     P.syncMode();
     P.syncDr();
     if (P.drSub) P.paintDr(K.drEstimate);        // what was collected while away

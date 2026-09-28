@@ -63,13 +63,20 @@ P.mount = el => {
         K.card(null,
             h('div', { class: 'qz-searchwrap' },
                 h('div', { class: 'qz-searchrow' }, P.input,
-                    h('button', { type: 'button', class: 'btn primary', onclick: () => { P.input.blur(); P.search(); } }, 'Search')),
+                    h('button', { type: 'button', class: 'btn primary', onclick: () => P.go() }, 'Search')),
                 P.suggestBox),
             P.fsum, P.filters));
     P.results = h('div', { class: 'qz-results' });
     P.player = h('div', { class: 'qz-player' });
-    P.main = h('div', { class: 'qz-main' }, P.form, P.results);
+    // the box's place on this page (it may be on Now instead: see "where the search box is"),
+    // and the head shown in its place over results searched from Now
+    P.formHome = h('div', {}, P.form);
+    P.resHead = h('div', { class: 'qz-reshead', hidden: true },
+        h('button', { type: 'button', class: 'btn qz-back', title: 'Back to Now playing', 'aria-label': 'Back to Now playing', onclick: () => K.showPage('now') }, '‹'),
+        h('span', { class: 'qz-reshead-title' }, 'Search results'));
+    P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.results);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
+    P.input.addEventListener('focus', () => P.revealInput());
     P.buildPlayer();
     P.paintDate(); P.paintSort(); P.paintLabels();
     P.openFilters(true);
@@ -81,6 +88,12 @@ P.mount = el => {
 };
 
 P.show = () => {
+    // searched from Now: the results under their head, the box stays down there;
+    // otherwise the box is up here
+    P.fromNowShown = P.fromNow;
+    P.fromNow = false;
+    P.resHead.hidden = !P.fromNowShown;
+    if (!P.fromNowShown) P.undock();
     P.poll.start();
     P.playerPoll.start();
     P.clock = setInterval(P.paintTime, 500);
@@ -91,6 +104,49 @@ P.hide = () => {
     clearInterval(P.clock);
 };
 P.prefetch = () => P.refreshStatus();     // which also loads the labels
+
+// ── where the search box is ──────────────────────────────────────────────────
+// One search box (field, completions, filters), in one place at a time: at the
+// bottom of Now while that page is upright (pages/now.js gives it a slot), else at
+// the top of this page.  A search made down there opens this page on its results,
+// under a "‹ Search results" head whose ‹ goes back to Now.
+P.ensureMounted = () => {
+    if (!P.mounted) { P.mounted = true; P.mount(P.body); P.refreshStatus(); }
+};
+P.dockedOnNow = () => !!P.form && P.form.parentElement !== P.formHome;
+K.qobuzDock = slot => {
+    P.ensureMounted();
+    if (P.form.parentElement === slot) return;
+    P.openFilters(false);                          // folded down there until asked for
+    slot.append(P.form);
+    P.form.classList.add('qz-docked');
+};
+P.undock = () => {
+    if (!P.dockedOnNow()) return;
+    P.form.classList.remove('qz-docked');
+    P.formHome.append(P.form);
+};
+
+// An explicit search (the button, Enter): from Now it moves over to the results.
+P.go = () => {
+    P.input.blur();
+    P.showSuggestions([]);
+    if (P.dockedOnNow() && K.portrait()) {
+        P.fromNow = true;
+        K.showPage(P.id);
+        P.el.scrollTop = 0;
+    }
+    P.search();
+};
+
+// The app shrinks the page by the keyboard: keep the field (and at the bottom of Now,
+// the completions above it) in sight once it has.
+P.revealInput = () => {
+    [120, 450].forEach(ms => setTimeout(() => {
+        if (document.activeElement === P.input) P.input.scrollIntoView({ block: 'nearest' });
+    }, ms));
+};
+addEventListener('resize', () => { if (P.input && document.activeElement === P.input) P.revealInput(); });
 
 // ── availability ─────────────────────────────────────────────────────────────
 P.refreshStatus = async () => {
@@ -119,6 +175,7 @@ P.paintBanner = () => {
     if (box) P.banner.append(box);
     P.main.classList.toggle('qz-disabled', !P.usable());
     P.player.classList.toggle('qz-disabled', !P.usable());
+    P.form.classList.toggle('qz-disabled', !P.usable() && P.dockedOnNow());   // on Now, outside P.main
     if (!P.usable()) P.closeFull();
 };
 
@@ -323,6 +380,7 @@ P.openFilters = open => {
     P.filtersOpen = open;
     P.filters.hidden = !open;
     P.paintSummary();
+    if (open && P.dockedOnNow()) setTimeout(() => P.form.scrollIntoView({ block: 'end', behavior: 'smooth' }), 30);
 };
 
 P.paintSort = () => {
@@ -354,6 +412,7 @@ P.params = scan => {
 let soon = null;
 P.searchSoon = () => {
     clearTimeout(soon);
+    if (P.dockedOnNow()) return;                  // down on Now: the next Search uses them
     if (P.last || P.request) soon = setTimeout(() => P.search(), 450);
 };
 
@@ -561,8 +620,7 @@ P.suggestKey = e => {
         e.preventDefault();
         if (n && P.active >= 0) { P.pick(P.active); return; }
         P.showSuggestions([]);
-        P.input.blur();
-        P.search();
+        P.go();
     }
 };
 

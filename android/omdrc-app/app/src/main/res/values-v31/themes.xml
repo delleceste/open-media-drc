@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.OmdrcWidget" parent="android:Theme.Material.NoActionBar" />
-    <!-- The dashboard: black from the first frame, as its splash (LoadingRingView) -->
+    <!-- The dashboard: black from the first frame, the system splash included -->
     <style name="Theme.OmdrcWidget.Main">
         <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowSplashScreenBackground">@android:color/black</item>
     </style>
 </resources>

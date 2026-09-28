@@ -55,6 +55,11 @@ class MainActivity : ComponentActivity() {
     private var loadFailed = false
     private lateinit var connError: ConnectionErrorPanel
 
+    /** The kiosk said its first page is painted (AppBridge.pageReady): the splash
+     *  goes once the phone is also in the orientation that page asked for. */
+    private var pageReady = false
+    private val splashFallback = Runnable { pageReady = true; if (!loadFailed) loadingRing.finish() }
+
     /** The dashboard URL last asked for: what "Retry" loads again. */
     private var lastUrl: String? = null
 
@@ -110,9 +115,15 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { }
 
+    /** The orientation of the last run (or of the last page shown): landscape at first. */
+    private fun rememberedOrientation(): Int =
+        if (AppPrefs.lastPortrait(this)) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestedOrientation = rememberedOrientation()
         setContentView(R.layout.activity_main)
 
         // targetSdk 35 draws edge-to-edge by default, so without this the
@@ -126,7 +137,10 @@ class MainActivity : ComponentActivity() {
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
             )
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            // and the keyboard while it is up: the page shrinks above it rather than
+            // under it (the Qobuz search box sits at the bottom of Now, upright)
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime))
             insets
         }
 
@@ -154,12 +168,9 @@ class MainActivity : ComponentActivity() {
             onRetry = { lastUrl?.let { load(it) } ?: loadDashboard() },
             onConnect = { host, port -> useServer(host, port) },
         )
-        // Edge-to-edge: the window does not shrink for the keyboard, so the error card
-        // pads itself above it (the root is already padded by the system bars).
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.conn_error)) { view, insets ->
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
-            view.setPadding(0, 0, 0, maxOf(0, ime - bars))
+        // The root is padded by the keyboard (above), so the error card is already above
+        // it; only the address field is scrolled back into sight.
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.conn_error)) { _, insets ->
             connError.revealField()
             insets
         }
@@ -171,8 +182,8 @@ class MainActivity : ComponentActivity() {
                 pageWantsScreenOn = false
                 applyKeepScreenOn()
                 pageScrolled = false
-                // and back to landscape until a page asks otherwise
-                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                // and back to the last orientation asked for until a page asks otherwise
+                requestedOrientation = rememberedOrientation()
                 val requested = loadRequested
                 loadRequested = false
                 if (connError.isShown) {
@@ -181,6 +192,8 @@ class MainActivity : ComponentActivity() {
                 } else {
                     loadingRing.start()
                 }
+                pageReady = false
+                loadingRing.removeCallbacks(splashFallback)
                 loadFailed = false
                 updateSettingsButton()
             }
@@ -213,9 +226,14 @@ class MainActivity : ComponentActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (loadFailed) return
-                loadingRing.finish()
                 webView.visibility = View.VISIBLE
                 connError.hide()
+                // The kiosk builds its pages after the document has loaded and says when
+                // the first one is painted; the full web page (or a kiosk too old to say)
+                // is shown as soon as it has loaded, or after a few seconds at most.
+                loadingRing.setProgress(100)
+                if (AppPrefs.viewMode(this@MainActivity) != AppPrefs.VIEW_KIOSK) splashFallback.run()
+                else loadingRing.postDelayed(splashFallback, 5000)
             }
         }
 
@@ -308,6 +326,7 @@ class MainActivity : ComponentActivity() {
     private fun load(url: String) {
         lastUrl = url
         loadRequested = true
+        if (!connError.isShown) loadingRing.start()   // the splash at once, not once the request is answered
         webView.loadUrl(url)
     }
 
@@ -349,7 +368,29 @@ class MainActivity : ComponentActivity() {
 
     /** What the kiosk page can ask of the app.  Called from a WebView
      *  thread, so everything hops to the UI thread. */
+    /** The splash stays over the page until the kiosk is painted and the phone has
+     *  turned the way the page wants, so neither the half-built page nor the turn is seen. */
+    private fun maybeEndSplash() {
+        if (!pageReady || loadFailed) return
+        val portrait = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+        val wantPortrait = requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        if (portrait != wantPortrait) return            // onConfigurationChanged calls again
+        loadingRing.removeCallbacks(splashFallback)
+        loadingRing.postDelayed({ loadingRing.finish() }, 200)   // the page re-lays out after a turn
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        maybeEndSplash()
+    }
+
     private inner class AppBridge {
+        /** The kiosk's first page is on screen (main.js boot). */
+        @JavascriptInterface
+        fun pageReady() {
+            runOnUiThread { pageReady = true; maybeEndSplash() }
+        }
+
         @JavascriptInterface
         fun setPageWantsScreenOn(on: Boolean) {
             runOnUiThread { pageWantsScreenOn = on; applyKeepScreenOn() }
@@ -385,6 +426,7 @@ class MainActivity : ComponentActivity() {
                 val want = if (orientation == "portrait") ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
                            else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 if (requestedOrientation != want) requestedOrientation = want
+                AppPrefs.setLastPortrait(this@MainActivity, orientation == "portrait")
             }
         }
 
