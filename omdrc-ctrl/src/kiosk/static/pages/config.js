@@ -263,6 +263,8 @@ P.logSheet = title => {
     };
 };
 
+const LEVEL_OPTIONS = [{ value: 'needles', label: 'Needles' }, { value: 'bars', label: 'Bars' }, { value: 'spectrum', label: 'Bars + spectrum' }, { value: 'off', label: 'Off' }];
+
 P.render = function render() {
     if (!P.left) return;
     const opt = (key, dflt, options) => K.segmented(options, K.pref(key, dflt), v => { K.setPref(key, v); P.render(); K.applyPrefs && K.applyPrefs(); });
@@ -272,9 +274,12 @@ P.render = function render() {
             h('p', { class: 'muted small' }, 'View (kiosk or full web page), keeping the screen on while “Now playing” is showing, hiding the Android bars, and the server address are set in the app’s own settings.'),
             h('button', { class: 'btn', type: 'button', onclick: () => window.OmdrcApp.openSettings() }, 'App settings')) : null,
         K.card('Now page',
-            h('div', { class: 'lbl' }, 'Level display'),
-            opt('now.level', 'needles', [{ value: 'needles', label: 'Needles' }, { value: 'bars', label: 'Bars' }, { value: 'spectrum', label: 'Bars + spectrum' }, { value: 'off', label: 'Off' }]),
-            K.pref('now.level', 'needles') === 'off' ? h('p', { class: 'muted small' }, 'Off keeps the meters idle: the Now page shows the audio chain instead, and the level stream is opened only while Balance is switched on.') : null,
+            // one choice per orientation (pages/now.js): upright bars, landscape needles by default
+            ...[[false, 'Level display in landscape'], [true, 'Level display upright']].map(([portrait, title]) => [
+                h('div', { class: 'lbl' }, title),
+                K.segmented(LEVEL_OPTIONS, K.levelMode(portrait), v => { K.setLevelMode(v, portrait); P.render(); K.applyPrefs && K.applyPrefs(); }),
+            ]).flat(),
+            [K.levelMode(false), K.levelMode(true)].includes('off') ? h('p', { class: 'muted small' }, 'Off keeps the meters idle: the Now page shows the audio chain instead, and the level stream is opened only while Balance is switched on.') : null,
             h('div', { class: 'lbl' }, 'Keep the DR estimate running when Now is not shown'),
             K.segmented([{ value: 2, label: '2 min' }, { value: 5, label: '5 min' }, { value: 10, label: '10 min' }],
                 [2, 5, 10].includes(Number(K.pref('dr.keepMinutes', 5))) ? Number(K.pref('dr.keepMinutes', 5)) : 5,

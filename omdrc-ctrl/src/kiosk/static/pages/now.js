@@ -115,10 +115,30 @@ P.mount = el => {
     K.drcState.onChange(P.paintDrc);
 };
 
+// ── level display, one choice per orientation ────────────────────────────────
+// Upright there is no room for needles: bars unless needles are picked while
+// upright.  Turned to landscape the needles come back, unless bars (or another
+// style) were picked there.  The older single setting ('now.level') seeds both,
+// needles never seeding the upright one.
+K.levelKey = (portrait = K.portrait()) => portrait ? 'now.level.portrait' : 'now.level.landscape';
+K.levelMode = (portrait = K.portrait()) => {
+    const old = K.pref('now.level', null);
+    const dflt = portrait ? (old && old !== 'needles' ? old : 'bars') : (old || 'needles');
+    const mode = K.pref(K.levelKey(portrait), dflt);
+    return MODES.includes(mode) ? mode : dflt;
+};
+K.setLevelMode = (mode, portrait = K.portrait()) => K.setPref(K.levelKey(portrait), mode);
+
+// The phone turned: the other orientation's choice, and the streams it needs.
+matchMedia('(orientation: portrait)').addEventListener('change', () => {
+    if (!P.mounted || K.levelMode() === P.mode) return;
+    P.applyLayout();
+    if (P.visible) P.syncMode();
+});
+
 // ── layout ───────────────────────────────────────────────────────────────────
 P.applyLayout = () => {
-    P.mode = K.pref('now.level', 'needles');
-    if (!MODES.includes(P.mode)) P.mode = 'needles';
+    P.mode = K.levelMode();
     P.showDr = K.pref('now.dr', true);
     P.showBalance = K.pref('now.balance', true);
     const off = P.mode === 'off';
@@ -156,7 +176,7 @@ P.applyLayout = () => {
 };
 
 P.cycleMode = () => {
-    K.setPref('now.level', MODES[(MODES.indexOf(P.mode) + 1) % MODES.length]);
+    K.setLevelMode(MODES[(MODES.indexOf(P.mode) + 1) % MODES.length]);
     P.applyLayout();
     P.syncMode();           // spectrum needs the FFT stream; off needs no stream at all
 };
