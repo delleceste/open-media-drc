@@ -25,6 +25,13 @@ down.
 | **Logs** | Recognised alerts and a tail of every configured log |
 | **Config** | This screen's own settings, and the desktop pages opened inside the kiosk (configuration, bit-perfect, filter response, manual) |
 
+## Level display, upright and in landscape
+
+The level display is chosen per orientation (Config → Now page, or the level
+button on Now, which changes the one on screen): upright it is **Bars** unless
+needles are picked while upright, in landscape **Needles** unless something
+else is picked there.  Turning the phone switches between the two at once.
+
 ## Level display off
 
 Config → Now page → Level display has a fourth choice, **Off**.  Nothing is
