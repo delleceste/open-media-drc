@@ -477,15 +477,113 @@ class SearchWords:
             return [{"text": e["text"], "count": e.get("count", 1)} for e in self._load()]
 
 
+class LoweredList:
+    """What the user does not want to see first: an album, or every album of
+    a label or by an artist (a conductor, an orchestra...).  Search results
+    it matches are not dropped but moved to the end of the list, marked.
+    A JSON file, each entry {"kind": album|label|artist, "key", "name",
+    "when"}, newest first; the page lists it to restore or clear.
+
+    `key` is the album id for an album, else the folded name.  A label
+    matches as a label group does (whole words: "Decca" lowers "Decca Music
+    Group Ltd."); an artist matches the album's artist or one of its
+    performers by the whole name."""
+
+    KINDS = ("album", "label", "artist")
+
+    def __init__(self, path: str, limit: int = 1000) -> None:
+        self.path = path
+        self.limit = limit
+        self._lock = threading.Lock()
+        self._entries: list[dict] | None = None
+
+    def _load(self) -> list[dict]:
+        if self._entries is None:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    data = json.load(f)
+                self._entries = [e for e in data.get("lowered", [])
+                                 if isinstance(e, dict) and e.get("kind") in self.KINDS
+                                 and isinstance(e.get("key"), str) and e["key"]]
+            except (OSError, ValueError, AttributeError):
+                self._entries = []
+        return self._entries
+
+    def _save(self) -> bool:
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            tmp = f"{self.path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"lowered": self._entries}, f, ensure_ascii=False)
+            os.replace(tmp, self.path)
+        except OSError:
+            return False
+        return True
+
+    @staticmethod
+    def key_for(kind: str, key: str) -> str:
+        return str(key).strip() if kind == "album" else _fold(key)
+
+    def add(self, kind: str, key: str, name: str = "", when: str | None = None) -> dict:
+        if kind not in self.KINDS:
+            raise QobuzError(f"unknown kind '{kind}'")
+        key = self.key_for(kind, key)
+        if not key:
+            raise QobuzError("nothing to lower")
+        entry = {"kind": kind, "key": key, "name": (name or key).strip()[:200],
+                 "when": when or dt.datetime.now().astimezone().isoformat(timespec="seconds")}
+        with self._lock:
+            entries = self._load()
+            entries[:] = [entry] + [e for e in entries
+                                    if (e["kind"], e["key"]) != (kind, key)][:self.limit - 1]
+            if not self._save():
+                raise QobuzError("could not save the lowered list")
+        return entry
+
+    def remove(self, kind: str, key: str) -> bool:
+        key = self.key_for(kind, key)
+        with self._lock:
+            entries = self._load()
+            kept = [e for e in entries if (e["kind"], e["key"]) != (kind, key)]
+            if len(kept) == len(entries):
+                return False
+            entries[:] = kept
+            return self._save()
+
+    def clear(self) -> bool:
+        with self._lock:
+            self._load()[:] = []
+            return self._save()
+
+    def entries(self) -> list[dict]:
+        with self._lock:
+            return [dict(e) for e in self._load()]
+
+    def reason(self, card: dict) -> dict | None:
+        """The entry that lowers this album card, or None."""
+        label = _fold(card.get("label", ""))
+        people = {_fold(card.get("artist", ""))} | {
+            _fold(p.get("name", "")) for p in card.get("performers") or []}
+        with self._lock:
+            for e in self._load():
+                if ((e["kind"] == "album" and e["key"] == card.get("id"))
+                        or (e["kind"] == "label" and label and _pattern_in(e["key"], label))
+                        or (e["kind"] == "artist" and e["key"] in people)):
+                    return {"kind": e["kind"], "key": e["key"], "name": e["name"]}
+        return None
+
+
 # ── client ──────────────────────────────────────────────────────────────────
 
 class QobuzCatalog:
     """Label- and date-filtered album search over Qobuz's catalog API."""
 
     def __init__(self, settings: Settings | None = None, credentials=None,
-                 fetch=None, today=None, played: PlayedAlbums | None = None) -> None:
+                 fetch=None, today=None, played: PlayedAlbums | None = None,
+                 lowered: LoweredList | None = None) -> None:
         self.settings = settings or Settings()
         self.played = played
+        self.lowered = lowered
         # () -> (app_id, user_auth_token); raises QobuzError when unavailable.
         self._credentials = credentials or (lambda: (self.settings.app_id, ""))
         self._fetch_override = fetch          # tests: (endpoint, params) -> dict
@@ -644,9 +742,10 @@ class QobuzCatalog:
         results, labels_seen, unstreamable = [], {}, 0
         for position, item in found.values():
             card = album_card(item)
-            if item.get("streamable") is False:
+            # Kept, as Qobuz's own list keeps them, but marked: nothing to play.
+            card["streamable"] = item.get("streamable") is not False
+            if not card["streamable"]:
                 unstreamable += 1
-                continue
             if (lo or hi) and not card["date"]:
                 continue
             if (lo and card["date"] < lo) or (hi and card["date"] > hi):
@@ -664,7 +763,7 @@ class QobuzCatalog:
 
     def search(self, text: str = "", labels: list[str] | None = None,
                last_years: float | None = None, from_year: int | None = None,
-               to_year: int | None = None, sort: str = "date",
+               to_year: int | None = None, sort: str = "relevance",
                enrich: bool = True, scan: int | None = None) -> dict:
         text = (text or "").strip()
         groups = self.label_groups(labels or [])
@@ -678,19 +777,26 @@ class QobuzCatalog:
             f"{text} {g.name}".strip() for g in groups]
         scans = [{"query": q, "items": [], "total": None, "done": False, "error": ""}
                  for q in queries]
-        if self.played:
+        # With no filter the answer is Qobuz's own list for the text, in its
+        # order, a page at a time ("Load more" reads the next, like scrolling
+        # in Qobuz's app).  The filters then work on that list, read deeper
+        # at once since they thin it out.
+        filtered = bool(groups or lo or hi)
+        if self.played and filtered:
             # Albums played before and matching the words: in the running
-            # whatever Qobuz's ranking does with them.
+            # whatever depth Qobuz ranks them at.
             mine = self.played.matching(text)
             scans.append({"query": "(played before)", "items": mine, "total": len(mine),
                           "done": True, "error": ""})
-        depth = min(MAX_SCAN, max(PAGE_SIZE, int(scan or self.settings.scan)))
+        first = self.settings.scan if filtered else PAGE_SIZE
+        depth = min(MAX_SCAN, max(PAGE_SIZE, int(scan or first)))
         with ThreadPoolExecutor(max_workers=max(1, self.settings.workers)) as pool:
             while True:
                 self._read(pool, scans, depth)
                 results, labels_seen, unstreamable, considered = self._filter(
                     scans, groups, lo, hi)
-                if (len(results) >= self.settings.want or all(s["done"] for s in scans)
+                if (not filtered or len(results) >= self.settings.want
+                        or all(s["done"] for s in scans)
                         or depth >= max(self.settings.auto_scan, scan or 0)):
                     break
                 depth = min(depth * 2, self.settings.auto_scan)
@@ -700,15 +806,21 @@ class QobuzCatalog:
         else:
             results.sort(key=lambda c: c["rank"])
 
+        # Lowered albums go to the end, in their order.  Marked once before
+        # the performers are fetched (none are fetched for them) and again
+        # after, when a lowered conductor may show up among them.
+        self._mark_lowered(results)
         enriched = 0
         if enrich and results:
-            head = results[:self.settings.max_enrich]
+            head = [c for c in results if "lowered" not in c][:self.settings.max_enrich]
             with ThreadPoolExecutor(max_workers=max(1, self.settings.workers)) as pool:
                 details = list(pool.map(self._performers_quietly, [c["id"] for c in head]))
             for card, performers in zip(head, details):
                 if performers is not None:
                     card["performers"] = performers
                     enriched += 1
+        self._mark_lowered(results)
+        results.sort(key=lambda c: "lowered" in c)      # stable: each part keeps its order
 
         return {
             "query": text,
@@ -719,6 +831,7 @@ class QobuzCatalog:
             "count": len(results),
             "considered": considered,
             "unstreamable": unstreamable,
+            "lowered": sum(1 for c in results if "lowered" in c),
             "enriched": enriched,
             # How deep each query was read.  `more`: some query has albums
             # left; ask again with scan=next_scan to read them.
@@ -735,6 +848,15 @@ class QobuzCatalog:
                  "groups": [g.name for g in self.settings.labels if g.matches(name)]}
                 for name, count in sorted(labels_seen.items(), key=lambda kv: (-kv[1], kv[0]))],
         }
+
+    def _mark_lowered(self, cards: list[dict]) -> None:
+        if not self.lowered:
+            return
+        for card in cards:
+            if "lowered" not in card:
+                why = self.lowered.reason(card)
+                if why:
+                    card["lowered"] = why
 
     def _performers_quietly(self, album_id: str) -> list[dict] | None:
         """A card's performers, or None: one album failing to load must not

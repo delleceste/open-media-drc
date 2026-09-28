@@ -38,6 +38,7 @@ body.bar-shown #topbar { transform: none; }
 .top-bar-spacer {}
 #top-awake { font-size: 1rem; padding: 0 .55rem; }
 .chip.tog.on { color: var(--accent); border-color: var(--accent); background: rgba(88,166,255,.14); }
+.icon-btn .top-icon { width: 1.2rem; height: 1.2rem; display: block; margin: auto; }
 .icon-btn { background: none; border: 1px solid var(--border); border-radius: .4rem; width: 2.1rem; height: 2.1rem; font-size: 1.1rem; }
 .top-alert { border: 0; border-radius: 1rem; min-width: 1.7rem; height: 1.7rem; font-weight: 700; padding: 0 .5rem; color: #000; }
 .top-alert.bad { background: var(--red); } .top-alert.warn { background: var(--yellow); }
@@ -141,11 +142,6 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .now-art { width: 3rem; height: 3rem; border-radius: .4rem; object-fit: cover; background: var(--surface2); flex: 0 0 auto; }
 .now.cover-big .now-art { display: none; }
 .now-meta { flex: 1; min-width: 0; }
-/* the way into the Qobuz search (only with [qobuz_search] enabled) */
-.now-search { flex: 0 0 auto; width: 2.6rem; height: 2.6rem; padding: 0; border-radius: 50%; border: 1px solid var(--border);
-    background: var(--surface2); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-.now-search svg { width: 1.25rem; height: 1.25rem; }
-.now-search:active { color: var(--accent); border-color: var(--accent); }
 .now-title { font-size: 1.7rem; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-title.idle { color: var(--muted); font-weight: 500; }
 .now-sub { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -482,6 +478,24 @@ input[type=range] { accent-color: var(--accent); }
 .qz-row { display: grid; grid-template-columns: 4.4rem minmax(0, 1fr) auto; gap: .2rem .7rem; align-items: start;
     padding: .45rem; border: 1px solid var(--border); border-radius: .6rem; background: var(--surface); }
 .qz-row.open { border-color: var(--accent); }
+.qz-row.off .qz-cover, .qz-row.off .qz-body { opacity: .45; }  /* listed by Qobuz, not available to play */
+.qz-row.lowered .qz-cover, .qz-row.lowered .qz-body { opacity: .6; }
+.qz-row.going { opacity: .3; transition: opacity .2s; }
+.qz-lowgroup { margin-top: .7rem; }
+.qz-lowgroup > summary { cursor: pointer; padding: .4rem .1rem; }
+.btn.link.qz-lowlink { margin-top: .6rem; min-height: 2.2rem; padding: 0 .1rem; border: 0; background: none; color: var(--accent); font-weight: 600; }
+.qz-lowsheet { width: min(34rem, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
+.qz-lowlist { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-bottom: .8rem; }
+.qz-lowrow { display: flex; align-items: center; gap: .6rem; padding: .35rem 0; border-bottom: 1px solid rgba(48,54,61,.6); }
+.qz-lowname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qz-lowrow .btn { min-height: 2.3rem; }
+/* the bar after a − : undo, or lower the label / artist instead */
+.qz-snack { position: sticky; bottom: 5.2rem; z-index: 3; margin-top: .5rem; padding: .5rem .6rem; border-radius: .6rem;
+    background: #22303f; border: 1px solid var(--accent); box-shadow: 0 .3rem 1rem rgba(0,0,0,.5); }
+.qz-snack-text { font-size: .9rem; margin-bottom: .4rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qz-snack-acts { display: flex; flex-wrap: wrap; gap: .4rem; }
+.qz-snack-acts .btn { min-height: 2.3rem; padding: 0 .7rem; font-size: .85rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn.qz-snack-x { margin-left: auto; }
 .qz-cover { width: 4.4rem; height: 4.4rem; border-radius: .35rem; object-fit: cover; background: var(--surface2); display: block; }
 .qz-body { min-width: 0; cursor: pointer; }
 .qz-title { font-weight: 650; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -490,7 +504,8 @@ input[type=range] { accent-color: var(--accent); }
 .qz-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .6rem; margin-top: .15rem; }
 .qz-meta .chip { min-height: 1.3rem; font-size: .72rem; padding: 0 .45rem; }
 .qz-act { display: flex; flex-direction: column; gap: .35rem; }
-.qz-act .btn { min-width: 3.2rem; padding: 0; font-size: 1.15rem; }
+.qz-act .btn { min-width: 3.2rem; min-height: 2.35rem; padding: 0; font-size: 1.15rem; }
+.qz-act .btn.qz-low { color: var(--muted); }
 .qz-tracks { grid-column: 1 / -1; }
 .qz-tracks:empty { display: none; }
 .qz-tracks > .spinner { margin: .4rem auto; }
@@ -520,6 +535,7 @@ input[type=range] { accent-color: var(--accent); }
     gap: .4rem .8rem; align-items: center; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: .6rem;
     background: var(--surface); box-shadow: 0 -.3rem 1rem rgba(0,0,0,.45); }
 .qz-pinfo { grid-area: info; min-width: 0; display: flex; align-items: center; gap: .6rem; cursor: pointer; }
+.qz-pprog { display: none; }
 .qz-player .qz-pbtns { grid-area: btns; } .qz-player .qz-pseek { grid-area: seek; } .qz-expand { grid-area: expand; }
 .qz-pcover { flex: 0 0 auto; width: 2.8rem; height: 2.8rem; border-radius: .3rem; overflow: hidden; background: var(--surface2);
     display: flex; align-items: center; justify-content: center; color: var(--muted); }
@@ -560,8 +576,13 @@ input[type=range] { accent-color: var(--accent); }
 .qz-qtitle, .qz-qartist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qz-qartist { font-size: .8rem; }
 @media (orientation: portrait) {
-    .qz-player { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "info expand" "btns btns" "seek seek"; }
-    .qz-player .qz-pbtns { justify-content: center; }
+    /* upright, the strip is one row as in Qobuz's app: cover and title, play/pause,
+       open; a thin progress line along its top.  The rest is in the full player. */
+    .qz-player { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "info btns expand"; gap: .5rem; padding: .45rem .5rem .4rem; overflow: hidden; }
+    .qz-player .qz-pbtns .btn:not(.qz-toggle), .qz-player .qz-pseek { display: none; }
+    .qz-pprog { display: block; position: absolute; left: 0; right: 0; top: 0; height: .18rem; background: rgba(139,148,158,.25); }
+    .qz-pprog i { display: block; height: 100%; width: 0; background: var(--accent); }
+    .qz-snack { bottom: 4.3rem; }
     .scrim.qz-full { overflow-y: auto; }
     .qz-full-body { grid-template-columns: minmax(0, 1fr); flex: 0 0 auto; }
     .qz-full .qz-pcover { width: min(100%, 60dvh); justify-self: center; }

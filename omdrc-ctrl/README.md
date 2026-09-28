@@ -152,10 +152,23 @@ the search is only offered while upmpdcli is the running renderer.
   [the upmpdcli patch](../upmpdcli/patches/README.md)). BubbleUPnP and other
   control points see the same playlist. The renderer is found by SSDP and
   must be on this machine.
+- **No filter, Qobuz's list:** with no label ticked and no dates, the answer
+  is exactly Qobuz's releases for the text, in Qobuz's order ("Qobuz order",
+  the default; "Newest first" is a choice), a page of 50 at a time; the end
+  of the list reads the next page, as scrolling does in Qobuz's app. Albums
+  Qobuz lists but cannot stream are shown greyed, without ▶. The filters only
+  ever work on that list.
+- **Lowered:** − on a result moves the album to the end of every list, folded
+  under "N lowered results"; the bar that follows can undo it or lower the
+  album's whole label ("Decca" lowers every Decca spelling) or artist (the
+  album artist or any of its performers, so a conductor) instead. The Lowered
+  list, by the filters, restores entries or clears them all
+  (`qobuz-lowered.json` in the state directory).
 - **Played albums** are remembered (`qobuz-played.json` in the state
   directory). A search always includes the ones whose title, artist,
   composer, label or performers contain all its words, however deep Qobuz
-  ranks them, and marks every result played before with `played: <count>`.
+  ranks them -- when a filter is on; unfiltered, the list stays Qobuz's --
+  and marks every result played before with `played: <count>`.
 
 | endpoint | answers |
 |---|---|
@@ -167,6 +180,7 @@ the search is only offered while upmpdcli is the running renderer.
 | `GET /qobuz/played` | the albums played from here, newest first |
 | `GET /qobuz/words` | search-field completions: `words` (the shipped list) and `learned` |
 | `GET /qobuz/track/<id>` | one track and its album card (the player's cover) |
+| `GET`/`POST /qobuz/lowered` | the lowered list; `{"action": "add", "kind": "album"\|"label"\|"artist", "key", "name"}`, `{"action": "remove", "kind", "key"}`, `{"action": "clear"}` |
 
 Search and play answer 409 while upmpdcli is not running.
 

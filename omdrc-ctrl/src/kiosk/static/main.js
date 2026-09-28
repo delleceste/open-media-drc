@@ -10,6 +10,28 @@ K.alerts = [];
 K.alertSubs = new Set();
 K.onAlerts = fn => K.alertSubs.add(fn);
 
+// Small line icons for the top bar (SVG, so they are sharp at any size).
+function icon(name) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', 'top-icon');
+    const shapes = {
+        search: [['circle', { cx: 10.5, cy: 10.5, r: 6.3 }], ['path', { d: 'M15.3 15.3 L20.5 20.5' }]],
+        // a phone turning: an upright phone and an arrow round its corner
+        rotate: [['rect', { x: 4, y: 7.5, width: 9, height: 14, rx: 1.6 }],
+                 ['path', { d: 'M13.5 3.5 A7.5 7.5 0 0 1 20.5 10.5' }], ['path', { d: 'M20.5 10.5 L22.3 7.8 M20.5 10.5 L17.7 9.1' }]],
+    }[name];
+    for (const [tag, attrs] of shapes) {
+        const el = document.createElementNS(ns, tag);
+        Object.entries({ fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', ...attrs })
+            .forEach(([k, v]) => el.setAttribute(k, v));
+        svg.append(el);
+    }
+    return svg;
+}
+
 // ── pager ────────────────────────────────────────────────────────────────────
 let cur = -1;
 const pager = $('#pager'), tabs = $('#tabs');
@@ -138,15 +160,35 @@ function scrolledAt(el) {
         if (el.scrollTop > 2 && el.scrollHeight > el.clientHeight) return true;
     return false;
 }
-// A page may want the phone upright (the Qobuz search: a list and a keyboard).  The
-// Android app rotates on request (apiVersion 5); a browser only in fullscreen.
+// ── orientation (a phone) ────────────────────────────────────────────────────
+// Every page is upright except Now, which is laid out for landscape; the top bar's
+// rotate button flips the page on screen and remembers that for it.  The Android
+// app rotates on request (apiVersion 5); a browser only in fullscreen, where the
+// orientation can be locked.  The 7" panel is neither, and never turns.
+K.canRotate = () => K.inApp ? !!window.OmdrcApp.setPageOrientation
+    : !!(document.fullscreenElement && screen.orientation && screen.orientation.lock);
+K.orientationOf = page => K.pref('orient.' + page.id, page.orientation || 'portrait');
 function applyOrientation(page) {
-    const want = page.orientation || '';
+    if (!page) return;
+    const want = K.orientationOf(page);
     if (K.inApp) {
         try { if (window.OmdrcApp.setPageOrientation) window.OmdrcApp.setPageOrientation(want); } catch {}
-    } else if (document.fullscreenElement && screen.orientation && screen.orientation.lock) {
-        screen.orientation.lock(want || 'landscape').catch(() => {});
+    } else if (K.canRotate()) {
+        screen.orientation.lock(want).catch(() => {});
     }
+    paintRotate();
+}
+function paintRotate() {
+    const btn = $('#top-rotate');
+    btn.hidden = !K.canRotate();
+    const page = cur >= 0 ? K.pages[cur] : null;
+    if (page) btn.title = K.orientationOf(page) === 'portrait' ? 'Turn this page to landscape' : 'Turn this page upright';
+}
+function rotate() {
+    const page = cur >= 0 ? K.pages[cur] : null;
+    if (!page) return;
+    K.setPref('orient.' + page.id, K.orientationOf(page) === 'portrait' ? 'landscape' : 'portrait');
+    applyOrientation(page);
 }
 
 function reportScroll(target) {
@@ -226,10 +268,10 @@ async function pollAlerts() {
 K.toggleFullscreen = () => {
     if (document.fullscreenElement) {
         try { screen.orientation && screen.orientation.unlock(); } catch {}
-        document.exitFullscreen();
+        document.exitFullscreen().then(paintRotate, paintRotate);
     } else if (document.documentElement.requestFullscreen) {
         document.documentElement.requestFullscreen()
-            .then(() => { try { return screen.orientation && screen.orientation.lock('landscape'); } catch {} })
+            .then(() => applyOrientation(K.pages[cur]))
             .catch(() => {});
     }
 };
@@ -344,6 +386,15 @@ async function boot() {
     paintClock(); setInterval(paintClock, 10000);
     pollAlerts(); setInterval(() => { if (!document.hidden) pollAlerts(); }, 20000);
     $('#top-full').addEventListener('click', K.toggleFullscreen);
+    $('#top-rotate').append(icon('rotate'));
+    $('#top-rotate').addEventListener('click', rotate);
+    if (K.state.features.qobuz_search) {
+        const search = $('#top-search');
+        search.hidden = false;
+        search.append(icon('search'));
+        search.addEventListener('click', () => { K.showBar(false); K.goto('qobuz'); });
+    }
+    paintRotate();
     // Top-right: release the screen.  Off = the OS may switch the display off after its own
     // timeout (in the app that is the keep-awake flag, in a browser the wake lock / video).
     const awakeBtn = $('#top-awake');

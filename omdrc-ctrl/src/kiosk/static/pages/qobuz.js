@@ -7,7 +7,11 @@
  * The search field completes from a classical word list (composers, works,
  * forms, instruments, performers: /qobuz/words) and from what was played
  * after a search (the search text, the album's artist and composer).  The
- * player strip opens into a full-screen player with the cover and the queue. */
+ * player strip opens into a full-screen player with the cover and the queue.
+ *
+ * − on a result lowers it: the album (and, from the bar that follows, its label
+ * or artist) moves to the end of every result list, folded away; the Lowered
+ * list, by the filters, restores entries or clears them (/qobuz/lowered). */
 (() => {
 'use strict';
 const { h } = K;
@@ -15,7 +19,6 @@ const { h } = K;
 const P = {
     id: 'qobuz', label: 'Qobuz', title: 'Qobuz search',
     optional: () => !!K.state.features.qobuz_search,
-    orientation: 'portrait',   // the app turns the phone upright here (main.js)
     status: null,              // /qobuz/status
     favourites: [],            // configured label groups' names
     selected: new Set(K.pref('qobuz.labels', [])),
@@ -54,7 +57,8 @@ P.mount = el => {
     P.filters = h('div', { class: 'qz-filters' },
         h('div', { class: 'qz-fgroup' }, h('div', { class: 'lbl' }, 'Labels'), P.labelsBox, P.seenBox),
         h('div', { class: 'qz-fgroup' }, h('div', { class: 'lbl' }, 'Released'), P.dateBox,
-            h('div', { class: 'lbl' }, 'Order'), P.sortBox));
+            h('div', { class: 'lbl' }, 'Order'), P.sortBox,
+            P.lowLink = h('button', { type: 'button', class: 'btn link qz-lowlink', onclick: () => P.openLowered() }, 'Lowered list ›')));
     P.form = h('div', { class: 'qz-form' },
         K.card(null,
             h('div', { class: 'qz-searchwrap' },
@@ -73,6 +77,7 @@ P.mount = el => {
     P.playerPoll = new K.Poller(P.refreshPlayer, 2000);
     P.recent();
     P.loadWords();
+    K.api('/qobuz/lowered').then(d => { if (d.ok) { P.lowCountCache = d.entries.length; P.paintLowLink(); } });
 };
 
 P.show = () => {
@@ -305,7 +310,7 @@ P.filterSummary = () => {
     const when = mode === 'last' ? (pref('lastN', 2) === 1 ? 'last year' : `last ${pref('lastN', 2)} years`)
         : mode === 'span' ? `${yearOf('from')}–${to === TODAY ? 'today' : to}` : 'any time';
     return [P.selected.size ? [...P.selected].join(', ') : 'all labels', when,
-        pref('sort', 'date') === 'date' ? 'newest first' : 'best match'].join(' · ');
+        pref('order', 'relevance') === 'date' ? 'newest first' : 'Qobuz order'].join(' · ');
 };
 
 P.paintSummary = () => {
@@ -323,8 +328,8 @@ P.openFilters = open => {
 P.paintSort = () => {
     P.paintSummary();
     K.clear(P.sortBox).append(K.segmented([
-        { value: 'date', label: 'Newest first' }, { value: 'relevance', label: 'Best match' },
-    ], pref('sort', 'date'), v => { setPref('sort', v); P.paintSort(); P.searchSoon(); }, 'small'));
+        { value: 'relevance', label: 'Qobuz order' }, { value: 'date', label: 'Newest first' },
+    ], pref('order', 'relevance'), v => { setPref('order', v); P.paintSort(); P.searchSoon(); }, 'small'));
 };
 
 // ── search ───────────────────────────────────────────────────────────────────
@@ -339,7 +344,7 @@ P.params = scan => {
         if (pref('from', thisYear - 5)) q.set('from', pref('from', thisYear - 5));
         if (pref('to', '')) q.set('to', pref('to', ''));
     }
-    q.set('sort', pref('sort', 'date'));
+    q.set('sort', pref('order', 'relevance'));
     if (scan) q.set('scan', scan);
     return q;
 };
@@ -352,7 +357,7 @@ P.searchSoon = () => {
     if (P.last || P.request) soon = setTimeout(() => P.search(), 450);
 };
 
-P.search = async (scan = 0) => {
+P.search = async (scan = 0, { quiet = false } = {}) => {
     clearTimeout(soon);
     const params = P.params(scan);
     if (!params.has('q') && !params.has('label')) {
@@ -362,7 +367,7 @@ P.search = async (scan = 0) => {
     setPref('q', P.input.value.trim());
     const seq = ++P.searching;
     P.request = params.toString();
-    P.paintWorking(scan ? 'Reading further…' : 'Searching…');
+    if (!quiet) P.paintWorking(scan ? 'Reading further…' : 'Searching…', !!scan);
     const d = await K.api('/qobuz/search?' + params, { timeout: 120000 });
     if (seq !== P.searching) return;
     P.request = null;
@@ -371,17 +376,19 @@ P.search = async (scan = 0) => {
         P.paintError(d.error || 'search failed');
         return;
     }
-    const first = !P.last;
+    // A new search may read on by itself at the end of its list; a further page
+    // only if the previous one brought albums (see watchMore).
+    P.autoMore = !scan || (!!P.last && d.count > P.last.count);
     P.last = d;
     P.paintSeen();
     P.paintResults();
-    // The first results fold the filters away: the list gets the screen.
-    if (first) P.openFilters(false);
+    // Results fold the filters away: the list gets the screen.
+    if (!quiet) P.openFilters(false);
 };
 
-P.paintWorking = text => {
+P.paintWorking = (text, more_) => {
     // A "Load more" keeps the list on screen and only turns its button into a spinner.
-    const more = P.results.querySelector('.qz-more');
+    const more = more_ && P.results.querySelector('.qz-more');
     if (more) { K.clear(more).append(h('div', { class: 'spinner small' }), h('span', {}, text)); return; }
     K.clear(P.results).append(h('div', { class: 'qz-working' }, h('div', { class: 'spinner' }), h('div', { class: 'muted' }, text)));
 };
@@ -397,16 +404,39 @@ P.paintResults = () => {
         `${d.count} album${d.count === 1 ? '' : 's'}`,
         d.window.from || d.window.to ? ` · ${d.window.from ? d.window.from.slice(0, 4) : '…'}–${d.window.to ? d.window.to.slice(0, 4) : 'today'}` : '',
         ` · ${d.considered} looked at`,
-        d.sort === 'date' ? ' · newest first' : ' · best match first')];
+        d.sort === 'date' ? ' · newest first' : ' · Qobuz order',
+        d.unstreamable ? ` · ${d.unstreamable} not available` : '',
+        P.lowCount(d) ? ` · ${P.lowCount(d)} lowered` : '')];
     failed.forEach(q => kids.push(h('div', { class: 'errbox warn small' }, `“${q.query}”: stopped after ${q.fetched} albums: ${q.error}`)));
     if (!d.results.length) kids.push(h('p', { class: 'muted' }, d.more
         ? 'Nothing matches yet among the albums read so far.'
         : 'Nothing matches.'));
-    kids.push(h('div', { class: 'qz-list' }, d.results.map(P.row)));
-    if (d.more) kids.push(h('button', {
-        type: 'button', class: 'btn qz-more', onclick: () => P.search(d.next_scan),
-    }, `Load more (read ${d.next_scan} per query)`));
+    const shown = d.results.filter(c => !c.lowered), low = d.results.filter(c => c.lowered);
+    kids.push(h('div', { class: 'qz-list' }, shown.map(P.row)));
+    if (low.length) kids.push(h('details', { class: 'qz-lowgroup', open: P.lowOpen || null,
+        ontoggle: e => { P.lowOpen = e.target.open; } },
+        h('summary', { class: 'small muted' }, `${low.length} lowered result${low.length === 1 ? '' : 's'}`),
+        h('div', { class: 'qz-list' }, low.map(P.row))));
+    if (d.more) {
+        const more = h('button', { type: 'button', class: 'btn qz-more', onclick: () => P.search(d.next_scan) }, 'Load more');
+        kids.push(more);
+        P.watchMore(more, d);
+    }
     K.clear(P.results).append(...kids);
+};
+
+// Reaching the end of the list reads on by itself, as scrolling does in Qobuz's
+// app -- but only while that keeps bringing albums: a filter that matches
+// nothing further down waits for a tap instead of reading thousands.
+P.watchMore = (button, d) => {
+    if (P.moreObserver) P.moreObserver.disconnect();
+    if (!P.autoMore || !d.results.length || !('IntersectionObserver' in window)) return;
+    P.moreObserver = new IntersectionObserver(entries => {
+        if (!entries.some(e => e.isIntersecting) || P.request || P.last !== d) return;
+        P.moreObserver.disconnect();
+        P.search(d.next_scan);
+    }, { root: P.el, rootMargin: '0px 0px 200px 0px' });
+    P.moreObserver.observe(button);
 };
 
 // Before any search: the albums played from here, newest first.
@@ -536,6 +566,115 @@ P.suggestKey = e => {
     }
 };
 
+// ── lowering ─────────────────────────────────────────────────────────────────
+P.lowCount = d => d.results.filter(c => c.lowered).length;
+
+P.lowerApi = body => K.api('/qobuz/lowered', { json: body });
+
+// − : the album at once (the row goes, and joins the folded group at the end),
+// then a bar to undo it or to lower its whole label or artist instead.
+P.lower = async (c, row) => {
+    row.classList.add('going');
+    const d = await P.lowerApi({ action: 'add', kind: 'album', key: c.id, name: c.title });
+    if (!d.ok) { row.classList.remove('going'); K.toast(d.error || 'could not lower it', 'error'); return; }
+    c.lowered = { kind: 'album', key: c.id, name: c.title };
+    P.lowCountCache = d.entries.length;
+    const inResults = P.last && P.last.results.includes(c);
+    if (inResults) {
+        // to the end, in the order the server would give it
+        P.last.results = [...P.last.results.filter(x => x !== c && !x.lowered), c, ...P.last.results.filter(x => x !== c && x.lowered)];
+        P.paintResults();
+    } else row.remove();
+    P.paintLowLink();
+    P.snack(`Lowered “${c.title}”`, [
+        { label: 'Undo', run: () => P.restore(c.lowered) },
+        c.label ? { label: `All of ${c.label}`, run: () => P.lowerMore('label', c.label, c) } : null,
+        c.artist ? { label: `All by ${c.artist}`, run: () => P.lowerMore('artist', c.artist, c) } : null,
+    ]);
+};
+
+// A whole label or artist: the album entry is replaced by the wider one.
+P.lowerMore = async (kind, name, c) => {
+    await P.lowerApi({ action: 'remove', kind: 'album', key: c.id });
+    const d = await P.lowerApi({ action: 'add', kind, key: name, name });
+    if (!d.ok) { K.toast(d.error || 'could not lower it', 'error'); return; }
+    K.toast(`Lowered all ${kind === 'label' ? 'of' : 'by'} ${name}`);
+    P.lowCountCache = d.entries.length;
+    P.paintLowLink();
+    P.refreshResults();
+};
+
+P.restore = async entry => {
+    const d = await P.lowerApi({ action: 'remove', kind: entry.kind, key: entry.key });
+    if (!d.ok) { K.toast(d.error || 'could not restore it', 'error'); return; }
+    P.lowCountCache = d.entries.length;
+    P.paintLowLink();
+    P.refreshResults();
+};
+
+// Ask again, as deep as the list on screen: the pages come from the server's cache.
+P.refreshResults = () => { if (P.last && !P.request) P.search(P.last.scan > 50 ? P.last.scan : 0, { quiet: true }); };
+
+// A bar above the player strip: a message and a few actions, gone after 10 s.
+P.snack = (text, actions) => {
+    clearTimeout(P.snackTimer);
+    if (P.snackEl) P.snackEl.remove();
+    const close = () => { clearTimeout(P.snackTimer); if (P.snackEl === bar) P.snackEl = null; bar.remove(); };
+    const bar = h('div', { class: 'qz-snack' },
+        h('div', { class: 'qz-snack-text' }, text),
+        h('div', { class: 'qz-snack-acts' }, actions.filter(Boolean).map(a =>
+            h('button', { type: 'button', class: 'btn', onclick: () => { close(); a.run(); } }, a.label)),
+            h('button', { type: 'button', class: 'btn qz-snack-x', title: 'Close', onclick: close }, '✕')));
+    P.snackEl = bar;
+    P.player.before(bar);
+    P.snackTimer = setTimeout(close, 10000);
+};
+
+// The Lowered list: every entry with its kind, restore one, or clear them all.
+P.paintLowLink = () => {
+    if (!P.lowLink) return;
+    const n = P.lowCountCache;
+    P.lowLink.textContent = n ? `Lowered list (${n}) ›` : 'Lowered list ›';
+};
+
+P.openLowered = async () => {
+    const d = await K.api('/qobuz/lowered');
+    if (!d.ok) { K.toast(d.error || 'could not read the lowered list', 'error'); return; }
+    const KIND = { album: 'Album', label: 'Label', artist: 'Artist' };
+    const list = h('div', { class: 'qz-lowlist' });
+    const close = () => scrim.remove();
+    const paint = entries => {
+        P.lowCountCache = entries.length;
+        P.paintLowLink();
+        K.clear(list).append(...(entries.length ? entries.map(e => h('div', { class: 'qz-lowrow' },
+            h('span', { class: 'chip dim' }, KIND[e.kind] || e.kind),
+            h('span', { class: 'qz-lowname' }, e.name),
+            h('button', { type: 'button', class: 'btn', onclick: async () => {
+                const r = await P.lowerApi({ action: 'remove', kind: e.kind, key: e.key });
+                if (r.ok) { paint(r.entries); P.changedLow = true; }
+            } }, '↺ Restore'))) : [h('p', { class: 'muted' }, 'Nothing is lowered.')]));
+    };
+    P.changedLow = false;
+    const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) done(); } },
+        h('div', { class: 'sheet qz-lowsheet' },
+            h('h2', {}, 'Lowered'),
+            h('p', {}, 'These come last in every result list, folded away. Restore one to see it in its place again.'),
+            list,
+            h('div', { class: 'sheet-actions' },
+                h('button', { type: 'button', class: 'btn danger-soft', onclick: async () => {
+                    if (!P.lowCountCache) return;
+                    const yes = await K.confirm({ title: 'Clear the lowered list?', message: 'Every album, label and artist in it gets its place back.', ok: 'Clear', danger: true });
+                    if (!yes) return;
+                    const r = await P.lowerApi({ action: 'clear' });
+                    if (r.ok) { paint(r.entries); P.changedLow = true; }
+                } }, 'Clear all'),
+                h('span', { class: 'spacer' }),
+                h('button', { type: 'button', class: 'btn primary', onclick: () => done() }, 'Done'))));
+    function done() { close(); if (P.changedLow) P.refreshResults(); }
+    paint(d.entries);
+    document.getElementById('overlay-root').append(scrim);
+};
+
 // ── one result ───────────────────────────────────────────────────────────────
 const quality = c => c.bits && c.bits > 16 ? `${c.bits}/${+(+c.rate).toFixed(1)}` : '';
 const who = p => p.roles && p.roles.length ? `${p.name} (${p.roles[0]})` : p.name;
@@ -551,12 +690,16 @@ P.row = c => {
             h('span', {}, c.label || '—'), h('span', { class: 'muted' }, c.year || ''),
             quality(c) ? h('span', { class: 'chip ok' }, quality(c)) : null,
             c.played ? h('span', { class: 'chip dim' }, `played ${c.played}×`) : null));
-    const row = h('div', { class: 'qz-row' },
+    const off = c.streamable === false;
+    const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') },
         c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }),
         body,
         h('div', { class: 'qz-act' },
-            h('button', { type: 'button', class: 'btn primary qz-play', title: 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, '▶'),
-            h('button', { type: 'button', class: 'btn qz-add', title: 'Add to the queue', onclick: () => P.play(c, 'append') }, '+')),
+            h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: off ? 'Not available on Qobuz' : 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, '▶'),
+            h('button', { type: 'button', class: 'btn qz-add', disabled: off, title: off ? 'Not available on Qobuz' : 'Add to the queue', onclick: () => P.play(c, 'append') }, '+'),
+            c.lowered
+                ? h('button', { type: 'button', class: 'btn qz-low', title: `Lowered (${c.lowered.kind}: ${c.lowered.name}): restore`, onclick: () => P.restore(c.lowered) }, '↺')
+                : h('button', { type: 'button', class: 'btn qz-low', title: 'Lower: show it last, folded away', onclick: () => P.lower(c, row) }, '−')),
         tracks);
     if (P.open.has(c.id)) P.toggleTracks(c, row, tracks, true);
     return row;
@@ -654,8 +797,9 @@ P.makeView = full => {
 
 P.buildPlayer = () => {
     const v = P.makeView(false);
+    v.prog = h('div', { class: 'qz-pprog' }, h('i'));    // upright: a thin line instead of the slider
     P.views.push(v);
-    K.clear(P.player).append(
+    K.clear(P.player).append(v.prog,
         h('div', { class: 'qz-pinfo tap', title: 'Open the player', onclick: () => P.openFull() },
             v.cover, h('div', { class: 'qz-ptext' }, v.title, v.sub)),
         v.buttons, v.seekRow,
@@ -771,6 +915,7 @@ P.paintTime = () => {
     for (const v of P.views) {
         v.seek.disabled = !known;
         v.total.textContent = b && Number.isFinite(b.duration) ? K.fmtClock(b.duration) : '–:––';
+        if (v.prog) v.prog.firstChild.style.width = known ? `${(e / b.duration * 100).toFixed(1)}%` : '0';
         if (P.seeking) continue;          // a finger is on a slider
         if (!known) { v.elapsed.textContent = '–:––'; v.seek.value = 0; continue; }
         v.seek.max = Math.floor(b.duration);
@@ -807,7 +952,14 @@ P.markQueue = () => {
         row.classList.toggle('on', on);
         if (on) current = row;
     }
-    if (current && id !== P.markedId) current.scrollIntoView({ block: 'nearest' });
+    // Scroll the queue list alone (landscape, where it scrolls by itself): upright
+    // the whole sheet scrolls, and the cover must stay where the sheet opened.
+    const box = P.queueBox;
+    if (current && id !== P.markedId && box.scrollHeight > box.clientHeight + 2) {
+        const top = current.offsetTop - box.offsetTop;
+        if (top < box.scrollTop || top + current.offsetHeight > box.scrollTop + box.clientHeight)
+            box.scrollTop = Math.max(0, top - box.clientHeight / 3);
+    }
     P.markedId = id;
 };
 

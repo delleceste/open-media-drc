@@ -11,24 +11,10 @@ const WINDOWS = [60, 300, 900, 1800, 3600, 5400];
 
 const P = {
     id: 'now', label: 'Now', title: 'Now playing',
+    orientation: 'landscape',   // the one page laid out for it; every other is upright (main.js)
     mode: 'needles', showDr: true, showBalance: true,
     level: null, drSub: null, track: null, base: null,
 };
-
-// A small magnifier by the track: straight to the Qobuz search.
-function searchButton() {
-    const ns = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('aria-hidden', 'true');
-    const circle = document.createElementNS(ns, 'circle');
-    Object.entries({ cx: 10.5, cy: 10.5, r: 6.5, fill: 'none', stroke: 'currentColor', 'stroke-width': 2.4 }).forEach(([k, v]) => circle.setAttribute(k, v));
-    const handle = document.createElementNS(ns, 'path');
-    Object.entries({ d: 'M15.5 15.5 L21 21', stroke: 'currentColor', 'stroke-width': 2.8, 'stroke-linecap': 'round' }).forEach(([k, v]) => handle.setAttribute(k, v));
-    svg.append(circle, handle);
-    return h('button', { type: 'button', class: 'now-search', title: 'Search Qobuz', 'aria-label': 'Search Qobuz',
-        onclick: () => K.goto('qobuz') }, svg);
-}
 
 P.mount = el => {
     P.el = el;
@@ -43,7 +29,6 @@ P.mount = el => {
     P.calLed = h('i', { class: 'cal-led', hidden: true, title: 'Calibrating the meter timing' });
     const trackBox = h('div', { class: 'now-track' }, P.art,
         h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt)), P.calLed,
-        K.state.features.qobuz_search ? searchButton() : null,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
         h('div', { class: 'now-timebox' }, P.state, P.time, h('div', { class: 'now-prog' }, P.prog)));
 

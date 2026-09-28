@@ -16,7 +16,7 @@ down.
 |---|---|
 | **Now** | Level meters (needles / bars / bars + spectrum), DR bar, channel balance, track + time, and one line saying which DRC is applied |
 | **Cover** | *Optional* (Config → Cover art → Cover page): the album cover, square and as large as the height allows, the track beside it, and optionally a narrow vertical DR or level column (top bar: DR / Lvl) where there is room |
-| **Qobuz** | *Optional* (`[qobuz_search] enabled`): album search with label check boxes and a release-date window, results newest first with ▶ (replace upmpdcli's queue and play) and **+** (append), a tap shows the tracks, and a player strip (previous, play/pause, stop, next, seek) that opens into a full-screen player with the cover and the queue. The search field completes from a classical word list and from what was played. The form is full width; the filters fold into a one-line summary once results arrive. The magnifier by the track on **Now** opens this page. Greyed out while upmpdcli is not the running renderer |
+| **Qobuz** | *Optional* (`[qobuz_search] enabled`): album search with label check boxes and a release-date window, results newest first with ▶ (replace upmpdcli's queue and play) and **+** (append), a tap shows the tracks, and a player strip (previous, play/pause, stop, next, seek) that opens into a full-screen player with the cover and the queue. The search field completes from a classical word list and from what was played. The form is full width; the filters fold into a one-line summary once results arrive. The magnifier in the top bar opens this page. − on a result lowers it (see the panel README). Greyed out while upmpdcli is not the running renderer |
 | **DRC** | Applied state, sample-rate presets, filter set and design, attenuation, BruteFIR peak/RTI, `drc.sh status` |
 | **DR** | Rolling DR estimate (off until enabled), measure this record, compare masters |
 | **Source** | Renderer switch/restart/activity, MPD state, CD input |
@@ -58,10 +58,11 @@ top bar on Now, or Config → Cover art):
 `android/omdrc-app` opens `/k/` by default.  When `window.OmdrcApp` exists the
 kiosk hides its own fullscreen button (the app owns the gear button), skips the
 browser keep-awake fallback, and tells the app whether the screen should stay on:
-only while the Now page is on screen (`setPageWantsScreenOn`). A page may also ask for the phone
-upright (`setPageOrientation`, app API 5): the Qobuz page does, and every other
-page turns it back to landscape.  In a browser the same happens only in
-fullscreen, where the orientation can be locked.  Config shows an
+only while the Now page is on screen (`setPageWantsScreenOn`). Every page is shown upright except
+**Now**, which is laid out for landscape; the top bar's rotate button turns the
+page on screen the other way and remembers that for it (`setPageOrientation`,
+app API 5).  In a browser the same happens only in fullscreen, where the
+orientation can be locked; the 7" panel never turns.  Config shows an
 "App settings" button (`openSettings`).
 
 ## Meter timing and calibration

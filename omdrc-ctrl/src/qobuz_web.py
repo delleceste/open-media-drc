@@ -15,6 +15,10 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     GET /qobuz/words               search-field completions: the shipped
                                    list and the ones learned from plays
     GET /qobuz/track/<id>          one track and its album (the player's cover)
+    GET /qobuz/lowered             albums, labels and artists moved to the end
+    POST /qobuz/lowered            {"action": "add", "kind", "key", "name"} |
+                                   {"action": "remove", "kind", "key"} |
+                                   {"action": "clear"}
 
 Playing goes through upmpdcli's OpenHome playlist (openhome.py), exactly as a
 control point browsing the box's own Qobuz library would do it: the queued
@@ -36,8 +40,8 @@ import time
 from flask import Blueprint, jsonify, request
 
 import openhome
-from qobuz_search import (PlayedAlbums, QobuzCatalog, QobuzError, SearchWords,
-                          discover_app_id, read_word_list)
+from qobuz_search import (LoweredList, PlayedAlbums, QobuzCatalog, QobuzError,
+                          SearchWords, discover_app_id, read_word_list)
 
 bp = Blueprint("qobuz", __name__, url_prefix="/qobuz")
 
@@ -66,6 +70,7 @@ _app_id = ""
 _renderer = (0.0, False)
 _played: dict[str, PlayedAlbums] = {}       # one store per file, across reloads
 _learned: dict[str, SearchWords] = {}
+_lowered: dict[str, LoweredList] = {}
 # The shipped completion list, next to this module; re-read when it changes.
 WORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qobuz_words.txt")
 _words = (None, [])                          # (mtime, entries)
@@ -127,6 +132,14 @@ def learned() -> SearchWords:
         return _learned[path]
 
 
+def lowered() -> LoweredList:
+    path = os.path.join(_state_dir(), "qobuz-lowered.json")
+    with _lock:
+        if path not in _lowered:
+            _lowered[path] = LoweredList(path)
+        return _lowered[path]
+
+
 def word_list() -> list[str]:
     global _words
     try:
@@ -142,11 +155,13 @@ def catalog() -> QobuzCatalog:
     """One client per settings object: a config reload starts a fresh cache."""
     global _catalog, _catalog_settings
     settings = _settings()
-    store = played()
+    store, lower = played(), lowered()
     with _lock:
         if _catalog is None or _catalog_settings is not settings:
-            _catalog = QobuzCatalog(settings, credentials=_credentials, played=store)
+            _catalog = QobuzCatalog(settings, credentials=_credentials, played=store,
+                                    lowered=lower)
             _catalog_settings = settings
+        _catalog.lowered = lower
         return _catalog
 
 
@@ -251,7 +266,7 @@ def labels():
 def search():
     """?q=text&label=Pentatone&label=Decca (or label=Pentatone,Decca)
     &last=2 (years back from today) or &from=2021&to=2026 (calendar years)
-    &sort=date|relevance &scan=<albums per query> &enrich=0"""
+    &sort=relevance|date &scan=<albums per query> &enrich=0"""
     guard = _guard()
     if guard:
         return guard
@@ -262,7 +277,7 @@ def search():
             request.args.get("q", ""), labels=names,
             last_years=_number("last", float),
             from_year=_number("from", int), to_year=_number("to", int),
-            sort=request.args.get("sort", "date"),
+            sort=request.args.get("sort", "relevance"),
             enrich=request.args.get("enrich", "1") not in ("0", "no", "false"),
             scan=_number("scan", int))
         return jsonify({"ok": True, **answer})
@@ -374,3 +389,28 @@ def track(track_id):
         return jsonify({"ok": True, "track": catalog().track(track_id)})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/lowered", methods=["GET", "POST"])
+def lowered_list():
+    """The lowered list: read it, or add, restore (remove) or clear.  It only
+    reorders results, so it needs neither upmpdcli nor a Qobuz sign-in."""
+    if not _settings().enabled:
+        return jsonify({"ok": False, "error": "Qobuz search disabled"}), 404
+    store = lowered()
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        try:
+            if action == "add":
+                store.add(str(body.get("kind", "")), str(body.get("key", "")),
+                          str(body.get("name", "")))
+            elif action == "remove":
+                store.remove(str(body.get("kind", "")), str(body.get("key", "")))
+            elif action == "clear":
+                store.clear()
+            else:
+                return jsonify({"ok": False, "error": "action must be add, remove or clear"}), 400
+        except QobuzError as error:
+            return jsonify({"ok": False, "error": str(error)}), 400
+    return jsonify({"ok": True, "entries": store.entries()})

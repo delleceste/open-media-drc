@@ -157,7 +157,7 @@ class SearchTest(unittest.TestCase):
             album("dg", "Symphony No. 7", "Deutsche Grammophon (DG)", "2025-06-01"),
             album("penta1", "Symphony No. 7", "PENTATONE", "2024-11-15"),
             album("nodate", "Symphony No. 7", "Decca (UMO)"),
-            album("gone", "Symphony No. 7", "PENTATONE", "2026-01-01", streamable=False),
+            album("gone", "Symphony No. 7", "PENTATONE", "1999-05-01", streamable=False),
         ],
         # The label query reaches an album the plain one ranked out of reach,
         # and repeats one the plain query already had lower down.
@@ -195,9 +195,12 @@ class SearchTest(unittest.TestCase):
         self.assertIn("nodate", self.ids(self.search()[0]))
         self.assertNotIn("nodate", self.ids(self.search(from_year=1990)[0]))
 
-    def test_unstreamable_albums_are_dropped_and_counted(self):
+    def test_unstreamable_albums_are_kept_marked_and_counted(self):
+        """As in Qobuz's own list: shown, but with nothing to play."""
         answer, _ = self.search(labels=["Pentatone"])
-        self.assertNotIn("gone", self.ids(answer))
+        cards = {c["id"]: c for c in answer["results"]}
+        self.assertFalse(cards["gone"]["streamable"])
+        self.assertTrue(cards["penta1"]["streamable"])
         self.assertEqual(answer["unstreamable"], 1)
 
     def test_relevance_keeps_each_albums_best_position(self):
@@ -205,7 +208,29 @@ class SearchTest(unittest.TestCase):
         # penta2 is first of its query; penta1 is 2nd of the label query,
         # better than 3rd of the plain one.
         self.assertEqual([(c["id"], c["rank"]) for c in answer["results"]],
-                         [("penta2", 0), ("penta1", 1)])
+                         [("penta2", 0), ("penta1", 1), ("gone", 4)])
+
+    def test_no_filter_is_qobuzs_own_list(self):
+        """Nothing ticked, no dates: Qobuz's releases for the text, in its
+        order, one page to start with -- the filters only ever work on that."""
+        many = [album(f"a{i}", "T", "L", f"20{i % 25:02d}-01-01") for i in range(120)]
+        cat, calls = catalog({"x": many}, max_enrich=0)
+        answer = cat.search("x")
+        self.assertEqual(self.ids(answer), [f"a{i}" for i in range(50)])
+        self.assertEqual([p["offset"] for _, p in calls], [0])
+        self.assertTrue(answer["more"])
+        self.assertEqual(answer["next_scan"], 100)
+
+    def test_played_albums_join_only_a_filtered_search(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = qs.PlayedAlbums(tmp + "/p.json")
+            store.record(album("mine", "Symphony No. 7", "PENTATONE", "2025-05-05"), [])
+            cat, _ = catalog(self.SEARCHES, max_enrich=0)
+            cat.played = store
+            plain = cat.search("bruckner 7")
+            filtered = cat.search("bruckner 7", labels=["Pentatone"])
+        self.assertNotIn("mine", self.ids(plain))
+        self.assertIn("mine", self.ids(filtered))
 
     def test_labels_seen_are_reported_as_qobuz_spells_them(self):
         answer, _ = self.search(from_year=2021)
@@ -235,7 +260,7 @@ class SearchTest(unittest.TestCase):
     def test_paging_stops_at_the_total(self):
         many = [album(f"a{i}", "T", "L", "2020-01-01") for i in range(120)]
         cat, calls = catalog({"x": many}, max_enrich=0)
-        answer = cat.search("x")
+        answer = cat.search("x", from_year=2000)       # a filter reads deeper at once
         self.assertEqual(answer["considered"], 120)
         self.assertEqual(sorted(p["offset"] for _, p in calls), [0, 50, 100])
         self.assertFalse(answer["more"])
@@ -243,7 +268,7 @@ class SearchTest(unittest.TestCase):
     def test_enough_matches_stop_the_reading(self):
         many = [album(f"a{i}", "T", "L", "2020-01-01") for i in range(3000)]
         cat, calls = catalog({"x": many}, max_enrich=0, scan=100, want=20)
-        answer = cat.search("x")
+        answer = cat.search("x", from_year=2000)
         self.assertEqual(len(calls), 2)
         self.assertTrue(answer["more"])
         self.assertEqual(answer["next_scan"], 200)
@@ -271,10 +296,10 @@ class SearchTest(unittest.TestCase):
     def test_load_more_reads_only_the_new_pages(self):
         many = [album(f"a{i}", "T", "Other", "2020-01-01") for i in range(3000)]
         cat, calls = catalog({"x": many}, max_enrich=0, scan=100, auto_scan=100)
-        cat.search("x")
+        cat.search("x")                                 # the first page
         calls.clear()
         answer = cat.search("x", scan=300)
-        self.assertEqual(sorted(p["offset"] for _, p in calls), [100, 150, 200, 250])
+        self.assertEqual(sorted(p["offset"] for _, p in calls), [50, 100, 150, 200, 250])
         self.assertEqual(answer["considered"], 300)
 
     def test_a_failing_later_page_ends_only_its_query(self):
@@ -287,7 +312,7 @@ class SearchTest(unittest.TestCase):
             return fetch(endpoint, params)
 
         cat = qs.QobuzCatalog(qs.Settings(max_enrich=0), fetch=flaky, today=lambda: TODAY)
-        answer = cat.search("x")
+        answer = cat.search("x", from_year=2000)
         self.assertEqual(answer["considered"], 100)
         self.assertEqual(answer["queries"][0]["error"], "HTTP 500")
 
@@ -323,6 +348,83 @@ class SearchTest(unittest.TestCase):
         self.assertEqual(cards["penta1"]["performers"],
                          [{"name": "Jakub Hrusa", "roles": ["Conductor"]}])
         self.assertEqual(answer["enriched"], 1)
+
+
+class LoweredTest(unittest.TestCase):
+    """The − on a result: an album, a label or an artist moved to the end of
+    every list, never dropped, and listed to restore or clear."""
+
+    SEARCHES = {"x": [
+        album("a", "One", "Decca Music Group Ltd.", "2024-01-01"),
+        album("b", "Two", "PENTATONE", "2024-01-02", artist="Some Conductor"),
+        album("c", "Three", "PENTATONE", "2024-01-03"),
+        album("d", "Four", "BIS", "2024-01-04"),
+    ]}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = qs.LoweredList(self.tmp.name + "/sub/lowered.json")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def search(self, albums=None, **kw):
+        cat, _ = catalog(self.SEARCHES, albums, max_enrich=0)
+        cat.lowered = self.store
+        return cat.search("x", **kw)
+
+    def order(self, answer):
+        return [(c["id"], c.get("lowered", {}).get("kind")) for c in answer["results"]]
+
+    def test_an_album_goes_to_the_end_marked(self):
+        self.store.add("album", "b", "Two")
+        answer = self.search()
+        self.assertEqual(self.order(answer),
+                         [("a", None), ("c", None), ("d", None), ("b", "album")])
+        self.assertEqual(answer["lowered"], 1)
+
+    def test_a_label_lowers_every_spelling_of_it(self):
+        self.store.add("label", "Decca", "Decca")
+        self.store.add("label", "pentatone", "Pentatone")
+        self.assertEqual([i for i, _ in self.order(self.search())], ["d", "a", "b", "c"])
+
+    def test_an_artist_matches_the_album_artist_or_a_performer(self):
+        self.store.add("artist", "Some Conductor")
+        self.store.add("artist", "Jakub Hrusa")
+        albums = {i: {**a, "tracks": {"items": [{"performers": "Jakub Hrusa, Conductor"}]}}
+                  for i, a in ((a["id"], a) for a in self.SEARCHES["x"]) if i == "d"}
+        albums.update({i: {**a, "tracks": {"items": []}} for i, a in
+                       ((a["id"], a) for a in self.SEARCHES["x"]) if i != "d"})
+        cat, calls = catalog(self.SEARCHES, albums, max_enrich=10)
+        cat.lowered = self.store
+        answer = cat.search("x")
+        self.assertEqual(self.order(answer),
+                         [("a", None), ("c", None), ("b", "artist"), ("d", "artist")])
+        fetched = [p["album_id"] for e, p in calls if e == "album/get"]
+        self.assertNotIn("b", fetched, "no performers are fetched for a lowered album")
+
+    def test_lowering_is_kept_restored_and_cleared(self):
+        self.store.add("label", "Decca Classics", "Decca Classics")
+        self.store.add("album", "b", "Two")
+        again = qs.LoweredList(self.store.path)
+        self.assertEqual([(e["kind"], e["key"]) for e in again.entries()],
+                         [("album", "b"), ("label", "decca classics")])
+        self.assertTrue(again.remove("label", "DECCA classics"))
+        self.assertEqual([e["key"] for e in again.entries()], ["b"])
+        again.clear()
+        self.assertEqual(qs.LoweredList(self.store.path).entries(), [])
+
+    def test_adding_twice_keeps_one_newest_entry(self):
+        self.store.add("album", "b", "Two")
+        self.store.add("label", "BIS")
+        self.store.add("album", "b", "Two")
+        self.assertEqual([e["key"] for e in self.store.entries()], ["b", "bis"])
+
+    def test_nonsense_is_refused(self):
+        with self.assertRaises(qs.QobuzError):
+            self.store.add("composer", "Berio")
+        with self.assertRaises(qs.QobuzError):
+            self.store.add("label", "  ")
 
 
 class AlbumTest(unittest.TestCase):
@@ -410,6 +512,21 @@ class PanelTest(unittest.TestCase):
         self.assertFalse(data["ok"])
         self.assertIn("sign-in", data["error"])
         self.assertFalse(status["token"])
+
+    def test_lowered_route_adds_restores_and_clears(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = qs.LoweredList(tmp + "/l.json")
+            with patch.object(qobuz_web, "lowered", return_value=store):
+                post = lambda **b: self.client.post("/qobuz/lowered", json=b)
+                self.assertEqual(post(action="add", kind="label", key="Decca", name="Decca")
+                                 .get_json()["entries"][0]["key"], "decca")
+                post(action="add", kind="album", key="a1", name="Some album")
+                self.assertEqual(len(self.client.get("/qobuz/lowered").get_json()["entries"]), 2)
+                self.assertEqual([e["key"] for e in post(action="remove", kind="album", key="a1")
+                                  .get_json()["entries"]], ["decca"])
+                self.assertEqual(post(action="clear").get_json()["entries"], [])
+                self.assertEqual(post(action="add", kind="composer", key="x").status_code, 400)
+                self.assertEqual(post(action="explode").status_code, 400)
 
     def test_labels_come_from_the_config(self):
         with tempfile.NamedTemporaryFile("w", suffix=".conf") as conf:
