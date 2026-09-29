@@ -168,13 +168,20 @@ document.addEventListener('pointerdown', e => {
     if (P.input && document.activeElement === P.input && !(e.target.closest && e.target.closest('.qz-searchwrap')))
         P.input.blur();
 }, { capture: true, passive: true });
+// The keyboard has gone when the page, having shrunk for it, is back to its height from
+// before the field took the focus.  Not merely "grew again": in the app the page may
+// shrink twice as the keyboard comes up (the WebView's own step, then the app's padding),
+// and the step back between the two is not the keyboard going.
 if (window.visualViewport) {
-    let tallest = visualViewport.height;
+    let base = visualViewport.height, low = base;    // before the focus; the lowest since
+    document.addEventListener('focusin', e => {
+        if (e.target === P.input) { base = visualViewport.height; low = base; }
+    });
     visualViewport.addEventListener('resize', () => {
+        if (!P.input || document.activeElement !== P.input) return;
         const hgt = visualViewport.height;
-        // grown back by more than a keyboard row: the keyboard has gone
-        if (P.input && document.activeElement === P.input && hgt > tallest + 120) P.input.blur();
-        tallest = document.activeElement === P.input ? Math.min(tallest, hgt) : hgt;
+        low = Math.min(low, hgt);
+        if (low < base - 120 && hgt > base - 60) P.input.blur();
     });
 }
 

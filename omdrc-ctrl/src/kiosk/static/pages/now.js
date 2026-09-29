@@ -117,6 +117,7 @@ P.mount = el => {
     P.wireSplitter();
     P.wireVSplit();
     P.wireResetTap();
+    P.wireMeterTap();
     P.wireCoverGesture();
     P.wireSeekRing();
     new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
@@ -176,6 +177,8 @@ P.applyLayout = () => {
     P.artBox.classList.toggle('seek-zone', K.portrait());   // the seek ring's: no page swipe, no top bar
     P.el.firstChild.classList.toggle('cover-sq', square);
     if (!off) P.vu.setMode(P.mode === 'needles' ? 'needles' : 'bars');
+    // needles and bars swap on a tap (a control then, so the tap leaves the top bar alone)
+    P.lvlBody.classList.toggle('tap', P.mode === 'needles' || P.mode === 'bars');
     P.el.firstChild.classList.toggle('lvl-off', off);
     P.drBox.hidden = !P.showDr;
     P.drBarBox.hidden = !P.showDr;
@@ -199,6 +202,7 @@ P.setMode = mode => {
     K.setLevelMode(mode);
     P.applyLayout();
     P.syncMode();           // spectrum needs the FFT stream; off needs no stream at all
+    if (P.menuPaint) P.menuPaint();
 };
 
 // The View menu: the level display (one of) and the switches (any of).  It stays open
@@ -217,6 +221,7 @@ P.openViewMenu = () => {
         item(P.showDr, 'Dynamic range (DR)', () => P.flip('now.dr')),
         item(P.showBalance, 'Balance', () => P.flip('now.balance')));
     paint();
+    P.menuPaint = paint;
     document.body.append(menu);
     const r = P.modeBtn.getBoundingClientRect();
     menu.style.top = `${r.bottom + 4}px`;
@@ -229,7 +234,7 @@ P.closeViewMenu = () => {
     if (!P.menu) return;
     document.removeEventListener('pointerdown', P.menuOutside, true);
     P.menu.remove();
-    P.menu = null;
+    P.menu = P.menuPaint = null;
 };
 
 P.cycleWindow = ev => {
@@ -444,6 +449,21 @@ P.wireResetTap = () => {
             last = null; P.resetSplits(); return;
         }
         last = { t: now, x: e.clientX, y: e.clientY };
+    });
+};
+
+// A single tap on the meters swaps needles and bars; it waits out a double tap (which
+// resets the splits, above) and is not a tap once the finger has moved (a swipe, the
+// cover's diagonal drag).
+P.wireMeterTap = () => {
+    let down = null, timer = null;
+    P.lvlBody.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY }; });
+    P.lvlBody.addEventListener('pointerup', e => {
+        const d = down; down = null;
+        if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return;
+        if (P.mode !== 'needles' && P.mode !== 'bars') return;
+        if (timer) { clearTimeout(timer); timer = null; return; }          // the second of a double tap
+        timer = setTimeout(() => { timer = null; P.setMode(P.mode === 'needles' ? 'bars' : 'needles'); }, 360);
     });
 };
 

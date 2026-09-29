@@ -186,6 +186,9 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .seek-ring.active .sr-knob { r: 4.8px; stroke-width: 1.2; }
 .sr-time { position: relative; padding: .2rem .7rem; border-radius: 1rem; background: rgba(13,17,23,.78); font: 600 1rem ui-monospace, monospace; white-space: nowrap; }
 .now-search { display: none; }                  /* upright only */
+/* ... but never hidden under the finger: the keyboard coming up may leave the page wider
+   than tall, and a hidden field loses the focus (and the keyboard goes again) */
+.now-search:focus-within { display: flex; flex-direction: column; }
 .now.cover-big .now-art { display: none !important; }
 .now-meta { flex: 1; min-width: 0; }
 .now-title { font-size: 1.7rem; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
