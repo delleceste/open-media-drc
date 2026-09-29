@@ -304,6 +304,18 @@ button.award { font: inherit; font-size: .8rem; font-weight: 650; cursor: pointe
 .tap:active { border-color: var(--accent); }
 .dr-bar.static > span { cursor: pointer; }
 button.chip.state { color: inherit; }
+/* transport (widgets/icons.js): plain line icons, no fill; the main one (play/pause, a
+   row's play) framed by a thin blue rounded border -- never a filled tile */
+.ticon { width: 1.3em; height: 1.3em; display: block; flex: 0 0 auto; }
+.btn.qz-pbtn, .btn.qz-play, .btn.qz-tplay, .now-ctl .chip { background: none; border: 1.5px solid transparent; color: var(--text); box-shadow: none; }
+.btn.qz-pbtn.primary, .btn.qz-play.primary, .now-ctl .chip.state { border-color: var(--accent); }
+.btn.qz-pbtn:active, .btn.qz-play:active, .btn.qz-tplay:active, .now-ctl .chip:active { background: var(--press); }
+.btn.qz-pbtn, .btn.qz-play, .btn.qz-tplay, .now-skip { display: inline-flex; align-items: center; justify-content: center; }
+.now-ctl .chip.state { display: inline-flex; align-items: center; gap: .35rem; }
+.now-ctl .chip.state .ticon { width: 1.05em; height: 1.05em; }
+.qz-full .btn.qz-pbtn .ticon { width: 1.6rem; height: 1.6rem; }
+/* no focus ring after a tap (Android's WebView draws one in orange); keyboards keep it */
+button:focus:not(:focus-visible) { outline: none; }
 /* the Now page's View menu (pages/now.js), under its chip in the top bar */
 .menu-pop { position: fixed; z-index: 60; min-width: 13rem; padding: .25rem 0; border: 1px solid var(--border); border-radius: .5rem;
     background: var(--surface2); box-shadow: 0 .5rem 1.2rem var(--shadow); }

@@ -44,9 +44,9 @@ P.mount = el => {
         // (upright, previous and next track either side of it)
         h('div', { class: 'now-timebox' },
             h('span', { class: 'now-ctl' },
-                h('button', { class: 'chip now-skip', type: 'button', title: 'Previous track', 'aria-label': 'Previous track', onclick: () => P.transport('prev') }, '⏮'),
+                h('button', { class: 'chip now-skip', type: 'button', title: 'Previous track', 'aria-label': 'Previous track', onclick: () => P.transport('prev') }, K.tIcon('prev')),
                 P.state,
-                h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, '⏭')),
+                h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, K.tIcon('next'))),
             P.time, h('div', { class: 'now-prog' }, P.prog)));
 
     // level area
@@ -548,6 +548,12 @@ P.paintDr = E => {
     P.drBar.render(E.selected(), E.windowSeconds);
 };
 
+// The play/pause/stop chip: a line icon (widgets/icons.js) and the state in words.
+P.paintState = state => {
+    const [icon, word] = { play: ['play', 'Playing'], pause: ['pause', 'Paused'], stop: ['stop', 'Stopped'] }[state] || ['play', 'Play'];
+    K.clear(P.state).append(K.tIcon(icon), h('span', {}, word));
+};
+
 // ── track ────────────────────────────────────────────────────────────────────
 P.pollTrack = async () => {
     const t = await K.fetchTrack();
@@ -562,7 +568,7 @@ P.pollTrack = async () => {
     P.pAlbum.textContent = [t.album, t.edition].filter(Boolean).join(' · ');
     P.fmt.textContent = P.shortFormat(t.format);
     P.fmt.style.color = K.formatColor(t.format);
-    P.state.textContent = { play: '▶ Playing', pause: '❚❚ Paused', stop: '■ Stopped' }[t.state] || '▶ Play';
+    P.paintState(t.state);
     P.state.className = 'chip state ' + t.state;
     if (t.art) { if (P.art.getAttribute('src') !== t.art) { P.art.hidden = true; P.art.setAttribute('src', t.art); } }
     else { P.art.hidden = true; P.art.removeAttribute('src'); P.artBox.classList.add('empty'); }
@@ -727,8 +733,7 @@ P.wireCoverGesture = () => {
 
 // ── transport: tap = play/pause, hold = stop ────────────────────────────────
 P.transport = async action => {
-    const label = { play: '▶ Playing', pause: '❚❚ Paused', stop: '■ Stopped' }[action];
-    if (label) P.state.textContent = label;              // optimistic; the next poll confirms
+    if (['play', 'pause', 'stop'].includes(action)) P.paintState(action);              // optimistic; the next poll confirms
     const d = await K.api('/k/api/transport', { json: { action } });
     if (!d.ok) K.toast(d.error || `${action} failed`, 'error');
     [700, 2500].forEach(ms => setTimeout(() => { if (P.trackPoll.running) P.trackPoll.now(); }, ms));

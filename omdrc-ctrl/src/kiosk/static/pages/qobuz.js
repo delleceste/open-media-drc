@@ -1087,7 +1087,7 @@ P.row = (c, where = '') => {
         c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }),
         body,
         h('div', { class: 'qz-act' },
-            h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: off ? 'Not available on Qobuz' : 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, '▶'),
+            h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: off ? 'Not available on Qobuz' : 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),
             h('button', { type: 'button', class: 'btn qz-add', disabled: off, title: off ? 'Not available on Qobuz' : 'Add to the queue', onclick: () => P.play(c, 'append') }, '+'),
             // in "Played recently", − only takes it out of that list (P.hideRecent)
             where === 'recent'
@@ -1129,7 +1129,7 @@ P.toggleTracks = async (c, row, box, keep = false) => {
             h('span', { class: 'qz-ttitle' }, t.title, t.version ? h('span', { class: 'muted' }, ` (${t.version})`) : null),
             h('span', { class: 'qz-dur muted' }, K.fmtClock(t.duration)),
             h('button', { type: 'button', class: 'btn qz-tplay', disabled: !t.streamable, title: 'Play the album from here',
-                onclick: () => P.play(c, 'replace', t) }, '▶')));
+                onclick: () => P.play(c, 'replace', t) }, K.tIcon('play'))));
     }
     K.clear(box).append(...lines,
         // everything about it, and marking it awarded (widgets/albuminfo.js)
@@ -1178,7 +1178,7 @@ P.makeView = full => {
     v.cover = h('div', { class: 'qz-pcover' });
     v.title = h('div', { class: 'qz-ptitle' }, '—');
     v.sub = h('div', { class: 'qz-psub muted' }, '');
-    v.toggle = btn('▶', 'Play / pause', () => P.transport(P.base && P.base.playing ? 'pause' : 'play'), 'primary qz-toggle');
+    v.toggle = btn(K.tIcon('play'), 'Play / pause', () => P.transport(P.base && P.base.playing ? 'pause' : 'play'), 'primary qz-toggle');
     v.elapsed = h('span', { class: 'qz-ptime' }, '–:––');
     v.total = h('span', { class: 'qz-ptime' }, '–:––');
     v.seek = h('input', {
@@ -1187,10 +1187,10 @@ P.makeView = full => {
         onchange: () => P.seekTo(+v.seek.value),
     });
     v.buttons = h('div', { class: 'qz-pbtns' },
-        btn('⏮', 'Previous track', () => P.transport('prev')),
+        btn(K.tIcon('prev'), 'Previous track', () => P.transport('prev')),
         v.toggle,
-        btn('⏹', 'Stop', () => P.transport('stop')),
-        btn('⏭', 'Next track', () => P.transport('next')));
+        btn(K.tIcon('stop'), 'Stop', () => P.transport('stop')),
+        btn(K.tIcon('next'), 'Next track', () => P.transport('next')));
     v.seekRow = h('div', { class: 'qz-pseek' }, v.elapsed, v.seek, v.total);
     return v;
 };
@@ -1306,7 +1306,10 @@ P.paintViews = () => {
     const pos = d && d.pos && d.length ? `${d.pos} / ${d.length}` : '';
     for (const v of P.views) {
         v.title.textContent = title;
-        v.toggle.textContent = playing ? '⏸' : '▶';
+        if (v.toggle.dataset.icon !== (playing ? 'pause' : 'play')) {
+            v.toggle.dataset.icon = playing ? 'pause' : 'play';
+            K.clear(v.toggle).append(K.tIcon(v.toggle.dataset.icon));
+        }
         setCover(v.cover, album ? (v.full ? album.image_large || album.image : album.image || album.image_large) : '');
         if (v.full) {
             v.infoBtn.hidden = !(album && album.id);
