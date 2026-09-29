@@ -301,6 +301,9 @@ class PlayRouteTest(OpenHomeCase):
             patch.object(qobuz_web, "_renderer_running", lambda: True),
             patch.object(qobuz_web, "_upmpdcli_options", lambda: {}),
             patch.object(qobuz_web, "learned", return_value=self.words),
+            # never the real state directory's ring
+            patch.object(qobuz_web, "artist_labels",
+                         return_value=qs.ArtistLabels(self.tmp.name + "/a.json")),
         ]
         for p in self.patches:
             p.start()
