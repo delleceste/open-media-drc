@@ -7,7 +7,7 @@
     <path android:pathData="M0,0 L108,0 L108,108 L0,108 Z">
         <aapt:attr name="android:fillColor">
             <gradient android:type="radial" android:centerX="54.0" android:centerY="48.6"
-                android:gradientRadius="75.6" android:startColor="#ffffff" android:endColor="#fbf5ec"/>
+                android:gradientRadius="75.6" android:startColor="#1b2028" android:endColor="#07090c"/>
         </aapt:attr>
     </path>
 </vector>
