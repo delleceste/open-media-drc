@@ -107,6 +107,7 @@ endif()
 install(FILES src/app.py src/configuration.py src/bitperfect.py
               src/audio_diagnostics.py src/drdb.py src/drmeter.py
               src/qobuz_search.py src/qobuz_web.py src/openhome.py src/qobuz_words.txt
+              src/qobuz_artists.txt
               README.md SPECTRUM_ANALYZER.md
         DESTINATION lib/omdrcctrl)
 

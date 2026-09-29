@@ -408,6 +408,35 @@ class PlayRouteTest(OpenHomeCase):
         self.assertEqual(data["words"], ["Beethoven", "symphony"])
         self.assertEqual(data["learned"], [{"text": "Pink Floyd", "count": 1}])
 
+    def test_words_route_sends_the_artists_and_their_labels(self):
+        ring = qs.ArtistLabels(self.tmp.name + "/pairs.json")
+        ring.record("Tiny Band", "Indie One")
+        with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
+            f.write("Miles Davis: Columbia, Blue Note\n")
+            f.flush()
+            with patch.object(qobuz_web, "ARTISTS_FILE", f.name), \
+                    patch.object(qobuz_web, "_artists", (None, [])), \
+                    patch.object(qobuz_web, "artist_labels", return_value=ring):
+                data = self.client.get("/qobuz/words").get_json()
+        self.assertEqual(data["artists"], [["Miles Davis", ["Columbia", "Blue Note"]]])
+        self.assertEqual(data["artist_pairs"], [["Tiny Band", "Indie One"]])
+
+    def test_a_play_learns_a_rock_pair_but_not_a_classical_one(self):
+        ring = qs.ArtistLabels(self.tmp.name + "/pairs.json")
+        real = self.catalog.album
+
+        def as_rock(album_id):
+            card = real(album_id)
+            return {**card, "artist": "Tiny Band", "label": "Indie One", "genre": "Rock", "groups": []}
+
+        with patch.object(qobuz_web, "artist_labels", return_value=ring):
+            self.play(album_id="a1", mode="append", query="tiny")           # PENTATONE: a label group
+            self.assertEqual(ring.pairs(), [])
+            with patch.object(self.catalog, "album", side_effect=as_rock):
+                data = self.play(album_id="a1", mode="append", query="tiny").get_json()
+        self.assertTrue(data["label_learned"])
+        self.assertEqual(ring.pairs(), [["Tiny Band", "Indie One"]])
+
     def test_track_route_gives_the_players_cover(self):
         data = self.client.get("/qobuz/track/11").get_json()
         self.assertTrue(data["ok"], data)
@@ -449,6 +478,63 @@ class SearchWordsTest(unittest.TestCase):
         store = qs.SearchWords("/nonexistent-dir/x/words.json")
         with patch("os.makedirs", side_effect=OSError("read-only")):
             self.assertFalse(store.record(["Pink Floyd"]))
+
+
+class ArtistLabelsTest(unittest.TestCase):
+    """Shipped artist -> label pairs, and the ring learned from plays."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "pairs.json")
+        self.shipped = [("Miles Davis", ["Columbia", "Blue Note"])]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def ring(self, limit=3):
+        return qs.ArtistLabels(self.path, limit, shipped=lambda: self.shipped)
+
+    def test_the_shipped_file_parses(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
+            f.write("# c\nMiles Davis: Columbia, Blue Note  # x\n\nmiles davis: Other\nNo labels:\nAC/DC: Atlantic\n")
+            f.flush()
+            self.assertEqual(qs.read_artist_labels(f.name),
+                             [("Miles Davis", ["Columbia", "Blue Note"]), ("AC/DC", ["Atlantic"])])
+
+    def test_the_shipped_list_is_real_and_has_labels_for_everyone(self):
+        pairs = qs.read_artist_labels(str(SRC / "qobuz_artists.txt"))
+        self.assertGreater(len(pairs), 300)
+        self.assertLess(len(pairs), 900)             # a short list of what matters
+        names = dict(pairs)
+        self.assertIn("Blue Note", names["Herbie Hancock"])
+        self.assertIn("Sub Pop", names["Nirvana"])
+
+    def test_the_oldest_pair_falls_out_of_the_ring(self):
+        ring = self.ring(3)
+        for artist in ("A Band", "B Band", "C Band", "D Band"):
+            self.assertTrue(ring.record(artist, "Indie"))
+        self.assertEqual([p[0] for p in qs.ArtistLabels(self.path, 3).pairs()],
+                         ["D Band", "C Band", "B Band"])
+
+    def test_a_pair_played_again_moves_up_and_is_not_duplicated(self):
+        ring = self.ring(3)
+        ring.record("A Band", "Indie"); ring.record("B Band", "Indie"); ring.record("a band", "INDIE")
+        self.assertEqual(ring.pairs(), [["a band", "INDIE"], ["B Band", "Indie"]])
+
+    def test_shipped_pairs_and_nothing_are_not_kept(self):
+        ring = self.ring()
+        self.assertFalse(ring.record("miles davis", "blue note"))     # the shipped list has it
+        self.assertTrue(ring.record("Miles Davis", "Tiny Label"))     # a new label of a known artist
+        self.assertFalse(ring.record("", "Indie"))
+        self.assertFalse(ring.record("Various Artists", "Indie"))
+        self.assertFalse(self.ring(0).record("A Band", "Indie"))
+
+    def test_a_smaller_ring_forgets_at_once(self):
+        ring = self.ring(3)
+        for artist in ("A Band", "B Band", "C Band"):
+            ring.record(artist, "Indie")
+        ring.limit = 1
+        self.assertEqual(ring.pairs(), [["C Band", "Indie"]])
 
 
 class WordListTest(unittest.TestCase):

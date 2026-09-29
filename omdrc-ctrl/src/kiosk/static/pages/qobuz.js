@@ -50,7 +50,8 @@ P.mount = el => {
     P.input.value = pref('q', '');
     P.labelsBox = h('div', { class: 'qz-chips' });
     P.seenBox = h('div', {});
-    P.labelsBody = h('div', { class: 'qz-label-body' }, P.labelsBox, P.seenBox);
+    P.hintBox = h('div', { class: 'qz-hints' });      // the labels of the artist typed (see P.hintsFor)
+    P.labelsBody = h('div', { class: 'qz-label-body' }, P.hintBox, P.labelsBox, P.seenBox);
     P.labelsToggle = h('button', { type: 'button', class: 'qz-label-toggle',
         onclick: () => P.setLabelsOpen(!P.labelsOpen) });
     P.dateBox = h('div', {});
@@ -341,7 +342,9 @@ P.setLabelsOpen = open => {
 // while typing. Short fragments would classify too many ordinary searches.
 P.syncLabels = () => {
     const query = P.plain(P.input.value);
+    const hinted = P.paintHints(query);
     if (!query) { P.setLabelsOpen(true); return; }
+    if (hinted) { P.setLabelsOpen(true); return; }
     if (query.length < 4 && query !== 'duo') return;
     const padded = ` ${query} `;
     const last = query.split(' ').pop();
@@ -350,11 +353,52 @@ P.syncLabels = () => {
         || query === 'quarted');
 };
 
+// The labels of the artist being searched, offered as chips: Qobuz cannot search
+// by label, so the way to a label is through the artist.  An artist is recognised
+// at the start or the end of the text; a short single word ("Low", "Free", "Can")
+// only when it is all that was typed, or every search with the word would offer it.
+P.hintsFor = query => {
+    if (!query) return [];
+    const found = [];
+    for (const a of P.artists) {
+        const t = a.term;
+        if (!t || t.length < 3) continue;
+        const short = !t.includes(' ') && t.length <= 4;
+        if (query === t || (!short && (query.startsWith(t + ' ') || query.endsWith(' ' + t)))) {
+            found.push({ artist: a.e.text, labels: [...a.labels], term: t });
+        }
+    }
+    for (const [artist, label] of P.artistPairs) {
+        const t = P.plain(artist);
+        if (t && t.length >= 3 && (query === t || query.startsWith(t + ' ') || query.endsWith(' ' + t))) {
+            let f = found.find(x => x.term === t);
+            if (!f) found.push(f = { artist, labels: [], term: t });
+            if (!f.labels.some(l => P.plain(l) === P.plain(label))) f.labels.push(label);
+        }
+    }
+    return found.sort((a, b) => b.term.length - a.term.length).slice(0, 2);
+};
+
+P.paintHints = query => {
+    const found = P.hintsFor(query);
+    K.clear(P.hintBox);
+    for (const f of found) {
+        P.hintBox.append(h('div', { class: 'qz-hint' },
+            h('div', { class: 'small muted' }, `Labels of ${f.artist}`),
+            h('div', { class: 'qz-chips' }, f.labels.map(name => h('button', {
+                type: 'button', class: 'chip tog qz-chip' + (P.selected.has(name) ? ' on' : ''),
+                onclick: () => P.toggleLabel(name),
+            }, name)))));
+    }
+    return found.length > 0;
+};
+
 // A ticked name that is not a favourite (picked from a result's labels) is still
 // sent: the server takes an unknown name as a label keyword of its own.
 P.paintLabels = () => {
     const names = [...P.favourites, ...[...P.selected].filter(n => !P.favourites.some(f => f.toLowerCase() === n.toLowerCase()))];
     P.paintSummary();
+    P.paintHints(P.plain(P.input.value));            // their ticks follow
     const chip = name => h('button', {
         type: 'button', class: 'chip tog qz-chip' + (P.selected.has(name) ? ' on' : ''),
         onclick: () => P.toggleLabel(name),
@@ -799,12 +843,23 @@ const entry = (text, learned = 0) => {
 };
 P.words = [];
 P.learned = [];
+P.artists = [];          // [{ e: entry, term, labels }]: the shipped artists and their labels
+P.artistPairs = [];      // [[artist, label]]: learned from plays, a ring the server keeps
 
 P.loadWords = async () => {
     const d = await K.api('/qobuz/words', { timeout: 30000 });
     if (!d.ok) return;
     P.words = d.words.map(w => ({ ...entry(w), term: P.plain(w) }));
     P.learned = d.learned.map(w => entry(w.text, w.count));
+    P.artists = (d.artists || []).map(([a, labels]) => ({ ...entry(a), term: P.plain(a), labels }));
+    P.artistPairs = d.artist_pairs || [];
+    P.syncLabels();
+};
+
+// The server's ring, kept alike here: newest first, the oldest forgotten.
+P.learnPair = (artist, label) => {
+    P.artistPairs = [[artist, label], ...P.artistPairs.filter(([a, l]) => !(P.plain(a) === P.plain(artist) && P.plain(l) === P.plain(label)))]
+        .slice(0, 200);
     P.syncLabels();
 };
 
@@ -837,6 +892,7 @@ P.suggestions = (value, caret) => {
         };
         P.learned.forEach(e => consider(e, 0));
         P.words.forEach(e => consider(e, 1));
+        P.artists.forEach(a => consider(a, 1));
     }
     return [...best.values()].sort((a, b) =>
         a.source - b.source || (b.e.learned - a.e.learned) || (a.at > 0) - (b.at > 0)
@@ -1101,6 +1157,7 @@ P.play = async (c, mode, track = null) => {
     K.toast(mode === 'append' ? `Added ${n} to the queue` : `Playing — ${n} queued`, 'ok', mode !== 'append');
     if (d.remembered) c.played = (c.played || 0) + 1;
     if (fromSearch) P.learn([P.last.query, c.artist, c.composer]);
+    if (d.label_learned) P.learnPair(c.artist, c.label);
     P.playerPoll.now();
     // results searched from Now: back there, to what is now playing
     if (P.visible && P.fromNowShown) K.showPage('now');

@@ -107,6 +107,9 @@ class Settings:
     renderer: str = ""
     # Albums the played list remembers.
     played_limit: int = 1000
+    # Artist -> label pairs learned from plays beyond the shipped list: a ring,
+    # the oldest forgotten.  0: nothing is learned.
+    artist_ring: int = 200
 
 
 # A search reporting its progress (the kiosk's preview) does so at most this often, seconds.
@@ -134,6 +137,7 @@ def settings_from_section(sec, current: Settings) -> Settings:
         labels=parse_labels(labels) if labels else current.labels,
         renderer=sec.get("renderer", fallback=current.renderer).strip(),
         played_limit=max(0, sec.getint("played_limit", fallback=current.played_limit)),
+        artist_ring=min(1000, max(0, sec.getint("artist_ring", fallback=current.artist_ring))),
     )
 
 
@@ -513,6 +517,91 @@ class SearchWords:
     def recent(self) -> list[dict]:
         with self._lock:
             return [{"text": e["text"], "count": e.get("count", 1)} for e in self._load()]
+
+
+def read_artist_labels(path: str) -> list[tuple[str, list[str]]]:
+    """The shipped artists and their labels (qobuz_artists.txt): "Artist:
+    Label, Label" per line, "#" comments, the first line of a repeated artist
+    kept.  A missing file is an empty list."""
+    out, seen = [], set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        artist, sep, rest = line.split("#", 1)[0].partition(":")
+        artist = re.sub(r"\s+", " ", artist).strip()
+        labels = [re.sub(r"\s+", " ", x).strip() for x in rest.split(",")]
+        labels = [x for x in dict.fromkeys(labels) if x]
+        if sep and artist and labels and _fold(artist) not in seen:
+            seen.add(_fold(artist))
+            out.append((artist, labels))
+    return out
+
+
+class ArtistLabels:
+    """Artist -> label pairs met in what is played, beyond the shipped list.
+
+    A ring: `limit` pairs, newest first, the oldest dropped as new ones come.
+    A pair the shipped list already has is not kept (it lives there for good),
+    and a pair kept is not counted: one-off listening is meant to be forgotten.
+    A JSON file, {"pairs": [{"artist", "label"}]}."""
+
+    def __init__(self, path: str, limit: int = 200, shipped=None) -> None:
+        self.path = path
+        self.limit = limit
+        self._shipped = shipped or (lambda: [])     # -> [(artist, [labels])]
+        self._lock = threading.Lock()
+        self._entries: list[dict] | None = None
+
+    def _load(self) -> list[dict]:
+        if self._entries is None:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    data = json.load(f)
+                self._entries = [e for e in data.get("pairs", []) if isinstance(e, dict)
+                                 and isinstance(e.get("artist"), str) and isinstance(e.get("label"), str)]
+            except (OSError, ValueError, AttributeError):
+                self._entries = []
+        return self._entries
+
+    def _known(self, artist: str, label: str) -> bool:
+        for name, labels in self._shipped():
+            if _fold(name) == _fold(artist):
+                return any(_fold(x) == _fold(label) for x in labels)
+        return False
+
+    def record(self, artist: str, label: str) -> bool:
+        """Put the pair at the head.  False when it is not kept (nothing to
+        learn, already shipped, a ring of 0, or the file cannot be written)."""
+        artist = re.sub(r"\s+", " ", artist or "").strip()
+        label = re.sub(r"\s+", " ", label or "").strip()
+        if not artist or not label or len(artist) > 80 or len(label) > 80 or self.limit <= 0:
+            return False
+        if _fold(artist) in ("various artists", "various") or self._known(artist, label):
+            return False
+        with self._lock:
+            entries = self._load()
+            key = (_fold(artist), _fold(label))
+            entries[:] = [{"artist": artist, "label": label}] + [
+                e for e in entries if (_fold(e["artist"]), _fold(e["label"])) != key]
+            del entries[self.limit:]
+            try:
+                os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+                tmp = f"{self.path}.tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({"pairs": entries}, f, ensure_ascii=False)
+                os.replace(tmp, self.path)
+            except OSError:
+                return False
+        return True
+
+    def pairs(self) -> list[list[str]]:
+        with self._lock:
+            entries = self._load()
+            del entries[max(0, self.limit):]
+            return [[e["artist"], e["label"]] for e in entries]
 
 
 class LoweredList:

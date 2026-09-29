@@ -1,0 +1,481 @@
+# Artists and the labels they are known by, for the Qobuz search field.
+#
+# Typing (or completing) one of these names offers its labels as filter
+# chips, because Qobuz's own search cannot search by label.  One line each:
+#   Artist: Label, Label
+# A label is matched as whole words, ignoring case, inside the label name
+# Qobuz reports ("Blue Note" finds "Blue Note Records").  "#" starts a comment.
+#
+# Deliberately short: only records that matter in history.  What is played
+# beyond this goes to a small ring of learned pairs (qobuz-artist-labels.json)
+# that forgets its oldest entries; this file never grows by itself.
+
+# ── jazz ────────────────────────────────────────────────────────────────────
+Miles Davis: Columbia, Prestige, Blue Note
+John Coltrane: Impulse!, Atlantic, Prestige
+Thelonious Monk: Blue Note, Riverside, Columbia, Prestige
+Bill Evans: Riverside, Verve, Warner
+Charles Mingus: Atlantic, Impulse!, Columbia, Debut
+Dave Brubeck: Columbia
+Art Blakey: Blue Note
+Art Blakey & The Jazz Messengers: Blue Note
+Herbie Hancock: Blue Note, Columbia, Verve
+Wayne Shorter: Blue Note, Columbia, Verve
+Sonny Rollins: Prestige, Blue Note, Riverside, Impulse!
+Cannonball Adderley: Riverside, Blue Note, Capitol
+Horace Silver: Blue Note
+Lee Morgan: Blue Note
+Hank Mobley: Blue Note
+Dexter Gordon: Blue Note, Steeplechase
+Wes Montgomery: Riverside, Verve
+Freddie Hubbard: Blue Note, CTI, Atlantic
+Ornette Coleman: Atlantic, Blue Note, Impulse!
+Eric Dolphy: Blue Note, Prestige
+Stan Getz: Verve, Columbia
+Chet Baker: Pacific Jazz, Riverside, Prestige, Steeplechase
+Gerry Mulligan: Pacific Jazz, Verve, Columbia
+Oscar Peterson: Verve, Pablo, Telarc
+Ella Fitzgerald: Verve, Decca, Capitol
+Louis Armstrong: Decca, Columbia, Verve
+Duke Ellington: Columbia, Verve, Reprise, RCA
+Count Basie: Verve, Roulette, Pablo
+Billie Holiday: Verve, Columbia, Decca
+Sarah Vaughan: Mercury, Columbia
+Nina Simone: RCA, Philips, Colpix
+Charlie Parker: Verve, Savoy, Dial
+Dizzy Gillespie: Verve, Blue Note, Savoy
+Lester Young: Verve, Columbia
+Coleman Hawkins: Verve, Riverside
+Ben Webster: Verve
+Sun Ra: Impulse!, Saturn, Strut
+Pharoah Sanders: Impulse!, Verve, Luaka Bop
+Alice Coltrane: Impulse!, Warner
+McCoy Tyner: Blue Note, Impulse!, Milestone
+Archie Shepp: Impulse!, Blue Note, Verve
+Albert Ayler: ESP-Disk, Impulse!
+Cecil Taylor: Blue Note, Candid, Soul Note
+Keith Jarrett: ECM, Atlantic, Impulse!
+Chick Corea: ECM, Polydor, Stretch, Concord
+Pat Metheny: ECM, Geffen, Nonesuch, Warner
+Jan Garbarek: ECM
+Charlie Haden: ECM, Verve, Impulse!
+Paul Bley: ECM, Steeplechase
+Gary Burton: ECM, Atlantic, RCA
+Jack DeJohnette: ECM, Impulse!
+Ralph Towner: ECM
+Kenny Wheeler: ECM
+Marcin Wasilewski: ECM
+Tord Gustavsen: ECM
+Nik Bärtsch: ECM
+Anouar Brahem: ECM
+Weather Report: Columbia
+Return to Forever: Polydor, Columbia
+Mahavishnu Orchestra: Columbia
+Pat Martino: Prestige, Muse, Blue Note
+Grant Green: Blue Note
+Joe Henderson: Blue Note, Milestone, Verve
+Jimmy Smith: Blue Note, Verve
+Jimmy Giuffre: Atlantic, Verve
+Lennie Tristano: Atlantic
+Lee Konitz: Atlantic, Verve
+Paul Desmond: RCA, A&M
+Clifford Brown: EmArcy, Blue Note
+Max Roach: EmArcy, Mercury, Impulse!, Candid
+Kenny Burrell: Blue Note, Verve, Prestige
+Booker Little: Candid, Blue Note
+Yusef Lateef: Impulse!, Atlantic
+Ahmad Jamal: Argo, Verve, Impulse!
+Erroll Garner: Columbia, Mercury
+Bud Powell: Blue Note, Verve, Roost
+Art Pepper: Contemporary, Galaxy
+Shelly Manne: Contemporary
+Jaco Pastorius: Epic, Warner
+Joe Pass: Pablo, Verve
+Cassandra Wilson: Blue Note, Verve
+Diana Krall: Verve, Impulse!
+Norah Jones: Blue Note
+Kamasi Washington: Young Turks, Brainfeeder
+Brad Mehldau: Nonesuch, Warner
+Esbjörn Svensson Trio: ACT, Columbia
+Robert Glasper: Blue Note, Concord
+Snarky Puppy: GroundUP, Ropeadope
+Gregory Porter: Blue Note, Motéma
+Jacob Collier: Hajanga, Decca
+Vijay Iyer: ECM, ACT
+Avishai Cohen: Razdaz, Blue Note, Naïve
+Christian McBride: Mack Avenue, Verve
+Branford Marsalis: Columbia, Marsalis Music
+Wynton Marsalis: Columbia, Blue Engine
+Joshua Redman: Warner, Nonesuch
+Pat Metheny Group: ECM, Geffen
+Ravi Coltrane: Blue Note, Savoy
+Esperanza Spalding: Concord, Heads Up
+Django Reinhardt: Decca, Swing
+Stéphane Grappelli: Verve, Decca
+Michel Petrucciani: Blue Note, Dreyfus
+John Scofield: Blue Note, Verve, ECM
+Bill Frisell: Nonesuch, Blue Note, ECM
+Dave Holland: ECM, Dare2
+Stan Kenton: Capitol
+Woody Herman: Capitol, Columbia
+Benny Goodman: Columbia, RCA, Decca
+Glenn Miller: RCA
+Sidney Bechet: Blue Note, Vogue
+Jelly Roll Morton: Victor, Library of Congress
+Bessie Smith: Columbia
+Fats Waller: Victor, RCA
+
+# ── rock ────────────────────────────────────────────────────────────────────
+The Beatles: Parlophone, Apple, Capitol
+The Rolling Stones: Decca, Rolling Stones Records, Abkco, Polydor
+Led Zeppelin: Atlantic, Swan Song
+Pink Floyd: Harvest, EMI, Columbia, Capitol
+The Who: Track, Decca, Polydor, MCA
+The Kinks: Pye, RCA, Reprise
+The Doors: Elektra
+Jimi Hendrix: Reprise, Track, Polydor, Experience Hendrix
+Cream: Reaction, Atco, Polydor
+Deep Purple: Harvest, Purple, Warner
+Black Sabbath: Vertigo, Warner
+Queen: EMI, Parlophone, Hollywood
+David Bowie: RCA, EMI, Virgin, Columbia, Parlophone
+Roxy Music: Island, EG, Virgin
+Genesis: Charisma, Atlantic, Virgin
+Yes: Atlantic, Atco
+King Crimson: Island, EG, Discipline, Virgin
+Jethro Tull: Chrysalis, Island
+Fleetwood Mac: Reprise, Warner, Blue Horizon
+Eric Clapton: Polydor, Reprise, RSO
+The Velvet Underground: Verve, MGM, Polydor
+Lou Reed: RCA, Sire, Arista
+Iggy Pop: Elektra, Virgin, RCA, Bomp
+Bob Dylan: Columbia, Asylum
+Neil Young: Reprise, Geffen
+Bruce Springsteen: Columbia
+Tom Petty: Backstreet, MCA, Warner
+The Band: Capitol, Rhino
+The Byrds: Columbia
+The Beach Boys: Capitol, Brother
+Creedence Clearwater Revival: Fantasy
+Grateful Dead: Warner, Grateful Dead Records, Arista
+Santana: Columbia
+Crosby, Stills, Nash & Young: Atlantic
+Eagles: Asylum, Elektra
+Steely Dan: ABC, MCA, Warner
+The Allman Brothers Band: Capricorn, Polydor
+Lynyrd Skynyrd: MCA, Sounds of the South
+ZZ Top: London, Warner
+AC/DC: Atlantic, Albert, EMI, Columbia
+Aerosmith: Columbia, Geffen
+Kiss: Casablanca, Mercury
+Van Halen: Warner
+Rush: Anthem, Mercury, Atlantic
+Iron Maiden: EMI, Parlophone, Sanctuary
+Judas Priest: Columbia, Sony
+Motörhead: Bronze, Sanctuary, Steamhammer
+Metallica: Elektra, Megaforce, Blackened, Vertigo
+Slayer: Def Jam, American, Columbia
+Megadeth: Capitol, Combat
+Anthrax: Megaforce, Island
+Tool: Zoo, Volcano, Tool Dissectional
+Sepultura: Roadrunner
+The Clash: CBS, Epic
+Sex Pistols: Virgin, Warner
+Ramones: Sire, Warner
+Talking Heads: Sire, Warner
+Television: Elektra, Rough Trade
+Patti Smith: Arista, Sire
+Blondie: Chrysalis, Capitol
+The Jam: Polydor
+The Damned: Stiff, Chiswick
+Buzzcocks: United Artists, IRS, Domino
+Joy Division: Factory, Warner, Rhino
+New Order: Factory, London, Warner
+The Cure: Fiction, Elektra, Polydor
+Siouxsie and the Banshees: Polydor, Geffen
+Bauhaus: Beggars Banquet, 4AD
+Depeche Mode: Mute, Sire, Reprise
+Echo & the Bunnymen: Korova, Warner, Sire
+The Smiths: Rough Trade, Warner, Sire
+Morrissey: HMV, Parlophone, Sire, Harvest
+The Stone Roses: Silvertone, Jive
+Pixies: 4AD, Elektra, Rykodisc
+Sonic Youth: Geffen, DGC, Blast First, Sub Pop
+Dinosaur Jr.: SST, Sub Pop, Merge, Blanco y Negro
+Hüsker Dü: SST, Warner
+Minutemen: SST
+Black Flag: SST
+Fugazi: Dischord
+Minor Threat: Dischord
+Bad Brains: SST, Roir, Caroline
+Nirvana: Sub Pop, DGC, Geffen
+Pearl Jam: Epic, Monkeywrench, J
+Soundgarden: A&M, Sub Pop
+Alice in Chains: Columbia
+Mudhoney: Sub Pop, Reprise
+Smashing Pumpkins: Virgin, Caroline, Martha's Music
+Radiohead: Parlophone, Capitol, XL, TBD
+Oasis: Creation, Big Brother, Epic
+Blur: Food, Parlophone, Virgin
+Pulp: Island, Fire, Rough Trade
+Suede: Nude, Columbia, Sony
+The Verve: Hut, Virgin
+Arctic Monkeys: Domino
+Interpol: Matador, Capitol, Domino
+The Strokes: RCA, Rough Trade
+The White Stripes: XL, Third Man, V2
+Queens of the Stone Age: Interscope, Loosegroove, Matador
+Foo Fighters: RCA, Roswell, Capitol
+Red Hot Chili Peppers: Warner, EMI, Capitol
+R.E.M.: IRS, Warner
+U2: Island, Universal, Interscope
+Sigur Rós: Krúnk, Parlophone, XL
+Mogwai: Rock Action, Chemikal Underground, Matador
+Godspeed You! Black Emperor: Constellation, Kranky
+Explosions in the Sky: Temporary Residence
+Neutral Milk Hotel: Merge
+Pavement: Matador, Drag City
+Built to Spill: Up, Warner, Sub Pop
+Wilco: Reprise, Nonesuch, dBpm
+Modest Mouse: Epic, Up, Sub Pop
+Death Cab for Cutie: Barsuk, Atlantic
+The National: Beggars Banquet, 4AD
+Arcade Fire: Merge, Sonovox, Columbia
+LCD Soundsystem: DFA, Parlophone
+Yeah Yeah Yeahs: Interscope, Polydor, Touch and Go
+TV on the Radio: Interscope, DGC, Touch and Go
+Bon Iver: Jagjaguwar, 4AD, Jagjaguwar
+Fleet Foxes: Sub Pop, Nonesuch
+Beach House: Sub Pop, Bella Union
+Tame Impala: Modular, Interscope
+Kings of Leon: RCA, Hands Down
+Muse: Mushroom, Warner
+Coldplay: Parlophone, Capitol
+Kraftwerk: Philips, EMI, Parlophone, Warner
+Can: Spoon, Mute, Liberty, Harvest
+Neu!: Brain, Grönland
+Faust: Polydor, Recommended, Klangbad
+Tangerine Dream: Virgin, Ohr, Jive
+Brian Eno: Island, EG, Opal, Virgin, Warp
+Robert Fripp: Editions EG, Discipline
+Robert Wyatt: Rough Trade, Domino, Virgin
+Nick Drake: Island, Fontana, Hannibal
+Leonard Cohen: Columbia, Sony
+Joni Mitchell: Reprise, Asylum, Warner
+Van Morrison: Warner, Polydor, Exile
+Bob Marley & The Wailers: Island, Tuff Gong, Trojan
+Peter Tosh: Rolling Stones Records, EMI, Columbia
+Dire Straits: Vertigo, Warner
+Mark Knopfler: Vertigo, Mercury, Blue Note
+Sting: A&M, Polydor
+The Police: A&M
+Peter Gabriel: Charisma, Real World, Geffen
+Phil Collins: Atlantic, Virgin
+The Cars: Elektra, Warner
+Bruce Cockburn: True North, Columbia
+Frank Zappa: Bizarre, Reprise, DiscReet, Barking Pumpkin, Zappa
+Captain Beefheart: Straight, Reprise, Virgin, Buddah
+Tom Waits: Asylum, Island, Anti-, Epitaph
+Nick Cave & The Bad Seeds: Mute, Anti-, Bad Seed
+Nick Cave: Mute, Bad Seed
+PJ Harvey: Island, Too Pure, Rough Trade, Universal
+Björk: One Little Independent, Elektra, Polydor
+Portishead: Go! Beat, Island, Universal, Polydor
+Massive Attack: Circa, Wild Bunch, Virgin
+Tricky: 4th & Broadway, Island, False Idols
+Aphex Twin: Warp, R&S, Rephlex, Sire
+Autechre: Warp
+Boards of Canada: Warp, Music70
+Thom Yorke: XL, Parlophone
+Elliott Smith: Kill Rock Stars, DreamWorks, Domino
+Big Star: Ardent, Stax, Rykodisc, Omnivore
+The Zombies: Decca, CBS, Rhino
+The Yardbirds: Columbia, EMI, Epic
+Small Faces: Immediate, Decca
+Free: Island, Fontana
+Traffic: Island, United Artists
+Procol Harum: Regal Zonophone, Chrysalis, Deram
+The Moody Blues: Deram, Threshold, Decca
+Emerson, Lake & Palmer: Island, Manticore
+Gentle Giant: Vertigo, Chrysalis
+Camel: Deram, Decca, Gama
+Van der Graaf Generator: Charisma, Fie!
+Soft Machine: Probe, Columbia, Harvest
+Caravan: Deram, Decca, Kingdom
+Steve Hackett: Charisma, Camino, InsideOut
+Porcupine Tree: Kscope, Lava, Atlantic, Snapper
+Opeth: Music for Nations, Roadrunner, Nuclear Blast, Moderbolaget
+Dream Theater: Elektra, Atlantic, Rhino
+Type O Negative: Roadrunner
+Pantera: Atco, East West
+Motley Crue: Elektra
+Guns N' Roses: Geffen
+Def Leppard: Mercury, Bludgeon Riffola
+Whitesnake: Geffen, EMI, Purple, Warner
+Rainbow: Oyster, Polydor
+Dio: Vertigo, Warner
+Ozzy Osbourne: Jet, Epic
+Scorpions: Harvest, Mercury, EMI
+Accept: Brain, Portrait, RCA, Nuclear Blast
+Manowar: Megaforce, Music for Nations
+Blind Guardian: Virgin, Nuclear Blast
+Sabaton: Nuclear Blast, Black Lodge, Sabaton
+Rammstein: Motor, Universal
+Nightwish: Spinefarm, Nuclear Blast, Century Media
+System of a Down: American, Columbia
+Rage Against the Machine: Epic
+Linkin Park: Warner
+Green Day: Reprise, Lookout!
+The Offspring: Epitaph, Columbia
+NOFX: Fat Wreck Chords
+Bad Religion: Epitaph, Atlantic
+Rancid: Epitaph, Hellcat
+Blink-182: MCA, Geffen
+Weezer: DGC, Geffen, Interscope
+The Killers: Island, Vertigo
+My Chemical Romance: Reprise
+Paramore: Fueled by Ramen, Atlantic
+Fall Out Boy: Island, Fueled by Ramen
+Sleater-Kinney: Kill Rock Stars, Sub Pop, Matador
+Bikini Kill: Kill Rock Stars, Bikini Kill Records
+Hole: DGC, Caroline, Geffen
+Liz Phair: Matador, Capitol
+Jeff Buckley: Columbia
+Grandaddy: V2, Dangerbird
+The Flaming Lips: Warner, Bella Union, Restless
+Spiritualized: Dedicated, Arista, Fat Possum
+Slowdive: Creation, Dead Oceans
+My Bloody Valentine: Creation, Domino, Sire
+Ride: Creation, Wichita, Sire
+Cocteau Twins: 4AD, Fontana, Capitol
+Dead Can Dance: 4AD, PIAS
+This Mortal Coil: 4AD
+The Fall: Rough Trade, Beggars Banquet, Cog Sinister
+Wire: Harvest, Pinkflag
+Gang of Four: EMI, Warner, Rough Trade
+Pere Ubu: Blank, Rough Trade, Fire
+Devo: Warner, Booji Boy, Rhino
+Suicide: Red Star, Ze, Mute
+The Stooges: Elektra, Bomp
+MC5: Elektra, Atlantic, Alive
+New York Dolls: Mercury, Roadrunner
+Television Personalities: Whaam!, Fire
+Jesus and Mary Chain: Blanco y Negro, Warner, Fuzz Club
+Teenage Fanclub: Creation, Matador, Merge
+Belle and Sebastian: Jeepster, Matador, Rough Trade
+Stereolab: Duophonic, Elektra, Drag City, Warp
+Broadcast: Warp
+Low: Kranky, Sub Pop, Chair Kickers Union
+Slint: Touch and Go, Jennifer Hoover
+Tortoise: Thrill Jockey
+Swans: Young God, Mute, Rough Trade, Sacred Bones
+Neurosis: Relapse, Neurot
+Sunn O))): Southern Lord, Ipecac, Rise Above
+Boris: Southern Lord, Sargent House, Fangs Anal Satan
+
+# ── pop, soul, r&b ──────────────────────────────────────────────────────────
+Michael Jackson: Epic, Motown
+Prince: Warner, NPG, Paisley Park
+Madonna: Sire, Maverick, Warner
+Stevie Wonder: Tamla, Motown
+Marvin Gaye: Tamla, Motown
+The Supremes: Motown
+Diana Ross: Motown, RCA
+The Temptations: Gordy, Motown
+Smokey Robinson & The Miracles: Tamla, Motown
+Aretha Franklin: Atlantic, Columbia, Arista
+Otis Redding: Volt, Stax, Atco
+Sam Cooke: RCA, Keen, Abkco
+Ray Charles: Atlantic, ABC, Tangerine
+James Brown: King, Polydor, Smash
+Al Green: Hi, Fat Possum
+Curtis Mayfield: Curtom, Buddah, Warner
+Isaac Hayes: Stax, Enterprise
+Sly & The Family Stone: Epic
+Parliament: Casablanca, Polydor
+Funkadelic: Westbound, Warner
+Earth, Wind & Fire: Columbia, ARC
+Donna Summer: Casablanca, Geffen, Mercury
+Chic: Atlantic, Warner
+Elvis Presley: RCA, Sun
+Chuck Berry: Chess
+Little Richard: Specialty, Vee-Jay
+Buddy Holly: Decca, Coral, Brunswick
+Bo Diddley: Chess, Checker
+Muddy Waters: Chess, Blind Pig
+Howlin' Wolf: Chess
+John Lee Hooker: Vee-Jay, Chess, Riverside
+B.B. King: RPM, ABC, MCA
+Robert Johnson: Columbia, Vocalion
+Johnny Cash: Sun, Columbia, American
+Willie Nelson: Columbia, RCA, Atlantic
+Hank Williams: MGM
+Dolly Parton: RCA, Sugar Hill
+Emmylou Harris: Warner, Reprise, Nonesuch
+Gram Parsons: Reprise, A&M, Sierra
+Townes Van Zandt: Tomato, Poppy, Fat Possum
+Simon & Garfunkel: Columbia
+Paul Simon: Warner, Columbia, Hear Music
+Carole King: Ode, Epic
+James Taylor: Warner, Columbia, Apple
+Cat Stevens: Island, A&M, Decca
+Elton John: DJM, MCA, Rocket, Mercury
+Billy Joel: Columbia
+ABBA: Polar, Epic, Polydor
+Bee Gees: Polydor, RSO, Atco
+Carpenters: A&M
+Barbra Streisand: Columbia
+Frank Sinatra: Capitol, Reprise, Columbia
+Nat King Cole: Capitol
+Dean Martin: Capitol, Reprise
+Tony Bennett: Columbia, RPM
+Bing Crosby: Decca, Capitol
+Peggy Lee: Capitol, Decca
+Patsy Cline: Decca
+Roy Orbison: Monument, Virgin, Sun
+Bobby Darin: Atco, Capitol
+Dusty Springfield: Philips, Atlantic, Mercury
+Amy Winehouse: Island, Universal
+Adele: XL, Columbia
+Lana Del Rey: Interscope, Polydor
+Taylor Swift: Big Machine, Republic
+Beyoncé: Columbia, Parkwood
+Kate Bush: EMI, Fish People
+Tori Amos: Atlantic, Epic
+Fiona Apple: Epic, Clean Slate
+Joan Baez: Vanguard, A&M
+Joan Armatrading: A&M
+Suzanne Vega: A&M
+Tracy Chapman: Elektra
+Enya: Warner, WEA
+Sinéad O'Connor: Ensign, Chrysalis
+Erasure: Mute
+Pet Shop Boys: Parlophone, EMI
+Eurythmics: RCA, Arista
+Duran Duran: EMI, Capitol, Tape Modern
+Talk Talk: EMI, Parlophone, Verve, Polydor
+Japan: Virgin, Hansa, Ariola
+David Sylvian: Virgin, Samadhi Sound, Opium
+Prefab Sprout: Kitchenware, Epic
+The Blue Nile: Linn, A&M
+Everything But the Girl: Blanco y Negro, Virgin, Atlantic
+Style Council: Polydor
+Simple Minds: Virgin, A&M
+Tears for Fears: Mercury, Phonogram
+Yazoo: Mute
+Human League: Virgin, Fast Product
+Gary Numan: Beggars Banquet, Atco, Mortal
+Fela Kuti: Knitting Factory, Barclay, EMI, Strut
+Manu Dibango: Fiesta, Mango, Soul Makossa
+Ali Farka Touré: World Circuit, Nonesuch
+Buena Vista Social Club: World Circuit, Nonesuch
+Ravi Shankar: World Pacific, EMI, Angel
+Nusrat Fateh Ali Khan: Real World, Shanachie
+Caetano Veloso: Philips, Nonesuch, Polygram
+Gilberto Gil: Philips, Warner
+João Gilberto: Odeon, Verve, Elektra
+Antonio Carlos Jobim: Verve, Philips, Warner
+Astrud Gilberto: Verve
+Elis Regina: Philips
+Jorge Ben Jor: Philips
+Cesária Évora: Lusafrica, RCA, Bluebird

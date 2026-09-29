@@ -133,6 +133,10 @@ renderer =
 # Albums remembered as played (state dir, qobuz-played.json).  A played
 # album is found again by any search whose words it contains.  0: none.
 played_limit = 1000
+# Artist -> label pairs learned from plays, beyond the shipped list
+# (qobuz_artists.txt), so typing an artist offers its label.  A ring: when
+# full, the oldest is forgotten.  0: nothing is learned.
+artist_ring = 200
 # Label groups offered as check boxes, one per line: "Name" or
 # "Name: pattern, pattern".  Qobuz spells a label many ways ("Decca Music
 # Group Ltd.", "Decca (UMO)"), so a group matches any label containing one of

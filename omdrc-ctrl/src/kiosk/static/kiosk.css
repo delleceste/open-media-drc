@@ -610,6 +610,7 @@ input[type=range] { accent-color: var(--accent); }
 .btn.qz-ycell { padding: 0; font-variant-numeric: tabular-nums; }
 .qz-chips { display: flex; flex-wrap: wrap; gap: .4rem; }
 .chip.qz-chip { min-height: 2.3rem; font-size: .9rem; padding: 0 .8rem; cursor: pointer; }
+.qz-hints:empty { display: none; } .qz-hint { margin-bottom: .55rem; } .qz-hint > .small { margin-bottom: .3rem; }
 .qz-seen { margin-top: .45rem; } .qz-seen summary { cursor: pointer; margin-bottom: .4rem; }
 .qz-summary { margin: .2rem 0 .4rem; }
 .qz-working { display: flex; flex-direction: column; align-items: center; gap: .6rem; padding: 2.5rem 0; }

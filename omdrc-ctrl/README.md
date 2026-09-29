@@ -206,6 +206,17 @@ playing a Pink Floyd album "pi" offers Pink Floyd. Learned entries come
 first, most played first, and are kept in `qobuz-words.json` in the state
 directory. Accents and case don't matter ("dvor" finds Dvořák).
 
+**Labels of the artist.** Qobuz cannot search by label (a label name typed as
+text finds titles and artists that share the words), so a label is reached
+through the artist: `qobuz_artists.txt` lists about 450 jazz, rock and pop
+artists that matter in history with their labels (`Miles Davis: Columbia,
+Prestige, Blue Note`). The names complete like the rest, and once one is typed
+its labels appear above the label check boxes as chips; a tap adds the label
+to the filter. Plays teach the panel more pairs (`qobuz-artist-labels.json`),
+but only as a ring of `artist_ring` (200) pairs: the oldest is forgotten, a
+pair the shipped list has is not kept, classical albums (their labels have
+check boxes already) are not learned. The shipped file never grows by itself.
+
 A lightweight web-based remote control panel for a Linux or FreeBSD desktop.
 Commands are defined in a plain-text INI config file; the server renders a
 mobile-friendly interface that can be opened in any browser on the local

@@ -25,7 +25,9 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     POST /qobuz/played             {"action": "hide"|"show", "album_id"}: out of
                                    (back into) that list; still counted as played
     GET /qobuz/words               search-field completions: the shipped
-                                   list and the ones learned from plays
+                                   list and the ones learned from plays, and
+                                   the artists with their labels (shipped,
+                                   and a ring learned from plays)
     GET /qobuz/track/<id>          one track and its album (the player's cover)
     GET /qobuz/lowered             albums, labels and artists moved to the end
     POST /qobuz/lowered            {"action": "add", "kind", "key", "name"} |
@@ -48,6 +50,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import threading
 import time
 
@@ -56,7 +59,8 @@ from flask import Blueprint, Response, jsonify, request
 import openhome
 from qobuz_search import (AWARD_PRESETS, AwardedAlbums, LoweredList, PlayedAlbums,
                           QobuzCatalog, QobuzError, album_card,
-                          SearchWords, discover_app_id, read_word_list)
+                          SearchWords, ArtistLabels, discover_app_id, read_word_list,
+                          read_artist_labels)
 
 bp = Blueprint("qobuz", __name__, url_prefix="/qobuz")
 
@@ -90,6 +94,10 @@ _awarded: dict[str, AwardedAlbums] = {}
 # The shipped completion list, next to this module; re-read when it changes.
 WORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qobuz_words.txt")
 _words = (None, [])                          # (mtime, entries)
+# Artists and their labels, shipped the same way: typing an artist offers its labels.
+ARTISTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qobuz_artists.txt")
+_artists = (None, [])                        # (mtime, [(artist, [label])])
+_artist_labels: dict[str, ArtistLabels] = {}
 _openhome: openhome.Renderer | None = None
 
 
@@ -146,6 +154,26 @@ def learned() -> SearchWords:
         if path not in _learned:
             _learned[path] = SearchWords(path)
         return _learned[path]
+
+
+def artist_list() -> list[tuple[str, list[str]]]:
+    global _artists
+    try:
+        mtime = os.stat(ARTISTS_FILE).st_mtime
+    except OSError:
+        return []
+    if _artists[0] != mtime:
+        _artists = (mtime, read_artist_labels(ARTISTS_FILE))
+    return _artists[1]
+
+
+def artist_labels() -> ArtistLabels:
+    path = os.path.join(_state_dir(), "qobuz-artist-labels.json")
+    with _lock:
+        if path not in _artist_labels:
+            _artist_labels[path] = ArtistLabels(path, shipped=artist_list)
+        _artist_labels[path].limit = _settings().artist_ring
+        return _artist_labels[path]
 
 
 def lowered() -> LoweredList:
@@ -451,6 +479,9 @@ def play():
     if "query" in body:
         answer["learned"] = learned().record(
             [str(body.get("query") or ""), album["artist"], album["composer"]])
+        # classical labels have their own check boxes: only the rest is learned
+        if not album.get("groups") and not re.search(r"classi|opera", album.get("genre", ""), re.I):
+            answer["label_learned"] = artist_labels().record(album["artist"], album["label"])
     return jsonify({"ok": True, "mode": mode, **answer})
 
 
@@ -518,7 +549,9 @@ def words():
     KB, and the page matches as the user types without asking again."""
     if not _settings().enabled:
         return jsonify({"ok": False, "error": "Qobuz search disabled"}), 404
-    return jsonify({"ok": True, "words": word_list(), "learned": learned().recent()})
+    return jsonify({"ok": True, "words": word_list(), "learned": learned().recent(),
+                    "artists": [[a, ls] for a, ls in artist_list()],
+                    "artist_pairs": artist_labels().pairs()})
 
 
 @bp.route("/track/<track_id>")
