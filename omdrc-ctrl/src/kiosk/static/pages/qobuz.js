@@ -74,16 +74,25 @@ P.mount = el => {
             P.fsum, P.filters));
     P.results = h('div', { class: 'qz-results' });
     P.recentBox = h('div', { class: 'qz-recent' });
+    P.awardedBox = h('div', { class: 'qz-awarded' });
     // Under the box: which list is shown, remembered (the albums played from here, or
     // the last search's results), and, while the box is scrolled out of sight, a hint
     // that it is up there.
     P.viewChips = h('div', { class: 'qz-viewchips' },
-        ['recent', 'Played recently', 'results', 'Results'].reduce((a, x, i, all) => i % 2 ? a : [...a,
+        ['recent', 'Played recently', 'results', 'Results', 'awarded', 'Awarded'].reduce((a, x, i, all) => i % 2 ? a : [...a,
             h('button', { type: 'button', class: 'chip tog qz-chip', dataset: { view: x }, onclick: () => P.setView(x) }, all[i + 1])], []));
     P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'The search is at the top',
         onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, 'Search ⌃');
     P.viewRow = h('div', { class: 'qz-viewrow' }, P.viewChips, P.searchHint);
-    P.preview = h('div', { class: 'qz-preview', hidden: true });   // on Now only, above the box
+    P.preview = h('div', { class: 'qz-preview', hidden: true, role: 'button', tabindex: '-1',
+        'aria-label': 'Open the results', 'aria-disabled': 'true',
+        onclick: () => { if (P.previewReady()) P.openResults(); },
+        onkeydown: e => {
+            if (P.previewReady() && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault();
+                P.openResults();
+            }
+        } });   // on Now only, above the box
     P.player = h('div', { class: 'qz-player' });
     // the box's place on this page (it may be on Now instead: see "where the search box is"),
     // and the head shown in its place over results searched from Now
@@ -91,7 +100,7 @@ P.mount = el => {
     P.resHead = h('div', { class: 'qz-reshead', hidden: true },
         h('button', { type: 'button', class: 'btn qz-back', title: 'Back to Now playing', 'aria-label': 'Back to Now playing', onclick: () => K.showPage('now') }, '‹'),
         h('span', { class: 'qz-reshead-title' }, 'Search results'));
-    P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow, P.recentBox, P.results);
+    P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow, P.recentBox, P.results, P.awardedBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.input.addEventListener('focus', () => P.revealInput());
     P.buildPlayer();
@@ -124,6 +133,7 @@ P.show = () => {
     P.viewRow.hidden = P.fromNowShown;
     if (P.fromNowShown) P.setView('results');
     else if (P.view() === 'recent') P.recent();
+    else if (P.view() === 'awarded') P.awardedList();
     if (!P.fromNowShown) P.undock();
     else P.reserve(false);                         // no empty place under the results' head
     // the first time after a load (the app reopened, a reload): as a swipe from Now
@@ -159,16 +169,18 @@ P.forget = () => {
     }
     P.preview.hidden = true;
     P.form.classList.remove('qz-has-res');
+    P.updatePreviewAction();
 };
 
 // ── which list: played recently, or the results ──────────────────────────────
-P.view = () => pref('view', 'recent') === 'results' ? 'results' : 'recent';
-P.setView = v => { setPref('view', v); P.paintView(); if (v === 'recent') P.recent(); };
+P.view = () => ['results', 'awarded'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
+P.setView = v => { setPref('view', v); P.paintView(); if (v === 'recent') P.recent(); if (v === 'awarded') P.awardedList(); };
 P.paintView = () => {
     const v = P.view();
     [...P.viewChips.children].forEach(b => b.classList.toggle('on', b.dataset.view === v));
     P.recentBox.hidden = v !== 'recent';
     P.results.hidden = v !== 'results';
+    P.awardedBox.hidden = v !== 'awarded';
     if (v === 'results' && !P.results.firstChild)
         P.results.append(h('p', { class: 'muted' }, 'No search yet: the search is at the top.'));
 };
@@ -224,6 +236,14 @@ P.openResults = () => {
     P.fromNow = true;
     K.showPage(P.id, false);
     P.el.scrollTop = 0;
+};
+P.previewReady = () => P.dockedOnNow() && P.form.classList.contains('qz-has-res')
+    && !P.form.classList.contains('qz-stale');
+P.updatePreviewAction = () => {
+    const ready = P.previewReady();
+    P.preview.classList.toggle('ready', ready);
+    P.preview.tabIndex = ready ? 0 : -1;
+    P.preview.setAttribute('aria-disabled', String(!ready));
 };
 
 // The app shrinks the page by the keyboard: keep the field (and at the bottom of Now,
@@ -639,6 +659,7 @@ P.streamSearch = (params, seq) => new Promise(resolve => {
 P.paintPreview = (text, d = P.last) => {
     const partial = !!(d && d.partial);
     P.form.classList.toggle('qz-has-res', !text && !partial && !!d);
+    P.updatePreviewAction();
     P.preview.hidden = false;
     if (text) { K.clear(P.preview).append(h('div', { class: 'qz-pv-line muted' }, text)); return; }
     if (!d) { P.preview.hidden = true; return; }
@@ -647,7 +668,7 @@ P.paintPreview = (text, d = P.last) => {
     const asked = P.plain(P.input.value);
     const named = a => { const x = P.plain(a); return !!x && !!asked && (asked.includes(x) || (asked.length > 2 && x.includes(asked))); };
     const line = c => h('div', { class: 'qz-pv-line' + (c.lowered ? ' low' : '') },
-        [c.title + (c.version ? ` (${c.version})` : ''), named(c.artist) ? '' : c.artist, c.year, c.label]
+        [((c.awards && c.awards.length) || c.rating ? '🏆 ' : '') + c.title + (c.version ? ` (${c.version})` : ''), named(c.artist) ? '' : c.artist, c.year, c.label]
             .filter(Boolean).join(' · '));
     const n = `${d.count} album${d.count === 1 ? '' : 's'}`;
     const head = partial ? `Searching… ${n} so far (${d.considered} looked at)` : n + (d.more ? ' so far' : '');
@@ -667,6 +688,7 @@ P.revealPreview = () => {
 // the text or a filter no longer matches the search those results answer.
 P.paintStale = () => {
     if (P.form) P.form.classList.toggle('qz-stale', !P.last || P.params(0).toString() !== P.searchedKey);
+    if (P.preview) P.updatePreviewAction();
 };
 
 // A name or a search text, compared loosely: no case, accents, punctuation or leading "the".
@@ -692,6 +714,17 @@ P.recent = async () => {
     if (!d.ok) return;
     K.clear(P.recentBox).append(d.albums.length ? h('div', { class: 'qz-list' }, d.albums.map(c => P.row(c, 'recent')))
         : h('p', { class: 'muted' }, 'Nothing played from here yet.'));
+};
+
+// Every album met with an award or marked awarded, most recent first: to look at
+// together (the "Awarded" view).
+P.awardedList = async () => {
+    const d = await K.api('/qobuz/awarded');
+    if (!d.ok) { K.clear(P.awardedBox).append(h('div', { class: 'errbox' }, d.error || 'the list cannot be read')); return; }
+    K.clear(P.awardedBox).append(d.albums.length
+        ? h('div', {}, h('div', { class: 'qz-summary small muted' }, `${d.albums.length} album${d.albums.length === 1 ? '' : 's'} with an award, met in searches or marked by you`),
+            h('div', { class: 'qz-list' }, d.albums.map(c => P.row(c))))
+        : h('p', { class: 'muted' }, 'None yet: albums with an award are listed here as searches meet them, and so are the ones you mark awarded (Album details).'));
 };
 
 // Out of "Played recently" only: still counted as played, not lowered in searches.
@@ -941,6 +974,8 @@ P.row = (c, where = '') => {
     const body = h('div', { class: 'qz-body tap', onclick: () => P.toggleTracks(c, row, tracks) },
         h('div', { class: 'qz-title' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-artist' }, c.artist),
+        // one badge: awards and my rating, a tap shows them all (widgets/albuminfo.js)
+        K.awardsBox(c, c.awards ? { awards: c.awards, rating: c.rating || 0 } : null, { compact: true }),
         c.performers && c.performers.length
             ? h('div', { class: 'qz-perf small muted' }, c.performers.slice(0, 4).map(who).join(', ')) : null,
         h('div', { class: 'qz-meta small' },
@@ -996,7 +1031,9 @@ P.toggleTracks = async (c, row, box, keep = false) => {
             h('button', { type: 'button', class: 'btn qz-tplay', disabled: !t.streamable, title: 'Play the album from here',
                 onclick: () => P.play(c, 'replace', t) }, '▶')));
     }
-    K.clear(box).append(...lines);
+    K.clear(box).append(...lines,
+        // everything about it, and marking it awarded (widgets/albuminfo.js)
+        h('button', { type: 'button', class: 'btn qz-details', onclick: () => K.albumInfo(c.id) }, 'Album details ›'));
 };
 
 // ── play ─────────────────────────────────────────────────────────────────────
@@ -1084,8 +1121,15 @@ P.openFull = () => {
         h('div', { class: 'qz-full-body' },
             v.cover,
             h('div', { class: 'qz-full-side' },
-                h('div', { class: 'qz-full-info' }, v.title, v.work, v.sub, v.detail),
+                h('div', { class: 'qz-full-info' }, v.title, v.work, v.sub, v.awards = h('div', {}), v.detail),
                 v.seekRow, v.buttons, P.queueHead, P.queueBox)));
+    // the playing album's details (widgets/albuminfo.js): after the queue, or before it
+    // when the queue is long enough to push it far down (loadQueue)
+    v.infoBtn = h('button', { type: 'button', class: 'btn qz-finfo', hidden: true, onclick: () => {
+        const t = P.trackInfo();
+        if (t && t.album && t.album.id) K.albumInfo(t.album.id);
+    } }, 'Album details ›');
+    P.queueBox.after(v.infoBtn);
     // no slider here: the cover's seek ring (widgets/seekring.js), shown for a moment
     // on opening so it is known to be there (paintTime, once the track's length is)
     v.cover.classList.add('seek-zone');
@@ -1164,6 +1208,9 @@ P.paintViews = () => {
         v.toggle.textContent = playing ? '⏸' : '▶';
         setCover(v.cover, album ? (v.full ? album.image_large || album.image : album.image || album.image_large) : '');
         if (v.full) {
+            v.infoBtn.hidden = !(album && album.id);
+            const aid = album && album.id || '';       // the album's awards, above its label (v.detail)
+            if (v.awardsFor !== aid) { v.awardsFor = aid; K.clear(v.awards); if (aid) v.awards.append(K.awardsBox(album)); }
             v.work.textContent = t && t.work ? t.work : '';
             v.sub.textContent = d ? d.artist || (t && t.performer) || '' : P.playerError;
             v.detail.textContent = [
@@ -1207,6 +1254,7 @@ P.loadQueue = async () => {
     if (!q.ok) { K.clear(P.queueBox).append(h('div', { class: 'muted small' }, q.error || 'queue unavailable')); return; }
     P.queueVersion = q.version;
     P.queueHead.textContent = q.length ? `Queue · ${q.length}` : 'Queue is empty';
+    if (P.fullView) { if (q.length > 10) P.queueHead.before(P.fullView.infoBtn); else P.queueBox.after(P.fullView.infoBtn); }
     K.clear(P.queueBox).append(...q.songs.map(s => h('button', {
         type: 'button', class: 'qz-qrow', dataset: { id: s.id }, title: 'Play from here',
         onclick: () => P.transport('jump', { pos: s.pos }),

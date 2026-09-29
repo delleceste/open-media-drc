@@ -16,6 +16,7 @@ Layout, page order and every widget live in static/ (plain JS, no build step).
 import io
 import math
 import os
+import platform
 import re
 import struct
 import threading
@@ -68,7 +69,8 @@ def _asset_version() -> str:
 
 @bp.route("/")
 def shell():
-    return render_template("kiosk_shell.html", asset_version=_asset_version())
+    return render_template("kiosk_shell.html", asset_version=_asset_version(),
+                           os_name=platform.system())
 
 
 @bp.route("/version")

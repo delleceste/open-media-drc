@@ -29,6 +29,7 @@ P.mount = el => {
     // upright, the details are one per line instead of the one line under the title
     P.pArtist = h('div', { class: 'now-partist' });
     P.pAlbum = h('div', { class: 'now-palbum' });
+    P.awards = h('div', { class: 'now-awards' });      // the album's prizes, in gold (widgets/albuminfo.js)
     P.fmt = h('span', { class: 'now-fmt' });
     // upright, under the format: all Qobuz says about the release, booklet first (widgets/albuminfo.js)
     P.infoBtn = h('button', { type: 'button', class: 'chip now-info', hidden: true, onclick: () => P.track && K.albumInfo(P.track.qobuz_album) }, 'Album details ›');
@@ -38,7 +39,7 @@ P.mount = el => {
     // a meter-timing calibration in progress (automatic ones included): a blinking blue light
     P.calLed = h('i', { class: 'cal-led', hidden: true, title: 'Calibrating the meter timing' });
     const trackBox = h('div', { class: 'now-track' }, P.artBox,
-        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.pAlbum, P.infoBtn), P.calLed,
+        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.awards, P.pAlbum, P.infoBtn), P.calLed,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
         // (upright, previous and next track either side of it)
         h('div', { class: 'now-timebox' },
@@ -536,6 +537,11 @@ P.pollTrack = async () => {
     else { P.art.hidden = true; P.art.removeAttribute('src'); P.artBox.classList.add('empty'); }
     if ((t.art || '') !== P.artUrl) P.setArt(t.art || '');
     P.infoBtn.hidden = !t.qobuz_album;
+    if (P.awardsFor !== (t.qobuz_album || '')) {
+        P.awardsFor = t.qobuz_album || '';
+        K.clear(P.awards);
+        if (P.awardsFor) P.awards.append(K.awardsBox({ id: P.awardsFor, title: t.album || t.title, artist: t.artist }));
+    }
     P.paintIdle();
     P.paintTime();
 };

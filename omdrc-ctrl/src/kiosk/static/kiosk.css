@@ -199,7 +199,39 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .now-subrow { display: flex; align-items: baseline; gap: .7rem; }
 .now-subrow .now-sub { flex: 1; min-width: 0; }
 .now-fmt { flex: 0 0 auto; font: 700 .85rem ui-monospace, monospace; }
-.chip.now-info { display: none; }             /* upright only (below) */
+.chip.now-info { display: none; }
+/* awards (widgets/albuminfo.js): gold, above the label */
+:root { --award: #e3b341; --award-bg: rgba(227,179,65,.13); --award-edge: rgba(227,179,65,.5); }
+:root[data-theme=light] { --award: #8a5a00; --award-bg: rgba(154,103,0,.1); --award-edge: rgba(154,103,0,.45); }
+.award.mine { border-style: dashed; }
+button.award { font: inherit; font-size: .8rem; font-weight: 650; cursor: pointer; }
+.award.award-rating { border-color: rgba(63,185,80,.5); background: rgba(63,185,80,.1); }
+/* my rating: 1 to 3 circles, each a deeper green (never a bad mark) */
+.rating { display: inline-flex; align-items: center; gap: .18rem; margin-left: .15rem; vertical-align: middle; }
+.dot-r { display: inline-block; width: .62rem; height: .62rem; border-radius: 50%; }
+.dot-r.r1, .rate-dot.r1.on { background: rgba(63,185,80,.45); }
+.dot-r.r2, .rate-dot.r2.on { background: rgba(63,185,80,.75); }
+.dot-r.r3, .rate-dot.r3.on { background: #3fb950; box-shadow: 0 0 .35rem rgba(63,185,80,.8); }
+.rate-row { display: flex; align-items: center; gap: .7rem; }
+.rate-dot { width: 2.6rem; height: 2.6rem; border-radius: 50%; border: 2px solid rgba(63,185,80,.6); background: none; cursor: pointer; padding: 0; }
+.ai-award-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; }
+.ai-award-actions .awards-box:empty { display: none; }
+.ai-award-actions .awards { margin: 0; }
+.chip.ai-award-add { min-height: 1.8rem; font-size: .8rem; }
+.scrim.ai-markscrim { z-index: 62; }                 /* over the details page (58) */
+.ai-marksheet { display: flex; flex-direction: column; gap: .6rem; max-height: 92vh; overflow-y: auto; }
+.ai-marksheet h2, .ai-marksheet p { margin: 0; }
+.ai-input { height: 2.6rem; padding: 0 .7rem; border-radius: .5rem; border: 1px solid var(--border); background: var(--deep); color: var(--text); font-size: 1rem; }
+.ai-input[hidden] { display: none; }
+.ai-mine { display: flex; flex-direction: column; gap: .3rem; }
+.ai-mine-row { display: flex; align-items: center; gap: .5rem; justify-content: space-between; }
+.btn.qz-details { margin-top: .45rem; }
+.qz-awarded[hidden] { display: none; }
+.awards { display: flex; flex-wrap: wrap; gap: .3rem; margin: .2rem 0; }
+.award { display: inline-flex; align-items: center; gap: .2rem; padding: .08rem .55rem; border-radius: 1rem; font-size: .8rem; font-weight: 650;
+    color: var(--award); background: var(--award-bg); border: 1px solid var(--award-edge); max-width: 100%; overflow-wrap: anywhere; }
+.now-awards:empty { display: none; }        /* (an empty .awards-box stays displayed, 0 high: it must be seen to load) */
+#top-mascot { height: 1.9rem; width: auto; flex: 0 0 auto; margin: 0 .1rem 0 .2rem; pointer-events: none; }             /* upright only (below) */
 /* chip + small time on one line, the progress bar under them */
 .now-timebox { display: grid; grid-template-columns: auto auto; justify-content: end; align-items: center; column-gap: .6rem; row-gap: .3rem; width: 13rem; flex: 0 0 auto; }
 .now-time { font: .8rem ui-monospace, monospace; color: var(--muted); white-space: nowrap; }
@@ -629,6 +661,7 @@ input[type=range] { accent-color: var(--accent); }
 .qz-preview { flex: 1 1 0; min-height: 4.5rem; overflow-y: auto; margin-bottom: .35rem; padding: .3rem .55rem;
     border: 1px solid var(--border); border-radius: .5rem; background: var(--deep); font-size: .8rem; line-height: 1.4; }
 .qz-preview[hidden] { display: none; }
+.qz-preview.ready { cursor: pointer; }
 .qz-pv-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qz-pv-line.low { opacity: .55; }
 .qz-toresults { display: none; min-width: 2.8rem; font-size: 1.2rem; }
@@ -720,6 +753,7 @@ input[type=range] { accent-color: var(--accent); }
 .qz-full .btn.qz-pbtn { min-width: 3.8rem; min-height: 3.4rem; font-size: 1.4rem; }
 .qz-full .btn.qz-toggle { min-width: 5rem; }
 .qz-full-side .lbl { margin: .3rem 0 0; }
+.btn.qz-finfo { align-self: flex-start; flex: 0 0 auto; }
 .qz-queue { flex: 1 1 auto; min-height: 4rem; overflow-y: auto; border-top: 1px solid var(--border); overscroll-behavior: contain; }
 .qz-qrow { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; gap: .6rem; align-items: center; width: 100%; min-height: 2.8rem;
     padding: .2rem .3rem; border: 0; border-bottom: 1px solid var(--hair); background: none; text-align: left; cursor: pointer; }

@@ -11,6 +11,14 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     GET /qobuz/search/stream?...    the same, as server-sent events: partial
                                    results while it reads, then the answer
     GET /qobuz/album/<id>          one album: tracks, performers, description
+    GET /qobuz/awards?ids=a,b,...  the awards of up to 30 albums (a search
+                                   carries them only for the ones it enriched)
+    GET /qobuz/awarded             the albums met with an award or marked
+                                   awarded, and the publications to offer
+    POST /qobuz/awarded            {"action": "mark", "album_id", "name",
+                                    "publication"} | {"action": "unmark",
+                                    "album_id", "name"} | {"action": "rate",
+                                    "album_id", "rating": 0-3}: the user's own
     POST /qobuz/play               {"album_id", "mode": "replace"|"append",
                                     "start": track id}: queue it on upmpdcli
     GET /qobuz/played              the albums played from here, newest first
@@ -46,7 +54,8 @@ import time
 from flask import Blueprint, Response, jsonify, request
 
 import openhome
-from qobuz_search import (LoweredList, PlayedAlbums, QobuzCatalog, QobuzError,
+from qobuz_search import (AWARD_PRESETS, AwardedAlbums, LoweredList, PlayedAlbums,
+                          QobuzCatalog, QobuzError, album_card,
                           SearchWords, discover_app_id, read_word_list)
 
 bp = Blueprint("qobuz", __name__, url_prefix="/qobuz")
@@ -77,6 +86,7 @@ _renderer = (0.0, False)
 _played: dict[str, PlayedAlbums] = {}       # one store per file, across reloads
 _learned: dict[str, SearchWords] = {}
 _lowered: dict[str, LoweredList] = {}
+_awarded: dict[str, AwardedAlbums] = {}
 # The shipped completion list, next to this module; re-read when it changes.
 WORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qobuz_words.txt")
 _words = (None, [])                          # (mtime, entries)
@@ -146,6 +156,14 @@ def lowered() -> LoweredList:
         return _lowered[path]
 
 
+def awarded() -> AwardedAlbums:
+    path = os.path.join(_state_dir(), "qobuz-awarded.json")
+    with _lock:
+        if path not in _awarded:
+            _awarded[path] = AwardedAlbums(path)
+        return _awarded[path]
+
+
 def word_list() -> list[str]:
     global _words
     try:
@@ -161,13 +179,14 @@ def catalog() -> QobuzCatalog:
     """One client per settings object: a config reload starts a fresh cache."""
     global _catalog, _catalog_settings
     settings = _settings()
-    store, lower = played(), lowered()
+    store, lower, prizes = played(), lowered(), awarded()
     with _lock:
         if _catalog is None or _catalog_settings is not settings:
             _catalog = QobuzCatalog(settings, credentials=_credentials, played=store,
-                                    lowered=lower)
+                                    lowered=lower, awarded=prizes)
             _catalog_settings = settings
         _catalog.lowered = lower
+        _catalog.awarded = prizes
         return _catalog
 
 
@@ -228,11 +247,13 @@ def renderer_running() -> bool:
     return _renderer[1]
 
 
-def _guard():
-    """None when a search may run, else a ready (response, status)."""
+def _guard(renderer_needed: bool = True):
+    """None when a search may run, else a ready (response, status).  Reading
+    about an album (its details, its awards) needs only the catalog, not
+    upmpdcli: the Now page asks whichever renderer plays."""
     if not _settings().enabled:
         return jsonify({"ok": False, "error": "Qobuz search disabled"}), 404
-    if not renderer_running():
+    if renderer_needed and not renderer_running():
         return jsonify({"ok": False, "renderer": False,
                         "error": "upmpdcli is not running: the Qobuz search plays "
                                  "through it, so switch the renderer to upmpdcli"}), 409
@@ -357,7 +378,12 @@ def played_albums():
             return jsonify({"ok": False, "error": "not in the played list, or it cannot be saved"}), 409
         return jsonify({"ok": True})
     limit = request.args.get("limit", "50")
-    return jsonify({"ok": True, "albums": played().recent(int(limit) if limit.isdigit() else 50)})
+    albums = played().recent(int(limit) if limit.isdigit() else 50)
+    for card in albums:                  # the user's own awards too (see AwardedAlbums)
+        if "awards" in card:
+            card["awards"] = awarded().merged(card["id"], card["awards"])
+        card["rating"] = awarded().rating(card["id"])
+    return jsonify({"ok": True, "albums": albums})
 
 
 def _queue(album: dict, mode: str, start: str) -> dict:
@@ -429,13 +455,60 @@ def play():
 
 @bp.route("/album/<album_id>")
 def album(album_id):
-    guard = _guard()
+    guard = _guard(renderer_needed=False)
     if guard:
         return guard
     try:
         return jsonify({"ok": True, "album": catalog().album(album_id)})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/awards")
+def awards():
+    guard = _guard(renderer_needed=False)
+    if guard:
+        return guard
+    ids = [i for i in request.args.get("ids", "").split(",") if i.strip()]
+    try:
+        cat = catalog()
+        found = cat.awards(ids)
+        return jsonify({"ok": True, "awards": found, "ratings": cat.ratings(list(found))})
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/awarded", methods=["GET", "POST"])
+def awarded_albums():
+    guard = _guard(renderer_needed=False)
+    if guard:
+        return guard
+    if request.method == "GET":
+        return jsonify({"ok": True, "albums": awarded().albums(), "presets": list(AWARD_PRESETS)})
+    body = request.get_json(silent=True) or {}
+    album_id = str(body.get("album_id") or "").strip()
+    action = body.get("action")
+    if action not in ("mark", "unmark", "rate"):
+        return jsonify({"ok": False, "error": "want action mark|unmark|rate"}), 400
+    try:
+        card = album_card(catalog()._album_raw(album_id)) if album_id.isalnum() else {}
+        if not card.get("id"):
+            raise QobuzError("unknown album")
+        store = awarded()
+        if action == "mark":
+            store.mark(card, body.get("name", ""), body.get("publication", ""))
+        elif action == "unmark":
+            store.unmark(album_id, body.get("name", ""))
+        else:
+            try:
+                store.rate(card, int(body.get("rating", 0)))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "rating: 0 to 3"}), 400
+        # the album's awards as shown everywhere: Qobuz's, then the user's
+        qobuz = [a for a in catalog().awards([album_id]).get(album_id, []) if not a.get("mine")]
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+    return jsonify({"ok": True, "awards": store.merged(album_id, qobuz), "rating": store.rating(album_id)})
 
 
 @bp.route("/words")

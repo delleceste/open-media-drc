@@ -263,6 +263,18 @@ def album_performers(tracks: list[dict], limit: int = 6) -> list[dict]:
     return [{"name": e["name"], "roles": e["roles"]} for e in ranked[:limit]]
 
 
+def album_awards(raw: dict) -> list[dict]:
+    """The prizes Qobuz lists for an album (album/get only: a search's albums
+    carry none) -- Gramophone Editor's Choice, Diapason d'Or, BBC Music
+    Magazine, Qobuz's own ... -- as [{"name", "publication", "date"}]."""
+    return [{
+        "name": (a.get("name") or "").strip(),
+        "publication": (a.get("publication_name") or "").strip(),
+        "date": (dt.datetime.fromtimestamp(a["awarded_at"], dt.timezone.utc).strftime("%Y-%m-%d")
+                 if isinstance(a.get("awarded_at"), (int, float)) and a["awarded_at"] > 0 else ""),
+    } for a in raw.get("awards") or [] if isinstance(a, dict) and (a.get("name") or "").strip()]
+
+
 def _plain_text(markup: str) -> str:
     text = re.sub(r"<br\s*/?>|</p>", "\n", markup or "", flags=re.I)
     text = html.unescape(re.sub(r"<[^>]+>", "", text))
@@ -321,7 +333,8 @@ def discover_app_id(plugin_dir: str, python: str | None = None,
 # result card and to filter it like a fresh search result.
 _KEEP = ("id", "title", "version", "artist", "composer", "label", "genre",
          "release_date_original", "released_at", "image", "tracks_count",
-         "duration", "maximum_bit_depth", "maximum_sampling_rate", "streamable")
+         "duration", "maximum_bit_depth", "maximum_sampling_rate", "streamable",
+         "awards")
 
 
 class PlayedAlbums:
@@ -421,6 +434,8 @@ class PlayedAlbums:
         out = []
         for entry in entries:
             card = album_card(entry["item"])
+            if "awards" in entry["item"]:        # entries from before awards were kept: the kiosk asks
+                card["awards"] = album_awards(entry["item"])
             card.update(played=entry.get("count", 1), last_played=entry.get("last", ""),
                         performers=[{"name": n, "roles": []} for n in entry.get("performers", [])])
             out.append(card)
@@ -598,15 +613,162 @@ class LoweredList:
 
 # ── client ──────────────────────────────────────────────────────────────────
 
+# ── awarded albums ──────────────────────────────────────────────────────────
+
+AWARD_PRESETS = ("Gramophone", "Diapason", "BBC Music Magazine", "Stereophile", "Hi-Fi News")
+
+
+class AwardedAlbums:
+    """Albums with a prize: the ones met with a Qobuz award (remembered as they
+    are met, to be looked at together later), the ones the user marked
+    awarded -- Qobuz lists few of the magazines' choices -- and the user's own
+    rating of the recording, 1 to 3 (there is no bad mark: 1 is already a very
+    good recording; 0 is not rated).  A JSON file of {"id", "card", "qobuz":
+    [award], "mine": [award], "rating", "changed"}, newest first.
+
+    An award is {"name", "publication", "date"}; the user's carry "mine": true
+    once merged (see merged), and are shown wherever the album is, as Qobuz's
+    are."""
+
+    CARD_KEYS = ("id", "title", "version", "artist", "composer", "label", "year",
+                 "image", "image_large", "bits", "rate", "streamable")
+
+    def __init__(self, path: str, limit: int = 5000) -> None:
+        self.path = path
+        self.limit = limit
+        self._lock = threading.Lock()
+        self._entries: list[dict] | None = None
+
+    def _load(self) -> list[dict]:
+        if self._entries is None:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    data = json.load(f)
+                self._entries = [e for e in data.get("albums", [])
+                                 if isinstance(e, dict) and e.get("id") and isinstance(e.get("card"), dict)]
+            except (OSError, ValueError, AttributeError):
+                self._entries = []
+        return self._entries
+
+    def _save(self) -> bool:
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            tmp = f"{self.path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"albums": self._entries}, f, ensure_ascii=False)
+            os.replace(tmp, self.path)
+        except OSError:
+            return False
+        return True
+
+    def _put(self, card: dict, **change) -> dict:
+        """The album's entry, updated and moved to the head (caller holds the lock)."""
+        entries = self._load()
+        album_id = str(card.get("id", ""))
+        old = next((e for e in entries if e["id"] == album_id), None)
+        entry = old or {"id": album_id, "qobuz": [], "mine": []}
+        entry["card"] = {k: card[k] for k in self.CARD_KEYS if k in card} or entry.get("card", {})
+        entry.update(change)
+        entry["changed"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        entries[:] = [entry] + [e for e in entries if e is not old][:self.limit - 1]
+        return entry
+
+    def seen(self, card: dict, qobuz: list[dict]) -> None:
+        """Qobuz's awards for an album, as just read.  Written only when they
+        are new or changed: this runs for every album a search enriches."""
+        album_id = str(card.get("id", ""))
+        if not album_id:
+            return
+        with self._lock:
+            old = next((e for e in self._load() if e["id"] == album_id), None)
+            if (old is None and not qobuz) or (old is not None and old.get("qobuz") == qobuz):
+                return
+            self._put(card, qobuz=list(qobuz))
+            self._save()
+
+    def mark(self, card: dict, name: str, publication: str = "", date: str = "") -> list[dict]:
+        """The user's own award for the album; its awards, merged."""
+        name, publication = (name or "").strip()[:120], (publication or "").strip()[:80]
+        if not (name or publication) or not card.get("id"):
+            raise QobuzError("an award needs a name")
+        award = {"name": name or publication, "publication": publication or name, "date": (date or "")[:10]}
+        with self._lock:
+            old = next((e for e in self._load() if e["id"] == str(card["id"])), None)
+            mine = [a for a in (old or {}).get("mine", []) if a["name"].casefold() != award["name"].casefold()]
+            entry = self._put(card, mine=mine + [award])
+            if not self._save():
+                raise QobuzError("the awarded list cannot be saved")
+            return self._merge(entry.get("qobuz", []), entry["mine"])
+
+    def unmark(self, album_id: str, name: str) -> list[dict]:
+        with self._lock:
+            entry = next((e for e in self._load() if e["id"] == str(album_id)), None)
+            if entry is None:
+                return []
+            entry["mine"] = [a for a in entry.get("mine", []) if a["name"].casefold() != (name or "").casefold()]
+            if not entry["mine"] and not entry.get("qobuz") and not entry.get("rating"):
+                self._entries.remove(entry)
+            if not self._save():
+                raise QobuzError("the awarded list cannot be saved")
+            return self._merge(entry.get("qobuz", []), entry.get("mine", []))
+
+    def rate(self, card: dict, rating: int) -> int:
+        """The user's rating of the recording, 1 to 3; 0 takes it away."""
+        rating = max(0, min(3, int(rating)))
+        if not card.get("id"):
+            raise QobuzError("unknown album")
+        with self._lock:
+            old = next((e for e in self._load() if e["id"] == str(card["id"])), None)
+            if old is None and not rating:
+                return 0
+            entry = self._put(card, rating=rating)
+            if not rating and not entry.get("mine") and not entry.get("qobuz"):
+                self._entries.remove(entry)
+            if not self._save():
+                raise QobuzError("the awarded list cannot be saved")
+            return rating
+
+    def rating(self, album_id: str) -> int:
+        with self._lock:
+            entry = next((e for e in self._load() if e["id"] == str(album_id)), None)
+        return int(entry.get("rating") or 0) if entry else 0
+
+    @staticmethod
+    def _merge(qobuz: list[dict], mine: list[dict]) -> list[dict]:
+        names = {a["name"].casefold() for a in qobuz}
+        return list(qobuz) + [{**a, "mine": True} for a in mine if a["name"].casefold() not in names]
+
+    def merged(self, album_id: str, qobuz: list[dict]) -> list[dict]:
+        """Qobuz's awards for the album, and the user's after them."""
+        with self._lock:
+            entry = next((e for e in self._load() if e["id"] == str(album_id)), None)
+        return self._merge(qobuz, entry.get("mine", []) if entry else [])
+
+    def albums(self) -> list[dict]:
+        """Every awarded album, most recently met or marked first, as cards
+        with their awards merged."""
+        with self._lock:
+            entries = list(self._load())
+        return [{**e["card"], "id": e["id"], "awards": self._merge(e.get("qobuz", []), e.get("mine", [])),
+                 "rating": int(e.get("rating") or 0), "awarded_changed": e.get("changed", "")}
+                for e in entries]
+
+
+
+MAX_AWARD_IDS = 30      # albums per /qobuz/awards request
+
+
 class QobuzCatalog:
     """Label- and date-filtered album search over Qobuz's catalog API."""
 
     def __init__(self, settings: Settings | None = None, credentials=None,
                  fetch=None, today=None, played: PlayedAlbums | None = None,
-                 lowered: LoweredList | None = None) -> None:
+                 lowered: LoweredList | None = None,
+                 awarded: AwardedAlbums | None = None) -> None:
         self.settings = settings or Settings()
         self.played = played
         self.lowered = lowered
+        self.awarded = awarded
         # () -> (app_id, user_auth_token); raises QobuzError when unavailable.
         self._credentials = credentials or (lambda: (self.settings.app_id, ""))
         self._fetch_override = fetch          # tests: (endpoint, params) -> dict
@@ -863,10 +1025,12 @@ class QobuzCatalog:
         if enrich and results:
             head = [c for c in results if "lowered" not in c][:self.settings.max_enrich]
             with ThreadPoolExecutor(max_workers=max(1, self.settings.workers)) as pool:
-                details = list(pool.map(self._performers_quietly, [c["id"] for c in head]))
-            for card, performers in zip(head, details):
-                if performers is not None:
-                    card["performers"] = performers
+                details = list(pool.map(self._details_quietly, [c["id"] for c in head]))
+            for card, found in zip(head, details):
+                if found is not None:
+                    card["performers"] = found[0]
+                    card["awards"] = self._awards_of(card, found[1])
+                    card["rating"] = self.awarded.rating(card["id"]) if self.awarded else 0
                     enriched += 1
         self._mark_lowered(results)
         results.sort(key=lambda c: "lowered" in c)      # stable: each part keeps its order
@@ -907,14 +1071,38 @@ class QobuzCatalog:
                 if why:
                     card["lowered"] = why
 
-    def _performers_quietly(self, album_id: str) -> list[dict] | None:
-        """A card's performers, or None: one album failing to load must not
-        cost the whole result list."""
+    def _details_quietly(self, album_id: str) -> tuple[list[dict], list[dict]] | None:
+        """A card's performers and awards, or None: one album failing to load
+        must not cost the whole result list."""
         try:
             raw = self._album_raw(album_id)
         except QobuzError:
             return None
-        return album_performers((raw.get("tracks") or {}).get("items") or [])
+        return album_performers((raw.get("tracks") or {}).get("items") or []), album_awards(raw)
+
+    def ratings(self, album_ids: list[str]) -> dict[str, int]:
+        """The user's rating of each of these albums that has one."""
+        if not self.awarded:
+            return {}
+        return {i: r for i in album_ids if (r := self.awarded.rating(i))}
+
+    def awards(self, album_ids: list[str]) -> dict[str, list[dict]]:
+        """The awards of each album (see album_awards), for the ones a search did
+        not enrich: {id: [...]}.  An album that cannot be loaded is left out."""
+        ids = list(dict.fromkeys(str(i).strip() for i in album_ids
+                                 if re.fullmatch(r"[0-9A-Za-z]+", str(i).strip())))[:MAX_AWARD_IDS]
+        with ThreadPoolExecutor(max_workers=max(1, self.settings.workers)) as pool:
+            found = list(pool.map(self._details_quietly, ids))
+        return {i: self._awards_of(album_card(self._album_raw(i)), f[1])
+                for i, f in zip(ids, found) if f is not None}
+
+    def _awards_of(self, card: dict, qobuz: list[dict]) -> list[dict]:
+        """Qobuz's awards for a card, noted in the awarded list, with the
+        user's own added."""
+        if not self.awarded:
+            return qobuz
+        self.awarded.seen(card, qobuz)
+        return self.awarded.merged(card["id"], qobuz)
 
     def album(self, album_id: str) -> dict:
         """One album with its tracks, performers and description."""
@@ -936,12 +1124,8 @@ class QobuzCatalog:
             "url": g["url"],
         } for g in raw.get("goodies") or []
             if isinstance(g, dict) and str(g.get("url") or "").startswith("https://")]
-        card["awards"] = [{
-            "name": (a.get("name") or "").strip(),
-            "publication": (a.get("publication_name") or "").strip(),
-            "date": (dt.datetime.fromtimestamp(a["awarded_at"], dt.timezone.utc).strftime("%Y-%m-%d")
-                     if isinstance(a.get("awarded_at"), (int, float)) and a["awarded_at"] > 0 else ""),
-        } for a in raw.get("awards") or [] if isinstance(a, dict) and a.get("name")]
+        card["awards"] = self._awards_of(card, album_awards(raw))
+        card["rating"] = self.awarded.rating(album_id) if self.awarded else 0
         card["upc"] = raw.get("upc") or ""
         card["release_type"] = raw.get("release_type") or raw.get("product_type") or ""
         card["media_count"] = raw.get("media_count")

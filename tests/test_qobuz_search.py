@@ -492,6 +492,60 @@ class AlbumTest(unittest.TestCase):
         self.assertEqual(out["upc"], "0123")
         self.assertEqual(out["technical"], "24 bits / 48.0 kHz - Stereo")
 
+    def test_awards_come_with_enrichment_and_on_request(self):
+        prize = {"name": "Diapason d'or", "publication_name": "Diapason", "awarded_at": 1764543600}
+        raw = {**album("a1", "Symphony No. 2", "Halle", "2025-10-01"), "awards": [prize],
+               "tracks": {"items": []}}
+        plain = {**album("a2", "Symphony No. 2", "Halle", "2025-10-01"), "tracks": {"items": []}}
+        cat, _ = catalog({"mahler 2": [album("a1", "Symphony No. 2", "Halle", "2025-10-01"),
+                                       album("a2", "Symphony No. 2", "Halle", "2025-10-01")]},
+                         {"a1": raw, "a2": plain})
+        answer = cat.search("mahler 2")
+        by_id = {c["id"]: c for c in answer["results"]}
+        self.assertEqual(by_id["a1"]["awards"][0]["name"], "Diapason d'or")
+        self.assertEqual(by_id["a2"]["awards"], [])
+        got = cat.awards(["a1", "a2", "../bad", "a1"])
+        self.assertEqual(sorted(got), ["a1", "a2"])
+        self.assertEqual(got["a1"][0]["publication"], "Diapason")
+
+    def test_awarded_list_notes_qobuz_awards_and_keeps_the_users(self):
+        prize = {"name": "Gramophone: Editor's Choice", "publication_name": "Gramophone",
+                 "awarded_at": 1764543600}
+        raw1 = {**album("a1", "Symphony No. 2", "Halle", "2025-10-01"), "awards": [prize],
+                "tracks": {"items": []}}
+        raw2 = {**album("a2", "Symphony No. 2", "Channel", "2006-01-01"), "tracks": {"items": []}}
+        with tempfile.TemporaryDirectory() as tmp:
+            store = qs.AwardedAlbums(tmp + "/aw.json")
+            cat, _ = catalog({}, {"a1": raw1, "a2": raw2})
+            cat.awarded = store
+            cat.awards(["a1", "a2"])                       # met: a1 with an award, a2 without
+            self.assertEqual([a["id"] for a in store.albums()], ["a1"])
+            got = store.mark(qs.album_card(raw2), "Diapason d'Or", "Diapason")
+            self.assertEqual(got, [{"name": "Diapason d'Or", "publication": "Diapason", "date": "", "mine": True}])
+            again = qs.AwardedAlbums(tmp + "/aw.json")      # kept in the file
+            cat.awarded = again
+            self.assertEqual(cat.awards(["a2"])["a2"][0]["name"], "Diapason d'Or")
+            self.assertEqual([a["id"] for a in again.albums()], ["a2", "a1"])
+            self.assertEqual(again.unmark("a2", "diapason d'or"), [])
+            self.assertEqual([a["id"] for a in again.albums()], ["a1"])
+            with self.assertRaises(qs.QobuzError):
+                again.mark(qs.album_card(raw2), "", "")
+
+    def test_a_rating_alone_keeps_the_album_listed_and_rides_with_its_awards(self):
+        raw = {**album("r1", "Symphony No. 3", "BIS", "2020-01-01"), "tracks": {"items": []}}
+        with tempfile.TemporaryDirectory() as tmp:
+            store = qs.AwardedAlbums(tmp + "/aw.json")
+            cat, _ = catalog({"mahler 3": [album("r1", "Symphony No. 3", "BIS", "2020-01-01")]}, {"r1": raw})
+            cat.awarded = store
+            self.assertEqual(store.rate(qs.album_card(raw), 5), 3)            # clamped
+            self.assertEqual([(a["id"], a["rating"], a["awards"]) for a in store.albums()], [("r1", 3, [])])
+            card = cat.search("mahler 3")["results"][0]
+            self.assertEqual(card["rating"], 3)
+            self.assertEqual(cat.ratings(["r1", "x"]), {"r1": 3})
+            self.assertEqual(qs.AwardedAlbums(tmp + "/aw.json").rating("r1"), 3)
+            self.assertEqual(store.rate(qs.album_card(raw), 0), 0)
+            self.assertEqual(store.albums(), [])
+
     def test_track_brings_its_album_card(self):
         calls = []
 

@@ -19,6 +19,9 @@ try {
 <body>
 <header id="topbar">
     <button type="button" id="top-menu" aria-haspopup="dialog"><span>☰</span><span id="top-page">Now</span></button>
+    {# the box's own mascot, as on the desktop panel: Tux on Linux, the daemon on FreeBSD #}
+    <img id="top-mascot" src="{{ url_for('static', filename='tux.png' if os_name == 'Linux' else 'freebsd-beastie.png') }}"
+         alt="{{ os_name }}" title="The box runs {{ os_name }}">
     <span class="brand">OMDRC</span>
     <span class="spacer"></span>
     <button type="button" id="top-alert" class="top-alert" hidden title="Log alerts">!</button>
