@@ -39,19 +39,23 @@ P.mount = el => {
     const trackBox = h('div', { class: 'now-track' }, P.artBox,
         h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.pAlbum), P.calLed,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
-        h('div', { class: 'now-timebox' }, P.state, P.time, h('div', { class: 'now-prog' }, P.prog)));
+        // (upright, previous and next track either side of it)
+        h('div', { class: 'now-timebox' },
+            h('span', { class: 'now-ctl' },
+                h('button', { class: 'chip now-skip', type: 'button', title: 'Previous track', 'aria-label': 'Previous track', onclick: () => P.transport('prev') }, '⏮'),
+                P.state,
+                h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, '⏭')),
+            P.time, h('div', { class: 'now-prog' }, P.prog)));
 
     // level area
     P.meterHost = h('div', { class: 'lvl-meter' });
     P.specCanvas = h('canvas', { class: 'lvl-spectrum' });
-    // these live in the top bar while this page is showing (see show()).  DR and Bal are
-    // shortcuts for the remembered switches (the DR page's Estimate, Config's Balance): off
-    // hides the card and also stops what feeds it.
-    P.modeBtn = h('button', { class: 'chip lvl-mode', type: 'button', onclick: () => P.cycleMode() });
-    P.drToggle = h('button', { class: 'chip tog', type: 'button', title: 'Dynamic range estimate on / off', onclick: () => P.flip('now.dr') }, 'DR');
-    P.balToggle = h('button', { class: 'chip tog', type: 'button', title: 'Balance on / off', onclick: () => P.flip('now.balance') }, 'Bal');
-    P.coverToggle = h('button', { class: 'chip tog', type: 'button', title: 'Album cover behind the meters on / off', onclick: () => P.flipCover() }, 'Art');
-    P.topBtns = h('span', { class: 'top-toggles' }, P.coverToggle, P.drToggle, P.balToggle, P.modeBtn);
+    // One chip in the top bar while this page is showing (see show()): a menu with the
+    // level display and the Art, DR and Balance switches (DR and Balance are the
+    // remembered switches of the DR page's Estimate and Config's Balance: off hides the
+    // card and also stops what feeds it).  Its title says what the meters are reading.
+    P.modeBtn = h('button', { class: 'chip lvl-mode', type: 'button', 'aria-haspopup': 'menu', onclick: () => P.openViewMenu() }, 'View ▾');
+    P.topBtns = h('span', { class: 'top-toggles' }, P.modeBtn);
     // The cover behind the meters (off unless switched on: see "cover art" below)
     P.coverLayer = h('div', { class: 'cover-layer', hidden: true });
     P.coverScrim = h('div', { class: 'cover-scrim', hidden: true });
@@ -107,7 +111,7 @@ P.mount = el => {
     // the handle overlays the gap above the DR strip: it takes no layout space
     P.drBarBox.append(P.splitter);
     // upright, with the Qobuz search on: the Qobuz page's search box sits at the
-    // bottom (pages/qobuz.js moves it here and back; a search opens that page)
+    // bottom, a preview of the results above it (pages/qobuz.js moves both here and back)
     P.qzSlot = h('div', { class: 'now-search', hidden: true });
     el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.drBarBox, P.drcLine, P.qzSlot));
     P.wireSplitter();
@@ -168,14 +172,10 @@ P.applyLayout = () => {
     P.el.firstChild.classList.toggle('cover-big', square);
     P.chainBox.hidden = !off || square;
     P.coverSqBox.hidden = !square;
-    P.coverToggle.classList.toggle('on', P.coverWanted());
     P.qzSlot.hidden = !K.state.features.qobuz_search;   // shown upright only (kiosk.css)
     P.artBox.classList.toggle('seek-zone', K.portrait());   // the seek ring's: no page swipe, no top bar
     P.el.firstChild.classList.toggle('cover-sq', square);
-    P.modeBtn.textContent = MODE_LABEL[P.mode];
     if (!off) P.vu.setMode(P.mode === 'needles' ? 'needles' : 'bars');
-    P.drToggle.classList.toggle('on', P.showDr);
-    P.balToggle.classList.toggle('on', P.showBalance);
     P.el.firstChild.classList.toggle('lvl-off', off);
     P.drBox.hidden = !P.showDr;
     P.drBarBox.hidden = !P.showDr;
@@ -186,6 +186,8 @@ P.applyLayout = () => {
     P.el.firstChild.classList.toggle('no-drbar', !P.showDr);
     // DR hidden but Balance on: no side column, the balance slides under the meters
     P.el.firstChild.classList.toggle('bal-below', !P.showDr && P.showBalance);
+    // upright, something switched off leaves room: the cover grows and the track goes under it
+    P.el.firstChild.classList.toggle('roomy', off || !P.showDr || !P.showBalance);
     P.splitter.hidden = !P.showDr || (P.mode === 'off' && !square);
     P.paintCover();
     P.applySplit();
@@ -193,10 +195,41 @@ P.applyLayout = () => {
     P.drWin.textContent = K.dr.windowLabel(K.drEstimate.windowSeconds).replace(' minutes', ' min').replace(' minute', ' min');
 };
 
-P.cycleMode = () => {
-    K.setLevelMode(MODES[(MODES.indexOf(P.mode) + 1) % MODES.length]);
+P.setMode = mode => {
+    K.setLevelMode(mode);
     P.applyLayout();
     P.syncMode();           // spectrum needs the FFT stream; off needs no stream at all
+};
+
+// The View menu: the level display (one of) and the switches (any of).  It stays open
+// for another pick; a tap outside it, or leaving the page, closes it.
+P.openViewMenu = () => {
+    if (P.menu) { P.closeViewMenu(); return; }
+    const item = (on, text, fn, radio = false) => h('button', {
+        type: 'button', class: 'menu-item', role: radio ? 'menuitemradio' : 'menuitemcheckbox', 'aria-checked': String(on),
+        onclick: () => { fn(); paint(); K.showBar(true); },   // picking keeps the bar up
+    }, h('span', { class: 'mk' }, on ? (radio ? '●' : '✓') : ''), text);
+    const menu = P.menu = h('div', { class: 'menu-pop', role: 'menu' });
+    const paint = () => K.clear(menu).append(
+        ...MODES.map(m => item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)),
+        h('div', { class: 'menu-sep' }),
+        item(P.coverWanted(), 'Album cover', () => P.flipCover()),
+        item(P.showDr, 'Dynamic range (DR)', () => P.flip('now.dr')),
+        item(P.showBalance, 'Balance', () => P.flip('now.balance')));
+    paint();
+    document.body.append(menu);
+    const r = P.modeBtn.getBoundingClientRect();
+    menu.style.top = `${r.bottom + 4}px`;
+    menu.style.right = `${Math.max(8, innerWidth - r.right)}px`;
+    P.menuOutside = e => { if (!menu.contains(e.target) && e.target !== P.modeBtn) P.closeViewMenu(); };
+    document.addEventListener('pointerdown', P.menuOutside, true);
+    K.onBarHidden = P.closeViewMenu;
+};
+P.closeViewMenu = () => {
+    if (!P.menu) return;
+    document.removeEventListener('pointerdown', P.menuOutside, true);
+    P.menu.remove();
+    P.menu = null;
 };
 
 P.cycleWindow = ev => {
@@ -627,7 +660,7 @@ P.wireCoverGesture = () => {
 // ── transport: tap = play/pause, hold = stop ────────────────────────────────
 P.transport = async action => {
     const label = { play: '▶ Playing', pause: '❚❚ Paused', stop: '■ Stopped' }[action];
-    P.state.textContent = label;                         // optimistic; the next poll confirms
+    if (label) P.state.textContent = label;              // optimistic; the next poll confirms
     const d = await K.api('/k/api/transport', { json: { action } });
     if (!d.ok) K.toast(d.error || `${action} failed`, 'error');
     [700, 2500].forEach(ms => setTimeout(() => { if (P.trackPoll.running) P.trackPoll.now(); }, ms));
@@ -809,6 +842,7 @@ P.show = () => {
 };
 
 P.hide = () => {
+    P.closeViewMenu();
     if (P.level) { P.level.close(); P.level = null; }
     P.chainPoll.stop();
     P.visible = false;

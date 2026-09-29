@@ -109,6 +109,9 @@ class Settings:
     played_limit: int = 1000
 
 
+# A search reporting its progress (the kiosk's preview) does so at most this often, seconds.
+PROGRESS_INTERVAL = 0.25
+
 # Deepest scan a request may ask for, whatever the page asks: "Load more"
 # pressed many times must not turn one tap into hundreds of requests.
 MAX_SCAN = 10000
@@ -650,19 +653,22 @@ class QobuzCatalog:
             return block.get("items") or [], block.get("total")
         return self._cached(f"page:{_fold(query)}:{offset}", self.settings.cache_ttl, make)
 
-    def _read(self, pool, scans: list[dict], end: int) -> None:
+    def _read(self, pool, scans: list[dict], end: int, on_page=None) -> None:
         """Extend each query's album list to `end` albums, or to its last one.
 
         A query's first page comes first, alone: it gives the total, so no
         page past the end is ever asked for.  The rest go in parallel.  A
         first page that fails fails the search (it is the credentials, or the
-        network); a later one only ends that query, with the error noted."""
+        network); a later one only ends that query, with the error noted.
+        `on_page()`, if given, is called (in this thread) as pages come in."""
         fresh = [s for s in scans if s["total"] is None and not s["done"]]
         for scan, (items, total) in zip(fresh, pool.map(
                 lambda s: self._page(s["query"], 0), fresh)):
             scan["items"] = list(items)
             scan["total"] = total if total is not None else len(items)
             scan["done"] = len(items) < PAGE_SIZE or len(items) >= scan["total"]
+        if fresh and on_page:
+            on_page()
 
         jobs = [(scan, offset) for scan in scans if not scan["done"]
                 for offset in range(len(scan["items"]), min(end, scan["total"]), PAGE_SIZE)]
@@ -683,6 +689,8 @@ class QobuzCatalog:
             scan["items"].extend(items)
             if len(items) < PAGE_SIZE or len(scan["items"]) >= scan["total"]:
                 scan["done"] = True
+            if on_page:
+                on_page()
 
     def record_played(self, album_id: str) -> bool:
         """Remember an album as played (see PlayedAlbums)."""
@@ -764,7 +772,10 @@ class QobuzCatalog:
     def search(self, text: str = "", labels: list[str] | None = None,
                last_years: float | None = None, from_year: int | None = None,
                to_year: int | None = None, sort: str = "relevance",
-               enrich: bool = True, scan: int | None = None) -> dict:
+               enrich: bool = True, scan: int | None = None, progress=None) -> dict:
+        """The search.  `progress(partial)`, if given, is handed the results as
+        they come in, a few times a second, in their final order but without
+        performers: {"partial": True, "results", "count", "considered", "sort"}."""
         text = (text or "").strip()
         groups = self.label_groups(labels or [])
         if not text and not groups:
@@ -790,9 +801,30 @@ class QobuzCatalog:
                           "done": True, "error": ""})
         first = self.settings.scan if filtered else PAGE_SIZE
         depth = min(MAX_SCAN, max(PAGE_SIZE, int(scan or first)))
+
+        def order(results):
+            if sort == "date":
+                results.sort(key=lambda c: (c["date"] or "0000", -c["rank"]), reverse=True)
+            else:
+                results.sort(key=lambda c: c["rank"])
+
+        reported = [0.0]
+
+        def report():
+            now = time.monotonic()
+            if now - reported[0] < PROGRESS_INTERVAL:
+                return
+            reported[0] = now
+            partial, _, _, considered = self._filter(scans, groups, lo, hi)
+            order(partial)
+            self._mark_lowered(partial)
+            partial.sort(key=lambda c: "lowered" in c)
+            progress({"partial": True, "results": partial, "count": len(partial),
+                      "considered": considered, "sort": sort})
+
         with ThreadPoolExecutor(max_workers=max(1, self.settings.workers)) as pool:
             while True:
-                self._read(pool, scans, depth)
+                self._read(pool, scans, depth, report if progress else None)
                 results, labels_seen, unstreamable, considered = self._filter(
                     scans, groups, lo, hi)
                 if (not filtered or len(results) >= self.settings.want
@@ -801,10 +833,7 @@ class QobuzCatalog:
                     break
                 depth = min(depth * 2, self.settings.auto_scan)
 
-        if sort == "date":
-            results.sort(key=lambda c: (c["date"] or "0000", -c["rank"]), reverse=True)
-        else:
-            results.sort(key=lambda c: c["rank"])
+        order(results)
 
         # Lowered albums go to the end, in their order.  Marked once before
         # the performers are fetched (none are fetched for them) and again

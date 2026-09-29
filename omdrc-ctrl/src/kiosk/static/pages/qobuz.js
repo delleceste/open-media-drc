@@ -62,11 +62,16 @@ P.mount = el => {
     P.form = h('div', { class: 'qz-form' },
         K.card(null,
             h('div', { class: 'qz-searchwrap' },
-                h('div', { class: 'qz-searchrow' }, P.input,
-                    h('button', { type: 'button', class: 'btn primary', onclick: () => P.go() }, 'Search')),
+                // a real form: the keyboard's Search key submits it (Android's IME action
+                // does not always come through as an Enter keydown)
+                h('form', { class: 'qz-searchrow', action: '', onsubmit: e => { e.preventDefault(); P.go(); } }, P.input,
+                    h('button', { type: 'submit', class: 'btn primary' }, 'Search'),
+                    // down on Now, once there are results: over to them (kiosk.css shows it)
+                    h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›')),
                 P.suggestBox),
             P.fsum, P.filters));
     P.results = h('div', { class: 'qz-results' });
+    P.preview = h('div', { class: 'qz-preview', hidden: true });   // on Now only, above the box
     P.player = h('div', { class: 'qz-player' });
     // the box's place on this page (it may be on Now instead: see "where the search box is"),
     // and the head shown in its place over results searched from Now
@@ -118,25 +123,30 @@ K.qobuzDock = slot => {
     P.ensureMounted();
     if (P.form.parentElement === slot) return;
     P.openFilters(false);                          // folded down there until asked for
-    slot.append(P.form);
+    slot.append(P.preview, P.form);
     P.form.classList.add('qz-docked');
 };
 P.undock = () => {
     if (!P.dockedOnNow()) return;
     P.form.classList.remove('qz-docked');
+    P.preview.remove();
     P.formHome.append(P.form);
 };
 
-// An explicit search (the button, Enter): from Now it moves over to the results.
+// An explicit search (the button, Enter).  From Now it stays there: the results show
+// as a preview above the box, and › opens them here.
 P.go = () => {
     P.input.blur();
     P.showSuggestions([]);
-    if (P.dockedOnNow() && K.portrait()) {
-        P.fromNow = true;
-        K.showPage(P.id);
-        P.el.scrollTop = 0;
-    }
     P.search();
+};
+// No smooth scroll: the keyboard closing meanwhile resizes the page, and a resize
+// puts the pager back on the page it is on (main.js).
+P.openResults = () => {
+    P.input.blur();
+    P.fromNow = true;
+    K.showPage(P.id, false);
+    P.el.scrollTop = 0;
 };
 
 // The app shrinks the page by the keyboard: keep the field (and at the bottom of Now,
@@ -447,12 +457,16 @@ P.search = async (scan = 0, { quiet = false } = {}) => {
     const seq = ++P.searching;
     P.request = params.toString();
     if (!quiet) P.paintWorking(scan ? 'Reading further…' : 'Searching…', !!scan);
-    const d = await K.api('/qobuz/search?' + params, { timeout: 120000 });
+    if (!scan && !quiet) P.paintPreview('Searching…');
+    // a new search streams its partial results into the preview; "Load more" just asks
+    const d = scan ? await K.api('/qobuz/search?' + params, { timeout: 120000 })
+        : await P.streamSearch(params, seq);
     if (seq !== P.searching) return;
     P.request = null;
     if (!d.ok) {
         if (d.renderer === false) P.refreshStatus();
         P.paintError(d.error || 'search failed');
+        P.paintPreview(d.error || 'search failed');
         return;
     }
     // A new search may read on by itself at the end of its list; a further page
@@ -461,6 +475,7 @@ P.search = async (scan = 0, { quiet = false } = {}) => {
     P.last = d;
     P.paintSeen();
     P.paintResults();
+    P.paintPreview();
     // Results fold the filters away: the list gets the screen.
     if (!quiet) P.openFilters(false);
 };
@@ -502,6 +517,48 @@ P.paintResults = () => {
         P.watchMore(more, d);
     }
     K.clear(P.results).append(...kids);
+};
+
+// The search as server-sent events: partial results (already in their final order)
+// repaint the preview while Qobuz is being read; the promise gets the whole answer.
+// A newer search ends the older one's stream.
+P.streamSearch = (params, seq) => new Promise(resolve => {
+    if (P.streamEnd) P.streamEnd({ ok: false, error: 'replaced' });
+    const es = new EventSource('/qobuz/search/stream?' + params);
+    const end = d => {
+        if (P.streamEnd !== end) return;
+        P.streamEnd = null;
+        clearTimeout(timer);
+        es.close();
+        resolve(d);
+    };
+    P.streamEnd = end;
+    const timer = setTimeout(() => end({ ok: false, error: 'the search took too long' }), 120000);
+    es.onmessage = ev => {
+        let d;
+        try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.ok && d.partial) { if (seq === P.searching) P.paintPreview(null, d); return; }
+        end(d);
+    };
+    es.onerror = () => end({ ok: false, error: 'the search was cut off' });
+});
+
+// The preview on Now: one line of text per album, the lowered ones last and dimmed;
+// or, with text given, just that (searching, an error).  `d` is a partial answer
+// while the search runs (see streamSearch), else the last one.
+P.paintPreview = (text, d = P.last) => {
+    const partial = !!(d && d.partial);
+    P.form.classList.toggle('qz-has-res', !text && !partial && !!d);
+    P.preview.hidden = false;
+    if (text) { K.clear(P.preview).append(h('div', { class: 'qz-pv-line muted' }, text)); return; }
+    if (!d) { P.preview.hidden = true; return; }
+    const line = c => h('div', { class: 'qz-pv-line' + (c.lowered ? ' low' : '') },
+        [c.title + (c.version ? ` (${c.version})` : ''), c.artist, c.year].filter(Boolean).join(' · '));
+    const n = `${d.count} album${d.count === 1 ? '' : 's'}`;
+    const head = partial ? `Searching… ${n} so far (${d.considered} looked at)` : n + (d.more ? ' so far' : '');
+    const top = P.preview.scrollTop;
+    K.clear(P.preview).append(h('div', { class: 'qz-pv-line muted' }, head), ...d.results.map(line));
+    P.preview.scrollTop = partial ? top : 0;     // the live list stays where it is being read
 };
 
 // Reaching the end of the list reads on by itself, as scrolling does in Qobuz's
@@ -636,12 +693,10 @@ P.suggestKey = e => {
         P.pick(Math.max(0, P.active));
     } else if (e.key === 'Escape') {
         P.showSuggestions([]);
-    } else if (e.key === 'Enter') {
-        e.preventDefault();
-        if (n && P.active >= 0) { P.pick(P.active); return; }
-        P.showSuggestions([]);
-        P.go();
-    }
+    } else if (e.key === 'Enter' && n && P.active >= 0) {
+        e.preventDefault();                       // a completion, not a search
+        P.pick(P.active);
+    }                                             // else Enter submits the form: P.go()
 };
 
 // ── lowering ─────────────────────────────────────────────────────────────────

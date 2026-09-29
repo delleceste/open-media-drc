@@ -8,6 +8,8 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     GET /qobuz/status              enabled, upmpdcli running, token present
     GET /qobuz/labels              the label groups offered as check boxes
     GET /qobuz/search?q=&label=&last=|from=&to=&sort=&scan=&enrich=
+    GET /qobuz/search/stream?...    the same, as server-sent events: partial
+                                   results while it reads, then the answer
     GET /qobuz/album/<id>          one album: tracks, performers, description
     POST /qobuz/play               {"album_id", "mode": "replace"|"append",
                                     "start": track id}: queue it on upmpdcli
@@ -33,11 +35,13 @@ plugin reads from Qobuz's web player, fetched once per panel run.
 """
 from __future__ import annotations
 
+import json
 import os
+import queue
 import threading
 import time
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 import openhome
 from qobuz_search import (LoweredList, PlayedAlbums, QobuzCatalog, QobuzError,
@@ -262,6 +266,19 @@ def labels():
         {"name": g.name, "patterns": list(g.patterns)} for g in _settings().labels]})
 
 
+def _search_args() -> dict:
+    """The search's arguments, from the request (QobuzError on a bad number)."""
+    names = [name for value in request.args.getlist("label")
+             for name in value.split(",")]
+    return dict(
+        text=request.args.get("q", ""), labels=names,
+        last_years=_number("last", float),
+        from_year=_number("from", int), to_year=_number("to", int),
+        sort=request.args.get("sort", "relevance"),
+        enrich=request.args.get("enrich", "1") not in ("0", "no", "false"),
+        scan=_number("scan", int))
+
+
 @bp.route("/search")
 def search():
     """?q=text&label=Pentatone&label=Decca (or label=Pentatone,Decca)
@@ -271,18 +288,58 @@ def search():
     if guard:
         return guard
     try:
-        names = [name for value in request.args.getlist("label")
-                 for name in value.split(",")]
-        answer = catalog().search(
-            request.args.get("q", ""), labels=names,
-            last_years=_number("last", float),
-            from_year=_number("from", int), to_year=_number("to", int),
-            sort=request.args.get("sort", "relevance"),
-            enrich=request.args.get("enrich", "1") not in ("0", "no", "false"),
-            scan=_number("scan", int))
+        answer = catalog().search(**_search_args())
         return jsonify({"ok": True, **answer})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/search/stream")
+def search_stream():
+    """The search above as server-sent events: {"ok": true, "partial": true, ...}
+    frames while Qobuz is being read (in the final order, without performers),
+    then one frame with the whole answer, or {"ok": false, "error"}; then the
+    stream ends.  Always 200, so that an EventSource sees the error frame."""
+    def frame(d):
+        return f"data: {json.dumps(d, separators=(',', ':'))}\n\n"
+
+    guard = _guard()
+    if guard:
+        body = guard[0].get_json()
+        return Response(frame(body), mimetype="text/event-stream")
+    try:
+        args = _search_args()
+    except QobuzError as error:
+        return Response(frame({"ok": False, "error": str(error)}), mimetype="text/event-stream")
+
+    frames: queue.Queue = queue.Queue()
+    target = catalog()
+
+    def run():
+        try:
+            answer = target.search(**args, progress=lambda d: frames.put({"ok": True, **d}))
+            frames.put({"ok": True, **answer})
+        except QobuzError as error:
+            frames.put({"ok": False, "error": str(error)})
+        except Exception as error:      # noqa: BLE001 - the page must hear of it
+            frames.put({"ok": False, "error": f"search failed: {error}"})
+        frames.put(None)
+
+    threading.Thread(target=run, name="qobuz-search", daemon=True).start()
+
+    def events():
+        while True:
+            try:
+                d = frames.get(timeout=10)
+            except queue.Empty:
+                yield ": keepalive\n\n"
+                continue
+            if d is None:
+                return
+            yield frame(d)
+
+    return Response(events(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @bp.route("/played")

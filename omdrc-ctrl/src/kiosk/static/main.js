@@ -235,6 +235,7 @@ K.showBar = (show = true) => {
     document.body.classList.toggle('bar-shown', show);
     clearTimeout(barTimer);
     if (show) barTimer = setTimeout(() => K.showBar(false), BAR_MS);
+    else if (K.onBarHidden) K.onBarHidden();     // a menu opened from the bar goes with it
 };
 const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar:not(.static), .splitter, .vsplit, .seek-zone, [role=switch]';
 let tapStart = null;

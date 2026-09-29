@@ -183,6 +183,17 @@ class SearchTest(unittest.TestCase):
         self.assertEqual([p["query"] for _, p in calls],
                          ["bruckner 7", "bruckner 7 Pentatone"])
 
+    def test_progress_reports_partial_results_in_the_final_order(self):
+        seen = []
+        with patch.object(qs, "PROGRESS_INTERVAL", 0):
+            answer, _ = self.search(labels=["Pentatone", "Decca"], from_year=2021, sort="date",
+                                    progress=seen.append)
+        self.assertTrue(seen)
+        self.assertTrue(all(p["partial"] for p in seen))
+        self.assertNotIn("partial", answer)
+        last = [c["id"] for c in seen[-1]["results"]]
+        self.assertEqual(last, self.ids(answer))
+
     def test_several_labels(self):
         answer, _ = self.search(labels=["Pentatone", "Decca"], from_year=2021)
         self.assertEqual(self.ids(answer), ["penta2", "decca", "penta1"])
@@ -484,6 +495,28 @@ class PanelTest(unittest.TestCase):
                                    "&from=2021").get_json()
         self.assertTrue(data["ok"])
         self.assertEqual([c["id"] for c in data["results"]], ["penta2", "decca", "penta1"])
+
+    def test_search_stream_route(self):
+        import json
+        cat, _ = catalog(SearchTest.SEARCHES, max_enrich=0)
+        with patch.object(qobuz_web, "catalog", return_value=cat), self.running(), \
+                patch.object(qs, "PROGRESS_INTERVAL", 0):
+            response = self.client.get("/qobuz/search/stream?q=bruckner+7&label=Pentatone,Decca"
+                                       "&from=2021")
+            body = response.get_data(as_text=True)
+        self.assertEqual(response.mimetype, "text/event-stream")
+        frames = [json.loads(line[6:]) for line in body.splitlines() if line.startswith("data: ")]
+        self.assertGreater(len(frames), 1)
+        self.assertTrue(all(f["ok"] and f.get("partial") for f in frames[:-1]))
+        self.assertNotIn("partial", frames[-1])
+        self.assertEqual([c["id"] for c in frames[-1]["results"]], ["penta2", "decca", "penta1"])
+
+    def test_search_stream_says_why_it_cannot(self):
+        cat, _ = catalog(SearchTest.SEARCHES)
+        with patch.object(qobuz_web, "catalog", return_value=cat), self.running(False):
+            response = self.client.get("/qobuz/search/stream?q=bruckner+7")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("upmpdcli", response.get_data(as_text=True))
 
     def test_no_search_without_upmpdcli(self):
         cat, calls = catalog(SearchTest.SEARCHES)
