@@ -577,14 +577,15 @@ input[type=range] { accent-color: var(--accent); }
 @keyframes cal-blink { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
 
 /* ── Qobuz search (pages/qobuz.js) ── */
-.qz { display: flex; flex-direction: column; min-height: calc(100% + var(--qz-hide, 0px)); }
+.qz { display: flex; flex-direction: column; min-height: 100%; }
 .qz-main { flex: 1 0 auto; display: flex; flex-direction: column; }
 .qz-home { display: flow-root; }
+.qz-home[hidden] { display: none; }
 .qz-viewrow { display: flex; align-items: center; gap: .6rem; margin: .1rem 0 .55rem; }
 .qz-viewrow[hidden], .qz-recent[hidden], .qz-results[hidden] { display: none; }
 .qz-viewchips { display: flex; gap: .4rem; flex-wrap: wrap; }
 .btn.link.qz-searchhint { margin-left: auto; border: 0; background: none; padding: 0 .1rem; min-height: 2.3rem;
-    color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }                 /* its height includes the box's margin (pages/qobuz.js reserve) */
+    color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
 /* filters: side by side where there is room, folded into one line after a search */
 .qz-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0 1.2rem; }
 .qz-filters[hidden], .qz-label-body[hidden] { display: none; }

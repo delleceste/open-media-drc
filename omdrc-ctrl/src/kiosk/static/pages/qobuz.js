@@ -142,11 +142,6 @@ P.show = () => {
     else if (P.view() === 'recent') P.recent();
     else if (P.view() === 'awarded') P.awardedList();
     if (!P.fromNowShown) P.undock();
-    else P.reserve(false);                         // no empty place under the results' head
-    // the first time after a load (the app reopened, a reload): as a swipe from Now
-    // lands, on the list with the box scrolled up out of sight
-    if (!P.shownOnce && !P.fromNowShown) { P.formHeight = P.formHome.offsetHeight; P.reserve(true); }
-    P.shownOnce = true;
     P.poll.start();
     P.playerPoll.start();
     P.clock = setInterval(P.paintTime, 500);
@@ -160,7 +155,7 @@ P.hide = () => {
     // they go, from here and from the preview on Now
     // ... and so is the preview on Now, once its results have been looked at up here
     const seen = P.fromNowShown || (P.view() === 'results' && P.form.classList.contains('qz-has-res'));
-    if (P.fromNowShown) { P.fromNowShown = false; P.forget(); if (P.dockedOnNow()) P.reserve(true); }
+    if (P.fromNowShown) { P.fromNowShown = false; P.forget(); }
     else if (seen) P.forget();
 };
 
@@ -206,26 +201,16 @@ K.qobuzDock = slot => {
     P.ensureMounted();
     if (P.form.parentElement === slot) return;
     P.openFilters(false);                          // folded down there until asked for
-    // Its place up here stays, empty and scrolled out of sight: a swipe from Now lands
-    // on the list with nothing popping in above it, and the box is back there (off
-    // screen) by the time anyone scrolls up to it.
-    if (!P.dockedOnNow()) P.formHeight = P.formHome.offsetHeight;
     slot.append(P.preview, P.form);
     P.form.classList.add('qz-docked');
-    P.reserve(true);
-};
-P.reserve = on => {
-    P.formHome.style.minHeight = on && P.formHeight ? P.formHeight + 'px' : '';
-    // room to scroll that far however short the list (kiosk.css .qz)
-    P.el.style.setProperty('--qz-hide', on && P.formHeight ? P.formHeight + 'px' : '0px');
-    if (on) P.el.scrollTop += P.formHome.getBoundingClientRect().bottom - P.el.getBoundingClientRect().top
-        - parseFloat(getComputedStyle(P.el).paddingTop);   // the list where it would be at the top
+    P.formHome.hidden = true;
 };
 P.undock = () => {
     if (!P.dockedOnNow()) return;
     P.form.classList.remove('qz-docked');
     P.preview.remove();
     P.formHome.append(P.form);
+    P.formHome.hidden = false;
 };
 
 // An explicit search (the button, Enter).  From Now it stays there: the results show
