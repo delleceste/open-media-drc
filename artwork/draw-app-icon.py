@@ -61,13 +61,15 @@ def note_d():
         head.append((cx + x * math.cos(tilt) - y * math.sin(tilt), cy + x * math.sin(tilt) + y * math.cos(tilt)))
     top, sx0, sx1 = 1180, 418, 470
     stem = [(sx0, 190), (sx1, 225), (sx1, top), (sx0, top)]
+    # the flag, full enough for the tall stem: out and down along an outer curve,
+    # back up along an inner one, the body between them thick at its middle
     flag = [(sx0, top)]
-    for i in range(1, 13):
-        t = i / 12
-        flag.append((sx1 + 190 * math.sin(t * math.pi * 0.9) * (1 - 0.3 * t), top - 430 * t))
-    for i in range(12, -1, -1):
-        t = i / 12
-        flag.append((sx1 + 120 * math.sin(t * math.pi * 0.9) * (1 - 0.3 * t), top - 80 - 320 * t))
+    for i in range(1, 17):
+        t = i / 16
+        flag.append((sx1 + 262 * math.sin(t * math.pi * 0.9) * (1 - 0.3 * t), top - 565 * t))
+    for i in range(16, -1, -1):
+        t = i / 16
+        flag.append((sx1 + 160 * math.sin(t * math.pi * 0.9) * (1 - 0.3 * t), top - 115 - 400 * t))
     return [[(x + y * SLANT, y) for x, y in shape] for shape in (head, stem, flag)]
 
 
