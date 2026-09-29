@@ -206,10 +206,12 @@ P.tuneSheet = () => {
     const close = (force = false) => {
         if (busy && !force) return;
         closed = true; P.tuneClose = null;
+        K.holdScreen('tune', false);
         level.close(); vu.destroy(); scrim.remove();
         if (P.left && !force) P.render();
     };
     P.tuneClose = close;
+    K.holdScreen('tune', true);        // the phone must not sleep in the middle of a run (main.js)
     const scrim = h('div', { class: 'scrim' }, h('div', { class: 'sheet cal-sheet tune-sheet' },
         h('div', { class: 'cal-title tune-title' }, h('span', {}, 'Meter timing'), P.infoBtn()),
         meterHost,

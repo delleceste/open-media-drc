@@ -41,7 +41,7 @@ P.mount = el => {
         type: 'search', class: 'qz-input', placeholder: 'Composer, work, performer…', enterkeyhint: 'search',
         autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
         onkeydown: e => P.suggestKey(e),
-        oninput: () => P.suggestSoon(),
+        oninput: () => { P.suggestSoon(); P.paintStale(); },
         onfocus: () => P.suggestSoon(),
         onblur: () => setTimeout(() => P.showSuggestions([]), 150),
     });
@@ -65,8 +65,9 @@ P.mount = el => {
                 // a real form: the keyboard's Search key submits it (Android's IME action
                 // does not always come through as an Enter keydown)
                 h('form', { class: 'qz-searchrow', action: '', onsubmit: e => { e.preventDefault(); P.go(); } }, P.input,
-                    h('button', { type: 'submit', class: 'btn primary' }, 'Search'),
-                    // down on Now, once there are results: over to them (kiosk.css shows it)
+                    h('button', { type: 'submit', class: 'btn primary qz-go' }, 'Search'),
+                    // down on Now, once there are results: over to them, in Search's place
+                    // until the text or a filter changes (kiosk.css, paintStale)
                     h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›')),
                 P.suggestBox),
             P.fsum, P.filters));
@@ -93,6 +94,7 @@ P.mount = el => {
 };
 
 P.show = () => {
+    P.visible = true;
     // searched from Now: the results under their head, the box stays down there;
     // otherwise the box is up here
     P.fromNowShown = P.fromNow;
@@ -104,9 +106,27 @@ P.show = () => {
     P.clock = setInterval(P.paintTime, 500);
 };
 P.hide = () => {
+    P.visible = false;
     P.poll.stop();
     P.playerPoll.stop();
     clearInterval(P.clock);
+    // results searched from Now are only for the moment: left (‹, a play, a swipe),
+    // they go, from here and from the preview on Now
+    if (P.fromNowShown) { P.fromNowShown = false; P.forget(); }
+};
+
+// Back to before any search: no results, no preview, "Played recently" again.  The
+// text and the filters stay.  A search still running is dropped.
+P.forget = () => {
+    ++P.searching;
+    if (P.streamEnd) P.streamEnd({ ok: false, error: 'dropped' });
+    if (P.moreObserver) P.moreObserver.disconnect();
+    P.last = null; P.request = null; P.searchedKey = null;
+    P.paintPreview();
+    P.paintStale();
+    P.paintSeen();
+    K.clear(P.results);
+    P.recent();
 };
 P.prefetch = () => P.refreshStatus();     // which also loads the labels
 
@@ -449,6 +469,7 @@ P.params = scan => {
 let soon = null;
 P.searchSoon = () => {
     clearTimeout(soon);
+    P.paintStale();
     if (P.dockedOnNow()) return;                  // down on Now: the next Search uses them
     if (P.last || P.request) soon = setTimeout(() => P.search(), 450);
 };
@@ -461,10 +482,11 @@ P.search = async (scan = 0, { quiet = false } = {}) => {
         return;
     }
     setPref('q', P.input.value.trim());
+    if (!scan) P.searchedKey = params.toString();
     const seq = ++P.searching;
     P.request = params.toString();
     if (!quiet) P.paintWorking(scan ? 'Reading further…' : 'Searching…', !!scan);
-    if (!scan && !quiet) P.paintPreview('Searching…');
+    if (!scan && !quiet) { P.paintPreview('Searching…'); P.revealPreview(); }
     // a new search streams its partial results into the preview; "Load more" just asks
     const d = scan ? await K.api('/qobuz/search?' + params, { timeout: 120000 })
         : await P.streamSearch(params, seq);
@@ -483,6 +505,7 @@ P.search = async (scan = 0, { quiet = false } = {}) => {
     P.paintSeen();
     P.paintResults();
     P.paintPreview();
+    P.paintStale();
     // Results fold the filters away: the list gets the screen.
     if (!quiet) P.openFilters(false);
 };
@@ -559,14 +582,35 @@ P.paintPreview = (text, d = P.last) => {
     P.preview.hidden = false;
     if (text) { K.clear(P.preview).append(h('div', { class: 'qz-pv-line muted' }, text)); return; }
     if (!d) { P.preview.hidden = true; return; }
+    // the artist only if the search was not for them ("rolling stones" leaves out
+    // "The Rolling Stones"); then the year and the label
+    const asked = P.plain(P.input.value);
+    const named = a => { const x = P.plain(a); return !!x && !!asked && (asked.includes(x) || (asked.length > 2 && x.includes(asked))); };
     const line = c => h('div', { class: 'qz-pv-line' + (c.lowered ? ' low' : '') },
-        [c.title + (c.version ? ` (${c.version})` : ''), c.artist, c.year].filter(Boolean).join(' · '));
+        [c.title + (c.version ? ` (${c.version})` : ''), named(c.artist) ? '' : c.artist, c.year, c.label]
+            .filter(Boolean).join(' · '));
     const n = `${d.count} album${d.count === 1 ? '' : 's'}`;
     const head = partial ? `Searching… ${n} so far (${d.considered} looked at)` : n + (d.more ? ' so far' : '');
     const top = P.preview.scrollTop;
     K.clear(P.preview).append(h('div', { class: 'qz-pv-line muted' }, head), ...d.results.map(line));
     P.preview.scrollTop = partial ? top : 0;     // the live list stays where it is being read
 };
+
+// Down on Now the preview has a height of its own (kiosk.css); the page scrolls so it
+// and the box are in view.  Again once the keyboard has gone: that resizes the page.
+P.revealPreview = () => {
+    if (!P.dockedOnNow()) return;
+    [0, 450].forEach(ms => setTimeout(() => P.form.scrollIntoView({ block: 'end', inline: 'nearest' }), ms));
+};
+
+// Down on Now, once there are results, › takes Search's place; Search comes back when
+// the text or a filter no longer matches the search those results answer.
+P.paintStale = () => {
+    if (P.form) P.form.classList.toggle('qz-stale', !P.last || P.params(0).toString() !== P.searchedKey);
+};
+
+// A name or a search text, compared loosely: no case, accents, punctuation or leading "the".
+P.plain = t => fold(String(t || '')).replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/^the /, '');
 
 // Reaching the end of the list reads on by itself, as scrolling does in Qobuz's
 // app -- but only while that keeps bringing albums: a filter that matches
@@ -901,6 +945,8 @@ P.play = async (c, mode, track = null) => {
     if (d.remembered) c.played = (c.played || 0) + 1;
     if (fromSearch) P.learn([P.last.query, c.artist, c.composer]);
     P.playerPoll.now();
+    // results searched from Now: back there, to what is now playing
+    if (P.visible && P.fromNowShown) K.showPage('now');
 };
 
 // ── player ───────────────────────────────────────────────────────────────────
@@ -964,6 +1010,12 @@ P.openFull = () => {
             h('div', { class: 'qz-full-side' },
                 h('div', { class: 'qz-full-info' }, v.title, v.work, v.sub, v.detail),
                 v.seekRow, v.buttons, P.queueHead, P.queueBox)));
+    // no slider here: the cover's seek ring (widgets/seekring.js), shown for a moment
+    // on opening so it is known to be there (paintTime, once the track's length is)
+    v.cover.classList.add('seek-zone');
+    v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
+        duration: () => P.base.duration, seek: s => P.seekTo(s) });
+    P.ringHint = true;
     document.getElementById('overlay-root').append(P.fullEl);
     P.fullView = v;
     P.views.push(v);
@@ -1022,7 +1074,8 @@ P.refreshPlayer = async () => {
 const setCover = (box, src) => {
     if (box.dataset.src === src) return;
     box.dataset.src = src;
-    K.clear(box).append(src ? h('img', { src, alt: '' }) : h('span', { class: 'qz-nocover' }, '♪'));
+    [...box.children].forEach(c => { if (!c.classList.contains('seek-ring')) c.remove(); });   // the ring stays
+    box.prepend(src ? h('img', { src, alt: '' }) : h('span', { class: 'qz-nocover' }, '♪'));
 };
 
 P.paintViews = () => {
@@ -1048,7 +1101,14 @@ P.paintViews = () => {
     P.paintTime();
 };
 
+P.seekable = () => !!(P.base && Number.isFinite(P.base.duration) && P.base.duration > 0 && Number.isFinite(P.base.elapsed));
+P.elapsedNow = () => {
+    const b = P.base;
+    return K.clamp(b.elapsed + (b.playing ? (performance.now() - b.at) / 1000 : 0), 0, b.duration);
+};
+
 P.paintTime = () => {
+    if (P.ringHint && P.fullView && P.seekable()) { P.ringHint = false; P.fullView.ring.flash(1000); }
     const b = P.base;
     const known = b && Number.isFinite(b.duration) && b.duration > 0 && Number.isFinite(b.elapsed);
     const e = known ? K.clamp(b.elapsed + (b.playing ? (performance.now() - b.at) / 1000 : 0), 0, b.duration) : 0;

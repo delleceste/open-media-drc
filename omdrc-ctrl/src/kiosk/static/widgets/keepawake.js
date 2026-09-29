@@ -10,9 +10,10 @@ const VIDEO = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE
 
 const A = K.awake = { lock: null, video: null, mode: 'off' };
 
-// Wanted only while Now playing is showing (never on the other pages, never behind the screensaver),
+// Wanted while Now playing is showing (never on the other pages, never behind the screensaver)
+// and, for Now playing, only if the user hasn't released it with the top-right button.  The Android app does this natively.
 // and only if the user hasn't released it with the top-right button.  The Android app does this natively.
-A.enabled = () => !window.OmdrcApp && K.pref('awake.on', true) && !!(K.nowShown && K.nowShown());
+A.enabled = () => !window.OmdrcApp && (!!(K.screenHeld && K.screenHeld()) || K.pref('awake.on', true) && !!(K.nowShown && K.nowShown()));
 
 A.release = () => {
     if (A.lock) { try { A.lock.release(); } catch {} A.lock = null; }

@@ -28,6 +28,7 @@ K.fetchTrack = async () => {
             format: q.line2 || '', state,
             elapsed: Number(q.elapsed), duration: Number(q.duration),
             art: state === 'stop' ? '' : (q.art || ''),
+            qobuz_album: q.qobuz_album || '',   // from a Qobuz cover: the album-details button
             activity: Array.isArray(q.events) ? q.events : (q.line3 ? [q.line3] : []),
             phase: q.state || '',
         };

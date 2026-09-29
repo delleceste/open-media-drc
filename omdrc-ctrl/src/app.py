@@ -4363,7 +4363,8 @@ def _upmpdcli_qconnect_status() -> dict:
                     if meta.get("art") else ""),
             "edition": _edition_line(
                 np.get("label") or meta.get("label", ""),
-                np.get("date") or meta.get("year", ""))}
+                np.get("date") or meta.get("year", "")),
+            "qobuz_album": _qobuz_album_of(meta.get("art", ""))}
 
 
 @app.route("/qconnect/status")
@@ -4380,6 +4381,7 @@ def qconnect_status():
             lines = f.read().splitlines()
         status = _parse_qconnect_status(lines)
         art_url = status.pop("art_url", "")
+        status["qobuz_album"] = _qobuz_album_of(art_url)
         if art_url:
             status["art"] = "/qconnect/art?v=" + hashlib.sha1(art_url.encode()).hexdigest()[:10]
         # qobuzconnect2mpd's status file names the track and the format; the
@@ -4528,6 +4530,17 @@ def qconnect_art():
     content_type, data = got
     return Response(data, mimetype=content_type,
                     headers={"Cache-Control": "public, max-age=3600"})
+
+
+# Qobuz names a cover after its album: .../images/covers/ab/cd/<album id>_600.jpg.
+# Either renderer knows the cover URL of what it plays, so that is where the
+# kiosk's "Album details" learns which album to ask /qobuz/album/<id> about.
+_QOBUZ_COVER = re.compile(r"^https?://static\.qobuz\.com/images/covers/\w+/\w+/([0-9A-Za-z]+)_\w+\.jpg")
+
+
+def _qobuz_album_of(art_url: str) -> str:
+    found = _QOBUZ_COVER.match(art_url or "")
+    return found.group(1) if found else ""
 
 
 def _edition_line(label: str, date: str) -> str:

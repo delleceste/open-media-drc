@@ -181,6 +181,7 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .sr-track { fill: none; stroke: rgba(255,255,255,.3); stroke-width: .9; transition: stroke-width .15s; }
 .sr-arc { fill: none; stroke: var(--accent); stroke-width: 1.3; stroke-linecap: round; transition: stroke-width .15s; }
 .sr-knob { fill: #fff; stroke: var(--accent); stroke-width: .8; r: 2.6px; transition: r .15s; }
+.seek-ring.fading { opacity: 0; transition: opacity .6s ease; }
 .seek-ring.active .sr-track { stroke-width: 2.2; }
 .seek-ring.active .sr-arc { stroke-width: 3.2; }
 .seek-ring.active .sr-knob { r: 4.8px; stroke-width: 1.2; }
@@ -190,6 +191,7 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
    than tall, and a hidden field loses the focus (and the keyboard goes again) */
 .now-search:focus-within { display: flex; flex-direction: column; }
 .now.cover-big .now-art { display: none !important; }
+.now.idle .now-art, .now.idle .now-timebox { display: none !important; }
 .now-meta { flex: 1; min-width: 0; }
 .now-title { font-size: 1.7rem; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-title.idle { color: var(--muted); font-weight: 500; }
@@ -197,6 +199,7 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .now-subrow { display: flex; align-items: baseline; gap: .7rem; }
 .now-subrow .now-sub { flex: 1; min-width: 0; }
 .now-fmt { flex: 0 0 auto; font: 700 .85rem ui-monospace, monospace; }
+.chip.now-info { display: none; }             /* upright only (below) */
 /* chip + small time on one line, the progress bar under them */
 .now-timebox { display: grid; grid-template-columns: auto auto; justify-content: end; align-items: center; column-gap: .6rem; row-gap: .3rem; width: 13rem; flex: 0 0 auto; }
 .now-time { font: .8rem ui-monospace, monospace; color: var(--muted); white-space: nowrap; }
@@ -490,6 +493,8 @@ input[type=range] { accent-color: var(--accent); }
     .now-meta { grid-area: meta; display: flex; flex-direction: column; gap: .25rem; }
     .now-title { font-size: 1.3rem; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
     .now-subrow { order: 3; } .now-subrow .now-sub { display: none; }
+    .chip.now-info:not([hidden]) { display: inline-flex; order: 4; align-self: flex-start; margin-top: .15rem; }
+    .now.roomy .now-info { align-self: center; }
     .now-partist, .now-palbum { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
     .now-partist { font-weight: 600; -webkit-line-clamp: 2; }
     .now-palbum { color: var(--muted); font-size: .9rem; -webkit-line-clamp: 3; }
@@ -509,6 +514,10 @@ input[type=range] { accent-color: var(--accent); }
     .now-search { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin-top: auto; padding-top: .3rem; }
     .now-search .qz-form { margin-top: auto; }
     .now-search .qz-form > .card { margin-bottom: 0; }
+    /* the preview a fifth of a screen high at least: the page grows and what is above scrolls away */
+    .now-search .qz-preview:not([hidden]) { flex: 1 0 auto; height: 21dvh; }
+    /* stopped with no cover (pages/now.js paintIdle): the title alone at the top */
+    .now.idle .now-track, .now.idle.roomy .now-track { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "meta" "led"; }
     .preset-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
@@ -618,6 +627,7 @@ input[type=range] { accent-color: var(--accent); }
 .qz-pv-line.low { opacity: .55; }
 .qz-toresults { display: none; min-width: 2.8rem; font-size: 1.2rem; }
 .qz-docked.qz-has-res .qz-toresults { display: inline-flex; align-items: center; justify-content: center; }
+.qz-docked.qz-has-res:not(.qz-stale) .qz-go, .qz-docked.qz-has-res.qz-stale .qz-toresults { display: none; }
 /* search-field completions, under the field */
 .qz-searchwrap { position: relative; }
 .qz-suggest { display: none; position: absolute; left: 0; right: 0; top: calc(100% + .25rem); z-index: 5; max-height: 19rem; overflow-y: auto;
@@ -650,19 +660,55 @@ input[type=range] { accent-color: var(--accent); }
 .qz-pseek { display: flex; align-items: center; gap: .5rem; }
 .qz-seek { flex: 1; min-width: 0; height: 2.4rem; }
 .qz-ptime { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 2.6rem; text-align: center; }
+/* album details (widgets/albuminfo.js): a page of its own over the kiosk */
+.scrim.ai { flex-direction: column; align-items: stretch; justify-content: flex-start; background: var(--bg); z-index: 58;
+    padding: .5rem .9rem max(.6rem, env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; }
+.ai-top { display: flex; align-items: center; gap: .7rem; flex: 0 0 auto; margin-bottom: .6rem; position: sticky; top: 0; z-index: 1; background: var(--bg); padding: .2rem 0; }
+.btn.ai-close { min-width: 2.8rem; padding: 0; font-size: 1.6rem; line-height: 1; }
+.ai-label { color: var(--muted); font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; }
+.ai-body { display: flex; flex-direction: column; gap: .7rem; max-width: 46rem; width: 100%; margin: 0 auto; }
+.ai-head { display: grid; grid-template-columns: min(38vw, 12rem) minmax(0, 1fr); gap: .9rem; align-items: start; }
+.ai-cover { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: .5rem; background: var(--surface2); }
+.ai-headtext { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.ai-title { font-size: 1.3rem; font-weight: 700; line-height: 1.2; }
+.ai-artist { font-weight: 600; }
+.ai-booklets { display: flex; flex-direction: column; gap: .45rem; }
+.btn.ai-booklet { display: flex; align-items: center; justify-content: flex-start; gap: .8rem; min-height: 3.6rem; padding: .4rem 1rem; text-align: left; }
+.ai-bk-icon { font-size: 1.7rem; }
+.ai-bk-text { display: flex; flex-direction: column; min-width: 0; }
+.ai-bk-text .small { opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-catch { margin: 0; font-style: italic; }
+.ai-awards { display: flex; flex-wrap: wrap; gap: .4rem; }
+.chip.ai-award { min-height: 1.8rem; font-size: .8rem; }
+.ai-body > .lbl { margin: .4rem 0 -.3rem; }
+.ai-perf { display: flex; flex-direction: column; gap: .2rem; font-size: .92rem; }
+.ai-desc { white-space: pre-line; line-height: 1.45; font-size: .95rem; }
+.ai-tracks { display: flex; flex-direction: column; }
+.ai-work { margin: .45rem 0 .1rem; font-weight: 600; font-size: .9rem; }
+.ai-track { display: grid; grid-template-columns: 2rem minmax(0, 1fr) auto; gap: .5rem; padding: .22rem 0; border-bottom: 1px solid var(--hair); font-size: .92rem; }
+.ai-track.off { opacity: .45; }
+.ai-num { text-align: right; font-variant-numeric: tabular-nums; } .ai-dur { font-variant-numeric: tabular-nums; }
+.ai-copy { margin: .3rem 0 0; }
+.btn.link.ai-qobuz { align-self: flex-start; border: 0; background: none; color: var(--accent); font-weight: 600; padding: 0; min-height: 2.4rem; }
+
 /* the full-screen player: cover left and the rest beside it in landscape, stacked on a phone */
 .scrim.qz-full { flex-direction: column; align-items: stretch; justify-content: flex-start; background: var(--bg); z-index: 55;
     padding: .5rem .9rem max(.6rem, env(safe-area-inset-bottom)); }
 .qz-full-top { display: flex; align-items: center; gap: .7rem; flex: 0 0 auto; margin-bottom: .5rem; }
 .qz-full-label { color: var(--muted); font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; }
 .qz-full-body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1.2rem; }
-.qz-full .qz-pcover { width: min(calc(100dvh - 5rem), 55vw); height: auto; aspect-ratio: 1; border-radius: .6rem; font-size: 5rem;
+.qz-full .qz-pcover { position: relative; width: min(calc(100dvh - 5rem), 55vw); height: auto; aspect-ratio: 1; border-radius: .6rem; font-size: 5rem;
     align-self: start; box-shadow: 0 .6rem 2rem rgba(0,0,0,.5); }
 .qz-full-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: .6rem; }
 .qz-full-info { min-width: 0; }
 .qz-full .qz-ptitle { font-size: 1.6rem; line-height: 1.2; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .qz-full .qz-psub { font-size: 1.05rem; color: var(--text); margin-top: .2rem; white-space: normal; }
 .qz-fwork { font-size: .95rem; margin-top: .15rem; }
+/* no slider in the full player: the cover's seek ring instead; the times stay, centred */
+.qz-full .qz-seek { display: none; }
+.qz-full .qz-pseek { justify-content: center; gap: .3rem; }
+.qz-full .qz-pseek .qz-ptime { min-width: 0; }
+.qz-full .qz-pseek .qz-ptime:first-child::after { content: ' /'; }
 .qz-fdetail { font-size: .85rem; margin-top: .3rem; }
 .qz-full .qz-pbtns { justify-content: center; gap: .8rem; }
 .qz-full .btn.qz-pbtn { min-width: 3.8rem; min-height: 3.4rem; font-size: 1.4rem; }

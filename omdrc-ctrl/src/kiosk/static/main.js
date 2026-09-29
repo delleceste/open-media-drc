@@ -143,12 +143,25 @@ K.lastSoundAt = Date.now();
 K.markSound = () => { const was = K.silent(); K.lastSoundAt = Date.now(); if (was) { syncAppScreen(); if (K.awake) K.awake.sync(); } };
 K.silent = () => Date.now() - K.lastSoundAt > SILENCE_MS;
 K.nowShown = () => cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !document.hidden && !K.silent();
+// Held on regardless (and no screensaver) while something the user is watching runs
+// without a touch: the meter-timing sheet, a calibration (pages/config.js).
+K.screenHolds = new Set();
+K.holdScreen = (key, on) => {
+    if (on) K.screenHolds.add(key); else K.screenHolds.delete(key);
+    try { if (window.OmdrcApp && window.OmdrcApp.setHoldScreenOn) window.OmdrcApp.setHoldScreenOn(K.screenHolds.size > 0); } catch {}
+    syncAppScreen();
+    if (K.awake) K.awake.sync();
+    armSaver();
+};
+K.screenHeld = () => K.screenHolds.size > 0 && !document.hidden;
 setInterval(() => { syncAppScreen(); if (K.awake) K.awake.sync(); }, 5000);
 function syncAppScreen() {
     if (!K.inApp) return;
     // K.nowShown(): Now on screen, no screensaver, and sound within the last SILENCE_MS -
     // still meters let the phone sleep again, in the app as in a browser.
-    try { window.OmdrcApp.setPageWantsScreenOn(K.nowShown()); } catch {}
+    // (an older app without setHoldScreenOn: a hold asks as Now playing does)
+    const hold = K.screenHeld() && !window.OmdrcApp.setHoldScreenOn;
+    try { window.OmdrcApp.setPageWantsScreenOn(K.nowShown() || hold); } catch {}
 }
 document.addEventListener('visibilitychange', syncAppScreen);
 
@@ -294,7 +307,7 @@ let idleTimer = null, saverPoll = null;
 function armSaver() {
     clearTimeout(idleTimer);
     const minutes = Number(K.pref('saver.minutes', 0));
-    if (minutes > 0 && !K.saverActive) idleTimer = setTimeout(startSaver, minutes * 60000);
+    if (minutes > 0 && !K.saverActive) idleTimer = setTimeout(() => K.screenHolds.size ? armSaver() : startSaver(), minutes * 60000);
 }
 async function paintSaverTrack() {
     const t = await K.fetchTrack();

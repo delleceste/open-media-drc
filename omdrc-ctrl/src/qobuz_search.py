@@ -909,6 +909,27 @@ class QobuzCatalog:
         card["description"] = _plain_text(raw.get("description") or "")
         card["copyright"] = raw.get("copyright") or ""
         card["streamable"] = raw.get("streamable") is not False
+        # the digital booklet(s) and whatever else Qobuz attaches: plain links
+        card["booklets"] = [{
+            "name": (g.get("name") or "").strip() or "Booklet",
+            "description": (g.get("description") or "").strip(),
+            "url": g["url"],
+        } for g in raw.get("goodies") or []
+            if isinstance(g, dict) and str(g.get("url") or "").startswith("https://")]
+        card["awards"] = [{
+            "name": (a.get("name") or "").strip(),
+            "publication": (a.get("publication_name") or "").strip(),
+            "date": (dt.datetime.fromtimestamp(a["awarded_at"], dt.timezone.utc).strftime("%Y-%m-%d")
+                     if isinstance(a.get("awarded_at"), (int, float)) and a["awarded_at"] > 0 else ""),
+        } for a in raw.get("awards") or [] if isinstance(a, dict) and a.get("name")]
+        card["upc"] = raw.get("upc") or ""
+        card["release_type"] = raw.get("release_type") or raw.get("product_type") or ""
+        card["media_count"] = raw.get("media_count")
+        card["genres"] = [g for g in raw.get("genres_list") or [] if isinstance(g, str)]
+        card["technical"] = raw.get("maximum_technical_specifications") or ""
+        card["recording"] = _plain_text(raw.get("recording_information") or "")
+        card["catchline"] = _plain_text(raw.get("catchline") or "")
+        card["released_stream"] = raw.get("release_date_stream") or ""
         card["track_list"] = [{
             "id": str(t.get("id", "")),
             "title": (t.get("title") or "").strip(),

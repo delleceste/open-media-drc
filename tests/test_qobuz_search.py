@@ -456,6 +456,23 @@ class AlbumTest(unittest.TestCase):
         self.assertEqual(out["track_list"][0]["work"], "Symphony No. 7")
         self.assertEqual(out["groups"], ["Pentatone"])
 
+    def test_album_booklets_and_awards(self):
+        raw = {**album("a1", "Symphony No. 2", "Halle", "2025-10-01"),
+               "goodies": [{"name": "Livret numérique", "description": "Mahler 2",
+                            "url": "https://static.qobuz.com/goodies/97/000215979.pdf"},
+                           {"name": "not a link", "url": "javascript:alert(1)"}],
+               "awards": [{"name": "Gramophone: Editor's Choice", "publication_name": "Gramophone",
+                           "awarded_at": 1764543600}],
+               "upc": "0123", "maximum_technical_specifications": "24 bits / 48.0 kHz - Stereo"}
+        cat, _ = catalog({}, {"a1": raw})
+        out = cat.album("a1")
+        self.assertEqual(out["booklets"], [{"name": "Livret numérique", "description": "Mahler 2",
+                                            "url": "https://static.qobuz.com/goodies/97/000215979.pdf"}])
+        self.assertEqual(out["awards"][0]["publication"], "Gramophone")
+        self.assertEqual(out["awards"][0]["date"], "2025-11-30")
+        self.assertEqual(out["upc"], "0123")
+        self.assertEqual(out["technical"], "24 bits / 48.0 kHz - Stereo")
+
     def test_track_brings_its_album_card(self):
         calls = []
 

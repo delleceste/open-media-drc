@@ -19,25 +19,26 @@ const P = {
 P.mount = el => {
     P.el = el;
     P.art = h('img', { alt: '', hidden: true,
-        onload: e => { e.target.hidden = false; P.artBox.classList.remove('empty'); },
-        onerror: e => { e.target.hidden = true; P.artBox.classList.add('empty'); } });
+        onload: e => { e.target.hidden = false; P.artBox.classList.remove('empty'); P.paintIdle(); },
+        onerror: e => { e.target.hidden = true; P.artBox.classList.add('empty'); P.paintIdle(); } });
     // the cover's box: small beside the title in landscape, a third of the height upright,
     // where a touch brings up the ring to seek along (see "seek ring" below)
-    P.ring = h('div', { class: 'seek-ring', hidden: true });
-    P.artBox = h('div', { class: 'now-art empty' }, P.art, P.ring);
+    P.artBox = h('div', { class: 'now-art empty' }, P.art);
     P.t1 = h('div', { class: 'now-title' }, '—');
     P.t2 = h('div', { class: 'now-sub' });
     // upright, the details are one per line instead of the one line under the title
     P.pArtist = h('div', { class: 'now-partist' });
     P.pAlbum = h('div', { class: 'now-palbum' });
     P.fmt = h('span', { class: 'now-fmt' });
+    // upright, under the format: all Qobuz says about the release, booklet first (widgets/albuminfo.js)
+    P.infoBtn = h('button', { type: 'button', class: 'chip now-info', hidden: true, onclick: () => P.track && K.albumInfo(P.track.qobuz_album) }, 'Album details ›');
     P.state = h('button', { class: 'chip state', type: 'button', title: 'Tap: play / pause · hold: stop' });
     P.time = h('div', { class: 'now-time' });
     P.prog = h('i');
     // a meter-timing calibration in progress (automatic ones included): a blinking blue light
     P.calLed = h('i', { class: 'cal-led', hidden: true, title: 'Calibrating the meter timing' });
     const trackBox = h('div', { class: 'now-track' }, P.artBox,
-        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.pAlbum), P.calLed,
+        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.pAlbum, P.infoBtn), P.calLed,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
         // (upright, previous and next track either side of it)
         h('div', { class: 'now-timebox' },
@@ -119,7 +120,8 @@ P.mount = el => {
     P.wireResetTap();
     P.wireMeterTap();
     P.wireCoverGesture();
-    P.wireSeekRing();
+    P.ring = new K.SeekRing(P.artBox, { usable: P.ringUsable, elapsed: () => P.elapsedNow(),
+        duration: () => P.base.duration, seek: s => P.seek(s) });
     new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
@@ -533,7 +535,16 @@ P.pollTrack = async () => {
     if (t.art) { if (P.art.getAttribute('src') !== t.art) { P.art.hidden = true; P.art.setAttribute('src', t.art); } }
     else { P.art.hidden = true; P.art.removeAttribute('src'); P.artBox.classList.add('empty'); }
     if ((t.art || '') !== P.artUrl) P.setArt(t.art || '');
+    P.infoBtn.hidden = !t.qobuz_album;
+    P.paintIdle();
     P.paintTime();
+};
+
+// Stopped (or nothing at all) with no cover: no empty cover and no ⏮ Stopped ⏭ row,
+// the space goes to the rest (kiosk.css).
+P.paintIdle = () => {
+    const t = P.track;
+    P.el.firstChild.classList.toggle('idle', P.artBox.classList.contains('empty') && (!t || !t.ok || t.state === 'stop'));
 };
 
 // ── cover art ────────────────────────────────────────────────────────────────
@@ -701,90 +712,8 @@ P.wireTransport = () => {
     P.state.addEventListener('contextmenu', e => e.preventDefault());   // long-press menu on touch browsers
 };
 
-// ── seek ring (upright only) ─────────────────────────────────────────────────
-// Two steps, so a stray touch on the cover never moves the music: the first touch
-// (a tap, or a slide) only brings up a ring inscribed in the cover, 12 o'clock the
-// start of the track, clockwise to the end, the knob where it is now.  While the
-// ring is up, a slide that *starts on the ring* moves the knob round it (it stops
-// at the start and the end, it never jumps across) and lifting the finger seeks
-// there.  A touch anywhere else on the cover puts the ring away; untouched, it
-// goes by itself after a few seconds.
-const RING_R = 44;            // in the ring's 100 x 100 viewBox
-const RING_GRAB = 0.11;       // how far off the ring a slide may start, as a share of the cover's width
-const RING_IDLE_MS = 4000;    // the ring goes away this long after the last touch
-const RING_C = 2 * Math.PI * RING_R;
-const SVG = 'http://www.w3.org/2000/svg';
-const svg = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+// ── seek ring (upright only): widgets/seekring.js ─────────────────────────────
 P.ringUsable = () => K.portrait() && !!P.base && Number.isFinite(P.base.duration) && P.base.duration > 0;
-P.wireSeekRing = () => {
-    const s = svg('svg', { viewBox: '0 0 100 100' });
-    s.append(svg('circle', { class: 'sr-track', cx: 50, cy: 50, r: RING_R }));
-    P.ringArc = svg('circle', { class: 'sr-arc', cx: 50, cy: 50, r: RING_R, transform: 'rotate(-90 50 50)', 'stroke-dasharray': `0 ${RING_C}` });
-    P.ringKnob = svg('circle', { class: 'sr-knob', cx: 50, cy: 50 - RING_R, r: 4.2 });
-    s.append(P.ringArc, P.ringKnob);
-    P.ringTime = h('div', { class: 'sr-time' });
-    P.ring.append(s, P.ringTime);
-    const box = P.artBox;
-    let g = null;
-    const hideLater = ms => { clearTimeout(P.ringTimer); P.ringTimer = setTimeout(() => { P.ring.hidden = true; }, ms); };
-    // is the finger on the ring (the circle's radius, give or take RING_GRAB)?
-    const onRing = e => {
-        const r = box.getBoundingClientRect();
-        const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
-        return Math.abs(d - r.width * RING_R / 100) <= Math.max(18, r.width * RING_GRAB);
-    };
-    const fracAt = e => {
-        const r = box.getBoundingClientRect();
-        const a = Math.atan2(e.clientX - (r.left + r.width / 2), -(e.clientY - (r.top + r.height / 2)));
-        return (a / (2 * Math.PI) + 1) % 1;
-    };
-    box.addEventListener('pointerdown', e => {
-        if (!P.ringUsable()) return;
-        e.preventDefault();
-        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}   // not pull-to-reload
-        const f = P.elapsedNow() / P.base.duration;
-        if (P.ring.hidden) {                       // step one: only show the ring
-            P.ring.hidden = false;
-            P.paintRing(f);
-            hideLater(RING_IDLE_MS);
-            return;
-        }
-        if (!onRing(e)) { clearTimeout(P.ringTimer); P.ring.hidden = true; return; }   // off the ring: put it away
-        // step two: a slide that starts on the ring
-        g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
-        P.ring.classList.add('active');           // drawn thick only while the finger is on it
-        try { box.setPointerCapture(e.pointerId); } catch {}
-        clearTimeout(P.ringTimer);
-        P.paintRing(g.f);
-    });
-    box.addEventListener('pointermove', e => {
-        if (!g || e.pointerId !== g.id) return;
-        if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) < 8) return;
-        g.moved = true;
-        // the nearest of a, a - 1, a + 1 to where the knob is: no jump across 12 o'clock
-        const a = fracAt(e);
-        const near = [a - 1, a, a + 1].reduce((b, c) => Math.abs(c - g.f) < Math.abs(b - g.f) ? c : b);
-        g.f = K.clamp(near, 0, 1);
-        P.paintRing(g.f);
-    });
-    const end = e => {
-        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
-        if (!g || e.pointerId !== g.id) return;
-        const d = g; g = null;
-        P.ring.classList.remove('active');
-        if (d.moved && e.type === 'pointerup' && P.base) P.seek(d.f * P.base.duration);
-        hideLater(d.moved ? 1200 : RING_IDLE_MS);
-    };
-    box.addEventListener('pointerup', end);
-    box.addEventListener('pointercancel', end);
-};
-P.paintRing = f => {
-    P.ringArc.setAttribute('stroke-dasharray', `${(f * RING_C).toFixed(2)} ${RING_C}`);
-    const a = f * 2 * Math.PI;
-    P.ringKnob.setAttribute('cx', (50 + RING_R * Math.sin(a)).toFixed(2));
-    P.ringKnob.setAttribute('cy', (50 - RING_R * Math.cos(a)).toFixed(2));
-    P.ringTime.textContent = P.base ? `${K.fmtClock(f * P.base.duration)} / ${K.fmtClock(P.base.duration)}` : '';
-};
 P.seek = async seconds => {
     seconds = Math.floor(seconds);
     P.base = { ...P.base, elapsed: seconds, at: performance.now() };   // optimistic; the next poll confirms

@@ -55,6 +55,8 @@ class MainActivity : ComponentActivity() {
     /** What the page last asked for over [AppBridge]: true only while the
      *  kiosk's "Now playing" page is on screen. */
     private var pageWantsScreenOn = false
+    /** The kiosk holds the screen on for a calibration (setHoldScreenOn). */
+    private var pageHoldsScreenOn = false
 
     /** The page in the WebView could not be loaded (box off, wrong address). */
     private var loadFailed = false
@@ -215,6 +217,7 @@ class MainActivity : ComponentActivity() {
                 // A new document knows nothing about the old one's request:
                 // drop the screen-on flag until the kiosk page asks again.
                 pageWantsScreenOn = false
+                pageHoldsScreenOn = false
                 applyKeepScreenOn()
                 pageScrolled = false
                 // and back to the last orientation asked for until a page asks otherwise
@@ -421,7 +424,8 @@ class MainActivity : ComponentActivity() {
      *  showing (and the setting allows it).  Every other page, the full web
      *  page, and a page that is loading all let the phone sleep normally. */
     private fun applyKeepScreenOn() {
-        val on = pageWantsScreenOn && AppPrefs.keepScreenOn(this) &&
+        // a calibration holds it on whatever the setting: it must not sleep mid-run
+        val on = pageHoldsScreenOn || pageWantsScreenOn && AppPrefs.keepScreenOn(this) &&
             AppPrefs.viewMode(this) == AppPrefs.VIEW_KIOSK
         if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -486,9 +490,31 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { pageWantsScreenOn = on; applyKeepScreenOn() }
         }
 
+        /** The meter-timing sheet is open (a calibration may run): screen on,
+         *  regardless of the "keep the screen on" setting, which is about Now playing. */
+        @JavascriptInterface
+        fun setHoldScreenOn(on: Boolean) {
+            runOnUiThread { pageHoldsScreenOn = on; applyKeepScreenOn() }
+        }
+
         @JavascriptInterface
         fun openSettings() {
             runOnUiThread { showSettings() }
+        }
+
+        /** A link outside the box (an album's booklet PDF, the album on Qobuz): to
+         *  whatever Android opens it with, since the WebView shows no PDF. Back returns here. */
+        @JavascriptInterface
+        fun openExternal(url: String) {
+            val uri = android.net.Uri.parse(url)
+            if (uri.scheme != "https" && uri.scheme != "http") return
+            runOnUiThread {
+                try {
+                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                } catch (e: android.content.ActivityNotFoundException) {
+                    android.widget.Toast.makeText(this@MainActivity, "Nothing on this phone opens $url", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
         }
 
         /** The user's "keep the screen on while Now playing is shown" choice. */

@@ -112,6 +112,14 @@ class UpmpdcliStatusTest(unittest.TestCase):
         self.assertNotIn("Lyricist", got["line1"])
 
 
+class QobuzAlbumOfCoverTest(unittest.TestCase):
+    def test_the_album_id_is_read_from_a_qobuz_cover(self):
+        self.assertEqual(APP._qobuz_album_of(
+            "https://static.qobuz.com/images/covers/uz/ln/eqwbo26m9lnuz_600.jpg"), "eqwbo26m9lnuz")
+        self.assertEqual(APP._qobuz_album_of("https://example.com/cover.jpg"), "")
+        self.assertEqual(APP._qobuz_album_of(""), "")
+
+
 class PanelMarkupTest(unittest.TestCase):
     """The panel is one template; these keep the wiring from silently rotting."""
 
