@@ -546,6 +546,26 @@ class AlbumTest(unittest.TestCase):
             self.assertEqual(store.rate(qs.album_card(raw), 0), 0)
             self.assertEqual(store.albums(), [])
 
+    def test_awarded_filter_combines_with_label_and_release_date(self):
+        items = [album("prize", "Symphony", "Pentatone", "2025-04-01"),
+                 album("rated", "Symphony", "Decca", "2025-05-01"),
+                 album("old", "Symphony", "Pentatone", "2020-01-01"),
+                 album("plain", "Symphony", "Pentatone", "2025-06-01")]
+        with tempfile.TemporaryDirectory() as tmp:
+            store = qs.AwardedAlbums(tmp + "/aw.json")
+            store.seen(qs.album_card(items[0]), [{"name": "Gramophone", "publication": "Gramophone"}])
+            store.rate(qs.album_card(items[1]), 2)
+            store.mark(qs.album_card(items[2]), "Diapason", "Diapason")
+            cat, _ = catalog({"symphony": items, "symphony Pentatone": items}, max_enrich=0)
+            cat.awarded = store
+            answer = cat.search("symphony", awarded_only=True, labels=["Pentatone"], from_year=2024)
+            self.assertEqual([c["id"] for c in answer["results"]], ["prize"])
+            self.assertTrue(answer["awarded_only"])
+            self.assertEqual([c["id"] for c in cat.search("symphony", awarded_only=True)["results"]],
+                             ["prize", "rated", "old"])
+            self.assertEqual([c["id"] for c in cat.search("symphony")["results"]],
+                             ["prize", "rated", "old", "plain"])
+
     def test_track_brings_its_album_card(self):
         calls = []
 
@@ -585,6 +605,15 @@ class PanelTest(unittest.TestCase):
                                    "&from=2021").get_json()
         self.assertTrue(data["ok"])
         self.assertEqual([c["id"] for c in data["results"]], ["penta2", "decca", "penta1"])
+
+    def test_search_route_passes_awarded_filter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cat, _ = catalog(SearchTest.SEARCHES, max_enrich=0)
+            cat.awarded = qs.AwardedAlbums(tmp + "/aw.json")
+            cat.awarded.rate(qs.album_card(SearchTest.SEARCHES["bruckner 7"][2]), 1)
+            with patch.object(qobuz_web, "catalog", return_value=cat), self.running():
+                data = self.client.get("/qobuz/search?q=bruckner+7&awarded=1").get_json()
+            self.assertEqual([c["id"] for c in data["results"]], ["penta1"])
 
     def test_search_stream_route(self):
         import json

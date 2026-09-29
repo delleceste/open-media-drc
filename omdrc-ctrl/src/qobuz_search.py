@@ -1,4 +1,4 @@
-"""Qobuz album search, filtered by label and release date, for the panel.
+"""Qobuz album search, filtered by label, release date and known awards.
 
 Qobuz's own apps cannot answer the questions a classical listener asks first:
 "this symphony, on Pentatone or Decca, released in the last two years", newest
@@ -733,6 +733,12 @@ class AwardedAlbums:
             entry = next((e for e in self._load() if e["id"] == str(album_id)), None)
         return int(entry.get("rating") or 0) if entry else 0
 
+    def awarded_ids(self) -> set[str]:
+        """Albums with a known Qobuz award, a user award, or a rating."""
+        with self._lock:
+            return {str(e["id"]) for e in self._load()
+                    if e.get("qobuz") or e.get("mine") or e.get("rating")}
+
     @staticmethod
     def _merge(qobuz: list[dict], mine: list[dict]) -> list[dict]:
         names = {a["name"].casefold() for a in qobuz}
@@ -917,7 +923,8 @@ class QobuzCatalog:
                 groups.append(known.get(name.casefold()) or LabelGroup(name, (_fold(name),)))
         return groups
 
-    def _filter(self, scans: list[dict], groups: list[LabelGroup], lo: str, hi: str):
+    def _filter(self, scans: list[dict], groups: list[LabelGroup], lo: str, hi: str,
+                awarded_ids: set[str] | None = None):
         """Merge the queries' albums, keeping each one's best position (the
         plain query's order is Qobuz's relevance; a label query's hits
         interleave by their own position), and apply the filters."""
@@ -932,6 +939,8 @@ class QobuzCatalog:
         results, labels_seen, unstreamable = [], {}, 0
         for position, item in found.values():
             card = album_card(item)
+            if awarded_ids is not None and card["id"] not in awarded_ids:
+                continue
             # Kept, as Qobuz's own list keeps them, but marked: nothing to play.
             card["streamable"] = item.get("streamable") is not False
             if not card["streamable"]:
@@ -954,7 +963,8 @@ class QobuzCatalog:
     def search(self, text: str = "", labels: list[str] | None = None,
                last_years: float | None = None, from_year: int | None = None,
                to_year: int | None = None, sort: str = "relevance",
-               enrich: bool = True, scan: int | None = None, progress=None) -> dict:
+               enrich: bool = True, scan: int | None = None, progress=None,
+               awarded_only: bool = False) -> dict:
         """The search.  `progress(partial)`, if given, is handed the results as
         they come in, a few times a second, in their final order but without
         performers: {"partial": True, "results", "count", "considered", "sort"}."""
@@ -965,6 +975,7 @@ class QobuzCatalog:
         if sort not in ("date", "relevance"):
             raise QobuzError(f"unknown sort '{sort}'")
         lo, hi = date_window(last_years, from_year, to_year, today=self._today())
+        awarded_ids = (self.awarded.awarded_ids() if self.awarded else set()) if awarded_only else None
 
         queries = ([text] if text else []) + [
             f"{text} {g.name}".strip() for g in groups]
@@ -974,7 +985,7 @@ class QobuzCatalog:
         # order, a page at a time ("Load more" reads the next, like scrolling
         # in Qobuz's app).  The filters then work on that list, read deeper
         # at once since they thin it out.
-        filtered = bool(groups or lo or hi)
+        filtered = bool(groups or lo or hi or awarded_only)
         if self.played and filtered:
             # Albums played before and matching the words: in the running
             # whatever depth Qobuz ranks them at.
@@ -997,7 +1008,7 @@ class QobuzCatalog:
             if now - reported[0] < PROGRESS_INTERVAL:
                 return
             reported[0] = now
-            partial, _, _, considered = self._filter(scans, groups, lo, hi)
+            partial, _, _, considered = self._filter(scans, groups, lo, hi, awarded_ids)
             order(partial)
             self._mark_lowered(partial)
             partial.sort(key=lambda c: "lowered" in c)
@@ -1008,7 +1019,7 @@ class QobuzCatalog:
             while True:
                 self._read(pool, scans, depth, report if progress else None)
                 results, labels_seen, unstreamable, considered = self._filter(
-                    scans, groups, lo, hi)
+                    scans, groups, lo, hi, awarded_ids)
                 if (not filtered or len(results) >= self.settings.want
                         or all(s["done"] for s in scans)
                         or depth >= max(self.settings.auto_scan, scan or 0)):
@@ -1040,6 +1051,7 @@ class QobuzCatalog:
             "labels": [g.name for g in groups],
             "window": {"from": lo, "to": hi},
             "sort": sort,
+            "awarded_only": awarded_only,
             "results": results,
             "count": len(results),
             "considered": considered,

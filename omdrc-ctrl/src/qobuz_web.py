@@ -7,7 +7,7 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
 
     GET /qobuz/status              enabled, upmpdcli running, token present
     GET /qobuz/labels              the label groups offered as check boxes
-    GET /qobuz/search?q=&label=&last=|from=&to=&sort=&scan=&enrich=
+    GET /qobuz/search?q=&label=&last=|from=&to=&sort=&awarded=&scan=&enrich=
     GET /qobuz/search/stream?...    the same, as server-sent events: partial
                                    results while it reads, then the answer
     GET /qobuz/album/<id>          one album: tracks, performers, description
@@ -298,6 +298,7 @@ def _search_args() -> dict:
         last_years=_number("last", float),
         from_year=_number("from", int), to_year=_number("to", int),
         sort=request.args.get("sort", "relevance"),
+        awarded_only=request.args.get("awarded", "0").lower() in ("1", "true", "yes"),
         enrich=request.args.get("enrich", "1") not in ("0", "no", "false"),
         scan=_number("scan", int))
 
@@ -306,7 +307,7 @@ def _search_args() -> dict:
 def search():
     """?q=text&label=Pentatone&label=Decca (or label=Pentatone,Decca)
     &last=2 (years back from today) or &from=2021&to=2026 (calendar years)
-    &sort=relevance|date &scan=<albums per query> &enrich=0"""
+    &sort=relevance|date &awarded=1 &scan=<albums per query> &enrich=0"""
     guard = _guard()
     if guard:
         return guard

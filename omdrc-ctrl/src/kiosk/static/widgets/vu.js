@@ -44,6 +44,10 @@ K.VuMeter = class VuMeter {
         this.disp = {}; this.tgt = {};
         KEYS.forEach(k => { this.disp[k] = this.tgt[k] = FLOOR; });
         this.hold = { left: { db: FLOOR, at: 0 }, right: { db: FLOOR, at: 0 } };
+        this.clips = { left: 0, right: 0 };
+        this.suspects = { left: false, right: false };
+        this.blinkOn = false; this.blinkTimer = null;
+        this.clipTargets = {};
         this.raf = null; this.last = 0;
         this.glass = 1;          // < 1 only with a cover behind the meters (pages/now.js)
         this.ro = new ResizeObserver(() => this.render());
@@ -65,6 +69,35 @@ K.VuMeter = class VuMeter {
         this.render();
     }
 
+    setClips(clips) {
+        this.clips = { left: clips.left || 0, right: clips.right || 0 };
+        this.syncBlink();
+        this.render();
+    }
+
+    setSuspects(suspects) {
+        this.suspects = { left: !!suspects.left, right: !!suspects.right };
+        this.syncBlink();
+        this.render();
+    }
+
+    syncBlink() {
+        const pending = ['left', 'right'].some(ch => this.suspects[ch] && !this.clips[ch]);
+        if (pending && !this.blinkTimer) {
+            this.blinkOn = true;
+            this.blinkTimer = setInterval(() => { this.blinkOn = !this.blinkOn; this.render(); }, 450);
+        } else if (!pending && this.blinkTimer) {
+            clearInterval(this.blinkTimer);
+            this.blinkTimer = null;
+            this.blinkOn = false;
+        }
+    }
+
+    clipAt(canvas, e) {
+        return Object.entries(this.clipTargets).find(([ch, r]) => this.clips[ch] && r.canvas === canvas &&
+            e.offsetX >= r.x0 && e.offsetX <= r.x1 && e.offsetY >= r.y0 && e.offsetY <= r.y1)?.[0] || null;
+    }
+
     setMode(mode) {
         this.mode = mode === 'bars' ? 'bars' : 'needles';
         K.clear(this.host);
@@ -73,7 +106,26 @@ K.VuMeter = class VuMeter {
             : [h('canvas', { class: 'vu-canvas vu-needle' }), h('canvas', { class: 'vu-canvas vu-needle' })];
         this.host.classList.toggle('vu-needles', this.mode === 'needles');
         this.host.classList.toggle('vu-barmode', this.mode === 'bars');
-        this.canvases.forEach(c => { this.host.append(c); });
+        this.clipTargets = {};
+        this.canvases.forEach(c => {
+            this.host.append(c);
+            let pressed = null, consumed = false;
+            c.addEventListener('pointerdown', e => {
+                consumed = false;
+                pressed = this.clipAt(c, e);
+                if (pressed) e.stopPropagation();
+            });
+            c.addEventListener('pointerup', e => {
+                if (!pressed) return;
+                e.stopPropagation();
+                consumed = true;
+                const ch = this.clipAt(c, e);
+                if (ch === pressed && this.onClipReset) this.onClipReset(ch);
+                pressed = null;
+            });
+            c.addEventListener('pointercancel', () => { pressed = null; });
+            c.addEventListener('click', e => { if (consumed) { e.stopPropagation(); consumed = false; } });
+        });
         this.ro.disconnect();
         this.ro.observe(this.host);
         this.render();
@@ -98,6 +150,8 @@ K.VuMeter = class VuMeter {
     destroy() {
         if (this.raf) cancelAnimationFrame(this.raf);
         this.raf = null;
+        if (this.blinkTimer) clearInterval(this.blinkTimer);
+        this.blinkTimer = null;
         this.ro.disconnect();
     }
 
@@ -134,7 +188,7 @@ K.VuMeter = class VuMeter {
     drawBars(canvas) {
         const { w, h: H, dpr, ctx } = fit(canvas);
         ctx.clearRect(0, 0, w, H);
-        const padL = 26 * dpr, padR = 8 * dpr, x0 = padL, x1 = w - padR, span = x1 - x0;
+        const padL = 26 * dpr, padR = 32 * dpr, x0 = padL, x1 = w - padR, span = x1 - x0;
         const scaleH = 22 * dpr;
         const rowH = (H - scaleH - 10 * dpr) / 2, barH = Math.min(rowH * .72, 46 * dpr);
         const x = db => x0 + span * K.clamp(voltagePct(db, SCALE_FLOOR), 0, 100) / 100;
@@ -167,6 +221,22 @@ K.VuMeter = class VuMeter {
             ctx.font = `600 ${13 * dpr}px system-ui, sans-serif`;
             ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
             ctx.fillText(label, 6 * dpr, cy);
+            const ch = i ? 'right' : 'left';
+            const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : '';
+            if (state) {
+                ctx.save();
+                ctx.translate(w - 13 * dpr, cy);
+                ctx.rotate(-Math.PI / 2);
+                ctx.fillStyle = state === 'clip' ? K.css('--red') : K.theme() === 'light' ? '#a54800' : '#ffa726';
+                ctx.font = `800 ${11 * dpr}px system-ui, sans-serif`;
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : 'CLIP?';
+                ctx.fillText(text, 0, 0, rowH - 8 * dpr);
+                ctx.restore();
+                if (state === 'clip') this.clipTargets[ch] = { canvas, x0: w / dpr - 32, x1: w / dpr,
+                    y0: (cy - rowH / 2) / dpr, y1: (cy + rowH / 2) / dpr };
+            }
+            if (state !== 'clip') delete this.clipTargets[ch];
         });
         // scale
         ctx.font = `${10.5 * dpr}px ui-monospace, monospace`;
@@ -313,6 +383,34 @@ K.VuMeter = class VuMeter {
         ctx.fillStyle = I.dim;
         ctx.fillText(`PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 11 * dpr, 11 * dpr);
         halo(false);
+        const ch = label === 'L' ? 'left' : 'right';
+        const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : '';
+        if (state) {
+            const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : 'CLIP?';
+            // Sit beside the full-scale needle, with the word parallel to it.
+            const [zeroX, zeroY] = at(aTop, R * .93);
+            const tx = Math.min(w - 19 * dpr, zeroX + 9 * dpr);
+            const ty = zeroY + 16 * dpr;
+            ctx.save();
+            ctx.translate(tx, ty);
+            ctx.rotate(aTop);
+            ctx.font = `800 ${12 * dpr}px system-ui, sans-serif`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            const maxWidth = R * .65;
+            const width = Math.min(ctx.measureText(text).width, maxWidth);
+            ctx.lineWidth = 3 * dpr;
+            ctx.strokeStyle = dark ? '#fff' : '#000';
+            ctx.strokeText(text, 0, 0, maxWidth);
+            ctx.fillStyle = state === 'clip' ? I.red : dark ? '#a54800' : '#ffa726';
+            ctx.fillText(text, 0, 0, maxWidth);
+            ctx.restore();
+            const hitX = Math.abs(Math.cos(aTop)) * width / 2 + 5 * dpr;
+            const hitY = Math.abs(Math.sin(aTop)) * width / 2 + 8 * dpr;
+            if (state === 'clip') this.clipTargets[ch] = { canvas,
+                x0: (tx - hitX) / dpr - 8, x1: (tx + hitX) / dpr + 8,
+                y0: (ty - hitY) / dpr - 8, y1: (ty + hitY) / dpr + 8 };
+        }
+        if (state !== 'clip') delete this.clipTargets[ch];
     }
 };
 })();

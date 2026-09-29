@@ -113,10 +113,10 @@ K.api = async (url, opts = {}) => {
 
 // ── toast ────────────────────────────────────────────────────────────────────
 let toastTimer = null;
-K.toast = (msg, type = 'ok') => {
+K.toast = (msg, type = 'ok', raised = false) => {
     const el = document.getElementById('toast');
     el.textContent = msg;
-    el.className = 'show ' + type;
+    el.className = 'show ' + type + (raised ? ' raised' : '');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { el.className = ''; }, type === 'error' ? 6000 : 2600);
 };
@@ -226,11 +226,12 @@ K.streams = (() => {
     const open = (mode, replacing = null) => {
         const s = S[mode];
         const es = new EventSource('/spectrum/stream?mode=' + encodeURIComponent(mode));
+        const tapMode = mode.endsWith('-clip') ? mode.slice(0, -5) : mode;
         s.es = es;
         if (replacing) setTimeout(() => replacing.close(), 1500);
         let best = Infinity, late = 0;
         const deliver = d => {
-            if (K.drawTap) K.drawTap(mode, d, Date.now());     // the post-calibration check
+            if (K.drawTap) K.drawTap(tapMode, d, Date.now());     // the post-calibration check
             s.subs.forEach(f => f(d));
         };
         const draw = d => {
@@ -244,7 +245,7 @@ K.streams = (() => {
             let d;
             try { d = JSON.parse(ev.data); } catch { return; }
             const now = Date.now();
-            if (K.streamTap) K.streamTap(mode, d, now);     // the meter-delay calibration
+            if (K.streamTap) K.streamTap(tapMode, d, now);     // the meter-delay calibration
             if (mode !== 'dr' && Number.isFinite(d.sent)) {
                 const lag = now - d.sent;
                 best = Math.min(best, lag);

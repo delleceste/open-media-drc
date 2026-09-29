@@ -159,6 +159,7 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .scrim.frame iframe { flex: 1; border: 0; width: 100%; background: var(--bg); }
 #toast { position: fixed; left: 50%; bottom: calc(var(--tabs) + .8rem); transform: translate(-50%, 1rem); opacity: 0; pointer-events: none; z-index: 70;
     background: var(--surface2); border: 1px solid var(--border); border-radius: .6rem; padding: .6rem 1.1rem; max-width: 80vw; transition: opacity .2s, transform .2s; }
+#toast.raised { bottom: calc(var(--tabs) + 5.2rem); }
 #toast.show { opacity: 1; transform: translate(-50%, 0); } #toast.error { border-color: var(--red); color: var(--toast-bad); } #toast.ok { border-color: var(--ok-edge); }
 #saver { position: fixed; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; }
 #saver-clock { font-size: 8rem; font-weight: 200; color: #3a4048; font-variant-numeric: tabular-nums; }
@@ -574,7 +575,12 @@ input[type=range] { accent-color: var(--accent); }
     color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }                 /* its height includes the box's margin (pages/qobuz.js reserve) */
 /* filters: side by side where there is room, folded into one line after a search */
 .qz-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0 1.2rem; }
+.qz-filters[hidden], .qz-label-body[hidden] { display: none; }
+@media (min-width: 42rem) { .qz-filters.qz-labels-closed { grid-template-columns: 9rem minmax(0, 1fr); } }
 .qz-fgroup { min-width: 0; }
+.qz-label-toggle { width: 100%; min-height: 2.3rem; padding: 0; border: 0; background: none;
+    color: var(--muted); text-align: left; cursor: pointer; font: inherit; font-size: .8rem; font-weight: 600; letter-spacing: .08em; }
+.qz-label-toggle:focus-visible { outline: 2px solid var(--accent); }
 .qz-fsum { display: flex; align-items: center; gap: .6rem; width: 100%; min-height: 2.4rem; margin-top: .45rem; padding: 0 .1rem;
     border: 0; background: none; text-align: left; cursor: pointer; font-size: .85rem; }
 .qz-fsum-text { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

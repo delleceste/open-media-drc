@@ -42,7 +42,7 @@ P.mount = el => {
         type: 'search', class: 'qz-input', placeholder: 'Composer, work, performer…', enterkeyhint: 'search',
         autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
         onkeydown: e => P.suggestKey(e),
-        oninput: () => { P.suggestSoon(); P.paintStale(); },
+        oninput: () => { P.suggestSoon(); P.syncLabels(); P.paintStale(); },
         onfocus: () => P.suggestSoon(),
         onblur: () => setTimeout(() => P.showSuggestions([]), 150),
     });
@@ -50,15 +50,20 @@ P.mount = el => {
     P.input.value = pref('q', '');
     P.labelsBox = h('div', { class: 'qz-chips' });
     P.seenBox = h('div', {});
+    P.labelsBody = h('div', { class: 'qz-label-body' }, P.labelsBox, P.seenBox);
+    P.labelsToggle = h('button', { type: 'button', class: 'qz-label-toggle',
+        onclick: () => P.setLabelsOpen(!P.labelsOpen) });
     P.dateBox = h('div', {});
     P.sortBox = h('div', {});
+    P.awardedFilterBox = h('div', { class: 'qz-chips' });
     // Full width; the filters sit side by side where there is room, and fold
     // into one summary line once results arrive (a tap opens them again).
     P.fsum = h('button', { type: 'button', class: 'qz-fsum', onclick: () => P.openFilters(!P.filtersOpen) });
     P.filters = h('div', { class: 'qz-filters' },
-        h('div', { class: 'qz-fgroup' }, h('div', { class: 'lbl' }, 'Labels'), P.labelsBox, P.seenBox),
+        h('div', { class: 'qz-fgroup' }, P.labelsToggle, P.labelsBody),
         h('div', { class: 'qz-fgroup' }, h('div', { class: 'lbl' }, 'Released'), P.dateBox,
             h('div', { class: 'lbl' }, 'Order'), P.sortBox,
+            h('div', { class: 'lbl' }, 'Awarded'), P.awardedFilterBox,
             P.lowLink = h('button', { type: 'button', class: 'btn link qz-lowlink', onclick: () => P.openLowered() }, 'Lowered list ›')));
     P.form = h('div', { class: 'qz-form' },
         K.card(null,
@@ -104,7 +109,8 @@ P.mount = el => {
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.input.addEventListener('focus', () => P.revealInput());
     P.buildPlayer();
-    P.paintDate(); P.paintSort(); P.paintLabels();
+    P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintLabels();
+    P.setLabelsOpen(true);
     P.openFilters(false);                          // the summary line opens them
     P.poll = new K.Poller(P.refreshStatus, 10000);
     P.playerPoll = new K.Poller(P.refreshPlayer, 2000);
@@ -323,6 +329,27 @@ P.loadLabels = async () => {
     P.paintLabels();
 };
 
+P.setLabelsOpen = open => {
+    P.labelsOpen = open;
+    P.labelsBody.hidden = !open;
+    P.filters.classList.toggle('qz-labels-closed', !open);
+    P.labelsToggle.setAttribute('aria-expanded', String(open));
+    P.labelsToggle.textContent = `${open ? '⌄' : '›'} LABELS${P.selected.size ? ` (${P.selected.size} selected)` : ''}`;
+};
+
+// Recognize complete terms anywhere, or a sufficiently long final word prefix
+// while typing. Short fragments would classify too many ordinary searches.
+P.syncLabels = () => {
+    const query = P.plain(P.input.value);
+    if (!query) { P.setLabelsOpen(true); return; }
+    if (query.length < 4 && query !== 'duo') return;
+    const padded = ` ${query} `;
+    const last = query.split(' ').pop();
+    P.setLabelsOpen(P.words.some(w => w.term && (padded.includes(` ${w.term} `)
+        || (query === last && last.length >= 4 && !w.term.includes(' ') && w.term.startsWith(last))))
+        || query === 'quarted');
+};
+
 // A ticked name that is not a favourite (picked from a result's labels) is still
 // sent: the server takes an unknown name as a label keyword of its own.
 P.paintLabels = () => {
@@ -335,6 +362,7 @@ P.paintLabels = () => {
     K.clear(P.labelsBox).append(...names.map(chip));
     if (!names.length && P.favouritesLoaded) P.labelsBox.append(h('span', { class: 'muted small' }, 'No favourite labels configured ([qobuz_search] labels).'));
     P.paintSeen();
+    if (P.labelsToggle && P.labelsOpen !== undefined) P.setLabelsOpen(P.labelsOpen);
 };
 
 // The labels met in the last results, to tick one that is not a favourite.
@@ -502,7 +530,8 @@ P.filterSummary = () => {
     const when = mode === 'last' ? (pref('lastN', 2) === 1 ? 'last year' : `last ${pref('lastN', 2)} years`)
         : mode === 'span' ? `${yearOf('from')}–${to === TODAY ? 'today' : to}` : 'any time';
     return [P.selected.size ? [...P.selected].join(', ') : 'all labels', when,
-        pref('order', 'relevance') === 'date' ? 'newest first' : 'Qobuz order'].join(' · ');
+        pref('order', 'relevance') === 'date' ? 'newest first' : 'Qobuz order',
+        ...(pref('awarded', false) ? ['awarded only'] : [])].join(' · ');
 };
 
 P.paintSummary = () => {
@@ -525,6 +554,17 @@ P.paintSort = () => {
     ], pref('order', 'relevance'), v => { setPref('order', v); P.paintSort(); P.searchSoon(); }, 'small'));
 };
 
+P.paintAwarded = () => {
+    const only = pref('awarded', false);
+    K.clear(P.awardedFilterBox).append(h('button', {
+        type: 'button', class: 'chip tog qz-chip' + (only ? ' on' : ''),
+        'aria-pressed': String(only),
+        title: 'Albums with an award or your rating already found by this app',
+        onclick: () => { setPref('awarded', !only); P.paintAwarded(); P.searchSoon(); },
+    }, 'Awarded only'));
+    P.paintSummary();
+};
+
 // ── search ───────────────────────────────────────────────────────────────────
 P.params = scan => {
     const q = new URLSearchParams();
@@ -538,6 +578,7 @@ P.params = scan => {
         if (pref('to', '')) q.set('to', pref('to', ''));
     }
     q.set('sort', pref('order', 'relevance'));
+    if (pref('awarded', false)) q.set('awarded', '1');
     if (scan) q.set('scan', scan);
     return q;
 };
@@ -762,8 +803,9 @@ P.learned = [];
 P.loadWords = async () => {
     const d = await K.api('/qobuz/words', { timeout: 30000 });
     if (!d.ok) return;
-    P.words = d.words.map(w => entry(w));
+    P.words = d.words.map(w => ({ ...entry(w), term: P.plain(w) }));
     P.learned = d.learned.map(w => entry(w.text, w.count));
+    P.syncLabels();
 };
 
 P.learn = texts => {
@@ -833,6 +875,8 @@ P.pick = n => {
     const v = P.input.value;
     const head = v.slice(0, s.from) + s.e.text + ' ';
     P.input.value = head + v.slice(s.to).replace(/^\s+/, '');
+    P.syncLabels();
+    P.paintStale();
     P.input.setSelectionRange(head.length, head.length);
     P.input.focus();
     P.showSuggestions([]);
@@ -1054,7 +1098,7 @@ P.play = async (c, mode, track = null) => {
         return;
     }
     const n = `${d.queued} track${d.queued === 1 ? '' : 's'}`;
-    K.toast(mode === 'append' ? `Added ${n} to the queue` : `Playing — ${n} queued`);
+    K.toast(mode === 'append' ? `Added ${n} to the queue` : `Playing — ${n} queued`, 'ok', mode !== 'append');
     if (d.remembered) c.played = (c.played || 0) + 1;
     if (fromSearch) P.learn([P.last.query, c.artist, c.composer]);
     P.playerPoll.now();

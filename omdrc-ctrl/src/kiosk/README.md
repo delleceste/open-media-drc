@@ -44,6 +44,16 @@ button on Now, which changes the one on screen): upright it is **Bars** unless
 needles are picked while upright, in landscape **Needles** unless something
 else is picked there.  Turning the phone switches between the two at once.
 
+Each channel shows a blinking orange **CLIP?** near the 0 dB end when its peak
+reaches -1 dBFS; this means the detector is checking that channel. A detected
+flat top turns the mark into a steady red **CLIP**, latched independently for
+Left and Right. The marks follow each full-scale needle's angle or sit vertically
+at the right end of each bar. Tap a red mark to reset its channel. The PCM
+check runs only while the Now page's meters are active and a channel peaks near
+full scale. The tap is before DRC, so this does not measure clipping at the
+DAC. A limiter can make a flat top without audible distortion, so the mark
+indicates possible source clipping, not a definitive diagnosis.
+
 ## Now, upright
 
 Upright, the cover takes a third of the height at the left with title, artist

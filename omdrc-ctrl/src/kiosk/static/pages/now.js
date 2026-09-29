@@ -126,6 +126,17 @@ P.mount = el => {
     new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
+    const savedClips = K.pref('now.clipChannels', {}) || {};
+    // Older saved values were booleans; keep a previous red CLIP as one hit.
+    const count = value => value === true ? 1 : Number.isSafeInteger(value) && value > 0 ? value : 0;
+    P.clipChannels = { left: count(savedClips.left), right: count(savedClips.right) };
+    P.clipSignal = { left: false, right: false };
+    P.vu.setClips(P.clipChannels);
+    P.vu.onClipReset = ch => {
+        P.clipChannels[ch] = 0;
+        K.setPref('now.clipChannels', P.clipChannels);
+        P.vu.setClips(P.clipChannels);
+    };
     P.spec = new K.Spectrum(P.specCanvas);
     if (K.sync) K.sync.onRunning(on => { P.calLed.hidden = !on; });
 
@@ -277,10 +288,11 @@ P.openLevel = () => {
     // only while Balance itself is switched on; with both off, nothing is opened at all.
     if (P.mode === 'off' && !P.showBalance) return;
     P.vu.snap({}); P.spec.clear(); P.balance.clear();
+    P.vu.setSuspects({});
     P.modeBtn.title = K.state.spectrum.enabled ? '' : 'analyzer disabled';
     // Bars/needles need only the RMS/peak reader (no FFT); the spectrum mode
     // asks for the full frame, which carries the same levels.
-    const stream = P.mode === 'spectrum' ? 'music' : 'vu';
+    const stream = P.mode === 'spectrum' ? 'music-clip' : P.mode === 'off' ? 'vu' : 'vu-clip';
     P.level = K.streams.open(stream, d => {
         if (d.ok && d.state === 'running') {
             const v = d.vu || {};
@@ -288,11 +300,30 @@ P.openLevel = () => {
             if (pk > -60) K.markSound();
             if (K.sync) K.sync.onLevel(pk);
             if (P.mode !== 'off') P.vu.update(d.vu);
+            P.vu.setSuspects(P.mode === 'off' ? {} : {
+                left: Number(v.left_peak) >= -1, right: Number(v.right_peak) >= -1,
+            });
+            let newClip = false;
+            for (const ch of ['left', 'right']) {
+                const signal = P.mode !== 'off' && !!v[`${ch}_clip`];
+                // One hit per detected episode, not one for every overlapping
+                // 25 Hz meter frame containing the same clipped samples.
+                if (signal && !P.clipSignal[ch]) {
+                    P.clipChannels[ch] += 1;
+                    newClip = true;
+                }
+                P.clipSignal[ch] = signal;
+            }
+            if (newClip) {
+                K.setPref('now.clipChannels', P.clipChannels);
+                P.vu.setClips(P.clipChannels);
+            }
             if (P.showBalance) P.balance.update(d.vu);
             if (P.mode === 'spectrum') P.spec.update(d);
             P.modeBtn.title = [d.source_label, d.rate ? `${d.rate} Hz` : ''].filter(Boolean).join(' · ');
         } else {
             if (P.mode !== 'off') P.vu.snap({});
+            P.vu.setSuspects({});
             P.spec.clear(); P.balance.clear();
             P.modeBtn.title = d.state === 'idle' || !d.error ? (d.state || '') : d.error;
         }
@@ -799,6 +830,7 @@ P.show = () => {
 P.hide = () => {
     P.closeViewMenu();
     if (P.level) { P.level.close(); P.level = null; }
+    P.vu.setSuspects({});
     P.chainPoll.stop();
     P.visible = false;
     if (P.drSub) {

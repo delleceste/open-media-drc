@@ -39,6 +39,56 @@ SPEC.loader.exec_module(APP)
 NO_BRIDGE = {"active": False, "rate": 0, "running": False, "source": ""}
 
 
+class FlatTopTest(unittest.TestCase):
+    def test_pcm_scan_only_for_active_meters_near_full_scale(self):
+        samples = np.full(100, np.iinfo(np.int32).max, dtype=np.int32)
+        with mock.patch.object(APP, "_spectrum_flat_top", return_value=True) as scan:
+            self.assertFalse(APP._spectrum_clip_if_suspect(samples, 0, False))
+            self.assertFalse(APP._spectrum_clip_if_suspect(samples, -6, True))
+            scan.assert_not_called()
+            self.assertTrue(APP._spectrum_clip_if_suspect(samples, -.2, True))
+            scan.assert_called_once()
+
+    def test_peak_at_zero_is_not_itself_clipping(self):
+        signal = np.zeros(100, dtype=np.int32)
+        signal[50] = np.iinfo(np.int32).max
+        self.assertFalse(APP._spectrum_flat_top(signal))
+
+    def test_full_scale_and_subrail_flat_tops(self):
+        signal = np.zeros(100, dtype=np.int32)
+        signal[40:45] = np.iinfo(np.int32).min
+        self.assertTrue(APP._spectrum_flat_top(signal))
+        signal[40:45] = -int(2147483648 * 10 ** (-0.2 / 20))
+        self.assertTrue(APP._spectrum_flat_top(signal))
+
+    def test_normal_sine_near_full_scale(self):
+        t = np.arange(4800) / 48000
+        for frequency in (10, 50, 1000):
+            signal = (np.sin(2 * np.pi * frequency * t) * 2147483647).astype(np.int32)
+            self.assertFalse(APP._spectrum_flat_top(signal), f"{frequency} Hz")
+
+    def test_short_clipped_peaks_with_abrupt_shoulders(self):
+        rate = 44100
+        t = np.arange(int(rate * .05)) / rate
+        cap = 10 ** (-.1 / 20)
+        scale = np.iinfo(np.int32).max
+        for phase in (0, .13, .5, 1.1):
+            wave = np.sin(2 * np.pi * 5000 * t + phase)
+            clipped = np.clip(1.5 * wave, -cap, cap)
+            clean = cap * wave
+            self.assertTrue(APP._spectrum_flat_top((clipped * scale).astype(np.int32)))
+            self.assertFalse(APP._spectrum_flat_top((clean * scale).astype(np.int32)))
+
+    def test_clean_symmetric_peak_pairs_are_not_clipping(self):
+        rate = 44100
+        t = np.arange(int(rate * .05)) / rate
+        freq = 2205  # exactly 20 samples/cycle: equal samples flank each crest
+        phase = np.pi / 2 - 2 * np.pi * freq / rate * 4.5
+        wave = np.sin(2 * np.pi * freq * t + phase)
+        signal = (wave * 10 ** (-.1 / 20) * np.iinfo(np.int32).max).astype(np.int32)
+        self.assertFalse(APP._spectrum_flat_top(signal))
+
+
 class SourceSelectionTest(unittest.TestCase):
     """`auto` has to ask the chain, not a config file."""
 
@@ -705,17 +755,20 @@ class PublishDeduplicationTest(unittest.TestCase):
              mock.patch.object(an, "_run", side_effect=run):
             client = APP.app.test_client()
             streams = [client.get(f"/spectrum/stream?mode={mode}", buffered=False)
-                       for mode in ("dr", "vu", "music")]
+                       for mode in ("dr", "vu", "music", "vu-clip")]
             try:
                 first_frames = [next(stream.response) for stream in streams]
                 self.assertIn(b'"dr_blocks":[]', first_frames[0])
                 self.assertNotIn(b'"dr_blocks"', first_frames[1])
                 self.assertNotIn(b'"dr_blocks"', first_frames[2])
+                self.assertNotIn(b'"dr_blocks"', first_frames[3])
                 self.assertTrue(started.wait(1))
-                self.assertEqual((an.clients, an.dr_clients, an.band_clients),
-                                 (3, 1, 1))
+                self.assertEqual((an.clients, an.dr_clients, an.band_clients,
+                                  an.clip_clients), (4, 1, 1, 1))
                 streams[0].close()
                 streams[1].close()
+                streams[3].close()
+                self.assertEqual(an.clip_clients, 0)
                 self.assertEqual(an.clients, 1)
                 self.assertFalse(an.stop_event.is_set())
                 streams[2].close()

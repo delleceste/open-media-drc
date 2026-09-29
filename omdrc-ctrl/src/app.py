@@ -1845,6 +1845,42 @@ def _spectrum_level_db(samples) -> tuple[float, float]:
     return max(-120.0, min(0.0, rms_db)), max(-120.0, min(0.0, peak_db))
 
 
+def _spectrum_flat_top(samples) -> bool:
+    """Find near-ceiling plateaus with abrupt shoulders in signed S32 PCM.
+
+    Repeated equal peak pairs alone do not prove clipping: a clean periodic
+    tone sampled symmetrically about each crest produces them too. Require at
+    least three nearly equal samples with a sharp slope on both sides.
+    """
+    import numpy as np
+    if samples.size < 4:
+        return False
+    s = samples.astype(np.int64, copy=False)
+    near = np.abs(s) >= int(2147483648 * 10 ** (-1 / 20))
+    # The narrow tolerance allows a few quantization steps, but excludes the
+    # rounded crest of a normal audible-frequency sine wave.
+    flat = near[1:] & near[:-1] & (np.abs(np.diff(s)) <= 512)
+    if not np.any(flat[:-1] & flat[1:]):
+        return False
+    edges = np.diff(np.r_[False, flat, False].astype(np.int8))
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1)
+    valid = (ends - starts >= 2) & (starts > 0) & (ends + 1 < s.size)
+    starts, ends = starts[valid], ends[valid]
+    if not starts.size:
+        return False
+    return bool(np.any((np.abs(s[starts] - s[starts - 1]) > 4096) &
+                       (np.abs(s[ends + 1] - s[ends]) > 4096)))
+
+
+def _spectrum_clip_if_suspect(samples, peak_db: float,
+                              meters_active: bool) -> bool:
+    """Skip the PCM scan unless a visible meter has a near-ceiling peak."""
+    if not meters_active or peak_db < -1.0:
+        return False
+    return _spectrum_flat_top(samples)
+
+
 def _dr_track_changed(previous_file: str, previous_id: str,
                       current_file: str, current_id: str) -> bool:
     """MPD queue identity changes are track changes; elapsed jumps are not."""
@@ -1860,6 +1896,7 @@ class SpectrumAnalyzer:
         self.clients = 0
         self.band_clients = 0   # subset of `clients` that actually want FFT bands
         self.dr_clients = 0     # rolling DR shares this reader, without FFTs
+        self.clip_clients = 0   # Now meters opted into near-ceiling PCM checks
         self.dr_epoch = 0       # reset the excerpt when its first client joins
         self.dr_state = {"state": "collecting", "dr": None, "seconds": 0,
                          "track_age_blocks": 0}
@@ -1916,9 +1953,11 @@ class SpectrumAnalyzer:
             "drc_delay_margin_ms": round(SPECTRUM_DRC_DELAY_MARGIN_MS, 1),
         }
 
-    def _start_thread_locked(self, mode: str) -> None:
+    def _start_thread_locked(self, mode: str, wants_clip: bool = False) -> None:
         # caller holds self.lock
         self.clients += 1
+        if wants_clip:
+            self.clip_clients += 1
         if mode == "dr":
             self.dr_clients += 1
             self.dr_epoch += 1
@@ -1933,7 +1972,7 @@ class SpectrumAnalyzer:
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
-    def acquire(self, mode: str = "music") -> None:
+    def acquire(self, mode: str = "music", wants_clip: bool = False) -> None:
         # "vu" is a level-meters-only client: it never needs the FFT band
         # analysis, only the RMS/peak numbers `_run_source` derives from a raw
         # PCM slice regardless of mode.  `band_clients` counts how many
@@ -1960,6 +1999,8 @@ class SpectrumAnalyzer:
                     old = self.thread          # shutting down — wait outside lock
                 elif self.thread is not None:
                     self.clients += 1          # healthy thread — share it
+                    if wants_clip:
+                        self.clip_clients += 1
                     if mode == "dr":
                         if self.dr_clients == 0:
                             self.dr_epoch += 1
@@ -1973,21 +2014,24 @@ class SpectrumAnalyzer:
                         self.mode = mode
                     return
                 else:
-                    self._start_thread_locked(mode)
+                    self._start_thread_locked(mode, wants_clip)
                     return
             old.join(timeout=0.1)
         # Fallback: the previous thread is wedged.  Start fresh so the UI gets a
         # stream rather than hanging; the stale thread is a daemon and will exit.
         with self.lock:
-            self._start_thread_locked(mode)
+            self._start_thread_locked(mode, wants_clip)
 
-    def release(self, wants_bands: bool = True, wants_dr: bool = False) -> None:
+    def release(self, wants_bands: bool = True, wants_dr: bool = False,
+                wants_clip: bool = False) -> None:
         with self.lock:
             self.clients = max(0, self.clients - 1)
             if wants_bands:
                 self.band_clients = max(0, self.band_clients - 1)
             if wants_dr:
                 self.dr_clients = max(0, self.dr_clients - 1)
+            if wants_clip:
+                self.clip_clients = max(0, self.clip_clients - 1)
             if self.clients == 0:
                 self.stop_event.set()
                 self.cond.notify_all()
@@ -2655,6 +2699,14 @@ class SpectrumAnalyzer:
                 peak_frames = min(len(left), max(peak_window, span_frames))
                 _, l_peak = _spectrum_level_db(left[-peak_frames:])
                 _, r_peak = _spectrum_level_db(right[-peak_frames:])
+                # Only the Now page's meter stream opts into clipping checks.
+                # A balance-only, DR-only, or unrelated spectrum listener does
+                # not scan PCM, even though they share this analyzer thread.
+                meters_active = self.clip_clients > 0
+                l_clip = _spectrum_clip_if_suspect(
+                    pcm[-peak_frames:, 0], l_peak, meters_active)
+                r_clip = _spectrum_clip_if_suspect(
+                    pcm[-peak_frames:, 1], r_peak, meters_active)
                 self._publish({
                     "ok": True,
                     "state": "running",
@@ -2682,6 +2734,8 @@ class SpectrumAnalyzer:
                         "right_rms": round(r_rms, 1),
                         "left_peak": round(l_peak, 1),
                         "right_peak": round(r_peak, 1),
+                        "left_clip": l_clip,
+                        "right_clip": r_clip,
                     },
                 })
         finally:
@@ -7784,7 +7838,7 @@ def spectrum_margin():
                     "drc_delay_terms_ms": _drc_delay_terms_ms(terms)})
 
 
-def _release_stream(mode: str, wants_bands: bool):
+def _release_stream(mode: str, wants_bands: bool, wants_clip: bool = False):
     """Let go of an analyzer stream.  A DR stream is let go of only after
     DR_HOLD_SECONDS: the rolling DR history lives only while a DR listener is
     attached (the next first listener starts it afresh), so without the hold a
@@ -7796,7 +7850,8 @@ def _release_stream(mode: str, wants_bands: bool):
         timer.daemon = True
         timer.start()
         return timer
-    _SPECTRUM.release(wants_bands, wants_dr=mode == "dr")
+    _SPECTRUM.release(wants_bands, wants_dr=mode == "dr",
+                      wants_clip=wants_clip)
     return None
 
 
@@ -7806,11 +7861,14 @@ def spectrum_stream():
         return jsonify({"ok": False, "error": "spectrum analyzer disabled"}), 404
     # VU and rolling DR share the FIFO reader without costing an FFT.
     raw_mode = request.args.get("mode")
+    wants_clip = raw_mode in ("vu-clip", "music-clip")
+    if wants_clip:
+        raw_mode = raw_mode.removesuffix("-clip")
     mode = raw_mode if raw_mode in ("precision", "vu", "dr") else "music"
     wants_bands = mode not in ("vu", "dr")
 
     def events():
-        _SPECTRUM.acquire(mode)
+        _SPECTRUM.acquire(mode, wants_clip=wants_clip)
         dr_revision = -1
 
         def payload(frame):
@@ -7849,7 +7907,7 @@ def spectrum_stream():
         except GeneratorExit:
             pass
         finally:
-            _release_stream(mode, wants_bands)
+            _release_stream(mode, wants_bands, wants_clip)
 
     return Response(events(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
