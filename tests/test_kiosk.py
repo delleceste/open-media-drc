@@ -55,6 +55,13 @@ class KioskTests(unittest.TestCase):
         plain = self.client.get("/k/static/core.js").headers.get("Cache-Control", "")
         self.assertNotIn("max-age=31536000", plain)
 
+    def test_version_is_the_one_the_shell_names_its_scripts_with(self):
+        """An open kiosk compares /k/version with the v= of its own scripts and
+        reloads when they differ (main.js): the two must agree while nothing changed."""
+        page = self.client.get("/k/").get_data(as_text=True)
+        shell_v = re.findall(r'src="/k/static/main\.js\?v=([^"]+)"', page)[0]
+        self.assertEqual(self.client.get("/k/version").get_json()["version"], shell_v)
+
     def test_config_exposes_commands_but_never_their_command_line(self):
         data = self.client.get("/k/api/config").get_json()
         self.assertTrue(data["ok"])

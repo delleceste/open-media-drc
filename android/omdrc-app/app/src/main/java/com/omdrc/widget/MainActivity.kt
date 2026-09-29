@@ -28,6 +28,7 @@ import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.drawToBitmap
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.WindowInsetsCompat
@@ -390,6 +391,10 @@ class MainActivity : ComponentActivity() {
             else loadingRing.start()
         }
         firstLoad = false
+        // No pull-to-reload in the kiosk: it reloads itself when the box has new code
+        // (main.js, reloadQuietly below) and otherwise has nothing to reload for.  The
+        // full web page keeps it: it has no other way.
+        swipeRefresh.isEnabled = AppPrefs.viewMode(this) != AppPrefs.VIEW_KIOSK
         webView.loadUrl(url)
     }
 
@@ -500,6 +505,25 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun openSettings() {
             runOnUiThread { showSettings() }
+        }
+
+        /** The kiosk found new code on the box: reload under a picture of the screen as it
+         *  is, so nothing is seen but the new page replacing it (the ring only if that
+         *  takes more than about a second, as on a cold start). */
+        @JavascriptInterface
+        fun reloadQuietly() {
+            runOnUiThread {
+                if (loadFailed || connError.isShown) return@runOnUiThread
+                try {
+                    lastPage.setImageBitmap(webView.drawToBitmap())
+                    lastPage.animate().cancel()
+                    lastPage.alpha = 1f
+                    lastPage.visibility = View.VISIBLE
+                    showingLastPage = true
+                    loadingRing.postDelayed(ringLater, 1200)
+                } catch (e: IllegalStateException) {}      // not laid out: an ordinary reload
+                webView.reload()
+            }
         }
 
         /** A link outside the box (an album's booklet PDF, the album on Qobuz): to

@@ -243,6 +243,25 @@ class SearchTest(unittest.TestCase):
         self.assertNotIn("mine", self.ids(plain))
         self.assertIn("mine", self.ids(filtered))
 
+    def test_hidden_from_recent_stays_played_and_a_new_play_brings_it_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = qs.PlayedAlbums(tmp + "/p.json")
+            store.record(album("a", "One", "PENTATONE", "2025-05-05"), [])
+            store.record(album("b", "Two", "PENTATONE", "2025-05-05"), [])
+            self.assertTrue(store.hide("a"))
+            self.assertEqual([c["id"] for c in store.recent()], ["b"])
+            self.assertEqual(store.counts()["a"], 1)             # still played
+            self.assertIn("a", [i["id"] for i in store.matching("one")])
+            again = qs.PlayedAlbums(tmp + "/p.json")               # kept in the file
+            self.assertEqual([c["id"] for c in again.recent()], ["b"])
+            self.assertTrue(again.hide("a", False))
+            self.assertEqual([c["id"] for c in again.recent()], ["b", "a"])
+            again.hide("a")
+            again.record(album("a", "One", "PENTATONE", "2025-05-05"), [])
+            self.assertEqual([c["id"] for c in again.recent()], ["a", "b"])
+            self.assertEqual(again.counts()["a"], 2)
+            self.assertFalse(again.hide("nope"))
+
     def test_labels_seen_are_reported_as_qobuz_spells_them(self):
         answer, _ = self.search(from_year=2021)
         self.assertEqual(answer["labels_seen"], [

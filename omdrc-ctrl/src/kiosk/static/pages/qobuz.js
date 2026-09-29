@@ -18,6 +18,7 @@ const { h } = K;
 
 const P = {
     id: 'qobuz', label: 'Qobuz', title: 'Qobuz search',
+    noPullReload: true,        // main.js: a pull down here only scrolls up to the box
     optional: () => !!K.state.features.qobuz_search,
     status: null,              // /qobuz/status
     favourites: [],            // configured label groups' names
@@ -72,23 +73,43 @@ P.mount = el => {
                 P.suggestBox),
             P.fsum, P.filters));
     P.results = h('div', { class: 'qz-results' });
+    P.recentBox = h('div', { class: 'qz-recent' });
+    // Under the box: which list is shown, remembered (the albums played from here, or
+    // the last search's results), and, while the box is scrolled out of sight, a hint
+    // that it is up there.
+    P.viewChips = h('div', { class: 'qz-viewchips' },
+        ['recent', 'Played recently', 'results', 'Results'].reduce((a, x, i, all) => i % 2 ? a : [...a,
+            h('button', { type: 'button', class: 'chip tog qz-chip', dataset: { view: x }, onclick: () => P.setView(x) }, all[i + 1])], []));
+    P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'The search is at the top',
+        onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, 'Search ⌃');
+    P.viewRow = h('div', { class: 'qz-viewrow' }, P.viewChips, P.searchHint);
     P.preview = h('div', { class: 'qz-preview', hidden: true });   // on Now only, above the box
     P.player = h('div', { class: 'qz-player' });
     // the box's place on this page (it may be on Now instead: see "where the search box is"),
     // and the head shown in its place over results searched from Now
-    P.formHome = h('div', {}, P.form);
+    P.formHome = h('div', { class: 'qz-home' }, P.form);
     P.resHead = h('div', { class: 'qz-reshead', hidden: true },
         h('button', { type: 'button', class: 'btn qz-back', title: 'Back to Now playing', 'aria-label': 'Back to Now playing', onclick: () => K.showPage('now') }, '‹'),
         h('span', { class: 'qz-reshead-title' }, 'Search results'));
-    P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.results);
+    P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow, P.recentBox, P.results);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.input.addEventListener('focus', () => P.revealInput());
     P.buildPlayer();
     P.paintDate(); P.paintSort(); P.paintLabels();
-    P.openFilters(true);
+    P.openFilters(false);                          // the summary line opens them
     P.poll = new K.Poller(P.refreshStatus, 10000);
     P.playerPoll = new K.Poller(P.refreshPlayer, 2000);
     P.recent();
+    // the last results, as they were: the app may have been left, or the page reloaded
+    const kept = pref('lastResults', null);
+    if (kept && kept.d && Array.isArray(kept.d.results)) {
+        P.last = kept.d; P.searchedKey = kept.key || null;
+        P.paintResults(); P.paintSeen();
+    }
+    P.paintView();
+    if ('IntersectionObserver' in window) new IntersectionObserver(es => {
+        P.searchHint.hidden = es[es.length - 1].isIntersecting;
+    }, { root: P.el, rootMargin: '-24px 0px 0px 0px' }).observe(P.formHome);   // a sliver at the top edge is not "in view"
     P.loadWords();
     K.api('/qobuz/lowered').then(d => { if (d.ok) { P.lowCountCache = d.entries.length; P.paintLowLink(); } });
 };
@@ -100,7 +121,15 @@ P.show = () => {
     P.fromNowShown = P.fromNow;
     P.fromNow = false;
     P.resHead.hidden = !P.fromNowShown;
+    P.viewRow.hidden = P.fromNowShown;
+    if (P.fromNowShown) P.setView('results');
+    else if (P.view() === 'recent') P.recent();
     if (!P.fromNowShown) P.undock();
+    else P.reserve(false);                         // no empty place under the results' head
+    // the first time after a load (the app reopened, a reload): as a swipe from Now
+    // lands, on the list with the box scrolled up out of sight
+    if (!P.shownOnce && !P.fromNowShown) { P.formHeight = P.formHome.offsetHeight; P.reserve(true); }
+    P.shownOnce = true;
     P.poll.start();
     P.playerPoll.start();
     P.clock = setInterval(P.paintTime, 500);
@@ -112,21 +141,36 @@ P.hide = () => {
     clearInterval(P.clock);
     // results searched from Now are only for the moment: left (‹, a play, a swipe),
     // they go, from here and from the preview on Now
-    if (P.fromNowShown) { P.fromNowShown = false; P.forget(); }
+    // ... and so is the preview on Now, once its results have been looked at up here
+    const seen = P.fromNowShown || (P.view() === 'results' && P.form.classList.contains('qz-has-res'));
+    if (P.fromNowShown) { P.fromNowShown = false; P.forget(); if (P.dockedOnNow()) P.reserve(true); }
+    else if (seen) P.forget();
 };
 
-// Back to before any search: no results, no preview, "Played recently" again.  The
-// text and the filters stay.  A search still running is dropped.
+// Back on Now as before the search: no preview, Search beside the field.  The results
+// stay, for this page's Results view.  A search still running is dropped.
 P.forget = () => {
-    ++P.searching;
-    if (P.streamEnd) P.streamEnd({ ok: false, error: 'dropped' });
-    if (P.moreObserver) P.moreObserver.disconnect();
-    P.last = null; P.request = null; P.searchedKey = null;
-    P.paintPreview();
-    P.paintStale();
-    P.paintSeen();
-    K.clear(P.results);
-    P.recent();
+    if (P.request) {
+        ++P.searching;
+        if (P.streamEnd) P.streamEnd({ ok: false, error: 'dropped' });
+        P.request = null;
+        if (P.last) P.paintResults(); else K.clear(P.results);
+        P.paintView();
+    }
+    P.preview.hidden = true;
+    P.form.classList.remove('qz-has-res');
+};
+
+// ── which list: played recently, or the results ──────────────────────────────
+P.view = () => pref('view', 'recent') === 'results' ? 'results' : 'recent';
+P.setView = v => { setPref('view', v); P.paintView(); if (v === 'recent') P.recent(); };
+P.paintView = () => {
+    const v = P.view();
+    [...P.viewChips.children].forEach(b => b.classList.toggle('on', b.dataset.view === v));
+    P.recentBox.hidden = v !== 'recent';
+    P.results.hidden = v !== 'results';
+    if (v === 'results' && !P.results.firstChild)
+        P.results.append(h('p', { class: 'muted' }, 'No search yet: the search is at the top.'));
 };
 P.prefetch = () => P.refreshStatus();     // which also loads the labels
 
@@ -143,8 +187,20 @@ K.qobuzDock = slot => {
     P.ensureMounted();
     if (P.form.parentElement === slot) return;
     P.openFilters(false);                          // folded down there until asked for
+    // Its place up here stays, empty and scrolled out of sight: a swipe from Now lands
+    // on the list with nothing popping in above it, and the box is back there (off
+    // screen) by the time anyone scrolls up to it.
+    if (!P.dockedOnNow()) P.formHeight = P.formHome.offsetHeight;
     slot.append(P.preview, P.form);
     P.form.classList.add('qz-docked');
+    P.reserve(true);
+};
+P.reserve = on => {
+    P.formHome.style.minHeight = on && P.formHeight ? P.formHeight + 'px' : '';
+    // room to scroll that far however short the list (kiosk.css .qz)
+    P.el.style.setProperty('--qz-hide', on && P.formHeight ? P.formHeight + 'px' : '0px');
+    if (on) P.el.scrollTop += P.formHome.getBoundingClientRect().bottom - P.el.getBoundingClientRect().top
+        - parseFloat(getComputedStyle(P.el).paddingTop);   // the list where it would be at the top
 };
 P.undock = () => {
     if (!P.dockedOnNow()) return;
@@ -164,6 +220,7 @@ P.go = () => {
 // puts the pager back on the page it is on (main.js).
 P.openResults = () => {
     P.input.blur();
+    P.setView('results');
     P.fromNow = true;
     K.showPage(P.id, false);
     P.el.scrollTop = 0;
@@ -213,6 +270,7 @@ P.refreshStatus = async () => {
     P.paintBanner();
 };
 
+K.qobuzBusy = () => !!P.request;     // a search running: main.js waits with a reload
 P.usable = () => !!(P.status && P.status.ok && P.status.enabled && P.status.renderer);
 
 P.paintBanner = () => {
@@ -487,6 +545,7 @@ P.search = async (scan = 0, { quiet = false } = {}) => {
     P.request = params.toString();
     if (!quiet) P.paintWorking(scan ? 'Reading further…' : 'Searching…', !!scan);
     if (!scan && !quiet) { P.paintPreview('Searching…'); P.revealPreview(); }
+    if (!scan && !quiet && !P.dockedOnNow()) P.setView('results');   // searched up here: its results
     // a new search streams its partial results into the preview; "Load more" just asks
     const d = scan ? await K.api('/qobuz/search?' + params, { timeout: 120000 })
         : await P.streamSearch(params, seq);
@@ -536,17 +595,18 @@ P.paintResults = () => {
         ? 'Nothing matches yet among the albums read so far.'
         : 'Nothing matches.'));
     const shown = d.results.filter(c => !c.lowered), low = d.results.filter(c => c.lowered);
-    kids.push(h('div', { class: 'qz-list' }, shown.map(P.row)));
+    kids.push(h('div', { class: 'qz-list' }, shown.map(c => P.row(c))));
     if (low.length) kids.push(h('details', { class: 'qz-lowgroup', open: P.lowOpen || null,
         ontoggle: e => { P.lowOpen = e.target.open; } },
         h('summary', { class: 'small muted' }, `${low.length} lowered result${low.length === 1 ? '' : 's'}`),
-        h('div', { class: 'qz-list' }, low.map(P.row))));
+        h('div', { class: 'qz-list' }, low.map(c => P.row(c)))));
     if (d.more) {
         const more = h('button', { type: 'button', class: 'btn qz-more', onclick: () => P.search(d.next_scan) }, 'Load more');
         kids.push(more);
         P.watchMore(more, d);
     }
     K.clear(P.results).append(...kids);
+    setPref('lastResults', { d, key: P.searchedKey });   // kept on this device (see mount)
 };
 
 // The search as server-sent events: partial results (already in their final order)
@@ -626,12 +686,25 @@ P.watchMore = (button, d) => {
     P.moreObserver.observe(button);
 };
 
-// Before any search: the albums played from here, newest first.
+// The albums played from here, newest first (the "Played recently" view).
 P.recent = async () => {
     const d = await K.api('/qobuz/played?limit=30');
-    if (P.last || P.request || !d.ok || !d.albums.length) return;
-    K.clear(P.results).append(h('div', { class: 'lbl' }, 'Played recently'),
-        h('div', { class: 'qz-list' }, d.albums.map(P.row)));
+    if (!d.ok) return;
+    K.clear(P.recentBox).append(d.albums.length ? h('div', { class: 'qz-list' }, d.albums.map(c => P.row(c, 'recent')))
+        : h('p', { class: 'muted' }, 'Nothing played from here yet.'));
+};
+
+// Out of "Played recently" only: still counted as played, not lowered in searches.
+P.hideRecent = async (c, row) => {
+    row.classList.add('going');
+    const d = await K.api('/qobuz/played', { json: { action: 'hide', album_id: c.id } });
+    if (!d.ok) { row.classList.remove('going'); K.toast(d.error || 'could not hide it', 'error'); return; }
+    row.remove();
+    P.snack(`Hidden from Played recently: “${c.title}”`, [{ label: 'Undo', run: async () => {
+        const u = await K.api('/qobuz/played', { json: { action: 'show', album_id: c.id } });
+        if (!u.ok) K.toast(u.error || 'could not put it back', 'error');
+        P.recent();
+    } }]);
 };
 
 // ── completion ───────────────────────────────────────────────────────────────
@@ -863,7 +936,7 @@ P.openLowered = async () => {
 const quality = c => c.bits && c.bits > 16 ? `${c.bits}/${+(+c.rate).toFixed(1)}` : '';
 const who = p => p.roles && p.roles.length ? `${p.name} (${p.roles[0]})` : p.name;
 
-P.row = c => {
+P.row = (c, where = '') => {
     const tracks = h('div', { class: 'qz-tracks' });
     const body = h('div', { class: 'qz-body tap', onclick: () => P.toggleTracks(c, row, tracks) },
         h('div', { class: 'qz-title' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
@@ -881,7 +954,10 @@ P.row = c => {
         h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: off ? 'Not available on Qobuz' : 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, '▶'),
             h('button', { type: 'button', class: 'btn qz-add', disabled: off, title: off ? 'Not available on Qobuz' : 'Add to the queue', onclick: () => P.play(c, 'append') }, '+'),
-            c.lowered
+            // in "Played recently", − only takes it out of that list (P.hideRecent)
+            where === 'recent'
+                ? h('button', { type: 'button', class: 'btn qz-low', title: 'Hide from Played recently', onclick: () => P.hideRecent(c, row) }, '−')
+            : c.lowered
                 ? h('button', { type: 'button', class: 'btn qz-low', title: `Lowered (${c.lowered.kind}: ${c.lowered.name}): restore`, onclick: () => P.restore(c.lowered) }, '↺')
                 : h('button', { type: 'button', class: 'btn qz-low', title: 'Lower: show it last, folded away', onclick: () => P.lower(c, row) }, '−')),
         tracks);

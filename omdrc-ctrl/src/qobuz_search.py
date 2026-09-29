@@ -364,16 +364,36 @@ class PlayedAlbums:
                 "count": (old or {}).get("count", 0) + 1,
                 "last": when or dt.datetime.now().astimezone().isoformat(timespec="seconds"),
             }
+            # (played again, a hidden album is back in the list: the entry is new)
             entries[:] = [entry] + [e for e in entries if e is not old][:self.limit - 1]
-            try:
-                os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-                tmp = f"{self.path}.tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump({"albums": entries}, f, ensure_ascii=False)
-                os.replace(tmp, self.path)
-            except OSError:
-                return False
+            return self._save(entries)
+
+    def _save(self, entries: list[dict]) -> bool:
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            tmp = f"{self.path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"albums": entries}, f, ensure_ascii=False)
+            os.replace(tmp, self.path)
+        except OSError:
+            return False
         return True
+
+    def hide(self, album_id: str, hidden: bool = True) -> bool:
+        """Take an album out of the "recently played" list (or put it back).  It
+        stays played: its count and its place among the search candidates are
+        kept.  False when it is not in the list or the file cannot be written."""
+        album_id = str(album_id)
+        with self._lock:
+            entries = self._load()
+            entry = next((e for e in entries if str(e["item"].get("id")) == album_id), None)
+            if entry is None:
+                return False
+            if hidden:
+                entry["hidden"] = True
+            else:
+                entry.pop("hidden", None)
+            return self._save(entries)
 
     def counts(self) -> dict[str, int]:
         with self._lock:
@@ -397,7 +417,7 @@ class PlayedAlbums:
 
     def recent(self, limit: int = 50) -> list[dict]:
         with self._lock:
-            entries = list(self._load()[:limit])
+            entries = [e for e in self._load() if not e.get("hidden")][:limit]
         out = []
         for entry in entries:
             card = album_card(entry["item"])

@@ -14,6 +14,8 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     POST /qobuz/play               {"album_id", "mode": "replace"|"append",
                                     "start": track id}: queue it on upmpdcli
     GET /qobuz/played              the albums played from here, newest first
+    POST /qobuz/played             {"action": "hide"|"show", "album_id"}: out of
+                                   (back into) that list; still counted as played
     GET /qobuz/words               search-field completions: the shipped
                                    list and the ones learned from plays
     GET /qobuz/track/<id>          one track and its album (the player's cover)
@@ -342,10 +344,18 @@ def search_stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@bp.route("/played")
+@bp.route("/played", methods=["GET", "POST"])
 def played_albums():
     if not _settings().enabled:
         return jsonify({"ok": False, "error": "Qobuz search disabled"}), 404
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        action, album_id = body.get("action"), str(body.get("album_id") or "")
+        if action not in ("hide", "show") or not album_id:
+            return jsonify({"ok": False, "error": "want action hide|show and album_id"}), 400
+        if not played().hide(album_id, action == "hide"):
+            return jsonify({"ok": False, "error": "not in the played list, or it cannot be saved"}), 409
+        return jsonify({"ok": True})
     limit = request.args.get("limit", "50")
     return jsonify({"ok": True, "albums": played().recent(int(limit) if limit.isdigit() else 50)})
 

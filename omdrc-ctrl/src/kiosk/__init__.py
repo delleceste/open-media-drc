@@ -71,6 +71,13 @@ def shell():
     return render_template("kiosk_shell.html", asset_version=_asset_version())
 
 
+@bp.route("/version")
+def version():
+    """The asset version a page loaded now would get: an open kiosk that finds it
+    different from its own has old code and reloads itself (static/main.js)."""
+    return jsonify({"ok": True, "version": _asset_version()})
+
+
 # The panel's own buttons (commands.conf), minus the shell command line: the
 # kiosk needs to know what to offer and how to confirm it, never how it runs.
 _PUBLIC_KEYS = ("id", "what", "group", "type", "button", "confirm",

@@ -216,7 +216,10 @@ function rotate() {
 function reportScroll(target) {
     if (!K.inApp || !window.OmdrcApp.setPageScrolled) return;
     const body = cur >= 0 ? K.pages[cur].body : null;
-    const scrolled = $('#overlay-root').children.length > 0 || scrolledAt(target) || (!!body && body.scrollTop > 2);
+    // a page may opt out of pull-to-reload altogether (pages/qobuz.js: pulling down there
+    // means "up to the search box", never "reload the kiosk")
+    const scrolled = $('#overlay-root').children.length > 0 || scrolledAt(target) || (!!body && body.scrollTop > 2)
+        || (cur >= 0 && !!K.pages[cur].noPullReload);
     try { window.OmdrcApp.setPageScrolled(scrolled); } catch {}
 }
 document.addEventListener('scroll', e => {
@@ -387,6 +390,37 @@ K.refreshPages = () => {
     [...tabs.children].forEach((b, n) => b.classList.toggle('on', n === cur));
     pager.scrollTo({ left: cur * pager.clientWidth, behavior: 'instant' });
 };
+
+// ── new code on the box: reload by itself ────────────────────────────────────
+// Every script is asked for with ?v=<asset version> (kiosk/__init__.py), which changes
+// only when the box's kiosk files do.  An open page asks the box for the current one
+// now and then, and when it differs, reloads -- but only at a quiet moment: no sheet
+// or player open, nothing being typed, no calibration and no search running.  The
+// page comes back where it was (the hash), the Qobuz results with it (kept on this
+// device).  In the app the screen is frozen meanwhile (reloadQuietly), so the new page
+// just replaces the old one.
+const MY_VERSION = (() => { try { return new URL(document.currentScript.src).searchParams.get('v') || ''; } catch { return ''; } })();
+const VERSION_EVERY_MS = 60000;
+let newCode = false, lastVersionCheck = 0;
+const quietNow = () => $('#overlay-root').children.length === 0 && !K.saverActive
+    && !(document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))
+    && !(K.sync && K.sync.running) && !(K.qobuzBusy && K.qobuzBusy());
+function reloadForNewCode() {
+    if (!newCode || document.hidden || !quietNow()) return;
+    newCode = false;
+    try { if (K.inApp && window.OmdrcApp.reloadQuietly) { window.OmdrcApp.reloadQuietly(); return; } } catch {}
+    location.reload();
+}
+async function checkVersion() {
+    if (!MY_VERSION || newCode || document.hidden || Date.now() - lastVersionCheck < VERSION_EVERY_MS / 2) return;
+    lastVersionCheck = Date.now();
+    const d = await K.api('/k/version', { timeout: 5000 });
+    if (d && d.ok && d.version && d.version !== MY_VERSION) newCode = true;
+    reloadForNewCode();
+}
+setInterval(checkVersion, VERSION_EVERY_MS);
+setInterval(reloadForNewCode, 3000);       // waiting for a quiet moment
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });   // back in the app
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
