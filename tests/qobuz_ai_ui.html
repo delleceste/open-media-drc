@@ -41,7 +41,7 @@
                 considered: 9, queries: [], window: { from: '', to: '' }, sort: 'ai', labels_seen: [],
                 more: false, ai: { requested: 3, summary: 'Review-based recommendations.' } };
         };
-        P.aiToggle.click();
+        await P.toggleAI();
         check(P.aiToggle.getAttribute('aria-pressed') === 'true', 'AI mode enabled');
         check(!P.params(0).has('hires') && !P.fsum.classList.contains('qz-filtered'), 'AI clears filters');
         P.qualityBox.querySelector('button').click();
@@ -62,8 +62,13 @@
         await new Promise(resolve => setTimeout(resolve, 550));
         check(calls === 1, 'Filter change does not trigger paid AI calls');
         K.api = async () => ({ ok: true, configured: false, provider: 'claude', model: '', account_ready: true, defaults: {} });
-        await P.askAI();
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await P.toggleAI();
+        P.qualityBox.querySelector('button').click();
+        check(P.fsum.classList.contains('qz-filtered'), 'Active filter before unconfigured toggle');
+        await P.toggleAI();
+        check(P.aiToggle.getAttribute('aria-pressed') === 'false', 'Unconfigured AI stays off');
+        check(!P.aiToggle.disabled, 'Toggle available after configuration check');
+        check(P.fsum.classList.contains('qz-filtered'), 'Unconfigured toggle preserves filters');
         check(calls === 1, 'Unconfigured AI makes no paid request');
         check(document.querySelector('[role=dialog]').textContent.includes('Configure an AI provider'), 'Missing configuration dialog');
         check(document.querySelector('.qz-ai-sheet select').value === 'claude', 'Claude selected in settings');

@@ -76,12 +76,8 @@ P.mount = el => {
                 h('form', { class: 'qz-searchrow', action: '', onsubmit: e => { e.preventDefault(); P.go(); } }, P.input,
                     P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
                     P.aiToggle = h('button', { type: 'button', class: 'btn qz-ai-toggle' + (pref('aiMode', false) ? ' active' : ''),
-                        'aria-label': 'AI search mode', 'aria-pressed': String(pref('aiMode', false)), onclick: () => {
-                            const enabled = !pref('aiMode', false); setPref('aiMode', enabled);
-                            P.aiToggle.classList.toggle('active', enabled); P.aiToggle.setAttribute('aria-pressed', String(enabled));
-                            if (enabled) P.resetFilters();
-                            P.searchedKey = null; P.paintStale();
-                        } }, 'AI'),
+                        'aria-label': 'AI search mode', 'aria-pressed': String(pref('aiMode', false)),
+                        onclick: () => P.toggleAI() }, 'AI'),
                     // down on Now, once there are results: over to them, in Search's place
                     // until the text or a filter changes (kiosk.css, paintStale)
                     h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›')),
@@ -642,6 +638,25 @@ P.paintQuality = () => {
     P.paintSummary();
 };
 
+P.setAIMode = enabled => {
+    setPref('aiMode', enabled);
+    P.aiToggle.classList.toggle('active', enabled);
+    P.aiToggle.setAttribute('aria-pressed', String(enabled));
+    if (enabled) P.resetFilters();
+    P.searchedKey = null; P.paintStale();
+};
+P.toggleAI = async () => {
+    if (P.aiToggle.disabled) return;
+    if (pref('aiMode', false)) { P.setAIMode(false); return; }
+    P.aiToggle.disabled = true;
+    try {
+        const settings = await K.api('/qobuz/ai/settings');
+        P.paintAIIcon(settings);
+        if (!settings.ok) { K.toast(settings.error || 'Could not read AI settings', 'error'); return; }
+        if (!settings.configured) { await P.aiSettings(true); return; }
+        P.setAIMode(true);
+    } finally { P.aiToggle.disabled = false; }
+};
 P.refreshAIIcon = async () => {
     const settings = await K.api('/qobuz/ai/settings');
     P.paintAIIcon(settings);
