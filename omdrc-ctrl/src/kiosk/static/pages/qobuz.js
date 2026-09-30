@@ -80,13 +80,8 @@ P.mount = el => {
                     h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›')),
                 P.suggestBox),
             h('div', { class: 'qz-ai-controls' },
-                P.aiButton = h('button', { type: 'button', class: 'btn', onclick: () => P.askAI() }, 'Ask AI'),
-                h('label', { class: 'small' }, 'Albums ', P.aiCount = h('select', { 'aria-label': 'Number of AI recommendations',
-                    onchange: () => setPref('aiCount', +P.aiCount.value) },
-                    ...[1, 2, 3, 4, 5, 6].map(n => h('option', { value: String(n) }, String(n))))),
-                h('button', { type: 'button', class: 'btn link', onclick: () => P.aiSettings() }, 'AI settings')),
+                P.aiButton = h('button', { type: 'button', class: 'btn', onclick: () => P.askAI() }, 'Ask AI')),
             P.fsum, P.filters));
-    P.aiCount.value = String(pref('aiCount', 3));
     P.results = h('div', { class: 'qz-results' });
     P.recentBox = h('div', { class: 'qz-recent' });
     P.awardedBox = h('div', { class: 'qz-awarded' });
@@ -641,29 +636,40 @@ P.aiPost = async (url, json) => {
     } finally { clearTimeout(timer); }
 };
 
-P.aiSettings = async () => {
+P.aiSettings = K.openAISettings = async (required = false) => {
     const d = await K.api('/qobuz/ai/settings');
     if (!d.ok) { K.toast(d.error, 'error'); return; }
     const provider = h('select', { 'aria-label': 'AI provider' },
-        h('option', { value: 'claude' }, 'Claude'), h('option', { value: 'openai' }, 'OpenAI'));
+        h('option', { value: 'claude_account' }, 'Claude account (server login)'),
+        h('option', { value: 'claude' }, 'Claude API'), h('option', { value: 'openai' }, 'OpenAI API'));
     provider.value = d.provider;
     const model = h('input', { type: 'text', value: d.model, 'aria-label': 'Model', autocomplete: 'off' });
     const key = h('input', { type: 'password', 'aria-label': 'API key', autocomplete: 'off',
         placeholder: d.configured ? 'Key configured; leave blank to keep it' : 'Paste your API key' });
-    provider.onchange = () => { model.value = d.defaults[provider.value]; key.value = ''; key.placeholder = 'API key (blank keeps any saved key)'; };
+    const keyLabel = h('label', {}, 'API key', key);
+    const note = h('p', { class: 'small muted' });
+    const paintAccount = () => {
+        const account = provider.value === 'claude_account';
+        keyLabel.hidden = account;
+        note.textContent = account
+            ? (d.account_ready ? 'Claude is signed in on this server. Requests use that account and its applicable usage limits or credits.' : 'Sign in to Claude Code on this server as the web service user. No API key is needed for account mode.')
+            : 'API requests use separately billed provider credits. The key is saved on this server and is never returned to the browser. A blank key keeps the saved key.';
+    };
+    provider.onchange = () => { model.value = d.defaults[provider.value]; key.value = ''; key.placeholder = 'API key (blank keeps any saved key)'; paintAccount(); };
+    paintAccount();
     const error = h('div', { class: 'errbox', hidden: true });
     const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
         save.disabled = true;
         const r = await P.aiPost('/qobuz/ai/settings', { provider: provider.value, model: model.value.trim(), key: key.value.trim() });
         save.disabled = false;
         if (!r.ok) { error.hidden = false; error.textContent = r.error; return; }
-        key.value = ''; scrim.remove(); K.toast(r.configured ? 'AI settings saved' : 'Settings saved; add an API key to use Ask AI');
+        key.value = ''; scrim.remove(); K.toast(r.configured ? 'AI settings saved' : r.provider === 'claude_account' ? 'Settings saved; sign in to Claude Code on this server' : 'Settings saved; add an API key to use Ask AI');
     } }, 'Save');
     const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) scrim.remove(); } },
-        h('div', { class: 'sheet qz-ai-sheet' }, h('h2', {}, 'AI settings'),
-            h('p', { class: 'small muted' }, 'Ask AI researches reviews and finds playable Qobuz releases. Each request uses your provider’s paid API and web search. Your request and album candidates are sent to that provider.'),
-            h('label', {}, 'Provider', provider), h('label', {}, 'Model', model), h('label', {}, 'API key', key),
-            h('p', { class: 'small muted' }, 'The key is saved on this server and is never returned to the browser. A blank key keeps the selected provider’s saved key.'),
+        h('div', { class: 'sheet qz-ai-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'AI settings' }, h('h2', {}, 'AI settings'),
+            required ? h('p', {}, 'Configure an AI provider and API key to use Ask AI. You can also change these settings in Configuration.') : null,
+            h('p', { class: 'small muted' }, 'Ask AI researches reviews and finds playable Qobuz releases. Your request and album candidates are sent to the selected provider.'),
+            h('label', {}, 'Provider', provider), h('label', {}, 'Model', model), keyLabel, note,
             error, h('div', { class: 'sheet-actions' }, h('button', { type: 'button', class: 'btn', onclick: () => scrim.remove() }, 'Cancel'), save)));
     document.getElementById('overlay-root').append(scrim);
 };
@@ -671,13 +677,13 @@ P.aiSettings = async () => {
 P.askAI = async () => {
     clearTimeout(soon);
     const prompt = P.input.value.trim();
-    if (!prompt) { K.toast('Type a recommendation request first', 'error'); return; }
     if (P.request || P.aiStarting) { K.toast('Wait for the current search to finish', 'error'); return; }
     P.aiStarting = true; P.aiButton.disabled = true;
     const settings = await K.api('/qobuz/ai/settings');
     P.aiStarting = false;
     if (!settings.ok) { P.aiButton.disabled = false; K.toast(settings.error, 'error'); return; }
-    if (!settings.configured) { P.aiButton.disabled = false; P.aiSettings(); return; }
+    if (!settings.configured) { P.aiButton.disabled = false; P.aiSettings(true); return; }
+    if (!prompt) { P.aiButton.disabled = false; K.toast('Type a recommendation request first', 'error'); return; }
     P.input.blur(); P.showSuggestions([]);
     const params = P.params(0), seq = ++P.searching;
     P.searchedKey = params.toString(); P.request = params.toString();
@@ -686,7 +692,7 @@ P.askAI = async () => {
     P.paintWorking('Researching reviews and matching Qobuz releases…');
     P.paintPreview('Researching reviews and matching Qobuz releases…'); P.revealPreview();
     if (!P.dockedOnNow()) P.setView('results');
-    const d = await P.aiPost('/qobuz/ai/recommend?' + params, { prompt, count: +P.aiCount.value });
+    const d = await P.aiPost('/qobuz/ai/recommend?' + params, { prompt });
     P.aiButton.disabled = false; P.aiRunning = false;
     if (seq !== P.searching) return;
     P.request = null; P.fetchProgress.hidden = true;

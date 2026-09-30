@@ -109,10 +109,24 @@ class MainActivity : ComponentActivity() {
         runOnUiThread { webView.evaluateJavascript("window.K && K.onMicEnvelope && K.onMicEnvelope($json)", null) }
     }
 
+    // At most one recording at a time; it is cancelled when the page asks, when the app
+    // leaves the screen, and by a watchdog, so the microphone can never stay open.
+    @Volatile private var micRun: MicEnvelope? = null
+
+    private fun stopMic() { micRun?.cancel() }
+
+    override fun onDestroy() { stopMic(); super.onDestroy() }
+
     private fun recordMic(durationMs: Int, stepMs: Int) {
+        stopMic()
+        val mic = MicEnvelope(durationMs, stepMs)
+        micRun = mic
+        val watchdog = android.os.Handler(android.os.Looper.getMainLooper())
+        val kill = Runnable { mic.cancel() }
+        watchdog.postDelayed(kill, durationMs + 4000L)
         Thread {
             val json = try {
-                val r = MicEnvelope(durationMs, stepMs).record()
+                val r = mic.record()
                 val o = org.json.JSONObject()
                 o.put("ok", true); o.put("t0", r.t0WallMs); o.put("step", r.stepMs); o.put("source", r.source)
                 val a = org.json.JSONArray()
@@ -122,6 +136,8 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 org.json.JSONObject().put("ok", false).put("error", e.message ?: "microphone error").toString()
             }
+            watchdog.removeCallbacks(kill)
+            if (micRun === mic) micRun = null
             sendMicResult(json)
         }.start()
     }
@@ -383,6 +399,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        stopMic()
         super.onStop()
         contentResolver.unregisterContentObserver(autoRotateObserver)
         connError.pause()
@@ -642,6 +659,10 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        /** Release the microphone at once (the page gave up waiting, or the run ended). */
+        @JavascriptInterface
+        fun stopMicEnvelope() { stopMic() }
+
         @JavascriptInterface
         fun micAvailable(): Boolean = packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)
 
@@ -650,7 +671,7 @@ class MainActivity : ComponentActivity() {
         fun autoRotate(): Boolean = this@MainActivity.autoRotate()
 
         @JavascriptInterface
-        fun apiVersion(): Int = 7
+        fun apiVersion(): Int = 8
     }
 
     /** The gear button: which view to show, the screen-on rule, and the

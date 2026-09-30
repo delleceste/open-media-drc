@@ -212,6 +212,8 @@ S.running = false;
 const runWatchers = new Set();
 S.onRunning = fn => { runWatchers.add(fn); fn(S.running); return () => runWatchers.delete(fn); };
 const setRunning = v => { S.running = v; runWatchers.forEach(fn => { try { fn(v); } catch {} }); };
+// release the phone's microphone right now (no-op on an older app)
+const stopMic = () => { try { window.OmdrcApp && window.OmdrcApp.stopMicEnvelope && window.OmdrcApp.stopMicEnvelope(); } catch {} };
 S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why = 'manual' } = {}) => {
     if (verify) clicks = true;
     if (window.OmdrcApp && window.OmdrcApp.timingNetwork && window.OmdrcTiming.network().key === 'unknown')
@@ -256,7 +258,7 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         await new Promise(r => setTimeout(r, 1500));   // let the stream settle first
         logLine(`settled: ${frames.length} level frames so far`);
         const mic = await new Promise(resolve => {
-            const timer = setTimeout(() => resolve({ ok: false, error: 'the microphone did not answer' }), (seconds + 15) * 1000);
+            const timer = setTimeout(() => { stopMic(); resolve({ ok: false, error: 'the microphone did not answer' }); }, (seconds + 8) * 1000);
             K.onMicEnvelope = res => { clearTimeout(timer); K.onMicEnvelope = null; if (res && res.ok) LAST_MIC.value = res; resolve(res); };
             let left = seconds;
             const tick = setInterval(() => { left -= 1; if (onTick) onTick(Math.max(0, left)); if (left <= 0) clearInterval(tick); }, 1000);
@@ -268,7 +270,7 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
                 logLine('click test: asking the box to stop the music and play the click track');
                 const r = await K.api('/k/api/clicktest', { method: 'POST' });
                 logLine(`click test: box answered ${JSON.stringify(r)}`);
-                if (!r.ok) { clearTimeout(timer); K.onMicEnvelope = null; resolve({ ok: false, error: r.error || 'the click track could not be played' }); }
+                if (!r.ok) { clearTimeout(timer); K.onMicEnvelope = null; stopMic(); resolve({ ok: false, error: r.error || 'the click track could not be played' }); }
             }, 1000);
         });
         logLine(mic.ok
@@ -297,6 +299,7 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         logLine(`EXCEPTION: ${res.error}`);
         return res;
     } finally {
+        stopMic();
         setRunning(false);
         hold.close();
         K[TAP] = prevTap;

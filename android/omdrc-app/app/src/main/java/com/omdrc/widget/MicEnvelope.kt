@@ -24,6 +24,16 @@ import kotlin.math.max
  */
 class MicEnvelope(private val durationMs: Int, private val stepMs: Int) {
 
+    @Volatile private var rec: AudioRecord? = null
+    @Volatile private var cancelled = false
+
+    /** Stop listening now, from any thread; record() then ends with an error.  Stopping
+     *  the AudioRecord also unblocks a read() that is waiting for samples. */
+    fun cancel() {
+        cancelled = true
+        try { rec?.stop() } catch (_: Exception) {}
+    }
+
     data class Result(val t0WallMs: Double, val stepMs: Int, val db: FloatArray, val source: String)
 
     @SuppressLint("MissingPermission")    // checked by the caller
@@ -37,28 +47,37 @@ class MicEnvelope(private val durationMs: Int, private val stepMs: Int) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             source = MediaRecorder.AudioSource.UNPROCESSED; sourceName = "unprocessed"
         }
-        var rec = AudioRecord(source, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(minBuf, step * 8))
-        if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec.release()
+        var rec0 = AudioRecord(source, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(minBuf, step * 8))
+        if (rec0.state != AudioRecord.STATE_INITIALIZED) {
+            rec0.release()
             source = MediaRecorder.AudioSource.MIC; sourceName = "mic"
-            rec = AudioRecord(source, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(minBuf, step * 8))
+            rec0 = AudioRecord(source, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(minBuf, step * 8))
         }
-        check(rec.state == AudioRecord.STATE_INITIALIZED) { "the microphone could not be opened" }
-        try { if (AutomaticGainControl.isAvailable()) AutomaticGainControl.create(rec.audioSessionId)?.enabled = false } catch (_: Exception) {}
-        try { if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId)?.enabled = false } catch (_: Exception) {}
+        if (rec0.state != AudioRecord.STATE_INITIALIZED) { rec0.release(); error("the microphone could not be opened") }
+        val rec = rec0
+        this.rec = rec
+        var agc: AutomaticGainControl? = null
+        var ns: NoiseSuppressor? = null
+        try { if (AutomaticGainControl.isAvailable()) agc = AutomaticGainControl.create(rec.audioSessionId)?.also { it.enabled = false } } catch (_: Exception) {}
+        try { if (NoiseSuppressor.isAvailable()) ns = NoiseSuppressor.create(rec.audioSessionId)?.also { it.enabled = false } } catch (_: Exception) {}
 
         val steps = durationMs / stepMs
         val db = FloatArray(steps)
         val buf = ShortArray(step)
         var t0Wall = Double.NaN
         val ts = AudioTimestamp()
-        rec.startRecording()
+        val deadline = System.nanoTime() + (durationMs + 3000L) * 1_000_000L
         try {
+            rec.startRecording()
+            check(rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "the microphone is in use by another app" }
             var framesRead = 0L
             for (i in 0 until steps) {
                 var got = 0
                 while (got < step) {
+                    check(!cancelled) { "microphone recording cancelled" }
+                    check(System.nanoTime() < deadline) { "microphone recording ran too long" }
                     val n = rec.read(buf, got, step - got)
+                    check(!cancelled) { "microphone recording cancelled" }
                     if (n <= 0) error("microphone read failed ($n)")
                     got += n
                 }
@@ -80,7 +99,11 @@ class MicEnvelope(private val durationMs: Int, private val stepMs: Int) {
                 }
             }
         } finally {
-            rec.stop(); rec.release()
+            this.rec = null
+            try { rec.stop() } catch (_: Exception) {}
+            try { agc?.release() } catch (_: Exception) {}
+            try { ns?.release() } catch (_: Exception) {}
+            try { rec.release() } catch (_: Exception) {}
         }
         return Result(t0Wall, stepMs, db, sourceName)
     }

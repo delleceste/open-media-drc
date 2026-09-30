@@ -383,7 +383,7 @@ def ai_recommend():
         # Keep catalog research bounded: at most four queries and 30 candidates each.
         filters["scan"] = 250
         answer = qobuz_ai.recommend(_state_dir(), catalog(), body.get("prompt"),
-                                    filters, body.get("count", 3))
+                                    filters, body.get("count"))
         return jsonify({"ok": True, **answer})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502

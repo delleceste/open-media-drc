@@ -75,6 +75,14 @@ K.VuMeter = class VuMeter {
         this.render();
     }
 
+    /** A meter-timing calibration is listening: the readouts and the dB scale say so. */
+    setCalibrating(on) {
+        on = !!on;
+        if (on === !!this.calibrating) return;
+        this.calibrating = on;
+        this.render();
+    }
+
     setSuspects(suspects) {
         this.suspects = { left: !!suspects.left, right: !!suspects.right };
         this.syncBlink();
@@ -242,6 +250,12 @@ K.VuMeter = class VuMeter {
         ctx.font = `${10.5 * dpr}px ui-monospace, monospace`;
         ctx.textBaseline = 'top'; ctx.textAlign = 'center';
         const yScale = H - scaleH + 2 * dpr;
+        if (this.calibrating) {
+            ctx.fillStyle = K.theme() === 'light' ? '#0969da' : '#58a6ff';
+            ctx.font = `700 ${11.5 * dpr}px system-ui, sans-serif`;
+            ctx.fillText('CALIBRATING…', w / 2, yScale + 4 * dpr);
+            return;
+        }
         for (const db of [-60, -40, -30, -20, -12, -6, -3, 0]) {
             const px = x(db);
             ctx.strokeStyle = K.css('--meter-tick');
@@ -381,7 +395,11 @@ K.VuMeter = class VuMeter {
         ctx.font = `500 ${10.5 * dpr}px ui-monospace, monospace`;
         ctx.textAlign = 'right';
         ctx.fillStyle = I.dim;
-        ctx.fillText(`PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 11 * dpr, 11 * dpr);
+        if (this.calibrating) {
+            ctx.font = `700 ${10.5 * dpr}px system-ui, sans-serif`;
+            ctx.fillStyle = '#58a6ff';
+        }
+        ctx.fillText(this.calibrating ? 'CALIBRATING…' : `PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 11 * dpr, 11 * dpr);
         halo(false);
         const ch = label === 'L' ? 'left' : 'right';
         const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : '';

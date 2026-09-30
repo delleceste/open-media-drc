@@ -17,13 +17,14 @@
         K.state.features.qobuz_search = true;
         K.awardsBox = () => K.h('span', {});
         K.api = async url => url === '/qobuz/ai/settings'
-            ? { ok: true, provider: 'claude', model: 'claude-sonnet-4-6', configured: true,
-                defaults: { claude: 'claude-sonnet-4-6', openai: 'gpt-5.4' } }
+            ? { ok: true, provider: 'claude', model: 'claude-sonnet-4-6', configured: true, account_ready: true,
+                defaults: { claude: 'claude-sonnet-4-6', claude_account: 'claude-sonnet-4-6', openai: 'gpt-5.4' } }
             : { ok: true, entries: [] };
         for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
         P.mount(document.getElementById('page'));
         P.input.value = 'Three Beethoven 5 recordings for sound engineering';
-        check(P.aiCount.value === '3', 'Default album count');
+        check(!P.form.textContent.includes('AI settings'), 'Settings removed from search');
+        check(!P.form.querySelector('[aria-label="Number of AI recommendations"]'), 'No fixed count selector');
         check(!P.params(0).has('hires'), 'Hi-Res initially off');
         P.qualityBox.querySelector('button').click();
         check(P.params(0).get('hires') === '1', 'Enabled Hi-Res sent to backend');
@@ -35,7 +36,7 @@
         P.aiPost = async (url, body) => {
             calls++;
             check(url.includes('hires=1'), 'AI respects Hi-Res');
-            check(body.count === 3 && body.prompt.includes('Beethoven'), 'AI count and prompt');
+            check(!('count' in body) && body.prompt.includes('Beethoven'), 'AI count and prompt');
             return { ok: true, results: [card('a', 0), card('b', 1), card('c', 2)], count: 3,
                 considered: 9, queries: [], window: { from: '', to: '' }, sort: 'ai', labels_seen: [],
                 more: false, ai: { requested: 3, summary: 'Review-based recommendations.' } };
@@ -55,9 +56,17 @@
         P.qualityBox.querySelector('button').click();
         await new Promise(resolve => setTimeout(resolve, 550));
         check(calls === 1, 'Filter change does not trigger paid AI calls');
-        await P.aiSettings();
+        K.api = async () => ({ ok: true, configured: false, provider: 'claude', model: '', defaults: {} });
+        await P.askAI();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        check(calls === 1, 'Unconfigured AI makes no paid request');
+        check(document.querySelector('[role=dialog]').textContent.includes('Configure an AI provider'), 'Missing configuration dialog');
         check(document.querySelector('.qz-ai-sheet select').value === 'claude', 'Claude selected in settings');
         check(document.querySelector('.qz-ai-sheet input[type=password]').value === '', 'Key never returned');
+        const provider = document.querySelector('.qz-ai-sheet select');
+        provider.value = 'claude_account'; provider.dispatchEvent(new Event('change'));
+        check(document.querySelector('.qz-ai-sheet input[type=password]').parentElement.hidden, 'Account mode needs no API key');
+        check(document.querySelector('.qz-ai-sheet').textContent.includes('Claude is signed in'), 'Account login status displayed');
         check(document.getElementById('page').scrollWidth <= 392, 'Phone-width layout fits');
         document.getElementById('result').textContent = 'PASS: AI cards, playback controls, sources, safe text, Hi-Res, settings, restoring and no automatic paid requests';
     } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }

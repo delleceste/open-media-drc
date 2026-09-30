@@ -138,7 +138,7 @@ P.mount = el => {
         P.vu.setClips(P.clipChannels);
     };
     P.spec = new K.Spectrum(P.specCanvas);
-    if (K.sync) K.sync.onRunning(on => { P.calLed.hidden = !on; });
+    if (K.sync) K.sync.onRunning(on => { P.calLed.hidden = !on; P.vu.setCalibrating(on); });
 
     P.wireTransport();
     P.chainPoll = new K.Poller(P.pollChain, 4000);
