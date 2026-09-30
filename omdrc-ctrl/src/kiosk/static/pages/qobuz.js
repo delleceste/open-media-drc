@@ -57,6 +57,7 @@ P.mount = el => {
     P.dateBox = h('div', {});
     P.sortBox = h('div', {});
     P.awardedFilterBox = h('div', { class: 'qz-chips' });
+    P.qualityBox = h('div', { class: 'qz-chips' });
     // Full width; the filters sit side by side where there is room, and fold
     // into one summary line once results arrive (a tap opens them again).
     P.fsum = h('button', { type: 'button', class: 'qz-fsum', onclick: () => P.openFilters(!P.filtersOpen) });
@@ -65,6 +66,7 @@ P.mount = el => {
         h('div', { class: 'qz-fgroup' }, h('div', { class: 'lbl' }, 'Released'), P.dateBox,
             h('div', { class: 'lbl' }, 'Order'), P.sortBox,
             h('div', { class: 'lbl' }, 'Awarded'), P.awardedFilterBox,
+            h('div', { class: 'lbl' }, 'Audio quality'), P.qualityBox,
             P.lowLink = h('button', { type: 'button', class: 'btn link qz-lowlink', onclick: () => P.openLowered() }, 'Lowered list ›')));
     P.form = h('div', { class: 'qz-form' },
         K.card(null,
@@ -77,7 +79,14 @@ P.mount = el => {
                     // until the text or a filter changes (kiosk.css, paintStale)
                     h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›')),
                 P.suggestBox),
+            h('div', { class: 'qz-ai-controls' },
+                P.aiButton = h('button', { type: 'button', class: 'btn', onclick: () => P.askAI() }, 'Ask AI'),
+                h('label', { class: 'small' }, 'Albums ', P.aiCount = h('select', { 'aria-label': 'Number of AI recommendations',
+                    onchange: () => setPref('aiCount', +P.aiCount.value) },
+                    ...[1, 2, 3, 4, 5, 6].map(n => h('option', { value: String(n) }, String(n))))),
+                h('button', { type: 'button', class: 'btn link', onclick: () => P.aiSettings() }, 'AI settings')),
             P.fsum, P.filters));
+    P.aiCount.value = String(pref('aiCount', 3));
     P.results = h('div', { class: 'qz-results' });
     P.recentBox = h('div', { class: 'qz-recent' });
     P.awardedBox = h('div', { class: 'qz-awarded' });
@@ -120,7 +129,7 @@ P.mount = el => {
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.input.addEventListener('focus', () => P.revealInput());
     P.buildPlayer();
-    P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintLabels();
+    P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintQuality(); P.paintLabels();
     P.setLabelsOpen(true);
     P.openFilters(false);                          // the summary line opens them
     P.poll = new K.Poller(P.refreshStatus, 10000);
@@ -575,7 +584,8 @@ P.filterSummary = () => {
         : mode === 'span' ? `${yearOf('from')}–${to === TODAY ? 'today' : to}` : 'any time';
     return [P.selected.size ? [...P.selected].join(', ') : 'all labels', when,
         pref('order', 'relevance') === 'date' ? 'newest first' : 'Qobuz order',
-        ...(pref('awarded', false) ? ['awarded only'] : [])].join(' · ');
+        ...(pref('awarded', false) ? ['awarded only'] : []),
+        ...(pref('hires', false) ? ['Hi-Res: exclude 16/44.1'] : [])].join(' · ');
 };
 
 P.paintSummary = () => {
@@ -609,6 +619,82 @@ P.paintAwarded = () => {
     P.paintSummary();
 };
 
+P.paintQuality = () => {
+    const on = pref('hires', false);
+    K.clear(P.qualityBox).append(h('button', {
+        type: 'button', class: 'chip tog qz-chip' + (on ? ' on' : ''),
+        'aria-pressed': String(on), title: 'Exclude 16-bit/44.1 kHz releases',
+        onclick: () => { setPref('hires', !on); P.paintQuality(); P.searchSoon(); },
+    }, 'Hi-Res'));
+    P.paintSummary();
+};
+
+P.aiPost = async (url, json) => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 240000);
+    try {
+        return await (await fetch(url, { method: 'POST', signal: ctl.signal,
+            headers: { 'Content-Type': 'application/json', 'X-Qobuz-AI': '1' },
+            body: JSON.stringify(json) })).json();
+    } catch (e) {
+        return { ok: false, error: e.name === 'AbortError' ? 'AI research timed out. Try again.' : 'Could not reach AI recommendations.' };
+    } finally { clearTimeout(timer); }
+};
+
+P.aiSettings = async () => {
+    const d = await K.api('/qobuz/ai/settings');
+    if (!d.ok) { K.toast(d.error, 'error'); return; }
+    const provider = h('select', { 'aria-label': 'AI provider' },
+        h('option', { value: 'claude' }, 'Claude'), h('option', { value: 'openai' }, 'OpenAI'));
+    provider.value = d.provider;
+    const model = h('input', { type: 'text', value: d.model, 'aria-label': 'Model', autocomplete: 'off' });
+    const key = h('input', { type: 'password', 'aria-label': 'API key', autocomplete: 'off',
+        placeholder: d.configured ? 'Key configured; leave blank to keep it' : 'Paste your API key' });
+    provider.onchange = () => { model.value = d.defaults[provider.value]; key.value = ''; key.placeholder = 'API key (blank keeps any saved key)'; };
+    const error = h('div', { class: 'errbox', hidden: true });
+    const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+        save.disabled = true;
+        const r = await P.aiPost('/qobuz/ai/settings', { provider: provider.value, model: model.value.trim(), key: key.value.trim() });
+        save.disabled = false;
+        if (!r.ok) { error.hidden = false; error.textContent = r.error; return; }
+        key.value = ''; scrim.remove(); K.toast(r.configured ? 'AI settings saved' : 'Settings saved; add an API key to use Ask AI');
+    } }, 'Save');
+    const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) scrim.remove(); } },
+        h('div', { class: 'sheet qz-ai-sheet' }, h('h2', {}, 'AI settings'),
+            h('p', { class: 'small muted' }, 'Ask AI researches reviews and finds playable Qobuz releases. Each request uses your provider’s paid API and web search. Your request and album candidates are sent to that provider.'),
+            h('label', {}, 'Provider', provider), h('label', {}, 'Model', model), h('label', {}, 'API key', key),
+            h('p', { class: 'small muted' }, 'The key is saved on this server and is never returned to the browser. A blank key keeps the selected provider’s saved key.'),
+            error, h('div', { class: 'sheet-actions' }, h('button', { type: 'button', class: 'btn', onclick: () => scrim.remove() }, 'Cancel'), save)));
+    document.getElementById('overlay-root').append(scrim);
+};
+
+P.askAI = async () => {
+    clearTimeout(soon);
+    const prompt = P.input.value.trim();
+    if (!prompt) { K.toast('Type a recommendation request first', 'error'); return; }
+    if (P.request || P.aiStarting) { K.toast('Wait for the current search to finish', 'error'); return; }
+    P.aiStarting = true; P.aiButton.disabled = true;
+    const settings = await K.api('/qobuz/ai/settings');
+    P.aiStarting = false;
+    if (!settings.ok) { P.aiButton.disabled = false; K.toast(settings.error, 'error'); return; }
+    if (!settings.configured) { P.aiButton.disabled = false; P.aiSettings(); return; }
+    P.input.blur(); P.showSuggestions([]);
+    const params = P.params(0), seq = ++P.searching;
+    P.searchedKey = params.toString(); P.request = params.toString();
+    setPref('q', prompt);
+    P.aiRunning = true;
+    P.paintWorking('Researching reviews and matching Qobuz releases…');
+    P.paintPreview('Researching reviews and matching Qobuz releases…'); P.revealPreview();
+    if (!P.dockedOnNow()) P.setView('results');
+    const d = await P.aiPost('/qobuz/ai/recommend?' + params, { prompt, count: +P.aiCount.value });
+    P.aiButton.disabled = false; P.aiRunning = false;
+    if (seq !== P.searching) return;
+    P.request = null; P.fetchProgress.hidden = true;
+    if (!d.ok) { P.paintError(d.error); P.paintPreview(d.error); return; }
+    P.last = d; P.autoMore = false;
+    P.paintSeen(); P.paintResults(); P.paintPreview(); P.paintStale(); P.openFilters(false);
+};
+
 // ── search ───────────────────────────────────────────────────────────────────
 P.params = scan => {
     const q = new URLSearchParams();
@@ -623,6 +709,7 @@ P.params = scan => {
     }
     q.set('sort', pref('order', 'relevance'));
     if (pref('awarded', false)) q.set('awarded', '1');
+    if (pref('hires', false)) q.set('hires', '1');
     if (scan) q.set('scan', scan);
     return q;
 };
@@ -634,6 +721,8 @@ P.searchSoon = () => {
     clearTimeout(soon);
     P.paintStale();
     if (P.dockedOnNow()) return;                  // down on Now: the next Search uses them
+    // Changing a filter never silently starts another paid AI request.
+    if (P.aiRunning || P.aiStarting || (P.last && P.last.ai)) return;
     if (P.last || P.request) soon = setTimeout(() => P.search(), 450);
 };
 
@@ -694,9 +783,13 @@ P.paintResults = () => {
         `${d.count} album${d.count === 1 ? '' : 's'}`,
         d.window.from || d.window.to ? ` · ${d.window.from ? d.window.from.slice(0, 4) : '…'}–${d.window.to ? d.window.to.slice(0, 4) : 'today'}` : '',
         ` · ${d.considered} looked at`,
-        d.sort === 'date' ? ' · newest first' : ' · Qobuz order',
+        d.sort === 'ai' ? ' · AI recommendations' : d.sort === 'date' ? ' · newest first' : ' · Qobuz order',
         d.unstreamable ? ` · ${d.unstreamable} not available` : '',
         P.lowCount(d) ? ` · ${P.lowCount(d)} lowered` : '')];
+    if (d.ai) {
+        if (d.ai.summary) kids.push(h('p', { class: 'small qz-ai-summary' }, d.ai.summary));
+        if (d.count < d.ai.requested) kids.push(h('p', { class: 'small muted' }, `Found ${d.count} verified releases of ${d.ai.requested} requested.`));
+    }
     failed.forEach(q => kids.push(h('div', { class: 'errbox warn small' }, `“${q.query}”: stopped after ${q.fetched} albums: ${q.error}`)));
     if (!d.results.length) kids.push(h('p', { class: 'muted' }, d.more
         ? 'Nothing matches yet among the albums read so far.'
@@ -1044,7 +1137,23 @@ P.suggestKey = e => {
 // ── lowering ─────────────────────────────────────────────────────────────────
 P.lowCount = d => d.results.filter(c => c.lowered).length;
 
-P.lowerApi = body => K.api('/qobuz/lowered', { json: body });
+P.syncAILowered = entries => {
+    if (!P.last || !P.last.ai) return;
+    const normal = text => fold(String(text || '')).trim().replace(/\s+/g, ' ');
+    for (const c of P.last.results) {
+        const people = [c.artist, ...(c.performers || []).map(p => p.name)].map(normal);
+        const reason = entries.find(e => e.kind === 'album' ? e.key === c.id
+            : e.kind === 'artist' ? people.includes(normal(e.key))
+            : new RegExp('(^|[^\\p{L}\\p{N}_])' + normal(e.key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^\\p{L}\\p{N}_])', 'u').test(normal(c.label)));
+        if (reason) c.lowered = reason; else delete c.lowered;
+    }
+    P.last.results.sort((a, b) => Number(!!a.lowered) - Number(!!b.lowered) || a.ai.rank - b.ai.rank);
+};
+P.lowerApi = async body => {
+    const d = await K.api('/qobuz/lowered', { json: body });
+    if (d.ok) P.syncAILowered(d.entries);
+    return d;
+};
 
 // − : the album at once (the row goes, and joins the folded group at the end),
 // then a bar to undo it or to lower its whole label or artist instead.
@@ -1088,7 +1197,16 @@ P.restore = async entry => {
 };
 
 // Ask again, as deep as the list on screen: the pages come from the server's cache.
-P.refreshResults = () => { if (P.last && !P.request) P.search(P.last.scan > 50 ? P.last.scan : 0, { quiet: true }); };
+P.refreshResults = async () => {
+    if (!P.last || P.request) return;
+    if (P.last.ai) {
+        const last = P.last, d = await K.api('/qobuz/lowered');
+        if (P.last !== last) return;
+        if (d.ok) P.syncAILowered(d.entries);
+        P.paintResults(); return;
+    }
+    P.search(P.last.scan > 50 ? P.last.scan : 0, { quiet: true });
+};
 
 // A bar above the player strip: a message and a few actions, gone after 10 s.
 P.snack = (text, actions) => {
@@ -1168,6 +1286,13 @@ P.row = (c, where = '') => {
             quality(c) ? h('span', { class: 'chip ok' }, quality(c)) : null,
             c.played ? h('span', { class: 'chip dim' }, `played ${c.played}×`) : null));
     const off = c.streamable === false;
+    if (c.ai) body.append(h('div', { class: 'qz-ai-reason small', onclick: e => e.stopPropagation() },
+        h('p', {}, c.ai.reason),
+        c.ai.uncertain ? h('p', { class: 'muted' }, 'Limited evidence: no supporting review linked.') : null,
+        h('div', { class: 'qz-ai-sources' }, c.ai.sources.map(s => h('a', {
+            href: s.url, target: '_blank', rel: 'noopener noreferrer',
+            onclick: e => { e.preventDefault(); K.openExternal(s.url); },
+        }, s.title)))));
     const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') },
         c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }),
         body,

@@ -603,6 +603,13 @@ input[type=range] { accent-color: var(--accent); }
 .qz-banner { display: flex; align-items: center; gap: .8rem; }
 .qz-banner > div { flex: 1; min-width: 0; }
 .qz-searchrow { display: flex; gap: .5rem; }
+.qz-ai-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .7rem; margin-top: .5rem; }
+.qz-ai-controls select { width: auto; }
+.qz-ai-sheet label { display: grid; gap: .3rem; margin: .8rem 0; }
+.qz-ai-reason { margin-top: .5rem; cursor: default; }
+.qz-ai-reason p { margin: .3rem 0; }
+.qz-ai-sources { display: flex; flex-wrap: wrap; gap: .3rem .8rem; }
+.qz-ai-sources a { overflow-wrap: anywhere; }
 .qz-input { min-width: 0; height: 2.8rem; padding: 0 .7rem; border-radius: .5rem; border: 1px solid var(--border);
     background: var(--deep); color: var(--text); font: inherit; -webkit-user-select: text; user-select: text; }
 .qz-input { flex: 1; }

@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+<div id="page" style="width:390px;max-width:100%"></div>
+<div id="overlay-root"></div>
+<pre id="result">RUNNING</pre>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
+<script>
+(async () => {
+    const check = (ok, message) => { if (!ok) throw Error(message); };
+    try {
+        localStorage.clear();
+        const P = K.pages.find(p => p.id === 'qobuz');
+        K.state.features.qobuz_search = true;
+        K.awardsBox = () => K.h('span', {});
+        K.api = async url => url === '/qobuz/ai/settings'
+            ? { ok: true, provider: 'claude', model: 'claude-sonnet-4-6', configured: true,
+                defaults: { claude: 'claude-sonnet-4-6', openai: 'gpt-5.4' } }
+            : { ok: true, entries: [] };
+        for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
+        P.mount(document.getElementById('page'));
+        P.input.value = 'Three Beethoven 5 recordings for sound engineering';
+        check(P.aiCount.value === '3', 'Default album count');
+        check(!P.params(0).has('hires'), 'Hi-Res initially off');
+        P.qualityBox.querySelector('button').click();
+        check(P.params(0).get('hires') === '1', 'Enabled Hi-Res sent to backend');
+        const card = (id, rank) => ({ id, title: 'Beethoven: Symphony No. 5', artist: 'Orchestra', label: 'BIS',
+            date: '2025-01-01', year: 2025, bits: 24, rate: 96, awards: [], performers: [],
+            ai: { rank, reason: '<img src=x onerror=alert(1)> Excellent engineering.', uncertain: false,
+                sources: [{ url: 'https://reviews.example/recording', title: 'Review source' }] } });
+        let calls = 0;
+        P.aiPost = async (url, body) => {
+            calls++;
+            check(url.includes('hires=1'), 'AI respects Hi-Res');
+            check(body.count === 3 && body.prompt.includes('Beethoven'), 'AI count and prompt');
+            return { ok: true, results: [card('a', 0), card('b', 1), card('c', 2)], count: 3,
+                considered: 9, queries: [], window: { from: '', to: '' }, sort: 'ai', labels_seen: [],
+                more: false, ai: { requested: 3, summary: 'Review-based recommendations.' } };
+        };
+        await P.askAI();
+        check(P.results.querySelectorAll('.qz-row').length === 3, 'Three album result cards');
+        check(P.results.querySelectorAll('.qz-play').length === 3, 'Playable controls');
+        check(P.results.querySelectorAll('.qz-ai-sources a').length === 3, 'Linked sources');
+        check(!P.results.querySelector('.qz-ai-reason img'), 'AI text is safely rendered');
+        check(P.results.textContent.includes('AI recommendations'), 'Recommendation order label');
+        check(P.request === null && !P.aiButton.disabled, 'Busy state cleared');
+        P.syncAILowered([{ kind: 'label', key: 'bis', name: 'BIS' }]);
+        check(P.last.results.every(c => c.lowered), 'Lowering applies to AI results');
+        P.syncAILowered([]);
+        check(P.last.results.every(c => !c.lowered), 'Restoring AI results');
+        check(P.last.results.map(c => c.id).join('') === 'abc', 'AI order retained after restoring');
+        P.qualityBox.querySelector('button').click();
+        await new Promise(resolve => setTimeout(resolve, 550));
+        check(calls === 1, 'Filter change does not trigger paid AI calls');
+        await P.aiSettings();
+        check(document.querySelector('.qz-ai-sheet select').value === 'claude', 'Claude selected in settings');
+        check(document.querySelector('.qz-ai-sheet input[type=password]').value === '', 'Key never returned');
+        check(document.getElementById('page').scrollWidth <= 392, 'Phone-width layout fits');
+        document.getElementById('result').textContent = 'PASS: AI cards, playback controls, sources, safe text, Hi-Res, settings, restoring and no automatic paid requests';
+    } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
+})();
+</script>

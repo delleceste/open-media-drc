@@ -57,6 +57,7 @@ import time
 from flask import Blueprint, Response, jsonify, request
 
 import openhome
+import qobuz_ai
 from qobuz_search import (AWARD_PRESETS, AwardedAlbums, LoweredList, PlayedAlbums,
                           QobuzCatalog, QobuzError, album_card,
                           SearchWords, ArtistLabels, discover_app_id, read_word_list,
@@ -331,8 +332,61 @@ def _search_args() -> dict:
         from_year=_number("from", int), to_year=_number("to", int),
         sort=request.args.get("sort", "relevance"),
         awarded_only=request.args.get("awarded", "0").lower() in ("1", "true", "yes"),
+        exclude_cd=request.args.get("hires", "0").lower() in ("1", "true", "yes"),
         enrich=request.args.get("enrich", "1") not in ("0", "no", "false"),
         scan=_number("scan", int))
+
+
+def _ai_mutation_guard():
+    origin = request.headers.get("Origin")
+    if (not request.is_json or request.headers.get("X-Qobuz-AI") != "1"
+            or (origin and origin.rstrip("/") != request.host_url.rstrip("/"))):
+        return jsonify({"ok": False, "error": "Use AI controls in this app."}), 403
+    return None
+
+
+@bp.route("/ai/settings", methods=["GET", "POST"])
+def ai_settings():
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        if request.method == "POST":
+            guard = _ai_mutation_guard()
+            if guard:
+                return guard
+            body = request.get_json(silent=True)
+            if not isinstance(body, dict):
+                return jsonify({"ok": False, "error": "Invalid settings."}), 400
+            answer = qobuz_ai.save_settings(_state_dir(), body)
+        else:
+            answer = qobuz_ai.public_settings(_state_dir())
+        response = jsonify({"ok": True, **answer})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except (qobuz_ai.AIError, OSError):
+        return jsonify({"ok": False, "error": "Could not read or save AI settings. Check the provider, model, key and state directory."}), 400
+
+
+@bp.route("/ai/recommend", methods=["POST"])
+def ai_recommend():
+    guard = _guard() or _ai_mutation_guard()
+    if guard:
+        return guard
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "Invalid recommendation request."}), 400
+    try:
+        filters = _search_args()
+        for key in ("text", "sort", "scan"):
+            filters.pop(key)
+        # Keep catalog research bounded: at most four queries and 30 candidates each.
+        filters["scan"] = 250
+        answer = qobuz_ai.recommend(_state_dir(), catalog(), body.get("prompt"),
+                                    filters, body.get("count", 3))
+        return jsonify({"ok": True, **answer})
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
 
 
 @bp.route("/genres")

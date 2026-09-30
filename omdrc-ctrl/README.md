@@ -812,6 +812,44 @@ max_detail_lookups = 24
 The [Qobuz album search](#qobuz-album-search). Read-only, on demand, and only
 while upmpdcli runs.
 
+The search filters include **Hi-Res**. Enabling it excludes exactly
+16-bit/44.1 kHz releases, including during streamed results and deeper scans.
+Other formats and releases with unknown specifications remain eligible.
+Disabling it restores all formats. The choice is remembered on each device.
+
+**Ask AI** uses the same search field and results page. Open **AI settings**,
+select Claude (the initial default) or OpenAI, and save your provider API key.
+The default models are `claude-sonnet-4-6` and `gpt-5.4`; the model field can be
+changed to another model supporting web search and tool use. Claude web search
+must be enabled for your API account. API/model and web-search usage are billed
+by the provider. The request and candidate album metadata are sent to it.
+
+For example, enter “Suggest three Beethoven Symphony No. 5 recordings,
+prioritizing sound engineering,” choose **3** albums, and press **Ask AI**.
+The backend researches reviews, searches Qobuz, and selects only album IDs
+returned by the catalog. It verifies the selected releases' availability and
+format again before returning ordinary playable cards, with reasons and review
+links. Label, release-date, Awarded and Hi-Res filters also apply. The results
+keep AI recommendation order. Fewer results may be returned when matches or
+evidence are insufficient; an absent supporting link is explicitly flagged.
+Hi-Res specifications do not establish engineering quality, and a review of
+one mastering may not apply to another edition.
+
+Keys are stored only on the server in `<state_dir>/qobuz-ai.json`, atomically
+written with mode `0600`, and never returned by the settings API or saved in
+browser storage. A blank key preserves the selected provider's saved key.
+Alternatively, supply `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the service
+environment. Each explicit AI request makes up to three model calls, four web
+searches and four Qobuz searches. Only one AI request runs at a time. Changing
+filters or restoring/lowering a result never automatically makes a paid AI call;
+press **Ask AI** again to obtain recommendations for changed filters.
+
+The new endpoints are `GET/POST /qobuz/ai/settings` (public settings only on
+read) and `POST /qobuz/ai/recommend?hires=1&...` with JSON
+`{"prompt": "...", "count": 3}`. Mutations require JSON, the
+`X-Qobuz-AI: 1` header, and a same-origin request when an Origin is supplied.
+Regular `/qobuz/search` and `/qobuz/search/stream` accept `hires=1` too.
+
 ```ini
 [qobuz_search]
 enabled    = yes

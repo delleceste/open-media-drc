@@ -218,6 +218,14 @@ def album_card(item: dict) -> dict:
     }
 
 
+def is_cd_quality(card: dict) -> bool:
+    """Qobuz reports sampling rates in kHz; tolerate Hz in imported cards."""
+    try:
+        return float(card.get("bits") or 0) == 16 and float(card.get("rate") or 0) in (44.1, 44100)
+    except (TypeError, ValueError):
+        return False
+
+
 # Roles that name who made the recording, not who plays on it.
 _TECHNICAL_ROLES = {
     "producer", "co-producer", "executive producer", "associate producer",
@@ -1041,7 +1049,7 @@ class QobuzCatalog:
         return groups
 
     def _filter(self, scans: list[dict], groups: list[LabelGroup], lo: str, hi: str,
-                awarded_ids: set[str] | None = None):
+                awarded_ids: set[str] | None = None, exclude_cd: bool = False):
         """Merge the queries' albums, keeping each one's best position (the
         plain query's order is Qobuz's relevance; a label query's hits
         interleave by their own position), and apply the filters."""
@@ -1056,6 +1064,8 @@ class QobuzCatalog:
         results, labels_seen, unstreamable = [], {}, 0
         for position, item in found.values():
             card = album_card(item)
+            if exclude_cd and is_cd_quality(card):
+                continue
             if awarded_ids is not None and card["id"] not in awarded_ids:
                 continue
             # Kept, as Qobuz's own list keeps them, but marked: nothing to play.
@@ -1081,7 +1091,7 @@ class QobuzCatalog:
                last_years: float | None = None, from_year: int | None = None,
                to_year: int | None = None, sort: str = "relevance",
                enrich: bool = True, scan: int | None = None, progress=None,
-               awarded_only: bool = False) -> dict:
+               awarded_only: bool = False, exclude_cd: bool = False) -> dict:
         """The search.  `progress(partial)`, if given, is handed the results as
         they come in, a few times a second, in their final order but without
         performers: {"partial": True, "results", "count", "considered", "sort"}."""
@@ -1102,7 +1112,7 @@ class QobuzCatalog:
         # order, a page at a time ("Load more" reads the next, like scrolling
         # in Qobuz's app).  The filters then work on that list, read deeper
         # at once since they thin it out.
-        filtered = bool(groups or lo or hi or awarded_only)
+        filtered = bool(groups or lo or hi or awarded_only or exclude_cd)
         if self.played and filtered:
             # Albums played before and matching the words: in the running
             # whatever depth Qobuz ranks them at.
@@ -1125,7 +1135,7 @@ class QobuzCatalog:
             if now - reported[0] < PROGRESS_INTERVAL:
                 return
             reported[0] = now
-            partial, _, _, considered = self._filter(scans, groups, lo, hi, awarded_ids)
+            partial, _, _, considered = self._filter(scans, groups, lo, hi, awarded_ids, exclude_cd)
             order(partial)
             self._mark_lowered(partial)
             partial.sort(key=lambda c: "lowered" in c)
@@ -1136,7 +1146,7 @@ class QobuzCatalog:
             while True:
                 self._read(pool, scans, depth, report if progress else None)
                 results, labels_seen, unstreamable, considered = self._filter(
-                    scans, groups, lo, hi, awarded_ids)
+                    scans, groups, lo, hi, awarded_ids, exclude_cd)
                 if (not filtered or len(results) >= self.settings.want
                         or all(s["done"] for s in scans)
                         or depth >= max(self.settings.auto_scan, scan or 0)):
@@ -1169,6 +1179,7 @@ class QobuzCatalog:
             "window": {"from": lo, "to": hi},
             "sort": sort,
             "awarded_only": awarded_only,
+            "exclude_cd": exclude_cd,
             "results": results,
             "count": len(results),
             "considered": considered,
