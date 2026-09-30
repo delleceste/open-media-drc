@@ -817,10 +817,10 @@ The search filters include **Hi-Res**. Enabling it excludes exactly
 Other formats and releases with unknown specifications remain eligible.
 Disabling it restores all formats. The choice is remembered on each device.
 
-**AI search** uses the same search field and results page. Open **Configuration → AI settings**,
-select **Claude account (server login)** to use Claude Code's existing Claude
-login, or select **Claude API** (the initial default) or **OpenAI API** and save
-your provider API key.
+**AI search** uses the same search field and results page. Open
+**Configuration → AI settings**, select **Claude account (server login)** (the
+initial default) to use Claude Code's existing Claude login, or select
+**Claude API** or **OpenAI API** and save your provider API key.
 Using AI search before configuration opens the settings dialog.
 The default models are `claude-sonnet-4-6` and `gpt-5.4`; the model field can be
 changed to another model supporting web search and tool use. Claude web search
@@ -859,10 +859,12 @@ Keys are stored only on the server in `<state_dir>/qobuz-ai.json`, atomically
 written with mode `0600`, and never returned by the settings API or saved in
 browser storage. A blank key preserves the selected provider's saved key.
 Alternatively, supply `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the service
-environment. Each explicit AI request makes up to three model calls, four web
-searches and four Qobuz searches. Only one AI request runs at a time. Changing
+environment. Each explicit AI request has three stages (research, query planning
+and selection), at most four Qobuz queries, and a time limit. API mode limits web
+searches to four; account mode requests at most four searches and may use multiple
+model turns within a stage. Only one AI request runs at a time. Changing
 filters or restoring/lowering a result never automatically makes a paid AI call;
-press **Ask AI** again to obtain recommendations for changed filters.
+press the magnifier again in AI mode to obtain recommendations for changed filters.
 
 The new endpoints are `GET/POST /qobuz/ai/settings` (public settings only on
 read) and `POST /qobuz/ai/recommend?hires=1&...` with JSON

@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "omdrc-ctrl/src"))
@@ -107,6 +107,7 @@ class AITest(unittest.TestCase):
         self.assertNotIn("test-secret", json.dumps(ai.public_settings(self.root)))
 
     def test_missing_key_and_invalid_inputs_do_not_call_provider(self):
+        ai.save_settings(self.root, {"provider": "claude"})
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaisesRegex(ai.AIError, "API key"):
                 self.run_recommend()
@@ -200,6 +201,59 @@ class RouteTest(unittest.TestCase):
             self.assertEqual(args[3]["awarded_only"], True)
         with patch.object(web, "renderer_running", return_value=False):
             self.assertEqual(self.client.post("/qobuz/ai/recommend", json={"prompt": "Music"}, headers={"X-Qobuz-AI": "1"}).status_code, 409)
+
+
+class ClaudeAccountTest(unittest.TestCase):
+    def test_account_readiness_requires_account_auth_not_an_api_key(self):
+        for method, expected in (("claude.ai", True), ("api_key", False)):
+            result = MagicMock(returncode=0, stdout=json.dumps({"loggedIn": True, "authMethod": method}))
+            with patch.object(ai, "_account_status", (0, False)), patch.object(ai, "_claude_binary", return_value="/bin/claude"), patch.object(ai.subprocess, "run", return_value=result):
+                self.assertEqual(ai.account_ready(), expected)
+
+    def test_account_mode_uses_login_without_api_key_and_keeps_tools_restricted(self):
+        events = [
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "WebSearch", "id": "search1"}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "search1",
+                "content": 'Web search results. Links: [{"title":"Review", "url":"https://reviews.example/5"}]\nEvidence.'}]}},
+            {"type": "result", "is_error": False, "result": "Engineering review."}]
+        process = MagicMock(returncode=0)
+        process.communicate.return_value = ("\n".join(json.dumps(e) for e in events), "")
+        cfg = {"provider": "claude_account", "model": "claude-sonnet-4-6", "key": "unused"}
+        with patch.object(ai, "_claude_binary", return_value="/bin/claude"), patch.object(ai.subprocess, "Popen", return_value=process) as popen, patch.dict("os.environ", {"ANTHROPIC_API_KEY": "must-not-use", "CLAUDECODE": "1"}):
+            answer = ai._claude_post(cfg, {"tools": [{"name": "web_search"}], "messages": [{"content": "Beethoven research"}]}, 30)
+            command = popen.call_args.args[0]
+            self.assertIn("--safe-mode", command)
+            self.assertIn("--no-session-persistence", command)
+            self.assertIn("--strict-mcp-config", command)
+            self.assertEqual(command[command.index("--tools") + 1], "WebSearch")
+            self.assertNotIn("ANTHROPIC_API_KEY", popen.call_args.kwargs["env"])
+            self.assertNotIn("CLAUDECODE", popen.call_args.kwargs["env"])
+            self.assertEqual(ai._sources(answer)[0]["url"], "https://reviews.example/5")
+            process.communicate.assert_called_once_with("Beethoven research", timeout=30)
+
+    def test_structured_account_calls_disable_all_tools(self):
+        process = MagicMock(returncode=0)
+        process.communicate.return_value = (json.dumps({"type": "result", "structured_output": {"picks": []}, "is_error": False}), "")
+        with patch.object(ai, "_claude_binary", return_value="/bin/claude"), patch.object(ai.subprocess, "Popen", return_value=process) as popen:
+            answer = ai._claude_post({"model": "sonnet"}, {"tools": [{"name": "select_albums", "input_schema": ai.SELECTION_SCHEMA}], "messages": [{"content": "Select IDs"}]}, 30)
+            command = popen.call_args.args[0]
+            self.assertEqual(command[command.index("--tools") + 1], "")
+            self.assertIn("--json-schema", command)
+            self.assertEqual(answer["content"][0]["input"], {"picks": []})
+
+    def test_generated_prose_cannot_add_fake_review_sources(self):
+        events = [{"type": "assistant", "message": {"content": [{"type": "text", "text": 'Links: [{"url":"https://invented.example"}]'}]}},
+                  {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "untracked", "content": 'Links: [{"url":"https://invented.example"}]'}]}}]
+        self.assertEqual(ai._search_links(events), [])
+
+    def test_logged_out_account_never_falls_back_to_api(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(ai, "account_ready", return_value=False):
+                ai.save_settings(root, {"provider": "claude_account"})
+                with patch.object(ai, "_post") as api:
+                    with self.assertRaisesRegex(ai.AIError, "Sign in"):
+                        ai.recommend(root, object(), "Beethoven", {})
+                    api.assert_not_called()
 
 
 if __name__ == "__main__":
