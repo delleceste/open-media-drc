@@ -323,6 +323,7 @@ button:focus:not(:focus-visible) { outline: none; }
     background: none; color: inherit; font-size: .95rem; text-align: left; cursor: pointer; }
 .menu-item:active { background: var(--press); }
 .menu-item .mk { flex: 0 0 1.1rem; color: var(--accent); text-align: center; }
+.menu-scroll { overflow-y: auto; overscroll-behavior: contain; }
 .menu-sep { height: 1px; margin: .25rem 0; background: var(--hair); }
 .now-ctl { display: inline-flex; align-items: center; gap: .4rem; }
 .now-skip { display: none; color: inherit; }          /* upright only */

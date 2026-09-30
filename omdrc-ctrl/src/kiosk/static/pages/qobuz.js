@@ -81,11 +81,12 @@ P.mount = el => {
     P.results = h('div', { class: 'qz-results' });
     P.recentBox = h('div', { class: 'qz-recent' });
     P.awardedBox = h('div', { class: 'qz-awarded' });
-    P.genreSelect = h('select', { class: 'chip qz-chip', 'aria-label': 'Discover genre',
-        onchange: () => { setPref('discoverGenre', P.genreSelect.value); P.discover(); } },
-        h('option', { value: '' }, 'All genres'));
+    P.genres = [{ id: '', name: 'All genres' }];
+    P.genreBtn = h('button', { type: 'button', class: 'chip qz-chip', 'aria-haspopup': 'menu', 'aria-label': 'Discover genre',
+        onclick: () => P.openGenreMenu() });
+    P.paintGenre();
     P.discoverList = h('div', {});
-    P.discoverBox = h('div', { class: 'qz-discover' }, P.genreSelect, P.discoverList);
+    P.discoverBox = h('div', { class: 'qz-discover' }, P.genreBtn, P.discoverList);
     P.loadGenres();
     // Under the box: which list is shown, remembered (the albums played from here, or
     // the last search's results), and, while the box is scrolled out of sight, a hint
@@ -188,7 +189,7 @@ P.forget = () => {
 
 // ── which list: played recently, or the results ──────────────────────────────
 P.view = () => ['results', 'discover', 'awarded'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
-P.setView = v => { setPref('view', v); P.paintView(); if (v === 'recent') P.recent(); if (v === 'awarded') P.awardedList(); if (v === 'discover') P.discover(); };
+P.setView = v => { P.closeGenreMenu(); setPref('view', v); P.paintView(); if (v === 'recent') P.recent(); if (v === 'awarded') P.awardedList(); if (v === 'discover') P.discover(); };
 P.paintView = () => {
     const v = P.view();
     [...P.viewChips.children].forEach(b => b.classList.toggle('on', b.dataset.view === v));
@@ -809,8 +810,37 @@ P.recent = async () => {
 P.loadGenres = async () => {
     const d = await K.api('/qobuz/genres');
     if (!d.ok) { K.toast(d.error || 'Could not load genres', 'error'); return; }
-    for (const g of d.genres) P.genreSelect.append(h('option', { value: g.id }, g.name));
-    P.genreSelect.value = pref('discoverGenre', '');
+    P.genres = [{ id: '', name: 'All genres' }, ...d.genres.map(g => ({ id: String(g.id), name: g.name }))];
+    P.paintGenre();
+};
+
+P.paintGenre = () => {
+    const g = P.genres.find(x => x.id === String(pref('discoverGenre', '')));
+    P.genreBtn.textContent = `${g ? g.name : 'All genres'} ▾`;
+};
+
+// The genre menu: the same look as the Now page's View menu (.menu-pop), one genre marked.
+P.closeGenreMenu = () => {
+    if (!P.genreMenu) return;
+    document.removeEventListener('pointerdown', P.genreOutside, true);
+    P.genreMenu.remove();
+    P.genreMenu = null;
+};
+P.openGenreMenu = () => {
+    if (P.genreMenu) { P.closeGenreMenu(); return; }
+    const cur = String(pref('discoverGenre', ''));
+    const menu = P.genreMenu = h('div', { class: 'menu-pop menu-scroll', role: 'menu' },
+        ...P.genres.map(g => h('button', {
+            type: 'button', class: 'menu-item', role: 'menuitemradio', 'aria-checked': String(g.id === cur),
+            onclick: () => { P.closeGenreMenu(); setPref('discoverGenre', g.id); P.paintGenre(); P.discover(); },
+        }, h('span', { class: 'mk' }, g.id === cur ? '●' : ''), g.name)));
+    document.body.append(menu);
+    const r = P.genreBtn.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${r.bottom + 4}px`;
+    menu.style.maxHeight = `${Math.max(120, innerHeight - r.bottom - 16)}px`;
+    P.genreOutside = e => { if (!menu.contains(e.target) && e.target !== P.genreBtn) P.closeGenreMenu(); };
+    document.addEventListener('pointerdown', P.genreOutside, true);
 };
 
 P.discover = async (offset = 0) => {
