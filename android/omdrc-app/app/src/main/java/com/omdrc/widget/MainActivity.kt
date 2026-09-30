@@ -126,6 +126,35 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    private val networkPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { }
+
+    @Suppress("DEPRECATION")
+    private fun timingNetwork(): String {
+        val out = org.json.JSONObject()
+        try {
+            val cm = getSystemService(android.net.ConnectivityManager::class.java)
+            val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+            when {
+                caps == null -> out.put("key", "offline").put("label", "Disconnected")
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) ->
+                    out.put("key", "wired").put("label", "Wired")
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> {
+                    val wifi = applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
+                    val ssid = wifi.connectionInfo.ssid?.removeSurrounding("\"")
+                    if (!ssid.isNullOrBlank() && ssid != android.net.wifi.WifiManager.UNKNOWN_SSID)
+                        out.put("key", "wifi:" + ssid).put("label", ssid)
+                    else out.put("key", "unknown").put("label", "Wi-Fi name unavailable")
+                }
+                else -> out.put("key", "unknown").put("label", "Network unidentified")
+            }
+        } catch (_: SecurityException) {
+            out.put("key", "unknown").put("label", "Wi-Fi name unavailable")
+        }
+        return out.toString()
+    }
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
@@ -484,6 +513,28 @@ class MainActivity : ComponentActivity() {
     }
 
     private inner class AppBridge {
+        @JavascriptInterface
+        fun timingNetwork(): String = this@MainActivity.timingNetwork()
+
+        @JavascriptInterface
+        fun identifyTimingNetwork() {
+            runOnUiThread {
+                networkPermissionLauncher.launch(arrayOf(
+                    Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+            }
+        }
+
+        // Native storage survives a change of the box's IP / WebView origin.
+        @JavascriptInterface
+        fun timingProfiles(): String = getSharedPreferences("meter-timing", MODE_PRIVATE)
+            .getString("profiles", "{}") ?: "{}"
+
+        @JavascriptInterface
+        fun saveTimingProfiles(json: String) {
+            if (json.length <= 100000) getSharedPreferences("meter-timing", MODE_PRIVATE)
+                .edit().putString("profiles", json).apply()
+        }
+
         /** The kiosk's first page is on screen (main.js boot). */
         @JavascriptInterface
         fun pageReady() {

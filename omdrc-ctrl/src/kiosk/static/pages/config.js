@@ -20,7 +20,13 @@ P.awakeTip = () => /Firefox/i.test(navigator.userAgent)
 
 // Meter timing: this device's extra display delay, and its microphone calibration.
 P.timingCard = () => {
+    const network = h('p', { class: 'muted small' }, window.OmdrcTiming.status());
     const value = h('strong', { class: 'timing-value' }, `${K.sync.delayMs()} ms`);
+    const timer = setInterval(() => {
+        if (!network.isConnected) { clearInterval(timer); return; }
+        network.textContent = window.OmdrcTiming.status();
+        value.textContent = `${K.sync.delayMs()} ms`;
+    }, 1000);
     const set = ms => { K.sync.setDelayMs(ms); value.textContent = `${K.sync.delayMs()} ms`; };
     const step = d => h('button', { class: 'btn step', type: 'button', onclick: () => set(K.sync.delayMs() + d) }, (d > 0 ? '+' : '−') + Math.abs(d));
     const result = h('p', { class: 'muted small' }, P.lastCal || '');
@@ -34,7 +40,7 @@ P.timingCard = () => {
                 if (attempt > 1) sheet.append(`\n==================== attempt ${attempt} of 3 ====================\n`);
                 res = await K.sync.calibrate({ seconds: 10, onTick: left =>
                     sheet.status(`Attempt ${attempt} of 3 · listening for ${left} s — hold the phone near the speakers while the music plays`) });
-                if (res.ok || /microphone|app/.test(res.error || '')) break;
+                if (res.ok || /microphone|app|network name/.test(res.error || '')) break;
             }
         } finally { unsub(); }
         P.lastCal = await P.applyCal(res);
@@ -43,7 +49,15 @@ P.timingCard = () => {
         sheet.status(P.lastCal, true);
     };
     return K.card('Meter timing',
-        h('p', { class: 'muted small' }, 'Extra delay for this screen, on top of the box’s own chain delay: the meters and spectrum are drawn this long after they arrive. Stored on this device only.'),
+        network,
+        h('div', { class: 'btn-row' },
+            window.OmdrcApp && window.OmdrcApp.identifyTimingNetwork ? h('button', { class: 'btn', onclick: () => window.OmdrcApp.identifyTimingNetwork() }, 'Identify Wi-Fi') : null,
+            h('button', { class: 'btn', onclick: () => {
+                const name = window.prompt('Wi-Fi profile name, or wired for a wired connection. Leave empty for automatic detection.', K.pref('sync.networkName', ''));
+                if (name !== null) window.OmdrcTiming.setNetworkName(name);
+            } }, 'Set network name')),
+        h('p', { class: 'muted small' }, 'Wi-Fi identification requires Android location permission and Location enabled. If the name is unavailable, set a profile name manually when switching networks.'),
+        h('p', { class: 'muted small' }, 'Extra delay for this screen, on top of the box’s own chain delay: the meters and spectrum are drawn this long after they arrive. Stored on this device for the active network. New networks start at 0 ms until calibrated.'),
         h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50),
             h('button', { class: 'btn', type: 'button', onclick: () => set(0) }, 'Reset')),
         h('div', { class: 'btn-row' },
@@ -81,24 +95,29 @@ const TAKE_BACK_CUSHION_MS = 20;
 P.takeBack = async lateMs => {
     const st = await K.api('/spectrum/settings');
     if (!st.ok) return { error: st.error || 'the box did not answer' };
+    window.OmdrcTiming.updateSettings(st);
+    const network = window.OmdrcTiming.network().key;
     const held = Math.round(st.drc_delay_base_ms || 0);
     const given = Math.min(held, lateMs + TAKE_BACK_CUSHION_MS);
     if (given > 0) {
         const r = await K.api('/spectrum/margin', { json: { margin_ms: (st.drc_delay_margin_ms || 0) + given } });
         if (!r.ok) return { error: r.error || 'the box refused the change' };
+        window.OmdrcTiming.updateSettings(r);
+        if (network !== window.OmdrcTiming.network().key) return { error: 'network changed during adjustment; calibrate again', changedNetwork: true };
     }
     return { given, wait: Math.max(0, given - lateMs), left: Math.max(0, lateMs - given) };
 };
 
 // A calibration result into the delay; the sentence that says what happened.
 P.applyCal = async res => {
+    if (res.ok && res.context !== window.OmdrcTiming.context()) return 'Network or server timing changed; calibrate again.';
     if (res.ok && res.lagMs >= 0) {
         K.sync.setDelayMs(res.lagMs);
         return `Calibrated: the meters led the sound by ${res.lagMs} ms (match ${res.r}); this device now waits ${res.lagMs} ms.`;
     }
     if (res.ok) {
         const late = -res.lagMs, tb = await P.takeBack(late);
-        K.sync.setDelayMs(tb.wait || 0);
+        if (!tb.changedNetwork) K.sync.setDelayMs(tb.wait || 0);
         if (tb.error) return `The meters arrived ${late} ms after the sound (match ${res.r}), and the box could not be adjusted: ${tb.error}.`;
         if (!tb.given) return `The meters arrived ${late} ms after the sound (match ${res.r}). The box is not holding them back at all, so this is the network or this screen being slow: nothing can be taken back.`;
         return `The meters arrived ${late} ms after the sound (match ${res.r}): the box now sends them ${tb.given} ms sooner` +
@@ -170,7 +189,7 @@ P.tuneSheet = () => {
                     } else {
                         // later than this screen's own wait can absorb: the box sends sooner
                         const late = -(K.sync.delayMs() + res.lagMs), tb = await P.takeBack(late);
-                        K.sync.setDelayMs(tb.wait || 0);
+                        if (!tb.changedNetwork) K.sync.setDelayMs(tb.wait || 0);
                         note(tb.error ? `Could not adjust the box: ${tb.error}.`
                             : tb.given ? `The box now sends the meters ${tb.given} ms sooner; this device waits ${K.sync.delayMs()} ms — Check again to see it.`
                             : 'The box is not holding the meters back at all: the rest is the network or this screen.');

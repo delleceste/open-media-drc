@@ -2236,6 +2236,7 @@
 
 <div id="toast"></div>
 
+<script src="{{ url_for('kiosk.static', filename='widgets/timing.js', v=asset_version) }}"></script>
 <script>
 const MONITOR_INTERVAL_MS = {{ monitor_interval }} * 1000;
 const TOPCPU_INTERVAL_MS  = {{ topcpu_interval }} * 1000;
@@ -4619,14 +4620,9 @@ function setSpectrumFloor(value) {
 // arrive a little early; this browser waits out the rest.  The value lives in this
 // browser under the kiosk's key, so /k/ on the same device uses it too (and its
 // calibration, in the Android app, sets it).
-const SCREEN_DELAY_KEY = 'omdrc-kiosk.sync.delayMs';
-function screenDelayMs() {
-    try { return Math.max(0, Number(JSON.parse(localStorage.getItem(SCREEN_DELAY_KEY))) || 0); }
-    catch { return 0; }
-}
+function screenDelayMs() { return window.OmdrcTiming.delayMs(); }
 function stepScreenDelay(d) {
-    const v = Math.max(0, Math.min(3000, screenDelayMs() + d));
-    try { localStorage.setItem(SCREEN_DELAY_KEY, JSON.stringify(v)); } catch {}
+    window.OmdrcTiming.setDelayMs(screenDelayMs() + d);
     renderDelayReadout();
 }
 // Level and spectrum frames are drawn this browser's delay after they arrive.

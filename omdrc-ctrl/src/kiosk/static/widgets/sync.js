@@ -6,7 +6,8 @@
  * so they always arrive a little early.  The rest - the buffers nothing reports, the
  * network, this device - differs per screen, so it is corrected here: frames are
  * drawn `sync.delayMs` after they arrive.  The value lives in this device's browser
- * storage (the desktop panel in the same browser shares it), not on the box.
+ * storage, per network (native app storage survives box address changes). The
+ * desktop panel uses the same profiles. Server margin changes are compensated.
  *
  * Calibration: for ~10 s the app records the microphone and reduces it to a peak
  * envelope (10 ms steps, capture-time stamped); meanwhile the arrival time and peak
@@ -27,8 +28,8 @@ const STEP = 10;                 // ms, the grid both series are compared on
 const LAG_MIN = -600, LAG_MAX = 2500;
 const FLOOR = -60;
 
-S.delayMs = () => Math.max(0, Number(K.pref('sync.delayMs', 0)) || 0);
-S.setDelayMs = ms => { K.setPref('sync.delayMs', Math.max(0, Math.min(3000, Math.round(ms)))); };
+S.delayMs = () => window.OmdrcTiming.delayMs();
+S.setDelayMs = ms => window.OmdrcTiming.setDelayMs(ms);
 S.canCalibrate = () => !!(window.OmdrcApp && window.OmdrcApp.startMicEnvelope &&
                           (!window.OmdrcApp.micAvailable || window.OmdrcApp.micAvailable()));
 
@@ -213,6 +214,8 @@ S.onRunning = fn => { runWatchers.add(fn); fn(S.running); return () => runWatche
 const setRunning = v => { S.running = v; runWatchers.forEach(fn => { try { fn(v); } catch {} }); };
 S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why = 'manual' } = {}) => {
     if (verify) clicks = true;
+    if (window.OmdrcApp && window.OmdrcApp.timingNetwork && window.OmdrcTiming.network().key === 'unknown')
+        return { ok: false, error: 'identify Wi-Fi or set a network name before calibrating' };
     if (S.running) return { ok: false, error: 'a calibration is already running' };
     LOG.lines = []; LOG.t0 = Date.now();
     logRaw(`OMDRC meter-timing calibration log - ${new Date(LOG.t0).toISOString()}`);
@@ -224,6 +227,9 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         endLog();
         return { ok: false, error: 'calibration needs the OMDRC Android app (microphone)' };
     }
+    await window.OmdrcTiming.refresh();
+    const context = window.OmdrcTiming.context();
+    logRaw(`network: ${window.OmdrcTiming.status()}`);
     const box = await K.api('/spectrum/settings', { timeout: 4000 });
     if (box && box.ok !== false) {
         logRaw(`box: analyzer ${box.enabled ? 'on' : 'OFF'}, source ${box.source_active || box.source_now || '?'}, ${box.refresh_hz} Hz frames, vu ${box.vu_mode}, ` +
@@ -282,6 +288,9 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         res = clicks ? S.estimateClicks(frames, mic) : S.estimate(frames, mic);
         logLine(`detector (${clicks ? 'click onsets' : 'envelope correlation'}):`);
         logDiag(res.diag);
+        await window.OmdrcTiming.refresh();
+        res.context = context;
+        if (context !== window.OmdrcTiming.context()) res = { ok: false, error: 'network or server timing changed during calibration; try again' };
         return res;
     } catch (e) {
         res = { ok: false, error: String(e && e.message || e) };
@@ -338,6 +347,7 @@ S.playClicks = async ({ onTick } = {}) => {
 const AUTO_EVERY_MS = 120000, SILENCE_DB = -55, SOUND_DB = -40, QUIET_FOR_MS = 1500;
 let quietSince = null, lastAutoAt = 0;
 const recent = [];
+let recentContext = null;
 S.autoEnabled = () => S.canCalibrate() && !!K.pref('sync.auto', false);
 S.onLevel = peak => {
     const now = Date.now();
@@ -350,9 +360,12 @@ S.onTrackChange = () => S.autoRun('new track');
 S.autoRun = async why => {
     if (!S.autoEnabled() || S.running || Date.now() - lastAutoAt < AUTO_EVERY_MS) return;
     if (!(K.nowShown && K.nowShown())) return;
+    const context = window.OmdrcTiming.context();
+    if (context !== recentContext) { recent.length = 0; recentContext = context; }
     lastAutoAt = Date.now();
     const res = await S.calibrate({ seconds: 8, why: `automatic (${why})` });
     const note = text => K.setPref('sync.lastLog', S.lastLog() + `\nAUTO: ${text}`);
+    if (res.context !== window.OmdrcTiming.context()) return;
     if (!res.ok || res.lagMs < 0 || res.r < 0.5) { note('not used (failed, negative, or match below 0.5)'); return; }
     recent.push(res.lagMs);
     if (recent.length > 3) recent.shift();
