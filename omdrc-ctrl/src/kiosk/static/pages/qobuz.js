@@ -715,9 +715,16 @@ P.aiSettings = K.openAISettings = async (required = false) => {
     } }, 'Save');
     const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) scrim.remove(); } },
         h('div', { class: 'sheet qz-ai-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'AI settings' }, h('h2', {}, 'AI settings'),
-            required ? h('p', {}, 'Configure an AI provider and API key to use Ask AI. You can also change these settings in Configuration.') : null,
+            required ? h('p', {}, 'Configure an AI provider to use Ask AI: use the server’s Claude account login, or an API provider with a key. You can also change these settings in Configuration.') : null,
             h('p', { class: 'small muted' }, 'Ask AI researches reviews and finds playable Qobuz releases. Your request and album candidates are sent to the selected provider.'),
             h('label', {}, 'Provider', provider), h('label', {}, 'Model', model), keyLabel, note,
+            h('details', { class: 'small' },
+                h('summary', {}, 'How AI search works'),
+                h('p', {}, 'Web research + Qobuz catalog + AI reasoning. The selected model researches reviews using web search, then proposes Qobuz searches. It can also draw on its learned knowledge; answers are not based exclusively on web pages.'),
+                h('p', {}, 'This server searches Qobuz and sends matching album metadata to the model. The model selects recordings from those candidates and explains its choices. The server checks each selected album again for playback availability and your audio-quality filter.'),
+                h('p', {}, 'The AI does not listen to the recordings or analyse their audio. Sound-quality recommendations come from review evidence and reasoning; Hi-Res alone is not proof of better engineering. Results include review links when available and flag missing sources or uncertain editions.'),
+                h('p', {}, 'Your query determines the number of recommendations, or the AI chooses a suitable number, up to 20. Filters you set after enabling AI still apply. Each search makes multiple AI requests; changing filters alone does not start another AI search.')),
+
             error, h('div', { class: 'sheet-actions' }, h('button', { type: 'button', class: 'btn', onclick: () => scrim.remove() }, 'Cancel'), save)));
     document.getElementById('overlay-root').append(scrim);
 };
