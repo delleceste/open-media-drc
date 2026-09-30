@@ -74,13 +74,18 @@ P.mount = el => {
                 // a real form: the keyboard's Search key submits it (Android's IME action
                 // does not always come through as an Enter keydown)
                 h('form', { class: 'qz-searchrow', action: '', onsubmit: e => { e.preventDefault(); P.go(); } }, P.input,
-                    h('button', { type: 'submit', class: 'btn primary qz-go' }, 'Search'),
+                    P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
+                    P.aiToggle = h('button', { type: 'button', class: 'btn qz-ai-toggle' + (pref('aiMode', false) ? ' active' : ''),
+                        'aria-label': 'AI search mode', 'aria-pressed': String(pref('aiMode', false)), onclick: () => {
+                            const enabled = !pref('aiMode', false); setPref('aiMode', enabled);
+                            P.aiToggle.classList.toggle('active', enabled); P.aiToggle.setAttribute('aria-pressed', String(enabled));
+                            if (enabled) P.resetFilters();
+                            P.searchedKey = null; P.paintStale();
+                        } }, 'AI'),
                     // down on Now, once there are results: over to them, in Search's place
                     // until the text or a filter changes (kiosk.css, paintStale)
                     h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›')),
                 P.suggestBox),
-            h('div', { class: 'qz-ai-controls' },
-                P.aiButton = h('button', { type: 'button', class: 'btn', onclick: () => P.askAI() }, 'Ask AI')),
             P.fsum, P.filters));
     P.results = h('div', { class: 'qz-results' });
     P.recentBox = h('div', { class: 'qz-recent' });
@@ -123,6 +128,7 @@ P.mount = el => {
     P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow, P.recentBox, P.results, P.discoverBox, P.awardedBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.input.addEventListener('focus', () => P.revealInput());
+    P.refreshAIIcon();
     P.buildPlayer();
     P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintQuality(); P.paintLabels();
     P.setLabelsOpen(true);
@@ -235,6 +241,7 @@ P.undock = () => {
 // An explicit search (the button, Enter).  From Now it stays there: the results show
 // as a preview above the box, and › opens them here.
 P.go = () => {
+    if (pref('aiMode', false)) return P.askAI();
     P.input.blur();
     P.showSuggestions([]);
     P.search();
@@ -583,8 +590,19 @@ P.filterSummary = () => {
         ...(pref('hires', false) ? ['Hi-Res: exclude 16/44.1'] : [])].join(' · ');
 };
 
+P.filtersActive = () => P.selected.size > 0 || pref('date', 'any') !== 'any'
+    || pref('order', 'relevance') !== 'relevance' || pref('awarded', false) || pref('hires', false);
+P.resetFilters = () => {
+    clearTimeout(soon);
+    P.selected.clear();
+    for (const [key, value] of Object.entries({ labels: [], date: 'any', from: thisYear - 5, to: '', lastN: 2,
+        order: 'relevance', awarded: false, hires: false })) setPref(key, value);
+    P.paintLabels(); P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintQuality();
+    P.openFilters(false);
+};
 P.paintSummary = () => {
     if (!P.fsum) return;
+    P.fsum.classList.toggle('qz-filtered', !!P.filtersActive());
     K.clear(P.fsum).append(h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
         h('span', { class: 'qz-fsum-mark' }, P.filtersOpen ? 'Hide filters ▴' : 'Filters ▾'));
 };
@@ -624,6 +642,20 @@ P.paintQuality = () => {
     P.paintSummary();
 };
 
+P.refreshAIIcon = async () => {
+    const settings = await K.api('/qobuz/ai/settings');
+    P.paintAIIcon(settings);
+};
+P.paintAIIcon = settings => {
+    if (!P.aiToggle) return;
+    const provider = settings.ok && settings.configured ? settings.provider : '';
+    const name = provider.startsWith('claude') ? 'Claude' : provider === 'openai' ? 'ChatGPT' : 'AI';
+    K.clear(P.aiToggle).append(name === 'AI' ? 'AI' : h('img', {
+        src: '/k/static/img/' + (name === 'Claude' ? 'claude' : 'openai') + '.svg',
+        alt: '', width: '18', height: '18', class: 'qz-provider-icon' }));
+    P.aiToggle.title = name + ' search mode';
+    P.aiToggle.setAttribute('aria-label', name + ' search mode');
+};
 P.aiPost = async (url, json) => {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 240000);
@@ -663,6 +695,7 @@ P.aiSettings = K.openAISettings = async (required = false) => {
         const r = await P.aiPost('/qobuz/ai/settings', { provider: provider.value, model: model.value.trim(), key: key.value.trim() });
         save.disabled = false;
         if (!r.ok) { error.hidden = false; error.textContent = r.error; return; }
+        P.paintAIIcon(r);
         key.value = ''; scrim.remove(); K.toast(r.configured ? 'AI settings saved' : r.provider === 'claude_account' ? 'Settings saved; sign in to Claude Code on this server' : 'Settings saved; add an API key to use Ask AI');
     } }, 'Save');
     const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) scrim.remove(); } },
@@ -680,7 +713,7 @@ P.askAI = async () => {
     if (P.request || P.aiStarting) { K.toast('Wait for the current search to finish', 'error'); return; }
     P.aiStarting = true; P.aiButton.disabled = true;
     const settings = await K.api('/qobuz/ai/settings');
-    P.aiStarting = false;
+    P.aiStarting = false; P.paintAIIcon(settings);
     if (!settings.ok) { P.aiButton.disabled = false; K.toast(settings.error, 'error'); return; }
     if (!settings.configured) { P.aiButton.disabled = false; P.aiSettings(true); return; }
     if (!prompt) { P.aiButton.disabled = false; K.toast('Type a recommendation request first', 'error'); return; }
@@ -728,7 +761,7 @@ P.searchSoon = () => {
     P.paintStale();
     if (P.dockedOnNow()) return;                  // down on Now: the next Search uses them
     // Changing a filter never silently starts another paid AI request.
-    if (P.aiRunning || P.aiStarting || (P.last && P.last.ai)) return;
+    if (pref('aiMode', false) || P.aiRunning || P.aiStarting || (P.last && P.last.ai)) return;
     if (P.last || P.request) soon = setTimeout(() => P.search(), 450);
 };
 

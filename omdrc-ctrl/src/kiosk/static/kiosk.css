@@ -603,8 +603,8 @@ input[type=range] { accent-color: var(--accent); }
 .qz-banner { display: flex; align-items: center; gap: .8rem; }
 .qz-banner > div { flex: 1; min-width: 0; }
 .qz-searchrow { display: flex; gap: .5rem; }
-.qz-ai-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .7rem; margin-top: .5rem; }
-.qz-ai-controls select { width: auto; }
+.qz-filtered .qz-fsum-mark { color: var(--red, #dc3545); }
+.qz-go, .qz-ai-toggle { flex: 0 0 auto; padding-inline: .6rem; }
 .qz-ai-sheet label { display: grid; gap: .3rem; margin: .8rem 0; }
 .qz-ai-reason { margin-top: .5rem; cursor: default; }
 .qz-ai-reason p { margin: .3rem 0; }
@@ -821,3 +821,6 @@ input[type=range] { accent-color: var(--accent); }
 /* Queue actions open above the full-screen player (z-index: 55). */
 .scrim.qz-queue-menu { z-index: 62; }
 .qz-queue-menu .sheet-actions { flex-wrap: wrap; }
+
+.qz-provider-icon { display: block; width: 18px; height: 18px; }
+[data-theme="dark"] .qz-provider-icon { filter: invert(1); }

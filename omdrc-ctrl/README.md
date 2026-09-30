@@ -817,11 +817,11 @@ The search filters include **Hi-Res**. Enabling it excludes exactly
 Other formats and releases with unknown specifications remain eligible.
 Disabling it restores all formats. The choice is remembered on each device.
 
-**Ask AI** uses the same search field and results page. Open **Configuration → AI settings**,
+**AI search** uses the same search field and results page. Open **Configuration → AI settings**,
 select **Claude account (server login)** to use Claude Code's existing Claude
 login, or select **Claude API** (the initial default) or **OpenAI API** and save
 your provider API key.
-Using **Ask AI** before configuration opens the settings dialog.
+Using AI search before configuration opens the settings dialog.
 The default models are `claude-sonnet-4-6` and `gpt-5.4`; the model field can be
 changed to another model supporting web search and tool use. Claude web search
 must be enabled for your API account. API/model and web-search usage are billed
@@ -840,7 +840,10 @@ disabled. Account mode does not fall back to an API key. Claude's own login
 stores the account credentials; omdrcctrl neither copies nor returns them.
 
 For example, enter “Suggest three Beethoven Symphony No. 5 recordings,
-prioritizing sound engineering,” and press **Ask AI**. The AI uses the number
+prioritizing sound engineering,” enable **AI** and press the magnifier.
+Enabling AI clears the filters; active filters make the Filters label red.
+The toggle shows the configured provider’s icon, or “AI” before configuration.
+The AI uses the number
 requested in your query, or chooses a suitable number if none is specified
 (up to 20 results per request).
 The backend researches reviews, searches Qobuz, and selects only album IDs
