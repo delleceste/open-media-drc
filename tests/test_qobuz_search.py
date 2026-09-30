@@ -707,5 +707,36 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(len(groups), len(qs.parse_labels(qs.DEFAULT_LABELS)))
 
 
+class DiscoverTests(unittest.TestCase):
+    def test_featured_genre_paging_and_cache(self):
+        calls = []
+        def fetch(endpoint, params):
+            calls.append((endpoint, params))
+            return {"albums": {"items": [album("new", "New", "Label", "2026-09-30"),
+                                        album("blocked", "Blocked", "Label", streamable=False)],
+                               "total": 55}}
+        catalog = qs.QobuzCatalog(fetch=fetch)
+        result = catalog.discover("80", 50)
+        self.assertEqual([a["id"] for a in result["albums"]], ["new"])
+        self.assertEqual(result["next_offset"], 52)
+        self.assertTrue(result["more"])
+        self.assertEqual(calls[0], ("album/getFeatured", {
+            "type": "new-releases", "genre_ids": "80:", "offset": 50, "limit": qs.PAGE_SIZE}))
+        self.assertEqual(catalog.discover("80", 50), result)
+        self.assertEqual(len(calls), 1)
+        catalog.discover()
+        self.assertNotIn("genre_ids", calls[-1][1])
+
+    def test_genres_and_invalid_arguments(self):
+        catalog = qs.QobuzCatalog(fetch=lambda endpoint, params: {
+            "genres": {"items": [{"id": 80, "name": "Jazz"}, {"id": 10, "name": "Classical"}]}})
+        self.assertEqual(catalog.genres(), [{"id": "80", "name": "Jazz"},
+                                           {"id": "10", "name": "Classical"}])
+        with self.assertRaises(qs.QobuzError):
+            catalog.discover("invalid")
+        with self.assertRaises(qs.QobuzError):
+            catalog.discover(offset=-1)
+
+
 if __name__ == "__main__":
     unittest.main()

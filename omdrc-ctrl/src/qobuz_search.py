@@ -921,6 +921,34 @@ class QobuzCatalog:
 
     # -- queries --
 
+    def genres(self) -> list[dict]:
+        """Qobuz's complete genre selector, rather than a local shortlist."""
+        def make():
+            data = self._call("genre/list", {"limit": 500, "offset": 0})
+            return [{"id": str(g["id"]), "name": g["name"]}
+                    for g in (data.get("genres") or {}).get("items", [])
+                    if g.get("id") is not None and g.get("name")]
+        return self._cached("genres", self.settings.cache_ttl, make)
+
+    def discover(self, genre: str = "", offset: int = 0) -> dict:
+        if genre and not genre.isdigit():
+            raise QobuzError("genre must be a numeric Qobuz genre id")
+        if offset < 0:
+            raise QobuzError("offset must be non-negative")
+        def make():
+            params = {"type": "new-releases", "limit": PAGE_SIZE, "offset": offset}
+            if genre:
+                params["genre_ids"] = genre + ":"
+            block = self._call("album/getFeatured", params).get("albums") or {}
+            items = block.get("items") or []
+            cards = [album_card(a) for a in items if a.get("streamable", True)]
+            total = block.get("total")
+            next_offset = offset + len(items)
+            return {"albums": cards, "next_offset": next_offset,
+                    "more": bool(items) and (next_offset < total if isinstance(total, int)
+                                             else len(items) == PAGE_SIZE)}
+        return self._cached(f"discover:{genre}:{offset}", self.settings.cache_ttl, make)
+
     def _page(self, query: str, offset: int) -> tuple[list[dict], int | None]:
         """One page of one query's albums, and the total Qobuz reports."""
         def make():

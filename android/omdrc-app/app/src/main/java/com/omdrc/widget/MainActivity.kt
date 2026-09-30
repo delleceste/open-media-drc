@@ -132,16 +132,16 @@ class MainActivity : ComponentActivity() {
 
     /** The phone's own auto-rotate setting.  On, the app follows the phone the way
      *  every other app does, and the kiosk adapts to whichever way it is held (Now:
-     *  needles in landscape, bars upright); off, each kiosk page turns the phone the
-     *  way it is laid out for (setPageOrientation), as the rotate button asks. */
+     *  needles in landscape, bars upright); off, the rotate button selects
+     *  one orientation for every page. */
     private fun autoRotate(): Boolean =
         Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
 
     private fun isPortrait(): Boolean =
         resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
 
-    /** The orientation to ask for: the phone's with auto-rotate, else the last page's
-     *  (or the last run's): landscape at first. */
+    /** The orientation to ask for: the phone's with auto-rotate, else the user's choice
+     *  from the last run: landscape at first. */
     private fun rememberedOrientation(): Int = when {
         autoRotate() -> ActivityInfo.SCREEN_ORIENTATION_USER
         AppPrefs.lastPortrait(this) -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
@@ -557,21 +557,25 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { pageScrolled = scrolled }
         }
 
-        /** The kiosk page on screen wants the phone upright ("portrait": the
-         *  Qobuz search, a list and a keyboard) or not (anything else: the
-         *  usual landscape, either way up). */
+        /** Page navigation preserves the user's app-wide orientation. */
         @JavascriptInterface
         fun setPageOrientation(orientation: String) {
+            runOnUiThread { requestedOrientation = rememberedOrientation() }
+        }
+
+        @JavascriptInterface
+        fun forcedOrientation(): String =
+            if (AppPrefs.lastPortrait(this@MainActivity)) "portrait" else "landscape"
+
+        /** Only the rotate button changes the forced orientation. */
+        @JavascriptInterface
+        fun setUserOrientation(orientation: String) {
+            if (orientation != "portrait" && orientation != "landscape") return
             runOnUiThread {
-                // with auto-rotate the phone decides; the page's wish is kept for when it is off
                 if (!autoRotate()) {
-                    val want = if (orientation == "portrait") ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                               else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    if (requestedOrientation != want) requestedOrientation = want
                     AppPrefs.setLastPortrait(this@MainActivity, orientation == "portrait")
-                } else if (requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_USER) {
-                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER
                 }
+                requestedOrientation = rememberedOrientation()
             }
         }
 
@@ -595,7 +599,7 @@ class MainActivity : ComponentActivity() {
         fun autoRotate(): Boolean = this@MainActivity.autoRotate()
 
         @JavascriptInterface
-        fun apiVersion(): Int = 6
+        fun apiVersion(): Int = 7
     }
 
     /** The gear button: which view to show, the screen-on rule, and the

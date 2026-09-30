@@ -671,6 +671,7 @@ input[type=range] { accent-color: var(--accent); }
 .qz-num { text-align: right; }
 .btn.qz-tplay { min-height: 2.2rem; min-width: 2.6rem; padding: 0; }
 .btn.qz-more { width: 100%; margin: .6rem 0; display: flex; align-items: center; justify-content: center; gap: .6rem; }
+.qz-page-end { min-height: 1px; font-size: .85rem; color: var(--muted); }
 /* the head over results searched from Now (upright): ‹ back to Now */
 .qz-reshead { display: flex; align-items: center; gap: .6rem; margin: .1rem 0 .5rem; }
 .btn.qz-back { min-width: 2.8rem; padding: 0; font-size: 1.6rem; line-height: 1; }
@@ -681,6 +682,11 @@ input[type=range] { accent-color: var(--accent); }
 .qz-preview { flex: 1 1 0; min-height: 4.5rem; overflow-y: auto; margin-bottom: .35rem; padding: .3rem .55rem;
     border: 1px solid var(--border); border-radius: .5rem; background: var(--deep); font-size: .8rem; line-height: 1.4; }
 .qz-preview[hidden] { display: none; }
+.qz-fetch-progress { height: 2px; flex: 0 0 2px; overflow: hidden; margin: 0 0 .35rem; background: var(--surface2); border-radius: 1px; }
+.qz-fetch-progress[hidden] { display: none; }
+.qz-fetch-progress-fill { display: block; width: 35%; height: 100%; background: var(--accent); animation: qz-fetch-progress 1.4s ease-in-out infinite; }
+@keyframes qz-fetch-progress { from { transform: translateX(-100%); } to { transform: translateX(286%); } }
+@media (prefers-reduced-motion: reduce) { .qz-fetch-progress-fill { width: 100%; animation: none; opacity: .65; } }
 .qz-preview.ready { cursor: pointer; }
 .qz-pv-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qz-pv-line.low { opacity: .55; }
@@ -731,6 +737,8 @@ input[type=range] { accent-color: var(--accent); }
 .ai-headtext { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
 .ai-title { font-size: 1.3rem; font-weight: 700; line-height: 1.2; }
 .ai-artist { font-weight: 600; }
+.ai-research { display: flex; flex-wrap: wrap; gap: .4rem; }
+.chip.ai-research-link { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .ai-booklets { display: flex; flex-direction: column; gap: .45rem; }
 .btn.ai-booklet { display: flex; align-items: center; justify-content: flex-start; gap: .8rem; min-height: 3.6rem; padding: .4rem 1rem; text-align: left; }
 .ai-bk-icon { font-size: 1.7rem; }
@@ -797,3 +805,11 @@ input[type=range] { accent-color: var(--accent); }
     .qz-row { grid-template-columns: 3.8rem minmax(0, 1fr) auto; }
     .qz-cover { width: 3.8rem; height: 3.8rem; }
 }
+
+.qz-queue-tools { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.qz-qrow { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.qz-qrow.qz-removing { background: rgba(248,81,73,.2); }
+
+/* Queue actions open above the full-screen player (z-index: 55). */
+.scrim.qz-queue-menu { z-index: 62; }
+.qz-queue-menu .sheet-actions { flex-wrap: wrap; }

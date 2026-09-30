@@ -57,7 +57,7 @@ object AppPrefs {
         prefs(context).edit().putBoolean(KEY_HIDE_BARS, hide).apply()
     }
 
-    /** The orientation the kiosk last asked for (setPageOrientation): the app
+    /** The orientation the user selected for every kiosk page: the app
      *  starts in it next time, instead of landscape and then turning. */
     fun lastPortrait(context: Context): Boolean =
         prefs(context).getBoolean(KEY_PORTRAIT, false)

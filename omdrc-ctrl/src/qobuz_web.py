@@ -71,6 +71,8 @@ _read_options = lambda path: {}  # noqa: E731 - flat key = value reader
 _token_file = lambda: ""        # noqa: E731 - the plugin's token file
 _plugin_dir = lambda: ""        # noqa: E731 - upmpdcli's cdplugins/qobuz
 _renderer_running = lambda: False  # noqa: E731
+_queue_tail = None
+_move_to_end = None
 _state_dir = lambda: ""         # noqa: E731 - where the played list lives
 
 # The path upmpdcli's Qobuz plugin serves its tracks under, and its default
@@ -82,6 +84,7 @@ PLUGIN_PORT = "49149"
 # on every keystroke.
 RENDERER_CHECK_TTL = 5.0
 
+_queue_lock = threading.Lock()
 _lock = threading.Lock()
 _catalog: QobuzCatalog | None = None
 _catalog_settings = None
@@ -102,12 +105,13 @@ _openhome: openhome.Renderer | None = None
 
 
 def init_app(app, settings, upmpdcli_conf, read_options, token_file, plugin_dir,
-             renderer_running, state_dir) -> None:
+             renderer_running, state_dir, queue_tail=None, move_to_end=None) -> None:
     global _settings, _upmpdcli_conf, _read_options, _token_file, _plugin_dir
-    global _renderer_running, _state_dir
+    global _renderer_running, _state_dir, _queue_tail, _move_to_end
     _settings, _upmpdcli_conf, _read_options = settings, upmpdcli_conf, read_options
     _token_file, _plugin_dir, _renderer_running = token_file, plugin_dir, renderer_running
     _state_dir = state_dir
+    _queue_tail, _move_to_end = queue_tail, move_to_end
     app.register_blueprint(bp)
 
 
@@ -331,6 +335,29 @@ def _search_args() -> dict:
         scan=_number("scan", int))
 
 
+@bp.route("/genres")
+def genres():
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        return jsonify({"ok": True, "genres": catalog().genres()})
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/discover")
+def discover():
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        return jsonify({"ok": True, **catalog().discover(
+            request.args.get("genre", ""), _number("offset", int) or 0)})
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+
+
 @bp.route("/search")
 def search():
     """?q=text&label=Pentatone&label=Decca (or label=Pentatone,Decca)
@@ -416,6 +443,11 @@ def played_albums():
 
 
 def _queue(album: dict, mode: str, start: str) -> dict:
+    with _queue_lock:
+        return _queue_album(album, mode, start)
+
+
+def _queue_album(album: dict, mode: str, start: str) -> dict:
     """Put the album on upmpdcli's playlist: `replace` clears it and plays
     (from `start` if given), `append` adds at the end and leaves playback
     alone."""
@@ -438,10 +470,23 @@ def _queue(album: dict, mode: str, start: str) -> dict:
     else:
         after = existing[-1] if existing else 0
 
+    tail_position = 0
+    if mode == "append" and _queue_tail is not None:
+        try:
+            after, tail_position = _queue_tail()
+        except Exception as error:
+            raise openhome.OpenHomeError(f"cannot read MPD queue: {error}") from error
+
+    zero_tail = mode == "append" and tail_position > 0 and after == 0
     queued: list[tuple[str, int]] = []
     try:
         for track_id, uri, metadata in entries:
             after = playlist.insert(after, uri, metadata)
+            if not queued and zero_tail:
+                try:
+                    _move_to_end(after, tail_position)
+                except Exception as error:
+                    raise openhome.OpenHomeError(f"cannot move appended track: {error}") from error
             queued.append((track_id, after))
     except openhome.OpenHomeError as error:
         raise openhome.OpenHomeError(

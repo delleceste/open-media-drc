@@ -338,6 +338,53 @@ def queue():
     })
 
 
+
+def queue_tail():
+    """Read the live MPD tail; OpenHome's IdArray may still be cached."""
+    with _Mpd() as mpd:
+        songs = _queue_entries(mpd.lines("playlistinfo"))
+    return (int(songs[-1]["id"]), len(songs)) if songs else (0, 0)
+
+
+def move_to_end(track_id, position):
+    with _Mpd() as mpd:
+        mpd.cmd(f"moveid {int(track_id)} {int(position)}")
+
+
+@bp.route("/api/queue", methods=["POST"])
+def edit_queue():
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action not in ("clear", "remove", "remove_album"):
+        return jsonify(ok=False, error="unknown queue action"), 400
+    song_id = str(body.get("id", ""))
+    if action != "clear" and not re.fullmatch(r"[0-9]+", song_id):
+        return jsonify(ok=False, error="a queue track id is required"), 400
+    try:
+        with _Mpd() as mpd:
+            if action == "clear":
+                mpd.cmd("clear")
+            elif action == "remove":
+                mpd.cmd(f"deleteid {int(song_id)}")
+            else:
+                songs = _queue_entries(mpd.lines("playlistinfo"))
+                selected = next((s for s in songs if s.get("id") == song_id), None)
+                if selected is None:
+                    return jsonify(ok=False, error="track is no longer in the queue"), 409
+                album = selected.get("album", "")
+                if not album:
+                    return jsonify(ok=False, error="track has no album metadata"), 400
+                # AlbumArtist distinguishes records with the same title without
+                # splitting a compilation by each track's performer.
+                artist = selected.get("albumartist", "")
+                ids = [s["id"] for s in songs if s.get("album") == album
+                       and s.get("albumartist", "") == artist]
+                mpd.cmd(*(f"deleteid {int(i)}" for i in ids))
+    except Exception as error:
+        return jsonify(ok=False, error=str(error))
+    return jsonify(ok=True)
+
+
 def _quote(v: str) -> str:
     return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
 

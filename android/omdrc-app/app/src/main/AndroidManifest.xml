@@ -34,13 +34,9 @@
           also launches this activity, but with an explicit host/port extra for
           that widget instance instead of the app-wide default.
         -->
-        <!-- Landscape (either way up, following the sensor), whatever the phone's
-             rotation setting: the kiosk view is laid out for it.  Set in onCreate,
-             not here, so a launch in portrait never shows a landscape window first.  A page
-             may ask for portrait (the Qobuz search, setPageOrientation); the
-             activity handles the rotation itself, so the page is not reloaded.
-             The last orientation asked for is remembered and the next launch
-             starts in it (MainActivity.rememberedOrientation). -->
+        <!-- Follow the phone with auto-rotate on; otherwise use the user's saved
+             orientation for every page. Handle rotation without reloading the page
+             (MainActivity.rememberedOrientation). -->
         <activity
             android:name=".MainActivity"
             android:theme="@style/Theme.OmdrcWidget.Main"

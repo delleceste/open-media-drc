@@ -24,10 +24,10 @@ JavaScript bridge (`window.OmdrcApp`, see `MainActivity.AppBridge`).
 
 **Orientation.** With Android's auto-rotate on, the app follows the phone like any
 other app and the kiosk adapts to how it is held (on Now: needles in landscape,
-bars upright). With auto-rotate off, each kiosk page turns the phone the way it
-is laid out for (Now in landscape, the others upright), and the kiosk's rotate
-button turns the page on screen the other way. The app watches the setting while
-it is open and starts in the orientation it was last in.
+bars upright). With auto-rotate off, the kiosk's rotate button selects landscape
+or portrait for all pages. The choice persists across navigation and app launches.
+The button shows the orientation it will switch to. The app watches the phone's
+auto-rotate setting while it is open.
 
 **Light and dark.** The dashboard follows the phone's light/dark mode: its theme
 (`values` light, `values-night` dark) is what the WebView reports to the kiosk,

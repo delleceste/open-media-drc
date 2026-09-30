@@ -121,9 +121,9 @@ timeout.
 Orientation: with the phone's **auto-rotate on** (app API 6, `autoRotate`) the
 app follows the phone like any other app and the pages adapt to how it is held
 (on Now, needles in landscape and bars upright); the rotate button is hidden.
-With auto-rotate off, every page is shown upright except **Now**, which is laid
-out for landscape; the top bar's rotate button turns the page on screen the other
-way and remembers that for it (`setPageOrientation`, app API 5).  In a browser
+With auto-rotate off, the top bar's rotate button selects one orientation for
+all app pages and remembers it across launches (`setUserOrientation` and
+`forcedOrientation`, app API 7). Its icon shows the target orientation. In a browser
 the same happens only in fullscreen, where the orientation can be locked; the 7"
 panel never turns.  Config shows an "App settings" button (`openSettings`).
 

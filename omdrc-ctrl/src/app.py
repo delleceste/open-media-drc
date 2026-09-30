@@ -9015,7 +9015,8 @@ try:
                        token_file=_qobuz_cache_config,
                        plugin_dir=lambda: os.path.dirname(QOBUZ_OAUTH_SCRIPT),
                        renderer_running=lambda: _service_running(UPMPDCLI_SERVICE),
-                       state_dir=lambda: _STATE_DIR)
+                       state_dir=lambda: _STATE_DIR,
+                       queue_tail=kiosk.queue_tail, move_to_end=kiosk.move_to_end)
 except Exception as _qobuz_web_error:           # pragma: no cover
     print(f"Qobuz search unavailable: {_qobuz_web_error}", file=sys.stderr)
 

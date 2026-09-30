@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- Open in Chromium, or run with --headless --dump-dom --virtual-time-budget=2000. -->
+<html><head><meta charset="utf-8"><title>Queue gesture regression</title>
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+</head><body><div id="overlay-root"></div><pre id="result">RUNNING</pre>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
+<script>
+(async () => {
+    const assert = (condition, message) => { if (!condition) throw new Error(message); };
+    const pointer = (row, type, x = 100, y = 100) => row.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerType: 'touch', pointerId: 1, button: 0, clientX: x, clientY: y,
+    }));
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    try {
+        const page = K.pages.find(p => p.id === 'qobuz');
+        const song = { id: '7', pos: 1, title: 'Track', album: 'Album', artist: 'Artist', duration: 120 };
+        const player = K.h('div', { class: 'scrim qz-full' });
+        document.getElementById('overlay-root').append(player);
+        const row = page.queueRow(song);
+        player.append(row);
+        const edits = [], plays = [];
+        page.editQueue = (action, song) => edits.push([action, song.id]);
+        page.transport = action => plays.push(action);
+        pointer(row, 'pointerdown');
+        await sleep(600);
+        const menu = document.querySelector('.qz-queue-menu');
+        assert(menu, 'Long press must open the queue menu');
+        const albumButton = [...menu.querySelectorAll('button')].find(b => b.textContent === 'Remove album');
+        assert(albumButton, 'Album removal must be offered');
+        const bounds = albumButton.getBoundingClientRect();
+        const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+        assert(albumButton.contains(hit), 'Album removal must be visible and receive touches above the player');
+        pointer(row, 'pointerup'); row.click();
+        assert(!plays.length, 'Releasing a long press must not play the track');
+        albumButton.click();
+        assert(edits.length === 1 && edits[0][0] === 'remove_album' && edits[0][1] === '7', 'Album removal must target the held track');
+        assert(!document.querySelector('.qz-queue-menu'), 'The menu must close after choosing an action');
+        pointer(row, 'pointerdown'); pointer(row, 'pointermove', 100, 125); pointer(row, 'pointercancel');
+        await sleep(600);
+        assert(!document.querySelector('.qz-queue-menu'), 'Scrolling must cancel the long press');
+        pointer(row, 'pointerdown'); pointer(row, 'pointerup'); row.click();
+        assert(plays.length === 1, 'A normal tap must still play the track');
+        document.getElementById('result').textContent = 'PASS';
+    } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.message; }
+})();
+</script></body></html>

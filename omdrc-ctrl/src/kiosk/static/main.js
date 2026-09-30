@@ -19,9 +19,10 @@ function icon(name) {
     svg.setAttribute('class', 'top-icon');
     const shapes = {
         search: [['circle', { cx: 10.5, cy: 10.5, r: 6.3 }], ['path', { d: 'M15.3 15.3 L20.5 20.5' }]],
-        // a phone turning: an upright phone and an arrow round its corner
-        rotate: [['rect', { x: 4, y: 7.5, width: 9, height: 14, rx: 1.6 }],
-                 ['path', { d: 'M13.5 3.5 A7.5 7.5 0 0 1 20.5 10.5' }], ['path', { d: 'M20.5 10.5 L22.3 7.8 M20.5 10.5 L17.7 9.1' }]],
+        landscape: [['rect', { x: 2, y: 6, width: 20, height: 12, rx: 2 }],
+                    ['path', { d: 'M18.5 10 L18.5 14' }]],
+        portrait: [['rect', { x: 6, y: 2, width: 12, height: 20, rx: 2 }],
+                   ['path', { d: 'M10 18.5 L14 18.5' }]],
     }[name];
     for (const [tag, attrs] of shapes) {
         const el = document.createElementNS(ns, tag);
@@ -120,8 +121,13 @@ function endSwipe(e) {
     const far = Math.min(0.2 * w, 100);          // a fifth of the width, but never more than 100 px
     if (dx < -far || s.v < -0.5) to = from + 1;
     else if (dx > far || s.v > 0.5) to = from - 1;
-    to = K.clamp(to, 0, K.pages.length - 1);
-    pager.scrollTo({ left: to * w, behavior: 'smooth' });
+    if (to >= K.pages.length) {
+        // A left swipe past the last page cycles straight back to Now.
+        K.showPage('now', false);
+    } else {
+        to = K.clamp(to, 0, K.pages.length - 1);
+        pager.scrollTo({ left: to * w, behavior: 'smooth' });
+    }
     setTimeout(() => { pager.style.scrollSnapType = ''; }, 450);
 }
 pager.addEventListener('pointerup', endSwipe);
@@ -177,8 +183,8 @@ function scrolledAt(el) {
     return false;
 }
 // ── orientation (a phone) ────────────────────────────────────────────────────
-// Every page is upright except Now, which is laid out for landscape; the top bar's
-// rotate button flips the page on screen and remembers that for it.  The Android
+// The rotate button selects one orientation for every page in the Android app.
+// Browsers keep their page preferences.  The Android
 // app rotates on request (apiVersion 5); a browser only in fullscreen, where the
 // orientation can be locked.  The 7" panel is neither, and never turns.
 // With the phone's auto-rotate on (app apiVersion 6) the app follows the phone like
@@ -189,7 +195,10 @@ K.canRotate = () => K.inApp ? !!window.OmdrcApp.setPageOrientation && !K.autoRot
     : !!(document.fullscreenElement && screen.orientation && screen.orientation.lock);
 // the app: auto-rotate was switched on or off while the kiosk is open
 K.onAutoRotate = () => applyOrientation(cur >= 0 ? K.pages[cur] : null);
-K.orientationOf = page => K.pref('orient.' + page.id, page.orientation || 'portrait');
+K.orientationOf = page => {
+    if (K.inApp && window.OmdrcApp.forcedOrientation) return window.OmdrcApp.forcedOrientation();
+    return K.pref('orient.' + page.id, page.orientation || 'portrait');
+};
 function applyOrientation(page) {
     if (!page) return;
     const want = K.orientationOf(page);
@@ -203,13 +212,18 @@ function applyOrientation(page) {
 function paintRotate() {
     const btn = $('#top-rotate');
     btn.hidden = !K.canRotate();
-    const page = cur >= 0 ? K.pages[cur] : null;
-    if (page) btn.title = K.orientationOf(page) === 'portrait' ? 'Turn this page to landscape' : 'Turn this page upright';
+    const target = window.matchMedia('(orientation: portrait)').matches ? 'landscape' : 'portrait';
+    btn.replaceChildren(icon(target));
+    btn.title = target === 'landscape' ? 'Turn to landscape' : 'Turn upright';
+    btn.setAttribute('aria-label', btn.title);
 }
+window.matchMedia('(orientation: portrait)').addEventListener('change', paintRotate);
 function rotate() {
     const page = cur >= 0 ? K.pages[cur] : null;
     if (!page) return;
-    K.setPref('orient.' + page.id, K.orientationOf(page) === 'portrait' ? 'landscape' : 'portrait');
+    const want = K.orientationOf(page) === 'portrait' ? 'landscape' : 'portrait';
+    if (K.inApp && window.OmdrcApp.setUserOrientation) window.OmdrcApp.setUserOrientation(want);
+    else K.setPref('orient.' + page.id, want);
     applyOrientation(page);
 }
 
@@ -443,7 +457,7 @@ async function boot() {
     paintClock(); setInterval(paintClock, 10000);
     pollAlerts(); setInterval(() => { if (!document.hidden) pollAlerts(); }, 20000);
     $('#top-full').addEventListener('click', K.toggleFullscreen);
-    $('#top-rotate').append(icon('rotate'));
+    paintRotate();
     $('#top-rotate').addEventListener('click', rotate);
     if (K.state.features.qobuz_search) {
         const search = $('#top-search');

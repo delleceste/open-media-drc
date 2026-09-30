@@ -355,6 +355,25 @@ class PlayerTests(unittest.TestCase):
                          ("Adagio", "Nelsons", "Bruckner 7", "Deutsche Grammophon"))
         self.assertEqual([c.split(": ", 1)[1] for c in mpd.log], ["status", "currentsong"])
 
+    def test_queue_edits_use_ids_and_remove_album_beyond_display_limit(self):
+        import kiosk
+        from unittest.mock import MagicMock, patch
+        mpd = MagicMock()
+        mpd.__enter__.return_value = mpd
+        mpd.lines.return_value = ["file: a", "Id: 0", "Album: Record", "AlbumArtist: A",
+                                  "file: b", "Id: 9", "Album: Other",
+                                  "file: c", "Id: 600", "Album: Record", "AlbumArtist: A"]
+        client = APP.app.test_client()
+        with patch.object(kiosk, "_Mpd", return_value=mpd):
+            for action, extra, commands in [
+                    ("clear", {}, ("clear",)),
+                    ("remove", {"id": "0"}, ("deleteid 0",)),
+                    ("remove_album", {"id": "0"}, ("deleteid 0", "deleteid 600"))]:
+                result = client.post("/k/api/queue", json={"action": action, **extra}).get_json()
+                self.assertTrue(result["ok"], result)
+                self.assertEqual(mpd.cmd.call_args.args, commands)
+            self.assertEqual(client.post("/k/api/queue", json={"action": "remove", "id": "1\nclear"}).status_code, 400)
+
     def test_the_queue_marks_the_song_playing(self):
         import kiosk
         mpd = FakeMpd(state="play")

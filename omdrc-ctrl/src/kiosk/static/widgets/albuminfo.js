@@ -190,6 +190,61 @@ K.albumInfo = async albumId => {
     body.append(...page(d.album));
 };
 
+// Search results keep ambiguous names and different classical recordings visible.
+// Wikipedia's search page deliberately does not jump to the first matching title.
+const researchLinks = a => {
+    const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+    const usableName = value => clean(value) && !/^(various\b|multiple\b|unknown\b)/i.test(clean(value));
+    const unique = values => [...new Set(values.map(clean).filter(Boolean))];
+    const title = clean(a.title), artist = usableName(a.artist) ? clean(a.artist) : '';
+    let composer = usableName(a.composer) ? clean(a.composer) : '';
+    const classical = [a.genre, ...(a.genres || [])].some(g => /\b(classical|classique|classica|klassik)\b/i.test(g || ''));
+    let albumTitle = title;
+    if (classical) {
+        const trackComposers = unique((a.track_list || []).map(t => t.composer).filter(usableName));
+        // A tribute/arrangements album may say "Various Composers". Only read
+        // a name from its title when the contributor or composer metadata backs it.
+        const candidates = unique([composer, ...trackComposers, ...(a.performers || [])
+            .filter(p => (p.roles || []).some(r => /composer|adapter|arranger|transcriber/i.test(r)))
+            .map(p => p.name).filter(usableName)]);
+        const prefix = title.match(/^(.+?)\s*(?::|\s[-–—]\s)\s*(.+)$/);
+        const named = prefix && candidates.find(name => name.toLocaleLowerCase() === clean(prefix[1]).toLocaleLowerCase());
+        if (named) { composer = named; albumTitle = clean(prefix[2]); }
+        else if (!composer && trackComposers.length === 1) composer = trackComposers[0];
+    }
+    const links = [];
+    const wiki = (name, query) => links.push(h('button', {
+        type: 'button', class: 'chip ai-research-link',
+        title: `Search Wikipedia for ${query}`,
+        onclick: () => K.openExternal('https://en.wikipedia.org/w/index.php?title=Special%3ASearch&search=' + encodeURIComponent(query)),
+    }, `Wikipedia: ${name}`));
+    if (artist) wiki(artist, artist);
+    if (classical && composer && composer !== artist) wiki(composer, composer);
+    if (!classical && title) wiki(title, unique([title, artist]).join(' '));
+    if (classical && title) {
+        const query = composer && albumTitle.toLocaleLowerCase().includes(composer.toLocaleLowerCase())
+            ? albumTitle : unique([composer, albumTitle]).join(' ');
+        for (const [name, domain] of [['Gramophone', 'gramophone.co.uk'], ['Diapason', 'diapasonmag.fr'], ['BBC Music Magazine', 'classical-music.com']]) {
+            links.push(h('button', {
+                type: 'button', class: 'chip ai-research-link',
+                title: `Search ${name} for ${query}`,
+                onclick: () => K.openExternal('https://www.google.com/search?q=' + encodeURIComponent(`site:${domain} ${query}`)),
+            }, `Search ${name}`));
+        }
+    }
+    if (title) {
+        const name = classical ? composer : artist;
+        const query = name && !albumTitle.toLocaleLowerCase().includes(name.toLocaleLowerCase())
+            ? `${name} - ${albumTitle}` : albumTitle;
+        links.push(h('button', {
+            type: 'button', class: 'chip ai-research-link',
+            title: `Search Google for ${query}`,
+            onclick: () => K.openExternal('https://www.google.com/search?q=' + encodeURIComponent(query)),
+        }, 'Search Google'));
+    }
+    return links.length ? h('div', { class: 'ai-research', 'aria-label': 'Search artist and album information' }, links) : null;
+};
+
 const page = a => {
     const out = [];
     const facts = [a.label, a.date || a.year, a.genre].filter(Boolean).join(' · ');
@@ -203,6 +258,8 @@ const page = a => {
                 h('button', { type: 'button', class: 'chip ai-award-add', onclick: () => K.awardsPopup(a) }, 'Add award or rate'),
                 K.awardsBox(a, { awards: a.awards || [], rating: a.rating || 0 }, { compact: true })),
             facts ? h('div', { class: 'muted small' }, facts) : null)));
+    const research = researchLinks(a);
+    if (research) out.push(research);
     // the booklet first: the reason to come here, often
     if (a.booklets && a.booklets.length) out.push(h('div', { class: 'ai-booklets' }, a.booklets.map(b =>
         h('button', { type: 'button', class: 'btn primary ai-booklet', title: b.description || b.name, onclick: () => K.openExternal(b.url) },

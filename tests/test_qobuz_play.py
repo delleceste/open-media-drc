@@ -296,6 +296,7 @@ class PlayRouteTest(OpenHomeCase):
         self.words = qs.SearchWords(self.tmp.name + "/w.json")
         target = openhome.Renderer("http://192.0.2.7:49152/d.xml", "box", self.url)
         self.patches = [
+            patch.object(qobuz_web, "_queue_tail", None),
             patch.object(qobuz_web, "catalog", return_value=self.catalog),
             patch.object(qobuz_web, "renderer", return_value=target),
             patch.object(qobuz_web, "_renderer_running", lambda: True),
@@ -341,6 +342,30 @@ class PlayRouteTest(OpenHomeCase):
     def test_replace_can_start_at_a_given_track(self):
         self.play(album_id="a1", mode="replace", start="13")
         self.assertEqual(self.fake.sought, self.fake.tracks[1][0])
+
+    def test_append_uses_live_tail_when_openhome_ids_are_stale(self):
+        self.fake.tracks = [(10, "old/1", ""), (11, "old/2", "")]
+        self.fake.next_id = 12
+        with patch.object(qobuz_web, "_queue_tail", return_value=(11, 2)), \
+                patch.object(openhome.Playlist, "ids", return_value=[]):
+            data = self.play(album_id="a1", mode="append").get_json()
+        self.assertTrue(data["ok"], data)
+        self.assertEqual([t[1] for t in self.fake.tracks[:2]], ["old/1", "old/2"])
+        self.assertIn("trackId/11", self.fake.tracks[2][1])
+
+    def test_append_after_mpd_id_zero_moves_first_track_to_end(self):
+        self.fake.tracks = [(0, "old/1", "")]
+        def move(track_id, position):
+            track = next(t for t in self.fake.tracks if t[0] == track_id)
+            self.fake.tracks.remove(track)
+            self.fake.tracks.insert(position, track)
+        with patch.object(qobuz_web, "_queue_tail", return_value=(0, 1)), \
+                patch.object(qobuz_web, "_move_to_end", side_effect=move):
+            data = self.play(album_id="a1", mode="append").get_json()
+        self.assertTrue(data["ok"], data)
+        self.assertEqual(self.fake.tracks[0][1], "old/1")
+        self.assertIn("trackId/11", self.fake.tracks[1][1])
+        self.assertIn("trackId/13", self.fake.tracks[2][1])
 
     def test_append_adds_at_the_end_and_leaves_playback_alone(self):
         self.fake.tracks = [(7, "http://old", "m")]
