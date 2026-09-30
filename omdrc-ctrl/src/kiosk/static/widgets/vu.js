@@ -83,6 +83,14 @@ K.VuMeter = class VuMeter {
         this.render();
     }
 
+    /** "LAG!" where CLIP would be: level frames were dropped by the network. */
+    setLag(on) {
+        on = !!on;
+        if (on === !!this.lag) return;
+        this.lag = on;
+        this.render();
+    }
+
     setSuspects(suspects) {
         this.suspects = { left: !!suspects.left, right: !!suspects.right };
         this.syncBlink();
@@ -230,7 +238,7 @@ K.VuMeter = class VuMeter {
             ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
             ctx.fillText(label, 6 * dpr, cy);
             const ch = i ? 'right' : 'left';
-            const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : '';
+            const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : this.lag ? 'lag' : '';
             if (state) {
                 ctx.save();
                 ctx.translate(w - 13 * dpr, cy);
@@ -238,7 +246,7 @@ K.VuMeter = class VuMeter {
                 ctx.fillStyle = state === 'clip' ? K.css('--red') : K.theme() === 'light' ? '#a54800' : '#ffa726';
                 ctx.font = `800 ${11 * dpr}px system-ui, sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : 'CLIP?';
+                const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : state === 'lag' ? 'LAG!' : 'CLIP?';
                 ctx.fillText(text, 0, 0, rowH - 8 * dpr);
                 ctx.restore();
                 if (state === 'clip') this.clipTargets[ch] = { canvas, x0: w / dpr - 32, x1: w / dpr,
@@ -402,9 +410,9 @@ K.VuMeter = class VuMeter {
         ctx.fillText(this.calibrating ? 'CALIBRATING…' : `PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 11 * dpr, 11 * dpr);
         halo(false);
         const ch = label === 'L' ? 'left' : 'right';
-        const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : '';
+        const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : this.lag ? 'lag' : '';
         if (state) {
-            const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : 'CLIP?';
+            const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : state === 'lag' ? 'LAG!' : 'CLIP?';
             // Sit beside the full-scale needle, with the word parallel to it.
             const [zeroX, zeroY] = at(aTop, R * .93);
             const tx = Math.min(w - 19 * dpr, zeroX + 9 * dpr);

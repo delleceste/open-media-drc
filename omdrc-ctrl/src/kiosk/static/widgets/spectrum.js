@@ -26,6 +26,13 @@ K.Spectrum = class Spectrum {
         this.tl = this.tr = new Array(this.bands.length).fill(-200);
         if (!this.raf) { this.last = 0; this.raf = requestAnimationFrame(ts => this.step(ts)); }
     }
+    /** "LAG!" in the corner: frames were dropped by the network. */
+    setLag(on) {
+        on = !!on;
+        if (on === !!this.lag) return;
+        this.lag = on;
+        this.draw();
+    }
     destroy() { if (this.raf) cancelAnimationFrame(this.raf); this.raf = null; this.ro.disconnect(); }
 
     step(ts) {
@@ -57,6 +64,12 @@ K.Spectrum = class Spectrum {
         ctx.clearRect(0, 0, w, H);
         const n = this.bands.length;
         if (!n) return;
+        if (this.lag) {
+            ctx.font = `800 ${12 * dpr}px system-ui, sans-serif`;
+            ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+            ctx.fillStyle = K.theme() === 'light' ? '#a54800' : '#ffa726';
+            ctx.fillText('LAG!', w - 6 * dpr, 6 * dpr);
+        }
         const labelH = 15 * dpr, top = 4 * dpr, plotH = H - labelH - top;
         const fl = this.floor, y = db => top + plotH * (1 - K.clamp((db - fl) / (0 - fl), 0, 1));
         // faint grid every 10 dB

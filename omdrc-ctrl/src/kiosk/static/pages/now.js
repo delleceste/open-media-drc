@@ -132,6 +132,13 @@ P.mount = el => {
     P.clipChannels = { left: count(savedClips.left), right: count(savedClips.right) };
     P.clipSignal = { left: false, right: false };
     P.vu.setClips(P.clipChannels);
+    // Frames dropped because the network lagged: "LAG!" for a few seconds where CLIP shows.
+    K.streams.onLag(mode => {
+        if (mode === 'dr') return;
+        P.vu.setLag(true); P.spec.setLag(true);
+        clearTimeout(P.lagTimer);
+        P.lagTimer = setTimeout(() => { P.vu.setLag(false); P.spec.setLag(false); }, 4000);
+    });
     P.vu.onClipReset = ch => {
         P.clipChannels[ch] = 0;
         K.setPref('now.clipChannels', P.clipChannels);

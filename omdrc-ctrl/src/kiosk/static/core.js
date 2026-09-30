@@ -218,6 +218,7 @@ K.streams = (() => {
     //    it.  The new stream is opened before the old one is closed, so the box
     //    never sees its last listener leave (that would turn its analyzer off).
     const LAG_MS = 1200, LAG_FRAMES = 5;
+    const lagFns = new Set();     // told when a backlog was dropped (meters show "LAG!")
     const connect = mode => {
         const s = S[mode];
         if (!s || s.es || (document.hidden && !BACKGROUND.has(mode)) || !s.subs.size) return;
@@ -253,6 +254,7 @@ K.streams = (() => {
                 if (late >= LAG_FRAMES && !s.replacing) {
                     s.replacing = true;
                     setTimeout(() => { s.replacing = false; }, 5000);   // at most one reopen per 5 s
+                    lagFns.forEach(f => f(mode));
                     open(mode, es);
                     return;
                 }
@@ -285,6 +287,8 @@ K.streams = (() => {
         }
     });
     return {
+        /** fn(mode) runs whenever late frames were discarded because the network lagged. */
+        onLag(fn) { lagFns.add(fn); return { close() { lagFns.delete(fn); } }; },
         open(mode, fn) {
             if (!K.state.spectrum.enabled) return { close() {} };
             const s = S[mode] || (S[mode] = { subs: new Set(), es: null, retry: null });
