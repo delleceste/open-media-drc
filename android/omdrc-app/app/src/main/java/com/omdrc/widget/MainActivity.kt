@@ -142,50 +142,66 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    private val networkPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions(),
-    ) { }
+    // The Wi-Fi name is read when the app starts or resumes, every 5 minutes while it is
+    // on screen, and when the user presses "Identify Wi-Fi" (reading it is a location access, and Android shows its location
+    // indicator for it).  It is then remembered against the network's fingerprint
+    // (gateway address + subnet, readable without location), so later runs and app
+    // restarts recognise the network without asking Android for the name again.
+    // The page's once-a-second timingNetwork() never touches WifiManager.
+    private val netPrefs get() = getSharedPreferences("wifi-names", MODE_PRIVATE)
 
-    // The page asks every second, but reading the Wi-Fi name counts as a location access
-    // (Android shows its location indicator the whole time the app is open).  So the
-    // answer is kept until the active network changes; an unresolved one is retried
-    // only every 30 s.
-    private var netCacheKey: android.net.Network? = null
-    private var netCache: String? = null
-    private var netCacheAt = 0L
-
-    private fun timingNetwork(): String {
-        val cm = getSystemService(android.net.ConnectivityManager::class.java)
-        val active = cm.activeNetwork
-        val now = android.os.SystemClock.elapsedRealtime()
-        val cached = netCache
-        if (cached != null && active == netCacheKey &&
-            (!cached.contains("\"unknown\"") || now - netCacheAt < 30_000)) return cached
-        val fresh = readTimingNetwork(cm, active)
-        netCacheKey = active; netCache = fresh; netCacheAt = now
-        return fresh
+    private fun wifiFingerprint(cm: android.net.ConnectivityManager, net: android.net.Network?): String? {
+        val lp = cm.getLinkProperties(net) ?: return null
+        val gw = lp.routes.firstOrNull { it.isDefaultRoute && it.gateway != null }?.gateway?.hostAddress ?: return null
+        val addr = lp.linkAddresses.firstOrNull { it.address is java.net.Inet4Address } ?: return null
+        val prefix = addr.prefixLength
+        val ip = addr.address.address
+        val mask = if (prefix == 0) 0 else -1 shl (32 - prefix)
+        val n = ((ip[0].toInt() and 255) shl 24 or ((ip[1].toInt() and 255) shl 16) or
+            ((ip[2].toInt() and 255) shl 8) or (ip[3].toInt() and 255)) and mask
+        return "$gw/$prefix/${Integer.toHexString(n)}"
     }
 
+    private val networkPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants -> if (grants.values.any { it }) identifyWifiNow() }
+
     @Suppress("DEPRECATION")
-    private fun readTimingNetwork(cm: android.net.ConnectivityManager, active: android.net.Network?): String {
-        val out = org.json.JSONObject()
+    private fun identifyWifiNow(quiet: Boolean = false) {
         try {
-            val caps = cm.getNetworkCapabilities(active)
-            when {
-                caps == null -> out.put("key", "offline").put("label", "Disconnected")
-                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) ->
-                    out.put("key", "wired").put("label", "Wired")
-                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> {
-                    val wifi = applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
-                    val ssid = wifi.connectionInfo.ssid?.removeSurrounding("\"")
-                    if (!ssid.isNullOrBlank() && ssid != android.net.wifi.WifiManager.UNKNOWN_SSID)
-                        out.put("key", "wifi:" + ssid).put("label", ssid)
-                    else out.put("key", "unknown").put("label", "Wi-Fi name unavailable")
-                }
-                else -> out.put("key", "unknown").put("label", "Network unidentified")
+            val cm = getSystemService(android.net.ConnectivityManager::class.java)
+            val net = cm.activeNetwork
+            val caps = cm.getNetworkCapabilities(net)
+            val ssid = if (caps != null && caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))
+                applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
+                    .connectionInfo.ssid?.removeSurrounding("\"") else null
+            val fp = wifiFingerprint(cm, net)
+            if (!ssid.isNullOrBlank() && ssid != android.net.wifi.WifiManager.UNKNOWN_SSID && fp != null) {
+                netPrefs.edit().putString(fp, ssid).apply()
+                if (!quiet) android.widget.Toast.makeText(this, "Wi-Fi remembered: $ssid", android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                if (!quiet) android.widget.Toast.makeText(this, "Wi-Fi name unavailable (is Location on?)", android.widget.Toast.LENGTH_LONG).show()
             }
         } catch (_: SecurityException) {
-            out.put("key", "unknown").put("label", "Wi-Fi name unavailable")
+            if (!quiet) android.widget.Toast.makeText(this, "Wi-Fi name unavailable (location permission)", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun timingNetwork(): String {
+        val out = org.json.JSONObject()
+        val cm = getSystemService(android.net.ConnectivityManager::class.java)
+        val active = cm.activeNetwork
+        val caps = cm.getNetworkCapabilities(active)
+        when {
+            caps == null -> out.put("key", "offline").put("label", "Disconnected")
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) ->
+                out.put("key", "wired").put("label", "Wired")
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> {
+                val ssid = wifiFingerprint(cm, active)?.let { netPrefs.getString(it, null) }
+                if (ssid != null) out.put("key", "wifi:$ssid").put("label", ssid)
+                else out.put("key", "unknown").put("label", "Wi-Fi not identified")
+            }
+            else -> out.put("key", "unknown").put("label", "Network unidentified")
         }
         return out.toString()
     }
@@ -405,8 +421,26 @@ class MainActivity : ComponentActivity() {
         AppPrefs.touchForeground(this)
     }
 
+    // The Wi-Fi name is read at startup / resume and then every 5 minutes while the app
+    // is on screen (only when location is already permitted) - never more often.
+    private val wifiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val wifiCheck = object : Runnable {
+        override fun run() {
+            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) identifyWifiNow(quiet = true)
+            wifiHandler.postDelayed(this, 5 * 60_000L)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        wifiHandler.removeCallbacks(wifiCheck)
+        wifiHandler.post(wifiCheck)
+    }
+
     override fun onPause() {
         super.onPause()
+        wifiHandler.removeCallbacks(wifiCheck)
         // The screen as it is left, for the next cold start (see LastPage).  Here and
         // not in onStop: the page is still drawn, so the picture is not a blank one.
         val url = lastUrl
@@ -555,7 +589,9 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun identifyTimingNetwork() {
             runOnUiThread {
-                networkPermissionLauncher.launch(arrayOf(
+                if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED) identifyWifiNow()
+                else networkPermissionLauncher.launch(arrayOf(
                     Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
             }
         }

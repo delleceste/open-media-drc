@@ -56,7 +56,7 @@ P.timingCard = () => {
                 const name = window.prompt('Wi-Fi profile name, or wired for a wired connection. Leave empty for automatic detection.', K.pref('sync.networkName', ''));
                 if (name !== null) window.OmdrcTiming.setNetworkName(name);
             } }, 'Set network name')),
-        h('p', { class: 'muted small' }, 'Wi-Fi identification requires Android location permission and Location enabled. If the name is unavailable, set a profile name manually when switching networks.'),
+        h('p', { class: 'muted small' }, 'The app reads the Wi-Fi name (Android location permission and Location on) at startup, on resume and every 5 minutes while open, and remembers it per network (gateway and subnet); nothing else reads it. Identify Wi-Fi forces a read. If the name is unavailable, set a profile name manually when switching networks.'),
         h('p', { class: 'muted small' }, 'Extra delay for this screen, on top of the box’s own chain delay: the meters and spectrum are drawn this long after they arrive. Stored on this device for the active network. New networks start at 0 ms until calibrated.'),
         h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50),
             h('button', { class: 'btn', type: 'button', onclick: () => set(0) }, 'Reset')),
