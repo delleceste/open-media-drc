@@ -146,12 +146,31 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { }
 
-    @Suppress("DEPRECATION")
+    // The page asks every second, but reading the Wi-Fi name counts as a location access
+    // (Android shows its location indicator the whole time the app is open).  So the
+    // answer is kept until the active network changes; an unresolved one is retried
+    // only every 30 s.
+    private var netCacheKey: android.net.Network? = null
+    private var netCache: String? = null
+    private var netCacheAt = 0L
+
     private fun timingNetwork(): String {
+        val cm = getSystemService(android.net.ConnectivityManager::class.java)
+        val active = cm.activeNetwork
+        val now = android.os.SystemClock.elapsedRealtime()
+        val cached = netCache
+        if (cached != null && active == netCacheKey &&
+            (!cached.contains("\"unknown\"") || now - netCacheAt < 30_000)) return cached
+        val fresh = readTimingNetwork(cm, active)
+        netCacheKey = active; netCache = fresh; netCacheAt = now
+        return fresh
+    }
+
+    @Suppress("DEPRECATION")
+    private fun readTimingNetwork(cm: android.net.ConnectivityManager, active: android.net.Network?): String {
         val out = org.json.JSONObject()
         try {
-            val cm = getSystemService(android.net.ConnectivityManager::class.java)
-            val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+            val caps = cm.getNetworkCapabilities(active)
             when {
                 caps == null -> out.put("key", "offline").put("label", "Disconnected")
                 caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) ->
