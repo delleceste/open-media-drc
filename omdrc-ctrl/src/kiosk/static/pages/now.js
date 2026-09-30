@@ -126,12 +126,12 @@ P.mount = el => {
     new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
-    const savedClips = K.pref('now.clipChannels', {}) || {};
-    // Older saved values were booleans; keep a previous red CLIP as one hit.
-    const count = value => value === true ? 1 : Number.isSafeInteger(value) && value > 0 ? value : 0;
-    P.clipChannels = { left: count(savedClips.left), right: count(savedClips.right) };
-    P.clipSignal = { left: false, right: false };
-    P.vu.setClips(P.clipChannels);
+    P.initClips();
+    P.vu.onClipReset = ch => {
+        P.clipChannels[ch] = 0;
+        P.vu.setClips(P.clipChannels);
+    };
+    P.spec = new K.Spectrum(P.specCanvas);
     // Frames dropped because the network lagged: "LAG!" for a few seconds where CLIP shows.
     K.streams.onLag(mode => {
         if (mode === 'dr') return;
@@ -139,12 +139,6 @@ P.mount = el => {
         clearTimeout(P.lagTimer);
         P.lagTimer = setTimeout(() => { P.vu.setLag(false); P.spec.setLag(false); }, 4000);
     });
-    P.vu.onClipReset = ch => {
-        P.clipChannels[ch] = 0;
-        K.setPref('now.clipChannels', P.clipChannels);
-        P.vu.setClips(P.clipChannels);
-    };
-    P.spec = new K.Spectrum(P.specCanvas);
     if (K.sync) K.sync.onRunning(on => { P.calLed.hidden = !on; P.vu.setCalibrating(on); });
 
     P.wireTransport();
@@ -152,6 +146,33 @@ P.mount = el => {
     P.trackPoll = new K.Poller(P.pollTrack, 3000);
     P.tick = new K.Poller(P.paintTime, 1000);
     K.drcState.onChange(P.paintDrc);
+};
+
+// Clip history belongs to this running page, not the saved preferences. An
+// Android process restart creates a fresh page; pause/stop/background do not.
+P.initClips = () => {
+    P.clipChannels = { left: 0, right: 0 };
+    P.clipSignal = { left: false, right: false };
+    P.clipAlbum = null;
+    P.vu.setClips(P.clipChannels);
+};
+
+P.observeClipAlbum = t => {
+    // A stopped renderer may temporarily drop its album ID and edition. Keep
+    // the last known album across stop and unavailable metadata.
+    if (!t.ok || t.state === 'stop' || (!t.qobuz_album && !t.album)) return;
+    const album = { id: t.qobuz_album || '', title: t.album || '', edition: t.edition || '' };
+    const previous = P.clipAlbum;
+    const changed = previous && (previous.id && album.id
+        ? previous.id !== album.id
+        : previous.title !== album.title || previous.edition !== album.edition);
+    if (changed) {
+        P.clipChannels = { left: 0, right: 0 };
+        P.clipSignal = { left: false, right: false };
+        P.vu.setSuspects({});
+        P.vu.setClips(P.clipChannels);
+    }
+    P.clipAlbum = album;
 };
 
 // ── level display, one choice per orientation ────────────────────────────────
@@ -322,7 +343,6 @@ P.openLevel = () => {
                 P.clipSignal[ch] = signal;
             }
             if (newClip) {
-                K.setPref('now.clipChannels', P.clipChannels);
                 P.vu.setClips(P.clipChannels);
             }
             if (P.showBalance) P.balance.update(d.vu);
@@ -564,6 +584,7 @@ P.paintState = state => {
 // ── track ────────────────────────────────────────────────────────────────────
 P.pollTrack = async () => {
     const t = await K.fetchTrack();
+    P.observeClipAlbum(t);
     if (P.track && t.ok && P.track.title !== t.title && K.sync) K.sync.onTrackChange();
     P.track = t;
     P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
