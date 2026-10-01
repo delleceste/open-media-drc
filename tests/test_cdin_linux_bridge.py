@@ -662,7 +662,7 @@ class ExclusiveSourceTest(unittest.TestCase):
         """Both `off/stop` and the rebuild path must free the substream first."""
         self.assertEqual(self.text.count("release_cdin_or_restore_mpd\n"), 2,
                          "a teardown path no longer releases the loopback")
-        self.assertIn('mpc_bounded enable only "OKTO-DAC"', self.text)
+        self.assertIn('mpc_select_audible "OKTO-DAC"', self.text)
         self.assertIn("MPD direct output restored to OKTO-DAC; requested audio change was not applied",
                       self.text)
 
@@ -712,7 +712,7 @@ class ExclusiveSourceTest(unittest.TestCase):
         # MPD must NOT be given the DAC first: it is single-open, and doing so
         # is the EBUSY that would read as the bridge failing to start.
         self.assertTrue(re.search(
-            r'if \$keep_cdin; then.{0,400}?elif mpc_bounded enable only "OKTO-DAC"',
+            r'if \$keep_cdin; then.{0,400}?elif mpc_select_audible "OKTO-DAC"',
             block, re.S),
             "the direct-DAC output must be skipped when the CD input keeps it")
         # And the bridge has to be told to start again after being stopped.
@@ -729,7 +729,7 @@ class ExclusiveSourceTest(unittest.TestCase):
                                 1)[1].split("\n  fi\n", 1)[0]
         self.assertTrue(re.search(
             r'if \$IS_LINUX && is_capture_source "\$desired_source"; then'
-            r'.{0,900}?exit 0.{0,80}?fi\s+mpc_bounded enable only "OKTO-DAC"',
+            r'.{0,900}?exit 0.{0,80}?fi\s+mpc_select_audible "OKTO-DAC"',
             block, re.S),
             "the capture guard must come before the direct-DAC handover")
         # Started only when absent: restarting a healthy bridge every tick

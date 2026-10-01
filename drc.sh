@@ -223,6 +223,18 @@ run_bounded() {
   "$_TIMEOUT_BIN" -k 1 "$seconds" "$@"
 }
 mpc_bounded() { run_bounded "$OMDRC_MPC_TIMEOUT" mpc "$@"; }
+# Select the audible route without disabling independent analyzer outputs.
+# `mpc enable only` also turns off the Spectrum FIFO, stranding VU/DR readers.
+mpc_select_audible() {
+  local selected="$1" output
+  for output in OKTO-DAC DRC-native DRC-resamp; do
+    if [ "$output" != "$selected" ]; then
+      mpc_bounded disable "$output" >/dev/null || return $?
+    fi
+  done
+  mpc_bounded enable "$selected"
+}
+
 sudo_bounded() {
   local seconds="$1"
   shift
@@ -719,7 +731,7 @@ release_cdin_or_restore_mpd() {
   release_cdin && return 0
 
   echo "warning: CD input release failed; restoring MPD direct output" >&2
-  if mpc_bounded enable only "OKTO-DAC" >/dev/null 2>&1; then
+  if mpc_select_audible "OKTO-DAC" >/dev/null 2>&1; then
     log_event "event=cdin_release_recovery result=ok output=OKTO-DAC"
     echo "MPD direct output restored to OKTO-DAC; requested audio change was not applied" >&2
   else
@@ -978,7 +990,7 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
       echo "DRC already off; the $(source_label "$desired_source") owns the DAC"
       exit 0
     fi
-    mpc_bounded enable only "OKTO-DAC" >/dev/null 2>&1 || true
+    mpc_select_audible "OKTO-DAC" >/dev/null 2>&1 || true
     log_event "event=reconcile result=noop reason=already_off source=${desired_source}"
     echo "DRC already off"
     exit 0
@@ -1000,7 +1012,7 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
   desired_conf="$SITE_DIR/configs/$GEOMETRY/brutefir-${desired_rate}${desired_variant}.conf"
 
   if physical_chain_matches "$desired_rate" "$desired_conf"; then
-    if mpc_bounded enable only "$desired_output" >/dev/null 2>&1; then
+    if mpc_select_audible "$desired_output" >/dev/null 2>&1; then
       mpd_reconcile=ok
     else
       mpd_reconcile=pending
@@ -1776,7 +1788,7 @@ ensure_mpd_has_output() {
     return 0
   fi
   echo "MPD has no enabled output; re-enabling the direct DAC" >&2
-  if mpc_bounded enable only "OKTO-DAC" >/dev/null 2>&1; then
+  if mpc_select_audible "OKTO-DAC" >/dev/null 2>&1; then
     log_event "event=mpd_output result=repaired output=OKTO-DAC"
     return 0
   fi
@@ -1794,7 +1806,7 @@ rollback_to_direct() {
   if ! $IS_LINUX; then
     stop_virtual_oss
   fi
-  mpc_bounded enable only "OKTO-DAC" 2>/dev/null || true
+  mpc_select_audible "OKTO-DAC" 2>/dev/null || true
 }
 
 # ── stop brutefir ────────────────────────────────────────────────────────────
@@ -1906,7 +1918,7 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
     # look like the bridge failing to start.
     log_event "event=run_result mode=${mode} result=stopped source=${off_source} output=cdin"
     echo "The $(source_label "$off_source") keeps playing, straight to the DAC (no room correction)"
-  elif mpc_bounded enable only "OKTO-DAC"; then
+  elif mpc_select_audible "OKTO-DAC"; then
     log_event "event=run_result mode=${mode} result=stopped output=OKTO-DAC"
   else
     log_event "event=run_result mode=${mode} result=stopped output=fail"
@@ -2080,8 +2092,8 @@ if is_capture_source "${source_mode:-music}"; then
   mpd_result="cdin"
   log_event "event=mpd_output result=released reason=cdin_exclusive source=${source_mode}"
 # Enable ONLY the selected DRC output (disables the direct + the other DRC
-# output). "mpc disable all" is not valid in mpc — use "enable only <name>".
-elif mpc_bounded enable only "$mpd_output"; then
+# output), leaving the analyzer FIFO under its listener's control.
+elif mpc_select_audible "$mpd_output"; then
   mpd_result="$mpd_output"
   refresh_qconnect_after_capture
 else

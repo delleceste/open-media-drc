@@ -339,7 +339,7 @@ class DrcPowerStateTest(unittest.TestCase):
         self.assertIn('systemctl start', refresh)
         self.assertNotIn('upmpdcli', refresh)
 
-        output = drc.split('elif mpc_bounded enable only "$mpd_output"; then', 1)[1].split(
+        output = drc.split('elif mpc_select_audible "$mpd_output"; then', 1)[1].split(
             "else", 1)[0]
         self.assertLess(output.index('mpd_result="$mpd_output"'),
                         output.index("refresh_qconnect_after_capture"))
@@ -447,6 +447,26 @@ class DspHeadroomGaugeMarkupTest(unittest.TestCase):
         self.assertLessEqual(float(warn.group(1)), -3.0)
         self.assertLess(float(warn.group(1)), float(bad.group(1)))
         self.assertLessEqual(float(bad.group(1)), 0.0)
+
+
+
+class AudibleOutputSelectionTest(unittest.TestCase):
+    def test_switches_both_directions_without_touching_spectrum(self):
+        script = (ROOT / "drc.sh").read_text()
+        helper = script.split("mpc_select_audible() {", 1)[1].split("\n}", 1)[0]
+        for selected in ("OKTO-DAC", "DRC-native", "DRC-resamp"):
+            with self.subTest(selected=selected):
+                result = subprocess.run(
+                    ["bash", "-c", 'mpc_bounded() { printf "%s %s\\n" "$1" "$2" >&2; }; '
+                     + "mpc_select_audible() {" + helper + "\n}; "
+                     + 'mpc_select_audible "$1"', "test", selected],
+                    capture_output=True, text=True, check=True)
+                commands = result.stderr.splitlines()
+                self.assertEqual(commands[-1], "enable " + selected)
+                self.assertEqual(set(commands[:-1]),
+                                 {"disable " + output for output in
+                                  ("OKTO-DAC", "DRC-native", "DRC-resamp")
+                                  if output != selected})
 
 
 if __name__ == "__main__":
