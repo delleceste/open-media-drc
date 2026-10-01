@@ -49,9 +49,11 @@ P.mount = el => {
         // (upright, previous and next track either side of it)
         h('div', { class: 'now-timebox' },
             h('span', { class: 'now-ctl' },
+                h('button', { class: 'chip now-step', type: 'button', title: 'Seek backward within this track', 'aria-label': 'Seek backward within this track', onclick: () => P.stepSeek(-1) }, '<<'),
                 h('button', { class: 'chip now-skip', type: 'button', title: 'Previous track', 'aria-label': 'Previous track', onclick: () => P.transport('prev') }, K.tIcon('prev')),
                 P.state,
-                h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, K.tIcon('next'))),
+                h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, K.tIcon('next')),
+                h('button', { class: 'chip now-step', type: 'button', title: 'Seek forward within this track', 'aria-label': 'Seek forward within this track', onclick: () => P.stepSeek(1) }, '>>')),
             P.time, h('div', { class: 'now-prog' }, P.prog)), P.t1);
 
     // level area
@@ -128,7 +130,7 @@ P.mount = el => {
     P.wireMeterTap();
     P.wireCoverGesture();
     P.ring = new K.SeekRing(P.artBox, { usable: P.ringUsable, elapsed: () => P.elapsedNow(),
-        duration: () => P.base.duration, seek: s => P.seek(s) });
+        duration: () => P.base.duration, seek: s => P.seek(s), longPress: true });
     new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
@@ -198,7 +200,7 @@ K.setLevelMode = (mode, portrait = K.portrait()) => K.setPref(K.levelKey(portrai
 // The phone turned: the other orientation's choice, and the streams it needs.
 matchMedia('(orientation: portrait)').addEventListener('change', () => {
     if (!P.mounted) return;
-    P.artBox.classList.toggle('seek-zone', K.portrait());
+    P.artBox.classList.add('seek-zone');
     if (P.visible) P.syncDock();
     if (K.levelMode() === P.mode) { P.applyCols(); return; }   // the columns stack upright
     P.applyLayout();
@@ -222,7 +224,7 @@ P.applyLayout = () => {
     P.chainBox.hidden = !off || square;
     P.coverSqBox.hidden = !square;
     P.qzSlot.hidden = !K.state.features.qobuz_search;   // shown upright only (kiosk.css)
-    P.artBox.classList.toggle('seek-zone', K.portrait());   // the seek ring's: no page swipe, no top bar
+    P.artBox.classList.add('seek-zone');   // the seek ring's: no page swipe, no top bar
     P.el.firstChild.classList.toggle('cover-sq', square);
     if (!off) P.vu.setMode(P.mode === 'needles' ? 'needles' : 'bars');
     // needles and bars swap on a tap (a control then, so the tap leaves the top bar alone)
@@ -596,7 +598,8 @@ P.pollTrack = async () => {
     P.observeClipAlbum(t);
     if (P.track && t.ok && P.track.title !== t.title && K.sync) K.sync.onTrackChange();
     P.track = t;
-    P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
+    if (!P.stepSeekSending || !P.ring.taps || P.seekTrackKey(t) !== P.ring.taps.songid)
+        P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
     if (t.state === 'play' && !P.level) K.markSound();     // no level stream to listen to: trust the player
     const title = t.ok ? (t.title || '—') : 'Nothing playing';
     if (P.titleText.textContent !== title) {
@@ -796,8 +799,34 @@ P.wireTransport = () => {
     P.state.addEventListener('contextmenu', e => e.preventDefault());   // long-press menu on touch browsers
 };
 
-// ── seek ring (upright only): widgets/seekring.js ─────────────────────────────
-P.ringUsable = () => K.portrait() && !!P.base && Number.isFinite(P.base.duration) && P.base.duration > 0;
+// ── seek ring: widgets/seekring.js ─────────────────────────────
+P.ringUsable = () => !!P.base && Number.isFinite(P.base.elapsed) && Number.isFinite(P.base.duration) && P.base.duration > 0;
+P.seekTrackKey = (t = P.track) => t ? JSON.stringify([t.from, t.artist, t.album, t.title, t.duration]) : '';
+P.stepSeek = direction => {
+    const songid = P.seekTrackKey();
+    const seconds = P.ring.step(direction, songid);
+    if (seconds === null) return;
+    P.base = { ...P.base, elapsed: seconds, at: performance.now() };
+    P.paintTime();
+    P.stepSeekPending = { seconds, songid };
+    P.flushStepSeek();
+};
+P.flushStepSeek = async () => {
+    if (P.stepSeekSending) return;
+    P.stepSeekSending = true;
+    try {
+        while (P.stepSeekPending) {
+            const target = P.stepSeekPending;
+            P.stepSeekPending = null;
+            if (P.seekTrackKey() !== target.songid) continue;
+            const d = await K.api('/k/api/transport', { json: { action: 'seek', seconds: target.seconds } });
+            if (!d.ok) { P.stepSeekPending = null; K.toast(d.error || 'Seek failed', 'error'); }
+        }
+    } finally {
+        P.stepSeekSending = false;
+        if (P.trackPoll.running) P.trackPoll.now();
+    }
+};
 P.seek = async seconds => {
     seconds = Math.floor(seconds);
     P.base = { ...P.base, elapsed: seconds, at: performance.now() };   // optimistic; the next poll confirms
@@ -819,6 +848,7 @@ P.paintTime = () => {
         P.time.textContent = ''; P.prog.style.width = '0%'; return;
     }
     const e = P.elapsedNow();
+    if (P.ring.shown && !P.ring.el.classList.contains('active')) P.ring.paint(e / b.duration);
     P.time.textContent = `${K.fmtClock(e)} / ${K.fmtClock(b.duration)}`;
     P.prog.style.width = `${(e / b.duration * 100).toFixed(1)}%`;
 };
@@ -875,6 +905,7 @@ P.show = () => {
 };
 
 P.hide = () => {
+    P.ring.destroy();
     P.closeViewMenu();
     if (P.level) { P.level.close(); P.level = null; }
     P.vu.setSuspects({});

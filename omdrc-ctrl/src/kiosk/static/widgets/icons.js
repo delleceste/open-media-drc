@@ -5,6 +5,8 @@
 (() => {
 const NS = 'http://www.w3.org/2000/svg';
 const SHAPES = {
+    filter_down: [['path', { d: 'M3 4 H21 L14 12 V18 L10 21 V12 Z M17 17 L20 20 L23 17' }]],
+    filter_up: [['path', { d: 'M3 4 H21 L14 12 V18 L10 21 V12 Z M17 20 L20 17 L23 20' }]],
     close: [['path', { d: 'M6 6 L18 18 M18 6 L6 18' }]],
     search: [['circle', { cx: 10, cy: 10, r: 6 }], ['path', { d: 'M14.5 14.5 L21 21' }]],
     play: [['path', { d: 'M8 5.5 L18.5 12 L8 18.5 Z' }]],

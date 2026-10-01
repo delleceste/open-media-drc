@@ -106,10 +106,10 @@ P.mount = el => {
     // the last search's results), and, while the box is scrolled out of sight, a hint
     // that it is up there.
     P.viewChips = h('div', { class: 'qz-viewchips' },
-        ['recent', 'Played recently', 'results', 'Results', 'discover', 'Discover', 'awarded', 'Awarded'].reduce((a, x, i, all) => i % 2 ? a : [...a,
+        ['recent', 'Recent', 'results', 'Results', 'discover', 'Discover', 'awarded', 'Awarded'].reduce((a, x, i, all) => i % 2 ? a : [...a,
             h('button', { type: 'button', class: 'chip tog qz-chip', dataset: { view: x }, onclick: () => P.setView(x) }, all[i + 1])], []));
-    P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'The search is at the top',
-        onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, 'Search ⌃');
+    P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'Back to search', 'aria-label': 'Back to search',
+        onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, K.tIcon('search'), h('span', { 'aria-hidden': 'true' }, '⌃'));
     P.viewRow = h('div', { class: 'qz-viewrow' }, P.viewChips, P.searchHint);
     P.preview = h('div', { class: 'qz-preview', hidden: true, role: 'button', tabindex: '-1',
         'aria-label': 'Open the results', 'aria-disabled': 'true',
@@ -664,9 +664,11 @@ P.paintSummary = () => {
     P.fsum.classList.toggle('qz-filtered', active);
     K.clear(P.fsum).append(
         h('button', { type: 'button', class: 'qz-fsum-toggle',
-            'aria-expanded': String(!!P.filtersOpen), onclick: () => P.openFilters(!P.filtersOpen) },
+            'aria-label': 'Filters', 'aria-expanded': String(!!P.filtersOpen), onclick: () => P.openFilters(!P.filtersOpen) },
             h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
-            h('span', { class: 'qz-fsum-mark' }, 'Filters' + (P.filtersOpen ? ' ▴' : ' ▾'))));
+            h('span', { class: 'qz-fsum-mark' }, pref('aiMode', false)
+                ? K.tIcon(P.filtersOpen ? 'filter_up' : 'filter_down')
+                : 'Filters' + (P.filtersOpen ? ' ▴' : ' ▾'))));
     if (active) P.fsum.append(h('button', { type: 'button', class: 'btn qz-filter-clear',
         title: 'Clear filters', 'aria-label': 'Clear filters',
         onclick: () => { P.resetFilters(); P.searchSoon(); } }, K.tIcon('close')));
@@ -719,6 +721,7 @@ P.setAIMode = enabled => {
     P.showSuggestions([]);
     if (focused) P.input.focus();
     if (enabled) P.resetFilters();
+    P.paintSummary();
     P.searchedKey = null; P.paintStale();
 };
 P.toggleAI = async () => {
@@ -1148,7 +1151,7 @@ P.hideRecent = async (c, row) => {
     const d = await K.api('/qobuz/played', { json: { action: 'hide', album_id: c.id } });
     if (!d.ok) { row.classList.remove('going'); K.toast(d.error || 'could not hide it', 'error'); return; }
     row.remove();
-    P.snack(`Hidden from Played recently: “${c.title}”`, [{ label: 'Undo', run: async () => {
+    P.snack(`Hidden from Recent: “${c.title}”`, [{ label: 'Undo', run: async () => {
         const u = await K.api('/qobuz/played', { json: { action: 'show', album_id: c.id } });
         if (!u.ok) K.toast(u.error || 'could not put it back', 'error');
         P.recent();
@@ -1455,7 +1458,7 @@ P.row = (c, where = '') => {
             h('button', { type: 'button', class: 'btn qz-add', disabled: off, title: off ? 'Not available on Qobuz' : 'Add to the queue', onclick: () => P.play(c, 'append') }, '+'),
             // in "Played recently", − only takes it out of that list (P.hideRecent)
             where === 'recent'
-                ? h('button', { type: 'button', class: 'btn qz-low', title: 'Hide from Played recently', onclick: () => P.hideRecent(c, row) }, '−')
+                ? h('button', { type: 'button', class: 'btn qz-low', title: 'Hide from Recent', onclick: () => P.hideRecent(c, row) }, '−')
             : c.lowered
                 ? h('button', { type: 'button', class: 'btn qz-low', title: `Lowered (${c.lowered.kind}: ${c.lowered.name}): restore`, onclick: () => P.restore(c.lowered) }, '↺')
                 : h('button', { type: 'button', class: 'btn qz-low', title: 'Lower: show it last, folded away', onclick: () => P.lower(c, row) }, '−')),
@@ -1551,10 +1554,12 @@ P.makeView = full => {
         onchange: () => P.seekTo(+v.seek.value),
     });
     v.buttons = h('div', { class: 'qz-pbtns' },
+        full ? btn('<<', 'Seek backward within this track', () => P.stepSeek(-1), 'qz-step') : null,
         btn(K.tIcon('prev'), 'Previous track', () => P.transport('prev')),
         v.toggle,
         btn(K.tIcon('stop'), 'Stop', () => P.transport('stop')),
-        btn(K.tIcon('next'), 'Next track', () => P.transport('next')));
+        btn(K.tIcon('next'), 'Next track', () => P.transport('next')),
+        full ? btn('>>', 'Seek forward within this track', () => P.stepSeek(1), 'qz-step') : null);
     v.seekRow = h('div', { class: 'qz-pseek' }, v.elapsed, v.seek, v.total);
     return v;
 };
@@ -1634,12 +1639,13 @@ P.openFull = ({ offset = 0 } = {}) => {
         if (t && t.album && t.album.id) K.albumInfo(t.album.id);
     } }, 'Album details ›');
     P.queueTools.append(v.infoBtn);
-    // no slider here: the cover's seek ring (widgets/seekring.js), shown for a moment
-    // on opening so it is known to be there (paintTime, once the track's length is)
+    // Long-press the cover to seek; a tap or downward pull minimizes the player.
     v.cover.classList.add('seek-zone');
     v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
-        duration: () => P.base.duration, seek: s => P.seekTo(s) });
-    P.ringHint = true;
+        duration: () => P.base.duration, seek: s => P.seekTo(s), longPress: true,
+        onMinimize: () => P.closeFull(),
+        onPull: distance => { if (P.fullEl) P.fullEl.style.transform = `translateY(${distance}px)`; } });
+    P.seekTaps = null;
     if (offset) {
         P.fullEl.style.transform = `translateY(${Math.max(0, offset)}px)`;
         P.fullEl.style.pointerEvents = 'none';
@@ -1658,6 +1664,8 @@ P.openFull = ({ offset = 0 } = {}) => {
 P.closeFull = () => {
     if (!P.fullEl) return;
     P.closeQueueActions();
+    if (P.fullView) P.fullView.ring.destroy();
+    P.seekTaps = null;
     P.fullEl.remove();
     P.fullEl = null;
     P.views = P.views.filter(v => v !== P.fullView);
@@ -1696,6 +1704,34 @@ P.transport = async (action, extra = {}) => {
     P.playerPoll.now();
 };
 
+// First tap exposes the ring. Repeat taps seek; faster repeats increase the step.
+P.stepSeek = direction => {
+    if (!P.fullView || !P.seekable()) return;
+    const ring = P.fullView.ring;
+    const songid = P.now && P.now.songid;
+    const seconds = ring.step(direction, songid);
+    P.seekTaps = ring.taps;
+    if (seconds === null) return;
+    P.base = { ...P.base, elapsed: seconds, at: performance.now() };
+    ring.paint(seconds / P.base.duration);
+    // Serialize requests and keep the newest target during rapid tapping.
+    P.stepSeekPending = { seconds, songid };
+    P.flushStepSeek();
+};
+P.flushStepSeek = async () => {
+    if (P.stepSeekSending) return;
+    P.stepSeekSending = true;
+    try {
+        while (P.stepSeekPending) {
+            const target = P.stepSeekPending;
+            P.stepSeekPending = null;
+            if (!P.now || P.now.songid !== target.songid) continue;
+            const d = await K.api('/k/api/transport', { json: { action: 'seek', seconds: target.seconds } });
+            if (!d.ok) { P.stepSeekPending = null; K.toast(d.error || 'Seek failed', 'error'); }
+        }
+    } finally { P.stepSeekSending = false; P.playerPoll.now(); }
+};
+
 P.seekTo = async seconds => {
     await P.transport('seek', { seconds });
     P.seeking = false;
@@ -1711,7 +1747,8 @@ P.refreshPlayer = async () => {
     const d = await K.api('/k/api/player', { timeout: 6000 });
     P.now = d.ok ? d : null;
     P.playerError = d.ok ? '' : (d.error || 'MPD unavailable');
-    P.base = d.ok ? { elapsed: d.elapsed, duration: d.duration, at: performance.now(), playing: d.state === 'play' } : null;
+    if (!P.stepSeekSending || !d.ok || !P.seekTaps || d.songid !== P.seekTaps.songid)
+        P.base = d.ok ? { elapsed: d.elapsed, duration: d.duration, at: performance.now(), playing: d.state === 'play' } : null;
     const m = d.ok ? d.file.match(PLUGIN_TRACK) : null;
     P.trackId = m ? m[1] : null;
     if (P.trackId && !P.tracks.has(P.trackId)) {
@@ -1768,7 +1805,7 @@ P.elapsedNow = () => {
 };
 
 P.paintTime = () => {
-    if (P.ringHint && P.fullView && P.seekable()) { P.ringHint = false; P.fullView.ring.flash(1000); }
+    if (P.fullView && P.seekable() && P.fullView.ring.shown && !P.fullView.ring.el.classList.contains('active') && !P.seeking) P.fullView.ring.paint(P.elapsedNow() / P.base.duration);
     const b = P.base;
     const known = b && Number.isFinite(b.duration) && b.duration > 0 && Number.isFinite(b.elapsed);
     const e = known ? K.clamp(b.elapsed + (b.playing ? (performance.now() - b.at) / 1000 : 0), 0, b.duration) : 0;

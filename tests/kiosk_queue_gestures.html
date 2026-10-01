@@ -46,7 +46,7 @@
         page.makeView = () => ({ cover: K.h('div'), title: K.h('div'), sub: K.h('div'), seekRow: K.h('div'), buttons: K.h('div') });
         page.paintViews = () => {};
         page.playerPoll = { now() {} };
-        K.SeekRing = class {};
+        K.SeekRing = class { destroy() {} };
         page.openFull();
         assert(page.fullView.infoBtn.parentElement === page.queueTools, 'Album details must share the queue header');
         const queue = Array.from({ length: 30 }, (_, i) => ({ ...song, id: String(i + 1), pos: i + 1 }));

@@ -23,6 +23,23 @@
         const buildPlayer = P.buildPlayer;
         for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
         P.mount(document.getElementById('page'));
+        check(P.viewChips.querySelector('[data-view=recent]').textContent === 'Recent', 'Recent label is compact');
+        check(P.searchHint.querySelector('svg') && !P.searchHint.textContent.includes('Search'), 'Back to search uses a magnifier and chevron');
+        check(P.searchHint.getAttribute('aria-label') === 'Back to search', 'Search icon has an accessible label');
+        P.setAIMode(true);
+        check(P.fsum.querySelector('.qz-fsum-mark svg'), 'AI filters use a funnel icon');
+        check(!P.fsum.classList.contains('qz-filtered'), 'Default AI icon is not active');
+        P.qualityBox.querySelector('button').click();
+        const yellow = getComputedStyle(P.fsum).getPropertyValue('--yellow').trim();
+        const probe = K.h('span', { style: `color: ${yellow}` });
+        P.fsum.append(probe);
+        check(getComputedStyle(P.fsum.querySelector('.qz-fsum-mark')).color === getComputedStyle(probe).color, 'Active AI filter icon is yellow');
+        probe.remove();
+        P.resetFilters();
+        check(!P.fsum.classList.contains('qz-filtered'), 'Cleared AI filters restore icon color');
+        P.setAIMode(false);
+        check(P.fsum.querySelector('.qz-fsum-mark').textContent.includes('Filters'), 'Normal mode retains Filters text');
+
         P.input.value = 'Three Beethoven 5 recordings for sound engineering';
         check(!P.form.textContent.includes('AI settings'), 'Settings removed from search');
         check(!P.form.querySelector('[aria-label="Number of AI recommendations"]'), 'No fixed count selector');
@@ -48,7 +65,7 @@
         check(!P.fsum.textContent.includes('Filters Applied'), 'Reset removes applied label');
         P.qualityBox.querySelector('button').click();
         check(P.fsum.classList.contains('qz-filtered'), 'Active filters marked');
-        check(P.fsum.querySelector('.qz-fsum-mark').textContent.startsWith('Filters'), 'Filters label retained');
+        check(P.fsum.querySelector('.qz-fsum-mark svg'), 'AI filter icon retained');
         check(P.filterSummary() === 'Hi-Res: exclude 16/44.1', 'Summary omits default settings');
         check(P.fsum.querySelector('[aria-label="Clear filters"] svg'), 'Clear filters uses an icon');
         check(P.input.tagName === 'TEXTAREA', 'AI uses multiline input');
@@ -57,7 +74,7 @@
         P.input.dispatchEvent(enter);
         check(!enter.defaultPrevented, 'AI Enter remains a newline');
         P.openFilters(true);
-        check(P.fsum.querySelector('.qz-fsum-mark').textContent.startsWith('Filters'), 'Filters label retained when expanded');
+        check(P.fsum.querySelector('.qz-fsum-mark svg'), 'AI filter icon retained when expanded');
         P.openFilters(false);
         await P.go();
         check(P.results.querySelectorAll('.qz-row').length === 3, 'Three album result cards');

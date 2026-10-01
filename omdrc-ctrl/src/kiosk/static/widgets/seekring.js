@@ -10,6 +10,8 @@
  * out, so the user knows it is there.
  *
  *   new K.SeekRing(box, { usable(), elapsed(), duration(), seek(seconds) })
+ * Optional longPress uses a hold to reveal the ring, onMinimize for a tap or
+ * downward swipe, and onPull(distance) to move the player with the finger.
  * `box` is the cover's element (position: relative); the ring is added to it. */
 (() => {
 const h = K.h;
@@ -41,6 +43,18 @@ K.SeekRing = class {
     hide() { clearTimeout(this.timer); this.el.classList.remove('fading'); this.el.hidden = true; }
     hideLater(ms) { clearTimeout(this.timer); this.timer = setTimeout(() => this.hide(), ms); }
 
+    // Shared tap rhythm for both Now playing views. A new sequence only reveals the ring.
+    step(direction, songid) {
+        if (!this.o.usable()) return null;
+        const now = performance.now(), previous = this.taps;
+        const repeat = previous && previous.direction === direction && previous.songid === songid && now - previous.at < RING_IDLE_MS;
+        const interval = previous ? now - previous.at : 0;
+        const amount = repeat && previous.count > 1 ? 5 * Math.max(1, Math.min(8, 600 / Math.max(75, interval))) : 5;
+        this.taps = { direction, songid, at: now, count: repeat ? previous.count + 1 : 1 };
+        this.show(); this.hideLater(RING_IDLE_MS);
+        return repeat ? K.clamp(this.o.elapsed() + direction * amount, 0, Math.max(0, this.o.duration() - 1)) : null;
+    }
+
     // shown for `ms`, then faded out (kiosk.css) -- untouched meanwhile
     flash(ms = 1000) {
         if (!this.o.usable()) return;
@@ -61,8 +75,14 @@ K.SeekRing = class {
         this.time.textContent = d > 0 ? `${K.fmtClock(f * d)} / ${K.fmtClock(d)}` : '';
     }
 
+    destroy() {
+        clearTimeout(this.holdTimer); this.hide(); this.taps = null;
+        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
+    }
+
     wire() {
         const box = this.box;
+        if (this.o.longPress) box.addEventListener('contextmenu', e => e.preventDefault());
         let g = null;
         // is the finger on the ring (the circle's radius, give or take RING_GRAB)?
         const onRing = e => {
@@ -76,6 +96,22 @@ K.SeekRing = class {
             return (a / (2 * Math.PI) + 1) % 1;
         };
         box.addEventListener('pointerdown', e => {
+            if (e.button !== 0) return;
+            if (this.o.longPress) {
+                try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}
+            }
+            if (this.o.longPress && (!this.shown || this.el.classList.contains('fading') || !onRing(e))) {
+                e.preventDefault();
+                g = { id: e.pointerId, x: e.clientX, y: e.clientY, cover: true, moved: false, held: false, dy: 0 };
+                const gesture = g;
+                try { box.setPointerCapture(e.pointerId); } catch {}
+                this.holdTimer = setTimeout(() => {
+                    if (g !== gesture || g.moved) return;
+                    g.held = true;
+                    if (this.o.usable()) { this.show(); this.hideLater(RING_IDLE_MS); }
+                }, 550);
+                return;
+            }
             if (!this.o.usable()) return;
             e.preventDefault();
             try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}   // not pull-to-reload
@@ -88,6 +124,7 @@ K.SeekRing = class {
             if (!onRing(e)) { this.hide(); return; }   // off the ring: put it away
             // step two: a slide that starts on the ring
             g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
+            if (this.o.longPress) this.holdTimer = setTimeout(() => { if (g && !g.moved) g.held = true; }, 550);
             this.el.classList.add('active');           // drawn thick only while the finger is on it
             try { box.setPointerCapture(e.pointerId); } catch {}
             clearTimeout(this.timer);
@@ -97,6 +134,12 @@ K.SeekRing = class {
             if (!g || e.pointerId !== g.id) return;
             if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) < 8) return;
             g.moved = true;
+            if (g.cover) {
+                clearTimeout(this.holdTimer);
+                g.dy = Math.max(0, e.clientY - g.y);
+                if (!g.held && this.o.onPull) this.o.onPull(g.dy);
+                return;
+            }
             // the nearest of a, a - 1, a + 1 to where the knob is: no jump across 12 o'clock
             const a = fracAt(e);
             const near = [a - 1, a, a + 1].reduce((b, c) => Math.abs(c - g.f) < Math.abs(b - g.f) ? c : b);
@@ -107,7 +150,14 @@ K.SeekRing = class {
             try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
             if (!g || e.pointerId !== g.id) return;
             const d = g; g = null;
+            clearTimeout(this.holdTimer);
             this.el.classList.remove('active');
+            if (d.cover) {
+                if (e.type === 'pointerup' && !d.held && (!d.moved || d.dy > 40)) this.o.onMinimize && this.o.onMinimize();
+                else if (this.o.onPull) this.o.onPull(0);
+                return;
+            }
+            if (this.o.longPress && !d.moved && !d.held && e.type === 'pointerup') { this.o.onMinimize && this.o.onMinimize(); return; }
             if (d.moved && e.type === 'pointerup') this.o.seek(d.f * this.o.duration());
             this.hideLater(d.moved ? 1200 : RING_IDLE_MS);
         };

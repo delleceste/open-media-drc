@@ -1,0 +1,121 @@
+<!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+<div id="overlay-root"></div><pre id="result">RUNNING</pre>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/seekring.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/now.js"></script>
+<script>
+(async () => {
+    const check = (ok, message) => { if (!ok) throw Error(message); };
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    let clock = 10000;
+    Object.defineProperty(performance, 'now', { value: () => clock });
+    const P = K.pages.find(p => p.id === 'qobuz');
+    const calls = [];
+    K.api = async (url, options) => { calls.push(options.json); return { ok: true }; };
+    P.usable = () => true;
+    P.playerPoll = { now() {} };
+    P.now = { songid: '7', state: 'pause', title: 'Track' };
+    P.base = { elapsed: 50, duration: 120, playing: false, at: clock };
+    const pointer = (type, dx = 0, dy = 0) => {
+        const cover = P.fullView.cover, r = cover.getBoundingClientRect();
+        cover.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0,
+            pointerId: 1, pointerType: 'touch', clientX: r.left + r.width / 2 + dx, clientY: r.top + r.height / 2 + dy }));
+    };
+    try {
+        P.openFull();
+        check(!P.fullView.ring.shown, 'Opening must not automatically show the seek ring');
+        const buttons = [...P.fullView.buttons.children];
+        check(buttons[0].textContent === '<<' && buttons.at(-1).textContent === '>>', 'Seek controls must surround the track controls');
+        check(P.fullView.buttons.scrollWidth <= P.fullView.buttons.clientWidth + 1, 'Transport controls must fit the screen');
+        pointer('pointerdown'); pointer('pointerup');
+        check(!P.fullEl, 'Short cover tap must minimize');
+        P.openFull(); pointer('pointerdown'); await sleep(600);
+        check(P.fullView.ring.shown, 'Long cover press must show the ring');
+        pointer('pointerup'); check(P.fullEl, 'Long press must keep the player open');
+        P.closeFull(); P.openFull();
+        pointer('pointerdown'); pointer('pointermove', 0, 80);
+        check(P.fullEl.style.transform.includes('80px'), 'Pull must move the view down with the finger');
+        pointer('pointerup', 0, 80); check(!P.fullEl, 'Downward swipe must minimize');
+        P.openFull(); pointer('pointerdown'); pointer('pointercancel'); await sleep(600);
+        check(!P.fullView.ring.shown && P.fullEl, 'Canceled touch must not open ring or minimize');
+        const forward = P.fullView.buttons.lastChild;
+        forward.click(); check(!calls.length && P.fullView.ring.shown, 'First seek tap must only show the ring');
+        clock += 200; forward.click(); await sleep(0);
+        check(calls.at(-1).seconds === 55, 'First repeat must advance five seconds');
+        clock += 150; forward.click(); await sleep(0);
+        check(calls.at(-1).seconds === 75, 'Faster repetition must increase the seek step');
+        clock += 1000; forward.click(); await sleep(0);
+        check(calls.at(-1).seconds === 80, 'Slower repetition must return to five seconds');
+        for (let i = 0; i < 8; i++) { clock += 100; forward.click(); await sleep(0); }
+        check(calls.at(-1).seconds === 119, 'Repeated forward seeking must stay before track end');
+        const back = P.fullView.buttons.firstChild;
+        const count = calls.length; back.click(); check(calls.length === count, 'Changing direction must first show the ring');
+        for (let i = 0; i < 10; i++) { clock += 100; back.click(); await sleep(0); }
+        check(calls.at(-1).seconds === 0, 'Backward seeking must stop at track start');
+        check(calls.every(c => c.action === 'seek' && c.seconds >= 0 && c.seconds < 120), 'Seeking must never request previous or next track');
+        clock += 4001; const lastCount = calls.length; back.click();
+        check(calls.length === lastCount, 'A new tap sequence must only show the ring');
+        // Ring dragging still seeks after a long press.
+        P.fullView.ring.hide(); pointer('pointerdown'); await sleep(600); pointer('pointerup');
+        pointer('pointerdown', 0, -P.fullView.cover.getBoundingClientRect().width * .44);
+        pointer('pointermove', P.fullView.cover.getBoundingClientRect().width * .44, 0);
+        pointer('pointerup', P.fullView.cover.getBoundingClientRect().width * .44, 0);
+        await sleep(0);
+        check(calls.at(-1).seconds === 30, 'Dragging the revealed ring must still seek');
+        let release;
+        K.api = async (url, options) => { calls.push(options.json); return new Promise(resolve => { release = resolve; }); };
+        P.seekTaps = null; P.base.elapsed = 50; forward.click();
+        clock += 200; forward.click();
+        const inFlight = calls.length;
+        clock += 150; forward.click(); clock += 150; forward.click();
+        check(calls.length === inFlight, 'Rapid seek requests must be serialized');
+        release({ ok: true }); await sleep(0);
+        check(calls.at(-1).seconds === 95 && calls.length === inFlight + 1, 'Pending repeats must coalesce to the newest target');
+        release({ ok: true }); await sleep(0);
+        P.now.songid = '8'; const beforeTrack = calls.length;
+        clock += 100; forward.click();
+        check(calls.length === beforeTrack, 'Track change must reset repeated seeking');
+        P.closeFull();
+        // Mount the main Now page with its unrelated meters stubbed out.
+        K.drGauge = () => {};
+        K.DrBar = K.Balance = K.Spectrum = class {};
+        K.VuMeter = class { setClips() {} };
+        K.streams = { onLag() {} };
+        K.drcState = { onChange() {} };
+        const N = K.pages.find(p => p.id === 'now');
+        N.drModeBox = () => K.h('div');
+        const host = K.h('div', { style: 'width:100%;height:100dvh' }); document.body.append(host);
+        N.mount(host);
+        N.base = { elapsed: 50, duration: 120, playing: false, at: clock };
+        N.track = { from: 'renderer', artist: 'Artist', title: 'Track', album: 'Album', duration: 120 };
+        N.paintState('pause'); N.paintTime();
+        check(host.querySelector('.now-timebox').scrollWidth <= host.querySelector('.now-timebox').clientWidth + 1, 'Main Now controls and elapsed time must fit');
+        const mainButtons = host.querySelector('.now-ctl');
+        check(mainButtons.firstChild.textContent === '<<' && mainButtons.lastChild.textContent === '>>', 'Main Now controls include rewind and forward');
+        const mainForward = mainButtons.lastChild;
+        K.api = async (url, options) => { calls.push(options.json); return { ok: true }; };
+        const beforeMain = calls.length; mainForward.click();
+        check(N.ring.shown && calls.length === beforeMain, 'Main Now first tap shows ring without seeking');
+        clock += 200; mainForward.click(); await sleep(0);
+        check(calls.at(-1).seconds === 55, 'Main Now first repeat seeks five seconds');
+        clock += 150; mainForward.click(); await sleep(0);
+        check(calls.at(-1).seconds === 75, 'Main Now uses the same acceleration');
+        N.ring.hide();
+        const coverPointer = type => {
+            const r = N.artBox.getBoundingClientRect();
+            N.artBox.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0,
+                pointerId: 2, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+        };
+        coverPointer('pointerdown'); coverPointer('pointerup');
+        check(!N.ring.shown, 'Main Now short cover touch must not reveal the ring');
+        coverPointer('pointerdown'); await sleep(600); coverPointer('pointerup');
+        check(N.ring.shown, 'Main Now long cover touch reveals the ring');
+        N.ring.destroy(); host.remove();
+        document.getElementById('result').textContent = 'PASS';
+    } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.message; }
+})();
+</script>
