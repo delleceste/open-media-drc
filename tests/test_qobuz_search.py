@@ -77,7 +77,9 @@ class SingleTrackRankingTest(unittest.TestCase):
         items = [album(str(i), "Debussy Preludes", "Decca", date=date)
                  for i, date in enumerate(["2026-01-01", "2024-01-01", "2025-01-01", "2023-01-01"])]
         items[0]["tracks_count"] = 1
+        items[0]["duration"] = 300
         items[2]["tracks_count"] = 1
+        items[2]["duration"] = 599
         items[3].pop("tracks_count")  # Unknown counts must not be penalized.
         for sort, expected in [("relevance", ["1", "3", "0", "2"]),
                                ("date", ["1", "3", "0", "2"])]:
@@ -93,9 +95,21 @@ class SingleTrackRankingTest(unittest.TestCase):
                 self.assertTrue(seen)
                 self.assertEqual([c["id"] for c in seen[-1]["results"]], expected)
 
+    def test_long_singles_two_track_albums_and_unknown_durations_keep_rank(self):
+        durations = [300, 600, 1500, None, 0, "unknown", 1200]
+        items = [album(str(i), "Debussy", "Decca") for i in range(len(durations))]
+        for item, duration in zip(items, durations):
+            item.update(tracks_count=1, duration=duration)
+        items[-1]["tracks_count"] = 2
+        cat, _ = catalog({"Debussy": items})
+        answer = cat.search("Debussy", enrich=False)
+        self.assertEqual([c["id"] for c in answer["results"]],
+                         ["1", "2", "3", "4", "5", "6", "0"])
+
     def test_enrichment_prioritizes_albums_over_single_tracks(self):
         single = album("single", "Feux d'artifice", "Decca")
         single["tracks_count"] = 1
+        single["duration"] = 300
         full = album("full", "Preludes", "Decca")
         cat, calls = catalog({"Debussy": [single, full]}, {"full": full}, max_enrich=1)
         answer = cat.search("Debussy")

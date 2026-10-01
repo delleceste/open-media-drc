@@ -218,6 +218,13 @@ def album_card(item: dict) -> dict:
     }
 
 
+def is_short_single(card: dict) -> bool:
+    """Lower only known single-track releases shorter than ten minutes."""
+    duration = card.get("duration")
+    return (card.get("tracks") == 1 and isinstance(duration, (int, float))
+            and 0 < duration < 600)
+
+
 def is_cd_quality(card: dict) -> bool:
     """Qobuz reports sampling rates in kHz; tolerate Hz in imported cards."""
     try:
@@ -1108,7 +1115,7 @@ class QobuzCatalog:
             f"{text} {g.name}".strip() for g in groups]
         scans = [{"query": q, "items": [], "total": None, "done": False, "error": ""}
                  for q in queries]
-        # With no filter, read Qobuz's list a page at a time. Single-track
+        # With no filter, read Qobuz's list a page at a time. Short single-track
         # releases are ranked after other albums within the fetched results.
         # "Load more" reads the next page, like scrolling
         # in Qobuz's app).  The filters then work on that list, read deeper
@@ -1139,7 +1146,7 @@ class QobuzCatalog:
             partial, _, _, considered = self._filter(scans, groups, lo, hi, awarded_ids, exclude_cd)
             order(partial)
             self._mark_lowered(partial)
-            partial.sort(key=lambda c: ("lowered" in c, c.get("tracks") == 1))
+            partial.sort(key=lambda c: ("lowered" in c, is_short_single(c)))
             progress({"partial": True, "results": partial, "count": len(partial),
                       "considered": considered, "sort": sort})
 
@@ -1160,7 +1167,7 @@ class QobuzCatalog:
         # the performers are fetched (none are fetched for them) and again
         # after, when a lowered conductor may show up among them.
         self._mark_lowered(results)
-        results.sort(key=lambda c: ("lowered" in c, c.get("tracks") == 1))
+        results.sort(key=lambda c: ("lowered" in c, is_short_single(c)))
         enriched = 0
         if enrich and results:
             head = [c for c in results if "lowered" not in c][:self.settings.max_enrich]
@@ -1174,7 +1181,7 @@ class QobuzCatalog:
                     enriched += 1
         order(results)
         self._mark_lowered(results)
-        results.sort(key=lambda c: ("lowered" in c, c.get("tracks") == 1))  # stable
+        results.sort(key=lambda c: ("lowered" in c, is_short_single(c)))  # stable
 
         return {
             "query": text,
