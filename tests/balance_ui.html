@@ -21,6 +21,8 @@ try {
     const drTrack = gauge.querySelector('.drg-track');
     if (!portrait) {
         check(parseFloat(getComputedStyle(drTrack).height) >= 10, 'Landscape DR bar retains thickness');
+        const label = gauge.parentElement.firstElementChild;
+        check(gauge.getBoundingClientRect().top >= label.getBoundingClientRect().bottom, 'Landscape DR bar sits below its label');
         check(parseFloat(getComputedStyle(marker).width) >= 4 && parseFloat(getComputedStyle(marker).height) >= 14, 'Landscape DR retains thick needle');
     }
     if (portrait) check(getComputedStyle(marker).borderTopWidth === '0px' && getComputedStyle(marker).borderBottomWidth === '4px' && getComputedStyle(marker).borderBottomColor === 'rgb(255, 255, 255)', 'DR triangle indicator');

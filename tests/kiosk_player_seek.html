@@ -99,7 +99,7 @@
         const mainForward = mainButtons.lastChild;
         K.api = async (url, options) => { calls.push(options.json); return { ok: true }; };
         const beforeMain = calls.length; mainForward.click();
-        check(N.ring.shown && calls.length === beforeMain, 'Main Now first tap shows ring without seeking');
+        check((K.portrait() ? N.ring.shown : !N.seekSlider.hidden) && calls.length === beforeMain, 'Main Now first tap reveals seeking without moving playback');
         clock += 200; mainForward.click(); await sleep(0);
         check(calls.at(-1).seconds === 55, 'Main Now first repeat seeks five seconds');
         clock += 150; mainForward.click(); await sleep(0);
@@ -114,6 +114,27 @@
         check(!N.ring.shown, 'Main Now short cover touch must not reveal the ring');
         coverPointer('pointerdown'); await sleep(600); coverPointer('pointerup');
         check(N.ring.shown, 'Main Now long cover touch reveals the ring');
+        if (!K.portrait()) {
+            const progress = N.progBox;
+            check(parseFloat(getComputedStyle(progress).height) >= 30, 'Landscape progress bar expands for touch seeking');
+            N.seekSlider.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+            N.seekSlider.value = 35; N.seekSlider.dispatchEvent(new Event('input', { bubbles: true }));
+            N.paintTime();
+            check(+N.seekSlider.value === 35, 'Polling must preserve the dragged slider position');
+            N.seekSlider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+            check(+N.seekSlider.value === 35, 'Pointer release must preserve the selected seek value');
+            N.seekSlider.dispatchEvent(new Event('change', { bubbles: true })); await sleep(0);
+            check(calls.at(-1).action === 'seek' && calls.at(-1).seconds === 35, 'Releasing the slider seeks within the track');
+            N.seekSlider.value = 45; N.seekSlider.dispatchEvent(new Event('input', { bubbles: true }));
+            await sleep(4100);
+            check(!N.seekSlider.hidden, 'Slider must stay expanded during a long drag');
+            N.seekSlider.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
+            await sleep(4100);
+            check(N.seekSlider.hidden && !progress.classList.contains('seeking'), 'Inactive slider returns to the slim progress bar');
+            mainForward.click();
+            check(!N.seekSlider.hidden, 'Seek control reopens the slider');
+            N.hideSeekSlider();
+        }
         N.ring.destroy(); host.remove();
         document.getElementById('result').textContent = 'PASS';
     } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.message; }

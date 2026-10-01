@@ -237,6 +237,14 @@ button.award { font: inherit; font-size: .8rem; font-weight: 650; cursor: pointe
 .now-timebox { display: grid; grid-template-columns: auto auto; justify-content: end; align-items: center; column-gap: .6rem; row-gap: .3rem; width: auto; min-width: 13rem; flex: 0 0 auto; }
 .now-time { font: .8rem ui-monospace, monospace; color: var(--muted); white-space: nowrap; }
 .now-prog { grid-column: 1 / -1; height: .3rem; background: var(--border); border-radius: .2rem; overflow: hidden; } .now-prog i { display: block; height: 100%; width: 0; background: var(--accent); }
+@media (orientation: landscape) {
+    .now-dr .dr-head { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; }
+    .now-dr .now-drthermo { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-top: .35rem; margin-bottom: .15rem; }
+    .now-prog.seeking { height: 2rem; background: none; overflow: visible; }
+    .now-prog.seeking > i { display: none; }
+    .now-seek-slider { display: block; width: 100%; height: 2rem; margin: 0; cursor: ew-resize; touch-action: none; }
+}
+
 .now-main { display: grid; grid-template-columns: 1.55fr 1fr; gap: .4rem; min-height: 0; }
 .now-main > * { min-width: 0; }
 .vu-needles .vu-needle, .vu-barmode .vu-bars { min-width: 0; }

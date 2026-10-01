@@ -41,6 +41,26 @@ P.mount = el => {
     P.state = h('button', { class: 'chip state', type: 'button', title: 'Tap: play / pause · hold: stop' });
     P.time = h('div', { class: 'now-time' });
     P.prog = h('i');
+    P.seekSlider = h('input', { type: 'range', class: 'now-seek-slider', min: 0, max: 1, step: 1, value: 0,
+        hidden: true, 'aria-label': 'Seek within the current track',
+        onpointerdown: () => { P.seekDragging = true; clearTimeout(P.seekSliderTimer); },
+        oninput: () => {
+            P.seekDragging = true; clearTimeout(P.seekSliderTimer);
+            P.time.textContent = `${K.fmtClock(+P.seekSlider.value)} / ${K.fmtClock(P.base.duration)}`;
+        },
+        onchange: () => {
+            P.seekDragging = false;
+            if (P.seekSliderTrack === P.seekTrackKey()) P.queueSeek(+P.seekSlider.value);
+            P.showSeekSlider();
+        },
+        onpointerup: () => {
+            P.seekDragging = false;
+            clearTimeout(P.seekSliderTimer);
+            P.seekSliderTimer = setTimeout(P.hideSeekSlider, 4000);
+        },
+        onpointercancel: () => { P.seekDragging = false; P.paintTime(); P.showSeekSlider(); },
+    });
+    P.progBox = h('div', { class: 'now-prog' }, P.prog, P.seekSlider);
     // a meter-timing calibration in progress (automatic ones included): a blinking blue light
     P.calLed = h('i', { class: 'cal-led', hidden: true, title: 'Calibrating the meter timing' });
     const trackBox = h('div', { class: 'now-track' }, P.artBox,
@@ -54,7 +74,7 @@ P.mount = el => {
                 P.state,
                 h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, K.tIcon('next')),
                 h('button', { class: 'chip now-step', type: 'button', title: 'Seek forward within this track', 'aria-label': 'Seek forward within this track', onclick: () => P.stepSeek(1) }, '>>')),
-            P.time, h('div', { class: 'now-prog' }, P.prog)), P.t1);
+            P.time, P.progBox), P.t1);
 
     // level area
     P.meterHost = h('div', { class: 'lvl-meter' });
@@ -201,6 +221,7 @@ K.setLevelMode = (mode, portrait = K.portrait()) => K.setPref(K.levelKey(portrai
 matchMedia('(orientation: portrait)').addEventListener('change', () => {
     if (!P.mounted) return;
     P.artBox.classList.add('seek-zone');
+    if (K.portrait()) P.hideSeekSlider();
     if (P.visible) P.syncDock();
     if (K.levelMode() === P.mode) { P.applyCols(); return; }   // the columns stack upright
     P.applyLayout();
@@ -598,6 +619,7 @@ P.pollTrack = async () => {
     P.observeClipAlbum(t);
     if (P.track && t.ok && P.track.title !== t.title && K.sync) K.sync.onTrackChange();
     P.track = t;
+    if (!P.seekSlider.hidden && P.seekSliderTrack !== P.seekTrackKey()) P.hideSeekSlider();
     if (!P.stepSeekSending || !P.ring.taps || P.seekTrackKey(t) !== P.ring.taps.songid)
         P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
     if (t.state === 'play' && !P.level) K.markSound();     // no level stream to listen to: trust the player
@@ -805,11 +827,32 @@ P.seekTrackKey = (t = P.track) => t ? JSON.stringify([t.from, t.artist, t.album,
 P.stepSeek = direction => {
     const songid = P.seekTrackKey();
     const seconds = P.ring.step(direction, songid);
+    if (!K.portrait()) { P.ring.hide(); P.showSeekSlider(); }
     if (seconds === null) return;
+    P.queueSeek(seconds);
+};
+P.queueSeek = seconds => {
+    const songid = P.seekTrackKey();
+    seconds = K.clamp(seconds, 0, Math.max(0, P.base.duration - 1));
     P.base = { ...P.base, elapsed: seconds, at: performance.now() };
     P.paintTime();
     P.stepSeekPending = { seconds, songid };
     P.flushStepSeek();
+};
+P.showSeekSlider = () => {
+    if (K.portrait() || !P.ringUsable()) return;
+    P.seekSliderTrack = P.seekTrackKey();
+    P.seekSlider.hidden = false;
+    P.progBox.classList.add('seeking');
+    P.paintTime();
+    clearTimeout(P.seekSliderTimer);
+    if (!P.seekDragging) P.seekSliderTimer = setTimeout(P.hideSeekSlider, 4000);
+};
+P.hideSeekSlider = () => {
+    clearTimeout(P.seekSliderTimer);
+    P.seekDragging = false;
+    P.seekSlider.hidden = true;
+    P.progBox.classList.remove('seeking');
 };
 P.flushStepSeek = async () => {
     if (P.stepSeekSending) return;
@@ -845,11 +888,16 @@ P.shortFormat = line => {
 P.paintTime = () => {
     const b = P.base;
     if (!b || !Number.isFinite(b.elapsed) || !Number.isFinite(b.duration) || b.duration <= 0) {
+        P.hideSeekSlider();
         P.time.textContent = ''; P.prog.style.width = '0%'; return;
     }
     const e = P.elapsedNow();
     if (P.ring.shown && !P.ring.el.classList.contains('active')) P.ring.paint(e / b.duration);
-    P.time.textContent = `${K.fmtClock(e)} / ${K.fmtClock(b.duration)}`;
+    if (!P.seekDragging) {
+        P.seekSlider.max = Math.max(0, b.duration - 1);
+        P.seekSlider.value = e;
+        P.time.textContent = `${K.fmtClock(e)} / ${K.fmtClock(b.duration)}`;
+    }
     P.prog.style.width = `${(e / b.duration * 100).toFixed(1)}%`;
 };
 P.elapsedNow = () => {
@@ -905,6 +953,7 @@ P.show = () => {
 };
 
 P.hide = () => {
+    P.hideSeekSlider();
     P.ring.destroy();
     P.closeViewMenu();
     if (P.level) { P.level.close(); P.level = null; }
