@@ -78,3 +78,23 @@ const marginContext = T.context();
 settings({ drc: true, rate: 192000, filters: ['A'] }, 40, 170);
 assert.notEqual(T.context(), marginContext);
 console.log('Audio configuration timing profiles: passed');
+// A rate fallback stays within the same network, audio source and filter family.
+const config = (rate, design = '.v1.FDW6', source = 'mpd') => ({ drc: true, rate,
+    config: '/configs/120.green/brutefir-' + rate + design + '.conf', source,
+    filters: ['L-' + rate + '.raw'], partition: 4096 });
+settings(config(192000)); T.setDelayMs(210);
+settings(config(96000));
+assert.equal(T.delayMs(), 210);
+assert.equal(T.details().saved, null, 'borrowing must not create a dedicated calibration');
+assert.equal(T.details().fallback.rate, 192000);
+assert.match(T.status(), /Provisional.*192/);
+T.setDelayMs(180);
+assert.equal(T.details().fallback, null);
+settings(config(48000)); assert.equal(T.delayMs(), 180, 'prefer the nearest calibrated rate');
+settings(config(48000, '.v2.FDW8')); assert.equal(T.delayMs(), 0, 'never borrow another filter family');
+settings(config(48000, '.v1.FDW6', 'cdin')); assert.equal(T.delayMs(), 0, 'never borrow another source');
+network = { key: 'wifi:Studio', label: 'Studio' };
+settings(config(48000)); assert.equal(T.delayMs(), 0, 'never borrow another network');
+network = { key: 'wifi:HotSpot1', label: 'HotSpot1' };
+settings({ drc: false, source: 'mpd' }); assert.equal(T.details().fallback, null, 'DRC off has no rate fallback');
+console.log('Provisional sample-rate fallback: passed');

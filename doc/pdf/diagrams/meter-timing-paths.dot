@@ -1,0 +1,16 @@
+digraph meter_paths {
+  rankdir=LR; graph [fontname="Helvetica", bgcolor="white"];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, fillcolor="#eef4fb"];
+  edge [fontname="Helvetica", fontsize=10];
+  tap [label="Audio tap\ncopy taken", fillcolor="#f3e6f5"];
+  filter [label="DRC ON: FIR + partition\nDRC OFF: direct output"];
+  dac [label="DAC / USB / amplifier\nreported + unreported delays"];
+  sound [label="Sound heard", fillcolor="#dff0df"];
+  hold [label="Controller hold-back\nmeasured delay minus margin"];
+  network [label="Network transport\nvariable latency"];
+  wait [label="Device's calibrated wait\nselected profile", fillcolor="#fff3cf"];
+  draw [label="Meters drawn", fillcolor="#dff0df"];
+  tap -> filter -> dac -> sound [color="#238636"];
+  tap -> hold -> network -> wait -> draw [color="#0969da"];
+  sound -> draw [style=dashed, dir=none, label="same event, same moment", constraint=false];
+}

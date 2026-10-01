@@ -1,0 +1,16 @@
+digraph meter_example {
+  rankdir=LR; graph [fontname="Helvetica", bgcolor="white"];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, fillcolor="#eef4fb"];
+  edge [fontname="Helvetica", fontsize=10];
+  tap [label="0 ms\nAudio tap", fillcolor="#f3e6f5"];
+  sent [label="300 ms\nFrame sent"];
+  arrives [label="380 ms\nFrame arrives"];
+  drawn [label="600 ms\nFrame drawn", fillcolor="#dff0df"];
+  heard [label="600 ms\nSound heard", fillcolor="#dff0df"];
+  tap -> sent [label="controller holds 300 ms"];
+  sent -> arrives [label="network 80 ms"];
+  arrives -> drawn [label="screen waits 220 ms", color="#b08800"];
+  tap -> heard [label="audio path: 600 ms", color="#238636"];
+  {rank=same; heard; drawn;}
+  heard -> drawn [dir=none, style=dashed, label="aligned", constraint=false];
+}

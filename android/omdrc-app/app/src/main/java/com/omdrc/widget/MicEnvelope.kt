@@ -64,13 +64,16 @@ class MicEnvelope(private val durationMs: Int, private val stepMs: Int) {
         val steps = durationMs / stepMs
         val db = FloatArray(steps)
         val buf = ShortArray(step)
-        var t0Wall = Double.NaN
+        val anchors = mutableListOf<Double>()
+        var fallbackWall = Double.NaN
+        // Keep one wall/monotonic mapping for the entire recording.
+        val wallMinusMonoMs = System.currentTimeMillis().toDouble() - System.nanoTime() / 1e6
+        var lastTimestampFrame = -1L
         val ts = AudioTimestamp()
         val deadline = System.nanoTime() + (durationMs + 3000L) * 1_000_000L
         try {
             rec.startRecording()
             check(rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "the microphone is in use by another app" }
-            var framesRead = 0L
             for (i in 0 until steps) {
                 var got = 0
                 while (got < step) {
@@ -84,19 +87,16 @@ class MicEnvelope(private val durationMs: Int, private val stepMs: Int) {
                 var peak = 0
                 for (s in buf) peak = max(peak, abs(s.toInt()))
                 db[i] = if (peak == 0) -120f else (20.0 * log10(peak / 32768.0)).toFloat()
-                // Anchor the capture time of sample 0 once a hardware timestamp exists.
-                if (t0Wall.isNaN() && rec.getTimestamp(ts, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS) {
-                    val nowWall = System.currentTimeMillis().toDouble()
-                    val nowMono = System.nanoTime()
-                    val tsWall = nowWall - (nowMono - ts.nanoTime) / 1e6
-                    t0Wall = tsWall - ts.framePosition * 1000.0 / rate
+                // Hardware timestamps often appear only after recording warms up.
+                // Continue asking after the first read, and use a median of independent
+                // anchors so a single startup timestamp cannot bias every calibration.
+                if (i % 10 == 0 && rec.getTimestamp(ts, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS &&
+                    ts.framePosition > lastTimestampFrame && ts.nanoTime > 0) {
+                    anchors.add(wallMinusMonoMs + ts.nanoTime / 1e6 - ts.framePosition * 1000.0 / rate)
+                    lastTimestampFrame = ts.framePosition
                 }
-                framesRead += step
-                if (i == 0 && t0Wall.isNaN()) {
-                    // no timestamp yet: assume the first step was just captured
-                    t0Wall = System.currentTimeMillis() - stepMs.toDouble()
-                    sourceName += "+readtime"
-                }
+                if (i == 0) fallbackWall = System.currentTimeMillis() - stepMs.toDouble()
+
             }
         } finally {
             this.rec = null
@@ -104,6 +104,17 @@ class MicEnvelope(private val durationMs: Int, private val stepMs: Int) {
             try { agc?.release() } catch (_: Exception) {}
             try { ns?.release() } catch (_: Exception) {}
             try { rec.release() } catch (_: Exception) {}
+        }
+        val sorted = anchors.sorted()
+        val t0Wall = if (sorted.isNotEmpty()) {
+            val p10 = sorted[sorted.size / 10]
+            val p90 = sorted[(sorted.size * 9 / 10).coerceAtMost(sorted.lastIndex)]
+            check(p90 - p10 <= 20.0) { "microphone capture timing drifted during recording; try again" }
+            sourceName += "+capturetime"
+            sorted[sorted.size / 2]
+        } else {
+            sourceName += "+readtime"
+            fallbackWall
         }
         return Result(t0Wall, stepMs, db, sourceName)
     }

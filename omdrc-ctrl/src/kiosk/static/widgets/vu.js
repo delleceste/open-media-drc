@@ -83,6 +83,13 @@ K.VuMeter = class VuMeter {
         this.render();
     }
 
+    /** Missing calibration replaces PK/RMS with the page's red warning + chip. */
+    setTimingMissing(on) {
+        if (!!on === !!this.timingMissing) return;
+        this.timingMissing = !!on;
+        this.render();
+    }
+
     /** "LAG!" where CLIP would be: level frames were dropped by the network. */
     setLag(on) {
         on = !!on;
@@ -407,7 +414,7 @@ K.VuMeter = class VuMeter {
             ctx.font = `700 ${10.5 * dpr}px system-ui, sans-serif`;
             ctx.fillStyle = '#58a6ff';
         }
-        ctx.fillText(this.calibrating ? 'CALIBRATING…' : `PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 11 * dpr, 11 * dpr);
+        ctx.fillText(this.calibrating ? 'CALIBRATING…' : this.timingMissing ? '' : `PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 11 * dpr, 11 * dpr);
         halo(false);
         const ch = label === 'L' ? 'left' : 'right';
         const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : this.lag ? 'lag' : '';

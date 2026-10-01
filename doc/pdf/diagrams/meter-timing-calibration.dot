@@ -1,0 +1,16 @@
+digraph meter_calibration {
+  rankdir=TB; graph [fontname="Helvetica", bgcolor="white"];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, fillcolor="#eef4fb"];
+  edge [fontname="Helvetica", fontsize=10];
+  clicks [label="14 irregular clicks through the normal audio path\n14 s microphone envelope; level stream"];
+  meter [label="Meter onsets\nrelative rise >15 dB"];
+  mic [label="Microphone onsets\nrelative rise >10 dB"];
+  search [label="Search offset: -600 to +2500 ms\npair tolerance +/-40 ms"];
+  accept [label="At least 9 / 14 paired one-to-one\n4 more than competing lag >100 ms away\nhalf-recording offsets agree within 30 ms\nmedian absolute deviation at most 20 ms", fillcolor="#fff3cf"];
+  apply [label="Median paired offset\napply screen delay (or release box hold-back)", fillcolor="#dff0df"];
+  verify [label="Replay clicks; timestamp drawn frames\nresidual within 30 ms: in sync"];
+  fail [label="Reject result; retain log and existing delay", fillcolor="#ffe4e4"];
+  clicks -> meter; clicks -> mic; meter -> search; mic -> search;
+  search -> accept; accept -> apply [label="passes"]; accept -> fail [label="fails"];
+  apply -> verify;
+}

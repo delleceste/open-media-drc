@@ -141,11 +141,15 @@ S.estimateClicks = (frames, mic, expected = 14) => {
     if (mOn.length < expected / 2) return { ok: false, diag, error: `the microphone heard only ${mOn.length} of the ${expected} clicks - raise the volume a little, or hold the phone nearer the speakers` };
     const TOL = 40;
     const pairs = lag => {
-        const d = [];
+        const d = [], used = new Set();
         for (const ft of fOn) {
-            let best = null;
-            for (const mt of mOn) { const e = mt - (ft + lag); if (Math.abs(e) <= TOL && (best === null || Math.abs(e) < Math.abs(best))) best = e; }
-            if (best !== null) d.push(lag + best);
+            let best = null, index = -1;
+            mOn.forEach((mt, i) => {
+                if (used.has(i)) return;
+                const e = mt - (ft + lag);
+                if (Math.abs(e) <= TOL && (best === null || Math.abs(e) < Math.abs(best))) { best = e; index = i; }
+            });
+            if (best !== null) { used.add(index); d.push({ lag: lag + best, t: ft }); }
         }
         return d;
     };
@@ -158,16 +162,36 @@ S.estimateClicks = (frames, mic, expected = 14) => {
     }
     scored.forEach(c => { if (c.n > best.n) best = c; });
     scored.forEach(c => { if (Math.abs(c.lag - best.lag) > 100) second = Math.max(second, c.n); });
-    const d = pairs(best.lag).sort((a, b) => a - b);
+    const paired = pairs(best.lag);
+    const d = paired.map(p => p.lag).sort((a, b) => a - b);
     const lag = d.length ? d[Math.floor(d.length / 2)] : 0;
-    const ok = best.n >= Math.max(6, Math.ceil(expected * 0.6)) && best.n - second >= 4;
+    const median = values => { const a = values.slice().sort((a, b) => a - b); return a[Math.floor(a.length / 2)]; };
+    const split = Math.floor(paired.length / 2);
+    const drift = paired.length >= 6 ? median(paired.slice(split).map(p => p.lag)) - median(paired.slice(0, split).map(p => p.lag)) : 0;
+    const mad = d.length ? median(d.map(x => Math.abs(x - lag))) : Infinity;
+    const stable = Math.abs(drift) <= 30 && mad <= 20;
+    const ok = stable && best.n >= Math.max(6, Math.ceil(expected * 0.6)) && best.n - second >= 4;
+    diag.driftMs = Math.round(drift); diag.medianDeviationMs = Math.round(mad);
     const seen = new Set();
     diag.candidates = scored.slice().sort((a, b) => b.n - a.n)
         .filter(c => { const k = Math.round(c.lag / 20); if (seen.has(k)) return false; seen.add(k); return true; })
         .slice(0, 6).map(c => `${Math.round(c.lag)} ms: ${c.n} paired`);
     diag.pairedLagsMs = d.map(Math.round);
     return { diag, ok, lagMs: Math.round(lag), r: +(best.n / expected).toFixed(2), margin: best.n - second, matched: best.n,
-             error: ok ? '' : `only ${best.n} of ${expected} clicks lined up (next best ${second})` };
+             error: ok ? '' : !stable ? 'timing drifted or varied too much during calibration; try again' : `only ${best.n} of ${expected} clicks lined up (next best ${second})` };
+};
+
+// A whole-song correlation can hide offsets moving during the recording.
+S.estimateStable = (frames, mic) => {
+    const result = S.estimate(frames, mic);
+    if (!result.ok) return result;
+    const half = Math.floor(mic.db.length / 2);
+    const first = S.estimate(frames, { ...mic, db: mic.db.slice(0, half) });
+    const last = S.estimate(frames, { ...mic, t0: mic.t0 + half * mic.step, db: mic.db.slice(half) });
+    result.diag.halfLagsMs = [first.lagMs, last.lagMs];
+    if (!first.ok || !last.ok || Math.abs(first.lagMs - last.lagMs) > 30)
+        return { ...result, ok: false, error: 'timing did not agree across both halves of the recording; try clicks or repeat with clearer music' };
+    return result;
 };
 
 // ── the log ──────────────────────────────────────────────────────────────────
@@ -232,7 +256,11 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         endLog();
         return { ok: false, error: 'calibration needs the OMDRC Android app (microphone)' };
     }
-    await window.OmdrcTiming.refresh();
+    if (await window.OmdrcTiming.refresh() === false) {
+        endLog();
+        return { ok: false, error: 'controller timing settings unavailable; try again' };
+    }
+    const clockOffset = Date.now() - performance.now();
     const context = window.OmdrcTiming.context();
     logRaw(`network: ${window.OmdrcTiming.status()}`);
     const box = await K.api('/spectrum/settings', { timeout: 4000 });
@@ -246,9 +274,11 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
     // calibrating: when a frame arrives; verifying: when it is drawn, this device's delay included
     const TAP = verify ? 'drawTap' : 'streamTap';
     const prevTap = K[TAP];
-    K[TAP] = (mode, d, t) => {
-        if (prevTap) prevTap(mode, d, t);
-        if ((mode === 'vu' || mode === 'music' || mode === 'precision') && d.ok && d.vu) {
+    K[TAP] = (mode, d, t, stream) => {
+        if (prevTap) prevTap(mode, d, t, stream);
+        // Only the dedicated VU connection: concurrent FFT / clip streams must
+        // not duplicate onsets or bring their own transit baselines into the run.
+        if (mode === 'vu' && (!stream || stream === 'vu') && d.ok && d.vu) {
             const p = Math.max(Number(d.vu.left_peak ?? -120), Number(d.vu.right_peak ?? -120));
             if (Number.isFinite(p)) frames.push({ t, p });
         }
@@ -256,20 +286,20 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
     const hold = K.streams.open('vu', () => {});     // make sure level frames flow
     logLine('level stream (vu) opened; waiting 1.5 s for it to settle');
     setRunning(true);
-    let res = null;
+    let res = null, clickTimer = null, tickTimer = null, micTimer = null;
     try {
         await new Promise(r => setTimeout(r, 1500));   // let the stream settle first
         logLine(`settled: ${frames.length} level frames so far`);
         const mic = await new Promise(resolve => {
-            const timer = setTimeout(() => { stopMic(); resolve({ ok: false, error: 'the microphone did not answer' }); }, (seconds + 8) * 1000);
+            const timer = micTimer = setTimeout(() => { stopMic(); resolve({ ok: false, error: 'the microphone did not answer' }); }, (seconds + 8) * 1000);
             K.onMicEnvelope = res => { clearTimeout(timer); K.onMicEnvelope = null; if (res && res.ok) LAST_MIC.value = res; resolve(res); };
             let left = seconds;
-            const tick = setInterval(() => { left -= 1; if (onTick) onTick(Math.max(0, left)); if (left <= 0) clearInterval(tick); }, 1000);
+            const tick = tickTimer = setInterval(() => { left -= 1; if (onTick) onTick(Math.max(0, left)); if (left <= 0) clearInterval(tick); }, 1000);
             if (onTick) onTick(left);
             logLine(`microphone: recording ${seconds * 1000} ms in ${STEP} ms steps (requested from the app)`);
             window.OmdrcApp.startMicEnvelope(seconds * 1000, STEP);
             // precise mode: the box plays its click track once the mic is listening
-            if (clicks) setTimeout(async () => {
+            if (clicks) clickTimer = setTimeout(async () => {
                 logLine('click test: asking the box to stop the music and play the click track');
                 const r = await K.api('/k/api/clicktest', { method: 'POST' });
                 logLine(`click test: box answered ${JSON.stringify(r)}`);
@@ -282,6 +312,14 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         const tail = 1500 + (verify ? S.delayMs() : 0);  // drawn frames trail by the delay
         logLine(`waiting ${tail} ms for the last level frames`);
         await new Promise(r => setTimeout(r, tail));   // frames for the last instant of sound
+        if (mic.ok && String(mic.source || '').includes('+readtime')) {
+            res = { ok: false, error: 'microphone capture timestamps unavailable; use the manual click adjustment' };
+            return res;
+        }
+        if (Math.abs((Date.now() - performance.now()) - clockOffset) > 20) {
+            res = { ok: false, error: 'device clock changed during calibration; try again' };
+            return res;
+        }
         if (!mic.ok) { res = { ok: false, error: mic.error || 'microphone error' }; return res; }
 
         const gaps = frames.slice(1).map((f, i) => f.t - frames[i].t);
@@ -290,10 +328,11 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         logLine(`  arrival gaps (ms): ${stats(gaps)}`);
         logLine(`  peak (dBFS): ${stats(frames.map(f => f.p))}`);
         logLine(`microphone envelope (dBFS): ${stats(mic.db)}`);
-        res = clicks ? S.estimateClicks(frames, mic) : S.estimate(frames, mic);
+        res = clicks ? S.estimateClicks(frames, mic) : S.estimateStable(frames, mic);
         logLine(`detector (${clicks ? 'click onsets' : 'envelope correlation'}):`);
         logDiag(res.diag);
-        await window.OmdrcTiming.refresh();
+        if (await window.OmdrcTiming.refresh() === false)
+            res = { ...res, ok: false, error: 'controller timing settings unavailable at the end of calibration; try again' };
         res.context = context;
         if (context !== window.OmdrcTiming.context()) res = { ...res, ok: false, error: 'network or audio configuration changed during calibration; try again' };
         return res;
@@ -302,6 +341,8 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         logLine(`EXCEPTION: ${res.error}`);
         return res;
     } finally {
+        clearTimeout(clickTimer); clearTimeout(micTimer); clearInterval(tickTimer);
+        K.onMicEnvelope = null;
         stopMic();
         setRunning(false);
         hold.close();
@@ -375,11 +416,17 @@ S.autoRun = async why => {
     if (!res.ok || res.lagMs < 0 || res.r < 0.5) { note('not used (failed, negative, or match below 0.5)'); return; }
     recent.push(res.lagMs);
     if (recent.length > 3) recent.shift();
+    if (recent.length < 3) { note(`waiting for agreement (${recent.length}/3 measurements)`); return; }
+    if (Math.max(...recent) - Math.min(...recent) > 40) { note('not used: recent measurements disagree by more than 40 ms'); return; }
     const median = recent.slice().sort((a, b) => a - b)[Math.floor(recent.length / 2)];
     if (Math.abs(median - S.delayMs()) > 15) {
-        note(`recent results ${recent.join(', ')} ms -> median ${median} ms applied (was ${S.delayMs()} ms)`);
-        S.setDelayMs(median);
-        K.toast(`Meter delay recalibrated (${why}): ${median} ms`);
+        note(`recent results ${recent.join(', ')} ms -> median ${median} ms agreed (was ${S.delayMs()} ms)`);
+        // Existing timing moves gradually; a new profile can adopt the consensus.
+        const saved = window.OmdrcTiming.details().saved;
+        const applied = saved ? S.delayMs() + Math.max(-20, Math.min(20, median - S.delayMs())) : median;
+        S.setDelayMs(applied);
+        K.setPref('sync.calibrationReminder', true);
+        K.toast(`Meter delay recalibrated (${why}): ${applied} ms`);
     } else note(`recent results ${recent.join(', ')} ms -> median ${median} ms, within 15 ms of ${S.delayMs()} ms: unchanged`);
 };
 })();

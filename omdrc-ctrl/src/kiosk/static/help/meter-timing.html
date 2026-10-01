@@ -35,6 +35,12 @@ th { color: var(--muted); font-weight: 600; }
 .step { display: grid; grid-template-columns: 2.2rem 1fr; gap: .6rem; margin: .8rem 0; }
 .step b.n { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: var(--accent); color: var(--bg); }
 .note { border-left: 3px solid var(--yellow); padding: .3rem .8rem; background: var(--surface); border-radius: 0 .4rem .4rem 0; }
+.diagram-only main { padding: 0; }
+.diagram-only figure { margin: 0; padding: .4rem; border: 0; }
+.diagram-only svg { min-width: 0; }
+.diagram-only svg text { font-size: 16px; }
+.diagram-only svg text.m { font-size: 14px; }
+.diagram-only figcaption { font-size: .75rem; }
 </style>
 </head>
 <body>
@@ -107,7 +113,7 @@ and keeps the best one. The median of those pairs is the measured offset.</p>
     <svg id="fig-clicks" viewBox="0 0 900 250" role="img" aria-label="Click onsets seen by the meters and by the microphone, and the shift that pairs them"></svg>
     <figcaption>The meters (blue) see each burst 190 ms before the microphone (green) hears it. Shifting the blue marks right by 190 ms pairs all 14. Because the spacing is irregular, any other shift pairs only a few.</figcaption>
 </figure>
-<p>The result is accepted when at least 9 of the 14 bursts pair up, and the best shift pairs at least 4 more than any other shift more than 100 ms away.</p>
+<p>The result is accepted when at least 9 of the 14 bursts pair one-to-one, and the best shift pairs at least 4 more than any other shift more than 100 ms away. The first and second halves must agree within 30 ms, with a median absolute deviation no greater than 20 ms. Only the dedicated level stream is used, so simultaneous spectrum streams do not duplicate clicks.</p>
 
 <h2 id="steps">The two steps</h2>
 <div class="step"><b class="n">1</b><div><strong>Measuring.</strong> The bursts play with this screen's current delay. Frames are timed when they
@@ -126,21 +132,23 @@ meters are late, the box) by what it found, and says so; check once more to conf
 <h2 id="music">Calibrate on the music, and automatic recalibration</h2>
 <p><strong>Calibrate on the music</strong> does the same measurement without stopping anything. It listens for 10 s and compares the <em>shape</em>
 of the loudness in the microphone recording with the meters, at every shift from −600 to +2500 ms, and keeps the best match. Music with clear beats
-works best. A very regular beat can match in more than one place, and is then rejected as ambiguous. It tries up to 3 times.</p>
+works best. A very regular beat can match in more than one place, and is then rejected as ambiguous. Both halves of the recording must independently match within 30 ms. It tries up to 3 times.</p>
 <p><strong>Automatic recalibration</strong> (off by default) does this on Now playing when a track starts or playback resumes: 8 s at most every two minutes.
-The delay becomes the median of the last 3 good results. Failed, weak (match below 0.5) or late results are ignored. A blue light blinks over the meters
+Three good results must agree within 40 ms before adjustment. Their median is used, with changes to an existing profile limited to 20 ms per adjustment. Failed, weak (match below 0.5) or late results are ignored. A blue light blinks over the meters
 while it listens.</p>
 
+<p class="note">Calibrate the networks, rates and filters you use. An uncalibrated DRC rate can provisionally borrow timing from the same network and filter family at another rate. The timing dialog identifies the borrowed rate; a dedicated calibration takes priority.</p>
 <h2 id="stored">What is stored where</h2>
 <table>
     <tr><th>Value</th><th>Where</th><th>Who it affects</th></tr>
-    <tr><td>Extra display delay</td><td>this device's browser storage</td><td>this screen only</td></tr>
+    <tr><td>Extra display delay</td><td>this device, per network and DRC configuration; native storage in Android, per-origin storage in browsers</td><td>this screen only</td></tr>
     <tr><td>Box margin</td><td>the box's state directory (<code>spectrum-drc-delay-margin-ms</code>); <code>drc_delay_margin_ms</code> in the configuration is only the starting value</td><td>every screen</td></tr>
     <tr><td>Measured stages</td><td>worked out live, every 2 s while a meter is open</td><td>every screen</td></tr>
     <tr><td>Last calibration log</td><td>this device (Config → Meter timing → Calibration log)</td><td>for diagnosis</td></tr>
 </table>
 
 <h2 id="fails">When it fails</h2>
+<p>The Android recorder keeps seeking hardware timestamps after startup and uses the median of capture-time anchors. Unstable anchors, a device-clock step, or a recording with only read-time timestamps invalidate measurement instead of saving an unreliable delay. Use manual click adjustment when hardware capture timing is unavailable.</p>
 <table>
     <tr><th>Message</th><th>What to do</th></tr>
     <tr><td>the microphone heard only N of the 14 clicks</td><td>Raise the volume a little, or hold the phone nearer the speakers.</td></tr>
@@ -178,9 +186,9 @@ const arrow = (svg, x1, y1, x2, y2, color, w = 2, dash) => el(svg, 'line', {
     ...(dash ? { 'stroke-dasharray': dash } : {}) });
 
 // A time axis: rows of labelled marks and spans on a shared ms scale.
-function timeline(id, { max, step, rows, left = 150, right = 20, top = 16, rowH = 38 }) {
+function timeline(id, { max, step, rows, left = 150, right = 20, top = 16, rowH = 38, width = 900 }) {
     const svg = document.getElementById(id);
-    const W = 900, x = t => left + (W - left - right) * t / max;
+    const W = width, x = t => left + (W - left - right) * t / max;
     arrowDefs(svg);
     const axisY = top + rows.length * rowH + 6;
     for (let t = 0; t <= max; t += step) {
@@ -242,13 +250,14 @@ timeline('fig-box', { max: 700, step: 100, rows: [
 ] });
 
 // 3. the screen waits
-timeline('fig-screen', { max: 700, step: 100, rows: [
+const compactScreen = new URLSearchParams(location.search).get('diagram') === 'screen';
+timeline('fig-screen', { max: 700, step: compactScreen ? 200 : 100, width: compactScreen ? 480 : 900, left: compactScreen ? 90 : 150, rowH: compactScreen ? 32 : 38, rows: [
     { label: 'Sound', marks: [{ t: 0, color: 'violet', text: 'tap' }, { t: 600, color: 'sound', text: 'heard' }],
       spans: [{ from: 0, to: 600, color: 'sound', fill: .12 }] },
     { label: 'Box', spans: [{ from: 0, to: 300, color: 'frame', fill: .18, text: 'hold-back' }], marks: [{ t: 300, color: 'frame', text: 'sent' }] },
     { label: 'Network', spans: [{ from: 300, to: 380, color: 'frame', fill: .35 }], marks: [{ t: 380, color: 'frame', text: 'arrives' }] },
-    { label: 'Screen waits', spans: [{ from: 380, to: 600, color: 'wait', text: 'delay 220 ms' }] },
-    { label: 'Drawn', marks: [{ t: 600, color: 'frame', text: 'drawn with the sound' }] },
+    { label: compactScreen ? 'Wait' : 'Screen waits', spans: [{ from: 380, to: 600, color: 'wait', text: 'delay 220 ms' }] },
+    { label: 'Drawn', marks: [{ t: 600, color: 'frame', text: compactScreen ? 'drawn' : 'drawn with the sound' }] },
 ] });
 
 // 4. late frames, before and after
@@ -291,6 +300,13 @@ timeline('fig-steps', { max: 36000, step: 4000, rowH: 40, rows: [
     { label: 'Step 2', spans: [{ from: 18000, to: 32000, color: 'wait', text: 'Checking (14 s)' }, { from: 19500, to: 30800, color: 'sound', fill: .25 }],
       marks: [{ t: 33500, color: 'sound', text: 'in sync?' }] },
 ] });
+// The Now timing dialog reuses this exact documented diagram.
+if (new URLSearchParams(location.search).get('diagram') === 'screen') {
+    document.getElementById('fig-screen').setAttribute('viewBox', '0 0 480 215');
+    const figure = document.getElementById('fig-screen').parentElement;
+    document.querySelector('main').replaceChildren(figure);
+    document.documentElement.classList.add('diagram-only');
+}
 </script>
 </body>
 </html>

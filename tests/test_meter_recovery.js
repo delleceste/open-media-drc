@@ -37,3 +37,8 @@ const result = detector.sync.estimateClicks(frames, { t0: 0, step: 10, db });
 assert.equal(result.ok, true);
 assert.equal(result.lagMs, 200);
 console.log('Meter recovery and attenuated click detection: passed');
+// Server scheduling delays must not look like fresh audio.
+const countBefore = tapped.length;
+now += 50;
+streams.at(-1).onmessage({ data: JSON.stringify({ id: 30, sent: now - 20, published: now - 2020 }) });
+assert.equal(tapped.length, countBefore, 'an old snapshot sent now remains stale');

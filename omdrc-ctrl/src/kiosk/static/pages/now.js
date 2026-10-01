@@ -89,7 +89,16 @@ P.mount = el => {
     P.coverLayer = h('div', { class: 'cover-layer', hidden: true });
     P.coverScrim = h('div', { class: 'cover-scrim', hidden: true });
     P.coverReadout = h('div', { class: 'cover-readout', hidden: true });
-    P.lvlBody = h('div', { class: 'lvl-body' }, P.coverLayer, P.coverScrim, P.meterHost, P.specCanvas, P.coverReadout);
+    const configureTiming = () => {
+        K.goto('config');
+        requestAnimationFrame(() => document.getElementById('meter-timing-card')?.scrollIntoView({ block: 'start' }));
+    };
+    const timingNotice = () => h('span', { class: 'meter-calibration-notice' },
+        h('span', { class: 'meter-calibration-label' }, 'Timing not calibrated'),
+        h('button', { class: 'chip meter-configure', type: 'button', onclick: configureTiming }, 'Configure now'));
+    P.timingNotice = h('div', { class: 'lvl-timing-alert', hidden: true, role: 'status' }, timingNotice(), timingNotice());
+    P.lvlBody = h('div', { class: 'lvl-body' }, P.coverLayer, P.coverScrim, P.meterHost, P.specCanvas, P.coverReadout, P.timingNotice);
+    P.timingPoll = new K.Poller(() => P.paintTiming(), 1000);
     P.levelBox = h('div', { class: 'now-level' }, P.lvlBody);
 
     // With the level display off, the audio chain takes the meters' place: no
@@ -129,7 +138,7 @@ P.mount = el => {
     P.balHost = h('div', { class: 'now-bal card' });
     P.balance = new K.Balance(P.balHost);
     // vertical handle between the meters and the side column (side by side only)
-    P.vsplit = h('div', { class: 'vsplit', title: 'Drag to widen the meters or the DR/balance column · double-tap the meters to restore' }, h('i'));
+    P.vsplit = h('div', { class: 'vsplit', title: 'Drag to widen the meters or the DR/balance column · double-tap this handle to restore' }, h('i'));
     P.side = h('div', { class: 'now-side' }, P.vsplit, P.drBox, P.balHost);
 
     // the DRC line
@@ -155,6 +164,7 @@ P.mount = el => {
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
     P.initClips();
+    P.paintTiming();
     P.vu.onClipReset = ch => {
         P.clipChannels[ch] = 0;
         P.vu.setClips(P.clipChannels);
@@ -174,6 +184,18 @@ P.mount = el => {
     P.trackPoll = new K.Poller(P.pollTrack, 3000);
     P.tick = new K.Poller(P.paintTime, 1000);
     K.drcState.onChange(P.paintDrc);
+};
+
+// A provisional rate fallback still needs its own acoustic calibration.
+P.paintTiming = () => {
+    if (!window.OmdrcTiming || !P.timingNotice || !P.vu) return;
+    const d = window.OmdrcTiming.details();
+    const missing = !!d.configuration && !d.saved;
+    P.timingNotice.hidden = !missing || !!K.sync?.running;
+    P.levelBox.classList.toggle('timing-missing', missing);
+    const text = P.mode === 'needles' ? 'UNCALIBRATED' : d.fallback ? 'Timing provisional — calibrate' : 'Timing not calibrated';
+    P.timingNotice.querySelectorAll('.meter-calibration-label').forEach(label => { label.textContent = text; });
+    if (P.vu.setTimingMissing) P.vu.setTimingMissing(missing);
 };
 
 // Clip history belongs to this running page, not the saved preferences. An
@@ -248,8 +270,9 @@ P.applyLayout = () => {
     P.artBox.classList.add('seek-zone');   // the seek ring's: no page swipe, no top bar
     P.el.firstChild.classList.toggle('cover-sq', square);
     if (!off) P.vu.setMode(P.mode === 'needles' ? 'needles' : 'bars');
-    // needles and bars swap on a tap (a control then, so the tap leaves the top bar alone)
+    // Level gestures reveal navigation, inspect timing, or double-tap the style
     P.lvlBody.classList.toggle('tap', P.mode === 'needles' || P.mode === 'bars');
+    P.paintTiming();
     P.el.firstChild.classList.toggle('lvl-off', off);
     P.drBox.hidden = !P.showDr;
     P.drBarBox.hidden = !P.showDr;
@@ -515,6 +538,7 @@ P.wireVSplit = () => {
     const end = e => { if (drag && e.pointerId === drag.id) { drag = null; sp.classList.remove('active'); P.hintReset(); } };
     sp.addEventListener('pointerup', end);
     sp.addEventListener('pointercancel', end);
+    sp.addEventListener('dblclick', e => { e.stopPropagation(); P.resetSplits(); });
 };
 
 // After a drag, remind once in a while how to undo it.
@@ -522,10 +546,10 @@ P.hintReset = () => {
     const now = Date.now();
     if (P.hintAt && now - P.hintAt < 30000) return;
     P.hintAt = now;
-    K.toast('Double-tap the meters to restore the default layout');
+    K.toast('Double-tap the vertical layout handle to restore the default layout');
 };
 
-// Double tap on the meters: both splitters back to their defaults.
+// Restore both splitters from the vertical handle or other non-meter space.
 P.resetSplits = () => {
     K.setPref('now.split', null); K.setPref('now.col', null);
     P.applySplit(); P.applyCols();
@@ -542,19 +566,49 @@ P.wireResetTap = () => {
     });
 };
 
-// A single tap on the meters swaps needles and bars; it waits out a double tap (which
-// resets the splits, above) and is not a tap once the finger has moved (a swipe, the
-// cover's diagonal drag).
+// Single tap reveals navigation; double tap changes only the level style.
+// Holds inspect timing. Movement cancels both, preserving swipes/cover drags.
 P.wireMeterTap = () => {
-    let down = null, timer = null;
-    P.lvlBody.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY }; });
-    P.lvlBody.addEventListener('pointerup', e => {
-        const d = down; down = null;
-        if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return;
-        if (P.mode !== 'needles' && P.mode !== 'bars') return;
-        if (timer) { clearTimeout(timer); timer = null; return; }          // the second of a double tap
-        timer = setTimeout(() => { timer = null; P.setMode(P.mode === 'needles' ? 'bars' : 'needles'); }, 360);
+    let down = null, last = null, holdTimer = null, tapTimer = null, held = false;
+    const cancel = () => { clearTimeout(holdTimer); clearTimeout(tapTimer); down = last = null; held = false; };
+    P.cancelMeterGesture = cancel;
+    const el = P.lvlBody;
+    el.style.touchAction = 'manipulation';
+    el.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || e.isPrimary === false || P.mode === 'off' || e.target.closest('button')) { cancel(); return; }
+        down = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        held = false;
+        clearTimeout(tapTimer);
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(() => {
+            held = true; clearTimeout(tapTimer); last = null;
+            K.showMeterTiming();
+        }, 650);
     });
+    el.addEventListener('pointermove', e => {
+        if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 10) cancel();
+    });
+    el.addEventListener('pointercancel', cancel);
+    el.addEventListener('pointerleave', () => { if (down) cancel(); });
+    el.addEventListener('pointerup', e => {
+        const d = down; down = null; clearTimeout(holdTimer);
+        if (!d || e.pointerId !== d.id || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return;
+        e.stopPropagation(); // neither layout-reset double tap nor the global bar toggle
+        if (held) { held = false; return; }
+        K.showBar(true);
+        if (P.mode !== 'needles' && P.mode !== 'bars') return;
+        const now = performance.now();
+        if (last && now - last.t < 350 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 30) {
+            clearTimeout(tapTimer); last = null;
+            P.setMode(P.mode === 'needles' ? 'bars' : 'needles');
+        } else {
+            clearTimeout(tapTimer);
+            last = { t: now, x: e.clientX, y: e.clientY };
+            tapTimer = setTimeout(() => { last = null; K.showMeterTapHint(); }, 360);
+        }
+    });
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('dblclick', e => e.preventDefault());
 };
 
 // Level stream and chain poll follow the chosen display: exactly one is running.
@@ -938,6 +992,7 @@ P.syncDock = () => {
 // ── lifecycle ────────────────────────────────────────────────────────────────
 P.show = () => {
     P.visible = true;
+    P.timingPoll.start();
     clearTimeout(P.drKeep); P.drKeep = null;     // back before the keep-alive ran out
     if (P.drAsk) { const a = P.drAsk; P.drAsk = null; a.close(true); }   // back on Now: keep it
     P.applyLayout();
@@ -953,6 +1008,8 @@ P.show = () => {
 };
 
 P.hide = () => {
+    P.timingPoll.stop();
+    if (P.cancelMeterGesture) P.cancelMeterGesture();
     P.hideSeekSlider();
     P.ring.destroy();
     P.closeViewMenu();

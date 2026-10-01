@@ -1,0 +1,106 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+<div id="overlay-root"></div><pre id="result">RUNNING</pre>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/timing.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/config.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/seekring.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/now.js"></script>
+<script>
+(async () => {
+    const check = (yes, message) => { if (!yes) throw Error(message); };
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    localStorage.removeItem('omdrc-kiosk.sync.profiles');
+    const T = window.OmdrcTiming;
+    T.setNetworkName('Meter UI test');
+    T.updateSettings({ timing_configuration: { drc: true, rate: 192000,
+        config: '/configs/120.green.multipos.fdw6/drc192.conf', source: 'mpd', filters: [['/filters/L.raw'], ['/filters/R.raw']] },
+        drc_delay_terms_ms: { margin: 150 }, drc_delay_margin_ms: 150, drc_delay_base_ms: 300 });
+    T.setDelayMs(210);
+    T.refresh = async () => {};
+    K.setPref('now.meterTapUnderstood', false);
+    const P = K.pages.find(p => p.id === 'now');
+    P.mode = 'needles'; P.lvlBody = K.h('div');
+    const parent = K.h('div', {}, P.lvlBody), canvas = K.h('canvas');
+    P.lvlBody.append(canvas); document.body.append(parent);
+    let leaked = 0, toggled = 0, bars = 0;
+    parent.addEventListener('pointerup', () => leaked++);
+    K.showBar = show => { check(show, 'Meters must show the bar rather than toggle it'); bars++; };
+    P.setMode = mode => { P.mode = mode; toggled++; };
+    P.wireMeterTap();
+    const pointer = (type, x = 30, y = 30) => canvas.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch', button: 0, clientX: x, clientY: y, isPrimary: true }));
+    const tap = () => { pointer('pointerdown'); pointer('pointerup'); };
+    const close = id => document.querySelector('#' + id + ' .primary').click();
+    try {
+        tap(); check(toggled === 0 && bars === 1 && leaked === 0, 'Single tap only shows bar and consumes parent gestures');
+        await sleep(380);
+        check(document.getElementById('meter-tap-hint'), 'Single tap offers the gesture hint');
+        document.querySelector('#meter-tap-hint input').checked = true; close('meter-tap-hint');
+        check(K.pref('now.meterTapUnderstood', false), 'Understood preference persists');
+        tap(); await sleep(100); tap(); await sleep(380);
+        check(P.mode === 'bars' && toggled === 1 && leaked === 0, 'Double tap changes style exactly once and does not reset layout');
+        check(!document.getElementById('meter-tap-hint'), 'Double tap never opens the hint');
+        tap(); await sleep(380); check(!document.getElementById('meter-tap-hint'), 'Understood suppresses subsequent hints');
+        pointer('pointerdown'); await sleep(680);
+        check(document.getElementById('meter-timing-dialog'), 'Long hold opens timing inspection');
+        const text = document.getElementById('meter-timing-dialog').textContent;
+        check(text.includes('Meter UI test') && text.includes('192 kHz') && text.includes('120.green.multipos.fdw6') && text.includes('210 ms') && text.includes('300 ms'), 'Dialog identifies the actual combination and delays');
+        check(text.includes('Saved for this network and configuration'), 'Dialog confirms matching saved profile');
+        check(document.querySelector('#meter-timing-dialog iframe').src.includes('diagram=screen'), 'Dialog reuses the documented screen diagram');
+        pointer('pointerup'); await sleep(380); check(toggled === 1 && leaked === 0, 'Hold release must not act as tap');
+        close('meter-timing-dialog');
+        P.mode = 'spectrum'; pointer('pointerdown'); await sleep(680); pointer('pointerup');
+        check(document.getElementById('meter-timing-dialog') && toggled === 1, 'Spectrum supports inspection without switching style');
+        close('meter-timing-dialog'); P.mode = 'bars';
+        pointer('pointerdown'); pointer('pointermove', 60, 60); await sleep(680); pointer('pointerup', 60, 60);
+        check(!document.getElementById('meter-timing-dialog') && toggled === 1, 'Dragging cancels hold and style gestures');
+        pointer('pointerdown'); pointer('pointercancel'); await sleep(680);
+        check(!document.getElementById('meter-timing-dialog'), 'Canceled touch must not open a dialog');
+        pointer('pointerdown'); P.cancelMeterGesture(); await sleep(680);
+        check(!document.getElementById('meter-timing-dialog'), 'Page hide cleanup cancels hold');
+        T.updateSettings({ timing_configuration: { drc: false, source: 'mpd' }, drc_delay_terms_ms: { margin: 0 }, drc_delay_base_ms: 0 });
+        K.showMeterTiming();
+        check(document.getElementById('meter-timing-dialog').textContent.includes('DRC OFF') && document.getElementById('meter-timing-dialog').textContent.includes('No saved profile'), 'Uncalibrated combinations must be identified');
+        close('meter-timing-dialog');
+        const rateConfig = rate => ({ drc: true, rate, config: '/configs/120.green/brutefir-' + rate + '.fdw6.conf', source: 'mpd', filters: [] });
+        T.updateSettings({ timing_configuration: rateConfig(192000), drc_delay_terms_ms: { margin: 150 } }); T.setDelayMs(210);
+        T.updateSettings({ timing_configuration: rateConfig(96000), drc_delay_terms_ms: { margin: 150 } });
+        P.mode = 'needles'; P.levelBox = K.h('div');
+        P.timingNotice = K.h('div', {}, K.h('span', { class: 'meter-calibration-label' }));
+        let missingReadout = false;
+        P.vu = { setTimingMissing: value => { missingReadout = value; } };
+        P.paintTiming();
+        check(!P.timingNotice.hidden && missingReadout && P.timingNotice.textContent === 'UNCALIBRATED', 'VU needles replace PK/RMS when dedicated timing is missing, even with a fallback');
+        P.mode = 'bars'; P.paintTiming();
+        check(P.timingNotice.textContent.includes('Timing provisional') && P.levelBox.classList.contains('timing-missing'), 'Bars show a provisional timing warning above the meter');
+        K.showMeterTiming();
+        check(document.getElementById('meter-timing-dialog').textContent.includes('Provisional — borrowed from 192 kHz'), 'Dialog explicitly identifies a borrowed rate');
+        close('meter-timing-dialog');
+        K.sync = { delayMs: T.delayMs, setDelayMs: T.setDelayMs, canCalibrate: () => false };
+        const configPage = K.pages.find(p => p.id === 'config');
+        await configPage.applyCal({ ok: true, context: T.context(), lagMs: 180, r: .9 });
+        P.paintTiming(); check(P.timingNotice.hidden && !missingReadout, 'Dedicated calibration clears the missing warning');
+        const card = configPage.timingCard(); document.body.append(card);
+        const suggestion = card.querySelector('.calibration-reminder');
+        check(suggestion && suggestion.textContent.includes('every network, sample rate and filter'), 'Successful calibration shows the repeat-all-combinations reminder');
+        check(getComputedStyle(suggestion).color === getComputedStyle(document.documentElement).getPropertyValue('--yellow').trim() || getComputedStyle(suggestion).color === 'rgb(210, 153, 34)', 'Reminder is yellow');
+        card.remove();
+        // Mount the actual Now notice and verify its Configure chip targets Meter timing.
+        K.drGauge = () => {}; K.DrBar = K.Balance = K.Spectrum = class {};
+        K.VuMeter = class { setClips() {} setTimingMissing() {} };
+        K.streams = { onLag() {} }; K.drcState = { onChange() {} }; K.sync.onRunning = () => {};
+        P.drModeBox = () => K.h('div');
+        const host = K.h('div'); document.body.append(host); P.mount(host);
+        T.updateSettings({ timing_configuration: rateConfig(48000), drc_delay_terms_ms: { margin: 150 } });
+        P.mode = 'bars'; P.paintTiming();
+        check(!P.timingNotice.hidden && P.timingNotice.querySelector('.meter-configure'), 'Actual Now mount creates the red notice and configure chip');
+        let destination = null; K.goto = page => { destination = page; };
+        P.timingNotice.querySelector('.meter-configure').click();
+        check(destination === 'config', 'Configure chip navigates to Config without changing the meter style');
+        host.remove();
+        document.getElementById('result').textContent = 'PASS: tap, double tap, hold, spectrum, drag, cancellation, suppression and profile inspection';
+    } catch (e) { document.getElementById('result').textContent = 'FAIL: ' + e.message; }
+})();
+</script>

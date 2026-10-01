@@ -232,7 +232,7 @@ K.streams = (() => {
         if (replacing) setTimeout(() => replacing.close(), 1500);
         let best = Infinity, late = 0;
         const deliver = d => {
-            if (K.drawTap) K.drawTap(tapMode, d, Date.now());     // the post-calibration check
+            if (K.drawTap) K.drawTap(tapMode, d, Date.now(), mode);     // the post-calibration check
             s.subs.forEach(f => f(d));
         };
         const draw = d => {
@@ -249,7 +249,9 @@ K.streams = (() => {
             if (mode !== 'dr' && Number.isFinite(d.sent)) {
                 const lag = now - d.sent;
                 best = Math.min(best, lag);
-                late = lag - best > LAG_MS ? late + 1 : 0;
+                const origin = (Number.isFinite(d.published) ? d.published : d.sent) + best;
+                const age = now - origin;
+                late = age > LAG_MS ? late + 1 : 0;
                 if (late >= LAG_FRAMES && !s.replacing) {
                     s.replacing = true;
                     setTimeout(() => { s.replacing = false; }, 5000);   // at most one reopen per 5 s
@@ -257,13 +259,13 @@ K.streams = (() => {
                     open(mode, es);
                     return;
                 }
-                if (lag - best > LAG_MS) return; // discard stale data before taps and drawing
+                if (age > LAG_MS) return; // discard stale data before taps and drawing
                 // Schedule from server send time plus the best transit time seen.
                 // A burst after Wi-Fi stalls must not shift the saved alignment.
                 d = { ...d };
-                d._timingArrival = d.sent + best;
+                d._timingArrival = origin;
             }
-            if (K.streamTap) K.streamTap(tapMode, d, d._timingArrival ?? now);
+            if (K.streamTap) K.streamTap(tapMode, d, d._timingArrival ?? now, mode);
             // Level and spectrum frames are drawn this device's extra delay after they
             // arrive (widgets/sync.js); DR is not time-critical.
             const wait = mode === 'dr' || !K.sync ? 0 : K.sync.delayMs();

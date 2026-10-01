@@ -43,3 +43,16 @@ change in network latency can still require recalibration.
 The click detector uses the meter silence floor instead of a fixed -50 dBFS
 threshold, so attenuated clicks can be measured. The calibration log retains
 detector diagnostics even when a configuration change invalidates the result.
+
+An uncalibrated DRC rate provisionally borrows from the same network, source,
+config directory and design selector at another rate (nearest ratio first).
+DRC off, other networks and other filter families are excluded. The status and
+Now timing dialog identify this as provisional and show the source rate. Saving
+a calibration creates the dedicated profile and takes priority over fallback.
+
+Mic calibration uses only its dedicated VU stream. Click matches are one-to-one
+and must have stable early/late offsets; music correlation must agree in both
+recording halves. Automatic adjustment requires three agreeing measurements
+and moves an existing profile by no more than 20 ms per adjustment. The Android
+recorder keeps seeking hardware timestamps after startup and uses their median;
+read-time-only recording is not accepted for persistent calibration.

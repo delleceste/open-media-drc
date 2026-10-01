@@ -3,6 +3,8 @@
 (() => {
 'use strict';
 const { h } = K;
+const CALIBRATION_REMINDER = 'For best alignment, repeat calibration for every network, sample rate and filter configuration you use. A same-network, same-filter delay from another rate is provisional until this rate is calibrated.';
+const reminder = () => h('p', { class: 'calibration-reminder', role: 'note' }, CALIBRATION_REMINDER);
 
 const P = { id: 'config', label: 'Config', title: 'Configuration' };
 
@@ -45,10 +47,11 @@ P.timingCard = () => {
         } finally { unsub(); }
         P.lastCal = await P.applyCal(res);
         result.textContent = P.lastCal;
+        if (res.ok && !result.nextElementSibling?.classList.contains('calibration-reminder')) result.after(reminder());
         value.textContent = `${K.sync.delayMs()} ms`;
         sheet.status(P.lastCal, true);
     };
-    return K.card('Meter timing',
+    const card = K.card('Meter timing',
         network,
         h('div', { class: 'btn-row' },
             window.OmdrcApp && window.OmdrcApp.identifyTimingNetwork ? h('button', { class: 'btn', onclick: () => window.OmdrcApp.identifyTimingNetwork() }, 'Identify Wi-Fi') : null,
@@ -57,7 +60,7 @@ P.timingCard = () => {
                 if (name !== null) window.OmdrcTiming.setNetworkName(name);
             } }, 'Set network name')),
         h('p', { class: 'muted small' }, 'The app reads the Wi-Fi name (Android location permission and Location on) at startup, on resume and every 5 minutes while open, and remembers it per network (gateway and subnet); nothing else reads it. Identify Wi-Fi forces a read. If the name is unavailable, set a profile name manually when switching networks.'),
-        h('p', { class: 'muted small' }, 'Extra delay for this screen, on top of the box’s own chain delay: the meters and spectrum are drawn this long after they arrive. Stored on this device for the active network. New networks start at 0 ms until calibrated.'),
+        h('p', { class: 'muted small' }, 'Extra delay for this screen, on top of the box’s own chain delay: the meters and spectrum are drawn this long after they arrive. Stored on this device for the active network and DRC configuration. An uncalibrated rate can provisionally reuse timing from the same network and filter family; calibrate each combination for best alignment.'),
         h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50),
             h('button', { class: 'btn', type: 'button', onclick: () => set(0) }, 'Reset')),
         h('div', { class: 'btn-row' },
@@ -72,17 +75,69 @@ P.timingCard = () => {
                 v => { K.setPref('sync.auto', v); P.render(); }),
             h('p', { class: 'muted small' }, 'On the music, for 8 s at most every two minutes, only on Now playing; a blue light blinks over the meters meanwhile, and Android shows its microphone indicator.')) : null,
         result,
+        K.pref('sync.calibrationReminder', false) ? reminder() : null,
         h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', onclick: () => {
             const text = K.sync.lastLog();
             if (!text) { K.toast('No calibration has run on this device yet'); return; }
             P.logSheet('Last calibration log (kept on this device)').set(text);
         } }, 'Calibration log')),
         K.cardOpts({ actions: P.infoBtn() }));
+    card.id = 'meter-timing-card';
+    return card;
 };
 
 // How the timing works and what the calibration does, with diagrams.
 P.infoBtn = () => h('button', { class: 'btn info-btn', type: 'button', title: 'How meter timing works',
     'aria-label': 'How meter timing works', onclick: () => K.frame('/k/static/help/meter-timing.html', 'How meter timing works') }, 'ⓘ How it works');
+
+// Inspect the profile used by Now without changing calibration.
+K.showMeterTiming = () => {
+    if (document.getElementById('meter-timing-dialog')) return;
+    const details = h('div', { class: 'meter-timing-details', 'aria-live': 'polite' });
+    const paint = () => {
+        const d = window.OmdrcTiming.details(), c = d.configuration;
+        const basename = path => String(path || '').split('/').filter(Boolean).pop() || 'Unknown';
+        const row = (label, text) => h('div', {}, h('strong', {}, label + ': '), text);
+        const config = !c ? 'Waiting for controller settings' : !c.drc ? 'DRC OFF' :
+            `DRC ${(Number(c.rate) / 1000).toLocaleString()} kHz · ${basename(String(c.config).split('/').slice(0, -1).join('/'))} · ${basename(c.config)}`;
+        K.clear(details).append(
+            row('Network', d.network.label), row('Configuration', config),
+            c ? row('Audio source', c.source === 'mpd' ? 'MPD' : c.source || 'Unknown') : h('span'),
+            c && c.drc ? row('Filters', (c.filters || []).map(f => basename(f[0])).join(', ') || 'Unknown') : h('span'),
+            row('Profile', d.saved ? 'Saved for this network and configuration' : d.fallback ? `Provisional — borrowed from ${d.fallback.rate / 1000} kHz on this network and filter family; calibrate this rate` : 'No saved profile for this combination'),
+            row('Applied screen delay', `${d.delayMs} ms`),
+            d.saved ? row('Saved screen delay', `${d.saved.delayMs} ms`) : d.fallback ? row('Borrowed screen delay', `${d.fallback.profile.delayMs} ms`) : h('span'),
+            row('Box hold-back', d.settings ? `${d.settings.drc_delay_base_ms} ms` : 'Unknown'));
+    };
+    const timer = setInterval(paint, 1000);
+    const close = () => { clearInterval(timer); scrim.remove(); };
+    const scrim = h('div', { class: 'scrim', id: 'meter-timing-dialog', onclick: e => { if (e.target === scrim) close(); } },
+        h('div', { class: 'sheet meter-timing-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'meter-timing-title',
+            onkeydown: e => { if (e.key === 'Escape') close(); } },
+            h('h2', { id: 'meter-timing-title' }, 'Applied meter timing'), details,
+            h('p', { class: 'small' }, 'The box holds frames back; this screen waits the remaining delay. The diagram below is an illustrative example from How it works, not a live measurement.'),
+            h('iframe', { class: 'meter-timing-diagram', src: '/k/static/help/meter-timing.html?diagram=screen', title: 'Example: frame drawn together with sound' }),
+            h('div', { class: 'sheet-actions' }, P.infoBtn(), h('button', { class: 'btn primary', onclick: close }, 'Close'))));
+    document.getElementById('overlay-root').append(scrim);
+    paint();
+    scrim.querySelector('.primary').focus();
+    window.OmdrcTiming.refresh().then(() => { if (scrim.isConnected) paint(); });
+};
+
+K.showMeterTapHint = () => {
+    if (K.pref('now.meterTapUnderstood', false) || document.getElementById('meter-tap-hint')) return;
+    const understood = h('input', { type: 'checkbox' });
+    const close = () => { if (understood.checked) K.setPref('now.meterTapUnderstood', true); scrim.remove(); };
+    const scrim = h('div', { class: 'scrim', id: 'meter-tap-hint', onclick: e => { if (e.target === scrim) close(); } },
+        h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'meter-tap-title',
+            onkeydown: e => { if (e.key === 'Escape') close(); } },
+            h('h2', { id: 'meter-tap-title' }, 'Meter controls'),
+            h('p', {}, 'Double tap the level meters to switch between VU needles and bars. A single tap shows the top bar. Hold the meters or spectrum to inspect the applied timing.'),
+            h('label', { class: 'meter-hint-check' }, understood, 'Understood — don’t show this again'),
+            h('div', { class: 'sheet-actions' }, h('button', { class: 'btn primary', onclick: close }, 'Close'))));
+    document.getElementById('overlay-root').append(scrim);
+    scrim.querySelector('.primary').focus();
+};
 
 // Meters that reach this screen AFTER the sound: a screen can only wait, so the
 // box has to send them sooner.  It holds the frames back by the chain it measures
@@ -111,6 +166,7 @@ P.takeBack = async lateMs => {
 // A calibration result into the delay; the sentence that says what happened.
 P.applyCal = async res => {
     if (res.ok && res.context !== window.OmdrcTiming.context()) return 'Network or server timing changed; calibrate again.';
+    if (res.ok) K.setPref('sync.calibrationReminder', true);
     if (res.ok && res.lagMs >= 0) {
         K.sync.setDelayMs(res.lagMs);
         return `Calibrated: the meters led the sound by ${res.lagMs} ms (match ${res.r}); this device now waits ${res.lagMs} ms.`;
@@ -208,6 +264,7 @@ P.tuneSheet = () => {
                 status.textContent = `${title1}: listening while the bursts play with ${K.sync.delayMs()} ms — ${left} s left` });
             P.lastCal = await P.applyCal(res);
             note(`Step 1 · ${P.lastCal}`);
+            if (res.ok) scrim.querySelector('.calibration-reminder').hidden = false;
             show();
             if (closed) return;
             if (!res.ok) { status.textContent = 'Failed at step 1 — the delay was not changed. Start to try again, or open the Log.'; return; }
@@ -249,6 +306,7 @@ P.tuneSheet = () => {
 P.logSheet = title => {
     const status = h('div', { class: 'cal-status' }, '');
     const pre = h('pre', { class: 'cal-log' });
+    const suggestion = reminder(); suggestion.hidden = true;
     const copy = async () => {
         const text = pre.textContent;
         let ok = false;
@@ -269,7 +327,7 @@ P.logSheet = title => {
     };
     const close = () => scrim.remove();
     const scrim = h('div', { class: 'scrim' }, h('div', { class: 'sheet cal-sheet' },
-        h('div', { class: 'cal-title' }, title), status, pre,
+        h('div', { class: 'cal-title' }, title), status, pre, suggestion,
         h('div', { class: 'btn-row' },
             h('button', { class: 'btn primary', type: 'button', onclick: copy }, 'Copy'),
             h('button', { class: 'btn', type: 'button', onclick: selectAll }, 'Select all'),
@@ -282,7 +340,7 @@ P.logSheet = title => {
             if (atEnd) pre.scrollTop = pre.scrollHeight;
         },
         set(text) { pre.textContent = text; },
-        status(text, done = false) { status.textContent = text; status.classList.toggle('done', done); },
+        status(text, done = false) { status.textContent = text; status.classList.toggle('done', done); suggestion.hidden = !done || !K.pref('sync.calibrationReminder', false); },
         close,
     };
 };

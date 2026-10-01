@@ -2077,10 +2077,13 @@ class SpectrumAnalyzer:
         with self.cond:
             if self.dr_clients:
                 frame = {**frame, "dr": dict(self.dr_state)}
-            if frame == self.frame:
+            previous = {k: v for k, v in self.frame.items() if k != "published"}
+            if frame == previous:
                 return
             self.seq += 1
-            self.frame = frame
+            # Preserve production time when an SSE thread sends late or a new
+            # listener receives an old snapshot. Sending time alone hides that age.
+            self.frame = {**frame, "published": int(time.time() * 1000)}
             self.cond.notify_all()
 
     def _ensure_fifo(self, path: str, create: bool = True) -> tuple[bool, str]:
@@ -4390,6 +4393,61 @@ _QC_STATUS_EMPTY = {"line1": "", "line2": "", "state": "", "events": [],
                     "line3": "", "elapsed": None, "duration": None,
                     "playback_state": "", "art": "", "edition": ""}
 
+_COVER_STATE_FILE = os.path.join(_STATE_DIR, "loaded-album-cover.json")
+_COVER_IMAGE_FILE = os.path.join(_STATE_DIR, "loaded-album-cover.img")
+_COVER_LOCK = threading.RLock()
+
+
+def _cover_state() -> dict:
+    try:
+        with open(_COVER_STATE_FILE, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_cover_file(path: str, data: bytes) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, temp = tempfile.mkstemp(prefix=".cover-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def _loaded_album_art(np: dict, url: str = "") -> str:
+    """Keep art only while MPD's selected queue entry belongs to its album."""
+    file = np.get("file", "")
+    if not file:
+        return ""
+    with _COVER_LOCK:
+        saved = _cover_state()
+        if url and urlsplit(url).scheme in ("http", "https"):
+            current = {"file": file, "album": np.get("album", ""),
+                       "album_artist": np.get("album_artist", ""), "url": url}
+            if saved.get("url") == url and saved.get("content_type"):
+                current["content_type"] = saved["content_type"]
+            if all(saved.get(k) == v for k, v in current.items()):
+                return url
+            try:
+                _write_cover_file(_COVER_STATE_FILE, json.dumps(current).encode())
+            except OSError:
+                pass
+            return url
+        if not saved.get("url"):
+            return ""
+        if saved.get("file") == file:
+            return saved["url"]
+        album = np.get("album", "")
+        artist = np.get("album_artist", "")
+        if album and album == saved.get("album") and (
+                not artist or not saved.get("album_artist") or artist == saved["album_artist"]):
+            return saved["url"]
+        return ""
+
 
 def _upmpdcli_qconnect_status() -> dict:
     """The {line1, line2, state, events} shape /qconnect/status serves for
@@ -4426,6 +4484,7 @@ def _upmpdcli_qconnect_status() -> dict:
     # MusicPD's queue as tags when the renderer publishes them (see
     # upmpdcli/patches/).  Either may be missing; the card just shows less.
     meta = _upmpdcli_didl_meta(np.get("file", ""))
+    art_url = _loaded_album_art(np, meta.get("art", ""))
     return {"line1": line1, "line2": line2, "state": "", "events": [],
             "elapsed": np["elapsed"], "duration": np["duration"],
             "playback_state": np["state"],
@@ -4433,12 +4492,12 @@ def _upmpdcli_qconnect_status() -> dict:
             # token changes with the cover, so the browser refetches on a new
             # album and caches within one.
             "art": ("/qconnect/art?v=" +
-                    hashlib.sha1(meta["art"].encode()).hexdigest()[:10]
-                    if meta.get("art") else ""),
+                    hashlib.sha1(art_url.encode()).hexdigest()[:10]
+                    if art_url else ""),
             "edition": _edition_line(
                 np.get("label") or meta.get("label", ""),
                 np.get("date") or meta.get("year", "")),
-            "qobuz_album": _qobuz_album_of(meta.get("art", ""))}
+            "qobuz_album": _qobuz_album_of(art_url)}
 
 
 @app.route("/qconnect/status")
@@ -4455,6 +4514,14 @@ def qconnect_status():
             lines = f.read().splitlines()
         status = _parse_qconnect_status(lines)
         art_url = status.pop("art_url", "")
+        np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+        if not status["line1"] or (np.get("album") and np["album"] not in status["line1"]):
+            art_url = ""
+        art_url = _loaded_album_art(np, art_url)
+        if not status["line1"] and np.get("state") == "stop" and art_url:
+            track_album = " · ".join(part for part in (np.get("title", ""), np.get("album", "")) if part)
+            status["line1"] = f"[stopped] {track_album}" if track_album else ""
+            status["playback_state"] = "stop"
         status["qobuz_album"] = _qobuz_album_of(art_url)
         if art_url:
             status["art"] = "/qconnect/art?v=" + hashlib.sha1(art_url.encode()).hexdigest()[:10]
@@ -4462,11 +4529,19 @@ def qconnect_status():
         # edition reaches MusicPD's queue as tags instead (Label, Date), so
         # read them from there while something is playing.
         if status["playback_state"] in ("play", "pause"):
-            np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
             status["edition"] = _edition_line(np.get("label", ""),
                                               np.get("date", ""))
         return jsonify({"ok": True, **status})
     except FileNotFoundError:
+        np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+        art_url = _loaded_album_art(np)
+        if np.get("state") == "stop" and art_url:
+            track_album = " · ".join(part for part in (np.get("title", ""), np.get("album", "")) if part)
+            return jsonify({"ok": True, **_QC_STATUS_EMPTY,
+                            "line1": f"[stopped] {track_album}" if track_album else "",
+                            "playback_state": "stop",
+                            "art": "/qconnect/art?v=" + hashlib.sha1(art_url.encode()).hexdigest()[:10],
+                            "qobuz_album": _qobuz_album_of(art_url)})
         return jsonify({"ok": False, **_QC_STATUS_EMPTY})
     except OSError as e:
         return jsonify({"ok": False, **_QC_STATUS_EMPTY, "error": str(e)})
@@ -4561,6 +4636,16 @@ def _fetch_art(url: str) -> tuple | None:
     caller named would be an open proxy into whatever the box can reach."""
     if url in _ART_CACHE:
         return _ART_CACHE[url]
+    with _COVER_LOCK:
+        saved = _cover_state()
+        if saved.get("url") == url and saved.get("content_type"):
+            try:
+                with open(_COVER_IMAGE_FILE, "rb") as handle:
+                    data = handle.read(_ART_MAX_BYTES + 1)
+                if data and len(data) <= _ART_MAX_BYTES:
+                    return saved["content_type"], data
+            except OSError:
+                pass
     if urlsplit(url).scheme not in ("http", "https"):
         return None
     import urllib.request
@@ -4578,6 +4663,15 @@ def _fetch_art(url: str) -> tuple | None:
     while len(_ART_CACHE) >= _ART_CACHE_MAX:
         _ART_CACHE.pop(next(iter(_ART_CACHE)))
     _ART_CACHE[url] = (content_type, data)
+    with _COVER_LOCK:
+        saved = _cover_state()
+        if saved.get("url") == url:
+            try:
+                _write_cover_file(_COVER_IMAGE_FILE, data)
+                saved["content_type"] = content_type
+                _write_cover_file(_COVER_STATE_FILE, json.dumps(saved).encode())
+            except OSError:
+                pass
     return _ART_CACHE[url]
 
 
@@ -4587,15 +4681,21 @@ def qconnect_art():
     card appends is only there so a new track busts the browser's cache."""
     if _current_renderer() == UPMPDCLI_SERVICE:
         np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
-        url = _upmpdcli_didl_meta(np.get("file", "")).get("art", "")
+        url = _loaded_album_art(np, _upmpdcli_didl_meta(np.get("file", "")).get("art", ""))
     else:
         # qobuzconnect2mpd writes the cover of the playing track into its
         # status file as an art= line.
         try:
             with open(QCONNECT_STATUS_FILE, encoding="utf-8") as handle:
-                url = _parse_qconnect_status(handle.read().splitlines())["art_url"]
+                status = _parse_qconnect_status(handle.read().splitlines())
+                url = status["art_url"]
         except OSError:
+            status = {}
             url = ""
+        np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+        if not status.get("line1") or (np.get("album") and np["album"] not in status["line1"]):
+            url = ""
+        url = _loaded_album_art(np, url)
     if not url:
         return "", 404
     got = _fetch_art(url)

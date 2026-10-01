@@ -613,11 +613,16 @@ input[type=range] { accent-color: var(--accent); }
 .qz-banner { display: flex; align-items: center; gap: .8rem; }
 .qz-banner > div { flex: 1; min-width: 0; }
 .qz-searchrow { display: flex; gap: .5rem; }
+.qz-inputbox { position: relative; flex: 1; min-width: 0; }
+.qz-inputbox > .qz-input { display: block; width: 100%; box-sizing: border-box; }
 .qz-filtered .qz-fsum-text, .qz-filtered .qz-fsum-mark { color: var(--yellow); }
 .qz-fsum-toggle { display: flex; align-items: center; gap: .6rem; flex: 1; min-width: 0;
     border: 0; background: none; padding: 0; text-align: left; font: inherit; cursor: pointer; }
-.btn.qz-filter-clear { display: inline-flex; align-items: center; padding: .25rem; }
-textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: .6rem .7rem; resize: vertical; line-height: 1.4; }
+.btn.qz-filter-clear { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 2.8rem;
+    width: 2.8rem; min-width: 2.8rem; height: 2.8rem; min-height: 2.8rem; padding: 0; box-sizing: border-box; }
+textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: .6rem .7rem 3.4rem; resize: vertical; line-height: 1.4; }
+.qz-inputbox:has(textarea) .qz-fsum { position: absolute; right: .7rem; bottom: .15rem; left: .7rem;
+    width: auto; min-height: 2.8rem; margin: 0; padding: 0; }
 .qz-searchrow:has(textarea) { align-items: flex-start; }
 .qz-go, .qz-ai-toggle { flex: 0 0 auto; padding-inline: .6rem; }
 .qz-go { display: inline-flex; align-items: center; justify-content: center; }
@@ -886,3 +891,24 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 }
 
 .menu-pop.qz-queue-actions { position: absolute; top: calc(100% + .25rem); left: 0; }
+
+/* Timing inspection and the optional meter gesture hint. */
+.meter-timing-sheet { max-height: 92vh; overflow-y: auto; }
+.meter-timing-details { font-size: .9rem; overflow-wrap: anywhere; margin-bottom: .8rem; }
+.meter-timing-details > div { margin: .3rem 0; }
+.meter-timing-diagram { width: 100%; height: 220px; border: 0; border-radius: .4rem; margin-bottom: .6rem; }
+.meter-hint-check { display: flex; align-items: center; gap: .6rem; margin: .5rem 0 1rem; }
+
+.sheet p.calibration-reminder, p.calibration-reminder { color: var(--yellow); font-size: .85rem; border-left: 3px solid var(--yellow); padding-left: .65rem; }
+
+/* Missing dedicated timing: bars get a heading; needles replace PK/RMS. */
+.lvl-timing-alert { position: absolute; top: .25rem; left: .4rem; right: .4rem; z-index: 2; text-align: center; }
+.meter-calibration-notice { display: inline-flex; align-items: center; gap: .35rem; color: var(--red); font-size: 11px; font-weight: 700; }
+.meter-calibration-notice + .meter-calibration-notice { display: none; }
+.meter-configure { font-size: 10px; padding: .15rem .35rem; line-height: 1.2; min-height: 0; }
+.timing-missing:not(.mode-needles) .lvl-meter { top: 2rem; }
+.timing-missing.mode-spectrum .lvl-spectrum { height: calc(58% - 1.6rem); }
+.mode-needles .lvl-timing-alert { top: .95rem; left: .4rem; right: .4rem; pointer-events: none; }
+.mode-needles .meter-calibration-notice { position: absolute; right: calc(50% + .35rem); font-size: 9px; gap: .2rem; white-space: nowrap; }
+.mode-needles .meter-calibration-notice + .meter-calibration-notice { display: inline-flex; right: .7rem; }
+.mode-needles .meter-configure { pointer-events: auto; font-size: 9px; padding: .1rem .2rem; }
