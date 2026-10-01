@@ -25,7 +25,8 @@ try {
         check(gauge.getBoundingClientRect().top >= label.getBoundingClientRect().bottom, 'Landscape DR bar sits below its label');
         check(parseFloat(getComputedStyle(marker).width) >= 4 && parseFloat(getComputedStyle(marker).height) >= 14, 'Landscape DR retains thick needle');
     }
-    if (portrait) check(getComputedStyle(marker).borderTopWidth === '0px' && getComputedStyle(marker).borderBottomWidth === '4px' && getComputedStyle(marker).borderBottomColor === 'rgb(255, 255, 255)', 'DR triangle indicator');
+    if (portrait) check(parseFloat(getComputedStyle(drTrack).height) >= .5 * parseFloat(getComputedStyle(document.documentElement).fontSize), 'Portrait DR bar is thicker');
+    if (portrait) check(getComputedStyle(marker).borderTopWidth === '0px' && getComputedStyle(marker).borderBottomWidth === '7px' && getComputedStyle(marker).borderBottomColor === 'rgb(255, 255, 255)', 'DR triangle indicator');
     if (balance.look === 'split' && !portrait) {
         check(parseFloat(getComputedStyle(balance.track).height) >= 17, 'Landscape split balance retains thick bar');
         check(parseFloat(getComputedStyle(balance.pointer).width) >= 10, 'Landscape balance retains thick needle');

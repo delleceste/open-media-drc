@@ -236,6 +236,9 @@ P.tuneSheet = () => {
         meterHost,
         h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50)),
         status, lines,
+        mic ? h('div', { class: 'small muted' },
+            h('div', {}, h('strong', {}, 'Start'), ' measures and sets the meter delay, then runs a second pass to verify it.'),
+            h('div', {}, h('strong', {}, 'Check again'), ' verifies the current timing. If the error exceeds ±30 ms, it corrects it; otherwise the delay stays unchanged.')) : null,
         h('div', { class: 'btn-row' }, startBtn, againBtn, logBtn, closeBtn)));
     document.getElementById('overlay-root').append(scrim);
 };
