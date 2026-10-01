@@ -50,6 +50,12 @@ P.makeInput = enabled => {
     return input;
 };
 
+P.clearInput = () => {
+    P.input.value = '';
+    setPref('q', '');
+    P.input.dispatchEvent(new Event('input', { bubbles: true }));
+};
+
 P.mount = el => {
     P.el = el;
     P.banner = h('div', {});
@@ -83,9 +89,12 @@ P.mount = el => {
                 // a real form: the keyboard's Search key submits it (Android's IME action
                 // does not always come through as an Enter keydown)
                 h('form', { class: 'qz-searchrow', action: '', onsubmit: e => { e.preventDefault(); P.go(); } },
-                    P.aiToggle = h('button', { type: 'button', class: 'btn qz-ai-toggle' + (pref('aiMode', false) ? ' active' : ''),
-                        'aria-label': 'AI search mode', 'aria-pressed': String(pref('aiMode', false)),
-                        onclick: () => P.toggleAI() }, 'AI'),
+                    h('div', { class: 'qz-modeactions' },
+                        P.aiToggle = h('button', { type: 'button', class: 'btn qz-ai-toggle' + (pref('aiMode', false) ? ' active' : ''),
+                            'aria-label': 'AI search mode', 'aria-pressed': String(pref('aiMode', false)),
+                            onclick: () => P.toggleAI() }, 'AI'),
+                        P.textClear = h('button', { type: 'button', class: 'chip qz-text-clear',
+                            'aria-label': 'Clear search text', onclick: () => P.clearInput() }, 'Clear')),
                     P.inputBox,
                     P.searchActions = h('div', { class: 'qz-searchactions' },
                         P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),

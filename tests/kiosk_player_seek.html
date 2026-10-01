@@ -93,6 +93,8 @@
         N.base = { elapsed: 50, duration: 120, playing: false, at: clock };
         N.track = { from: 'renderer', artist: 'Artist', title: 'Track', album: 'Album', duration: 120 };
         N.paintState('pause'); N.paintTime();
+        check(getComputedStyle(N.state).borderTopColor === 'rgba(0, 0, 0, 0)',
+            'Now play and pause control has no visible border');
         check(host.querySelector('.now-timebox').scrollWidth <= host.querySelector('.now-timebox').clientWidth + 1, 'Main Now controls and elapsed time must fit');
         const mainButtons = host.querySelector('.now-ctl');
         check(mainButtons.firstChild.textContent === '<<' && mainButtons.lastChild.textContent === '>>', 'Main Now controls include rewind and forward');

@@ -27,6 +27,12 @@
         check(P.searchHint.querySelector('svg') && !P.searchHint.textContent.includes('Search'), 'Back to search uses a magnifier and chevron');
         check(P.searchHint.getAttribute('aria-label') === 'Back to search', 'Search icon has an accessible label');
         P.setAIMode(true);
+        check(P.textClear.parentElement === P.aiToggle.parentElement &&
+            Math.abs(P.textClear.getBoundingClientRect().bottom - P.input.getBoundingClientRect().bottom) < 1,
+            'Clear sits below AI in the same column and aligns with the text field bottom');
+        P.input.value = 'Temporary request';
+        P.textClear.click();
+        check(P.input.value === '' && K.pref('qobuz.q', 'saved') === '', 'Clear empties the text field and saved query');
         check(P.fsum.querySelector('.qz-fsum-mark').textContent.includes('Filters'), 'AI filters retain their label');
         check(!P.fsum.querySelector('.qz-fsum-mark svg'), 'AI filters have no icon');
         check(P.fsum.parentElement === P.searchActions, 'AI filters sit in the search controls column');
@@ -40,6 +46,8 @@
         P.input.style.height = '10rem';
         check(Math.abs(P.fsum.getBoundingClientRect().bottom - P.input.getBoundingClientRect().bottom) < 1,
             'AI filters stay aligned when the text field grows');
+        check(Math.abs(P.textClear.getBoundingClientRect().bottom - P.input.getBoundingClientRect().bottom) < 1,
+            'Clear stays bottom aligned when the text field grows');
         P.input.style.height = '';
         check(!P.fsum.classList.contains('qz-filtered'), 'Default AI filters are not active');
         P.qualityBox.querySelector('button').click();
@@ -51,6 +59,7 @@
         P.resetFilters();
         check(!P.fsum.classList.contains('qz-filtered'), 'Cleared AI filters restore label color');
         P.setAIMode(false);
+        check(getComputedStyle(P.textClear).display === 'none', 'Clear hides with the single line search field');
         check(P.fsum.querySelector('.qz-fsum-mark').textContent.includes('Filters'), 'Normal mode retains Filters text');
         check(P.fsum.previousElementSibling === P.searchWrap, 'Normal filters sit below the search row');
 

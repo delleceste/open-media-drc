@@ -312,11 +312,10 @@ button.award { font: inherit; font-size: .8rem; font-weight: 650; cursor: pointe
 .tap:active { border-color: var(--accent); }
 .dr-bar.static > span { cursor: pointer; }
 button.chip.state { color: inherit; }
-/* transport (widgets/icons.js): plain line icons, no fill; the main one (play/pause, a
-   row's play) framed by a thin blue rounded border -- never a filled tile */
+/* transport (widgets/icons.js): plain line icons, no fill */
 .ticon { width: 1.3em; height: 1.3em; display: block; flex: 0 0 auto; }
 .btn.qz-pbtn, .btn.qz-play, .btn.qz-tplay, .now-ctl .chip { background: none; border: 1.5px solid transparent; color: var(--text); box-shadow: none; }
-.btn.qz-pbtn.primary, .btn.qz-play.primary, .now-ctl .chip.state { border-color: var(--accent); }
+.btn.qz-pbtn.primary, .btn.qz-play.primary { border-color: var(--accent); }
 .btn.qz-pbtn:active, .btn.qz-play:active, .btn.qz-tplay:active, .now-ctl .chip:active { background: var(--press); }
 .btn.qz-pbtn, .btn.qz-play, .btn.qz-tplay, .now-skip { display: inline-flex; align-items: center; justify-content: center; }
 .now-ctl .chip.state { display: inline-flex; align-items: center; gap: .35rem; }
@@ -613,6 +612,8 @@ input[type=range] { accent-color: var(--accent); }
 .qz-banner { display: flex; align-items: center; gap: .8rem; }
 .qz-banner > div { flex: 1; min-width: 0; }
 .qz-searchrow { display: flex; gap: .5rem; }
+.qz-modeactions { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-start; }
+.qz-text-clear { display: none; cursor: pointer; }
 .qz-inputbox { flex: 1; min-width: 0; }
 .qz-inputbox > .qz-input { display: block; width: 100%; box-sizing: border-box; }
 .qz-searchactions { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-start; }
@@ -623,6 +624,8 @@ input[type=range] { accent-color: var(--accent); }
     width: 2.8rem; min-width: 2.8rem; height: 2.8rem; min-height: 2.8rem; padding: 0; box-sizing: border-box; }
 textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: .6rem .7rem; resize: vertical; line-height: 1.4; }
 .qz-searchrow:has(textarea) { align-items: flex-start; }
+.qz-searchrow:has(textarea) .qz-modeactions { align-self: stretch; justify-content: space-between; }
+.qz-searchrow:has(textarea) .qz-text-clear { display: inline-flex; }
 .qz-searchrow:has(textarea) .qz-searchactions { align-self: stretch; justify-content: space-between; }
 .qz-searchrow:has(textarea) .qz-fsum { width: auto; min-height: 2.8rem; margin: 0; padding: 0; }
 .qz-searchrow:has(textarea) .qz-fsum-text { display: none; }
