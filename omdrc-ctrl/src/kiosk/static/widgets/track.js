@@ -24,10 +24,10 @@ K.fetchTrack = async () => {
         const state = q.playback_state === 'play' ? 'play' : q.playback_state === 'pause' ? 'pause' : 'stop';
         return {
             ok: true, from: 'renderer', ...parsed,
-            edition: state === 'stop' ? '' : (q.edition || ''),
+            edition: q.edition || '',
             format: q.line2 || '', state,
             elapsed: Number(q.elapsed), duration: Number(q.duration),
-            art: state === 'stop' ? '' : (q.art || ''),
+            art: q.art || '',
             qobuz_album: q.qobuz_album || '',   // from a Qobuz cover: the album-details button
             activity: Array.isArray(q.events) ? q.events : (q.line3 ? [q.line3] : []),
             phase: q.state || '',

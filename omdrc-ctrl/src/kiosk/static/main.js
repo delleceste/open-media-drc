@@ -36,6 +36,11 @@ function icon(name) {
 // ── pager ────────────────────────────────────────────────────────────────────
 let cur = -1;
 const pager = $('#pager'), tabs = $('#tabs');
+const rememberedPages = ['now', 'cover', 'qobuz'];
+const rememberedPage = () => {
+    const id = K.pref('lastMainPage', 'now');
+    return rememberedPages.includes(id) && K.pages.some(p => p.id === id) ? id : 'now';
+};
 
 function activate(i) {
     if (i < 0 || i >= K.pages.length) return;
@@ -48,6 +53,7 @@ function activate(i) {
     cur = i;
     if (K.awake) K.awake.sync();
     const page = K.pages[i];
+    if (rememberedPages.includes(page.id)) K.setPref('lastMainPage', page.id);
     if (!page.mounted) {
         page.mounted = true;
         safe(() => page.mount(page.body), page);
@@ -510,7 +516,7 @@ async function boot() {
     $('#top-alert').addEventListener('click', () => K.showPage('logs'));
     armSaver(); K.awake.sync();
 
-    const wanted = (location.hash || '').slice(1) || new URLSearchParams(location.search).get('page') || K.pages[0].id;
+    const wanted = (location.hash || '').slice(1) || new URLSearchParams(location.search).get('page') || rememberedPage();
     K.showPage(K.pages.some(p => p.id === wanted) ? wanted : K.pages[0].id, false);
     // the app's splash covers the page until now: tell it once this first page is painted
     requestAnimationFrame(() => requestAnimationFrame(() => {
