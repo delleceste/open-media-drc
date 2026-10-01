@@ -85,10 +85,8 @@ P.mount = el => {
     P.drValue = h('strong', { class: 'dr-value' }, '—');
     P.drStatus = h('span', { class: 'dr-status' });
     P.drWin = h('button', { class: 'chip', type: 'button', onclick: ev => P.cycleWindow(ev) });
-    P.drGaugeHost = h('div', { class: 'drg' });
     P.drBox = h('div', { class: 'now-dr card' },
-        h('div', { class: 'dr-head' }, h('span', { class: 'lbl' }, 'DR'), P.drValue, P.drStatus, P.drWin), P.drGaugeHost, P.drModeBox());
-    P.gauge = K.drGauge(P.drGaugeHost);
+        h('div', { class: 'dr-head' }, h('span', { class: 'lbl' }, 'DR'), P.drValue, P.drStatus, P.drWin), P.drModeBox());
 
     P.balHost = h('div', { class: 'now-bal card' });
     P.balance = new K.Balance(P.balHost);
@@ -503,7 +501,6 @@ P.paintDr = E => {
     P.drValue.textContent = s.value === null ? '—' : (s.value > 14 ? 'DR14+' : `DR${s.value}`);
     P.drValue.style.color = s.value === null ? '' : K.dr.color(s.value).bg;
     P.drStatus.textContent = s.value === null ? s.short : `${s.sampled}s sampled`;
-    P.gauge.set(s.value === null ? null : s.value);
 };
 
 // The play/pause/stop chip: a line icon (widgets/icons.js) and the state in words.
