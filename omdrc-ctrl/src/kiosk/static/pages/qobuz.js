@@ -1520,15 +1520,54 @@ P.buildPlayer = () => {
     v.prog = h('div', { class: 'qz-pprog' }, h('i'));    // upright: a thin line instead of the slider
     P.views.push(v);
     K.clear(P.player).append(v.prog,
-        h('div', { class: 'qz-pinfo tap', title: 'Open the player', onclick: () => P.openFull() },
+        h('div', { class: 'qz-pinfo', role: 'button', tabindex: '0', 'aria-label': 'Open Now playing',
+            onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.openFull(); } },
+            title: 'Tap or swipe up to open the player' },
             v.cover, h('div', { class: 'qz-ptext' }, v.title, v.sub)),
-        v.buttons, v.seekRow,
-        h('button', { type: 'button', class: 'btn qz-pbtn qz-expand', title: 'Open the player', onclick: () => P.openFull() }, '⌃'));
+        v.buttons, v.seekRow);
+    P.wirePlayerDrawer();
+};
+
+P.wirePlayerDrawer = () => {
+    let drag = null, suppressClick = false;
+    const control = target => target.closest('button, input, select, a');
+    P.player.addEventListener('click', e => {
+        if (control(e.target)) return;
+        if (suppressClick) { suppressClick = false; return; }
+        P.openFull();
+    });
+    P.player.addEventListener('pointerdown', e => {
+        if (control(e.target) || e.button !== 0 || P.fullEl) return;
+        suppressClick = false;
+        drag = { id: e.pointerId, y: e.clientY, distance: 0, height: window.innerHeight };
+        P.player.setPointerCapture(e.pointerId);
+        e.stopPropagation();
+    });
+    P.player.addEventListener('pointermove', e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        drag.distance = Math.max(0, drag.y - e.clientY);
+        if (Math.abs(drag.y - e.clientY) > 8) suppressClick = true;
+        if (drag.distance > 8 && !P.fullEl) P.openFull({ offset: drag.height - drag.distance });
+        if (P.fullEl) P.fullEl.style.transform = `translateY(${Math.max(0, drag.height - drag.distance)}px)`;
+    });
+    const end = e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const finish = e.type !== 'pointercancel' && drag.distance > Math.min(100, drag.height * .2);
+        drag = null;
+        if (!P.fullEl) return;
+        const panel = P.fullEl;
+        panel.style.pointerEvents = '';
+        panel.style.transition = 'transform 180ms ease-out';
+        panel.style.transform = finish ? 'translateY(0)' : 'translateY(100dvh)';
+        if (!finish) setTimeout(() => { if (P.fullEl === panel) P.closeFull(); }, 180);
+    };
+    P.player.addEventListener('pointerup', end);
+    P.player.addEventListener('pointercancel', end);
 };
 
 // Full screen, like Qobuz's own player: the cover as large as the screen
 // allows, the track, the transport, and the queue (a tap plays from there).
-P.openFull = () => {
+P.openFull = ({ offset = 0 } = {}) => {
     if (P.fullEl || !P.usable()) return;
     const v = P.makeView(true);
     v.work = h('div', { class: 'qz-fwork muted' });
@@ -1559,6 +1598,10 @@ P.openFull = () => {
     v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
         duration: () => P.base.duration, seek: s => P.seekTo(s) });
     P.ringHint = true;
+    if (offset) {
+        P.fullEl.style.transform = `translateY(${Math.max(0, offset)}px)`;
+        P.fullEl.style.pointerEvents = 'none';
+    }
     document.getElementById('overlay-root').append(P.fullEl);
     P.fullView = v;
     P.views.push(v);

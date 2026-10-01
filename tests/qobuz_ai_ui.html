@@ -20,6 +20,7 @@
             ? { ok: true, provider: 'claude', model: 'claude-sonnet-4-6', configured: true, account_ready: true,
                 defaults: { claude: 'claude-sonnet-4-6', claude_account: 'claude-sonnet-4-6', openai: 'gpt-5.4' } }
             : { ok: true, entries: [] };
+        const buildPlayer = P.buildPlayer;
         for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
         P.mount(document.getElementById('page'));
         P.input.value = 'Three Beethoven 5 recordings for sound engineering';
@@ -137,8 +138,44 @@
         provider.value = 'claude_account'; provider.dispatchEvent(new Event('change'));
         check(document.querySelector('.qz-ai-sheet input[type=password]').parentElement.hidden, 'Account mode needs no API key');
         check(document.querySelector('.qz-ai-sheet').textContent.includes('Claude is signed in'), 'Account login status displayed');
+        buildPlayer();
+        check(!P.player.querySelector('.qz-expand'), 'No adjacent expand button');
+        const openFull = P.openFull;
+        let opened = 0;
+        P.openFull = ({ offset = 0 } = {}) => {
+            opened++;
+            P.fullEl = K.h('div', {});
+            P.fullEl.style.transform = `translateY(${offset}px)`;
+        };
+        P.player.setPointerCapture = () => {};
+        const info = P.player.querySelector('.qz-pinfo');
+        info.click();
+        check(opened === 1, 'Bar tap opens player');
+        P.fullEl = null;
+        const pointer = (type, y) => info.dispatchEvent(new PointerEvent(type,
+            { bubbles: true, pointerId: 42, pointerType: 'touch', button: 0, clientY: y }));
+        pointer('pointerdown', 700);
+        pointer('pointermove', 650);
+        const firstOffset = P.fullEl.style.transform;
+        pointer('pointermove', 500);
+        check(firstOffset !== P.fullEl.style.transform, 'Drawer follows upward drag progressively');
+        pointer('pointerup', 500);
+        check(P.fullEl.style.transform === 'translateY(0px)', 'Long swipe opens drawer');
+        info.click();
+        check(opened === 2, 'Swipe does not also trigger a tap');
+        P.fullEl = null;
+        pointer('pointerdown', 700); pointer('pointermove', 680); pointer('pointerup', 680);
+        check(P.fullEl.style.transform === 'translateY(100dvh)', 'Short swipe returns drawer');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        check(!P.fullEl, 'Returned drawer removed');
+        let transport = 0;
+        P.transport = () => { transport++; };
+        P.player.querySelector('.qz-toggle').click();
+        check(transport === 1 && opened === 3, 'Play button does not open drawer');
+        P.openFull = openFull;
+        check(getComputedStyle(P.aiButton).backgroundColor !== 'rgb(31, 111, 235)', 'Search has no blue fill');
         check(document.getElementById('page').scrollWidth <= 392, 'Phone-width layout fits');
-        document.getElementById('result').textContent = 'PASS: search stop, restart, late responses, catalog stream, AI cards, playback controls, sources, safe text, Hi-Res, settings, restoring and no automatic paid requests';
+        document.getElementById('result').textContent = 'PASS: player tap, progressive swipe, short-swipe cancel, separate playback, neutral search, search stop, restart, late responses, catalog stream, AI cards, playback controls, sources, safe text, Hi-Res, settings, restoring and no automatic paid requests';
     } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
 })();
 </script>

@@ -106,7 +106,7 @@ body.bar-shown #topbar { transform: none; }
 .btn { min-height: 2.8rem; padding: 0 1rem; border-radius: .5rem; border: 1px solid var(--border); background: var(--surface2); font-weight: 600; font-size: .95rem; cursor: pointer; }
 .btn:active { background: var(--press); }
 .btn:disabled { opacity: .4; }
-.btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.btn.primary { background: var(--surface); border-color: var(--accent); color: var(--text); }
 .btn.danger { background: #b62324; border-color: #b62324; color: #fff; }
 .btn.danger-soft { border-color: var(--bad-edge); color: var(--toast-bad); }
 .btn.active { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,.12); }
@@ -715,7 +715,7 @@ input[type=range] { accent-color: var(--accent); }
 .qz-sug-mark { color: var(--muted); font-size: .8rem; }
 /* player strip: pinned to the bottom of the page, over the results */
 .qz-player { position: sticky; bottom: 0; z-index: 2; margin-top: .6rem; display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(12rem, 1.3fr) auto; grid-template-areas: "info btns seek expand";
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.3fr); grid-template-areas: "info btns seek";
     gap: .4rem .8rem; align-items: center; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: .6rem;
     background: var(--surface); box-shadow: 0 -.3rem 1rem var(--shadow); }
 .qz-pinfo { grid-area: info; min-width: 0; display: flex; align-items: center; gap: .6rem; cursor: pointer; }
@@ -801,7 +801,7 @@ input[type=range] { accent-color: var(--accent); }
 @media (orientation: portrait) {
     /* upright, the strip is one row as in Qobuz's app: cover and title, play/pause,
        open; a thin progress line along its top.  The rest is in the full player. */
-    .qz-player { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "info btns expand"; gap: .5rem; padding: .45rem .5rem .4rem; overflow: hidden; }
+    .qz-player { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "info btns"; gap: .5rem; padding: .45rem .5rem .4rem; overflow: hidden; }
     .qz-player .qz-pbtns .btn:not(.qz-toggle), .qz-player .qz-pseek { display: none; }
     .qz-pprog { display: block; position: absolute; left: 0; right: 0; top: 0; height: .18rem; background: rgba(139,148,158,.25); }
     .qz-pprog i { display: block; height: 100%; width: 0; background: var(--accent); }
@@ -849,3 +849,6 @@ input[type=range] { accent-color: var(--accent); }
 .now-drthermo .drg-scale { display: none; }
 .now-drthermo .drg-track { height: .65rem; border-radius: 0; }
 .now-drthermo .drg-marker { top: -.12rem; height: .9rem; border-radius: 0; }
+
+.qz-player { touch-action: none; cursor: pointer; }
+.qz-player button, .qz-player input { touch-action: manipulation; }
