@@ -29,11 +29,18 @@
         P.setAIMode(true);
         check(P.fsum.querySelector('.qz-fsum-mark').textContent.includes('Filters'), 'AI filters retain their label');
         check(!P.fsum.querySelector('.qz-fsum-mark svg'), 'AI filters have no icon');
-        check(P.fsum.parentElement === P.inputBox, 'AI filters sit inside the text field');
+        check(P.fsum.parentElement === P.searchActions, 'AI filters sit in the search controls column');
         const inputRect = P.input.getBoundingClientRect();
         const summaryRect = P.fsum.getBoundingClientRect();
-        check(summaryRect.bottom <= inputRect.bottom && summaryRect.bottom >= inputRect.bottom - 5,
-            'AI filters align with the bottom of the text field');
+        const searchRect = P.aiButton.getBoundingClientRect();
+        check(summaryRect.left >= inputRect.right && Math.abs(summaryRect.left - searchRect.left) < 1,
+            'AI filters sit beside the text field below the search icon');
+        check(Math.abs(summaryRect.bottom - inputRect.bottom) < 1,
+            'AI filters bottom-align with the text field');
+        P.input.style.height = '10rem';
+        check(Math.abs(P.fsum.getBoundingClientRect().bottom - P.input.getBoundingClientRect().bottom) < 1,
+            'AI filters stay aligned when the text field grows');
+        P.input.style.height = '';
         check(!P.fsum.classList.contains('qz-filtered'), 'Default AI filters are not active');
         P.qualityBox.querySelector('button').click();
         const yellow = getComputedStyle(P.fsum).getPropertyValue('--yellow').trim();

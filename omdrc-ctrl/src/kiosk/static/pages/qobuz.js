@@ -87,13 +87,14 @@ P.mount = el => {
                         'aria-label': 'AI search mode', 'aria-pressed': String(pref('aiMode', false)),
                         onclick: () => P.toggleAI() }, 'AI'),
                     P.inputBox,
-                    P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
-                    // down on Now, once there are results: over to them, in Search's place
-                    // until the text or a filter changes (kiosk.css, paintStale)
-                    h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›')),
+                    P.searchActions = h('div', { class: 'qz-searchactions' },
+                        P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
+                        // down on Now, once there are results: over to them, in Search's place
+                        // until the text or a filter changes (kiosk.css, paintStale)
+                        h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›'))),
                 P.suggestBox),
             P.fsum, P.filters));
-    if (pref('aiMode', false)) P.inputBox.append(P.fsum);
+    if (pref('aiMode', false)) P.searchActions.append(P.fsum);
     P.results = h('div', { class: 'qz-results' });
     P.recentBox = h('div', { class: 'qz-recent' });
     P.awardedBox = h('div', { class: 'qz-awarded' });
@@ -666,7 +667,8 @@ P.paintSummary = () => {
     P.fsum.classList.toggle('qz-filtered', active);
     K.clear(P.fsum).append(
         h('button', { type: 'button', class: 'qz-fsum-toggle',
-            'aria-label': 'Filters', 'aria-expanded': String(!!P.filtersOpen), onclick: () => P.openFilters(!P.filtersOpen) },
+            'aria-label': 'Filters', 'aria-expanded': String(!!P.filtersOpen),
+            title: P.filterSummary() || 'Filters', onclick: () => P.openFilters(!P.filtersOpen) },
             h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
             h('span', { class: 'qz-fsum-mark' }, 'Filters' + (P.filtersOpen ? ' ▴' : ' ▾'))));
     if (active) P.fsum.append(h('button', { type: 'button', class: 'btn qz-filter-clear',
@@ -718,7 +720,7 @@ P.setAIMode = enabled => {
     P.input = P.makeInput(enabled);
     P.input.value = oldInput.value;
     oldInput.replaceWith(P.input);
-    if (enabled) P.inputBox.append(P.fsum);
+    if (enabled) P.searchActions.append(P.fsum);
     else P.searchWrap.after(P.fsum);
     P.showSuggestions([]);
     if (focused) P.input.focus();
