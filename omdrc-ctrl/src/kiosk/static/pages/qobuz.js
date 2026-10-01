@@ -671,7 +671,7 @@ P.paintSummary = () => {
                 : 'Filters' + (P.filtersOpen ? ' ▴' : ' ▾'))));
     if (active) P.fsum.append(h('button', { type: 'button', class: 'btn qz-filter-clear',
         title: 'Clear filters', 'aria-label': 'Clear filters',
-        onclick: () => { P.resetFilters(); P.searchSoon(); } }, K.tIcon('close')));
+        onclick: () => { P.resetFilters(); P.searchSoon(); } }, K.tIcon('clear')));
 };
 
 P.openFilters = open => {
