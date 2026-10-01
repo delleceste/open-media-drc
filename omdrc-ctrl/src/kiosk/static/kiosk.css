@@ -856,19 +856,24 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 
 .now-drthermo { flex: 1 1 2rem; min-width: 2rem; align-self: center; margin-bottom: .4rem; }
 .now-drthermo .drg-scale { display: none; }
-.now-drthermo .drg-track { height: .3rem; border-radius: 0; overflow: visible; }
-.now-drthermo .drg-marker { top: calc(100% + 2px); width: 0; height: 0; margin-left: -4px;
-    border: 4px solid transparent; border-top: 0; border-bottom-color: #fff;
-    border-radius: 0; background: none; box-shadow: none; }
+.now-drthermo .drg-track { height: .65rem; border-radius: 0; }
+.now-drthermo .drg-marker { top: -.12rem; height: .9rem; border-radius: 0; }
 
 .qz-player { touch-action: none; cursor: pointer; }
 .qz-player button, .qz-player input { touch-action: manipulation; }
 
-/* Split balance uses a fine needle and an upward pointer; bar mode keeps its fill. */
+/* Fine indicators suit portrait; landscape retains the thick bars and needles. */
+@media (orientation: portrait) {
+.now-drthermo .drg-track { height: .3rem; border-radius: 0; overflow: visible; }
+.now-drthermo .drg-marker { top: calc(100% + 2px); width: 0; height: 0; margin-left: -4px;
+    border: 4px solid transparent; border-top: 0; border-bottom-color: #fff;
+    border-radius: 0; background: none; box-shadow: none; }
 .bal-track.split, .now-side.single .bal-track.split { height: .3rem; border-radius: 0; margin-bottom: .65rem; }
 .bal-track.split .bal-pointer { top: -.05rem; width: 2px; height: calc(100% + .1rem); margin-left: -1px;
     border-radius: 0; box-shadow: none; }
 .bal-track.split .bal-pointer::after { content: ''; position: absolute; top: calc(100% + 2px); left: 50%;
     width: 0; height: 0; margin-left: -4px; border: 4px solid transparent; border-top: 0; border-bottom-color: #fff; }
+
+}
 
 .menu-pop.qz-queue-actions { position: absolute; top: calc(100% + .25rem); left: 0; }

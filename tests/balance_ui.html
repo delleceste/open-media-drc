@@ -16,9 +16,19 @@ try {
     const gauge = document.getElementById('thermo');
     K.drGauge(gauge).set(10);
     check(parseFloat(getComputedStyle(gauge).width) > 48, 'DR thermo fills spare header width');
+    const portrait = matchMedia('(orientation: portrait)').matches;
     const marker = gauge.querySelector('.drg-marker');
-    check(getComputedStyle(marker).borderTopWidth === '0px' && getComputedStyle(marker).borderBottomWidth === '4px' && getComputedStyle(marker).borderBottomColor === 'rgb(255, 255, 255)', 'DR triangle indicator');
-    if (balance.look === 'split') {
+    const drTrack = gauge.querySelector('.drg-track');
+    if (!portrait) {
+        check(parseFloat(getComputedStyle(drTrack).height) >= 10, 'Landscape DR bar retains thickness');
+        check(parseFloat(getComputedStyle(marker).width) >= 4 && parseFloat(getComputedStyle(marker).height) >= 14, 'Landscape DR retains thick needle');
+    }
+    if (portrait) check(getComputedStyle(marker).borderTopWidth === '0px' && getComputedStyle(marker).borderBottomWidth === '4px' && getComputedStyle(marker).borderBottomColor === 'rgb(255, 255, 255)', 'DR triangle indicator');
+    if (balance.look === 'split' && !portrait) {
+        check(parseFloat(getComputedStyle(balance.track).height) >= 17, 'Landscape split balance retains thick bar');
+        check(parseFloat(getComputedStyle(balance.pointer).width) >= 10, 'Landscape balance retains thick needle');
+        check(getComputedStyle(balance.pointer, '::after').content === 'none', 'Landscape needle has no triangle');
+    } else if (balance.look === 'split') {
         check(parseFloat(getComputedStyle(balance.track).height) < 8, 'Thin split track');
         check(getComputedStyle(balance.pointer).width === '2px', 'Thin blue needle');
         check(getComputedStyle(balance.pointer, '::after').borderBottomColor === 'rgb(255, 255, 255)', 'White balance triangle');
@@ -27,6 +37,6 @@ try {
         check(getComputedStyle(balance.pointer).display === 'none', 'Bar mode has no needle');
     }
     if (phase === 'initial' || phase === 'bar') balance.toggleLook();
-    document.getElementById('result').textContent = 'PASS: ' + phase + ' mode persistence, DR fill and triangle, split needle and triangle, unchanged bar mode';
+    document.getElementById('result').textContent = 'PASS: ' + phase + ' mode persistence and orientation-appropriate DR and balance indicators';
 } catch (e) { document.getElementById('result').textContent = 'FAIL: ' + e.stack; }
 </script>
