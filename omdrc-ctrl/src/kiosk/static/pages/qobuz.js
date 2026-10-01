@@ -634,9 +634,10 @@ P.resetFilters = () => {
 };
 P.paintSummary = () => {
     if (!P.fsum) return;
-    P.fsum.classList.toggle('qz-filtered', !!P.filtersActive());
+    const active = !!P.filtersActive();
+    P.fsum.classList.toggle('qz-filtered', active);
     K.clear(P.fsum).append(h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
-        h('span', { class: 'qz-fsum-mark' }, P.filtersOpen ? 'Hide filters ▴' : 'Filters ▾'));
+        h('span', { class: 'qz-fsum-mark' }, (active ? 'Filters Applied' : 'Filters') + (P.filtersOpen ? ' ▴' : ' ▾')));
 };
 
 P.openFilters = open => {

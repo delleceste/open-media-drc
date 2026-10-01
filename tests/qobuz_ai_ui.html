@@ -45,8 +45,13 @@
         await P.toggleAI();
         check(P.aiToggle.getAttribute('aria-pressed') === 'true', 'AI mode enabled');
         check(!P.params(0).has('hires') && !P.fsum.classList.contains('qz-filtered'), 'AI clears filters');
+        check(!P.fsum.textContent.includes('Filters Applied'), 'Reset removes applied label');
         P.qualityBox.querySelector('button').click();
         check(P.fsum.classList.contains('qz-filtered'), 'Active filters marked');
+        check(P.fsum.textContent.includes('Filters Applied'), 'Applied filters explicitly labeled');
+        P.openFilters(true);
+        check(P.fsum.textContent.includes('Filters Applied'), 'Applied label retained when expanded');
+        P.openFilters(false);
         await P.go();
         check(P.results.querySelectorAll('.qz-row').length === 3, 'Three album result cards');
         check(P.results.querySelectorAll('.qz-play').length === 3, 'Playable controls');
