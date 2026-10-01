@@ -138,6 +138,35 @@ function(omdrc_check_upmpdcli_edition_tags)
 endfunction()
 
 omdrc_check_upmpdcli_edition_tags()
+
+# The Qobuz OAuth cache guidance applies on Linux and FreeBSD. Show the same
+# upstream patch procedure on both platforms.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    message(NOTICE
+"\n  upmpdcli Qobuz OAuth cache patch (full notes in upmpdcli/patches/README.md):"
+"\n"
+"\n    git clone https://framagit.org/medoc92/upmpdcli.git"
+"\n    cd upmpdcli"
+"\n    git apply --check ${CMAKE_SOURCE_DIR}/upmpdcli/patches/0002-qobuz-oauth-cache-guidance.patch"
+"\n    git apply ${CMAKE_SOURCE_DIR}/upmpdcli/patches/0002-qobuz-oauth-cache-guidance.patch"
+"\n    meson setup build && ninja -C build && sudo ninja -C build install"
+"\n")
+endif()
+
+# The upstream FreeBSD rc.d addition is useful for standalone upmpdcli source
+# installs. open-media-drc installs and manages its own renderer service.
+if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    message(NOTICE
+"\n  Optional standalone upmpdcli FreeBSD rc.d patch (see upmpdcli/patches/README.md):"
+"\n"
+"\n    git apply --check ${CMAKE_SOURCE_DIR}/upmpdcli/patches/0003-freebsd-rcd-support.patch"
+"\n    git apply ${CMAKE_SOURCE_DIR}/upmpdcli/patches/0003-freebsd-rcd-support.patch"
+"\n    meson setup build && ninja -C build && sudo ninja -C build install"
+"\n"
+"\n  open-media-drc installs its own upmpdcli rc.d service; this patch is for"
+"\n  standalone upmpdcli installs or upstream contribution.\n")
+endif()
+
 # qobuzconnect2mpd is built and installed separately.  HINTS are searched BEFORE
 # the system PATH, so a per-user build left in ~/.local/bin used to win over a
 # later system-wide install of the same program — and go on winning long after

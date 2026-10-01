@@ -1,5 +1,42 @@
 # upmpdcli patches
 
+These patches are kept against the official upmpdcli source tree. Apply only
+the patches you need; `cmake` reports the relevant procedure during configure.
+
+## `0002-qobuz-oauth-cache-guidance.patch`
+
+Makes the Qobuz OAuth helper and manual explain which running upmpdcli instance
+receives the redirect and where its token is saved. This patch applies on both
+Linux and FreeBSD.
+
+Check it against the exact official source revision you build:
+
+```sh
+git clone https://framagit.org/medoc92/upmpdcli.git
+cd upmpdcli
+git apply --check /path/to/open-media-drc/upmpdcli/patches/0002-qobuz-oauth-cache-guidance.patch
+git apply /path/to/open-media-drc/upmpdcli/patches/0002-qobuz-oauth-cache-guidance.patch
+meson setup build && ninja -C build && sudo ninja -C build install
+```
+
+## `0003-freebsd-rcd-support.patch`
+
+Adds a FreeBSD rc.d service script and its Meson installation, and documents
+the FreeBSD startup procedure. The script defaults to root and system-wide
+configuration; set `upmpdcli_user` and `upmpdcli_homedir` in rc.conf when using
+a dedicated account. This patch came from the sibling upmpdcli checkout's
+`freebsd-rcd-support` branch.
+
+open-media-drc installs and manages its own upmpdcli rc.d service, so this
+patch is only needed for standalone upmpdcli source installs or upstream
+contribution. Apply it to the official source tree with:
+
+```sh
+git apply --check /path/to/open-media-drc/upmpdcli/patches/0003-freebsd-rcd-support.patch
+git apply /path/to/open-media-drc/upmpdcli/patches/0003-freebsd-rcd-support.patch
+meson setup build && ninja -C build && sudo ninja -C build install
+```
+
 ## `0001-carry-date-genre-and-publisher-tags.patch`
 
 **What it fixes.** upmpdcli hands MusicPD the metadata a control point sent

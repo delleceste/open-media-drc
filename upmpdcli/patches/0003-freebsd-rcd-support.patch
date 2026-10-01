@@ -1,0 +1,152 @@
+diff --git a/doc/upmpdcli-manual.txt b/doc/upmpdcli-manual.txt
+index bc7c5cb..c2f76cd 100644
+--- a/doc/upmpdcli-manual.txt
++++ b/doc/upmpdcli-manual.txt
+@@ -1272,8 +1272,19 @@ There is no need for upmpdcli to be started by root, it can run as any user. In
+ will create its cache files in user home directory normal cache location ($XDG_CACHE_HOME/upmpdcli
+ or ~/.cache/upmpdcli).
+ 
+-On systemd platforms, upmpdcli will usually be started through a unit files. This is usually taken
+-care of by the package. There is a also an init file in the source tree.
++On systemd platforms, upmpdcli will usually be started through a unit file. This is usually taken
++care of by the package. There is also an init file in the source tree.
++
++On FreeBSD, the Meson installation installs an rc.d script under the configured prefix,
++normally `/usr/local/etc/rc.d/upmpdcli`. Enable
++automatic startup with:
++
++----
++sysrc upmpdcli_enable=YES
++----
++
++The default rc.d script uses the installed `upmpdcli.conf`; set `upmpdcli_config` in rc.conf if your
++configuration file is elsewhere.
+ 
+ 
+ ////
+diff --git a/freebsd/upmpdcli b/freebsd/upmpdcli
+new file mode 100755
+index 0000000..3f35ffe
+--- /dev/null
++++ b/freebsd/upmpdcli
+@@ -0,0 +1,104 @@
++#!/bin/sh
++
++# PROVIDE: upmpdcli
++# REQUIRE: NETWORKING FILESYSTEMS mpd
++# KEYWORD: shutdown
++#
++# FreeBSD rc.d service script for upmpdcli.
++#
++# upmpdcli is a UPnP/DLNA Media Renderer front-end for Music Player Daemon
++# (MPD). It bridges UPnP control points (e.g. BubbleUPnP, Kazoo) to an
++# MPD instance running on the same or a different host.
++#
++# ---------------------------------------------------------------------------
++# INSTALLATION PATHS
++# ---------------------------------------------------------------------------
++# This script assumes a standard FreeBSD ports/pkg install rooted at
++# /usr/local.  If you have built and installed upmpdcli from source with a
++# different prefix, update the three paths below accordingly:
++#
++#   PREFIX     - installation root             (default: /usr/local)
++#   BINDIR     - upmpdcli executable           (default: $PREFIX/bin)
++#   SYSCONFDIR - system-wide configuration dir  (default: $PREFIX/etc)
++#
++# Quick reference for the most common non-default prefixes:
++#   Source install to /opt:   PREFIX=/opt
++#   Source install to /usr:   PREFIX=/usr  SYSCONFDIR=/etc
++# ---------------------------------------------------------------------------
++
++PREFIX="/usr/local"
++BINDIR="${PREFIX}/bin"
++SYSCONFDIR="${PREFIX}/etc"
++
++# ---------------------------------------------------------------------------
++# USER CONFIGURATION
++# ---------------------------------------------------------------------------
++# Edit the values below to match your setup, or override them in
++# /etc/rc.conf.d/upmpdcli (takes precedence over anything set here).
++#
++# upmpdcli_user   : Unix user that runs the daemon (empty = root)
++# upmpdcli_homedir: home directory of that user
++#                   When set, HOME is exported correctly (rc.subr uses
++#                   su -m which does not update HOME), and config/pidfile
++#                   paths are derived from it automatically:
++#                     config  : $homedir/.local/etc/upmpdcli.conf
++#                     pidfile : $homedir/.cache/upmpdcli/upmpdcli.pid
++#
++# Override individual paths only if the derived defaults don't suit you:
++# upmpdcli_config  : path to configuration file
++# upmpdcli_pidfile : path to PID file (must be writable by upmpdcli_user;
++#                    /var/run is not writable by non-root users)
++# upmpdcli_flags   : extra flags passed to upmpdcli, e.g. "-v"
++# ---------------------------------------------------------------------------
++
++upmpdcli_user=""
++upmpdcli_homedir=""
++
++. /etc/rc.subr
++
++name="upmpdcli"
++rcvar="upmpdcli_enable"
++
++load_rc_config "$name"
++
++: ${upmpdcli_enable:="NO"}
++: ${upmpdcli_user:=""}
++: ${upmpdcli_homedir:=""}
++: ${upmpdcli_flags:=""}
++
++# Derive config and pidfile defaults from upmpdcli_homedir when set,
++# otherwise fall back to system-wide paths.
++if [ -n "${upmpdcli_homedir}" ]; then
++    : ${upmpdcli_config:="${upmpdcli_homedir}/.local/etc/upmpdcli.conf"}
++    : ${upmpdcli_pidfile:="${upmpdcli_homedir}/.cache/upmpdcli/upmpdcli.pid"}
++    export HOME="${upmpdcli_homedir}"
++else
++    : ${upmpdcli_config:="${SYSCONFDIR}/upmpdcli.conf"}
++    : ${upmpdcli_pidfile:="/var/run/${name}.pid"}
++fi
++
++# Ensure /usr/local/bin is in PATH so that plugin subprocesses launched by
++# upmpdcli (Python scripts with #!/usr/bin/env python3) can find python3.
++# Services start with a minimal PATH that omits /usr/local/bin on FreeBSD.
++export PATH="/usr/local/bin:/usr/bin:/bin"
++
++# Use daemon(8) to daemonise upmpdcli and manage the PID file.
++# upmpdcli is invoked without -D so it runs in the foreground;
++# daemon(8) forks it into the background and writes the PID file,
++# allowing rc.subr to reliably stop and query the service.
++#
++# daemon flags:
++#   -f  : redirect stdin/stdout/stderr to /dev/null
++#   -p  : write PID of the child to pidfile
++#   -t  : set the process title shown in ps(1)
++command="/usr/sbin/daemon"
++procname="${BINDIR}/upmpdcli"
++pidfile="${upmpdcli_pidfile}"
++
++# Refuse to start if the configuration file is missing.
++required_files="${upmpdcli_config}"
++
++# (no -D: daemon(8) handles daemonisation)
++command_args="-f -p ${upmpdcli_pidfile} -t ${name} -- ${BINDIR}/upmpdcli -c ${upmpdcli_config}"
++
++run_rc_command "$1"
+diff --git a/meson.build b/meson.build
+index b7cff6d..49f3d03 100644
+--- a/meson.build
++++ b/meson.build
+@@ -187,6 +187,11 @@ upmpdcli_data = files(
+ )
+ install_data(upmpdcli_data, install_dir: get_option('datadir') / 'upmpdcli')
+ 
++# FreeBSD rc.d service, installed under the configured prefix.
++if host_machine.system() == 'freebsd'
++  install_data('freebsd/upmpdcli', install_dir: get_option('prefix') / 'etc' / 'rc.d')
++endif
++
+ install_data('src/upmpdcli.conf-dist', install_dir: '/etc')
+ 
+ install_subdir(
