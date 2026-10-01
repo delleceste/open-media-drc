@@ -84,9 +84,25 @@ P.mount = el => {
     // DR block
     P.drValue = h('strong', { class: 'dr-value' }, '—');
     P.drStatus = h('span', { class: 'dr-status' });
+    P.drThermo = h('div', { class: 'now-drthermo', 'aria-label': 'Dynamic range', role: 'meter',
+        'aria-valuemin': '0', 'aria-valuemax': '14' });
     P.drWin = h('button', { class: 'chip', type: 'button', onclick: ev => P.cycleWindow(ev) });
+    P.drBarHost = h('div', { class: 'dr-bar' });
+    P.drDetail = h('div', { class: 'dr-detail', hidden: true });
+    P.drOldest = h('span', {});
+    // The value lives in the side column; the segmented history is a
+    // full-width strip along the bottom, where finer segments fit
     P.drBox = h('div', { class: 'now-dr card' },
-        h('div', { class: 'dr-head' }, h('span', { class: 'lbl' }, 'DR'), P.drValue, P.drStatus, P.drWin), P.drModeBox());
+        h('div', { class: 'dr-head' }, h('span', { class: 'lbl' }, 'DR'), P.drValue, P.drStatus, P.drThermo, P.drWin));
+    P.gauge = K.drGauge(P.drThermo);
+    P.drBarBox = h('div', { class: 'now-drbar card' }, P.drBarHost,
+        h('div', { class: 'dr-times' }, P.drOldest, P.drDetail, P.drModeBox(), h('span', {}, 'Latest')));
+    // On Now the bar is for looking at: a tap there is an ordinary tap on the page
+    // (it shows the top bar); its segments are inspected on the DR page.
+    P.drBar = new K.DrBar(P.drBarHost, { interactive: false, onDetail: (text, count) => {
+        P.drDetail.hidden = !text; P.drDetail.textContent = text || '';
+        P.drOldest.textContent = count ? `−${K.dr.elapsedLabel(count * 3)}` : '';
+    } });
 
     P.balHost = h('div', { class: 'now-bal card' });
     P.balance = new K.Balance(P.balHost);
@@ -97,11 +113,16 @@ P.mount = el => {
     // the DRC line
     P.drcLine = h('button', { class: 'now-drc', type: 'button', onclick: () => K.goto('drc') });
 
+    // drag handle between the meters and the DR strip (see wireSplitter)
+    P.splitter = h('div', { class: 'splitter', title: 'Drag to give the meters or the DR history more room · double-tap to reset' }, h('i'));
     P.mainBox = h('div', { class: 'now-main' }, P.leftCell, P.side);
+    // the handle overlays the gap above the DR strip: it takes no layout space
+    P.drBarBox.append(P.splitter);
     // upright, with the Qobuz search on: the Qobuz page's search box sits at the
     // bottom, a preview of the results above it (pages/qobuz.js moves both here and back)
     P.qzSlot = h('div', { class: 'now-search', hidden: true });
-    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.drcLine, P.qzSlot));
+    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.drBarBox, P.drcLine, P.qzSlot));
+    P.wireSplitter();
     P.wireVSplit();
     P.wireResetTap();
     P.wireMeterTap();
@@ -208,15 +229,17 @@ P.applyLayout = () => {
     P.lvlBody.classList.toggle('tap', P.mode === 'needles' || P.mode === 'bars');
     P.el.firstChild.classList.toggle('lvl-off', off);
     P.drBox.hidden = !P.showDr;
+    P.drBarBox.hidden = !P.showDr;
     P.balHost.hidden = !P.showBalance;
     P.side.hidden = !P.showDr && !P.showBalance;
     P.side.classList.toggle('single', P.showDr !== P.showBalance);   // one card alone: make it bigger
     P.el.firstChild.classList.toggle('no-side', P.side.hidden);
-    P.el.firstChild.classList.add('no-drbar');
+    P.el.firstChild.classList.toggle('no-drbar', !P.showDr);
     // DR hidden but Balance on: no side column, the balance slides under the meters
     P.el.firstChild.classList.toggle('bal-below', !P.showDr && P.showBalance);
     // upright, something switched off leaves room: the cover grows and the track goes under it
     P.el.firstChild.classList.toggle('roomy', off || !P.showDr || !P.showBalance);
+    P.splitter.hidden = !P.showDr || (P.mode === 'off' && !square);
     P.paintCover();
     P.applySplit();
     P.applyCols();
@@ -340,7 +363,60 @@ P.openLevel = () => {
     });
 };
 
-P.applySplit = () => { P.mainBox.style.flex = ''; };
+// ── meters / DR strip splitter ───────────────────────────────────────────────
+// r = the share of the flexible height for the meters row (the rest is the DR
+// strip).  The user's drag is remembered; until then Balance decides: without it
+// the side column is short, so the meters take more.
+const SPLIT_MIN = 0.2, SPLIT_MAX = 0.85;
+P.splitRatio = () => {
+    const saved = K.pref('now.split', null);
+    if (typeof saved === 'number') return K.clamp(saved, SPLIT_MIN, SPLIT_MAX);
+    if (P.coverMode === 'square') return 0.72;         // the cover's row is a square: give it the height
+    return (P.showBalance ? 0.55 : 0.68) + (P.mode === 'spectrum' ? 0.1 : 0);
+};
+P.applySplit = () => {
+    const on = P.showDr && !P.splitter.hidden;
+    const r = P.splitRatio();
+    if (P.coverMode === 'square' && !K.portrait()) {
+        // the level-off layout pins both heights with !important: only an !important inline value moves them
+        P.mainBox.style.setProperty('flex', on ? `${r} 1 0` : '', 'important');
+        P.drBarBox.style.setProperty('flex', on ? `${1 - r} 1 0` : '', 'important');
+        return;
+    }
+    P.mainBox.style.flex = on ? `${r} 1 0` : '';
+    P.drBarBox.style.flex = on ? `${1 - r} 1 0` : '';
+};
+P.wireSplitter = () => {
+    const sp = P.splitter;
+    let drag = null;
+    sp.addEventListener('pointerdown', e => {
+        e.preventDefault(); e.stopPropagation();
+        const a = P.mainBox.getBoundingClientRect(), b = P.drBarBox.getBoundingClientRect();
+        drag = { id: e.pointerId, top: a.top, bottom: b.bottom };
+        try { sp.setPointerCapture(e.pointerId); } catch {}
+        sp.classList.add('active');
+        // the Android app must not read this drag as pull-to-reload
+        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}
+    });
+    sp.addEventListener('pointermove', e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const span = drag.bottom - drag.top;
+        if (span <= 0) return;
+        K.setPref('now.split', K.clamp((e.clientY - drag.top) / span, SPLIT_MIN, SPLIT_MAX));
+        P.applySplit();
+    });
+    const end = e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        drag = null;
+        sp.classList.remove('active');
+        P.hintReset();
+        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
+    };
+    sp.addEventListener('pointerup', end);
+    sp.addEventListener('pointercancel', end);
+    sp.addEventListener('click', e => e.stopPropagation());   // it sits in the DR strip card, whose tap opens the DR page
+    sp.addEventListener('dblclick', e => { e.stopPropagation(); K.setPref('now.split', null); P.applySplit(); });
+};
 
 // One keep-alive, dr.keepMinutes (2, 5 or 10 min; anything else is 5), for both ways
 // of not looking at Now: another page, or the app in the background (core.js keeps the
@@ -501,6 +577,11 @@ P.paintDr = E => {
     P.drValue.textContent = s.value === null ? '—' : (s.value > 14 ? 'DR14+' : `DR${s.value}`);
     P.drValue.style.color = s.value === null ? '' : K.dr.color(s.value).bg;
     P.drStatus.textContent = s.value === null ? s.short : `${s.sampled}s sampled`;
+    P.gauge.set(s.value);
+    P.drThermo.setAttribute('aria-valuetext', s.value === null ? s.short : `DR${s.value}`);
+    if (s.value === null) P.drThermo.removeAttribute('aria-valuenow');
+    else P.drThermo.setAttribute('aria-valuenow', String(Math.min(14, s.value)));
+    P.drBar.render(E.selected(), E.windowSeconds);
 };
 
 // The play/pause/stop chip: a line icon (widgets/icons.js) and the state in words.

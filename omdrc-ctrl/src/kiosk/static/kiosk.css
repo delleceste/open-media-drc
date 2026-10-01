@@ -832,7 +832,7 @@ input[type=range] { accent-color: var(--accent); }
 .now-track { flex-wrap: wrap; }
 .now-track > .now-title { flex: 0 0 100%; width: 100%; min-width: 0; display: block; white-space: nowrap;
     overflow-x: auto; overflow-y: hidden; touch-action: pan-x; scrollbar-width: none;
-    font-size: 1.15rem; -webkit-line-clamp: unset; }
+    font-size: 1.15rem; font-weight: 400; -webkit-line-clamp: unset; }
 .now-title::-webkit-scrollbar { display: none; }
 .now-title > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-title.reading > span { width: max-content; min-width: 100%; overflow: visible; text-overflow: clip; }
@@ -844,3 +844,8 @@ input[type=range] { accent-color: var(--accent); }
     .now.idle .now-track { grid-template-areas: "title" "meta" "led"; }
     .now-track > .now-title { grid-area: title; }
 }
+
+.now-drthermo { flex: 0 0 3rem; width: 3rem; align-self: center; }
+.now-drthermo .drg-scale { display: none; }
+.now-drthermo .drg-track { height: .65rem; border-radius: 0; }
+.now-drthermo .drg-marker { top: -.12rem; height: .9rem; border-radius: 0; }
