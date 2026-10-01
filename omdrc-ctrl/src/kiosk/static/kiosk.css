@@ -603,7 +603,12 @@ input[type=range] { accent-color: var(--accent); }
 .qz-banner { display: flex; align-items: center; gap: .8rem; }
 .qz-banner > div { flex: 1; min-width: 0; }
 .qz-searchrow { display: flex; gap: .5rem; }
-.qz-filtered .qz-fsum-mark { color: var(--red, #dc3545); }
+.qz-filtered .qz-fsum-text { color: var(--yellow); }
+.qz-fsum-toggle { display: flex; align-items: center; gap: .6rem; flex: 1; min-width: 0;
+    border: 0; background: none; padding: 0; text-align: left; font: inherit; cursor: pointer; }
+.btn.qz-filter-clear { display: inline-flex; align-items: center; padding: .25rem; }
+textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: .6rem .7rem; resize: vertical; line-height: 1.4; }
+.qz-searchrow:has(textarea) { align-items: flex-start; }
 .qz-go, .qz-ai-toggle { flex: 0 0 auto; padding-inline: .6rem; }
 .qz-go { display: inline-flex; align-items: center; justify-content: center; }
 .qz-ai-sheet label { display: grid; gap: .3rem; margin: .8rem 0; }

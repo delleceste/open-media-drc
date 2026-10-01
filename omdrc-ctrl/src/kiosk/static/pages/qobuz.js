@@ -35,17 +35,25 @@ const pref = (k, d) => K.pref('qobuz.' + k, d);
 const setPref = (k, v) => K.setPref('qobuz.' + k, v);
 const thisYear = new Date().getFullYear();
 
-P.mount = el => {
-    P.el = el;
-    P.banner = h('div', {});
-    P.input = h('input', {
-        type: 'search', class: 'qz-input', placeholder: 'Composer, work, performer…', enterkeyhint: 'search',
+P.makeInput = enabled => {
+    const input = h(enabled ? 'textarea' : 'input', {
+        ...(enabled ? { rows: 4 } : { type: 'search' }), class: 'qz-input',
+        placeholder: enabled ? 'Describe the recordings you want…' : 'Composer, work, performer…',
+        enterkeyhint: enabled ? 'enter' : 'search',
         autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
         onkeydown: e => P.suggestKey(e),
-        oninput: () => { P.suggestSoon(); P.syncLabels(); P.paintStale(); },
+        oninput: () => { P.dismissEditedPreview(); P.suggestSoon(); P.syncLabels(); P.paintStale(); },
         onfocus: () => P.suggestSoon(),
         onblur: () => setTimeout(() => P.showSuggestions([]), 150),
     });
+    input.addEventListener('focus', () => P.revealInput());
+    return input;
+};
+
+P.mount = el => {
+    P.el = el;
+    P.banner = h('div', {});
+    P.input = P.makeInput(pref('aiMode', false));
     P.suggestBox = h('div', { class: 'qz-suggest', role: 'listbox' });
     P.input.value = pref('q', '');
     P.labelsBox = h('div', { class: 'qz-chips' });
@@ -60,7 +68,7 @@ P.mount = el => {
     P.qualityBox = h('div', { class: 'qz-chips' });
     // Full width; the filters sit side by side where there is room, and fold
     // into one summary line once results arrive (a tap opens them again).
-    P.fsum = h('button', { type: 'button', class: 'qz-fsum', onclick: () => P.openFilters(!P.filtersOpen) });
+    P.fsum = h('div', { class: 'qz-fsum' });
     P.filters = h('div', { class: 'qz-filters' },
         h('div', { class: 'qz-fgroup' }, P.labelsToggle, P.labelsBody),
         h('div', { class: 'qz-fgroup' }, h('div', { class: 'lbl' }, 'Released'), P.dateBox,
@@ -123,7 +131,6 @@ P.mount = el => {
         h('span', { class: 'qz-reshead-title' }, 'Search results'));
     P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow, P.recentBox, P.results, P.discoverBox, P.awardedBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
-    P.input.addEventListener('focus', () => P.revealInput());
     P.refreshAIIcon();
     P.buildPlayer();
     P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintQuality(); P.paintLabels();
@@ -286,6 +293,17 @@ P.openResults = () => {
     P.fromNow = true;
     K.showPage(P.id, false);
     P.el.scrollTop = 0;
+};
+P.dismissEditedPreview = () => {
+    const length = P.input.value.trim().length;
+    const searchedLength = new URLSearchParams(P.searchedKey || '').get('q')?.length || 0;
+    if (!length || (searchedLength && length <= searchedLength * .75)) {
+        P.previewDismissed = true;
+        P.preview.hidden = true;
+        P.fetchProgress.hidden = true;
+        P.form.classList.remove('qz-has-res');
+        P.updatePreviewAction();
+    }
 };
 P.previewReady = () => P.dockedOnNow() && P.form.classList.contains('qz-has-res')
     && !P.form.classList.contains('qz-stale');
@@ -615,11 +633,11 @@ P.filterSummary = () => {
     const mode = pref('date', 'any');
     const to = yearOf('to');
     const when = mode === 'last' ? (pref('lastN', 2) === 1 ? 'last year' : `last ${pref('lastN', 2)} years`)
-        : mode === 'span' ? `${yearOf('from')}–${to === TODAY ? 'today' : to}` : 'any time';
-    return [P.selected.size ? [...P.selected].join(', ') : 'all labels', when,
-        pref('order', 'relevance') === 'date' ? 'newest first' : 'Qobuz order',
+        : mode === 'span' ? `${yearOf('from')}–${to === TODAY ? 'today' : to}` : '';
+    return [P.selected.size ? [...P.selected].join(', ') : '', when,
+        pref('order', 'relevance') === 'date' ? 'newest first' : '',
         ...(pref('awarded', false) ? ['awarded only'] : []),
-        ...(pref('hires', false) ? ['Hi-Res: exclude 16/44.1'] : [])].join(' · ');
+        ...(pref('hires', false) ? ['Hi-Res: exclude 16/44.1'] : [])].filter(Boolean).join(' · ');
 };
 
 P.filtersActive = () => P.selected.size > 0 || pref('date', 'any') !== 'any'
@@ -636,8 +654,14 @@ P.paintSummary = () => {
     if (!P.fsum) return;
     const active = !!P.filtersActive();
     P.fsum.classList.toggle('qz-filtered', active);
-    K.clear(P.fsum).append(h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
-        h('span', { class: 'qz-fsum-mark' }, (active ? 'Filters Applied' : 'Filters') + (P.filtersOpen ? ' ▴' : ' ▾')));
+    K.clear(P.fsum).append(
+        h('button', { type: 'button', class: 'qz-fsum-toggle',
+            'aria-expanded': String(!!P.filtersOpen), onclick: () => P.openFilters(!P.filtersOpen) },
+            h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
+            h('span', { class: 'qz-fsum-mark' }, 'Filters' + (P.filtersOpen ? ' ▴' : ' ▾'))));
+    if (active) P.fsum.append(h('button', { type: 'button', class: 'btn qz-filter-clear',
+        title: 'Clear filters', 'aria-label': 'Clear filters',
+        onclick: () => { P.resetFilters(); P.searchSoon(); } }, K.tIcon('close')));
 };
 
 P.openFilters = open => {
@@ -679,6 +703,13 @@ P.setAIMode = enabled => {
     setPref('aiMode', enabled);
     P.aiToggle.classList.toggle('active', enabled);
     P.aiToggle.setAttribute('aria-pressed', String(enabled));
+    const oldInput = P.input;
+    const focused = document.activeElement === oldInput;
+    P.input = P.makeInput(enabled);
+    P.input.value = oldInput.value;
+    oldInput.replaceWith(P.input);
+    P.showSuggestions([]);
+    if (focused) P.input.focus();
     if (enabled) P.resetFilters();
     P.searchedKey = null; P.paintStale();
 };
@@ -779,6 +810,7 @@ P.askAI = async () => {
     if (!prompt) { P.aiButton.disabled = false; K.toast('Type a recommendation request first', 'error'); return; }
     P.input.blur(); P.showSuggestions([]);
     const params = P.params(0);
+    P.previewDismissed = false;
     P.searchedKey = params.toString(); P.request = params.toString();
     setPref('q', prompt);
     P.aiRunning = true;
@@ -836,7 +868,7 @@ P.search = async (scan = 0, { quiet = false } = {}) => {
         return;
     }
     setPref('q', P.input.value.trim());
-    if (!scan) P.searchedKey = params.toString();
+    if (!scan) { P.previewDismissed = false; P.searchedKey = params.toString(); }
     const seq = ++P.searching;
     P.request = params.toString();
     const ctl = P.searchController = new AbortController();
@@ -951,6 +983,7 @@ P.streamSearch = (params, seq) => new Promise(resolve => {
 // or, with text given, just that (searching, an error).  `d` is a partial answer
 // while the search runs (see streamSearch), else the last one.
 P.paintPreview = (text, d = P.last) => {
+    if (P.previewDismissed) return;
     const partial = !!(d && d.partial);
     P.form.classList.toggle('qz-has-res', !text && !partial && !!d);
     P.updatePreviewAction();
@@ -1190,6 +1223,7 @@ P.suggestions = (value, caret) => {
 
 let suggestTimer = null;
 P.suggestSoon = () => {
+    if (pref('aiMode', false)) { P.showSuggestions([]); return; }
     clearTimeout(suggestTimer);
     suggestTimer = setTimeout(() => {
         if (document.activeElement !== P.input) return;
@@ -1228,6 +1262,7 @@ P.pick = n => {
 };
 
 P.suggestKey = e => {
+    if (pref('aiMode', false)) return;
     const n = (P.shown || []).length;
     if (n && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
         e.preventDefault();
