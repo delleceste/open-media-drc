@@ -605,6 +605,7 @@ input[type=range] { accent-color: var(--accent); }
 .qz-searchrow { display: flex; gap: .5rem; }
 .qz-filtered .qz-fsum-mark { color: var(--red, #dc3545); }
 .qz-go, .qz-ai-toggle { flex: 0 0 auto; padding-inline: .6rem; }
+.qz-go { display: inline-flex; align-items: center; justify-content: center; }
 .qz-ai-sheet label { display: grid; gap: .3rem; margin: .8rem 0; }
 .qz-ai-reason { margin-top: .5rem; cursor: default; }
 .qz-ai-reason p { margin: .3rem 0; }

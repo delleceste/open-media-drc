@@ -68,6 +68,13 @@
         await Promise.resolve();
         check(P.aiButton.getAttribute('aria-label') === 'Stop search' && !P.aiButton.disabled, 'Stop available during AI search');
         check(P.aiToggle.disabled, 'AI toggle disabled during search');
+        const stopIcon = P.aiButton.querySelector('svg.ticon');
+        check(stopIcon && !P.aiButton.textContent.trim(), 'Stop uses an SVG icon without a letter');
+        const buttonRect = P.aiButton.getBoundingClientRect(), iconRect = stopIcon.getBoundingClientRect();
+        check(Math.abs((buttonRect.top + buttonRect.bottom - iconRect.top - iconRect.bottom) / 2) < 1,
+            'Stop icon vertically centered');
+        check(Math.abs((buttonRect.left + buttonRect.right - iconRect.left - iconRect.right) / 2) < 1,
+            'Stop icon horizontally centered');
         const finishFirst = finishOld;
         const oldController = P.searchController;
         P.go();
