@@ -346,7 +346,11 @@ class CoverProxyTest(unittest.TestCase):
         self.assertEqual(retained["art"], first["art"])
         self.assertEqual(response.data, b"\xff\xd8\xff-jpeg-bytes")
         self.assertEqual(APP._loaded_album_art({**stopped, "album": "Other Album"}), "")
+        self.assertFalse(Path(APP._COVER_STATE_FILE).exists())
+        self.assertFalse(Path(APP._COVER_IMAGE_FILE).exists())
+        APP._loaded_album_art(playing, url)
         self.assertEqual(APP._loaded_album_art({"state": "stop"}), "")
+        self.assertFalse(Path(APP._COVER_STATE_FILE).exists())
 
 
 

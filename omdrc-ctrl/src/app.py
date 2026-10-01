@@ -4418,10 +4418,21 @@ def _write_cover_file(path: str, data: bytes) -> None:
             os.unlink(temp)
 
 
+def _clear_cover_state() -> None:
+    for path in (_COVER_STATE_FILE, _COVER_IMAGE_FILE):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _loaded_album_art(np: dict, url: str = "") -> str:
     """Keep art only while MPD's selected queue entry belongs to its album."""
     file = np.get("file", "")
     if not file:
+        if np.get("state") == "stop":
+            with _COVER_LOCK:
+                _clear_cover_state()
         return ""
     with _COVER_LOCK:
         saved = _cover_state()
@@ -4439,6 +4450,9 @@ def _loaded_album_art(np: dict, url: str = "") -> str:
             return url
         if not saved.get("url"):
             return ""
+        if np.get("album") and saved.get("album") and np["album"] != saved["album"]:
+            _clear_cover_state()
+            return ""
         if saved.get("file") == file:
             return saved["url"]
         album = np.get("album", "")
@@ -4446,6 +4460,7 @@ def _loaded_album_art(np: dict, url: str = "") -> str:
         if album and album == saved.get("album") and (
                 not artist or not saved.get("album_artist") or artist == saved["album_artist"]):
             return saved["url"]
+        _clear_cover_state()
         return ""
 
 
