@@ -81,11 +81,12 @@ P.mount = el => {
             h('div', { class: 'qz-searchwrap' },
                 // a real form: the keyboard's Search key submits it (Android's IME action
                 // does not always come through as an Enter keydown)
-                h('form', { class: 'qz-searchrow', action: '', onsubmit: e => { e.preventDefault(); P.go(); } }, P.input,
-                    P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
+                h('form', { class: 'qz-searchrow', action: '', onsubmit: e => { e.preventDefault(); P.go(); } },
                     P.aiToggle = h('button', { type: 'button', class: 'btn qz-ai-toggle' + (pref('aiMode', false) ? ' active' : ''),
                         'aria-label': 'AI search mode', 'aria-pressed': String(pref('aiMode', false)),
                         onclick: () => P.toggleAI() }, 'AI'),
+                    P.input,
+                    P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
                     // down on Now, once there are results: over to them, in Search's place
                     // until the text or a filter changes (kiosk.css, paintStale)
                     h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›')),
