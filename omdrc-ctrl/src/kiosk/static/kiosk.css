@@ -325,7 +325,7 @@ button:focus:not(:focus-visible) { outline: none; }
 .menu-item .mk { flex: 0 0 1.1rem; color: var(--accent); text-align: center; }
 .menu-scroll { overflow-y: auto; overscroll-behavior: contain; }
 .menu-sep { height: 1px; margin: .25rem 0; background: var(--hair); }
-.now-ctl { display: inline-flex; align-items: center; gap: .4rem; }
+.now-ctl { display: inline-flex; align-items: center; gap: .65rem; }
 .now-skip, .now-step { display: inline-flex; align-items: center; justify-content: center; color: inherit; }
 .dr-times { display: flex; justify-content: space-between; font-size: .7rem; color: var(--muted); margin-top: .2rem; }
 .dr-mode { display: inline-flex; gap: .9rem; align-items: center; margin: 0 auto; }
@@ -548,7 +548,7 @@ input[type=range] { accent-color: var(--accent); }
     .now-track .cal-led { grid-area: led; }
     .now-timebox { grid-area: time; width: 100%; grid-template-columns: auto minmax(0, 1fr); justify-content: stretch; margin-top: .2rem; }
     .now-time { text-align: right; }
-    .now-ctl { gap: .15rem; }
+    .now-ctl { gap: .45rem; }
     .now-ctl .chip { min-width: 0; padding-inline: .35rem; }
     .now-timebox { column-gap: .3rem; }
     /* something switched off (meters, DR, balance): the cover a little larger, the track under it */
