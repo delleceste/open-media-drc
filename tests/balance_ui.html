@@ -1,0 +1,32 @@
+<!doctype html>
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+<div class="now" style="width:360px"><div class="now-side single"><div id="balance" class="now-bal card"></div></div>
+<div class="now-dr card"><div class="dr-head"><span>DR10</span><span>30s sampled</span><div id="thermo" class="now-drthermo"></div><button class="chip">5 min</button></div></div></div>
+<pre id="result">RUNNING</pre>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/dr.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/balance.js"></script>
+<script>
+try {
+    const check = (ok, message) => { if (!ok) throw Error(message); };
+    const phase = new URL(location.href).searchParams.get('phase') || 'initial';
+    if (phase === 'initial') K.setPref('balance.look', 'split');
+    const balance = new K.Balance(document.getElementById('balance'));
+    check(balance.look === (phase === 'bar' ? 'bar' : 'split'), 'Saved mode restored in fresh process');
+    const gauge = document.getElementById('thermo');
+    K.drGauge(gauge).set(10);
+    check(parseFloat(getComputedStyle(gauge).width) > 48, 'DR thermo fills spare header width');
+    const marker = gauge.querySelector('.drg-marker');
+    check(getComputedStyle(marker).borderTopWidth === '0px' && getComputedStyle(marker).borderBottomWidth === '4px' && getComputedStyle(marker).borderBottomColor === 'rgb(255, 255, 255)', 'DR triangle indicator');
+    if (balance.look === 'split') {
+        check(parseFloat(getComputedStyle(balance.track).height) < 8, 'Thin split track');
+        check(getComputedStyle(balance.pointer).width === '2px', 'Thin blue needle');
+        check(getComputedStyle(balance.pointer, '::after').borderBottomColor === 'rgb(255, 255, 255)', 'White balance triangle');
+    } else {
+        check(parseFloat(getComputedStyle(balance.track).height) >= 17, 'Bar mode height preserved');
+        check(getComputedStyle(balance.pointer).display === 'none', 'Bar mode has no needle');
+    }
+    if (phase === 'initial' || phase === 'bar') balance.toggleLook();
+    document.getElementById('result').textContent = 'PASS: ' + phase + ' mode persistence, DR fill and triangle, split needle and triangle, unchanged bar mode';
+} catch (e) { document.getElementById('result').textContent = 'FAIL: ' + e.stack; }
+</script>
