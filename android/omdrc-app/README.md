@@ -58,8 +58,15 @@ then every 30 s while the app is in the foreground, so a box that is still booti
 comes back without a tap. The address is an editable field (`192.168.1.50`,
 `box.lan:9090` or a pasted `http://…/k/` URL all work) with **Connect**: after
 moving to another network the box usually has another IP, and this saves the new
-one, loads it and re-points the live status service. Automatic retries pause while
-the field is being edited; **Retry now** tries the current address at once.
+one, loads it and re-points the live status service. The app remembers the last
+selected or successfully reached address for each network and reconnects with it when the phone changes networks, including changes
+while the app was in the background. Wi-Fi names identify networks when Android
+provides them; otherwise the gateway and subnet identify them (networks using the
+same gateway and subnet cannot be distinguished without the Wi-Fi name).
+After three consecutive page-load failures, the server configuration dialog opens
+automatically once for that failure episode. Automatic retries pause while the
+dialog is open or the field is being edited; **Retry now** tries the current address
+at once.
 
 Apart from the kiosk's own controls (DRC presets, filter switching, play/pause),
 the app adds no controls of its own; the widget itself is read-only.

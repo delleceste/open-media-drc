@@ -152,7 +152,7 @@ class MainActivity : ComponentActivity() {
 
     private fun wifiFingerprint(cm: android.net.ConnectivityManager, net: android.net.Network?): String? {
         val lp = cm.getLinkProperties(net) ?: return null
-        val gw = lp.routes.firstOrNull { it.isDefaultRoute && it.gateway != null }?.gateway?.hostAddress ?: return null
+        val gw = lp.routes.firstOrNull { it.isDefaultRoute && it.gateway is java.net.Inet4Address }?.gateway?.hostAddress ?: return null
         val addr = lp.linkAddresses.firstOrNull { it.address is java.net.Inet4Address } ?: return null
         val prefix = addr.prefixLength
         val ip = addr.address.address
@@ -160,6 +160,69 @@ class MainActivity : ComponentActivity() {
         val n = ((ip[0].toInt() and 255) shl 24 or ((ip[1].toInt() and 255) shl 16) or
             ((ip[2].toInt() and 255) shl 8) or (ip[3].toInt() and 255)) and mask
         return "$gw/$prefix/${Integer.toHexString(n)}"
+    }
+
+    private var currentServerNetwork: String? = null
+    private var loadedServerNetwork: String? = null
+    private var observedNetwork: android.net.Network? = null
+    private var networkWatching = false
+    private var foreground = false
+    private var connectionFailures = 0
+    private var configurationOffered = false
+    private var serverDialog: AlertDialog? = null
+    private val networkHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val networkChanged = Runnable {
+        if (!foreground) return@Runnable
+        val cm = getSystemService(android.net.ConnectivityManager::class.java)
+        val network = cm.activeNetwork
+        val key = serverNetworkKey()
+        if (network == observedNetwork && key == currentServerNetwork) return@Runnable
+        observedNetwork = network
+        currentServerNetwork = key
+        connectionFailures = 0
+        configurationOffered = false
+        serverDialog?.dismiss()
+        if (network != null) {
+            val saved = key?.let { AppPrefs.networkServer(this, it) }
+            if (saved != null) connectServer(saved.first, saved.second) else loadDashboard()
+        }
+    }
+    private val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) = queueNetworkChange()
+        override fun onLost(network: android.net.Network) = queueNetworkChange()
+        override fun onLinkPropertiesChanged(network: android.net.Network, properties: android.net.LinkProperties) = queueNetworkChange()
+        override fun onCapabilitiesChanged(network: android.net.Network, capabilities: android.net.NetworkCapabilities) = queueNetworkChange()
+    }
+
+    private fun queueNetworkChange() {
+        networkHandler.removeCallbacks(networkChanged)
+        networkHandler.postDelayed(networkChanged, 800)
+    }
+
+    private fun serverNetworkKey(): String? {
+        val cm = getSystemService(android.net.ConnectivityManager::class.java)
+        val net = cm.activeNetwork ?: return null
+        val caps = cm.getNetworkCapabilities(net) ?: return null
+        val fingerprint = wifiFingerprint(cm, net) ?: return null
+        return when {
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> {
+                // Refresh only on network events / foreground entry, never during polling.
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED) identifyWifiNow(quiet = true)
+                val name = netPrefs.getString(fingerprint, null)
+                if (name != null) "wifi:$name" else "wifi-network:$fingerprint"
+            }
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet:$fingerprint"
+            else -> null
+        }
+    }
+
+    private fun rememberServer() {
+        if (loadedServerNetwork == null || loadedServerNetwork != serverNetworkKey()) return
+        val uri = lastUrl?.let { Uri.parse(it) } ?: return
+        val host = uri.host ?: return
+        AppPrefs.setNetworkServer(this, loadedServerNetwork!!, host,
+            if (uri.port > 0) uri.port else AppPrefs.DEFAULT_PORT)
     }
 
     private val networkPermissionLauncher = registerForActivityResult(
@@ -324,7 +387,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 // Only the page itself: without this the gear stays hidden and a
                 // wrong server address could not be corrected.
-                if (request?.isForMainFrame == true) {
+                if (request?.isForMainFrame == true && isCurrentServer(request.url)) {
                     val description = error?.description?.toString()
                     showLoadError(ConnectionErrorPanel.reasonFor(error?.errorCode ?: 0, description), description)
                 }
@@ -338,15 +401,19 @@ class MainActivity : ComponentActivity() {
                 errorResponse: android.webkit.WebResourceResponse?,
             ) {
                 val code = errorResponse?.statusCode ?: return
-                if (request?.isForMainFrame == true && code >= 500) {
+                if (request?.isForMainFrame == true && isCurrentServer(request.url) && code >= 500) {
                     showLoadError(ConnectionErrorPanel.Reason.HTTP, httpStatus = code)
                 }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                if (loadFailed) return
+                if (loadFailed || url == null || !isCurrentServer(Uri.parse(url))) return
                 webView.visibility = View.VISIBLE
                 connError.hide()
+                connectionFailures = 0
+                configurationOffered = false
+                serverDialog?.dismiss()
+                rememberServer()
                 // The kiosk builds its pages after the document has loaded and says when
                 // the first one is painted; the full web page (or a kiosk too old to say)
                 // is shown as soon as it has loaded, or after a few seconds at most.
@@ -415,7 +482,15 @@ class MainActivity : ComponentActivity() {
         contentResolver.registerContentObserver(
             Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION), false, autoRotateObserver)
         requestedOrientation = rememberedOrientation()      // the setting may have changed meanwhile
-        connError.resume()
+        foreground = true
+        if (!networkWatching) {
+            getSystemService(android.net.ConnectivityManager::class.java)
+                .registerDefaultNetworkCallback(networkCallback, networkHandler)
+            networkWatching = true
+        }
+        networkChanged.run()
+        if (serverDialog == null) connError.resume()
+        offerNetworkConfiguration()
         // Resets LiveStatusService's idle clock every time the dashboard
         // becomes visible again, not just on first open.
         AppPrefs.touchForeground(this)
@@ -452,6 +527,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        foreground = false
+        networkHandler.removeCallbacks(networkChanged)
+        if (networkWatching) {
+            getSystemService(android.net.ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback)
+            networkWatching = false
+        }
         stopMic()
         super.onStop()
         contentResolver.unregisterContentObserver(autoRotateObserver)
@@ -465,23 +546,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadDashboard() {
-        val host = intent.getStringExtra(EXTRA_HOST) ?: AppPrefs.defaultHost(this)
-        val port = intent.getIntExtra(EXTRA_PORT, AppPrefs.defaultPort(this))
+        currentServerNetwork = serverNetworkKey()
+        observedNetwork = getSystemService(android.net.ConnectivityManager::class.java).activeNetwork
+        val saved = currentServerNetwork?.let { AppPrefs.networkServer(this, it) }
+        val host = saved?.first ?: intent.getStringExtra(EXTRA_HOST) ?: AppPrefs.defaultHost(this)
+        val port = saved?.second ?: intent.getIntExtra(EXTRA_PORT, AppPrefs.defaultPort(this))
         if (host == null) {
-            promptForHost { newHost, newPort ->
-                AppPrefs.setDefault(this, newHost, newPort)
-                load(AppPrefs.dashboardUrl(this, newHost, newPort))
-                startLiveUpdates(newHost, newPort)
-            }
+            promptForHost { newHost, newPort -> useServer(newHost, newPort) }
             return
         }
-        load(AppPrefs.dashboardUrl(this, host, port))
-        startLiveUpdates(host, port)
+        connectServer(host, port)
     }
 
     private fun load(url: String) {
+        loadedServerNetwork = currentServerNetwork
         lastUrl = url
         loadRequested = true
+        if (connError.isShown) connError.connecting()
         if (!connError.isShown) {
             // the first load of a fresh start: the last screen at once, if there is one
             // of this page in this orientation; else the splash at once, not once the
@@ -499,6 +580,11 @@ class MainActivity : ComponentActivity() {
 
     /** The page could not be loaded: hide the WebView (and with it the engine's own
      *  error page) behind [ConnectionErrorPanel]. */
+    private fun isCurrentServer(uri: Uri): Boolean {
+        val current = lastUrl?.let { Uri.parse(it) } ?: return false
+        return uri.scheme == current.scheme && uri.host == current.host && uri.port == current.port
+    }
+
     private fun showLoadError(reason: ConnectionErrorPanel.Reason, description: String? = null, httpStatus: Int = 0) {
         loadFailed = true
         updateSettingsButton()
@@ -510,6 +596,15 @@ class MainActivity : ComponentActivity() {
             "${uri.host ?: ""}:${if (uri.port > 0) uri.port else AppPrefs.defaultPort(this)}"
         } ?: ""
         connError.show(reason, address, description, httpStatus)
+        connectionFailures++
+        offerNetworkConfiguration()
+    }
+
+    private fun offerNetworkConfiguration() {
+        if (!foreground || connectionFailures < 3 || configurationOffered || serverDialog != null) return
+        // One offer per failure episode; dismissing it keeps automatic retries available.
+        configurationOffered = true
+        changeServer()
     }
 
     private fun changeServer() {
@@ -519,6 +614,14 @@ class MainActivity : ComponentActivity() {
     /** A new server address, from the settings dialog or the error screen's field:
      *  remembered, loaded, and the live status service re-pointed at it. */
     private fun useServer(host: String, port: Int) {
+        currentServerNetwork = serverNetworkKey()
+        currentServerNetwork?.let { AppPrefs.setNetworkServer(this, it, host, port) }
+        connectionFailures = 0
+        configurationOffered = false
+        connectServer(host, port)
+    }
+
+    private fun connectServer(host: String, port: Int) {
         AppPrefs.setDefault(this, host, port)
         load(AppPrefs.dashboardUrl(this, host, port))
         startLiveUpdates(host, port)
@@ -801,6 +904,8 @@ class MainActivity : ComponentActivity() {
      *  (pre-filled with the current value, cancelable, leaving everything
      *  unchanged if dismissed). */
     private fun promptForHost(onSaved: (String, Int) -> Unit) {
+        if (serverDialog != null) return
+        connError.pause()
         val alreadyConfigured = AppPrefs.defaultHost(this) != null
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -832,7 +937,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         if (alreadyConfigured) builder.setNegativeButton(android.R.string.cancel, null)
-        builder.show()
+        serverDialog = builder.create().also { dialog ->
+            dialog.setOnDismissListener {
+                serverDialog = null
+                if (foreground) connError.resume()
+            }
+            dialog.show()
+        }
     }
 
     companion object {

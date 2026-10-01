@@ -37,6 +37,17 @@ object AppPrefs {
             .apply()
     }
 
+    /** Last selected or successfully reached server on this network. */
+    fun networkServer(context: Context, network: String): Pair<String, Int>? {
+        val host = prefs(context).getString("network_host:$network", null) ?: return null
+        return host to prefs(context).getInt("network_port:$network", DEFAULT_PORT)
+    }
+
+    fun setNetworkServer(context: Context, network: String, host: String, port: Int) {
+        prefs(context).edit().putString("network_host:$network", host)
+            .putInt("network_port:$network", port).apply()
+    }
+
     fun viewMode(context: Context): String =
         if (prefs(context).getString(KEY_VIEW, VIEW_KIOSK) == VIEW_WEB) VIEW_WEB else VIEW_KIOSK
 
