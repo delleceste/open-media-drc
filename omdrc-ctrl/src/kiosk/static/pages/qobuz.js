@@ -74,7 +74,7 @@ P.mount = el => {
                 // a real form: the keyboard's Search key submits it (Android's IME action
                 // does not always come through as an Enter keydown)
                 h('form', { class: 'qz-searchrow', action: '', onsubmit: e => { e.preventDefault(); P.go(); } }, P.input,
-                    P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
+                    P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, 'Start'),
                     P.aiToggle = h('button', { type: 'button', class: 'btn qz-ai-toggle' + (pref('aiMode', false) ? ' active' : ''),
                         'aria-label': 'AI search mode', 'aria-pressed': String(pref('aiMode', false)),
                         onclick: () => P.toggleAI() }, 'AI'),
@@ -237,10 +237,35 @@ P.undock = () => {
 // An explicit search (the button, Enter).  From Now it stays there: the results show
 // as a preview above the box, and › opens them here.
 P.go = () => {
+    if (P.request || P.aiStarting) return P.stopSearch();
     if (pref('aiMode', false)) return P.askAI();
     P.input.blur();
     P.showSuggestions([]);
     P.search();
+};
+P.paintSearchControl = () => {
+    const busy = !!(P.request || P.aiStarting);
+    P.aiButton.disabled = false;
+    P.aiButton.textContent = busy ? 'Stop' : 'Start';
+    P.aiButton.title = busy ? 'Stop search' : 'Search';
+    P.aiButton.setAttribute('aria-label', P.aiButton.title);
+    P.aiToggle.disabled = busy;
+    P.form.classList.toggle('qz-searching', busy);
+};
+P.stopSearch = () => {
+    clearTimeout(soon);
+    ++P.searching;
+    if (P.searchController) P.searchController.abort();
+    P.searchController = null;
+    if (P.streamEnd) P.streamEnd({ ok: false, error: 'Search stopped' });
+    P.request = null; P.aiStarting = false; P.aiRunning = false;
+    P.autoMore = false;
+    if (P.moreObserver) P.moreObserver.disconnect();
+    P.searchedKey = null;
+    P.fetchProgress.hidden = true;
+    P.paintSearchControl(); P.paintStale();
+    if (P.last) { P.paintResults(); P.paintPreview(); }
+    else { P.paintError('Search stopped'); P.paintPreview('Search stopped'); }
 };
 // No smooth scroll: the keyboard closing meanwhile resizes the page, and a resize
 // puts the pager back on the page it is on (main.js).
@@ -655,7 +680,7 @@ P.toggleAI = async () => {
         if (!settings.ok) { K.toast(settings.error || 'Could not read AI settings', 'error'); return; }
         if (!settings.configured) { await P.aiSettings(true); return; }
         P.setAIMode(true);
-    } finally { P.aiToggle.disabled = false; }
+    } finally { P.aiToggle.disabled = !!(P.request || P.aiStarting); }
 };
 P.refreshAIIcon = async () => {
     const settings = await K.api('/qobuz/ai/settings');
@@ -671,8 +696,7 @@ P.paintAIIcon = settings => {
     P.aiToggle.title = name + ' search mode';
     P.aiToggle.setAttribute('aria-label', name + ' search mode');
 };
-P.aiPost = async (url, json) => {
-    const ctl = new AbortController();
+P.aiPost = async (url, json, ctl = new AbortController()) => {
     const timer = setTimeout(() => ctl.abort(), 240000);
     try {
         return await (await fetch(url, { method: 'POST', signal: ctl.signal,
@@ -733,24 +757,28 @@ P.askAI = async () => {
     clearTimeout(soon);
     const prompt = P.input.value.trim();
     if (P.request || P.aiStarting) { K.toast('Wait for the current search to finish', 'error'); return; }
-    P.aiStarting = true; P.aiButton.disabled = true;
+    const seq = ++P.searching;
+    P.aiStarting = true; P.paintSearchControl();
     const settings = await K.api('/qobuz/ai/settings');
-    P.aiStarting = false; P.paintAIIcon(settings);
+    if (seq !== P.searching) return;
+    P.aiStarting = false; P.paintSearchControl(); P.paintAIIcon(settings);
     if (!settings.ok) { P.aiButton.disabled = false; K.toast(settings.error, 'error'); return; }
     if (!settings.configured) { P.aiButton.disabled = false; P.aiSettings(true); return; }
     if (!prompt) { P.aiButton.disabled = false; K.toast('Type a recommendation request first', 'error'); return; }
     P.input.blur(); P.showSuggestions([]);
-    const params = P.params(0), seq = ++P.searching;
+    const params = P.params(0);
     P.searchedKey = params.toString(); P.request = params.toString();
     setPref('q', prompt);
     P.aiRunning = true;
+    const ctl = P.searchController = new AbortController();
+    P.paintSearchControl();
     P.paintWorking('Researching reviews and matching Qobuz releases…');
     P.paintPreview('Researching reviews and matching Qobuz releases…'); P.revealPreview();
     if (!P.dockedOnNow()) P.setView('results');
-    const d = await P.aiPost('/qobuz/ai/recommend?' + params, { prompt });
-    P.aiButton.disabled = false; P.aiRunning = false;
+    const d = await P.aiPost('/qobuz/ai/recommend?' + params, { prompt }, ctl);
     if (seq !== P.searching) return;
-    P.request = null; P.fetchProgress.hidden = true;
+    P.searchController = null; P.aiRunning = false;
+    P.request = null; P.fetchProgress.hidden = true; P.paintSearchControl();
     if (!d.ok) { P.paintError(d.error); P.paintPreview(d.error); return; }
     P.last = d; P.autoMore = false;
     P.paintSeen(); P.paintResults(); P.paintPreview(); P.paintStale(); P.openFilters(false);
@@ -789,6 +817,7 @@ P.searchSoon = () => {
 
 P.search = async (scan = 0, { quiet = false } = {}) => {
     clearTimeout(soon);
+    if (P.request || P.aiStarting) P.stopSearch();
     const params = P.params(scan);
     if (!params.has('q') && !params.has('label')) {
         K.toast('Type something or tick a label', 'error');
@@ -798,15 +827,18 @@ P.search = async (scan = 0, { quiet = false } = {}) => {
     if (!scan) P.searchedKey = params.toString();
     const seq = ++P.searching;
     P.request = params.toString();
+    const ctl = P.searchController = new AbortController();
+    P.paintSearchControl();
     P.fetchProgress.hidden = P.preview.hidden;
     if (!quiet) P.paintWorking(scan ? 'Reading further…' : 'Searching…', !!scan);
     if (!scan && !quiet) { P.paintPreview('Searching…'); P.revealPreview(); }
     if (!scan && !quiet && !P.dockedOnNow()) P.setView('results');   // searched up here: its results
     // a new search streams its partial results into the preview; "Load more" just asks
-    const d = scan ? await K.api('/qobuz/search?' + params, { timeout: 120000 })
+    const d = scan ? await P.fetchMore(params, ctl)
         : await P.streamSearch(params, seq);
     if (seq !== P.searching) return;
-    P.request = null;
+    P.request = null; P.searchController = null;
+    P.paintSearchControl();
     P.fetchProgress.hidden = true;
     if (!d.ok) {
         if (d.renderer === false) P.refreshStatus();
@@ -876,6 +908,12 @@ P.paintResults = () => {
 // The search as server-sent events: partial results (already in their final order)
 // repaint the preview while Qobuz is being read; the promise gets the whole answer.
 // A newer search ends the older one's stream.
+P.fetchMore = async (params, ctl) => {
+    const timer = setTimeout(() => ctl.abort(), 120000);
+    try { return await (await fetch('/qobuz/search?' + params, { signal: ctl.signal })).json(); }
+    catch (e) { return { ok: false, error: e.name === 'AbortError' ? 'Search stopped or timed out' : 'Could not reach search' }; }
+    finally { clearTimeout(timer); }
+};
 P.streamSearch = (params, seq) => new Promise(resolve => {
     if (P.streamEnd) P.streamEnd({ ok: false, error: 'replaced' });
     const es = new EventSource('/qobuz/search/stream?' + params);

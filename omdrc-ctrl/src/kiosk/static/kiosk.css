@@ -824,3 +824,6 @@ input[type=range] { accent-color: var(--accent); }
 
 .qz-provider-icon { display: block; width: 18px; height: 18px; }
 [data-theme="dark"] .qz-provider-icon { filter: invert(1); }
+
+.qz-docked.qz-searching .qz-go { display: inline-flex; }
+.qz-docked.qz-searching .qz-toresults { display: none; }
