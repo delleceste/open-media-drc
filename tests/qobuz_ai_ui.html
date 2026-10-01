@@ -65,18 +65,18 @@
         P.aiPost = () => new Promise(resolve => { finishOld = resolve; });
         const running = P.go();
         await Promise.resolve();
-        check(P.aiButton.textContent === 'Stop' && !P.aiButton.disabled, 'Stop available during AI search');
+        check(P.aiButton.getAttribute('aria-label') === 'Stop search' && !P.aiButton.disabled, 'Stop available during AI search');
         check(P.aiToggle.disabled, 'AI toggle disabled during search');
         const finishFirst = finishOld;
         const oldController = P.searchController;
         P.go();
         check(oldController.signal.aborted && !P.request, 'Stop aborts request');
-        check(P.aiButton.textContent === 'Start' && !P.aiToggle.disabled, 'Controls restored after stop');
+        check(P.aiButton.getAttribute('aria-label') === 'Search' && !P.aiToggle.disabled, 'Controls restored after stop');
         P.input.value = 'Replacement search';
         const replacement = P.go();
         await Promise.resolve();
         const finishNew = finishOld;
-        check(P.aiButton.textContent === 'Stop', 'Replacement starts immediately');
+        check(P.aiButton.getAttribute('aria-label') === 'Stop search', 'Replacement starts immediately');
         P.stopSearch();
         finishNew({ ok: false, error: 'late response' });
         await replacement;
@@ -88,7 +88,7 @@
         const settingsAPI = K.api;
         K.api = () => new Promise(resolve => { finishSettings = resolve; });
         const starting = P.go();
-        check(P.aiButton.textContent === 'Stop', 'Settings lookup can be stopped');
+        check(P.aiButton.getAttribute('aria-label') === 'Stop search', 'Settings lookup can be stopped');
         P.go();
         finishSettings({ ok: true, configured: true });
         await starting;
@@ -102,12 +102,12 @@
             close() { this.closed = true; }
         };
         const catalogSearch = P.search();
-        check(P.aiButton.textContent === 'Stop' && P.aiToggle.disabled, 'Catalog search has Stop');
+        check(P.aiButton.getAttribute('aria-label') === 'Stop search' && P.aiToggle.disabled, 'Catalog search has Stop');
         P.go();
         await catalogSearch;
         check(stream.closed && !P.request, 'Stop closes catalog stream');
         stream.onmessage({ data: JSON.stringify({ ok: true, partial: true, results: [] }) });
-        check(P.aiButton.textContent === 'Start', 'Late stream event does not restart search');
+        check(P.aiButton.getAttribute('aria-label') === 'Search', 'Late stream event does not restart search');
         window.EventSource = NativeEventSource;
         P.setAIMode(true);
         K.api = async () => ({ ok: true, configured: false, provider: 'claude', model: '', account_ready: true, defaults: {} });

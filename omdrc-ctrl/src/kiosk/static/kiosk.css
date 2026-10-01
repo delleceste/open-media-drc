@@ -827,3 +827,20 @@ input[type=range] { accent-color: var(--accent); }
 
 .qz-docked.qz-searching .qz-go { display: inline-flex; }
 .qz-docked.qz-searching .qz-toresults { display: none; }
+
+/* The track title gets the width below the cover and can be read by swiping. */
+.now-track { flex-wrap: wrap; }
+.now-track > .now-title { flex: 0 0 100%; width: 100%; min-width: 0; display: block; white-space: nowrap;
+    overflow-x: auto; overflow-y: hidden; touch-action: pan-x; scrollbar-width: none;
+    font-size: 1.15rem; -webkit-line-clamp: unset; }
+.now-title::-webkit-scrollbar { display: none; }
+.now-title > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-title.reading > span { width: max-content; min-width: 100%; overflow: visible; text-overflow: clip; }
+.now .dr-value, .now .now-side.single .dr-value { font-size: 1.5rem; }
+@media (orientation: portrait) {
+    .now .now-track { grid-template-rows: auto auto auto auto; grid-template-areas: "art meta" "art led" "title title" "time time"; }
+    .now.roomy .now-track { grid-template-areas: "art" "title" "meta" "led" "time"; }
+    .now.cover-big .now-track { grid-template-areas: "meta" "led" "title" "time"; }
+    .now.idle .now-track { grid-template-areas: "title" "meta" "led"; }
+    .now-track > .now-title { grid-area: title; }
+}

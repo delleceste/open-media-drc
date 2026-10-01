@@ -1,5 +1,5 @@
 /* Page 1 — Now: the fancy one.  Level meters (needles, bars, or bars plus
- * spectrum), the DR bar, channel balance, the track, and one line saying which
+ * spectrum), the DR estimate, channel balance, the track, and one line saying which
  * room correction is being applied.  Everything here is live, so nothing runs
  * unless this page is on screen. */
 (() => {
@@ -24,7 +24,12 @@ P.mount = el => {
     // the cover's box: small beside the title in landscape, a third of the height upright,
     // where a touch brings up the ring to seek along (see "seek ring" below)
     P.artBox = h('div', { class: 'now-art empty' }, P.art);
-    P.t1 = h('div', { class: 'now-title' }, '—');
+    P.titleText = h('span', {}, '—');
+    P.t1 = h('div', { class: 'now-title', tabindex: '0',
+        onpointerdown: () => P.t1.classList.add('reading'),
+        onfocus: () => P.t1.classList.add('reading'),
+        onblur: () => { P.t1.classList.remove('reading'); P.t1.scrollLeft = 0; }
+    }, P.titleText);
     P.t2 = h('div', { class: 'now-sub' });
     // upright, the details are one per line instead of the one line under the title
     P.pArtist = h('div', { class: 'now-partist' });
@@ -39,7 +44,7 @@ P.mount = el => {
     // a meter-timing calibration in progress (automatic ones included): a blinking blue light
     P.calLed = h('i', { class: 'cal-led', hidden: true, title: 'Calibrating the meter timing' });
     const trackBox = h('div', { class: 'now-track' }, P.artBox,
-        h('div', { class: 'now-meta' }, P.t1, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.awards, P.pAlbum, P.infoBtn), P.calLed,
+        h('div', { class: 'now-meta' }, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.awards, P.pAlbum, P.infoBtn), P.calLed,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
         // (upright, previous and next track either side of it)
         h('div', { class: 'now-timebox' },
@@ -47,7 +52,7 @@ P.mount = el => {
                 h('button', { class: 'chip now-skip', type: 'button', title: 'Previous track', 'aria-label': 'Previous track', onclick: () => P.transport('prev') }, K.tIcon('prev')),
                 P.state,
                 h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, K.tIcon('next'))),
-            P.time, h('div', { class: 'now-prog' }, P.prog)));
+            P.time, h('div', { class: 'now-prog' }, P.prog)), P.t1);
 
     // level area
     P.meterHost = h('div', { class: 'lvl-meter' });
@@ -81,22 +86,9 @@ P.mount = el => {
     P.drStatus = h('span', { class: 'dr-status' });
     P.drWin = h('button', { class: 'chip', type: 'button', onclick: ev => P.cycleWindow(ev) });
     P.drGaugeHost = h('div', { class: 'drg' });
-    P.drBarHost = h('div', { class: 'dr-bar' });
-    P.drDetail = h('div', { class: 'dr-detail', hidden: true });
-    P.drOldest = h('span', {});
-    // value + gauge live in the side column; the segmented history is a
-    // full-width strip along the bottom, where finer segments fit
     P.drBox = h('div', { class: 'now-dr card' },
-        h('div', { class: 'dr-head' }, h('span', { class: 'lbl' }, 'DR'), P.drValue, P.drStatus, P.drWin), P.drGaugeHost);
-    P.drBarBox = h('div', { class: 'now-drbar card' }, P.drBarHost,
-        h('div', { class: 'dr-times' }, P.drOldest, P.drDetail, P.drModeBox(), h('span', {}, 'Latest')));
+        h('div', { class: 'dr-head' }, h('span', { class: 'lbl' }, 'DR'), P.drValue, P.drStatus, P.drWin), P.drGaugeHost, P.drModeBox());
     P.gauge = K.drGauge(P.drGaugeHost);
-    // On Now the bar is for looking at: a tap there is an ordinary tap on the page
-    // (it shows the top bar); its segments are inspected on the DR page.
-    P.drBar = new K.DrBar(P.drBarHost, { interactive: false, onDetail: (text, count) => {
-        P.drDetail.hidden = !text; P.drDetail.textContent = text || '';
-        P.drOldest.textContent = count ? `−${K.dr.elapsedLabel(count * 3)}` : '';
-    } });
 
     P.balHost = h('div', { class: 'now-bal card' });
     P.balance = new K.Balance(P.balHost);
@@ -107,16 +99,11 @@ P.mount = el => {
     // the DRC line
     P.drcLine = h('button', { class: 'now-drc', type: 'button', onclick: () => K.goto('drc') });
 
-    // drag handle between the meters and the DR strip (see wireSplitter)
-    P.splitter = h('div', { class: 'splitter', title: 'Drag to give the meters or the DR history more room · double-tap to reset' }, h('i'));
     P.mainBox = h('div', { class: 'now-main' }, P.leftCell, P.side);
-    // the handle overlays the gap above the DR strip: it takes no layout space
-    P.drBarBox.append(P.splitter);
     // upright, with the Qobuz search on: the Qobuz page's search box sits at the
     // bottom, a preview of the results above it (pages/qobuz.js moves both here and back)
     P.qzSlot = h('div', { class: 'now-search', hidden: true });
-    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.drBarBox, P.drcLine, P.qzSlot));
-    P.wireSplitter();
+    el.append(h('div', { class: 'now' }, trackBox, P.mainBox, P.drcLine, P.qzSlot));
     P.wireVSplit();
     P.wireResetTap();
     P.wireMeterTap();
@@ -223,17 +210,15 @@ P.applyLayout = () => {
     P.lvlBody.classList.toggle('tap', P.mode === 'needles' || P.mode === 'bars');
     P.el.firstChild.classList.toggle('lvl-off', off);
     P.drBox.hidden = !P.showDr;
-    P.drBarBox.hidden = !P.showDr;
     P.balHost.hidden = !P.showBalance;
     P.side.hidden = !P.showDr && !P.showBalance;
     P.side.classList.toggle('single', P.showDr !== P.showBalance);   // one card alone: make it bigger
     P.el.firstChild.classList.toggle('no-side', P.side.hidden);
-    P.el.firstChild.classList.toggle('no-drbar', !P.showDr);
+    P.el.firstChild.classList.add('no-drbar');
     // DR hidden but Balance on: no side column, the balance slides under the meters
     P.el.firstChild.classList.toggle('bal-below', !P.showDr && P.showBalance);
     // upright, something switched off leaves room: the cover grows and the track goes under it
     P.el.firstChild.classList.toggle('roomy', off || !P.showDr || !P.showBalance);
-    P.splitter.hidden = !P.showDr || (P.mode === 'off' && !square);
     P.paintCover();
     P.applySplit();
     P.applyCols();
@@ -357,60 +342,7 @@ P.openLevel = () => {
     });
 };
 
-// ── meters / DR strip splitter ───────────────────────────────────────────────
-// r = the share of the flexible height for the meters row (the rest is the DR
-// strip).  The user's drag is remembered; until then Balance decides: without it
-// the side column is short, so the meters take more.
-const SPLIT_MIN = 0.2, SPLIT_MAX = 0.85;
-P.splitRatio = () => {
-    const saved = K.pref('now.split', null);
-    if (typeof saved === 'number') return K.clamp(saved, SPLIT_MIN, SPLIT_MAX);
-    if (P.coverMode === 'square') return 0.72;         // the cover's row is a square: give it the height
-    return (P.showBalance ? 0.55 : 0.68) + (P.mode === 'spectrum' ? 0.1 : 0);
-};
-P.applySplit = () => {
-    const on = P.showDr && !P.splitter.hidden;
-    const r = P.splitRatio();
-    if (P.coverMode === 'square' && !K.portrait()) {
-        // the level-off layout pins both heights with !important: only an !important inline value moves them
-        P.mainBox.style.setProperty('flex', on ? `${r} 1 0` : '', 'important');
-        P.drBarBox.style.setProperty('flex', on ? `${1 - r} 1 0` : '', 'important');
-        return;
-    }
-    P.mainBox.style.flex = on ? `${r} 1 0` : '';
-    P.drBarBox.style.flex = on ? `${1 - r} 1 0` : '';
-};
-P.wireSplitter = () => {
-    const sp = P.splitter;
-    let drag = null;
-    sp.addEventListener('pointerdown', e => {
-        e.preventDefault(); e.stopPropagation();
-        const a = P.mainBox.getBoundingClientRect(), b = P.drBarBox.getBoundingClientRect();
-        drag = { id: e.pointerId, top: a.top, bottom: b.bottom };
-        try { sp.setPointerCapture(e.pointerId); } catch {}
-        sp.classList.add('active');
-        // the Android app must not read this drag as pull-to-reload
-        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}
-    });
-    sp.addEventListener('pointermove', e => {
-        if (!drag || e.pointerId !== drag.id) return;
-        const span = drag.bottom - drag.top;
-        if (span <= 0) return;
-        K.setPref('now.split', K.clamp((e.clientY - drag.top) / span, SPLIT_MIN, SPLIT_MAX));
-        P.applySplit();
-    });
-    const end = e => {
-        if (!drag || e.pointerId !== drag.id) return;
-        drag = null;
-        sp.classList.remove('active');
-        P.hintReset();
-        try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
-    };
-    sp.addEventListener('pointerup', end);
-    sp.addEventListener('pointercancel', end);
-    sp.addEventListener('click', e => e.stopPropagation());   // it sits in the DR strip card, whose tap opens the DR page
-    sp.addEventListener('dblclick', e => { e.stopPropagation(); K.setPref('now.split', null); P.applySplit(); });
-};
+P.applySplit = () => { P.mainBox.style.flex = ''; };
 
 // One keep-alive, dr.keepMinutes (2, 5 or 10 min; anything else is 5), for both ways
 // of not looking at Now: another page, or the app in the background (core.js keeps the
@@ -572,7 +504,6 @@ P.paintDr = E => {
     P.drValue.style.color = s.value === null ? '' : K.dr.color(s.value).bg;
     P.drStatus.textContent = s.value === null ? s.short : `${s.sampled}s sampled`;
     P.gauge.set(s.value === null ? null : s.value);
-    P.drBar.render(E.selected(), E.windowSeconds);
 };
 
 // The play/pause/stop chip: a line icon (widgets/icons.js) and the state in words.
@@ -589,7 +520,12 @@ P.pollTrack = async () => {
     P.track = t;
     P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
     if (t.state === 'play' && !P.level) K.markSound();     // no level stream to listen to: trust the player
-    P.t1.textContent = t.ok ? (t.title || '—') : 'Nothing playing';
+    const title = t.ok ? (t.title || '—') : 'Nothing playing';
+    if (P.titleText.textContent !== title) {
+        P.titleText.textContent = title;
+        P.t1.classList.remove('reading'); P.t1.scrollLeft = 0;
+    }
+    P.t1.title = title;
     P.t1.classList.toggle('idle', !t.ok);
     P.t2.textContent = [t.artist, [t.album, t.edition].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');
     P.pArtist.textContent = t.artist || '';
