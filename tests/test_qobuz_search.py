@@ -72,6 +72,37 @@ def catalog(searches, albums=None, **settings):
                            today=lambda: TODAY), calls
 
 
+class SingleTrackRankingTest(unittest.TestCase):
+    def test_single_tracks_remain_available_after_albums_in_both_orders(self):
+        items = [album(str(i), "Debussy Preludes", "Decca", date=date)
+                 for i, date in enumerate(["2026-01-01", "2024-01-01", "2025-01-01", "2023-01-01"])]
+        items[0]["tracks_count"] = 1
+        items[2]["tracks_count"] = 1
+        items[3].pop("tracks_count")  # Unknown counts must not be penalized.
+        for sort, expected in [("relevance", ["1", "3", "0", "2"]),
+                               ("date", ["1", "3", "0", "2"])]:
+            with self.subTest(sort=sort):
+                cat, _ = catalog({"Debussy Preludes": items})
+                seen = []
+                with patch.object(qs, "PROGRESS_INTERVAL", 0):
+                    answer = cat.search("Debussy Preludes", sort=sort, enrich=False,
+                                        progress=seen.append)
+                self.assertEqual([c["id"] for c in answer["results"]], expected)
+                self.assertEqual(answer["count"], 4)
+                self.assertEqual(answer["lowered"], 0)
+                self.assertTrue(seen)
+                self.assertEqual([c["id"] for c in seen[-1]["results"]], expected)
+
+    def test_enrichment_prioritizes_albums_over_single_tracks(self):
+        single = album("single", "Feux d'artifice", "Decca")
+        single["tracks_count"] = 1
+        full = album("full", "Preludes", "Decca")
+        cat, calls = catalog({"Debussy": [single, full]}, {"full": full}, max_enrich=1)
+        answer = cat.search("Debussy")
+        self.assertEqual([c["id"] for c in answer["results"]], ["full", "single"])
+        self.assertEqual([p["album_id"] for e, p in calls if e == "album/get"], ["full"])
+
+
 class LabelTest(unittest.TestCase):
     def test_one_group_matches_every_spelling(self):
         decca = qs.parse_labels("Decca")[0]

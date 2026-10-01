@@ -1108,8 +1108,9 @@ class QobuzCatalog:
             f"{text} {g.name}".strip() for g in groups]
         scans = [{"query": q, "items": [], "total": None, "done": False, "error": ""}
                  for q in queries]
-        # With no filter the answer is Qobuz's own list for the text, in its
-        # order, a page at a time ("Load more" reads the next, like scrolling
+        # With no filter, read Qobuz's list a page at a time. Single-track
+        # releases are ranked after other albums within the fetched results.
+        # "Load more" reads the next page, like scrolling
         # in Qobuz's app).  The filters then work on that list, read deeper
         # at once since they thin it out.
         filtered = bool(groups or lo or hi or awarded_only or exclude_cd)
@@ -1138,7 +1139,7 @@ class QobuzCatalog:
             partial, _, _, considered = self._filter(scans, groups, lo, hi, awarded_ids, exclude_cd)
             order(partial)
             self._mark_lowered(partial)
-            partial.sort(key=lambda c: "lowered" in c)
+            partial.sort(key=lambda c: ("lowered" in c, c.get("tracks") == 1))
             progress({"partial": True, "results": partial, "count": len(partial),
                       "considered": considered, "sort": sort})
 
@@ -1159,6 +1160,7 @@ class QobuzCatalog:
         # the performers are fetched (none are fetched for them) and again
         # after, when a lowered conductor may show up among them.
         self._mark_lowered(results)
+        results.sort(key=lambda c: ("lowered" in c, c.get("tracks") == 1))
         enriched = 0
         if enrich and results:
             head = [c for c in results if "lowered" not in c][:self.settings.max_enrich]
@@ -1170,8 +1172,9 @@ class QobuzCatalog:
                     card["awards"] = self._awards_of(card, found[1])
                     card["rating"] = self.awarded.rating(card["id"]) if self.awarded else 0
                     enriched += 1
+        order(results)
         self._mark_lowered(results)
-        results.sort(key=lambda c: "lowered" in c)      # stable: each part keeps its order
+        results.sort(key=lambda c: ("lowered" in c, c.get("tracks") == 1))  # stable
 
         return {
             "query": text,
