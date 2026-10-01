@@ -156,8 +156,10 @@ P.mount = el => {
 // Prepare before the pager moves: bringing the form back after the swipe settles
 // would insert it into an already visible page. Keep it above the viewport.
 P.prepareEnter = from => {
-    if (from !== 'now' || P.fromNow) return;
+    if (from !== 'now') return;
     P.ensureMounted();
+    P.dismissPreview();
+    if (P.fromNow) return;
     if (!P.dockedOnNow()) return;
     P.undock();
     P.el.scrollTo({ top: P.el.scrollTop + P.formHome.getBoundingClientRect().bottom
@@ -166,6 +168,7 @@ P.prepareEnter = from => {
 
 P.show = () => {
     P.visible = true;
+    P.dismissPreview();
     // searched from Now: the results under their head, the box stays down there;
     // otherwise the box is up here
     P.fromNowShown = P.fromNow;
@@ -288,21 +291,25 @@ P.stopSearch = () => {
 // No smooth scroll: the keyboard closing meanwhile resizes the page, and a resize
 // puts the pager back on the page it is on (main.js).
 P.openResults = () => {
+    P.dismissPreview();
     P.input.blur();
     P.setView('results');
     P.fromNow = true;
     K.showPage(P.id, false);
     P.el.scrollTop = 0;
 };
+P.dismissPreview = () => {
+    P.previewDismissed = true;
+    P.preview.hidden = true;
+    P.fetchProgress.hidden = true;
+    P.form.classList.remove('qz-has-res');
+    P.updatePreviewAction();
+};
 P.dismissEditedPreview = () => {
     const length = P.input.value.trim().length;
     const searchedLength = new URLSearchParams(P.searchedKey || '').get('q')?.length || 0;
     if (!length || (searchedLength && length <= searchedLength * .75)) {
-        P.previewDismissed = true;
-        P.preview.hidden = true;
-        P.fetchProgress.hidden = true;
-        P.form.classList.remove('qz-has-res');
-        P.updatePreviewAction();
+        P.dismissPreview();
     }
 };
 P.previewReady = () => P.dockedOnNow() && P.form.classList.contains('qz-has-res')
@@ -920,7 +927,7 @@ P.paintResults = () => {
         `${d.count} album${d.count === 1 ? '' : 's'}`,
         d.window.from || d.window.to ? ` · ${d.window.from ? d.window.from.slice(0, 4) : '…'}–${d.window.to ? d.window.to.slice(0, 4) : 'today'}` : '',
         ` · ${d.considered} looked at`,
-        d.sort === 'ai' ? ' · AI recommendations' : d.sort === 'date' ? ' · newest first' : ' · Qobuz order',
+        d.sort === 'ai' ? ' · AI recommendations' : d.sort === 'date' ? ' · newest first' : '',
         d.unstreamable ? ` · ${d.unstreamable} not available` : '',
         P.lowCount(d) ? ` · ${P.lowCount(d)} lowered` : '')];
     if (d.ai) {
@@ -1608,10 +1615,9 @@ P.openFull = ({ offset = 0 } = {}) => {
     const v = P.makeView(true);
     v.work = h('div', { class: 'qz-fwork muted' });
     v.detail = h('div', { class: 'qz-fdetail muted' });
-    P.queueHead = h('div', { class: 'lbl' }, 'Queue');
+    P.queueHead = h('button', { type: 'button', class: 'btn lbl', 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: () => P.openQueueActions() }, 'Queue · 0 ▾');
     P.queueBox = h('div', { class: 'qz-queue' });
-    P.clearQueue = h('button', { type: 'button', class: 'btn', onclick: () => P.editQueue('clear') }, 'Clear queue');
-    P.queueTools = h('div', { class: 'qz-queue-tools' }, P.queueHead, P.clearQueue);
+    P.queueTools = h('div', { class: 'qz-queue-tools' }, P.queueHead);
     P.fullEl = h('div', { class: 'scrim qz-full' },
         h('div', { class: 'qz-full-top' },
             h('button', { type: 'button', class: 'btn qz-pbtn', title: 'Back to the search', onclick: () => P.closeFull() }, '⌄'),
@@ -1621,13 +1627,12 @@ P.openFull = ({ offset = 0 } = {}) => {
             h('div', { class: 'qz-full-side' },
                 h('div', { class: 'qz-full-info' }, v.title, v.work, v.sub, v.awards = h('div', {}), v.detail),
                 v.seekRow, v.buttons, P.queueTools, P.queueBox)));
-    // the playing album's details (widgets/albuminfo.js): after the queue, or before it
-    // when the queue is long enough to push it far down (loadQueue)
+    // Keep the playing album's details beside the queue actions.
     v.infoBtn = h('button', { type: 'button', class: 'btn qz-finfo', hidden: true, onclick: () => {
         const t = P.trackInfo();
         if (t && t.album && t.album.id) K.albumInfo(t.album.id);
     } }, 'Album details ›');
-    P.queueBox.after(v.infoBtn);
+    P.queueTools.append(v.infoBtn);
     // no slider here: the cover's seek ring (widgets/seekring.js), shown for a moment
     // on opening so it is known to be there (paintTime, once the track's length is)
     v.cover.classList.add('seek-zone');
@@ -1642,6 +1647,7 @@ P.openFull = ({ offset = 0 } = {}) => {
     P.fullView = v;
     P.views.push(v);
     P.queueVersion = null;
+    P.queueCount = 0;
     P.markedId = null;
     document.addEventListener('keydown', P.fullKey);
     P.paintViews();
@@ -1650,13 +1656,38 @@ P.openFull = ({ offset = 0 } = {}) => {
 
 P.closeFull = () => {
     if (!P.fullEl) return;
+    P.closeQueueActions();
     P.fullEl.remove();
     P.fullEl = null;
     P.views = P.views.filter(v => v !== P.fullView);
     P.fullView = null;
     document.removeEventListener('keydown', P.fullKey);
 };
-P.fullKey = e => { if (e.key === 'Escape') P.closeFull(); };
+P.fullKey = e => { if (e.key === 'Escape') { if (P.queueActions) { P.closeQueueActions(); P.queueHead.focus(); } else P.closeFull(); } };
+
+P.openQueueActions = () => {
+    if (P.queueActions) { P.closeQueueActions(); return; }
+    const clear = h('button', { type: 'button', class: 'menu-item', role: 'menuitem', disabled: !P.queueCount, onclick: () => {
+        P.closeQueueActions();
+        P.queueHead.focus();
+        P.editQueue('clear');
+    } }, 'Clear queue');
+    P.queueActions = h('div', { class: 'menu-pop qz-queue-actions', role: 'menu' }, clear);
+    P.queueTools.append(P.queueActions);
+    P.queueHead.setAttribute('aria-expanded', 'true');
+    P.queueActionsOutside = e => {
+        if (!P.queueActions.contains(e.target) && !P.queueHead.contains(e.target)) P.closeQueueActions();
+    };
+    document.addEventListener('pointerdown', P.queueActionsOutside, true);
+    clear.focus();
+};
+P.closeQueueActions = () => {
+    if (!P.queueActions) return;
+    document.removeEventListener('pointerdown', P.queueActionsOutside, true);
+    P.queueActions.remove();
+    P.queueActions = null;
+    P.queueHead.setAttribute('aria-expanded', 'false');
+};
 
 P.transport = async (action, extra = {}) => {
     const d = await K.api('/k/api/transport', { json: { action, ...extra } });
@@ -1758,9 +1789,9 @@ P.loadQueue = async () => {
     if (!P.fullEl) return;
     if (!q.ok) { K.clear(P.queueBox).append(h('div', { class: 'muted small' }, q.error || 'queue unavailable')); return; }
     P.queueVersion = q.version;
-    P.queueHead.textContent = q.length ? `Queue · ${q.length}` : 'Queue is empty';
-    if (P.fullView) { if (q.length > 10) P.queueTools.before(P.fullView.infoBtn); else P.queueBox.after(P.fullView.infoBtn); }
-    P.clearQueue.disabled = !q.length;
+    P.queueCount = q.length;
+    P.queueHead.textContent = `Queue · ${q.length} ▾`;
+    if (P.queueActions) P.queueActions.querySelector('button').disabled = !q.length;
     K.clear(P.queueBox).append(...q.songs.map(P.queueRow));
     if (q.length > q.songs.length) P.queueBox.append(h('div', { class: 'muted small' }, `… and ${q.length - q.songs.length} more`));
     P.markedId = null;
@@ -1850,13 +1881,12 @@ P.markQueue = () => {
         row.classList.toggle('on', on);
         if (on) current = row;
     }
-    // Scroll the queue list alone (landscape, where it scrolls by itself): upright
-    // the whole sheet scrolls, and the cover must stay where the sheet opened.
+    // Leave enough room after the last row to align even the final track at the top.
     const box = P.queueBox;
-    if (current && id !== P.markedId && box.scrollHeight > box.clientHeight + 2) {
-        const top = current.offsetTop - box.offsetTop;
-        if (top < box.scrollTop || top + current.offsetHeight > box.scrollTop + box.clientHeight)
-            box.scrollTop = Math.max(0, top - box.clientHeight / 3);
+    const last = box.querySelector('.qz-qrow:last-of-type');
+    box.style.setProperty('--queue-tail', `${Math.max(0, box.clientHeight - (last ? last.offsetHeight : 0) - 2)}px`);
+    if (current && id !== P.markedId) {
+        box.scrollTop += current.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientTop;
     }
     P.markedId = id;
 };

@@ -211,6 +211,14 @@
         P.previewDismissed = false; P.paintPreview('Preview');
         P.input.value = ''; P.input.dispatchEvent(new Event('input'));
         check(P.preview.hidden, 'Clearing text hides preview');
+        P.previewDismissed = false; P.paintPreview('Preview');
+        const showPage = K.showPage;
+        K.showPage = () => check(P.preview.hidden, 'Preview hidden before switching pages');
+        P.openResults();
+        K.showPage = showPage;
+        P.previewDismissed = false; P.paintPreview('Preview');
+        P.prepareEnter('now');
+        check(P.preview.hidden, 'Swipe into results dismisses preview immediately');
         check(P.form.scrollWidth <= 392, 'Phone-width layout fits');
         document.getElementById('result').textContent = 'PASS: player tap, progressive swipe, short-swipe cancel, separate playback, neutral search, search stop, restart, late responses, catalog stream, AI cards, playback controls, sources, safe text, Hi-Res, settings, restoring and no automatic paid requests';
     } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
