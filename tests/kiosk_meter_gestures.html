@@ -20,6 +20,7 @@
     T.setDelayMs(210);
     T.refresh = async () => {};
     K.setPref('now.meterTapUnderstood', false);
+    K.setPref('now.hideTimingNotice', false);
     const P = K.pages.find(p => p.id === 'now');
     P.mode = 'needles'; P.lvlBody = K.h('div');
     const parent = K.h('div', {}, P.lvlBody), canvas = K.h('canvas');
@@ -95,10 +96,32 @@
         const host = K.h('div'); document.body.append(host); P.mount(host);
         T.updateSettings({ timing_configuration: rateConfig(48000), drc_delay_terms_ms: { margin: 150 } });
         P.mode = 'bars'; P.paintTiming();
-        check(!P.timingNotice.hidden && P.timingNotice.querySelector('.meter-configure'), 'Actual Now mount creates the red notice and configure chip');
+        check(!P.timingNotice.hidden && P.timingNotice.querySelector('.meter-configure') && P.timingCancel.hidden,
+            'Bars retain the red notice and Configure chip without Cancel');
+        P.mode = 'needles'; P.paintTiming();
+        check(P.timingNotice.querySelectorAll('.meter-calibration-notice').length === 1 &&
+            P.timingNotice.querySelectorAll('.meter-configure').length === 2 && !P.timingCancel.hidden &&
+            P.timingNotice.textContent.includes('UNCALIBRATED'), 'VU view has one uncalibrated notice and Configure chip above both meters');
+        check(getComputedStyle(P.meterHost).top === '32px' &&
+            P.timingNotice.getBoundingClientRect().bottom <= P.meterHost.getBoundingClientRect().top,
+            'VU notice sits above both meter boxes');
         let destination = null; K.goto = page => { destination = page; };
         P.timingNotice.querySelector('.meter-configure').click();
         check(destination === 'config', 'Configure chip navigates to Config without changing the meter style');
+        P.timingCancel.click();
+        let never = P.timingCancelMenu.querySelector('[role=menuitemcheckbox]');
+        check(never.getAttribute('aria-checked') === 'false', 'Never show again defaults to unchecked');
+        P.timingCancelMenu.querySelector('[role=menuitem]').click();
+        check(P.timingNotice.hidden && !K.pref('now.hideTimingNotice', false), 'Dismiss hides the warning for this session only');
+        P.timingDismissed = false; P.paintTiming();
+        P.timingCancel.click();
+        never = P.timingCancelMenu.querySelector('[role=menuitemcheckbox]');
+        never.click();
+        check(never.getAttribute('aria-checked') === 'true', 'Never show again can be selected');
+        P.timingCancelMenu.querySelector('[role=menuitem]').click();
+        P.timingDismissed = false; P.paintTiming();
+        check(P.timingNotice.hidden && K.pref('now.hideTimingNotice', false), 'Never show again persists and suppresses the warning');
+        K.setPref('now.hideTimingNotice', false);
         host.remove();
         document.getElementById('result').textContent = 'PASS: tap, double tap, hold, spectrum, drag, cancellation, suppression and profile inspection';
     } catch (e) { document.getElementById('result').textContent = 'FAIL: ' + e.message; }

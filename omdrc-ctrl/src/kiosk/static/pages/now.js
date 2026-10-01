@@ -93,10 +93,13 @@ P.mount = el => {
         K.goto('config');
         requestAnimationFrame(() => document.getElementById('meter-timing-card')?.scrollIntoView({ block: 'start' }));
     };
-    const timingNotice = () => h('span', { class: 'meter-calibration-notice' },
+    P.timingCancel = h('button', { class: 'chip meter-configure', type: 'button', hidden: true,
+        'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: () => P.openTimingCancelMenu() }, 'Cancel ▾');
+    const timingNotice = h('span', { class: 'meter-calibration-notice' },
         h('span', { class: 'meter-calibration-label' }, 'Timing not calibrated'),
-        h('button', { class: 'chip meter-configure', type: 'button', onclick: configureTiming }, 'Configure now'));
-    P.timingNotice = h('div', { class: 'lvl-timing-alert', hidden: true, role: 'status' }, timingNotice(), timingNotice());
+        h('button', { class: 'chip meter-configure', type: 'button', onclick: configureTiming }, 'Configure now'),
+        P.timingCancel);
+    P.timingNotice = h('div', { class: 'lvl-timing-alert', hidden: true, role: 'status' }, timingNotice);
     P.lvlBody = h('div', { class: 'lvl-body' }, P.coverLayer, P.coverScrim, P.meterHost, P.specCanvas, P.coverReadout, P.timingNotice);
     P.timingPoll = new K.Poller(() => P.paintTiming(), 1000);
     P.levelBox = h('div', { class: 'now-level' }, P.lvlBody);
@@ -191,11 +194,46 @@ P.paintTiming = () => {
     if (!window.OmdrcTiming || !P.timingNotice || !P.vu) return;
     const d = window.OmdrcTiming.details();
     const missing = !!d.configuration && !d.saved;
-    P.timingNotice.hidden = !missing || !!K.sync?.running;
-    P.levelBox.classList.toggle('timing-missing', missing);
+    const showNotice = missing && !K.sync?.running && !P.timingDismissed && !K.pref('now.hideTimingNotice', false);
+    P.timingNotice.hidden = !showNotice;
+    if (!showNotice) P.closeTimingCancelMenu();
+    if (P.timingCancel) P.timingCancel.hidden = P.mode !== 'needles';
+    P.levelBox.classList.toggle('timing-missing', showNotice);
     const text = P.mode === 'needles' ? 'UNCALIBRATED' : d.fallback ? 'Timing provisional — calibrate' : 'Timing not calibrated';
     P.timingNotice.querySelectorAll('.meter-calibration-label').forEach(label => { label.textContent = text; });
-    if (P.vu.setTimingMissing) P.vu.setTimingMissing(missing);
+    if (P.vu.setTimingMissing) P.vu.setTimingMissing(showNotice);
+};
+
+P.openTimingCancelMenu = () => {
+    if (P.timingCancelMenu) { P.closeTimingCancelMenu(); return; }
+    let never = false;
+    const option = h('button', { type: 'button', class: 'menu-item', role: 'menuitemcheckbox', 'aria-checked': 'false',
+        onclick: () => { never = !never; option.setAttribute('aria-checked', String(never)); mark.textContent = never ? '✓' : ''; },
+    }, h('span', { class: 'mk' }, ''), 'Never show again');
+    const mark = option.querySelector('.mk');
+    const menu = P.timingCancelMenu = h('div', { class: 'menu-pop', role: 'menu' }, option,
+        h('button', { type: 'button', class: 'menu-item', role: 'menuitem', onclick: () => {
+            if (never) K.setPref('now.hideTimingNotice', true);
+            P.timingDismissed = true;
+            P.closeTimingCancelMenu();
+            P.paintTiming();
+        } }, h('span', { class: 'mk' }), 'Dismiss'));
+    document.body.append(menu);
+    const r = P.timingCancel.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${r.bottom + 4}px`;
+    P.timingCancel.setAttribute('aria-expanded', 'true');
+    P.timingCancelOutside = e => {
+        if (!menu.contains(e.target) && e.target !== P.timingCancel) P.closeTimingCancelMenu();
+    };
+    document.addEventListener('pointerdown', P.timingCancelOutside, true);
+};
+P.closeTimingCancelMenu = () => {
+    if (!P.timingCancelMenu) return;
+    document.removeEventListener('pointerdown', P.timingCancelOutside, true);
+    P.timingCancelMenu.remove();
+    P.timingCancelMenu = null;
+    P.timingCancel.setAttribute('aria-expanded', 'false');
 };
 
 // Clip history belongs to this running page, not the saved preferences. An
@@ -1013,6 +1051,7 @@ P.hide = () => {
     P.hideSeekSlider();
     P.ring.destroy();
     P.closeViewMenu();
+    P.closeTimingCancelMenu();
     if (P.level) { P.level.close(); P.level = null; }
     P.vu.setSuspects({});
     P.chainPoll.stop();
