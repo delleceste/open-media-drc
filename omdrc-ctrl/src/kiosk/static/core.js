@@ -246,7 +246,6 @@ K.streams = (() => {
             let d;
             try { d = JSON.parse(ev.data); } catch { return; }
             const now = Date.now();
-            if (K.streamTap) K.streamTap(tapMode, d, now);     // the meter-delay calibration
             if (mode !== 'dr' && Number.isFinite(d.sent)) {
                 const lag = now - d.sent;
                 best = Math.min(best, lag);
@@ -258,11 +257,17 @@ K.streams = (() => {
                     open(mode, es);
                     return;
                 }
+                if (lag - best > LAG_MS) return; // discard stale data before taps and drawing
+                // Schedule from server send time plus the best transit time seen.
+                // A burst after Wi-Fi stalls must not shift the saved alignment.
+                d = { ...d };
+                d._timingArrival = d.sent + best;
             }
+            if (K.streamTap) K.streamTap(tapMode, d, d._timingArrival ?? now);
             // Level and spectrum frames are drawn this device's extra delay after they
             // arrive (widgets/sync.js); DR is not time-critical.
             const wait = mode === 'dr' || !K.sync ? 0 : K.sync.delayMs();
-            if (wait > 0) setTimeout(() => draw(d), wait);
+            if (wait > 0) setTimeout(() => draw(d), Math.max(0, wait - (now - (d._timingArrival ?? now))));
             else draw(d);
         };
         es.onerror = () => {

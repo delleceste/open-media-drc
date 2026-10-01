@@ -51,3 +51,30 @@ vm.runInNewContext(source, { window: otherWindow, localStorage, setInterval: () 
 otherWindow.OmdrcTiming.updateSettings({ drc_delay_terms_ms: { margin: 40 } });
 assert.equal(otherWindow.OmdrcTiming.delayMs(), 125);
 console.log('Network timing profiles: passed');
+// Real settings use a stable audio identity and the requested margin. Buffer
+// fill/effective margin can change as the click test stops and starts playback.
+const settings = (config, effective = 40, requested = 150) => T.updateSettings({
+    timing_configuration: config, drc_delay_margin_ms: requested,
+    drc_delay_terms_ms: { margin: effective }
+});
+settings({ drc: false });
+assert.equal(T.delayMs(), 0, 'legacy network-only timing must not silently cover a new configuration');
+T.setDelayMs(90);
+const idleContext = T.context();
+settings({ drc: false }, 0);
+assert.equal(T.context(), idleContext, 'idle buffer fill must not invalidate calibration');
+assert.equal(T.delayMs(), 90, 'stopping the click partition must not re-anchor the calibration to zero margin');
+settings({ drc: true, rate: 192000, filters: ['A'] });
+assert.equal(T.delayMs(), 0);
+T.setDelayMs(210);
+settings({ drc: true, rate: 96000, filters: ['A'] });
+assert.equal(T.delayMs(), 0);
+T.setDelayMs(120);
+settings({ drc: true, rate: 192000, filters: ['B'] });
+assert.equal(T.delayMs(), 0);
+settings({ drc: true, rate: 192000, filters: ['A'] });
+assert.equal(T.delayMs(), 210);
+const marginContext = T.context();
+settings({ drc: true, rate: 192000, filters: ['A'] }, 40, 170);
+assert.notEqual(T.context(), marginContext);
+console.log('Audio configuration timing profiles: passed');

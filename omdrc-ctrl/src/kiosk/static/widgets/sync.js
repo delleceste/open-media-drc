@@ -119,9 +119,12 @@ S.estimateClicks = (frames, mic, expected = 14) => {
     if (!mic || !mic.db || mic.db.length < 50) return { ok: false, error: 'not enough data' };
     const f = frames.slice().sort((a, b) => a.t - b.t);
     const fOn = [];
+    const meterLevels = f.map(x => x.p).sort((a, b) => a - b);
+    const meterFloor = meterLevels[Math.floor(meterLevels.length * .2)] ?? -120;
+    const meterThreshold = meterFloor + 15;
     for (let i = 0; i < f.length; i++) {
         const prev = f[i - 1];
-        if (f[i].p > -50 && (!prev || prev.p < f[i].p - 15 || f[i].t - prev.t > 150)) fOn.push(f[i].t);
+        if (f[i].p > meterThreshold && (!prev || prev.p < f[i].p - 15 || f[i].t - prev.t > 150)) fOn.push(f[i].t);
     }
     const sorted = mic.db.slice().sort((a, b) => a - b);
     const micFloor = sorted[Math.floor(sorted.length * 0.2)];
@@ -132,7 +135,7 @@ S.estimateClicks = (frames, mic, expected = 14) => {
         if (mic.db[i] > micThreshold && mic.db[i] - before > 10 && (!mOn.length || mic.t0 + i * mic.step - mOn[mOn.length - 1] > 200))
             mOn.push(mic.t0 + i * mic.step);
     }
-    const diag = { micFloorDb: +micFloor.toFixed(1), micThresholdDb: +micThreshold.toFixed(1),
+    const diag = { meterFloorDb: meterFloor, meterThresholdDb: meterThreshold, micFloorDb: +micFloor.toFixed(1), micThresholdDb: +micThreshold.toFixed(1),
                    micMaxDb: +sorted[sorted.length - 1].toFixed(1), meterOnsets: fOn, micOnsets: mOn };
     if (fOn.length < expected / 2) return { ok: false, diag, error: `the meters showed only ${fOn.length} of the ${expected} clicks` };
     if (mOn.length < expected / 2) return { ok: false, diag, error: `the microphone heard only ${mOn.length} of the ${expected} clicks - raise the volume a little, or hold the phone nearer the speakers` };
@@ -292,7 +295,7 @@ S.calibrate = async ({ seconds = 10, onTick, clicks = false, verify = false, why
         logDiag(res.diag);
         await window.OmdrcTiming.refresh();
         res.context = context;
-        if (context !== window.OmdrcTiming.context()) res = { ok: false, error: 'network or server timing changed during calibration; try again' };
+        if (context !== window.OmdrcTiming.context()) res = { ...res, ok: false, error: 'network or audio configuration changed during calibration; try again' };
         return res;
     } catch (e) {
         res = { ok: false, error: String(e && e.message || e) };

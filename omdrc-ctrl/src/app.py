@@ -1951,6 +1951,7 @@ class SpectrumAnalyzer:
             "drc_delay_base_ms": round(terms.get("total", 0.0) * 1000.0, 1),
             "drc_delay_terms_ms": _drc_delay_terms_ms(terms),
             "drc_delay_margin_ms": round(SPECTRUM_DRC_DELAY_MARGIN_MS, 1),
+            "timing_configuration": _meter_timing_configuration(),
         }
 
     def _start_thread_locked(self, mode: str, wants_clip: bool = False) -> None:
@@ -3829,6 +3830,25 @@ def _fir_group_delay_cached(fn: str, fmt: str, rate: int) -> float:
         _drc_delay_cache["key"] = key
         _drc_delay_cache["seconds"] = group
     return group
+
+
+def _meter_timing_configuration() -> dict:
+    """Stable profile identity; playback buffer fill is deliberately excluded."""
+    conf = _active_brutefir_conf()
+    if not conf:
+        return {"drc": False, "source": _spectrum_resolve_source().name}
+    parsed = _parse_brutefir_conf(conf)
+    filters = []
+    for coeff in parsed.get("coeffs") or []:
+        filename = coeff["filename"]
+        try:
+            stamp = os.stat(filename).st_mtime_ns
+        except OSError:
+            stamp = None
+        filters.append([filename, coeff.get("format"), stamp])
+    return {"drc": True, "source": _spectrum_resolve_source().name,
+            "config": conf, "rate": parsed.get("rate"), "filters": filters,
+            "partition": _brutefir_partition_size(_read_text_quietly(conf))}
 
 
 def _drc_display_delay_terms() -> dict:
