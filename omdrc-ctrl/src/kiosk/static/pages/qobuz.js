@@ -146,6 +146,17 @@ P.mount = el => {
     K.api('/qobuz/lowered').then(d => { if (d.ok) { P.lowCountCache = d.entries.length; P.paintLowLink(); } });
 };
 
+// Prepare before the pager moves: bringing the form back after the swipe settles
+// would insert it into an already visible page. Keep it above the viewport.
+P.prepareEnter = from => {
+    if (from !== 'now' || P.fromNow) return;
+    P.ensureMounted();
+    if (!P.dockedOnNow()) return;
+    P.undock();
+    P.el.scrollTo({ top: P.el.scrollTop + P.formHome.getBoundingClientRect().bottom
+        - P.el.getBoundingClientRect().top, behavior: 'instant' });
+};
+
 P.show = () => {
     P.visible = true;
     // searched from Now: the results under their head, the box stays down there;

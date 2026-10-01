@@ -84,6 +84,17 @@
         finishFirst({ ok: false, error: 'older response' });
         await running;
         check(!P.results.textContent.includes('older response'), 'Older response ignored');
+        P.mounted = true;
+        const dock = K.h('div', {});
+        document.getElementById('page').append(dock);
+        K.qobuzDock(dock);
+        let entryScroll;
+        const nativeScroll = P.el.scrollTo;
+        P.el.scrollTo = options => { entryScroll = options; };
+        P.prepareEnter('now');
+        check(!P.dockedOnNow(), 'Form restored before page transition');
+        check(entryScroll && entryScroll.behavior === 'instant', 'Search scrolled out before transition');
+        P.el.scrollTo = nativeScroll;
         let finishSettings;
         const settingsAPI = K.api;
         K.api = () => new Promise(resolve => { finishSettings = resolve; });

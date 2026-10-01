@@ -38,7 +38,11 @@ let cur = -1;
 const pager = $('#pager'), tabs = $('#tabs');
 
 function activate(i) {
-    if (i === cur || i < 0 || i >= K.pages.length) return;
+    if (i < 0 || i >= K.pages.length) return;
+    if (i === cur) {
+        safe(() => K.pages[i].syncDock && K.pages[i].syncDock());
+        return;
+    }
     if (cur >= 0) safe(() => K.pages[cur].hide && K.pages[cur].hide());
     K.setTopExtra(null);
     cur = i;
@@ -64,9 +68,16 @@ function safe(fn, page) {
     }
 }
 
+function preparePage(i) {
+    const page = K.pages[i];
+    if (!page || i === cur) return;
+    safe(() => page.prepareEnter && page.prepareEnter(cur >= 0 ? K.pages[cur].id : null));
+}
+
 K.showPage = (id, smooth = true) => {
     const i = K.pages.findIndex(p => p.id === id);
     if (i < 0) return;
+    preparePage(i);
     pager.scrollTo({ left: i * pager.clientWidth, behavior: smooth ? 'smooth' : 'instant' });
     if (!smooth) activate(i);
 };
@@ -91,7 +102,7 @@ document.addEventListener('keydown', e => {
 // page's own vertical scroll.  The finger drags the pager; on release it goes to
 // the next page if you moved a fifth of the width (at most 100 px) or flicked.
 let sw = null;
-const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit, .seek-zone';
+const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit, .seek-zone, .now-title';
 pager.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch' || e.target.closest(NO_SWIPE)) return;
     sw = { id: e.pointerId, x: e.clientX, y: e.clientY, left: pager.scrollLeft, mode: null, lastX: e.clientX, lastT: performance.now(), v: 0 };
@@ -101,6 +112,7 @@ pager.addEventListener('pointermove', e => {
     const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
     if (!sw.mode) {
         if (Math.abs(dx) > 10 && Math.abs(dx) > 1.4 * Math.abs(dy)) {
+            preparePage(cur + (dx < 0 ? 1 : -1));
             sw.mode = 'x';
             try { pager.setPointerCapture(e.pointerId); } catch {}
             pager.style.scrollSnapType = 'none';
