@@ -21,6 +21,9 @@ SPEC = importlib.util.spec_from_file_location("omdrc_activity_app", SRC / "app.p
 APP = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(APP)
+COVER_DIR = tempfile.TemporaryDirectory()
+APP._COVER_STATE_FILE = str(Path(COVER_DIR.name) / "cover.json")
+APP._COVER_IMAGE_FILE = str(Path(COVER_DIR.name) / "cover.img")
 
 
 def parse(text):
@@ -230,6 +233,8 @@ class CoverProxyTest(unittest.TestCase):
 
     def setUp(self):
         APP._ART_CACHE.clear()
+        Path(APP._COVER_STATE_FILE).unlink(missing_ok=True)
+        Path(APP._COVER_IMAGE_FILE).unlink(missing_ok=True)
 
     def tearDown(self):
         APP._ART_CACHE.clear()
@@ -319,6 +324,30 @@ class CoverProxyTest(unittest.TestCase):
         self.assertTrue(got["art"].startswith("/qconnect/art?v="))
         self.assertNotIn("cdn.invalid", got["art"])
 
+    def test_stopped_album_keeps_its_cover_across_server_restart(self):
+        playing = {"file": "stream/1", "title": "First", "album": "Live Album",
+                   "album_artist": "Artist", "state": "play", "elapsed": 1,
+                   "duration": 100, "audio": "", "label": "", "date": ""}
+        stopped = {**playing, "file": "stream/2", "title": "Second", "state": "stop"}
+        url = "https://cdn.invalid/live.jpg"
+        with patch.object(APP, "_mpd_now_playing_via_protocol", return_value=playing), \
+             patch.object(APP, "_upmpdcli_didl_meta", return_value={"art": url}):
+            first = APP._upmpdcli_qconnect_status()
+        self.assertTrue(first["art"])
+        with patch("urllib.request.urlopen", lambda *a, **k: self.Response()):
+            self.assertIsNotNone(APP._fetch_art(url))
+        APP._ART_CACHE.clear()  # a new app process has no memory cache
+        with patch("urllib.request.urlopen", side_effect=OSError("offline")):
+            self.assertEqual(APP._fetch_art(url), ("image/jpeg", b"\xff\xd8\xff-jpeg-bytes"))
+        with patch.object(APP, "_mpd_now_playing_via_protocol", return_value=stopped), \
+             patch.object(APP, "_upmpdcli_didl_meta", return_value={}):
+            retained = APP._upmpdcli_qconnect_status()
+            response = APP.app.test_client().get("/qconnect/art")
+        self.assertEqual(retained["art"], first["art"])
+        self.assertEqual(response.data, b"\xff\xd8\xff-jpeg-bytes")
+        self.assertEqual(APP._loaded_album_art({**stopped, "album": "Other Album"}), "")
+        self.assertEqual(APP._loaded_album_art({"state": "stop"}), "")
+
 
 
 class QobuzCoverLineTest(unittest.TestCase):
@@ -331,6 +360,10 @@ class QobuzCoverLineTest(unittest.TestCase):
               "state=PLAYING\n"
               "art=https://static.qobuz.invalid/covers/xx_600.jpg\n"
               "11:24:03 queue received: 3 tracks\n")
+
+    def setUp(self):
+        Path(APP._COVER_STATE_FILE).unlink(missing_ok=True)
+        Path(APP._COVER_IMAGE_FILE).unlink(missing_ok=True)
 
     def test_the_url_is_parsed_but_not_shown(self):
         got = parse(self.STATUS)
@@ -349,7 +382,8 @@ class QobuzCoverLineTest(unittest.TestCase):
             path.write_text(self.STATUS, encoding="utf-8")
             with patch.object(APP, "QCONNECT_STATUS_FILE", str(path)), \
                  patch.object(APP, "_current_renderer", return_value="qobuzconnect2mpd"), \
-                 patch.object(APP, "_mpd_now_playing_via_protocol", return_value={}), \
+                 patch.object(APP, "_mpd_now_playing_via_protocol", return_value={
+                     "file": "qobuz://sorrow", "album": "Delicate Sound of Thunder"}), \
                  patch.object(APP, "_resolve_mpd_port", return_value="6600"):
                 body = APP.app.test_client().get("/qconnect/status").get_data(as_text=True)
         self.assertNotIn("qobuz.invalid", body)
@@ -362,11 +396,30 @@ class QobuzCoverLineTest(unittest.TestCase):
             seen = []
             with patch.object(APP, "QCONNECT_STATUS_FILE", str(path)), \
                  patch.object(APP, "_current_renderer", return_value="qobuzconnect2mpd"), \
+                 patch.object(APP, "_mpd_now_playing_via_protocol", return_value={
+                     "file": "qobuz://sorrow", "album": "Delicate Sound of Thunder"}), \
                  patch.object(APP, "_fetch_art",
                               lambda url: seen.append(url) or ("image/jpeg", b"jpg")):
                 response = APP.app.test_client().get("/qconnect/art")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(seen, ["https://static.qobuz.invalid/covers/xx_600.jpg"])
+
+    def test_missing_status_file_keeps_cover_for_stopped_queue_album(self):
+        playing = {"file": "stream/1", "title": "Sorrow",
+                   "album": "Delicate Sound of Thunder", "state": "play"}
+        stopped = {**playing, "file": "stream/2", "title": "Another Song", "state": "stop"}
+        url = "https://static.qobuz.invalid/covers/xx_600.jpg"
+        APP._loaded_album_art(playing, url)
+        with patch.object(APP, "QCONNECT_STATUS_FILE", "/nonexistent/qconnect-status"), \
+             patch.object(APP, "_current_renderer", return_value=APP.QCONNECT_SERVICE), \
+             patch.object(APP, "_mpd_now_playing_via_protocol", return_value=stopped):
+            body = APP.app.test_client().get("/qconnect/status").json
+            with patch.object(APP, "_fetch_art", return_value=("image/jpeg", b"jpg")):
+                image = APP.app.test_client().get("/qconnect/art")
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["line1"], "[stopped] Another Song · Delicate Sound of Thunder")
+        self.assertTrue(body["art"])
+        self.assertEqual(image.data, b"jpg")
 
 
 if __name__ == "__main__":
