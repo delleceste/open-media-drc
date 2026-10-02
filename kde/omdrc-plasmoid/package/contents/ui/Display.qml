@@ -22,14 +22,15 @@ Item {
 
     readonly property bool panel: horizontalPanel || verticalPanel
     readonly property string meterStyle: app.meterStyle
+    readonly property bool bottomMeters: !compact && app.page === "cover" && (app.showDr || app.showBalance)
     readonly property bool coverBehind: app.coverMode === "background" && panes.some(p => p !== "cover")
     readonly property var panes: {
         const list = []
         if (app.coverMode === "pane") list.push("cover")
         if (meterStyle !== "off") list.push(app.showSpectrum && app.spectrumBelow ? "meterspectrum" : "meters")
         if (app.showSpectrum && (meterStyle === "off" || !app.spectrumBelow)) list.push("spectrum")
-        if (app.showDr) list.push("dr")
-        if (app.showBalance) list.push("balance")
+        if (!bottomMeters && app.showDr) list.push("dr")
+        if (!bottomMeters && app.showBalance) list.push("balance")
         if (!list.length) list.push("cover")   // nothing chosen: at least show what plays
         return list
     }
@@ -83,11 +84,11 @@ Item {
     Item {
         id: paneArea
         visible: !face.compactSearchOpen && (face.compact || face.app.page === "cover")
-        anchors { left: parent.left; right: parent.right; top: parent.top; bottom: track.visible ? track.top : parent.bottom }
+        anchors { left: parent.left; right: parent.right; top: parent.top; bottom: track.visible ? track.top : bottomRow.visible ? bottomRow.top : parent.bottom }
         anchors.leftMargin: face.inset
         anchors.rightMargin: face.inset
         anchors.topMargin: face.inset
-        anchors.bottomMargin: track.visible ? Kirigami.Units.smallSpacing : face.inset
+        anchors.bottomMargin: track.visible || bottomRow.visible ? Kirigami.Units.smallSpacing : face.inset
 
         Cover {
             visible: face.coverBehind
@@ -174,10 +175,34 @@ Item {
         BalanceView { app: face.app }
     }
 
+    RowLayout {
+        id: bottomRow
+        visible: face.bottomMeters
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: face.inset }
+        height: Kirigami.Units.gridUnit * 3
+        spacing: Kirigami.Units.smallSpacing
+        DrView {
+            visible: face.app.showDr
+            app: face.app
+            strip: true
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.preferredWidth: face.app.showBalance ? Math.max(0, bottomRow.width - bottomRow.spacing) * 0.72 : bottomRow.width
+        }
+        BalanceView {
+            visible: face.app.showBalance
+            app: face.app
+            strip: true
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.preferredWidth: face.app.showDr ? Math.max(0, bottomRow.width - bottomRow.spacing) * 0.28 : bottomRow.width
+        }
+    }
+
     ColumnLayout {
         id: track
         visible: face.showTrack && face.app.player.title !== ""
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: face.inset }
+        anchors { left: parent.left; right: parent.right; bottom: bottomRow.visible ? bottomRow.top : parent.bottom; margins: face.inset }
         spacing: 0
         PlasmaComponents.Label {
             Layout.fillWidth: true

@@ -13,6 +13,7 @@ Item {
 
     required property var app
     property bool compact: false
+    property bool strip: false
 
     readonly property real db: app.balanceDb          // NaN: nothing to average
     readonly property bool ok: Number.isFinite(db)
@@ -29,7 +30,7 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: view.compact ? 0 : Kirigami.Units.smallSpacing / 2
+        spacing: view.compact ? 0 : view.strip ? 1 : Kirigami.Units.smallSpacing / 2
 
         RowLayout {
             visible: !view.compact
@@ -37,6 +38,7 @@ Item {
             spacing: Kirigami.Units.smallSpacing
             PlasmaComponents.Label { text: i18n("Balance"); opacity: 0.7; font.bold: true }
             PlasmaComponents.Label {
+                visible: !view.strip || view.width >= 185
                 Layout.fillWidth: true
                 text: view.readout
                 font.family: "monospace"
@@ -45,12 +47,14 @@ Item {
                 elide: Text.ElideRight
             }
             PlasmaComponents.ToolButton {
+                visible: !view.strip
                 flat: false
                 font: Kirigami.Theme.smallFont
                 text: view.split ? i18n("Split") : i18n("Bar")
                 onClicked: view.app.toggleBalanceLook()
             }
             PlasmaComponents.ToolButton {
+                visible: !view.strip || view.width >= 135
                 flat: false
                 font: Kirigami.Theme.smallFont
                 text: view.app.balanceWindow + " s"
@@ -62,8 +66,8 @@ Item {
         Item {
             id: track
             Layout.fillWidth: true
-            Layout.fillHeight: view.compact
-            Layout.preferredHeight: view.compact ? -1 : Kirigami.Units.gridUnit * 0.9
+            Layout.fillHeight: view.compact || view.strip
+            Layout.preferredHeight: view.compact || view.strip ? -1 : Kirigami.Units.gridUnit * 0.9
             Layout.leftMargin: view.compact ? 2 : 3
             Layout.rightMargin: view.compact ? 2 : 3
 
@@ -122,7 +126,7 @@ Item {
         }
 
         RowLayout {        // L  −6  0  +6  R
-            visible: !view.compact
+            visible: !view.compact && !view.strip
             Layout.fillWidth: true
             spacing: 0
             PlasmaComponents.Label { text: "L"; color: view.leftColor; font.bold: true; font.pixelSize: Kirigami.Theme.smallFont.pixelSize * 1.1 }

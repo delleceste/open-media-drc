@@ -13,6 +13,7 @@ Item {
 
     required property var app
     property bool compact: false
+    property bool strip: false
     property bool history: true      // the bar (and its mode switch) inside this view
 
     readonly property var summary: app.drSummary
@@ -49,7 +50,7 @@ Item {
     // ── desktop and popup ───────────────────────────────────────────────────
     ColumnLayout {
         anchors.fill: parent
-        visible: !view.compact
+        visible: !view.compact && !view.strip
         spacing: Kirigami.Units.smallSpacing
 
         RowLayout {
@@ -100,6 +101,43 @@ Item {
             Radio { text: i18n("Continuous"); checked: !view.app.drPerSong; onClicked: view.app.setConfig("drPerSong", false) }
             Item { Layout.fillWidth: true }
             PlasmaComponents.Label { text: i18n("Latest"); font: Kirigami.Theme.smallFont; opacity: 0.7 }
+        }
+    }
+
+    // A shallow desktop footer: the history receives most of the width.
+    ColumnLayout {
+        anchors.fill: parent
+        visible: view.strip
+        spacing: 1
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+            PlasmaComponents.Label { text: view.valueText; color: view.valueColor; font.bold: true }
+            PlasmaComponents.Label {
+                visible: view.width >= 360
+                Layout.fillWidth: true
+                text: view.summary.value === null ? view.summary.short : i18n("%1 s sampled", view.summary.sampled)
+                opacity: 0.7
+                font: Kirigami.Theme.smallFont
+                elide: Text.ElideRight
+            }
+            Chip {
+                visible: view.width >= 210
+                text: DR.windowLabel(view.app.drWindow)
+                tip: i18n("DR window: click for the next")
+                onClicked: view.app.cycleDrWindow()
+            }
+            Chip {
+                visible: view.width >= 300
+                text: view.app.drPerSong ? i18n("Per song") : i18n("Continuous")
+                tip: i18n("Switch DR history mode")
+                onClicked: view.app.setConfig("drPerSong", !view.app.drPerSong)
+            }
+        }
+        DrBar {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            blocks: view.app.drSelected
         }
     }
 
