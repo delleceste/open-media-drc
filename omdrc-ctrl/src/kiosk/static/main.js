@@ -61,6 +61,7 @@ function activate(i) {
     if (!K.saverActive) safe(() => page.show && page.show(), page);
     [...tabs.children].forEach((b, n) => b.classList.toggle('on', n === i));
     $('#top-page').textContent = page.label;
+    syncBarMode();
     syncAppScreen();
     reportScroll();
     applyOrientation(page);
@@ -235,7 +236,7 @@ function paintRotate() {
     btn.title = target === 'landscape' ? 'Turn to landscape' : 'Turn upright';
     btn.setAttribute('aria-label', btn.title);
 }
-window.matchMedia('(orientation: portrait)').addEventListener('change', paintRotate);
+window.matchMedia('(orientation: portrait)').addEventListener('change', () => { paintRotate(); syncBarMode(); });
 function rotate() {
     const page = cur >= 0 ? K.pages[cur] : null;
     if (!page) return;
@@ -274,21 +275,30 @@ K.drcLedClass = s => !s.known ? 'warn' : s.power === 'on'
     ? (s.verification === 'verified' ? 'ok' : s.verification === 'mismatch' ? 'bad' : 'warn')
     : s.power === 'off' ? 'off' : 'warn';
 
-// The top bar is an overlay that slides away, so every page has the whole screen.  A tap on
-// the page (not on a control, not a swipe) or the mouse near the top edge brings it back; it
-// hides again after a few seconds, or on the next such tap.
+// Only Now in landscape uses the temporary overlay. Elsewhere the bar stays
+// visible and has its own row, leaving the whole page unobscured.
 const BAR_MS = 5000;
 let barTimer = null;
+const transientBar = () => cur >= 0 && K.pages[cur].id === 'now'
+    && window.matchMedia('(orientation: landscape)').matches;
+function syncBarMode() {
+    const transient = transientBar();
+    document.body.classList.toggle('bar-persistent', !transient);
+    K.showBar(!transient);
+    try { if (K.inApp && window.OmdrcApp.setNowPage) window.OmdrcApp.setNowPage(cur >= 0 && K.pages[cur].id === 'now'); } catch {}
+}
 K.showBar = (show = true) => {
+    if (!transientBar()) show = true;
     document.body.classList.toggle('bar-shown', show);
     clearTimeout(barTimer);
-    if (show) barTimer = setTimeout(() => K.showBar(false), BAR_MS);
-    else if (K.onBarHidden) K.onBarHidden();     // a menu opened from the bar goes with it
+    if (show && transientBar()) barTimer = setTimeout(() => K.showBar(false), BAR_MS);
+    if (!show && K.onBarHidden) K.onBarHidden(); // a menu opened from the bar goes with it
 };
 const CONTROLS = 'button, a, input, select, textarea, label, summary, .tap, .seg, .chip, .scrim, #topbar, #tabs, .dr-bar:not(.static), .splitter, .vsplit, .seek-zone, [role=switch]';
 let tapStart = null;
 document.addEventListener('pointerdown', e => { tapStart = { x: e.clientX, y: e.clientY }; }, true);
 document.addEventListener('pointerup', e => {
+    if (!transientBar()) return;
     const s = tapStart; tapStart = null;
     if (!s || Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) return;   // a swipe or drag
     if (K.saverActive || (e.target.closest && e.target.closest(CONTROLS))) return;

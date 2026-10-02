@@ -48,6 +48,9 @@ html, body { margin: 0; height: 100%; height: 100dvh; background: var(--bg); col
     font: 1rem/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
 body { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr var(--tabs); }
+body.bar-persistent { grid-template-rows: var(--top) minmax(0, 1fr) var(--tabs); }
+body.bar-persistent #pager { grid-row: 2; }
+body.bar-persistent #tabs { grid-row: 3; }
 button { font: inherit; color: inherit; }
 pre, .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .spacer { flex: 1; }

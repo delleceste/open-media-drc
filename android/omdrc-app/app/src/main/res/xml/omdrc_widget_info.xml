@@ -15,5 +15,5 @@
     android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/widget_small"
-    android:configure="com.omdrc.widget.WidgetConfigureActivity"
+    android:configure="it.giacomos.omdrc.app.WidgetConfigureActivity"
     android:widgetCategory="home_screen" />

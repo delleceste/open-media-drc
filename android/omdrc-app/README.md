@@ -35,9 +35,11 @@ whose *Automatic* theme then matches, and the app's own screens (splash, the
 connection error, the status bar icons) switch with it. The home-screen widget
 stays dark.
 
-The launcher name is now "OMDRC". The Android package / application id is still
-`com.omdrc.widget`, so an existing install upgrades in place and keeps its
-settings; the folder and project were renamed from `omdrc-widget`.
+The launcher name is "OMDRC". The Android application id is
+`it.giacomos.omdrc.app`. Android treats it as a separate app from the former
+`com.omdrc.widget` package. An existing install and its widgets remain until
+the old package is removed; settings must be migrated separately. The project
+folder remains `omdrc-app`.
 
 While a page loads, a large ring in the middle of the screen shows the progress in
 percent. It is spared where it can be: **Back** leaves the app the way Home does,
@@ -84,6 +86,8 @@ the app adds no controls of its own; the widget itself is read-only.
 
 This is a self-contained Gradle project, independent of the repo's
 CMake/Make build (nothing here is wired into `CMakeLists.txt`/`Makefile`).
+On FreeBSD, follow [the FreeBSD Android build guide](../FREEBSD-BUILD.md) for
+the Linux JDK and SDK setup.
 
 1. Install a JDK 17+ and the Android SDK command-line tools (or Android
    Studio, which bundles both). Point `ANDROID_HOME`/`local.properties` at
@@ -92,7 +96,7 @@ CMake/Make build (nothing here is wired into `CMakeLists.txt`/`Makefile`).
    with a system Gradle install:
    ```sh
    cd android/omdrc-app
-   gradle wrapper --gradle-version 8.9
+   gradle wrapper --gradle-version 9.6.0
    ```
    From then on use `./gradlew` as usual.
 3. Build and install on a device on the same LAN as the box:

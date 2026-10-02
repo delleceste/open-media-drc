@@ -6,7 +6,7 @@
     android:background="@color/kiosk_bg">
 
     <!-- Swipe down to reload the page: also the way back after a network failure. -->
-    <com.omdrc.widget.VerticalSwipeRefreshLayout
+    <it.giacomos.omdrc.app.VerticalSwipeRefreshLayout
         android:id="@+id/swipe_refresh"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
@@ -15,7 +15,7 @@
             android:id="@+id/web_view"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
-    </com.omdrc.widget.VerticalSwipeRefreshLayout>
+    </it.giacomos.omdrc.app.VerticalSwipeRefreshLayout>
 
     <!-- A cold start: the kiosk's last screen as it was left (LastPage), over the
          page until the live one is painted.  Clickable, so no touch reaches the
@@ -31,7 +31,7 @@
 
     <!-- The splash: the whole screen, over the page until it is ready (clickable,
          so no touch reaches the page underneath). -->
-    <com.omdrc.widget.LoadingRingView
+    <it.giacomos.omdrc.app.LoadingRingView
         android:id="@+id/loading_ring"
         android:layout_width="match_parent"
         android:layout_height="match_parent"

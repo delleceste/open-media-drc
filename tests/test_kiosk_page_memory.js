@@ -13,7 +13,7 @@ function launch(ids = ['now', 'cover', 'qobuz', 'drc', 'config']) {
         setTopExtra() {},
     };
     const context = { K, $: () => ({ children: [], textContent: '' }),
-        safe: fn => fn(), syncAppScreen() {}, reportScroll() {}, applyOrientation() {},
+        safe: fn => fn(), syncBarMode() {}, syncAppScreen() {}, reportScroll() {}, applyOrientation() {},
         history: { replaceState() {} } };
     vm.createContext(context);
     vm.runInContext(pagerCode + '\nthis.restore = rememberedPage; this.select = id => activate(K.pages.findIndex(p => p.id === id));', context);

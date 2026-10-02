@@ -353,7 +353,7 @@ P.render = function render() {
 
     K.clear(P.left).append(...[      // (append() would print a null as "null")
         window.OmdrcApp ? K.card('Android app',
-            h('p', { class: 'muted small' }, 'View (kiosk or full web page), keeping the screen on while “Now playing” is showing, hiding the Android bars, and the server address are set in the app’s own settings.'),
+            h('p', { class: 'muted small' }, 'View (kiosk or full web page), keeping the screen on while “Now playing” is showing, and the server address are set in the app’s own settings.'),
             h('button', { class: 'btn', type: 'button', onclick: () => window.OmdrcApp.openSettings() }, 'App settings')) : null,
         K.card('Theme',
             K.segmented([{ value: 'auto', label: 'Automatic' }, { value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }],

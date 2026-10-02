@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.omdrc.widget"
+    namespace = "it.giacomos.omdrc.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.omdrc.widget"
+        applicationId = "it.giacomos.omdrc.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
