@@ -72,6 +72,9 @@
         P.timingNotice = K.h('div', {}, K.h('span', { class: 'meter-calibration-label' }));
         let missingReadout = false;
         P.vu = { setTimingMissing: value => { missingReadout = value; } };
+        P.meterLiveAt = -Infinity; P.paintTiming();
+        check(P.timingNotice.hidden && !missingReadout, 'No timing notice while no meter data is arriving');
+        P.meterLiveAt = performance.now();
         P.paintTiming();
         check(!P.timingNotice.hidden && missingReadout && P.timingNotice.textContent === 'UNCALIBRATED', 'VU needles replace PK/RMS when dedicated timing is missing, even with a fallback');
         P.mode = 'bars'; P.paintTiming();
@@ -95,7 +98,9 @@
         P.drModeBox = () => K.h('div');
         const host = K.h('div'); document.body.append(host); P.mount(host);
         T.updateSettings({ timing_configuration: rateConfig(48000), drc_delay_terms_ms: { margin: 150 } });
-        P.mode = 'bars'; P.paintTiming();
+        P.mode = 'bars'; P.markMetersLive(false);
+        check(P.timingNotice.hidden, 'A stream error hides the notice and its chips');
+        P.markMetersLive(true);
         check(!P.timingNotice.hidden && P.timingNotice.querySelector('.meter-configure') && P.timingCancel.hidden,
             'Bars retain the red notice and Configure chip without Cancel');
         P.mode = 'needles'; P.paintTiming();

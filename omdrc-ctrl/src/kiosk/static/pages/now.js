@@ -189,12 +189,21 @@ P.mount = el => {
     K.drcState.onChange(P.paintDrc);
 };
 
-// A provisional rate fallback still needs its own acoustic calibration.
+// A provisional rate fallback still needs its own acoustic calibration.  The notice
+// and its chips show only while the meters are moving: not on a network error, a
+// stopped player or a stream that has gone quiet (see P.markMetersLive).
+const METERS_LIVE_MS = 5000;
+P.metersLive = () => P.mode !== 'off' && performance.now() - (P.meterLiveAt ?? -Infinity) < METERS_LIVE_MS;
+P.markMetersLive = live => {
+    const was = P.metersLive();
+    P.meterLiveAt = live ? performance.now() : -Infinity;
+    if (was !== P.metersLive()) P.paintTiming();
+};
 P.paintTiming = () => {
     if (!window.OmdrcTiming || !P.timingNotice || !P.vu) return;
     const d = window.OmdrcTiming.details();
     const missing = !!d.configuration && !d.saved;
-    const showNotice = missing && !K.sync?.running && !P.timingDismissed && !K.pref('now.hideTimingNotice', false);
+    const showNotice = missing && P.metersLive() && !K.sync?.running && !P.timingDismissed && !K.pref('now.hideTimingNotice', false);
     P.timingNotice.hidden = !showNotice;
     if (!showNotice) P.closeTimingCancelMenu();
     if (P.timingCancel) P.timingCancel.hidden = P.mode !== 'needles';
@@ -407,6 +416,7 @@ P.openLevel = () => {
     if (P.mode === 'off' && !P.showBalance) return;
     P.vu.snap({}); P.spec.clear(); P.balance.clear();
     P.vu.setSuspects({});
+    P.markMetersLive(false);
     P.modeBtn.title = K.state.spectrum.enabled ? '' : 'analyzer disabled';
     // Bars/needles need only the RMS/peak reader (no FFT); the spectrum mode
     // asks for the full frame, which carries the same levels.
@@ -415,7 +425,7 @@ P.openLevel = () => {
         if (d.ok && d.state === 'running') {
             const v = d.vu || {};
             const pk = Math.max(Number(v.left_peak ?? -120), Number(v.right_peak ?? -120));
-            if (pk > -60) K.markSound();
+            if (pk > -60) { K.markSound(); P.markMetersLive(true); }
             if (K.sync) K.sync.onLevel(pk);
             if (P.mode !== 'off') P.vu.update(d.vu);
             P.vu.setSuspects(P.mode === 'off' ? {} : {
@@ -439,6 +449,7 @@ P.openLevel = () => {
             if (P.mode === 'spectrum') P.spec.update(d);
             P.modeBtn.title = [d.source_label, d.rate ? `${d.rate} Hz` : ''].filter(Boolean).join(' · ');
         } else {
+            P.markMetersLive(false);
             if (P.mode !== 'off') P.vu.snap({});
             P.vu.setSuspects({});
             P.spec.clear(); P.balance.clear();
