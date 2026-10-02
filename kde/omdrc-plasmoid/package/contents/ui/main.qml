@@ -46,6 +46,9 @@ PlasmoidItem {
     property bool simpleSearchBusy: false
     property var simpleSearchAnswer: null
     property string qobuzOpenOption: ""
+    property bool compactSearchRequested: false
+    property bool stoppedSearchReady: false
+    property bool autoOpenedSearch: false
     property string pollError: ""
     readonly property bool playing: player.state === "play"
     // A disc on the CD / S-PDIF input plays past MPD, which says "stop" meanwhile.
@@ -203,6 +206,15 @@ PlasmoidItem {
                 reachable = true
                 pollError = ""
                 player = data
+                if (data.state === "stop" && !cdinActive && !stoppedSearchReady
+                        && !stopSearchTimer.running) stopSearchTimer.start()
+                else if (data.state !== "stop") {
+                    stopSearchTimer.stop()
+                    stoppedSearchReady = false
+                    compactSearchRequested = false
+                    if (autoOpenedSearch && page === "qobuz") page = "cover"
+                    autoOpenedSearch = false
+                }
                 if (!was || oldFile !== data.file) artPath = ""
                 pollArt()
                 if (!was) readSettings()
@@ -220,6 +232,16 @@ PlasmoidItem {
         request("GET", "/cdin/status", null, function (status, data) {
             cdinActive = status === 200 && !!data && data.active === true
         })
+    }
+    onCdinActiveChanged: {
+        if (cdinActive) {
+            stopSearchTimer.stop()
+            compactSearchRequested = false
+            if (autoOpenedSearch && page === "qobuz") page = "cover"
+            autoOpenedSearch = false
+        }
+        else if (reachable && player.state === "stop" && !stoppedSearchReady)
+            stopSearchTimer.start()
     }
 
     function pollArt() {
@@ -345,6 +367,10 @@ PlasmoidItem {
         // Show the change at once; the next poll confirms or corrects it.
         if (action === "play" || action === "pause" || action === "stop")
             player = Object.assign({}, player, { state: action })
+        if (action === "stop" && !cdinActive) {
+            stoppedSearchReady = false
+            stopSearchTimer.restart()
+        }
         request("POST", "/k/api/transport", { action: action }, function (status, data) {
             if (!(data && data.ok))
                 console.warn("omdrc: transport", action, "failed:", data ? data.error : status)
@@ -359,6 +385,11 @@ PlasmoidItem {
         request("POST", "/k/api/transport", { action: "seek", seconds: value }, function () { poll() })
     }
     function openPage(name) { page = name; expanded = true }
+    function dismissCompactSearch() {
+        compactSearchRequested = false
+        stoppedSearchReady = true
+        stopSearchTimer.stop()
+    }
 
     function openQobuzOption(option) {
         qobuzOpenOption = option
@@ -384,12 +415,34 @@ PlasmoidItem {
 
     onBaseChanged: {
         reachable = false
+        stopSearchTimer.stop()
+        stoppedSearchReady = false
+        compactSearchRequested = false
+        autoOpenedSearch = false
         ++artRequestSerial
         artPath = ""
         player = { state: "stop", title: "", artist: "", album: "", file: "" }
         poll()
     }
     Component.onCompleted: poll()
+
+    Timer {
+        id: stopSearchTimer
+        interval: 2300
+        repeat: false
+        onTriggered: {
+            if (!root.reachable || root.player.state !== "stop" || root.cdinActive) return
+            root.stoppedSearchReady = true
+            if (root.page !== "cover") return
+            if (Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+                    || Plasmoid.formFactor === PlasmaCore.Types.Vertical)
+                root.compactSearchRequested = true
+            else {
+                root.autoOpenedSearch = true
+                root.page = "qobuz"
+            }
+        }
+    }
 
     Timer {
         interval: root.expanded || Plasmoid.formFactor === PlasmaCore.Types.Planar ? 1500 : 2500

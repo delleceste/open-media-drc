@@ -17,7 +17,9 @@ Item {
     // in a panel: the thickness is fixed and the panes are laid along it
     property bool horizontalPanel: false
     property bool verticalPanel: false
-    property bool compactSearchOpen: false
+    readonly property bool compactSearchOpen: compact && app.compactSearchRequested
+    onCompactSearchOpenChanged: if (compactSearchOpen)
+        Qt.callLater(() => simpleInput.forceActiveFocus())
     property bool controlsShown: false
 
     signal activated()
@@ -41,6 +43,8 @@ Item {
         return list.sort((a, b) => order.indexOf(key(a)) - order.indexOf(key(b)))
     }
     readonly property bool showTrack: !compact && app.page === "cover" && app.showTitle
+    readonly property real coverTitleHeight: showTrack && app.player.title
+        ? Kirigami.Units.gridUnit * (app.subtitle ? 2.1 : 1.2) : 0
     // panes laid out in a row, or a column
     readonly property bool row: horizontalPanel || (!verticalPanel && paneArea.width >= paneArea.height)
 
@@ -60,7 +64,9 @@ Item {
         const along = row ? paneArea.width : paneArea.height
         const across = row ? paneArea.height : paneArea.width
         const free = Math.max(0, along - spacing * (panes.length - 1))
-        const cover = panes.length > 1 ? Math.min(across, free * 0.45) : free
+        const coverSpace = row ? Math.max(0, across - coverTitleHeight)
+                               : across + coverTitleHeight
+        const cover = panes.length > 1 ? Math.min(coverSpace, free * 0.45) : free
         const weight = p => p === "cover" ? 0 : row ? aspect(p) : 1 / aspect(p)
         const total = panes.reduce((s, p) => s + weight(p), 0)
         const rest = free - (panes.indexOf("cover") >= 0 ? cover : 0)
@@ -109,11 +115,11 @@ Item {
     Item {
         id: paneArea
         visible: !face.compactSearchOpen && (face.compact || face.app.page === "cover")
-        anchors { left: parent.left; right: parent.right; top: parent.top; bottom: track.visible ? track.top : bottomRow.visible ? bottomRow.top : parent.bottom }
+        anchors { left: parent.left; right: parent.right; top: parent.top; bottom: bottomRow.visible ? bottomRow.top : parent.bottom }
         anchors.leftMargin: face.inset
         anchors.rightMargin: face.inset
         anchors.topMargin: face.inset
-        anchors.bottomMargin: track.visible || bottomRow.visible ? Kirigami.Units.smallSpacing : face.inset
+        anchors.bottomMargin: bottomRow.visible ? Kirigami.Units.smallSpacing : face.inset
 
         Cover {
             visible: face.coverBehind
@@ -170,7 +176,40 @@ Item {
 
     Component {
         id: coverPane
-        Cover { source: face.app.coverUrl }
+        Item {
+            Cover {
+                id: artwork
+                readonly property real side: Math.max(0, Math.min(parent.width,
+                    parent.height - (coverTrack.visible ? coverTrack.implicitHeight + Kirigami.Units.smallSpacing : 0)))
+                anchors { top: parent.top; horizontalCenter: parent.horizontalCenter }
+                width: side
+                height: side
+                source: face.app.coverUrl
+            }
+            ColumnLayout {
+                id: coverTrack
+                visible: face.showTrack && face.app.player.title !== ""
+                anchors { top: artwork.bottom; topMargin: Kirigami.Units.smallSpacing
+                          left: parent.left; right: parent.right }
+                spacing: 0
+                PlasmaComponents.Label {
+                    Layout.fillWidth: true
+                    text: face.app.player.title || ""
+                    font.bold: true
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                PlasmaComponents.Label {
+                    Layout.fillWidth: true
+                    text: face.app.subtitle
+                    visible: text !== ""
+                    elide: Text.ElideRight
+                    opacity: 0.7
+                    font: Kirigami.Theme.smallFont
+                    horizontalAlignment: Text.AlignHCenter
+                }
+            }
+        }
     }
     Component {
         id: metersPane
@@ -251,29 +290,6 @@ Item {
         }
     }
 
-    ColumnLayout {
-        id: track
-        visible: face.showTrack && face.app.player.title !== ""
-        anchors { left: parent.left; right: parent.right; bottom: bottomRow.visible ? bottomRow.top : parent.bottom; margins: face.inset }
-        spacing: 0
-        PlasmaComponents.Label {
-            Layout.fillWidth: true
-            text: face.app.player.title || ""
-            font.bold: true
-            elide: Text.ElideRight
-            horizontalAlignment: Text.AlignHCenter
-        }
-        PlasmaComponents.Label {
-            Layout.fillWidth: true
-            text: face.app.subtitle
-            visible: text !== ""
-            elide: Text.ElideRight
-            opacity: 0.7
-            font: Kirigami.Theme.smallFont
-            horizontalAlignment: Text.AlignHCenter
-        }
-    }
-
     // Not configured, or the box does not answer: say so where the panes are.
     Rectangle {
         anchors.centerIn: paneArea
@@ -342,7 +358,7 @@ Item {
             icon.name: "go-previous"
             text: i18n("Back to cover")
             display: QQC2.AbstractButton.IconOnly
-            onClicked: face.compactSearchOpen = false
+            onClicked: face.app.dismissCompactSearch()
         }
     }
 
@@ -398,10 +414,19 @@ Item {
 
     Item {
         id: coverHoverZone
-        x: paneArea.x
-        y: paneArea.y
-        width: face.panes.indexOf("cover") >= 0 && face.row ? face.extents[0] : paneArea.width
-        height: face.panes.indexOf("cover") >= 0 && !face.row ? face.extents[0] : paneArea.height
+        readonly property int coverIndex: face.panes.indexOf("cover")
+        readonly property real coverOffset: coverIndex <= 0 ? 0
+            : face.extents.slice(0, coverIndex).reduce((sum, value) => sum + value + face.spacing, 0)
+        readonly property real coverWidth: coverIndex < 0 ? Math.min(paneArea.width, paneArea.height)
+            : face.row ? face.extents[coverIndex] : paneArea.width
+        readonly property real coverHeight: coverIndex < 0 ? Math.min(paneArea.width, paneArea.height)
+            : face.row ? paneArea.height : face.extents[coverIndex]
+        readonly property real side: Math.max(0, Math.min(coverWidth,
+            coverHeight - (coverIndex >= 0 ? face.coverTitleHeight : 0)))
+        x: paneArea.x + (face.row ? coverOffset : 0) + (coverWidth - side) / 2
+        y: paneArea.y + (face.row ? 0 : coverOffset)
+        width: side
+        height: side
         visible: paneArea.visible && !face.editing
     }
 
@@ -468,8 +493,10 @@ Item {
             width: transportButtons.width + 4
             height: transportButtons.height + 2
             radius: height / 3
-            color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
-                           Kirigami.Theme.backgroundColor.b, 0.72)
+            color: "transparent"
+            border.width: 1
+            border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                                  Kirigami.Theme.textColor.b, 0.28)
             Row {
                 id: transportButtons
                 anchors.centerIn: parent
@@ -499,12 +526,6 @@ Item {
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                     onClicked: {
                         face.app.transport(modelData.action)
-                        if (modelData.action === "stop") {
-                            if (face.compact) {
-                                face.compactSearchOpen = true
-                                Qt.callLater(() => simpleInput.forceActiveFocus())
-                            } else face.app.openPage("qobuz")
-                        }
                     }
                 }
             }
@@ -549,10 +570,6 @@ Item {
                             else if (modelData.action === "queue") face.app.openPage("queue")
                             else {
                                 face.app.transport(modelData.action)
-                                if (modelData.action === "stop") {
-                                    face.compactSearchOpen = true
-                                    Qt.callLater(() => simpleInput.forceActiveFocus())
-                                }
                             }
                         }
                     }
