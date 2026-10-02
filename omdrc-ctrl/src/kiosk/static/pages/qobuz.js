@@ -1756,15 +1756,17 @@ P.wireQueueScroll = () => {
         P.scrollQueue(e.deltaY * scale, wheelGesture);
     }, { passive: false });
     sheet.addEventListener('touchstart', e => {
-        if (e.touches.length !== 1 || e.target.closest('.qz-pcover, input')) return;
-        touch = { y: e.touches[0].clientY, paused: false };
+        if (e.touches.length !== 1 || e.target.closest('input')) return;
+        const cover = !!e.target.closest('.qz-pcover');
+        if (cover && P.fullView.ring.shown) return; // a shown ring owns its seek gesture
+        touch = { y: e.touches[0].clientY, paused: false, cover };
     }, { passive: true });
     sheet.addEventListener('touchmove', e => {
         if (!touch || e.touches.length !== 1) return;
         const y = e.touches[0].clientY;
         const delta = touch.y - y;
         touch.y = y;
-        if (!delta) return;
+        if (!delta || (touch.cover && delta < 0)) return; // downward cover swipe minimizes the player
         e.preventDefault();
         P.scrollQueue(delta, touch);
     }, { passive: false });

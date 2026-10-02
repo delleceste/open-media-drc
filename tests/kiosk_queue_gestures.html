@@ -63,6 +63,15 @@
             page.fullEl.scrollTop = 0;
         }
         assert(aligned(), 'Opening while paused must align the current track at the top');
+        if (matchMedia('(orientation: portrait)').matches) {
+            const cover = page.fullView.cover;
+            const swipe = (type, y) => cover.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+                touches: type === 'touchend' ? [] : [new Touch({ identifier: 1, target: cover, clientX: 100, clientY: y })] }));
+            swipe('touchstart', 300); swipe('touchmove', 180); swipe('touchend', 180);
+            assert(page.fullEl.scrollTop > 0 && !page.queueAuto, 'An upward cover swipe must scroll the page and stop auto alignment');
+            page.fullEl.scrollTop = 0;
+            page.queueAuto = true;
+        }
         page.now = { songid: '60', state: 'play' };
         page.markQueue();
         assert(aligned(), 'Changing to the last track must align it at the top');
