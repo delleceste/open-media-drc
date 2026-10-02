@@ -230,6 +230,8 @@ the DAC-hotplug glue; the MPD and upmpdcli renderer configs; the
 OS-specific pieces of Part II or III. `make user-install` links the entries
 that must live in the user's session; menu entries go straight to
 `$PREFIX/share/applications`. The install prints the OS-specific enable steps.
+The optional KDE Plasma widget has a target of its own, `make plasmoid-install`
+(section \ref{sec:plasmoid}).
 
 Running from a checkout needs no install: put a `config.env` beside `drc.sh`
 and it enters *repo mode*, taking state and site data from the checkout.
@@ -948,6 +950,12 @@ any error. How CD samples reach the FIFO is OS-specific (section
 * Started and stopped from the page; the source is enabled only while a
   browser is streaming (Server-Sent Events; clients share one capture thread)
   and is force-disabled at startup for crash recovery.
+* `/spectrum/stream?max_s=N` asks for a **bounded stream**, ended by the box
+  after N seconds (5 to 3600) and confirmed by an `X-Stream-Max-S` header. It
+  is for clients that cannot close a stream: Qt's QML `XMLHttpRequest.abort()`
+  leaves the socket open and downloading, so the Plasma widget (section
+  \ref{sec:plasmoid}) asks for 20 s streams, each opened before the previous
+  one ends, and the analyzer stops at most 20 s after it stops listening.
 * 24 logarithmic bands from 31.5 Hz, 25 Hz refresh, Music (16384-point) or
   Precision (65536-point) FFT windows, VU bars or needles over a ~50 ms
   window, one Floor slider for graphs and meters.
@@ -1350,6 +1358,44 @@ a cold load does not re-check each file.
 sent it. The kiosk draws at most one frame per display refresh, the newest;
 frames that keep arriving more than 1.2 s late mean a backlog queued in the
 network, and the stream is reopened to drop it.
+
+## The KDE Plasma widget {#sec:plasmoid}
+
+**OMDRC Monitor** (`kde/omdrc-plasmoid`) is a KDE Plasma 6 widget showing what
+the box plays: level meters (LED-style bars or VU needles), the spectrum
+analyzer and the cover, in any combination. Pointing at it brings up previous,
+play/pause and next. Like the kiosk it is only a client of the panel: it
+reads `/spectrum/stream` (levels, and bands with the spectrum), polls
+`/k/api/player`, sends `/k/api/transport` and shows `/qconnect/art`.
+
+* **In a panel** it is a strip as thick as the panel, as long as the chosen
+  panes need (stacked in a vertical panel). The tooltip names the track; a
+  click opens a larger view with title and artist.
+* **On the desktop** it shows the large view directly, panes side by side
+  when wide and stacked when tall. The cover can sit beside the meters or
+  behind them, the meters then translucent.
+* **Settings**: the box's address and port, meter style, spectrum, cover,
+  track line, and whether to keep streaming while paused. By default it
+  closes its stream while nothing plays, so the box can switch the analyzer
+  off.
+
+It needs an omdrcctrl with bounded analyzer streams (`max_s`, section
+\ref{sec:omdrcctrl}); against an older one it says so instead of showing
+meters, while the cover and the buttons still work.
+
+**Installing.** The widget is a per-user Plasma package, installed by whoever
+will use it, on the box or on any KDE desktop on the LAN:
+
+```sh
+cmake --build build --target plasmoid-install   # or: kde/omdrc-plasmoid/install.sh
+```
+
+Both run `kpackagetool6` for the current user, installing or upgrading in
+place. It is not part of `make install` or `make user-install`, since a
+headless box has no Plasma; once installed, `make user-install` keeps it
+upgraded. Then add *OMDRC Monitor* from *Add Widgets...* and enter the box's
+address (`localhost` when the desktop is the box). After an upgrade, a Plasma
+restart (`plasmashell --replace &`) loads the new code into running widgets.
 
 ## Qobuz album search {#sec:qobuz-search}
 
@@ -4372,6 +4418,7 @@ CMake build, grouped by the same split as the manual itself.
 | Helper scripts | `scripts/README.md`, `README.md` |
 | Web control panel and `/configuration` page | `omdrc-ctrl/README.md`, `omdrc-ctrl/src/configuration.py` |
 | The kiosk and the Android app | `omdrc-ctrl/src/kiosk/README.md`, `android/omdrc-app/README.md` |
+| The KDE Plasma widget | `kde/omdrc-plasmoid/README.md` |
 | Qobuz album search | `omdrc-ctrl/README.md` (Qobuz album search), `omdrc-ctrl/src/qobuz_words.txt` |
 | Spectrum analyzer | `omdrc-ctrl/SPECTRUM_ANALYZER.md` |
 | Bit-perfect verification, the `/bitperfect` page and its implementation | `doc/BIT-PERFECT-VERIFICATION.md`, `scripts/README.md`, `omdrc-ctrl/README.md` |

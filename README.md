@@ -50,6 +50,7 @@ the supplied `host.cmake` to describe that host. The build installs to
    cmake --build build
    sudo cmake --install build
    cmake --build build --target user-install  # run as AUDIO_USER, not root
+   cmake --build build --target plasmoid-install  # optional: KDE Plasma widget
    ```
 
    Set at least `AUDIO_USER`, `AUDIO_HOME`, `GEOMETRY`, and the media paths in
@@ -101,6 +102,14 @@ and bit-perfect checks. It executes configured shell commands as the audio
 user, so expose it only on a trusted LAN. `video/` supplies mpv launchers and
 a companion web remote; `browser-nodrc/` provides a separate browser path
 when browser audio must bypass DRC.
+
+Besides the panel, three clients show what the box plays: the touch **kiosk**
+at `http://<box>:9090/k/`, the **Android app** (`android/omdrc-app`), and
+**OMDRC Monitor**, a KDE Plasma 6 widget (`kde/omdrc-plasmoid`) for a panel or
+the desktop with level meters, spectrum and cover, and play/pause/skip on
+hover. The widget is installed per user with `make plasmoid-install`, on the
+box or on any KDE desktop on the LAN; see its
+[README](kde/omdrc-plasmoid/README.md).
 
 ## Verification and updates
 

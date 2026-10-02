@@ -117,6 +117,15 @@ if [ "$(uname)" = "Linux" ] && [ -f "$PREFIX/lib/systemd/user/omdrcvideo.service
         || echo "user-install: to survive logout, run: sudo loginctl enable-linger $(id -un)"
 fi
 
+# --- KDE Plasma widget: upgraded where installed, never installed unasked ----
+# `make plasmoid-install` installs it; this keeps an installed one in step with
+# the checkout.  Running widgets load the new code after a Plasma restart.
+_plasmoid="@CMAKE_SOURCE_DIR@/kde/omdrc-plasmoid"
+if [ -f "$_plasmoid/install.sh" ] && command -v kpackagetool6 >/dev/null 2>&1 &&
+   kpackagetool6 --type Plasma/Applet --show org.omdrc.monitor >/dev/null 2>&1; then
+    /bin/sh "$_plasmoid/install.sh" | sed 's/^/user-install: /'
+fi
+
 # --- remembered renderer restore --------------------------------------------
 # upmpdcli, qobuzconnect2mpd and omdrc-renderer are now systemd SYSTEM units
 # (User=@AUDIO_USER@ — see their own header comments for why they moved off

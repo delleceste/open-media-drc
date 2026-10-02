@@ -137,6 +137,15 @@ add_custom_target(user-install
     USES_TERMINAL
     COMMENT "open-media-drc: per-user setup (run as the audio user, after the system install)")
 
+# ── `make plasmoid-install`: the KDE Plasma widget, for whoever runs it ──────
+# A desktop client of omdrcctrl, not part of the box, so never installed unasked:
+# any KDE Plasma 6 user on the LAN may want it, and a headless box has no Plasma.
+# user-install upgrades it, but only where it is already installed.
+add_custom_target(plasmoid-install
+    COMMAND /bin/sh "${CMAKE_SOURCE_DIR}/kde/omdrc-plasmoid/install.sh"
+    USES_TERMINAL
+    COMMENT "open-media-drc: KDE Plasma widget (OMDRC Monitor) for the current user")
+
 # ── consolidated post-install checklist (guaranteed to print last) ───────────
 # Subprojects have their own local hints.  This generated script is registered
 # after every add_subdirectory(), so `make install` finishes with one coherent

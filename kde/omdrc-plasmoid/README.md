@@ -25,15 +25,29 @@ runs on the desktop besides the widget.
 
 ## Install
 
+From a configured build directory (see the main README):
+
 ```sh
-kde/omdrc-plasmoid/install.sh          # installs, or upgrades in place
+cmake --build build --target plasmoid-install    # or: make -C build plasmoid-install
 ```
 
-That runs `kpackagetool6 --type Plasma/Applet` for the current user.  Then add
-**OMDRC Monitor** from *Add Widgets…* to a panel or the desktop, open its
-settings and enter the box's address (port 9090 unless changed).  After an
-upgrade, restart Plasma (`plasmashell --replace &`, or log out and in) for a
-running widget to load the new code.
+or without CMake, from any checkout:
+
+```sh
+kde/omdrc-plasmoid/install.sh
+```
+
+Both run the same script: `kpackagetool6 --type Plasma/Applet` for the user
+running it (no root), installing the widget or upgrading it in place.  It is
+not part of `make install` or `make user-install`, because it is a desktop
+client: any KDE Plasma 6 desktop on the LAN may want it, and a headless box
+has none.  Once installed, though, `make user-install` keeps it upgraded.
+
+Then add **OMDRC Monitor** from *Add Widgets...* to a panel or the desktop,
+open its settings and enter the box's address (`localhost` when the desktop is
+the box; port 9090 unless changed).  After an upgrade, restart Plasma
+(`plasmashell --replace &`, or log out and in) for a running widget to load
+the new code.
 
 To remove it: `kpackagetool6 --type Plasma/Applet --remove org.omdrc.monitor`.
 
