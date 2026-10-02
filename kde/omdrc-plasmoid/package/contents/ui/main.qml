@@ -99,30 +99,21 @@ PlasmoidItem {
         : PlasmaCore.Types.NoBackground
     Plasmoid.icon: "audio-volume-high"
 
-    toolTipMainText: player.title || i18n("OMDRC Monitor")
+    toolTipMainText: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+        || Plasmoid.formFactor === PlasmaCore.Types.Vertical
+        ? player.album || i18n("OMDRC Monitor") : player.title || i18n("OMDRC Monitor")
     toolTipSubText: problem !== "" ? problem
+        : Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+          || Plasmoid.formFactor === PlasmaCore.Types.Vertical
+        ? [player.title, player.artist].filter(s => s).join(" — ")
         : subtitle !== "" ? subtitle + (playing ? "" : " (" + stateText() + ")")
         : stateText()
     toolTipItem: Item {
-        visible: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
-              || Plasmoid.formFactor === PlasmaCore.Types.Vertical
-        width: 260
-        height: 300
+        width: 240
+        height: 240
         Cover {
-            anchors { top: parent.top; horizontalCenter: parent.horizontalCenter }
-            width: 240
-            height: 240
+            anchors.fill: parent
             source: root.coverUrl
-        }
-        Text {
-            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-            height: 55
-            text: root.player.title + (root.subtitle ? "\n" + root.subtitle : "")
-            color: Kirigami.Theme.textColor
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
-            wrapMode: Text.WordWrap
         }
     }
 

@@ -411,7 +411,8 @@ Item {
         objectName: "controls"
         x: coverHoverZone.x
         y: coverHoverZone.y
-        width: face.panel ? Math.min(face.width, controls.size * 6 + 8) : coverHoverZone.width
+        width: face.panel ? Math.min(face.width, coverHoverZone.width + controls.size * 6 + 8)
+                          : coverHoverZone.width
         height: coverHoverZone.height
         opacity: paneArea.visible && !face.editing && face.controlsShown && face.app.host !== "" ? 1 : 0
         visible: opacity > 0
@@ -427,8 +428,10 @@ Item {
         readonly property real size: face.panel ? Math.max(24, Math.min(30, height * 0.74))
             : Math.max(12, Math.min(height * 0.24, width / 5.5, Kirigami.Units.iconSizes.medium))
         SeekRing {
+            id: seekRing
             app: face.app
             visible: !face.compact && face.app.seekable && face.panes.indexOf("cover") >= 0
+                     && (controlsHover.hovered || dragging)
             readonly property real side: Math.min(controls.width, controls.height)
             width: side
             height: side
@@ -509,7 +512,8 @@ Item {
         }
         Rectangle {
             visible: face.panel
-            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+            anchors { left: parent.left; leftMargin: coverHoverZone.width + 2
+                      verticalCenter: parent.verticalCenter }
             width: panelActions.width + 4
             height: panelActions.height + 2
             radius: height / 3
