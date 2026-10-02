@@ -8,7 +8,11 @@
 /* The theme before the first paint (no dark flash on a light phone): Config -> Theme,
    "auto" by default, which follows the device's light/dark setting.  core.js keeps it. */
 try {
-    var t = JSON.parse(localStorage.getItem('omdrc-kiosk.theme') || '"auto"');
+    /* ?embed=<page>: that page alone, without the kiosk's bars (the KDE Plasma
+       widget shows the Qobuz page this way); ?theme= overrides the saved theme. */
+    var q = new URLSearchParams(location.search);
+    if (q.get('embed')) document.documentElement.dataset.embed = q.get('embed');
+    var t = q.get('theme') || JSON.parse(localStorage.getItem('omdrc-kiosk.theme') || '"auto"');
     if (t !== 'dark' && t !== 'light') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     document.documentElement.dataset.theme = t;
 } catch (e) { document.documentElement.dataset.theme = 'dark'; }
@@ -18,7 +22,7 @@ try {
 </head>
 <body>
 <header id="topbar">
-    <button type="button" id="top-menu" aria-haspopup="dialog"><span>☰</span><span id="top-page">Now</span></button>
+    <button type="button" id="top-menu" aria-haspopup="menu" aria-expanded="false"><span>☰</span><span id="top-page">Now</span></button>
     {# the box's own mascot, as on the desktop panel: Tux on Linux, the daemon on FreeBSD #}
     <img id="top-mascot" src="{{ url_for('static', filename='tux.png' if os_name == 'Linux' else 'freebsd-beastie.png') }}"
          alt="{{ os_name }}" title="The box runs {{ os_name }}">

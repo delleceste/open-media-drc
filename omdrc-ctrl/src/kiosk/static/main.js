@@ -264,11 +264,31 @@ document.addEventListener('pointerdown', e => reportScroll(e.target), { capture:
 
 // ── page menu (phones: replaces the bottom tab bar) ──────────────────────────
 $('#top-menu').addEventListener('click', () => {
-    const close = () => scrim.remove();
-    const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) close(); } },
-        h('div', { class: 'sheet' }, h('div', { class: 'pick-grid' }, K.pages.map((p, n) =>
-            h('button', { type: 'button', class: 'btn' + (n === cur ? ' active' : ''), onclick: () => { close(); K.showPage(p.id); } }, p.title)))));
-    $('#overlay-root').append(scrim);
+    const trigger = $('#top-menu');
+    const oldMenu = document.querySelector('#page-menu');
+    if (oldMenu) { oldMenu.closeMenu(); return; }
+    const menu = h('div', { id: 'page-menu', class: 'menu-pop menu-scroll', role: 'menu', 'aria-label': 'Switch page' });
+    const close = () => {
+        document.removeEventListener('pointerdown', outside, true);
+        document.removeEventListener('keydown', escape);
+        menu.remove();
+        trigger.setAttribute('aria-expanded', 'false');
+    };
+    menu.closeMenu = close;
+    const outside = e => { if (!menu.contains(e.target) && e.target !== trigger) close(); };
+    const escape = e => { if (e.key === 'Escape') { close(); trigger.focus(); } };
+    menu.append(...K.pages.map((p, n) => h('button', {
+        type: 'button', class: 'menu-item', role: 'menuitemradio', 'aria-checked': String(n === cur),
+        onclick: () => { close(); K.showPage(p.id); },
+    }, h('span', { class: 'mk' }, n === cur ? '●' : ''), p.title)));
+    document.body.append(menu);
+    const r = trigger.getBoundingClientRect();
+    menu.style.top = `${r.bottom + 4}px`;
+    menu.style.left = `${Math.max(8, r.left)}px`;
+    menu.style.maxHeight = `${Math.max(120, innerHeight - r.bottom - 12)}px`;
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', escape);
 });
 
 // ── top bar ──────────────────────────────────────────────────────────────────
@@ -353,6 +373,7 @@ K.saverActive = false;
 let idleTimer = null, saverPoll = null;
 function armSaver() {
     clearTimeout(idleTimer);
+    if (K.embed) return;                   // a page inside something else: never a saver
     const minutes = Number(K.pref('saver.minutes', 0));
     if (minutes > 0 && !K.saverActive) idleTimer = setTimeout(() => K.screenHolds.size ? armSaver() : startSaver(), minutes * 60000);
 }
@@ -413,7 +434,7 @@ async function prepareOtherPages() {
 // A page with optional() is in the pager and the tab bar only while that says so
 // (the Cover page: Config → Cover art).  Switching one on or off rebuilds the
 // order in place and keeps the current page on screen.
-const enabledPages = () => K.allPages.filter(p => !p.optional || p.optional());
+const enabledPages = () => K.allPages.filter(p => (!p.optional || p.optional()) && (!K.embed || p.id === K.embed));
 function buildPage(p) {
     p.body = h('div', { class: 'page-body' });
     p.section = h('section', { class: 'page', id: 'page-' + p.id, 'data-id': p.id }, p.body);
@@ -528,6 +549,10 @@ async function boot() {
     $('#top-alert').addEventListener('click', () => K.showPage('logs'));
     armSaver(); K.awake.sync();
 
+    if (!K.pages.length) {                 // ?embed= of a page this box does not offer
+        pager.append(h('p', { class: 'embed-missing' }, `“${K.embed}” is not available on this box.`));
+        return;
+    }
     const wanted = (location.hash || '').slice(1) || new URLSearchParams(location.search).get('page') || rememberedPage();
     K.showPage(K.pages.some(p => p.id === wanted) ? wanted : K.pages[0].id, false);
     // the app's splash covers the page until now: tell it once this first page is painted
