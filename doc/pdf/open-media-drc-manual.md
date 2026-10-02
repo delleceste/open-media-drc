@@ -960,7 +960,7 @@ any error. How CD samples reach the FIFO is OS-specific (section
   minus `drc_delay_margin_ms` (150 ms), re-derived every 2 s while a meter is
   open. Each screen waits out the rest with its own delay, stored in the
   browser: the kiosk calibrates it with the phone's microphone and a click
-  track, or it is set by eye (kiosk Config → Meter timing; the panel's
+  track, or it is set by eye (kiosk Config -> Meter timing; the panel's
   **Screen delay**). A screen can only wait, so a calibration that finds the
   meters late calls for a larger margin.
 * With `source = auto` an open card follows MPD-to-CD hand-offs without
@@ -1015,7 +1015,7 @@ thicker while the finger is on it, and lifting the finger seeks there.
 
 ### Meter timing and the Calibration page {#sec:meter-calibration}
 
-Open **Config → Meter timing** to calibrate the VU needles, level bars and
+Open **Config -> Meter timing** to calibrate the VU needles, level bars and
 spectrum against the sound heard at the phone. This is a display timing
 adjustment: it does not delay the music, change room-correction filters, or
 measure the acoustic frequency response. **How it works** opens the illustrated
@@ -1040,7 +1040,7 @@ about every two seconds while the analyzer runs.
 
 Let **M** be the sum of measured audio delays and **R** the requested controller
 margin (150 ms by default). The effective margin is **min(M, R)** and the
-controller holds frames back for **H = max(0, M − R)**. Sending frames early
+controller holds frames back for **H = max(0, M - R)**. Sending frames early
 leaves room for network transport and the screen's extra wait. The effective
 margin can change when playback starts or stops; this does not itself mean that
 the user changed configurations.
@@ -1048,7 +1048,7 @@ the user changed configurations.
 **The screen's part.** Calibration estimates how far the meter events lead the
 microphone events. A positive result becomes this device's extra screen delay.
 For example, with a 300 ms controller hold-back, 80 ms transport time and sound
-heard 600 ms after the tap, the remaining wait is **600 − 300 − 80 = 220 ms**.
+heard 600 ms after the tap, the remaining wait is **600 - 300 - 80 = 220 ms**.
 These are illustrative numbers, not defaults or measurements of a particular
 installation. The Now timing dialog reuses this example from the information
 page and identifies it as illustrative.
@@ -1097,10 +1097,10 @@ uses the reported MPD playback rate when available, falling back to 48 kHz.
 In an ordinary browser without the Android microphone bridge, **Play the clicks**
 and the delay controls remain available. Adjust by eye until the bars flick
 with the sound. The delay controls move by 10 or 50 ms, **Reset** saves zero for
-the active combination, and stored screen waits are bounded to 0–3000 ms.
+the active combination, and stored screen waits are bounded to 0--3000 ms.
 
 **Click algorithm.** The track contains 14 quiet, 8 ms Hann-windowed bursts of
-1 kHz tone at −30 dBFS. The first burst follows 1 s of silence; successive gaps
+1 kHz tone at -30 dBFS. The first burst follows 1 s of silence; successive gaps
 are 700, 530, 860, 610, 940, 480, 770, 650, 890, 560, 720, 830 and 590 ms.
 There is a 1.2 s silent tail, giving about 11.3 s total. Irregular spacing prevents
 a repeated rhythm from producing several equally plausible offsets.
@@ -1128,14 +1128,14 @@ a short burst can ring much longer in a room than in the meter envelope. It
 sorts meter frames by time and estimates their silence floor from the 20th
 percentile. A meter onset must exceed that floor by 15 dB and rise by more than
 15 dB from the previous frame, be the first frame, or follow a gap over 150 ms.
-There is no fixed −50 dBFS cutoff: clicks attenuated by the playback path can
+There is no fixed -50 dBFS cutoff: clicks attenuated by the playback path can
 still be detected. Microphone onsets must exceed the recording's 20th-percentile
-floor by 10 dB (with a threshold no lower than −80 dBFS), rise over the minimum
+floor by 10 dB (with a threshold no lower than -80 dBFS), rise over the minimum
 of the preceding five steps by more than 10 dB, and be over 200 ms apart.
 
 The algorithm tries offsets formed by differences between microphone and meter
-onsets, within **−600 to +2500 ms**. For each offset it counts meter onsets having
-a microphone onset within **±40 ms** of their predicted time. A result needs at
+onsets, within **-600 to +2500 ms**. For each offset it counts meter onsets having
+a microphone onset within **+/-40 ms** of their predicted time. A result needs at
 least **9 of the 14 clicks** paired, and at least four more pairs than the best
 alternative more than 100 ms away. Pairing is one-to-one: a microphone onset cannot count twice. The final delay
 is the median of the paired time differences. The median offsets in the first
@@ -1162,15 +1162,15 @@ to the drawing code, not a measurement of the physical display's pixel response.
 **Calibrate on the music.** This option records 10 s of ordinary playback, without
 playing the click track. It compares microphone and meter peak envelopes on a
 10 ms grid. Microphone peaks get a trailing 50 ms maximum to match the meter
-peak window, and levels are bounded to −60–0 dB. Between frame times the meter
+peak window, and levels are bounded to -60--0 dB. Between frame times the meter
 series is interpolated; a gap over 150 ms holds the previous level until the
 last 55 ms rather than inventing a slow ramp across silence.
 
 The algorithm removes a trailing one-second moving mean and searches lags from
-−600 to +2500 ms in 10 ms steps using normalized correlation. Each lag needs
+-600 to +2500 ms in 10 ms steps using normalized correlation. Each lag needs
 at least 200 overlapping points. A parabola through the best point and its
 neighbors refines the peak below the grid spacing. Acceptance requires
-correlation **r ≥ 0.4** and a lead of at least **0.06** over any candidate more
+correlation **r >= 0.4** and a lead of at least **0.06** over any candidate more
 than 150 ms away. The same estimator also runs on the first and second halves of the recording;
 both must be accepted and agree within 30 ms, so a strong full-recording peak
 cannot conceal changing timing. Clear, varied dynamics work better than steady
@@ -1179,9 +1179,9 @@ that can plausibly improve, and shows the progress and result in the log sheet.
 
 **Automatic recalibration** is off by default. When enabled, it uses an 8 s music
 measurement on Now after track changes or playback starts, at most once every
-two minutes. A detected playback start requires at least 1.5 s below −55 dB,
-followed by a level above −40 dB. It accepts only successful, nonnegative results
-with **r ≥ 0.5**, requires three recent accepted values agreeing within a 40 ms range, and uses
+two minutes. A detected playback start requires at least 1.5 s below -55 dB,
+followed by a level above -40 dB. It accepts only successful, nonnegative results
+with **r >= 0.5**, requires three recent accepted values agreeing within a 40 ms range, and uses
 their median only if it differs from the current delay by more than 15 ms.
 An existing dedicated profile moves by at most 20 ms per accepted adjustment;
 a combination without its own calibration adopts the agreed median directly.
@@ -1191,7 +1191,7 @@ on Now and does not pre-calibrate every combination or run the click test by
 itself. A blue calibration indicator and Android's microphone indicator show
 when measurement is running.
 
-**What is stored: device × network × audio configuration.** Each device has its
+**What is stored: device x network x audio configuration.** Each device has its
 own calibration. The Android bridge stores profiles in native preferences so a
 controller address change does not erase them; an ordinary browser uses storage
 for its origin. The profile selects the network together with the actual loaded
@@ -1208,7 +1208,7 @@ DRC OFF is shared across the two selected filter families.
 
 | Network | DRC | DRC rate (kHz) | Filter/configuration family | Example saved wait (ms) |
 |---|---|---:|---|---:|
-| Home | OFF | — | Not applicable | 90 |
+| Home | OFF | --- | Not applicable | 90 |
 | Home | ON | 192 | 120.green.multipos.fdw6 | 210 |
 | Home | ON | 96 | 120.green.multipos.fdw6 | 180 |
 | Home | ON | 48 | 120.green.multipos.fdw6 | 160 |
@@ -1217,7 +1217,7 @@ DRC OFF is shared across the two selected filter families.
 | Home | ON | 96 | 120.blue.blah.blah | 195 |
 | Home | ON | 48 | 120.blue.blah.blah | 175 |
 | Home | ON | 44.1 | 120.blue.blah.blah | 170 |
-| Studio | OFF | — | Not applicable | 70 |
+| Studio | OFF | --- | Not applicable | 70 |
 | Studio | ON | 192 | 120.green.multipos.fdw6 | 190 |
 | Studio | ON | 96 | 120.green.multipos.fdw6 | 160 |
 | Studio | ON | 48 | 120.green.multipos.fdw6 | 140 |
@@ -1233,7 +1233,7 @@ A new DRC rate without its own calibration can provisionally reuse the saved
 delay for the **same network, source, configuration directory and filter design
 selector** at another rate. If more than one is available, it chooses the nearest
 rate by ratio, with the most recently saved value breaking a tie. The status
-says **Provisional timing from ... kHz — calibrate this rate**. Borrowing does
+says **Provisional timing from ... kHz --- calibrate this rate**. Borrowing does
 not create a dedicated saved profile; calibrating the active rate replaces the
 fallback with its own value. For example, Home/green/192 can seed Home/green/96
 or /48, but cannot seed Studio/green/96, Home/blue/96 or DRC OFF. It is an
@@ -1244,8 +1244,8 @@ creates a new identity even if its displayed name stays the same. Legacy
 unidentified browsers/older bridges retain the unscoped delay fallback.
 
 Each saved profile records its screen delay and the effective margin at saving.
-The applied wait is **saved wait + current effective margin − saved margin**,
-bounded to 0–3000 ms. For example, 100 ms saved at a 40 ms margin becomes
+The applied wait is **saved wait + current effective margin - saved margin**,
+bounded to 0--3000 ms. For example, 100 ms saved at a 40 ms margin becomes
 140 ms at an 80 ms effective margin. A zero effective margin when the same
 configuration stops playing does not erase the last playback margin; this
 avoids anchoring a just-finished click result against an idle DAC.
@@ -1290,8 +1290,8 @@ values. **How it works** opens the full diagrams, and **Close** returns to Now.
 
 A **single tap** on VU needles or level bars shows the top bar and leaves the
 style alone. After the double-tap interval it also offers a small gesture hint.
-Tick **Understood — don’t show this again** before closing to suppress future
-hints in this browser's storage. A **double tap** switches needles ↔ bars and
+Tick **Understood --- don't show this again** before closing to suppress future
+hints in this browser's storage. A **double tap** switches needles <-> bars and
 keeps the top bar visible; it does not reset the layout. Double tap the vertical
 layout handle to restore the default layout. The choice remains
 specific to the current orientation. In bars-plus-spectrum mode a short tap
@@ -1306,7 +1306,7 @@ changing effective buffer margin does not invalidate it. Settings refresh every
 five seconds and at measurement start/end, so identity changes are detected
 through that polling rather than instantaneously.
 
-“Only x of 14 clicks” needs interpretation: *meters showed only x* concerns the
+"Only x of 14 clicks" needs interpretation: *meters showed only x* concerns the
 analyzer/output/frame sequence; *microphone heard only x* concerns recording,
 noise, level or room response; *only x lined up* means too few onsets matched
 within the timing tolerance or an alternative lag was too competitive. High
@@ -1318,7 +1318,7 @@ Every run keeps a plain-text log locally with its mode/trigger, network and
 controller timing, meter timestamps/peaks, microphone capture start and envelope,
 arrival gaps, detected onsets, best candidates and paired lags, and final verdict.
 Detector diagnostics remain available when a context change rejects the result.
-Use **Calibration log → Copy**, or **Select all** and manual copy when clipboard
+Use **Calibration log -> Copy**, or **Select all** and manual copy when clipboard
 access is restricted. The last log is overwritten by the next run, so save it
 before repeating a failure. Logs can distinguish input/detection faults from
 transport timing; an acoustic test on the actual phone and speakers is still
@@ -2018,7 +2018,7 @@ Range meter --- applied to blocks of the audio as it plays:
 3. Over the blocks in scope, the **RMS~upper~** is the root mean square of
    the loudest 20 % of block RMS values, and the **reference peak** is the
    *second-highest* block peak.
-4. **DR** per channel is 20 · log~10~(reference peak / RMS~upper~); the reading
+4. **DR** per channel is 20 * log~10~(reference peak / RMS~upper~); the reading
    is the mean over channels. The gauge shows it rounded, and the exact value
    to a hundredth in the status text.
 
