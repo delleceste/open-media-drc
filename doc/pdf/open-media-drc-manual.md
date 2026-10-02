@@ -1375,9 +1375,12 @@ reads `/spectrum/stream` (levels, and bands with the spectrum), polls
   when wide and stacked when tall. The cover can sit beside the meters or
   behind them, the meters then translucent.
 * **Settings**: the box's address and port, meter style, spectrum, cover,
-  track line, and whether to keep streaming while paused. By default it
-  closes its stream while nothing plays, so the box can switch the analyzer
-  off.
+  track line, the length in a panel (automatic, or fixed in pixels: Plasma
+  offers no resize handle there), and the background (Plasma's, none, or a
+  custom color with alpha).
+* It streams levels only while something plays --- MPD, or a disc on the CD
+  input (`/cdin/status`), which plays past MPD --- and otherwise closes its
+  stream, so the box can switch the analyzer off.
 
 It needs an omdrcctrl with bounded analyzer streams (`max_s`, section
 \ref{sec:omdrcctrl}); against an older one it says so instead of showing

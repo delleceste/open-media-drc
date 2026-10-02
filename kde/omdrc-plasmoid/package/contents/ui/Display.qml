@@ -59,10 +59,25 @@ Item {
     implicitWidth: horizontalPanel ? Math.round(height * aspectSum + spacing * (panes.length - 1)) : Kirigami.Units.gridUnit * 16
     implicitHeight: verticalPanel ? Math.round(width * aspectSum + spacing * (panes.length - 1)) : Kirigami.Units.gridUnit * 8
 
+    // The custom background (Plasma draws its own, or none, otherwise).  Off a
+    // panel the content keeps a margin from its edge, as on Plasma's own.
+    readonly property bool customBackground: app.backgroundMode === "custom"
+    readonly property real inset: customBackground && !panel ? Kirigami.Units.smallSpacing * 2 : 0
+
+    Rectangle {
+        anchors.fill: parent
+        visible: face.customBackground
+        color: face.app.backgroundColor
+        radius: face.panel ? Kirigami.Units.cornerRadius / 2 : Kirigami.Units.cornerRadius
+    }
+
     Item {
         id: paneArea
         anchors { left: parent.left; right: parent.right; top: parent.top; bottom: track.visible ? track.top : parent.bottom }
-        anchors.bottomMargin: track.visible ? Kirigami.Units.smallSpacing : 0
+        anchors.leftMargin: face.inset
+        anchors.rightMargin: face.inset
+        anchors.topMargin: face.inset
+        anchors.bottomMargin: track.visible ? Kirigami.Units.smallSpacing : face.inset
 
         Cover {
             visible: face.coverBehind
@@ -115,7 +130,7 @@ Item {
     ColumnLayout {
         id: track
         visible: face.showTrack && face.app.player.title !== ""
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: face.inset }
         spacing: 0
         PlasmaComponents.Label {
             Layout.fillWidth: true

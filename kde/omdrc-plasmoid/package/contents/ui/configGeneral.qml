@@ -3,6 +3,7 @@ import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.kcmutils as KCM
+import org.kde.kquickcontrols as KQuickControls
 
 KCM.SimpleKCM {
     property alias cfg_host: hostField.text
@@ -11,12 +12,19 @@ KCM.SimpleKCM {
     property alias cfg_showSpectrum: spectrumBox.checked
     property string cfg_coverMode
     property alias cfg_showTitle: titleBox.checked
-    property alias cfg_streamWhenIdle: idleBox.checked
+    property string cfg_backgroundMode
+    property string cfg_backgroundColor
+    property int cfg_panelLength
 
     readonly property var meterStyles: [
         { value: "bars", text: i18n("Level bars") },
         { value: "needles", text: i18n("VU needles") },
         { value: "off", text: i18n("None") },
+    ]
+    readonly property var backgroundModes: [
+        { value: "default", text: i18n("Plasma default") },
+        { value: "none", text: i18n("None") },
+        { value: "custom", text: i18n("Custom color") },
     ]
     readonly property var coverModes: [
         { value: "off", text: i18n("Hidden") },
@@ -65,25 +73,47 @@ KCM.SimpleKCM {
             currentIndex: indexOf(coverModes, cfg_coverMode)
             onActivated: cfg_coverMode = coverModes[currentIndex].value
         }
+        RowLayout {
+            Kirigami.FormData.label: i18n("Length in panel:")
+            QQC2.CheckBox {
+                id: autoLength
+                text: i18n("Automatic")
+                checked: cfg_panelLength <= 0
+                onToggled: cfg_panelLength = checked ? 0 : lengthField.value
+            }
+            QQC2.SpinBox {
+                id: lengthField
+                enabled: !autoLength.checked
+                from: 16
+                to: 4000
+                stepSize: 8
+                value: cfg_panelLength > 0 ? cfg_panelLength : 240
+                textFromValue: (value) => i18n("%1 px", value)
+                valueFromText: (text) => parseInt(text) || 240
+                onValueModified: cfg_panelLength = value
+            }
+        }
         QQC2.CheckBox {
             id: titleBox
             Kirigami.FormData.label: i18n("Track:")
             text: i18n("Show title and artist on the desktop and in the popup")
         }
 
-        Item { Kirigami.FormData.isSection: true }
-
-        QQC2.CheckBox {
-            id: idleBox
-            Kirigami.FormData.label: i18n("Analyzer:")
-            text: i18n("Keep streaming while paused or stopped")
-        }
-        QQC2.Label {
-            Layout.maximumWidth: Kirigami.Units.gridUnit * 22
-            wrapMode: Text.WordWrap
-            font: Kirigami.Theme.smallFont
-            opacity: 0.7
-            text: i18n("Off by default: while nothing plays the widget closes its stream, so the box can switch its analyzer FIFO output off.")
+        RowLayout {
+            Kirigami.FormData.label: i18n("Background:")
+            QQC2.ComboBox {
+                model: backgroundModes
+                textRole: "text"
+                currentIndex: indexOf(backgroundModes, cfg_backgroundMode)
+                onActivated: cfg_backgroundMode = backgroundModes[currentIndex].value
+            }
+            KQuickControls.ColorButton {
+                visible: cfg_backgroundMode === "custom"
+                showAlphaChannel: true
+                dialogTitle: i18n("Background color")
+                color: cfg_backgroundColor
+                onAccepted: (color) => cfg_backgroundColor = String(color)
+            }
         }
     }
 }

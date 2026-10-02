@@ -19,7 +19,7 @@ runs on the desktop besides the widget.
 |---|---|
 | levels (and bands) | `/spectrum/stream?mode=vu` or `mode=music`, server-sent events |
 | spectrum floor | `/spectrum/settings` |
-| state and track, polled | `/k/api/player` |
+| state and track, polled | `/k/api/player`, `/cdin/status` |
 | prev / play / pause / next | `/k/api/transport` |
 | cover | `/qconnect/art` |
 
@@ -59,8 +59,9 @@ To remove it: `kpackagetool6 --type Plasma/Applet --remove org.omdrc.monitor`.
 | Meters | level bars, VU needles, or none |
 | Spectrum | the band analyzer beside the meters |
 | Cover | hidden, beside the meters, or behind them (the meters go translucent) |
+| Length in panel | automatic (follows the panes) or a fixed length in pixels: a panel has no resize handle, so this is how to make it longer or shorter |
 | Track | title and artist under the large view |
-| Analyzer | keep streaming while paused or stopped (off by default) |
+| Background | Plasma's default, none, or a custom color with alpha |
 
 With meters and spectrum both off the widget shows the cover.
 
@@ -73,8 +74,9 @@ open: an unbounded stream would keep the box's analyzer, and MPD's FIFO output,
 running after every pause.  Against an older box the widget says so instead of
 showing meters; the cover and the transport buttons still work.
 
-While nothing plays it closes its stream, so the box can switch the analyzer
-off (within 20 s).  Transport goes to MPD through the kiosk's endpoint, the
+It streams levels only while something plays: MPD playing, or a disc on the
+CD / S-PDIF input (`/cdin/status`), which plays past MPD.  Otherwise it closes
+its stream, so the box can switch the analyzer off (within 20 s).  Transport goes to MPD through the kiosk's endpoint, the
 same as the kiosk's own buttons.
 
 ## Files

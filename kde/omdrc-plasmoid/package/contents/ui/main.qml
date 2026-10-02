@@ -23,7 +23,9 @@ PlasmoidItem {
     readonly property bool showSpectrum: Plasmoid.configuration.showSpectrum
     readonly property string coverMode: Plasmoid.configuration.coverMode
     readonly property bool showTitle: Plasmoid.configuration.showTitle
-    readonly property bool streamWhenIdle: Plasmoid.configuration.streamWhenIdle
+    readonly property string backgroundMode: Plasmoid.configuration.backgroundMode
+    readonly property color backgroundColor: Plasmoid.configuration.backgroundColor
+    readonly property int panelLength: Plasmoid.configuration.panelLength   // 0: automatic
 
     readonly property string base: host === "" ? ""
         : "http://" + (host.indexOf(":") >= 0 && host[0] !== "[" ? "[" + host + "]" : host) + ":" + port
@@ -33,6 +35,8 @@ PlasmoidItem {
     property bool reachable: false
     property string pollError: ""
     readonly property bool playing: player.state === "play"
+    // A disc on the CD / S-PDIF input plays past MPD, which says "stop" meanwhile.
+    property bool cdinActive: false
     readonly property string subtitle: [player.artist, player.album].filter(s => s).join(" — ")
 
     property var vu: silentVu()
@@ -52,7 +56,9 @@ PlasmoidItem {
         : ""
 
     Plasmoid.configurationRequired: host === ""
-    Plasmoid.backgroundHints: PlasmaCore.Types.DefaultBackground | PlasmaCore.Types.ConfigurableBackground
+    Plasmoid.backgroundHints: backgroundMode === "default"
+        ? PlasmaCore.Types.DefaultBackground | PlasmaCore.Types.ConfigurableBackground
+        : PlasmaCore.Types.NoBackground
     Plasmoid.icon: "audio-volume-high"
 
     toolTipMainText: player.title || i18n("OMDRC Monitor")
@@ -71,10 +77,16 @@ PlasmoidItem {
         compact: true
         horizontalPanel: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
         verticalPanel: Plasmoid.formFactor === PlasmaCore.Types.Vertical
-        Layout.minimumWidth: horizontalPanel ? implicitWidth : -1
-        Layout.preferredWidth: horizontalPanel ? implicitWidth : -1
-        Layout.minimumHeight: verticalPanel ? implicitHeight : -1
-        Layout.preferredHeight: verticalPanel ? implicitHeight : -1
+        // A panel offers no resize handle: the length is a setting, or
+        // follows the chosen panes.  The panes share whatever length it is.
+        readonly property int length: root.panelLength > 0 ? root.panelLength
+                                      : horizontalPanel ? implicitWidth : implicitHeight
+        Layout.minimumWidth: horizontalPanel ? length : -1
+        Layout.preferredWidth: horizontalPanel ? length : -1
+        Layout.maximumWidth: horizontalPanel ? length : -1
+        Layout.minimumHeight: verticalPanel ? length : -1
+        Layout.preferredHeight: verticalPanel ? length : -1
+        Layout.maximumHeight: verticalPanel ? length : -1
         onActivated: root.expanded = !root.expanded
     }
 
@@ -121,11 +133,19 @@ PlasmoidItem {
                 pollError = ""
                 player = data
                 if (!was) readSettings()
+                if (playing || !wantsLevels) cdinActive = false
+                else pollCdin()
             } else {
                 reachable = false
                 pollError = status === 0 ? i18n("no answer")
                           : data && data.error ? data.error : i18n("HTTP %1", status)
             }
+        })
+    }
+
+    function pollCdin() {
+        request("GET", "/cdin/status", null, function (status, data) {
+            cdinActive = status === 200 && !!data && data.active === true
         })
     }
 
@@ -167,7 +187,7 @@ PlasmoidItem {
     SseStream {
         id: levels
         property string bandsKey: ""
-        url: root.base !== "" && root.reachable && root.wantsLevels && (root.playing || root.streamWhenIdle)
+        url: root.base !== "" && root.reachable && root.wantsLevels && (root.playing || root.cdinActive)
              ? root.base + "/spectrum/stream?mode=" + (root.showSpectrum ? "music" : "vu")
              : ""
         onUrlChanged: if (url === "") {
