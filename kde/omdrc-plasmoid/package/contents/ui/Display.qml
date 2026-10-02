@@ -32,7 +32,7 @@ Item {
         if (!list.length) list.push("cover")   // nothing chosen: at least show what plays
         return list
     }
-    readonly property bool showTrack: !compact && app.showTitle
+    readonly property bool showTrack: !compact && app.page === "cover" && app.showTitle
     // panes laid out in a row, or a column
     readonly property bool row: horizontalPanel || (!verticalPanel && paneArea.width >= paneArea.height)
 
@@ -80,6 +80,7 @@ Item {
 
     Item {
         id: paneArea
+        visible: face.compact || face.app.page === "cover"
         anchors { left: parent.left; right: parent.right; top: parent.top; bottom: track.visible ? track.top : parent.bottom }
         anchors.leftMargin: face.inset
         anchors.rightMargin: face.inset
@@ -223,8 +224,46 @@ Item {
 
     MouseArea {
         anchors.fill: parent
+        enabled: face.compact
         acceptedButtons: Qt.LeftButton
         onClicked: face.activated()
+    }
+
+    ColumnLayout {
+        anchors { fill: parent; margins: face.inset }
+        visible: !face.compact && face.app.page !== "cover"
+        spacing: Kirigami.Units.smallSpacing
+        RowLayout {
+            Layout.fillWidth: true
+            PlasmaComponents.ToolButton {
+                icon.name: "media-optical-audio"
+                text: i18n("Cover")
+                onClicked: face.app.page = "cover"
+            }
+            PlasmaComponents.ToolButton {
+                icon.name: "view-list-details"
+                text: i18n("Queue")
+                onClicked: face.app.page = "queue"
+            }
+            PlasmaComponents.ToolButton {
+                icon.name: "edit-find"
+                text: i18n("Qobuz")
+                onClicked: face.app.page = "qobuz"
+            }
+            Item { Layout.fillWidth: true }
+        }
+        QueueView {
+            app: face.app
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: face.app.page === "queue"
+        }
+        QobuzView {
+            app: face.app
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: face.app.page === "qobuz"
+        }
     }
 
     HoverHandler { id: hover }
@@ -237,12 +276,37 @@ Item {
         color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
                        Kirigami.Theme.backgroundColor.b, 0.55)
         radius: Kirigami.Units.cornerRadius
-        opacity: hover.hovered && face.app.host !== "" ? 1 : 0
+        opacity: paneArea.visible && hover.hovered && face.app.host !== "" ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Kirigami.Units.shortDuration } }
 
         readonly property real size: Math.max(12, Math.min(height * 0.85, width / 3.3,
                                                           Kirigami.Units.iconSizes.huge))
+        SeekRing {
+            app: face.app
+            visible: face.app.seekable && face.panes.indexOf("cover") >= 0
+            readonly property real side: Math.min(face.extents[0] || 0, face.row ? controls.height : controls.width)
+            width: side
+            height: side
+            x: face.row ? (face.extents[0] - width) / 2 : (controls.width - width) / 2
+            y: face.row ? (controls.height - height) / 2 : (face.extents[0] - height) / 2
+        }
+        Row {
+            anchors { top: parent.top; right: parent.right; margins: 2 }
+            spacing: 2
+            PlasmaComponents.ToolButton {
+                icon.name: "edit-find"
+                text: i18n("Search Qobuz")
+                display: QQC2.AbstractButton.IconOnly
+                onClicked: face.app.openPage("qobuz")
+            }
+            PlasmaComponents.ToolButton {
+                icon.name: "view-list-details"
+                text: i18n("Play queue")
+                display: QQC2.AbstractButton.IconOnly
+                onClicked: face.app.openPage("queue")
+            }
+        }
         Row {
             anchors.centerIn: parent
             spacing: Math.min(Kirigami.Units.largeSpacing, controls.size * 0.15)

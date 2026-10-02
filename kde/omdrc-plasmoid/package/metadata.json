@@ -7,12 +7,12 @@
             }
         ],
         "Category": "Multimedia",
-        "Description": "Level meters, spectrum and cover of what an Open Media DRC box is playing, with play/pause/skip on hover",
+        "Description": "Native playback meters, cover, queue and Qobuz browser for an Open Media DRC box",
         "Icon": "audio-volume-high",
         "Id": "org.omdrc.monitor",
         "License": "BSD-2-Clause",
         "Name": "OMDRC Monitor",
-        "Version": "1.0",
+        "Version": "1.1",
         "Website": "https://github.com/delleceste/open-media-drc"
     },
     "KPackageStructure": "Plasma/Applet",

@@ -37,11 +37,14 @@ PlasmoidItem {
     // what the box says
     property var player: ({ state: "stop", title: "", artist: "", album: "", file: "" })
     property bool reachable: false
+    property string page: "cover"       // cover | queue | qobuz
     property string pollError: ""
     readonly property bool playing: player.state === "play"
     // A disc on the CD / S-PDIF input plays past MPD, which says "stop" meanwhile.
     property bool cdinActive: false
     readonly property string subtitle: [player.artist, player.album].filter(s => s).join(" — ")
+    readonly property bool seekable: Number.isFinite(Number(player.duration)) && Number(player.duration) > 0
+                                     && Number.isFinite(Number(player.elapsed))
 
     property var vu: silentVu()
     property var bands: []
@@ -111,10 +114,10 @@ PlasmoidItem {
 
     fullRepresentation: Display {
         app: root
-        Layout.minimumWidth: Kirigami.Units.gridUnit * 6
-        Layout.minimumHeight: Kirigami.Units.gridUnit * 3
-        Layout.preferredWidth: Kirigami.Units.gridUnit * 22
-        Layout.preferredHeight: Kirigami.Units.gridUnit * 10
+        Layout.minimumWidth: Kirigami.Units.gridUnit * (root.page === "cover" ? 6 : 18)
+        Layout.minimumHeight: Kirigami.Units.gridUnit * (root.page === "cover" ? 3 : 14)
+        Layout.preferredWidth: Kirigami.Units.gridUnit * (root.page === "cover" ? 22 : 32)
+        Layout.preferredHeight: Kirigami.Units.gridUnit * (root.page === "cover" ? 10 : 32)
     }
 
     function silentVu() {
@@ -126,7 +129,7 @@ PlasmoidItem {
              : player.state === "pause" ? i18n("paused") : i18n("stopped")
     }
 
-    function request(method, path, body, done) {
+    function request(method, path, body, done, timeoutMs, headers) {
         const xhr = new XMLHttpRequest()
         const url = base + path
         xhr.onreadystatechange = function () {
@@ -136,9 +139,11 @@ PlasmoidItem {
             if (done) done(xhr.status, data)
         }
         xhr.open(method, url)
-        xhr.timeout = 4000
+        xhr.timeout = timeoutMs || 4000
         if (body !== null) xhr.setRequestHeader("Content-Type", "application/json")
+        if (headers) for (const key of Object.keys(headers)) xhr.setRequestHeader(key, headers[key])
         xhr.send(body === null ? null : JSON.stringify(body))
+        return xhr
     }
 
     function poll() {
@@ -214,6 +219,14 @@ PlasmoidItem {
             poll()
         })
     }
+
+    function seek(seconds) {
+        if (!seekable) return
+        const value = Math.max(0, Math.min(Number(player.duration), seconds))
+        player = Object.assign({}, player, { elapsed: value })
+        request("POST", "/k/api/transport", { action: "seek", seconds: value }, function () { poll() })
+    }
+    function openPage(name) { page = name; expanded = true }
 
     onBaseChanged: {
         reachable = false

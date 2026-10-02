@@ -16,7 +16,7 @@
     <!-- on the desktop and in the popup: the spectrum under the meters, not beside them -->
     <entry name="spectrumBelow" type="Bool"><default>false</default></entry>
     <!-- "off" | "pane" (beside the meters) | "background" (behind them) -->
-    <entry name="coverMode" type="String"><default>off</default></entry>
+    <entry name="coverMode" type="String"><default>pane</default></entry>
     <!-- live dynamic range: value, gauge and the segmented history -->
     <entry name="showDr" type="Bool"><default>false</default></entry>
     <!-- per song (the window restarts at each track) or continuous -->
