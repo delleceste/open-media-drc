@@ -280,6 +280,47 @@ class MarginEndpointTest(unittest.TestCase):
             self.assertEqual(client.post("/spectrum/margin", json={"margin_ms": "x"}).status_code, 400)
 
 
+class BoundedStreamTest(unittest.TestCase):
+    """max_s ends a stream on the box's side, for a client that cannot close
+    one (Qt's QML XMLHttpRequest: abort() leaves the socket downloading).  The
+    stream must end on time, say so in a header, and still let go of the
+    analyzer; without max_s it stays as unbounded as before."""
+
+    def stream(self, query, clock):
+        frame = {"ok": True, "state": "running", "vu": {}}
+        with mock.patch.object(APP, "SPECTRUM_ENABLED", True), \
+             mock.patch.object(APP._SPECTRUM, "acquire") as acquire, \
+             mock.patch.object(APP._SPECTRUM, "snapshot", return_value=(1, frame)), \
+             mock.patch.object(APP._SPECTRUM, "wait_next", return_value=(1, frame)), \
+             mock.patch.object(APP, "_release_stream") as release, \
+             mock.patch.object(APP.time, "monotonic", side_effect=clock):
+            response = APP.app.test_client().get("/spectrum/stream" + query, buffered=False)
+            chunks = []
+            for chunk in response.response:
+                chunks.append(chunk)
+                if len(chunks) > 50:
+                    break
+            response.close()
+            return response, chunks, acquire, release
+
+    def test_a_bounded_stream_ends_and_lets_go(self):
+        ticks = iter(range(0, 1000, 4))              # 4 s per keepalive wait
+        response, chunks, acquire, release = self.stream("?mode=vu&max_s=10", lambda: next(ticks))
+        self.assertEqual(response.headers["X-Stream-Max-S"], "10")
+        self.assertLess(len(chunks), 10)
+        acquire.assert_called_once()
+        release.assert_called_once_with("vu", False, False)
+
+    def test_max_s_is_clamped_and_junk_ignored(self):
+        for query, header in (("?max_s=1", "5"), ("?max_s=99999", "3600"),
+                              ("?max_s=x", None), ("?max_s=nan", None), ("", None)):
+            ticks = iter(range(0, 100000, 400))
+            response, chunks, _, _ = self.stream(query, lambda: next(ticks))
+            self.assertEqual(response.headers.get("X-Stream-Max-S"), header, query)
+            if header is None:
+                self.assertGreater(len(chunks), 50, query)  # unbounded, as before
+
+
 class DrcDelayEstimateTest(unittest.TestCase):
     """The frames are held back by the MEASURED stages minus a margin.
 

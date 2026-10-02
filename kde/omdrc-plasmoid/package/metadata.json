@@ -1,0 +1,20 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "delleceste@gmail.com",
+                "Name": "Giacomo Strangolino"
+            }
+        ],
+        "Category": "Multimedia",
+        "Description": "Level meters, spectrum and cover of what an Open Media DRC box is playing, with play/pause/skip on hover",
+        "Icon": "audio-volume-high",
+        "Id": "org.omdrc.monitor",
+        "License": "BSD-2-Clause",
+        "Name": "OMDRC Monitor",
+        "Version": "1.0",
+        "Website": "https://github.com/delleceste/open-media-drc"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

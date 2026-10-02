@@ -8028,9 +8028,21 @@ def spectrum_stream():
         raw_mode = raw_mode.removesuffix("-clip")
     mode = raw_mode if raw_mode in ("precision", "vu", "dr") else "music"
     wants_bands = mode not in ("vu", "dr")
+    # max_s: end the stream after this many seconds, for a client that cannot
+    # close one itself.  Qt's QML XMLHttpRequest is such a client: abort()
+    # leaves the socket open and still downloading, so the KDE plasmoid
+    # (kde/omdrc-plasmoid) would hold the analyzer on for ever after a pause.
+    # It asks for bounded streams and opens the next before this one ends, so
+    # the listener count, and with it MPD's FIFO output, never drops to zero.
+    try:
+        max_s = float(request.args.get("max_s", "0"))
+    except ValueError:
+        max_s = 0.0
+    max_s = min(3600.0, max(5.0, max_s)) if math.isfinite(max_s) and max_s > 0 else 0.0
 
     def events():
         _SPECTRUM.acquire(mode, wants_clip=wants_clip)
+        deadline = time.monotonic() + max_s if max_s else None
         dr_revision = -1
 
         def payload(frame):
@@ -8053,7 +8065,7 @@ def spectrum_stream():
         try:
             seq, frame = _SPECTRUM.snapshot()
             yield payload(frame)
-            while True:
+            while deadline is None or time.monotonic() < deadline:
                 next_seq, frame = _SPECTRUM.wait_next(seq, timeout=1.0)
                 if next_seq == seq:
                     # A silent or paused source produces no changed frames.
@@ -8071,8 +8083,10 @@ def spectrum_stream():
         finally:
             _release_stream(mode, wants_bands, wants_clip)
 
-    return Response(events(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    if max_s:
+        headers["X-Stream-Max-S"] = f"{max_s:g}"    # tells the client it is honoured
+    return Response(events(), mimetype="text/event-stream", headers=headers)
 
 
 def _drc_script() -> str | None:

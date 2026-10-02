@@ -234,6 +234,18 @@ a second device just joins the same broadcast — it does **not** start a second
 capture.  The MPD FIFO output is enabled when the first client starts and
 disabled only when the **last** client disconnects.
 
+### Bounded streams
+
+`/spectrum/stream?...&max_s=N` ends the stream after `N` seconds (clamped to
+5–3600) and answers with an `X-Stream-Max-S` header saying so.  It exists for
+clients that cannot close a stream: Qt's QML `XMLHttpRequest.abort()` stops
+the callbacks but leaves the socket open and downloading, so the KDE plasmoid
+(`kde/omdrc-plasmoid`) would otherwise keep the analyzer, and MPD's FIFO
+output, on for ever after a pause.  It asks for 20-second streams and opens
+the next one 5 seconds before the current one ends, so the listener count
+never touches zero while it listens and drops to zero at most 20 seconds after
+it stops.  Without `max_s` a stream is as unbounded as ever.
+
 ### Reliable disable
 
 The FIFO output must never be left enabled with no consumer (it would make MPD
