@@ -1705,80 +1705,16 @@ P.sizeQueue = () => {
     P.queueBox.style.height = `${Math.max(64, P.fullEl.clientHeight - (queue.top - controls.top) - bottom)}px`;
 };
 
-P.scrollQueue = (delta, gesture) => {
-    if (!P.fullEl || !delta) return;
-    P.queueAuto = false;
-    const sheet = P.fullEl, box = P.queueBox;
-    // On the way up, finish the queue before revealing the cover again.
-    // On the way down, reach the controls before moving the queue.
-    if (delta < 0) {
-        const old = box.scrollTop;
-        P.scrollQueueRows(delta, gesture);
-        if (!gesture.paused) sheet.scrollTop += delta - (box.scrollTop - old);
-    } else {
-        const old = sheet.scrollTop;
-        sheet.scrollTop += delta;
-        P.scrollQueueRows(delta - (sheet.scrollTop - old), gesture);
-    }
-};
-
-P.scrollQueueRows = (delta, gesture) => {
-    if (!delta || gesture.paused) return;
-    const box = P.queueBox;
-    const current = box.querySelector('.qz-qrow.on');
-    const before = box.scrollTop;
-    let target = Math.max(0, Math.min(box.scrollHeight - box.clientHeight, before + delta));
-    if (current) {
-        const rowTop = before + current.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientTop;
-        const rowBottom = rowTop + current.offsetHeight;
-        if (delta < 0 && rowBottom <= before + 1 && target <= rowTop) {
-            target = rowTop;
-            gesture.paused = true;
-        } else if (delta > 0 && rowTop >= before + box.clientHeight - 1 && target >= rowBottom - box.clientHeight) {
-            target = rowBottom - box.clientHeight;
-            gesture.paused = true;
-        }
-    }
-    box.scrollTop = target;
-};
-
 P.wireQueueScroll = () => {
-    const sheet = P.fullEl;
-    let wheelGesture = null, wheelTimer = null, touch = null;
-    sheet.addEventListener('wheel', e => {
-        if (e.target.closest('input')) return;
-        e.preventDefault();
-        if (!wheelGesture || Math.sign(wheelGesture.direction) !== Math.sign(e.deltaY))
-            wheelGesture = { paused: false, direction: e.deltaY };
-        clearTimeout(wheelTimer);
-        wheelTimer = setTimeout(() => { wheelGesture = null; }, 180);
-        const scale = e.deltaMode === 1 ? 20 : e.deltaMode === 2 ? sheet.clientHeight : 1;
-        P.scrollQueue(e.deltaY * scale, wheelGesture);
-    }, { passive: false });
-    sheet.addEventListener('touchstart', e => {
-        if (e.touches.length !== 1 || e.target.closest('input')) return;
-        const cover = !!e.target.closest('.qz-pcover');
-        if (cover && P.fullView.ring.shown) return; // a shown ring owns its seek gesture
-        touch = { y: e.touches[0].clientY, paused: false, cover };
-    }, { passive: true });
-    sheet.addEventListener('touchmove', e => {
-        if (!touch || e.touches.length !== 1) return;
-        const y = e.touches[0].clientY;
-        const delta = touch.y - y;
-        touch.y = y;
-        if (!delta || (touch.cover && delta < 0)) return; // downward cover swipe minimizes the player
-        e.preventDefault();
-        P.scrollQueue(delta, touch);
-    }, { passive: false });
-    sheet.addEventListener('touchend', () => { touch = null; });
-    sheet.addEventListener('touchcancel', () => { touch = null; });
-    sheet.addEventListener('keydown', e => {
-        if (e.target.matches('input, textarea, select')) return;
-        const delta = { ArrowUp: -40, ArrowDown: 40, PageUp: -sheet.clientHeight, PageDown: sheet.clientHeight }[e.key];
-        if (!delta) return;
-        e.preventDefault();
-        P.scrollQueue(delta, { paused: false });
-    });
+    // Let the browser own wheel and touch scrolling so momentum stays native.
+    // User movement turns off track following until the full player is reopened.
+    const box = P.queueBox;
+    const stopFollowing = e => {
+        if (e.target.closest('.qz-qrow')) P.queueAuto = false;
+    };
+    box.addEventListener('wheel', stopFollowing, { passive: true });
+    box.addEventListener('touchstart', stopFollowing, { passive: true });
+    box.addEventListener('keydown', stopFollowing);
 };
 
 P.openQueueActions = () => {
