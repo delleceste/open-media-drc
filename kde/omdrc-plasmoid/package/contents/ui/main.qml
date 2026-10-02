@@ -4,6 +4,7 @@ import org.kde.plasma.plasmoid
 import org.kde.plasma.core as PlasmaCore
 import org.kde.kirigami as Kirigami
 import "levels.js" as L
+import "dr.js" as DR
 
 /* OMDRC Monitor: level meters, spectrum and cover of what an Open Media DRC
  * box plays, with prev / play-pause / next on hover.  A pure client of
@@ -20,11 +21,14 @@ PlasmoidItem {
     readonly property string host: Plasmoid.configuration.host.trim()
     readonly property int port: Plasmoid.configuration.port
     readonly property string meterStyle: Plasmoid.configuration.meterStyle
+    readonly property string meterPair: Plasmoid.configuration.meterPair
     readonly property bool showSpectrum: Plasmoid.configuration.showSpectrum
+    readonly property bool spectrumBelow: Plasmoid.configuration.spectrumBelow
     readonly property string coverMode: Plasmoid.configuration.coverMode
     readonly property bool showTitle: Plasmoid.configuration.showTitle
     readonly property string backgroundMode: Plasmoid.configuration.backgroundMode
     readonly property color backgroundColor: Plasmoid.configuration.backgroundColor
+    readonly property int backgroundOpacity: Plasmoid.configuration.backgroundOpacity
     readonly property int panelLength: Plasmoid.configuration.panelLength   // 0: automatic
 
     readonly property string base: host === "" ? ""
@@ -44,8 +48,21 @@ PlasmoidItem {
     property var specLeft: []
     property var specRight: []
     property real floorDb: -40
+    property var drFrame: null
+    property var drBlocks: []
+    property int drTrackAge: 0
+    property real balanceDb: NaN
+    property var balanceSamples: []
+    readonly property int drWindow: Plasmoid.configuration.drWindow
+    readonly property bool drPerSong: Plasmoid.configuration.drPerSong
+    readonly property var drSelected: DR.selected(drBlocks, drTrackAge, drWindow, drPerSong)
+    readonly property var drSummary: DR.summary(drFrame, drBlocks, drTrackAge, drWindow, drPerSong)
+    readonly property bool showDr: Plasmoid.configuration.showDr
+    readonly property bool showBalance: Plasmoid.configuration.showBalance
+    readonly property string balanceLook: Plasmoid.configuration.balanceLook
+    readonly property real balanceWindow: Plasmoid.configuration.balanceWindow
 
-    readonly property bool wantsLevels: meterStyle !== "off" || showSpectrum
+    readonly property bool wantsLevels: meterStyle !== "off" || showSpectrum || showDr || showBalance
     readonly property bool wantsCover: coverMode !== "off" || !wantsLevels
     readonly property string coverUrl: !wantsCover || base === "" || (!player.file && !player.title) ? ""
         : base + "/qconnect/art?v=" + encodeURIComponent(player.file + "|" + player.album + "|" + player.title)
@@ -56,7 +73,9 @@ PlasmoidItem {
         : ""
 
     Plasmoid.configurationRequired: host === ""
-    Plasmoid.backgroundHints: backgroundMode === "default"
+    Plasmoid.backgroundHints: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+        || Plasmoid.formFactor === PlasmaCore.Types.Vertical ? PlasmaCore.Types.NoBackground
+        : backgroundMode === "default"
         ? PlasmaCore.Types.DefaultBackground | PlasmaCore.Types.ConfigurableBackground
         : PlasmaCore.Types.NoBackground
     Plasmoid.icon: "audio-volume-high"
@@ -156,6 +175,34 @@ PlasmoidItem {
         })
     }
 
+    function setConfig(key, value) { Plasmoid.configuration[key] = value }
+    function cycleMeterStyle() {
+        const styles = ["bars", "needles"], i = styles.indexOf(meterStyle)
+        if (meterStyle !== "off") setConfig("meterStyle", styles[(i + 1) % styles.length])
+    }
+    function cycleDrWindow() {
+        const i = DR.WINDOWS.indexOf(drWindow)
+        setConfig("drWindow", DR.WINDOWS[(i + 1) % DR.WINDOWS.length])
+    }
+    function toggleBalanceLook() { setConfig("balanceLook", balanceLook === "split" ? "bar" : "split") }
+    function cycleBalanceWindow() {
+        const ws = [0.3, 1, 3, 5, 15, 30, 60], i = ws.indexOf(balanceWindow)
+        setConfig("balanceWindow", ws[(i + 1) % ws.length])
+    }
+    function updateBalance(vu) {
+        const now = Date.now(), l = Number(vu.left_rms), r = Number(vu.right_rms)
+        let samples = balanceSamples.slice()
+        if (samples.length && now - samples[samples.length - 1].at > 1000) samples = []
+        if (Number.isFinite(l) && Number.isFinite(r) && Math.max(l, r) > -60)
+            samples.push({ at: now, left: Math.pow(10, l / 10), right: Math.pow(10, r / 10) })
+        samples = samples.filter(s => s.at >= now - Math.max(60000, balanceWindow * 1000))
+        balanceSamples = samples
+        const start = Math.min(now - balanceWindow * 1000, samples.length ? samples[samples.length - 1].at : now)
+        let left = 0, right = 0
+        for (const s of samples) if (s.at >= start) { left += s.left; right += s.right }
+        balanceDb = left || right ? 10 * Math.log10(Math.max(right, 1e-12) / Math.max(left, 1e-12)) : NaN
+    }
+
     function transport(action) {
         if (action === "toggle") action = playing ? "pause" : "play"
         // Show the change at once; the next poll confirms or corrects it.
@@ -188,21 +235,50 @@ PlasmoidItem {
         id: levels
         property string bandsKey: ""
         url: root.base !== "" && root.reachable && root.wantsLevels && (root.playing || root.cdinActive)
-             ? root.base + "/spectrum/stream?mode=" + (root.showSpectrum ? "music" : "vu")
+             ? root.base + "/spectrum/stream?mode=" + (root.showSpectrum ? "music" : root.showDr ? "dr" : "vu")
              : ""
         onUrlChanged: if (url === "") {
             root.vu = root.silentVu()
             root.specLeft = root.bands.map(() => L.FLOOR)
             root.specRight = root.specLeft
+            root.balanceSamples = []
+            root.balanceDb = NaN
+            root.drFrame = null
+            root.drBlocks = []
+            root.drTrackAge = 0
         }
         onFrame: (data) => {
-            if (data.vu && data.vu.left_rms !== undefined) root.vu = data.vu
+            if (data.vu && data.vu.left_rms !== undefined) {
+                root.vu = data.vu
+                root.updateBalance(data.vu)
+            }
+            if (data.dr && Array.isArray(data.dr_blocks)) {
+                root.drFrame = data
+                root.drBlocks = data.dr_blocks
+                root.drTrackAge = Number(data.dr.track_age_blocks) || 0
+            }
             if (Array.isArray(data.bands) && data.bands.length) {
                 // the bands follow the source's rate: replace them only then
                 const key = JSON.stringify(data.bands)
                 if (key !== bandsKey) { bandsKey = key; root.bands = data.bands }
                 root.specLeft = Array.isArray(data.left) ? data.left : []
                 root.specRight = Array.isArray(data.right) ? data.right : []
+            }
+        }
+    }
+
+    // Music mode carries FFT bands; DR mode carries the rolling three-second
+    // history.  When both views are enabled each subscription asks only for
+    // the data it needs, while the server shares the FIFO reader.
+    SseStream {
+        id: drStream
+        url: root.base !== "" && root.reachable && root.showDr && root.showSpectrum
+             && (root.playing || root.cdinActive) ? root.base + "/spectrum/stream?mode=dr" : ""
+        onFrame: (data) => {
+            if (data.dr && Array.isArray(data.dr_blocks)) {
+                root.drFrame = data
+                root.drBlocks = data.dr_blocks
+                root.drTrackAge = Number(data.dr.track_age_blocks) || 0
             }
         }
     }

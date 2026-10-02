@@ -25,8 +25,10 @@ Item {
     readonly property var panes: {
         const list = []
         if (app.coverMode === "pane") list.push("cover")
-        if (meterStyle !== "off") list.push("meters")
-        if (app.showSpectrum) list.push("spectrum")
+        if (meterStyle !== "off") list.push(app.showSpectrum && app.spectrumBelow ? "meterspectrum" : "meters")
+        if (app.showSpectrum && (meterStyle === "off" || !app.spectrumBelow)) list.push("spectrum")
+        if (app.showDr) list.push("dr")
+        if (app.showBalance) list.push("balance")
         if (!list.length) list.push("cover")   // nothing chosen: at least show what plays
         return list
     }
@@ -37,6 +39,8 @@ Item {
     function aspect(pane) {        // width / height a pane would like
         if (pane === "cover") return 1
         if (pane === "spectrum") return row ? 3.5 : 1.4
+        if (pane === "meterspectrum") return row ? 2.0 : 1.2
+        if (pane === "dr" || pane === "balance") return row ? 2.5 : 1.2
         if (meterStyle === "needles") return row ? 2.6 : 0.75
         return row ? 2.6 : 0.6
     }
@@ -61,13 +65,16 @@ Item {
 
     // The custom background (Plasma draws its own, or none, otherwise).  Off a
     // panel the content keeps a margin from its edge, as on Plasma's own.
-    readonly property bool customBackground: app.backgroundMode === "custom"
+    readonly property bool customBackground: app.backgroundMode === "custom" || app.backgroundMode === "transparent"
     readonly property real inset: customBackground && !panel ? Kirigami.Units.smallSpacing * 2 : 0
 
     Rectangle {
         anchors.fill: parent
         visible: face.customBackground
-        color: face.app.backgroundColor
+        color: face.app.backgroundMode === "transparent"
+             ? Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
+                       Kirigami.Theme.backgroundColor.b, face.app.backgroundOpacity / 100)
+             : face.app.backgroundColor
         radius: face.panel ? Kirigami.Units.cornerRadius / 2 : Kirigami.Units.cornerRadius
     }
 
@@ -99,7 +106,10 @@ Item {
                 width: face.row ? Math.round(extent) : paneArea.width
                 height: face.row ? paneArea.height : Math.round(extent)
                 sourceComponent: modelData === "cover" ? coverPane
-                               : modelData === "spectrum" ? spectrumPane : metersPane
+                               : modelData === "meterspectrum" ? meterSpectrumPane
+                               : modelData === "spectrum" ? spectrumPane
+                               : modelData === "dr" ? drPane
+                               : modelData === "balance" ? balancePane : metersPane
             }
         }
     }
@@ -111,9 +121,35 @@ Item {
     Component {
         id: metersPane
         Meters {
+            app: face.app
             style: face.meterStyle
+            pair: face.app.meterPair
             vu: face.app.vu
             glass: face.coverBehind ? 0.5 : 1
+        }
+    }
+    Component {
+        id: meterSpectrumPane
+        Item {
+            Meters {
+                app: face.app
+                anchors { left: parent.left; right: parent.right; top: parent.top }
+                height: parent.height * 0.58
+                style: face.meterStyle
+                pair: face.app.meterPair
+                vu: face.app.vu
+                glass: face.coverBehind ? 0.5 : 1
+            }
+            Spectrum {
+                anchors { left: parent.left; right: parent.right }
+                y: parent.height * 0.61
+                height: parent.height * 0.39
+                bands: face.app.bands
+                leftDb: face.app.specLeft
+                rightDb: face.app.specRight
+                floorDb: face.app.floorDb
+                glass: face.coverBehind ? 0.5 : 1
+            }
         }
     }
     Component {
@@ -125,6 +161,14 @@ Item {
             floorDb: face.app.floorDb
             glass: face.coverBehind ? 0.5 : 1
         }
+    }
+    Component {
+        id: drPane
+        DrView { app: face.app; history: true }
+    }
+    Component {
+        id: balancePane
+        BalanceView { app: face.app }
     }
 
     ColumnLayout {

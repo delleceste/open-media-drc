@@ -8,10 +8,12 @@ Canvas {
     id: meters
 
     property string style: "bars"     // "bars" | "needles"
+    property var app: null
+    property string pair: "auto"       // channel lanes: "auto" | "side" | "stacked"
     property var vu: ({})              // the frame's vu object: left_rms, left_peak, ...
     property real glass: 1             // < 1: a cover behind the meters shows through
 
-    readonly property bool vertical: height > width * 1.1
+    readonly property bool vertical: pair === "side" ? true : pair === "stacked" ? false : height > width * 1.1
     readonly property var keys: ["left_rms", "right_rms", "left_peak", "right_peak"]
     property var disp: ({ left_rms: L.FLOOR, right_rms: L.FLOOR, left_peak: L.FLOOR, right_peak: L.FLOOR })
     property var hold: ({ left: { db: L.FLOOR, at: 0 }, right: { db: L.FLOOR, at: 0 } })
@@ -60,6 +62,13 @@ Canvas {
         ctx.reset()
         if (style === "needles") paintNeedles(ctx)
         else paintBars(ctx)
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton
+        onClicked: if (meters.app) meters.app.cycleMeterStyle()
+        onWheel: (event) => { if (meters.app) meters.app.cycleMeterStyle(); event.accepted = true }
     }
 
     // ── bars ────────────────────────────────────────────────────────────────

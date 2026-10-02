@@ -8,11 +8,26 @@
     <!-- the box running omdrcctrl -->
     <entry name="host" type="String"><default></default></entry>
     <entry name="port" type="Int"><default>9090</default></entry>
-    <!-- "off" | "bars" | "needles" -->
+    <!-- "off" | "bars" | "needles"; a click or a scroll on the meters swaps the two -->
     <entry name="meterStyle" type="String"><default>bars</default></entry>
+    <!-- the two channels: "auto" (by the pane's shape) | "side" (side by side) | "stacked" -->
+    <entry name="meterPair" type="String"><default>auto</default></entry>
     <entry name="showSpectrum" type="Bool"><default>false</default></entry>
+    <!-- on the desktop and in the popup: the spectrum under the meters, not beside them -->
+    <entry name="spectrumBelow" type="Bool"><default>false</default></entry>
     <!-- "off" | "pane" (beside the meters) | "background" (behind them) -->
     <entry name="coverMode" type="String"><default>off</default></entry>
+    <!-- live dynamic range: value, gauge and the segmented history -->
+    <entry name="showDr" type="Bool"><default>false</default></entry>
+    <!-- per song (the window restarts at each track) or continuous -->
+    <entry name="drPerSong" type="Bool"><default>true</default></entry>
+    <!-- the DR window, seconds: 60 .. 5400 in whole minutes -->
+    <entry name="drWindow" type="Int"><default>60</default></entry>
+    <entry name="showBalance" type="Bool"><default>false</default></entry>
+    <!-- "split" (grey left / red right, a pointer) | "bar" (from the centre) -->
+    <entry name="balanceLook" type="String"><default>split</default></entry>
+    <!-- the balance's averaging window, seconds -->
+    <entry name="balanceWindow" type="Double"><default>15</default></entry>
     <!-- title / artist under the display (desktop and popup only) -->
     <entry name="showTitle" type="Bool"><default>true</default></entry>
     <!-- length along a panel in pixels; 0: follow the panes -->
@@ -21,5 +36,7 @@
     <entry name="backgroundMode" type="String"><default>default</default></entry>
     <!-- #AARRGGBB: the alpha is kept -->
     <entry name="backgroundColor" type="String"><default>#99000000</default></entry>
+    <!-- theme background hue with this opacity (0..100), for panel/desktop use -->
+    <entry name="backgroundOpacity" type="Int"><default>55</default></entry>
   </group>
 </kcfg>

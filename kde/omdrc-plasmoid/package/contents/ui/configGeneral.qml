@@ -9,11 +9,16 @@ KCM.SimpleKCM {
     property alias cfg_host: hostField.text
     property alias cfg_port: portField.value
     property string cfg_meterStyle
+    property string cfg_meterPair
     property alias cfg_showSpectrum: spectrumBox.checked
+    property alias cfg_showDr: drBox.checked
+    property alias cfg_showBalance: balanceBox.checked
+    property alias cfg_spectrumBelow: spectrumBelowBox.checked
     property string cfg_coverMode
     property alias cfg_showTitle: titleBox.checked
     property string cfg_backgroundMode
     property string cfg_backgroundColor
+    property int cfg_backgroundOpacity
     property int cfg_panelLength
 
     readonly property var meterStyles: [
@@ -21,9 +26,15 @@ KCM.SimpleKCM {
         { value: "needles", text: i18n("VU needles") },
         { value: "off", text: i18n("None") },
     ]
+    readonly property var meterPairs: [
+        { value: "auto", text: i18n("Automatic") },
+        { value: "side", text: i18n("Channels side by side") },
+        { value: "stacked", text: i18n("Channels stacked") },
+    ]
     readonly property var backgroundModes: [
         { value: "default", text: i18n("Plasma default") },
         { value: "none", text: i18n("None") },
+        { value: "transparent", text: i18n("Theme color with transparency") },
         { value: "custom", text: i18n("Custom color") },
     ]
     readonly property var coverModes: [
@@ -61,10 +72,30 @@ KCM.SimpleKCM {
             currentIndex: indexOf(meterStyles, cfg_meterStyle)
             onActivated: cfg_meterStyle = meterStyles[currentIndex].value
         }
+        QQC2.ComboBox {
+            Kirigami.FormData.label: i18n("Channel layout:")
+            model: meterPairs
+            textRole: "text"
+            currentIndex: indexOf(meterPairs, cfg_meterPair)
+            onActivated: cfg_meterPair = meterPairs[currentIndex].value
+        }
         QQC2.CheckBox {
             id: spectrumBox
             Kirigami.FormData.label: i18n("Spectrum:")
             text: i18n("Show the spectrum analyzer")
+        }
+        QQC2.CheckBox {
+            id: drBox
+            Kirigami.FormData.label: i18n("Meters:")
+            text: i18n("Show live DR meter and history")
+        }
+        QQC2.CheckBox {
+            id: balanceBox
+            text: i18n("Show live channel balance meter")
+        }
+        QQC2.CheckBox {
+            id: spectrumBelowBox
+            text: i18n("Place spectrum below meters in desktop and popup")
         }
         QQC2.ComboBox {
             Kirigami.FormData.label: i18n("Cover:")
@@ -114,6 +145,17 @@ KCM.SimpleKCM {
                 color: cfg_backgroundColor
                 onAccepted: (color) => cfg_backgroundColor = String(color)
             }
+        }
+        RowLayout {
+            visible: cfg_backgroundMode === "transparent"
+            Kirigami.FormData.label: i18n("Background opacity:")
+            QQC2.Slider {
+                from: 0; to: 100; stepSize: 5
+                value: cfg_backgroundOpacity
+                onMoved: cfg_backgroundOpacity = Math.round(value)
+                Layout.fillWidth: true
+            }
+            QQC2.Label { text: cfg_backgroundOpacity + "%" }
         }
     }
 }
