@@ -61,6 +61,8 @@ function activate(i) {
     if (!K.saverActive) safe(() => page.show && page.show(), page);
     [...tabs.children].forEach((b, n) => b.classList.toggle('on', n === i));
     $('#top-page').textContent = page.label;
+    const topSearch = $('#top-search');
+    if (K.state.features.qobuz_search) topSearch.hidden = page.id === 'qobuz';
     syncBarMode();
     syncAppScreen();
     reportScroll();
