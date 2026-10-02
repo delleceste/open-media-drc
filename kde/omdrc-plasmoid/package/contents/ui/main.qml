@@ -109,22 +109,41 @@ PlasmoidItem {
         : PlasmaCore.Types.NoBackground
     Plasmoid.icon: "audio-volume-high"
 
-    toolTipMainText: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
-        || Plasmoid.formFactor === PlasmaCore.Types.Vertical
-        ? player.album || i18n("OMDRC Monitor") : player.title || i18n("OMDRC Monitor")
-    toolTipSubText: problem !== "" ? problem
-        : Plasmoid.formFactor === PlasmaCore.Types.Horizontal
-          || Plasmoid.formFactor === PlasmaCore.Types.Vertical
-        ? [player.title, player.artist].filter(s => s).join(" — ")
+    // In a panel, while a track is loaded: the cover and the album's details.
+    // Nothing of the widget's own while the pointer is on its buttons or search.
+    property bool panelControlsHovered: false
+    readonly property bool inPanel: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+                                    || Plasmoid.formFactor === PlasmaCore.Types.Vertical
+    readonly property bool quietTip: inPanel && (panelControlsHovered || compactSearchRequested)
+    readonly property bool albumTip: inPanel && !quietTip && problem === "" && !!player.title
+    toolTipMainText: quietTip || albumTip ? "" : player.title || i18n("OMDRC Monitor")
+    toolTipSubText: quietTip || albumTip ? "" : problem !== "" ? problem
         : subtitle !== "" ? subtitle + (playing ? "" : " (" + stateText() + ")")
         : stateText()
-    toolTipItem: Item {
-        width: 240
-        height: 240
-        Cover {
-            anchors.fill: parent
-            source: root.coverUrl
-        }
+    toolTipItem: albumTip ? albumTipItem : null
+    property Item albumTipItem: AlbumTip { app: root }
+
+    // The Qobuz album of the track playing, for the tooltip: the track's own
+    // card at once, the album's (description, performers, awards) after.
+    property var albumInfo: null
+    readonly property string qobuzTrackId: (/\/trackId\/(\d+)/.exec(player.file || "") || [])[1] || ""
+    onQobuzTrackIdChanged: {
+        albumInfo = null
+        const id = qobuzTrackId
+        if (!id || base === "") return
+        request("GET", "/qobuz/track/" + id, null, function (status, data) {
+            if (id !== qobuzTrackId || !data || !data.ok || !data.track) return
+            const composer = data.track.composer || ""
+            albumInfo = Object.assign({}, data.track.album, { trackComposer: composer })
+            const albumId = data.track.album && data.track.album.id
+            if (!albumId) return
+            request("GET", "/qobuz/album/" + encodeURIComponent(albumId), null, function (status, data) {
+                if (id !== qobuzTrackId || !data || !data.ok || !data.album) return
+                const info = data.album
+                delete info.track_list
+                albumInfo = Object.assign(info, { trackComposer: composer })
+            }, 30000)
+        }, 15000)
     }
 
     switchWidth: Kirigami.Units.gridUnit * 8

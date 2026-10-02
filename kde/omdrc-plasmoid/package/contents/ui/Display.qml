@@ -360,6 +360,8 @@ Item {
         anchors { fill: parent; margins: face.inset }
         visible: face.compact && face.compactSearchOpen && !face.editing
         spacing: 1
+        // the buttons' own tooltips, not the widget's big one, while on them
+        HoverHandler { onHoveredChanged: face.app.panelControlsHovered = hovered }
         QQC2.TextField {
             id: simpleInput
             Layout.fillWidth: true
@@ -383,23 +385,35 @@ Item {
             icon.name: "edit-find"
             text: face.app.simpleSearchBusy ? i18n("Searching…") : i18n("Search")
             display: QQC2.AbstractButton.IconOnly
+            PlasmaComponents.ToolTip.text: text
+            PlasmaComponents.ToolTip.visible: hovered && text !== ""
+            PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
             enabled: !face.app.simpleSearchBusy
             onClicked: face.app.simpleSearch(simpleInput.text)
         }
         PlasmaComponents.ToolButton {
             text: i18n("AI")
+            PlasmaComponents.ToolTip.text: i18n("Ask the AI for albums")
+            PlasmaComponents.ToolTip.visible: hovered
+            PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
             onClicked: face.app.openQobuzOption("ai")
         }
         PlasmaComponents.ToolButton {
             icon.name: "view-filter"
             text: i18n("Filters")
             display: QQC2.AbstractButton.IconOnly
+            PlasmaComponents.ToolTip.text: text
+            PlasmaComponents.ToolTip.visible: hovered && text !== ""
+            PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
             onClicked: face.app.openQobuzOption("filters")
         }
         PlasmaComponents.ToolButton {
             icon.name: "go-previous"
             text: i18n("Back to cover")
             display: QQC2.AbstractButton.IconOnly
+            PlasmaComponents.ToolTip.text: text
+            PlasmaComponents.ToolTip.visible: hovered && text !== ""
+            PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
             onClicked: face.app.dismissCompactSearch()
         }
     }
@@ -510,6 +524,9 @@ Item {
                 icon.name: "edit-find"
                 text: i18n("Search Qobuz")
                 display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 width: controls.size
                 height: controls.size
                 padding: 1
@@ -519,6 +536,9 @@ Item {
                 icon.name: "view-list-details"
                 text: i18n("Play queue")
                 display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 width: controls.size
                 height: controls.size
                 padding: 1
@@ -561,7 +581,7 @@ Item {
                     text: modelData.tip
                     enabled: face.app.reachable
                     PlasmaComponents.ToolTip.text: modelData.tip
-                    PlasmaComponents.ToolTip.visible: hovered && !face.panel
+                    PlasmaComponents.ToolTip.visible: hovered
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                     onClicked: {
                         face.app.transport(modelData.action)
@@ -579,6 +599,7 @@ Item {
             radius: height / 3
             color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
                            Kirigami.Theme.backgroundColor.b, 0.78)
+            HoverHandler { onHoveredChanged: face.app.panelControlsHovered = hovered }
             Row {
                 id: panelActions
                 anchors.centerIn: parent
@@ -602,6 +623,9 @@ Item {
                         icon.width: controls.size - 4
                         icon.height: controls.size - 4
                         display: QQC2.AbstractButton.IconOnly
+                        PlasmaComponents.ToolTip.text: text
+                        PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                        PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                         text: modelData.tip
                         enabled: face.app.reachable
                         onClicked: {

@@ -227,6 +227,9 @@ Item {
                 icon.name: "configure"
                 text: i18n("AI settings")
                 display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 onClicked: settingsDialog.open()
             }
         }

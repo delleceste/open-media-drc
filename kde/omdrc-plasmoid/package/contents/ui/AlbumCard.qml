@@ -89,6 +89,9 @@ Rectangle {
                 icon.name: "media-playback-start"
                 text: i18n("Play album")
                 display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 enabled: card.canPlay && card.album.streamable !== false
                 onClicked: card.play("replace", "")
             }
@@ -96,6 +99,9 @@ Rectangle {
                 icon.name: "list-add"
                 text: i18n("Add album to queue")
                 display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 enabled: card.canPlay && card.album.streamable !== false
                 onClicked: card.play("append", "")
             }
@@ -146,6 +152,9 @@ Rectangle {
                     icon.name: "media-playback-start"
                     text: i18n("Play from this track")
                     display: QQC2.AbstractButton.IconOnly
+                    PlasmaComponents.ToolTip.text: text
+                    PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                    PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                     enabled: card.canPlay && modelData.streamable !== false
                     onClicked: card.play("replace", modelData.id)
                 }

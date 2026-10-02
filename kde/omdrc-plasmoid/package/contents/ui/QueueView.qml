@@ -66,12 +66,18 @@ Item {
                 icon.name: "view-refresh"
                 text: i18n("Refresh")
                 display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 onClicked: view.refresh()
             }
             PlasmaComponents.ToolButton {
                 icon.name: "edit-clear-list"
                 text: i18n("Clear queue")
                 display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 enabled: view.count > 0
                 onClicked: clearDialog.open()
             }
@@ -131,6 +137,9 @@ Item {
                             icon.name: "list-remove"
                             text: i18n("Remove track")
                             display: QQC2.AbstractButton.IconOnly
+                            PlasmaComponents.ToolTip.text: text
+                            PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                            PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                             onClicked: view.edit("remove", row.modelData)
                         }
                     }
