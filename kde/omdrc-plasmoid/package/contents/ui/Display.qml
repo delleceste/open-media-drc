@@ -28,11 +28,16 @@ Item {
     readonly property string meterStyle: app.meterStyle
     readonly property bool bottomMeters: !compact && app.page === "cover" && (app.showDr || app.showBalance)
     readonly property bool coverBehind: app.coverMode === "background" && panes.some(p => p !== "cover")
+    // On the desktop and in the popup, with cover, meters and spectrum all on:
+    // cover and meters side by side on top, the spectrum across the full width
+    // under them (DR and balance below that, in bottomRow).
+    readonly property bool grid: !compact && !panel && app.coverMode === "pane"
+                                 && meterStyle !== "off" && app.showSpectrum
     readonly property var panes: {
         const list = []
         if (app.coverMode === "pane") list.push("cover")
-        if (meterStyle !== "off") list.push(app.showSpectrum && app.spectrumBelow ? "meterspectrum" : "meters")
-        if (app.showSpectrum && (meterStyle === "off" || !app.spectrumBelow)) list.push("spectrum")
+        if (meterStyle !== "off") list.push(app.showSpectrum && app.spectrumBelow && !grid ? "meterspectrum" : "meters")
+        if (app.showSpectrum && (meterStyle === "off" || !app.spectrumBelow || grid)) list.push("spectrum")
         if (!bottomMeters && app.showDr) list.push("dr")
         if (!bottomMeters && app.showBalance) list.push("balance")
         if (!list.length) list.push("cover")   // nothing chosen: at least show what plays
@@ -71,6 +76,33 @@ Item {
         return panes.map(p => p === "cover" ? cover : rest * weight(p) / total)
     }
 
+    // each pane's rectangle in paneArea
+    readonly property var rects: {
+        const W = paneArea.width, H = paneArea.height
+        if (grid) {
+            const top = panes.filter(p => p !== "spectrum")
+            const topH = Math.round(Math.max(0, H - spacing) * 0.6)
+            const coverW = Math.round(Math.max(0, Math.min(topH - coverTitleHeight, (W - spacing) * 0.45)))
+            const otherW = Math.max(0, W - spacing - coverW)
+            let x = 0
+            const at = {}
+            for (const p of top) {
+                const w = p === "cover" ? coverW : otherW
+                at[p] = { x: x, y: 0, w: w, h: topH }
+                x += w + spacing
+            }
+            at.spectrum = { x: 0, y: topH + spacing, w: W, h: Math.max(0, H - topH - spacing) }
+            return panes.map(p => at[p])
+        }
+        let offset = 0
+        return panes.map((p, i) => {
+            const e = extents[i] || 0
+            const r = row ? { x: offset, y: 0, w: e, h: H } : { x: 0, y: offset, w: W, h: e }
+            offset += e + spacing
+            return r
+        })
+    }
+
     function movePane(from, to) {
         if (from < 0 || to < 0 || from >= panes.length || to >= panes.length || from === to) return
         const key = p => p === "meterspectrum" ? "meters" : p
@@ -81,13 +113,17 @@ Item {
         app.setConfig("paneOrder", order.concat(saved.filter(p => !order.includes(p))).join(","))
     }
 
-    function paneAt(along) {
-        let start = 0
-        for (let i = 0; i < panes.length; i++) {
-            if (along < start + extents[i] + spacing / 2) return i
-            start += extents[i] + spacing
+    // the pane under a point of paneArea, or the nearest one
+    function paneAt(px, py) {
+        let best = panes.length - 1, bestDist = Infinity
+        for (let i = 0; i < rects.length; i++) {
+            const r = rects[i]
+            const dx = Math.max(r.x - px, 0, px - r.x - r.w)
+            const dy = Math.max(r.y - py, 0, py - r.y - r.h)
+            const d = dx * dx + dy * dy
+            if (d < bestDist) { best = i; bestDist = d }
         }
-        return panes.length - 1
+        return best
     }
 
     // In a panel the long side follows the content.
@@ -133,12 +169,11 @@ Item {
                 id: paneLoader
                 required property string modelData
                 required property int index
-                readonly property real offset: face.extents.slice(0, index).reduce((s, e) => s + e + face.spacing, 0)
-                readonly property real extent: face.extents[index] || 0
-                x: face.row ? Math.round(offset) : 0
-                y: face.row ? 0 : Math.round(offset)
-                width: face.row ? Math.round(extent) : paneArea.width
-                height: face.row ? paneArea.height : Math.round(extent)
+                readonly property var rect: face.rects[index] || { x: 0, y: 0, w: 0, h: 0 }
+                x: Math.round(rect.x)
+                y: Math.round(rect.y)
+                width: Math.round(rect.w)
+                height: Math.round(rect.h)
                 sourceComponent: modelData === "cover" ? coverPane
                                : modelData === "meterspectrum" ? meterSpectrumPane
                                : modelData === "spectrum" ? spectrumPane
@@ -157,15 +192,14 @@ Item {
                     acceptedButtons: Qt.LeftButton
                     acceptedModifiers: Qt.ControlModifier
                     target: null
-                    property real lastAlong: 0
-                    onTranslationChanged: lastAlong = face.row ? translation.x : translation.y
+                    property point moved: Qt.point(0, 0)
+                    onTranslationChanged: moved = translation
                     onActiveChanged: {
-                        if (active) { lastAlong = 0; return }
-                        if (Math.abs(lastAlong) < 2) return
-                        const centre = face.row ? paneLoader.x + paneLoader.width / 2
-                                                : paneLoader.y + paneLoader.height / 2
-                        face.movePane(paneLoader.index, face.paneAt(centre + lastAlong))
-                        lastAlong = 0
+                        if (active) { moved = Qt.point(0, 0); return }
+                        if (Math.abs(moved.x) < 2 && Math.abs(moved.y) < 2) return
+                        face.movePane(paneLoader.index, face.paneAt(paneLoader.x + paneLoader.width / 2 + moved.x,
+                                                                    paneLoader.y + paneLoader.height / 2 + moved.y))
+                        moved = Qt.point(0, 0)
                     }
                 }
             }
@@ -423,16 +457,13 @@ Item {
     Item {
         id: coverHoverZone
         readonly property int coverIndex: face.panes.indexOf("cover")
-        readonly property real coverOffset: coverIndex <= 0 ? 0
-            : face.extents.slice(0, coverIndex).reduce((sum, value) => sum + value + face.spacing, 0)
-        readonly property real coverWidth: coverIndex < 0 ? Math.min(paneArea.width, paneArea.height)
-            : face.row ? face.extents[coverIndex] : paneArea.width
-        readonly property real coverHeight: coverIndex < 0 ? Math.min(paneArea.width, paneArea.height)
-            : face.row ? paneArea.height : face.extents[coverIndex]
+        readonly property var coverRect: face.rects[coverIndex] || null
+        readonly property real coverWidth: coverRect ? coverRect.w : Math.min(paneArea.width, paneArea.height)
+        readonly property real coverHeight: coverRect ? coverRect.h : Math.min(paneArea.width, paneArea.height)
         readonly property real side: Math.max(0, Math.min(coverWidth,
             coverHeight - (coverIndex >= 0 ? face.coverTitleHeight : 0)))
-        x: paneArea.x + (face.row ? coverOffset : 0) + (coverWidth - side) / 2
-        y: paneArea.y + (face.row ? 0 : coverOffset)
+        x: paneArea.x + (coverRect ? coverRect.x : 0) + (coverWidth - side) / 2
+        y: paneArea.y + (coverRect ? coverRect.y : 0)
         width: side
         height: side
         visible: paneArea.visible && !face.editing

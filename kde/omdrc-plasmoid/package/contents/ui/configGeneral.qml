@@ -152,7 +152,7 @@ KCM.SimpleKCM {
         }
         QQC2.CheckBox {
             id: spectrumBelowBox
-            text: i18n("Place spectrum below meters in desktop and popup")
+            text: i18n("Place spectrum below meters in desktop and popup when the cover is not a pane")
         }
 
         Item { Kirigami.FormData.isSection: true }

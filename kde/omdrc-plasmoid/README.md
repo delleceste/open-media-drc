@@ -10,7 +10,10 @@ It works both ways Plasma offers:
   panes you chose (in a vertical panel they stack). The tooltip previews the
   cover; a click opens a larger view in a popup, with title and artist.
 * **On the desktop** it shows the large view directly, resizable.  Wide, the
-  panes sit side by side; tall, they stack.
+  panes sit side by side; tall, they stack.  With the cover pane, meters and
+  spectrum all on, the desktop and popup use a grid instead: cover and track
+  next to the meters, the spectrum across the full width below, and DR (wider)
+  and balance underneath.
 
 Control-click a pane to move it to the next position, or Control-drag it to a
 chosen position. The order is saved for each widget. In Plasma panel edit mode,
