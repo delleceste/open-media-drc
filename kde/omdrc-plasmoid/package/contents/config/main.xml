@@ -28,6 +28,9 @@
     <entry name="balanceLook" type="String"><default>split</default></entry>
     <!-- the balance's averaging window, seconds -->
     <entry name="balanceWindow" type="Double"><default>15</default></entry>
+    <!-- analyzer frame wait: follow the box's measured remaining margin, or override per widget -->
+    <entry name="autoScreenDelay" type="Bool"><default>true</default></entry>
+    <entry name="screenDelayMs" type="Int"><default>150</default></entry>
     <!-- title / artist under the display (desktop and popup only) -->
     <entry name="showTitle" type="Bool"><default>true</default></entry>
     <!-- length along a panel in pixels; 0: follow the panes -->

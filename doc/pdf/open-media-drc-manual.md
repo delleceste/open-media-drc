@@ -966,11 +966,12 @@ any error. How CD samples reach the FIFO is OS-specific (section
   is held back, clock-anchored, by what the box can measure (filter group
   delay and convolver partition with DRC on; the DAC buffer with DRC off)
   minus `drc_delay_margin_ms` (150 ms), re-derived every 2 s while a meter is
-  open. Each screen waits out the rest with its own delay, stored in the
-  browser: the kiosk calibrates it with the phone's microphone and a click
-  track, or it is set by eye (kiosk Config -> Meter timing; the panel's
-  **Screen delay**). A screen can only wait, so a calibration that finds the
-  meters late calls for a larger margin.
+  open. The web panel and kiosk wait out the rest with a per-network,
+  per-configuration browser profile, calibrated with the phone's microphone
+  and click track or set by eye (Config -> Meter timing / **Screen delay**).
+  The Plasma widget follows the reported remaining margin by default and also
+  has a per-widget manual delay. A screen can only wait, so a calibration that
+  finds the meters late calls for a larger margin.
 * With `source = auto` an open card follows MPD-to-CD hand-offs without
   closing the browser stream. Writer loss and FIFO replacement are detected,
   stale pre-pause history is dropped on resume, and a disconnected browser
@@ -1035,6 +1036,14 @@ the display data passes through the controller, network and drawing device.
 These paths need not take the same time. The target is the same musical event
 heard and drawn at the same moment, rather than simply drawing every frame as
 soon as it arrives.
+
+The analyzer computation is shared, but its SSE stream has a separate
+connection for each client. Clients receive copies of the same published
+frames; they do not compete for or consume a single message queue. Each client
+can therefore wait a different amount before drawing the same event. The
+localhost browser can wait longer than a phone whose network transit uses some
+of the early lead. Both displays can line up with the sound at once, provided
+the shared controller margin leaves enough lead for the slowest route.
 
 ![The audio and display paths split at the tap and should meet at the same moment.](build/meter-timing-paths.pdf){width=95%}
 
@@ -1258,6 +1267,61 @@ bounded to 0--3000 ms. For example, 100 ms saved at a 40 ms margin becomes
 configuration stops playing does not erase the last playback margin; this
 avoids anchoring a just-finished click result against an idle DAC.
 
+#### Practical setup: a phone on one or two networks
+
+Calibrate on the phone itself; its extra delay includes the route from the box
+to that phone. On each Wi-Fi network you use, open **Config -> Meter timing**,
+press **Identify Wi-Fi**, and confirm the displayed network name. If Android
+does not provide it, set a manual network name before calibrating. Keep the
+phone connected to the box while measuring. **Calibrate on the music** uses the
+phone microphone and is the easiest option when there is varied music playing.
+**Tune with clicks** is useful when the music match is weak; with the phone app
+it measures the click train too. Without microphone access, use the click bars
+and adjust by eye.
+
+Repeat after switching to the second network. The phone keeps separate values
+for each network and active audio configuration, so returning to the first
+network restores its calibration. Calibrate the DRC filters and sample rates
+you actually use; an unmeasured nearby rate may borrow provisionally from the
+same filter family. Do not enter a different network name merely to force a
+new value: the network identity should describe the connection in use.
+
+#### Practical setup: the web UI and plasmoid on host X, plus a phone
+
+On host X, open the web panel using one stable origin, for example
+`http://localhost:9090`. The full panel and kiosk at `/k/` share their timing
+profile when they use that same origin. Browser storage is origin-specific, so
+switching between `localhost`, a host name and an IP address can make the same
+browser appear to have different saved timing. The ordinary browser cannot
+identify its network automatically: in **Config -> Meter timing**, set a
+network name such as `wired` or the Wi-Fi name before saving a local profile.
+For host X, use **Tune with clicks** and set the delay by watching the bars
+against the sound; this needs no microphone in the box.
+
+In the plasmoid on X, enter `localhost` as the box address. **Use the box's
+live delay estimate** reads `/spectrum/settings` and applies the effective
+remaining margin to the plasmoid. The estimate includes the box's reported FIR
+peak/partition or direct-output delay model, but does not measure network
+transit. For a local plasmoid it is a starting point. To match the web UI,
+turn Auto off and copy its **Applied screen delay** in milliseconds into the
+plasmoid's number field; the slider adjusts in 1 ms steps. This setting is
+local to the plasmoid and does not alter the web profile, phone profile or
+box-wide margin. Fine-tune it by ear if the two displays do not line up.
+
+The phone is a separate client even when it is on the same Wi-Fi as X. Its
+Android app stores profiles on the phone, and identifies that Wi-Fi separately
+from the browser's manually named local profile. Calibrate the phone on that
+network too: its route and drawing device add different delay from the
+localhost display. A copied value can be a starting point, but use the phone's
+microphone calibration or click test for the phone's own final value. Both
+clients can share the same network label and still retain separate values.
+
+The controller margin is different: it is shared by every client. A phone
+calibration may increase that margin only when frames otherwise arrive after
+the sound. The web profiles compensate for a changed margin; the plasmoid's
+automatic estimate follows the current value. A manual plasmoid value is an
+explicit override, so check it again if the box-wide margin is changed.
+
 **Network stalls and recovery.** In the kiosk, each timestamped frame is scheduled
 against its server publication time plus the lowest observed transit time on that
 connection. The unknown clock offset between box and phone is included in this
@@ -1377,7 +1441,18 @@ reads `/spectrum/stream` (levels, and bands with the spectrum), polls
 * **Settings**: the box's address and port, meter style, spectrum, cover,
   track line, the length in a panel (automatic, or fixed in pixels: Plasma
   offers no resize handle there), and the background (Plasma's, none, or a
-  custom color with alpha).
+  custom color with alpha). Meter and spectrum timing can follow the box's
+  live estimate or use a per-plasmoid millisecond override, with a 1 ms slider
+  and an editable number.
+* **Timing estimate and manual tuning**: Auto reads the effective remaining
+  margin from `/spectrum/settings` and shows both that local wait estimate and
+  the box's frame hold-back in the configuration page. It does not estimate
+  the plasmoid's network transit. For a desktop plasmoid on the same host, this
+  is usually a good starting point. For a manual value, copy the web UI's
+  **Applied screen delay** into the number field, or tune in 1 ms steps while
+  comparing the bars with the sound. The setting affects this plasmoid only;
+  it does not change the controller's shared margin or another device's saved
+  profile.
 * It streams levels only while something plays --- MPD, or a disc on the CD
   input (`/cdin/status`), which plays past MPD --- and otherwise closes its
   stream, so the box can switch the analyzer off.

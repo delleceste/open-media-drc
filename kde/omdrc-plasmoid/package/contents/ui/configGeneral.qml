@@ -6,6 +6,7 @@ import org.kde.kcmutils as KCM
 import org.kde.kquickcontrols as KQuickControls
 
 KCM.SimpleKCM {
+    id: root
     property alias cfg_host: hostField.text
     property alias cfg_port: portField.value
     property string cfg_meterStyle
@@ -14,6 +15,8 @@ KCM.SimpleKCM {
     property alias cfg_showDr: drBox.checked
     property alias cfg_showBalance: balanceBox.checked
     property alias cfg_spectrumBelow: spectrumBelowBox.checked
+    property alias cfg_autoScreenDelay: autoScreenDelayBox.checked
+    property int cfg_screenDelayMs
     property string cfg_coverMode
     property alias cfg_showTitle: titleBox.checked
     property string cfg_backgroundMode
@@ -49,11 +52,63 @@ KCM.SimpleKCM {
         return 0
     }
 
+    property int boxDelayEstimateMs: -1
+    property int boxHoldBackMs: -1
+    property string estimateStatus: i18n("Enter the box address to read its delay estimate.")
+
+    function settingsUrl() {
+        const host = hostField.text.trim()
+        if (!host) return ""
+        const authority = host.indexOf(":") >= 0 && host[0] !== "[" ? "[" + host + "]" : host
+        return "http://" + authority + ":" + portField.value + "/spectrum/settings"
+    }
+
+    function refreshDelayEstimate() {
+        const url = settingsUrl()
+        if (!url) {
+            boxDelayEstimateMs = -1
+            boxHoldBackMs = -1
+            estimateStatus = i18n("Enter the box address to read its delay estimate.")
+            return
+        }
+        const xhr = new XMLHttpRequest()
+        xhr.timeout = 3000
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (url !== root.settingsUrl()) return
+            let data = null
+            try { data = JSON.parse(xhr.responseText) } catch (error) {}
+            const terms = data && data.drc_delay_terms_ms
+            const estimate = terms && Number(terms.margin)
+            if (xhr.status === 200 && Number.isFinite(estimate)) {
+                boxDelayEstimateMs = Math.max(0, Math.min(3000, Math.round(estimate)))
+                boxHoldBackMs = Math.max(0, Math.round(Number(data.drc_delay_base_ms) || 0))
+                estimateStatus = i18n("Local screen wait estimate: %1 ms; analyzer frames are held back by %2 ms before they leave the box.", boxDelayEstimateMs, boxHoldBackMs)
+            } else {
+                boxDelayEstimateMs = -1
+                boxHoldBackMs = -1
+                estimateStatus = i18n("Could not read the estimate. Check the box address and that its analyzer is available.")
+            }
+        }
+        xhr.open("GET", url)
+        xhr.send()
+    }
+
+    Component.onCompleted: refreshDelayEstimate()
+
+    Timer {
+        interval: 5000
+        repeat: true
+        running: hostField.text.trim() !== ""
+        onTriggered: root.refreshDelayEstimate()
+    }
+
     Kirigami.FormLayout {
         QQC2.TextField {
             id: hostField
             Kirigami.FormData.label: i18n("Box:")
             placeholderText: i18n("host name or address of omdrcctrl")
+            onEditingFinished: root.refreshDelayEstimate()
         }
         QQC2.SpinBox {
             id: portField
@@ -61,6 +116,7 @@ KCM.SimpleKCM {
             from: 1
             to: 65535
             textFromValue: (value) => String(value)   // no thousands separator
+            onValueModified: root.refreshDelayEstimate()
         }
 
         Item { Kirigami.FormData.isSection: true }
@@ -96,6 +152,53 @@ KCM.SimpleKCM {
         QQC2.CheckBox {
             id: spectrumBelowBox
             text: i18n("Place spectrum below meters in desktop and popup")
+        }
+
+        Item { Kirigami.FormData.isSection: true }
+
+        QQC2.CheckBox {
+            id: autoScreenDelayBox
+            Kirigami.FormData.label: i18n("Meter and spectrum timing:")
+            text: i18n("Use the box's live delay estimate")
+            onToggled: root.refreshDelayEstimate()
+        }
+        QQC2.Label {
+            Kirigami.FormData.label: i18n("Box estimate:")
+            text: estimateStatus
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+        QQC2.Label {
+            Kirigami.FormData.label: i18n("Manual screen delay:")
+            text: i18n("A 1 ms adjustment for this plasmoid only. The slider and number use milliseconds, matching the web UI's Applied screen delay.")
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+        RowLayout {
+            Kirigami.FormData.label: i18n("Delay (ms):")
+            enabled: !autoScreenDelayBox.checked
+            QQC2.Slider {
+                id: screenDelaySlider
+                from: 0; to: 3000; stepSize: 1
+                value: cfg_screenDelayMs
+                onMoved: cfg_screenDelayMs = Math.round(value)
+                Layout.fillWidth: true
+            }
+            QQC2.SpinBox {
+                id: screenDelaySpin
+                from: 0; to: 3000; stepSize: 1
+                value: cfg_screenDelayMs
+                textFromValue: (value) => String(value)
+                valueFromText: (text) => parseInt(text) || 0
+                onValueModified: cfg_screenDelayMs = value
+            }
+        }
+        Item { Kirigami.FormData.isSection: true }
+        QQC2.Label {
+            Kirigami.FormData.label: i18n("Instructions:")
+            text: i18n("Every client receives its own copy of the same analyzer frames and applies its own wait before drawing. Automatic uses the effective margin reported by /spectrum/settings; it follows the box's FIR peak and partition estimate and does not measure this screen's network transit. For a local display, this is a useful starting point. To tune by ear, open the box's web UI -> Config -> Meter timing -> Tune with clicks, then set the same Applied screen delay here with Auto off. The click test uses the speakers and meters, so it needs no microphone. These settings change only this plasmoid; they do not change the box-wide margin or the phone's profile.")
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
         }
         QQC2.ComboBox {
             Kirigami.FormData.label: i18n("Cover:")

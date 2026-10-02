@@ -64,6 +64,15 @@ PlasmoidItem {
     readonly property bool showBalance: Plasmoid.configuration.showBalance
     readonly property string balanceLook: Plasmoid.configuration.balanceLook
     readonly property real balanceWindow: Plasmoid.configuration.balanceWindow
+    readonly property bool autoScreenDelay: Plasmoid.configuration.autoScreenDelay
+    readonly property int manualScreenDelayMs: Math.max(0, Math.min(3000, Number(Plasmoid.configuration.screenDelayMs) || 0))
+    property int estimatedScreenDelayMs: 0
+    property bool hasScreenDelayEstimate: false
+    readonly property int screenDelayMs: autoScreenDelay
+        ? (hasScreenDelayEstimate ? estimatedScreenDelayMs : 0) : manualScreenDelayMs
+    property var delayedFrames: []
+    property int receivedFrameSequence: 0
+    property int renderedFrameSequence: 0
 
     readonly property bool wantsLevels: meterStyle !== "off" || showSpectrum || showDr || showBalance
     readonly property bool wantsCover: coverMode !== "off" || !wantsLevels
@@ -175,9 +184,84 @@ PlasmoidItem {
 
     function readSettings() {
         request("GET", "/spectrum/settings", null, function (status, data) {
-            if (status === 200 && data && Number.isFinite(Number(data.floor_db)))
-                floorDb = Number(data.floor_db)
+            if (status !== 200 || !data) return
+            if (Number.isFinite(Number(data.floor_db))) floorDb = Number(data.floor_db)
+            const margin = data.drc_delay_terms_ms && Number(data.drc_delay_terms_ms.margin)
+            if (Number.isFinite(margin)) {
+                estimatedScreenDelayMs = Math.max(0, Math.min(3000, Math.round(margin)))
+                hasScreenDelayEstimate = true
+            }
         })
+    }
+
+    function receiveLevelFrame(data) {
+        // DR is a history/statistics view, not a time-critical level display.
+        if (data.dr && Array.isArray(data.dr_blocks)) {
+            drFrame = data
+            drBlocks = data.dr_blocks
+            drTrackAge = Number(data.dr.track_age_blocks) || 0
+        }
+        const displayFrame = Object.assign({}, data)
+        delete displayFrame.dr
+        delete displayFrame.dr_blocks
+        const sequence = ++receivedFrameSequence
+        const delay = screenDelayMs
+        if (delay <= 0) {
+            delayedFrames = []
+            delayedFrameTimer.stop()
+            renderedFrameSequence = sequence
+            applyLevelFrame(displayFrame)
+            return
+        }
+        const queue = delayedFrames.slice()
+        queue.push({ due: Date.now() + delay, sequence: sequence, data: displayFrame })
+        queue.sort((a, b) => a.due - b.due)
+        // Bound memory if a UI thread stalls; old frames are no longer useful
+        // once a newer analyzer frame is due.
+        if (queue.length > 100) queue.splice(0, queue.length - 100)
+        delayedFrames = queue
+        scheduleDelayedFrames()
+    }
+
+    function scheduleDelayedFrames() {
+        if (!delayedFrames.length) { delayedFrameTimer.stop(); return }
+        delayedFrameTimer.interval = Math.max(1, delayedFrames[0].due - Date.now())
+        delayedFrameTimer.restart()
+    }
+
+    function drawDelayedFrames() {
+        const now = Date.now(), queue = delayedFrames.slice()
+        let latest = null, count = 0
+        while (count < queue.length && queue[count].due <= now) {
+            if (queue[count].sequence > renderedFrameSequence
+                    && (!latest || queue[count].sequence > latest.sequence))
+                latest = queue[count]
+            count++
+        }
+        if (count) delayedFrames = queue.slice(count)
+        if (latest) {
+            renderedFrameSequence = latest.sequence
+            applyLevelFrame(latest.data)
+        }
+        scheduleDelayedFrames()
+    }
+
+    function applyLevelFrame(data) {
+        if (data.vu && data.vu.left_rms !== undefined) {
+            vu = data.vu
+            updateBalance(data.vu)
+        }
+        if (data.dr && Array.isArray(data.dr_blocks)) {
+            drFrame = data
+            drBlocks = data.dr_blocks
+            drTrackAge = Number(data.dr.track_age_blocks) || 0
+        }
+        if (Array.isArray(data.bands) && data.bands.length) {
+            const key = JSON.stringify(data.bands)
+            if (key !== levels.bandsKey) { levels.bandsKey = key; bands = data.bands }
+            specLeft = Array.isArray(data.left) ? data.left : []
+            specRight = Array.isArray(data.right) ? data.right : []
+        }
     }
 
     function setConfig(key, value) { Plasmoid.configuration[key] = value }
@@ -242,6 +326,20 @@ PlasmoidItem {
         onTriggered: root.poll()
     }
 
+    Timer {
+        id: settingsRefresh
+        interval: 5000
+        repeat: true
+        running: root.reachable
+        onTriggered: root.readSettings()
+    }
+
+    Timer {
+        id: delayedFrameTimer
+        repeat: false
+        onTriggered: root.drawDelayedFrames()
+    }
+
     // Only while there is something to show: the box enables MPD's analyzer
     // FIFO output for as long as anyone listens.
     SseStream {
@@ -251,6 +349,8 @@ PlasmoidItem {
              ? root.base + "/spectrum/stream?mode=" + (root.showSpectrum ? "music" : root.showDr ? "dr" : "vu")
              : ""
         onUrlChanged: if (url === "") {
+            root.delayedFrames = []
+            delayedFrameTimer.stop()
             root.vu = root.silentVu()
             root.specLeft = root.bands.map(() => L.FLOOR)
             root.specRight = root.specLeft
@@ -260,24 +360,7 @@ PlasmoidItem {
             root.drBlocks = []
             root.drTrackAge = 0
         }
-        onFrame: (data) => {
-            if (data.vu && data.vu.left_rms !== undefined) {
-                root.vu = data.vu
-                root.updateBalance(data.vu)
-            }
-            if (data.dr && Array.isArray(data.dr_blocks)) {
-                root.drFrame = data
-                root.drBlocks = data.dr_blocks
-                root.drTrackAge = Number(data.dr.track_age_blocks) || 0
-            }
-            if (Array.isArray(data.bands) && data.bands.length) {
-                // the bands follow the source's rate: replace them only then
-                const key = JSON.stringify(data.bands)
-                if (key !== bandsKey) { bandsKey = key; root.bands = data.bands }
-                root.specLeft = Array.isArray(data.left) ? data.left : []
-                root.specRight = Array.isArray(data.right) ? data.right : []
-            }
-        }
+        onFrame: (data) => root.receiveLevelFrame(data)
     }
 
     // Music mode carries FFT bands; DR mode carries the rolling three-second

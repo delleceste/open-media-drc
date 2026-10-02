@@ -18,7 +18,7 @@ runs on the desktop besides the widget.
 | What | Endpoint |
 |---|---|
 | levels (and bands) | `/spectrum/stream?mode=vu` or `mode=music`, server-sent events |
-| spectrum floor | `/spectrum/settings` |
+| spectrum floor and delay estimate | `/spectrum/settings` |
 | state and track, polled | `/k/api/player`, `/cdin/status` |
 | prev / play / pause / next | `/k/api/transport` |
 | cover | `/qconnect/art` |
@@ -58,12 +58,31 @@ To remove it: `kpackagetool6 --type Plasma/Applet --remove org.omdrc.monitor`.
 | Box, Port | where `omdrcctrl` listens |
 | Meters | level bars, VU needles, or none |
 | Spectrum | the band analyzer beside the meters |
+| Meter and spectrum timing | follow the box's live remaining-delay estimate, or set a per-widget delay from 0 to 3000 ms with a 1 ms slider and editable number |
 | Cover | hidden, beside the meters, or behind them (the meters go translucent) |
 | Length in panel | automatic (follows the panes) or a fixed length in pixels: a panel has no resize handle, so this is how to make it longer or shorter |
 | Track | title and artist under the large view |
 | Background | Plasma's default, none, or a custom color with alpha |
 
 With meters and spectrum both off the widget shows the cover.
+
+### Meter and spectrum timing
+
+The box estimates its FIR/convolver (or direct-output) delay and reports the
+effective remaining margin at `/spectrum/settings`. **Use the box's live delay
+estimate** applies that value as this plasmoid's local wait and refreshes it
+while connected. The configuration page shows the estimated wait and the
+box's frame hold-back. This estimate does not measure network transit; it is a
+useful starting point when the plasmoid runs on the audio box itself.
+
+For manual alignment, turn Auto off and enter the web UI's **Applied screen
+delay** in milliseconds. The number field accepts pasted values; the slider
+moves in 1 ms steps. The override belongs to this plasmoid and does not change
+the controller's shared margin, the web browser's profile, or the Android
+phone's profile. On a box without a microphone, use the web UI's **Config ->
+Meter timing -> Tune with clicks** and adjust the plasmoid while listening to
+the click train. The click test does not require a microphone when you adjust
+by eye.
 
 ## The box's side
 
