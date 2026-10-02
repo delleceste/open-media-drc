@@ -9,6 +9,7 @@ Canvas {
 
     property string style: "bars"     // "bars" | "needles"
     property var app: null
+    property bool interactionsEnabled: true
     property string pair: "auto"       // channel lanes: "auto" | "side" | "stacked"
     property var vu: ({})              // the frame's vu object: left_rms, left_peak, ...
     property real glass: 1             // < 1: a cover behind the meters shows through
@@ -66,6 +67,7 @@ Canvas {
 
     MouseArea {
         anchors.fill: parent
+        enabled: meters.interactionsEnabled
         acceptedButtons: Qt.LeftButton
         onClicked: if (meters.app) meters.app.cycleMeterStyle()
         onWheel: (event) => { if (meters.app) meters.app.cycleMeterStyle(); event.accepted = true }

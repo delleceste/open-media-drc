@@ -3,6 +3,7 @@ import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.kde.plasma.components as PlasmaComponents
 import org.kde.kirigami as Kirigami
+import org.kde.plasma.plasmoid
 
 /* The widget's face: the configured panes (cover, meters, spectrum) side by
  * side or stacked, the track underneath on the desktop and in the popup, and
@@ -21,6 +22,8 @@ Item {
     signal activated()
 
     readonly property bool panel: horizontalPanel || verticalPanel
+    readonly property bool editing: !!(panel && Plasmoid.containment
+                                     && Plasmoid.containment.corona.editMode)
     readonly property string meterStyle: app.meterStyle
     readonly property bool bottomMeters: !compact && app.page === "cover" && (app.showDr || app.showBalance)
     readonly property bool coverBehind: app.coverMode === "background" && panes.some(p => p !== "cover")
@@ -32,7 +35,9 @@ Item {
         if (!bottomMeters && app.showDr) list.push("dr")
         if (!bottomMeters && app.showBalance) list.push("balance")
         if (!list.length) list.push("cover")   // nothing chosen: at least show what plays
-        return list
+        const order = (app.paneOrder || "cover,meters,spectrum,dr,balance").split(",")
+        const key = p => p === "meterspectrum" ? "meters" : p
+        return list.sort((a, b) => order.indexOf(key(a)) - order.indexOf(key(b)))
     }
     readonly property bool showTrack: !compact && app.page === "cover" && app.showTitle
     // panes laid out in a row, or a column
@@ -59,6 +64,25 @@ Item {
         const total = panes.reduce((s, p) => s + weight(p), 0)
         const rest = free - (panes.indexOf("cover") >= 0 ? cover : 0)
         return panes.map(p => p === "cover" ? cover : rest * weight(p) / total)
+    }
+
+    function movePane(from, to) {
+        if (from < 0 || to < 0 || from >= panes.length || to >= panes.length || from === to) return
+        const key = p => p === "meterspectrum" ? "meters" : p
+        const order = panes.map(key)
+        const moved = order.splice(from, 1)[0]
+        order.splice(to, 0, moved)
+        const saved = (app.paneOrder || "cover,meters,spectrum,dr,balance").split(",")
+        app.setConfig("paneOrder", order.concat(saved.filter(p => !order.includes(p))).join(","))
+    }
+
+    function paneAt(along) {
+        let start = 0
+        for (let i = 0; i < panes.length; i++) {
+            if (along < start + extents[i] + spacing / 2) return i
+            start += extents[i] + spacing
+        }
+        return panes.length - 1
     }
 
     // In a panel the long side follows the content.
@@ -101,6 +125,7 @@ Item {
         Repeater {
             model: face.panes
             delegate: Loader {
+                id: paneLoader
                 required property string modelData
                 required property int index
                 readonly property real offset: face.extents.slice(0, index).reduce((s, e) => s + e + face.spacing, 0)
@@ -114,6 +139,30 @@ Item {
                                : modelData === "spectrum" ? spectrumPane
                                : modelData === "dr" ? drPane
                                : modelData === "balance" ? balancePane : metersPane
+                opacity: paneDrag.active ? 0.65 : 1
+                TapHandler {
+                    enabled: !face.editing && face.panes.length > 1
+                    acceptedButtons: Qt.LeftButton
+                    acceptedModifiers: Qt.ControlModifier
+                    onTapped: face.movePane(paneLoader.index, (paneLoader.index + 1) % face.panes.length)
+                }
+                DragHandler {
+                    id: paneDrag
+                    enabled: !face.editing && face.panes.length > 1
+                    acceptedButtons: Qt.LeftButton
+                    acceptedModifiers: Qt.ControlModifier
+                    target: null
+                    property real lastAlong: 0
+                    onTranslationChanged: lastAlong = face.row ? translation.x : translation.y
+                    onActiveChanged: {
+                        if (active) { lastAlong = 0; return }
+                        if (Math.abs(lastAlong) < 2) return
+                        const centre = face.row ? paneLoader.x + paneLoader.width / 2
+                                                : paneLoader.y + paneLoader.height / 2
+                        face.movePane(paneLoader.index, face.paneAt(centre + lastAlong))
+                        lastAlong = 0
+                    }
+                }
             }
         }
     }
@@ -129,6 +178,7 @@ Item {
             style: face.meterStyle
             pair: face.app.meterPair
             vu: face.app.vu
+            interactionsEnabled: !face.editing
             glass: face.coverBehind ? 0.5 : 1
         }
     }
@@ -142,6 +192,7 @@ Item {
                 style: face.meterStyle
                 pair: face.app.meterPair
                 vu: face.app.vu
+                interactionsEnabled: !face.editing
                 glass: face.coverBehind ? 0.5 : 1
             }
             Spectrum {
@@ -251,14 +302,14 @@ Item {
 
     MouseArea {
         anchors.fill: parent
-        enabled: face.compact && !face.compactSearchOpen
+        enabled: face.compact && !face.compactSearchOpen && !face.editing
         acceptedButtons: Qt.LeftButton
         onClicked: face.activated()
     }
 
     RowLayout {
         anchors { fill: parent; margins: face.inset }
-        visible: face.compact && face.compactSearchOpen
+        visible: face.compact && face.compactSearchOpen && !face.editing
         spacing: 1
         QQC2.TextField {
             id: simpleInput
@@ -331,14 +382,15 @@ Item {
         }
     }
 
+    HoverHandler { id: hover }
+
     Item {
         id: coverHoverZone
         x: paneArea.x
         y: paneArea.y
         width: face.panes.indexOf("cover") >= 0 && face.row ? face.extents[0] : paneArea.width
         height: face.panes.indexOf("cover") >= 0 && !face.row ? face.extents[0] : paneArea.height
-        visible: paneArea.visible
-        HoverHandler { id: hover }
+        visible: paneArea.visible && !face.editing
     }
 
     // Controls stay within the artwork. The cover and meters retain their colors.
@@ -347,14 +399,14 @@ Item {
         objectName: "controls"
         x: coverHoverZone.x
         y: coverHoverZone.y
-        width: coverHoverZone.width
+        width: face.panel ? Math.min(face.width, controls.size * 6 + 8) : coverHoverZone.width
         height: coverHoverZone.height
-        opacity: paneArea.visible && hover.hovered && face.app.host !== "" ? 1 : 0
+        opacity: paneArea.visible && !face.editing && hover.hovered && face.app.host !== "" ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Kirigami.Units.shortDuration } }
 
-        readonly property real size: Math.max(12, Math.min(height * 0.24, width / 5.5,
-                                                          Kirigami.Units.iconSizes.medium))
+        readonly property real size: face.panel ? Math.max(24, Math.min(30, height * 0.74))
+            : Math.max(12, Math.min(height * 0.24, width / 5.5, Kirigami.Units.iconSizes.medium))
         SeekRing {
             app: face.app
             visible: !face.compact && face.app.seekable && face.panes.indexOf("cover") >= 0
@@ -365,6 +417,7 @@ Item {
             y: (controls.height - height) / 2
         }
         Row {
+            visible: !face.panel
             anchors { top: parent.top; right: parent.right; margins: 1 }
             spacing: 2
             PlasmaComponents.ToolButton {
@@ -388,6 +441,7 @@ Item {
         }
         Rectangle {
             id: transportBox
+            visible: !face.panel
             anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 1 }
             width: transportButtons.width + 4
             height: transportButtons.height + 2
@@ -432,6 +486,54 @@ Item {
                     }
                 }
             }
+            }
+        }
+        Rectangle {
+            visible: face.panel
+            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+            width: panelActions.width + 4
+            height: panelActions.height + 2
+            radius: height / 3
+            color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
+                           Kirigami.Theme.backgroundColor.b, 0.78)
+            Row {
+                id: panelActions
+                anchors.centerIn: parent
+                spacing: 0
+                Repeater {
+                    model: [
+                        { action: "prev", icon: "media-skip-backward", tip: i18n("Previous") },
+                        { action: "toggle", icon: face.app.playing ? "media-playback-pause" : "media-playback-start",
+                          tip: face.app.playing ? i18n("Pause") : i18n("Play") },
+                        { action: "next", icon: "media-skip-forward", tip: i18n("Next") },
+                        { action: "stop", icon: "media-playback-stop", tip: i18n("Stop") },
+                        { action: "search", icon: "edit-find", tip: i18n("Search Qobuz") },
+                        { action: "queue", icon: "view-list-details", tip: i18n("Play queue") },
+                    ]
+                    delegate: PlasmaComponents.ToolButton {
+                        required property var modelData
+                        width: controls.size
+                        height: controls.size
+                        padding: 2
+                        icon.name: modelData.icon
+                        icon.width: controls.size - 4
+                        icon.height: controls.size - 4
+                        display: QQC2.AbstractButton.IconOnly
+                        text: modelData.tip
+                        enabled: face.app.reachable
+                        onClicked: {
+                            if (modelData.action === "search") face.app.openPage("qobuz")
+                            else if (modelData.action === "queue") face.app.openPage("queue")
+                            else {
+                                face.app.transport(modelData.action)
+                                if (modelData.action === "stop") {
+                                    face.compactSearchOpen = true
+                                    Qt.callLater(() => simpleInput.forceActiveFocus())
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

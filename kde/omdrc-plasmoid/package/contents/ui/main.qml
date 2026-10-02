@@ -31,6 +31,7 @@ PlasmoidItem {
     readonly property int backgroundOpacity: Plasmoid.configuration.backgroundOpacity
     readonly property int panelLength: Plasmoid.configuration.panelLength   // 0: automatic
     readonly property int panelInset: Plasmoid.configuration.panelInset
+    readonly property string paneOrder: Plasmoid.configuration.paneOrder
 
     readonly property string base: host === "" ? ""
         : "http://" + (host.indexOf(":") >= 0 && host[0] !== "[" ? "[" + host + "]" : host) + ":" + port
@@ -131,16 +132,15 @@ PlasmoidItem {
                              || Plasmoid.formFactor === PlasmaCore.Types.MediaCenter
                              ? fullRepresentation : compactRepresentation
 
-    compactRepresentation: Display {
-        app: root
-        compact: true
-        horizontalPanel: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
-        verticalPanel: Plasmoid.formFactor === PlasmaCore.Types.Vertical
+    compactRepresentation: Item {
+        id: compactRoot
+        readonly property bool horizontalPanel: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+        readonly property bool verticalPanel: Plasmoid.formFactor === PlasmaCore.Types.Vertical
         // A panel offers no resize handle: the length is a setting, or
         // follows the chosen panes.  The panes share whatever length it is.
         readonly property int length: Math.max(root.panelLength > 0 ? root.panelLength
-                                      : horizontalPanel ? implicitWidth : implicitHeight,
-                                      compactSearchOpen ? 350 : 0)
+                                      : horizontalPanel ? compactFace.implicitWidth : compactFace.implicitHeight,
+                                      compactFace.compactSearchOpen ? 350 : 0)
         Layout.minimumWidth: horizontalPanel ? length : -1
         Layout.preferredWidth: horizontalPanel ? length : -1
         Layout.maximumWidth: horizontalPanel ? length : -1
@@ -148,7 +148,23 @@ PlasmoidItem {
         Layout.preferredHeight: verticalPanel ? length : -1
         Layout.maximumHeight: verticalPanel ? length : -1
         Layout.fillHeight: horizontalPanel
-        onActivated: root.expanded = !root.expanded
+
+        // Plasma reserves its own panel padding around the compact item. Let
+        // the artwork and graphs occupy that space while preserving a chosen
+        // inset inside the widget itself.
+        Display {
+            id: compactFace
+            app: root
+            compact: true
+            horizontalPanel: compactRoot.horizontalPanel
+            verticalPanel: compactRoot.verticalPanel
+            readonly property real bleed: 7
+            x: verticalPanel ? -bleed : 0
+            y: horizontalPanel ? -bleed : 0
+            width: compactRoot.width + (verticalPanel ? 2 * bleed : 0)
+            height: compactRoot.height + (horizontalPanel ? 2 * bleed : 0)
+            onActivated: root.expanded = !root.expanded
+        }
     }
 
     fullRepresentation: Display {

@@ -2,15 +2,19 @@
 
 A Plasma 6 widget showing what an Open Media DRC box is playing: level meters
 (LED-style bars or analogue needles), the spectrum analyzer, and the cover, in
-any combination.  Point at it and prev / play-pause / next appear over it.
+any combination. Hover the cover for playback, stop, search and queue controls.
 
 It works both ways Plasma offers:
 
 * **In a panel** it is a strip as thick as the panel, its length following the
-  panes you chose (in a vertical panel they stack).  The tooltip names the
-  track; a click opens a larger view in a popup, with title and artist.
+  panes you chose (in a vertical panel they stack). The tooltip previews the
+  cover; a click opens a larger view in a popup, with title and artist.
 * **On the desktop** it shows the large view directly, resizable.  Wide, the
   panes sit side by side; tall, they stack.
+
+Control-click a pane to move it to the next position, or Control-drag it to a
+chosen position. The order is saved for each widget. In Plasma panel edit mode,
+drag the whole widget to move it among the panel's other widgets.
 
 Like the kiosk and the Android app it is only a client of `omdrcctrl`; nothing
 runs on the desktop besides the widget.
@@ -61,6 +65,7 @@ To remove it: `kpackagetool6 --type Plasma/Applet --remove org.omdrc.monitor`.
 | Meter and spectrum timing | follow the box's live remaining-delay estimate, or set a per-widget delay from 0 to 3000 ms with a 1 ms slider and editable number |
 | Cover | hidden, beside the meters, or behind them (the meters go translucent) |
 | Length in panel | automatic (follows the panes) or a fixed length in pixels: a panel has no resize handle, so this is how to make it longer or shorter |
+| Panel edge margin | pixels left between the widget content and the panel edge (0 by default) |
 | Track | title and artist under the large view |
 | Background | Plasma's default, none, or a custom color with alpha |
 
