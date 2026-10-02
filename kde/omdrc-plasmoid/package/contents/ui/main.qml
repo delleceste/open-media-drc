@@ -31,6 +31,8 @@ PlasmoidItem {
     readonly property int backgroundOpacity: Plasmoid.configuration.backgroundOpacity
     readonly property int panelLength: Plasmoid.configuration.panelLength   // 0: automatic
     readonly property int panelInset: Plasmoid.configuration.panelInset
+    readonly property int panelMarginStart: Plasmoid.configuration.panelMarginStart
+    readonly property int panelMarginEnd: Plasmoid.configuration.panelMarginEnd
     readonly property string paneOrder: Plasmoid.configuration.paneOrder
 
     readonly property string base: host === "" ? ""
@@ -158,12 +160,14 @@ PlasmoidItem {
             horizontalPanel: compactRoot.horizontalPanel
             verticalPanel: compactRoot.verticalPanel
             readonly property real bleed: 7
-            // a hairline kept clear along the panel's bottom edge
-            readonly property real bottomGap: 2
-            x: verticalPanel ? -bleed : 0
-            y: horizontalPanel ? -bleed : 0
-            width: compactRoot.width + (verticalPanel ? 2 * bleed : 0)
-            height: compactRoot.height + (horizontalPanel ? 2 * bleed - bottomGap : 0)
+            // pixels kept clear from the panel's edges (top/left, bottom/right)
+            readonly property real marginStart: Math.max(0, Math.min(2 * bleed, root.panelMarginStart))
+            readonly property real marginEnd: Math.max(0, Math.min(2 * bleed, root.panelMarginEnd))
+            readonly property real across: 2 * bleed - marginStart - marginEnd
+            x: verticalPanel ? marginStart - bleed : 0
+            y: horizontalPanel ? marginStart - bleed : 0
+            width: compactRoot.width + (verticalPanel ? across : 0)
+            height: compactRoot.height + (horizontalPanel ? across : 0)
             onActivated: root.expanded = !root.expanded
         }
     }

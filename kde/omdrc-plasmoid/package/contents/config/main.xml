@@ -36,6 +36,10 @@
     <!-- length along a panel in pixels; 0: follow the panes -->
     <entry name="panelLength" type="Int"><default>0</default></entry>
     <entry name="panelInset" type="Int"><default>0</default></entry>
+    <!-- the widget's reach into the panel's own padding, pixels kept clear from the
+         panel's edges: top/left and bottom/right (0: flush with the panel edge) -->
+    <entry name="panelMarginStart" type="Int"><default>0</default></entry>
+    <entry name="panelMarginEnd" type="Int"><default>2</default></entry>
     <entry name="paneOrder" type="String"><default>cover,meters,spectrum,dr,balance</default></entry>
     <!-- "default" (Plasma's) | "none" | "custom" (backgroundColor) -->
     <entry name="backgroundMode" type="String"><default>default</default></entry>

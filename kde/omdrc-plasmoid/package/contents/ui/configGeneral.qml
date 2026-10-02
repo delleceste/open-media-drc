@@ -24,6 +24,8 @@ KCM.SimpleKCM {
     property int cfg_backgroundOpacity
     property int cfg_panelLength
     property alias cfg_panelInset: panelInsetField.value
+    property alias cfg_panelMarginStart: panelMarginStartField.value
+    property alias cfg_panelMarginEnd: panelMarginEndField.value
 
     readonly property var meterStyles: [
         { value: "bars", text: i18n("Level bars") },
@@ -240,6 +242,25 @@ KCM.SimpleKCM {
             to: 12
             textFromValue: (value) => i18n("%1 px", value)
             valueFromText: (text) => parseInt(text) || 0
+        }
+        RowLayout {
+            Kirigami.FormData.label: i18n("Panel outer margins:")
+            QQC2.Label { text: i18n("top/left") }
+            QQC2.SpinBox {
+                id: panelMarginStartField
+                from: 0
+                to: 14
+                textFromValue: (value) => i18n("%1 px", value)
+                valueFromText: (text) => parseInt(text) || 0
+            }
+            QQC2.Label { text: i18n("bottom/right") }
+            QQC2.SpinBox {
+                id: panelMarginEndField
+                from: 0
+                to: 14
+                textFromValue: (value) => i18n("%1 px", value)
+                valueFromText: (text) => parseInt(text) || 0
+            }
         }
 
         RowLayout {

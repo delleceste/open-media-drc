@@ -149,11 +149,16 @@ Canvas {
         const rad = d => d * Math.PI / 180
         const ang = db => rad(A0 + SPAN * L.voltageFrac(db, L.SCALE_FLOOR))
         const pad = Math.max(1, Math.min(w, h) * 0.04)
+        // the painted area; the needle's pivot stays at least a pixel inside
+        // its bottom edge, so the needle never starts under the clip
+        const top = y + pad, bottom = y + h - pad
         // sized so the arc spans the width or the needle the height; a gauge
         // narrower than its face is centred in it
-        const R = Math.max(4, Math.min((w / 2 - pad) / Math.sin(rad(SPAN / 2)), (h - 2 * pad) * 1.15))
-        const cx = x + w / 2
-        const cy = Math.min(y + h - pad, y + pad + R + Math.max(0, (h - 2 * pad - R) / 2))
+        const R = Math.max(4, Math.min((w / 2 - pad) / Math.sin(rad(SPAN / 2)), (bottom - top - 1) * 1.15))
+        const needleW = Math.max(1, R * 0.012)
+        const cx = Math.round(x + w / 2)
+        const cy = Math.min(Math.floor(bottom - 1 - needleW / 2),
+                            Math.round(top + R + Math.max(0, (bottom - top - R) / 2)))
         const small = R < 40
 
         ctx.globalAlpha = glass
@@ -214,7 +219,7 @@ Canvas {
         // the needle follows the peak
         const a = ang(Math.max(L.SCALE_FLOOR, peak))
         ctx.strokeStyle = textColor
-        ctx.lineWidth = Math.max(1, R * 0.012)
+        ctx.lineWidth = needleW
         ctx.beginPath()
         ctx.moveTo(cx, cy)
         ctx.lineTo(cx + Math.cos(a) * R * 0.97, cy + Math.sin(a) * R * 0.97)

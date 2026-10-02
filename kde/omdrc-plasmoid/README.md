@@ -73,6 +73,7 @@ To remove it: `kpackagetool6 --type Plasma/Applet --remove org.omdrc.monitor`.
 | Cover | hidden, beside the meters, or behind them (the meters go translucent) |
 | Length in panel | automatic (follows the panes) or a fixed length in pixels: a panel has no resize handle, so this is how to make it longer or shorter |
 | Panel edge margin | pixels left between the widget content and the panel edge (0 by default) |
+| Panel outer margins | pixels kept clear from the panel's top/left and bottom/right edges, where the widget reaches into the panel's own padding (0 and 2 by default) |
 | Track | title and artist below the cover in the large view |
 | Background | Plasma's default, none, or a custom color with alpha |
 
