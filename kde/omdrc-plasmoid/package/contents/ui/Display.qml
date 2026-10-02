@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
+import QtQuick.Window
 import org.kde.plasma.components as PlasmaComponents
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.plasmoid
@@ -18,8 +19,31 @@ Item {
     property bool horizontalPanel: false
     property bool verticalPanel: false
     readonly property bool compactSearchOpen: compact && app.compactSearchRequested
-    onCompactSearchOpenChanged: if (compactSearchOpen)
-        Qt.callLater(() => simpleInput.forceActiveFocus())
+    property var panelFlagsBeforeSearch: null
+    onCompactSearchOpenChanged: {
+        if (compactSearchOpen) Qt.callLater(() => face.focusCompactSearch())
+        else releaseCompactSearch()
+    }
+    Component.onDestruction: releaseCompactSearch()
+
+    function focusCompactSearch() {
+        if (!compactSearchOpen) return
+        const window = simpleInput.Window.window
+        if (window) {
+            // Plasma's panel is normally a dock that declines keyboard focus.
+            // Make it focusable only while its inline search field is open.
+            if (panelFlagsBeforeSearch === null) panelFlagsBeforeSearch = window.flags
+            window.flags = window.flags & ~Qt.WindowDoesNotAcceptFocus
+            window.requestActivate()
+        }
+        simpleInput.forceActiveFocus(Qt.OtherFocusReason)
+    }
+
+    function releaseCompactSearch() {
+        const window = simpleInput.Window.window
+        if (window && panelFlagsBeforeSearch !== null) window.flags = panelFlagsBeforeSearch
+        panelFlagsBeforeSearch = null
+    }
     property bool controlsShown: false
 
     signal activated()
@@ -336,6 +360,7 @@ Item {
             text: face.app.simpleSearchQuery
             onTextEdited: face.app.simpleSearchQuery = text
             onAccepted: face.app.simpleSearch(text)
+            TapHandler { onTapped: face.focusCompactSearch() }
         }
         PlasmaComponents.ToolButton {
             icon.name: "edit-find"
