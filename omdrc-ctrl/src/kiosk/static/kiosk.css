@@ -833,10 +833,11 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
     .qz-pprog { display: block; position: absolute; left: 0; right: 0; top: 0; height: .18rem; background: rgba(139,148,158,.25); }
     .qz-pprog i { display: block; height: 100%; width: 0; background: var(--accent); }
     .qz-snack { bottom: 4.3rem; }
-    .scrim.qz-full { overflow-y: auto; }
-    .qz-full-body { grid-template-columns: minmax(0, 1fr); flex: 0 0 auto; }
-    .qz-full .qz-pcover { width: min(100%, 60dvh); justify-self: center; }
-    .qz-queue { flex: 0 0 auto; height: 35dvh; overflow-y: auto; }
+    .scrim.qz-full { overflow-y: auto; overscroll-behavior: contain; }
+    .qz-full-body { display: block; flex: 0 0 auto; min-height: auto; }
+    .qz-full-side { min-height: auto; }
+    .qz-full .qz-pcover { width: min(100%, 60dvh); margin-inline: auto; }
+    .qz-queue { flex: 0 0 auto; min-height: 4rem; }
     .qz-row { grid-template-columns: 3.8rem minmax(0, 1fr) auto; }
     .qz-cover { width: 3.8rem; height: 3.8rem; }
 }

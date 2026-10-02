@@ -1669,6 +1669,12 @@ P.openFull = ({ offset = 0 } = {}) => {
     P.queueVersion = null;
     P.queueCount = 0;
     P.markedId = null;
+    P.queueAuto = true;
+    P.wireQueueScroll();
+    P.queueSizer = new ResizeObserver(() => requestAnimationFrame(P.sizeQueue));
+    [P.fullEl, v.cover, P.fullEl.querySelector('.qz-full-info'), v.seekRow, v.buttons, P.queueTools]
+        .forEach(el => P.queueSizer.observe(el));
+    requestAnimationFrame(P.sizeQueue);
     document.addEventListener('keydown', P.fullKey);
     P.paintViews();
     P.playerPoll.now();
@@ -1677,6 +1683,7 @@ P.openFull = ({ offset = 0 } = {}) => {
 P.closeFull = () => {
     if (!P.fullEl) return;
     P.closeQueueActions();
+    P.queueSizer.disconnect();
     if (P.fullView) P.fullView.ring.destroy();
     P.seekTaps = null;
     P.fullEl.remove();
@@ -1686,6 +1693,91 @@ P.closeFull = () => {
     document.removeEventListener('keydown', P.fullKey);
 };
 P.fullKey = e => { if (e.key === 'Escape') { if (P.queueActions) { P.closeQueueActions(); P.queueHead.focus(); } else P.closeFull(); } };
+
+// In portrait the outer sheet travels until the transport reaches its top edge.
+// The queue then fills the rest of the sheet and takes subsequent scrolling.
+P.sizeQueue = () => {
+    if (!P.fullEl) return;
+    if (!matchMedia('(orientation: portrait)').matches) { P.queueBox.style.height = ''; return; }
+    const bottom = parseFloat(getComputedStyle(P.fullEl).paddingBottom) || 0;
+    const controls = P.fullView.buttons.getBoundingClientRect();
+    const queue = P.queueBox.getBoundingClientRect();
+    P.queueBox.style.height = `${Math.max(64, P.fullEl.clientHeight - (queue.top - controls.top) - bottom)}px`;
+};
+
+P.scrollQueue = (delta, gesture) => {
+    if (!P.fullEl || !delta) return;
+    P.queueAuto = false;
+    const sheet = P.fullEl, box = P.queueBox;
+    // On the way up, finish the queue before revealing the cover again.
+    // On the way down, reach the controls before moving the queue.
+    if (delta < 0) {
+        const old = box.scrollTop;
+        P.scrollQueueRows(delta, gesture);
+        if (!gesture.paused) sheet.scrollTop += delta - (box.scrollTop - old);
+    } else {
+        const old = sheet.scrollTop;
+        sheet.scrollTop += delta;
+        P.scrollQueueRows(delta - (sheet.scrollTop - old), gesture);
+    }
+};
+
+P.scrollQueueRows = (delta, gesture) => {
+    if (!delta || gesture.paused) return;
+    const box = P.queueBox;
+    const current = box.querySelector('.qz-qrow.on');
+    const before = box.scrollTop;
+    let target = Math.max(0, Math.min(box.scrollHeight - box.clientHeight, before + delta));
+    if (current) {
+        const rowTop = before + current.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientTop;
+        const rowBottom = rowTop + current.offsetHeight;
+        if (delta < 0 && rowBottom <= before + 1 && target <= rowTop) {
+            target = rowTop;
+            gesture.paused = true;
+        } else if (delta > 0 && rowTop >= before + box.clientHeight - 1 && target >= rowBottom - box.clientHeight) {
+            target = rowBottom - box.clientHeight;
+            gesture.paused = true;
+        }
+    }
+    box.scrollTop = target;
+};
+
+P.wireQueueScroll = () => {
+    const sheet = P.fullEl;
+    let wheelGesture = null, wheelTimer = null, touch = null;
+    sheet.addEventListener('wheel', e => {
+        if (e.target.closest('input')) return;
+        e.preventDefault();
+        if (!wheelGesture || Math.sign(wheelGesture.direction) !== Math.sign(e.deltaY))
+            wheelGesture = { paused: false, direction: e.deltaY };
+        clearTimeout(wheelTimer);
+        wheelTimer = setTimeout(() => { wheelGesture = null; }, 180);
+        const scale = e.deltaMode === 1 ? 20 : e.deltaMode === 2 ? sheet.clientHeight : 1;
+        P.scrollQueue(e.deltaY * scale, wheelGesture);
+    }, { passive: false });
+    sheet.addEventListener('touchstart', e => {
+        if (e.touches.length !== 1 || e.target.closest('.qz-pcover, input')) return;
+        touch = { y: e.touches[0].clientY, paused: false };
+    }, { passive: true });
+    sheet.addEventListener('touchmove', e => {
+        if (!touch || e.touches.length !== 1) return;
+        const y = e.touches[0].clientY;
+        const delta = touch.y - y;
+        touch.y = y;
+        if (!delta) return;
+        e.preventDefault();
+        P.scrollQueue(delta, touch);
+    }, { passive: false });
+    sheet.addEventListener('touchend', () => { touch = null; });
+    sheet.addEventListener('touchcancel', () => { touch = null; });
+    sheet.addEventListener('keydown', e => {
+        if (e.target.matches('input, textarea, select')) return;
+        const delta = { ArrowUp: -40, ArrowDown: 40, PageUp: -sheet.clientHeight, PageDown: sheet.clientHeight }[e.key];
+        if (!delta) return;
+        e.preventDefault();
+        P.scrollQueue(delta, { paused: false });
+    });
+};
 
 P.openQueueActions = () => {
     if (P.queueActions) { P.closeQueueActions(); return; }
@@ -1843,9 +1935,12 @@ P.loadQueue = async () => {
     P.queueCount = q.length;
     P.queueHead.textContent = `Queue · ${q.length} ▾`;
     if (P.queueActions) P.queueActions.querySelector('button').disabled = !q.length;
+    const manualTop = P.queueAuto ? null : P.queueBox.scrollTop;
     K.clear(P.queueBox).append(...q.songs.map(P.queueRow));
     if (q.length > q.songs.length) P.queueBox.append(h('div', { class: 'muted small' }, `… and ${q.length - q.songs.length} more`));
-    P.markedId = null;
+    P.sizeQueue();
+    if (manualTop !== null) P.queueBox.scrollTop = manualTop;
+    if (P.queueAuto) P.markedId = null;
     P.markQueue();
 };
 
@@ -1936,7 +2031,7 @@ P.markQueue = () => {
     const box = P.queueBox;
     const last = box.querySelector('.qz-qrow:last-of-type');
     box.style.setProperty('--queue-tail', `${Math.max(0, box.clientHeight - (last ? last.offsetHeight : 0) - 2)}px`);
-    if (current && id !== P.markedId) {
+    if (P.queueAuto && current && id !== P.markedId) {
         box.scrollTop += current.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientTop;
     }
     P.markedId = id;
