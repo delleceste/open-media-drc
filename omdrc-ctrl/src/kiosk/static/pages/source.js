@@ -24,11 +24,12 @@ P.show = () => P.poll.start();
 P.hide = () => P.poll.stop();
 
 P.refresh = async () => {
-    const [svc, track, mpd, cd] = await Promise.all([
+    const [svc, track, mpd, cd, qobuz, qconnect] = await Promise.all([
         K.api('/qconnect/services'), K.fetchTrack(), K.api('/mpd/info'),
-        K.state.features.cdin ? K.api('/cdin/status') : Promise.resolve(null)]);
+        K.state.features.cdin ? K.api('/cdin/status') : Promise.resolve(null),
+        K.api('/qobuz/oauth/status'), K.api('/qconnect/oauth/status')]);
     if (svc && svc.ok && !P.switching) P.active = RENDERERS.find(r => svc[r]) || null;
-    P.paintRenderer(track, svc);
+    P.paintRenderer(track, svc, qobuz, qconnect);
     P.paintMpd(mpd);
     if (cd) P.paintCd(cd);
 };
@@ -54,18 +55,47 @@ P.restart = async () => {
     P.refresh();
 };
 
-P.paintRenderer = (t, svc) => {
+P.paintRenderer = (t, svc, qobuz, qconnect) => {
     const kids = [];
+    const statusTarget = P.error?.target || P.active;
     kids.push(K.segmented(RENDERERS.map(r => ({ value: r, label: r })), P.active, v => P.switchTo(v)));
     if (P.error) kids.push(h('div', { class: 'errbox' },
         h('div', { class: 'errhead' }, h('strong', {}, `${P.error.target}: ${P.error.error}`),
             h('button', { class: 'btn', type: 'button', onclick: () => { P.error = null; P.refresh(); } }, '×')),
         P.error.detail ? h('pre', {}, P.error.detail) : null, P.error.log ? h('div', { class: 'muted small' }, P.error.log) : null));
     if (svc && svc.ok) kids.push(K.kv('Boot renderer', `${svc.boot || '—'}${svc.boot_is_default ? ' (default)' : ''}`));
-    if (K.alerts && K.alerts.some(a => /oauth|auth/i.test(a.id || '') && a.severity !== 'ok'))
-        kids.push(h('div', { class: 'errbox' }, h('strong', {}, 'Qobuz sign-in needed'),
-            h('div', { class: 'muted small' }, 'The sign-in flow opens a browser page; do it from the full panel.'),
-            h('button', { class: 'btn', type: 'button', onclick: () => K.frame('/', 'Full panel') }, 'Open full panel')));
+    if (statusTarget === 'upmpdcli' && qobuz?.ok) {
+        const connected = qobuz.plugin_running &&
+            (K.alerts || []).some(a => a.id === 'qobuz_ok' && a.service_running);
+        const refused = (K.alerts || []).some(a => a.id === 'qobuz_login' && a.service_running);
+        if (!qobuz.plugin_present) {
+            kids.push(K.kv('Qobuz plugin', 'Missing', 'bad'),
+                h('div', { class: 'muted small' }, `Expected: ${qobuz.plugin_path}`));
+        } else if (!qobuz.plugin_enabled) {
+            kids.push(K.kv('Qobuz plugin', 'Installed, not enabled', 'bad'),
+                h('div', { class: 'muted small' }, `Set qobuzuser in ${qobuz.upmpdcli_config}`));
+        } else if (!qobuz.token && !qobuz.script_present) {
+            kids.push(K.kv('Qobuz sign-in helper', 'Missing', 'bad'),
+                h('div', { class: 'muted small' }, `Expected: ${qobuz.script}`));
+        } else if (!qobuz.token || refused) {
+            kids.push(K.kv('Qobuz plugin', refused ? 'Authentication rejected' : 'Not authenticated', 'bad'),
+                h('button', { class: 'btn', type: 'button', onclick: () => K.frame('/?oauth=upmpdcli', 'Qobuz sign-in') }, 'Open Qobuz sign-in'));
+        } else {
+            kids.push(K.kv('Qobuz plugin', connected ? 'Connected' : 'Token stored; connection not confirmed', connected ? 'good' : ''));
+        }
+    } else if (statusTarget === 'qobuzconnect2mpd' && qconnect) {
+        const connected = (K.alerts || []).some(a => a.id === 'qconnect_ok' && a.service_running);
+        const failed = (K.alerts || []).some(a => a.id === 'qconnect_auth' &&
+            (a.service_running || P.error?.target === 'qobuzconnect2mpd'));
+        if (!qconnect.binary || !qconnect.config) {
+            kids.push(K.kv('Qobuz Connect', !qconnect.binary ? 'Program missing' : 'Configuration missing', 'bad'));
+        } else if (!qconnect.token_present || failed) {
+            kids.push(K.kv('Qobuz Connect', failed ? 'Authentication failed' : 'Not authenticated', 'bad'),
+                h('button', { class: 'btn', type: 'button', onclick: () => K.frame('/?oauth=qobuzconnect2mpd', 'Qobuz sign-in') }, 'Open Qobuz sign-in'));
+        } else {
+            kids.push(K.kv('Qobuz Connect', connected ? 'Connected' : 'Token stored; connection not confirmed', connected ? 'good' : ''));
+        }
+    }
     // now playing, as the renderer reports it
     if (t.ok) {
         kids.push(h('div', { class: 'np' }, h('strong', {}, t.title || '—'), h('div', { class: 'muted' }, [t.artist, t.album].filter(Boolean).join(' — ')),

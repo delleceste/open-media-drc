@@ -1196,6 +1196,7 @@
         }
         .log-status.good { color: var(--green); }
         .log-status-note { color: var(--muted); }
+        .log-status-path { overflow-wrap: anywhere; }
 
         .log-picker {
             font-family: ui-monospace, "SFMono-Regular", monospace;
@@ -3634,7 +3635,8 @@ async function switchRenderer(target) {
     qcSwitching = false;
     sw.classList.remove('busy');
     if (qcLogVisible) fetchQcLog();
-    syncRenderers();   // reconcile with reality
+    await syncRenderers();   // reconcile with reality before showing its login state
+    fetchLogAlerts();
 }
 
 // ── Log alerts ─────────────────────────────────────────────────────────────
@@ -3652,20 +3654,35 @@ function fmtLogTime(epoch) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function renderLogAlerts(alerts) {
+function statusRenderer(qobuz, qconnect) {
+    return (rendererErrorShown() ? qcLogRenderer : null) || activeRenderer ||
+        (qobuz?.upmpdcli_running ? 'upmpdcli' : null) ||
+        (qconnect?.qobuzconnect2mpd_running ? 'qobuzconnect2mpd' : null);
+}
+
+function renderLogAlerts(alerts, qobuz, qconnect) {
     const box = document.getElementById('log-alerts');
     box.innerHTML = '';
-    // An OAuth action exists only while its failure rule is active. Keep the
-    // renderer-card shortcut in exact sync with that diagnosis; the action in
-    // the top-of-page message remains available as well.
+    const renderer = statusRenderer(qobuz, qconnect);
+    // A stopped renderer's old log must not be presented as the current one's
+    // login failure. A failed switch can still show the target's startup log.
+    alerts = alerts.filter(a => !a.service ||
+        (a.service === renderer && (a.service_running || rendererErrorShown())));
     const oauthAlerts = alerts.filter(a =>
         a.action === 'qobuz-oauth' || a.action === 'qconnect-oauth');
     const oauthButton = document.getElementById('btn-oauth');
-    oauthButton.hidden = oauthAlerts.length === 0;
+    const upmpdcliNeedsSignIn = renderer === 'upmpdcli' && qobuz?.ok &&
+        qobuz.plugin_present && qobuz.plugin_enabled &&
+        qobuz.script_present && !qobuz.token;
+    const qconnectNeedsSignIn = renderer === 'qobuzconnect2mpd' && qconnect &&
+        qconnect.binary && qconnect.config && !qconnect.token_present;
+    oauthButton.hidden = oauthAlerts.length === 0 &&
+        !upmpdcliNeedsSignIn && !qconnectNeedsSignIn;
     oauthAlertTarget = oauthAlerts.length
         ? (oauthAlerts[0].action === 'qconnect-oauth'
             ? 'qobuzconnect2mpd' : 'upmpdcli')
-        : null;
+        : (upmpdcliNeedsSignIn ? 'upmpdcli'
+            : qconnectNeedsSignIn ? 'qobuzconnect2mpd' : null);
     for (const a of alerts) {
         if (dismissedAlerts.has(a.key)) continue;
         const el = document.createElement('div');
@@ -3734,11 +3751,50 @@ function renderLogAlerts(alerts) {
     }
 }
 
-// `sources` here are only the logs the ok rules read (status_sources), so the
-// fallback text names the log the status would have come from.
-function renderRendererStatus(oks, sources) {
+// `sources` here are only the logs the ok rules read (status_sources).
+function renderRendererStatus(alerts, sources, qobuz, qconnect) {
     const el = document.getElementById('renderer-status');
-    if (oks.length) {
+    const renderer = statusRenderer(qobuz, qconnect);
+    let oks = alerts.filter(a => a.severity === 'ok');
+    if (renderer) {
+        oks = oks.filter(a => a.service === renderer);
+        sources = sources.filter(s => renderer === 'upmpdcli'
+            ? s.id === 'upmpdcli' || s.id === 'upmpdcli-console'
+            : s.id === 'qobuzconnect2mpd');
+    }
+    let problem = '';
+    if (renderer === 'upmpdcli' && qobuz?.ok) {
+        if (!qobuz.plugin_present) {
+            problem = `Qobuz plugin missing: ${qobuz.plugin_path}`;
+        } else if (!qobuz.plugin_enabled) {
+            problem = `Qobuz plugin installed but not enabled in ${qobuz.upmpdcli_config}`;
+        } else if (!qobuz.token && !qobuz.script_present) {
+            problem = `Qobuz sign-in helper missing: ${qobuz.script}`;
+        } else if (!qobuz.token) {
+            problem = 'Qobuz plugin installed, but not authenticated';
+        } else if (alerts.some(a => a.id === 'qobuz_login' && a.service_running)) {
+            problem = 'Qobuz plugin login rejected; sign in again';
+        } else if (!qobuz.plugin_running || !oks.some(a => a.id === 'qobuz_ok')) {
+            problem = 'Qobuz token stored; plugin connection not confirmed in the logs';
+        }
+    } else if (renderer === 'qobuzconnect2mpd' && qconnect) {
+        if (!qconnect.binary) {
+            problem = 'qobuzconnect2mpd program missing';
+        } else if (!qconnect.config) {
+            problem = 'qobuzconnect2mpd configuration missing';
+        } else if (!qconnect.token_present) {
+            problem = 'qobuzconnect2mpd is not authenticated with Qobuz';
+        } else if (alerts.some(a => a.id === 'qconnect_auth' &&
+                   (a.service_running || rendererErrorShown()))) {
+            problem = 'qobuzconnect2mpd Qobuz login failed; sign in again';
+        } else if (!oks.some(a => a.id === 'qconnect_ok')) {
+            problem = 'qobuzconnect2mpd token stored; connection not confirmed in the logs';
+        }
+    }
+    if (problem) {
+        el.className = 'log-status';
+        el.textContent = problem;
+    } else if (oks.length) {
         el.className = 'log-status good';
         el.textContent = oks.map(a => {
             const when = fmtLogTime(a.at);
@@ -3746,23 +3802,36 @@ function renderRendererStatus(oks, sources) {
         }).join(' · ');
         el.title = oks.map(a => a.line).join('\n');
         return;
+    } else {
+        // Nothing matched: say whether that is "no news" or "no log to read".
+        const missing = sources.filter(s => !s.exists).map(s => s.label);
+        el.className = 'log-status';
+        el.textContent = missing.length
+            ? `no service connection status yet — ${missing.join(', ')} not written yet`
+            : 'no service connection status in the logs';
     }
-    // Nothing matched: say whether that is "no news" or "no log to read".
-    const missing = sources.filter(s => !s.exists).map(s => s.label);
-    el.className = 'log-status';
-    el.textContent = missing.length
-        ? `no service connection status yet — ${missing.join(', ')} not written yet`
-        : 'no service connection status in the logs';
+    for (const source of sources) {
+        const path = document.createElement('div');
+        path.className = 'log-status-path';
+        const state = !source.exists ? 'file not found'
+            : source.size === 0 ? 'empty file' : 'file exists';
+        path.textContent = `${source.label} log: ${source.path} (${state})`;
+        el.appendChild(path);
+    }
     el.title = '';
 }
 
 async function fetchLogAlerts() {
     try {
-        const d = await (await fetch('/logs/alerts')).json();
+        const [d, qobuz, qconnect] = await Promise.all([
+            fetch('/logs/alerts').then(r => r.json()),
+            fetch('/qobuz/oauth/status').then(r => r.json()),
+            fetch('/qconnect/oauth/status').then(r => r.json()),
+        ]);
         if (!d.ok) return;
-        renderLogAlerts(d.alerts.filter(a => a.severity !== 'ok'));
-        renderRendererStatus(d.alerts.filter(a => a.severity === 'ok'),
-                             d.status_sources || d.sources || []);
+        renderLogAlerts(d.alerts.filter(a => a.severity !== 'ok'), qobuz, qconnect);
+        renderRendererStatus(d.alerts,
+                             d.status_sources || d.sources || [], qobuz, qconnect);
     } catch { /* ignore — status dot already signals offline */ }
 }
 
@@ -6360,6 +6429,9 @@ setInterval(syncRenderers, 7000);
 // cadence whether or not the Logs card is open.
 fetchLogAlerts();
 setInterval(fetchLogAlerts, LOG_ALERT_INTERVAL_MS);
+const oauthFromUrl = new URLSearchParams(window.location.search).get('oauth');
+if (oauthFromUrl === 'upmpdcli' || oauthFromUrl === 'qobuzconnect2mpd')
+    openOauthPanel(oauthFromUrl);
 startAutoRefresh('bf', BRUTEFIR_INTERVAL_MS, fetchBrutefirCpu);
 startAutoRefresh('mpd', MONITOR_INTERVAL_MS, fetchMpdInfo);
 startAutoRefresh('sndstat', SNDSTAT_INTERVAL_MS, fetchSndstat);

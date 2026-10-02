@@ -7452,6 +7452,16 @@ def _qconnect_oauth_snapshot(request_host: str) -> dict:
     urls = _oauth_candidates(state.get("output", ""), request_host)
     phase = state.get("phase", "idle")
     oauth_running = process is not None and process.poll() is None
+    config = _qconnect_oauth_config_path()
+    options = _upmpdcli_options(config) if config else {}
+    state_dir = options.get("qconnectstatedir", "")
+    token_path = options.get("qconnecttokenfile") or (
+        os.path.join(state_dir, "user_token") if state_dir else "")
+    token_present = bool(token_path)
+    try:
+        token_present = token_present and os.path.getsize(token_path) > 0
+    except OSError:
+        token_present = False
     return {
         "ok": phase != "error",
         "phase": phase,
@@ -7463,7 +7473,9 @@ def _qconnect_oauth_snapshot(request_host: str) -> dict:
         "returncode": state.get("returncode"),
         "started_at": state.get("started_at"),
         "binary": _qconnect_oauth_binary_path(),
-        "config": _qconnect_oauth_config_path(),
+        "config": config,
+        "token_path": token_path if config else "",
+        "token_present": token_present,
         "run_user": QCONNECT_OAUTH_USER,
         "qobuzconnect2mpd_running": (
             not oauth_running and _service_running(QCONNECT_SERVICE)),
@@ -7599,12 +7611,27 @@ def qconnect_oauth_start():
 @app.route("/qobuz/oauth/status")
 def qobuz_oauth_status():
     """Token state plus the two preconditions for the redirect to be caught."""
+    conf = _upmpdcli_conf_path()
+    options = _upmpdcli_options(conf) if conf else {}
+    plugin_path = os.path.join(
+        options.get("pkgdatadir") or "/usr/local/share/upmpdcli",
+        "cdplugins", "qobuz", "qobuz-app.py")
+    try:
+        plugin_running = subprocess.run(
+            ["pgrep", "-f", "/qobuz-app.py"], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=2).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        plugin_running = False
     return jsonify({
         "ok":               True,
         "upmpdcli_running": _service_running(UPMPDCLI_SERVICE),
         "script":           QOBUZ_OAUTH_SCRIPT,
         "script_present":   os.path.isfile(QOBUZ_OAUTH_SCRIPT),
-        "upmpdcli_config":  _upmpdcli_conf_path(),
+        "upmpdcli_config":  conf,
+        "plugin_path":      plugin_path,
+        "plugin_present":   os.path.isfile(plugin_path),
+        "plugin_enabled":   bool(options.get("qobuzuser")),
+        "plugin_running":   plugin_running,
         **_qobuz_token_state(),
     })
 
