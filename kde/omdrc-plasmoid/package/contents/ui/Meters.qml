@@ -155,10 +155,11 @@ Canvas {
         // sized so the arc spans the width or the needle the height; a gauge
         // narrower than its face is centred in it
         const R = Math.max(4, Math.min((w / 2 - pad) / Math.sin(rad(SPAN / 2)), (bottom - top - 1) * 1.15))
-        const needleW = Math.max(1, R * 0.012)
-        const cx = Math.round(x + w / 2)
-        const cy = Math.min(Math.floor(bottom - 1 - needleW / 2),
-                            Math.round(top + R + Math.max(0, (bottom - top - R) / 2)))
+        const needleW = Math.max(1, R * 0.012), hubR = Math.max(1.5, needleW * 1.5)
+        // on a pixel centre, so the needle's antialiased foot does not flicker
+        const cx = Math.floor(x + w / 2) + 0.5
+        const cy = Math.min(Math.floor(bottom - 1 - hubR),
+                            Math.round(top + R + Math.max(0, (bottom - top - R) / 2))) + 0.5
         const small = R < 40
 
         ctx.globalAlpha = glass
@@ -224,6 +225,9 @@ Canvas {
         ctx.moveTo(cx, cy)
         ctx.lineTo(cx + Math.cos(a) * R * 0.97, cy + Math.sin(a) * R * 0.97)
         ctx.stroke()
+        // the hub the needle turns on
+        ctx.fillStyle = textColor
+        ctx.beginPath(); ctx.arc(cx, cy, hubR, 0, 2 * Math.PI); ctx.fill()
         ctx.restore()
 
         if (h >= 24) {
