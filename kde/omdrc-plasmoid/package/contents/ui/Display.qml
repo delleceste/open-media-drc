@@ -18,6 +18,7 @@ Item {
     property bool horizontalPanel: false
     property bool verticalPanel: false
     property bool compactSearchOpen: false
+    property bool controlsShown: false
 
     signal activated()
 
@@ -382,7 +383,18 @@ Item {
         }
     }
 
-    HoverHandler { id: hover }
+    Timer {
+        id: hoverClose
+        interval: 600
+        onTriggered: if (!hover.hovered && !controlsHover.hovered) face.controlsShown = false
+    }
+    HoverHandler {
+        id: hover
+        onHoveredChanged: {
+            if (hovered) { face.controlsShown = true; hoverClose.stop() }
+            else hoverClose.restart()
+        }
+    }
 
     Item {
         id: coverHoverZone
@@ -401,9 +413,16 @@ Item {
         y: coverHoverZone.y
         width: face.panel ? Math.min(face.width, controls.size * 6 + 8) : coverHoverZone.width
         height: coverHoverZone.height
-        opacity: paneArea.visible && !face.editing && hover.hovered && face.app.host !== "" ? 1 : 0
+        opacity: paneArea.visible && !face.editing && face.controlsShown && face.app.host !== "" ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Kirigami.Units.shortDuration } }
+        HoverHandler {
+            id: controlsHover
+            onHoveredChanged: {
+                if (hovered) { face.controlsShown = true; hoverClose.stop() }
+                else if (!hover.hovered) hoverClose.restart()
+            }
+        }
 
         readonly property real size: face.panel ? Math.max(24, Math.min(30, height * 0.74))
             : Math.max(12, Math.min(height * 0.24, width / 5.5, Kirigami.Units.iconSizes.medium))
