@@ -1007,7 +1007,9 @@ space and hides after a few seconds; a tap on any control (buttons, fields,
 chips, sliders, the cover) never pulls it in. It carries the page's own
 switches (on Now: level display, cover art, DR, balance), the search icon
 (when the Qobuz search is enabled), the rotate button, keep-awake and
-fullscreen.
+fullscreen. `/k/?embed=<page>` (for example `?embed=qobuz`) shows one page
+alone, for embedding it elsewhere (such as the Plasma widget): no top bar,
+tab bar, Qobuz player strip or screen saver.
 
 **Now, in landscape and upright.** In landscape Now shows needles (or bars,
 or bars plus spectrum) beside DR and balance. Upright, the cover takes a
@@ -1427,23 +1429,57 @@ network, and the stream is reopened to drop it.
 
 **OMDRC Monitor** (`kde/omdrc-plasmoid`) is a KDE Plasma 6 widget showing what
 the box plays: level meters (LED-style bars or VU needles), the spectrum
-analyzer and the cover, in any combination. Pointing at it brings up previous,
-play/pause and next. Like the kiosk it is only a client of the panel: it
-reads `/spectrum/stream` (levels, and bands with the spectrum), polls
-`/k/api/player`, sends `/k/api/transport` and shows `/qconnect/art`.
+analyzer, live DR and channel balance meters, and the cover, in any
+combination. Pointing at the cover brings up previous, play/pause, next and
+stop, plus Qobuz search and the play queue; on the desktop and in the popup a
+ring around the cover seeks, dragged clockwise from twelve o'clock. Every
+icon-only button has a tooltip. Like the kiosk it is only a client of the
+panel: it reads `/spectrum/stream` (levels, bands, DR), polls `/k/api/player`
+and `/k/api/queue`, sends `/k/api/transport`, shows `/qconnect/art` and uses
+the `/qobuz/...` endpoints of section \ref{sec:qobuz-search}.
 
 * **In a panel** it is a strip as thick as the panel, as long as the chosen
-  panes need (stacked in a vertical panel). The tooltip names the track; a
-  click opens a larger view with title and artist.
+  panes need (stacked in a vertical panel). Hovering shows the transport,
+  search and queue buttons beside the cover; a click opens a larger view
+  with title and artist.
+* **The panel tooltip**, while a track is loaded, shows the cover on the left
+  and, on the right, the track, artist, album, label, year, format, genre,
+  composer, performers, awards and as much of Qobuz's album description as
+  fits. A tooltip takes no input and cannot scroll, so the description is cut
+  where the space ends. The album details come from `/qobuz/track/<id>` (the
+  track id is in the player's file URL) and `/qobuz/album/<id>`, fetched once
+  per track; a track not from Qobuz shows what the player reports. While the
+  pointer is on the panel buttons or the quick search, the big tooltip stays
+  away so the buttons' own tooltips show.
 * **On the desktop** it shows the large view directly, panes side by side
   when wide and stacked when tall. The cover can sit beside the meters or
-  behind them, the meters then translucent.
-* **Settings**: the box's address and port, meter style, spectrum, cover,
-  track line, the length in a panel (automatic, or fixed in pixels: Plasma
-  offers no resize handle there), and the background (Plasma's, none, or a
-  custom color with alpha). Meter and spectrum timing can follow the box's
-  live estimate or use a per-plasmoid millisecond override, with a 1 ms slider
-  and an editable number.
+  behind them, the meters then translucent. With the cover pane, meters and
+  spectrum all on, the desktop and popup use a grid: cover and track next to
+  the meters, the spectrum across the full width below, DR (wider) and
+  balance in a strip underneath.
+* **Pane order**: Control-click a pane to move it one place on, or
+  Control-drag it to a chosen place; the order is saved per widget.
+* **When playback stops** for a couple of seconds, the desktop view opens
+  Qobuz search and the panel widget turns into a quick-search field with
+  Search, AI, Filters and Back buttons. A Plasma panel normally takes no
+  keyboard focus; the widget asks Plasma for it (`AcceptingInputStatus`) only
+  when the field is clicked, never when it opens by itself, and gives it back
+  on Escape, on leaving the field or when the search closes. A search opens
+  the results in the popup.
+* **Qobuz and queue pages** in the popup: recently played, search results,
+  discover by genre and awarded albums, with release-date, order, label-group,
+  awarded and Hi-Res filters and the AI recommender. An album card plays or
+  appends the album and lists its tracks; playback goes through upmpdcli on
+  the box, as from the kiosk. The queue page lists, removes and clears.
+* **Settings**: the box's address and port, meter style and channel layout,
+  spectrum (beside or below the meters), DR and balance meters, cover, track
+  line, the length in a panel (automatic, or fixed in pixels: Plasma offers no
+  resize handle there), the panel edge margin and the panel outer margins
+  (pixels kept clear from the panel's top/left and bottom/right edges,
+  0 and 2 by default), and the background (Plasma's, none, theme color with
+  transparency, or a custom color). Meter and spectrum timing can follow the
+  box's live estimate or use a per-plasmoid millisecond override, with a 1 ms
+  slider and an editable number.
 * **Timing estimate and manual tuning**: Auto reads the effective remaining
   margin from `/spectrum/settings` and shows both that local wait estimate and
   the box's frame hold-back in the configuration page. It does not estimate

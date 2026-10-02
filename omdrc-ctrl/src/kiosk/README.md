@@ -25,6 +25,11 @@ down.
 | **Logs** | Recognised alerts and a tail of every configured log |
 | **Config** | This screen's own settings, and the desktop pages opened inside the kiosk (configuration, bit-perfect, filter response, manual) |
 
+`/k/?embed=<page>` (for example `?embed=qobuz`) shows that page alone, for
+embedding it in something else such as the KDE Plasma widget: no top bar, tab
+bar, Qobuz player strip or screen saver.  A page the box does not offer says
+so instead.
+
 ## Light and dark
 
 Config -> **Theme**: *Automatic* (the default) follows the device's own light or

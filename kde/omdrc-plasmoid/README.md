@@ -1,14 +1,27 @@
 # OMDRC Monitor: KDE Plasma widget
 
 A Plasma 6 widget showing what an Open Media DRC box is playing: level meters
-(LED-style bars or analogue needles), the spectrum analyzer, and the cover, in
-any combination. Hover the cover for playback, stop, search and queue controls.
+(LED-style bars or analogue needles), the spectrum analyzer, live DR and
+channel balance meters, and the cover, in any combination. Hover the cover for
+playback, stop, search and queue controls; on the desktop and in the popup a
+ring around the cover seeks (drag it clockwise from twelve o'clock).  It also
+browses Qobuz and the play queue, both played through upmpdcli on the box.
+Every icon-only button has a tooltip.
 
 It works both ways Plasma offers:
 
 * **In a panel** it is a strip as thick as the panel, its length following the
-  panes you chose (in a vertical panel they stack). The tooltip previews the
-  cover; a click opens a larger view in a popup, with title and artist.
+  panes you chose (in a vertical panel they stack). Hovering shows the
+  transport, search and queue buttons beside the cover. A click opens a larger
+  view in a popup, with title and artist.
+* **The panel tooltip**, while a track is loaded, shows the cover on the left
+  and on the right the track, artist, album, label, year, format, genre,
+  composer, performers, awards and as much of Qobuz's album description as
+  fits (a tooltip cannot scroll, so the description is cut where the space
+  ends).  The album details come from `/qobuz/track/<id>` and
+  `/qobuz/album/<id>`, fetched once per track; a track not from Qobuz shows
+  what the player reports.  The big tooltip stays away while the pointer is on
+  the panel buttons or the quick search, so their own tooltips show.
 * **On the desktop** it shows the large view directly, resizable.  Wide, the
   panes sit side by side; tall, they stack.  With the cover pane, meters and
   spectrum all on, the desktop and popup use a grid instead: cover and track
@@ -20,8 +33,19 @@ chosen position. The order is saved for each widget. In Plasma panel edit mode,
 drag the whole widget to move it among the panel's other widgets.
 
 After playback stops for a couple of seconds, the desktop view opens Qobuz
-search. The panel shows a focused quick-search field; its plain search opens
-the full results popup when the response arrives.
+search, and the panel widget turns into a quick-search field with Search, AI,
+Filters and Back buttons.  A Plasma panel normally takes no keyboard focus, so
+the widget asks Plasma for it (`AcceptingInputStatus`) only when the field is
+clicked, never when it opens by itself; Escape, leaving the field or closing
+the search gives the focus back.  A plain search opens the full results popup
+when the response arrives.
+
+The popup's **Qobuz** page has the kiosk's catalog tools: recently played,
+search results, discover by genre and awarded albums, filters for release
+date, order, label groups, awarded and Hi-Res, and the AI recommender (with
+its provider settings).  Each album card plays or appends the album and opens
+its track list.  The **Queue** page lists the play queue, removes tracks and
+clears it.
 
 Like the kiosk and the Android app it is only a client of `omdrcctrl`; nothing
 runs on the desktop besides the widget.
@@ -30,9 +54,12 @@ runs on the desktop besides the widget.
 |---|---|
 | levels (and bands) | `/spectrum/stream?mode=vu` or `mode=music`, server-sent events |
 | spectrum floor and delay estimate | `/spectrum/settings` |
+| live DR | `/spectrum/stream?mode=dr` |
 | state and track, polled | `/k/api/player`, `/cdin/status` |
-| prev / play / pause / next | `/k/api/transport` |
+| prev / play / pause / next / stop / seek | `/k/api/transport` |
+| play queue | `/k/api/queue` |
 | cover | `/qconnect/art` |
+| Qobuz browser, album details, AI | `/qobuz/...` (see `omdrc-ctrl/README.md`) |
 
 ## Install
 
@@ -68,7 +95,9 @@ To remove it: `kpackagetool6 --type Plasma/Applet --remove org.omdrc.monitor`.
 |---|---|
 | Box, Port | where `omdrcctrl` listens |
 | Meters | level bars, VU needles, or none |
-| Spectrum | the band analyzer beside the meters |
+| Channel layout | meter channels automatic, side by side, or stacked |
+| Spectrum | the band analyzer beside the meters, or below them in the desktop view and popup |
+| DR, balance | the live DR meter with its history, and the channel balance meter (desktop and popup put them in a strip at the bottom) |
 | Meter and spectrum timing | follow the box's live remaining-delay estimate, or set a per-widget delay from 0 to 3000 ms with a 1 ms slider and editable number |
 | Cover | hidden, beside the meters, or behind them (the meters go translucent) |
 | Length in panel | automatic (follows the panes) or a fixed length in pixels: a panel has no resize handle, so this is how to make it longer or shorter |
@@ -117,7 +146,14 @@ same as the kiosk's own buttons.
 package/metadata.json              the applet's identity (org.omdrc.monitor)
 package/contents/config/main.xml   settings and their defaults
 package/contents/ui/main.qml       data: polling, the stream, transport
-package/contents/ui/Display.qml    layout of the panes, track, hover controls
+package/contents/ui/Display.qml    layout of the panes, track, hover controls, quick search
+package/contents/ui/AlbumTip.qml   the panel tooltip: cover and album details
+package/contents/ui/QobuzView.qml  the Qobuz browser page
+package/contents/ui/AlbumCard.qml  one album in it: play, append, tracks
+package/contents/ui/QueueView.qml  the play queue page
+package/contents/ui/SeekRing.qml   seek ring around the cover
+package/contents/ui/DrView.qml     live DR meter and history
+package/contents/ui/BalanceView.qml channel balance meter
 package/contents/ui/Meters.qml     bars and needles (canvas)
 package/contents/ui/Spectrum.qml   band spectrum (canvas)
 package/contents/ui/SseStream.qml  server-sent events over XMLHttpRequest
