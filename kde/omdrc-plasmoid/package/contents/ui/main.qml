@@ -47,6 +47,11 @@ PlasmoidItem {
     property var simpleSearchAnswer: null
     property string qobuzOpenOption: ""
     property bool compactSearchRequested: false
+    property bool compactSearchTyping: false
+    onCompactSearchRequestedChanged: if (!compactSearchRequested) compactSearchTyping = false
+    // Plasma's panel takes keyboard focus while an applet accepts input.
+    Plasmoid.status: compactSearchTyping ? PlasmaCore.Types.AcceptingInputStatus
+                                         : PlasmaCore.Types.ActiveStatus
     property bool stoppedSearchReady: false
     property bool autoOpenedSearch: false
     property string pollError: ""
@@ -153,10 +158,12 @@ PlasmoidItem {
             horizontalPanel: compactRoot.horizontalPanel
             verticalPanel: compactRoot.verticalPanel
             readonly property real bleed: 7
+            // a hairline kept clear along the panel's bottom edge
+            readonly property real bottomGap: 2
             x: verticalPanel ? -bleed : 0
             y: horizontalPanel ? -bleed : 0
             width: compactRoot.width + (verticalPanel ? 2 * bleed : 0)
-            height: compactRoot.height + (horizontalPanel ? 2 * bleed : 0)
+            height: compactRoot.height + (horizontalPanel ? 2 * bleed - bottomGap : 0)
             onActivated: root.expanded = !root.expanded
         }
     }
