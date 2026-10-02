@@ -57,10 +57,11 @@ server), the WebView and its "Web page not available" page are hidden behind a
 native screen in the kiosk's colours: it names the address and the reason
 (refused, unknown host, timed out, ...) and retries by itself after 5, 10, 20 and
 then every 30 s while the app is in the foreground, so a box that is still booting
-comes back without a tap. The address is an editable field (`192.168.1.50`,
-`box.lan:9090` or a pasted `http://…/k/` URL all work) with **Connect**: after
-moving to another network the box usually has another IP, and this saves the new
-one, loads it and re-points the live status service. The app remembers the last
+comes back without a tap. The host and numeric port are separate fields with
+**Connect**: after moving to another network the box usually has another IP,
+while the port typically stays the same. Connecting saves the new address, loads
+it and re-points the live status service. **Network settings** opens Android's
+Wi-Fi settings. The app remembers the last
 selected or successfully reached address for each network and reconnects with it when the phone changes networks, including changes
 while the app was in the background. Wi-Fi names identify networks when Android
 provides them; otherwise the gateway and subnet identify them (networks using the

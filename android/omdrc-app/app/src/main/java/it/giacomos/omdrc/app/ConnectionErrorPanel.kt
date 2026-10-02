@@ -3,9 +3,11 @@ package it.giacomos.omdrc.app
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -16,7 +18,7 @@ import android.widget.TextView
 /**
  * The screen shown when the page cannot be loaded, in place of the WebView's own
  * "Web page not available": a card in the kiosk's palette saying which address
- * failed and why, the address in an editable field with "Connect" (after moving to
+ * failed and why, editable host and port fields with "Connect" (after moving to
  * another network the box usually has another IP), and "Retry now".  While it is up
  * it retries by itself after 5, 10, 20 and then every 30 s (a box that is still
  * booting comes back without a tap) - except while the address is being edited -
@@ -36,6 +38,7 @@ class ConnectionErrorPanel(
     private val hint: TextView = root.findViewById(R.id.conn_error_hint)
     private val status: TextView = root.findViewById(R.id.conn_error_status)
     private val field: EditText = root.findViewById(R.id.conn_error_host)
+    private val portField: EditText = root.findViewById(R.id.conn_error_port)
     private val handler = Handler(Looper.getMainLooper())
 
     private val pulse = ObjectAnimator.ofFloat(root.findViewById<View>(R.id.conn_error_led), View.ALPHA, 1f, 0.25f).apply {
@@ -61,19 +64,32 @@ class ConnectionErrorPanel(
     init {
         root.findViewById<View>(R.id.conn_error_retry).setOnClickListener { endEditing(); retryNow() }
         root.findViewById<View>(R.id.conn_error_connect).setOnClickListener { connect() }
-        field.setOnEditorActionListener { _, action, _ ->
+        root.findViewById<View>(R.id.conn_error_network_settings).setOnClickListener {
+            root.context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+        }
+        portField.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_GO || action == EditorInfo.IME_ACTION_DONE) { connect(); true } else false
         }
         // No automatic retry under the user's fingers: it would only fail again at the old address.
-        field.setOnFocusChangeListener { _, focused ->
+        val onFocusChanged = View.OnFocusChangeListener { _, focused ->
             if (focused) { handler.removeCallbacks(tick); status.setText(R.string.conn_error_editing) }
-            else if (isShown && !connecting && !paused) scheduleRetry(again = true)
+            else root.post {
+                // Wait until focus has moved, so switching between the two fields
+                // does not resume automatic retries mid-edit.
+                if (isShown && !connecting && !paused && !field.hasFocus() && !portField.hasFocus())
+                    scheduleRetry(again = true)
+            }
         }
+        field.onFocusChangeListener = onFocusChanged
+        portField.onFocusChangeListener = onFocusChanged
     }
 
     /** The keyboard came up or went: keep the field in view above it. */
     fun revealField() {
-        if (field.hasFocus()) field.post { field.requestRectangleOnScreen(Rect(0, 0, field.width, field.height), false) }
+        val active = if (field.hasFocus()) field else portField.takeIf { it.hasFocus() }
+        active?.let { focused ->
+            focused.post { focused.requestRectangleOnScreen(Rect(0, 0, focused.width, focused.height), false) }
+        }
     }
 
     /** A load of [address] (host:port) failed; [description] is WebView's own text,
@@ -90,7 +106,11 @@ class ConnectionErrorPanel(
         }
         detail.text = if (why.isEmpty()) address else "$address · $why"
         hint.setText(advice)
-        if (!field.hasFocus()) field.setText(address)      // never under the user's typing
+        if (!field.hasFocus() && !portField.hasFocus()) {
+            val parsed = parseAddress(address, defaultPort)
+            field.setText(parsed?.first ?: address)
+            portField.setText((parsed?.second ?: defaultPort).toString())
+        }
         connecting = false
         if (!isShown) {
             root.animate().cancel()
@@ -137,18 +157,23 @@ class ConnectionErrorPanel(
     }
 
     private fun connect() {
-        val parsed = parseAddress(field.text.toString(), defaultPort)
-        if (parsed == null) { status.setText(R.string.conn_error_bad_address); return }
+        val host = field.text.toString().trim()
+        val port = portField.text.toString().toIntOrNull()
+        if (host.isEmpty() || host.any { it.isWhitespace() || it == ':' || it == '/' } || port == null || port !in 1..65535) {
+            status.setText(R.string.conn_error_bad_address)
+            return
+        }
         endEditing()
         attempt = 0                                  // a new address starts the back-off over
-        onConnect(parsed.first, parsed.second)
+        onConnect(host, port)
     }
 
     private fun endEditing() {
-        if (!field.hasFocus()) return
+        if (!field.hasFocus() && !portField.hasFocus()) return
         (root.context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-            .hideSoftInputFromWindow(field.windowToken, 0)
+            .hideSoftInputFromWindow(root.windowToken, 0)
         field.clearFocus()
+        portField.clearFocus()
     }
 
     private fun retryNow() {
@@ -159,7 +184,7 @@ class ConnectionErrorPanel(
     /** [again]: restart the current step's countdown (after editing) rather than the next one. */
     private fun scheduleRetry(again: Boolean = false) {
         handler.removeCallbacks(tick)
-        if (field.hasFocus()) { status.setText(R.string.conn_error_editing); return }
+        if (field.hasFocus() || portField.hasFocus()) { status.setText(R.string.conn_error_editing); return }
         if (again && attempt > 0) attempt--
         secondsLeft = RETRY_SECONDS[minOf(attempt, RETRY_SECONDS.size - 1)]
         attempt++

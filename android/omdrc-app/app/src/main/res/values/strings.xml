@@ -36,10 +36,12 @@
     <string name="conn_error_reason_timeout">timed out</string>
     <string name="conn_error_reason_http">HTTP %1$d</string>
     <string name="conn_error_retry">Retry now</string>
-    <string name="conn_error_address_label">SERVER ADDRESS</string>
-    <string name="conn_error_address_hint">192.168.1.50:9090</string>
+    <string name="conn_error_address_label">SERVER IP OR HOSTNAME</string>
+    <string name="conn_error_address_hint">192.168.1.50</string>
+    <string name="conn_error_port_label">PORT</string>
     <string name="conn_error_connect">Connect</string>
-    <string name="conn_error_bad_address">Enter the box\'s IP or hostname, optionally with :port</string>
+    <string name="conn_error_network_settings">Network settings</string>
+    <string name="conn_error_bad_address">Enter a server IP or hostname and a port from 1 to 65535</string>
     <string name="conn_error_editing">Automatic retry paused while you edit the address</string>
     <string name="conn_error_retrying_in">Retrying in %1$d s</string>
     <string name="conn_error_connecting">Connecting…</string>
