@@ -916,3 +916,11 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .meter-configure { font-size: 10px; padding: .15rem .35rem; line-height: 1.2; min-height: 0; }
 .timing-missing .lvl-meter { top: 2rem; }
 .timing-missing.mode-spectrum .lvl-spectrum { height: calc(58% - 1.6rem); }
+
+/* ?embed=<page>: the page alone, inside something else (the KDE Plasma widget).
+   No bars; the host has its own transport, so no player strip either. */
+html[data-embed] #topbar, html[data-embed] #tabs,
+html[data-embed] .qz-player, html[data-embed] .qz-back { display: none !important; }
+html[data-embed] body, html[data-embed] body.bar-persistent { grid-template-rows: minmax(0, 1fr); }
+html[data-embed] #pager { grid-row: 1; }
+.embed-missing { margin: auto; padding: 2rem; color: var(--muted); text-align: center; }

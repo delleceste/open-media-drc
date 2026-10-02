@@ -348,6 +348,8 @@ K.segmented = (options, current, onPick, cls = '') => K.h('div', { class: 'seg '
 K.kv = (k, v, cls = '') => K.h('div', { class: 'kv ' + cls }, K.h('span', { class: 'k' }, k), K.h('span', { class: 'v' }, v));
 
 // Jump to a page by id (used by tappable summaries).
+// ?embed=<page> (kiosk_shell.html): that page alone, no bars, no screen saver
+K.embed = document.documentElement.dataset.embed || '';
 K.goto = id => { if (K.showPage) K.showPage(id); };
 
 // ── page registry ────────────────────────────────────────────────────────────
