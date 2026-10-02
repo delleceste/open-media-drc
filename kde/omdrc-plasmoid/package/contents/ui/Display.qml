@@ -6,7 +6,7 @@ import org.kde.kirigami as Kirigami
 
 /* The widget's face: the configured panes (cover, meters, spectrum) side by
  * side or stacked, the track underneath on the desktop and in the popup, and
- * prev / play-pause / next over everything while the pointer is on it.
+ * small transport controls on the cover while the pointer is on it.
  * Used by both representations; `app` is the PlasmoidItem holding the data. */
 Item {
     id: face
@@ -16,6 +16,7 @@ Item {
     // in a panel: the thickness is fixed and the panes are laid along it
     property bool horizontalPanel: false
     property bool verticalPanel: false
+    property bool compactSearchOpen: false
 
     signal activated()
 
@@ -66,7 +67,8 @@ Item {
     // The custom background (Plasma draws its own, or none, otherwise).  Off a
     // panel the content keeps a margin from its edge, as on Plasma's own.
     readonly property bool customBackground: app.backgroundMode === "custom" || app.backgroundMode === "transparent"
-    readonly property real inset: customBackground && !panel ? Kirigami.Units.smallSpacing * 2 : 0
+    readonly property real inset: panel ? Math.max(0, Math.min(12, app.panelInset || 0))
+                                 : customBackground ? Kirigami.Units.smallSpacing * 2 : 0
 
     Rectangle {
         anchors.fill: parent
@@ -80,7 +82,7 @@ Item {
 
     Item {
         id: paneArea
-        visible: face.compact || face.app.page === "cover"
+        visible: !face.compactSearchOpen && (face.compact || face.app.page === "cover")
         anchors { left: parent.left; right: parent.right; top: parent.top; bottom: track.visible ? track.top : parent.bottom }
         anchors.leftMargin: face.inset
         anchors.rightMargin: face.inset
@@ -224,9 +226,47 @@ Item {
 
     MouseArea {
         anchors.fill: parent
-        enabled: face.compact
+        enabled: face.compact && !face.compactSearchOpen
         acceptedButtons: Qt.LeftButton
         onClicked: face.activated()
+    }
+
+    RowLayout {
+        anchors { fill: parent; margins: face.inset }
+        visible: face.compact && face.compactSearchOpen
+        spacing: 1
+        QQC2.TextField {
+            id: simpleInput
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            placeholderText: i18n("Search Qobuz")
+            text: face.app.simpleSearchQuery
+            onTextEdited: face.app.simpleSearchQuery = text
+            onAccepted: face.app.simpleSearch(text)
+        }
+        PlasmaComponents.ToolButton {
+            icon.name: "edit-find"
+            text: face.app.simpleSearchBusy ? i18n("Searching…") : i18n("Search")
+            display: QQC2.AbstractButton.IconOnly
+            enabled: !face.app.simpleSearchBusy
+            onClicked: face.app.simpleSearch(simpleInput.text)
+        }
+        PlasmaComponents.ToolButton {
+            text: i18n("AI")
+            onClicked: face.app.openQobuzOption("ai")
+        }
+        PlasmaComponents.ToolButton {
+            icon.name: "view-filter"
+            text: i18n("Filters")
+            display: QQC2.AbstractButton.IconOnly
+            onClicked: face.app.openQobuzOption("filters")
+        }
+        PlasmaComponents.ToolButton {
+            icon.name: "go-previous"
+            text: i18n("Back to cover")
+            display: QQC2.AbstractButton.IconOnly
+            onClicked: face.compactSearchOpen = false
+        }
     }
 
     ColumnLayout {
@@ -266,50 +306,73 @@ Item {
         }
     }
 
-    HoverHandler { id: hover }
+    Item {
+        id: coverHoverZone
+        x: paneArea.x
+        y: paneArea.y
+        width: face.panes.indexOf("cover") >= 0 && face.row ? face.extents[0] : paneArea.width
+        height: face.panes.indexOf("cover") >= 0 && !face.row ? face.extents[0] : paneArea.height
+        visible: paneArea.visible
+        HoverHandler { id: hover }
+    }
 
-    // prev / play-pause / next while hovered
-    Rectangle {
+    // Controls stay within the artwork. The cover and meters retain their colors.
+    Item {
         id: controls
         objectName: "controls"
-        anchors.fill: paneArea
-        color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
-                       Kirigami.Theme.backgroundColor.b, 0.55)
-        radius: Kirigami.Units.cornerRadius
+        x: coverHoverZone.x
+        y: coverHoverZone.y
+        width: coverHoverZone.width
+        height: coverHoverZone.height
         opacity: paneArea.visible && hover.hovered && face.app.host !== "" ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Kirigami.Units.shortDuration } }
 
-        readonly property real size: Math.max(12, Math.min(height * 0.85, width / 3.3,
-                                                          Kirigami.Units.iconSizes.huge))
+        readonly property real size: Math.max(12, Math.min(height * 0.24, width / 5.5,
+                                                          Kirigami.Units.iconSizes.medium))
         SeekRing {
             app: face.app
-            visible: face.app.seekable && face.panes.indexOf("cover") >= 0
-            readonly property real side: Math.min(face.extents[0] || 0, face.row ? controls.height : controls.width)
+            visible: !face.compact && face.app.seekable && face.panes.indexOf("cover") >= 0
+            readonly property real side: Math.min(controls.width, controls.height)
             width: side
             height: side
-            x: face.row ? (face.extents[0] - width) / 2 : (controls.width - width) / 2
-            y: face.row ? (controls.height - height) / 2 : (face.extents[0] - height) / 2
+            x: (controls.width - width) / 2
+            y: (controls.height - height) / 2
         }
         Row {
-            anchors { top: parent.top; right: parent.right; margins: 2 }
+            anchors { top: parent.top; right: parent.right; margins: 1 }
             spacing: 2
             PlasmaComponents.ToolButton {
                 icon.name: "edit-find"
                 text: i18n("Search Qobuz")
                 display: QQC2.AbstractButton.IconOnly
+                width: controls.size
+                height: controls.size
+                padding: 1
                 onClicked: face.app.openPage("qobuz")
             }
             PlasmaComponents.ToolButton {
                 icon.name: "view-list-details"
                 text: i18n("Play queue")
                 display: QQC2.AbstractButton.IconOnly
+                width: controls.size
+                height: controls.size
+                padding: 1
                 onClicked: face.app.openPage("queue")
             }
         }
-        Row {
-            anchors.centerIn: parent
-            spacing: Math.min(Kirigami.Units.largeSpacing, controls.size * 0.15)
+        Rectangle {
+            id: transportBox
+            anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 1 }
+            width: transportButtons.width + 4
+            height: transportButtons.height + 2
+            radius: height / 3
+            color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
+                           Kirigami.Theme.backgroundColor.b, 0.72)
+            Row {
+                id: transportButtons
+                anchors.centerIn: parent
+                spacing: 0
             Repeater {
                 model: [
                     { action: "prev", icon: "media-skip-backward", tip: i18n("Previous") },
@@ -317,6 +380,7 @@ Item {
                       icon: face.app.playing ? "media-playback-pause" : "media-playback-start",
                       tip: face.app.playing ? i18n("Pause") : i18n("Play") },
                     { action: "next", icon: "media-skip-forward", tip: i18n("Next") },
+                    { action: "stop", icon: "media-playback-stop", tip: i18n("Stop") },
                 ]
                 delegate: PlasmaComponents.ToolButton {
                     required property var modelData
@@ -332,8 +396,17 @@ Item {
                     PlasmaComponents.ToolTip.text: modelData.tip
                     PlasmaComponents.ToolTip.visible: hovered && !face.panel
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
-                    onClicked: face.app.transport(modelData.action)
+                    onClicked: {
+                        face.app.transport(modelData.action)
+                        if (modelData.action === "stop") {
+                            if (face.compact) {
+                                face.compactSearchOpen = true
+                                Qt.callLater(() => simpleInput.forceActiveFocus())
+                            } else face.app.openPage("qobuz")
+                        }
+                    }
                 }
+            }
             }
         }
     }

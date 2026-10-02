@@ -30,6 +30,7 @@ PlasmoidItem {
     readonly property color backgroundColor: Plasmoid.configuration.backgroundColor
     readonly property int backgroundOpacity: Plasmoid.configuration.backgroundOpacity
     readonly property int panelLength: Plasmoid.configuration.panelLength   // 0: automatic
+    readonly property int panelInset: Plasmoid.configuration.panelInset
 
     readonly property string base: host === "" ? ""
         : "http://" + (host.indexOf(":") >= 0 && host[0] !== "[" ? "[" + host + "]" : host) + ":" + port
@@ -38,6 +39,12 @@ PlasmoidItem {
     property var player: ({ state: "stop", title: "", artist: "", album: "", file: "" })
     property bool reachable: false
     property string page: "cover"       // cover | queue | qobuz
+    property string artPath: ""
+    property int artRequestSerial: 0
+    property string simpleSearchQuery: ""
+    property bool simpleSearchBusy: false
+    property var simpleSearchAnswer: null
+    property string qobuzOpenOption: ""
     property string pollError: ""
     readonly property bool playing: player.state === "play"
     // A disc on the CD / S-PDIF input plays past MPD, which says "stop" meanwhile.
@@ -76,8 +83,7 @@ PlasmoidItem {
 
     readonly property bool wantsLevels: meterStyle !== "off" || showSpectrum || showDr || showBalance
     readonly property bool wantsCover: coverMode !== "off" || !wantsLevels
-    readonly property string coverUrl: !wantsCover || base === "" || (!player.file && !player.title) ? ""
-        : base + "/qconnect/art?v=" + encodeURIComponent(player.file + "|" + player.album + "|" + player.title)
+    readonly property string coverUrl: !wantsCover || base === "" || !artPath ? "" : base + artPath
 
     readonly property string problem: host === "" ? i18n("Set the box's address in the widget's settings.")
         : !reachable ? i18n("Cannot reach %1:%2 — %3", host, port, pollError)
@@ -96,6 +102,28 @@ PlasmoidItem {
     toolTipSubText: problem !== "" ? problem
         : subtitle !== "" ? subtitle + (playing ? "" : " (" + stateText() + ")")
         : stateText()
+    toolTipItem: Item {
+        visible: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
+              || Plasmoid.formFactor === PlasmaCore.Types.Vertical
+        width: 260
+        height: 300
+        Cover {
+            anchors { top: parent.top; horizontalCenter: parent.horizontalCenter }
+            width: 240
+            height: 240
+            source: root.coverUrl
+        }
+        Text {
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            height: 55
+            text: root.player.title + (root.subtitle ? "\n" + root.subtitle : "")
+            color: Kirigami.Theme.textColor
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+            wrapMode: Text.WordWrap
+        }
+    }
 
     switchWidth: Kirigami.Units.gridUnit * 8
     switchHeight: Kirigami.Units.gridUnit * 5
@@ -110,23 +138,25 @@ PlasmoidItem {
         verticalPanel: Plasmoid.formFactor === PlasmaCore.Types.Vertical
         // A panel offers no resize handle: the length is a setting, or
         // follows the chosen panes.  The panes share whatever length it is.
-        readonly property int length: root.panelLength > 0 ? root.panelLength
-                                      : horizontalPanel ? implicitWidth : implicitHeight
+        readonly property int length: Math.max(root.panelLength > 0 ? root.panelLength
+                                      : horizontalPanel ? implicitWidth : implicitHeight,
+                                      compactSearchOpen ? 350 : 0)
         Layout.minimumWidth: horizontalPanel ? length : -1
         Layout.preferredWidth: horizontalPanel ? length : -1
         Layout.maximumWidth: horizontalPanel ? length : -1
         Layout.minimumHeight: verticalPanel ? length : -1
         Layout.preferredHeight: verticalPanel ? length : -1
         Layout.maximumHeight: verticalPanel ? length : -1
+        Layout.fillHeight: horizontalPanel
         onActivated: root.expanded = !root.expanded
     }
 
     fullRepresentation: Display {
         app: root
-        Layout.minimumWidth: Kirigami.Units.gridUnit * (root.page === "cover" ? 6 : 18)
-        Layout.minimumHeight: Kirigami.Units.gridUnit * (root.page === "cover" ? 3 : 14)
-        Layout.preferredWidth: Kirigami.Units.gridUnit * (root.page === "cover" ? 22 : 32)
-        Layout.preferredHeight: Kirigami.Units.gridUnit * (root.page === "cover" ? 10 : 32)
+        Layout.minimumWidth: Kirigami.Units.gridUnit * (root.page === "cover" ? 6 : 26)
+        Layout.minimumHeight: Kirigami.Units.gridUnit * (root.page === "cover" ? 3 : 24)
+        Layout.preferredWidth: Kirigami.Units.gridUnit * (root.page === "cover" ? 22 : 38)
+        Layout.preferredHeight: Kirigami.Units.gridUnit * (root.page === "cover" ? 10 : 40)
     }
 
     function silentVu() {
@@ -162,9 +192,12 @@ PlasmoidItem {
             if (asked !== base) return
             if (status === 200 && data && data.ok) {
                 const was = reachable
+                const oldFile = player.file
                 reachable = true
                 pollError = ""
                 player = data
+                if (!was || oldFile !== data.file) artPath = ""
+                pollArt()
                 if (!was) readSettings()
                 if (playing || !wantsLevels) cdinActive = false
                 else pollCdin()
@@ -179,6 +212,14 @@ PlasmoidItem {
     function pollCdin() {
         request("GET", "/cdin/status", null, function (status, data) {
             cdinActive = status === 200 && !!data && data.active === true
+        })
+    }
+
+    function pollArt() {
+        const asked = base, serial = ++artRequestSerial
+        request("GET", "/qconnect/status", null, function (status, data) {
+            if (asked !== base || serial !== artRequestSerial || status !== 200 || !data || !data.ok) return
+            artPath = data.art || ""
         })
     }
 
@@ -295,7 +336,7 @@ PlasmoidItem {
     function transport(action) {
         if (action === "toggle") action = playing ? "pause" : "play"
         // Show the change at once; the next poll confirms or corrects it.
-        if (action === "play" || action === "pause")
+        if (action === "play" || action === "pause" || action === "stop")
             player = Object.assign({}, player, { state: action })
         request("POST", "/k/api/transport", { action: action }, function (status, data) {
             if (!(data && data.ok))
@@ -312,8 +353,32 @@ PlasmoidItem {
     }
     function openPage(name) { page = name; expanded = true }
 
+    function openQobuzOption(option) {
+        qobuzOpenOption = option
+        openPage("qobuz")
+    }
+
+    function simpleSearch(text) {
+        const query = text.trim()
+        if (!query || simpleSearchBusy || !base) return
+        simpleSearchQuery = query
+        simpleSearchBusy = true
+        const asked = base
+        request("GET", "/qobuz/search?q=" + encodeURIComponent(query) + "&sort=relevance",
+                null, function (status, data) {
+            if (asked !== base) return
+            simpleSearchBusy = false
+            simpleSearchAnswer = { query: query, data: data && data.ok ? data : null,
+                                   error: data && data.error ? data.error : i18n("Search failed") }
+            qobuzOpenOption = ""
+            openPage("qobuz")
+        }, 120000)
+    }
+
     onBaseChanged: {
         reachable = false
+        ++artRequestSerial
+        artPath = ""
         player = { state: "stop", title: "", artist: "", album: "", file: "" }
         poll()
     }

@@ -41,6 +41,7 @@ Item {
     property string message: ""
     property var xhr: null
     property int serial: 0
+    property var appliedSimpleAnswer: null
     readonly property bool usable: status.enabled && status.renderer && status.token
     readonly property var shown: tab === "results" ? results : tab === "recent" ? recent
                                   : tab === "discover" ? discover : awarded
@@ -80,6 +81,7 @@ Item {
                 view.aiSettings = data
                 view.aiProvider = data.provider || "claude_account"
                 view.aiModel = data.model || ""
+                view.applyRequestedView()
             }
         })
     }
@@ -143,6 +145,32 @@ Item {
         error = ""; message = ""
         loadTab()
     }
+    function applyRequestedView() {
+        if (!visible) return
+        if (app.simpleSearchAnswer && appliedSimpleAnswer !== app.simpleSearchAnswer) {
+            const answer = app.simpleSearchAnswer
+            appliedSimpleAnswer = answer
+            query = answer.query
+            aiMode = false
+            selectedLabels = []
+            dateMode = "any"
+            sort = "relevance"
+            awardedOnly = false
+            hiResOnly = false
+            tab = "results"
+            results = answer.data ? answer.data.results || [] : []
+            more = answer.data ? !!answer.data.more : false
+            nextScan = answer.data ? answer.data.next_scan || 0 : 0
+            if (answer.data) notice(i18n("%1 albums", answer.data.count || results.length))
+            else fail(null, answer.error)
+        }
+        if (app.qobuzOpenOption === "filters") filtersOpen = true
+        else if (app.qobuzOpenOption === "ai") {
+            if (!Object.prototype.hasOwnProperty.call(aiSettings, "configured")) return
+            if (!aiMode) toggleAI()
+        }
+        app.qobuzOpenOption = ""
+    }
     function saveAI() {
         app.request("POST", "/qobuz/ai/settings",
                     { provider: aiProvider, model: aiModel.trim(), key: aiKey.trim() },
@@ -153,7 +181,12 @@ Item {
         }, 15000, { "X-Qobuz-AI": "1" })
     }
 
-    onVisibleChanged: if (visible) initialize()
+    onVisibleChanged: if (visible) { initialize(); applyRequestedView() }
+    Connections {
+        target: view.app
+        function onSimpleSearchAnswerChanged() { view.applyRequestedView() }
+        function onQobuzOpenOptionChanged() { view.applyRequestedView() }
+    }
 
     ColumnLayout {
         anchors.fill: parent

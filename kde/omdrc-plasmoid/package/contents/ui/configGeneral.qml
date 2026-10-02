@@ -23,6 +23,7 @@ KCM.SimpleKCM {
     property string cfg_backgroundColor
     property int cfg_backgroundOpacity
     property int cfg_panelLength
+    property alias cfg_panelInset: panelInsetField.value
 
     readonly property var meterStyles: [
         { value: "bars", text: i18n("Level bars") },
@@ -231,6 +232,14 @@ KCM.SimpleKCM {
             id: titleBox
             Kirigami.FormData.label: i18n("Track:")
             text: i18n("Show title and artist on the desktop and in the popup")
+        }
+        QQC2.SpinBox {
+            id: panelInsetField
+            Kirigami.FormData.label: i18n("Panel edge margin:")
+            from: 0
+            to: 12
+            textFromValue: (value) => i18n("%1 px", value)
+            valueFromText: (text) => parseInt(text) || 0
         }
 
         RowLayout {

@@ -35,6 +35,7 @@
     <entry name="showTitle" type="Bool"><default>true</default></entry>
     <!-- length along a panel in pixels; 0: follow the panes -->
     <entry name="panelLength" type="Int"><default>0</default></entry>
+    <entry name="panelInset" type="Int"><default>0</default></entry>
     <!-- "default" (Plasma's) | "none" | "custom" (backgroundColor) -->
     <entry name="backgroundMode" type="String"><default>default</default></entry>
     <!-- #AARRGGBB: the alpha is kept -->
