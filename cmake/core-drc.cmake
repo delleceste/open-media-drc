@@ -277,7 +277,7 @@ foreach(_geo ${_geos})
         set(_default_note "")
     endif()
     string(APPEND OMDRC_INSTALL_CONFIGURATION_MESSAGES
-           "message(STATUS \"  ${_geo}${_default_note}\")\n")
+           "message(\"  ${_geo}${_default_note}\")\n")
     foreach(_selector ${_ordered_selectors})
         string(MD5 _selector_key "${_geo}:${_selector}")
         set(_rates_var "_omdrc_rates_${_selector_key}")
@@ -315,7 +315,7 @@ foreach(_geo ${_geos})
             set(_trust "unverified legacy selector")
         endif()
         string(APPEND OMDRC_INSTALL_CONFIGURATION_MESSAGES
-               "message(STATUS \"    ${_selector} [${_trust}]: ${_rates_text} Hz\")\n")
+               "message(\"    ${_selector} [${_trust}]: ${_rates_text} Hz\")\n")
     endforeach()
 
     # Copy the identity fields users see at the end of new_filter_design.py into
@@ -348,22 +348,22 @@ foreach(_geo ${_geos})
         endif()
         if(_runtime_selector IN_LIST _geo_selectors)
             string(APPEND OMDRC_INSTALL_PROVENANCE_MESSAGES
-                   "message(STATUS \"  ${_geo}/${_runtime_selector}\")\n")
+                   "message(\"  ${_geo}/${_runtime_selector}\")\n")
             if(_tag STREQUAL "")
                 string(APPEND OMDRC_INSTALL_PROVENANCE_MESSAGES
-                       "message(STATUS \"    annotated tag: (legacy bundle; none recorded)\")\n")
+                       "message(\"    annotated tag: (legacy bundle; none recorded)\")\n")
             else()
                 string(APPEND OMDRC_INSTALL_PROVENANCE_MESSAGES
-                       "message(STATUS \"    annotated tag: ${_tag}\")\n")
+                       "message(\"    annotated tag: ${_tag}\")\n")
             endif()
             string(APPEND OMDRC_INSTALL_PROVENANCE_MESSAGES
-                   "message(STATUS \"    source commit: ${_source_commit}\")\n"
-                   "message(STATUS \"    bundle ID: ${_bundle_id}\")\n"
-                   "message(STATUS \"    select: ${CMAKE_INSTALL_PREFIX}/bin/omdrc geometry ${_geo}\")\n"
-                   "message(STATUS \"            ${CMAKE_INSTALL_PREFIX}/bin/omdrc design ${_runtime_selector}\")\n")
+                   "message(\"    source commit: ${_source_commit}\")\n"
+                   "message(\"    bundle ID: ${_bundle_id}\")\n"
+                   "message(\"    select: ${CMAKE_INSTALL_PREFIX}/bin/omdrc geometry ${_geo}\")\n"
+                   "message(\"            ${CMAKE_INSTALL_PREFIX}/bin/omdrc design ${_runtime_selector}\")\n")
         endif()
     endforeach()
 endforeach()
 
 string(REPLACE ";" " " _geos_msg "${OMDRC_INSTALLED_GEOMETRIES}")
-install(CODE "message(STATUS \"core-drc: engine + filter sets [${_geos_msg}] (default ${GEOMETRY}) installed under ${CMAKE_INSTALL_PREFIX}\")")
+install(CODE "message(\"core-drc: engine + filter sets [${_geos_msg}] (default ${GEOMETRY}) installed under ${CMAKE_INSTALL_PREFIX}\")")
