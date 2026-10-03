@@ -51,9 +51,12 @@ pidfile="${upmpdcli_pidfile}"
 
 required_files="${upmpdcli_config}"
 
-# -o appends stdout+stderr to the console log, -H reopens it on SIGHUP so
-# newsyslog(8) can rotate it, -M makes it readable by omdrcctrl (default 0600).
-command_args="-f -o ${upmpdcli_logfile} -H -M 0644 -p ${upmpdcli_pidfile} -t ${name} -- ${BINDIR}/upmpdcli -c ${upmpdcli_config} ${upmpdcli_flags}"
+# -o appends stdout+stderr to the console log and -H reopens it on SIGHUP so
+# newsyslog(8) can rotate it.  daemon(8) creates that log 0600; its -M mode
+# option is missing from older base systems, where passing it fails the start
+# with "daemon: invalid option -- M", so upmpdcli_precmd pre-creates the log
+# 0644 instead and omdrcctrl's Logs panel can read it on every release.
+command_args="-f -o ${upmpdcli_logfile} -H -p ${upmpdcli_pidfile} -t ${name} -- ${BINDIR}/upmpdcli -c ${upmpdcli_config} ${upmpdcli_flags}"
 
 start_precmd="upmpdcli_precmd"
 
@@ -62,6 +65,12 @@ upmpdcli_precmd()
 	# Ensure the pidfile/cache dir exists and is owned by the run user
 	# (created as root, before rc.subr drops privileges via su).
 	/usr/bin/install -d -o "${upmpdcli_user}" -m 0755 "${upmpdcli_pidfile%/*}"
+	# Only when missing: open(2) with O_CREAT keeps an existing file's mode,
+	# and the log must survive a restart for the Logs panel to show history.
+	for f in "${upmpdcli_pidfile}" "${upmpdcli_logfile}"; do
+		[ -e "${f}" ] ||
+			/usr/bin/install -o "${upmpdcli_user}" -m 0644 /dev/null "${f}"
+	done
 }
 
 run_rc_command "$1"

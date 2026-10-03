@@ -44,7 +44,7 @@ command="/usr/sbin/daemon"
 # No `daemon -u`: rc.subr has already dropped privileges via ${name}_user, and
 # using both would run setusercontext() a second time as the already-dropped
 # user ("daemon: failed to set user environment").
-command_args="-f -M 0644 -o ${omdrcctrl_logfile} -P ${pidfile} \
+command_args="-f -o ${omdrcctrl_logfile} -P ${pidfile} \
 	%%PREFIX%%/bin/omdrcctrl --host ${omdrcctrl_addr} \
 	--port ${omdrcctrl_port} --config ${omdrcctrl_config}"
 
@@ -59,6 +59,16 @@ omdrcctrl_precmd()
 	# pidfile and state after privileges are dropped.
 	/usr/bin/install -d -o "${omdrcctrl_user}" -m 0755 "${pidfile%/*}"
 	/usr/bin/install -d -o "${omdrcctrl_user}" -m 0755 "${omdrcctrl_statedir}"
+	# daemon(8) creates the pidfile and the log 0600.  Its -M mode option is
+	# missing from older base systems, where passing it fails the start with
+	# "daemon: invalid option -- M", so pre-create them 0644 here instead:
+	# open(2) with O_CREAT keeps an existing file's mode, so a non-root status
+	# probe can read the supervisor PID and the Logs panel the console log on
+	# every release.
+	for f in "${pidfile}" "${omdrcctrl_logfile}"; do
+		[ -e "${f}" ] ||
+			/usr/bin/install -o "${omdrcctrl_user}" -m 0644 /dev/null "${f}"
+	done
 }
 
 run_rc_command "$1"

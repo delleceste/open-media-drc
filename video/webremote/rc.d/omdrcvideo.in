@@ -41,7 +41,7 @@ command="/usr/sbin/daemon"
 
 pidfile="${omdrcvideo_pidfile}"
 # The installed wrapper bakes in the python3 interpreter, app path and --config.
-command_args="-f -M 0644 -o ${omdrcvideo_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcvideo"
+command_args="-f -o ${omdrcvideo_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcvideo"
 
 start_precmd="omdrcvideo_precmd"
 
@@ -54,6 +54,15 @@ omdrcvideo_precmd()
 	# root, before rc.subr's su(1).
 	for d in "${omdrcvideo_pidfile%/*}" "${omdrcvideo_logfile%/*}"; do
 		/usr/bin/install -d -o "${omdrcvideo_user}" -m 0755 "${d}"
+	done
+	# daemon(8) creates the pidfile and the log 0600.  Its -M mode option is
+	# missing from older base systems, where passing it fails the start with
+	# "daemon: invalid option -- M", so pre-create them 0644 here instead --
+	# open(2) with O_CREAT keeps an existing file's mode -- so an ordinary
+	# status probe can read the supervisor PID on every release.
+	for f in "${omdrcvideo_pidfile}" "${omdrcvideo_logfile}"; do
+		[ -e "${f}" ] ||
+			/usr/bin/install -o "${omdrcvideo_user}" -m 0644 /dev/null "${f}"
 	done
 }
 

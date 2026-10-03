@@ -8,6 +8,17 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+def _command_args(text):
+    """The daemon(8) argument list, joined across its line continuations."""
+    tail = text.split("command_args=", 1)[1]
+    args = ""
+    for line in tail.splitlines():
+        args += line
+        if not line.endswith("\\"):
+            break
+    return args
+
+
 class FreeBSDServicePidfileTests(unittest.TestCase):
     def test_controller_templates_use_one_canonical_pidfile(self):
         for relpath in (
@@ -17,14 +28,19 @@ class FreeBSDServicePidfileTests(unittest.TestCase):
             with self.subTest(template=relpath):
                 text = (ROOT / relpath).read_text()
                 self.assertIn('/var/run/${name}/${name}.pid', text)
-                self.assertIn("-M 0644", text)
+                # daemon(8) -M is missing from older base systems, where it
+                # fails the start outright.  The pidfile/log are pre-created
+                # 0644 by start_precmd instead, which works on every release.
+                self.assertNotIn("-M", _command_args(text))
+                self.assertIn("-m 0644 /dev/null", text)
                 self.assertNotIn("${TMPDIR:-/tmp}", text)
                 self.assertNotIn("unset omdrcctrl_user", text)
 
     def test_video_template_uses_one_canonical_pidfile(self):
         text = (ROOT / "video/webremote/rc.d/omdrcvideo.in").read_text()
         self.assertIn('/var/run/${name}/${name}.pid', text)
-        self.assertIn("-M 0644", text)
+        self.assertNotIn("-M", _command_args(text))
+        self.assertIn("-m 0644 /dev/null", text)
         self.assertNotIn("${TMPDIR:-/tmp}", text)
         self.assertNotIn("unset omdrcvideo_user", text)
 

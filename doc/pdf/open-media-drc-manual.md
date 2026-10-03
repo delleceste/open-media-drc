@@ -3088,7 +3088,11 @@ Their identity does not depend on the caller: `/var/run/omdrcctrl/omdrcctrl.pid`
 supervisor, never a `TMPDIR` path. An earlier non-root branch chose
 `${TMPDIR:-/tmp}/omdrcctrl-USER.pid`, so an ordinary status probe reported the
 root-started service as stopped and `onestart` could start a second instance;
-it was removed. `daemon -M 0644` makes the PID readable for diagnostics. Use
+it was removed. `daemon(8)` creates the pidfile and the log 0600, and its `-M`
+mode option is not present in every base system -- on an older one the service
+fails to start with `daemon: invalid option -- M`. So `start_precmd` pre-creates
+both 0644 (only when missing, to keep the log's history), which leaves the PID
+readable for diagnostics on every release. Use
 `sudo service ... start|stop|restart` as the system interface; a development
 process needs a distinct port and direct launcher.
 

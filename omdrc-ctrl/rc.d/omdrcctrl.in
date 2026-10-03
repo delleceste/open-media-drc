@@ -49,9 +49,7 @@ command="/usr/sbin/daemon"
 : ${omdrcctrl_logfile:="/var/run/${name}/${name}.log"}
 
 pidfile="${omdrcctrl_pidfile}"
-# The PID is not secret.  Mode 0644 lets an ordinary status probe read the
-# canonical supervisor pidfile without granting any ability to modify it.
-command_args="-f -M 0644 -o ${omdrcctrl_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcctrl"
+command_args="-f -o ${omdrcctrl_logfile} -P ${pidfile} @CMAKE_INSTALL_PREFIX@/bin/omdrcctrl"
 
 start_precmd="omdrcctrl_precmd"
 
@@ -64,6 +62,17 @@ omdrcctrl_precmd()
 	# privileges).  At boot this runs as root, before the su(1) switch.
 	for d in "${omdrcctrl_pidfile%/*}" "${omdrcctrl_logfile%/*}"; do
 		/usr/bin/install -d -o "${omdrcctrl_user}" -m 0755 "${d}"
+	done
+	# daemon(8) creates the pidfile and the log 0600.  Its -M mode option is
+	# not in every base system: on an older one the whole service fails to
+	# start with "daemon: invalid option -- M", so do not pass it.  Pre-create
+	# both 0644 here instead -- open(2) with O_CREAT leaves an existing file's
+	# mode alone -- which works on every release: an ordinary status probe can
+	# read the supervisor PID, and the Logs panel the log, without write
+	# access to either.
+	for f in "${omdrcctrl_pidfile}" "${omdrcctrl_logfile}"; do
+		[ -e "${f}" ] ||
+			/usr/bin/install -o "${omdrcctrl_user}" -m 0644 /dev/null "${f}"
 	done
 }
 
