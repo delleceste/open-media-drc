@@ -402,6 +402,67 @@ valid_variant() {
   esac
 }
 
+# ── is the DRC chain installed on this box at all? ───────────────────────────
+# open-media-drc is useful as a plain control box: the panel, MPD, the renderers
+# and the DAC role links all work with no room correction in the path.  A box
+# that simply does not ship BruteFIR (or, on FreeBSD, virtual_oss) must
+# therefore degrade to direct DAC output instead of failing — and in particular
+# must NOT be left with virtual_oss running, since nothing would ever read the
+# loopback it creates.
+#
+# Which binary is missing is reported, not just "unavailable": the panel hides
+# the DRC controls on this answer, and an operator who expected correction needs
+# to know what to install.
+#
+# Looked for on PATH first, then in the usual install locations: rc.d runs
+# drc.sh under the audio user's login-class PATH, and "installed but not on this
+# PATH" is a configuration error to name and work around, not a box without
+# correction.  OMDRC_BRUTEFIR_PATHS/OMDRC_VIRTUAL_OSS_PATHS (settable in
+# omdrc.conf) override the sweep; empty means "PATH only".
+OMDRC_BRUTEFIR_PATHS="${OMDRC_BRUTEFIR_PATHS-/usr/local/bin/brutefir /usr/bin/brutefir}"
+OMDRC_VIRTUAL_OSS_PATHS="${OMDRC_VIRTUAL_OSS_PATHS-/usr/local/sbin/virtual_oss /usr/local/bin/virtual_oss /usr/sbin/virtual_oss}"
+
+# Resolve $1 on PATH, else in the sweep list $2.  Prints the path it found.
+find_chain_binary() {
+  local name="$1" sweep="$2" found=""
+  found=$(command -v "$name" 2>/dev/null) || found=""
+  if [ -n "$found" ]; then printf '%s' "$found"; return 0; fi
+  for found in $sweep; do
+    if [ -x "$found" ]; then
+      echo "warning: $name is not on PATH; using $found" >&2
+      printf '%s' "$found"
+      return 0
+    fi
+  done
+  return 1
+}
+
+BRUTEFIR_BIN=""
+brutefir_available() {
+  [ -n "$BRUTEFIR_BIN" ] && return 0
+  BRUTEFIR_BIN=$(find_chain_binary brutefir "$OMDRC_BRUTEFIR_PATHS") || BRUTEFIR_BIN=""
+  [ -n "$BRUTEFIR_BIN" ]
+}
+
+VIRTUAL_OSS_BIN=""
+virtual_oss_available() {
+  $IS_LINUX && return 0        # Linux uses snd-aloop; there is no virtual_oss
+  [ -n "$VIRTUAL_OSS_BIN" ] && return 0
+  VIRTUAL_OSS_BIN=$(find_chain_binary virtual_oss "$OMDRC_VIRTUAL_OSS_PATHS") ||
+    VIRTUAL_OSS_BIN=""
+  [ -n "$VIRTUAL_OSS_BIN" ]
+}
+
+# Space-separated list of the chain binaries this box is missing (empty when the
+# chain can be built).  Printed by `session` for the panel and by `status`.
+chain_missing() {
+  local missing=""
+  brutefir_available   || missing="brutefir"
+  virtual_oss_available || missing="${missing:+$missing }virtual_oss"
+  printf '%s' "$missing"
+}
+chain_available() { [ -z "$(chain_missing)" ]; }
+
 # Actual-chain probes used by reconcile.  Process existence alone is not
 # enough: a stale BruteFIR at the wrong config/rate is a mismatch that needs one
 # rebuild, while a fully matching chain must be a no-op.
@@ -1095,6 +1156,16 @@ if [ $# -eq 1 ] && [ "$1" = "session" ]; then
   printf 'rate=%s\n' "$session_rate"
   printf 'design=%s\n' "$session_design"
   printf 'label=%s\n' "$(state_label "$session_state")"
+  # The chain binaries this box lacks, for the panel: it hides the DRC controls
+  # rather than offering buttons whose only possible outcome is "unavailable".
+  session_missing="$(chain_missing)"
+  if [ -n "$session_missing" ]; then
+    printf 'drc_available=no\n'
+    printf 'missing=%s\n' "$(printf '%s' "$session_missing" | tr ' ' ',')"
+  else
+    printf 'drc_available=yes\n'
+    printf 'missing=\n'
+  fi
   exit 0
 fi
 
@@ -1391,14 +1462,24 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
     fi
   elif [ -n "$_st_voss_rate" ]; then
     printf "%-17s running  %s Hz\n"  "virtual_oss:"  "$_st_voss_rate"
-  else
+  elif virtual_oss_available; then
     printf "%-17s not running\n"     "virtual_oss:"
+  else
+    # "not running" reads as "stopped, press a rate button"; on a box that
+    # never had the binary it is the whole explanation for why DRC does nothing.
+    printf "%-17s not installed\n"   "virtual_oss:"
   fi
   if [ -n "$_st_bf_rate" ]; then
     printf "%-17s running  %s Hz%s\n" "brutefir:" \
       "$_st_bf_rate" "${_st_bf_var:+  $_st_bf_var}"
-  else
+  elif brutefir_available; then
     printf "%-17s not running\n" "brutefir:"
+  else
+    printf "%-17s not installed\n" "brutefir:"
+  fi
+  if ! chain_available; then
+    echo ""
+    echo "DRC is unavailable on this box (control box): $(chain_missing | tr ' ' ',') not installed"
   fi
   echo ""
   printf "%-17s %s\n" "MPD:"         "$_st_mpc_state"
@@ -1539,6 +1620,41 @@ if [ "$mode" != "off" ] && [ "$mode" != "stop" ]; then
   chmod 644 "$SOURCE_FILE" 2>/dev/null || true
   log_event "event=source_saved source=${source_mode} reason=transition_intent"
 
+  # A box without the chain binaries is a control box, not a broken one.  This
+  # is not an error: report it, leave MPD on the direct DAC, make sure no
+  # orphaned virtual_oss is left feeding a loopback nobody reads, and succeed —
+  # the rc.d scripts reconcile on every start, and a failure there is what used
+  # to print "omdrc_audio reconcile failed" on a box that simply has no
+  # brutefir.  Deliberately NOT recorded as power=off: installing the chain
+  # later must be enough for the next restore to bring it up.
+  #
+  # Call the probes directly (not only through the $() below) so they cache the
+  # resolved paths into BRUTEFIR_BIN / VIRTUAL_OSS_BIN in THIS shell: a command
+  # substitution runs in a subshell, and anything it caches is lost with it, so
+  # start_brutefir and the virtual_oss start would fall back to the bare name
+  # and the off-PATH resolution this block exists for would never be used.
+  brutefir_available || true
+  virtual_oss_available || true
+  chain_gap="$(chain_missing)"
+  if [ -n "$chain_gap" ]; then
+    echo "DRC unavailable on this box: $(echo "$chain_gap" | tr ' ' ',') not installed"
+    echo "running as a control box — MPD plays straight to the DAC"
+    if is_capture_source "$source_mode"; then
+      echo "note: the $(source_label "$source_mode") bridge feeds the DRC chain," \
+           "so it is unavailable too" >&2
+    fi
+    if ! $IS_LINUX && pgrep -q -x virtual_oss 2>/dev/null; then
+      echo "stopping virtual_oss: with no brutefir nothing reads its loopback"
+      stop_virtual_oss
+    fi
+    if ! mpc_select_audible "OKTO-DAC" >/dev/null 2>&1; then
+      echo "warning: could not switch MPD to the direct DAC output" >&2
+    fi
+    log_event "event=chain_unavailable missing=$(echo "$chain_gap" | tr ' ' ',')" \
+              "result=direct_dac rate=${actual_rate:-} source=${source_mode}"
+    exit 0
+  fi
+
   if ! $IS_LINUX && [ ! -e "$DAC_DEV_LINK" ]; then
     echo "required DAC role is missing: $DAC_DEV_LINK" >&2
     echo "run: service omdrc_audio roles" >&2
@@ -1603,7 +1719,7 @@ start_brutefir() {
     # 9>&- closes the inherited flock lock fd (Linux) in the daemon so it does
     # not hold the lock for its whole lifetime and deadlock the next run; a
     # no-op on FreeBSD, where fd 9 is not the lock.  See the lock block above.
-    brutefir "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
+    "${BRUTEFIR_BIN:-brutefir}" "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
     # brutefir -daemon forks and the parent returns 0 immediately, before
     # the daemon has opened the audio devices.  Poll until the daemon shows
     # up, then confirm it *stays* up — it exits a moment later if it cannot
@@ -1696,7 +1812,7 @@ prime_dac() {
   local n=$1 i w
   for i in $(seq 1 "$n"); do
     echo "priming DAC (rate change) cycle $i/$n at ${actual_rate} Hz"
-    brutefir "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
+    "${BRUTEFIR_BIN:-brutefir}" "$conf_file" -daemon 9>&- > /tmp/brutefir.out 2>&1 || true
     w=0; while [ "$w" -lt 15 ]; do bf_running && break; sleep 0.2; w=$((w + 1)); done
     sleep 0.8                       # hold the open so the 44.1k clock settles
     pkill -f "$bf_pattern" 2>/dev/null || true
@@ -1973,7 +2089,7 @@ if ! $IS_LINUX; then
   stop_virtual_oss
   echo "starting virtual_oss at ${actual_rate} Hz"
   # shellcheck disable=SC2086
-  _sudo virtual_oss -D "$VIRTUAL_OSS_PID" -r "$actual_rate" $VIRTUAL_OSS_ARGS &
+  _sudo "${VIRTUAL_OSS_BIN:-virtual_oss}" -D "$VIRTUAL_OSS_PID" -r "$actual_rate" $VIRTUAL_OSS_ARGS &
   # Wait until virtual_oss is actually up and the loopback node exists;
   # brutefir's input opens /dev/dsp.loop and fails outright if it is not
   # ready yet.  Fall back after ~5 s rather than blocking forever.

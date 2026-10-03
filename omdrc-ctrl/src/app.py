@@ -4079,12 +4079,20 @@ def index():
     if request.args.get("view") == "mini":      # small touch screen: see kiosk/
         return redirect("/k/")
     os_label = _os_label()
+    # No chain on this box: drop the DRC command group (its rate/OFF/CD-input
+    # buttons) and every DRC-only block of the page.  The CD input goes with it
+    # — the capture bridge feeds the chain, so it cannot play without it.
+    drc_missing = _drc_chain_missing()
+    drc_enabled = not drc_missing
+    groups = [g for g in _groups() if drc_enabled or g[0] != "drc"]
     return render_template(
         "index.html",
         control_title=f"Open Media DRC — {os_label}",
         os_label=os_label,
         os_name=platform.system(),
-        groups=_groups(),
+        groups=groups,
+        drc_enabled=drc_enabled,
+        drc_missing=", ".join(drc_missing),
         topcpu_threshold=TOPCPU_THRESHOLD,
         monitor_interval=MONITOR_INTERVAL,
         topcpu_interval=TOPCPU_INTERVAL,
@@ -4096,12 +4104,12 @@ def index():
         spectrum=_SPECTRUM.settings(),
         log_sources=[{"id": s["id"], "label": s["label"]} for s in LOG_SOURCES],
         log_alert_interval=LOG_ALERT_INTERVAL,
-        cdin_enabled=CDIN_ENABLED,
+        cdin_enabled=CDIN_ENABLED and drc_enabled,
         cdin_interval=CDIN_INTERVAL,
         cdin_control=CDIN_CONTROL,
         cdin_control_start=CDIN_CONTROL_START,
         cdin_log_id=_cdin_log_source_id(),
-        chain_enabled=CHAIN_ENABLED,
+        chain_enabled=CHAIN_ENABLED and drc_enabled,
         chain_interval=CHAIN_INTERVAL,
         drdb_enabled=DRDB.enabled,
         csrf=_CONFIGURATION_CSRF,
@@ -8089,6 +8097,50 @@ def spectrum_stream():
     return Response(events(), mimetype="text/event-stream", headers=headers)
 
 
+# ── is the DRC chain installed on this box at all? ───────────────────────────
+# A box that ships no BruteFIR (or, on FreeBSD, no virtual_oss) is a perfectly
+# good control box: MPD plays straight to the DAC, and drc.sh reports that and
+# succeeds instead of failing a reconcile.  The panel must not then offer rate,
+# OFF and CD-input buttons whose only possible outcome is "DRC unavailable", so
+# the whole DRC card — and the kiosk's DRC page — is hidden.
+#
+# Same rule as drc.sh's chain_missing(): PATH first, then the usual install
+# locations, because services run with a minimal PATH.  Cached briefly so a
+# `pkg install brutefir` is picked up without restarting omdrcctrl, while an
+# ordinary page load does not stat the filesystem repeatedly.
+_CHAIN_FALLBACK_PATHS = {
+    "brutefir": ("/usr/local/bin/brutefir", "/usr/bin/brutefir"),
+    "virtual_oss": ("/usr/local/sbin/virtual_oss", "/usr/local/bin/virtual_oss",
+                    "/usr/sbin/virtual_oss"),
+}
+_CHAIN_CACHE_S = 30.0
+_chain_missing_cache: tuple[float, tuple[str, ...]] = (0.0, ())
+
+
+def _binary_present(name: str) -> bool:
+    if shutil.which(name, path=_env().get("PATH")):
+        return True
+    return any(os.access(path, os.X_OK)
+               for path in _CHAIN_FALLBACK_PATHS.get(name, ()))
+
+
+def _drc_chain_missing() -> tuple[str, ...]:
+    """The chain binaries this box lacks — () when DRC can run at all."""
+    global _chain_missing_cache
+    stamp, cached = _chain_missing_cache
+    now = time.monotonic()
+    if stamp and now - stamp < _CHAIN_CACHE_S:
+        return cached
+    needed = ["brutefir"] if _IS_LINUX else ["brutefir", "virtual_oss"]
+    missing = tuple(name for name in needed if not _binary_present(name))
+    _chain_missing_cache = (now, missing)
+    return missing
+
+
+def _drc_available() -> bool:
+    return not _drc_chain_missing()
+
+
 def _drc_script() -> str | None:
     """The drc.sh entry point, derived from the configured drc_status command —
     its sibling in every supported layout:
@@ -9173,7 +9225,9 @@ def _kiosk_playback_rate() -> int:
 try:
     import kiosk
     kiosk.init_app(app, commands=lambda: COMMANDS,
-                   features=lambda: {"drdb": DRDB.enabled, "cdin": CDIN_ENABLED,
+                   features=lambda: {"drdb": DRDB.enabled,
+                                     "cdin": CDIN_ENABLED and _drc_available(),
+                                     "drc": _drc_available(),
                                      "qobuz_search": QOBUZ_SEARCH.enabled},
                    mpc=_kiosk_mpc, playback_rate=_kiosk_playback_rate,
                    mpd_port=_resolve_mpd_port)

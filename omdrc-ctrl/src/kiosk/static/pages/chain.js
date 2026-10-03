@@ -4,7 +4,10 @@
 'use strict';
 const { h } = K;
 
-const P = { id: 'chain', label: 'Chain', title: 'Audio chain', detail: false };
+const P = { id: 'chain', label: 'Chain', title: 'Audio chain', detail: false,
+    // The chain page draws virtual_oss → brutefir → DAC; without those
+    // binaries there is no chain to draw (see features.drc).
+    optional: () => K.state.features.drc !== false };
 
 P.mount = el => {
     P.el = el;

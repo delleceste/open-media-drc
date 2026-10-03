@@ -8,7 +8,11 @@
 const { h } = K;
 const PRESET_LABEL = { drc_off: 'OFF', drc_192000: '192', drc_96000: '96', drc_88200: '88.2', drc_48000: '48', drc_44100: '44.1', drc_cdin: 'CD in' };
 
-const P = { id: 'drc', label: 'DRC', title: 'Room correction', geo: null, design: null, status: null, busy: false, attTimer: null, attDb: null };
+const P = { id: 'drc', label: 'DRC', title: 'Room correction',
+    // No chain installed (no brutefir, or no virtual_oss on FreeBSD): there is
+    // nothing here to show or change, so the page leaves the pager and the tab
+    // bar — same rule as the desktop panel's hidden DRC card.
+    optional: () => K.state.features.drc !== false, geo: null, design: null, status: null, busy: false, attTimer: null, attDb: null };
 
 P.mount = el => {
     P.el = el;

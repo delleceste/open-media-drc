@@ -504,7 +504,8 @@ async function boot() {
     });
     K.markReady();
 
-    K.drcState.start();
+    // A control box with no chain installed has no DRC state to poll for.
+    if (K.state.features.drc !== false) K.drcState.start();
     paintClock(); setInterval(paintClock, 10000);
     pollAlerts(); setInterval(() => { if (!document.hidden) pollAlerts(); }, 20000);
     $('#top-full').addEventListener('click', K.toggleFullscreen);

@@ -1755,6 +1755,16 @@
 {% for group_name, group_label, cmds in groups if group_name == 'drc' %}
 {{ render_group(group_name, group_label, cmds) }}
 {% endfor %}
+{% if not drc_enabled %}
+<!-- No chain binaries on this box: the DRC group is not rendered at all (app.py
+     drops it), because every button in it could only answer "unavailable".
+     This says why the card is missing, which is otherwise a mystery. -->
+<div class="card">
+    <div class="card-title"><span>Room correction</span></div>
+    <p style="color:var(--muted);margin:0">Not available on this box: {{ drc_missing }} {{ 'is' if ',' not in drc_missing else 'are' }} not installed.
+       MPD plays straight to the DAC; everything else on this panel works as usual.</p>
+</div>
+{% endif %}
 
 <!-- Level meters: L/R, independent of the Spectrum tab. The card appears
      only while requested; its control remains available in the Listen view. -->
@@ -2121,6 +2131,7 @@
 {% endfor %}
 
 <!-- Brutefir CPU panel -->
+{% if drc_enabled %}
 <div class="card" id="bf-card">
     <div class="card-title title-row">
         <span class="collapsible-title" onclick="toggleCard('bf')"><span class="card-chevron" id="bf-chevron">▾</span>Brutefir CPU <span class="refresh-note" id="bf-refresh-label">refresh: {{ brutefir_interval }}s</span></span>
@@ -2130,6 +2141,7 @@
         <span style="color:var(--muted);font-style:italic">loading…</span>
     </div>
 </div>
+{% endif %}
 
 <!-- RAM panel -->
 <div class="card" id="ram-card">
@@ -2255,6 +2267,10 @@ const SPECTRUM_ENABLED = {{ 'true' if spectrum.enabled else 'false' }};
 const SPECTRUM_VU_MODE = {{ spectrum.vu_mode | tojson }};
 const OMDRC_CSRF = {{ csrf | tojson }};
 const UAUDIO_ENABLED = {{ 'true' if os_name == 'FreeBSD' else 'false' }};
+// False on a control box with no chain installed: the DRC card, the BruteFIR
+// CPU panel, the chain card and the CD input are not in the page at all, so
+// nothing polls /drc/* either (see _drc_chain_missing in app.py).
+const DRC_ENABLED = {{ 'true' if drc_enabled else 'false' }};
 
 // ── DRC filter set (geometry) picker ──────────────────────────────────────
 // brutefir loads its coefficients from the .conf it was started with, so
@@ -2715,7 +2731,7 @@ async function switchGeometry(target) {
     if (document.getElementById('out-drc_status')) fetchRead('drc_status');
 }
 
-loadGeometries();
+if (DRC_ENABLED) loadGeometries();
 
 async function loadDesigns() {
     const sel = document.getElementById('drc-design-select');
@@ -2865,13 +2881,15 @@ async function restoreDrcSession() {
     if (document.getElementById('out-drc_status')) fetchRead('drc_status');
 }
 
-loadDesigns();
-loadDrcAttenuation();
+if (DRC_ENABLED) {
+    loadDesigns();
+    loadDrcAttenuation();
+}
 
 // Configuration can add/remove designs in another tab while this page stays
 // open. Refresh the pickers without requiring a controller restart or reload.
 function refreshDrcChoices() {
-    if (document.hidden || designBusy || geoBusy || drcSessionBusy) return;
+    if (!DRC_ENABLED || document.hidden || designBusy || geoBusy || drcSessionBusy) return;
     loadGeometries();
     loadDesigns();
 }
@@ -3079,7 +3097,7 @@ function setRefreshLabel(id, seconds) {
 // ── collapsible cards ──────────────────────────────────────────────────────
 // A collapsed card hides its body and pauses its auto-refresh. System cards
 // also pause while their tab or the browser page is hidden.
-const COLLAPSIBLE_CARDS = ['bf', 'ram', 'sndstat',
+const COLLAPSIBLE_CARDS = [...(DRC_ENABLED ? ['bf'] : []), 'ram', 'sndstat',
                            ...(UAUDIO_ENABLED ? ['uaudio'] : []),
                            'advanced', 'topcpu'];
 const CARD_STATE_PREFIX = 'omdrcctrl.card.collapsed.';
@@ -6432,7 +6450,7 @@ setInterval(fetchLogAlerts, LOG_ALERT_INTERVAL_MS);
 const oauthFromUrl = new URLSearchParams(window.location.search).get('oauth');
 if (oauthFromUrl === 'upmpdcli' || oauthFromUrl === 'qobuzconnect2mpd')
     openOauthPanel(oauthFromUrl);
-startAutoRefresh('bf', BRUTEFIR_INTERVAL_MS, fetchBrutefirCpu);
+if (DRC_ENABLED) startAutoRefresh('bf', BRUTEFIR_INTERVAL_MS, fetchBrutefirCpu);
 startAutoRefresh('mpd', MONITOR_INTERVAL_MS, fetchMpdInfo);
 startAutoRefresh('sndstat', SNDSTAT_INTERVAL_MS, fetchSndstat);
 if (UAUDIO_ENABLED)

@@ -146,6 +146,8 @@ P.mount = el => {
 
     // the DRC line
     P.drcLine = h('button', { class: 'now-drc', type: 'button', onclick: () => K.goto('drc') });
+    // No chain on this box: nothing to report and no DRC page to jump to.
+    P.drcLine.hidden = K.state.features.drc === false;
 
     // drag handle between the meters and the DR strip (see wireSplitter)
     P.splitter = h('div', { class: 'splitter', title: 'Drag to give the meters or the DR history more room · double-tap to reset' }, h('i'));
@@ -1010,7 +1012,7 @@ P.elapsedNow = () => {
 
 // ── the DRC line ─────────────────────────────────────────────────────────────
 P.paintDrc = () => {
-    if (!P.drcLine) return;
+    if (!P.drcLine || P.drcLine.hidden) return;
     const s = K.drcState.summary();
     const chips = [];
     const chip = (cls, text, title) => chips.push(h('span', { class: 'chip ' + cls, title: title || null }, text));
