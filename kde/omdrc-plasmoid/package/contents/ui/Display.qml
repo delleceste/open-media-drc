@@ -61,15 +61,15 @@ Item {
     }
     readonly property real aspectSum: panes.reduce((s, p) => s + (row ? aspect(p) : 1 / aspect(p)), 0)
     readonly property real spacing: panes.length > 1 ? Math.max(2, Kirigami.Units.smallSpacing) : 0
-    // each pane's length along the layout: the cover a square (at most 45%
-    // of the room when it shares it), the others what is left, by aspect
+    // each pane's length along the layout: the cover a square, with more room
+    // on the desktop than in a panel; the others share what is left by aspect
     readonly property var extents: {
         const along = row ? paneArea.width : paneArea.height
         const across = row ? paneArea.height : paneArea.width
         const free = Math.max(0, along - spacing * (panes.length - 1))
         const coverSpace = row ? Math.max(0, across - coverTitleHeight)
                                : across + coverTitleHeight
-        const cover = panes.length > 1 ? Math.min(coverSpace, free * 0.45) : free
+        const cover = panes.length > 1 ? Math.min(coverSpace, free * (panel || compact ? 0.45 : 0.6)) : free
         const weight = p => p === "cover" ? 0 : row ? aspect(p) : 1 / aspect(p)
         const total = panes.reduce((s, p) => s + weight(p), 0)
         const rest = free - (panes.indexOf("cover") >= 0 ? cover : 0)
@@ -81,8 +81,8 @@ Item {
         const W = paneArea.width, H = paneArea.height
         if (grid) {
             const top = panes.filter(p => p !== "spectrum")
-            const topH = Math.round(Math.max(0, H - spacing) * 0.6)
-            const coverW = Math.round(Math.max(0, Math.min(topH - coverTitleHeight, (W - spacing) * 0.45)))
+            const topH = Math.round(Math.max(0, H - spacing) * 0.75)
+            const coverW = Math.round(Math.max(0, Math.min(topH - coverTitleHeight, (W - spacing) * 0.6)))
             const otherW = Math.max(0, W - spacing - coverW)
             let x = 0
             const at = {}
