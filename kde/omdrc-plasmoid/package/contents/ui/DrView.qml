@@ -98,8 +98,8 @@ Item {
                 opacity: 0.7
             }
             Item { Layout.fillWidth: true }
-            Radio { text: i18n("Per song"); checked: view.app.drPerSong; onClicked: view.app.setConfig("drPerSong", true) }
-            Radio { text: i18n("Continuous"); checked: !view.app.drPerSong; onClicked: view.app.setConfig("drPerSong", false) }
+            ModeChip { text: i18n("Per song"); selected: view.app.drPerSong; onClicked: view.app.setConfig("drPerSong", true) }
+            ModeChip { text: i18n("Continuous"); selected: !view.app.drPerSong; onClicked: view.app.setConfig("drPerSong", false) }
             Item { Layout.fillWidth: true }
             PlasmaComponents.Label { text: i18n("Latest"); font: Kirigami.Theme.smallFont; opacity: 0.7 }
         }
@@ -128,9 +128,10 @@ Item {
                 tip: i18n("DR window: click for the next")
                 onClicked: view.app.cycleDrWindow()
             }
-            Chip {
+            ModeChip {
                 visible: view.width >= 300
                 text: view.app.drPerSong ? i18n("Per song") : i18n("Continuous")
+                selected: true
                 tip: i18n("Switch DR history mode")
                 onClicked: view.app.setConfig("drPerSong", !view.app.drPerSong)
             }
@@ -182,10 +183,23 @@ Item {
         PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
     }
 
-    // shows the setting; a click asks for it (no state of its own to drift)
-    component Radio: PlasmaComponents.RadioButton {
-        font: Kirigami.Theme.smallFont
-        checkable: false
-        autoExclusive: false
+    // Quiet mode controls: transparent, with a hairline outline and small type.
+    component ModeChip: PlasmaComponents.ToolButton {
+        property bool selected: false
+        property string tip: ""
+        flat: true
+        font.pixelSize: Math.max(8, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.8))
+        implicitWidth: contentItem.implicitWidth + 10
+        implicitHeight: contentItem.implicitHeight + 4
+        opacity: selected ? 0.9 : 0.6
+        background: Rectangle {
+            color: "transparent"
+            radius: 3
+            border.width: 1
+            border.color: Kirigami.Theme.textColor
+        }
+        PlasmaComponents.ToolTip.text: tip
+        PlasmaComponents.ToolTip.visible: hovered && tip !== ""
+        PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
     }
 }
