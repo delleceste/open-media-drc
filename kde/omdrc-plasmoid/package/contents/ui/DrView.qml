@@ -188,7 +188,7 @@ Item {
         property bool selected: false
         property string tip: ""
         flat: true
-        font.pixelSize: Math.max(8, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.8))
+        font.pixelSize: Math.max(7, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.7))
         implicitWidth: contentItem.implicitWidth + 10
         implicitHeight: contentItem.implicitHeight + 4
         opacity: selected ? 0.9 : 0.6

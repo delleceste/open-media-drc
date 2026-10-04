@@ -55,9 +55,17 @@ Item {
             }
             PlasmaComponents.ToolButton {
                 visible: !view.strip || view.width >= 135
-                flat: false
-                font: Kirigami.Theme.smallFont
+                flat: true
+                font.pixelSize: Math.max(7, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.7))
+                implicitWidth: contentItem.implicitWidth + 10
+                implicitHeight: contentItem.implicitHeight + 4
                 text: view.app.balanceWindow + " s"
+                background: Rectangle {
+                    color: "transparent"
+                    radius: 3
+                    border.width: 1
+                    border.color: Kirigami.Theme.textColor
+                }
                 onClicked: view.app.cycleBalanceWindow()
             }
         }
