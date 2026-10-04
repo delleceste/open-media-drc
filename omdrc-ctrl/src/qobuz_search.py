@@ -946,14 +946,17 @@ class QobuzCatalog:
         return self._cached("genres", self.settings.cache_ttl, make)
 
     def discover(self, genre: str = "", offset: int = 0) -> dict:
-        if genre and not genre.isdigit():
+        # One or several comma-separated numeric genre ids; new releases across
+        # any of them.  A single id keeps the exact "<id>:" form as before.
+        ids = [g for g in genre.split(",") if g]
+        if any(not g.isdigit() for g in ids):
             raise QobuzError("genre must be a numeric Qobuz genre id")
         if offset < 0:
             raise QobuzError("offset must be non-negative")
         def make():
             params = {"type": "new-releases", "limit": PAGE_SIZE, "offset": offset}
-            if genre:
-                params["genre_ids"] = genre + ":"
+            if ids:
+                params["genre_ids"] = ",".join(g + ":" for g in ids)
             block = self._call("album/getFeatured", params).get("albums") or {}
             items = block.get("items") or []
             cards = [album_card(a) for a in items if a.get("streamable", True)]

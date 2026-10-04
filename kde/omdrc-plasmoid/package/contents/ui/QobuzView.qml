@@ -28,7 +28,8 @@ Item {
     property bool hiResOnly: false
     property bool filtersOpen: false
     property var genres: [{ id: "", name: "All genres" }]
-    property string genre: ""
+    // Several genres may be filtered at once; empty means all.
+    property var selectedGenres: []
     property var results: []
     property var recent: []
     property var discover: []
@@ -89,6 +90,17 @@ Item {
         selectedLabels = selectedLabels.includes(name)
             ? selectedLabels.filter(n => n !== name) : selectedLabels.concat([name])
     }
+    function genreSummary() {
+        if (!selectedGenres.length) return i18n("All genres")
+        const names = genres.filter(g => selectedGenres.includes(String(g.id))).map(g => g.name)
+        return names.length <= 2 ? names.join(", ") : i18n("%1 genres", names.length)
+    }
+    function toggleGenre(id) {
+        if (id === "") selectedGenres = []
+        else selectedGenres = selectedGenres.includes(id)
+            ? selectedGenres.filter(g => g !== id) : selectedGenres.concat([id])
+        loadTab(0)
+    }
     function toggleAI() {
         if (aiMode) { aiMode = false; return }
         if (!aiSettings.configured) { settingsDialog.open(); return }
@@ -126,7 +138,7 @@ Item {
         if (!offset) more = false
         const path = tab === "recent" ? "/qobuz/played?limit=30"
                    : tab === "awarded" ? "/qobuz/awarded"
-                   : "/qobuz/discover?genre=" + encodeURIComponent(genre) + "&offset=" + (offset || 0)
+                   : "/qobuz/discover?genre=" + encodeURIComponent(selectedGenres.join(",")) + "&offset=" + (offset || 0)
         app.request("GET", path, null, function (statusCode, data) {
             if (view.tab !== wanted) return
             if (!data || !data.ok) { view.fail(data, i18n("Could not load albums")); return }
@@ -324,12 +336,50 @@ Item {
             }
         }
         RowLayout {
+            Layout.fillWidth: true
             visible: view.tab === "discover"
-            PlasmaComponents.Label { text: i18n("Genre") }
-            QQC2.ComboBox {
-                model: view.genres
-                textRole: "name"
-                onActivated: { view.genre = String(view.genres[currentIndex].id); view.loadTab(0) }
+            PlasmaComponents.Label {
+                text: i18n("Genre")
+                font: Kirigami.Theme.smallFont
+            }
+            PlasmaComponents.ToolButton {
+                id: genreButton
+                Layout.fillWidth: true
+                text: view.genreSummary()
+                icon.name: "arrow-down"
+                checkable: true
+                checked: genrePopup.visible
+                font: Kirigami.Theme.smallFont
+                onClicked: genrePopup.visible ? genrePopup.close() : genrePopup.open()
+                QQC2.Popup {
+                    id: genrePopup
+                    y: genreButton.height
+                    width: Math.max(genreButton.width, Kirigami.Units.gridUnit * 12)
+                    height: Math.min(view.height * 0.6, Kirigami.Units.gridUnit * 18)
+                    padding: Kirigami.Units.smallSpacing
+                    QQC2.ScrollView {
+                        anchors.fill: parent
+                        clip: true
+                        ColumnLayout {
+                            width: genrePopup.availableWidth
+                            spacing: 0
+                            Repeater {
+                                model: view.genres
+                                delegate: QQC2.CheckBox {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    text: modelData.name
+                                    font: Kirigami.Theme.smallFont
+                                    // "All genres" (empty id) clears the rest.
+                                    checked: String(modelData.id) === ""
+                                        ? view.selectedGenres.length === 0
+                                        : view.selectedGenres.includes(String(modelData.id))
+                                    onToggled: view.toggleGenre(String(modelData.id))
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         PlasmaComponents.Label {
@@ -354,6 +404,8 @@ Item {
                         Layout.fillWidth: true
                         app: view.app
                         album: modelData
+                        compact: view.tab === "recent"
+                        bigCover: view.tab === "discover"
                         query: view.tab === "results" ? view.query : ""
                         canPlay: view.usable
                         onPlayed: (mode) => view.notice(mode === "append" ? i18n("Added to queue") : i18n("Playing"))

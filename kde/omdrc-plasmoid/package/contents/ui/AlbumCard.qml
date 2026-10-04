@@ -10,10 +10,21 @@ Rectangle {
     required property var album
     property string query: ""
     property bool canPlay: false
+    // A terse one-line "artist / title" row with a small thumbnail, used by the
+    // Recent tab so more entries fit; the full card keeps the details.
+    property bool compact: false
+    // A prominent cover with the same small text, used by the Discover tab so
+    // new releases read at a glance.
+    property bool bigCover: false
     property bool expanded: false
     property var tracks: []
     property string error: ""
     signal played(string mode)
+
+    // Slightly smaller than the theme default throughout, so the browser is
+    // denser and shows more albums at once.
+    readonly property int titleSize: Kirigami.Theme.smallFont.pixelSize
+    readonly property int bodySize: Math.max(9, Kirigami.Theme.smallFont.pixelSize - 1)
 
     width: parent ? parent.width : 320
     implicitHeight: body.implicitHeight + 2 * Kirigami.Units.smallSpacing
@@ -56,25 +67,38 @@ Rectangle {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
             Image {
-                Layout.preferredWidth: 54
-                Layout.preferredHeight: 54
+                readonly property int side: card.compact ? 32 : card.bigCover ? 92 : 46
+                Layout.preferredWidth: side
+                Layout.preferredHeight: side
+                Layout.alignment: Qt.AlignTop
                 source: card.album.image || ""
                 asynchronous: true
                 fillMode: Image.PreserveAspectFit
             }
+            // Recent: one terse line, "artist / title".
+            PlasmaComponents.Label {
+                Layout.fillWidth: true
+                visible: card.compact
+                text: [card.album.artist, card.album.title].filter(s => s).join(" / ")
+                elide: Text.ElideRight
+                font.pixelSize: card.titleSize
+            }
             ColumnLayout {
                 Layout.fillWidth: true
+                visible: !card.compact
                 spacing: 0
                 PlasmaComponents.Label {
                     Layout.fillWidth: true
                     text: card.album.title + (card.album.version ? " (" + card.album.version + ")" : "")
                     font.bold: true
+                    font.pixelSize: card.titleSize
                     wrapMode: Text.Wrap
                 }
                 PlasmaComponents.Label {
                     Layout.fillWidth: true
                     text: card.album.artist || ""
                     elide: Text.ElideRight
+                    font.pixelSize: card.bodySize
                 }
                 PlasmaComponents.Label {
                     Layout.fillWidth: true
@@ -82,11 +106,13 @@ Rectangle {
                            card.album.bits > 16 ? card.album.bits + "/" + card.album.rate : ""].filter(s => s).join(" · ")
                     elide: Text.ElideRight
                     opacity: 0.7
-                    font: Kirigami.Theme.smallFont
+                    font.pixelSize: card.bodySize
                 }
             }
             PlasmaComponents.ToolButton {
                 icon.name: "media-playback-start"
+                icon.width: card.compact ? card.titleSize : undefined
+                icon.height: card.compact ? card.titleSize : undefined
                 text: i18n("Play album")
                 display: QQC2.AbstractButton.IconOnly
                 PlasmaComponents.ToolTip.text: text
@@ -97,6 +123,8 @@ Rectangle {
             }
             PlasmaComponents.ToolButton {
                 icon.name: "list-add"
+                icon.width: card.compact ? card.titleSize : undefined
+                icon.height: card.compact ? card.titleSize : undefined
                 text: i18n("Add album to queue")
                 display: QQC2.AbstractButton.IconOnly
                 PlasmaComponents.ToolTip.text: text
@@ -108,21 +136,21 @@ Rectangle {
         }
         PlasmaComponents.Label {
             Layout.fillWidth: true
-            visible: !!(card.album.performers && card.album.performers.length)
+            visible: !card.compact && !!(card.album.performers && card.album.performers.length)
             text: card.album.performers ? card.album.performers.slice(0, 4).map(p => p.name).join(", ") : ""
             wrapMode: Text.Wrap
-            font: Kirigami.Theme.smallFont
+            font.pixelSize: card.bodySize
             opacity: 0.7
         }
         PlasmaComponents.Label {
             Layout.fillWidth: true
-            visible: !!(card.album.ai && card.album.ai.reason)
+            visible: !card.compact && !!(card.album.ai && card.album.ai.reason)
             text: card.album.ai ? card.album.ai.reason : ""
             wrapMode: Text.Wrap
-            font: Kirigami.Theme.smallFont
+            font.pixelSize: card.bodySize
         }
         Repeater {
-            model: card.album.ai && card.album.ai.sources || []
+            model: card.compact ? [] : (card.album.ai && card.album.ai.sources || [])
             delegate: QQC2.Button {
                 required property var modelData
                 Layout.fillWidth: true
@@ -132,6 +160,7 @@ Rectangle {
             }
         }
         PlasmaComponents.ToolButton {
+            visible: !card.compact
             text: card.expanded ? i18n("Hide tracks") : i18n("Tracks")
             icon.name: card.expanded ? "arrow-up" : "arrow-down"
             onClicked: card.toggleTracks()

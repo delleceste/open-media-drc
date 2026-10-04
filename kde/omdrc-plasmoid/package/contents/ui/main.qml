@@ -193,10 +193,16 @@ PlasmoidItem {
 
     fullRepresentation: Display {
         app: root
-        Layout.minimumWidth: Kirigami.Units.gridUnit * (root.page === "cover" ? 6 : 26)
-        Layout.minimumHeight: Kirigami.Units.gridUnit * (root.page === "cover" ? 3 : 24)
-        Layout.preferredWidth: Kirigami.Units.gridUnit * (root.page === "cover" ? 22 : 38)
-        Layout.preferredHeight: Kirigami.Units.gridUnit * (root.page === "cover" ? 10 : 40)
+        // No size hint may depend on the page, or switching views resizes the
+        // widget: a larger minimum would force an already-shrunk widget to
+        // grow, and on the desktop the applet also follows preferredWidth/
+        // Height when it changes. All views fill whatever size the user left
+        // (the queue and Qobuz views scroll), so the hints stay constant and
+        // only describe the widget's own sensible bounds, once.
+        Layout.minimumWidth: Kirigami.Units.gridUnit * 6
+        Layout.minimumHeight: Kirigami.Units.gridUnit * 3
+        Layout.preferredWidth: Kirigami.Units.gridUnit * 30
+        Layout.preferredHeight: Kirigami.Units.gridUnit * 24
     }
 
     function silentVu() {
