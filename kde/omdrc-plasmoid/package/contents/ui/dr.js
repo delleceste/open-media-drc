@@ -61,10 +61,9 @@ function elapsedLabel(seconds) {
     return m ? (s ? m + " min " + s + " s" : m + " min") : s + " s";
 }
 
-// The blocks the window covers: per song, no further back than the track.
+// Per song uses the whole available track; continuous uses the chosen window.
 function selected(blocks, trackAge, windowSeconds, perSong) {
-    var want = windowSeconds / BLOCK_S;
-    var count = perSong ? Math.min(want, trackAge) : want;
+    var count = perSong ? trackAge : windowSeconds / BLOCK_S;
     return count > 0 ? blocks.slice(-count) : [];
 }
 

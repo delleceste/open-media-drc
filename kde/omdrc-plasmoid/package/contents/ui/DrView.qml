@@ -71,6 +71,7 @@ Item {
                 elide: Text.ElideRight
             }
             Chip {
+                visible: !view.app.drPerSong
                 text: DR.windowLabel(view.app.drWindow)
                 tip: i18n("DR window: click for the next")
                 onClicked: view.app.cycleDrWindow()
@@ -122,7 +123,7 @@ Item {
                 elide: Text.ElideRight
             }
             Chip {
-                visible: view.width >= 210
+                visible: !view.app.drPerSong && view.width >= 210
                 text: DR.windowLabel(view.app.drWindow)
                 tip: i18n("DR window: click for the next")
                 onClicked: view.app.cycleDrWindow()
