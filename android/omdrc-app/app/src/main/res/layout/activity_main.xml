@@ -36,7 +36,58 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:clickable="true"
-        android:visibility="gone" />
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:descendantFocusability="beforeDescendants"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:labelFor="@id/loading_host"
+                android:text="@string/conn_error_address_label"
+                android:textColor="@color/kiosk_muted"
+                android:textSize="11sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/loading_host"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/conn_error_field"
+                    android:imeOptions="actionGo|flagNoExtractUi|flagNoFullscreen"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:paddingHorizontal="12dp"
+                    android:selectAllOnFocus="true"
+                    android:singleLine="true"
+                    android:textColor="@color/kiosk_text"
+                    android:textColorHint="@color/kiosk_muted"
+                    android:textSize="15sp" />
+
+                <Button
+                    android:id="@+id/loading_connect"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/conn_error_connect" />
+            </LinearLayout>
+        </LinearLayout>
+    </it.giacomos.omdrc.app.LoadingRingView>
 
     <!-- Stands in for the WebView's own "Web page not available" page, in the
          kiosk's look (see ConnectionErrorPanel). Clickable so no touch reaches

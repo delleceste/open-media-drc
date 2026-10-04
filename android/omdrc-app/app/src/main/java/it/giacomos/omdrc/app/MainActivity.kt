@@ -68,7 +68,19 @@ class MainActivity : ComponentActivity() {
     /** The kiosk said its first page is painted (AppBridge.pageReady): the splash
      *  goes once the phone is also in the orientation that page asked for. */
     private var pageReady = false
-    private val splashFallback = Runnable { pageReady = true; if (!loadFailed) { loadingRing.finish(); endLastPage() } }
+    private val finishSplash = Runnable {
+        if (pageReady && !loadFailed) {
+            val host = findViewById<EditText>(R.id.loading_host)
+            if (host.hasFocus()) {
+                (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                    .hideSoftInputFromWindow(host.windowToken, 0)
+                host.clearFocus()
+            }
+            loadingRing.finish()
+            endLastPage()
+        }
+    }
+    private val splashFallback = Runnable { pageReady = true; finishSplash.run() }
 
     /** A cold start shows the kiosk's last screen (LastPage) instead of the splash;
      *  the splash comes up over it only if the live page is slow to paint. */
@@ -330,6 +342,22 @@ class MainActivity : ComponentActivity() {
 
         webView = findViewById(R.id.web_view)
         loadingRing = findViewById(R.id.loading_ring)
+        val loadingHost = findViewById<EditText>(R.id.loading_host)
+        val reconnect = {
+            val host = loadingHost.text.toString().trim()
+            if (host.isEmpty() || host.any { it.isWhitespace() || it == ':' || it == '/' }) {
+                loadingHost.error = getString(R.string.conn_error_bad_address)
+            } else {
+                (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                    .hideSoftInputFromWindow(loadingHost.windowToken, 0)
+                loadingHost.clearFocus()
+                useServer(host, AppPrefs.defaultPort(this))
+            }
+        }
+        findViewById<View>(R.id.loading_connect).setOnClickListener { reconnect() }
+        loadingHost.setOnEditorActionListener { _, action, _ ->
+            if (action == android.view.inputmethod.EditorInfo.IME_ACTION_GO) { reconnect(); true } else false
+        }
         lastPage = findViewById(R.id.last_page)
         swipeRefresh = findViewById(R.id.swipe_refresh)
         swipeRefresh.setColorSchemeColors(0xFF58A6FF.toInt(), 0xFF3FB950.toInt(), 0xFFD8C23A.toInt())
@@ -360,6 +388,7 @@ class MainActivity : ComponentActivity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                if (url == null || !isCurrentServer(Uri.parse(url))) return
                 // A new document knows nothing about the old one's request:
                 // drop the screen-on flag until the kiosk page asks again.
                 pageWantsScreenOn = false
@@ -562,6 +591,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun load(url: String) {
+        webView.stopLoading()
+        loadingRing.removeCallbacks(splashFallback)
+        loadingRing.removeCallbacks(finishSplash)
+        loadingRing.removeCallbacks(ringLater)
+        pageReady = false
+        findViewById<EditText>(R.id.loading_host).setText(Uri.parse(url).host ?: "")
         loadedServerNetwork = currentServerNetwork
         lastUrl = url
         loadRequested = true
@@ -673,12 +708,12 @@ class MainActivity : ComponentActivity() {
         val wantPortrait = requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
         if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_USER) {   // auto-rotate: nothing to wait for
             loadingRing.removeCallbacks(splashFallback)
-            loadingRing.postDelayed({ loadingRing.finish(); endLastPage() }, 200)
+            loadingRing.postDelayed(finishSplash, 200)
             return
         }
         if (portrait != wantPortrait) return            // onConfigurationChanged calls again
         loadingRing.removeCallbacks(splashFallback)
-        loadingRing.postDelayed({ loadingRing.finish(); endLastPage() }, 200)   // the page re-lays out after a turn
+        loadingRing.postDelayed(finishSplash, 200)   // the page re-lays out after a turn
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {

@@ -42,7 +42,10 @@ the old package is removed; settings must be migrated separately. The project
 folder remains `omdrc-app`.
 
 While a page loads, a large ring in the middle of the screen shows the progress in
-percent. It is spared where it can be: **Back** leaves the app the way Home does,
+percent. At the bottom, an editable IP/hostname and **Connect** button let you
+cancel a stalled connection immediately. The new address is saved for the current
+network and reconnects using the existing port, without waiting for a timeout.
+It is spared where it can be: **Back** leaves the app the way Home does,
 so the page stays alive and coming back shows it at once; and when the system has
 dropped the app (or it was swiped away), the kiosk's last screen, kept as a picture
 per orientation (`LastPage`), is shown at once while the page loads under it, the

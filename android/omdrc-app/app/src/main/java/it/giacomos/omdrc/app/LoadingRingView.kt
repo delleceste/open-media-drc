@@ -10,7 +10,7 @@ import android.graphics.Shader
 import android.graphics.RectF
 import android.graphics.SweepGradient
 import android.util.AttributeSet
-import android.view.View
+import android.widget.FrameLayout
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import kotlin.math.min
@@ -24,7 +24,9 @@ import kotlin.math.min
  */
 class LoadingRingView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null,
-) : View(context, attrs) {
+) : FrameLayout(context, attrs) {
+
+    init { setWillNotDraw(false) }
 
     private val density = resources.displayMetrics.density
     /** The phone's dark mode, as the kiosk page follows it (values-night). */
@@ -112,8 +114,11 @@ class LoadingRingView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         canvas.drawPaint(backdrop)
         val cx = width / 2f
-        val cy = height / 2f
-        val radius = min(ringRadius, min(width, height) / 2f - stroke * 1.4f)
+        // Leave room for the connection controls, including larger accessibility text.
+        val ringHeight = (height - (getChildAt(0)?.height ?: 0)).coerceAtLeast(0).toFloat()
+        val cy = ringHeight / 2f
+        val radius = min(ringRadius, min(width.toFloat(), ringHeight) / 2f - stroke * 1.4f)
+        if (radius <= 0f) return
         bounds.set(cx - radius, cy - radius, cx + radius, cy + radius)
         canvas.drawCircle(cx, cy, radius, track)
 
