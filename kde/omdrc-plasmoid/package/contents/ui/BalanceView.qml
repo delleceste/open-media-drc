@@ -30,7 +30,6 @@ Item {
         : (db < 0 ? "L " : "R ") + Math.abs(db).toFixed(1) + " dB"
     // a short window glides fast, a long one slowly (the kiosk's applySpeed)
     readonly property int glide: app.balanceWindow <= 0.3 ? 60 : app.balanceWindow <= 1 ? 120 : 250
-    HoverHandler { id: balanceHover }
 
     ColumnLayout {
         anchors.fill: parent
@@ -58,7 +57,6 @@ Item {
                 onClicked: view.app.toggleBalanceLook()
             }
             PlasmaComponents.ToolButton {
-                visible: balanceHover.hovered
                 flat: true
                 font.pixelSize: Math.max(6, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.55))
                 implicitWidth: contentItem.implicitWidth + 6
