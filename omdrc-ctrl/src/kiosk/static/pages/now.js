@@ -721,6 +721,7 @@ P.paintState = state => {
 // ── track ────────────────────────────────────────────────────────────────────
 P.pollTrack = async () => {
     const t = await K.fetchTrack();
+    K.setPlaybackState(t.state);
     P.observeClipAlbum(t);
     if (P.track && t.ok && P.track.title !== t.title && K.sync) K.sync.onTrackChange();
     P.track = t;

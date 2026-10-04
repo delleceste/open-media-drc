@@ -169,7 +169,15 @@ const SILENCE_MS = 30000;
 K.lastSoundAt = Date.now();
 K.markSound = () => { const was = K.silent(); K.lastSoundAt = Date.now(); if (was) { syncAppScreen(); if (K.awake) K.awake.sync(); } };
 K.silent = () => Date.now() - K.lastSoundAt > SILENCE_MS;
-K.nowShown = () => cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive && !document.hidden && !K.silent();
+K.playbackState = 'stop';
+K.setPlaybackState = state => {
+    if (K.playbackState === state) return;
+    K.playbackState = state;
+    syncAppScreen();
+    if (K.awake) K.awake.sync();
+};
+K.nowShown = () => cur >= 0 && K.pages[cur].id === 'now' && !K.saverActive &&
+    !document.hidden && K.playbackState === 'play' && !K.silent();
 // Held on regardless (and no screensaver) while something the user is watching runs
 // without a touch: the meter-timing sheet, a calibration (pages/config.js).
 K.screenHolds = new Set();
@@ -184,8 +192,8 @@ K.screenHeld = () => K.screenHolds.size > 0 && !document.hidden;
 setInterval(() => { syncAppScreen(); if (K.awake) K.awake.sync(); }, 5000);
 function syncAppScreen() {
     if (!K.inApp) return;
-    // K.nowShown(): Now on screen, no screensaver, and sound within the last SILENCE_MS -
-    // still meters let the phone sleep again, in the app as in a browser.
+    // Paused/stopped playback releases the screen immediately; stale meter frames
+    // cannot hold it on. Still meters during playback release it after SILENCE_MS.
     // (an older app without setHoldScreenOn: a hold asks as Now playing does)
     const hold = K.screenHeld() && !window.OmdrcApp.setHoldScreenOn;
     try { window.OmdrcApp.setPageWantsScreenOn(K.nowShown() || hold); } catch {}
