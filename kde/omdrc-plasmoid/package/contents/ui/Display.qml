@@ -29,8 +29,8 @@ Item {
     readonly property bool bottomMeters: !compact && app.page === "cover" && (app.showDr || app.showBalance)
     readonly property bool coverBehind: app.coverMode === "background" && panes.some(p => p !== "cover")
     // On the desktop and in the popup, with cover, meters and spectrum all on:
-    // cover and meters side by side on top, the spectrum across the full width
-    // under them (DR and balance below that, in bottomRow).
+    // the cover fills the left 10 columns of a 16-column grid; the right 6
+    // hold meters above spectrum. DR and balance span the bottom row.
     readonly property bool grid: !compact && !panel && app.coverMode === "pane"
                                  && meterStyle !== "off" && app.showSpectrum
     readonly property var panes: {
@@ -80,18 +80,17 @@ Item {
     readonly property var rects: {
         const W = paneArea.width, H = paneArea.height
         if (grid) {
-            const top = panes.filter(p => p !== "spectrum")
-            const topH = Math.round(Math.max(0, H - spacing) * 0.75)
-            const coverW = Math.round(Math.max(0, Math.min(topH - coverTitleHeight, (W - spacing) * 0.6)))
-            const otherW = Math.max(0, W - spacing - coverW)
-            let x = 0
-            const at = {}
-            for (const p of top) {
-                const w = p === "cover" ? coverW : otherW
-                at[p] = { x: x, y: 0, w: w, h: topH }
-                x += w + spacing
+            const coverW = Math.round(Math.max(0, W - spacing) * 10 / 16)
+            const rightX = coverW + spacing
+            const rightW = Math.max(0, W - rightX)
+            const metersH = Math.round(Math.max(0, H - spacing) * 3 / 10)
+            const spectrumY = metersH + spacing
+            const at = {
+                cover: { x: 0, y: 0, w: coverW, h: H },
+                meters: { x: rightX, y: 0, w: rightW, h: metersH },
+                spectrum: { x: rightX, y: spectrumY, w: rightW,
+                            h: Math.max(0, H - spectrumY) }
             }
-            at.spectrum = { x: 0, y: topH + spacing, w: W, h: Math.max(0, H - topH - spacing) }
             return panes.map(p => at[p])
         }
         let offset = 0
@@ -222,23 +221,80 @@ Item {
                 id: coverTrack
                 visible: face.showTrack && face.app.player.title !== ""
                 anchors { top: artwork.bottom; topMargin: Kirigami.Units.smallSpacing
-                          left: parent.left; right: parent.right }
+                          horizontalCenter: artwork.horizontalCenter }
+                width: artwork.width
                 spacing: 0
-                PlasmaComponents.Label {
-                    Layout.fillWidth: true
-                    text: face.app.player.title || ""
-                    font.bold: true
-                    elide: Text.ElideRight
-                    horizontalAlignment: Text.AlignHCenter
+                HoverHandler {
+                    onHoveredChanged: {
+                        if (hovered) {
+                            if (titleScroll.contentWidth > titleScroll.width) titlePan.start()
+                            if (subtitleScroll.contentWidth > subtitleScroll.width) subtitlePan.start()
+                        } else {
+                            titlePan.stop()
+                            subtitlePan.stop()
+                            titleScroll.contentX = 0
+                            subtitleScroll.contentX = 0
+                        }
+                    }
                 }
-                PlasmaComponents.Label {
+                Flickable {
+                    id: titleScroll
                     Layout.fillWidth: true
-                    text: face.app.subtitle
-                    visible: text !== ""
-                    elide: Text.ElideRight
-                    opacity: 0.7
-                    font: Kirigami.Theme.smallFont
-                    horizontalAlignment: Text.AlignHCenter
+                    Layout.preferredHeight: titleLabel.implicitHeight
+                    contentWidth: Math.max(width, titleLabel.width)
+                    contentHeight: height
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    interactive: false
+                    clip: true
+                    NumberAnimation {
+                        id: titlePan
+                        target: titleScroll
+                        property: "contentX"
+                        from: 0
+                        to: Math.max(0, titleScroll.contentWidth - titleScroll.width)
+                        duration: Math.max(1200, to * 30)
+                        easing.type: Easing.Linear
+                    }
+                    PlasmaComponents.Label {
+                        id: titleLabel
+                        x: Math.max(0, (titleScroll.width - width) / 2)
+                        width: implicitWidth
+                        text: face.app.player.title || ""
+                        font.bold: true
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        wrapMode: Text.NoWrap
+                    }
+                }
+                Flickable {
+                    id: subtitleScroll
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: subtitleLabel.implicitHeight
+                    visible: subtitleLabel.text !== ""
+                    contentWidth: Math.max(width, subtitleLabel.width)
+                    contentHeight: height
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    interactive: false
+                    clip: true
+                    NumberAnimation {
+                        id: subtitlePan
+                        target: subtitleScroll
+                        property: "contentX"
+                        from: 0
+                        to: Math.max(0, subtitleScroll.contentWidth - subtitleScroll.width)
+                        duration: Math.max(1200, to * 30)
+                        easing.type: Easing.Linear
+                    }
+                    PlasmaComponents.Label {
+                        id: subtitleLabel
+                        x: Math.max(0, (subtitleScroll.width - width) / 2)
+                        width: implicitWidth
+                        text: face.app.subtitle
+                        opacity: 0.7
+                        font.pixelSize: Math.max(9, Kirigami.Theme.smallFont.pixelSize - 1)
+                        wrapMode: Text.NoWrap
+                    }
                 }
             }
         }
