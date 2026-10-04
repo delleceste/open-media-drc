@@ -86,6 +86,32 @@ P.timingCard = () => {
     return card;
 };
 
+// The box-wide chain-delay margin: one value shared by every screen. Separate
+// from the per-screen delay above; see widgets/timing.js. A floor, not a lock —
+// a late screen's calibration can still raise it, and aligned screens compensate.
+P.marginCard = () => {
+    const T = window.OmdrcTiming;
+    const fmt = () => { const m = T.boxMargin(); return m === null || m === undefined ? '—' : `${Math.round(m)} ms`; };
+    const value = h('strong', { class: 'timing-value' }, fmt());
+    const holdback = h('p', { class: 'muted small' }, '');
+    const refresh = () => {
+        value.textContent = fmt();
+        const base = Number(T.details().settings?.drc_delay_base_ms);
+        holdback.textContent = Number.isFinite(base)
+            ? `The box now holds the meters back ${Math.round(base)} ms before sending them; the rest of its measured chain delay is this margin.`
+            : '';
+    };
+    const timer = setInterval(() => { if (!value.isConnected) { clearInterval(timer); return; } refresh(); }, 1000);
+    const set = async ms => { if (!await T.setBoxMargin(ms)) K.toast('Could not change the box margin', 'error'); refresh(); };
+    const step = d => h('button', { class: 'btn step', type: 'button', onclick: () => set(Math.round(T.boxMargin() || 0) + d) }, (d > 0 ? '+' : '−') + Math.abs(d));
+    refresh();
+    return K.card('Box chain-delay margin',
+        h('p', { class: 'muted small' }, 'Box-wide — one value for every screen, not just this one. The box trims this much from its own measured chain delay, so the meters leave this far ahead of the sound and each screen waits out the rest. Raise it to cut the shared lag on a fast local display (at the limit the box holds nothing back and the meters lead the sound); lower it if the meters reach a slow screen after the sound. Calibrated screens re-absorb a change and stay aligned. Applied to the box at once.'),
+        h('div', { class: 'att-row' }, step(-100), step(-20), value, step(20), step(100),
+            h('button', { class: 'btn', type: 'button', onclick: () => set(0) }, 'Reset')),
+        holdback);
+};
+
 // How the timing works and what the calibration does, with diagrams.
 P.infoBtn = () => h('button', { class: 'btn info-btn', type: 'button', title: 'How meter timing works',
     'aria-label': 'How meter timing works', onclick: () => K.frame('/k/static/help/meter-timing.html', 'How meter timing works') }, 'ⓘ How it works');
@@ -382,6 +408,7 @@ P.render = function render() {
             opt('cover.page', false, [{ value: true, label: 'Show' }, { value: false, label: 'Hide' }]),
             h('p', { class: 'muted small' }, 'A page after Now playing with the cover as large as the screen allows and the track beside it; DR or Lvl in its top bar adds a narrow DR or level column where there is room.')),
         P.timingCard(),
+        P.marginCard(),
         K.card('Screen',
             h('div', { class: 'lbl' }, 'Screensaver after'),
             opt('saver.minutes', 0, [{ value: 0, label: 'Never' }, { value: 5, label: '5 min' }, { value: 15, label: '15 min' }, { value: 30, label: '30 min' }]),

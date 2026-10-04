@@ -103,6 +103,22 @@ T.updateSettings = settings => {
     if (active && active.marginMs === null) { active.marginMs = margin; changed = true; }
     if (changed) save(all);
 };
+// The box-wide chain-delay margin: the box trims this much from its own measured
+// hold-back, so every frame leaves this far ahead of the sound.  Shared headroom,
+// not this screen's delay; raising it de-lags an unaligned screen and calibrated
+// ones simply re-absorb it and stay aligned (see T.delayMs).  null until known.
+T.MARGIN_MAX_MS = 5000;
+T.boxMargin = () => configuredMargin;
+T.setBoxMargin = async ms => {
+    const value = Math.max(0, Math.min(T.MARGIN_MAX_MS, Math.round(Number(ms) || 0)));
+    try {
+        const r = await fetch('/spectrum/margin', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ margin_ms: value }) });
+        if (r.ok) { T.updateSettings(await r.json()); return true; }
+    } catch {}
+    return false;
+};
 T.refresh = async () => {
     try {
         const r = await fetch('/spectrum/settings');
