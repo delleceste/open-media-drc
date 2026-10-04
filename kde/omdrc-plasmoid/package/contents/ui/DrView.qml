@@ -15,6 +15,9 @@ Item {
     property bool compact: false
     property bool strip: false
     property bool history: true      // the bar (and its mode switch) inside this view
+    readonly property real stripBarHeight: Kirigami.Units.gridUnit * 1.1
+    readonly property color chipBackground: app.backgroundMode === "custom"
+        ? app.backgroundColor : Kirigami.Theme.backgroundColor
 
     readonly property var summary: app.drSummary
     readonly property color valueColor: summary.value === null ? Kirigami.Theme.disabledTextColor
@@ -138,7 +141,9 @@ Item {
         }
         DrBar {
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.preferredHeight: view.stripBarHeight
+            Layout.minimumHeight: view.stripBarHeight
+            Layout.maximumHeight: view.stripBarHeight
             blocks: view.app.drSelected
         }
     }
@@ -176,8 +181,16 @@ Item {
 
     component Chip: PlasmaComponents.ToolButton {
         property string tip
-        flat: false
-        font: Kirigami.Theme.smallFont
+        flat: true
+        font.pixelSize: Math.max(6, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.55))
+        implicitWidth: contentItem.implicitWidth + 6
+        implicitHeight: contentItem.implicitHeight + 2
+        background: Rectangle {
+            color: "transparent"
+            radius: 2
+            border.width: 0.5
+            border.color: Qt.lighter(view.chipBackground, 1.4)
+        }
         PlasmaComponents.ToolTip.text: tip
         PlasmaComponents.ToolTip.visible: hovered && tip !== ""
         PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
@@ -188,15 +201,15 @@ Item {
         property bool selected: false
         property string tip: ""
         flat: true
-        font.pixelSize: Math.max(7, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.7))
-        implicitWidth: contentItem.implicitWidth + 10
-        implicitHeight: contentItem.implicitHeight + 4
+        font.pixelSize: Math.max(6, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.55))
+        implicitWidth: contentItem.implicitWidth + 6
+        implicitHeight: contentItem.implicitHeight + 2
         opacity: selected ? 0.9 : 0.6
         background: Rectangle {
             color: "transparent"
-            radius: 3
-            border.width: 1
-            border.color: Kirigami.Theme.textColor
+            radius: 2
+            border.width: 0.5
+            border.color: Qt.lighter(view.chipBackground, 1.4)
         }
         PlasmaComponents.ToolTip.text: tip
         PlasmaComponents.ToolTip.visible: hovered && tip !== ""

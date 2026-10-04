@@ -18,7 +18,7 @@ Item {
     property bool horizontalPanel: false
     property bool verticalPanel: false
     readonly property bool compactSearchOpen: compact && app.compactSearchRequested
-    property bool controlsShown: false
+    readonly property bool controlsShown: hover.hovered
 
     signal activated()
 
@@ -80,7 +80,8 @@ Item {
     readonly property var rects: {
         const W = paneArea.width, H = paneArea.height
         if (grid) {
-            const coverW = Math.round(Math.max(0, W - spacing) * 10 / 16)
+            const coverW = Math.round(Math.min(Math.max(0, W - spacing) * 10 / 16,
+                                               Math.max(0, H - coverTitleHeight)))
             const rightX = coverW + spacing
             const rightW = Math.max(0, W - rightX)
             const metersH = Math.round(Math.max(0, H - spacing) * 3 / 10)
@@ -212,7 +213,8 @@ Item {
                 id: artwork
                 readonly property real side: Math.max(0, Math.min(parent.width,
                     parent.height - (coverTrack.visible ? coverTrack.implicitHeight + Kirigami.Units.smallSpacing : 0)))
-                anchors { top: parent.top; horizontalCenter: parent.horizontalCenter }
+                x: face.grid ? 0 : (parent.width - width) / 2
+                y: 0
                 width: side
                 height: side
                 source: face.app.coverUrl
@@ -225,15 +227,14 @@ Item {
                 width: artwork.width
                 spacing: 0
                 HoverHandler {
+                    id: trackHover
                     onHoveredChanged: {
                         if (hovered) {
-                            if (titleScroll.contentWidth > titleScroll.width) titlePan.start()
-                            if (subtitleScroll.contentWidth > subtitleScroll.width) subtitlePan.start()
+                            if (!titlePan.running && titleScroll.contentWidth > titleScroll.width) titlePan.start()
+                            if (!subtitlePan.running && subtitleScroll.contentWidth > subtitleScroll.width) subtitlePan.start()
                         } else {
-                            titlePan.stop()
-                            subtitlePan.stop()
-                            titleScroll.contentX = 0
-                            subtitleScroll.contentX = 0
+                            if (!titlePan.running) titleScroll.contentX = 0
+                            if (!subtitlePan.running) subtitleScroll.contentX = 0
                         }
                     }
                 }
@@ -255,6 +256,7 @@ Item {
                         to: Math.max(0, titleScroll.contentWidth - titleScroll.width)
                         duration: Math.max(1200, to * 30)
                         easing.type: Easing.Linear
+                        onStopped: if (!trackHover.hovered) titleScroll.contentX = 0
                     }
                     PlasmaComponents.Label {
                         id: titleLabel
@@ -285,6 +287,7 @@ Item {
                         to: Math.max(0, subtitleScroll.contentWidth - subtitleScroll.width)
                         duration: Math.max(1200, to * 30)
                         easing.type: Easing.Linear
+                        onStopped: if (!trackHover.hovered) subtitleScroll.contentX = 0
                     }
                     PlasmaComponents.Label {
                         id: subtitleLabel
@@ -511,18 +514,7 @@ Item {
         }
     }
 
-    Timer {
-        id: hoverClose
-        interval: 600
-        onTriggered: if (!hover.hovered && !controlsHover.hovered) face.controlsShown = false
-    }
-    HoverHandler {
-        id: hover
-        onHoveredChanged: {
-            if (hovered) { face.controlsShown = true; hoverClose.stop() }
-            else hoverClose.restart()
-        }
-    }
+    HoverHandler { id: hover }
 
     Item {
         id: coverHoverZone
@@ -532,7 +524,7 @@ Item {
         readonly property real coverHeight: coverRect ? coverRect.h : Math.min(paneArea.width, paneArea.height)
         readonly property real side: Math.max(0, Math.min(coverWidth,
             coverHeight - (coverIndex >= 0 ? face.coverTitleHeight : 0)))
-        x: paneArea.x + (coverRect ? coverRect.x : 0) + (coverWidth - side) / 2
+        x: paneArea.x + (coverRect ? coverRect.x : 0) + (face.grid ? 0 : (coverWidth - side) / 2)
         y: paneArea.y + (coverRect ? coverRect.y : 0)
         width: side
         height: side
@@ -550,17 +542,10 @@ Item {
         height: coverHoverZone.height
         opacity: paneArea.visible && !face.editing && face.controlsShown && face.app.host !== "" ? 1 : 0
         visible: opacity > 0
-        Behavior on opacity { NumberAnimation { duration: Kirigami.Units.shortDuration } }
-        HoverHandler {
-            id: controlsHover
-            onHoveredChanged: {
-                if (hovered) { face.controlsShown = true; hoverClose.stop() }
-                else if (!hover.hovered) hoverClose.restart()
-            }
-        }
+        HoverHandler { id: controlsHover }
 
         readonly property real size: face.panel ? Math.max(24, Math.min(30, height * 0.74))
-            : Math.max(12, Math.min(height * 0.24, width / 5.5, Kirigami.Units.iconSizes.medium))
+            : Math.max(7, Math.min(height * 0.2, width / 5.5, Kirigami.Units.iconSizes.medium))
         SeekRing {
             id: seekRing
             app: face.app
@@ -604,7 +589,7 @@ Item {
         Rectangle {
             id: transportBox
             visible: !face.panel
-            anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 1 }
+            anchors.centerIn: parent
             width: transportButtons.width + 4
             height: transportButtons.height + 2
             radius: height / 3

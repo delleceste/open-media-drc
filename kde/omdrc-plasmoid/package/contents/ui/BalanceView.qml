@@ -14,6 +14,9 @@ Item {
     required property var app
     property bool compact: false
     property bool strip: false
+    readonly property real stripBarHeight: Kirigami.Units.gridUnit * 1.1
+    readonly property color chipBackground: app.backgroundMode === "custom"
+        ? app.backgroundColor : Kirigami.Theme.backgroundColor
 
     readonly property real db: app.balanceDb          // NaN: nothing to average
     readonly property bool ok: Number.isFinite(db)
@@ -27,6 +30,7 @@ Item {
         : (db < 0 ? "L " : "R ") + Math.abs(db).toFixed(1) + " dB"
     // a short window glides fast, a long one slowly (the kiosk's applySpeed)
     readonly property int glide: app.balanceWindow <= 0.3 ? 60 : app.balanceWindow <= 1 ? 120 : 250
+    HoverHandler { id: balanceHover }
 
     ColumnLayout {
         anchors.fill: parent
@@ -36,7 +40,7 @@ Item {
             visible: !view.compact
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
-            PlasmaComponents.Label { text: i18n("Balance"); opacity: 0.7; font.bold: true }
+            PlasmaComponents.Label { text: i18n("Balance"); opacity: 0.7; font: Kirigami.Theme.smallFont }
             PlasmaComponents.Label {
                 visible: !view.strip || view.width >= 185
                 Layout.fillWidth: true
@@ -54,17 +58,17 @@ Item {
                 onClicked: view.app.toggleBalanceLook()
             }
             PlasmaComponents.ToolButton {
-                visible: !view.strip || view.width >= 135
+                visible: balanceHover.hovered
                 flat: true
-                font.pixelSize: Math.max(7, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.7))
-                implicitWidth: contentItem.implicitWidth + 10
-                implicitHeight: contentItem.implicitHeight + 4
+                font.pixelSize: Math.max(6, Math.round(Kirigami.Theme.smallFont.pixelSize * 0.55))
+                implicitWidth: contentItem.implicitWidth + 6
+                implicitHeight: contentItem.implicitHeight + 2
                 text: view.app.balanceWindow + " s"
                 background: Rectangle {
                     color: "transparent"
-                    radius: 3
-                    border.width: 1
-                    border.color: Kirigami.Theme.textColor
+                    radius: 2
+                    border.width: 0.5
+                    border.color: Qt.lighter(view.chipBackground, 1.4)
                 }
                 onClicked: view.app.cycleBalanceWindow()
             }
@@ -74,8 +78,11 @@ Item {
         Item {
             id: track
             Layout.fillWidth: true
-            Layout.fillHeight: view.compact || view.strip
-            Layout.preferredHeight: view.compact || view.strip ? -1 : Kirigami.Units.gridUnit * 0.9
+            Layout.fillHeight: view.compact
+            Layout.preferredHeight: view.strip ? view.stripBarHeight
+                : view.compact ? -1 : Kirigami.Units.gridUnit * 0.9
+            Layout.minimumHeight: view.strip ? view.stripBarHeight : -1
+            Layout.maximumHeight: view.strip ? view.stripBarHeight : -1
             Layout.leftMargin: view.compact ? 2 : 3
             Layout.rightMargin: view.compact ? 2 : 3
 
@@ -115,7 +122,7 @@ Item {
             Rectangle {
                 visible: view.split
                 width: Math.max(4, Math.min(parent.height * 0.6, 11))
-                height: parent.height + Math.min(8, parent.height * 0.6)
+                height: view.strip ? parent.height : parent.height + Math.min(8, parent.height * 0.6)
                 y: (parent.height - height) / 2
                 x: parent.width * (0.5 + 0.5 * view.pos) - width / 2
                 radius: width / 2.5

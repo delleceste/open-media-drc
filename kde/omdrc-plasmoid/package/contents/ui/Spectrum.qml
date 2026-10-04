@@ -108,7 +108,10 @@ Canvas {
                 ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.55)
                 ctx.font = "9px sans-serif"
                 ctx.textAlign = "center"; ctx.textBaseline = "top"
-                ctx.fillText(bands[i].label, i * slot + slot / 2, H - labelH + 1)
+                const label = bands[i].label
+                const half = ctx.measureText(label).width / 2
+                const center = i * slot + slot / 2
+                ctx.fillText(label, Math.max(half + 2, Math.min(W - half - 2, center)), H - labelH + 1)
             }
         }
     }
