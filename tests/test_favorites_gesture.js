@@ -31,7 +31,7 @@ function setup() {
         }
     };
     page.folderHold(button, 'Classical/BIS', () => {});
-    return { page, window, button, fire, runTimers, menuCount: () => menus };
+    return { K, page, window, button, fire, runTimers, menuCount: () => menus };
 }
 
 test('a pager swipe cannot trigger a folder long press or context menu', () => {
@@ -59,4 +59,30 @@ test('leaving Library cancels a pending hold', () => {
     app.runTimers();
     app.fire(app.button, 'contextmenu');
     assert.equal(app.menuCount(), 0);
+});
+
+test('refresh reads Qobuz before opening the drop destination', async () => {
+    const app = setup();
+    const events = [];
+    app.page.path = ['Source'];
+    app.page.message = { textContent: '' };
+    app.page.paint = async () => { events.push(`paint:${app.page.pathName()}`); };
+    app.page.reveal = () => { events.push('reveal'); };
+    app.K.api = async () => {
+        events.push('read');
+        return { ok: true, folders: [{ path: 'Target/Child' }], albums: [], covers: {}, order: {} };
+    };
+    assert.equal(await app.page.refresh('Target'), true);
+    assert.deepEqual(events, ['read', 'paint:Target', 'reveal']);
+    assert.equal(app.page.pathName(), 'Target');
+});
+
+test('failed refresh leaves the selected folder unchanged', async () => {
+    const app = setup();
+    app.page.path = ['Source'];
+    app.page.message = { textContent: '' };
+    app.K.api = async () => ({ ok: false, error: 'Qobuz unavailable' });
+    assert.equal(await app.page.refresh('Target'), false);
+    assert.equal(app.page.pathName(), 'Source');
+    assert.equal(app.page.message.textContent, 'Qobuz unavailable');
 });

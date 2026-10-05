@@ -215,7 +215,9 @@ Drag a tile by its handle to reorder it; the service stores the order per
 folder in `qobuz-library-order-<user_id>.json` in its state directory, shared
 by every browser and Android device using that service. Hold a dragged folder
 over another folder until **Release to move inside** appears, then release to
-move the entire playlist subtree there. Holding a folder tile
+move the entire playlist subtree there. The Library refreshes from Qobuz after
+the move attempt and opens the destination folder after a successful move.
+Holding a folder tile
 opens Rename and Remove actions; these apply to every Qobuz playlist below
 that path, while existing Qobuz album favorites remain.
 

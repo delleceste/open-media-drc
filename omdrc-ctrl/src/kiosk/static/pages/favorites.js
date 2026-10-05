@@ -14,25 +14,29 @@ P.mount = el => {
 };
 P.show = () => { P.visible = true; P.refresh(); };
 P.hide = () => { P.visible = false; if (P.activeHoldCancel) P.activeHoldCancel(); };
-P.refresh = async () => {
+P.refresh = async selectedFolder => {
     P.message.textContent = 'Reading Qobuz Library…';
     const d = await K.api('/qobuz/favorites', { timeout: 60000 });
-    if (!d.ok) { P.message.textContent = d.error || 'Could not read Qobuz Library'; return; }
+    if (!d.ok) { P.message.textContent = d.error || 'Could not read Qobuz Library'; return false; }
     P.folders = d.folders; P.albums = d.albums;
     P.covers = d.covers || {}; P.order = d.order || {};
+    if (selectedFolder && P.folders.some(f => f.path === selectedFolder ||
+        f.path.startsWith(selectedFolder + '/'))) P.path = selectedFolder.split('/');
     while (P.path.length && P.pathName() !== 'Qobuz' &&
            !P.folders.some(f => f.path === P.pathName() || f.path.startsWith(P.pathName() + '/')))
         P.path.pop();
     P.loaded.clear();
     P.message.textContent = '';
-    P.paint();
+    await P.paint();
+    if (selectedFolder && P.visible) P.reveal();
+    return true;
 };
-P.enter = name => {
-    P.path.push(name); P.paint();
+P.reveal = () => {
     const scrollBox = P.el.closest('.page-body');
     if (scrollBox) scrollBox.scrollTop += P.el.getBoundingClientRect().top -
         scrollBox.getBoundingClientRect().top;
 };
+P.enter = name => { P.path.push(name); P.paint(); P.reveal(); };
 P.back = () => { P.path.pop(); P.paint(); };
 P.pathName = () => P.path.join('/');
 P.openPlaylist = async folder => {
@@ -154,7 +158,7 @@ P.paint = async () => {
     K.clear(P.head).append(...[
         P.path.length ? h('button', { type: 'button', class: 'btn', onclick: P.back }, '‹ Back') : null,
         h('strong', {}, path || 'Qobuz Library'),
-        h('button', { type: 'button', class: 'btn', title: 'Refresh Qobuz Library', onclick: P.refresh }, '↻'),
+        h('button', { type: 'button', class: 'btn', title: 'Refresh Qobuz Library', onclick: () => P.refresh() }, '↻'),
     ].filter(Boolean));
     K.clear(P.grid);
     const children = new Map();
@@ -311,9 +315,10 @@ P.dragStart = (e, tile, grip) => {
             placeholder.remove();
             const d = await K.api('/qobuz/favorites/folder', {
                 json: { action: 'move', path: sourcePath, target: destination }, timeout: 60000 });
-            if (!d.ok) { K.toast(d.error || 'Could not move folder', 'error'); return; }
-            K.toast(`Moved into ${destination}`);
-            await P.refresh();
+            const refreshed = await P.refresh(d.ok ? destination : undefined);
+            if (!d.ok) K.toast(d.error || 'Could not move folder', 'error');
+            else K.toast(refreshed ? `Moved into ${destination}` : 'Folder moved; refresh failed',
+                         refreshed ? 'ok' : 'error');
             return;
         }
         placeholder.replaceWith(tile);
