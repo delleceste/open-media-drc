@@ -685,6 +685,11 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-ygrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; margin-bottom: .9rem; }
 .btn.qz-ycell { padding: 0; font-variant-numeric: tabular-nums; }
 .qz-chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.qz-label-picker { display: flex; align-items: flex-start; gap: .4rem; min-width: 0; }
+.qz-label-scroll { flex: 1; min-width: 0; max-height: calc(4 * 2.3rem + 3 * .4rem);
+    overflow-y: auto; overscroll-behavior-y: contain; align-content: flex-start; scrollbar-width: thin; }
+.qz-label-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qz-label-picker > .qz-add-label-button { flex: 0 0 auto; }
 .chip.qz-chip { min-height: 2.3rem; font-size: .9rem; padding: 0 .8rem; cursor: pointer; }
 .qz-hints:empty { display: none; } .qz-hint { margin-bottom: .55rem; } .qz-hint > .small { margin-bottom: .3rem; }
 .qz-seen { margin-top: .45rem; } .qz-seen summary { cursor: pointer; margin-bottom: .4rem; }

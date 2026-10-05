@@ -62,7 +62,9 @@ P.mount = el => {
     P.input = P.makeInput(pref('aiMode', false));
     P.suggestBox = h('div', { class: 'qz-suggest', role: 'listbox' });
     P.input.value = pref('q', '');
-    P.labelsBox = h('div', { class: 'qz-chips' });
+    P.labelsScroll = h('div', { class: 'qz-chips qz-label-scroll', tabindex: '0',
+        'aria-label': 'Search labels' });
+    P.labelsBox = h('div', { class: 'qz-label-picker' }, P.labelsScroll);
     P.seenBox = h('div', {});
     P.hintBox = h('div', { class: 'qz-hints' });      // the labels of the artist typed (see P.hintsFor)
     P.labelsBody = h('div', { class: 'qz-label-body' }, P.hintBox, P.labelsBox, P.seenBox);
@@ -115,7 +117,9 @@ P.mount = el => {
         'aria-label': 'Discover filters', 'aria-expanded': 'false',
         onclick: () => P.openDiscoverFilters(!P.discoverFiltersOpen) });
     P.discoverFilterSummary = h('span', { class: 'small muted qz-discover-summary' });
-    P.discoverLabels = h('div', { class: 'qz-chips' });
+    P.discoverLabelsScroll = h('div', { class: 'qz-chips qz-label-scroll', tabindex: '0',
+        'aria-label': 'Discover labels' });
+    P.discoverLabels = h('div', { class: 'qz-label-picker' }, P.discoverLabelsScroll);
     P.discoverAwarded = h('div', { class: 'qz-chips' });
     P.discoverQuality = h('div', { class: 'qz-chips' });
     P.discoverFilters = h('div', { class: 'qz-discover-filters', hidden: true },
@@ -566,9 +570,11 @@ P.addLabel = view => {
             const selected = P.discoverSelected();
             selected.add(name); setPref('discoverLabels', [...selected]);
             P.paintDiscoverFilters(); P.paintLabels(); P.discover();
+            P.discoverLabelsScroll.scrollTop = P.discoverLabelsScroll.scrollHeight;
         } else {
             P.selected.add(name); setPref('labels', [...P.selected]);
             P.paintLabels(); P.paintDiscoverFilters(); P.searchSoon();
+            P.labelsScroll.scrollTop = P.labelsScroll.scrollHeight;
         }
         close();
     };
@@ -586,13 +592,16 @@ P.addLabel = view => {
 // A ticked name that is not a favourite is sent as its own label keyword.
 P.paintLabels = () => {
     const names = P.labelNames(P.selected);
+    const top = P.labelsScroll.scrollTop;
     P.paintSummary();
     P.paintHints(P.plain(P.input.value));            // their ticks follow
     const chip = name => h('button', {
         type: 'button', class: 'chip tog qz-chip' + (P.selected.has(name) ? ' on' : ''),
         onclick: () => P.toggleLabel(name),
     }, name);
-    K.clear(P.labelsBox).append(...names.map(chip),
+    K.clear(P.labelsScroll).append(...names.map(chip));
+    P.labelsScroll.scrollTop = top;
+    K.clear(P.labelsBox).append(P.labelsScroll,
         h('button', { type: 'button', class: 'chip qz-chip qz-add-label-button',
             'aria-label': 'Add search label', title: 'Add label', onclick: () => P.addLabel('search') }, '+'));
     P.paintSeen();
@@ -1228,14 +1237,18 @@ P.openDiscoverFilters = open => {
 P.paintDiscoverFilters = () => {
     const selected = P.discoverSelected();
     const names = P.labelNames(selected);
-    K.clear(P.discoverLabels).append(...names.map(name => h('button', {
+    const top = P.discoverLabelsScroll.scrollTop;
+    K.clear(P.discoverLabelsScroll).append(...names.map(name => h('button', {
         type: 'button', class: 'chip tog qz-chip' + (selected.has(name) ? ' on' : ''),
         'aria-pressed': String(selected.has(name)),
         onclick: () => {
             selected.has(name) ? selected.delete(name) : selected.add(name);
             setPref('discoverLabels', [...selected]); P.paintDiscoverFilters(); P.discover();
         },
-    }, name)), h('button', { type: 'button', class: 'chip qz-chip qz-add-label-button',
+    }, name)));
+    P.discoverLabelsScroll.scrollTop = top;
+    K.clear(P.discoverLabels).append(P.discoverLabelsScroll,
+        h('button', { type: 'button', class: 'chip qz-chip qz-add-label-button',
         'aria-label': 'Add Discover label', title: 'Add label', onclick: () => P.addLabel('discover') }, '+'));
     for (const [box, key, label, title] of [
         [P.discoverAwarded, 'discoverAwarded', 'Awarded only', 'Albums with an award or your rating already found by this app'],

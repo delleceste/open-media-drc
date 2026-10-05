@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
-<div id="page"></div><div id="overlay-root"></div><pre id="result">RUNNING</pre>
+<div id="page" style="width:390px"></div><div id="overlay-root"></div><pre id="result">RUNNING</pre>
 <script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
 <script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
 <script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
@@ -16,11 +16,20 @@
         const P = K.pages.find(p => p.id === 'qobuz');
         for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
         P.mount(document.getElementById('page'));
-        P.favourites = ['Decca'];
+        P.favourites = ['Decca', ...Array.from({ length: 28 }, (_, i) => `Long label ${i + 1}`)];
+        P.paintLabels();
         P.paintDiscoverFilters();
+        P.openFilters(true);
+        P.discoverBox.hidden = false;
         P.openDiscoverFilters(true);
         check(!P.discoverFilters.hidden && P.discoverFilterBtn.getAttribute('aria-expanded') === 'true',
             'Discover filters open beside Genre');
+        check(P.labelsScroll.scrollHeight > P.labelsScroll.clientHeight &&
+            P.discoverLabelsScroll.scrollHeight > P.discoverLabelsScroll.clientHeight,
+            'Both label lists scroll after four rows');
+        check(P.labelsBox.querySelector('[aria-label="Add search label"]').parentElement === P.labelsBox &&
+            P.discoverLabels.querySelector('[aria-label="Add Discover label"]').parentElement === P.discoverLabels,
+            'Add buttons stay outside the scrolling label lists');
         const calls = [];
         K.api = async url => {
             calls.push(url);

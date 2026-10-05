@@ -194,6 +194,8 @@ beside New releases. Date and search-order filters apply only to Search.
 Both Search and Discover label filters have a **+** button for entering a
 label outside the configured favourites; added labels are available in both
 lists and selected independently in each view.
+The label chips scroll vertically once they exceed four rows; the **+** button
+stays visible beside them.
 Owned Qobuz playlists supply the folders: their names are slash-separated
 paths such as `Blow Up/2026/June`. Each track in a playlist points to its
 album; several tracks from one album appear as one album tile. Existing
