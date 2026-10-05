@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+<div id="page"></div><div id="overlay-root"></div><pre id="result">RUNNING</pre>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
+<script>
+(async () => {
+    const check = (ok, message) => { if (!ok) throw Error(message); };
+    try {
+        localStorage.clear();
+        K.state.features.qobuz_search = true;
+        K.library = { mount() {}, show() {}, hide() {}, visible: false };
+        K.api = async () => ({ ok: true, entries: [] });
+        const P = K.pages.find(p => p.id === 'qobuz');
+        for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
+        P.mount(document.getElementById('page'));
+        P.favourites = ['Decca'];
+        P.paintDiscoverFilters();
+        P.openDiscoverFilters(true);
+        check(!P.discoverFilters.hidden && P.discoverFilterBtn.getAttribute('aria-expanded') === 'true',
+            'Discover filters open beside Genre');
+        const calls = [];
+        K.api = async url => {
+            calls.push(url);
+            return { ok: true, albums: [], more: false };
+        };
+        P.discoverLabels.querySelector('button').click();
+        P.discoverAwarded.querySelector('button').click();
+        P.discoverQuality.querySelector('button').click();
+        await P.discover();
+        const url = calls.at(-1);
+        check(url.includes('label=Decca') && url.includes('awarded=1') && url.includes('hires=1'),
+            'Discover sends all filters');
+        check(P.discoverList.textContent.includes('New releases') &&
+            P.discoverList.textContent.includes('Decca · awarded · Hi-Res'),
+            'Short filter summary appears beside New releases');
+        check(!P.discoverFilters.textContent.includes('Released') && !P.discoverFilters.textContent.includes('Order'),
+            'Discover omits date and order filters');
+        document.getElementById('result').textContent = 'PASS';
+    } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
+})();
+</script>

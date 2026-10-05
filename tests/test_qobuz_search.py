@@ -782,6 +782,31 @@ class DiscoverTests(unittest.TestCase):
         with self.assertRaises(qs.QobuzError):
             catalog.discover(offset=-1)
 
+    def test_discover_filters_keep_qobuz_page_offsets(self):
+        """Label, awarded and quality filters do not alter the Qobuz page cursor."""
+        calls = []
+        def fetch(endpoint, params):
+            calls.append(params)
+            return {"albums": {"items": [
+                album("match", "Match", "Decca Classics", "2026-09-30"),
+                album("other", "Other", "Sony", "2026-09-29"),
+            ], "total": 4}}
+        catalog = qs.QobuzCatalog(fetch=fetch)
+        result = catalog.discover("", 0, labels=["Decca"])
+        self.assertEqual([card["id"] for card in result["albums"]], ["match"])
+        self.assertEqual(result["next_offset"], 2)
+        self.assertTrue(result["more"])
+        self.assertEqual(catalog.discover("", 0, labels=["Sony"])["albums"][0]["id"], "other")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(catalog.discover("", 0, awarded_only=True)["albums"], [])
+        cd = album("cd", "CD", "Decca Classics", "2026-09-28")
+        cd["maximum_bit_depth"] = 16
+        cd["maximum_sampling_rate"] = 44.1
+        def fetch_quality(endpoint, params):
+            return {"albums": {"items": [cd, album("hires", "Hi-Res", "Decca Classics")], "total": 2}}
+        quality_catalog = qs.QobuzCatalog(fetch=fetch_quality)
+        self.assertEqual([card["id"] for card in quality_catalog.discover(exclude_cd=True)["albums"]], ["hires"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,8 +111,22 @@ P.mount = el => {
     P.genreBtn = h('button', { type: 'button', class: 'chip qz-chip', 'aria-haspopup': 'menu', 'aria-label': 'Discover genre',
         onclick: () => P.openGenreMenu() });
     P.paintGenre();
+    P.discoverFilterBtn = h('button', { type: 'button', class: 'chip qz-chip',
+        'aria-label': 'Discover filters', 'aria-expanded': 'false',
+        onclick: () => P.openDiscoverFilters(!P.discoverFiltersOpen) });
+    P.discoverFilterSummary = h('span', { class: 'small muted qz-discover-summary' });
+    P.discoverLabels = h('div', { class: 'qz-chips' });
+    P.discoverAwarded = h('div', { class: 'qz-chips' });
+    P.discoverQuality = h('div', { class: 'qz-chips' });
+    P.discoverFilters = h('div', { class: 'qz-discover-filters', hidden: true },
+        h('div', { class: 'lbl' }, 'Labels'), P.discoverLabels,
+        h('div', { class: 'lbl' }, 'Awarded'), P.discoverAwarded,
+        h('div', { class: 'lbl' }, 'Audio quality'), P.discoverQuality);
     P.discoverList = h('div', {});
-    P.discoverBox = h('div', { class: 'qz-discover' }, P.genreBtn, P.discoverList);
+    P.discoverBox = h('div', { class: 'qz-discover' },
+        h('div', { class: 'qz-discover-controls' }, P.genreBtn, P.discoverFilterBtn),
+        P.discoverFilters, P.discoverList);
+    P.paintDiscoverFilters();
     P.loadGenres();
     // Under the box: which list is shown, remembered (the albums played from here, or
     // the last search's results), and, while the box is scrolled out of sight, a hint
@@ -456,6 +470,7 @@ P.loadLabels = async () => {
     P.favouritesLoaded = true;
     P.favourites = d.labels.map(l => l.name);
     P.paintLabels();
+    P.paintDiscoverFilters();
 };
 
 P.setLabelsOpen = open => {
@@ -1151,12 +1166,57 @@ P.openGenreMenu = () => {
     document.addEventListener('pointerdown', P.genreOutside, true);
 };
 
+P.discoverSelected = () => new Set(pref('discoverLabels', []));
+P.discoverSummary = () => [
+    ...P.discoverSelected(),
+    ...(pref('discoverAwarded', false) ? ['awarded'] : []),
+    ...(pref('discoverHires', false) ? ['Hi-Res'] : []),
+].join(' · ');
+P.openDiscoverFilters = open => {
+    P.discoverFiltersOpen = open;
+    P.discoverFilters.hidden = !open;
+    P.discoverFilterBtn.setAttribute('aria-expanded', String(open));
+    P.paintDiscoverFilters();
+};
+P.paintDiscoverFilters = () => {
+    const selected = P.discoverSelected();
+    const names = [...P.favourites, ...[...selected].filter(n => !P.favourites.some(f => f.toLowerCase() === n.toLowerCase()))];
+    K.clear(P.discoverLabels).append(...names.map(name => h('button', {
+        type: 'button', class: 'chip tog qz-chip' + (selected.has(name) ? ' on' : ''),
+        'aria-pressed': String(selected.has(name)),
+        onclick: () => {
+            selected.has(name) ? selected.delete(name) : selected.add(name);
+            setPref('discoverLabels', [...selected]); P.paintDiscoverFilters(); P.discover();
+        },
+    }, name)));
+    if (!names.length && P.favouritesLoaded) P.discoverLabels.append(h('span', { class: 'small muted' }, 'No favourite labels configured.'));
+    for (const [box, key, label, title] of [
+        [P.discoverAwarded, 'discoverAwarded', 'Awarded only', 'Albums with an award or your rating already found by this app'],
+        [P.discoverQuality, 'discoverHires', 'Hi-Res', 'Exclude 16-bit/44.1 kHz releases'],
+    ]) {
+        const on = pref(key, false);
+        K.clear(box).append(h('button', { type: 'button', class: 'chip tog qz-chip' + (on ? ' on' : ''),
+            'aria-pressed': String(on), title,
+            onclick: () => { setPref(key, !on); P.paintDiscoverFilters(); P.discover(); },
+        }, label));
+    }
+    const summary = P.discoverSummary();
+    P.discoverFilterBtn.textContent = 'Filters ' + (P.discoverFiltersOpen ? '▴' : '▾');
+    P.discoverFilterBtn.classList.toggle('on', !!summary);
+    P.discoverFilterSummary.textContent = summary;
+    P.discoverFilterSummary.title = summary;
+};
+
 P.discover = async (offset = 0) => {
     if (P.discoverObserver) P.discoverObserver.disconnect();
     const seq = P.discoverSeq = (P.discoverSeq || 0) + 1;
     const genre = pref('discoverGenre', '');
     if (!offset) K.clear(P.discoverList).append(h('p', { class: 'muted' }, 'Loading new releases…'));
-    const d = await K.api('/qobuz/discover?' + new URLSearchParams({ genre, offset }));
+    const params = new URLSearchParams({ genre, offset });
+    for (const label of P.discoverSelected()) params.append('label', label);
+    if (pref('discoverAwarded', false)) params.set('awarded', '1');
+    if (pref('discoverHires', false)) params.set('hires', '1');
+    const d = await K.api('/qobuz/discover?' + params);
     if (seq !== P.discoverSeq) return;
     if (!d.ok) {
         K.clear(P.discoverList).append(h('div', { class: 'errbox' }, d.error || 'Could not load new releases',
@@ -1165,11 +1225,12 @@ P.discover = async (offset = 0) => {
     }
     if (!offset) {
         P.discoverRows = P.list([]);
-        K.clear(P.discoverList).append(h('p', { class: 'small muted' }, 'New releases'), P.discoverRows);
+        K.clear(P.discoverList).append(h('div', { class: 'qz-discover-heading' },
+            h('span', { class: 'small muted' }, 'New releases'), P.discoverFilterSummary), P.discoverRows);
     }
     if (P.discoverMore) P.discoverMore.remove();
     P.discoverRows.append(...d.albums.map(c => P.item(c)));
-    if (!P.discoverRows.firstChild) P.discoverRows.append(h('p', { class: 'muted' }, 'No new releases for this genre.'));
+    if (!P.discoverRows.firstChild && !d.more) P.discoverRows.append(h('p', { class: 'muted' }, 'No matching new releases.'));
     if (d.more) {
         let loading = false;
         const loadMore = () => {

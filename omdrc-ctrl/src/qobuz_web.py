@@ -415,7 +415,9 @@ def discover():
         return guard
     try:
         return jsonify({"ok": True, **catalog().discover(
-            request.args.get("genre", ""), _number("offset", int) or 0)})
+            request.args.get("genre", ""), _number("offset", int) or 0,
+            request.args.getlist("label"), request.args.get("awarded") == "1",
+            request.args.get("hires") == "1")})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
 

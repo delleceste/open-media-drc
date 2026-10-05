@@ -945,7 +945,9 @@ class QobuzCatalog:
                     if g.get("id") is not None and g.get("name")]
         return self._cached("genres", self.settings.cache_ttl, make)
 
-    def discover(self, genre: str = "", offset: int = 0) -> dict:
+    def discover(self, genre: str = "", offset: int = 0,
+                 labels: list[str] | None = None, awarded_only: bool = False,
+                 exclude_cd: bool = False) -> dict:
         # One or several comma-separated numeric genre ids; new releases across
         # any of them.  A single id keeps the exact "<id>:" form as before.
         ids = [g for g in genre.split(",") if g]
@@ -959,13 +961,27 @@ class QobuzCatalog:
                 params["genre_ids"] = ",".join(g + ":" for g in ids)
             block = self._call("album/getFeatured", params).get("albums") or {}
             items = block.get("items") or []
-            cards = [album_card(a) for a in items if a.get("streamable", True)]
             total = block.get("total")
             next_offset = offset + len(items)
-            return {"albums": cards, "next_offset": next_offset,
+            return {"items": items, "next_offset": next_offset,
                     "more": bool(items) and (next_offset < total if isinstance(total, int)
                                              else len(items) == PAGE_SIZE)}
-        return self._cached(f"discover:{genre}:{offset}", self.settings.cache_ttl, make)
+        page = self._cached(f"discover:{genre}:{offset}", self.settings.cache_ttl, make)
+        groups = self.label_groups(labels or [])
+        awarded_ids = (self.awarded.awarded_ids() if self.awarded else set()) if awarded_only else None
+        cards = []
+        for item in page["items"]:
+            if item.get("streamable") is False:
+                continue
+            card = album_card(item)
+            if groups and not any(group.matches(card["label"]) for group in groups):
+                continue
+            if awarded_ids is not None and card["id"] not in awarded_ids:
+                continue
+            if exclude_cd and is_cd_quality(card):
+                continue
+            cards.append(card)
+        return {"albums": cards, "next_offset": page["next_offset"], "more": page["more"]}
 
     def _page(self, query: str, offset: int) -> tuple[list[dict], int | None]:
         """One page of one query's albums, and the total Qobuz reports."""

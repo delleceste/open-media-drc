@@ -619,6 +619,12 @@ input[type=range] { accent-color: var(--accent); }
 .qz-filters[hidden], .qz-label-body[hidden] { display: none; }
 @media (min-width: 42rem) { .qz-filters.qz-labels-closed { grid-template-columns: 9rem minmax(0, 1fr); } }
 .qz-fgroup { min-width: 0; }
+.qz-discover-controls, .qz-discover-heading { display: flex; align-items: center; gap: .65rem; }
+.qz-discover-filters { padding: .35rem 0 .7rem; }
+.qz-discover-filters[hidden] { display: none; }
+.qz-discover-filters .lbl { margin: .45rem 0 .3rem; }
+.qz-discover-heading { margin: .65rem 0; min-width: 0; }
+.qz-discover-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--yellow); }
 .qz-label-toggle { width: 100%; min-height: 2.3rem; padding: 0; border: 0; background: none;
     color: var(--muted); text-align: left; cursor: pointer; font: inherit; font-size: .8rem; font-weight: 600; letter-spacing: .08em; }
 .qz-label-toggle:focus-visible { outline: 2px solid var(--accent); }

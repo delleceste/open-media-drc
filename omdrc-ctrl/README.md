@@ -188,6 +188,9 @@ Search and play answer 409 while upmpdcli is not running.
 
 The kiosk and Android app show **Favorites** as the heart view beside Qobuz's
 Results, Recent, Discover and Awarded views, with folder and album tiles.
+Discover keeps Qobuz's new release order and has its own collapsible filters
+beside Genre: favourite labels, Awarded and Hi-Res. The active filters appear
+beside New releases. Date and search-order filters apply only to Search.
 Owned Qobuz playlists supply the folders: their names are slash-separated
 paths such as `Blow Up/2026/June`. Each track in a playlist points to its
 album; several tracks from one album appear as one album tile. Existing
