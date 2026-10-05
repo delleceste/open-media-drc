@@ -122,7 +122,10 @@ P.mount = el => {
             h('button', { type: 'button', class: 'chip tog qz-chip', dataset: { view: x }, onclick: () => P.setView(x) }, all[i + 1])], []));
     P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'Back to search', 'aria-label': 'Back to search',
         onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, K.tIcon('search'), h('span', { 'aria-hidden': 'true' }, '⌃'));
-    P.viewRow = h('div', { class: 'qz-viewrow' }, P.viewChips, P.searchHint);
+    // list or grid, for all four lists alike (remembered)
+    P.layoutBtn = h('button', { type: 'button', class: 'chip qz-chip qz-layout', onclick: () => P.setLayout(P.grid() ? 'list' : 'grid') });
+    P.paintLayout();
+    P.viewRow = h('div', { class: 'qz-viewrow' }, P.viewChips, P.searchHint, P.layoutBtn);
     P.preview = h('div', { class: 'qz-preview', hidden: true, role: 'button', tabindex: '-1',
         'aria-label': 'Open the results', 'aria-disabled': 'true',
         onclick: () => { if (P.previewReady()) P.openResults(); },
@@ -241,6 +244,28 @@ P.paintView = () => {
         P.results.append(h('p', { class: 'muted' }, 'No search yet: the search is at the top.'));
 };
 P.prefetch = () => P.refreshStatus();     // which also loads the labels
+
+// ── list or grid ─────────────────────────────────────────────────────────────
+// The grid is Qobuz's Discover: covers in columns, the title and artist small under
+// each.  Switching rebuilds the albums already on screen from their cards, so a
+// Discover read several pages deep stays as it is.
+P.grid = () => pref('layout', 'list') === 'grid';
+P.paintLayout = () => {
+    const grid = P.grid();
+    K.clear(P.layoutBtn).append(K.tIcon(grid ? 'list' : 'grid'));
+    P.layoutBtn.title = grid ? 'Show as a list' : 'Show as a grid';
+    P.layoutBtn.setAttribute('aria-label', P.layoutBtn.title);
+};
+P.setLayout = v => {
+    setPref('layout', v);
+    P.paintLayout();
+    P.main.querySelectorAll('.qz-list').forEach(list => {
+        list.classList.toggle('qz-grid', P.grid());
+        [...list.children].forEach(el => { if (el.__card) el.replaceWith(P.item(el.__card, el.__where)); });
+    });
+};
+P.list = (cards, where = '') => h('div', { class: 'qz-list' + (P.grid() ? ' qz-grid' : '') }, cards.map(c => P.item(c, where)));
+P.item = (c, where = '') => P.grid() ? P.tile(c, where) : P.row(c, where);
 
 // ── where the search box is ──────────────────────────────────────────────────
 // One search box (field, completions, filters), in one place at a time: at the
@@ -956,11 +981,11 @@ P.paintResults = () => {
         ? 'Nothing matches yet among the albums read so far.'
         : 'Nothing matches.'));
     const shown = d.results.filter(c => !c.lowered), low = d.results.filter(c => c.lowered);
-    kids.push(h('div', { class: 'qz-list' }, shown.map(c => P.row(c))));
+    kids.push(P.list(shown));
     if (low.length) kids.push(h('details', { class: 'qz-lowgroup', open: P.lowOpen || null,
         ontoggle: e => { P.lowOpen = e.target.open; } },
         h('summary', { class: 'small muted' }, `${low.length} lowered result${low.length === 1 ? '' : 's'}`),
-        h('div', { class: 'qz-list' }, low.map(c => P.row(c)))));
+        P.list(low)));
     if (d.more) {
         const automatic = P.autoMore && d.results.length && 'IntersectionObserver' in window;
         const more = automatic
@@ -1064,7 +1089,7 @@ P.watchMore = (button, d) => {
 P.recent = async () => {
     const d = await K.api('/qobuz/played?limit=30');
     if (!d.ok) return;
-    K.clear(P.recentBox).append(d.albums.length ? h('div', { class: 'qz-list' }, d.albums.map(c => P.row(c, 'recent')))
+    K.clear(P.recentBox).append(d.albums.length ? P.list(d.albums, 'recent')
         : h('p', { class: 'muted' }, 'Nothing played from here yet.'));
 };
 
@@ -1117,11 +1142,11 @@ P.discover = async (offset = 0) => {
         return;
     }
     if (!offset) {
-        P.discoverRows = h('div', { class: 'qz-list' });
+        P.discoverRows = P.list([]);
         K.clear(P.discoverList).append(h('p', { class: 'small muted' }, 'New releases'), P.discoverRows);
     }
     if (P.discoverMore) P.discoverMore.remove();
-    P.discoverRows.append(...d.albums.map(c => P.row(c)));
+    P.discoverRows.append(...d.albums.map(c => P.item(c)));
     if (!P.discoverRows.firstChild) P.discoverRows.append(h('p', { class: 'muted' }, 'No new releases for this genre.'));
     if (d.more) {
         let loading = false;
@@ -1154,7 +1179,7 @@ P.awardedList = async () => {
     if (!d.ok) { K.clear(P.awardedBox).append(h('div', { class: 'errbox' }, d.error || 'the list cannot be read')); return; }
     K.clear(P.awardedBox).append(d.albums.length
         ? h('div', {}, h('div', { class: 'qz-summary small muted' }, `${d.albums.length} album${d.albums.length === 1 ? '' : 's'} with an award, met in searches or marked by you`),
-            h('div', { class: 'qz-list' }, d.albums.map(c => P.row(c))))
+            P.list(d.albums))
         : h('p', { class: 'muted' }, 'None yet: albums with an award are listed here as searches meet them, and so are the ones you mark awarded (Album details).'));
 };
 
@@ -1477,8 +1502,67 @@ P.row = (c, where = '') => {
                 : h('button', { type: 'button', class: 'btn qz-low', title: 'Lower: show it last, folded away', onclick: () => P.lower(c, row) }, '−')),
         tracks);
     if (P.open.has(c.id)) P.toggleTracks(c, row, tracks, true);
+    row.__card = c; row.__where = where;
     return row;
 };
+
+// One album in the grid.  A tap opens its details, with ▶ and + there (the only way
+// to them in the grid); a long press is the list's −: out of Recent, or lowered.
+// A lowered album has nothing to remove: its ↺ is in the list and the Lowered list.
+const LONG_PRESS_MS = 550;
+P.tile = (c, where = '') => {
+    const off = c.streamable === false;
+    const remove = where === 'recent' ? () => P.hideRecent(c, tile)
+        : c.lowered ? null : () => P.lower(c, tile);
+    const sub = [c.year, c.label].filter(Boolean).join(' · ');
+    const tile = h('div', {
+        class: 'qz-tile' + (off ? ' off' : '') + (c.lowered ? ' lowered' : ''), role: 'button', tabindex: 0,
+        title: [c.title, c.artist].filter(Boolean).join(' — ') + (remove ? (where === 'recent' ? ' (long press: hide from Recent)' : ' (long press: lower)') : ''),
+        onclick: () => { if (!held) P.details(c); },
+        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.details(c); } },
+    },
+        h('div', { class: 'qz-tcover' },
+            c.image ? h('img', { src: c.image_large || c.image, alt: '', loading: 'lazy', draggable: 'false',
+                ...(c.image_large ? { srcset: `${c.image} 230w, ${c.image_large} 600w`, sizes: '9rem' } : {}) }) : null,
+            (c.awards && c.awards.length) || c.rating ? h('span', { class: 'qz-taward', title: 'Awarded' }, '🏆') : null,
+            quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null),
+        h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
+        h('div', { class: 'qz-tsub muted' }, c.artist || ''),
+        sub ? h('div', { class: 'qz-tsub muted' }, sub) : null);
+    // the press: held still for LONG_PRESS_MS; a move (a scroll, a page swipe) ends it
+    let timer = null, start = null, held = false;
+    const cancel = () => { clearTimeout(timer); timer = null; tile.classList.remove('pressing'); };
+    const fire = () => {
+        cancel();
+        if (!remove || held) return;
+        held = true;
+        try { navigator.vibrate && navigator.vibrate(25); } catch {}
+        remove();
+    };
+    tile.addEventListener('pointerdown', e => {
+        if (e.button) return;
+        held = false;
+        start = { x: e.clientX, y: e.clientY };
+        if (!remove) return;
+        tile.classList.add('pressing');
+        timer = setTimeout(fire, LONG_PRESS_MS);
+    });
+    tile.addEventListener('pointermove', e => {
+        if (timer && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) cancel();
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => tile.addEventListener(t, cancel));
+    // Android's own long press (and a right click) asks for a context menu: it is ours
+    tile.addEventListener('contextmenu', e => { e.preventDefault(); if (timer || e.pointerType === 'mouse' || !e.pointerType) fire(); });
+    tile.__card = c; tile.__where = where;
+    return tile;
+};
+
+// The details page from the grid: with ▶ and + for this album.
+P.details = c => K.albumInfo(c.id, {
+    off: c.streamable === false,
+    play: () => P.play(c, 'replace'),
+    add: () => P.play(c, 'append'),
+});
 
 P.album = id => {
     if (!P.albums.has(id)) {

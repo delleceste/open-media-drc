@@ -172,7 +172,10 @@ const close = () => {
 };
 const onKey = e => { if (e.key === 'Escape') close(); };
 
-K.albumInfo = async albumId => {
+// `actions` ({play, add}: functions) puts ▶ and + under the title: only the Qobuz
+// page's grid passes them, where a cover tap is the way here and the row's own
+// buttons are not on screen.  From anywhere else the page only tells.
+K.albumInfo = async (albumId, actions = null) => {
     close();
     const body = h('div', { class: 'ai-body' }, h('div', { class: 'qz-working' }, h('div', { class: 'spinner' }), h('div', { class: 'muted' }, 'Asking Qobuz…')));
     open = h('div', { class: 'scrim ai' },
@@ -187,7 +190,7 @@ K.albumInfo = async albumId => {
     if (open !== mine) return;
     K.clear(body);
     if (!d.ok) { body.append(h('div', { class: 'errbox' }, d.error || 'Qobuz did not answer.')); return; }
-    body.append(...page(d.album));
+    body.append(...page(d.album, actions));
 };
 
 // Search results keep ambiguous names and different classical recordings visible.
@@ -245,15 +248,22 @@ const researchLinks = a => {
     return links.length ? h('div', { class: 'ai-research', 'aria-label': 'Search artist and album information' }, links) : null;
 };
 
-const page = a => {
+const page = (a, actions) => {
     const out = [];
     const facts = [a.label, a.date || a.year, a.genre].filter(Boolean).join(' · ');
+    const off = a.streamable === false || !!(actions && actions.off);
+    const act = (cls, title, fn, label) => h('button', { type: 'button', class: 'btn ' + cls, disabled: off,
+        title: off ? 'Not available on Qobuz' : title, 'aria-label': title, onclick: fn }, label);
+    const play = actions ? h('div', { class: 'ai-play' },
+        act('primary qz-play ai-playbtn', 'Replace the queue and play', () => { close(); actions.play(); }, K.tIcon('play')),
+        act('ai-addbtn', 'Add to the queue', () => actions.add(), '+')) : null;
     out.push(h('div', { class: 'ai-head' },
         a.image_large || a.image ? h('img', { class: 'ai-cover', src: a.image_large || a.image, alt: '' }) : null,
         h('div', { class: 'ai-headtext' },
             h('div', { class: 'ai-title' }, a.title, a.version ? h('span', { class: 'muted' }, ` (${a.version})`) : null),
             a.artist ? h('div', { class: 'ai-artist' }, a.artist) : null,
             a.composer && a.composer !== a.artist && !/^various/i.test(a.composer) ? h('div', { class: 'muted' }, a.composer) : null,
+            play,
             h('div', { class: 'ai-award-actions' },
                 h('button', { type: 'button', class: 'chip ai-award-add', onclick: () => K.awardsPopup(a) }, 'Add award or rate'),
                 K.awardsBox(a, { awards: a.awards || [], rating: a.rating || 0 }, { compact: true })),

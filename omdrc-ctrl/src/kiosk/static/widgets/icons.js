@@ -15,6 +15,10 @@ const SHAPES = {
     stop: [['rect', { x: 6.5, y: 6.5, width: 11, height: 11, rx: 1.8 }]],
     prev: [['path', { d: 'M6.5 6 V18' }], ['path', { d: 'M18 6.5 L9.5 12 L18 17.5 Z' }]],
     next: [['path', { d: 'M17.5 6 V18' }], ['path', { d: 'M6 6.5 L14.5 12 L6 17.5 Z' }]],
+    grid: [['rect', { x: 4, y: 4, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 4, width: 6.5, height: 6.5, rx: 1 }],
+        ['rect', { x: 4, y: 13.5, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 13.5, width: 6.5, height: 6.5, rx: 1 }]],
+    list: [['rect', { x: 3.5, y: 5, width: 4.5, height: 4.5, rx: .8 }], ['rect', { x: 3.5, y: 14.5, width: 4.5, height: 4.5, rx: .8 }],
+        ['path', { d: 'M11 6.5 H20.5 M11 9 H17 M11 16 H20.5 M11 18.5 H17' }]],
 };
 K.tIcon = name => {
     const svg = document.createElementNS(NS, 'svg');
