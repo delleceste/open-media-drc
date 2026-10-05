@@ -58,6 +58,7 @@ from flask import Blueprint, Response, jsonify, request
 
 import openhome
 import qobuz_ai
+import qobuz_favorites
 from qobuz_search import (AWARD_PRESETS, AwardedAlbums, LoweredList, PlayedAlbums,
                           QobuzCatalog, QobuzError, album_card,
                           SearchWords, ArtistLabels, discover_app_id, read_word_list,
@@ -137,6 +138,13 @@ def _credentials() -> tuple[str, str]:
         raise QobuzError("upmpdcli's Qobuz plugin has no token: use Qobuz sign-in "
                          "in the panel first")
     return _app_id_now(), token
+
+
+def _qobuz_user_id() -> str:
+    user_id = _read_options(_token_file()).get("user_id", "")
+    if not user_id.isdigit():
+        raise QobuzError("Qobuz user ID is unavailable: sign in again")
+    return user_id
 
 
 def _upmpdcli_options() -> dict[str, str]:
@@ -593,6 +601,61 @@ def album(album_id):
         return jsonify({"ok": True, "album": catalog().album(album_id)})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/favorites", methods=["GET", "POST"])
+def favorites():
+    """Qobuz's own playlists are folder paths; album hearts are the fallback."""
+    guard = _guard(renderer_needed=False)
+    if guard:
+        return guard
+    try:
+        cat, user_id = catalog(), _qobuz_user_id()
+        if request.method == "GET":
+            own = qobuz_favorites.playlists(cat, user_id)
+            folders = [{"id": str(p["id"]), "path": qobuz_favorites.legacy_path(p["name"]),
+                        "tracks": p.get("tracks_count", 0)}
+                       for p in own]
+            return jsonify({"ok": True, "folders": folders,
+                            "albums": qobuz_favorites.uncategorized(
+                                cat, user_id, own, qobuz_favorites.favorites(cat, user_id))})
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        album_id = str(body.get("album_id") or "")
+        if not re.fullmatch(r"[0-9A-Za-z]+", album_id):
+            raise QobuzError("bad album ID")
+        if action == "add":
+            result = qobuz_favorites.add(cat, user_id, album_id, body.get("path") or "")
+            qobuz_favorites.invalidate(user_id)
+            if album_id not in {a["id"] for a in qobuz_favorites.favorites(cat, user_id)}:
+                cat._call("favorite/create", {"album_ids": album_id})
+            return jsonify({"ok": True, **result})
+        if action == "remove":
+            qobuz_favorites.remove(cat, user_id, album_id, str(body.get("playlist_id") or ""))
+            qobuz_favorites.invalidate(user_id)
+            return jsonify({"ok": True})
+        if action == "unfavorite":
+            cat._call("favorite/delete", {"album_ids": album_id})
+            return jsonify({"ok": True})
+        raise QobuzError("unknown favorites action")
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/favorites/playlist/<playlist_id>")
+def favorite_playlist(playlist_id):
+    guard = _guard(renderer_needed=False)
+    if guard:
+        return guard
+    try:
+        if not playlist_id.isdigit():
+            raise QobuzError("bad playlist ID")
+        cat, user_id = catalog(), _qobuz_user_id()
+        if not any(str(p["id"]) == playlist_id for p in qobuz_favorites.playlists(cat, user_id)):
+            raise QobuzError("Playlist is not owned by this Qobuz account")
+        return jsonify({"ok": True, "albums": qobuz_favorites.playlist_albums(cat, playlist_id)})
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
 
 
 @bp.route("/awards")

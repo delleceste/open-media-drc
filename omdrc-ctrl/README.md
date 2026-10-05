@@ -184,6 +184,33 @@ the search is only offered while upmpdcli is the running renderer.
 
 Search and play answer 409 while upmpdcli is not running.
 
+### Qobuz Library folders
+
+The kiosk and Android app show a **Library** page with folder and album tiles.
+Owned Qobuz playlists supply the folders: their names are slash-separated
+paths such as `Blow Up/2026/June`. Each track in a playlist points to its
+album; several tracks from one album appear as one album tile. Existing
+playlists are read without changing their tracks. Album favorites with no
+owned-playlist membership appear under **Qobuz**. The Library is refreshed
+from Qobuz when opened (its playlist membership index is reused for at most
+five minutes if playlist modification times have not changed).
+
+The heart on any Qobuz result, recent album, Discover album or awarded album
+saves it under an existing or new path. This adds its first playable track
+to the matching playlist and adds a Qobuz album favorite. Removing an album
+from a folder removes its playlist entries but keeps the Qobuz album favorite,
+which then appears under **Qobuz** if it has no other folder. Removing it from
+**Qobuz** removes its album heart. Playlist names are reversible in Qobuz's
+own Library; legacy Blow Up and Gramophone names are also understood until
+renamed.
+
+`GET /qobuz/favorites` returns folder paths and uncategorized album cards;
+`GET /qobuz/favorites/playlist/<id>` returns an owned playlist grouped by
+album. `POST /qobuz/favorites` accepts `{"action":"add","album_id","path"}`,
+`{"action":"remove","album_id","playlist_id"}`, or
+`{"action":"unfavorite","album_id"}`. Folder reading and edits need a
+Qobuz sign-in, but only playing requires upmpdcli to be running.
+
 The kiosk (`/k/`, and so the Android app) has a **Qobuz** page for it: the
 text field, the favourite labels as check boxes (plus any label met in the
 results), "last N years" or a from–to span (each year a spinner: drag it up

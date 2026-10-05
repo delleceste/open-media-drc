@@ -1498,6 +1498,7 @@ P.row = (c, where = '') => {
         h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: off ? 'Not available on Qobuz' : 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),
             h('button', { type: 'button', class: 'btn qz-add', disabled: off, title: off ? 'Not available on Qobuz' : 'Add to the queue', onclick: () => P.play(c, 'append') }, '+'),
+            h('button', { type: 'button', class: 'btn', title: 'Save in Qobuz Library', onclick: () => K.saveQobuzFavorite(c) }, '♡'),
             // in "Played recently", − only takes it out of that list (P.hideRecent)
             where === 'recent'
                 ? h('button', { type: 'button', class: 'btn qz-low', title: 'Hide from Recent', onclick: () => P.hideRecent(c, row) }, '−')
@@ -1571,6 +1572,7 @@ P.tileMenu = (c, where, tile) => {
         h('div', { class: 'qz-tilemenu-head' }, c.title),
         item(K.tIcon('play'), off ? 'Not available on Qobuz' : 'Play (replace the queue)', () => P.play(c, 'replace'), off),
         item('+', 'Add to the queue', () => P.play(c, 'append'), off),
+        item('♡', 'Save in Qobuz Library', () => K.saveQobuzFavorite(c)),
         where === 'recent' ? item('−', 'Remove from Recent', () => P.hideRecent(c, tile))
         : c.lowered ? item('↺', `Restore (lowered ${c.lowered.kind}: ${c.lowered.name})`, () => P.restore(c.lowered))
         : item('−', 'Remove (lower it)', () => P.lower(c, tile)));

@@ -712,6 +712,23 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-tracks { grid-column: 1 / -1; }
 /* the grid (pages/qobuz.js P.tile): covers in columns, small text under each */
 .qz-list.qz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.6rem, 1fr)); gap: .75rem .6rem; }
+.fav-page { padding: .8rem; }
+.fav-head { display: flex; align-items: center; gap: .7rem; margin-bottom: .7rem; }
+.fav-head strong { flex: 1; font-size: 1.15rem; }
+.fav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr)); gap: .8rem; }
+.fav-folder, .fav-album { min-width: 0; border: 1px solid var(--hair); border-radius: .7rem;
+    background: var(--surface2); color: var(--text); padding: .55rem; text-align: left; }
+.fav-folder { display: flex; flex-direction: column; justify-content: center; min-height: 8rem; cursor: pointer; }
+.fav-folder-icon { font-size: 2rem; color: var(--accent); }
+.fav-folder strong, .fav-album strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-folder small, .fav-album small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-album { display: flex; flex-direction: column; gap: .2rem; }
+.fav-art { padding: 0; width: 100%; aspect-ratio: 1; border: 0; border-radius: .4rem;
+    background: var(--surface); color: var(--muted); font-size: 3rem; overflow: hidden; cursor: pointer; }
+.fav-art img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.fav-actions { display: flex; gap: .2rem; margin-top: auto; padding-top: .35rem; }
+.fav-actions .btn { flex: 1; padding: .25rem; }
+.fav-sheet input { width: 100%; box-sizing: border-box; padding: .6rem; font: inherit; }
 .qz-tile { min-width: 0; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     touch-action: manipulation; transition: transform .15s, opacity .2s; }
 .qz-tile.pressing { transform: scale(.96); }
