@@ -78,12 +78,21 @@ K.Spectrum = class Spectrum {
         const titleH = this.separate ? 14 * dpr : 0;
         const labelH = 15 * dpr, top = 4 * dpr + titleH, plotH = Math.max(1, H - labelH - top);
         const fl = this.floor, y = db => top + plotH * (1 - K.clamp((db - fl) / (0 - fl), 0, 1));
+        const colorAt = db => K.clamp((db - fl) / (0 - fl), 0, 1);
         const leftGrad = ctx.createLinearGradient(0, top + plotH, 0, top);
-        leftGrad.addColorStop(0, '#59616b'); leftGrad.addColorStop(.55, '#bdc5ce');
-        leftGrad.addColorStop(1, '#ffffff');
+        leftGrad.addColorStop(0, '#1f8f3a');
+        leftGrad.addColorStop(colorAt(-18), '#3fb950');
+        leftGrad.addColorStop(colorAt(-9), '#d8c23a');
+        leftGrad.addColorStop(colorAt(-4), '#e3892b');
+        leftGrad.addColorStop(colorAt(-1), '#f85149');
+        leftGrad.addColorStop(1, '#ff2d2d');
         const rightGrad = ctx.createLinearGradient(0, top + plotH, 0, top);
-        rightGrad.addColorStop(0, '#4a1414'); rightGrad.addColorStop(.55, '#c83030');
-        rightGrad.addColorStop(1, '#ff4545');
+        rightGrad.addColorStop(0, '#388f35');
+        rightGrad.addColorStop(colorAt(-18), '#55af4d');
+        rightGrad.addColorStop(colorAt(-9), '#e1b230');
+        rightGrad.addColorStop(colorAt(-4), '#ec772d');
+        rightGrad.addColorStop(colorAt(-1), '#f34a43');
+        rightGrad.addColorStop(1, '#ff2828');
         const panels = this.separate
             ? [['L', this.l, this.capL, 0, leftGrad, '#ffffff'],
                ['R', this.r, this.capR, panelW + gap, rightGrad, '#ff4545']]
