@@ -356,9 +356,26 @@ P.openViewMenu = () => {
         type: 'button', class: 'menu-item', role: radio ? 'menuitemradio' : 'menuitemcheckbox', 'aria-checked': String(on),
         onclick: () => { fn(); paint(); K.showBar(true); },   // picking keeps the bar up
     }, h('span', { class: 'mk' }, on ? (radio ? '●' : '✓') : ''), text);
-    const menu = P.menu = h('div', { class: 'menu-pop', role: 'menu' });
+    const menu = P.menu = h('div', { class: 'menu-pop', role: 'menu',
+        style: { width: 'min(21rem, calc(100vw - 16px))' } });
+    const spectrumRow = () => {
+        const mode = item(P.mode === 'spectrum', MODE_LABEL.spectrum, () => P.setMode('spectrum'), true);
+        Object.assign(mode.style, { flex: '1', width: 'auto', minWidth: '0', paddingRight: '0' });
+        const check = h('input', { type: 'checkbox', checked: P.spec.separate,
+            'aria-label': 'Separate left and right spectrum plots',
+            onchange: e => {
+                P.spec.setSeparate(e.target.checked);
+                K.setPref('now.spectrumSeparate', e.target.checked);
+                K.showBar(true);
+            } });
+        const toggle = h('label', { style: { display: 'flex', alignItems: 'center', gap: '.3rem',
+            padding: '0 .7rem 0 .2rem', whiteSpace: 'nowrap', fontSize: '.82rem', cursor: 'pointer' } },
+            'Separate L/R', check);
+        return h('div', { style: { display: 'flex', alignItems: 'center' } }, mode, toggle);
+    };
     const paint = () => K.clear(menu).append(
-        ...MODES.map(m => item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)),
+        ...MODES.map(m => m === 'spectrum' ? spectrumRow()
+            : item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)),
         ...(P.mode === 'spectrum' ? [P.floorRow()] : []),
         h('div', { class: 'menu-sep' }),
         item(P.coverWanted(), 'Album cover', () => P.flipCover()),

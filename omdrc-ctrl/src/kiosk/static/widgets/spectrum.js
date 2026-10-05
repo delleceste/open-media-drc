@@ -1,4 +1,4 @@
-/* Third-octave spectrum bars (left/right per band) with falling peak caps. */
+/* Third-octave spectrum with separate or paired channel plots and peak caps. */
 (() => {
 'use strict';
 const FALL_DB_S = 30, CAP_HOLD_MS = 900, CAP_FALL_DB_S = 14;
@@ -9,11 +9,13 @@ K.Spectrum = class Spectrum {
         this.canvas = canvas;
         this.bands = []; this.l = []; this.r = [];
         this.tl = []; this.tr = []; this.capL = []; this.capR = []; this.capAt = [];
+        this.separate = !!K.pref('now.spectrumSeparate', false);
         this.raf = null; this.last = 0;
         this.ro = new ResizeObserver(() => this.draw());
         this.ro.observe(canvas);
     }
     get floor() { return Number(K.state.spectrum.floor_db) || -40; }
+    setSeparate(on) { this.separate = !!on; this.draw(); }
 
     update(frame) {
         if (Array.isArray(frame.bands) && frame.bands.length) this.bands = frame.bands;
@@ -70,37 +72,63 @@ K.Spectrum = class Spectrum {
             ctx.fillStyle = K.theme() === 'light' ? '#a54800' : '#ffa726';
             ctx.fillText('LAG!', w - 6 * dpr, 6 * dpr);
         }
-        const labelH = 15 * dpr, top = 4 * dpr, plotH = H - labelH - top;
+        const gap = this.separate ? 8 * dpr : 0;
+        const panelW = this.separate ? Math.max(0, (w - gap) / 2) : w;
+        const titleH = this.separate ? 14 * dpr : 0;
+        const labelH = 15 * dpr, top = 4 * dpr + titleH, plotH = Math.max(1, H - labelH - top);
         const fl = this.floor, y = db => top + plotH * (1 - K.clamp((db - fl) / (0 - fl), 0, 1));
-        // faint grid every 10 dB
-        ctx.strokeStyle = 'rgba(139,148,158,.14)'; ctx.lineWidth = 1;
-        ctx.fillStyle = 'rgba(139,148,158,.6)';
-        ctx.font = `${9.5 * dpr}px ui-monospace, monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-        for (let db = -10; db > fl; db -= 10) {
-            ctx.beginPath(); ctx.moveTo(0, Math.round(y(db)) + .5); ctx.lineTo(w, Math.round(y(db)) + .5); ctx.stroke();
-            ctx.fillText(String(db), 3 * dpr, y(db) - 1);
-        }
         const grad = ctx.createLinearGradient(0, top + plotH, 0, top);
         grad.addColorStop(0, '#1f6feb'); grad.addColorStop(.45, '#3fb950');
         grad.addColorStop(.8, '#d8c23a'); grad.addColorStop(1, '#f85149');
-        const slot = w / n, bw = Math.max(2, slot * .38), gap = Math.max(1, slot * .04);
-        for (let i = 0; i < n; i++) {
-            const x0 = i * slot + (slot - 2 * bw - gap) / 2;
-            [[this.l[i], this.capL[i], x0], [this.r[i], this.capR[i], x0 + bw + gap]].forEach(([v, cap, x]) => {
-                if (Number.isFinite(v) && v > fl) {
-                    ctx.fillStyle = grad;
-                    ctx.fillRect(x, y(v), bw, top + plotH - y(v));
+        const panels = this.separate
+            ? [['Left', this.l, this.capL, 0], ['Right', this.r, this.capR, panelW + gap]]
+            : [['', this.l, this.capL, 0]];
+        for (const [name, values, caps, offset] of panels) {
+            if (this.separate) {
+                ctx.strokeStyle = 'rgba(139,148,158,.3)';
+                ctx.strokeRect(offset + .5, .5, panelW - 1, H - 1);
+                ctx.fillStyle = K.css('--text');
+                ctx.font = `600 ${11 * dpr}px system-ui, sans-serif`;
+                ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                ctx.fillText(name, offset + 4 * dpr, 2 * dpr);
+            }
+            ctx.strokeStyle = 'rgba(139,148,158,.14)'; ctx.lineWidth = 1;
+            ctx.font = `${9.5 * dpr}px ui-monospace, monospace`;
+            ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+            for (let db = -10; db > fl; db -= 10) {
+                ctx.beginPath(); ctx.moveTo(offset, Math.round(y(db)) + .5);
+                ctx.lineTo(offset + panelW, Math.round(y(db)) + .5); ctx.stroke();
+                if (!this.separate || name === 'Left') {
+                    ctx.fillStyle = 'rgba(139,148,158,.6)';
+                    ctx.fillText(String(db), offset + 3 * dpr, y(db) - 1);
                 }
-                if (Number.isFinite(cap) && cap > fl) {
-                    ctx.fillStyle = K.css('--text');
-                    ctx.fillRect(x, y(cap) - 2 * dpr, bw, 2 * dpr);
+            }
+            const slot = panelW / n;
+            const bw = this.separate ? Math.max(1, slot * .72) : Math.max(1, slot * .38);
+            const barGap = Math.max(.5, slot * .04);
+            const labelEvery = Math.max(3, Math.ceil(44 * dpr / slot));
+            for (let i = 0; i < n; i++) {
+                const x0 = offset + i * slot + (slot - (this.separate ? bw : 2 * bw + barGap)) / 2;
+                const bars = this.separate
+                    ? [[values[i], caps[i], x0, grad]]
+                    : [[this.l[i], this.capL[i], x0, '#58a6ff'],
+                       [this.r[i], this.capR[i], x0 + bw + barGap, '#f2a45c']];
+                for (const [v, cap, x, color] of bars) {
+                    if (Number.isFinite(v) && v > fl) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x, y(v), bw, top + plotH - y(v));
+                    }
+                    if (Number.isFinite(cap) && cap > fl) {
+                        ctx.fillStyle = this.separate ? K.css('--text') : color;
+                        ctx.fillRect(x, y(cap) - 2 * dpr, bw, 2 * dpr);
+                    }
                 }
-            });
-            if (i % 3 === 0) {
-                ctx.fillStyle = K.css('--muted');
-                ctx.font = `${10 * dpr}px ui-monospace, monospace`;
-                ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-                ctx.fillText(this.bands[i].label, i * slot + slot / 2 + 3 * dpr, H - labelH + 3 * dpr);
+                if (i % labelEvery === 0) {
+                    ctx.fillStyle = K.css('--muted');
+                    ctx.font = `${10 * dpr}px ui-monospace, monospace`;
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+                    ctx.fillText(this.bands[i].label, offset + i * slot + slot / 2, H - labelH + 3 * dpr);
+                }
             }
         }
     }

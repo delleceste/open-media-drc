@@ -49,6 +49,10 @@ button on Now, which changes the one on screen): upright it is **Bars** unless
 needles are picked while upright, in landscape **Needles** unless something
 else is picked there.  Turning the phone switches between the two at once.
 
+In the Now page's **View ▾** menu, the **Separate L/R** checkbox beside
+**Bars + spectrum** switches between two labeled channel plots and paired
+blue Left/orange Right bars. The choice is saved on this device.
+
 Each channel shows a blinking orange **CLIP?** near the 0 dB end when its peak
 reaches -1 dBFS; this means the detector is checking that channel. A detected
 flat top turns the mark into a steady red **CLIP**, latched independently for
