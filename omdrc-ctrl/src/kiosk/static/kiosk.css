@@ -561,8 +561,8 @@ input[type=range] { accent-color: var(--accent); }
     .now-title { font-size: 1.3rem; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
     .now-subrow { order: 3; } .now-subrow .now-sub { display: none; }
     .chip.now-info:not([hidden]), .chip.now-fav:not([hidden]) { display: inline-flex; align-self: flex-start;
-        align-items: center; justify-content: center; max-width: 100%; min-height: 2.2rem;
-        box-sizing: border-box; margin-top: .15rem; padding: .18rem .75rem; font-size: .84rem;
+        align-items: center; justify-content: center; max-width: 100%; min-height: 1.75rem;
+        box-sizing: border-box; margin-top: .1rem; padding: .1rem .5rem; font-size: .75rem;
         touch-action: manipulation; }
     .chip.now-info { order: 4; } .chip.now-fav { order: 5; }
     .now.roomy .now-info, .now.roomy .now-fav { align-self: center; }
