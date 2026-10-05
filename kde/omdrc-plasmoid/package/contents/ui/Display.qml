@@ -583,33 +583,42 @@ Item {
             x: (controls.width - width) / 2
             y: (controls.height - height) / 2
         }
-        Row {
+        Rectangle {
+            id: cornerActionsBox
             visible: !face.panel
             anchors { top: parent.top; right: parent.right; margins: 1 }
-            spacing: 2
-            PlasmaComponents.ToolButton {
-                icon.name: "edit-find"
-                text: i18n("Search Qobuz")
-                display: QQC2.AbstractButton.IconOnly
-                PlasmaComponents.ToolTip.text: text
-                PlasmaComponents.ToolTip.visible: hovered && text !== ""
-                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
-                width: controls.size
-                height: controls.size
-                padding: 1
-                onClicked: face.app.openPage("qobuz")
-            }
-            PlasmaComponents.ToolButton {
-                icon.name: "view-list-details"
-                text: i18n("Play queue")
-                display: QQC2.AbstractButton.IconOnly
-                PlasmaComponents.ToolTip.text: text
-                PlasmaComponents.ToolTip.visible: hovered && text !== ""
-                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
-                width: controls.size
-                height: controls.size
-                padding: 1
-                onClicked: face.app.openPage("queue")
+            width: cornerActions.width + 4
+            height: cornerActions.height + 2
+            radius: height / 3
+            color: Qt.rgba(0, 0, 0, 0.45)
+            Row {
+                id: cornerActions
+                anchors.centerIn: parent
+                spacing: 2
+                PlasmaComponents.ToolButton {
+                    icon.name: "edit-find"
+                    text: i18n("Search Qobuz")
+                    display: QQC2.AbstractButton.IconOnly
+                    PlasmaComponents.ToolTip.text: text
+                    PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                    PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    width: controls.size
+                    height: controls.size
+                    padding: 1
+                    onClicked: face.app.openPage("qobuz")
+                }
+                PlasmaComponents.ToolButton {
+                    icon.name: "view-list-details"
+                    text: i18n("Play queue")
+                    display: QQC2.AbstractButton.IconOnly
+                    PlasmaComponents.ToolTip.text: text
+                    PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                    PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    width: controls.size
+                    height: controls.size
+                    padding: 1
+                    onClicked: face.app.openPage("queue")
+                }
             }
         }
         Rectangle {
