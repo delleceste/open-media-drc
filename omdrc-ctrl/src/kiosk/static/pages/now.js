@@ -348,6 +348,12 @@ P.setMode = mode => {
     if (P.menuPaint) P.menuPaint();
 };
 
+P.setSpectrumLayout = separate => {
+    P.spec.setSeparate(separate);
+    K.setPref('now.spectrumSeparate', separate);
+    P.setMode('spectrum');
+};
+
 // The View menu: the level display (one of) and the switches (any of).  It stays open
 // for another pick; a tap outside it, or leaving the page, closes it.
 P.openViewMenu = () => {
@@ -357,25 +363,14 @@ P.openViewMenu = () => {
         onclick: () => { fn(); paint(); K.showBar(true); },   // picking keeps the bar up
     }, h('span', { class: 'mk' }, on ? (radio ? '●' : '✓') : ''), text);
     const menu = P.menu = h('div', { class: 'menu-pop', role: 'menu',
-        style: { width: 'min(21rem, calc(100vw - 16px))' } });
-    const spectrumRow = () => {
-        const mode = item(P.mode === 'spectrum', MODE_LABEL.spectrum, () => P.setMode('spectrum'), true);
-        Object.assign(mode.style, { flex: '1', width: 'auto', minWidth: '0', paddingRight: '0' });
-        const check = h('input', { type: 'checkbox', checked: P.spec.separate,
-            'aria-label': 'Separate left and right spectrum plots',
-            onchange: e => {
-                P.spec.setSeparate(e.target.checked);
-                K.setPref('now.spectrumSeparate', e.target.checked);
-                K.showBar(true);
-            } });
-        const toggle = h('label', { style: { display: 'flex', alignItems: 'center', gap: '.3rem',
-            padding: '0 .7rem 0 .2rem', whiteSpace: 'nowrap', fontSize: '.82rem', cursor: 'pointer' } },
-            'Separate L/R', check);
-        return h('div', { style: { display: 'flex', alignItems: 'center' } }, mode, toggle);
-    };
+        style: { width: 'min(18rem, calc(100vw - 16px))' } });
     const paint = () => K.clear(menu).append(
-        ...MODES.map(m => m === 'spectrum' ? spectrumRow()
-            : item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)),
+        ...MODES.flatMap(m => m === 'spectrum' ? [
+            item(P.mode === 'spectrum' && !P.spec.separate, MODE_LABEL.spectrum,
+                () => P.setSpectrumLayout(false), true),
+            item(P.mode === 'spectrum' && P.spec.separate, 'Bars + separate L/R spectrum',
+                () => P.setSpectrumLayout(true), true),
+        ] : [item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)]),
         ...(P.mode === 'spectrum' ? [P.floorRow()] : []),
         h('div', { class: 'menu-sep' }),
         item(P.coverWanted(), 'Album cover', () => P.flipCover()),
@@ -386,7 +381,9 @@ P.openViewMenu = () => {
     document.body.append(menu);
     const r = P.modeBtn.getBoundingClientRect();
     menu.style.top = `${r.bottom + 4}px`;
-    menu.style.right = `${Math.max(8, innerWidth - r.right)}px`;
+    menu.style.right = `${Math.max(8, Math.min(innerWidth - r.right, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.maxHeight = `${Math.max(0, innerHeight - r.bottom - 12)}px`;
+    menu.style.overflowY = 'auto';
     P.menuOutside = e => { if (!menu.contains(e.target) && e.target !== P.modeBtn) P.closeViewMenu(); };
     document.addEventListener('pointerdown', P.menuOutside, true);
     K.onBarHidden = P.closeViewMenu;
