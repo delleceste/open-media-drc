@@ -8,7 +8,8 @@ K.Spectrum = class Spectrum {
         K.onTheme(() => this.draw());
         this.canvas = canvas;
         this.bands = []; this.l = []; this.r = [];
-        this.tl = []; this.tr = []; this.capL = []; this.capR = []; this.capAt = [];
+        this.tl = []; this.tr = []; this.capL = []; this.capR = [];
+        this.capAtL = []; this.capAtR = [];
         this.separate = !!K.pref('now.spectrumSeparate', false);
         this.raf = null; this.last = 0;
         this.ro = new ResizeObserver(() => this.draw());
@@ -48,9 +49,9 @@ K.Spectrum = class Spectrum {
             this.l[i] = Math.max(tl, (this.l[i] ?? fl) - FALL_DB_S * dt);
             this.r[i] = Math.max(tr, (this.r[i] ?? fl) - FALL_DB_S * dt);
             if (Math.abs(this.l[i] - tl) > .1 || Math.abs(this.r[i] - tr) > .1) settled = false;
-            for (const [cap, v] of [[this.capL, this.l[i]], [this.capR, this.r[i]]]) {
-                if (v >= (cap[i] ?? fl)) { cap[i] = v; this.capAt[i] = now; }
-                else if (now - (this.capAt[i] || 0) > CAP_HOLD_MS) { cap[i] = Math.max(v, cap[i] - CAP_FALL_DB_S * dt); }
+            for (const [cap, at, v] of [[this.capL, this.capAtL, this.l[i]], [this.capR, this.capAtR, this.r[i]]]) {
+                if (v >= (cap[i] ?? fl)) { cap[i] = v; at[i] = now; }
+                else if (now - (at[i] || 0) > CAP_HOLD_MS) { cap[i] = Math.max(v, cap[i] - CAP_FALL_DB_S * dt); }
                 if (cap[i] > v + .1) settled = false;
             }
         }
@@ -77,13 +78,17 @@ K.Spectrum = class Spectrum {
         const titleH = this.separate ? 14 * dpr : 0;
         const labelH = 15 * dpr, top = 4 * dpr + titleH, plotH = Math.max(1, H - labelH - top);
         const fl = this.floor, y = db => top + plotH * (1 - K.clamp((db - fl) / (0 - fl), 0, 1));
-        const grad = ctx.createLinearGradient(0, top + plotH, 0, top);
-        grad.addColorStop(0, '#1f6feb'); grad.addColorStop(.45, '#3fb950');
-        grad.addColorStop(.8, '#d8c23a'); grad.addColorStop(1, '#f85149');
+        const leftGrad = ctx.createLinearGradient(0, top + plotH, 0, top);
+        leftGrad.addColorStop(0, '#59616b'); leftGrad.addColorStop(.55, '#bdc5ce');
+        leftGrad.addColorStop(1, '#ffffff');
+        const rightGrad = ctx.createLinearGradient(0, top + plotH, 0, top);
+        rightGrad.addColorStop(0, '#4a1414'); rightGrad.addColorStop(.55, '#c83030');
+        rightGrad.addColorStop(1, '#ff4545');
         const panels = this.separate
-            ? [['Left', this.l, this.capL, 0], ['Right', this.r, this.capR, panelW + gap]]
-            : [['', this.l, this.capL, 0]];
-        for (const [name, values, caps, offset] of panels) {
+            ? [['L', this.l, this.capL, 0, leftGrad, '#ffffff'],
+               ['R', this.r, this.capR, panelW + gap, rightGrad, '#ff4545']]
+            : [['', this.l, this.capL, 0, leftGrad, '#ffffff']];
+        for (const [name, values, caps, offset, panelGrad, peakColor] of panels) {
             if (this.separate) {
                 ctx.strokeStyle = 'rgba(139,148,158,.3)';
                 ctx.strokeRect(offset + .5, .5, panelW - 1, H - 1);
@@ -98,7 +103,7 @@ K.Spectrum = class Spectrum {
             for (let db = -10; db > fl; db -= 10) {
                 ctx.beginPath(); ctx.moveTo(offset, Math.round(y(db)) + .5);
                 ctx.lineTo(offset + panelW, Math.round(y(db)) + .5); ctx.stroke();
-                if (!this.separate || name === 'Left') {
+                if (!this.separate || name === 'L') {
                     ctx.fillStyle = 'rgba(139,148,158,.6)';
                     ctx.fillText(String(db), offset + 3 * dpr, y(db) - 1);
                 }
@@ -110,16 +115,21 @@ K.Spectrum = class Spectrum {
             for (let i = 0; i < n; i++) {
                 const x0 = offset + i * slot + (slot - (this.separate ? bw : 2 * bw + barGap)) / 2;
                 const bars = this.separate
-                    ? [[values[i], caps[i], x0, grad]]
-                    : [[this.l[i], this.capL[i], x0, '#58a6ff'],
-                       [this.r[i], this.capR[i], x0 + bw + barGap, '#f2a45c']];
-                for (const [v, cap, x, color] of bars) {
+                    ? [[values[i], caps[i], x0, panelGrad, peakColor]]
+                    : [[this.l[i], this.capL[i], x0, leftGrad, '#ffffff'],
+                       [this.r[i], this.capR[i], x0 + bw + barGap, rightGrad, '#ff4545']];
+                for (const [v, cap, x, color, capColor] of bars) {
                     if (Number.isFinite(v) && v > fl) {
                         ctx.fillStyle = color;
                         ctx.fillRect(x, y(v), bw, top + plotH - y(v));
+                        if (bw >= 2) {
+                            ctx.strokeStyle = 'rgba(0,0,0,.35)';
+                            ctx.lineWidth = 1;
+                            ctx.strokeRect(x, y(v), bw, top + plotH - y(v));
+                        }
                     }
                     if (Number.isFinite(cap) && cap > fl) {
-                        ctx.fillStyle = this.separate ? K.css('--text') : color;
+                        ctx.fillStyle = capColor;
                         ctx.fillRect(x, y(cap) - 2 * dpr, bw, 2 * dpr);
                     }
                 }

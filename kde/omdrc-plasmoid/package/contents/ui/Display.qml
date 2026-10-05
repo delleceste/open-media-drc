@@ -352,6 +352,7 @@ Item {
                 floorDb: face.app.floorDb
                 glass: face.coverBehind ? 0.5 : 1
                 splitChannels: face.spectrumSplit
+                peakHold: face.app.spectrumPeakHold
                 clickEnabled: !face.compact
                 onLayoutToggled: face.toggleSpectrumLayout()
             }
@@ -366,6 +367,7 @@ Item {
             floorDb: face.app.floorDb
             glass: face.coverBehind ? 0.5 : 1
             splitChannels: face.spectrumSplit
+            peakHold: face.app.spectrumPeakHold
             clickEnabled: !face.compact
             onLayoutToggled: face.toggleSpectrumLayout()
         }

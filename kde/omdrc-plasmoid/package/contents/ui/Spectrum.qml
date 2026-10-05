@@ -12,6 +12,7 @@ Canvas {
     property real floorDb: -40     // the box's spectrum floor (/spectrum/settings)
     property real glass: 1
     property bool splitChannels: true
+    property bool peakHold: true
     property bool clickEnabled: true
     signal layoutToggled()
 
@@ -21,7 +22,8 @@ Canvas {
     property var r: []
     property var capL: []
     property var capR: []
-    property var capAt: []
+    property var capAtL: []
+    property var capAtR: []
     property bool settled: true
 
     readonly property color textColor: Kirigami.Theme.textColor
@@ -34,6 +36,13 @@ Canvas {
     onTextColorChanged: requestPaint()
     onGlassChanged: requestPaint()
     onSplitChannelsChanged: requestPaint()
+    onPeakHoldChanged: {
+        if (peakHold) {
+            capL = l.slice(); capR = r.slice()
+            capAtL = []; capAtR = []
+        }
+        requestPaint()
+    }
 
     TapHandler {
         enabled: spectrum.clickEnabled
@@ -56,10 +65,12 @@ Canvas {
             l[i] = Math.max(tl, (l[i] ?? fl) - L.SPECTRUM_FALL * dt)
             r[i] = Math.max(tr, (r[i] ?? fl) - L.SPECTRUM_FALL * dt)
             if (Math.abs(l[i] - tl) > 0.1 || Math.abs(r[i] - tr) > 0.1) still = false
-            for (const [cap, v] of [[capL, l[i]], [capR, r[i]]]) {
-                if (v >= (cap[i] ?? fl)) { cap[i] = v; capAt[i] = now }
-                else if (now - (capAt[i] || 0) > capHoldMs) cap[i] = Math.max(v, cap[i] - capFall * dt)
-                if (cap[i] > v + 0.1) still = false
+            if (peakHold) {
+                for (const [cap, at, v] of [[capL, capAtL, l[i]], [capR, capAtR, r[i]]]) {
+                    if (v >= (cap[i] ?? fl)) { cap[i] = v; at[i] = now }
+                    else if (now - (at[i] || 0) > capHoldMs) cap[i] = Math.max(v, cap[i] - capFall * dt)
+                    if (cap[i] > v + 0.1) still = false
+                }
             }
         }
         settled = still
@@ -79,18 +90,22 @@ Canvas {
         const plotH = Math.max(0, H - labelH - top)
         const fl = floorDb
         const y = db => top + plotH * (1 - L.clamp((db - fl) / (0 - fl), 0, 1))
-        const grad = ctx.createLinearGradient(0, top + plotH, 0, top)
-        grad.addColorStop(0, "#1f6feb"); grad.addColorStop(0.45, "#3fb950")
-        grad.addColorStop(0.8, "#d8c23a"); grad.addColorStop(1, "#f85149")
+        const leftGrad = ctx.createLinearGradient(0, top + plotH, 0, top)
+        leftGrad.addColorStop(0, "#59616b"); leftGrad.addColorStop(0.55, "#bdc5ce")
+        leftGrad.addColorStop(1, "#ffffff")
+        const rightGrad = ctx.createLinearGradient(0, top + plotH, 0, top)
+        rightGrad.addColorStop(0, "#4a1414"); rightGrad.addColorStop(0.55, "#c83030")
+        rightGrad.addColorStop(1, "#ff4545")
         const slot = n ? plotW / n : 0
         const bw = Math.max(1, slot * (splitChannels ? 0.75 : 0.38))
         const barGap = Math.max(1, slot * 0.04)
         const capH = plotH >= 40 ? 2 : 1
         const every = Math.max(3, Math.ceil(36 / Math.max(1, slot)))
         const panels = splitChannels
-            ? [["Left", l, capL, 0], ["Right", r, capR, plotW + gap]]
-            : [["", l, capL, 0]]
-        for (const [channel, values, caps, offset] of panels) {
+            ? [["L", l, capL, 0, leftGrad, "#ffffff"],
+               ["R", r, capR, plotW + gap, rightGrad, "#ff4545"]]
+            : [["", l, capL, 0, leftGrad, "#ffffff"]]
+        for (const [channel, values, caps, offset, panelGrad, peakColor] of panels) {
             ctx.globalAlpha = glass
             ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.06)
             ctx.fillRect(offset, 0, plotW, H)
@@ -100,12 +115,11 @@ Canvas {
                 ctx.textAlign = "left"; ctx.textBaseline = "top"
                 if (splitChannels) {
                     ctx.fillStyle = textColor
-                    ctx.fillText(plotW < 40 ? channel[0] : channel, offset + 2, 1)
+                    ctx.fillText(channel, offset + 2, 1)
                 } else {
-                    ctx.fillStyle = "#58a6ff"
-                    ctx.fillText(plotW < 70 ? "L" : "Left", 2, 1)
-                    ctx.fillStyle = "#f2a45c"
-                    ctx.fillText(plotW < 70 ? "R" : "Right", plotW < 70 ? 16 : 34, 1)
+                    ctx.fillStyle = textColor
+                    ctx.fillText("L", 2, 1)
+                    ctx.fillText("R", 16, 1)
                 }
             }
             if (plotH >= 40) {
@@ -121,16 +135,21 @@ Canvas {
             for (let i = 0; i < n; i++) {
                 const x = offset + i * slot + (slot - (splitChannels ? bw : 2 * bw + barGap)) / 2
                 const bars = splitChannels
-                    ? [[values[i], caps[i], x, grad]]
-                    : [[l[i], capL[i], x, "#58a6ff"],
-                       [r[i], capR[i], x + bw + barGap, "#f2a45c"]]
-                for (const [v, cap, barX, color] of bars) {
+                    ? [[values[i], caps[i], x, panelGrad, peakColor]]
+                    : [[l[i], capL[i], x, leftGrad, "#ffffff"],
+                       [r[i], capR[i], x + bw + barGap, rightGrad, "#ff4545"]]
+                for (const [v, cap, barX, color, capColor] of bars) {
                     if (Number.isFinite(v) && v > fl) {
                         ctx.fillStyle = color
                         ctx.fillRect(barX, y(v), bw, top + plotH - y(v))
+                        if (bw >= 2) {
+                            ctx.strokeStyle = "rgba(0,0,0,0.35)"
+                            ctx.lineWidth = 1
+                            ctx.strokeRect(barX, y(v), bw, top + plotH - y(v))
+                        }
                     }
-                    if (Number.isFinite(cap) && cap > fl) {
-                        ctx.fillStyle = splitChannels ? textColor : color
+                    if (peakHold && Number.isFinite(cap) && cap > fl) {
+                        ctx.fillStyle = capColor
                         ctx.fillRect(barX, y(cap) - capH, bw, capH)
                     }
                 }

@@ -2067,20 +2067,20 @@
         <div class="spectrum-label"><strong>Bands</strong><span id="spectrum-source-label">{{ spectrum.bands }} bands · {{ spectrum.sample_rate }} Hz FIFO</span></div>
         <div class="spectrum-grid" id="spectrum-split">
             <div>
-                <div class="spectrum-channel-title">Left</div>
+                <div class="spectrum-channel-title">L</div>
                 <div class="spectrum-chart-wrap">
                     <canvas class="spectrum-canvas" id="spectrum-left"></canvas>
                 </div>
             </div>
             <div>
-                <div class="spectrum-channel-title">Right</div>
+                <div class="spectrum-channel-title">R</div>
                 <div class="spectrum-chart-wrap">
                     <canvas class="spectrum-canvas" id="spectrum-right"></canvas>
                 </div>
             </div>
         </div>
         <div id="spectrum-coupled" style="display:none">
-            <div class="spectrum-channel-title">Left / Right</div>
+            <div class="spectrum-channel-title">L / R</div>
             <div class="spectrum-chart-wrap">
                 <canvas class="spectrum-canvas" id="spectrum-paired"></canvas>
             </div>
@@ -4533,7 +4533,7 @@ function makeSpectrumChart(canvasId, label, alpha, paired = false) {
         data: {
             labels: [],
             datasets: paired
-                ? [dataset('Left', '#58a6ff'), dataset('Right', '#f2a45c')]
+                ? [dataset('L', '#58a6ff'), dataset('R', '#f2a45c')]
                 : [dataset(label, colors.map(c => c.replace('rgb', 'rgba').replace(')', `,${alpha})`)))],
         },
         options: {
@@ -4621,8 +4621,8 @@ function initSpectrumChart() {
     if (spectrumLayout === 'coupled') {
         if (!spectrumCharts.paired) spectrumCharts.paired = makeSpectrumChart('spectrum-paired', '', 1, true);
     } else {
-        if (!spectrumCharts.left) spectrumCharts.left = makeSpectrumChart('spectrum-left', 'Left', 1);
-        if (!spectrumCharts.right) spectrumCharts.right = makeSpectrumChart('spectrum-right', 'Right', .62);
+        if (!spectrumCharts.left) spectrumCharts.left = makeSpectrumChart('spectrum-left', 'L', 1);
+        if (!spectrumCharts.right) spectrumCharts.right = makeSpectrumChart('spectrum-right', 'R', .62);
     }
 }
 

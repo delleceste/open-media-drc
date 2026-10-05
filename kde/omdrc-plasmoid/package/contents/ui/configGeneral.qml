@@ -12,6 +12,7 @@ KCM.SimpleKCM {
     property string cfg_meterStyle
     property string cfg_meterPair
     property alias cfg_showSpectrum: spectrumBox.checked
+    property alias cfg_spectrumPeakHold: spectrumPeakHoldBox.checked
     property alias cfg_showDr: drBox.checked
     property alias cfg_showBalance: balanceBox.checked
     property alias cfg_spectrumBelow: spectrumBelowBox.checked
@@ -159,6 +160,11 @@ KCM.SimpleKCM {
             id: spectrumBox
             Kirigami.FormData.label: i18n("Spectrum:")
             text: i18n("Show the spectrum analyzer")
+        }
+        QQC2.CheckBox {
+            id: spectrumPeakHoldBox
+            text: i18n("Show falling peak hold caps")
+            enabled: spectrumBox.checked
         }
         QQC2.CheckBox {
             id: drBox
