@@ -613,12 +613,15 @@ def favorites():
         cat, user_id = catalog(), _qobuz_user_id()
         if request.method == "GET":
             own = qobuz_favorites.playlists(cat, user_id)
+            unfiled, covers = qobuz_favorites.library_snapshot(
+                cat, user_id, own, qobuz_favorites.favorites(cat, user_id))
             folders = [{"id": str(p["id"]), "path": qobuz_favorites.legacy_path(p["name"]),
                         "tracks": p.get("tracks_count", 0)}
                        for p in own]
             return jsonify({"ok": True, "folders": folders,
-                            "albums": qobuz_favorites.uncategorized(
-                                cat, user_id, own, qobuz_favorites.favorites(cat, user_id))})
+                            "albums": unfiled, "covers": covers,
+                            "order": qobuz_favorites.LibraryOrder(os.path.join(
+                                _state_dir(), f"qobuz-library-order-{user_id}.json")).all()})
         body = request.get_json(silent=True) or {}
         action = body.get("action")
         album_id = str(body.get("album_id") or "")
@@ -631,14 +634,38 @@ def favorites():
                 cat._call("favorite/create", {"album_ids": album_id})
             return jsonify({"ok": True, **result})
         if action == "remove":
-            qobuz_favorites.remove(cat, user_id, album_id, str(body.get("playlist_id") or ""))
+            folder_removed = qobuz_favorites.remove(
+                cat, user_id, album_id, str(body.get("playlist_id") or ""))
             qobuz_favorites.invalidate(user_id)
-            return jsonify({"ok": True})
+            return jsonify({"ok": True, "folder_removed": folder_removed})
         if action == "unfavorite":
             cat._call("favorite/delete", {"album_ids": album_id})
             return jsonify({"ok": True})
+        if action == "favorite":
+            if album_id not in {a["id"] for a in qobuz_favorites.favorites(cat, user_id)}:
+                cat._call("favorite/create", {"album_ids": album_id})
+            return jsonify({"ok": True})
         raise QobuzError("unknown favorites action")
     except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/favorites/order", methods=["POST"])
+def favorite_order():
+    guard = _guard(renderer_needed=False)
+    if guard:
+        return guard
+    try:
+        user_id = _qobuz_user_id()
+        body = request.get_json(silent=True) or {}
+        parent = body.get("parent")
+        if not isinstance(parent, str):
+            raise QobuzError("invalid folder path")
+        store = qobuz_favorites.LibraryOrder(os.path.join(
+            _state_dir(), f"qobuz-library-order-{user_id}.json"))
+        store.save(parent, body.get("keys"))
+        return jsonify({"ok": True})
+    except (QobuzError, OSError) as error:
         return jsonify({"ok": False, "error": str(error)}), 400
 
 

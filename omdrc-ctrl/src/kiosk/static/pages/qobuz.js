@@ -1694,13 +1694,20 @@ P.makeView = full => {
         oninput: () => { P.seeking = true; v.elapsed.textContent = K.fmtClock(+v.seek.value); },
         onchange: () => P.seekTo(+v.seek.value),
     });
+    v.favoriteDivider = h('span', { class: 'qz-pdivider', hidden: true, 'aria-hidden': 'true' });
+    v.favorite = btn('♡', 'Save playing album in Library', () => {
+        const album = P.trackInfo()?.album;
+        if (album && album.id) K.saveQobuzFavorite(album);
+    }, 'qz-favorite');
+    v.favorite.hidden = true;
     v.buttons = h('div', { class: 'qz-pbtns' },
         full ? btn('<<', 'Seek backward within this track', () => P.stepSeek(-1), 'qz-step') : null,
         btn(K.tIcon('prev'), 'Previous track', () => P.transport('prev')),
         v.toggle,
         btn(K.tIcon('stop'), 'Stop', () => P.transport('stop')),
         btn(K.tIcon('next'), 'Next track', () => P.transport('next')),
-        full ? btn('>>', 'Seek forward within this track', () => P.stepSeek(1), 'qz-step') : null);
+        full ? btn('>>', 'Seek forward within this track', () => P.stepSeek(1), 'qz-step') : null,
+        v.favoriteDivider, v.favorite);
     v.seekRow = h('div', { class: 'qz-pseek' }, v.elapsed, v.seek, v.total);
     return v;
 };
@@ -1947,6 +1954,8 @@ P.paintViews = () => {
     const pos = d && d.pos && d.length ? `${d.pos} / ${d.length}` : '';
     for (const v of P.views) {
         v.title.textContent = title;
+        v.favorite.hidden = !(album && album.id);
+        v.favoriteDivider.hidden = v.favorite.hidden;
         if (v.toggle.dataset.icon !== (playing ? 'pause' : 'play')) {
             v.toggle.dataset.icon = playing ? 'pause' : 'play';
             K.clear(v.toggle).append(K.tIcon(v.toggle.dataset.icon));

@@ -1,6 +1,7 @@
 """Folder mapping and Qobuz playlist mutations without account writes."""
 import sys
 from pathlib import Path
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "omdrc-ctrl/src"))
@@ -29,6 +30,11 @@ class FakeCatalog:
         if endpoint == "playlist/addTracks":
             self.tracks.append({"id": int(params["track_ids"]), "playlist_track_id": 93,
                                 "album": {"id": "xyz", "title": "New"}})
+        if endpoint == "playlist/deleteTracks":
+            ids = set(params["playlist_track_ids"].split(","))
+            self.tracks = [t for t in self.tracks if str(t["playlist_track_id"]) not in ids]
+        if endpoint == "playlist/delete":
+            self.playlists = [p for p in self.playlists if str(p["id"]) != params["playlist_id"]]
         return {}
 
     def album(self, album_id):
@@ -43,15 +49,28 @@ class FolderTest(unittest.TestCase):
         self.assertEqual(fav.legacy_path("blow up May 2025"), "Blow Up/2025/May")
         self.assertEqual(fav.legacy_path("gramophone awards 2024"),
                          "Classical/Gramophone/Awards/2024")
+        self.assertEqual(fav.legacy_path("* Classica *"), "Classical/**")
+        self.assertEqual(fav.legacy_path("* Classical"), "Classical/**")
+        self.assertEqual(fav.legacy_path("Discover BIS"), "Classical/BIS")
+        self.assertEqual(fav.legacy_path("label: aparte"), "Classical/Aparté")
+        self.assertEqual(fav.legacy_path("Discover DG"), "Classical/Deutsche Grammophon")
 
     def test_group_tracks_and_remove_all_album_entries(self):
         cat = FakeCatalog()
         albums = fav.playlist_albums(cat, "7")
         self.assertEqual(len(albums), 1)
         self.assertEqual(albums[0]["playlist_track_ids"], ["91", "92"])
-        fav.remove(cat, "10", "abc", "7")
-        self.assertEqual(cat.calls[-1], ("playlist/deleteTracks",
-                                         {"playlist_id": "7", "playlist_track_ids": "91,92"}))
+        self.assertTrue(fav.remove(cat, "10", "abc", "7"))
+        self.assertIn(("playlist/deleteTracks",
+                       {"playlist_id": "7", "playlist_track_ids": "91,92"}), cat.calls)
+        self.assertEqual(cat.calls[-1], ("playlist/delete", {"playlist_id": "7"}))
+
+    def test_folder_stays_when_another_album_remains(self):
+        cat = FakeCatalog()
+        cat.tracks.append({"id": 3, "playlist_track_id": 93,
+                           "album": {"id": "xyz", "title": "Other"}})
+        self.assertFalse(fav.remove(cat, "10", "abc", "7"))
+        self.assertEqual(len(cat.playlists), 1)
 
     def test_rejects_foreign_playlist_and_reserved_path(self):
         cat = FakeCatalog()
@@ -68,6 +87,35 @@ class FolderTest(unittest.TestCase):
         fav.add(cat, "10", "xyz", "Blow Up/2026/June")
         self.assertEqual(cat.calls[-1], ("playlist/addTracks",
                                          {"playlist_id": "7", "track_ids": "101"}))
+
+    def test_same_named_playlists_choose_the_one_with_more_tracks(self):
+        cat = FakeCatalog()
+        cat.playlists = [
+            {"id": 7, "name": "Classical/**", "owner": {"id": 10}, "tracks_count": 1},
+            {"id": 8, "name": "Classical/**", "owner": {"id": 10}, "tracks_count": 19},
+        ]
+        cat.tracks = []
+        fav.add(cat, "10", "xyz", "Classical/**")
+        self.assertEqual(cat.calls[-1][1]["playlist_id"], "8")
+
+    def test_cover_samples_and_shared_order_store(self):
+        cat = FakeCatalog()
+        for track in cat.tracks:
+            track["album"]["image"] = {"small": "https://example.test/cover.jpg"}
+        cards = [{"id": "unfiled", "image": "https://example.test/unfiled.jpg"}]
+        unfiled, covers = fav.library_snapshot(cat, "10", cat.playlists, cards)
+        self.assertEqual(unfiled, cards)
+        self.assertEqual(len(covers["Blow Up"]), 1)
+        self.assertEqual(covers["Qobuz"], [cards[0]["image"]])
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "order.json")
+            store = fav.LibraryOrder(path)
+            self.assertEqual(store.all(), {})
+            store.save("Classical", ["f:Classical/BIS", "a:abc"])
+            self.assertEqual(fav.LibraryOrder(path).all()["Classical"],
+                             ["f:Classical/BIS", "a:abc"])
+            with self.assertRaises(QobuzError):
+                store.save("Classical", ["a:abc", "a:abc"])
 
 
 if __name__ == "__main__":
