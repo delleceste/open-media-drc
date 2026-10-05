@@ -167,6 +167,34 @@ class LibraryOrder:
             os.replace(temporary, self.path)
             return orders
 
+    def rewrite_subtree(self, old: str, new: str | None) -> None:
+        """Keep saved tile positions aligned with renamed or removed folders."""
+        with _order_lock:
+            try:
+                with open(self.path, encoding="utf-8") as stream:
+                    orders = json.load(stream).get("orders", {})
+            except (OSError, ValueError, AttributeError):
+                return
+            if not isinstance(orders, dict):
+                return
+            def inside(path):
+                return path == old or path.startswith(old + "/")
+            def changed(path):
+                return new + path[len(old):]
+            result = {}
+            for parent, keys in orders.items():
+                if inside(parent) and new is None:
+                    continue
+                parent = changed(parent) if inside(parent) else parent
+                result[parent] = ["f:" + changed(key[2:]) if key.startswith("f:") and
+                                  inside(key[2:]) and new is not None else key
+                                  for key in keys if not (key.startswith("f:") and
+                                  inside(key[2:]) and new is None)]
+            temporary = self.path + ".tmp"
+            with open(temporary, "w", encoding="utf-8") as stream:
+                json.dump({"version": 1, "orders": result}, stream, ensure_ascii=False)
+            os.replace(temporary, self.path)
+
 
 def invalidate(user_id: str) -> None:
     with _membership_lock:
@@ -229,3 +257,51 @@ def remove(cat, user_id: str, album_id: str, playlist_id: str) -> bool:
         cat._call("playlist/delete", {"playlist_id": playlist_id})
         return True
     return False
+
+
+def folder_action(cat, user_id: str, path: str, action: str,
+                  order: LibraryOrder, name: str = "") -> dict:
+    """Rename or delete every owned playlist at and below a folder path."""
+    path = valid_path(path)
+    own = playlists(cat, user_id)
+    matching = [p for p in own if legacy_path(p["name"]) == path or
+                legacy_path(p["name"]).startswith(path + "/")]
+    if not matching:
+        raise QobuzError("Folder no longer exists")
+    if action == "rename":
+        if not isinstance(name, str) or not name.strip() or "/" in name:
+            raise QobuzError("Enter one folder name without /")
+        new = valid_path("/".join(path.split("/")[:-1] + [name.strip()]))
+        if new == path:
+            return {"path": path, "playlists": len(matching)}
+        if new.casefold() == path.casefold():
+            # Qobuz paths are case-sensitive on display; allow a case-only rename.
+            pass
+        elif any(legacy_path(p["name"]).casefold() == new.casefold() or
+                 legacy_path(p["name"]).casefold().startswith(new.casefold() + "/")
+                 for p in own if p not in matching):
+            raise QobuzError("A folder with that name already exists")
+        renamed_playlists = []
+        try:
+            for playlist in matching:
+                old_name = playlist["name"]
+                old_path = legacy_path(old_name)
+                renamed = new + old_path[len(path):]
+                valid_path(renamed)
+                cat._call("playlist/update", {"playlist_id": str(playlist["id"]), "name": renamed})
+                renamed_playlists.append((playlist, old_name))
+        except QobuzError:
+            for playlist, old_name in reversed(renamed_playlists):
+                try:
+                    cat._call("playlist/update", {"playlist_id": str(playlist["id"]), "name": old_name})
+                except QobuzError:
+                    pass
+            raise
+        order.rewrite_subtree(path, new)
+        return {"path": new, "playlists": len(matching)}
+    if action == "delete":
+        for playlist in matching:
+            cat._call("playlist/delete", {"playlist_id": str(playlist["id"])})
+        order.rewrite_subtree(path, None)
+        return {"path": path, "playlists": len(matching)}
+    raise QobuzError("unknown folder action")

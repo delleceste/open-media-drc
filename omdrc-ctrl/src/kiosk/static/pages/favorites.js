@@ -46,10 +46,73 @@ P.collage = (path, covers = P.covers || {}) => {
                     : h('span', { class: 'fav-empty-art' }, path === 'Qobuz' ? '♡' : '♪'));
 };
 P.folderTile = (name, fullPath, caption) => {
+    let heldUntil = 0;
+    const open = h('button', { type: 'button', class: 'fav-folder-open', onclick: () => {
+        if (Date.now() < heldUntil) return;
+        P.enter(name);
+    }, title: `Open ${name}; hold for folder actions` },
+    P.collage(fullPath), h('strong', {}, name), h('small', {}, caption));
     const tile = h('div', { class: 'fav-folder fav-item' },
-        h('button', { type: 'button', class: 'fav-folder-open', onclick: () => P.enter(name),
-            title: `Open ${name}` }, P.collage(fullPath), h('strong', {}, name), h('small', {}, caption)));
+        open);
+    if (fullPath !== 'Qobuz') P.folderHold(open, fullPath, () => { heldUntil = Date.now() + 700; });
     return P.movable(tile, 'f:' + fullPath);
+};
+P.folderHold = (button, path, onHeld) => {
+    let timer, startX, startY, opened = false;
+    const cancel = () => { clearTimeout(timer); timer = null; };
+    button.addEventListener('pointerdown', e => {
+        if (e.button) return;
+        startX = e.clientX; startY = e.clientY;
+        opened = false;
+        cancel();
+        timer = setTimeout(() => { timer = null; opened = true; onHeld(); P.folderMenu(path); }, 550);
+    });
+    button.addEventListener('pointermove', e => {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) > 12) cancel();
+    });
+    button.addEventListener('pointerup', cancel);
+    button.addEventListener('pointercancel', cancel);
+    button.addEventListener('contextmenu', e => {
+        e.preventDefault(); cancel();
+        if (!opened) { opened = true; onHeld(); P.folderMenu(path); }
+    });
+};
+P.folderMenu = path => {
+    const count = P.folders.filter(f => f.path === path || f.path.startsWith(path + '/')).length;
+    const close = () => scrim.remove();
+    const name = h('input', { type: 'text', maxlength: 80, value: path.split('/').at(-1),
+        'aria-label': 'Folder name' });
+    const rename = async () => {
+        const changed = name.value.trim();
+        if (!changed || changed.includes('/')) { K.toast('Enter one folder name without /', 'error'); return; }
+        const d = await K.api('/qobuz/favorites/folder', {
+            json: { action: 'rename', path, name: changed }, timeout: 60000 });
+        if (!d.ok) { K.toast(d.error || 'Could not rename folder', 'error'); return; }
+        if (P.pathName() === path || P.pathName().startsWith(path + '/'))
+            P.path = (d.path + P.pathName().slice(path.length)).split('/');
+        close(); K.toast(`Renamed ${count} playlist${count === 1 ? '' : 's'}`); P.refresh();
+    };
+    const remove = async () => {
+        close();
+        const yes = await K.confirm({ title: `Remove ${path}?`, danger: true, ok: 'Remove folder',
+            message: `This deletes ${count} Qobuz playlist${count === 1 ? '' : 's'} in this folder and its subfolders. Existing Qobuz album favorites remain.` });
+        if (!yes) return;
+        const d = await K.api('/qobuz/favorites/folder', {
+            json: { action: 'delete', path }, timeout: 60000 });
+        if (!d.ok) { K.toast(d.error || 'Could not remove folder', 'error'); return; }
+        if (P.pathName() === path || P.pathName().startsWith(path + '/')) P.path = path.split('/').slice(0, -1);
+        K.toast('Folder removed'); P.refresh();
+    };
+    const scrim = h('div', { class: 'scrim fav-picker', onclick: e => { if (e.target === scrim) close(); } },
+        h('div', { class: 'sheet fav-folder-menu' },
+            h('h2', {}, path), h('p', { class: 'muted' }, `${count} Qobuz playlist${count === 1 ? '' : 's'}`),
+            h('label', {}, 'Rename folder', name),
+            h('div', { class: 'sheet-actions' },
+                h('button', { type: 'button', class: 'btn', onclick: close }, 'Cancel'),
+                h('button', { type: 'button', class: 'btn primary', onclick: rename }, 'Rename'),
+                h('button', { type: 'button', class: 'btn danger', onclick: remove }, 'Remove folder and subfolders'))));
+    name.addEventListener('keydown', e => { if (e.key === 'Enter') rename(); });
+    document.body.append(scrim);
 };
 P.movable = (tile, key) => {
     tile.dataset.key = key;
@@ -123,38 +186,89 @@ P.albumTile = (a, folder) => P.movable(h('div', { class: 'fav-album fav-item' },
 P.dragStart = (e, tile, grip) => {
     if (e.button || P.loading || !P.grid.contains(tile)) return;
     e.preventDefault(); e.stopPropagation();
-    const start = [...P.grid.children].map(item => item.dataset.key).join('\n');
+    const parent = P.pathName();
+    const start = [...P.grid.children].map(item => item.dataset.key);
+    const next = tile.nextSibling;
+    const rect = tile.getBoundingClientRect();
+    const originalStyle = tile.style.cssText;
+    const placeholder = h('div', { class: 'fav-drop-placeholder fav-item', 'aria-hidden': 'true' }, 'Drop here');
+    placeholder.style.height = `${rect.height}px`;
+    P.grid.insertBefore(placeholder, tile);
+    P.grid.classList.add('is-dragging');
+    Object.assign(tile.style, { position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`,
+        width: `${rect.width}px`, height: `${rect.height}px`, zIndex: '100', pointerEvents: 'none' });
     tile.classList.add('dragging');
-    grip.setPointerCapture(e.pointerId);
-    const move = event => {
-        event.preventDefault(); event.stopPropagation();
-        const target = document.elementsFromPoint(event.clientX, event.clientY)
+    const scrollBox = P.el.closest('.page-body') || P.el;
+    let pointerX = e.clientX, pointerY = e.clientY, scrolling = true;
+    const place = () => {
+        const target = document.elementsFromPoint(pointerX, pointerY)
             .map(el => el.closest && el.closest('.fav-item'))
-            .find(el => el && el !== tile && el.parentNode === P.grid);
+            .find(el => el && el !== tile && el !== placeholder && el.parentNode === P.grid);
         if (!target) return;
-        const rect = target.getBoundingClientRect();
-        const before = event.clientY < rect.top ? true
-            : event.clientY > rect.bottom ? false
-            : event.clientX < rect.left + rect.width / 2;
-        P.grid.insertBefore(tile, before ? target : target.nextSibling);
+        const targetRect = target.getBoundingClientRect();
+        const before = pointerY < targetRect.top ? true
+            : pointerY > targetRect.bottom ? false
+            : pointerX < targetRect.left + targetRect.width / 2;
+        P.grid.insertBefore(placeholder, before ? target : target.nextSibling);
+    };
+    const move = event => {
+        if (event.pointerId !== e.pointerId) return;
+        event.preventDefault(); event.stopPropagation();
+        pointerX = event.clientX; pointerY = event.clientY;
+        tile.style.left = `${pointerX - (e.clientX - rect.left)}px`;
+        tile.style.top = `${pointerY - (e.clientY - rect.top)}px`;
+        place();
+    };
+    const autoScroll = () => {
+        if (!scrolling) return;
+        const box = scrollBox.getBoundingClientRect();
+        if (pointerX >= box.left && pointerX <= box.right &&
+            pointerY >= box.top && pointerY <= box.bottom) {
+            const edge = Math.min(96, box.height / 3);
+            const up = Math.max(0, edge - (pointerY - box.top)) / edge;
+            const down = Math.max(0, edge - (box.bottom - pointerY)) / edge;
+            const step = Math.round(22 * (down * down - up * up));
+            if (step) {
+                const before = scrollBox.scrollTop;
+                scrollBox.scrollTop += step;
+                if (scrollBox.scrollTop !== before) place();
+            }
+        }
+        requestAnimationFrame(autoScroll);
     };
     const end = async event => {
+        if (event.pointerId !== e.pointerId) return;
+        event.preventDefault();
         event.stopPropagation();
-        grip.removeEventListener('pointermove', move);
-        grip.removeEventListener('pointerup', end);
-        grip.removeEventListener('pointercancel', end);
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', end, true);
+        window.removeEventListener('pointercancel', end, true);
+        scrolling = false;
+        P.grid.classList.remove('is-dragging');
+        if (grip.hasPointerCapture && grip.hasPointerCapture(e.pointerId)) grip.releasePointerCapture(e.pointerId);
         tile.classList.remove('dragging');
-        if (event.type === 'pointercancel') { P.paint(); return; }
+        tile.style.cssText = originalStyle;
+        if (event.type === 'pointercancel') {
+            placeholder.remove();
+            P.grid.insertBefore(tile, next);
+            return;
+        }
+        placeholder.replaceWith(tile);
         const keys = [...P.grid.children].map(item => item.dataset.key);
-        if (keys.join('\n') === start) return;
-        const parent = P.pathName();
+        if (keys.join('\n') === start.join('\n')) return;
+        P.order[parent] = keys;
         const d = await K.api('/qobuz/favorites/order', { json: { parent, keys } });
-        if (d.ok) P.order[parent] = keys;
-        else { K.toast(d.error || 'Could not save tile order', 'error'); P.paint(); }
+        if (!d.ok) {
+            P.order[parent] = start;
+            K.toast(d.error || 'Could not save tile order', 'error');
+            if (P.pathName() === parent) P.paint();
+        }
     };
-    grip.addEventListener('pointermove', move);
-    grip.addEventListener('pointerup', end);
-    grip.addEventListener('pointercancel', end);
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', end, true);
+    window.addEventListener('pointercancel', end, true);
+    if (grip.setPointerCapture) grip.setPointerCapture(e.pointerId);
+    requestAnimationFrame(autoScroll);
 };
 P.play = async (a, mode) => {
     const d = await K.api('/qobuz/play', { json: { album_id: a.id, mode }, timeout: 90000 });

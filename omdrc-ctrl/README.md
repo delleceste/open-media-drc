@@ -209,7 +209,9 @@ own Library; legacy Blow Up and Gramophone names are also understood until
 renamed. Folder tiles show one to three covers from the albums they contain.
 Drag a tile by its handle to reorder it; the service stores the order per
 folder in `qobuz-library-order-<user_id>.json` in its state directory, shared
-by every browser and Android device using that service.
+by every browser and Android device using that service. Holding a folder tile
+opens Rename and Remove actions; these apply to every Qobuz playlist below
+that path, while existing Qobuz album favorites remain.
 
 `GET /qobuz/favorites` returns folder paths and uncategorized album cards;
 `GET /qobuz/favorites/playlist/<id>` returns an owned playlist grouped by
@@ -218,6 +220,9 @@ album. `POST /qobuz/favorites` accepts `{"action":"add","album_id","path"}`,
 `{"action":"remove","album_id","playlist_id"}`, or
 `{"action":"unfavorite","album_id"}`. `POST /qobuz/favorites/order`
 stores `{ "parent": "Classical", "keys": ["f:Classical/BIS", "a:album-id"] }`.
+`POST /qobuz/favorites/folder` accepts `{ "action": "rename", "path":
+"Classical/BIS", "name": "BIS Records" }` or `{ "action": "delete", "path":
+"Classical/BIS" }` for a folder subtree.
 Folder reading and edits need a
 Qobuz sign-in, but only playing requires upmpdcli to be running.
 

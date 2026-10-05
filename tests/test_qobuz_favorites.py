@@ -35,6 +35,8 @@ class FakeCatalog:
             self.tracks = [t for t in self.tracks if str(t["playlist_track_id"]) not in ids]
         if endpoint == "playlist/delete":
             self.playlists = [p for p in self.playlists if str(p["id"]) != params["playlist_id"]]
+        if endpoint == "playlist/update":
+            next(p for p in self.playlists if str(p["id"]) == params["playlist_id"])["name"] = params["name"]
         return {}
 
     def album(self, album_id):
@@ -116,6 +118,28 @@ class FolderTest(unittest.TestCase):
                              ["f:Classical/BIS", "a:abc"])
             with self.assertRaises(QobuzError):
                 store.save("Classical", ["a:abc", "a:abc"])
+
+    def test_rename_and_delete_folder_subtrees_and_saved_positions(self):
+        cat = FakeCatalog()
+        cat.playlists.append({"id": 8, "name": "Blow Up/2026/July", "owner": {"id": 10}})
+        cat.playlists.append({"id": 9, "name": "Other", "owner": {"id": 10}})
+        with tempfile.TemporaryDirectory() as directory:
+            store = fav.LibraryOrder(str(Path(directory) / "order.json"))
+            store.save("", ["f:Other", "f:Blow Up"])
+            store.save("Blow Up", ["f:Blow Up/2026"])
+            store.save("Blow Up/2026", ["f:Blow Up/2026/July", "f:Blow Up/2026/June"])
+            result = fav.folder_action(cat, "10", "Blow Up", "rename", store, "Magazine")
+            self.assertEqual(result["path"], "Magazine")
+            self.assertEqual([p["name"] for p in cat.playlists[:2]],
+                             ["Magazine/2026/June", "Magazine/2026/July"])
+            self.assertEqual(store.all()[""], ["f:Other", "f:Magazine"])
+            self.assertEqual(store.all()["Magazine/2026"],
+                             ["f:Magazine/2026/July", "f:Magazine/2026/June"])
+            with self.assertRaises(QobuzError):
+                fav.folder_action(cat, "10", "Magazine", "rename", store, "Other")
+            fav.folder_action(cat, "10", "Magazine", "delete", store)
+            self.assertEqual([p["name"] for p in cat.playlists], ["Other"])
+            self.assertEqual(store.all(), {"": ["f:Other"]})
 
 
 if __name__ == "__main__":

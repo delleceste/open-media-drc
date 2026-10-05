@@ -669,6 +669,25 @@ def favorite_order():
         return jsonify({"ok": False, "error": str(error)}), 400
 
 
+@bp.route("/favorites/folder", methods=["POST"])
+def favorite_folder():
+    guard = _guard(renderer_needed=False)
+    if guard:
+        return guard
+    try:
+        cat, user_id = catalog(), _qobuz_user_id()
+        body = request.get_json(silent=True) or {}
+        order = qobuz_favorites.LibraryOrder(os.path.join(
+            _state_dir(), f"qobuz-library-order-{user_id}.json"))
+        result = qobuz_favorites.folder_action(
+            cat, user_id, body.get("path") or "", body.get("action") or "",
+            order, body.get("name") or "")
+        qobuz_favorites.invalidate(user_id)
+        return jsonify({"ok": True, **result})
+    except (QobuzError, OSError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
 @bp.route("/favorites/playlist/<playlist_id>")
 def favorite_playlist(playlist_id):
     guard = _guard(renderer_needed=False)
