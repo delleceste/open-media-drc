@@ -722,6 +722,16 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-tq { right: .25rem; font-weight: 650; font-variant-numeric: tabular-nums; }
 .qz-ttl { margin-top: .3rem; font-size: .78rem; font-weight: 650; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qz-tsub { font-size: .7rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.qz-viewicon { padding: 0 .7rem; display: inline-flex; align-items: center; }
+.chip.qz-viewicon .ticon { width: 1.3rem; height: 1.3rem; }
+/* the grid's long-press menu (P.tileMenu) */
+.menu-pop.qz-tilemenu { max-width: min(20rem, calc(100vw - 16px)); }
+.qz-tilemenu-head { padding: .35rem .9rem .3rem; font-size: .8rem; font-weight: 650; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--hair); }
+.qz-tilemenu .menu-item .mk { display: inline-flex; justify-content: center; font-size: 1.1rem; }
+.qz-tilemenu .menu-item .mk .ticon { width: 1.1rem; height: 1.1rem; }
+.qz-tilemenu .menu-item:disabled { opacity: .45; cursor: default; }
+.qz-tile.menu-open .qz-tcover { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chip.qz-layout { margin-left: auto; padding: 0 .55rem; display: inline-flex; align-items: center; }
 .qz-searchhint:not([hidden]) + .chip.qz-layout { margin-left: 0; }
 .chip.qz-layout .ticon { width: 1.25rem; height: 1.25rem; }

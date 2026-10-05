@@ -118,8 +118,10 @@ P.mount = el => {
     // the last search's results), and, while the box is scrolled out of sight, a hint
     // that it is up there.
     P.viewChips = h('div', { class: 'qz-viewchips' },
-        ['recent', 'Recent', 'results', 'Results', 'discover', 'Discover', 'awarded', 'Awarded'].reduce((a, x, i, all) => i % 2 ? a : [...a,
-            h('button', { type: 'button', class: 'chip tog qz-chip', dataset: { view: x }, onclick: () => P.setView(x) }, all[i + 1])], []));
+        // Results in words; the others as icons (a clock, Qobuz's Discover compass, the award cup)
+        [['results', 'Results'], ['recent', 'Recent', 'clock'], ['discover', 'Discover', 'compass'], ['awarded', 'Awarded', 'trophy']].map(([x, name, icon]) =>
+            h('button', { type: 'button', class: 'chip tog qz-chip' + (icon ? ' qz-viewicon' : ''), dataset: { view: x },
+                title: name, 'aria-label': name, onclick: () => P.setView(x) }, icon ? K.tIcon(icon) : name)));
     P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'Back to search', 'aria-label': 'Back to search',
         onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, K.tIcon('search'), h('span', { 'aria-hidden': 'true' }, '⌃'));
     // list or grid, for all four lists alike (remembered)
@@ -202,6 +204,7 @@ P.show = () => {
 };
 P.hide = () => {
     P.visible = false;
+    P.closeTileMenu();
     if (P.discoverObserver) P.discoverObserver.disconnect();
     P.poll.stop();
     P.playerPoll.stop();
@@ -232,7 +235,7 @@ P.forget = () => {
 
 // ── which list: played recently, or the results ──────────────────────────────
 P.view = () => ['results', 'discover', 'awarded'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
-P.setView = v => { P.closeGenreMenu(); setPref('view', v); P.paintView(); if (v === 'recent') P.recent(); if (v === 'awarded') P.awardedList(); if (v === 'discover') P.discover(); };
+P.setView = v => { P.closeGenreMenu(); P.closeTileMenu(); setPref('view', v); P.paintView(); if (v === 'recent') P.recent(); if (v === 'awarded') P.awardedList(); if (v === 'discover') P.discover(); };
 P.paintView = () => {
     const v = P.view();
     [...P.viewChips.children].forEach(b => b.classList.toggle('on', b.dataset.view === v));
@@ -257,6 +260,7 @@ P.paintLayout = () => {
     P.layoutBtn.setAttribute('aria-label', P.layoutBtn.title);
 };
 P.setLayout = v => {
+    P.closeTileMenu();
     setPref('layout', v);
     P.paintLayout();
     P.main.querySelectorAll('.qz-list').forEach(list => {
@@ -1506,18 +1510,15 @@ P.row = (c, where = '') => {
     return row;
 };
 
-// One album in the grid.  A tap opens its details, with ▶ and + there (the only way
-// to them in the grid); a long press is the list's −: out of Recent, or lowered.
-// A lowered album has nothing to remove: its ↺ is in the list and the Lowered list.
+// One album in the grid.  A tap opens its details, with ▶ and + there; a long press
+// drops a menu under the cover with the list row's three buttons (P.tileMenu).
 const LONG_PRESS_MS = 550;
 P.tile = (c, where = '') => {
     const off = c.streamable === false;
-    const remove = where === 'recent' ? () => P.hideRecent(c, tile)
-        : c.lowered ? null : () => P.lower(c, tile);
     const sub = [c.year, c.label].filter(Boolean).join(' · ');
     const tile = h('div', {
         class: 'qz-tile' + (off ? ' off' : '') + (c.lowered ? ' lowered' : ''), role: 'button', tabindex: 0,
-        title: [c.title, c.artist].filter(Boolean).join(' — ') + (remove ? (where === 'recent' ? ' (long press: hide from Recent)' : ' (long press: lower)') : ''),
+        'aria-haspopup': 'menu', title: [c.title, c.artist].filter(Boolean).join(' — ') + ' (long press: play, add, remove)',
         onclick: () => { if (!held) P.details(c); },
         onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.details(c); } },
     },
@@ -1534,16 +1535,15 @@ P.tile = (c, where = '') => {
     const cancel = () => { clearTimeout(timer); timer = null; tile.classList.remove('pressing'); };
     const fire = () => {
         cancel();
-        if (!remove || held) return;
+        if (held) return;
         held = true;
         try { navigator.vibrate && navigator.vibrate(25); } catch {}
-        remove();
+        P.tileMenu(c, where, tile);
     };
     tile.addEventListener('pointerdown', e => {
         if (e.button) return;
         held = false;
         start = { x: e.clientX, y: e.clientY };
-        if (!remove) return;
         tile.classList.add('pressing');
         timer = setTimeout(fire, LONG_PRESS_MS);
     });
@@ -1555,6 +1555,48 @@ P.tile = (c, where = '') => {
     tile.addEventListener('contextmenu', e => { e.preventDefault(); if (timer || e.pointerType === 'mouse' || !e.pointerType) fire(); });
     tile.__card = c; tile.__where = where;
     return tile;
+};
+
+// The long press's menu, dropped under the cover (over it when there is no room
+// below): ▶ replaces the queue, + adds to it, and − is the list's −: out of Recent,
+// else lowered (the bar after it can undo).  A lowered album gets ↺ there instead.
+P.tileMenu = (c, where, tile) => {
+    P.closeTileMenu();
+    const off = c.streamable === false;
+    const item = (icon, label, run, disabled = false) => h('button', {
+        type: 'button', class: 'menu-item', role: 'menuitem', disabled,
+        onclick: () => { P.closeTileMenu(); run(); },
+    }, h('span', { class: 'mk' }, icon), label);
+    const menu = P.tileMenuEl = h('div', { class: 'menu-pop qz-tilemenu', role: 'menu', 'aria-label': c.title },
+        h('div', { class: 'qz-tilemenu-head' }, c.title),
+        item(K.tIcon('play'), off ? 'Not available on Qobuz' : 'Play (replace the queue)', () => P.play(c, 'replace'), off),
+        item('+', 'Add to the queue', () => P.play(c, 'append'), off),
+        where === 'recent' ? item('−', 'Remove from Recent', () => P.hideRecent(c, tile))
+        : c.lowered ? item('↺', `Restore (lowered ${c.lowered.kind}: ${c.lowered.name})`, () => P.restore(c.lowered))
+        : item('−', 'Remove (lower it)', () => P.lower(c, tile)));
+    document.body.append(menu);
+    tile.classList.add('menu-open');
+    P.tileMenuTile = tile;
+    const r = tile.querySelector('.qz-tcover').getBoundingClientRect();
+    const w = menu.offsetWidth, hgt = menu.offsetHeight;
+    menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+    menu.style.top = `${r.bottom + 4 + hgt <= innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top + 8)}px`;
+    // the finger that held lifts after this: only a new touch elsewhere closes it
+    P.tileMenuOutside = e => { if (!menu.contains(e.target)) P.closeTileMenu(); };
+    P.tileMenuKey = e => { if (e.key === 'Escape') P.closeTileMenu(); };
+    document.addEventListener('pointerdown', P.tileMenuOutside, true);
+    document.addEventListener('keydown', P.tileMenuKey);
+    P.el.addEventListener('scroll', P.closeTileMenu, { passive: true, once: true });
+};
+P.closeTileMenu = () => {
+    if (!P.tileMenuEl) return;
+    document.removeEventListener('pointerdown', P.tileMenuOutside, true);
+    document.removeEventListener('keydown', P.tileMenuKey);
+    P.el.removeEventListener('scroll', P.closeTileMenu);
+    P.tileMenuEl.remove();
+    P.tileMenuEl = null;
+    if (P.tileMenuTile) P.tileMenuTile.classList.remove('menu-open');
+    P.tileMenuTile = null;
 };
 
 // The details page from the grid: with ▶ and + for this album.
