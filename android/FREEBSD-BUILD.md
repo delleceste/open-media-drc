@@ -3,8 +3,15 @@
 This procedure was used on FreeBSD 15.1 to build `android/omdrc-app` and run
 Android lint. The Android SDK tools and Android Gradle Plugin expect Linux, so
 the build uses FreeBSD's Linux compatibility layer and a Linux JDK. The SDK,
-JDK, and Gradle were placed under `/tmp` for this run; use a persistent
-directory if you want to reuse them after a reboot.
+JDK, and Gradle live in a persistent toolchain directory,
+`~/devel/android-toolchain`, so they survive reboots and `/tmp` cleanup:
+
+```sh
+TC=$HOME/devel/android-toolchain
+mkdir -p $TC
+```
+
+Downloaded archives stay in `/tmp`; they can be deleted after unpacking.
 
 ## Prerequisites
 
@@ -28,10 +35,10 @@ curl -fL -o /tmp/omdrc-commandlinetools.zip \
   https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip
 sha256 -q /tmp/omdrc-commandlinetools.zip
 # Expected: 4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583
-unzip -q /tmp/omdrc-commandlinetools.zip -d /tmp/omdrc-sdk
-mv /tmp/omdrc-sdk/cmdline-tools /tmp/omdrc-sdk/latest
-mkdir /tmp/omdrc-sdk/cmdline-tools
-mv /tmp/omdrc-sdk/latest /tmp/omdrc-sdk/cmdline-tools/
+unzip -q /tmp/omdrc-commandlinetools.zip -d $TC/sdk
+mv $TC/sdk/cmdline-tools $TC/sdk/latest
+mkdir $TC/sdk/cmdline-tools
+mv $TC/sdk/latest $TC/sdk/cmdline-tools/
 ```
 
 Download the Linux JDK 17 and Gradle 9.6.0:
@@ -39,14 +46,14 @@ Download the Linux JDK 17 and Gradle 9.6.0:
 ```sh
 curl -fL -o /tmp/omdrc-linux-jdk17.tar.gz \
   https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse
-tar -xzf /tmp/omdrc-linux-jdk17.tar.gz -C /tmp
+tar -xzf /tmp/omdrc-linux-jdk17.tar.gz -C $TC
 curl -fL -o /tmp/omdrc-gradle-9.6-bin.zip \
   https://services.gradle.org/distributions/gradle-9.6.0-bin.zip
-unzip -q /tmp/omdrc-gradle-9.6-bin.zip -d /tmp
+unzip -q /tmp/omdrc-gradle-9.6-bin.zip -d $TC
 ```
 
 Set `JAVA_HOME` to the directory extracted by the JDK archive. For this run
-it was `/tmp/jdk-17.0.20.1+1`; the patch version can change.
+it was `$TC/jdk-17.0.20.1+1`; the patch version can change.
 
 ## Install the SDK packages and build
 
@@ -54,13 +61,13 @@ it was `/tmp/jdk-17.0.20.1+1`; the patch version can change.
 FreeBSD. Accept the Android SDK license when prompted.
 
 ```sh
-JAVA_HOME=/tmp/jdk-17.0.20.1+1 REPO_OS_OVERRIDE=linux \
-  /tmp/omdrc-sdk/cmdline-tools/latest/bin/sdkmanager \
-  --sdk_root=/tmp/omdrc-sdk 'platforms;android-35' 'build-tools;35.0.0'
+JAVA_HOME=$TC/jdk-17.0.20.1+1 REPO_OS_OVERRIDE=linux \
+  $TC/sdk/cmdline-tools/latest/bin/sdkmanager \
+  --sdk_root=$TC/sdk 'platforms;android-35' 'build-tools;35.0.0'
 
 cd android/omdrc-app
-JAVA_HOME=/tmp/jdk-17.0.20.1+1 ANDROID_HOME=/tmp/omdrc-sdk \
-  REPO_OS_OVERRIDE=linux /tmp/gradle-9.6.0/bin/gradle \
+JAVA_HOME=$TC/jdk-17.0.20.1+1 ANDROID_HOME=$TC/sdk \
+  REPO_OS_OVERRIDE=linux $TC/gradle-9.6.0/bin/gradle \
   :app:assembleDebug :app:lint --no-daemon
 ```
 
