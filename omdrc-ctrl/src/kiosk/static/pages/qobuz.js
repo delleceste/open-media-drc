@@ -122,9 +122,9 @@ P.mount = el => {
         [['results', 'Results'], ['recent', 'Recent', 'clock'], ['discover', 'Discover', 'compass'], ['awarded', 'Awarded', 'trophy']].map(([x, name, icon]) =>
             h('button', { type: 'button', class: 'chip tog qz-chip' + (icon ? ' qz-viewicon' : ''), dataset: { view: x },
                 title: name, 'aria-label': name, onclick: () => P.setView(x) }, icon ? K.tIcon(icon) : name)),
-        h('button', { type: 'button', class: 'chip qz-chip qz-library-shortcut',
-            title: 'Qobuz Library', 'aria-label': 'Open Qobuz Library',
-            onclick: () => K.showPage('favorites') }, '♡'));
+        h('button', { type: 'button', class: 'chip tog qz-chip qz-library-shortcut',
+            dataset: { view: 'library' }, title: 'Favorites', 'aria-label': 'Favorites',
+            onclick: () => P.setView('library') }, '♡'));
     P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'Back to search', 'aria-label': 'Back to search',
         onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, K.tIcon('search'), h('span', { 'aria-hidden': 'true' }, '⌃'));
     // list or grid, for all four lists alike (remembered)
@@ -150,7 +150,10 @@ P.mount = el => {
     P.resHead = h('div', { class: 'qz-reshead', hidden: true },
         h('button', { type: 'button', class: 'btn qz-back', title: 'Back to Now playing', 'aria-label': 'Back to Now playing', onclick: () => K.showPage('now') }, '‹'),
         h('span', { class: 'qz-reshead-title' }, 'Search results'));
-    P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow, P.recentBox, P.results, P.discoverBox, P.awardedBox);
+    P.libraryBox = h('div', { class: 'qz-library', hidden: true });
+    K.library.mount(P.libraryBox);
+    P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow,
+        P.recentBox, P.results, P.discoverBox, P.awardedBox, P.libraryBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.refreshAIIcon();
     P.buildPlayer();
@@ -200,6 +203,7 @@ P.show = () => {
     else if (P.view() === 'recent') P.recent();
     else if (P.view() === 'discover') P.discover();
     else if (P.view() === 'awarded') P.awardedList();
+    else if (P.view() === 'library') K.library.show();
     if (!P.fromNowShown) P.undock();
     P.poll.start();
     P.playerPoll.start();
@@ -207,6 +211,7 @@ P.show = () => {
 };
 P.hide = () => {
     P.visible = false;
+    K.library.hide();
     P.closeTileMenu();
     if (P.discoverObserver) P.discoverObserver.disconnect();
     P.poll.stop();
@@ -237,8 +242,17 @@ P.forget = () => {
 };
 
 // ── which list: played recently, or the results ──────────────────────────────
-P.view = () => ['results', 'discover', 'awarded'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
-P.setView = v => { P.closeGenreMenu(); P.closeTileMenu(); setPref('view', v); P.paintView(); if (v === 'recent') P.recent(); if (v === 'awarded') P.awardedList(); if (v === 'discover') P.discover(); };
+P.view = () => ['results', 'recent', 'discover', 'awarded', 'library'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
+P.setView = v => {
+    P.closeGenreMenu(); P.closeTileMenu();
+    const wasLibrary = P.view() === 'library';
+    setPref('view', v); P.paintView();
+    if (wasLibrary && v !== 'library') K.library.hide();
+    if (v === 'library') { if (P.visible && !K.library.visible) K.library.show(); }
+    else if (v === 'recent') P.recent();
+    else if (v === 'awarded') P.awardedList();
+    else if (v === 'discover') P.discover();
+};
 P.paintView = () => {
     const v = P.view();
     [...P.viewChips.children].forEach(b => b.classList.toggle('on', b.dataset.view === v));
@@ -246,6 +260,7 @@ P.paintView = () => {
     P.results.hidden = v !== 'results';
     P.awardedBox.hidden = v !== 'awarded';
     P.discoverBox.hidden = v !== 'discover';
+    P.libraryBox.hidden = v !== 'library';
     if (v === 'results' && !P.results.firstChild)
         P.results.append(h('p', { class: 'muted' }, 'No search yet: the search is at the top.'));
 };

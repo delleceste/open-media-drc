@@ -4,15 +4,17 @@ const vm = require('node:vm');
 const test = require('node:test');
 
 function setup() {
-    let page, nextTimer = 0;
+    let nextTimer = 0;
     const timers = new Map();
     const window = new EventTarget();
+    const K = { h: () => ({}) };
     const code = fs.readFileSync('omdrc-ctrl/src/kiosk/static/pages/favorites.js', 'utf8');
     vm.runInNewContext(code, {
-        K: { h: () => ({}), registerPage: p => { page = p; } }, window,
+        K, window,
         setTimeout: fn => { const id = ++nextTimer; timers.set(id, fn); return id; },
         clearTimeout: id => timers.delete(id),
     });
+    const page = K.library;
     page.visible = true;
     let menus = 0;
     page.folderMenu = () => { menus++; };

@@ -186,7 +186,8 @@ Search and play answer 409 while upmpdcli is not running.
 
 ### Qobuz Library folders
 
-The kiosk and Android app show a **Library** page with folder and album tiles.
+The kiosk and Android app show **Favorites** as the heart view beside Qobuz's
+Results, Recent, Discover and Awarded views, with folder and album tiles.
 Owned Qobuz playlists supply the folders: their names are slash-separated
 paths such as `Blow Up/2026/June`. Each track in a playlist points to its
 album; several tracks from one album appear as one album tile. Existing

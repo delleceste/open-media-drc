@@ -1,10 +1,9 @@
 /* Qobuz Library: playlist names are folder paths, playlist tracks are album
- * anchors. This page runs in the Android WebView as well as the browser. */
+ * anchors. This view runs inside Qobuz in the Android WebView and browser. */
 (() => {
 'use strict';
 const { h } = K;
-const P = { id: 'favorites', label: 'Library', title: 'Qobuz Library',
-    optional: () => !!K.state.features.qobuz_search, path: [], folders: [], albums: [], loaded: new Map() };
+const P = { path: [], folders: [], albums: [], loaded: new Map() };
 
 P.mount = el => {
     P.el = el;
@@ -28,7 +27,12 @@ P.refresh = async () => {
     P.message.textContent = '';
     P.paint();
 };
-P.enter = name => { P.path.push(name); P.paint(); P.el.scrollTo(0, 0); };
+P.enter = name => {
+    P.path.push(name); P.paint();
+    const scrollBox = P.el.closest('.page-body');
+    if (scrollBox) scrollBox.scrollTop += P.el.getBoundingClientRect().top -
+        scrollBox.getBoundingClientRect().top;
+};
 P.back = () => { P.path.pop(); P.paint(); };
 P.pathName = () => P.path.join('/');
 P.openPlaylist = async folder => {
@@ -437,5 +441,5 @@ K.saveQobuzFavorite = async a => {
     document.getElementById('overlay-root').append(scrim);
     paint();
 };
-K.registerPage(P);
+K.library = P;
 })();
