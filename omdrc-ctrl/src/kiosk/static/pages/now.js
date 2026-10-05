@@ -365,12 +365,7 @@ P.openViewMenu = () => {
     const menu = P.menu = h('div', { class: 'menu-pop', role: 'menu',
         style: { width: 'min(18rem, calc(100vw - 16px))' } });
     const paint = () => K.clear(menu).append(
-        ...MODES.flatMap(m => m === 'spectrum' ? [
-            item(P.mode === 'spectrum' && !P.spec.separate, MODE_LABEL.spectrum,
-                () => P.setSpectrumLayout(false), true),
-            item(P.mode === 'spectrum' && P.spec.separate, 'Bars + separate L/R spectrum',
-                () => P.setSpectrumLayout(true), true),
-        ] : [item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)]),
+        item(P.mode === 'off', MODE_LABEL.off, () => P.setMode('off'), true),
         ...(P.mode === 'spectrum' ? [P.floorRow()] : []),
         h('div', { class: 'menu-sep' }),
         item(P.coverWanted(), 'Album cover', () => P.flipCover()),
@@ -385,6 +380,27 @@ P.openViewMenu = () => {
     menu.style.maxHeight = `${Math.max(0, innerHeight - r.bottom - 12)}px`;
     menu.style.overflowY = 'auto';
     P.menuOutside = e => { if (!menu.contains(e.target) && e.target !== P.modeBtn) P.closeViewMenu(); };
+    document.addEventListener('pointerdown', P.menuOutside, true);
+    K.onBarHidden = P.closeViewMenu;
+};
+// Right-click the level display to choose its mutually exclusive rendering.
+// Keep these layout choices close to the display; the View menu holds page-wide switches.
+P.openDisplayMenu = (x, y) => {
+    P.closeViewMenu();
+    const item = (on, text, fn) => h('button', {
+        type: 'button', class: 'menu-item', role: 'menuitemradio', 'aria-checked': String(on),
+        onclick: () => { fn(); P.closeViewMenu(); K.showBar(true); },
+    }, h('span', { class: 'mk' }, on ? '●' : ''), text);
+    const menu = P.menu = h('div', { class: 'menu-pop', role: 'menu', 'aria-label': 'Level display',
+        style: { width: 'min(18rem, calc(100vw - 16px))' } },
+        item(P.mode === 'needles', 'VU meters', () => P.setMode('needles')),
+        item(P.mode === 'bars', 'Bars', () => P.setMode('bars')),
+        item(P.mode === 'spectrum' && !P.spec.separate, 'Single spectrum', () => P.setSpectrumLayout(false)),
+        item(P.mode === 'spectrum' && P.spec.separate, 'L/R double spectrum', () => P.setSpectrumLayout(true)));
+    document.body.append(menu);
+    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+    P.menuOutside = e => { if (!menu.contains(e.target)) P.closeViewMenu(); };
     document.addEventListener('pointerdown', P.menuOutside, true);
     K.onBarHidden = P.closeViewMenu;
 };
@@ -694,7 +710,10 @@ P.wireMeterTap = () => {
             tapTimer = setTimeout(() => { last = null; K.showMeterTapHint(); }, 360);
         }
     });
-    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        if (P.mode !== 'off') P.openDisplayMenu(e.clientX, e.clientY);
+    });
     el.addEventListener('dblclick', e => e.preventDefault());
 };
 
