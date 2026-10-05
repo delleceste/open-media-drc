@@ -1351,7 +1351,7 @@
         }
         .spectrum-grid {
             display: grid;
-            grid-template-columns: 1fr;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 12px;
         }
         .spectrum-channel-title {
@@ -1408,7 +1408,6 @@
         .screen-delay .grow { flex: 1; }
         @media (orientation: landscape) and (min-width: 700px) {
             body { max-width: 960px; }
-            .spectrum-grid { grid-template-columns: 1fr 1fr; }
             .spectrum-chart-wrap { height: 230px; }
         }
         /* ── level meters (Listen view): the control stays accessible while

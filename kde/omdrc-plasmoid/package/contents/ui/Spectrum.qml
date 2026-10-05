@@ -2,9 +2,7 @@ import QtQuick
 import org.kde.kirigami as Kirigami
 import "levels.js" as L
 
-/* Band spectrum (left/right per band) with falling peak caps, after the
- * kiosk's widgets/spectrum.js.  Narrow slots draw one bar of the louder
- * channel instead of a pair. */
+/* Separate left and right band plots with falling peak caps. */
 Canvas {
     id: spectrum
 
@@ -62,39 +60,47 @@ Canvas {
         ctx.reset()
         const n = bands.length
         const W = width, H = height
-        ctx.globalAlpha = glass
-        ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.06)
-        ctx.fillRect(0, 0, W, H)
-        ctx.globalAlpha = 1
-        if (!n) return
-        const labels = H >= 70 && W >= 160
-        const labelH = labels ? 12 : 0, top = 2, plotH = H - labelH - top
+        const gap = W >= 80 ? 6 : 2
+        const plotW = Math.max(0, (W - gap) / 2)
+        const titleH = H >= 28 && plotW >= 18 ? 13 : 0
+        const labels = H >= 70 && plotW >= 160
+        const labelH = labels ? 12 : 0, top = titleH + 2
+        const plotH = Math.max(0, H - labelH - top)
         const fl = floorDb
         const y = db => top + plotH * (1 - L.clamp((db - fl) / (0 - fl), 0, 1))
-        if (plotH >= 40) {
-            ctx.strokeStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.12)
-            ctx.lineWidth = 1
-            for (let db = -10; db > fl; db -= 10) {
-                ctx.beginPath()
-                ctx.moveTo(0, Math.round(y(db)) + 0.5)
-                ctx.lineTo(W, Math.round(y(db)) + 0.5)
-                ctx.stroke()
-            }
-        }
         const grad = ctx.createLinearGradient(0, top + plotH, 0, top)
         grad.addColorStop(0, "#1f6feb"); grad.addColorStop(0.45, "#3fb950")
         grad.addColorStop(0.8, "#d8c23a"); grad.addColorStop(1, "#f85149")
-        const slot = W / n, pair = slot >= 6
-        const bw = pair ? Math.max(2, slot * 0.38) : Math.max(1, slot * 0.75)
-        const gap = pair ? Math.max(1, slot * 0.04) : 0
+        const slot = n ? plotW / n : 0
+        const bw = Math.max(1, slot * 0.75)
         const capH = plotH >= 40 ? 2 : 1
-        const every = Math.max(3, Math.ceil(36 / slot))     // a label per this many bands
-        for (let i = 0; i < n; i++) {
-            const x0 = i * slot + (slot - (pair ? 2 * bw + gap : bw)) / 2
-            const cols = pair ? [[l[i], capL[i], x0], [r[i], capR[i], x0 + bw + gap]]
-                              : [[Math.max(l[i] ?? -200, r[i] ?? -200),
-                                  Math.max(capL[i] ?? -200, capR[i] ?? -200), x0]]
-            for (const [v, cap, x] of cols) {
+        const every = Math.max(3, Math.ceil(36 / Math.max(1, slot)))
+        for (const [channel, values, caps, offset] of [
+            ["Left", l, capL, 0], ["Right", r, capR, plotW + gap]
+        ]) {
+            ctx.globalAlpha = glass
+            ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.06)
+            ctx.fillRect(offset, 0, plotW, H)
+            ctx.globalAlpha = 1
+            if (titleH) {
+                ctx.fillStyle = textColor
+                ctx.font = "10px sans-serif"
+                ctx.textAlign = "left"; ctx.textBaseline = "top"
+                ctx.fillText(plotW < 40 ? channel[0] : channel, offset + 2, 1)
+            }
+            if (plotH >= 40) {
+                ctx.strokeStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.12)
+                ctx.lineWidth = 1
+                for (let db = -10; db > fl; db -= 10) {
+                    ctx.beginPath()
+                    ctx.moveTo(offset, Math.round(y(db)) + 0.5)
+                    ctx.lineTo(offset + plotW, Math.round(y(db)) + 0.5)
+                    ctx.stroke()
+                }
+            }
+            for (let i = 0; i < n; i++) {
+                const x = offset + i * slot + (slot - bw) / 2
+                const v = values[i], cap = caps[i]
                 if (Number.isFinite(v) && v > fl) {
                     ctx.fillStyle = grad
                     ctx.fillRect(x, y(v), bw, top + plotH - y(v))
@@ -103,15 +109,15 @@ Canvas {
                     ctx.fillStyle = textColor
                     ctx.fillRect(x, y(cap) - capH, bw, capH)
                 }
-            }
-            if (labels && i % every === 0) {
-                ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.55)
-                ctx.font = "9px sans-serif"
-                ctx.textAlign = "center"; ctx.textBaseline = "top"
-                const label = bands[i].label
-                const half = ctx.measureText(label).width / 2
-                const center = i * slot + slot / 2
-                ctx.fillText(label, Math.max(half + 2, Math.min(W - half - 2, center)), H - labelH + 1)
+                if (labels && i % every === 0) {
+                    ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.55)
+                    ctx.font = "9px sans-serif"
+                    ctx.textAlign = "center"; ctx.textBaseline = "top"
+                    const label = bands[i].label
+                    const half = ctx.measureText(label).width / 2
+                    const center = i * slot + slot / 2
+                    ctx.fillText(label, offset + Math.max(half + 2, Math.min(plotW - half - 2, center)), H - labelH + 1)
+                }
             }
         }
     }
