@@ -161,6 +161,12 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .scrim.frame { flex-direction: column; align-items: stretch; justify-content: flex-start; background: var(--bg); z-index: 60; }
 .frame-bar { display: flex; align-items: center; gap: .6rem; padding: .4rem .8rem; background: var(--surface); border-bottom: 1px solid var(--border); }
 .scrim.frame iframe { flex: 1; border: 0; width: 100%; background: var(--bg); }
+/* the cover, full screen (K.openCoverMax: now.js and qobuz.js's cover buttons) */
+.scrim.cover-max { flex-direction: column; z-index: 61; }
+.cover-max-top { position: absolute; top: 1rem; right: 1rem; }
+.cover-max-close { width: 2.6rem; height: 2.6rem; padding: 0; border-radius: 50%; }
+.cover-max-art { position: relative; width: min(92vw, 92dvh); height: min(92vw, 92dvh); border-radius: .6rem; overflow: hidden; background: var(--surface2); }
+.cover-max-art > img { display: block; width: 100%; height: 100%; object-fit: contain; }
 #toast { position: fixed; left: 50%; bottom: calc(var(--tabs) + .8rem); transform: translate(-50%, 1rem); opacity: 0; pointer-events: none; z-index: 70;
     background: var(--surface2); border: 1px solid var(--border); border-radius: .6rem; padding: .6rem 1.1rem; max-width: 80vw; transition: opacity .2s, transform .2s; }
 #toast.raised { bottom: calc(var(--tabs) + 5.2rem); }
@@ -191,6 +197,12 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .seek-ring.active .sr-arc { stroke-width: 3.2; }
 .seek-ring.active .sr-knob { r: 4.8px; stroke-width: 1.2; }
 .sr-time { position: relative; padding: .2rem .7rem; border-radius: 1rem; background: rgba(13,17,23,.78); font: 600 1rem ui-monospace, monospace; white-space: nowrap; }
+/* the button at the centre of a cover box that opens it full screen (K.coverMaxButton) */
+.cover-max-btn { position: absolute; inset: 0; margin: auto; width: 1.7rem; height: 1.7rem; z-index: 1;
+    display: flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%;
+    background: rgba(0,0,0,.45); color: #fff; }
+.cover-max-btn .ticon { width: 1rem; height: 1rem; }
+.now-art.empty .cover-max-btn { display: none; }
 .now-search { display: none; }                  /* upright only */
 /* ... but never hidden under the finger: the keyboard coming up may leave the page wider
    than tall, and a hidden field loses the focus (and the keyboard goes again) */
@@ -978,6 +990,9 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-full-body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1.2rem; }
 .qz-full .qz-pcover { position: relative; width: min(calc(100dvh - 5rem), 55vw); height: auto; aspect-ratio: 1; border-radius: .6rem; font-size: 5rem;
     align-self: start; box-shadow: 0 .6rem 2rem rgba(0,0,0,.5); }
+.qz-full .qz-pcover .cover-max-btn { width: 2.6rem; height: 2.6rem; }
+.qz-full .qz-pcover .cover-max-btn .ticon { width: 1.5rem; height: 1.5rem; }
+.qz-full .qz-pcover:has(.qz-nocover) .cover-max-btn { display: none; }
 .qz-full-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: .6rem; }
 .qz-full-info { min-width: 0; }
 .qz-full .qz-ptitle { font-size: 1.6rem; line-height: 1.2; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }

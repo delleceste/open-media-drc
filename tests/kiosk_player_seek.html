@@ -32,16 +32,16 @@
         check(buttons[0].textContent === '<<' && buttons.at(-1).textContent === '>>', 'Seek controls must surround the track controls');
         check(P.fullView.buttons.scrollWidth <= P.fullView.buttons.clientWidth + 1, 'Transport controls must fit the screen');
         pointer('pointerdown'); pointer('pointerup');
-        check(!P.fullEl, 'Short cover tap must minimize');
-        P.openFull(); pointer('pointerdown'); await sleep(600);
-        check(P.fullView.ring.shown, 'Long cover press must show the ring');
-        pointer('pointerup'); check(P.fullEl, 'Long press must keep the player open');
+        check(P.fullView.ring.shown, 'A tap must show the ring');
+        check(P.fullEl, 'A plain tap must not minimize');
         P.closeFull(); P.openFull();
         pointer('pointerdown'); pointer('pointermove', 0, 80);
         check(P.fullEl.style.transform.includes('80px'), 'Pull must move the view down with the finger');
-        pointer('pointerup', 0, 80); check(!P.fullEl, 'Downward swipe must minimize');
-        P.openFull(); pointer('pointerdown'); pointer('pointercancel'); await sleep(600);
-        check(!P.fullView.ring.shown && P.fullEl, 'Canceled touch must not open ring or minimize');
+        pointer('pointerup', 0, 80); check(!P.fullEl, 'A downward swipe past the threshold must minimize');
+        P.openFull(); pointer('pointerdown'); pointer('pointermove', 0, 20); pointer('pointerup', 0, 20);
+        check(P.fullEl, 'A small downward swipe must not minimize');
+        P.openFull(); pointer('pointerdown'); pointer('pointercancel');
+        check(P.fullEl, 'A canceled touch must not minimize');
         const forward = P.fullView.buttons.lastChild;
         forward.click(); check(!calls.length && P.fullView.ring.shown, 'First seek tap must only show the ring');
         clock += 200; forward.click(); await sleep(0);
@@ -59,8 +59,8 @@
         check(calls.every(c => c.action === 'seek' && c.seconds >= 0 && c.seconds < 120), 'Seeking must never request previous or next track');
         clock += 4001; const lastCount = calls.length; back.click();
         check(calls.length === lastCount, 'A new tap sequence must only show the ring');
-        // Ring dragging still seeks after a long press.
-        P.fullView.ring.hide(); pointer('pointerdown'); await sleep(600); pointer('pointerup');
+        // Ring dragging still seeks.
+        P.fullView.ring.hide(); pointer('pointerdown'); pointer('pointerup');
         pointer('pointerdown', 0, -P.fullView.cover.getBoundingClientRect().width * .44);
         pointer('pointermove', P.fullView.cover.getBoundingClientRect().width * .44, 0);
         pointer('pointerup', P.fullView.cover.getBoundingClientRect().width * .44, 0);
@@ -113,9 +113,7 @@
                 pointerId: 2, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
         };
         coverPointer('pointerdown'); coverPointer('pointerup');
-        check(!N.ring.shown, 'Main Now short cover touch must not reveal the ring');
-        coverPointer('pointerdown'); await sleep(600); coverPointer('pointerup');
-        check(N.ring.shown, 'Main Now long cover touch reveals the ring');
+        check(N.ring.shown, 'Main Now cover tap reveals the ring');
         if (!K.portrait()) {
             const progress = N.progBox;
             check(parseFloat(getComputedStyle(progress).height) >= 30, 'Landscape progress bar expands for touch seeking');

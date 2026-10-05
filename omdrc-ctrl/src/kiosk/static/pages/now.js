@@ -24,8 +24,11 @@ P.mount = el => {
         onload: e => { e.target.hidden = false; P.artBox.classList.remove('empty'); P.paintIdle(); },
         onerror: e => { e.target.hidden = true; P.artBox.classList.add('empty'); P.paintIdle(); } });
     // the cover's box: small beside the title in landscape, a third of the height upright,
-    // where a touch brings up the ring to seek along (see "seek ring" below)
-    P.artBox = h('div', { class: 'now-art empty' }, P.art);
+    // where a touch brings up the ring to seek along (see "seek ring" below); the centre
+    // button opens it full screen, with its own ring
+    P.coverMaxBtn = K.coverMaxButton(() => P.art.hidden ? '' : P.art.getAttribute('src') || '',
+        { usable: P.ringUsable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seek(s) });
+    P.artBox = h('div', { class: 'now-art empty' }, P.art, P.coverMaxBtn);
     P.titleText = h('span', {}, '—');
     P.t1 = h('div', { class: 'now-title', tabindex: '0',
         onpointerdown: () => P.t1.classList.add('reading'),
@@ -171,7 +174,7 @@ P.mount = el => {
     P.wireMeterTap();
     P.wireCoverGesture();
     P.ring = new K.SeekRing(P.artBox, { usable: P.ringUsable, elapsed: () => P.elapsedNow(),
-        duration: () => P.base.duration, seek: s => P.seek(s), longPress: true });
+        duration: () => P.base.duration, seek: s => P.seek(s) });
     new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');

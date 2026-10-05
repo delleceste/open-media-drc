@@ -1927,12 +1927,15 @@ P.openFull = ({ offset = 0 } = {}) => {
         if (t && t.album && t.album.id) K.albumInfo(t.album.id);
     } }, 'Album details ›');
     P.queueTools.append(v.infoBtn);
-    // Long-press the cover to seek; a tap or downward pull minimizes the player.
+    // Tap the cover to seek; a downward swipe minimizes the player; the centre
+    // button opens it full screen, with its own ring.
     v.cover.classList.add('seek-zone');
     v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
-        duration: () => P.base.duration, seek: s => P.seekTo(s), longPress: true,
+        duration: () => P.base.duration, seek: s => P.seekTo(s),
         onMinimize: () => P.closeFull(),
         onPull: distance => { if (P.fullEl) P.fullEl.style.transform = `translateY(${distance}px)`; } });
+    v.cover.append(K.coverMaxButton(() => v.cover.dataset.src || '',
+        { usable: P.seekable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seekTo(s) }));
     P.seekTaps = null;
     if (offset) {
         P.fullEl.style.transform = `translateY(${Math.max(0, offset)}px)`;
@@ -2083,7 +2086,7 @@ P.refreshPlayer = async () => {
 const setCover = (box, src) => {
     if (box.dataset.src === src) return;
     box.dataset.src = src;
-    [...box.children].forEach(c => { if (!c.classList.contains('seek-ring')) c.remove(); });   // the ring stays
+    [...box.children].forEach(c => { if (!c.classList.contains('seek-ring') && !c.classList.contains('cover-max-btn')) c.remove(); });   // the ring and maximize button stay
     box.prepend(src ? h('img', { src, alt: '' }) : h('span', { class: 'qz-nocover' }, '♪'));
 };
 
