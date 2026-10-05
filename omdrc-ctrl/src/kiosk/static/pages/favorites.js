@@ -200,12 +200,41 @@ P.dragStart = (e, tile, grip) => {
     tile.classList.add('dragging');
     const scrollBox = P.el.closest('.page-body') || P.el;
     let pointerX = e.clientX, pointerY = e.clientY, scrolling = true;
+    const sourcePath = tile.dataset.key.startsWith('f:') ? tile.dataset.key.slice(2) : '';
+    let hoverTarget = null, nestTarget = null, nestTimer = null;
+    const clearHover = () => {
+        clearTimeout(nestTimer);
+        if (hoverTarget) hoverTarget.classList.remove('fav-drop-pending', 'fav-drop-into');
+        hoverTarget = nestTarget = null;
+    };
     const place = () => {
         const target = document.elementsFromPoint(pointerX, pointerY)
             .map(el => el.closest && el.closest('.fav-item'))
             .find(el => el && el !== tile && el !== placeholder && el.parentNode === P.grid);
-        if (!target) return;
+        if (!target) { clearHover(); return; }
         const targetRect = target.getBoundingClientRect();
+        const targetPath = target.dataset.key.startsWith('f:') ? target.dataset.key.slice(2) : '';
+        const canNest = sourcePath && sourcePath !== 'Qobuz' && targetPath &&
+            targetPath !== 'Qobuz' && targetPath !== sourcePath &&
+            !targetPath.startsWith(sourcePath + '/') &&
+            pointerX > targetRect.left + targetRect.width * .2 &&
+            pointerX < targetRect.right - targetRect.width * .2 &&
+            pointerY > targetRect.top + targetRect.height * .2 &&
+            pointerY < targetRect.bottom - targetRect.height * .2;
+        if (canNest) {
+            if (hoverTarget !== target) {
+                clearHover();
+                hoverTarget = target;
+                target.classList.add('fav-drop-pending');
+                nestTimer = setTimeout(() => {
+                    nestTarget = target;
+                    target.classList.remove('fav-drop-pending');
+                    target.classList.add('fav-drop-into');
+                }, 550);
+            }
+            return;
+        }
+        clearHover();
         const before = pointerY < targetRect.top ? true
             : pointerY > targetRect.bottom ? false
             : pointerX < targetRect.left + targetRect.width / 2;
@@ -244,6 +273,13 @@ P.dragStart = (e, tile, grip) => {
         window.removeEventListener('pointerup', end, true);
         window.removeEventListener('pointercancel', end, true);
         scrolling = false;
+        const destination = nestTarget && nestTarget.dataset.key.slice(2);
+        if (!destination && hoverTarget && event.type !== 'pointercancel') {
+            const targetRect = hoverTarget.getBoundingClientRect();
+            P.grid.insertBefore(placeholder, pointerX < targetRect.left + targetRect.width / 2
+                ? hoverTarget : hoverTarget.nextSibling);
+        }
+        clearHover();
         P.grid.classList.remove('is-dragging');
         if (grip.hasPointerCapture && grip.hasPointerCapture(e.pointerId)) grip.releasePointerCapture(e.pointerId);
         tile.classList.remove('dragging');
@@ -251,6 +287,15 @@ P.dragStart = (e, tile, grip) => {
         if (event.type === 'pointercancel') {
             placeholder.remove();
             P.grid.insertBefore(tile, next);
+            return;
+        }
+        if (destination) {
+            placeholder.remove();
+            const d = await K.api('/qobuz/favorites/folder', {
+                json: { action: 'move', path: sourcePath, target: destination }, timeout: 60000 });
+            if (!d.ok) { K.toast(d.error || 'Could not move folder', 'error'); return; }
+            K.toast(`Moved into ${destination}`);
+            await P.refresh();
             return;
         }
         placeholder.replaceWith(tile);

@@ -681,7 +681,7 @@ def favorite_folder():
             _state_dir(), f"qobuz-library-order-{user_id}.json"))
         result = qobuz_favorites.folder_action(
             cat, user_id, body.get("path") or "", body.get("action") or "",
-            order, body.get("name") or "")
+            order, body.get("name") or "", body.get("target") or "")
         qobuz_favorites.invalidate(user_id)
         return jsonify({"ok": True, **result})
     except (QobuzError, OSError) as error:

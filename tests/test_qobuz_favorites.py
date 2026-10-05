@@ -141,6 +141,28 @@ class FolderTest(unittest.TestCase):
             self.assertEqual([p["name"] for p in cat.playlists], ["Other"])
             self.assertEqual(store.all(), {"": ["f:Other"]})
 
+    def test_move_folder_into_another_and_keep_child_order(self):
+        cat = FakeCatalog()
+        cat.playlists.extend([
+            {"id": 8, "name": "Blow Up/2026/July", "owner": {"id": 10}},
+            {"id": 9, "name": "Other", "owner": {"id": 10}},
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            store = fav.LibraryOrder(str(Path(directory) / "order.json"))
+            store.save("", ["f:Other", "f:Blow Up"])
+            store.save("Blow Up", ["f:Blow Up/2026"])
+            store.save("Blow Up/2026", ["f:Blow Up/2026/July", "f:Blow Up/2026/June"])
+            with self.assertRaises(QobuzError):
+                fav.folder_action(cat, "10", "Blow Up", "move", store, target="Blow Up/2026")
+            result = fav.folder_action(cat, "10", "Blow Up/2026", "move", store, target="Other")
+            self.assertEqual(result["path"], "Other/2026")
+            self.assertEqual([p["name"] for p in cat.playlists[:2]],
+                             ["Other/2026/June", "Other/2026/July"])
+            self.assertEqual(store.all()["Blow Up"], [])
+            self.assertEqual(store.all()["Other"], ["f:Other/2026"])
+            self.assertEqual(store.all()["Other/2026"],
+                             ["f:Other/2026/July", "f:Other/2026/June"])
+
 
 if __name__ == "__main__":
     unittest.main()

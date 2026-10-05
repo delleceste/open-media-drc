@@ -181,15 +181,26 @@ class LibraryOrder:
                 return path == old or path.startswith(old + "/")
             def changed(path):
                 return new + path[len(old):]
+            old_parent = old.rpartition("/")[0]
+            new_parent = new.rpartition("/")[0] if new is not None else None
             result = {}
             for parent, keys in orders.items():
                 if inside(parent) and new is None:
                     continue
-                parent = changed(parent) if inside(parent) else parent
-                result[parent] = ["f:" + changed(key[2:]) if key.startswith("f:") and
-                                  inside(key[2:]) and new is not None else key
-                                  for key in keys if not (key.startswith("f:") and
-                                  inside(key[2:]) and new is None)]
+                mapped_keys = []
+                for key in keys:
+                    if key.startswith("f:") and inside(key[2:]):
+                        if new is None or (key[2:] == old and parent == old_parent and
+                                           new_parent != old_parent):
+                            continue
+                        key = "f:" + changed(key[2:])
+                    mapped_keys.append(key)
+                mapped_parent = changed(parent) if inside(parent) else parent
+                result[mapped_parent] = mapped_keys
+            if new is not None and new_parent != old_parent:
+                destination = result.setdefault(new_parent, [])
+                if "f:" + new not in destination:
+                    destination.append("f:" + new)
             temporary = self.path + ".tmp"
             with open(temporary, "w", encoding="utf-8") as stream:
                 json.dump({"version": 1, "orders": result}, stream, ensure_ascii=False)
@@ -260,18 +271,27 @@ def remove(cat, user_id: str, album_id: str, playlist_id: str) -> bool:
 
 
 def folder_action(cat, user_id: str, path: str, action: str,
-                  order: LibraryOrder, name: str = "") -> dict:
-    """Rename or delete every owned playlist at and below a folder path."""
+                  order: LibraryOrder, name: str = "", target: str = "") -> dict:
+    """Rename, move or delete every owned playlist at and below a folder path."""
     path = valid_path(path)
     own = playlists(cat, user_id)
     matching = [p for p in own if legacy_path(p["name"]) == path or
                 legacy_path(p["name"]).startswith(path + "/")]
     if not matching:
         raise QobuzError("Folder no longer exists")
-    if action == "rename":
-        if not isinstance(name, str) or not name.strip() or "/" in name:
-            raise QobuzError("Enter one folder name without /")
-        new = valid_path("/".join(path.split("/")[:-1] + [name.strip()]))
+    if action in ("rename", "move"):
+        if action == "rename":
+            if not isinstance(name, str) or not name.strip() or "/" in name:
+                raise QobuzError("Enter one folder name without /")
+            new = valid_path("/".join(path.split("/")[:-1] + [name.strip()]))
+        else:
+            target = valid_path(target)
+            if target == path or target.startswith(path + "/"):
+                raise QobuzError("A folder cannot be moved inside itself")
+            if not any(legacy_path(p["name"]) == target or
+                       legacy_path(p["name"]).startswith(target + "/") for p in own):
+                raise QobuzError("Destination folder no longer exists")
+            new = valid_path(target + "/" + path.rpartition("/")[2])
         if new == path:
             return {"path": path, "playlists": len(matching)}
         if new.casefold() == path.casefold():

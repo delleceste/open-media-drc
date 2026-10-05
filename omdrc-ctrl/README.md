@@ -209,7 +209,9 @@ own Library; legacy Blow Up and Gramophone names are also understood until
 renamed. Folder tiles show one to three covers from the albums they contain.
 Drag a tile by its handle to reorder it; the service stores the order per
 folder in `qobuz-library-order-<user_id>.json` in its state directory, shared
-by every browser and Android device using that service. Holding a folder tile
+by every browser and Android device using that service. Hold a dragged folder
+over another folder until **Release to move inside** appears, then release to
+move the entire playlist subtree there. Holding a folder tile
 opens Rename and Remove actions; these apply to every Qobuz playlist below
 that path, while existing Qobuz album favorites remain.
 
@@ -222,7 +224,8 @@ album. `POST /qobuz/favorites` accepts `{"action":"add","album_id","path"}`,
 stores `{ "parent": "Classical", "keys": ["f:Classical/BIS", "a:album-id"] }`.
 `POST /qobuz/favorites/folder` accepts `{ "action": "rename", "path":
 "Classical/BIS", "name": "BIS Records" }` or `{ "action": "delete", "path":
-"Classical/BIS" }` for a folder subtree.
+"Classical/BIS" }` for a folder subtree. To nest a folder, send `{ "action":
+"move", "path": "Classical/BIS", "target": "Classical/Labels" }`.
 Folder reading and edits need a
 Qobuz sign-in, but only playing requires upmpdcli to be running.
 

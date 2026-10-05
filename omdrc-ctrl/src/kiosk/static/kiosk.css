@@ -751,6 +751,13 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .fav-grid.is-dragging > .fav-item:not(.dragging):not(.fav-drop-placeholder) { opacity: .55; }
 .fav-drop-placeholder { display: grid; place-items: center; border: 2px dashed var(--accent);
     border-radius: .7rem; background: var(--surface2); color: var(--accent); font-weight: 700; }
+.fav-folder.fav-drop-pending, .fav-folder.fav-drop-into { outline: 3px solid var(--accent); opacity: 1 !important; }
+.fav-folder.fav-drop-pending::after, .fav-folder.fav-drop-into::after { position: absolute;
+    inset: 25% .45rem; z-index: 3; display: grid; place-items: center; padding: .35rem;
+    border-radius: .5rem; background: var(--surface); color: var(--accent);
+    font-weight: 700; text-align: center; pointer-events: none; }
+.fav-folder.fav-drop-pending::after { content: 'Hold to move inside'; }
+.fav-folder.fav-drop-into::after { content: 'Release to move inside'; }
 .fav-folder-menu { max-width: 25rem; }
 .fav-folder-menu label { display: grid; gap: .4rem; margin: 1rem 0; }
 .fav-folder-menu input { min-width: 0; width: 100%; }
