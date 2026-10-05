@@ -1267,6 +1267,7 @@
         /* ── live spectrum ──────────────────────────────────── */
         .spectrum-head {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             justify-content: space-between;
             gap: 10px;
@@ -1354,6 +1355,7 @@
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 12px;
         }
+        .spectrum-grid > div { min-width: 0; }
         .spectrum-channel-title {
             color: var(--text);
             font-size: .78rem;
@@ -2053,13 +2055,17 @@
             <button type="button" data-mode="music" onclick="setSpectrumMode('music')">Music</button>
             <button type="button" data-mode="precision" onclick="setSpectrumMode('precision')">Precision</button>
         </div>
+        <div class="spectrum-mode" id="spectrum-layout" aria-label="Spectrum channel layout">
+            <button type="button" data-layout="split" onclick="setSpectrumLayout('split')">Separate</button>
+            <button type="button" data-layout="coupled" onclick="setSpectrumLayout('coupled')">Paired</button>
+        </div>
         <button type="button" id="spectrum-controls-toggle" class="btn-details active"
                 aria-expanded="false" onclick="toggleSpectrumControls()">Sliders</button>
         <a class="btn-details active" href="/details-spectrum">Details</a>
     </div>
     <div class="spectrum-plot" id="spectrum-plot">
         <div class="spectrum-label"><strong>Bands</strong><span id="spectrum-source-label">{{ spectrum.bands }} bands · {{ spectrum.sample_rate }} Hz FIFO</span></div>
-        <div class="spectrum-grid">
+        <div class="spectrum-grid" id="spectrum-split">
             <div>
                 <div class="spectrum-channel-title">Left</div>
                 <div class="spectrum-chart-wrap">
@@ -2071,6 +2077,12 @@
                 <div class="spectrum-chart-wrap">
                     <canvas class="spectrum-canvas" id="spectrum-right"></canvas>
                 </div>
+            </div>
+        </div>
+        <div id="spectrum-coupled" style="display:none">
+            <div class="spectrum-channel-title">Left / Right</div>
+            <div class="spectrum-chart-wrap">
+                <canvas class="spectrum-canvas" id="spectrum-paired"></canvas>
             </div>
         </div>
         <!-- Floor slider + screen delay: hidden until the "Sliders" toggle is pressed. -->
@@ -4375,9 +4387,12 @@ async function fetchMpdInfo() {
 // ── Live spectrum analyzer ────────────────────────────────────────────────
 let spectrumSource = null;
 let spectrumWanted = false;
-let spectrumCharts = { left: null, right: null };
+let spectrumCharts = { left: null, right: null, paired: null };
 let spectrumFloorDb = {{ spectrum.floor_db }};
 let spectrumMode = 'music';
+const SPECTRUM_LAYOUT_KEY = 'omdrcctrl.spectrum.layout';
+let spectrumLayout = 'split';
+try { if (localStorage.getItem(SPECTRUM_LAYOUT_KEY) === 'coupled') spectrumLayout = 'coupled'; } catch {}
 // What the box holds the frames back by (its measured chain minus a margin, ms);
 // this browser draws them a further screenDelayMs later (see frameScheduler).
 let spectrumDelayBaseMs = {{ spectrum.drc_delay_base_ms }};
@@ -4500,25 +4515,26 @@ function dbToChartValue(db) {
     return Math.max(0, Math.min(-spectrumFloorDb, Number(db) - spectrumFloorDb));
 }
 
-function makeSpectrumChart(canvasId, label, alpha) {
+function makeSpectrumChart(canvasId, label, alpha, paired = false) {
     const canvas = document.getElementById(canvasId);
     const colors = Array.from({ length: 31 }, (_, i) => bandColor(i / 30));
+    const dataset = (name, color) => ({
+        label: name,
+        data: [],
+        backgroundColor: color,
+        borderColor: color,
+        borderWidth: 1,
+        borderRadius: 4,
+        barPercentage: .88,
+        categoryPercentage: .86,
+    });
     return new Chart(canvas, {
         type: 'bar',
         data: {
             labels: [],
-            datasets: [
-                {
-                    label,
-                    data: [],
-                    backgroundColor: colors.map(c => c.replace('rgb', 'rgba').replace(')', `,${alpha})`)),
-                    borderColor: colors,
-                    borderWidth: 1,
-                    borderRadius: 4,
-                    barPercentage: .88,
-                    categoryPercentage: .86,
-                },
-            ],
+            datasets: paired
+                ? [dataset('Left', '#58a6ff'), dataset('Right', '#f2a45c')]
+                : [dataset(label, colors.map(c => c.replace('rgb', 'rgba').replace(')', `,${alpha})`)))],
         },
         options: {
             responsive: true,
@@ -4598,12 +4614,32 @@ function spectrumBodyVisible() {
 }
 
 function initSpectrumChart() {
-    if (spectrumCharts.left || typeof Chart === 'undefined') return;
+    if (typeof Chart === 'undefined') return;
     // Don't build charts while the body is collapsed — a zero-size canvas would
     // need a resize anyway once revealed.
     if (!spectrumBodyVisible()) return;
-    spectrumCharts.left = makeSpectrumChart('spectrum-left', 'Left', 1);
-    spectrumCharts.right = makeSpectrumChart('spectrum-right', 'Right', .62);
+    if (spectrumLayout === 'coupled') {
+        if (!spectrumCharts.paired) spectrumCharts.paired = makeSpectrumChart('spectrum-paired', '', 1, true);
+    } else {
+        if (!spectrumCharts.left) spectrumCharts.left = makeSpectrumChart('spectrum-left', 'Left', 1);
+        if (!spectrumCharts.right) spectrumCharts.right = makeSpectrumChart('spectrum-right', 'Right', .62);
+    }
+}
+
+function setSpectrumLayout(layout) {
+    spectrumLayout = layout === 'coupled' ? 'coupled' : 'split';
+    try { localStorage.setItem(SPECTRUM_LAYOUT_KEY, spectrumLayout); } catch {}
+    document.getElementById('spectrum-split').style.display = spectrumLayout === 'split' ? 'grid' : 'none';
+    document.getElementById('spectrum-coupled').style.display = spectrumLayout === 'coupled' ? 'block' : 'none';
+    document.querySelectorAll('#spectrum-layout button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.layout === spectrumLayout);
+        btn.setAttribute('aria-pressed', String(btn.dataset.layout === spectrumLayout));
+    });
+    if (spectrumBodyVisible()) {
+        initSpectrumChart();
+        for (const chart of Object.values(spectrumCharts)) if (chart) chart.resize();
+        drawBandSpectrum(lastSpectrumBands, lastSpectrumLeft, lastSpectrumRight);
+    }
 }
 
 function showSpectrumBody(show) {
@@ -4616,6 +4652,7 @@ function showSpectrumBody(show) {
         initSpectrumChart();
         if (spectrumCharts.left) spectrumCharts.left.resize();
         if (spectrumCharts.right) spectrumCharts.right.resize();
+        if (spectrumCharts.paired) spectrumCharts.paired.resize();
         drawBandSpectrum(lastSpectrumBands, lastSpectrumLeft, lastSpectrumRight);
     }
 }
@@ -4666,7 +4703,8 @@ function drawBandSpectrum(bands, left, right) {
     lastSpectrumLeft = left || [];
     lastSpectrumRight = right || [];
     initSpectrumChart();
-    if (!spectrumCharts.left || !spectrumCharts.right) return;
+    if (spectrumLayout === 'coupled' && !spectrumCharts.paired) return;
+    if (spectrumLayout === 'split' && (!spectrumCharts.left || !spectrumCharts.right)) return;
     const n = Math.min(bands.length, left.length, right.length);
     const labels = bands.slice(0, n).map(b => b.label || '');
     const colors = labels.map((_, i) => bandColor(labels.length <= 1 ? 0 : i / (labels.length - 1)));
@@ -4678,8 +4716,17 @@ function drawBandSpectrum(bands, left, right) {
         chart.data.datasets[0].borderColor = colors;
         chart.update('none');
     };
-    update(spectrumCharts.left, left, 1);
-    update(spectrumCharts.right, right, .62);
+    if (spectrumLayout === 'coupled') {
+        const chart = spectrumCharts.paired;
+        chart.data.labels = labels;
+        chart.data.bands = bands.slice(0, n);
+        chart.data.datasets[0].data = left.slice(0, n).map(dbToChartValue);
+        chart.data.datasets[1].data = right.slice(0, n).map(dbToChartValue);
+        chart.update('none');
+    } else {
+        update(spectrumCharts.left, left, 1);
+        update(spectrumCharts.right, right, .62);
+    }
 }
 
 function setSpectrumFloor(value) {
@@ -4688,7 +4735,7 @@ function setSpectrumFloor(value) {
     if (out) out.textContent = `${spectrumFloorDb} dB`;
     // Keep the live axis range in step with the slider; the top stays pinned at
     // 0 dBFS while the bottom follows the floor.
-    for (const ch of [spectrumCharts.left, spectrumCharts.right]) {
+    for (const ch of Object.values(spectrumCharts)) {
         if (ch) ch.options.scales.y.max = -spectrumFloorDb;
     }
     drawBandSpectrum(lastSpectrumBands, lastSpectrumLeft, lastSpectrumRight);
@@ -5551,6 +5598,7 @@ setMetersIdle(true);
     document.getElementById('btn-dr-estimate').disabled = disabled;
 }
 paintSpectrumMode();
+setSpectrumLayout(spectrumLayout);
 renderDelayReadout();
 setSpectrumButton(false);
 clearSpectrum();

@@ -96,7 +96,7 @@ To remove it: `kpackagetool6 --type Plasma/Applet --remove org.omdrc.monitor`.
 | Box, Port | where `omdrcctrl` listens |
 | Meters | level bars, VU needles, or none |
 | Channel layout | meter channels automatic, side by side, or stacked |
-| Spectrum | the band analyzer beside the meters, or below them in the desktop view and popup |
+| Spectrum | the band analyzer beside the meters, or below them in the desktop view and popup; click the spectrum to switch between separate plots and blue Left/orange Right paired bars |
 | DR, balance | the live DR meter with its history, and the channel balance meter (desktop and popup put them in a strip at the bottom) |
 | Meter and spectrum timing | follow the box's live remaining-delay estimate, or set a per-widget delay from 0 to 3000 ms with a 1 ms slider and editable number |
 | Cover | hidden, beside the meters, or behind them (the meters go translucent) |

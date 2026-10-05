@@ -13,6 +13,7 @@
     <!-- the two channels: "auto" (by the pane's shape) | "side" (side by side) | "stacked" -->
     <entry name="meterPair" type="String"><default>auto</default></entry>
     <entry name="showSpectrum" type="Bool"><default>false</default></entry>
+    <entry name="spectrumSplit" type="Bool"><default>true</default></entry>
     <!-- on the desktop and in the popup: the spectrum under the meters, not beside them -->
     <entry name="spectrumBelow" type="Bool"><default>false</default></entry>
     <!-- "off" | "pane" (beside the meters) | "background" (behind them) -->

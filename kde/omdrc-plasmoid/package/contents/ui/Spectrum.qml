@@ -2,7 +2,7 @@ import QtQuick
 import org.kde.kirigami as Kirigami
 import "levels.js" as L
 
-/* Separate left and right band plots with falling peak caps. */
+/* Toggle between separate channel plots and paired bars with falling peak caps. */
 Canvas {
     id: spectrum
 
@@ -11,6 +11,9 @@ Canvas {
     property var rightDb: []
     property real floorDb: -40     // the box's spectrum floor (/spectrum/settings)
     property real glass: 1
+    property bool splitChannels: true
+    property bool clickEnabled: true
+    signal layoutToggled()
 
     readonly property int capHoldMs: 900
     readonly property real capFall: 14
@@ -30,6 +33,14 @@ Canvas {
     onHeightChanged: requestPaint()
     onTextColorChanged: requestPaint()
     onGlassChanged: requestPaint()
+    onSplitChannelsChanged: requestPaint()
+
+    TapHandler {
+        enabled: spectrum.clickEnabled
+        acceptedButtons: Qt.LeftButton
+        acceptedModifiers: Qt.NoModifier
+        onTapped: spectrum.layoutToggled()
+    }
 
     FrameAnimation {
         running: !spectrum.settled && spectrum.visible
@@ -60,8 +71,8 @@ Canvas {
         ctx.reset()
         const n = bands.length
         const W = width, H = height
-        const gap = W >= 80 ? 6 : 2
-        const plotW = Math.max(0, (W - gap) / 2)
+        const gap = splitChannels ? (W >= 80 ? 6 : 2) : 0
+        const plotW = splitChannels ? Math.max(0, (W - gap) / 2) : W
         const titleH = H >= 28 && plotW >= 18 ? 13 : 0
         const labels = H >= 70 && plotW >= 160
         const labelH = labels ? 12 : 0, top = titleH + 2
@@ -72,21 +83,30 @@ Canvas {
         grad.addColorStop(0, "#1f6feb"); grad.addColorStop(0.45, "#3fb950")
         grad.addColorStop(0.8, "#d8c23a"); grad.addColorStop(1, "#f85149")
         const slot = n ? plotW / n : 0
-        const bw = Math.max(1, slot * 0.75)
+        const bw = Math.max(1, slot * (splitChannels ? 0.75 : 0.38))
+        const barGap = Math.max(1, slot * 0.04)
         const capH = plotH >= 40 ? 2 : 1
         const every = Math.max(3, Math.ceil(36 / Math.max(1, slot)))
-        for (const [channel, values, caps, offset] of [
-            ["Left", l, capL, 0], ["Right", r, capR, plotW + gap]
-        ]) {
+        const panels = splitChannels
+            ? [["Left", l, capL, 0], ["Right", r, capR, plotW + gap]]
+            : [["", l, capL, 0]]
+        for (const [channel, values, caps, offset] of panels) {
             ctx.globalAlpha = glass
             ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.06)
             ctx.fillRect(offset, 0, plotW, H)
             ctx.globalAlpha = 1
             if (titleH) {
-                ctx.fillStyle = textColor
                 ctx.font = "10px sans-serif"
                 ctx.textAlign = "left"; ctx.textBaseline = "top"
-                ctx.fillText(plotW < 40 ? channel[0] : channel, offset + 2, 1)
+                if (splitChannels) {
+                    ctx.fillStyle = textColor
+                    ctx.fillText(plotW < 40 ? channel[0] : channel, offset + 2, 1)
+                } else {
+                    ctx.fillStyle = "#58a6ff"
+                    ctx.fillText(plotW < 70 ? "L" : "Left", 2, 1)
+                    ctx.fillStyle = "#f2a45c"
+                    ctx.fillText(plotW < 70 ? "R" : "Right", plotW < 70 ? 16 : 34, 1)
+                }
             }
             if (plotH >= 40) {
                 ctx.strokeStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.12)
@@ -99,15 +119,20 @@ Canvas {
                 }
             }
             for (let i = 0; i < n; i++) {
-                const x = offset + i * slot + (slot - bw) / 2
-                const v = values[i], cap = caps[i]
-                if (Number.isFinite(v) && v > fl) {
-                    ctx.fillStyle = grad
-                    ctx.fillRect(x, y(v), bw, top + plotH - y(v))
-                }
-                if (Number.isFinite(cap) && cap > fl) {
-                    ctx.fillStyle = textColor
-                    ctx.fillRect(x, y(cap) - capH, bw, capH)
+                const x = offset + i * slot + (slot - (splitChannels ? bw : 2 * bw + barGap)) / 2
+                const bars = splitChannels
+                    ? [[values[i], caps[i], x, grad]]
+                    : [[l[i], capL[i], x, "#58a6ff"],
+                       [r[i], capR[i], x + bw + barGap, "#f2a45c"]]
+                for (const [v, cap, barX, color] of bars) {
+                    if (Number.isFinite(v) && v > fl) {
+                        ctx.fillStyle = color
+                        ctx.fillRect(barX, y(v), bw, top + plotH - y(v))
+                    }
+                    if (Number.isFinite(cap) && cap > fl) {
+                        ctx.fillStyle = splitChannels ? textColor : color
+                        ctx.fillRect(barX, y(cap) - capH, bw, capH)
+                    }
                 }
                 if (labels && i % every === 0) {
                     ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.55)

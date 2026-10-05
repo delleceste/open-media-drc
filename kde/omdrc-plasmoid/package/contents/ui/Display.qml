@@ -19,6 +19,9 @@ Item {
     property bool verticalPanel: false
     readonly property bool compactSearchOpen: compact && app.compactSearchRequested
     readonly property bool controlsShown: hover.hovered
+    readonly property bool spectrumSplit: app.spectrumSplit
+
+    function toggleSpectrumLayout() { app.setConfig("spectrumSplit", !spectrumSplit) }
 
     signal activated()
 
@@ -124,6 +127,19 @@ Item {
             if (d < bestDist) { best = i; bestDist = d }
         }
         return best
+    }
+
+    function toggleSpectrumAt(px, py) {
+        const x = px - paneArea.x, y = py - paneArea.y
+        for (let i = 0; i < panes.length; i++) {
+            const r = rects[i], pane = panes[i]
+            if (x < r.x || x >= r.x + r.w || y < r.y || y >= r.y + r.h) continue
+            if (pane === "spectrum" || (pane === "meterspectrum" && y >= r.y + r.h * 0.61)) {
+                toggleSpectrumLayout()
+                return true
+            }
+        }
+        return false
     }
 
     // In a panel the long side follows the content.
@@ -335,6 +351,9 @@ Item {
                 rightDb: face.app.specRight
                 floorDb: face.app.floorDb
                 glass: face.coverBehind ? 0.5 : 1
+                splitChannels: face.spectrumSplit
+                clickEnabled: !face.compact
+                onLayoutToggled: face.toggleSpectrumLayout()
             }
         }
     }
@@ -346,6 +365,9 @@ Item {
             rightDb: face.app.specRight
             floorDb: face.app.floorDb
             glass: face.coverBehind ? 0.5 : 1
+            splitChannels: face.spectrumSplit
+            clickEnabled: !face.compact
+            onLayoutToggled: face.toggleSpectrumLayout()
         }
     }
     Component {
@@ -412,7 +434,9 @@ Item {
         anchors.fill: parent
         enabled: face.compact && !face.compactSearchOpen && !face.editing
         acceptedButtons: Qt.LeftButton
-        onClicked: face.activated()
+        onClicked: mouse => {
+            if (!face.toggleSpectrumAt(mouse.x, mouse.y)) face.activated()
+        }
     }
 
     RowLayout {

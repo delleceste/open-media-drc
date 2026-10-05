@@ -337,12 +337,13 @@ needs 1 GB free in `/var/tmp` to start.
   and lists every coefficient file. Configured attenuation is shown beside a
   clipping-safe value recalculated from the current RAW bytes on every refresh.
 - **Live spectrum analyzer** — optional MPD FIFO tap (Linux and FreeBSD) with
-  left/right FFT graphs and VU bars/needles. The card is collapsible (revealed on
-  Start), the Floor slider drives graphs and meters together, and because the tap
-  is pre-DRC the display is automatically delayed to stay in sync with the
-  audible, post-BruteFIR sound. It starts only while the browser stream is
-  visible, shares one capture across clients, and stops when the page is hidden or
-  closed. See [Live Spectrum Analyzer](SPECTRUM_ANALYZER.md).
+  left/right FFT graphs and VU bars/needles. Separate and Paired buttons switch
+  between side by side plots and color coded channel bars. The card is
+  collapsible (revealed on Start), the Floor slider drives graphs and meters
+  together, and because the tap is pre-DRC the display is automatically delayed
+  to stay in sync with the audible, post-BruteFIR sound. It starts only while
+  the browser stream is visible, shares one capture across clients, and stops
+  when the page is hidden or closed. See [Live Spectrum Analyzer](SPECTRUM_ANALYZER.md).
 - **Log viewer and log alerts** — a **Logs** card shows any log listed in
   `[logs]` (MPD, the two upmpdcli logs, qobuzconnect2mpd and BruteFIR by
   default), and

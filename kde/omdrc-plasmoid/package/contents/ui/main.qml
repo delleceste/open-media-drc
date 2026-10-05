@@ -23,6 +23,7 @@ PlasmoidItem {
     readonly property string meterStyle: Plasmoid.configuration.meterStyle
     readonly property string meterPair: Plasmoid.configuration.meterPair
     readonly property bool showSpectrum: Plasmoid.configuration.showSpectrum
+    readonly property bool spectrumSplit: Plasmoid.configuration.spectrumSplit
     readonly property bool spectrumBelow: Plasmoid.configuration.spectrumBelow
     readonly property string coverMode: Plasmoid.configuration.coverMode
     readonly property bool showTitle: Plasmoid.configuration.showTitle
