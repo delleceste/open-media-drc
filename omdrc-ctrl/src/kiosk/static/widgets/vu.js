@@ -307,7 +307,9 @@ K.VuMeter = class VuMeter {
         };
         const A0 = -150, SPAN = 120;
         const ang = db => (A0 + SPAN * voltagePct(db, SCALE_FLOOR) / 100) * Math.PI / 180;
-        const cx = w / 2, cy = H * .93, R = Math.min(w * .47, H * .73);
+        // the pivot's cap (10 px) stays above the bottom edge, the long ticks (1.1 R) below the top
+        const cx = w / 2, cy = Math.min(H * .93, H - 10 * dpr);
+        const R = Math.max(4 * dpr, Math.min(w * .47, H * .73, (cy - 3 * dpr) / 1.1));
         const at = (a, r) => [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
         const aFloor = ang(SCALE_FLOOR), aRed = ang(-6), aTop = ang(0);
 

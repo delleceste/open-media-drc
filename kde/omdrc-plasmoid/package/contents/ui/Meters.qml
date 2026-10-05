@@ -152,9 +152,10 @@ Canvas {
         // the painted area; the needle's pivot stays at least a pixel inside
         // its bottom edge, so the needle never starts under the clip
         const top = y + pad, bottom = y + h - pad
-        // sized so the arc spans the width or the needle the height; a gauge
-        // narrower than its face is centred in it
-        const R = Math.max(4, Math.min((w / 2 - pad) / Math.sin(rad(SPAN / 2)), (bottom - top - 1) * 1.15))
+        // sized so the arc spans the width or the needle (0.97 R at full scale)
+        // and its hub (0.018 R) the height, so nothing reaches past the clip;
+        // a gauge narrower than its face is centred in it
+        const R = Math.max(4, Math.min((w / 2 - pad) / Math.sin(rad(SPAN / 2)), (bottom - top - 2) / 0.99))
         const needleW = Math.max(1, R * 0.012), hubR = Math.max(1.5, needleW * 1.5)
         // on a pixel centre, so the needle's antialiased foot does not flicker
         const cx = Math.floor(x + w / 2) + 0.5

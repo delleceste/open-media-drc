@@ -337,6 +337,9 @@ button:focus:not(:focus-visible) { outline: none; }
 .menu-item .mk { flex: 0 0 1.1rem; color: var(--accent); text-align: center; }
 .menu-scroll { overflow-y: auto; overscroll-behavior: contain; }
 .menu-sep { height: 1px; margin: .25rem 0; background: var(--hair); }
+.menu-floor { display: flex; align-items: center; gap: .5rem; min-height: 2.6rem; padding: 0 .9rem 0 2.6rem; font-size: .9rem; }
+.menu-floor-slider { flex: 1; min-width: 7rem; height: 2.2rem; margin: 0; accent-color: var(--accent); }
+.menu-floor-value { min-width: 3.4rem; text-align: right; font: .8rem ui-monospace, monospace; color: var(--muted); }
 .now-ctl { display: inline-flex; align-items: center; gap: .65rem; }
 .now-skip, .now-step { display: inline-flex; align-items: center; justify-content: center; color: inherit; }
 .dr-times { display: flex; justify-content: space-between; font-size: .7rem; color: var(--muted); margin-top: .2rem; }

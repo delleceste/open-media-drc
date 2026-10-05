@@ -359,6 +359,7 @@ P.openViewMenu = () => {
     const menu = P.menu = h('div', { class: 'menu-pop', role: 'menu' });
     const paint = () => K.clear(menu).append(
         ...MODES.map(m => item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)),
+        ...(P.mode === 'spectrum' ? [P.floorRow()] : []),
         h('div', { class: 'menu-sep' }),
         item(P.coverWanted(), 'Album cover', () => P.flipCover()),
         item(P.showDr, 'Dynamic range (DR)', () => P.flip('now.dr')),
@@ -372,6 +373,27 @@ P.openViewMenu = () => {
     P.menuOutside = e => { if (!menu.contains(e.target) && e.target !== P.modeBtn) P.closeViewMenu(); };
     document.addEventListener('pointerdown', P.menuOutside, true);
     K.onBarHidden = P.closeViewMenu;
+};
+// The spectrum's bottom edge: lower shows quiet bands.  Kept on the box (as the
+// panel's Floor slider), so every screen shares it.
+P.floorRow = () => {
+    const value = h('output', { class: 'menu-floor-value' });
+    const show = db => { value.textContent = `${db} dB`; };
+    const slider = h('input', { type: 'range', class: 'menu-floor-slider', min: -90, max: -24, step: 1,
+        value: P.spec.floor, 'aria-label': 'Spectrum floor',
+        oninput: () => {
+            const db = Number(slider.value);
+            show(db);
+            K.state.spectrum.floor_db = db;
+            P.spec.draw();
+            clearTimeout(P.floorPost);
+            P.floorPost = setTimeout(async () => {
+                const d = await K.api('/spectrum/floor', { json: { floor_db: db } });
+                if (!d.ok) K.toast(`Spectrum floor not saved: ${d.error}`, 'error');
+            }, 250);
+        } });
+    show(P.spec.floor);
+    return h('label', { class: 'menu-floor' }, h('span', {}, 'Floor'), slider, value);
 };
 P.closeViewMenu = () => {
     if (!P.menu) return;
