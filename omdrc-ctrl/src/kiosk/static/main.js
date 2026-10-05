@@ -111,7 +111,7 @@ document.addEventListener('keydown', e => {
 // page's own vertical scroll.  The finger drags the pager; on release it goes to
 // the next page if you moved a fifth of the width (at most 100 px) or flicked.
 let sw = null;
-const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit, .seek-zone, .now-title';
+const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit, .seek-zone, .now-title, .now-info, .now-fav, .qz-library-shortcut';
 pager.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch' || e.target.closest(NO_SWIPE)) return;
     sw = { id: e.pointerId, x: e.clientX, y: e.clientY, left: pager.scrollLeft, mode: null, lastX: e.clientX, lastT: performance.now(), v: 0 };

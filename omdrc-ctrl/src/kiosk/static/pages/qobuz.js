@@ -121,7 +121,10 @@ P.mount = el => {
         // Results in words; the others as icons (a clock, Qobuz's Discover compass, the award cup)
         [['results', 'Results'], ['recent', 'Recent', 'clock'], ['discover', 'Discover', 'compass'], ['awarded', 'Awarded', 'trophy']].map(([x, name, icon]) =>
             h('button', { type: 'button', class: 'chip tog qz-chip' + (icon ? ' qz-viewicon' : ''), dataset: { view: x },
-                title: name, 'aria-label': name, onclick: () => P.setView(x) }, icon ? K.tIcon(icon) : name)));
+                title: name, 'aria-label': name, onclick: () => P.setView(x) }, icon ? K.tIcon(icon) : name)),
+        h('button', { type: 'button', class: 'chip qz-chip qz-library-shortcut',
+            title: 'Qobuz Library', 'aria-label': 'Open Qobuz Library',
+            onclick: () => K.showPage('favorites') }, '♡'));
     P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'Back to search', 'aria-label': 'Back to search',
         onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, K.tIcon('search'), h('span', { 'aria-hidden': 'true' }, '⌃'));
     // list or grid, for all four lists alike (remembered)

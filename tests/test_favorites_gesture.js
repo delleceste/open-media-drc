@@ -1,0 +1,60 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const test = require('node:test');
+
+function setup() {
+    let page, nextTimer = 0;
+    const timers = new Map();
+    const window = new EventTarget();
+    const code = fs.readFileSync('omdrc-ctrl/src/kiosk/static/pages/favorites.js', 'utf8');
+    vm.runInNewContext(code, {
+        K: { h: () => ({}), registerPage: p => { page = p; } }, window,
+        setTimeout: fn => { const id = ++nextTimer; timers.set(id, fn); return id; },
+        clearTimeout: id => timers.delete(id),
+    });
+    page.visible = true;
+    let menus = 0;
+    page.folderMenu = () => { menus++; };
+    const button = new EventTarget();
+    const fire = (target, type, x = 100) => {
+        const event = new Event(type, { cancelable: true });
+        Object.assign(event, { button: 0, pointerId: 1, clientX: x, clientY: 100 });
+        target.dispatchEvent(event);
+    };
+    const runTimers = () => {
+        for (const [id, callback] of [...timers]) {
+            timers.delete(id);
+            callback();
+        }
+    };
+    page.folderHold(button, 'Classical/BIS', () => {});
+    return { page, window, button, fire, runTimers, menuCount: () => menus };
+}
+
+test('a pager swipe cannot trigger a folder long press or context menu', () => {
+    const app = setup();
+    app.fire(app.button, 'pointerdown');
+    app.fire(app.window, 'pointermove', 140); // pager has captured the pointer
+    app.fire(app.window, 'pointerup', 140);
+    app.runTimers();
+    app.fire(app.button, 'contextmenu', 140);
+    assert.equal(app.menuCount(), 0);
+});
+
+test('a stationary hold opens its menu once', () => {
+    const app = setup();
+    app.fire(app.button, 'pointerdown');
+    app.runTimers();
+    app.fire(app.button, 'contextmenu');
+    assert.equal(app.menuCount(), 1);
+});
+
+test('leaving Library cancels a pending hold', () => {
+    const app = setup();
+    app.fire(app.button, 'pointerdown');
+    app.page.hide();
+    app.runTimers();
+    app.fire(app.button, 'contextmenu');
+    assert.equal(app.menuCount(), 0);
+});

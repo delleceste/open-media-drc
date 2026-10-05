@@ -14,7 +14,7 @@ P.mount = el => {
     el.append(h('div', { class: 'fav-page' }, P.head, P.message, P.grid));
 };
 P.show = () => { P.visible = true; P.refresh(); };
-P.hide = () => { P.visible = false; };
+P.hide = () => { P.visible = false; if (P.activeHoldCancel) P.activeHoldCancel(); };
 P.refresh = async () => {
     P.message.textContent = 'Reading Qobuz Library…';
     const d = await K.api('/qobuz/favorites', { timeout: 60000 });
@@ -58,22 +58,36 @@ P.folderTile = (name, fullPath, caption) => {
     return P.movable(tile, 'f:' + fullPath);
 };
 P.folderHold = (button, path, onHeld) => {
-    let timer, startX, startY, opened = false;
-    const cancel = () => { clearTimeout(timer); timer = null; };
+    let timer, startX, startY, opened = false, moved = false, pointerId;
+    const cancel = () => {
+        clearTimeout(timer); timer = null;
+        window.removeEventListener('pointermove', track, true);
+        window.removeEventListener('pointerup', end, true);
+        window.removeEventListener('pointercancel', end, true);
+        if (P.activeHoldCancel === abort) P.activeHoldCancel = null;
+    };
+    const abort = () => { moved = true; cancel(); };
+    const track = e => {
+        if (e.pointerId === pointerId && Math.hypot(e.clientX - startX, e.clientY - startY) > 10)
+            abort();
+    };
+    const end = e => { if (e.pointerId === pointerId) cancel(); };
     button.addEventListener('pointerdown', e => {
         if (e.button) return;
+        if (P.activeHoldCancel) P.activeHoldCancel();
         startX = e.clientX; startY = e.clientY;
-        opened = false;
-        cancel();
+        pointerId = e.pointerId;
+        opened = moved = false;
+        P.activeHoldCancel = abort;
+        window.addEventListener('pointermove', track, true);
+        window.addEventListener('pointerup', end, true);
+        window.addEventListener('pointercancel', end, true);
         timer = setTimeout(() => { timer = null; opened = true; onHeld(); P.folderMenu(path); }, 550);
     });
-    button.addEventListener('pointermove', e => {
-        if (Math.hypot(e.clientX - startX, e.clientY - startY) > 12) cancel();
-    });
-    button.addEventListener('pointerup', cancel);
-    button.addEventListener('pointercancel', cancel);
     button.addEventListener('contextmenu', e => {
-        e.preventDefault(); cancel();
+        e.preventDefault();
+        if (moved || !P.visible) return;
+        cancel();
         if (!opened) { opened = true; onHeld(); P.folderMenu(path); }
     });
 };

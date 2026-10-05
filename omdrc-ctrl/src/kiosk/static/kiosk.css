@@ -560,7 +560,10 @@ input[type=range] { accent-color: var(--accent); }
     .now-meta { grid-area: meta; display: flex; flex-direction: column; gap: .25rem; }
     .now-title { font-size: 1.3rem; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
     .now-subrow { order: 3; } .now-subrow .now-sub { display: none; }
-    .chip.now-info:not([hidden]), .chip.now-fav:not([hidden]) { display: inline-flex; align-self: flex-start; margin-top: .15rem; }
+    .chip.now-info:not([hidden]), .chip.now-fav:not([hidden]) { display: inline-flex; align-self: flex-start;
+        align-items: center; justify-content: center; min-width: 7.5rem; max-width: 100%; min-height: 3rem;
+        box-sizing: border-box; margin-top: .15rem; padding: .35rem 1rem; font-size: .9rem;
+        touch-action: manipulation; }
     .chip.now-info { order: 4; } .chip.now-fav { order: 5; }
     .now.roomy .now-info, .now.roomy .now-fav { align-self: center; }
     .now-partist, .now-palbum { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -801,6 +804,8 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-tsub { font-size: .7rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip.qz-viewicon { padding: 0 .7rem; display: inline-flex; align-items: center; }
 .chip.qz-viewicon .ticon { width: 1.3rem; height: 1.3rem; }
+.chip.qz-library-shortcut { min-width: 2.8rem; min-height: 2.7rem; padding: 0 .55rem;
+    justify-content: center; color: var(--muted); font-size: 1.5rem; line-height: 1; }
 /* the grid's long-press menu (P.tileMenu) */
 .menu-pop.qz-tilemenu { max-width: min(20rem, calc(100vw - 16px)); }
 .qz-tilemenu-head { padding: .35rem .9rem .3rem; font-size: .8rem; font-weight: 650; color: var(--muted);
