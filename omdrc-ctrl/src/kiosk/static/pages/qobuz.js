@@ -135,10 +135,10 @@ P.mount = el => {
         // Results in words; the others as icons (a clock, Qobuz's Discover compass, the award cup)
         [['results', 'Results'], ['recent', 'Recent', 'clock'], ['discover', 'Discover', 'compass'], ['awarded', 'Awarded', 'trophy']].map(([x, name, icon]) =>
             h('button', { type: 'button', class: 'chip tog qz-chip' + (icon ? ' qz-viewicon' : ''), dataset: { view: x },
-                title: name, 'aria-label': name, onclick: () => P.setView(x) }, icon ? K.tIcon(icon) : name)),
+                title: name, 'aria-label': name, onclick: () => P.setView(x, true) }, icon ? K.tIcon(icon) : name)),
         h('button', { type: 'button', class: 'chip tog qz-chip qz-library-shortcut',
             dataset: { view: 'library' }, title: 'Favorites', 'aria-label': 'Favorites',
-            onclick: () => P.setView('library') }, '♡'));
+            onclick: () => P.setView('library', true) }, '♡'));
     P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'Back to search', 'aria-label': 'Back to search',
         onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, K.tIcon('search'), h('span', { 'aria-hidden': 'true' }, '⌃'));
     // list or grid, for all four lists alike (remembered)
@@ -257,8 +257,9 @@ P.forget = () => {
 
 // ── which list: played recently, or the results ──────────────────────────────
 P.view = () => ['results', 'recent', 'discover', 'awarded', 'library'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
-P.setView = v => {
+P.setView = (v, scroll = false) => {
     P.closeGenreMenu(); P.closeTileMenu();
+    if (scroll && document.activeElement === P.input) P.input.blur();
     const wasLibrary = P.view() === 'library';
     setPref('view', v); P.paintView();
     if (wasLibrary && v !== 'library') K.library.hide();
@@ -266,6 +267,11 @@ P.setView = v => {
     else if (v === 'recent') P.recent();
     else if (v === 'awarded') P.awardedList();
     else if (v === 'discover') P.discover();
+    if (scroll && P.visible && !P.viewRow.hidden) requestAnimationFrame(() => {
+        if (P.viewRow.hidden) return;
+        P.el.scrollTo({ top: P.el.scrollTop + P.viewRow.getBoundingClientRect().top
+            - P.el.getBoundingClientRect().top, behavior: 'smooth' });
+    });
 };
 P.paintView = () => {
     const v = P.view();
@@ -536,18 +542,59 @@ P.paintHints = query => {
     return found.length > 0;
 };
 
-// A ticked name that is not a favourite (picked from a result's labels) is still
-// sent: the server takes an unknown name as a label keyword of its own.
+// User-entered labels are available in both filter lists, with independent ticks.
+P.labelNames = selected => {
+    const names = [];
+    for (const name of [...P.favourites, ...pref('customLabels', []), ...selected]) {
+        if (!names.some(n => n.toLowerCase() === name.toLowerCase())) names.push(name);
+    }
+    return names;
+};
+P.addLabel = view => {
+    const input = h('input', { type: 'text', class: 'qz-input', placeholder: 'Label name',
+        'aria-label': 'Label name', autocomplete: 'off' });
+    const error = h('p', { class: 'small', hidden: true });
+    const close = () => scrim.remove();
+    const save = e => {
+        e.preventDefault();
+        const typed = input.value.trim().replace(/\s+/g, ' ');
+        if (!typed) { error.hidden = false; error.textContent = 'Enter a label name.'; input.focus(); return; }
+        const name = P.labelNames([]).find(n => n.toLowerCase() === typed.toLowerCase()) || typed;
+        if (!P.labelNames([]).some(n => n.toLowerCase() === typed.toLowerCase()))
+            setPref('customLabels', [...pref('customLabels', []), name]);
+        if (view === 'discover') {
+            const selected = P.discoverSelected();
+            selected.add(name); setPref('discoverLabels', [...selected]);
+            P.paintDiscoverFilters(); P.paintLabels(); P.discover();
+        } else {
+            P.selected.add(name); setPref('labels', [...P.selected]);
+            P.paintLabels(); P.paintDiscoverFilters(); P.searchSoon();
+        }
+        close();
+    };
+    const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) close(); } },
+        h('form', { class: 'sheet qz-add-label', role: 'dialog', 'aria-modal': 'true',
+            'aria-label': 'Add label', onsubmit: save },
+            h('h2', {}, 'Add label'), input, error,
+            h('div', { class: 'sheet-actions' },
+                h('button', { type: 'button', class: 'btn', onclick: close }, 'Cancel'),
+                h('button', { type: 'submit', class: 'btn primary' }, 'Add'))));
+    document.getElementById('overlay-root').append(scrim);
+    input.focus();
+};
+
+// A ticked name that is not a favourite is sent as its own label keyword.
 P.paintLabels = () => {
-    const names = [...P.favourites, ...[...P.selected].filter(n => !P.favourites.some(f => f.toLowerCase() === n.toLowerCase()))];
+    const names = P.labelNames(P.selected);
     P.paintSummary();
     P.paintHints(P.plain(P.input.value));            // their ticks follow
     const chip = name => h('button', {
         type: 'button', class: 'chip tog qz-chip' + (P.selected.has(name) ? ' on' : ''),
         onclick: () => P.toggleLabel(name),
     }, name);
-    K.clear(P.labelsBox).append(...names.map(chip));
-    if (!names.length && P.favouritesLoaded) P.labelsBox.append(h('span', { class: 'muted small' }, 'No favourite labels configured ([qobuz_search] labels).'));
+    K.clear(P.labelsBox).append(...names.map(chip),
+        h('button', { type: 'button', class: 'chip qz-chip qz-add-label-button',
+            'aria-label': 'Add search label', title: 'Add label', onclick: () => P.addLabel('search') }, '+'));
     P.paintSeen();
     if (P.labelsToggle && P.labelsOpen !== undefined) P.setLabelsOpen(P.labelsOpen);
 };
@@ -1180,7 +1227,7 @@ P.openDiscoverFilters = open => {
 };
 P.paintDiscoverFilters = () => {
     const selected = P.discoverSelected();
-    const names = [...P.favourites, ...[...selected].filter(n => !P.favourites.some(f => f.toLowerCase() === n.toLowerCase()))];
+    const names = P.labelNames(selected);
     K.clear(P.discoverLabels).append(...names.map(name => h('button', {
         type: 'button', class: 'chip tog qz-chip' + (selected.has(name) ? ' on' : ''),
         'aria-pressed': String(selected.has(name)),
@@ -1188,8 +1235,8 @@ P.paintDiscoverFilters = () => {
             selected.has(name) ? selected.delete(name) : selected.add(name);
             setPref('discoverLabels', [...selected]); P.paintDiscoverFilters(); P.discover();
         },
-    }, name)));
-    if (!names.length && P.favouritesLoaded) P.discoverLabels.append(h('span', { class: 'small muted' }, 'No favourite labels configured.'));
+    }, name)), h('button', { type: 'button', class: 'chip qz-chip qz-add-label-button',
+        'aria-label': 'Add Discover label', title: 'Add label', onclick: () => P.addLabel('discover') }, '+'));
     for (const [box, key, label, title] of [
         [P.discoverAwarded, 'discoverAwarded', 'Awarded only', 'Albums with an award or your rating already found by this app'],
         [P.discoverQuality, 'discoverHires', 'Hi-Res', 'Exclude 16-bit/44.1 kHz releases'],

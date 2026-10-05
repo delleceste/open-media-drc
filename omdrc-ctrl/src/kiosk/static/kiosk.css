@@ -611,6 +611,9 @@ input[type=range] { accent-color: var(--accent); }
 .qz-home[hidden] { display: none; }
 .qz-viewrow { display: flex; align-items: center; gap: .6rem; margin: .1rem 0 .55rem; }
 .qz-viewrow[hidden], .qz-recent[hidden], .qz-results[hidden], .qz-library[hidden] { display: none; }
+.qz-main > :is(.qz-results, .qz-recent, .qz-discover, .qz-awarded, .qz-library):not([hidden]) {
+    min-height: 100dvh;
+}
 .qz-viewchips { display: flex; gap: .4rem; flex-wrap: wrap; }
 .btn.link.qz-searchhint { display: inline-flex; align-items: center; gap: .1rem; margin-left: auto; border: 0; background: none; padding: 0 .1rem; min-height: 2.3rem;
     color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
@@ -625,6 +628,8 @@ input[type=range] { accent-color: var(--accent); }
 .qz-discover-filters .lbl { margin: .45rem 0 .3rem; }
 .qz-discover-heading { margin: .65rem 0; min-width: 0; }
 .qz-discover-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--yellow); }
+.qz-add-label .qz-input { width: 100%; box-sizing: border-box; }
+.qz-add-label .sheet-actions { margin-top: .8rem; }
 .qz-label-toggle { width: 100%; min-height: 2.3rem; padding: 0; border: 0; background: none;
     color: var(--muted); text-align: left; cursor: pointer; font: inherit; font-size: .8rem; font-weight: 600; letter-spacing: .08em; }
 .qz-label-toggle:focus-visible { outline: 2px solid var(--accent); }
