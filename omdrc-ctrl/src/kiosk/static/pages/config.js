@@ -62,7 +62,8 @@ P.timingCard = () => {
         h('p', { class: 'muted small' }, 'The app reads the Wi-Fi name (Android location permission and Location on) at startup, on resume and every 5 minutes while open, and remembers it per network (gateway and subnet); nothing else reads it. Identify Wi-Fi forces a read. If the name is unavailable, set a profile name manually when switching networks.'),
         h('p', { class: 'muted small' }, 'Extra delay for this screen, on top of the box’s own chain delay: the meters and spectrum are drawn this long after they arrive. Stored on this device for the active network and DRC configuration. An uncalibrated rate can provisionally reuse timing from the same network and filter family; calibrate each combination for best alignment.'),
         h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50),
-            h('button', { class: 'btn', type: 'button', onclick: () => set(0) }, 'Reset')),
+            h('button', { class: 'btn', type: 'button', onclick: () => set(0) }, 'Reset to 0')),
+        P.profilesList(),
         h('div', { class: 'btn-row' },
             h('button', { class: 'btn primary', type: 'button', onclick: () => P.tuneSheet() }, 'Tune with clicks'),
             K.sync.canCalibrate() ? h('button', { class: 'btn', type: 'button', onclick: onMusic }, 'Calibrate on the music') : null),
@@ -116,16 +117,55 @@ P.marginCard = () => {
 P.infoBtn = () => h('button', { class: 'btn info-btn', type: 'button', title: 'How meter timing works',
     'aria-label': 'How meter timing works', onclick: () => K.frame('/k/static/help/meter-timing.html', 'How meter timing works') }, 'ⓘ How it works');
 
+// A DRC configuration as a person reads it: rate, folder and file of the filter set.
+const basename = path => String(path || '').split('/').filter(Boolean).pop() || 'Unknown';
+const configLabel = c => !c ? 'Any configuration (older profile)' : !c.drc ? 'DRC OFF' :
+    `DRC ${(Number(c.rate) / 1000).toLocaleString()} kHz · ${basename(String(c.config).split('/').slice(0, -1).join('/'))} · ${basename(c.config)}`;
+
+// Every delay saved on this device, per network and configuration, with what each
+// applies now; each one can be stepped, typed in, reset to 0 or forgotten.  Redrawn
+// only when something changed, so a button is never replaced under a finger.
+P.profilesList = () => {
+    const T = window.OmdrcTiming;
+    const box = h('div', { class: 'timing-profiles' });
+    let shown = null;
+    const paint = () => {
+        const list = T.profiles(), sig = JSON.stringify(list.map(p => [p.key, p.delayMs, p.active]));
+        if (sig === shown) return;
+        shown = sig;
+        const change = (key, ms) => { T.setProfileDelay(key, ms); paint(); };
+        K.clear(box).append(h('div', { class: 'lbl' }, 'Saved delays on this device'),
+            !list.length ? h('p', { class: 'muted small' }, 'None yet: a calibration or a change to the delay above saves one for the active network and configuration.') : null,
+            ...list.map(p => h('div', { class: 'timing-profile' + (p.active ? ' active' : '') },
+                h('div', { class: 'small' }, h('strong', {}, p.network), ' · ', configLabel(p.configuration),
+                    p.active ? h('span', { class: 'muted' }, ' — in use now') : null),
+                h('div', { class: 'att-row' },
+                    h('button', { class: 'btn step', type: 'button', onclick: () => change(p.key, p.delayMs - 10) }, '−10'),
+                    h('button', { class: 'btn', type: 'button', title: 'Type a delay', onclick: () => {
+                        const v = window.prompt(`Delay for ${p.network} · ${configLabel(p.configuration)} (ms, 0–3000)`, String(p.delayMs));
+                        if (v !== null && v.trim() !== '' && Number.isFinite(Number(v))) change(p.key, Number(v));
+                    } }, h('strong', { class: 'timing-value' }, `${p.delayMs} ms`)),
+                    h('button', { class: 'btn step', type: 'button', onclick: () => change(p.key, p.delayMs + 10) }, '+10'),
+                    h('button', { class: 'btn', type: 'button', onclick: () => change(p.key, 0) }, 'Reset to 0'),
+                    h('button', { class: 'btn', type: 'button', onclick: async () => {
+                        if (await K.confirm({ title: 'Forget this delay?', message: `${p.network} · ${configLabel(p.configuration)}: ${p.delayMs} ms. It is not used again until it is calibrated or set anew.`, ok: 'Forget' })) {
+                            T.deleteProfile(p.key); paint();
+                        }
+                    } }, 'Forget')))));
+    };
+    paint();
+    const timer = setInterval(() => { if (!box.isConnected) { clearInterval(timer); return; } paint(); }, 1000);
+    return box;
+};
+
 // Inspect the profile used by Now without changing calibration.
 K.showMeterTiming = () => {
     if (document.getElementById('meter-timing-dialog')) return;
     const details = h('div', { class: 'meter-timing-details', 'aria-live': 'polite' });
     const paint = () => {
         const d = window.OmdrcTiming.details(), c = d.configuration;
-        const basename = path => String(path || '').split('/').filter(Boolean).pop() || 'Unknown';
         const row = (label, text) => h('div', {}, h('strong', {}, label + ': '), text);
-        const config = !c ? 'Waiting for controller settings' : !c.drc ? 'DRC OFF' :
-            `DRC ${(Number(c.rate) / 1000).toLocaleString()} kHz · ${basename(String(c.config).split('/').slice(0, -1).join('/'))} · ${basename(c.config)}`;
+        const config = !c ? 'Waiting for controller settings' : configLabel(c);
         K.clear(details).append(
             row('Network', d.network.label), row('Configuration', config),
             c ? row('Audio source', c.source === 'mpd' ? 'MPD' : c.source || 'Unknown') : h('span'),
@@ -317,8 +357,9 @@ P.tuneSheet = () => {
     const scrim = h('div', { class: 'scrim' }, h('div', { class: 'sheet cal-sheet tune-sheet' },
         h('div', { class: 'cal-title tune-title' }, h('span', {}, 'Meter timing'), P.infoBtn()),
         meterHost,
-        h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50)),
-        status, lines,
+        h('div', { class: 'att-row' }, step(-50), step(-10), value, step(10), step(50),
+            h('button', { class: 'btn', type: 'button', onclick: () => { K.sync.setDelayMs(0); show(); } }, 'Reset to 0')),
+        status, lines, Object.assign(reminder(), { hidden: true }), P.profilesList(),
         mic ? h('div', { class: 'small muted' },
             h('div', {}, h('strong', {}, 'Start'), ' measures and sets the meter delay, then runs a second pass to verify it.'),
             h('div', {}, h('strong', {}, 'Check again'), ' verifies the current timing. If the error exceeds ±30 ms, it corrects it; otherwise the delay stays unchanged.')) : null,

@@ -207,17 +207,25 @@ K.streams = (() => {
     // on the box only while a listener is attached, and pages/now.js ends it after the
     // configured keep-alive.  Everything else stops the moment nothing can be seen.
     const BACKGROUND = new Set(['dr']);
-    // A slow or stalled network must never leave the meters playing catch-up:
+    // A slow or stalled network, or a busy main thread, must never leave the meters
+    // playing catch-up:
+    //  - each frame says when the box produced it (`published`) and sent it (`sent`).
+    //    The lowest arrival - sent seen on this connection is the network at its best
+    //    (plus the clocks' offset), so published + that floor is when the frame would
+    //    have arrived with nothing in the way, and + this screen's delay is when it is
+    //    due.  A frame past due by more than STALE_MS is dropped - on arrival, and
+    //    again when it is about to be drawn - however it got late: a backlog queued in
+    //    the network, timers or a main thread that fell behind;
     //  - level/spectrum frames are drawn at most once per screen refresh, the newest
     //    one; whatever arrived in between is dropped (DR is not: its frames carry the
     //    history only when it changed, so every one of them counts);
-    //  - each frame says when the box sent it.  The lowest arrival - sent seen on
-    //    this connection is the network at its best (plus the clocks' offset); once
-    //    frames keep arriving LAG_MS later than that, they are coming out of a
-    //    backlog queued in the network, and the stream is opened again, which drops
-    //    it.  The new stream is opened before the old one is closed, so the box
-    //    never sees its last listener leave (that would turn its analyzer off).
-    const LAG_MS = 1200, LAG_FRAMES = 5;
+    //  - once frames keep arriving LAG_MS late, they are coming out of a backlog
+    //    queued in the network, and the stream is opened again, which drops it.  The
+    //    new stream is opened before the old one is closed, so the box never sees its
+    //    last listener leave (that would turn its analyzer off).
+    // The floor relaxes by DRIFT (100 ppm) so two clocks running apart cannot, over
+    // hours, make every frame look late.
+    const STALE_MS = 100, LAG_MS = 500, LAG_FRAMES = 5, DRIFT = 1e-4;
     const lagFns = new Set();     // told when a backlog was dropped (meters show "LAG!")
     const connect = mode => {
         const s = S[mode];
@@ -230,26 +238,34 @@ K.streams = (() => {
         const tapMode = mode.endsWith('-clip') ? mode.slice(0, -5) : mode;
         s.es = es;
         if (replacing) setTimeout(() => replacing.close(), 1500);
-        let best = Infinity, late = 0;
+        let best = Infinity, bestAt = 0, late = 0;
         const deliver = d => {
             if (K.drawTap) K.drawTap(tapMode, d, Date.now(), mode);     // the post-calibration check
             s.subs.forEach(f => f(d));
         };
-        const draw = d => {
+        const draw = (d, due) => {
             if (s.es !== es) return;                          // replaced or closed meanwhile
             if (mode === 'dr') { deliver(d); return; }
-            s.next = d;
-            if (!s.raf) s.raf = requestAnimationFrame(() => { s.raf = 0; const x = s.next; s.next = null; if (x && s.es === es) deliver(x); });
+            const live = d.ok && d.state === 'running';
+            if (live && Date.now() > due + STALE_MS) return;  // the timer itself ran late
+            s.next = d; s.nextDue = live ? due : Infinity;
+            if (!s.raf) s.raf = requestAnimationFrame(() => {
+                s.raf = 0;
+                const x = s.next, xDue = s.nextDue;
+                s.next = null;
+                if (x && s.es === es && Date.now() <= xDue + STALE_MS) deliver(x);
+            });
         };
         es.onmessage = ev => {
             if (s.es !== es) return;
             let d;
             try { d = JSON.parse(ev.data); } catch { return; }
             const now = Date.now();
+            let origin = now;
             if (mode !== 'dr' && Number.isFinite(d.sent)) {
-                const lag = now - d.sent;
-                best = Math.min(best, lag);
-                const origin = (Number.isFinite(d.published) ? d.published : d.sent) + best;
+                best = Math.min(now - d.sent, best + (bestAt ? (now - bestAt) * DRIFT : 0));
+                bestAt = now;
+                origin = (Number.isFinite(d.published) ? d.published : d.sent) + best;
                 const age = now - origin;
                 late = age > LAG_MS ? late + 1 : 0;
                 if (late >= LAG_FRAMES && !s.replacing) {
@@ -259,18 +275,22 @@ K.streams = (() => {
                     open(mode, es);
                     return;
                 }
-                if (age > LAG_MS) return; // discard stale data before taps and drawing
                 // Schedule from server send time plus the best transit time seen.
                 // A burst after Wi-Fi stalls must not shift the saved alignment.
                 d = { ...d };
                 d._timingArrival = origin;
             }
-            if (K.streamTap) K.streamTap(tapMode, d, d._timingArrival ?? now, mode);
             // Level and spectrum frames are drawn this device's extra delay after they
-            // arrive (widgets/sync.js); DR is not time-critical.
+            // would have arrived (widgets/sync.js); DR is not time-critical.
             const wait = mode === 'dr' || !K.sync ? 0 : K.sync.delayMs();
-            if (wait > 0) setTimeout(() => draw(d), Math.max(0, wait - (now - (d._timingArrival ?? now))));
-            else draw(d);
+            const due = origin + wait;
+            // Stale before taps and drawing.  A status frame (waiting, an error) is
+            // news however old: the box publishes it once and keeps it until it changes.
+            const live = mode !== 'dr' && d.ok && d.state === 'running';
+            if (live && now > due + STALE_MS) return;
+            if (K.streamTap) K.streamTap(tapMode, d, origin, mode);
+            if (due > now) setTimeout(() => draw(d, due), due - now);
+            else draw(d, due);
         };
         es.onerror = () => {
             es.close();

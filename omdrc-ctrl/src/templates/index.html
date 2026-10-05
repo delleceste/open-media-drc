@@ -4380,7 +4380,7 @@ let spectrumCharts = { left: null, right: null };
 let spectrumFloorDb = {{ spectrum.floor_db }};
 let spectrumMode = 'music';
 // What the box holds the frames back by (its measured chain minus a margin, ms);
-// this browser draws them a further screenDelayMs later (see drawLater).
+// this browser draws them a further screenDelayMs later (see frameScheduler).
 let spectrumDelayBaseMs = {{ spectrum.drc_delay_base_ms }};
 let spectrumFloorPost = null;   // debounce handle for POSTing the floor
 let spectrumReconnect = null;   // retry handle for a dropped SSE stream
@@ -4714,10 +4714,32 @@ function stepScreenDelay(d) {
     window.OmdrcTiming.setDelayMs(screenDelayMs() + d);
     renderDelayReadout();
 }
-// Level and spectrum frames are drawn this browser's delay after they arrive.
-function drawLater(fn) {
-    const wait = screenDelayMs();
-    if (wait > 0) setTimeout(fn, wait); else fn();
+// Level and spectrum frames are drawn this browser's delay after they would have
+// arrived, and never late: the same policy as the kiosk's streams (core.js).  Each
+// frame says when the box produced it (`published`) and sent it (`sent`); the lowest
+// arrival - sent on a connection is the network at its best plus the clocks' offset
+// (relaxed by 100 ppm against clock drift).  A frame past due by more than
+// FRAME_STALE_MS - a network backlog, a timer or a main thread that fell behind - is
+// dropped on arrival and again when its timer fires, so nothing piles up.  A status
+// frame (waiting, an error) is news however old, and is always shown.
+const FRAME_STALE_MS = 100, FRAME_DRIFT = 1e-4;
+function frameScheduler() {
+    let best = Infinity, bestAt = 0;
+    return (d, fn) => {
+        const now = Date.now();
+        let origin = now;
+        if (Number.isFinite(d.sent)) {
+            best = Math.min(now - d.sent, best + (bestAt ? (now - bestAt) * FRAME_DRIFT : 0));
+            bestAt = now;
+            origin = (Number.isFinite(d.published) ? d.published : d.sent) + best;
+        }
+        const due = origin + screenDelayMs();
+        const live = d.ok && d.state === 'running';
+        const fresh = () => !live || Date.now() <= due + FRAME_STALE_MS;
+        if (!fresh()) return;
+        if (due > now) setTimeout(() => { if (fresh()) fn(); }, due - now);
+        else fn();
+    };
 }
 
 function renderDelayReadout() {
@@ -5020,11 +5042,12 @@ function startSpectrum() {
     showSpectrumBody(true);
     spectrumStatus('connecting...', 'var(--muted)');
     spectrumSource = new EventSource('/spectrum/stream?mode=' + encodeURIComponent(spectrumMode));
+    const drawLater = frameScheduler();
     spectrumSource.onmessage = ev => {
         let d;
         try { d = JSON.parse(ev.data); }
         catch { spectrumStatus('bad spectrum frame', 'var(--red)'); return; }
-        drawLater(() => handleSpectrumFrame(d));
+        drawLater(d, () => handleSpectrumFrame(d));
     };
     spectrumSource.onerror = () => {
         stopSpectrum(false);
@@ -5097,11 +5120,12 @@ function startMeters() {
     // for this connection and only computes RMS/peak (see spectrum_stream()
     // in app.py) — turning the meters on never costs an rfft().
     metersSource = new EventSource('/spectrum/stream?mode=vu');
+    const drawLater = frameScheduler();
     let chainRefreshed = false;
     metersSource.onmessage = ev => {
         try {
             const d = JSON.parse(ev.data);
-            drawLater(() => {
+            drawLater(d, () => {
                 updateVu(d.ok ? (d.vu || {}) : {});
                 if (d.ok) updateBalance(d.vu || {});
                 else clearBalance();

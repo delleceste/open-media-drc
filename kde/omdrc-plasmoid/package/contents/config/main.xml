@@ -31,6 +31,9 @@
     <!-- analyzer frame wait: follow the box's measured remaining margin, or override per widget -->
     <entry name="autoScreenDelay" type="Bool"><default>true</default></entry>
     <entry name="screenDelayMs" type="Int"><default>150</default></entry>
+    <!-- the box-wide chain-delay margin last asked for in the settings, "ms@stamp":
+         written on Apply/OK, and the widget then sends it to the box (main.qml) -->
+    <entry name="boxMarginRequest" type="String"><default></default></entry>
     <!-- title / artist under the display (desktop and popup only) -->
     <entry name="showTitle" type="Bool"><default>true</default></entry>
     <!-- length along a panel in pixels; 0: follow the panes -->

@@ -75,6 +75,32 @@ T.setDelayMs = ms => {
     all[profileKey()] = { delayMs: clamp(ms), marginMs: margin, calibratedAt: Date.now() };
     save(all);
 };
+// Every saved delay on this device, one per network and DRC configuration, as it
+// applies at the box's current margin (see T.delayMs).  `active` is the one in use.
+const applied = p => clamp(p.delayMs + (margin === null || p.marginMs === null || p.marginMs === undefined ? 0 : margin - p.marginMs));
+const networkLabel = key => key === 'wired' ? 'Wired' : key.startsWith('wifi:') ? key.slice(5) : key;
+T.profiles = () => {
+    const active = profileKey();
+    return Object.entries(profiles()).map(([key, p]) => {
+        let network = key, config = null;
+        try { const [n, c] = JSON.parse(key); network = n; config = JSON.parse(c); } catch {} // legacy: network only
+        return { key, network: networkLabel(String(network)), configuration: config, delayMs: applied(p),
+                 calibratedAt: p.calibratedAt || null, active: key === active };
+    }).sort((a, b) => (b.active - a.active) || (b.calibratedAt || 0) - (a.calibratedAt || 0));
+};
+// Set a saved delay by hand, as it should apply now; stored against the current margin.
+T.setProfileDelay = (key, ms) => {
+    const all = profiles();
+    if (!all[key]) return;
+    all[key] = { ...all[key], delayMs: clamp(ms), marginMs: margin };
+    save(all);
+};
+T.deleteProfile = key => {
+    const all = profiles();
+    if (!(key in all)) return;
+    delete all[key];
+    save(all);
+};
 T.details = () => ({
     network: T.network(), configuration: configuration === null ? null : JSON.parse(configuration),
     saved: profiles()[profileKey()] || null, delayMs: T.delayMs(),

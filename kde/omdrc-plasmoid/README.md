@@ -126,6 +126,18 @@ Meter timing -> Tune with clicks** and adjust the plasmoid while listening to
 the click train. The click test does not require a microphone when you adjust
 by eye.
 
+The **Box chain-delay margin** below it is box-wide: one value shared by every
+screen. Like every other setting it is sent to the box with Apply or OK; the
+page shows what the box uses now and what is pending. With the live estimate on,
+this plasmoid absorbs a margin change (the box sends the frames earlier and the
+plasmoid waits that much longer), so its own timing does not move.
+
+Frames are never drawn late. Each one carries the time the box produced and sent
+it; the plasmoid schedules it from that, not from when the shell got round to
+reading it, and drops any frame more than 100 ms past due, so a network backlog
+or a busy Plasma shell cannot make the meters fall behind. A burst read in one
+go is drawn as its newest frame only.
+
 ## The box's side
 
 The widget needs an `omdrcctrl` that supports bounded analyzer streams

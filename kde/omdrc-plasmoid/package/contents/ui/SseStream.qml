@@ -21,8 +21,11 @@ Item {
 
     signal frame(var data)
 
-    readonly property int maxSeconds: 20
-    readonly property int rotateSeconds: 15
+    // Short: every LOADING callback hands over the whole body so far, decoded
+    // again on the shell's GUI thread - at 25 music frames a second a 20 s body
+    // is ~1 MB re-read 25 times a second, enough to make the frames late.
+    readonly property int maxSeconds: 6
+    readonly property int rotateSeconds: 4
     property var current: null       // { xhr, pos, dead, seen }
     property var retiring: null
     property double lastData: 0

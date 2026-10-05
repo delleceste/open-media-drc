@@ -89,9 +89,25 @@ PlasmoidItem {
     property bool hasScreenDelayEstimate: false
     readonly property int screenDelayMs: autoScreenDelay
         ? (hasScreenDelayEstimate ? estimatedScreenDelayMs : 0) : manualScreenDelayMs
+    // The box-wide chain-delay margin asked for in the settings ("ms@stamp"), sent
+    // to the box once Apply/OK stores it - not at start-up: another screen may
+    // have changed the box since.
+    readonly property string boxMarginRequest: Plasmoid.configuration.boxMarginRequest
+    onBoxMarginRequestChanged: {
+        const ms = parseInt(boxMarginRequest)
+        if (base === "" || !Number.isFinite(ms)) return
+        request("POST", "/spectrum/margin", { margin_ms: Math.max(0, Math.min(5000, ms)) },
+                function () { root.readSettings() })
+    }
     property var delayedFrames: []
     property int receivedFrameSequence: 0
     property int renderedFrameSequence: 0
+    // Late frames are dropped, never drawn late (the kiosk's policy, core.js
+    // K.streams): the lowest arrival - sent seen is the network at its best plus
+    // the clocks' offset, relaxed by 100 ppm against drift.  -1: not seen yet.
+    readonly property int frameStaleMs: 100
+    property double bestTransitMs: -1
+    property double bestTransitAt: 0
 
     readonly property bool wantsLevels: meterStyle !== "off" || showSpectrum || showDr || showBalance
     readonly property bool wantsCover: coverMode !== "off" || !wantsLevels
@@ -313,17 +329,30 @@ PlasmoidItem {
         const displayFrame = Object.assign({}, data)
         delete displayFrame.dr
         delete displayFrame.dr_blocks
-        const sequence = ++receivedFrameSequence
-        const delay = screenDelayMs
-        if (delay <= 0) {
-            delayedFrames = []
-            delayedFrameTimer.stop()
-            renderedFrameSequence = sequence
-            applyLevelFrame(displayFrame)
-            return
+        // Due when it would have arrived with nothing in the way, plus this
+        // screen's wait.  Past due by more than frameStaleMs - a network backlog,
+        // or a GUI thread (shared by the whole shell) that fell behind - it is
+        // dropped, here and again when its timer fires.  A status frame (waiting,
+        // an error) is news however old: the box sends it once and keeps it.
+        const now = Date.now()
+        let origin = now
+        const sent = Number(data.sent)
+        if (Number.isFinite(sent)) {
+            const transit = now - sent
+            const relaxed = bestTransitMs < 0 ? transit
+                          : bestTransitMs + (now - bestTransitAt) * 1e-4
+            bestTransitMs = Math.min(transit, relaxed)
+            bestTransitAt = now
+            const published = Number(data.published)
+            origin = (Number.isFinite(published) ? published : sent) + bestTransitMs
         }
+        const live = data.ok === true && data.state === "running"
+        const due = origin + screenDelayMs
+        if (live && now > due + frameStaleMs) return
+        // Always through the timer, even when already due: a burst read in one
+        // go from the stream then draws only its newest frame.
         const queue = delayedFrames.slice()
-        queue.push({ due: Date.now() + delay, sequence: sequence, data: displayFrame })
+        queue.push({ due: due, live: live, sequence: ++receivedFrameSequence, data: displayFrame })
         queue.sort((a, b) => a.due - b.due)
         // Bound memory if a UI thread stalls; old frames are no longer useful
         // once a newer analyzer frame is due.
@@ -334,7 +363,10 @@ PlasmoidItem {
 
     function scheduleDelayedFrames() {
         if (!delayedFrames.length) { delayedFrameTimer.stop(); return }
-        delayedFrameTimer.interval = Math.max(1, delayedFrames[0].due - Date.now())
+        const due = delayedFrames[0].due
+        if (delayedFrameTimer.running && delayedFrameTimer.due <= due) return
+        delayedFrameTimer.due = due
+        delayedFrameTimer.interval = Math.max(1, due - Date.now())
         delayedFrameTimer.restart()
     }
 
@@ -342,9 +374,10 @@ PlasmoidItem {
         const now = Date.now(), queue = delayedFrames.slice()
         let latest = null, count = 0
         while (count < queue.length && queue[count].due <= now) {
-            if (queue[count].sequence > renderedFrameSequence
-                    && (!latest || queue[count].sequence > latest.sequence))
-                latest = queue[count]
+            const f = queue[count]
+            if (f.sequence > renderedFrameSequence && (!f.live || now <= f.due + frameStaleMs)
+                    && (!latest || f.sequence > latest.sequence))
+                latest = f
             count++
         }
         if (count) delayedFrames = queue.slice(count)
@@ -501,6 +534,7 @@ PlasmoidItem {
 
     Timer {
         id: delayedFrameTimer
+        property double due: 0
         repeat: false
         onTriggered: root.drawDelayedFrames()
     }
@@ -514,6 +548,7 @@ PlasmoidItem {
              ? root.base + "/spectrum/stream?mode=" + (root.showSpectrum ? "music" : root.showDr ? "dr" : "vu")
              : ""
         onUrlChanged: if (url === "") {
+            root.bestTransitMs = -1
             root.delayedFrames = []
             delayedFrameTimer.stop()
             root.vu = root.silentVu()

@@ -26,6 +26,7 @@ KCM.SimpleKCM {
     property alias cfg_panelInset: panelInsetField.value
     property alias cfg_panelMarginStart: panelMarginStartField.value
     property alias cfg_panelMarginEnd: panelMarginEndField.value
+    property string cfg_boxMarginRequest
 
     readonly property var meterStyles: [
         { value: "bars", text: i18n("Level bars") },
@@ -58,8 +59,10 @@ KCM.SimpleKCM {
     property int boxDelayEstimateMs: -1
     property int boxHoldBackMs: -1
     // The box-wide chain-delay margin (ms), -1 until read. Shared by every screen,
-    // not just this plasmoid; applied to the box live, so it is not a cfg_ value.
+    // not just this plasmoid. A change is only asked for here: like every other
+    // setting it takes effect on Apply/OK, when the widget sends it (main.qml).
     property int boxMarginMs: -1
+    property int boxMarginPendingMs: -1
     property string estimateStatus: i18n("Enter the box address to read its delay estimate.")
 
     function settingsUrl() {
@@ -69,28 +72,10 @@ KCM.SimpleKCM {
         return "http://" + authority + ":" + portField.value + "/spectrum/settings"
     }
 
-    function marginUrl() {
-        const host = hostField.text.trim()
-        if (!host) return ""
-        const authority = host.indexOf(":") >= 0 && host[0] !== "[" ? "[" + host + "]" : host
-        return "http://" + authority + ":" + portField.value + "/spectrum/margin"
-    }
-
-    // Set the box-wide margin live. A floor, not a lock: a late screen's
-    // calibration can still raise it, and aligned screens re-absorb the change.
-    function setBoxMargin(ms) {
-        const url = marginUrl()
-        if (!url) return
-        const value = Math.max(0, Math.min(5000, Math.round(ms)))
-        const xhr = new XMLHttpRequest()
-        xhr.timeout = 3000
-        xhr.onreadystatechange = function () {
-            if (xhr.readyState === XMLHttpRequest.DONE) root.refreshDelayEstimate()
-        }
-        xhr.open("POST", url)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.send(JSON.stringify({ margin_ms: value }))
-        boxMarginMs = value              // optimistic; the refresh confirms it
+    function requestBoxMargin(ms) {
+        boxMarginPendingMs = Math.max(0, Math.min(5000, Math.round(ms)))
+        // the stamp makes every request a change, even back to an earlier value
+        cfg_boxMarginRequest = boxMarginPendingMs + "@" + Date.now()
     }
 
     function refreshDelayEstimate() {
@@ -116,6 +101,7 @@ KCM.SimpleKCM {
                 boxHoldBackMs = Math.max(0, Math.round(Number(data.drc_delay_base_ms) || 0))
                 const configured = Number(data.drc_delay_margin_ms)
                 boxMarginMs = Number.isFinite(configured) ? Math.max(0, Math.round(configured)) : -1
+                if (boxMarginPendingMs === boxMarginMs) boxMarginPendingMs = -1   // applied
                 estimateStatus = i18n("Local screen wait estimate: %1 ms; analyzer frames are held back by %2 ms before they leave the box.", boxDelayEstimateMs, boxHoldBackMs)
             } else {
                 boxDelayEstimateMs = -1
@@ -239,7 +225,7 @@ KCM.SimpleKCM {
 
         QQC2.Label {
             Kirigami.FormData.label: i18n("Box chain-delay margin:")
-            text: i18n("Box-wide — one value shared by every screen, not just this plasmoid, and applied to the box at once. The box trims this much from its own measured chain delay, so the meters leave it this far ahead of the sound and each screen waits out the rest. Raise it to cut the shared lag on a fast local display (at the limit the box holds nothing back and the meters lead the sound); lower it if the meters reach a slow screen after the sound. It is a floor, not a lock: a late screen's calibration may still raise it, and screens that follow the box estimate re-absorb the change and stay aligned.")
+            text: i18n("Box-wide — one value shared by every screen, not just this plasmoid; sent to the box with Apply or OK. The box trims this much from its own measured chain delay, so the meters leave it this far ahead of the sound and each screen waits out the rest. Raise it to cut the shared lag on a fast local display (at the limit the box holds nothing back and the meters lead the sound); lower it if the meters reach a slow screen after the sound. It is a floor, not a lock: a late screen's calibration may still raise it, and screens that follow the box estimate re-absorb the change and stay aligned.")
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
@@ -249,15 +235,28 @@ KCM.SimpleKCM {
             QQC2.SpinBox {
                 id: boxMarginSpin
                 from: 0; to: 5000; stepSize: 50
-                value: Math.max(0, boxMarginMs)
+                value: boxMarginPendingMs >= 0 ? boxMarginPendingMs : Math.max(0, boxMarginMs)
                 textFromValue: (value) => String(value)
                 valueFromText: (text) => parseInt(text) || 0
-                onValueModified: root.setBoxMargin(value)
+                onValueModified: root.requestBoxMargin(value)
             }
             QQC2.Button {
-                text: i18n("Reset")
-                onClicked: root.setBoxMargin(0)
+                text: i18n("Reset to 0")
+                onClicked: root.requestBoxMargin(0)
             }
+        }
+        QQC2.Label {
+            text: boxMarginMs < 0 ? i18n("Box margin unknown: the box is not answering.")
+                : boxMarginPendingMs >= 0 ? i18n("The box uses %1 ms now; %2 ms is sent with Apply or OK.", boxMarginMs, boxMarginPendingMs)
+                : i18n("The box uses %1 ms now.", boxMarginMs)
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+        QQC2.Label {
+            visible: autoScreenDelayBox.checked
+            text: i18n("With “Use the box's live delay estimate” on, this plasmoid absorbs a margin change: the box sends the frames earlier and this screen waits that much longer, so its own timing does not move. To make this screen draw sooner, turn the estimate off and lower the manual delay after raising the margin.")
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
         }
 
         Item { Kirigami.FormData.isSection: true }

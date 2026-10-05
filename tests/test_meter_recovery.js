@@ -14,14 +14,32 @@ vm.runInNewContext(source.slice(source.indexOf('K.streams ='), source.indexOf('/
     requestAnimationFrame: fn => { timers.push({ fn, ms: 0 }); return 1; }, encodeURIComponent
 });
 K.streams.open('vu', d => drawn.push(d.id));
-const send = (id, lag, es = streams.at(-1)) => { now += 50; es.onmessage({ data: JSON.stringify({ id, sent: now - lag }) }); };
+const send = (id, lag, es = streams.at(-1), extra = {}) => { now += 50;
+    es.onmessage({ data: JSON.stringify({ id, ok: true, state: 'running', sent: now - lag, ...extra }) }); };
 send(1, 20);
 assert.equal(timers[0].ms, 200);
 send(2, 120);
-assert.equal(timers[1].ms, 100, 'network jitter consumes the existing wait');
+assert.equal(Math.round(timers[1].ms), 100, 'network jitter consumes the existing wait');
+// Late by more than the 100 ms tolerance: dropped on arrival, however far from a backlog.
+const tappedBefore = tapped.length;
+send(3, 20 + 200 + 150);
+assert.equal(tapped.length, tappedBefore, 'a frame past due is dropped on arrival');
+// A status frame is news however old.
+now += 50;
+streams.at(-1).onmessage({ data: JSON.stringify({ id: 4, ok: false, state: 'waiting', sent: now - 900 }) });
+assert.equal(tapped.length, tappedBefore + 1, 'a status frame is never dropped as stale');
+// A timer that fires late (a busy main thread) drops its frame instead of drawing it.
+send(5, 20);
+const lateTimer = timers.at(-1);
+now += 400;
+const drawnBefore = drawn.length, timersBefore = timers.length;
+lateTimer.fn();
+assert.equal(timers.length, timersBefore, 'a frame whose timer ran late is not queued for drawing');
+assert.equal(drawn.length, drawnBefore);
+const tappedLag = tapped.length;
 for (let i = 0; i < 5; i++) send(10 + i, 1400);
 assert.equal(streams.length, 2);
-assert.equal(tapped.length, 2, 'stale frames never enter calibration');
+assert.equal(tapped.length, tappedLag, 'stale frames never enter calibration');
 send(20, 20);
 for (let i = 0; i < timers.length; i++) timers[i].fn();
 assert.deepEqual(drawn, [20], 'replacement discards old delayed frames and restores display');
@@ -40,5 +58,5 @@ console.log('Meter recovery and attenuated click detection: passed');
 // Server scheduling delays must not look like fresh audio.
 const countBefore = tapped.length;
 now += 50;
-streams.at(-1).onmessage({ data: JSON.stringify({ id: 30, sent: now - 20, published: now - 2020 }) });
+streams.at(-1).onmessage({ data: JSON.stringify({ id: 30, ok: true, state: 'running', sent: now - 20, published: now - 2020 }) });
 assert.equal(tapped.length, countBefore, 'an old snapshot sent now remains stale');
