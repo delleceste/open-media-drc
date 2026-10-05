@@ -518,11 +518,10 @@ PlasmoidItem {
         onTriggered: {
             if (!root.reachable || root.player.state !== "stop" || root.cdinActive) return
             root.stoppedSearchReady = true
-            if (root.page !== "cover") return
             if (Plasmoid.formFactor === PlasmaCore.Types.Horizontal
                     || Plasmoid.formFactor === PlasmaCore.Types.Vertical)
                 root.compactSearchRequested = true
-            else {
+            else if (root.page === "cover") {
                 root.autoOpenedSearch = true
                 root.page = "qobuz"
             }
