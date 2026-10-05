@@ -412,7 +412,9 @@ P.logSheet = title => {
     };
 };
 
-const LEVEL_OPTIONS = [{ value: 'needles', label: 'Needles' }, { value: 'bars', label: 'Bars' }, { value: 'spectrum', label: 'Bars + spectrum' }, { value: 'off', label: 'Off' }];
+const LEVEL_OPTIONS = [{ value: 'needles', label: 'Needles' }, { value: 'bars', label: 'Bars' },
+    { value: 'spectrum', label: 'Bars + spectrum' }, { value: 'circular', label: 'Circular spectrum' },
+    { value: 'circularbars', label: 'Bars + circular spectrum' }, { value: 'off', label: 'Off' }];
 
 P.render = function render() {
     if (!P.left) return;
@@ -430,7 +432,7 @@ P.render = function render() {
             // one choice per orientation (pages/now.js): upright bars, landscape needles by default
             ...[[false, 'Level display in landscape'], [true, 'Level display upright']].map(([portrait, title]) => [
                 h('div', { class: 'lbl' }, title),
-                K.segmented(LEVEL_OPTIONS, K.levelMode(portrait), v => { K.setLevelMode(v, portrait); P.render(); K.applyPrefs && K.applyPrefs(); }),
+                K.segmented(LEVEL_OPTIONS, K.levelMode(portrait), v => { K.setLevelMode(v, portrait); P.render(); K.applyPrefs && K.applyPrefs(); }, 'level-options'),
             ]).flat(),
             [K.levelMode(false), K.levelMode(true)].includes('off') ? h('p', { class: 'muted small' }, 'Off keeps the meters idle: the Now page shows the audio chain instead, and the level stream is opened only while Balance is switched on.') : null,
             h('div', { class: 'lbl' }, 'Keep the DR estimate running when Now is not shown'),

@@ -5,8 +5,10 @@
 (() => {
 'use strict';
 const { h } = K;
-const MODES = ['needles', 'bars', 'spectrum', 'off'];
-const MODE_LABEL = { needles: 'Needles', bars: 'Bars', spectrum: 'Bars + spectrum', off: 'Level off' };
+const MODES = ['needles', 'bars', 'spectrum', 'circular', 'circularbars', 'off'];
+const MODE_LABEL = { needles: 'Needles', bars: 'Bars', spectrum: 'Bars + spectrum',
+    circular: 'Circular spectrum', circularbars: 'Bars + circular spectrum', off: 'Level off' };
+const usesSpectrum = mode => mode === 'spectrum' || mode === 'circular' || mode === 'circularbars';
 const WINDOWS = [60, 300, 900, 1800, 3600, 5400];
 
 const P = {
@@ -307,6 +309,7 @@ matchMedia('(orientation: portrait)').addEventListener('change', () => {
 // ── layout ───────────────────────────────────────────────────────────────────
 P.applyLayout = () => {
     P.mode = K.levelMode();
+    P.spec.setCircular(P.mode === 'circular' || P.mode === 'circularbars');
     P.showDr = K.pref('now.dr', true);
     P.showBalance = K.pref('now.balance', true);
     const off = P.mode === 'off';
@@ -347,6 +350,7 @@ P.applyLayout = () => {
 };
 
 P.setMode = mode => {
+    P.closeCircularBandsMenu();
     K.setLevelMode(mode);
     P.applyLayout();
     P.syncMode();           // spectrum needs the FFT stream; off needs no stream at all
@@ -376,7 +380,7 @@ P.openViewMenu = () => {
             item(P.mode === 'spectrum' && P.spec.separate, 'Bars + separate L/R spectrum',
                 () => P.setSpectrumLayout(true), true),
         ] : [item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)]),
-        ...(P.mode === 'spectrum' ? [P.floorRow()] : []),
+        ...(usesSpectrum(P.mode) ? [P.floorRow()] : []),
         h('div', { class: 'menu-sep' }),
         item(P.coverWanted(), 'Album cover', () => P.flipCover()),
         item(P.showDr, 'Dynamic range (DR)', () => P.flip('now.dr')),
@@ -421,6 +425,34 @@ P.closeViewMenu = () => {
     P.menu = P.menuPaint = null;
 };
 
+P.openCircularBandsMenu = (x, y) => {
+    P.closeCircularBandsMenu();
+    const value = h('output', { class: 'menu-floor-value' }, String(P.spec.ringCount));
+    const slider = h('input', { type: 'range', class: 'menu-floor-slider', min: 4, max: 24, step: 1,
+        value: P.spec.ringCount, 'aria-label': 'Circular spectrum bands',
+        oninput: () => {
+            const count = Number(slider.value);
+            P.spec.setRingCount(count);
+            K.setPref('now.circularBands', count);
+            value.textContent = String(count);
+        } });
+    const menu = P.circularBandsMenu = h('div', { class: 'menu-pop', role: 'dialog',
+        'aria-label': 'Circular spectrum bands', style: { width: 'min(18rem, calc(100vw - 16px))' } },
+        h('label', { class: 'menu-floor' }, h('span', {}, 'Bands'), slider, value));
+    document.body.append(menu);
+    menu.style.left = `${Math.max(8, Math.min(x - menu.offsetWidth / 2, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y - menu.offsetHeight - 12, innerHeight - menu.offsetHeight - 8))}px`;
+    P.circularBandsOutside = e => { if (!menu.contains(e.target)) P.closeCircularBandsMenu(); };
+    // Wait until the initiating touch ends before listening for outside taps.
+    setTimeout(() => { if (P.circularBandsMenu === menu) document.addEventListener('pointerdown', P.circularBandsOutside, true); }, 0);
+};
+P.closeCircularBandsMenu = () => {
+    if (!P.circularBandsMenu) return;
+    document.removeEventListener('pointerdown', P.circularBandsOutside, true);
+    P.circularBandsMenu.remove();
+    P.circularBandsMenu = null;
+};
+
 P.cycleWindow = ev => {
     if (ev) ev.stopPropagation();          // the chip is not the shortcut
     const cur = WINDOWS.indexOf(K.drEstimate.windowSeconds);
@@ -461,9 +493,9 @@ P.openLevel = () => {
     P.vu.setSuspects({});
     P.markMetersLive(false);
     P.modeBtn.title = K.state.spectrum.enabled ? '' : 'analyzer disabled';
-    // Bars/needles need only the RMS/peak reader (no FFT); the spectrum mode
-    // asks for the full frame, which carries the same levels.
-    const stream = P.mode === 'spectrum' ? 'music-clip' : P.mode === 'off' ? 'vu' : 'vu-clip';
+    // Bars/needles need only the RMS/peak reader (no FFT); spectrum modes
+    // ask for the full frame, which carries the same levels.
+    const stream = usesSpectrum(P.mode) ? 'music-clip' : P.mode === 'off' ? 'vu' : 'vu-clip';
     P.level = K.streams.open(stream, d => {
         if (d.ok && d.state === 'running') {
             const v = d.vu || {};
@@ -489,7 +521,7 @@ P.openLevel = () => {
                 P.vu.setClips(P.clipChannels);
             }
             if (P.showBalance) P.balance.update(d.vu);
-            if (P.mode === 'spectrum') P.spec.update(d);
+            if (usesSpectrum(P.mode)) P.spec.update(d);
             P.modeBtn.title = [d.source_label, d.rate ? `${d.rate} Hz` : ''].filter(Boolean).join(' · ');
         } else {
             P.markMetersLive(false);
@@ -510,7 +542,7 @@ P.splitRatio = () => {
     const saved = K.pref('now.split', null);
     if (typeof saved === 'number') return K.clamp(saved, SPLIT_MIN, SPLIT_MAX);
     if (P.coverMode === 'square') return 0.72;         // the cover's row is a square: give it the height
-    return (P.showBalance ? 0.55 : 0.68) + (P.mode === 'spectrum' ? 0.1 : 0);
+    return (P.showBalance ? 0.55 : 0.68) + (usesSpectrum(P.mode) ? 0.1 : 0);
 };
 P.applySplit = () => {
     const on = P.showDr && !P.splitter.hidden;
@@ -674,7 +706,8 @@ P.wireMeterTap = () => {
         clearTimeout(holdTimer);
         holdTimer = setTimeout(() => {
             held = true; clearTimeout(tapTimer); last = null;
-            K.showMeterTiming();
+            if (P.mode === 'circular' || P.mode === 'circularbars') P.openCircularBandsMenu(down.x, down.y);
+            else K.showMeterTiming();
         }, 650);
     });
     el.addEventListener('pointermove', e => {
@@ -1107,6 +1140,7 @@ P.show = () => {
 };
 
 P.hide = () => {
+    P.closeCircularBandsMenu();
     P.timingPoll.stop();
     if (P.cancelMeterGesture) P.cancelMeterGesture();
     P.hideSeekSlider();

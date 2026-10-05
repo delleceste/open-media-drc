@@ -11,22 +11,29 @@ K.Spectrum = class Spectrum {
         this.tl = []; this.tr = []; this.capL = []; this.capR = [];
         this.capAtL = []; this.capAtR = [];
         this.separate = !!K.pref('now.spectrumSeparate', false);
+        this.circular = false;
+        this.ringCount = K.clamp(Number(K.pref('now.circularBands', 12)) || 12, 4, 24);
+        this.peaks = { left: -120, right: -120 };
         this.raf = null; this.last = 0;
         this.ro = new ResizeObserver(() => this.draw());
         this.ro.observe(canvas);
     }
     get floor() { return Number(K.state.spectrum.floor_db) || -40; }
     setSeparate(on) { this.separate = !!on; this.draw(); }
+    setCircular(on) { this.circular = !!on; this.draw(); }
+    setRingCount(count) { this.ringCount = K.clamp(Math.round(count), 4, 24); this.draw(); }
 
     update(frame) {
         if (Array.isArray(frame.bands) && frame.bands.length) this.bands = frame.bands;
         const n = this.bands.length;
         const pick = a => Array.isArray(a) && a.length === n ? a : new Array(n).fill(-200);
         this.tl = pick(frame.left); this.tr = pick(frame.right);
+        this.peaks = { left: Number(frame.vu?.left_peak ?? -120), right: Number(frame.vu?.right_peak ?? -120) };
         if (!this.raf) { this.last = 0; this.raf = requestAnimationFrame(ts => this.step(ts)); }
     }
     clear() {
         this.tl = this.tr = new Array(this.bands.length).fill(-200);
+        this.peaks = { left: -120, right: -120 };
         if (!this.raf) { this.last = 0; this.raf = requestAnimationFrame(ts => this.step(ts)); }
     }
     /** "LAG!" in the corner: frames were dropped by the network. */
@@ -73,6 +80,7 @@ K.Spectrum = class Spectrum {
             ctx.fillStyle = K.theme() === 'light' ? '#a54800' : '#ffa726';
             ctx.fillText('LAG!', w - 6 * dpr, 6 * dpr);
         }
+        if (this.circular) { this.drawCircular(ctx, w, H, dpr); return; }
         const gap = this.separate ? 8 * dpr : 0;
         const panelW = this.separate ? Math.max(0, (w - gap) / 2) : w;
         const titleH = this.separate ? 14 * dpr : 0;
@@ -149,6 +157,51 @@ K.Spectrum = class Spectrum {
                     ctx.fillText(this.bands[i].label, offset + i * slot + slot / 2, H - labelH + 3 * dpr);
                 }
             }
+        }
+    }
+
+    drawCircular(ctx, w, H, dpr) {
+        const n = this.bands.length;
+        const count = Math.min(this.ringCount, n);
+        const radius = Math.max(1, Math.min(w, H) / 2 - 13 * dpr);
+        const inner = radius * .27;
+        const pitch = (radius - inner) / count;
+        const thickness = Math.max(1, pitch * .72);
+        const cx = w / 2, cy = H / 2;
+        const fl = this.floor;
+        const colors = ['#399dc9', '#3aa6ca', '#40b7be', '#50bc9b', '#77bf6b', '#a9c653',
+            '#d0c34d', '#e4ad48', '#e69342', '#e3773d', '#e05a45', '#dc4a4a'];
+        // Average power within each adjacent group, then convert back to dB.
+        // This preserves the energy of narrow peaks better than averaging dB.
+        const level = (values, start, end) => {
+            let power = 0;
+            for (let i = start; i < end; i++) power += Math.pow(10, (values[i] ?? -200) / 10);
+            return 10 * Math.log10(Math.max(1e-20, power / (end - start)));
+        };
+        const arc = (r, start, end, color, alpha) => {
+            ctx.beginPath(); ctx.arc(cx, cy, r, start, end, end < start);
+            ctx.strokeStyle = color; ctx.globalAlpha = alpha;
+            ctx.lineWidth = thickness; ctx.lineCap = 'round'; ctx.stroke();
+        };
+        for (let j = 0; j < count; j++) {
+            const start = Math.floor(j * n / count), end = Math.floor((j + 1) * n / count);
+            const r = radius - pitch * (j + .5);
+            const color = colors[Math.round(j * (colors.length - 1) / Math.max(1, count - 1))];
+            const left = K.clamp(level(this.l, start, end) / -fl + 1, 0, 1);
+            const right = K.clamp(level(this.r, start, end) / -fl + 1, 0, 1);
+            arc(r, Math.PI / 2, Math.PI * 1.5, color, .16);
+            arc(r, Math.PI / 2, -Math.PI / 2, color, .16);
+            if (left > .005) arc(r, Math.PI / 2, Math.PI / 2 + Math.PI * left, color, .95);
+            if (right > .005) arc(r, Math.PI / 2, Math.PI / 2 - Math.PI * right, color, .95);
+        }
+        ctx.globalAlpha = 1;
+        const font = Math.max(9, Math.min(13, inner / dpr * .35)) * dpr;
+        ctx.font = `700 ${font}px ui-monospace, monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (const [side, x, peak] of [['L', cx - inner * .48, this.peaks.left], ['R', cx + inner * .48, this.peaks.right]]) {
+            ctx.fillStyle = K.css('--muted'); ctx.fillText(side, x, cy - font * .6);
+            ctx.fillStyle = peak >= -1 ? '#f85149' : K.css('--text');
+            ctx.fillText(Number.isFinite(peak) && peak > -100 ? String(Math.round(peak)) : '—', x, cy + font * .65);
         }
     }
 };

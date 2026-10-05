@@ -49,10 +49,14 @@ button on Now, which changes the one on screen): upright it is **Bars** unless
 needles are picked while upright, in landscape **Needles** unless something
 else is picked there.  Turning the phone switches between the two at once.
 
-Right-click the level display to choose VU meters, bars, a single spectrum,
-or separate L/R spectrum plots. Spectrum bars use a green/orange/red level
-ramp, with a warmer red tint on R; each channel brightens toward 0 dBFS. The
-choice is saved on this device.
+The Now page's View menu offers needles, bars, bars with a combined or separate
+L/R spectrum, a circular spectrum, bars with a circular spectrum, and Off.
+Circular spectrum uses outer low-frequency rings and inner high-frequency rings;
+each ring fills its left and right semicircles from the bottom according to the
+respective channel's level. Hold the circular display to set its band count
+(4–24, default 12). The center shows the current L/R peak levels. The choice
+and band count are saved on this device. Spectrum bars use a green/orange/red
+level ramp, with a warmer red tint on R.
 
 Each channel shows a blinking orange **CLIP?** near the 0 dB end when its peak
 reaches -1 dBFS; this means the detector is checking that channel. A detected
