@@ -3,14 +3,16 @@
 (() => {
 'use strict';
 const { h } = K;
-const P = { path: [], folders: [], albums: [], loaded: new Map() };
+const P = { path: [], folders: [], albums: [], loaded: new Map(), expanded: new Set() };
 
 P.mount = el => {
     P.el = el;
     P.head = h('div', { class: 'fav-head' });
     P.grid = h('div', { class: 'fav-grid' });
+    P.tree = h('div', { class: 'fav-tree' });
     P.message = h('div', { class: 'muted' });
-    el.append(h('div', { class: 'fav-page' }, P.head, P.message, P.grid));
+    P.layout = K.pref('favorites.layout', matchMedia('(max-width: 640px)').matches ? 'list' : 'grid');
+    el.append(h('div', { class: 'fav-page' }, P.head, P.message, P.grid, P.tree));
 };
 P.show = () => { P.visible = true; P.refresh(); };
 P.hide = () => { P.visible = false; if (P.activeHoldCancel) P.activeHoldCancel(); };
@@ -112,6 +114,8 @@ P.folderMenu = path => {
         if (!d.ok) { K.toast(d.error || 'Could not rename folder', 'error'); return; }
         if (P.pathName() === path || P.pathName().startsWith(path + '/'))
             P.path = (d.path + P.pathName().slice(path.length)).split('/');
+        P.expanded = new Set([...P.expanded].map(value =>
+            value === path || value.startsWith(path + '/') ? d.path + value.slice(path.length) : value));
         close(); K.toast(`Renamed ${count} playlist${count === 1 ? '' : 's'}`); P.refresh();
     };
     const remove = async () => {
@@ -123,6 +127,7 @@ P.folderMenu = path => {
             json: { action: 'delete', path }, timeout: 60000 });
         if (!d.ok) { K.toast(d.error || 'Could not remove folder', 'error'); return; }
         if (P.pathName() === path || P.pathName().startsWith(path + '/')) P.path = path.split('/').slice(0, -1);
+        P.expanded = new Set([...P.expanded].filter(value => value !== path && !value.startsWith(path + '/')));
         K.toast('Folder removed'); P.refresh();
     };
     const scrim = h('div', { class: 'scrim fav-picker', onclick: e => { if (e.target === scrim) close(); } },
@@ -151,15 +156,126 @@ P.ordered = (path, tiles) => {
                                  (positions.get(b.dataset.key) ?? Infinity));
 };
 P.appendOrdered = (path, tiles) => P.grid.replaceChildren(...P.ordered(path, tiles));
+P.setLayout = layout => {
+    P.layout = layout;
+    K.setPref('favorites.layout', layout);
+    P.paint();
+};
+P.moveEntry = async (parent, key, direction) => {
+    const rows = [...P.tree.querySelectorAll('.fav-children[data-parent]')]
+        .find(group => group.dataset.parent === parent);
+    if (!rows) return;
+    const keys = [...rows.children].map(row => row.dataset.key);
+    const index = keys.indexOf(key), other = index + direction;
+    if (index < 0 || other < 0 || other >= keys.length) return;
+    [keys[index], keys[other]] = [keys[other], keys[index]];
+    const previous = P.order[parent];
+    P.order[parent] = keys;
+    await P.paint();
+    const d = await K.api('/qobuz/favorites/order', { json: { parent, keys } });
+    if (!d.ok) {
+        if (previous === undefined) delete P.order[parent];
+        else P.order[parent] = previous;
+        K.toast(d.error || 'Could not save order', 'error');
+        P.paint();
+    }
+};
+P.listRow = (parent, key, content, extra) => h('div', { class: 'fav-tree-entry', dataset: { key } },
+    h('div', { class: 'fav-tree-row' }, content, extra,
+        h('div', { class: 'fav-tree-controls' },
+            h('button', { type: 'button', class: 'btn',
+                'aria-label': `Move ${key.slice(2)} up`, onclick: () => P.moveEntry(parent, key, -1) }, '↑'),
+            h('button', { type: 'button', class: 'btn',
+                'aria-label': `Move ${key.slice(2)} down`, onclick: () => P.moveEntry(parent, key, 1) }, '↓'))));
+P.paintTree = async seq => {
+    const render = async path => {
+        const children = new Map();
+        for (const folder of P.folders) {
+            const parts = folder.path.split('/');
+            const depth = path ? path.split('/').length : 0;
+            if (parts.length > depth && parts.slice(0, depth).join('/') === path)
+                children.set(parts[depth], (children.get(parts[depth]) || 0) + 1);
+        }
+        const entries = [...children].map(([name, count]) => ({
+            key: 'f:' + (path ? path + '/' : '') + name, name, count,
+        }));
+        if (!path) entries.push({ key: 'f:Qobuz', name: 'Qobuz', count: P.albums.length });
+        entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+        if (path === 'Qobuz') entries.push(...P.albums.map(album => ({ key: 'a:' + album.id, album })));
+        else if (path) {
+            for (const folder of P.folders.filter(f => f.path === path)) {
+                const albums = await P.openPlaylist(folder);
+                if (seq !== P.paintSeq) return null;
+                entries.push(...albums.map(album => ({ key: 'a:' + album.id, album, folder })));
+            }
+        }
+        const positions = new Map((P.order[path] || []).map((key, i) => [key, i]));
+        entries.sort((a, b) => (positions.get(a.key) ?? Infinity) - (positions.get(b.key) ?? Infinity));
+        const group = h('div', { class: 'fav-children', dataset: { parent: path } });
+        for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+            if (entry.album) {
+                const album = entry.album;
+                const content = h('div', { class: 'fav-tree-album' },
+                    h('button', { type: 'button', class: 'fav-tree-cover', title: `Details: ${album.title}`,
+                        onclick: () => K.albumInfo(album.id, { off: album.streamable === false,
+                            play: () => P.play(album, 'replace'), add: () => P.play(album, 'append') }) },
+                    album.image ? h('img', { src: album.image, alt: '' }) : '♪'),
+                    h('span', { class: 'fav-tree-name' }, h('strong', {}, album.title), h('small', {}, album.artist || '')));
+                const actions = h('div', { class: 'fav-tree-actions' },
+                    h('button', { type: 'button', class: 'btn', title: 'Play album', disabled: album.streamable === false,
+                        onclick: () => P.play(album, 'replace') }, '▶'),
+                    h('button', { type: 'button', class: 'btn', title: 'Add album to queue', disabled: album.streamable === false,
+                        onclick: () => P.play(album, 'append') }, '+'),
+                    h('button', { type: 'button', class: 'btn', title: 'Add to a folder', onclick: () => K.saveQobuzFavorite(album) }, '♡'),
+                    h('button', { type: 'button', class: 'btn', title: entry.folder ? 'Remove from folder' : 'Remove Qobuz favorite',
+                        onclick: () => P.remove(album, entry.folder) }, '−'));
+                group.append(P.listRow(path, entry.key, content, actions));
+            } else {
+                const full = entry.key.slice(2), open = P.expanded.has(full);
+                const content = h('button', { type: 'button', class: 'fav-tree-folder',
+                    'aria-expanded': String(open), onclick: () => {
+                        if (open) P.expanded.delete(full); else P.expanded.add(full);
+                        P.paint();
+                    } }, h('span', { class: 'fav-tree-chevron', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
+                    P.collage(full), h('span', { class: 'fav-tree-name' },
+                        h('strong', {}, entry.name), h('small', {}, `${entry.count} ${full === 'Qobuz' ? 'album favorites' : 'playlists'}`)));
+                const menu = full === 'Qobuz' ? null : h('button', { type: 'button', class: 'btn',
+                    'aria-label': `Actions for ${entry.name}`, onclick: () => P.folderMenu(full) }, '⋯');
+                const row = P.listRow(path, entry.key, content, menu);
+                if (open) {
+                    const nested = await render(full);
+                    if (seq !== P.paintSeq) return null;
+                    row.append(nested);
+                }
+                group.append(row);
+            }
+        }
+        for (const row of group.children) {
+            const controls = row.querySelector('.fav-tree-controls');
+            controls.children[0].disabled = row === group.firstElementChild;
+            controls.children[1].disabled = row === group.lastElementChild;
+        }
+        return group;
+    };
+    const root = await render('');
+    if (seq === P.paintSeq) P.tree.replaceChildren(root);
+};
 P.paint = async () => {
     const path = P.pathName(), seq = P.paintSeq = (P.paintSeq || 0) + 1;
     P.loading = false;
     P.message.textContent = '';
     K.clear(P.head).append(...[
-        P.path.length ? h('button', { type: 'button', class: 'btn', onclick: P.back }, '‹ Back') : null,
-        h('strong', {}, path || 'Qobuz Library'),
+        P.layout === 'grid' && P.path.length ? h('button', { type: 'button', class: 'btn', onclick: P.back }, '‹ Back') : null,
+        h('strong', {}, P.layout === 'list' ? 'Qobuz Library' : path || 'Qobuz Library'),
+        h('button', { type: 'button', class: 'btn', 'aria-label': P.layout === 'list' ? 'Show tiles' : 'Show list',
+            title: P.layout === 'list' ? 'Show tiles' : 'Show hierarchical list',
+            onclick: () => P.setLayout(P.layout === 'list' ? 'grid' : 'list') }, P.layout === 'list' ? '▦' : '☷'),
         h('button', { type: 'button', class: 'btn', title: 'Refresh Qobuz Library', onclick: () => P.refresh() }, '↻'),
     ].filter(Boolean));
+    P.grid.hidden = P.layout === 'list';
+    P.tree.hidden = P.layout !== 'list';
+    if (P.layout === 'list') { await P.paintTree(seq); return; }
     K.clear(P.grid);
     const children = new Map();
     for (const folder of P.folders) {
@@ -355,7 +471,7 @@ P.remove = async (a, folder) => {
 K.saveQobuzFavorite = async a => {
     const d = await K.api('/qobuz/favorites', { timeout: 60000 });
     if (!d.ok) { K.toast(d.error || 'Could not read folders', 'error'); return; }
-    const parts = P.visible && P.pathName() !== 'Qobuz' ? [...P.path] : [];
+    const parts = P.visible && P.layout === 'grid' && P.pathName() !== 'Qobuz' ? [...P.path] : [];
     const pathName = () => parts.join('/');
     const title = h('strong', {}, 'Library');
     const grid = h('div', { class: 'fav-grid fav-picker-grid' });

@@ -86,3 +86,31 @@ test('failed refresh leaves the selected folder unchanged', async () => {
     assert.equal(app.page.pathName(), 'Source');
     assert.equal(app.page.message.textContent, 'Qobuz unavailable');
 });
+
+test('list arrows save sibling order under the correct parent', async () => {
+    const app = setup();
+    const saved = [];
+    const rows = ['f:Classical/BIS', 'f:Classical/ECM', 'a:42']
+        .map(key => ({ dataset: { key } }));
+    app.page.tree = { querySelectorAll: () => [{ dataset: { parent: 'Classical' }, children: rows }] };
+    app.page.order = {};
+    app.page.paint = async () => {};
+    app.K.api = async (url, options) => { saved.push({ url, ...options.json }); return { ok: true }; };
+    await app.page.moveEntry('Classical', 'f:Classical/ECM', -1);
+    assert.deepEqual([...app.page.order.Classical], ['f:Classical/ECM', 'f:Classical/BIS', 'a:42']);
+    assert.equal(saved[0].url, '/qobuz/favorites/order');
+    assert.equal(saved[0].parent, 'Classical');
+    assert.deepEqual([...saved[0].keys], [...app.page.order.Classical]);
+});
+
+test('list arrows restore order when saving fails', async () => {
+    const app = setup();
+    const rows = ['f:A', 'f:B'].map(key => ({ dataset: { key } }));
+    app.page.tree = { querySelectorAll: () => [{ dataset: { parent: '' }, children: rows }] };
+    app.page.order = { '': ['f:A', 'f:B'] };
+    app.page.paint = async () => {};
+    app.K.api = async () => ({ ok: false, error: 'save failed' });
+    app.K.toast = () => {};
+    await app.page.moveEntry('', 'f:B', -1);
+    assert.deepEqual([...app.page.order['']], ['f:A', 'f:B']);
+});

@@ -187,7 +187,12 @@ Search and play answer 409 while upmpdcli is not running.
 ### Qobuz Library folders
 
 The kiosk and Android app show **Favorites** as the heart view beside Qobuz's
-Results, Recent, Discover and Awarded views, with folder and album tiles.
+Results, Recent, Discover and Awarded views. Favorites has folder and album
+tiles, plus a hierarchical list that opens folders inline. The list is the
+default on narrow screens; the view button switches between the two layouts
+and remembers the choice on that device. In the list, Up and Down buttons
+reorder folders and albums within their parent folder without dragging. The
+folder action button opens Rename and Remove.
 Discover keeps Qobuz's new release order and has its own collapsible filters
 beside Genre: favourite labels, Awarded and Hi-Res. The active filters appear
 beside New releases. Date and search-order filters apply only to Search.
@@ -216,7 +221,7 @@ which then appears under **Qobuz** if it has no other folder. Removing it from
 **Qobuz** removes its album heart. Playlist names are reversible in Qobuz's
 own Library; legacy Blow Up and Gramophone names are also understood until
 renamed. Folder tiles show one to three covers from the albums they contain.
-Drag a tile by its handle to reorder it; the service stores the order per
+Drag a tile by its handle in tile view to reorder it; the service stores the order per
 folder in `qobuz-library-order-<user_id>.json` in its state directory, shared
 by every browser and Android device using that service. Hold a dragged folder
 over another folder until **Release to move inside** appears, then release to

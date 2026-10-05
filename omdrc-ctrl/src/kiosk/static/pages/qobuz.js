@@ -285,6 +285,7 @@ P.paintView = () => {
     P.awardedBox.hidden = v !== 'awarded';
     P.discoverBox.hidden = v !== 'discover';
     P.libraryBox.hidden = v !== 'library';
+    P.layoutBtn.hidden = v === 'library';
     if (v === 'results' && !P.results.firstChild)
         P.results.append(h('p', { class: 'muted' }, 'No search yet: the search is at the top.'));
 };

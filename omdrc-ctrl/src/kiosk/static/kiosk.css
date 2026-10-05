@@ -785,6 +785,38 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .fav-art img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .fav-actions { display: flex; gap: .2rem; margin-top: auto; padding-top: .35rem; }
 .fav-actions .btn { flex: 1; padding: .25rem; }
+.fav-tree { display: grid; gap: .35rem; }
+.fav-children { display: grid; gap: .35rem; min-width: 0; }
+.fav-tree-entry { min-width: 0; }
+.fav-tree-entry > .fav-children { margin: .35rem 0 .4rem 1rem; padding-left: .7rem;
+    border-left: 2px solid var(--border); }
+.fav-tree-row { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem;
+    min-width: 0; padding: .35rem; border: 1px solid var(--hair); border-radius: .55rem;
+    background: var(--surface2); }
+.fav-tree-folder, .fav-tree-album { display: flex; align-items: center; flex: 1 1 10rem;
+    gap: .5rem; min-width: 0; padding: 0; color: var(--text); }
+.fav-tree-folder { border: 0; background: none; text-align: left; cursor: pointer; }
+.fav-tree-chevron { flex: 0 0 .8rem; color: var(--accent); }
+.fav-tree .fav-collage, .fav-tree-cover { flex: 0 0 2.7rem; width: 2.7rem; height: 2.7rem;
+    margin: 0; aspect-ratio: auto; border-radius: .3rem; }
+.fav-tree .fav-empty-art { font-size: 1.5rem; }
+.fav-tree-cover { display: grid; place-items: center; padding: 0; border: 0;
+    background: var(--surface); color: var(--muted); overflow: hidden; cursor: pointer; }
+.fav-tree-cover img { width: 100%; height: 100%; object-fit: cover; }
+.fav-tree-name { display: grid; min-width: 0; }
+.fav-tree-name strong, .fav-tree-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-tree-name small { color: var(--muted); }
+.fav-tree-controls, .fav-tree-actions { display: flex; flex: 0 0 auto; gap: .2rem; }
+.fav-tree-controls .btn, .fav-tree-actions .btn { min-width: 2.4rem; min-height: 2.4rem; padding: .2rem; }
+@media (max-width: 640px) {
+    .fav-page { padding: .5rem; }
+    .fav-head { gap: .35rem; }
+    .fav-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fav-tree-entry > .fav-children { margin-left: .45rem; padding-left: .45rem; }
+    .fav-tree-album { flex-basis: calc(100% - 5.5rem); }
+    .fav-tree-actions { order: 3; margin-left: 3.2rem; }
+    .fav-tree-row > .fav-tree-controls { margin-left: auto; }
+}
 .scrim.fav-picker { z-index: 65; }
 .sheet.fav-picker-sheet { display: flex; flex-direction: column; gap: .65rem; width: min(46rem, 96vw);
     height: min(48rem, 94dvh); min-height: 0; padding: .8rem; }
