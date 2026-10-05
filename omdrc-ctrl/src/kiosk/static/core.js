@@ -203,6 +203,7 @@ K.Poller = class {
 // host nothing.
 K.streams = (() => {
     const S = {};
+    const trace = (event, mode, data = {}) => K.timingDebug?.record(event, { mode, ...data });
     // DR outlives a hidden page (app in the background, screen off): its history lives
     // on the box only while a listener is attached, and pages/now.js ends it after the
     // configured keep-alive.  Everything else stops the moment nothing can be seen.
@@ -237,17 +238,27 @@ K.streams = (() => {
         const es = new EventSource('/spectrum/stream?mode=' + encodeURIComponent(mode));
         const tapMode = mode.endsWith('-clip') ? mode.slice(0, -5) : mode;
         s.es = es;
+        // An old connection's RAF must not consume the new connection's frame.
+        if (s.raf) cancelAnimationFrame(s.raf);
+        s.raf = 0; s.next = null;
+        trace('connect', mode, { replacement: !!replacing });
         if (replacing) setTimeout(() => replacing.close(), 1500);
-        let best = Infinity, bestAt = 0, late = 0;
+        let best = Infinity, bestAt = 0, late = 0, received = 0, newestDraw = 0;
         const deliver = d => {
+            trace('draw', mode, { published: d.published, usable: d.ok === true && d.state === 'running' &&
+                (Number.isFinite(d.vu?.left_peak) || Number.isFinite(d.vu?.right_peak) || !!d.bands?.length), ageMs: Date.now() - (d._timingArrival ?? Date.now()),
+                lateMs: Date.now() - (d._timingDue ?? Date.now()) });
             if (K.drawTap) K.drawTap(tapMode, d, Date.now(), mode);     // the post-calibration check
             s.subs.forEach(f => f(d));
         };
-        const draw = (d, due) => {
-            if (s.es !== es) return;                          // replaced or closed meanwhile
+        const draw = (d, due, order) => {
+            if (s.es !== es) { trace('obsolete', mode); return; }   // replaced or closed meanwhile
+            if (order < newestDraw) { trace('outOfOrder', mode); return; }
+            newestDraw = order;
             if (mode === 'dr') { deliver(d); return; }
             const live = d.ok && d.state === 'running';
-            if (live && Date.now() > due + STALE_MS) return;  // the timer itself ran late
+            if (live && Date.now() > due + STALE_MS) { trace('stale', mode, { lateMs: Date.now() - due }); return; }   // the timer itself ran late
+            if (s.next) trace('coalesced', mode);
             s.next = d; s.nextDue = live ? due : Infinity;
             if (!s.raf) s.raf = requestAnimationFrame(() => {
                 s.raf = 0;
@@ -256,17 +267,20 @@ K.streams = (() => {
                 if (x && s.es === es && Date.now() <= xDue + STALE_MS) deliver(x);
             });
         };
-        es.onmessage = ev => {
+        const receive = ev => {
             if (s.es !== es) return;
             let d;
             try { d = JSON.parse(ev.data); } catch { return; }
-            const now = Date.now();
+            const now = Date.now(), order = ++received;
+            trace('receive', mode, { sent: d.sent, published: d.published });
             let origin = now;
             if (mode !== 'dr' && Number.isFinite(d.sent)) {
                 best = Math.min(now - d.sent, best + (bestAt ? (now - bestAt) * DRIFT : 0));
                 bestAt = now;
                 origin = (Number.isFinite(d.published) ? d.published : d.sent) + best;
                 const age = now - origin;
+                trace('age', mode, { ageMs: age, bestTransitAndClockMs: best });
+                if (age > LAG_MS) trace('stale', mode, { ageMs: age });
                 late = age > LAG_MS ? late + 1 : 0;
                 if (late >= LAG_FRAMES && !s.replacing) {
                     s.replacing = true;
@@ -284,15 +298,21 @@ K.streams = (() => {
             // would have arrived (widgets/sync.js); DR is not time-critical.
             const wait = mode === 'dr' || !K.sync ? 0 : K.sync.delayMs();
             const due = origin + wait;
+            d._timingDue = due;
             // Stale before taps and drawing.  A status frame (waiting, an error) is
             // news however old: the box publishes it once and keeps it until it changes.
             const live = mode !== 'dr' && d.ok && d.state === 'running';
-            if (live && now > due + STALE_MS) return;
+            if (live && now > due + STALE_MS) { trace('stale', mode, { lateMs: now - due }); return; }
             if (K.streamTap) K.streamTap(tapMode, d, origin, mode);
-            if (due > now) setTimeout(() => draw(d, due), due - now);
-            else draw(d, due);
+            if (due > now) setTimeout(() => draw(d, due, order), due - now);
+            else draw(d, due, order);
+        };
+        es.onmessage = ev => {
+            if (K.timingDebug) K.timingDebug.ingress(mode, ev, receive);
+            else receive(ev);
         };
         es.onerror = () => {
+            trace('disconnect', mode);
             es.close();
             if (s.es !== es) return;                          // the one being replaced
             s.es = null;

@@ -204,6 +204,40 @@ class RouteTest(unittest.TestCase):
 
 
 class ClaudeAccountTest(unittest.TestCase):
+    def test_freebsd_package_is_found_with_a_minimal_service_path(self):
+        with patch.dict("os.environ", {"OMDRC_CLAUDE_BIN": "", "PATH": "/usr/bin:/bin"}), patch.object(ai.shutil, "which", return_value=None), patch.object(ai.Path, "is_file", lambda p: str(p) == "/usr/local/bin/claude"), patch.object(ai.os, "access", return_value=True):
+            self.assertEqual(ai._claude_binary(), "/usr/local/bin/claude")
+
+    def test_per_user_install_uses_the_service_users_home(self):
+        with tempfile.TemporaryDirectory() as home:
+            binary = Path(home) / ".local/bin/claude"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o755)
+            with patch.dict("os.environ", {"HOME": home, "OMDRC_CLAUDE_BIN": ""}), patch.object(ai.shutil, "which", return_value=None):
+                self.assertEqual(ai._claude_binary(), str(binary))
+
+    def test_explicit_binary_override_is_used_and_invalid_overrides_do_not_fall_back(self):
+        with tempfile.TemporaryDirectory() as root:
+            binary = Path(root) / "claude-wrapper"
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o755)
+            with patch.dict("os.environ", {"OMDRC_CLAUDE_BIN": str(binary)}), patch.object(ai.shutil, "which") as which:
+                self.assertEqual(ai._claude_binary(), str(binary))
+                which.assert_not_called()
+            for invalid in ("relative/claude", str(Path(root) / "missing")):
+                with patch.dict("os.environ", {"OMDRC_CLAUDE_BIN": invalid}), patch.object(ai.shutil, "which") as which:
+                    self.assertIsNone(ai._claude_binary())
+                    which.assert_not_called()
+
+    def test_existing_profile_environment_is_preserved_without_reading_secrets(self):
+        env = {"HOME": "/usr/home/listener", "CLAUDE_CONFIG_DIR": "/usr/home/listener/.claude", "OMDRC_CLAUDE_BIN": "/usr/local/bin/claude", "ANTHROPIC_API_KEY": "do-not-use"}
+        with patch.dict("os.environ", env, clear=True):
+            actual = ai._account_environment()
+        self.assertEqual(actual["HOME"], env["HOME"])
+        self.assertEqual(actual["CLAUDE_CONFIG_DIR"], env["CLAUDE_CONFIG_DIR"])
+        self.assertNotIn("ANTHROPIC_API_KEY", actual)
+
     def test_account_readiness_requires_account_auth_not_an_api_key(self):
         for method, expected in (("claude.ai", True), ("api_key", False)):
             result = MagicMock(returncode=0, stdout=json.dumps({"loggedIn": True, "authMethod": method}))
@@ -248,7 +282,7 @@ class ClaudeAccountTest(unittest.TestCase):
 
     def test_logged_out_account_never_falls_back_to_api(self):
         with tempfile.TemporaryDirectory() as root:
-            with patch.object(ai, "account_ready", return_value=False):
+            with patch.object(ai, "account_ready", return_value=False), patch.object(ai, "_claude_binary", return_value="/usr/local/bin/claude"):
                 ai.save_settings(root, {"provider": "claude_account"})
                 with patch.object(ai, "_post") as api:
                     with self.assertRaisesRegex(ai.AIError, "Sign in"):

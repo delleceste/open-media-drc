@@ -207,6 +207,7 @@ const rel = wall => Math.round(wall - LOG.t0);
 const logLine = text => {
     const line = `${String(rel(Date.now())).padStart(6)} ms  ${text}`;
     LOG.lines.push(line);
+    K.timingDebug?.record('calibration', { line });
     LOG.subs.forEach(f => { try { f(line); } catch {} });
 };
 const logRaw = text => {

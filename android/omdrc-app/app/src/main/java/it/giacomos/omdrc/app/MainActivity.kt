@@ -340,6 +340,8 @@ class MainActivity : ComponentActivity() {
 
         applySystemBars()
 
+        val timingDebug = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        WebView.setWebContentsDebuggingEnabled(timingDebug)
         webView = findViewById(R.id.web_view)
         loadingRing = findViewById(R.id.loading_ring)
         val loadingHost = findViewById<EditText>(R.id.loading_host)
@@ -457,6 +459,14 @@ class MainActivity : ComponentActivity() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                if (timingDebug && message.message().startsWith("OMDRC_TIMING ")) {
+                    android.util.Log.i("OMDRCTiming", message.message().removePrefix("OMDRC_TIMING "))
+                    return true
+                }
+                return super.onConsoleMessage(message)
+            }
+
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 if (!loadFailed) loadingRing.setProgress(newProgress)
             }

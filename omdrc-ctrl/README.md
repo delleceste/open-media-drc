@@ -901,6 +901,24 @@ during structured selection. Shell, file, MCP, hook and plugin access are
 disabled. Account mode does not fall back to an API key. Claude's own login
 stores the account credentials; omdrcctrl neither copies nor returns them.
 
+An existing Claude installation is reused the same way on Linux and FreeBSD:
+the service runs Claude as its own Unix user, with that user's `HOME`. On
+FreeBSD, `omdrcctrl_user` selects that user and the rc.d script sets its home
+directory. This must be the user whose Claude account is already signed in.
+Claude manages its existing configuration and credentials itself; there is no
+second omdrcctrl account-secret file. A `CLAUDE_CONFIG_DIR` supplied in the
+service environment is preserved for installations using a custom profile.
+
+Executable discovery checks the service `PATH`, then `~/.local/bin/claude`
+and `/usr/local/bin/claude` (including FreeBSD's usual package location). For
+a nonstandard location, set `OMDRC_CLAUDE_BIN` to the absolute executable path
+in the service environment and restart omdrcctrl. An invalid override is
+reported rather than silently selecting another executable. Custom FreeBSD
+`omdrcctrl_env` settings should retain the service user's correct `HOME` and
+the usual `/usr/local/bin` on `PATH`. Run `claude auth status` as that user to
+check the existing login. The app's `/qobuz/ai/settings` reports
+`account_ready: true` when that login is detected.
+
 For example, enter “Suggest three Beethoven Symphony No. 5 recordings,
 prioritizing sound engineering,” enable **AI** and press the magnifier.
 Enabling AI clears the filters; active filters make the Filters label red.

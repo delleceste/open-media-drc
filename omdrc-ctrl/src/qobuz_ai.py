@@ -37,11 +37,19 @@ class AIError(QobuzError):
 
 
 def _claude_binary():
+    # rc.d and systemd have smaller PATHs than an interactive login shell.
+    # A host-specific override belongs to the service environment, not the UI.
+    override = os.environ.get("OMDRC_CLAUDE_BIN", "").strip()
+    if override:
+        path = Path(override).expanduser()
+        return str(path) if path.is_absolute() and path.is_file() and os.access(path, os.X_OK) else None
     found = shutil.which("claude")
     if found:
         return found
-    path = Path.home() / ".local/bin/claude"
-    return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+    for path in (Path.home() / ".local/bin/claude", Path("/usr/local/bin/claude")):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
 
 
 def _account_environment():
@@ -301,6 +309,9 @@ def recommend(state_dir, catalog, prompt, filters, count=None, post=None):
         raise AIError("Ask for between one and six albums.")
     cfg = configuration(state_dir)
     if cfg["provider"] == "claude_account" and not account_ready():
+        if not _claude_binary():
+            raise AIError("Claude Code was not found for the web service user. Put claude on the service PATH "
+                          "or set OMDRC_CLAUDE_BIN to its absolute executable path.")
         raise AIError("Sign in to Claude Code on this server as the web service user first.")
     if cfg["provider"] != "claude_account" and not cfg["key"]:
         raise AIError("Add your API key in AI settings first.")

@@ -1399,6 +1399,89 @@ transport timing; an acoustic test on the actual phone and speakers is still
 needed to confirm audible alignment.
 
 
+**ADB timing verification (debug Android app).** The repository includes
+`omdrc-ctrl/tools/meter-timing-debug.mjs`. With Node.js 22 or newer, Android
+platform-tools (`adb`) on the computer, USB debugging authorized, and the debug
+OMDRC app open in the foreground, run from the repository root:
+
+```sh
+# Passive 30-second recording; leaves playback and calibration unchanged.
+node omdrc-ctrl/tools/meter-timing-debug.mjs --out /tmp/timing-passive.json
+
+# Hold VU messages for 2.2 seconds, then deliver the queued burst.
+node omdrc-ctrl/tools/meter-timing-debug.mjs --fault hold --out /tmp/timing-hold.json
+
+# Discard every third VU message for 2.2 seconds.
+node omdrc-ctrl/tools/meter-timing-debug.mjs --fault drop --out /tmp/timing-drop.json
+
+# Also measure audible alignment before and after the fault.
+node omdrc-ctrl/tools/meter-timing-debug.mjs --fault hold --acoustic --out /tmp/timing-mic.json
+```
+
+Select VU/level bars on Now for the default `vu-clip` stream. For Now’s spectrum use
+`--mode music-clip`. Other views may use `vu`, `music` or `precision`;
+match the stream named in the recording’s counters. Keep the
+screen awake and the view visible. Use `--serial SERIAL` when more than one ADB
+device is attached. `--seconds N` controls the recording interval (15–480 s).
+The tool connects to this app's WebView through a temporary ADB forward and
+removes that forward at exit. It does not enable global network throttling.
+
+Recording is opt-in and bounded: at most 12,000 events, with the number of
+omitted older events recorded explicitly. A watchdog stops capture within ten
+minutes; an injected fault ends automatically within ten seconds even if the
+computer disconnects. The CLI uses a 2.2-second fault after five seconds of
+baseline. Faults affect only the chosen meter message handler; they neither
+simulate an audio dropout nor exercise the Wi-Fi driver or TCP reconnect path.
+For those, record passively while reproducing an actual interruption, and
+inspect connection events. The tool does not manufacture frames or turn an
+inactive analyzer into successful evidence.
+
+The JSON contains wall-clock and monotonic timestamps, network and loaded
+filter/rate identity, exact or borrowed calibration and applied delay, connection
+opens/errors/replacements, received frames, stale frames, discarded obsolete or
+out-of-order draws, and frames combined into one screen refresh. Frame age is
+relative to the best observed transit on that connection (with server publication
+time preserved), **not absolute one-way network latency**. Draw lateness is the
+callback time minus its scheduled time; it does not measure the physical screen's
+scanout. These distinctions matter when interpreting apparently good logs.
+
+For an injected fault, the report compares the 95th percentile of drawing
+lateness before and after recovery, allowing three seconds after fault release.
+`delivery-recovered` requires at least ten baseline and ten recovered draws, an
+actually exercised fault, no omitted events or observed configuration/visibility
+change, and recovered lateness no greater than the larger of 100 ms or baseline
+plus 50 ms. `delivery-late` fails that lateness criterion; `inconclusive` means
+there is insufficient or interrupted evidence. Passive recordings are reported
+as inconclusive by this automatic fault comparison; their raw events remain
+useful. None of these results is a guarantee of acoustic synchronization.
+
+`--acoustic` explicitly **stops music and plays the click track twice**, using
+the phone microphone. Place the phone near the speakers at normal volume before
+starting. Both full microphone verification logs are saved separately in the
+JSON, with the measured residual lag before/after and their difference when
+both detections succeed. Failure of either detector makes the acoustic comparison
+inconclusive. These checks do not save or overwrite a calibration; the UI's last
+calibration log will contain the second check. Small differences are subject to
+the existing microphone/onset estimator's tolerance, so inspect paired-lag spread
+and repeat measurements before attributing a small change to long-term drift.
+
+During a recording, debug Android builds also forward structured diagnostics to
+Logcat under `OMDRCTiming`. In a second terminal use:
+
+```sh
+adb logcat -v threadtime -s OMDRCTiming:I '*:S'
+```
+
+Logcat contains one-second cumulative counters and session/configuration,
+connection and calibration messages; per-frame details are in the JSON export.
+No raw microphone PCM is recorded. Acoustic exports contain the existing level
+envelope and network/filter identifiers; they are diagnostic files rather than
+anonymous statistics. Release builds disable WebView debugging and this native
+Logcat forwarding. The implementation uses Android's documented
+[WebView debugging support](https://developer.android.com/develop/ui/views/layout/webapps/debug-chrome-devtools)
+and the [DevTools Runtime protocol](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/).
+
+
 **Orientation.** With the phone's auto-rotate on, the app follows the phone
 like any other app and every page adapts to how it is held; the rotate
 button is hidden. With auto-rotate off, Now is shown in landscape and every
