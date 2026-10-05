@@ -70,10 +70,11 @@ P.paint = async () => {
     const path = P.pathName(), seq = P.paintSeq = (P.paintSeq || 0) + 1;
     P.loading = false;
     P.message.textContent = '';
-    K.clear(P.head).append(
+    K.clear(P.head).append(...[
         P.path.length ? h('button', { type: 'button', class: 'btn', onclick: P.back }, '‹ Back') : null,
         h('strong', {}, path || 'Qobuz Library'),
-        h('button', { type: 'button', class: 'btn', title: 'Refresh Qobuz Library', onclick: P.refresh }, '↻'));
+        h('button', { type: 'button', class: 'btn', title: 'Refresh Qobuz Library', onclick: P.refresh }, '↻'),
+    ].filter(Boolean));
     K.clear(P.grid);
     const children = new Map();
     for (const folder of P.folders) {
