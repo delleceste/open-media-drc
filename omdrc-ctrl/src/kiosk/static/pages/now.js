@@ -743,9 +743,14 @@ P.pollTrack = async () => {
     P.fmt.style.color = K.formatColor(t.format);
     P.paintState(t.state);
     P.state.className = 'chip state ' + t.state;
-    if (t.art) { if (P.art.getAttribute('src') !== t.art) { P.art.hidden = true; P.art.setAttribute('src', t.art); } }
-    else { P.art.hidden = true; P.art.removeAttribute('src'); P.artBox.classList.add('empty'); }
-    if ((t.art || '') !== P.artUrl) P.setArt(t.art || '');
+    const nextArt = t.art || '';
+    P.emptyArtPolls = nextArt ? 0 : (P.emptyArtPolls || 0) + 1;
+    // A brief empty status during a track change must not unload the same album cover.
+    if (nextArt || P.emptyArtPolls > 1) {
+        if (nextArt) { if (P.art.getAttribute('src') !== nextArt) { P.art.hidden = true; P.art.setAttribute('src', nextArt); } }
+        else { P.art.hidden = true; P.art.removeAttribute('src'); P.artBox.classList.add('empty'); }
+        if (nextArt !== P.artUrl) P.setArt(nextArt);
+    }
     P.infoBtn.hidden = !t.qobuz_album;
     if (P.awardsFor !== (t.qobuz_album || '')) {
         P.awardsFor = t.qobuz_album || '';

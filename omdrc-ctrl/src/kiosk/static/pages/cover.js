@@ -118,8 +118,10 @@ P.pollTrack = async () => {
     P.fmt.style.color = K.formatColor(t.format);
     P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
     if (t.state === 'play' && !P.level) K.markSound();
-    if (t.art) { if (P.img.getAttribute('src') !== t.art) P.img.setAttribute('src', t.art); }
-    else { P.img.hidden = true; P.img.removeAttribute('src'); P.none.hidden = false; }
+    const nextArt = t.art || '';
+    P.emptyArtPolls = nextArt ? 0 : (P.emptyArtPolls || 0) + 1;
+    if (nextArt) { if (P.img.getAttribute('src') !== nextArt) P.img.setAttribute('src', nextArt); }
+    else if (P.emptyArtPolls > 1) { P.img.hidden = true; P.img.removeAttribute('src'); P.none.hidden = false; }
     P.paintTime();
 };
 

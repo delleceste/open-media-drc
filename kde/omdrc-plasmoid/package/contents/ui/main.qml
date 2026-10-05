@@ -44,6 +44,7 @@ PlasmoidItem {
     property string page: "cover"       // cover | queue | qobuz
     property string artPath: ""
     property int artRequestSerial: 0
+    property int emptyArtPolls: 0
     property string simpleSearchQuery: ""
     property bool simpleSearchBusy: false
     property var simpleSearchAnswer: null
@@ -238,7 +239,6 @@ PlasmoidItem {
             if (asked !== base) return
             if (status === 200 && data && data.ok) {
                 const was = reachable
-                const oldFile = player.file
                 reachable = true
                 pollError = ""
                 player = data
@@ -251,7 +251,6 @@ PlasmoidItem {
                     if (autoOpenedSearch && page === "qobuz") page = "cover"
                     autoOpenedSearch = false
                 }
-                if (!was || oldFile !== data.file) artPath = ""
                 pollArt()
                 if (!was) readSettings()
                 if (playing || !wantsLevels) cdinActive = false
@@ -284,7 +283,11 @@ PlasmoidItem {
         const asked = base, serial = ++artRequestSerial
         request("GET", "/qconnect/status", null, function (status, data) {
             if (asked !== base || serial !== artRequestSerial || status !== 200 || !data || !data.ok) return
-            artPath = data.art || ""
+            const nextArt = data.art || ""
+            emptyArtPolls = nextArt ? 0 : emptyArtPolls + 1
+            // A track change can briefly report no art before resolving the
+            // same album URL. Keep the image through that intermediate poll.
+            if (nextArt || emptyArtPolls > 1) artPath = nextArt
         })
     }
 
@@ -457,6 +460,7 @@ PlasmoidItem {
         autoOpenedSearch = false
         ++artRequestSerial
         artPath = ""
+        emptyArtPolls = 0
         player = { state: "stop", title: "", artist: "", album: "", file: "" }
         poll()
     }

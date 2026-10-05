@@ -3262,6 +3262,7 @@ const QC_PHASE_ERROR   = 'ERROR';
 let qcTiming = { elapsed: null, duration: null, playbackState: '', syncedAtMs: 0 };
 let qcArtSrc = '';         // cover currently attempted, so a poll cannot
                            // re-show one that failed to load
+let qcEmptyArtPolls = 0;
 let qcBaseLine1 = '';       // line1 with no position suffix, from the server
 let qcShowingTrack = false; // false while a phase override ("[ RESOLVING ]") owns the line
 
@@ -3326,12 +3327,13 @@ function paintQcStatus(d) {
     // failure keeps it that way: unhiding on every poll -- which is what this
     // did at first -- leaves a 48px dark square that never fills in.
     const art = document.getElementById('qc-art');
-    const wanted = (d.playback_state === 'stop') ? '' : (d.art || '');
-    if (!wanted) {
+    const wanted = d.art || '';
+    qcEmptyArtPolls = wanted ? 0 : qcEmptyArtPolls + 1;
+    if (!wanted && qcEmptyArtPolls > 1) {
         art.hidden = true;
         art.removeAttribute('src');
         qcArtSrc = '';
-    } else if (wanted !== qcArtSrc) {
+    } else if (wanted && wanted !== qcArtSrc) {
         qcArtSrc = wanted;
         art.hidden = true;             // onload shows it, onerror leaves it
         art.setAttribute('src', wanted);
