@@ -98,6 +98,7 @@ _learned: dict[str, SearchWords] = {}
 _lowered: dict[str, LoweredList] = {}
 _awarded: dict[str, AwardedAlbums] = {}
 _listening_jobs: dict[str, threading.Event] = {}
+_listening_cancelled: dict[str, float] = {}
 _listening_lock = threading.Lock()
 # The shipped completion list, next to this module; re-read when it changes.
 WORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qobuz_words.txt")
@@ -417,6 +418,9 @@ def ai_listening():
         return jsonify({"ok": False, "error": "Invalid research session."}), 400
     cancel = threading.Event()
     with _listening_lock:
+        if job in _listening_cancelled:
+            cancel.set()
+            _listening_cancelled.pop(job, None)
         _listening_jobs[job] = cancel
     try:
         answer = qobuz_ai.listening_research(_state_dir(), body.get("album"), body.get("tracks"), cancel=cancel)
@@ -441,6 +445,18 @@ def ai_listening_cancel():
         event = _listening_jobs.get(job) if isinstance(job, str) else None
         if event:
             event.set()
+        elif isinstance(job, str) and len(job) == 36:
+            try:
+                uuid.UUID(job)
+            except ValueError:
+                job = None
+            if job:
+                _listening_cancelled[job] = time.monotonic()
+            for key, age in list(_listening_cancelled.items()):
+                if time.monotonic() - age >= 300:
+                    _listening_cancelled.pop(key, None)
+            while len(_listening_cancelled) > 256:
+                _listening_cancelled.pop(next(iter(_listening_cancelled)))
     return jsonify({"ok": True})
 
 

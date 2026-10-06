@@ -942,7 +942,7 @@ tracks or movements. The current composition follows playback, including when
 the guide is swiped down to its bottom strip. Swipe up to reopen it; **Close**
 stops following playback and cancels the active research. When Qobuz supplies a
 track list, the guide maps sections to that list. Other sources use the current
-track and album metadata, so section matching is less precise.
+track and album metadata and research again on each track change.
 
 Keys are stored only on the server in `<state_dir>/qobuz-ai.json`, atomically
 written with mode `0600`, and never returned by the settings API or saved in

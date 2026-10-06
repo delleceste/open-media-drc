@@ -246,6 +246,10 @@ class RouteTest(unittest.TestCase):
             self.assertFalse(research.call_args.kwargs["cancel"].is_set())
         self.assertEqual(self.client.post("/qobuz/ai/listening", json={**body, "job": []}, headers=headers).status_code, 400)
         self.assertEqual(self.client.post("/qobuz/ai/listening/cancel", json={"job": []}, headers=headers).status_code, 200)
+        self.assertEqual(self.client.post("/qobuz/ai/listening/cancel", json={"job": job}, headers=headers).status_code, 200)
+        with patch.object(ai, "listening_research", return_value={"overview": "Cancelled"}) as research:
+            self.client.post("/qobuz/ai/listening", json=body, headers=headers)
+            self.assertTrue(research.call_args.kwargs["cancel"].is_set())
 
 
 class ClaudeAccountTest(unittest.TestCase):

@@ -13,7 +13,7 @@ const newJob = () => {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
 const keyOf = t => t && (t.qobuz_album ? 'q:' + t.qobuz_album :
-    'a:' + norm(t.album || t.title) + '|' + norm(t.artist));
+    'a:' + norm(t.album || t.title) + '|' + norm(t.artist) + '|' + norm(t.title));
 G.onChange = fn => { G.listeners.add(fn); return () => G.listeners.delete(fn); };
 G.changed = () => G.listeners.forEach(fn => fn());
 G.icon = (className = '') => G.provider && G.provider !== 'ai'
@@ -38,13 +38,16 @@ G.selectPlaying = () => {
     if (!G.guide) return;
     const n = G.trackNumber();
     const section = G.guide.compositions.findIndex(s => s.tracks.includes(n));
-    if (section >= 0) G.selected = section;
+    G.selected = section;
     G.paint();
 };
 G.observe = t => {
     if (!G.active || !t || !t.ok || t.state === 'stop' || !t.title) return;
-    const key = !t.qobuz_album && G.track?.qobuz_album && norm(t.album) === norm(G.track.album)
-        ? G.albumKey : keyOf(t);
+    if (!t.qobuz_album && G.track?.qobuz_album && norm(t.album) === norm(G.track.album)) {
+        t = { ...t, qobuz_album: G.track.qobuz_album,
+            track_id: t.track_id || (t.title === G.track.title ? G.track.track_id : '') };
+    }
+    const key = keyOf(t);
     if (!key) return;
     if (key !== G.albumKey) {
         G.albumKey = key;
@@ -76,6 +79,7 @@ G.open = async t => {
 G.close = () => {
     G.active = false;
     G.serial++;
+    clearTimeout(G.retryTimer);
     G.cancelJob();
     G.controller?.abort();
     G.controller = null;
@@ -97,6 +101,7 @@ G.cancelJob = () => {
 };
 G.research = async () => {
     const serial = ++G.serial;
+    clearTimeout(G.retryTimer);
     G.cancelJob();
     G.controller?.abort();
     G.controller = new AbortController();
@@ -133,6 +138,11 @@ G.research = async () => {
         G.selectPlaying();
     } catch (error) {
         if (serial !== G.serial || !G.active) return;
+        if (/already running/.test(error.message)) {
+            G.error = 'Waiting for the previous research to stop…';
+            G.retryTimer = setTimeout(() => { if (serial === G.serial && G.active) G.research(); }, 2500);
+            return;
+        }
         G.error = error.name === 'AbortError' ? 'Research stopped' : error.message;
     } finally {
         if (serial === G.serial) { G.job = null; G.busy = false; G.paint(); }
