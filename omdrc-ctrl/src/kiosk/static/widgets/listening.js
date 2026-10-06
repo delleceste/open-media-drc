@@ -387,7 +387,6 @@ G.paint = () => {
     G.tabsObserver = new ResizeObserver(updateHints);
     G.tabsObserver.observe(tabs);
     requestAnimationFrame(() => { tabs.scrollLeft = G.tabScroll || 0; updateHints(); });
-    if (G.guide.research_status) G.panel.append(h('p', { class: 'muted small', role: 'status' }, G.guide.research_status));
     const shown = G.selectedTrack ? {
         title: G.tracks[G.selectedTrack - 1]?.title || `Track ${G.selectedTrack}`,
         text: G.guide.track_notes?.find(n => n.track === G.selectedTrack)?.text ||
@@ -395,7 +394,6 @@ G.paint = () => {
     } : active || items[0];
     const content = h('div', { class: 'listening-content' },
         h('h2', {}, shown.title), ...String(shown.text || '').split(/\n\s*\n/).filter(Boolean).map(p => h('p', {}, p)));
-    if (!G.selectedTrack) G.panel.append(content);
     const singleTrackSections = G.singleTrackSections();
     if (G.tracks?.length && !singleTrackSections) {
         const trackTabs = h('div', { class: 'listening-track-tabs', 'aria-label': 'Track details' });
@@ -412,7 +410,8 @@ G.paint = () => {
         }, `${index + 1}. ${track.title}`)));
         G.panel.append(h('div', { class: 'listening-track-heading' }, 'Tracks'), trackTabs);
     }
-    if (G.selectedTrack) G.panel.append(content);
+    if (G.guide.research_status) G.panel.append(h('p', { class: 'muted small', role: 'status' }, G.guide.research_status));
+    G.panel.append(content);
     if (singleTrackSections && !G.selectedTrack && G.selected >= 0) {
         const detail = G.guide.track_notes?.find(note => note.track === active.tracks[0])?.text;
         if (detail && detail.trim() !== String(active?.text || '').trim()) {
