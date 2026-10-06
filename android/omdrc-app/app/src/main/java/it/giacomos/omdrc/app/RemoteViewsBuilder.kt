@@ -14,6 +14,10 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.Build
+import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.View
 import android.widget.RemoteViews
 import it.giacomos.omdrc.app.data.MpdStatus
@@ -95,13 +99,17 @@ object RemoteViewsBuilder {
     ): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_tiny)
 
-        val drcOn = snapshot?.drc?.running == true
-        views.setImageViewBitmap(R.id.cover_art, iconSurface(context, WidgetArtCache.load(context, appWidgetId), drcOn))
+        layoutTiny(context, views, appWidgetId)
 
         // A null song means an empty queue (nothing loaded to play/pause),
-        // not just "currently stopped" - no point offering a control that
-        // has nothing to act on.
-        val hasQueue = snapshot?.mpd?.song != null
+        // not just "currently stopped". Unreachable, the cached song and art
+        // are only last-known, so the tile falls back to the plain app icon
+        // with no control rather than showing them as current.
+        val hasQueue = snapshot?.reachable == true && snapshot.mpd?.song != null
+        val drcOn = snapshot?.reachable == true && snapshot.drc?.running == true
+        val art = if (hasQueue) WidgetArtCache.load(context, appWidgetId) else null
+        views.setImageViewBitmap(R.id.cover_art, iconSurface(context, art, drcOn))
+
         if (hasQueue) {
             val playing = snapshot?.mpd?.state == "playing"
             views.setImageViewResource(R.id.play_pause_icon, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
@@ -114,6 +122,44 @@ object RemoteViewsBuilder {
         views.setOnClickPendingIntent(R.id.widget_root, openDashboardIntent(context, appWidgetId, host, port))
 
         return views
+    }
+
+    /** Sizes the tile like the launcher's own icons in a cell of the same
+     *  height. Icon, label size and their gap all grow with the grid, so
+     *  each is interpolated between two Pixel launcher grids measured on
+     *  a Pixel 9: a 111dp-tall cell (53.5dp icon, 12.9sp label, 8.4dp from
+     *  icon to the label's cap line) and a 158dp one (83dp, 16.5sp, 14.9dp).
+     *  Icon top to label baseline is then centered in the cell, as the
+     *  launcher does. Before Android 12 RemoteViews can't size views at
+     *  runtime, and the layout's fixed, centered defaults apply. */
+    private fun layoutTiny(context: Context, views: RemoteViews, appWidgetId: Int) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
+        val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).toFloat()
+        val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0).toFloat()
+        if (width <= 0f || height <= 0f) return
+        val t = (height - 111f) / (158f - 111f)
+        val icon = (53.5f + (83f - 53.5f) * t).coerceIn(24f, width)
+        val textSp = (12.9f + (16.5f - 12.9f) * t).coerceAtLeast(9f)
+        val gap = (8.4f + (14.9f - 8.4f) * t).coerceAtLeast(2f)
+        val fontScale = context.resources.configuration.fontScale
+        // Measured on the label TextView: its cap line sits 0.353em below
+        // the view's top (font padding included), cap height 0.73em.
+        val capTop = 0.353f * textSp * fontScale
+        val capHeight = 0.73f * textSp * fontScale
+        val top = ((height - (icon + gap + capHeight)) / 2f).coerceAtLeast(0f)
+        Log.d("OmdrcWidget", "layoutTiny($appWidgetId): cell ${width}x$height dp -> icon $icon dp, label $textSp sp, top $top dp")
+
+        val dip = TypedValue.COMPLEX_UNIT_DIP
+        views.setInt(R.id.tiny_column, "setGravity", Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+        views.setViewLayoutWidth(R.id.icon_surface, icon, dip)
+        views.setViewLayoutHeight(R.id.icon_surface, icon, dip)
+        views.setViewLayoutMargin(R.id.icon_surface, RemoteViews.MARGIN_TOP, top, dip)
+        views.setTextViewTextSize(R.id.omdrc_label, TypedValue.COMPLEX_UNIT_SP, textSp)
+        views.setViewLayoutMargin(R.id.omdrc_label, RemoteViews.MARGIN_TOP, gap - capTop, dip)
+        val chip = 0.3f * icon
+        views.setViewLayoutWidth(R.id.play_pause_icon, chip, dip)
+        views.setViewLayoutHeight(R.id.play_pause_icon, chip, dip)
     }
 
     /** The launcher icon's circle, drawn as one square bitmap so it stays a

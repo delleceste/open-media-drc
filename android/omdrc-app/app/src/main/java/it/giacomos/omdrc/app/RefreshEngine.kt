@@ -100,12 +100,15 @@ object RefreshEngine {
 
     private fun sizeFor(manager: AppWidgetManager, appWidgetId: Int): WidgetSize {
         val options = manager.getAppWidgetOptions(appWidgetId)
-        val minWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
+        // Portrait size: the narrowest width and the tallest height.
+        val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
+        val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0)
         return when {
-            minWidth >= 250 -> WidgetSize.LARGE
-            // Below the 2-cell width (110dp) but still resized down from it -
-            // the 1-cell cover-art tile, not the text-strip SMALL layout.
-            minWidth < 70 -> WidgetSize.TINY
+            // A single cell is narrower than tall on the launcher's grids
+            // (79x127dp at 5 columns, 128x174dp at 3), a 2x1 strip wider -
+            // a fixed dp threshold misfires as the grid's cells grow.
+            width < 70 || width < height -> WidgetSize.TINY
+            width >= 250 -> WidgetSize.LARGE
             else -> WidgetSize.SMALL
         }
     }
