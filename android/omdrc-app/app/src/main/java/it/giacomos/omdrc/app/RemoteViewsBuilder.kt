@@ -38,6 +38,15 @@ private const val ICON_SURFACE_PX = 256
 // elsewhere. Must match widget_tiny.xml's omdrc_label fontFamily.
 private const val LABEL_FONT_FAMILY = "google-sans-text"
 
+// Pixel launcher on a Pixel 9, measured off screenshots, in dp: reported
+// cell height, icon diameter, icon bottom to the label's cap line, label
+// cap height. Small, large and extra-large icon grids, by cell height.
+private val LAUNCHER_GRIDS = arrayOf(
+    floatArrayOf(96.2f, 52.6f, 8.4f, 8.76f),
+    floatArrayOf(158f, 83f, 14.9f, 12.2f),
+    floatArrayOf(208.2f, 144.1f, 22.7f, 17.5f),
+)
+
 /**
  * Pure(ish) rendering: takes a snapshot (possibly null/stale/unreachable)
  * and produces the RemoteViews to show, without touching the network
@@ -128,13 +137,21 @@ object RemoteViewsBuilder {
         return views
     }
 
+    /** Column [column] of LAUNCHER_GRIDS, linearly interpolated (and
+     *  extrapolated past either end) at cell height [height] dp. */
+    private fun launcherMetric(height: Float, column: Int): Float {
+        val i = (1 until LAUNCHER_GRIDS.size - 1).firstOrNull { height < LAUNCHER_GRIDS[it][0] }
+            ?: (LAUNCHER_GRIDS.size - 1)
+        val a = LAUNCHER_GRIDS[i - 1]
+        val b = LAUNCHER_GRIDS[i]
+        return a[column] + (b[column] - a[column]) * (height - a[0]) / (b[0] - a[0])
+    }
+
     /** Sizes the tile like the launcher's own icons in a cell of the same
      *  height. The launcher reports a widget cell exactly as tall as an
      *  icon cell and centers icon + label in it; icon, label and their gap
-     *  all grow with the grid. Each is interpolated between two Pixel
-     *  launcher grids measured on a Pixel 9: a 96.2dp-tall cell (52.6dp
-     *  icon, 8.4dp from icon to the label's cap line, 8.76dp cap height)
-     *  and a 158dp one (83dp, 14.9dp, 12.2dp). The label's size and offset
+     *  all grow with the grid, not proportionally, so each is interpolated
+     *  between the grids in LAUNCHER_GRIDS. The label's size and offset
      *  come from its typeface's own metrics, so its capitals match the
      *  launcher's. Before Android 12 RemoteViews can't size views at
      *  runtime, and the layout's fixed, centered defaults apply. */
@@ -144,10 +161,9 @@ object RemoteViewsBuilder {
         val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).toFloat()
         val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0).toFloat()
         if (width <= 0f || height <= 0f) return
-        val t = (height - 96.2f) / (158f - 96.2f)
-        val icon = (52.6f + (83f - 52.6f) * t).coerceIn(24f, width)
-        val gap = (8.4f + (14.9f - 8.4f) * t).coerceAtLeast(2f)
-        val capHeight = (8.76f + (12.2f - 8.76f) * t).coerceAtLeast(5f)
+        val icon = launcherMetric(height, 1).coerceIn(24f, width)
+        val gap = launcherMetric(height, 2).coerceAtLeast(2f)
+        val capHeight = launcherMetric(height, 3).coerceAtLeast(5f)
 
         // Per unit of text size: the cap height, and how far below the
         // TextView's top (font padding included) the cap line sits.
