@@ -58,4 +58,9 @@ assert.equal(remembered.guide.overview, 'Album overview', 'completed research mu
 assert.equal(remembered.selectedTrack, 1, 'the selected tab must survive a restart');
 guide.forget();
 assert.equal(saved.has('omdrc.listening.v1'), false, 'closing the guide removes the saved session');
+guide.tracks = [{ title: 'One' }, { title: 'Two' }, { title: 'Three' }];
+guide.guide = { compositions: [{ tracks: [2] }, { tracks: [1] }, { tracks: [3] }] };
+assert.equal(guide.singleTrackSections(), true, 'one section per track needs just the top tabs');
+guide.guide.compositions[0].tracks = [1, 2];
+assert.equal(guide.singleTrackSections(), false, 'a multi-track work keeps separate track navigation');
 console.log('listening track matching OK');

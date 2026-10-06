@@ -160,6 +160,7 @@ G.close = () => {
     clearInterval(G.poll);
     G.swipePreview?.remove();
     G.swipePreview = null;
+    G.tabsObserver?.disconnect();
     G.panel?.remove();
     G.panel = null;
     G.albumKey = '';
@@ -288,6 +289,12 @@ G.makePanel = () => {
     }, { passive: true });
 };
 G.minimize = () => { G.collapsed = true; G.remember(); G.paint(); };
+G.singleTrackSections = () => {
+    if (!G.tracks?.length || G.guide?.compositions?.length !== G.tracks.length) return false;
+    const numbers = G.guide.compositions.map(section => section.tracks?.length === 1 ? section.tracks[0] : 0);
+    return new Set(numbers).size === G.tracks.length
+        && numbers.every(number => Number.isInteger(number) && number > 0 && number <= G.tracks.length);
+};
 G.label = () => {
     const active = G.guide?.compositions?.[G.selected];
     return G.selectedTrack ? G.tracks?.[G.selectedTrack - 1]?.title :
@@ -299,6 +306,13 @@ G.stripIcon = () => G.busy && G.provider?.startsWith('claude')
 G.paint = () => {
     G.changed();
     if (!G.panel) return;
+    G.tabsObserver?.disconnect();
+    G.tabScroll = G.panel.querySelector('.listening-tabs')?.scrollLeft ?? G.tabScroll ?? 0;
+    if (G.singleTrackSections() && G.selectedTrack) {
+        G.selected = G.guide.compositions.findIndex(section => section.tracks[0] === G.selectedTrack);
+        G.selectedTrack = null;
+        G.remember();
+    }
     const active = G.guide?.compositions?.[G.selected];
     const label = G.label();
     G.panel.classList.toggle('collapsed', G.collapsed);
@@ -322,11 +336,23 @@ G.paint = () => {
         h('button', { type: 'button', class: 'chip', onclick: G.research }, 'Retry'));
     if (!G.guide) return;
     const tabs = h('div', { class: 'listening-tabs', role: 'tablist' });
+    const leftHint = h('span', { class: 'listening-tab-hint left', hidden: true, 'aria-hidden': 'true' }, '<');
+    const rightHint = h('span', { class: 'listening-tab-hint right', hidden: true, 'aria-hidden': 'true' }, '>');
     const items = [{ title: 'Overview', text: G.guide.overview }, ...G.guide.compositions];
     items.forEach((item, index) => tabs.append(h('button', { type: 'button', class: 'chip' + (!G.selectedTrack && G.selected === index - 1 ? ' on' : ''),
         role: 'tab', 'aria-selected': String(!G.selectedTrack && G.selected === index - 1),
         onclick: () => { G.userSelected = true; G.selectedTrack = null; G.selected = index - 1; G.remember(); G.paint(); } }, item.title)));
-    G.panel.append(tabs);
+    G.panel.append(h('div', { class: 'listening-tabs-wrap' }, tabs, leftHint, rightHint));
+    const updateHints = () => {
+        if (!tabs.isConnected) return;
+        G.tabScroll = tabs.scrollLeft;
+        leftHint.hidden = tabs.scrollLeft < 2;
+        rightHint.hidden = tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 2;
+    };
+    tabs.addEventListener('scroll', updateHints, { passive: true });
+    G.tabsObserver = new ResizeObserver(updateHints);
+    G.tabsObserver.observe(tabs);
+    requestAnimationFrame(() => { tabs.scrollLeft = G.tabScroll || 0; updateHints(); });
     if (G.guide.research_status) G.panel.append(h('p', { class: 'muted small', role: 'status' }, G.guide.research_status));
     const shown = G.selectedTrack ? {
         title: G.tracks[G.selectedTrack - 1]?.title || `Track ${G.selectedTrack}`,
@@ -336,7 +362,8 @@ G.paint = () => {
     const content = h('div', { class: 'listening-content' },
         h('h2', {}, shown.title), ...String(shown.text || '').split(/\n\s*\n/).filter(Boolean).map(p => h('p', {}, p)));
     if (!G.selectedTrack) G.panel.append(content);
-    if (G.tracks?.length) {
+    const singleTrackSections = G.singleTrackSections();
+    if (G.tracks?.length && !singleTrackSections) {
         const trackTabs = h('div', { class: 'listening-track-tabs', 'aria-label': 'Track details' });
         G.tracks.forEach((track, index) => trackTabs.append(h('button', {
             type: 'button', class: 'chip' + (G.selectedTrack === index + 1 ? ' on' : ''),
@@ -352,9 +379,16 @@ G.paint = () => {
         G.panel.append(h('div', { class: 'listening-track-heading' }, 'Tracks'), trackTabs);
     }
     if (G.selectedTrack) G.panel.append(content);
+    if (singleTrackSections && !G.selectedTrack && G.selected >= 0) {
+        const detail = G.guide.track_notes?.find(note => note.track === active.tracks[0])?.text;
+        if (detail && detail.trim() !== String(active?.text || '').trim()) {
+            G.panel.append(h('div', { class: 'listening-track' },
+                h('strong', {}, 'Track detail'), h('p', {}, detail)));
+        }
+    }
     const number = G.trackNumber();
     const note = G.guide.track_notes?.find(n => n.track === number);
-    if (!G.userSelected && number && G.tracks[number - 1]) {
+    if (!singleTrackSections && !G.userSelected && number && G.tracks[number - 1]) {
         G.panel.append(h('div', { class: 'listening-track' },
             h('strong', {}, G.tracks[number - 1].title),
             note ? h('p', {}, note.text) : h('p', { class: 'muted' }, 'Track ' + number)));
