@@ -81,11 +81,9 @@ P.mount = el => {
         // (upright, previous and next track either side of it)
         h('div', { class: 'now-timebox' },
             h('span', { class: 'now-ctl' },
-                h('button', { class: 'chip now-step', type: 'button', title: 'Seek backward within this track', 'aria-label': 'Seek backward within this track', onclick: () => P.stepSeek(-1) }, '<<'),
                 h('button', { class: 'chip now-skip', type: 'button', title: 'Previous track', 'aria-label': 'Previous track', onclick: () => P.transport('prev') }, K.tIcon('prev')),
                 P.state,
-                h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, K.tIcon('next')),
-                h('button', { class: 'chip now-step', type: 'button', title: 'Seek forward within this track', 'aria-label': 'Seek forward within this track', onclick: () => P.stepSeek(1) }, '>>')),
+                h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, K.tIcon('next'))),
             P.time, P.progBox));
 
     // level area
