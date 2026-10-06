@@ -87,6 +87,56 @@ object OmdrcClient {
         )
     }
 
+    /** Current track's cover art, straight from GET /qconnect/art (same
+     *  image the kiosk UI's "Now"/cover pages show) - null on 404 (nothing
+     *  playing / no art) or any transport failure, both best-effort like
+     *  the other secondary fetches above. */
+    suspend fun fetchArt(host: String, port: Int): ByteArray? = withContext(Dispatchers.IO) {
+        val url = URL("http://$host:$port/qconnect/art")
+        val connection = url.openConnection() as HttpURLConnection
+        connection.connectTimeout = TIMEOUT_MS
+        connection.readTimeout = TIMEOUT_MS
+        connection.requestMethod = "GET"
+        try {
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) return@withContext null
+            connection.inputStream.use { it.readBytes() }
+        } catch (e: Exception) {
+            Log.w(TAG, "qconnect/art unreachable: ${e.message}")
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** POST /k/api/transport {"action": "play"|"pause"} - the same endpoint
+     *  the kiosk touchscreen UI's transport buttons use. No "toggle" action
+     *  exists server-side; the caller decides play vs pause from the last
+     *  known MPD state. Returns whether the box accepted it; the caller's
+     *  own refresh right afterward is what reconciles the widget with
+     *  whatever actually happened. */
+    suspend fun sendTransport(host: String, port: Int, action: String): Boolean = withContext(Dispatchers.IO) {
+        val url = URL("http://$host:$port/k/api/transport")
+        val connection = url.openConnection() as HttpURLConnection
+        connection.connectTimeout = TIMEOUT_MS
+        connection.readTimeout = TIMEOUT_MS
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        try {
+            connection.outputStream.use {
+                it.write(JSONObject(mapOf("action" to action)).toString().toByteArray(Charsets.UTF_8))
+            }
+            val ok = connection.responseCode in 200..299
+            if (!ok) Log.w(TAG, "transport($action) failed: HTTP ${connection.responseCode}")
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "transport($action) unreachable: ${e.message}")
+            false
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun get(host: String, port: Int, path: String): JSONObject {
         val url = URL("http://$host:$port$path")
         val connection = url.openConnection() as HttpURLConnection

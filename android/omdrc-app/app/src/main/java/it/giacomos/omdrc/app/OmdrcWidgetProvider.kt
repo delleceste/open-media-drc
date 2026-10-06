@@ -13,9 +13,9 @@ private const val TAG = "OmdrcWidget"
 /**
  * Single receiver for everything widget-related: the standard
  * AppWidgetProvider lifecycle (dispatched by the superclass's own
- * onReceive into onUpdate/onDeleted/onEnabled/onDisabled), plus two custom
- * explicit-intent actions (manual refresh tap, alarm tick) and
- * BOOT_COMPLETED, all handled directly in the onReceive override below.
+ * onReceive into onUpdate/onDeleted/onEnabled/onDisabled), plus custom
+ * explicit-intent actions (manual refresh tap, play/pause tap, alarm tick)
+ * and BOOT_COMPLETED, all handled directly in the onReceive override below.
  */
 class OmdrcWidgetProvider : AppWidgetProvider() {
 
@@ -28,6 +28,13 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
                 if (id != AppWidgetManager.INVALID_APPWIDGET_ID) {
                     RefreshEngine.showChecking(context, id)
                     WidgetRefreshWorker.enqueueOneTime(context, id, notify = true)
+                }
+            }
+            ACTION_TOGGLE_PLAY_PAUSE -> {
+                val id = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+                Log.d(TAG, "play/pause toggle requested for widget $id")
+                if (id != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                    WidgetRefreshWorker.enqueueTogglePlayPause(context, id)
                 }
             }
             ACTION_ALARM_TICK -> {
@@ -73,6 +80,7 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         for (id in appWidgetIds) {
             WidgetPrefs.delete(context, id)
+            WidgetArtCache.delete(context, id)
         }
     }
 
@@ -89,5 +97,6 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
     companion object {
         const val ACTION_MANUAL_REFRESH = "it.giacomos.omdrc.app.ACTION_MANUAL_REFRESH"
         const val ACTION_ALARM_TICK = "it.giacomos.omdrc.app.ACTION_ALARM_TICK"
+        const val ACTION_TOGGLE_PLAY_PAUSE = "it.giacomos.omdrc.app.ACTION_TOGGLE_PLAY_PAUSE"
     }
 }

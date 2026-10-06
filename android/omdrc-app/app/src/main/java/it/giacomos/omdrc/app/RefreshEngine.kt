@@ -22,7 +22,34 @@ object RefreshEngine {
         val snapshot = OmdrcClient.fetchSnapshot(hostPort.first, hostPort.second)
         Log.d(TAG, "refreshWidget($appWidgetId): reachable=${snapshot.reachable} running=${snapshot.drc?.running}")
         WidgetPrefs.saveSnapshot(context, appWidgetId, snapshot)
+        // Only touched while actually reachable - same reasoning as
+        // WidgetPrefs.saveSnapshot not overwriting the last-good status on a
+        // transient outage. A null here (no art for the current track) does
+        // still clear it, since that's a real "no art" answer, not a fetch
+        // failure.
+        if (snapshot.reachable) {
+            val art = OmdrcClient.fetchArt(hostPort.first, hostPort.second)
+            WidgetArtCache.save(context, appWidgetId, art)
+        }
         updateViews(context, appWidgetId, hostPort.first, hostPort.second)
+    }
+
+    /** Play/pause toggle from the TINY widget's icon tap. There's no
+     *  server-side "toggle" action, so the desired action is derived from
+     *  the last cached MPD state; refreshWidget() right after is what
+     *  reconciles the icon with whatever the box actually did (the POST
+     *  could fail, or another client could race it). */
+    suspend fun togglePlayPause(context: Context, appWidgetId: Int) {
+        val hostPort = WidgetPrefs.load(context, appWidgetId)
+        if (hostPort == null) {
+            Log.w(TAG, "togglePlayPause($appWidgetId): no host/port configured, skipping")
+            return
+        }
+        val cached = WidgetPrefs.loadSnapshot(context, appWidgetId)
+        val action = if (cached?.mpd?.state == "playing") "pause" else "play"
+        Log.d(TAG, "togglePlayPause($appWidgetId): sending $action")
+        OmdrcClient.sendTransport(hostPort.first, hostPort.second, action)
+        refreshWidget(context, appWidgetId)
     }
 
     suspend fun refreshAll(context: Context) {
@@ -74,6 +101,12 @@ object RefreshEngine {
     private fun sizeFor(manager: AppWidgetManager, appWidgetId: Int): WidgetSize {
         val options = manager.getAppWidgetOptions(appWidgetId)
         val minWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
-        return if (minWidth >= 250) WidgetSize.LARGE else WidgetSize.SMALL
+        return when {
+            minWidth >= 250 -> WidgetSize.LARGE
+            // Below the 2-cell width (110dp) but still resized down from it -
+            // the 1-cell cover-art tile, not the text-strip SMALL layout.
+            minWidth < 70 -> WidgetSize.TINY
+            else -> WidgetSize.SMALL
+        }
     }
 }

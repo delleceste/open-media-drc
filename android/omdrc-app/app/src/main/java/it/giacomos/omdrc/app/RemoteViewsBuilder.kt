@@ -4,6 +4,12 @@ import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.view.View
 import android.widget.RemoteViews
 import it.giacomos.omdrc.app.data.MpdStatus
@@ -11,7 +17,12 @@ import it.giacomos.omdrc.app.data.WidgetSnapshot
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
-enum class WidgetSize { SMALL, LARGE }
+enum class WidgetSize { TINY, SMALL, LARGE }
+
+// Offsets request codes for the extra PendingIntents below away from the
+// ones keyed on appWidgetId alone (manualRefreshIntent, openDashboardIntent)
+// so they never collide for the same widget instance.
+private const val TOGGLE_REQUEST_CODE_OFFSET = 1_000_000
 
 /**
  * Pure(ish) rendering: takes a snapshot (possibly null/stale/unreachable)
@@ -30,6 +41,9 @@ object RemoteViewsBuilder {
         size: WidgetSize,
         checking: Boolean = false,
     ): RemoteViews {
+        if (size == WidgetSize.TINY) {
+            return buildTiny(context, appWidgetId, host, port, snapshot)
+        }
         val layout = if (size == WidgetSize.LARGE) R.layout.widget_large else R.layout.widget_small
         val views = RemoteViews(context.packageName, layout)
 
@@ -61,6 +75,66 @@ object RemoteViewsBuilder {
         views.setOnClickPendingIntent(R.id.refresh_button, manualRefreshIntent(context, appWidgetId))
 
         return views
+    }
+
+    /** The 1x1 cover-art tile: no room for title/subtitle text, so it gets
+     *  its own render path entirely rather than squeezing into
+     *  renderConfigured()'s text-driven states. Unconfigured/unreachable
+     *  just falls back to the placeholder art + whatever play/pause icon
+     *  the last cached state implies - there's no text room to say so. */
+    private fun buildTiny(
+        context: Context,
+        appWidgetId: Int,
+        host: String?,
+        port: Int,
+        snapshot: WidgetSnapshot?,
+    ): RemoteViews {
+        val views = RemoteViews(context.packageName, R.layout.widget_tiny)
+
+        val art = WidgetArtCache.load(context, appWidgetId)
+        if (art != null) {
+            views.setImageViewBitmap(R.id.cover_art, circularCrop(art))
+        } else {
+            views.setImageViewResource(R.id.cover_art, R.drawable.ic_cover_placeholder)
+        }
+
+        val playing = snapshot?.mpd?.state == "playing"
+        views.setImageViewResource(R.id.play_pause_icon, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+
+        val drcOn = snapshot?.drc?.running == true
+        views.setViewVisibility(R.id.drc_badge, if (drcOn) View.VISIBLE else View.GONE)
+
+        views.setOnClickPendingIntent(R.id.widget_root, openDashboardIntent(context, appWidgetId, host, port))
+        views.setOnClickPendingIntent(R.id.play_pause_icon, togglePlayPauseIntent(context, appWidgetId))
+
+        return views
+    }
+
+    /** RemoteViews/AppWidgetHostView has no clipToOutline support reliable
+     *  enough across launchers to round an ImageView on its own, so the
+     *  circle is baked into the bitmap itself before handing it over. */
+    private fun circularCrop(bitmap: Bitmap): Bitmap {
+        val size = minOf(bitmap.width, bitmap.height)
+        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        val left = (bitmap.width - size) / 2
+        val top = (bitmap.height - size) / 2
+        canvas.drawBitmap(bitmap, Rect(left, top, left + size, top + size), Rect(0, 0, size, size), paint)
+        return output
+    }
+
+    private fun togglePlayPauseIntent(context: Context, appWidgetId: Int): PendingIntent {
+        val intent = Intent(context, OmdrcWidgetProvider::class.java).apply {
+            action = OmdrcWidgetProvider.ACTION_TOGGLE_PLAY_PAUSE
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+        }
+        return PendingIntent.getBroadcast(
+            context, TOGGLE_REQUEST_CODE_OFFSET + appWidgetId, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun renderConfigured(

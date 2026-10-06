@@ -33,7 +33,12 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
     override suspend fun doWork(): Result {
         val targetId = inputData.getInt(KEY_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
         val notify = inputData.getBoolean(KEY_NOTIFY, false)
-        Log.d(TAG, "doWork start, targetId=$targetId, notify=$notify")
+        val togglePlayPause = inputData.getBoolean(KEY_TOGGLE_PLAY_PAUSE, false)
+        Log.d(TAG, "doWork start, targetId=$targetId, notify=$notify, togglePlayPause=$togglePlayPause")
+        if (togglePlayPause && targetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            RefreshEngine.togglePlayPause(applicationContext, targetId)
+            return Result.success()
+        }
         if (targetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
             RefreshEngine.refreshWidget(applicationContext, targetId)
             // Only ever posted for a manual, user-triggered refresh of one
@@ -57,6 +62,7 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
     companion object {
         private const val KEY_APPWIDGET_ID = "appWidgetId"
         private const val KEY_NOTIFY = "notify"
+        private const val KEY_TOGGLE_PLAY_PAUSE = "togglePlayPause"
         private const val PERIODIC_WORK_NAME = "omdrc_periodic_refresh"
         private val NETWORK_CONSTRAINTS = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -80,6 +86,22 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
                 .build()
             val uniqueName = "omdrc_oneoff_${appWidgetId ?: "all"}"
             Log.d(TAG, "enqueueOneTime: $uniqueName notify=$notify")
+            WorkManager.getInstance(context).enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
+        }
+
+        /** TINY widget's play/pause icon tap. */
+        fun enqueueTogglePlayPause(context: Context, appWidgetId: Int) {
+            val data = workDataOf(
+                KEY_APPWIDGET_ID to appWidgetId,
+                KEY_TOGGLE_PLAY_PAUSE to true,
+            )
+            val request = OneTimeWorkRequestBuilder<WidgetRefreshWorker>()
+                .setInputData(data)
+                .setConstraints(NETWORK_CONSTRAINTS)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build()
+            val uniqueName = "omdrc_toggle_$appWidgetId"
+            Log.d(TAG, "enqueueTogglePlayPause: $uniqueName")
             WorkManager.getInstance(context).enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
         }
 

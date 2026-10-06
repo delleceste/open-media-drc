@@ -4,9 +4,13 @@
   unreliable (batched/delayed beyond its already-coarse ~30 min floor) and
   redundant with the AlarmManager + WorkManager scheduling this app drives
   itself (see AlarmScheduler.kt / WidgetRefreshWorker.kt).
+
+  minWidth is the 1-cell floor (70*1-30=40dp), well below targetCellWidth's
+  2-cell default placement, so a newly-added widget still lands at its usual
+  2x1 size but can be resized down to a 1x1 cover-art tile (WidgetSize.TINY).
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="110dp"
+    android:minWidth="40dp"
     android:minHeight="40dp"
     android:targetCellWidth="2"
     android:targetCellHeight="1"
