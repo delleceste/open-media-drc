@@ -1024,6 +1024,17 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 [data-theme="dark"] .listening-icon:is(img) { filter: invert(1); }
 .listening-icon.busy { animation: listening-pulse 1s ease-in-out infinite; }
 @keyframes listening-pulse { 50% { opacity: .25; transform: rotate(20deg) scale(.85); } }
+.listening-panel.collapsed .listening-claude-pulse { background: #fff;
+    -webkit-mask: url(/k/static/img/claude.svg) center / contain no-repeat;
+    mask: url(/k/static/img/claude.svg) center / contain no-repeat;
+    animation: listening-claude-pulse 1.5s ease-in-out infinite; }
+@keyframes listening-claude-pulse {
+    0%, 100% { background-color: #fff; opacity: 1; transform: scale(1); }
+    50% { background-color: #da7756; opacity: .9; transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .listening-panel.collapsed .listening-claude-pulse { animation: none; background-color: #da7756; }
+}
 .listening-panel { position: fixed; z-index: 67; inset: 0; overflow: auto; overscroll-behavior: contain;
     background: var(--bg); color: var(--text); padding: max(1rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom));
     box-sizing: border-box; }

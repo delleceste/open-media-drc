@@ -64,9 +64,10 @@ G.observe = t => {
         G.selectPlaying();
     }
 };
-G.open = async t => {
+G.open = async (t, source) => {
     if (G.busy) { G.close(); return; }
     if (G.active) { G.collapsed = false; G.paint(); return; }
+    const sourceRect = source?.getBoundingClientRect();
     const settings = await G.settings();
     if (!settings.ok || !settings.configured) {
         if (K.openAISettings) K.openAISettings(true);
@@ -74,11 +75,39 @@ G.open = async t => {
         return;
     }
     G.active = true;
-    G.collapsed = false;
+    G.collapsed = true;
     G.makePanel();
     G.observe(t);
     G.poll = setInterval(async () => { if (G.active) G.observe(await K.fetchTrack()); }, 3000);
     G.paint();
+    G.animateToStrip(sourceRect);
+};
+G.animateToStrip = source => {
+    if (!source?.width || !G.panel?.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const destination = G.panel.querySelector('.listening-strip-open .listening-icon')?.getBoundingClientRect();
+    if (!destination) return;
+    G.panel.animate([
+        { transform: 'translateY(100%)', opacity: .35 },
+        { transform: 'translateY(0)', opacity: 1 },
+    ], { duration: 480, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    const flyer = h('div', {}, G.icon());
+    Object.assign(flyer.style, {
+        position: 'fixed', zIndex: '68', pointerEvents: 'none',
+        left: `${source.left + source.width / 2 - 18}px`,
+        top: `${source.top + source.height / 2 - 18}px`,
+        width: '36px', height: '36px', display: 'grid', placeItems: 'center',
+        borderRadius: '50%', color: 'var(--text)', background: 'var(--bg)',
+        border: '1px solid var(--accent)', boxShadow: '0 0 18px var(--accent)',
+    });
+    document.getElementById('overlay-root').append(flyer);
+    const dx = destination.left + destination.width / 2 - source.left - source.width / 2;
+    const dy = destination.top + destination.height / 2 - source.top - source.height / 2;
+    const flight = flyer.animate([
+        { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+        { transform: `translate(${dx * .5}px, ${dy * .45 - 30}px) scale(1.12)`, opacity: 1, offset: .5 },
+        { transform: `translate(${dx}px, ${dy}px) scale(.55)`, opacity: 0 },
+    ], { duration: 540, easing: 'cubic-bezier(.2,.7,.25,1)' });
+    flight.onfinish = flight.oncancel = () => flyer.remove();
 };
 G.close = () => {
     G.active = false;
@@ -173,7 +202,9 @@ G.paint = () => {
         active?.title || G.track?.title || G.track?.album || 'Listening guide';
     G.panel.classList.toggle('collapsed', G.collapsed);
     K.clear(G.panel);
-    const icon = G.icon(G.busy ? 'busy' : '');
+    const icon = G.collapsed && G.busy && G.provider?.startsWith('claude')
+        ? h('span', { class: 'listening-icon busy listening-claude-pulse', 'aria-hidden': 'true' })
+        : G.icon(G.busy ? 'busy' : '');
     if (G.collapsed) {
         G.panel.append(h('button', { type: 'button', class: 'listening-strip-open',
             onclick: () => { G.collapsed = false; G.paint(); } }, icon,

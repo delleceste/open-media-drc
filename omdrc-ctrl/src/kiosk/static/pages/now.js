@@ -54,7 +54,7 @@ P.mount = el => {
             artist: P.track.artist, image: P.track.art,
         }) }, '♡ Favorites');
     P.aiBtn = h('button', { type: 'button', class: 'chip now-ai', hidden: true,
-        onclick: () => K.listening.open(P.track) });
+        onclick: e => K.listening.open(P.track, e.currentTarget) });
     P.paintAI = () => {
         K.clear(P.aiBtn).append(K.listening.icon(K.listening.busy ? 'busy' : ''),
             h('span', {}, K.listening.busy ? 'Stop research' : 'Research music'));

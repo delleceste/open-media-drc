@@ -1929,7 +1929,7 @@ P.openFull = ({ offset = 0 } = {}) => {
             h('button', { type: 'button', class: 'btn qz-pbtn', title: 'Back to the search', onclick: () => P.closeFull() }, '⌄'),
             h('span', { class: 'qz-full-label' }, 'Now playing'), v.maxBtn,
             v.aiBtn = h('button', { type: 'button', class: 'btn qz-listening', title: 'Research this music',
-                'aria-label': 'Research this music', onclick: () => K.listening.open(P.listeningTrack()) }, K.listening.icon())),
+                'aria-label': 'Research this music', onclick: e => K.listening.open(P.listeningTrack(), e.currentTarget) }, K.listening.icon())),
         h('div', { class: 'qz-full-body' },
             v.cover,
             h('div', { class: 'qz-full-side' },
