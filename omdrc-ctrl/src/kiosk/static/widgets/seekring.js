@@ -158,25 +158,55 @@ K.SeekRing = class {
     }
 };
 
-// A button centred on a cover box (now.js, qobuz.js) that opens the cover full
-// screen, with its own seek ring; a top-right X closes it.
-//   K.coverMaxButton(() => src)   -> <button class="cover-max-btn">, wire it up yourself
-//   K.openCoverMax(src, { usable(), elapsed(), duration(), seek(seconds) })
-K.coverMaxButton = (getSrc, o) => h('button', { type: 'button', class: 'cover-max-btn', title: 'View the cover full screen',
-    onpointerdown: e => e.stopPropagation(), onclick: e => { e.stopPropagation(); const src = getSrc(); if (src) K.openCoverMax(src, o); } },
+// A button (now.js, qobuz.js) that opens the cover full screen, with its own
+// seek ring; a top-right "Close" button closes it.
+//   K.coverMaxButton(() => src, o, getMeta)   -> <button class="cover-max-btn">, wire it up yourself
+//   K.openCoverMax(src, { usable(), elapsed(), duration(), seek(seconds) }, meta)
+// `getMeta`/`meta` is optional: { title, facts, albumId, transport: { playing(), action(name) } }.
+// `albumId` looks up the facts line (label, year) itself when the caller does not
+// already have it to hand; `transport` draws the same prev/play-pause/stop/next
+// row as the main player, acting through `action('prev' | 'play' | 'pause' | 'stop' | 'next')`.
+K.coverMaxButton = (getSrc, o, getMeta) => h('button', { type: 'button', class: 'cover-max-btn', title: 'View the cover full screen',
+    onpointerdown: e => e.stopPropagation(),
+    onclick: e => { e.stopPropagation(); const src = getSrc(); if (src) K.openCoverMax(src, o, getMeta ? getMeta() : {}); } },
     K.tIcon('maximize'));
 
-K.openCoverMax = (src, o) => {
+K.openCoverMax = (src, o, meta = {}) => {
+    let closed = false;
     const art = h('div', { class: 'cover-max-art' }, h('img', { src, alt: '' }));
-    const close = () => { ring.destroy(); document.removeEventListener('keydown', onKey); scrim.remove(); };
+    const close = () => { closed = true; ring.destroy(); document.removeEventListener('keydown', onKey); scrim.remove(); };
     const onKey = e => { if (e.key === 'Escape') close(); };
+    const titleEl = h('div', { class: 'cover-max-title' }, meta.title || '');
+    const factsEl = h('div', { class: 'cover-max-facts' }, meta.facts || '');
+    const info = h('div', { class: 'cover-max-info' }, titleEl, factsEl);
+    let controls = null;
+    if (meta.transport) {
+        const t = meta.transport;
+        let playing = !!t.playing();
+        const act = (icon, label, fn) => h('button', { type: 'button', class: 'btn cover-max-ctl', title: label, 'aria-label': label, onclick: fn }, K.tIcon(icon));
+        const toggle = act(playing ? 'pause' : 'play', 'Play / pause', () => {
+            playing = !playing;                               // optimistic; the next poll confirms
+            K.clear(toggle).append(K.tIcon(playing ? 'pause' : 'play'));
+            t.action(playing ? 'play' : 'pause');
+        });
+        controls = h('div', { class: 'cover-max-controls' },
+            act('prev', 'Previous track', () => t.action('prev')), toggle,
+            act('stop', 'Stop', () => { playing = false; K.clear(toggle).append(K.tIcon('play')); t.action('stop'); }),
+            act('next', 'Next track', () => t.action('next')));
+    }
     const scrim = h('div', { class: 'scrim cover-max', onclick: e => { if (e.target === scrim) close(); } },
         h('div', { class: 'cover-max-top' },
-            h('button', { type: 'button', class: 'btn cover-max-close', title: 'Close', onclick: close }, K.tIcon('close'))),
-        art);
+            h('button', { type: 'button', class: 'btn cover-max-close', title: 'Close', onclick: close }, K.tIcon('close'), h('span', {}, 'Close'))),
+        art, info, controls);
     const ring = new K.SeekRing(art, o);
     document.addEventListener('keydown', onKey);
     document.getElementById('overlay-root').append(scrim);
-    ring.flash();
+    if (meta.albumId) K.qobuzAlbumFacts(meta.albumId).then(a => {
+        if (closed || !a) return;
+        if (a.title) titleEl.textContent = a.title;
+        factsEl.textContent = [a.label, a.year].filter(Boolean).join(' · ');
+    });
+    // the ring stays hidden until a first, separate touch on the cover asks for it
+    // (see widgets/seekring.js's own header): a swipe to minimize never shows it either
 };
 })();

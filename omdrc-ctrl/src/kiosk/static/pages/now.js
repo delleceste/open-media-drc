@@ -27,7 +27,12 @@ P.mount = el => {
     // where a touch brings up the ring to seek along (see "seek ring" below); the centre
     // button opens it full screen, with its own ring
     P.coverMaxBtn = K.coverMaxButton(() => P.art.hidden ? '' : P.art.getAttribute('src') || '',
-        { usable: P.ringUsable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seek(s) });
+        { usable: P.ringUsable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seek(s) },
+        () => ({
+            title: P.track ? (P.track.album || P.track.title || '') : '',
+            albumId: (P.track && P.track.qobuz_album) || '',
+            transport: { playing: () => !!(P.track && P.track.state === 'play'), action: a => P.transport(a) },
+        }));
     P.artBox = h('div', { class: 'now-art empty' }, P.art, P.coverMaxBtn);
     P.titleText = h('span', {}, '—');
     P.t1 = h('div', { class: 'now-title', tabindex: '0',

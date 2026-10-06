@@ -172,6 +172,21 @@ const close = () => {
 };
 const onKey = e => { if (e.key === 'Escape') close(); };
 
+// Just the label and year, for a caller (K.openCoverMax) that only has the
+// album's id to hand and wants the one-line fact without the whole details
+// page -- cached the same way, once per id.
+const albumFactsCache = new Map();
+K.qobuzAlbumFacts = async albumId => {
+    if (!albumId) return null;
+    if (albumFactsCache.has(albumId)) return albumFactsCache.get(albumId);
+    const d = await K.api('/qobuz/album/' + encodeURIComponent(albumId), { timeout: 20000 });
+    if (!d.ok) return null;
+    const a = d.album;
+    const out = { title: a.title, label: a.label, year: (a.date || a.year || '').toString().slice(0, 4) };
+    albumFactsCache.set(albumId, out);
+    return out;
+};
+
 // `actions` ({play, add}: functions) puts ▶ and + under the title: only the Qobuz
 // page's grid passes them, where a cover tap is the way here and the row's own
 // buttons are not on screen.  From anywhere else the page only tells.

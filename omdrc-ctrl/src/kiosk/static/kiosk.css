@@ -161,12 +161,24 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .scrim.frame { flex-direction: column; align-items: stretch; justify-content: flex-start; background: var(--bg); z-index: 60; }
 .frame-bar { display: flex; align-items: center; gap: .6rem; padding: .4rem .8rem; background: var(--surface); border-bottom: 1px solid var(--border); }
 .scrim.frame iframe { flex: 1; border: 0; width: 100%; background: var(--bg); }
-/* the cover, full screen (K.openCoverMax: now.js and qobuz.js's cover buttons) */
-.scrim.cover-max { flex-direction: column; z-index: 61; }
+/* the cover, full screen (K.openCoverMax: now.js and qobuz.js's cover buttons) --
+   darker than the other scrims, so the art and the facts under it stand out */
+.scrim.cover-max { flex-direction: column; z-index: 61; background: rgba(0,0,0,.88); gap: .7rem; padding: 1rem; overflow-y: auto; }
 .cover-max-top { position: absolute; top: 1rem; right: 1rem; }
-.cover-max-close { width: 2.6rem; height: 2.6rem; padding: 0; border-radius: 50%; }
-.cover-max-art { position: relative; width: min(92vw, 92dvh); height: min(92vw, 92dvh); border-radius: .6rem; overflow: hidden; background: var(--surface2); }
+.cover-max-close { width: auto; height: auto; padding: .5rem 1.1rem; border-radius: 1.4rem; display: flex; align-items: center; gap: .4rem; font-weight: 600; }
+.cover-max-close .ticon { width: 1.1rem; height: 1.1rem; }
+.cover-max-art { position: relative; width: min(88vw, 60dvh); height: min(88vw, 60dvh); border-radius: .6rem; overflow: hidden; background: var(--surface2); flex: 0 0 auto; }
 .cover-max-art > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* the album title, year and label under the cover (filled once K.qobuzAlbumFacts answers) */
+.cover-max-info { text-align: center; color: #fff; max-width: 92vw; }
+.cover-max-title { font-weight: 700; font-size: 1.05rem; }
+.cover-max-title:empty, .cover-max-facts:empty { display: none; }
+.cover-max-facts { color: rgba(255,255,255,.7); font-size: .85rem; margin-top: .15rem; }
+/* the same prev / play-pause / stop / next row as the main player, replicated here */
+.cover-max-controls { display: flex; align-items: center; gap: .7rem; }
+.cover-max-ctl { width: 2.7rem; height: 2.7rem; padding: 0; border: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.14); color: #fff; }
+.cover-max-ctl .ticon { width: 1.3rem; height: 1.3rem; }
 #toast { position: fixed; left: 50%; bottom: calc(var(--tabs) + .8rem); transform: translate(-50%, 1rem); opacity: 0; pointer-events: none; z-index: 70;
     background: var(--surface2); border: 1px solid var(--border); border-radius: .6rem; padding: .6rem 1.1rem; max-width: 80vw; transition: opacity .2s, transform .2s; }
 #toast.raised { bottom: calc(var(--tabs) + 5.2rem); }
@@ -994,12 +1006,14 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
     padding: .5rem .9rem max(.6rem, env(safe-area-inset-bottom)); }
 .qz-full-top { display: flex; align-items: center; gap: .7rem; flex: 0 0 auto; margin-bottom: .5rem; }
 .qz-full-label { color: var(--muted); font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; }
+/* the cover's maximize button, out of the art and onto this row instead, pushed to the right */
+.qz-full-top .cover-max-btn { position: static; margin-left: auto; width: 2.1rem; height: 2.1rem;
+    background: none; border: 1.5px solid transparent; color: var(--text); }
+.qz-full-top .cover-max-btn .ticon { width: 1.2rem; height: 1.2rem; }
+.qz-full-top .cover-max-btn:active { background: var(--press); }
 .qz-full-body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1.2rem; }
 .qz-full .qz-pcover { position: relative; width: min(calc(100dvh - 5rem), 55vw); height: auto; aspect-ratio: 1; border-radius: .6rem; font-size: 5rem;
     align-self: start; box-shadow: 0 .6rem 2rem rgba(0,0,0,.5); }
-.qz-full .qz-pcover .cover-max-btn { width: 2rem; height: 2rem; }
-.qz-full .qz-pcover .cover-max-btn .ticon { width: 1.1rem; height: 1.1rem; }
-.qz-full .qz-pcover:has(.qz-nocover) .cover-max-btn { display: none; }
 .qz-full-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: .6rem; }
 .qz-full-info { min-width: 0; }
 .qz-full .qz-ptitle { font-size: 1.6rem; line-height: 1.2; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }

@@ -1912,10 +1912,22 @@ P.openFull = ({ offset = 0 } = {}) => {
     P.queueHead = h('button', { type: 'button', class: 'btn lbl', 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: () => P.openQueueActions() }, 'Queue · 0 ▾');
     P.queueBox = h('div', { class: 'qz-queue' });
     P.queueTools = h('div', { class: 'qz-queue-tools' }, P.queueHead);
+    // The cover's own maximize button, moved up into this row (to the right of the
+    // "Now playing" label) rather than floating over the art itself.
+    v.maxBtn = K.coverMaxButton(() => v.cover.dataset.src || '',
+        { usable: P.seekable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seekTo(s) },
+        () => {
+            const t = P.trackInfo(), album = t ? t.album : null, d = P.now;
+            return {
+                title: (d && d.album) || (album && album.title) || '',
+                facts: [(album && album.label) || (d && d.label), (album && album.year) || (d && d.date || '').slice(0, 4)].filter(Boolean).join(' · '),
+                transport: { playing: () => !!(P.base && P.base.playing), action: a => P.transport(a) },
+            };
+        });
     P.fullEl = h('div', { class: 'scrim qz-full' },
         h('div', { class: 'qz-full-top' },
             h('button', { type: 'button', class: 'btn qz-pbtn', title: 'Back to the search', onclick: () => P.closeFull() }, '⌄'),
-            h('span', { class: 'qz-full-label' }, 'Now playing')),
+            h('span', { class: 'qz-full-label' }, 'Now playing'), v.maxBtn),
         h('div', { class: 'qz-full-body' },
             v.cover,
             h('div', { class: 'qz-full-side' },
@@ -1927,15 +1939,12 @@ P.openFull = ({ offset = 0 } = {}) => {
         if (t && t.album && t.album.id) K.albumInfo(t.album.id);
     } }, 'Album details ›');
     P.queueTools.append(v.infoBtn);
-    // Tap the cover to seek; a downward swipe minimizes the player; the centre
-    // button opens it full screen, with its own ring.
+    // Tap the cover to seek; a downward swipe minimizes the player.
     v.cover.classList.add('seek-zone');
     v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
         duration: () => P.base.duration, seek: s => P.seekTo(s),
         onMinimize: () => P.closeFull(),
         onPull: distance => { if (P.fullEl) P.fullEl.style.transform = `translateY(${distance}px)`; } });
-    v.cover.append(K.coverMaxButton(() => v.cover.dataset.src || '',
-        { usable: P.seekable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seekTo(s) }));
     P.seekTaps = null;
     if (offset) {
         P.fullEl.style.transform = `translateY(${Math.max(0, offset)}px)`;
@@ -2086,7 +2095,7 @@ P.refreshPlayer = async () => {
 const setCover = (box, src) => {
     if (box.dataset.src === src) return;
     box.dataset.src = src;
-    [...box.children].forEach(c => { if (!c.classList.contains('seek-ring') && !c.classList.contains('cover-max-btn')) c.remove(); });   // the ring and maximize button stay
+    [...box.children].forEach(c => { if (!c.classList.contains('seek-ring')) c.remove(); });   // the ring stays
     box.prepend(src ? h('img', { src, alt: '' }) : h('span', { class: 'qz-nocover' }, '♪'));
 };
 
@@ -2105,6 +2114,7 @@ P.paintViews = () => {
         }
         setCover(v.cover, album ? (v.full ? album.image_large || album.image : album.image || album.image_large) : '');
         if (v.full) {
+            v.maxBtn.hidden = !v.cover.dataset.src;
             v.infoBtn.hidden = !(album && album.id);
             const aid = album && album.id || '';       // the album's awards, above its label (v.detail)
             if (v.awardsFor !== aid) { v.awardsFor = aid; K.clear(v.awards); if (aid) v.awards.append(K.awardsBox(album)); }
