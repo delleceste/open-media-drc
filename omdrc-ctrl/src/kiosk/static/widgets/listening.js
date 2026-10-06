@@ -17,6 +17,16 @@ const newJob = () => {
 const keyOf = t => t && (t.qobuz_album ? 'q:' + t.qobuz_album :
     'a:' + norm(t.album || t.title) + '|' + norm(t.artist) + '|' + norm(t.title));
 const STORAGE_KEY = 'omdrc.listening.v1';
+const CACHE_KEY = 'omdrc.listening.last-result.v1';
+G.cachedResult = key => {
+    try {
+        const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+        return saved?.key === key && Array.isArray(saved.answer?.compositions) ? saved.answer : null;
+    } catch (_) { return null; }
+};
+G.cacheResult = (key, answer) => {
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ key, answer })); } catch (_) {}
+};
 G.remember = () => {
     if (!G.active || !G.track?.title) return;
     try {
@@ -59,7 +69,7 @@ G.icon = (className = '') => G.provider && G.provider !== 'ai'
     : h('span', { class: 'listening-icon ' + className }, 'AI');
 G.settings = async () => {
     const d = await K.api('/qobuz/ai/settings');
-    if (d.ok) G.provider = d.provider;
+    if (d.ok) { G.provider = d.provider; G.model = d.model; }
     G.changed();
     return d;
 };
@@ -129,7 +139,7 @@ G.animateToStrip = source => {
     G.panel.animate([
         { transform: 'translateY(100%)', opacity: .35 },
         { transform: 'translateY(0)', opacity: 1 },
-    ], { duration: 480, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    ], { duration: 950, easing: 'cubic-bezier(.2,.8,.2,1)' });
     const flyer = h('div', {}, G.icon());
     Object.assign(flyer.style, {
         position: 'fixed', zIndex: '68', pointerEvents: 'none',
@@ -146,7 +156,7 @@ G.animateToStrip = source => {
         { transform: 'translate(0, 0) scale(1)', opacity: 1 },
         { transform: `translate(${dx * .5}px, ${dy * .45 - 30}px) scale(1.12)`, opacity: 1, offset: .5 },
         { transform: `translate(${dx}px, ${dy}px) scale(.55)`, opacity: 0 },
-    ], { duration: 540, easing: 'cubic-bezier(.2,.7,.25,1)' });
+    ], { duration: 1250, easing: 'cubic-bezier(.2,.7,.25,1)' });
     flight.onfinish = flight.oncancel = () => flyer.remove();
 };
 G.close = () => {
@@ -202,18 +212,31 @@ G.research = async () => {
     if (serial !== G.serial || !G.active) return;
     G.tracks = tracks;
     G.selectPlaying();
+    const query = {
+        album: { title: album.title, artist: album.artist, composer: album.composer,
+            label: album.label, year: album.year, genre: album.genre, release_type: album.release_type },
+        tracks: tracks.map(t => ({ title: t.title, work: t.work, composer: t.composer })),
+    };
+    const cacheKey = JSON.stringify({ provider: G.provider, model: G.model, ...query });
+    const cached = G.cachedResult(cacheKey);
+    if (cached) {
+        G.guide = cached;
+        G.busy = false;
+        G.controller = null;
+        G.selectPlaying();
+        G.remember();
+        return;
+    }
     G.job = newJob();
     try {
         const response = await fetch('/qobuz/ai/listening', { method: 'POST', signal: G.controller.signal,
             headers: { 'Content-Type': 'application/json', 'X-Qobuz-AI': '1' },
-            body: JSON.stringify({ job: G.job, album: { title: album.title, artist: album.artist,
-                composer: album.composer, label: album.label, year: album.year,
-                genre: album.genre, release_type: album.release_type },
-                tracks: tracks.map(t => ({ title: t.title, work: t.work, composer: t.composer })) }) });
+            body: JSON.stringify({ job: G.job, ...query }) });
         const answer = await response.json();
         if (serial !== G.serial || !G.active) return;
         if (!answer.ok) throw new Error(answer.error || 'AI research failed');
         G.guide = answer;
+        G.cacheResult(cacheKey, answer);
         G.selectPlaying();
     } catch (error) {
         if (serial !== G.serial || !G.active) return;

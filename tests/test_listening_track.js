@@ -63,4 +63,9 @@ guide.guide = { compositions: [{ tracks: [2] }, { tracks: [1] }, { tracks: [3] }
 assert.equal(guide.singleTrackSections(), true, 'one section per track needs just the top tabs');
 guide.guide.compositions[0].tracks = [1, 2];
 assert.equal(guide.singleTrackSections(), false, 'a multi-track work keeps separate track navigation');
+guide.cacheResult('claude:album-one', { ok: true, compositions: [{ title: 'Work', tracks: [1] }] });
+assert.equal(guide.cachedResult('claude:album-one').compositions[0].title, 'Work', 'same query reuses the result');
+assert.equal(guide.cachedResult('claude:album-two'), null, 'a changed query misses the cache');
+guide.forget();
+assert.ok(saved.has('omdrc.listening.last-result.v1'), 'closing keeps the last completed result');
 console.log('listening track matching OK');
