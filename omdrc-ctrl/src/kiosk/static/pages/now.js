@@ -73,7 +73,9 @@ P.mount = el => {
     P.progBox = h('div', { class: 'now-prog' }, P.prog, P.seekSlider);
     // a meter-timing calibration in progress (automatic ones included): a blinking blue light
     P.calLed = h('i', { class: 'cal-led', hidden: true, title: 'Calibrating the meter timing' });
-    const trackBox = h('div', { class: 'now-track' }, P.artBox,
+    // landscape: smaller, beside the cover, so the row stays compact and the meters below
+    // (the circular spectrum especially) keep the height; upright it goes back under the art (kiosk.css)
+    const trackBox = h('div', { class: 'now-track' }, P.artBox, P.t1,
         h('div', { class: 'now-meta' }, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.awards, P.pAlbum, P.infoBtn, P.favBtn), P.calLed,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
         // (upright, previous and next track either side of it)
@@ -84,7 +86,7 @@ P.mount = el => {
                 P.state,
                 h('button', { class: 'chip now-skip', type: 'button', title: 'Next track', 'aria-label': 'Next track', onclick: () => P.transport('next') }, K.tIcon('next')),
                 h('button', { class: 'chip now-step', type: 'button', title: 'Seek forward within this track', 'aria-label': 'Seek forward within this track', onclick: () => P.stepSeek(1) }, '>>')),
-            P.time, P.progBox), P.t1);
+            P.time, P.progBox));
 
     // level area
     P.meterHost = h('div', { class: 'lvl-meter' });
@@ -345,7 +347,6 @@ P.applyLayout = () => {
     P.el.firstChild.classList.toggle('bal-below', !P.showDr && P.showBalance);
     // upright, something switched off leaves room: the cover grows and the track goes under it
     P.el.firstChild.classList.toggle('roomy', off || !P.showDr || !P.showBalance);
-    P.splitter.hidden = !P.showDr || (P.mode === 'off' && !square);
     P.paintCover();
     P.applySplit();
     P.applyCols();
@@ -636,6 +637,14 @@ P.askKeepDr = async () => {
 // ── meters / side column splitter ────────────────────────────────────────────
 // c = the meters' share of the width.  Unset: the stylesheet's default columns.
 P.applyCols = () => {
+    // circular spectrum, side by side: the DR history strip moves into the side column,
+    // below Balance, so the spectrum keeps the meters' full height (re-run on every
+    // orientation flip, even when the level mode itself doesn't change)
+    const drSide = P.mode === 'circular' && !K.portrait();
+    P.el.firstChild.classList.toggle('dr-side', drSide);
+    if (drSide) { if (P.drBarBox.parentNode !== P.side) P.side.append(P.drBarBox); }
+    else if (P.drBarBox.parentNode === P.side) P.el.firstChild.insertBefore(P.drBarBox, P.drcLine);
+    P.splitter.hidden = !P.showDr || drSide || (P.mode === 'off' && P.coverMode !== 'square');
     const c = K.pref('now.col', null);
     // upright the columns stack (kiosk.css): a width dragged in landscape must not squeeze the meters
     const sideBySide = !P.side.hidden && !P.el.firstChild.classList.contains('bal-below') && !K.portrait();

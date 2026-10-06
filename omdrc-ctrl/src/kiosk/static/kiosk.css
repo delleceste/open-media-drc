@@ -210,7 +210,8 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .now.cover-big .now-art { display: none !important; }
 .now.idle .now-art, .now.idle .now-timebox { display: none !important; }
 .now-meta { flex: 1; min-width: 0; }
-.now-title { font-size: 1.7rem; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* landscape: beside the small cover (pages/now.js), so smaller than the upright title below (kiosk.css portrait rules) */
+.now-title { font-size: 1.2rem; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-title.idle { color: var(--muted); font-weight: 500; }
 .now-sub { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now-subrow { display: flex; align-items: baseline; gap: .7rem; }
@@ -311,6 +312,10 @@ button.award { font: inherit; font-size: .8rem; font-weight: 650; cursor: pointe
 .now-drbar { flex: 2 1 auto; max-height: 11rem; display: flex; flex-direction: column; margin: 0; padding: .3rem .6rem .2rem; }
 .now-drbar .dr-bar { flex: 1 1 auto; height: auto; min-height: 2.4rem; }
 .now-drbar .dr-times { align-items: baseline; gap: .8rem; } .now-drbar .dr-detail { margin: 0; flex: 1; text-align: center; }
+/* circular spectrum only (pages/now.js P.applyCols): the DR strip moves below Balance in the
+   side column instead of its own row, so the spectrum gets the meters' full height */
+.now.dr-side .now-drbar { max-height: none; }
+.now.dr-side .now-drbar .dr-times { flex-wrap: wrap; justify-content: center; }
 .dr-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
 .dr-head .lbl { margin: 0; } .dr-head .chip { margin-left: auto; }
 .dr-value { font-size: 1.9rem; line-height: 1; font-variant-numeric: tabular-nums; } .dr-value.big { font-size: 3.4rem; }
@@ -539,7 +544,7 @@ input[type=range] { accent-color: var(--accent); }
    DR strip and the DRC line still fit without scrolling */
 @media (orientation: landscape) and (max-height: 430px) {
     .now-track { min-height: 3.4rem; } .now-art { width: 3.4rem; height: 3.4rem; }
-    .now-title { font-size: 1.4rem; }
+    .now-title { font-size: 1.05rem; }
     .now-drc { padding: .3rem .6rem; }
 }
 
