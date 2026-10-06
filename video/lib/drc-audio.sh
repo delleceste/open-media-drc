@@ -11,15 +11,6 @@
 #   AUDIO_DELAY   -- mpv --audio-delay value (negative delays the VIDEO)
 #   SUB_DELAY     -- mpv --sub-delay value
 
-# --- MakeMKV decryption for libbluray ---------------------------------------
-# libbluray would otherwise load the stock libaacs, whose host certificate the
-# USB drive rejects ("has been revoked by your drive"), leaving AACS discs
-# unreadable.  MakeMKV's libmmbd is a drop-in for libaacs and libbdplus.  Only
-# set when MakeMKV is installed and the caller has not chosen otherwise.
-if [ -z "${LIBAACS_PATH:-}" ] && [ -e /usr/lib/libmmbd.so.0 ]; then
-    export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd
-fi
-
 DRC_SH="$(command -v omdrc 2>/dev/null || true)"
 DRC_STATUS_SH="$(command -v omdrc-status 2>/dev/null || true)"
 
@@ -41,6 +32,17 @@ fi
 
 IS_LINUX=false
 [ "$(uname)" = "Linux" ] && IS_LINUX=true
+
+# --- MakeMKV decryption for libbluray (Linux) --------------------------------
+# libbluray would otherwise load the stock libaacs, whose host certificate the
+# USB drive rejects ("has been revoked by your drive"), leaving AACS discs
+# unreadable.  MakeMKV's libmmbd is a drop-in for libaacs and libbdplus.  Only
+# set when MakeMKV is installed and the caller has not chosen otherwise.  The
+# FreeBSD side is untested: see BLURAY-PLAYBACK-TUNING.md.
+if $IS_LINUX && [ -z "${LIBAACS_PATH:-}" ] && [ -e /usr/lib/libmmbd.so.0 ]; then
+    export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd
+fi
+
 
 # DRC-on / DRC-off audio devices differ by OS:
 #   FreeBSD: virtual_oss exposes /dev/dsp.play (DRC) and the raw DAC is
