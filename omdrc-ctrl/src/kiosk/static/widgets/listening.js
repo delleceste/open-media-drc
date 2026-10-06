@@ -38,10 +38,10 @@ G.trackNumber = () => {
 };
 G.selectPlaying = () => {
     if (!G.guide) return;
+    if (G.userSelected) { G.paint(); return; }
     const n = G.trackNumber();
     const section = G.guide.compositions.findIndex(s => s.tracks.includes(n));
     G.selected = section;
-    if (G.selectedTrack) G.selectedTrack = n || null;
     G.paint();
 };
 G.observe = t => {
@@ -58,6 +58,7 @@ G.observe = t => {
         G.guide = null;
         G.selected = -1;
         G.selectedTrack = null;
+        G.userSelected = false;
         G.research();
     } else if (G.track?.title !== t.title || G.track?.track_id !== t.track_id) {
         G.track = t;
@@ -118,6 +119,8 @@ G.close = () => {
     G.controller = null;
     G.busy = false;
     clearInterval(G.poll);
+    G.swipePreview?.remove();
+    G.swipePreview = null;
     G.panel?.remove();
     G.panel = null;
     G.albumKey = '';
@@ -185,26 +188,81 @@ G.research = async () => {
 G.makePanel = () => {
     G.panel = h('div', { class: 'listening-panel' });
     document.getElementById('overlay-root').append(G.panel);
-    let startY = 0;
-    G.panel.addEventListener('touchstart', e => { startY = e.touches[0].clientY; }, { passive: true });
+    let touch = null;
+    const nestedScroller = target => {
+        for (let el = target; el && el !== G.panel; el = el.parentElement) {
+            if (el.matches('.listening-tabs, .listening-track-tabs')) return true;
+            const style = getComputedStyle(el);
+            if (/auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1) return true;
+            if (/auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1) return true;
+        }
+        return false;
+    };
+    G.panel.addEventListener('touchstart', e => {
+        const point = e.touches[0];
+        touch = point && G.panel.scrollTop <= 1 && !nestedScroller(e.target)
+            && !e.target.closest('button, a, input, select, textarea')
+            ? { x: point.clientX, y: point.clientY, distance: 0, dragging: false } : null;
+    }, { passive: true });
+    G.panel.addEventListener('touchmove', e => {
+        if (!touch || G.collapsed || e.touches.length !== 1) return;
+        const point = e.touches[0], dy = point.clientY - touch.y, dx = point.clientX - touch.x;
+        if (!touch.dragging && (dy < 8 || dy < Math.abs(dx) || G.panel.scrollTop > 1)) return;
+        if (!touch.dragging) {
+            touch.dragging = true;
+            const preview = h('div', { class: 'listening-panel collapsed' },
+                h('div', { class: 'listening-strip-open' }, G.stripIcon(), h('span', {}, G.label())),
+                h('span', { class: 'listening-close' }, '×'));
+            Object.assign(preview.style, { zIndex: '66', pointerEvents: 'none' });
+            document.getElementById('overlay-root').append(preview);
+            G.swipePreview = preview;
+        }
+        e.preventDefault();
+        touch.distance = Math.max(0, dy);
+        G.panel.style.transform = `translate3d(0, ${touch.distance}px, 0)`;
+    }, { passive: false });
     G.panel.addEventListener('touchend', e => {
-        const distance = e.changedTouches[0].clientY - startY;
-        if (distance > 65 && !G.collapsed && G.panel.scrollTop < 20) G.minimize();
-        if (distance < -45 && G.collapsed) { G.collapsed = false; G.paint(); }
+        if (!touch) return;
+        const distance = e.changedTouches[0].clientY - touch.y;
+        if (touch.dragging) {
+            const panel = G.panel, preview = G.swipePreview, finish = distance > 75;
+            const animation = panel.animate([
+                { transform: `translate3d(0, ${touch.distance}px, 0)` },
+                { transform: finish ? 'translate3d(0, 100%, 0)' : 'translate3d(0, 0, 0)' },
+            ], { duration: finish ? 280 : 200, easing: 'cubic-bezier(.2,.8,.2,1)' });
+            animation.onfinish = animation.oncancel = () => {
+                panel.style.transform = '';
+                if (finish && G.panel === panel) G.minimize();
+                preview?.remove();
+                if (G.swipePreview === preview) G.swipePreview = null;
+            };
+        } else if (distance < -45 && G.collapsed) { G.collapsed = false; G.paint(); }
+        touch = null;
+    }, { passive: true });
+    G.panel.addEventListener('touchcancel', () => {
+        G.panel.style.transform = '';
+        G.swipePreview?.remove();
+        G.swipePreview = null;
+        touch = null;
     }, { passive: true });
 };
 G.minimize = () => { G.collapsed = true; G.paint(); };
+G.label = () => {
+    const active = G.guide?.compositions?.[G.selected];
+    return G.selectedTrack ? G.tracks?.[G.selectedTrack - 1]?.title :
+        active?.title || G.track?.title || G.track?.album || 'Listening guide';
+};
+G.stripIcon = () => G.busy && G.provider?.startsWith('claude')
+    ? h('span', { class: 'listening-icon busy listening-claude-pulse', 'aria-hidden': 'true' })
+    : G.icon(G.busy ? 'busy' : '');
 G.paint = () => {
     G.changed();
     if (!G.panel) return;
     const active = G.guide?.compositions?.[G.selected];
-    const label = G.selectedTrack ? G.tracks?.[G.selectedTrack - 1]?.title :
-        active?.title || G.track?.title || G.track?.album || 'Listening guide';
+    const label = G.label();
     G.panel.classList.toggle('collapsed', G.collapsed);
     K.clear(G.panel);
-    const icon = G.collapsed && G.busy && G.provider?.startsWith('claude')
-        ? h('span', { class: 'listening-icon busy listening-claude-pulse', 'aria-hidden': 'true' })
-        : G.icon(G.busy ? 'busy' : '');
+    const icon = G.collapsed ? G.stripIcon() : G.icon(G.busy ? 'busy' : '');
     if (G.collapsed) {
         G.panel.append(h('button', { type: 'button', class: 'listening-strip-open',
             onclick: () => { G.collapsed = false; G.paint(); } }, icon,
@@ -226,7 +284,7 @@ G.paint = () => {
     const items = [{ title: 'Overview', text: G.guide.overview }, ...G.guide.compositions];
     items.forEach((item, index) => tabs.append(h('button', { type: 'button', class: 'chip' + (!G.selectedTrack && G.selected === index - 1 ? ' on' : ''),
         role: 'tab', 'aria-selected': String(!G.selectedTrack && G.selected === index - 1),
-        onclick: () => { G.selectedTrack = null; G.selected = index - 1; G.paint(); } }, item.title)));
+        onclick: () => { G.userSelected = true; G.selectedTrack = null; G.selected = index - 1; G.paint(); } }, item.title)));
     G.panel.append(tabs);
     if (G.guide.research_status) G.panel.append(h('p', { class: 'muted small', role: 'status' }, G.guide.research_status));
     const shown = G.selectedTrack ? {
@@ -234,14 +292,16 @@ G.paint = () => {
         text: G.guide.track_notes?.find(n => n.track === G.selectedTrack)?.text ||
             active?.text || G.guide.overview,
     } : active || items[0];
-    G.panel.append(h('div', { class: 'listening-content' },
-        h('h2', {}, shown.title), ...String(shown.text || '').split(/\n\s*\n/).filter(Boolean).map(p => h('p', {}, p))));
+    const content = h('div', { class: 'listening-content' },
+        h('h2', {}, shown.title), ...String(shown.text || '').split(/\n\s*\n/).filter(Boolean).map(p => h('p', {}, p)));
+    if (!G.selectedTrack) G.panel.append(content);
     if (G.tracks?.length) {
         const trackTabs = h('div', { class: 'listening-track-tabs', 'aria-label': 'Track details' });
         G.tracks.forEach((track, index) => trackTabs.append(h('button', {
             type: 'button', class: 'chip' + (G.selectedTrack === index + 1 ? ' on' : ''),
             'aria-current': G.trackNumber() === index + 1 ? 'true' : 'false',
             onclick: () => {
+                G.userSelected = true;
                 G.selectedTrack = index + 1;
                 G.selected = G.guide.compositions.findIndex(s => s.tracks.includes(index + 1));
                 G.paint();
@@ -249,9 +309,10 @@ G.paint = () => {
         }, `${index + 1}. ${track.title}`)));
         G.panel.append(h('div', { class: 'listening-track-heading' }, 'Tracks'), trackTabs);
     }
+    if (G.selectedTrack) G.panel.append(content);
     const number = G.trackNumber();
     const note = G.guide.track_notes?.find(n => n.track === number);
-    if (number && G.tracks[number - 1]) {
+    if (!G.userSelected && number && G.tracks[number - 1]) {
         G.panel.append(h('div', { class: 'listening-track' },
             h('strong', {}, G.tracks[number - 1].title),
             note ? h('p', {}, note.text) : h('p', { class: 'muted' }, 'Track ' + number)));
