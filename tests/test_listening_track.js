@@ -3,9 +3,15 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
+const saved = new Map();
+const localStorage = {
+    getItem: key => saved.get(key) || null,
+    setItem: (key, value) => saved.set(key, value),
+    removeItem: key => saved.delete(key),
+};
 const K = { h: () => ({}), api: async () => ({ ok: true, provider: 'claude_account' }) };
 const source = fs.readFileSync(path.join(__dirname, '../omdrc-ctrl/src/kiosk/static/widgets/listening.js'), 'utf8');
-vm.runInNewContext(source, { K, console });
+vm.runInNewContext(source, { K, console, localStorage });
 const guide = K.listening;
 
 guide.tracks = [
@@ -41,4 +47,15 @@ guide.observe({ ok: true, qobuz_album: 'album-one', track_id: 'one', title: 'Fir
 assert.equal(guide.selected, -1, 'playback must preserve a manually selected overview');
 guide.observe({ ok: true, qobuz_album: 'album-two', track_id: 'one', title: 'New album' });
 assert.equal(guide.userSelected, false, 'a new album starts with automatic selection');
+guide.guide = { overview: 'Album overview', compositions: [{ title: 'New work', tracks: [1], text: 'Work details' }] };
+guide.tracks = [{ id: 'one', title: 'New album' }];
+guide.selected = 0;
+guide.selectedTrack = 1;
+guide.userSelected = true;
+guide.remember();
+const remembered = JSON.parse(saved.get('omdrc.listening.v1'));
+assert.equal(remembered.guide.overview, 'Album overview', 'completed research must survive a restart');
+assert.equal(remembered.selectedTrack, 1, 'the selected tab must survive a restart');
+guide.forget();
+assert.equal(saved.has('omdrc.listening.v1'), false, 'closing the guide removes the saved session');
 console.log('listening track matching OK');

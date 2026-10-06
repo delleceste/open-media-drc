@@ -16,6 +16,41 @@ const newJob = () => {
 };
 const keyOf = t => t && (t.qobuz_album ? 'q:' + t.qobuz_album :
     'a:' + norm(t.album || t.title) + '|' + norm(t.artist) + '|' + norm(t.title));
+const STORAGE_KEY = 'omdrc.listening.v1';
+G.remember = () => {
+    if (!G.active || !G.track?.title) return;
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            active: true, albumKey: G.albumKey, track: G.track, tracks: G.tracks,
+            guide: G.guide, selected: G.selected, selectedTrack: G.selectedTrack,
+            userSelected: G.userSelected, collapsed: G.collapsed, busy: G.busy,
+        }));
+    } catch (_) { /* The guide remains usable if browser storage is unavailable. */ }
+};
+G.forget = () => { try { localStorage.removeItem(STORAGE_KEY); } catch (_) {} };
+G.restore = () => {
+    if (G.active) return;
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch (_) { return; }
+    if (!saved?.active || !saved.track?.title || typeof saved.albumKey !== 'string') return;
+    G.active = true;
+    G.track = saved.track;
+    G.tracks = Array.isArray(saved.tracks) ? saved.tracks : null;
+    G.albumKey = saved.albumKey;
+    G.guide = Array.isArray(saved.guide?.compositions) ? saved.guide : null;
+    G.selected = Number.isInteger(saved.selected) && saved.selected >= -1
+        && saved.selected < (G.guide?.compositions.length || 0) ? saved.selected : -1;
+    G.selectedTrack = Number.isInteger(saved.selectedTrack) && saved.selectedTrack > 0
+        && G.tracks?.[saved.selectedTrack - 1] ? saved.selectedTrack : null;
+    G.userSelected = !!saved.userSelected;
+    G.collapsed = saved.collapsed !== false;
+    G.busy = false;
+    G.error = G.guide ? '' : 'Research was interrupted. Tap Retry to continue.';
+    G.makePanel();
+    G.paint();
+    G.poll = setInterval(async () => { if (G.active) G.observe(await K.fetchTrack()); }, 3000);
+    K.fetchTrack().then(G.observe).catch(() => {});
+};
 G.onChange = fn => { G.listeners.add(fn); return () => G.listeners.delete(fn); };
 G.changed = () => G.listeners.forEach(fn => fn());
 G.icon = (className = '') => G.provider && G.provider !== 'ai'
@@ -42,6 +77,7 @@ G.selectPlaying = () => {
     const n = G.trackNumber();
     const section = G.guide.compositions.findIndex(s => s.tracks.includes(n));
     G.selected = section;
+    G.remember();
     G.paint();
 };
 G.observe = t => {
@@ -56,6 +92,7 @@ G.observe = t => {
         G.albumKey = key;
         G.track = t;
         G.guide = null;
+        G.tracks = null;
         G.selected = -1;
         G.selectedTrack = null;
         G.userSelected = false;
@@ -63,11 +100,12 @@ G.observe = t => {
     } else if (G.track?.title !== t.title || G.track?.track_id !== t.track_id) {
         G.track = t;
         G.selectPlaying();
+        G.remember();
     }
 };
 G.open = async (t, source) => {
     if (G.busy) { G.close(); return; }
-    if (G.active) { G.collapsed = false; G.paint(); return; }
+    if (G.active) { G.collapsed = false; G.remember(); G.paint(); return; }
     const sourceRect = source?.getBoundingClientRect();
     const settings = await G.settings();
     if (!settings.ok || !settings.configured) {
@@ -81,6 +119,7 @@ G.open = async (t, source) => {
     G.observe(t);
     G.poll = setInterval(async () => { if (G.active) G.observe(await K.fetchTrack()); }, 3000);
     G.paint();
+    G.remember();
     G.animateToStrip(sourceRect);
 };
 G.animateToStrip = source => {
@@ -125,6 +164,7 @@ G.close = () => {
     G.panel = null;
     G.albumKey = '';
     G.guide = null;
+    G.forget();
     G.changed();
 };
 G.cancelJob = () => {
@@ -143,6 +183,7 @@ G.research = async () => {
     G.controller = new AbortController();
     G.busy = true;
     G.error = '';
+    G.remember();
     G.paint();
     const track = G.track;
     let album = { title: track.album || track.title, artist: track.artist || '',
@@ -182,7 +223,7 @@ G.research = async () => {
         }
         G.error = error.name === 'AbortError' ? 'Research stopped' : error.message;
     } finally {
-        if (serial === G.serial) { G.job = null; G.busy = false; G.paint(); }
+        if (serial === G.serial) { G.job = null; G.busy = false; G.remember(); G.paint(); }
     }
 };
 G.makePanel = () => {
@@ -236,7 +277,7 @@ G.makePanel = () => {
                 preview?.remove();
                 if (G.swipePreview === preview) G.swipePreview = null;
             };
-        } else if (distance < -45 && G.collapsed) { G.collapsed = false; G.paint(); }
+        } else if (distance < -45 && G.collapsed) { G.collapsed = false; G.remember(); G.paint(); }
         touch = null;
     }, { passive: true });
     G.panel.addEventListener('touchcancel', () => {
@@ -246,7 +287,7 @@ G.makePanel = () => {
         touch = null;
     }, { passive: true });
 };
-G.minimize = () => { G.collapsed = true; G.paint(); };
+G.minimize = () => { G.collapsed = true; G.remember(); G.paint(); };
 G.label = () => {
     const active = G.guide?.compositions?.[G.selected];
     return G.selectedTrack ? G.tracks?.[G.selectedTrack - 1]?.title :
@@ -265,7 +306,7 @@ G.paint = () => {
     const icon = G.collapsed ? G.stripIcon() : G.icon(G.busy ? 'busy' : '');
     if (G.collapsed) {
         G.panel.append(h('button', { type: 'button', class: 'listening-strip-open',
-            onclick: () => { G.collapsed = false; G.paint(); } }, icon,
+            onclick: () => { G.collapsed = false; G.remember(); G.paint(); } }, icon,
             h('span', {}, label)),
         h('button', { type: 'button', class: 'listening-close', title: 'Close listening guide',
             'aria-label': 'Close listening guide', onclick: G.close }, '×'));
@@ -284,7 +325,7 @@ G.paint = () => {
     const items = [{ title: 'Overview', text: G.guide.overview }, ...G.guide.compositions];
     items.forEach((item, index) => tabs.append(h('button', { type: 'button', class: 'chip' + (!G.selectedTrack && G.selected === index - 1 ? ' on' : ''),
         role: 'tab', 'aria-selected': String(!G.selectedTrack && G.selected === index - 1),
-        onclick: () => { G.userSelected = true; G.selectedTrack = null; G.selected = index - 1; G.paint(); } }, item.title)));
+        onclick: () => { G.userSelected = true; G.selectedTrack = null; G.selected = index - 1; G.remember(); G.paint(); } }, item.title)));
     G.panel.append(tabs);
     if (G.guide.research_status) G.panel.append(h('p', { class: 'muted small', role: 'status' }, G.guide.research_status));
     const shown = G.selectedTrack ? {
@@ -304,6 +345,7 @@ G.paint = () => {
                 G.userSelected = true;
                 G.selectedTrack = index + 1;
                 G.selected = G.guide.compositions.findIndex(s => s.tracks.includes(index + 1));
+                G.remember();
                 G.paint();
             },
         }, `${index + 1}. ${track.title}`)));
@@ -321,5 +363,5 @@ G.paint = () => {
         h('strong', {}, 'Sources'), ...G.guide.sources.map(s => h('a', { href: s.url,
             target: '_blank', rel: 'noopener noreferrer' }, s.title || s.url))));
 };
-G.settings();
+G.settings().then(G.restore).catch(() => G.restore());
 })();
