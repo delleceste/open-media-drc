@@ -404,7 +404,16 @@ G.paint = () => {
     tabs.addEventListener('scroll', updateHints, { passive: true });
     G.tabsObserver = new ResizeObserver(updateHints);
     G.tabsObserver.observe(tabs);
-    requestAnimationFrame(() => { tabs.scrollLeft = G.tabScroll || 0; updateHints(); });
+    requestAnimationFrame(() => {
+        tabs.scrollLeft = G.tabScroll || 0;
+        const on = tabs.querySelector('.chip.on');
+        if (on) {
+            const left = on.offsetLeft - tabs.offsetLeft, right = left + on.offsetWidth;
+            if (left < tabs.scrollLeft) tabs.scrollLeft = left;
+            else if (right > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = right - tabs.clientWidth;
+        }
+        updateHints();
+    });
     const shown = G.selectedTrack ? {
         title: G.tracks[G.selectedTrack - 1]?.title || `Track ${G.selectedTrack}`,
         text: G.guide.track_notes?.find(n => n.track === G.selectedTrack)?.text ||
