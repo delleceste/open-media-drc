@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -38,13 +39,17 @@ private const val ICON_SURFACE_PX = 256
 // elsewhere. Must match widget_tiny.xml's omdrc_label fontFamily.
 private const val LABEL_FONT_FAMILY = "google-sans-text"
 
-// Pixel launcher on a Pixel 9, measured off screenshots, in dp: reported
-// cell height, icon diameter, icon bottom to the label's cap line, label
-// cap height. Small, large and extra-large icon grids, by cell height.
-private val LAUNCHER_GRIDS = arrayOf(
-    floatArrayOf(96.2f, 52.6f, 8.4f, 8.76f),
-    floatArrayOf(158f, 83f, 14.9f, 12.2f),
-    floatArrayOf(208.2f, 144.1f, 22.7f, 17.5f),
+private const val PIXEL_LAUNCHER = "com.google.android.apps.nexuslauncher"
+
+// Pixel launcher on a Pixel 9, measured off screenshots, in dp: cell width,
+// icon diameter, icon bottom to the label's cap line, label cap height.
+// Small, medium, large and extra-large icon grids, by cell width - the
+// cell's height doesn't order them (medium's cell is the shortest).
+private val PIXEL_GRIDS = arrayOf(
+    floatArrayOf(64.3f, 52.6f, 8.4f, 8.76f),
+    floatArrayOf(81.1f, 59.4f, 13.5f, 10.1f),
+    floatArrayOf(112f, 83f, 14.9f, 12.2f),
+    floatArrayOf(175.8f, 144.1f, 22.7f, 17.5f),
 )
 
 /**
@@ -137,33 +142,58 @@ object RemoteViewsBuilder {
         return views
     }
 
-    /** Column [column] of LAUNCHER_GRIDS, linearly interpolated (and
-     *  extrapolated past either end) at cell height [height] dp. */
-    private fun launcherMetric(height: Float, column: Int): Float {
-        val i = (1 until LAUNCHER_GRIDS.size - 1).firstOrNull { height < LAUNCHER_GRIDS[it][0] }
-            ?: (LAUNCHER_GRIDS.size - 1)
-        val a = LAUNCHER_GRIDS[i - 1]
-        val b = LAUNCHER_GRIDS[i]
-        return a[column] + (b[column] - a[column]) * (height - a[0]) / (b[0] - a[0])
+    /** Column [column] of PIXEL_GRIDS, linearly interpolated (and
+     *  extrapolated past either end) at cell width [width] dp. */
+    private fun pixelMetric(width: Float, column: Int): Float {
+        val i = (1 until PIXEL_GRIDS.size - 1).firstOrNull { width < PIXEL_GRIDS[it][0] }
+            ?: (PIXEL_GRIDS.size - 1)
+        val a = PIXEL_GRIDS[i - 1]
+        val b = PIXEL_GRIDS[i]
+        return a[column] + (b[column] - a[column]) * (width - a[0]) / (b[0] - a[0])
     }
 
-    /** Sizes the tile like the launcher's own icons in a cell of the same
-     *  height. The launcher reports a widget cell exactly as tall as an
-     *  icon cell and centers icon + label in it; icon, label and their gap
-     *  all grow with the grid, not proportionally, so each is interpolated
-     *  between the grids in LAUNCHER_GRIDS. The label's size and offset
-     *  come from its typeface's own metrics, so its capitals match the
-     *  launcher's. Before Android 12 RemoteViews can't size views at
-     *  runtime, and the layout's fixed, centered defaults apply. */
+    private fun isPixelLauncher(context: Context): Boolean {
+        val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val resolved = context.packageManager.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY)
+        return resolved?.activityInfo?.packageName == PIXEL_LAUNCHER
+    }
+
+    /** Sizes the tile like the launcher's own icons in the same cell. A
+     *  launcher reports a widget cell as big as an icon cell and centers
+     *  icon + label in it. No API exposes the launcher's icon size, so on
+     *  the Pixel launcher icon, gap and label are interpolated between its
+     *  measured grids (PIXEL_GRIDS), and anywhere else they're plain
+     *  proportions of the cell - close to a launcher icon, if not exact.
+     *  The label's size and offset come from its typeface's own metrics,
+     *  so its capitals come out at the intended height. Before Android 12
+     *  RemoteViews can't size views at runtime, and the layout's fixed,
+     *  centered defaults apply. */
     private fun layoutTiny(context: Context, views: RemoteViews, appWidgetId: Int) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
         val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).toFloat()
         val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0).toFloat()
         if (width <= 0f || height <= 0f) return
-        val icon = launcherMetric(height, 1).coerceIn(24f, width)
-        val gap = launcherMetric(height, 2).coerceAtLeast(2f)
-        val capHeight = launcherMetric(height, 3).coerceAtLeast(5f)
+        val icon: Float
+        val gap: Float
+        val capHeight: Float
+        if (isPixelLauncher(context)) {
+            icon = pixelMetric(width, 1)
+            gap = pixelMetric(width, 2)
+            capHeight = pixelMetric(width, 3)
+        } else {
+            // The Pixel grids' typical proportions: icon ~75% of the cell
+            // width, gap ~18% and label caps ~14% of the icon.
+            val fit = minOf(0.75f * width, height / 1.45f)
+            icon = fit
+            gap = 0.18f * fit
+            capHeight = 0.14f * fit
+        }
+        // Never more than the cell holds.
+        val scale = minOf(1f, width / icon, height / (icon + gap + capHeight))
+        val iconDp = (icon * scale).coerceAtLeast(16f)
+        val gapDp = (gap * scale).coerceAtLeast(1f)
+        val capDp = (capHeight * scale).coerceAtLeast(4f)
 
         // Per unit of text size: the cap height, and how far below the
         // TextView's top (font padding included) the cap line sits.
@@ -174,20 +204,20 @@ object RemoteViewsBuilder {
         val bounds = Rect().also { paint.getTextBounds("OMDRC", 0, 5, it) }
         val capRatio = bounds.height() / 100f
         val capTopRatio = (bounds.top - paint.fontMetrics.top) / 100f
-        val textDp = capHeight / capRatio
-        val top = ((height - (icon + gap + capHeight)) / 2f).coerceAtLeast(0f)
-        Log.d("OmdrcWidget", "layoutTiny($appWidgetId): cell ${width}x$height dp -> icon $icon dp, label $textDp dp, top $top dp")
+        val textDp = capDp / capRatio
+        val top = ((height - (iconDp + gapDp + capDp)) / 2f).coerceAtLeast(0f)
+        Log.d("OmdrcWidget", "layoutTiny($appWidgetId): cell ${width}x$height dp -> icon $iconDp dp, label $textDp dp, top $top dp")
 
         val dip = TypedValue.COMPLEX_UNIT_DIP
         views.setInt(R.id.tiny_column, "setGravity", Gravity.TOP or Gravity.CENTER_HORIZONTAL)
-        views.setViewLayoutWidth(R.id.icon_surface, icon, dip)
-        views.setViewLayoutHeight(R.id.icon_surface, icon, dip)
+        views.setViewLayoutWidth(R.id.icon_surface, iconDp, dip)
+        views.setViewLayoutHeight(R.id.icon_surface, iconDp, dip)
         views.setViewLayoutMargin(R.id.icon_surface, RemoteViews.MARGIN_TOP, top, dip)
         // dp, not sp: the launcher's labels follow the grid, not the font
         // scale setting, and these were measured off them.
         views.setTextViewTextSize(R.id.omdrc_label, dip, textDp)
-        views.setViewLayoutMargin(R.id.omdrc_label, RemoteViews.MARGIN_TOP, gap - capTopRatio * textDp, dip)
-        val chip = 0.3f * icon
+        views.setViewLayoutMargin(R.id.omdrc_label, RemoteViews.MARGIN_TOP, gapDp - capTopRatio * textDp, dip)
+        val chip = 0.3f * iconDp
         views.setViewLayoutWidth(R.id.play_pause_icon, chip, dip)
         views.setViewLayoutHeight(R.id.play_pause_icon, chip, dip)
     }
