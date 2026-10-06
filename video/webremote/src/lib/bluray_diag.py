@@ -22,8 +22,8 @@ def diagnose(disc_enabled: bool, disc_device: str, mpv_running: bool,
     now = now or datetime.now(timezone.utc)
     rows = []
 
-    def add(label: str, status: str, detail: str, fix: str = "") -> None:
-        rows.append({"label": label, "status": status, "detail": detail, "fix": fix})
+    def add(label: str, status: str, detail: str, fix: str = "", info: str = "") -> None:
+        rows.append({"label": label, "status": status, "detail": detail, "fix": fix, "info": info})
 
     system = platform.system()
     package_hint = ("sudo pkg install mpv libbluray libaacs libudfread libbdplus"
@@ -47,7 +47,11 @@ def diagnose(disc_enabled: bool, disc_device: str, mpv_running: bool,
             package_hint if not found else "")
     add("Idle mpv", "ok" if mpv_running else "warning",
         "Running" if mpv_running else "Not running; the web remote cannot start playback",
-        "Start the desktop session's mpv-idle.sh" if not mpv_running else "")
+        "Start the desktop session's mpv-idle.sh" if not mpv_running else "",
+        "From the top-level project, sudo cmake --install build installs mpv-idle.sh and its autostart entry. "
+        "Run cmake --build build --target user-install as the audio/desktop user to link that entry. "
+        f"Log into the graphical desktop, or start {Path(__file__).resolve().parents[2] / 'mpv-idle.sh'} there now. "
+        "The web service cannot launch mpv into that desktop session.")
 
     try:
         account_home = Path(pwd.getpwuid(os.geteuid()).pw_dir)

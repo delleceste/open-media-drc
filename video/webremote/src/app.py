@@ -18,7 +18,8 @@ import time
 
 from flask import Flask, jsonify, render_template, request, send_file
 
-from lib import (avsync, bluray_diag, classify, favorites, imdb, mpvipc, play, thumbs,
+from lib import (avsync, bluray_diag, classify, favorites, imdb, keydb_install,
+                 media_settings, mpvipc, play, thumbs,
                  titles, videodelay, roots as rootlib)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -82,11 +83,14 @@ def load_config(path: str | None) -> None:
     # the UI hides the button.
     if platform.system() not in ("FreeBSD", "Linux"):
         DISC_ENABLED = False
-    ROOTS = rootlib.load_roots(_RAW_ROOTS)
+    saved_roots = media_settings.load()
+    ROOTS = ([p for p in saved_roots if os.path.isdir(p)] if saved_roots is not None
+             else rootlib.load_roots(_RAW_ROOTS))
     thumbs.set_concurrency(THUMB_CONCURRENCY)
 
 
 app = Flask(__name__, template_folder=os.path.join(_HERE, "templates"))
+app.config["MAX_CONTENT_LENGTH"] = keydb_install.MAX_UPLOAD + 1024 * 1024
 
 
 def _fav_set() -> set[str]:
@@ -232,6 +236,10 @@ def index():
 @app.route("/api/roots")
 def api_roots():
     """Main page: configured media roots plus pinned favourites."""
+    global ROOTS
+    saved = media_settings.load()
+    ROOTS = ([p for p in saved if os.path.isdir(p)] if saved is not None
+             else rootlib.load_roots(_RAW_ROOTS))
     return jsonify({
         "ok": True,
         "roots": [{"name": os.path.basename(r) or r, "path": r,
@@ -239,6 +247,52 @@ def api_roots():
         "favorites": _fav_entries(),
         "disc": DISC_ENABLED,
     })
+
+
+@app.route("/api/media-roots", methods=["GET", "PUT"])
+def api_media_roots():
+    """Persist a user-picked whitelist, separate from root-owned webremote.conf."""
+    global ROOTS
+    if request.method == "PUT":
+        try:
+            paths = media_settings.validate((request.get_json(silent=True) or {}).get("roots"))
+            media_settings.save(paths)
+        except ValueError as error:
+            return jsonify({"ok": False, "error": str(error)}), 400
+        except OSError as error:
+            return jsonify({"ok": False, "error": str(error)}), 500
+        ROOTS = paths
+    configured = media_settings.load()
+    overridden = configured is not None
+    if configured is None:
+        configured = rootlib.load_roots(_RAW_ROOTS)
+    return jsonify({"ok": True, "roots": [{"path": path, "available": os.path.isdir(path)}
+                                           for path in configured], "source": "web UI" if overridden else "webremote.conf"})
+
+
+@app.route("/api/server-folders")
+def api_server_folders():
+    """Directory names only, for choosing a media root on the server."""
+    try:
+        return jsonify({"ok": True, **media_settings.list_folders(request.args.get("path") or "/")})
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except OSError as error:
+        return jsonify({"ok": False, "error": str(error)}), 403
+
+
+@app.route("/api/keydb", methods=["POST"])
+def api_install_keydb():
+    upload = request.files.get("file")
+    if upload is None:
+        return jsonify({"ok": False, "error": "Choose a KEYDB.cfg file or ZIP first"}), 400
+    try:
+        result = keydb_install.install(upload)
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except OSError as error:
+        return jsonify({"ok": False, "error": str(error)}), 500
+    return jsonify({"ok": True, **result})
 
 
 @app.route("/api/browse")

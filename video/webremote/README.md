@@ -157,7 +157,26 @@ filename's case and make it readable by that account. The diagnostic shows the
 exact path it checks. Download the current English ZIP from the
 [FindVUK database](https://fvonline-db.bplaced.net/) and extract `KEYDB.cfg`
 there; the web UI links to both the database and its ZIP. It does not download
-or replace keys automatically.
+keys automatically. After downloading, open **⋮ → Blu-ray check**, choose the
+`KEYDB.cfg` file or the English ZIP, and tap **Install KEYDB.cfg**. The upload is
+validated and installed with mode `0600` for the video service user. If there
+was an earlier file it is kept as `KEYDB.cfg.previous`; an invalid upload leaves
+the installed file unchanged.
+
+The **i** button beside **Idle mpv** explains its graphical-session setup:
+install from the top-level CMake build, run the `user-install` target as the
+audio user, and start `mpv-idle.sh` from that user's desktop session if needed.
+
+### Editing media folders
+
+Open **⋮ → Media folders** to browse directories on the server, add or remove
+roots, and save. Changes take effect immediately and persist across service
+restarts in `~/.config/omdrcvideo/media-roots.json` for the service user. This
+user-owned override leaves the root-owned `webremote.conf` intact. Only selected
+roots are available to the normal media browser and playback endpoints. The
+folder picker returns directory names and paths; it does not serve file contents.
+The server remains a trusted-LAN service because these setup controls are
+available to every client that can reach port 9080.
 
 ---
 

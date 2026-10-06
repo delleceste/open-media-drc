@@ -17,6 +17,16 @@
   .viewtoggle button { background:var(--card); color:var(--fg); border:1px solid var(--line);
            border-radius:8px; padding:7px 11px; font-size:15px; cursor:pointer; }
   .viewtoggle button.on { border-color:var(--accent); color:var(--accent); }
+  .more-menu { position:relative; margin-left:auto; }
+  .more-menu summary { list-style:none; cursor:pointer; background:var(--card); border:1px solid var(--line);
+          border-radius:8px; padding:5px 12px; font-size:22px; line-height:1; }
+  .more-menu summary::-webkit-details-marker { display:none; }
+  .more-options { position:absolute; right:0; top:calc(100% + 4px); min-width:190px; z-index:12;
+          background:var(--card); border:1px solid var(--line); border-radius:8px; padding:5px;
+          box-shadow:0 10px 28px rgba(0,0,0,.45); }
+  .more-options button { display:block; width:100%; text-align:left; padding:10px; color:var(--fg);
+          background:transparent; border:0; border-radius:5px; font:inherit; cursor:pointer; }
+  .more-options button:active { background:#21262d; }
   #path { color:var(--muted); font-size:13px; word-break:break-all; min-height:18px; }
 
   /* list view (compact) */
@@ -115,7 +125,15 @@
   .diag-row.warn strong { color:var(--gold); }
   .diag-row.error strong { color:#f85149; }
   .diag-row p { margin:5px 0 0; }
+  .diag-heading { display:flex; align-items:center; gap:8px; }
+  .diag-info { border:1px solid var(--line); border-radius:50%; width:22px; height:22px;
+          background:#21262d; color:var(--accent); font-weight:700; cursor:pointer; }
   .diag-links { display:flex; flex-wrap:wrap; gap:8px; margin-top:15px; }
+  .setup-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  .setup-row input[type=file] { max-width:100%; }
+  .folder-path { overflow-wrap:anywhere; color:var(--accent); margin:8px 0; }
+  .folder-entry { display:block; width:100%; border:1px solid var(--line); border-radius:8px;
+          background:#21262d; color:var(--fg); text-align:left; padding:10px; margin:5px 0; font:inherit; }
 </style>
 </head>
 <body>
@@ -123,11 +141,17 @@
   <div class="titlebar">
     <h1>🎬 Video Remote</h1>
     <div class="viewtoggle">
-      <button id="blurayDiag" title="Check Blu-ray setup">Blu-ray check</button>
-      <button id="rescan" title="Rescan thumbnails">⟳</button>
       <button id="vGrid" title="Grid">▦</button>
       <button id="vList" title="List">☰</button>
     </div>
+    <details class="more-menu" id="moreMenu">
+      <summary aria-label="More options" title="More options">⋮</summary>
+      <div class="more-options">
+        <button type="button" id="mediaFolders">Media folders</button>
+        <button type="button" id="blurayDiag">Blu-ray check</button>
+        <button type="button" id="rescan">Rescan thumbnails</button>
+      </div>
+    </details>
   </div>
   <div id="path"></div>
 </header>
@@ -329,7 +353,13 @@ function playDisc() {
 }
 function ejectDisc() { discCmd("eject", () => "Disc released — safe to eject"); }
 
-document.getElementById("blurayDiag").onclick = async () => {
+const moreMenu = document.getElementById("moreMenu");
+document.addEventListener("pointerdown", event => {
+  if (!moreMenu.contains(event.target)) moreMenu.open = false;
+});
+
+async function showBlurayDiagnostic() {
+  moreMenu.open = false;
   scrim.classList.add("show");
   sheet.replaceChildren();
   const title = document.createElement("h2"); title.textContent = "Blu-ray diagnostic";
@@ -343,10 +373,20 @@ document.getElementById("blurayDiag").onclick = async () => {
       data.status === "warning" ? "Warnings found" : "Setup needs attention";
     for (const check of data.checks) {
       const row = document.createElement("div"); row.className = "diag-row " + check.status;
+      const headingLine = document.createElement("div"); headingLine.className = "diag-heading";
       const heading = document.createElement("strong");
       heading.textContent = (check.status === "ok" ? "✓ " : check.status === "warning" ? "⚠ " : "✕ ") + check.label;
       const detail = document.createElement("small"); detail.textContent = check.detail;
-      row.append(heading, detail);
+      headingLine.append(heading);
+      if (check.info) {
+        const info = document.createElement("button"); info.className = "diag-info";
+        info.type = "button"; info.textContent = "i";
+        info.setAttribute("aria-label", "About " + check.label);
+        const explanation = document.createElement("p"); explanation.hidden = true;
+        explanation.textContent = check.info;
+        info.onclick = () => { explanation.hidden = !explanation.hidden; };
+        headingLine.append(info); row.append(headingLine, detail, explanation);
+      } else row.append(headingLine, detail);
       if (check.fix) { const fix = document.createElement("p"); fix.textContent = check.fix; row.append(fix); }
       sheet.append(row);
     }
@@ -359,10 +399,100 @@ document.getElementById("blurayDiag").onclick = async () => {
     archive.href = data.keydb.archive; archive.target = "_blank"; archive.rel = "noopener noreferrer";
     archive.textContent = "Download English KEYDB.cfg ZIP ↗";
     links.append(source, archive); sheet.append(note, links);
+    const installRow = document.createElement("div"); installRow.className = "setup-row";
+    const upload = document.createElement("input"); upload.type = "file";
+    upload.accept = ".cfg,.zip,application/zip";
+    upload.setAttribute("aria-label", "Select a downloaded KEYDB.cfg or ZIP");
+    const install = document.createElement("button"); install.className = "btn";
+    install.type = "button"; install.textContent = "Install KEYDB.cfg";
+    const result = document.createElement("small"); result.className = "syncinfo";
+    install.onclick = async () => {
+      if (!upload.files.length) { result.textContent = "Choose a downloaded KEYDB.cfg or ZIP first."; return; }
+      install.disabled = true; result.textContent = "Installing…";
+      try {
+        const body = new FormData(); body.append("file", upload.files[0]);
+        const response = await fetch("/api/keydb", { method:"POST", body });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "Install failed");
+        await showBlurayDiagnostic();
+        toast("KEYDB.cfg installed; previous file backed up when present");
+      } catch (error) { result.textContent = error.message || "Upload failed"; install.disabled = false; }
+    };
+    installRow.append(upload, install, result); sheet.append(installRow);
   } catch (error) { loading.textContent = error.message || "Network error"; loading.className = "err"; }
+}
+document.getElementById("blurayDiag").onclick = showBlurayDiagnostic;
+
+document.getElementById("mediaFolders").onclick = async () => {
+  moreMenu.open = false;
+  scrim.classList.add("show"); sheet.replaceChildren();
+  const title = document.createElement("h2"); title.textContent = "Media folders";
+  const help = document.createElement("p"); help.className = "syncinfo";
+  help.textContent = "Choose folders on the server. Only selected roots can be browsed or played in the video remote.";
+  const chosen = document.createElement("div");
+  const pathLine = document.createElement("div"); pathLine.className = "folder-path";
+  const listing = document.createElement("div");
+  const actions = document.createElement("div"); actions.className = "setup-row";
+  const up = document.createElement("button"); up.className = "btn"; up.textContent = "Up";
+  const add = document.createElement("button"); add.className = "btn"; add.textContent = "Add this folder";
+  const save = document.createElement("button"); save.className = "btn play"; save.textContent = "Save media folders";
+  const message = document.createElement("p"); message.className = "syncinfo";
+  actions.append(up, add, save);
+  sheet.append(title, help, chosen, pathLine, actions, listing, message);
+  let roots = [], currentPath = "/", parent = null;
+  const paintChosen = () => {
+    chosen.replaceChildren();
+    for (const path of roots) {
+      const row = document.createElement("div"); row.className = "setup-row";
+      const label = document.createElement("span"); label.textContent = path;
+      label.style.overflowWrap = "anywhere";
+      const remove = document.createElement("button"); remove.className = "btn";
+      remove.textContent = "Remove";
+      remove.onclick = () => { roots = roots.filter(item => item !== path); paintChosen(); };
+      row.append(label, remove); chosen.append(row);
+    }
+    if (!roots.length) { const empty = document.createElement("p"); empty.className = "syncinfo";
+      empty.textContent = "No media folders selected."; chosen.append(empty); }
+  };
+  const browseServer = async path => {
+    message.textContent = "Reading server folders…";
+    try {
+      const response = await fetch("/api/server-folders?path=" + encodeURIComponent(path));
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "Cannot read folder");
+      currentPath = data.path; parent = data.parent; pathLine.textContent = currentPath;
+      up.disabled = !parent; add.disabled = currentPath === "/";
+      listing.replaceChildren();
+      for (const folder of data.folders) {
+        const button = document.createElement("button"); button.className = "folder-entry";
+        button.textContent = "📁 " + folder.name;
+        button.onclick = () => browseServer(folder.path);
+        listing.append(button);
+      }
+      message.textContent = data.truncated ? "Showing the first 500 folders." : "";
+    } catch (error) { message.textContent = error.message || "Network error"; }
+  };
+  up.onclick = () => { if (parent) browseServer(parent); };
+  add.onclick = () => { if (!roots.includes(currentPath)) roots.push(currentPath); paintChosen(); };
+  save.onclick = async () => {
+    save.disabled = true; message.textContent = "Saving…";
+    try {
+      const response = await fetch("/api/media-roots", { method:"PUT",
+        headers:{"Content-Type":"application/json"}, body:JSON.stringify({ roots }) });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "Cannot save media folders");
+      closeSheet(); browse(""); toast("Media folders saved");
+    } catch (error) { message.textContent = error.message || "Network error"; save.disabled = false; }
+  };
+  try {
+    const response = await fetch("/api/media-roots"); const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Cannot read media folders");
+    roots = data.roots.map(item => item.path); paintChosen(); await browseServer("/");
+  } catch (error) { message.textContent = error.message || "Network error"; }
 };
 
 document.getElementById("rescan").onclick = async () => {
+  moreMenu.open = false;
   try {
     const d = await (await fetch("/api/rescan", { method:"POST" })).json();
     toast(d.busy ? "Scanning for new thumbnails…" : "Rescan started");
