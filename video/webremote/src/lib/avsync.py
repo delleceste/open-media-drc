@@ -91,6 +91,20 @@ def _rebase(sock: str, store: str) -> bool:
     return True
 
 
+def set_base(sock: str, store: str, base: float) -> None:
+    """Replace the baseline (e.g. once the per-filter video delay has been
+    computed in the background, after mpv already launched with a guess),
+    keeping the user's trim on top. Raises on IPC errors; the caller decides
+    whether a failure here (mpv not up yet, etc.) is worth surfacing."""
+    global _pid, _base, _base_known
+    with _lock:
+        _load(store)
+        pid = mpvipc.get_property(sock, "pid")
+        _pid, _base, _base_known = pid, float(base), True
+        _apply(sock)
+        _save(store)
+
+
 def state(sock: str, store: str, rng: float, step: float) -> dict:
     """Current trim and the bounds the UI should offer."""
     with _lock:

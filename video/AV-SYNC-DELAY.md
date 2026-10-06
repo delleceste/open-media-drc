@@ -183,8 +183,12 @@ file — it's the part you confirm by eye.
  ≈ 0.67 s+   →  DRC_VIDEO_DELAY
 ```
 
-That is why `DRC_VIDEO_DELAY` defaults to **0.67** (filter + partition), with the
-small virtual_oss remainder left for eyeball fine-tuning.
+`DRC_VIDEO_DELAY` is now computed this way automatically (`drc-audio.sh` calls
+`webremote/src/lib/videodelay.py`, which reads whichever filter brutefir is
+actually running and does exactly §6's checklist) -- it only falls back to the
+**0.67** derived here if that computation fails for any reason (brutefir not
+up yet, etc.). The small virtual_oss remainder is still left for eyeball
+fine-tuning, or the web remote's live A/V sync trim (§5).
 
 ---
 
@@ -238,14 +242,15 @@ small virtual_oss remainder left for eyeball fine-tuning.
 
 ## 7. Where else this delay is used: the omdrc-ctrl spectrum analyzer
 
-`play-bluray.sh` uses a **hardcoded** `DRC_VIDEO_DELAY=0.67` because the video
-path always runs brutefir at 192 kHz (resampled), so the number is fixed.
-
-The omdrc-ctrl live spectrum/VU analyzer faces the *same* problem from the other
-side: it taps the **pre-DRC** MPD FIFO, so its display would run *ahead* of the
-audible sound by exactly this delay. There it is **computed at runtime** rather
-than hardcoded, because music plays at the native rate (44.1–192 kHz) and the
-partition term is rate-dependent:
+The video path (§6, `videodelay.py`) and the omdrc-ctrl live spectrum/VU
+analyzer both need this same two-term delay, computed the same way, for two
+different reasons: the video path delays the picture to match the audibly-late
+sound; the analyzer taps the **pre-DRC** MPD FIFO, so its display would run
+*ahead* of the audible sound by exactly this delay unless it delays itself to
+match. The analyzer's version predates `videodelay.py` and lives in
+omdrc-ctrl's Python (not reused directly, since it also folds in the analyzer's
+own margin term below) -- same formula, independently computed because music
+plays at the native rate (44.1–192 kHz) and the partition term is rate-dependent:
 
 ```
 delay = argmax(|h|)/rate          (group delay, from the active L.raw — §2–3)

@@ -1,14 +1,15 @@
 #!/bin/sh
-# Play the Blu-ray in the USB drive (/dev/cd0) on FreeBSD.
+# Play the Blu-ray in the USB drive (/dev/cd0 FreeBSD, /dev/sr0 Linux).
 #
-# Why this script exists:
+# Why the FreeBSD branch exists:
 #   FreeBSD's raw optical device /dev/cd0 has no kernel read-ahead, so
 #   libbluray's small (2 KB) reads only sustain ~3.6 MB/s -- too slow for
 #   Blu-ray, which is what makes mpv stall/re-buffer. We front the drive with
 #   a GEOM read-ahead cache (gcache, 1 MB blocks) that turns those tiny reads
 #   into 1 MB device reads, raising the effective rate to ~9 MB/s. mpv's own
 #   config (~/.config/mpv/mpv.conf) adds a large RAM buffer on top.
-#   (On Linux this is unnecessary: /dev/sr0 is a block device with read-ahead.)
+#   On Linux this is unnecessary: /dev/sr0 is a block device with read-ahead,
+#   so we read it directly -- no cache, no sudo.
 #
 # Audio routing (DRC-aware) is handled by lib/drc-audio.sh; remote control
 # (KDE Connect / playerctl / Plasma) comes free via mpv-mpris on D-Bus/MPRIS.
@@ -22,22 +23,32 @@ set -e
 # Robust PATH so this works from a terminal, a .desktop launcher, or a keybind.
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:$PATH
 
-DEV=cd0
-CACHE=bd
+if [ "$(uname)" = "Linux" ]; then
+    DEV="${DISC_DEV:-sr0}"
+else
+    DEV="${DISC_DEV:-cd0}"
+fi
+CACHE="${DISC_CACHE:-bd}"
 
 # Installed launchers keep their shared helper beside the executable.
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-# --- DRC-aware audio routing: sets AUDIO_DEVICE / AUDIO_DELAY / SUB_DELAY -----
+# --- DRC-aware audio routing: sets AO / AUDIO_DEVICE / AUDIO_DELAY / SUB_DELAY -
 [ -r "$HERE/drc-audio.sh" ] || { echo "missing installed drc-audio.sh" >&2; exit 1; }
 . "$HERE/drc-audio.sh"
 
-# --- read-ahead cache in front of the slow optical drive -------------------
-sudo kldload -n geom_cache
-sudo gcache destroy "$CACHE" 2>/dev/null || true
-sudo gcache create -b 1048576 -s 268435456 "$CACHE" "$DEV"
-cleanup() { sudo gcache destroy "$CACHE" 2>/dev/null || true; }
-trap cleanup EXIT INT TERM
+# --- read-ahead cache in front of the slow optical drive (FreeBSD only) -----
+if $IS_LINUX; then
+    BD_DEVICE="/dev/$DEV"
+    [ -e "$BD_DEVICE" ] || { echo "no disc in $BD_DEVICE" >&2; exit 1; }
+else
+    BD_DEVICE="/dev/cache/$CACHE"
+    sudo kldload -n geom_cache
+    sudo gcache destroy "$CACHE" 2>/dev/null || true
+    sudo gcache create -b 1048576 -s 268435456 "$CACHE" "$DEV"
+    cleanup() { sudo gcache destroy "$CACHE" 2>/dev/null || true; }
+    trap cleanup EXIT INT TERM
+fi
 
 # --- choose what to play ---------------------------------------------------
 # An explicit argument (e.g. "bd://mpls/20", "bd://1") always wins. Otherwise
@@ -48,7 +59,7 @@ trap cleanup EXIT INT TERM
 # the longest and select it precisely with bd://mpls/<n>.
 TARGET="${1:-}"
 if [ -z "$TARGET" ]; then
-    mpls=$(bd_list_titles /dev/cache/"$CACHE" 2>/dev/null | awk '
+    mpls=$(bd_list_titles "$BD_DEVICE" 2>/dev/null | awk '
       /duration:/ {
         dur=0; pl="";
         for (i=1;i<=NF;i++) {
@@ -69,8 +80,8 @@ fi
 
 # --- play ------------------------------------------------------------------
 mpv --fs \
-    --bluray-device=/dev/cache/"$CACHE" \
-    --ao=oss --audio-device="$AUDIO_DEVICE" \
+    --bluray-device="$BD_DEVICE" \
+    --ao="$AO" --audio-device="$AUDIO_DEVICE" \
     --audio-delay="$AUDIO_DELAY" \
     --sub-delay="$SUB_DELAY" \
     "$TARGET"

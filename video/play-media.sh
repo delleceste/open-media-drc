@@ -22,13 +22,13 @@ fi
 # Installed launchers keep their shared helper beside the executable.
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-# --- DRC-aware audio routing: sets AUDIO_DEVICE / AUDIO_DELAY / SUB_DELAY -----
+# --- DRC-aware audio routing: sets AO / AUDIO_DEVICE / AUDIO_DELAY / SUB_DELAY -
 [ -r "$HERE/drc-audio.sh" ] || { echo "missing installed drc-audio.sh" >&2; exit 1; }
 . "$HERE/drc-audio.sh"
 
 # --- play (-- guards files/URLs that start with '-') -----------------------
 exec mpv --fs \
-    --ao=oss --audio-device="$AUDIO_DEVICE" \
+    --ao="$AO" --audio-device="$AUDIO_DEVICE" \
     --audio-delay="$AUDIO_DELAY" \
     --sub-delay="$SUB_DELAY" \
     -- "$@"

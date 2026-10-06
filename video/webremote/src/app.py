@@ -19,7 +19,7 @@ import time
 from flask import Flask, jsonify, render_template, request, send_file
 
 from lib import (avsync, classify, favorites, imdb, mpvipc, play, thumbs,
-                 titles, roots as rootlib)
+                 titles, videodelay, roots as rootlib)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -36,7 +36,7 @@ MPV_SOCKET = "/tmp/mpv-socket"
 PREWARM_INTERVAL = 900
 THUMB_CONCURRENCY = 2
 DISC_ENABLED = True
-DISC_DEV = "cd0"
+DISC_DEV = "cd0" if platform.system() == "FreeBSD" else "sr0"
 DISC_CACHE = "bd"
 DISC_SCRIPT = os.path.join(_HERE, os.pardir, "disc.sh")
 # The installed DRC audio library is deployed beside disc.sh.
@@ -76,10 +76,11 @@ def load_config(path: str | None) -> None:
         DISC_CACHE = cfg.get("disc", "cache", fallback=DISC_CACHE)
         AVSYNC_RANGE = abs(cfg.getfloat("avsync", "range", fallback=AVSYNC_RANGE))
         AVSYNC_STEP = abs(cfg.getfloat("avsync", "step", fallback=AVSYNC_STEP)) or 0.01
-    # Physical Blu-ray disc playback uses FreeBSD-only plumbing (gcache/kldload,
-    # cd0); force it off everywhere else regardless of config so /api/roots
-    # reports disc:false and the UI hides the button.
-    if platform.system() != "FreeBSD":
+    # Physical Blu-ray disc playback needs gcache/kldload (FreeBSD) or a plain
+    # /dev/sr0 block device (Linux; disc.sh skips the cache there). Force it off
+    # everywhere else regardless of config so /api/roots reports disc:false and
+    # the UI hides the button.
+    if platform.system() not in ("FreeBSD", "Linux"):
         DISC_ENABLED = False
     ROOTS = rootlib.load_roots(_RAW_ROOTS)
     thumbs.set_concurrency(THUMB_CONCURRENCY)
@@ -194,6 +195,33 @@ def _prewarm_loop() -> None:
 
 def start_prewarm() -> None:
     threading.Thread(target=_prewarm_loop, name="thumb-prewarm", daemon=True).start()
+
+
+def _apply_video_delay_once() -> None:
+    """Recompute the DRC audio-path delay for whichever filter is active right
+    now, and push it as avsync's baseline (keeping any saved trim on top of
+    it). Runs once per app start, in the background, so the UI is usable
+    immediately -- mpv-idle.sh already launched with a reasonable starting
+    delay, this just corrects it once the real number is known. See
+    lib/videodelay.py and ../AV-SYNC-DELAY.md for what's being computed and
+    why it can't just be a constant."""
+    delay = videodelay.compute_seconds()
+    if delay is None:
+        return                              # brutefir not up / config unreadable
+    for _ in range(30):                     # mpv-idle.sh may still be starting
+        if mpvipc.is_running(MPV_SOCKET):
+            break
+        time.sleep(1)
+    else:
+        return
+    try:
+        avsync.set_base(MPV_SOCKET, avsync_file(), -delay)
+    except (mpvipc.MpvError, mpvipc.MpvNotRunning, OSError):
+        pass
+
+
+def start_video_delay() -> None:
+    threading.Thread(target=_apply_video_delay_once, name="video-delay", daemon=True).start()
 
 
 @app.route("/")
@@ -377,10 +405,12 @@ def _ensure_drc_resamp() -> str | None:
         return None
     import subprocess
     # Same PATH widening as the disc helper: drc-audio.sh looks up the `omdrc`
-    # and `omdrc-status` wrappers on PATH. HERE mirrors what mpv-idle.sh passes.
+    # and `omdrc-status` wrappers on PATH. HERE mirrors what mpv-idle.sh passes
+    # (its own directory, lib/omdrcvideo -- not .../omdrcvideo/.., a stray extra
+    # pardir that was harmless only because drc-audio.sh never read $HERE before
+    # it needed to find videodelay.py under its own src/lib/).
     env = _disc_env()
-    env["HERE"] = os.path.join(os.path.dirname(os.path.abspath(DRC_AUDIO_LIB)),
-                               os.pardir)
+    env["HERE"] = os.path.dirname(os.path.abspath(DRC_AUDIO_LIB))
     env.pop("DRC_SKIP_RESAMP", None)   # this caller DOES want the switch
     # Check the outcome, not the exit status: drc-audio.sh reports a failed
     # switch with `|| echo ...` and still exits 0. Ask it instead which device
@@ -633,5 +663,6 @@ if __name__ == "__main__":
     if not ROOTS:
         print(f"WARNING: no usable media roots (configured: {_RAW_ROOTS!r}); "
               "browsing will be empty until the drive is mounted.")
-    start_prewarm()   # background: generate missing thumbnails for new files
+    start_prewarm()      # background: generate missing thumbnails for new files
+    start_video_delay()  # background: recompute the DRC video delay for this filter
     app.run(host=host, port=port, threaded=True)

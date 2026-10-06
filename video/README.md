@@ -1,9 +1,16 @@
-# video — Blu-ray / DVD playback on the FreeBSD media box
+# video — Blu-ray / DVD playback on the media box
 
 Companion to the audio DRC side of open-media-drc. This covers playing **physical
-Blu-ray discs and DVDs**, **local files**, and **network/stream URLs** on FreeBSD,
-with audio routed through the same virtual_oss/brutefir DRC chain and remote
-control from your phone via KDE Connect.
+Blu-ray discs and DVDs**, **local files**, and **network/stream URLs**, with
+audio routed through the same DRC chain (virtual_oss/brutefir on FreeBSD,
+brutefir + a snd-aloop loopback on Linux) and remote control from your phone
+via KDE Connect.
+
+> Physical Blu-ray plays on both OSes. FreeBSD needs the gcache read-ahead
+> trick below because its raw `/dev/cd0` has no kernel read-ahead; Linux reads
+> `/dev/sr0` directly (already a normal read-ahead block device) with no
+> cache step. The rest of this doc (mpv vs. Kodi, the gcache mechanics) is
+> FreeBSD-specific unless noted.
 
 The video launchers and web remote are installed by the top-level CMake build.
 Checkout-local symlinks and direct execution are unsupported.

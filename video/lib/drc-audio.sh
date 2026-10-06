@@ -1,8 +1,11 @@
 # Shared DRC-aware audio selection for the media-box mpv launchers.
 #
-# Source this (POSIX sh). The caller MUST set HERE to the video/ directory
-# (play-bluray.sh / play-media.sh do: HERE=$(dirname "$(readlink -f "$0")")).
-# It sets three variables for the caller's mpv command:
+# Source this (POSIX sh). The caller MUST set HERE to its own installed
+# directory (play-bluray.sh / play-media.sh do: HERE=$(dirname "$(readlink -f
+# "$0")")) -- this script and the webremote's src/ tree install as siblings
+# under it (CMakeLists.txt), which is also where this script finds videodelay.py.
+# It sets four variables for the caller's mpv command:
+#   AO            -- mpv --ao value (the audio output API this box actually has)
 #   AUDIO_DEVICE  -- mpv --audio-device value
 #   AUDIO_DELAY   -- mpv --audio-delay value (negative delays the VIDEO)
 #   SUB_DELAY     -- mpv --sub-delay value
@@ -37,30 +40,38 @@ IS_LINUX=false
 #            what routes audio through brutefir (room correction + resample),
 #            exactly as MPD does; the raw DAC is hw:0,0 (DRC off, bit-perfect).
 if $IS_LINUX; then
+    AO="alsa"                       # this box is ALSA-only on Linux (no Pulse/PipeWire)
     DAC_DEVICE="alsa/hw:0,0"        # direct USB DAC (DRC off)
     DRC_DEVICE="alsa/hw:1,0"        # snd-aloop loopback feeding brutefir (DRC on)
 else
+    AO="oss"
     # direct DAC (DRC off), by role — see omdrc_audio
     DAC_DEVICE="oss/$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)"
     DRC_DEVICE="oss//dev/dsp.play"  # virtual_oss client device (DRC on)
 fi
 
-# Audio-path latency to hide by delaying the video, in seconds.
-#   filter group delay  = 0.500 s  (EXACT: impulse peak at sample 96000 / 192000
-#                                    in filters/120.blue/192000/{L,R}.raw)
-# + brutefir partition  = 0.171 s  (one filter_length partition, 32768 / 192000)
-# + virtual_oss / snd-aloop buffer ~ a little more
-#   ~= 0.67 s            -> DRC_VIDEO_DELAY     (full derivation: ../AV-SYNC-DELAY.md)
-#   The filters are identical on Linux, so the same delay applies there too.
-: "${DRC_VIDEO_DELAY:=0.67}"
+# Audio-path latency to hide by delaying the video, in seconds:
+#   filter group delay   (the active filter's own impulse peak; different
+#                          filters/rates give a different number)
+# + brutefir partition   (one filter_length partition / rate)
+# + virtual_oss / snd-aloop buffer ~ a little more, not covered below
+# Computed fresh from whatever brutefir is actually running right now (we assume
+# the filter does not change mid-playback) -- full derivation and the one-off
+# measurement this replaces: ../AV-SYNC-DELAY.md. 0.67s (measured for
+# filters/120.blue/192000) is the fallback if brutefir isn't up yet or the
+# computation fails for any reason.
+if [ -z "${DRC_VIDEO_DELAY:-}" ]; then
+    # videodelay.py installs under the webremote's src/ tree, beside this script
+    # (CMakeLists.txt: lib/omdrcvideo/{drc-audio.sh,src/lib/videodelay.py}).
+    DRC_VIDEO_DELAY=$(python3 "$HERE/src/lib/videodelay.py" 2>/dev/null) || true
+    case "$DRC_VIDEO_DELAY" in '' | *[!0-9.]* ) DRC_VIDEO_DELAY=0.67 ;; esac
+fi
 # Subtitles track the VIDEO in mpv and we shift only the audio -> no offset.
 : "${DRC_SUB_DELAY:=0}"
 
 # DRC-active detection differs by OS:
 #   FreeBSD: virtual_oss running and its client node /dev/dsp.play present.
-#   Linux  : brutefir running and the snd-aloop loopback present.  The filter
-#            group delay is identical (same filters), so the 0.67s video delay
-#            applies unchanged.
+#   Linux  : brutefir running and the snd-aloop loopback present.
 if $IS_LINUX; then
     drc_up=false
     if pgrep -x brutefir >/dev/null 2>&1 && [ -e /proc/asound/Loopback ]; then
