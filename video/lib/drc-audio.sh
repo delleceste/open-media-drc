@@ -6,7 +6,7 @@
 # under it (CMakeLists.txt), which is also where this script finds videodelay.py.
 # It sets these variables for the caller's mpv command:
 #   AO            -- mpv --ao value (the audio output API this box actually has)
-#   AO_OPTS       -- extra output options for that API; expand UNQUOTED
+#   AO_OPTS       -- extra mpv options for this box's audio/disc path; expand UNQUOTED
 #   AUDIO_DEVICE  -- mpv --audio-device value
 #   AUDIO_DELAY   -- mpv --audio-delay value (negative delays the VIDEO)
 #   SUB_DELAY     -- mpv --sub-delay value
@@ -58,6 +58,14 @@ if $IS_LINUX; then
     # snd-aloop -> brutefir: playback freezes on the first frame, silent and
     # black.  Several periods keep it flowing.
     AO_OPTS="--alsa-buffer-time=800000 --alsa-periods=8"
+    # The loopback pair shares brutefir's 32768-frame period (~0.17 s at 192 kHz),
+    # so mpv's audio clock advances in coarse steps and video-sync=audio then
+    # drops about a third of the frames.  autosync smooths the audio clock.
+    # The rest is the Blu-ray read-ahead cache (the USB drive delivers ~3.5 MB/s
+    # in bursts; mpv's 1 s default leaves no cushion) and hardware decode.
+    AO_OPTS="$AO_OPTS --autosync=30 --hwdec=auto-safe --stream-buffer-size=4MiB"
+    AO_OPTS="$AO_OPTS --cache=yes --demuxer-max-bytes=512MiB --demuxer-max-back-bytes=64MiB"
+    AO_OPTS="$AO_OPTS --demuxer-readahead-secs=600 --cache-secs=600"
 else
     AO="oss"
     AO_OPTS=""

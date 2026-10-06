@@ -35,6 +35,9 @@ case "${1:-}" in
     up)
         if $IS_LINUX; then
             [ -e "/dev/$DEV" ] || { echo "no disc in /dev/$DEV" >&2; exit 1; }
+            # The drive can sit at a low read speed (3.7 MB/s here, under what
+            # high-bitrate Blu-ray needs); ask for its maximum.  Best effort.
+            command -v eject >/dev/null 2>&1 && eject -x 0 "/dev/$DEV" >/dev/null 2>&1
             echo "/dev/$DEV"
         else
             sudo kldload -n geom_cache
