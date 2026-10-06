@@ -1,18 +1,22 @@
 /* The seek ring on a cover (Now upright, the Qobuz page's full player).
  *
  * Two steps, so a stray touch on the cover never moves the music: the first touch
- * (a tap, or a slide) only brings up a ring inscribed in the cover, 12 o'clock the
- * start of the track, clockwise to the end, the knob where it is now.  While the
- * ring is up, a slide that *starts on the ring* moves the knob round it (it stops
- * at the start and the end, it never jumps across) and lifting the finger seeks
- * there.  A touch anywhere else on the cover puts the ring away; untouched, it
- * goes by itself after a few seconds.  flash() shows it for a moment and fades it
- * out, so the user knows it is there.
+ * is held, undecided, until it lifts or moves. Lifted without moving (a tap), it
+ * brings up a ring inscribed in the cover, 12 o'clock the start of the track,
+ * clockwise to the end, the knob where it is now -- or, if the ring was already up,
+ * puts it away. Moved instead (a swipe, from any point inside the cover, down or
+ * otherwise) it never shows the ring; it tracks as a downward swipe-to-minimize
+ * instead (onPull/onMinimize below), putting an already-shown ring away rather than
+ * dragging it along. While the ring is up, a slide that *starts on the ring* moves
+ * the knob round it (it stops at the start and the end, it never jumps across) and
+ * lifting the finger seeks there. Untouched, the ring goes away by itself after a
+ * few seconds. flash() shows it for a moment and fades it out, so the user knows it
+ * is there.
  *
  *   new K.SeekRing(box, { usable(), elapsed(), duration(), seek(seconds) })
  * Optional onMinimize is called on a downward swipe past a threshold, and
  * onPull(distance) moves the player with the finger as that swipe happens;
- * a tap always just reveals the ring, never minimizes.
+ * a tap always just reveals (or puts away) the ring, never minimizes.
  * `box` is the cover's element (position: relative); the ring is added to it. */
 (() => {
 const h = K.h;
@@ -102,28 +106,28 @@ K.SeekRing = class {
             e.preventDefault();
             try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}   // not pull-to-reload
             const f = this.frac();
-            if (!this.shown || this.el.classList.contains('fading')) {   // step one: a tap reveals the ring
-                this.show();
-                this.hideLater(RING_IDLE_MS);
-                if (this.o.onPull) {   // also track a downward swipe, to minimize instead
-                    g = { id: e.pointerId, x: e.clientX, y: e.clientY, cover: true, moved: false, dy: 0 };
-                    try { box.setPointerCapture(e.pointerId); } catch {}
-                }
+            if (this.shown && !this.el.classList.contains('fading') && onRing(e)) {
+                // the ring is up and the finger lands on it: a slide drags the knob
+                g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
+                this.el.classList.add('active');           // drawn thick only while the finger is on it
+                try { box.setPointerCapture(e.pointerId); } catch {}
+                clearTimeout(this.timer);
+                this.paint(g.f);
                 return;
             }
-            if (!onRing(e)) { this.hide(); return; }   // off the ring: put it away
-            // step two: a slide that starts on the ring
-            g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
-            this.el.classList.add('active');           // drawn thick only while the finger is on it
+            // anywhere else on the cover: wait for pointerup/pointermove to tell a tap
+            // (reveals, or puts away, the ring) from a swipe down (minimizes instead;
+            // the ring never appears for it, from any point inside the cover)
+            g = { id: e.pointerId, x: e.clientX, y: e.clientY, cover: true, moved: false, dy: 0,
+                wasShown: this.shown && !this.el.classList.contains('fading') };
             try { box.setPointerCapture(e.pointerId); } catch {}
-            clearTimeout(this.timer);
-            this.paint(g.f);
         });
         box.addEventListener('pointermove', e => {
             if (!g || e.pointerId !== g.id) return;
             if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) < 8) return;
             g.moved = true;
             if (g.cover) {
+                if (g.wasShown) this.hide();   // a swipe puts a shown ring away, it never drags along with it
                 g.dy = Math.max(0, e.clientY - g.y);
                 if (this.o.onPull) this.o.onPull(g.dy);
                 return;
@@ -140,7 +144,9 @@ K.SeekRing = class {
             const d = g; g = null;
             this.el.classList.remove('active');
             if (d.cover) {
-                if (e.type === 'pointerup' && d.dy > 40) this.o.onMinimize && this.o.onMinimize();
+                if (!d.moved) {   // a tap: reveal the ring, or put an already-shown one away
+                    if (d.wasShown) this.hide(); else { this.show(); this.hideLater(RING_IDLE_MS); }
+                } else if (e.type === 'pointerup' && d.dy > 40) this.o.onMinimize && this.o.onMinimize();
                 else if (this.o.onPull) this.o.onPull(0);
                 return;
             }
