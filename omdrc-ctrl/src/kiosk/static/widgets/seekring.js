@@ -102,11 +102,12 @@ K.SeekRing = class {
         };
         box.addEventListener('pointerdown', e => {
             if (e.button !== 0) return;
-            if (!this.o.usable()) return;
+            const usable = this.o.usable();
+            if (!usable && !this.o.onMinimize) return;   // nothing this gesture could do
             e.preventDefault();
             try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}   // not pull-to-reload
             const f = this.frac();
-            if (this.shown && !this.el.classList.contains('fading') && onRing(e)) {
+            if (usable && this.shown && !this.el.classList.contains('fading') && onRing(e)) {
                 // the ring is up and the finger lands on it: a slide drags the knob
                 g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
                 this.el.classList.add('active');           // drawn thick only while the finger is on it
@@ -145,7 +146,8 @@ K.SeekRing = class {
             this.el.classList.remove('active');
             if (d.cover) {
                 if (!d.moved) {   // a tap: reveal the ring, or put an already-shown one away
-                    if (d.wasShown) this.hide(); else { this.show(); this.hideLater(RING_IDLE_MS); }
+                    if (d.wasShown) this.hide();
+                    else if (this.o.usable()) { this.show(); this.hideLater(RING_IDLE_MS); }
                 } else if (e.type === 'pointerup' && d.dy > 40) this.o.onMinimize && this.o.onMinimize();
                 else if (this.o.onPull) this.o.onPull(0);
                 return;
