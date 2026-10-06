@@ -137,6 +137,46 @@ class AITest(unittest.TestCase):
             ai.listening_research(self.root, {"title": "The Wall"}, [{"title": "In the Flesh?"}],
                                   post=lambda *_: self.fail("provider was called"), cancel=cancelled)
 
+    def test_real_album_shapes_keep_the_right_work_boundaries(self):
+        """Qobuz metadata snapshots: jazz, concept album, live anthology, classical works."""
+        self.configure("claude")
+        cases = json.loads((Path(__file__).with_name("listening_album_cases.json")).read_text())
+        expected = {"sonny": [1] * 5, "wall": [26], "thunder": [1] * 15,
+                    "richter": [5, 3, 1]}
+        for name, case in cases.items():
+            with self.subTest(album=name):
+                sent = []
+                form = {"sonny": "song_collection", "wall": "concept_album",
+                        "thunder": "song_collection", "richter": "multi_work"}[name]
+                count = len(case["tracks"])
+                def post(_cfg, body, _timeout):
+                    sent.append(body)
+                    if len(sent) == 1:
+                        return {"content": [{"type": "text", "text": "Album and individual work research."}]}
+                    return {"content": [{"type": "tool_use", "name": "listening_guide", "input": {
+                        "form": form, "overview": "Album context", "compositions": [
+                            {"title": "Album", "text": "Context", "tracks": list(range(1, count + 1))}],
+                        "track_notes": [{"track": n, "text": "Track context"} for n in range(1, count + 1)]}}]}
+                answer = ai.listening_research(self.root, case["album"], case["tracks"], post=post)
+                self.assertEqual([len(s["tracks"]) for s in answer["compositions"]], expected[name])
+                self.assertEqual({n for s in answer["compositions"] for n in s["tracks"]}, set(range(1, count + 1)))
+                self.assertEqual(len(answer["track_notes"]), count)
+                self.assertEqual(len(sent), 2)
+
+    def test_web_timeout_uses_labeled_unsourced_fallback(self):
+        self.configure("claude")
+        calls = []
+        def post(_cfg, body, _timeout):
+            calls.append(body)
+            if len(calls) == 1:
+                raise ai.AIError("Claude account research timed out. Try a more specific request.")
+            return {"content": [{"type": "tool_use", "name": "listening_guide", "input": {
+                "form": "single_work", "overview": "Context", "compositions": [], "track_notes": []}}]}
+        answer = ai.listening_research(self.root, {"title": "A work"}, [{"title": "Movement I"}], post=post)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(answer["sources"], [])
+        self.assertIn("timed out", answer["research_status"])
+
     def test_missing_key_and_invalid_inputs_do_not_call_provider(self):
         ai.save_settings(self.root, {"provider": "claude"})
         with patch.dict("os.environ", {}, clear=True):

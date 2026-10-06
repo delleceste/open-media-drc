@@ -1,0 +1,329 @@
+{
+  "sonny": {
+    "album": {
+      "title": "Saxophone Colossus",
+      "artist": "Sonny Rollins",
+      "composer": "Various Composers",
+      "label": "Prestige",
+      "year": 1957,
+      "genre": "Jazz",
+      "release_type": "album"
+    },
+    "tracks": [
+      {
+        "title": "St. Thomas",
+        "work": "",
+        "composer": "Sonny Rollins"
+      },
+      {
+        "title": "You Don't Know What Love Is",
+        "work": "",
+        "composer": "Don Raye"
+      },
+      {
+        "title": "Strode Rode",
+        "work": "",
+        "composer": "Sonny Rollins"
+      },
+      {
+        "title": "Moritat",
+        "work": "",
+        "composer": "Kurt Weill"
+      },
+      {
+        "title": "Blue 7",
+        "work": "",
+        "composer": "Sonny Rollins"
+      }
+    ]
+  },
+  "wall": {
+    "album": {
+      "title": "The Wall (Remastered 2011 Version)",
+      "artist": "Pink Floyd",
+      "composer": "Various Composers",
+      "label": "Pink Floyd Records",
+      "year": 1979,
+      "genre": "Rock",
+      "release_type": "album"
+    },
+    "tracks": [
+      {
+        "title": "In the Flesh?",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "The Thin Ice",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Another Brick in the Wall, Pt. 1",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "The Happiest Days of Our Lives",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Another Brick in the Wall, Pt. 2",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Mother",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Goodbye Blue Sky",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Empty Spaces",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Young Lust",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "One of My Turns",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Don't Leave Me Now",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Another Brick in the Wall, Pt. 3",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Goodbye Cruel World",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Hey You",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Is There Anybody Out There ?",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Nobody Home",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Vera",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Bring the Boys Back Home",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Comfortably Numb",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "The Show Must Go On",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "In the Flesh",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Run Like Hell",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Waiting for the Worms",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Stop",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "The Trial",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Outside the Wall",
+        "work": "",
+        "composer": "Roger Waters"
+      }
+    ]
+  },
+  "thunder": {
+    "album": {
+      "title": "Delicate Sound of Thunder",
+      "artist": "Pink Floyd",
+      "composer": "Various Composers",
+      "label": "Pink Floyd Records",
+      "year": 1988,
+      "genre": "Rock",
+      "release_type": "album"
+    },
+    "tracks": [
+      {
+        "title": "Shine On You Crazy Diamond",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Learning to Fly",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "Yet Another Movie",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "Round and Around",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "Sorrow",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "The Dogs of War",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "On the Turning Away",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "One of These Days",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Time",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "Wish You Were Here",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Us and Them",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Money",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Another Brick in the Wall, Pt. 2",
+        "work": "",
+        "composer": "Roger Waters"
+      },
+      {
+        "title": "Comfortably Numb",
+        "work": "",
+        "composer": "David Gilmour"
+      },
+      {
+        "title": "Run Like Hell",
+        "work": "",
+        "composer": "David Gilmour"
+      }
+    ]
+  },
+  "richter": {
+    "album": {
+      "title": "Prokofiev: Piano Concerto No. 5; Piano Sonata No. 8",
+      "artist": "Sviatoslav Richter",
+      "composer": "Sergei Prokofiev",
+      "label": "Deutsche Grammophon (DG)",
+      "year": 1959,
+      "genre": "Classica",
+      "release_type": "album"
+    },
+    "tracks": [
+      {
+        "title": "Prokofiev: Piano Concerto No. 5 in G Major, Op. 55: I. Allegro con brio",
+        "work": "Piano Concerto No. 5 in G Major, Op. 55",
+        "composer": "Sergei Prokofiev"
+      },
+      {
+        "title": "Prokofiev: Piano Concerto No. 5 in G Major, Op. 55: II. Moderato ben accentuato",
+        "work": "Piano Concerto No. 5 in G Major, Op. 55",
+        "composer": "Sergei Prokofiev"
+      },
+      {
+        "title": "Prokofiev: Piano Concerto No. 5 in G Major, Op. 55: III. Toccata",
+        "work": "Piano Concerto No. 5 in G Major, Op. 55",
+        "composer": "Sergei Prokofiev"
+      },
+      {
+        "title": "Prokofiev: Piano Concerto No. 5 in G Major, Op. 55: IV. Larghetto",
+        "work": "Piano Concerto No. 5 in G Major, Op. 55",
+        "composer": "Sergei Prokofiev"
+      },
+      {
+        "title": "Prokofiev: Piano Concerto No. 5 in G Major, Op. 55: V. Vivo",
+        "work": "Piano Concerto No. 5 in G Major, Op. 55",
+        "composer": "Sergei Prokofiev"
+      },
+      {
+        "title": "Prokofiev: Piano Sonata No. 8 in B Flat Major, Op. 84: I. Andante dolce - Allegro moderato - Andante - Andante dolce come prima - Allegro",
+        "work": "Piano Sonata No. 8 in B Flat Major, Op. 84",
+        "composer": "Sergei Prokofiev"
+      },
+      {
+        "title": "Prokofiev: Piano Sonata No. 8 in B Flat Major, Op. 84: II. Andante sognando",
+        "work": "Piano Sonata No. 8 in B Flat Major, Op. 84",
+        "composer": "Sergei Prokofiev"
+      },
+      {
+        "title": "Prokofiev: Piano Sonata No. 8 in B Flat Major, Op. 84: III. Vivace - Allegro ben marcato - Andantino - Vivace",
+        "work": "Piano Sonata No. 8 in B Flat Major, Op. 84",
+        "composer": "Sergei Prokofiev"
+      },
+      {
+        "title": "Prokofiev: Visions fugitives, Op. 22: No. 3, No. 6 and No. 9",
+        "work": "Visions fugitives, Op. 22",
+        "composer": "Sergei Prokofiev"
+      }
+    ]
+  }
+}

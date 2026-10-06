@@ -4,6 +4,8 @@
 const { h } = K;
 const G = K.listening = { active: false, busy: false, collapsed: false, serial: 0, listeners: new Set() };
 const norm = value => String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\bpt\.?\b/g, 'part').replace(/\bpart\s+(iv|iii|ii|i)\b/g,
+        (_, roman) => 'part ' + ({ i: 1, ii: 2, iii: 3, iv: 4 })[roman])
     .replace(/\b(remaster(ed)?|live|version)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 const newJob = () => {
     const b = crypto.getRandomValues(new Uint8Array(16));
@@ -39,6 +41,7 @@ G.selectPlaying = () => {
     const n = G.trackNumber();
     const section = G.guide.compositions.findIndex(s => s.tracks.includes(n));
     G.selected = section;
+    if (G.selectedTrack) G.selectedTrack = n || null;
     G.paint();
 };
 G.observe = t => {
@@ -54,6 +57,7 @@ G.observe = t => {
         G.track = t;
         G.guide = null;
         G.selected = -1;
+        G.selectedTrack = null;
         G.research();
     } else if (G.track?.title !== t.title || G.track?.track_id !== t.track_id) {
         G.track = t;
@@ -110,7 +114,7 @@ G.research = async () => {
     G.paint();
     const track = G.track;
     let album = { title: track.album || track.title, artist: track.artist || '',
-        composer: '', label: '', year: '' };
+        composer: '', label: '', year: '', genre: '', release_type: '' };
     let tracks = [{ id: track.track_id || '', title: track.title, work: '', composer: '' }];
     if (track.qobuz_album) {
         try {
@@ -129,7 +133,8 @@ G.research = async () => {
         const response = await fetch('/qobuz/ai/listening', { method: 'POST', signal: G.controller.signal,
             headers: { 'Content-Type': 'application/json', 'X-Qobuz-AI': '1' },
             body: JSON.stringify({ job: G.job, album: { title: album.title, artist: album.artist,
-                composer: album.composer, label: album.label, year: album.year },
+                composer: album.composer, label: album.label, year: album.year,
+                genre: album.genre, release_type: album.release_type },
                 tracks: tracks.map(t => ({ title: t.title, work: t.work, composer: t.composer })) }) });
         const answer = await response.json();
         if (serial !== G.serial || !G.active) return;
@@ -164,7 +169,8 @@ G.paint = () => {
     G.changed();
     if (!G.panel) return;
     const active = G.guide?.compositions?.[G.selected];
-    const label = active?.title || G.track?.title || G.track?.album || 'Listening guide';
+    const label = G.selectedTrack ? G.tracks?.[G.selectedTrack - 1]?.title :
+        active?.title || G.track?.title || G.track?.album || 'Listening guide';
     G.panel.classList.toggle('collapsed', G.collapsed);
     K.clear(G.panel);
     const icon = G.icon(G.busy ? 'busy' : '');
@@ -187,13 +193,31 @@ G.paint = () => {
     if (!G.guide) return;
     const tabs = h('div', { class: 'listening-tabs', role: 'tablist' });
     const items = [{ title: 'Overview', text: G.guide.overview }, ...G.guide.compositions];
-    items.forEach((item, index) => tabs.append(h('button', { type: 'button', class: 'chip' + (G.selected === index - 1 ? ' on' : ''),
-        role: 'tab', 'aria-selected': String(G.selected === index - 1),
-        onclick: () => { G.selected = index - 1; G.paint(); } }, item.title)));
+    items.forEach((item, index) => tabs.append(h('button', { type: 'button', class: 'chip' + (!G.selectedTrack && G.selected === index - 1 ? ' on' : ''),
+        role: 'tab', 'aria-selected': String(!G.selectedTrack && G.selected === index - 1),
+        onclick: () => { G.selectedTrack = null; G.selected = index - 1; G.paint(); } }, item.title)));
     G.panel.append(tabs);
-    const shown = active || items[0];
+    if (G.guide.research_status) G.panel.append(h('p', { class: 'muted small', role: 'status' }, G.guide.research_status));
+    const shown = G.selectedTrack ? {
+        title: G.tracks[G.selectedTrack - 1]?.title || `Track ${G.selectedTrack}`,
+        text: G.guide.track_notes?.find(n => n.track === G.selectedTrack)?.text ||
+            active?.text || G.guide.overview,
+    } : active || items[0];
     G.panel.append(h('div', { class: 'listening-content' },
         h('h2', {}, shown.title), ...String(shown.text || '').split(/\n\s*\n/).filter(Boolean).map(p => h('p', {}, p))));
+    if (G.tracks?.length) {
+        const trackTabs = h('div', { class: 'listening-track-tabs', 'aria-label': 'Track details' });
+        G.tracks.forEach((track, index) => trackTabs.append(h('button', {
+            type: 'button', class: 'chip' + (G.selectedTrack === index + 1 ? ' on' : ''),
+            'aria-current': G.trackNumber() === index + 1 ? 'true' : 'false',
+            onclick: () => {
+                G.selectedTrack = index + 1;
+                G.selected = G.guide.compositions.findIndex(s => s.tracks.includes(index + 1));
+                G.paint();
+            },
+        }, `${index + 1}. ${track.title}`)));
+        G.panel.append(h('div', { class: 'listening-track-heading' }, 'Tracks'), trackTabs);
+    }
     const number = G.trackNumber();
     const note = G.guide.track_notes?.find(n => n.track === number);
     if (number && G.tracks[number - 1]) {
