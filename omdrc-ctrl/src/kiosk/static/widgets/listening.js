@@ -18,14 +18,17 @@ const keyOf = t => t && (t.qobuz_album ? 'q:' + t.qobuz_album :
     'a:' + norm(t.album || t.title) + '|' + norm(t.artist) + '|' + norm(t.title));
 const STORAGE_KEY = 'omdrc.listening.v1';
 const CACHE_KEY = 'omdrc.listening.last-result.v1';
-G.cachedResult = key => {
+G.materialKey = (albumKey, tracks) => JSON.stringify({ albumKey, provider: G.provider, model: G.model,
+    tracks: tracks.map(t => ({ title: t.title, work: t.work, composer: t.composer })) });
+G.cachedResult = (key, materialKey) => {
     try {
         const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
-        return saved?.key === key && Array.isArray(saved.answer?.compositions) ? saved.answer : null;
+        const same = saved?.key === key || (!saved?.key && saved?.materialKey === materialKey);
+        return same && Array.isArray(saved.answer?.compositions) ? saved.answer : null;
     } catch (_) { return null; }
 };
-G.cacheResult = (key, answer) => {
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ key, answer })); } catch (_) {}
+G.cacheResult = (key, answer, materialKey) => {
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ key, materialKey, answer })); } catch (_) {}
 };
 G.remember = () => {
     if (!G.active || !G.track?.title) return;
@@ -33,7 +36,7 @@ G.remember = () => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
             active: true, albumKey: G.albumKey, track: G.track, tracks: G.tracks,
             guide: G.guide, selected: G.selected, selectedTrack: G.selectedTrack,
-            userSelected: G.userSelected, collapsed: G.collapsed, busy: G.busy,
+            userSelected: G.userSelected, collapsed: G.collapsed, busy: G.busy, queryKey: G.queryKey,
         }));
     } catch (_) { /* The guide remains usable if browser storage is unavailable. */ }
 };
@@ -48,6 +51,7 @@ G.restore = () => {
     G.tracks = Array.isArray(saved.tracks) ? saved.tracks : null;
     G.albumKey = saved.albumKey;
     G.guide = Array.isArray(saved.guide?.compositions) ? saved.guide : null;
+    G.queryKey = typeof saved.queryKey === 'string' ? saved.queryKey : null;
     G.selected = Number.isInteger(saved.selected) && saved.selected >= -1
         && saved.selected < (G.guide?.compositions.length || 0) ? saved.selected : -1;
     G.selectedTrack = Number.isInteger(saved.selectedTrack) && saved.selectedTrack > 0
@@ -103,6 +107,7 @@ G.observe = t => {
         G.track = t;
         G.guide = null;
         G.tracks = null;
+        G.queryKey = null;
         G.selected = -1;
         G.selectedTrack = null;
         G.userSelected = false;
@@ -160,6 +165,9 @@ G.animateToStrip = source => {
     flight.onfinish = flight.oncancel = () => flyer.remove();
 };
 G.close = () => {
+    if (G.guide && !G.queryKey && G.tracks?.length) {
+        G.cacheResult(null, G.guide, G.materialKey(G.albumKey, G.tracks));
+    }
     G.active = false;
     G.serial++;
     clearTimeout(G.retryTimer);
@@ -175,6 +183,7 @@ G.close = () => {
     G.panel = null;
     G.albumKey = '';
     G.guide = null;
+    G.queryKey = null;
     G.forget();
     G.changed();
 };
@@ -218,7 +227,9 @@ G.research = async () => {
         tracks: tracks.map(t => ({ title: t.title, work: t.work, composer: t.composer })),
     };
     const cacheKey = JSON.stringify({ provider: G.provider, model: G.model, ...query });
-    const cached = G.cachedResult(cacheKey);
+    const materialKey = G.materialKey(G.albumKey, tracks);
+    G.queryKey = cacheKey;
+    const cached = G.cachedResult(cacheKey, materialKey);
     if (cached) {
         G.guide = cached;
         G.busy = false;
@@ -236,7 +247,7 @@ G.research = async () => {
         if (serial !== G.serial || !G.active) return;
         if (!answer.ok) throw new Error(answer.error || 'AI research failed');
         G.guide = answer;
-        G.cacheResult(cacheKey, answer);
+        G.cacheResult(cacheKey, answer, materialKey);
         G.selectPlaying();
     } catch (error) {
         if (serial !== G.serial || !G.active) return;

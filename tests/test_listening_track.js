@@ -66,6 +66,11 @@ assert.equal(guide.singleTrackSections(), false, 'a multi-track work keeps separ
 guide.cacheResult('claude:album-one', { ok: true, compositions: [{ title: 'Work', tracks: [1] }] });
 assert.equal(guide.cachedResult('claude:album-one').compositions[0].title, 'Work', 'same query reuses the result');
 assert.equal(guide.cachedResult('claude:album-two'), null, 'a changed query misses the cache');
+guide.cacheResult(null, { ok: true, compositions: [{ title: 'Earlier guide' }] }, 'same-material');
+assert.equal(guide.cachedResult('new-exact-key', 'same-material').compositions[0].title, 'Earlier guide',
+    'a guide saved before exact query keys existed remains reusable');
+assert.equal(guide.cachedResult('new-exact-key', 'other-material'), null,
+    'a changed material cannot reuse the earlier guide');
 guide.forget();
 assert.ok(saved.has('omdrc.listening.last-result.v1'), 'closing keeps the last completed result');
 console.log('listening track matching OK');
