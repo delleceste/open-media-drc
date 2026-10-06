@@ -231,7 +231,13 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .now-subrow { display: flex; align-items: baseline; gap: .7rem; }
 .now-subrow .now-sub { flex: 1; min-width: 0; }
 .now-fmt { flex: 0 0 auto; font: 700 .85rem ui-monospace, monospace; }
-.chip.now-info, .chip.now-fav, .chip.now-ai { display: none; }
+.chip.now-info, .chip.now-fav { display: none; }
+.chip.now-ai:not([hidden]) { display: inline-flex; align-items: center; gap: .35rem; }
+@media (orientation: landscape) {
+    .now-meta { display: flex; align-items: center; gap: .4rem; }
+    .now-subrow { flex: 1; min-width: 0; }
+    .chip.now-ai { flex: 0 0 auto; }
+}
 /* awards (widgets/albuminfo.js): gold, above the label */
 :root { --award: #e3b341; --award-bg: rgba(227,179,65,.13); --award-edge: rgba(227,179,65,.5); }
 :root[data-theme=light] { --award: #8a5a00; --award-bg: rgba(154,103,0,.1); --award-edge: rgba(154,103,0,.45); }

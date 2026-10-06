@@ -19,4 +19,10 @@ guide.track = { title: 'Prokofiev: Piano Concerto No. 5: II. Moderato', track_id
 assert.equal(guide.trackNumber(), 3, 'Qobuz track ID takes priority');
 guide.track = { title: 'Unknown track' };
 assert.equal(guide.trackNumber(), 0, 'unknown tracks must not select an unrelated composition');
+let requested = 0;
+guide.research = () => { requested++; };
+guide.active = true;
+guide.track = null;
+guide.observe({ ok: true, state: 'stop', title: 'Pezzi di vetro', album: 'Rimmel', artist: 'Francesco De Gregori' });
+assert.equal(requested, 1, 'the last known track must remain researchable while stopped');
 console.log('listening track matching OK');

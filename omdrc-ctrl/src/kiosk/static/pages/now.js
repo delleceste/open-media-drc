@@ -864,7 +864,7 @@ P.pollTrack = async () => {
     }
     P.infoBtn.hidden = !t.qobuz_album;
     P.favBtn.hidden = !t.qobuz_album || !K.state.features.qobuz_search;
-    P.aiBtn.hidden = !t.ok || t.state === 'stop' || !t.title;
+    P.aiBtn.hidden = !t.ok || !t.title;
     K.listening.observe(t);
     if (P.awardsFor !== (t.qobuz_album || '')) {
         P.awardsFor = t.qobuz_album || '';

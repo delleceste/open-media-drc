@@ -45,7 +45,7 @@ G.selectPlaying = () => {
     G.paint();
 };
 G.observe = t => {
-    if (!G.active || !t || !t.ok || t.state === 'stop' || !t.title) return;
+    if (!G.active || !t || !t.ok || !t.title) return;
     if (!t.qobuz_album && G.track?.qobuz_album && norm(t.album) === norm(G.track.album)) {
         t = { ...t, qobuz_album: G.track.qobuz_album,
             track_id: t.track_id || (t.title === G.track.title ? G.track.track_id : '') };

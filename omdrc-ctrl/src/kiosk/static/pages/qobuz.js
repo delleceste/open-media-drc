@@ -2115,7 +2115,7 @@ P.paintViews = () => {
     const d = P.now, t = P.trackInfo(), album = t ? t.album : null;
     const playing = !!(P.base && P.base.playing);
     if (P.fullView) {
-        P.fullView.aiBtn.hidden = !d || d.state === 'stop';
+        P.fullView.aiBtn.hidden = !d || !(d.title || t?.title);
         K.listening.observe(P.listeningTrack());
     }
     const title = !d ? '—' : d.state === 'stop' && !d.title ? 'Stopped' : (d.title || (t && t.title) || '—');
