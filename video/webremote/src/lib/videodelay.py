@@ -23,6 +23,9 @@ from pathlib import Path
 
 _RATE_RE = re.compile(r"sampling_rate:\s*(\d+)")
 _LEN_RE = re.compile(r"filter_length:\s*(\d+)")
+# filter_length usually lives here, not in the per-rate conf -- see
+# _brutefir_partition_size in omdrc-ctrl/src/app.py, which this mirrors.
+_DEFAULTS_CONF = Path("~/.config/BruteFIR/brutefir_defaults.conf").expanduser()
 _COEFF_RE = re.compile(r'coeff\s+"[^"]*"\s*\{([^}]*)\}', re.S)
 _FILENAME_RE = re.compile(r'filename:\s*"([^"]*)"')
 _FORMAT_RE = re.compile(r'format:\s*"?(\w+)"?')
@@ -80,8 +83,16 @@ def compute_seconds() -> float | None:
         text = Path(conf_path).read_text()
     except OSError:
         return None
-    rate_m, len_m = _RATE_RE.search(text), _LEN_RE.search(text)
-    if not rate_m or not len_m:
+    rate_m = _RATE_RE.search(text)
+    if not rate_m:
+        return None
+    len_m = _LEN_RE.search(text)
+    if not len_m:
+        try:
+            len_m = _LEN_RE.search(_DEFAULTS_CONF.read_text())
+        except OSError:
+            len_m = None
+    if not len_m:
         return None
     rate, length = int(rate_m.group(1)), int(len_m.group(1))
     if rate <= 0 or length <= 0:
