@@ -103,6 +103,9 @@ G.observe = t => {
     const key = keyOf(t);
     if (!key) return;
     if (key !== G.albumKey) {
+        G.tabScroll = 0;
+        const oldTabs = G.panel?.querySelector('.listening-tabs');
+        if (oldTabs) oldTabs.scrollLeft = 0;
         G.albumKey = key;
         G.track = t;
         G.guide = null;
@@ -267,7 +270,7 @@ G.makePanel = () => {
     let touch = null;
     const nestedScroller = target => {
         for (let el = target; el && el !== G.panel; el = el.parentElement) {
-            if (el.matches('.listening-tabs, .listening-track-tabs')) return true;
+            if (el.matches('.listening-tabs')) return true;
             const style = getComputedStyle(el);
             if (/auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1) return true;
             if (/auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1) return true;
@@ -373,9 +376,24 @@ G.paint = () => {
     const leftHint = h('span', { class: 'listening-tab-hint left', hidden: true, 'aria-hidden': 'true' }, '<');
     const rightHint = h('span', { class: 'listening-tab-hint right', hidden: true, 'aria-hidden': 'true' }, '>');
     const items = [{ title: 'Overview', text: G.guide.overview }, ...G.guide.compositions];
+    const singleTrackSections = G.singleTrackSections();
     items.forEach((item, index) => tabs.append(h('button', { type: 'button', class: 'chip' + (!G.selectedTrack && G.selected === index - 1 ? ' on' : ''),
         role: 'tab', 'aria-selected': String(!G.selectedTrack && G.selected === index - 1),
         onclick: () => { G.userSelected = true; G.selectedTrack = null; G.selected = index - 1; G.remember(); G.paint(); } }, item.title)));
+    if (G.tracks?.length && !singleTrackSections) {
+        G.tracks.forEach((track, index) => tabs.append(h('button', {
+            type: 'button', class: 'chip' + (G.selectedTrack === index + 1 ? ' on' : ''),
+            role: 'tab', 'aria-selected': String(G.selectedTrack === index + 1),
+            'aria-current': G.trackNumber() === index + 1 ? 'true' : 'false',
+            onclick: () => {
+                G.userSelected = true;
+                G.selectedTrack = index + 1;
+                G.selected = G.guide.compositions.findIndex(s => s.tracks.includes(index + 1));
+                G.remember();
+                G.paint();
+            },
+        }, `${index + 1}. ${track.title}`)));
+    }
     G.panel.append(h('div', { class: 'listening-tabs-wrap' }, tabs, leftHint, rightHint));
     const updateHints = () => {
         if (!tabs.isConnected) return;
@@ -394,22 +412,6 @@ G.paint = () => {
     } : active || items[0];
     const content = h('div', { class: 'listening-content' },
         h('h2', {}, shown.title), ...String(shown.text || '').split(/\n\s*\n/).filter(Boolean).map(p => h('p', {}, p)));
-    const singleTrackSections = G.singleTrackSections();
-    if (G.tracks?.length && !singleTrackSections) {
-        const trackTabs = h('div', { class: 'listening-track-tabs', 'aria-label': 'Track details' });
-        G.tracks.forEach((track, index) => trackTabs.append(h('button', {
-            type: 'button', class: 'chip' + (G.selectedTrack === index + 1 ? ' on' : ''),
-            'aria-current': G.trackNumber() === index + 1 ? 'true' : 'false',
-            onclick: () => {
-                G.userSelected = true;
-                G.selectedTrack = index + 1;
-                G.selected = G.guide.compositions.findIndex(s => s.tracks.includes(index + 1));
-                G.remember();
-                G.paint();
-            },
-        }, `${index + 1}. ${track.title}`)));
-        G.panel.append(h('div', { class: 'listening-track-heading' }, 'Tracks'), trackTabs);
-    }
     if (G.guide.research_status) G.panel.append(h('p', { class: 'muted small', role: 'status' }, G.guide.research_status));
     G.panel.append(content);
     if (singleTrackSections && !G.selectedTrack && G.selected >= 0) {

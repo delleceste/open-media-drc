@@ -1053,17 +1053,13 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .listening-close { border: 0; background: none; color: var(--text); font-size: 1.5rem; min-width: 2.5rem; min-height: 2.5rem; }
 .listening-tabs-wrap { position: relative; }
 .listening-tabs { display: flex; gap: .4rem; overflow-x: auto; padding: .35rem 0; }
+.listening-tabs .chip { flex: 0 0 auto; white-space: nowrap; }
 .listening-tab-hint { position: absolute; top: 0; bottom: 0; width: 1.35rem; display: grid;
     place-items: center; pointer-events: none; color: var(--text); font-size: 1.2rem; font-weight: 800; z-index: 1; }
 .listening-tab-hint[hidden] { display: none; }
 .listening-tab-hint.left { left: 0; background: linear-gradient(to right, var(--bg) 45%, transparent); }
 .listening-tab-hint.right { right: 0; background: linear-gradient(to left, var(--bg) 45%, transparent); }
 .listening-tabs .chip.on { border-color: var(--accent); color: var(--accent); }
-.listening-track-heading { margin: 1rem 0 .35rem; font-weight: 700; }
-.listening-track-tabs { display: flex; flex-wrap: wrap; gap: .35rem; max-height: 10rem; overflow: auto; }
-.listening-track-tabs .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.listening-track-tabs .chip.on { border-color: var(--accent); color: var(--accent); }
-.listening-track-tabs .chip[aria-current="true"] { font-weight: 700; }
 .listening-content { max-width: 65rem; line-height: 1.55; white-space: pre-wrap; }
 .listening-content h2 { font-size: 1.3rem; }
 .listening-track { max-width: 65rem; margin: 1rem 0; padding: .8rem; border: 1px solid var(--border); border-radius: .6rem; }
