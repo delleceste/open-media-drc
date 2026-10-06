@@ -97,9 +97,15 @@
             'Now play and pause control has no visible border');
         check(host.querySelector('.now-timebox').scrollWidth <= host.querySelector('.now-timebox').clientWidth + 1, 'Main Now controls and elapsed time must fit');
         const mainButtons = host.querySelector('.now-ctl');
-        check(mainButtons.children.length === 3 && mainButtons.firstChild.title === 'Previous track' &&
-            mainButtons.lastChild.title === 'Next track', 'Main Now controls are just prev / play-pause / next');
+        check(mainButtons.firstChild.textContent === '<<' && mainButtons.lastChild.textContent === '>>', 'Main Now controls include rewind and forward');
+        const mainForward = mainButtons.lastChild;
         K.api = async (url, options) => { calls.push(options.json); return { ok: true }; };
+        const beforeMain = calls.length; mainForward.click();
+        check((K.portrait() ? N.ring.shown : !N.seekSlider.hidden) && calls.length === beforeMain, 'Main Now first tap reveals seeking without moving playback');
+        clock += 200; mainForward.click(); await sleep(0);
+        check(calls.at(-1).seconds === 55, 'Main Now first repeat seeks five seconds');
+        clock += 150; mainForward.click(); await sleep(0);
+        check(calls.at(-1).seconds === 75, 'Main Now uses the same acceleration');
         N.ring.hide();
         const coverPointer = type => {
             const r = N.artBox.getBoundingClientRect();
