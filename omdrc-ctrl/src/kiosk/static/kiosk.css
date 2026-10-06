@@ -209,10 +209,10 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .seek-ring.active .sr-arc { stroke-width: 3.2; }
 .seek-ring.active .sr-knob { r: 4.8px; stroke-width: 1.2; }
 .sr-time { position: relative; padding: .2rem .7rem; border-radius: 1rem; background: rgba(13,17,23,.78); font: 600 1rem ui-monospace, monospace; white-space: nowrap; }
-/* the button at the bottom of a cover box that opens it full screen (K.coverMaxButton) */
-.cover-max-btn { position: absolute; inset: auto 0 .5rem 0; margin-inline: auto; width: 1.3rem; height: 1.3rem; z-index: 1;
+/* the button at the bottom right of a cover box that opens it full screen (K.coverMaxButton) */
+.cover-max-btn { position: absolute; inset: auto .5rem .5rem auto; width: 1.3rem; height: 1.3rem; z-index: 1;
     display: flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%;
-    background: rgba(0,0,0,.25); color: #fff; }
+    background: rgba(0,0,0,.55); color: #fff; }
 .cover-max-btn .ticon { width: .75rem; height: .75rem; }
 .now-art.empty .cover-max-btn { display: none; }
 /* the landscape cover is small (beside the title); no room/need for this there */
