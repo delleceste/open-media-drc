@@ -21,6 +21,8 @@ import re
 import struct
 import threading
 import time
+import urllib.request
+import json
 import wave
 
 from flask import Blueprint, Response, jsonify, render_template, request
@@ -93,6 +95,17 @@ def config():
         "commands": [{k: c[k] for k in _PUBLIC_KEYS if k in c} for c in _commands()],
         "features": {k: bool(v) for k, v in _features().items()},
     })
+
+
+@bp.route("/api/video")
+def video_available():
+    """Check the local video remote before offering its kiosk page."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:9080/api/roots", timeout=0.5) as response:
+            available = response.status == 200 and json.load(response).get("ok") is True
+    except (OSError, ValueError):
+        available = False
+    return jsonify({"ok": True, "available": available})
 
 
 # Transport for the Now page and the Qobuz page's player strip.  Only these

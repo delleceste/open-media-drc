@@ -109,6 +109,13 @@
   .sheet .plot { margin-top:12px; font-size:14px; color:#c9d1d9; }
   .sheet .links { margin-top:16px; display:flex; gap:8px; }
   .sheet a.btn, .sheet button.btn { text-decoration:none; }
+  .diag-row { border-top:1px solid var(--line); padding:9px 0; font-size:14px; }
+  .diag-row strong { display:block; }
+  .diag-row small { display:block; color:var(--muted); overflow-wrap:anywhere; }
+  .diag-row.warn strong { color:var(--gold); }
+  .diag-row.error strong { color:#f85149; }
+  .diag-row p { margin:5px 0 0; }
+  .diag-links { display:flex; flex-wrap:wrap; gap:8px; margin-top:15px; }
 </style>
 </head>
 <body>
@@ -116,6 +123,7 @@
   <div class="titlebar">
     <h1>🎬 Video Remote</h1>
     <div class="viewtoggle">
+      <button id="blurayDiag" title="Check Blu-ray setup">Blu-ray check</button>
       <button id="rescan" title="Rescan thumbnails">⟳</button>
       <button id="vGrid" title="Grid">▦</button>
       <button id="vList" title="List">☰</button>
@@ -320,6 +328,39 @@ function playDisc() {
   discCmd("play", (d) => "Playing disc " + (d.target || ""));
 }
 function ejectDisc() { discCmd("eject", () => "Disc released — safe to eject"); }
+
+document.getElementById("blurayDiag").onclick = async () => {
+  scrim.classList.add("show");
+  sheet.replaceChildren();
+  const title = document.createElement("h2"); title.textContent = "Blu-ray diagnostic";
+  const loading = document.createElement("p"); loading.textContent = "Checking packages, drive and AACS keys…";
+  sheet.append(title, loading);
+  try {
+    const response = await fetch("/api/bluray-diagnostic", { cache:"no-store" });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Diagnostic failed");
+    loading.textContent = data.status === "ready" ? "Ready for a disc test" :
+      data.status === "warning" ? "Warnings found" : "Setup needs attention";
+    for (const check of data.checks) {
+      const row = document.createElement("div"); row.className = "diag-row " + check.status;
+      const heading = document.createElement("strong");
+      heading.textContent = (check.status === "ok" ? "✓ " : check.status === "warning" ? "⚠ " : "✕ ") + check.label;
+      const detail = document.createElement("small"); detail.textContent = check.detail;
+      row.append(heading, detail);
+      if (check.fix) { const fix = document.createElement("p"); fix.textContent = check.fix; row.append(fix); }
+      sheet.append(row);
+    }
+    const note = document.createElement("p"); note.className = "syncinfo"; note.textContent = data.note;
+    const links = document.createElement("div"); links.className = "diag-links";
+    const source = document.createElement("a"); source.className = "btn";
+    source.href = data.keydb.source; source.target = "_blank"; source.rel = "noopener noreferrer";
+    source.textContent = "FindVUK database ↗";
+    const archive = document.createElement("a"); archive.className = "btn";
+    archive.href = data.keydb.archive; archive.target = "_blank"; archive.rel = "noopener noreferrer";
+    archive.textContent = "Download English KEYDB.cfg ZIP ↗";
+    links.append(source, archive); sheet.append(note, links);
+  } catch (error) { loading.textContent = error.message || "Network error"; loading.className = "err"; }
+};
 
 document.getElementById("rescan").onclick = async () => {
   try {

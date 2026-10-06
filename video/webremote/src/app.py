@@ -18,7 +18,7 @@ import time
 
 from flask import Flask, jsonify, render_template, request, send_file
 
-from lib import (avsync, classify, favorites, imdb, mpvipc, play, thumbs,
+from lib import (avsync, bluray_diag, classify, favorites, imdb, mpvipc, play, thumbs,
                  titles, videodelay, roots as rootlib)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -518,6 +518,12 @@ def api_disc():
             if not _disc_active:        # setup failed before activation → clean up
                 _gcache_down()
             return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/bluray-diagnostic")
+def api_bluray_diagnostic():
+    return jsonify(bluray_diag.diagnose(DISC_ENABLED, DISC_DEV,
+                                        mpvipc.is_running(MPV_SOCKET), disc_cache=DISC_CACHE))
 
 
 @app.route("/api/play", methods=["POST"])

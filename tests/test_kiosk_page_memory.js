@@ -8,6 +8,7 @@ const prefs = {};
 function launch(ids = ['now', 'cover', 'qobuz', 'drc', 'config']) {
     const K = {
         pages: ids.map(id => ({ id, mounted: true, label: id })),
+        state: { features: {} },
         pref: (key, fallback) => prefs[key] ?? fallback,
         setPref: (key, value) => { prefs[key] = value; },
         setTopExtra() {},

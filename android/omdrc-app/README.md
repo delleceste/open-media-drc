@@ -12,7 +12,9 @@ playing.
 
 - **Kiosk view** (default): the small-screen UI served at `/k/` (see
   `omdrc-ctrl/src/kiosk/README.md`) — swipeable pages for Now playing, DRC, DR,
-  Source, Chain, System, Logs and Config.
+  Source, Chain, System, Logs and Config. A Video page appears when the box's
+  `omdrcvideo` service is available on port 9080 and opens its remote in the
+  same WebView.
 - **Full web page**: the desktop dashboard at `/`.
 
 The choice is remembered. In the kiosk view the app keeps the screen on **only

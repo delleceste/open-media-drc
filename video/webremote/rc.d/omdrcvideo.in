@@ -23,11 +23,19 @@ load_rc_config "$name"
 
 : ${omdrcvideo_enable:="NO"}
 : ${omdrcvideo_user:="@OMDRCVIDEO_SERVICE_USER@"}
+# rc.subr's privilege drop can preserve root's HOME. Use the service user's
+# actual home so ~/.cache and AACS configuration resolve to that account.
+if [ -n "${omdrcvideo_user}" ] && [ "$(id -u)" -eq 0 ]; then
+	omdrcvideo_home=$(getent passwd "${omdrcvideo_user}" | cut -d: -f6)
+	[ -n "${omdrcvideo_home}" ] && omdrcvideo_home="HOME=${omdrcvideo_home} "
+else
+	omdrcvideo_home=""
+fi
 # rc starts with a minimal PATH; the app shells out to python3, ffmpeg, ffprobe,
 # bd_list_titles (all in /usr/local/bin), so set PATH explicitly via ${name}_env
 # (rc.subr applies it with env(1)). No DISPLAY needed: it talks to mpv over a
 # unix socket, not X.
-: ${omdrcvideo_env:="PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"}
+: ${omdrcvideo_env:="${omdrcvideo_home}PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"}
 
 command="/usr/sbin/daemon"
 

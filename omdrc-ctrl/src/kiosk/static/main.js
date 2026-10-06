@@ -497,10 +497,11 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) chec
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
-    const [cfg, spec] = await Promise.all([K.api('/k/api/config'), K.api('/spectrum/settings')]);
+    const [cfg, spec, video] = await Promise.all([K.api('/k/api/config'), K.api('/spectrum/settings'), K.api('/k/api/video')]);
     if (cfg.ok) { K.state.commands = cfg.commands; K.state.features = cfg.features || {}; }
     if (spec && spec.ok) K.state.spectrum = spec;
     else K.state.spectrum = { enabled: false };
+    K.video.setAvailable(video.ok === true && video.available === true);
 
     document.body.classList.toggle('in-app', K.inApp);
     K.allPages = K.pages.slice();

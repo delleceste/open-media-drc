@@ -12,6 +12,7 @@ from pathlib import Path
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "omdrc-ctrl/src"
@@ -68,7 +69,23 @@ class KioskTests(unittest.TestCase):
         self.assertEqual([c["id"] for c in data["commands"]], ["drc_off"])
         self.assertNotIn("cmd", data["commands"][0])
         self.assertEqual(data["commands"][0]["confirm"], "yes")
-        self.assertEqual(set(data["features"]), {"drdb", "cdin", "qobuz_search"})
+        self.assertEqual(set(data["features"]), {"drdb", "cdin", "drc", "qobuz_search"})
+
+    def test_video_page_follows_the_local_remote_health(self):
+        import kiosk
+        class Reply:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def read(self, *_):
+                return b'{"ok":true,"roots":[]}'
+        with patch.object(kiosk.urllib.request, "urlopen", return_value=Reply()) as probe:
+            self.assertEqual(self.client.get("/k/api/video").get_json(), {"ok": True, "available": True})
+            probe.assert_called_once_with("http://127.0.0.1:9080/api/roots", timeout=0.5)
+        with patch.object(kiosk.urllib.request, "urlopen", side_effect=OSError("offline")):
+            self.assertEqual(self.client.get("/k/api/video").get_json(), {"ok": True, "available": False})
 
     def test_view_mini_redirects_the_desktop_panel_to_the_kiosk(self):
         r = self.client.get("/?view=mini")
@@ -137,6 +154,8 @@ class KioskTests(unittest.TestCase):
         pages = sorted((SRC / "kiosk/static/pages").glob("*.js"))
         self.assertGreaterEqual(len(pages), 8)
         for path in pages:
+            if path.name == "favorites.js":  # Qobuz's Library view, not a pager page
+                continue
             self.assertIn("K.registerPage(", path.read_text(), path.name)
 
     def test_a_page_stops_its_work_when_hidden(self):

@@ -46,7 +46,7 @@ try {
 
 {% for name in ['widgets/timing.js', 'core.js', 'widgets/timing-debug.js', 'widgets/vu.js', 'widgets/spectrum.js', 'widgets/dr.js',
                 'widgets/balance.js', 'widgets/drcstate.js', 'widgets/track.js', 'widgets/cover.js', 'widgets/keepawake.js', 'widgets/chainflow.js', 'widgets/display.js', 'widgets/sync.js', 'widgets/icons.js', 'widgets/albuminfo.js', 'widgets/seekring.js', 'widgets/listening.js',
-                'pages/now.js', 'pages/cover.js', 'pages/qobuz.js', 'pages/favorites.js', 'pages/drc.js', 'pages/dr.js', 'pages/source.js',
+                'pages/now.js', 'pages/cover.js', 'pages/qobuz.js', 'pages/video.js', 'pages/favorites.js', 'pages/drc.js', 'pages/dr.js', 'pages/source.js',
                 'pages/chain.js', 'pages/system.js', 'pages/logs.js', 'pages/config.js',
                 'main.js'] %}
 <script src="{{ url_for('kiosk.static', filename=name, v=asset_version) }}"></script>

@@ -62,13 +62,28 @@ the practical install / run / API reference.
 |---|---|
 | Python ≥ 3.9 + Flask | the web app |
 | `mpv` (with `--input-ipc-server`, libbluray, dvdnav) | playback |
+| `libaacs`, `libudfread` and `libbdplus` | encrypted Blu-ray and discs using BD+ |
 | `ffmpeg` / `ffprobe` | thumbnails |
 | `bd_list_titles` (libbluray) | Blu-ray rip longest-title probe |
 | OMDb API key (omdbapi.com, free) | *optional* — IMDb enrichment |
 
 ```sh
-pkg install python3 py39-flask ffmpeg mpv libbluray   # FreeBSD
+pkg install python3 py312-flask ffmpeg mpv libbluray libaacs libudfread libbdplus   # FreeBSD, Python 3.12
 ```
+
+Use the Flask package matching the installed Python version (for example
+`py313-flask` with Python 3.13).
+
+For Debian/Ubuntu Linux, install the corresponding runtime packages and the
+title scanner with:
+
+```sh
+sudo apt install mpv libbluray2 libbluray-bin libaacs0 libudfread0 libbdplus0
+```
+
+On Fedora Linux the title scanner is in `libbluray-utils`; install `mpv`,
+`libbluray`, `libbluray-utils`, `libaacs`, `libudfread` and `libbdplus` with
+`dnf`. The web remote itself also needs Python/Flask and `ffmpeg` as above.
 
 ---
 
@@ -121,6 +136,28 @@ python3 app.py --config /path/to/webremote.conf --port 8080
 ```
 
 Open `http://<host>:9080` on the phone.
+
+### Blu-ray readiness
+
+Tap **Blu-ray check** in the video remote to inspect the installed libraries,
+`mpv`, the title scanner, optical device and the service user's AACS key file.
+On FreeBSD it checks `/dev/cd0`, `gcache`, `kldload` and the passwordless sudo
+permissions used by `disc.sh`; on Linux it checks the configured drive
+(normally `/dev/sr0`) without the FreeBSD cache checks.
+It also checks the latest English FindVUK archive date when the box can reach
+the provider, warning if the local file is older. Without network access it
+warns when the local file is at least 90 days old. This is a freshness warning,
+not proof that a particular disc's key is present; play an inserted disc to test
+decryption and drive access.
+
+The file libaacs expects is **`KEYDB.cfg`**, not `KEYS.db`. Put the extracted file
+at `~/.config/aacs/KEYDB.cfg` for the account running `omdrcvideo` and the idle
+`mpv` (or `$XDG_CONFIG_HOME/aacs/KEYDB.cfg` if that variable is set). Keep the
+filename's case and make it readable by that account. The diagnostic shows the
+exact path it checks. Download the current English ZIP from the
+[FindVUK database](https://fvonline-db.bplaced.net/) and extract `KEYDB.cfg`
+there; the web UI links to both the database and its ZIP. It does not download
+or replace keys automatically.
 
 ---
 

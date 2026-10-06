@@ -192,7 +192,7 @@ qdbus6 org.mpris.MediaPlayer2.mpv /org/mpris/MediaPlayer2 \
 | --- | --- | --- |
 | `mpv` (libbluray, luajit, dvdnav) | playback | installed |
 | `libbluray` `libaacs` `libbdplus` `libudfread` | BD read + AACS | installed |
-| `~/.config/aacs/KEYDB.cfg` | AACS decryption keys | present |
+| `~/.config/aacs/KEYDB.cfg` (video service user's home) | AACS decryption keys; use the video web remote's **Blu-ray check** for freshness and setup | present |
 | `geom_cache` (kld) | read-ahead cache | base system |
 | `mpv-mpris` | remote control (MPRIS/D-Bus) | installed |
 | `kdeconnect-kde` | phone remote front-end | installed |
