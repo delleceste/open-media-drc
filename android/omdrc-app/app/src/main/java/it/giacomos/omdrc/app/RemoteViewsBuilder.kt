@@ -9,7 +9,11 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.Typeface
 import android.view.View
 import android.widget.RemoteViews
 import it.giacomos.omdrc.app.data.MpdStatus
@@ -23,6 +27,8 @@ enum class WidgetSize { TINY, SMALL, LARGE }
 // ones keyed on appWidgetId alone (manualRefreshIntent, openDashboardIntent)
 // so they never collide for the same widget instance.
 private const val TOGGLE_REQUEST_CODE_OFFSET = 1_000_000
+
+private const val ICON_SURFACE_PX = 256
 
 /**
  * Pure(ish) rendering: takes a snapshot (possibly null/stale/unreachable)
@@ -77,11 +83,9 @@ object RemoteViewsBuilder {
         return views
     }
 
-    /** The 1x1 cover-art tile: no room for title/subtitle text, so it gets
-     *  its own render path entirely rather than squeezing into
-     *  renderConfigured()'s text-driven states. Unconfigured/unreachable
-     *  just falls back to the placeholder art + whatever play/pause icon
-     *  the last cached state implies - there's no text room to say so. */
+    /** The 1x1 tile, made to look like the launcher icon + its label: no
+     *  room for title/subtitle text, so it gets its own render path rather
+     *  than squeezing into renderConfigured()'s text-driven states. */
     private fun buildTiny(
         context: Context,
         appWidgetId: Int,
@@ -91,23 +95,85 @@ object RemoteViewsBuilder {
     ): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_tiny)
 
-        val art = WidgetArtCache.load(context, appWidgetId)
-        if (art != null) {
-            views.setImageViewBitmap(R.id.cover_art, circularCrop(art))
+        val drcOn = snapshot?.drc?.running == true
+        views.setImageViewBitmap(R.id.cover_art, iconSurface(context, WidgetArtCache.load(context, appWidgetId), drcOn))
+
+        // A null song means an empty queue (nothing loaded to play/pause),
+        // not just "currently stopped" - no point offering a control that
+        // has nothing to act on.
+        val hasQueue = snapshot?.mpd?.song != null
+        if (hasQueue) {
+            val playing = snapshot?.mpd?.state == "playing"
+            views.setImageViewResource(R.id.play_pause_icon, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+            views.setViewVisibility(R.id.play_pause_icon, View.VISIBLE)
+            views.setOnClickPendingIntent(R.id.play_pause_icon, togglePlayPauseIntent(context, appWidgetId))
         } else {
-            views.setImageViewResource(R.id.cover_art, R.drawable.ic_cover_placeholder)
+            views.setViewVisibility(R.id.play_pause_icon, View.GONE)
         }
 
-        val playing = snapshot?.mpd?.state == "playing"
-        views.setImageViewResource(R.id.play_pause_icon, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
-
-        val drcOn = snapshot?.drc?.running == true
-        views.setViewVisibility(R.id.drc_badge, if (drcOn) View.VISIBLE else View.GONE)
-
         views.setOnClickPendingIntent(R.id.widget_root, openDashboardIntent(context, appWidgetId, host, port))
-        views.setOnClickPendingIntent(R.id.play_pause_icon, togglePlayPauseIntent(context, appWidgetId))
 
         return views
+    }
+
+    /** The launcher icon's circle, drawn as one square bitmap so it stays a
+     *  true circle whatever the cell's aspect: the static icon (the
+     *  ic_launcher_background gradient + ic_launcher_foreground mark) when
+     *  there's no art, the cover filling that same circle when there is.
+     *  The DRC badge is painted in too, so it stays in the circle's own
+     *  top-right corner rather than the cell's. */
+    private fun iconSurface(context: Context, art: Bitmap?, drcOn: Boolean): Bitmap {
+        val size = ICON_SURFACE_PX
+        val content = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(content)
+        if (art != null) {
+            val side = minOf(art.width, art.height)
+            val left = (art.width - side) / 2
+            val top = (art.height - side) / 2
+            canvas.drawBitmap(
+                art, Rect(left, top, left + side, top + side), Rect(0, 0, size, size),
+                Paint(Paint.FILTER_BITMAP_FLAG),
+            )
+        } else {
+            // Same gradient as ic_launcher_background (artwork/draw-app-icon.py).
+            val paint = Paint().apply {
+                shader = RadialGradient(
+                    size * 0.5f, size * 0.45f, size * 0.7f,
+                    0xFF1B2028.toInt(), 0xFF07090C.toInt(), Shader.TileMode.CLAMP,
+                )
+            }
+            canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+            // An adaptive icon's mask only shows the central 72 of its 108dp
+            // layer, so the launcher draws the mark 1.5x what a plain
+            // 108->size scale would - match that.
+            val inset = size / 4
+            context.getDrawable(R.drawable.ic_launcher_foreground)?.let {
+                it.setBounds(-inset, -inset, size + inset, size + inset)
+                it.draw(canvas)
+            }
+        }
+        val surface = circularCrop(content)
+        if (drcOn) drawDrcBadge(context, surface)
+        return surface
+    }
+
+    private fun drawDrcBadge(context: Context, surface: Bitmap) {
+        val size = surface.width.toFloat()
+        val canvas = Canvas(surface)
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFFFFFFF.toInt()
+            textSize = size * 0.13f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val text = context.getString(R.string.drc_badge)
+        val padX = size * 0.04f
+        val padY = size * 0.02f
+        val width = textPaint.measureText(text) + 2 * padX
+        val height = textPaint.textSize + 2 * padY
+        val box = RectF(size - width, 0f, size, height)
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC000000.toInt() }
+        canvas.drawRoundRect(box, size * 0.04f, size * 0.04f, bgPaint)
+        canvas.drawText(text, box.left + padX, box.bottom - padY - textPaint.descent(), textPaint)
     }
 
     /** RemoteViews/AppWidgetHostView has no clipToOutline support reliable
