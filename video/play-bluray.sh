@@ -81,7 +81,7 @@ fi
 # --- play ------------------------------------------------------------------
 mpv --fs \
     --bluray-device="$BD_DEVICE" \
-    --ao="$AO" --audio-device="$AUDIO_DEVICE" \
+    --ao="$AO" $AO_OPTS --audio-device="$AUDIO_DEVICE" \
     --audio-delay="$AUDIO_DELAY" \
     --sub-delay="$SUB_DELAY" \
     "$TARGET"

@@ -4,11 +4,21 @@
 # directory (play-bluray.sh / play-media.sh do: HERE=$(dirname "$(readlink -f
 # "$0")")) -- this script and the webremote's src/ tree install as siblings
 # under it (CMakeLists.txt), which is also where this script finds videodelay.py.
-# It sets four variables for the caller's mpv command:
+# It sets these variables for the caller's mpv command:
 #   AO            -- mpv --ao value (the audio output API this box actually has)
+#   AO_OPTS       -- extra output options for that API; expand UNQUOTED
 #   AUDIO_DEVICE  -- mpv --audio-device value
 #   AUDIO_DELAY   -- mpv --audio-delay value (negative delays the VIDEO)
 #   SUB_DELAY     -- mpv --sub-delay value
+
+# --- MakeMKV decryption for libbluray ---------------------------------------
+# libbluray would otherwise load the stock libaacs, whose host certificate the
+# USB drive rejects ("has been revoked by your drive"), leaving AACS discs
+# unreadable.  MakeMKV's libmmbd is a drop-in for libaacs and libbdplus.  Only
+# set when MakeMKV is installed and the caller has not chosen otherwise.
+if [ -z "${LIBAACS_PATH:-}" ] && [ -e /usr/lib/libmmbd.so.0 ]; then
+    export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd
+fi
 
 DRC_SH="$(command -v omdrc 2>/dev/null || true)"
 DRC_STATUS_SH="$(command -v omdrc-status 2>/dev/null || true)"
@@ -43,8 +53,14 @@ if $IS_LINUX; then
     AO="alsa"                       # this box is ALSA-only on Linux (no Pulse/PipeWire)
     DAC_DEVICE="alsa/hw:0,0"        # direct USB DAC (DRC off)
     DRC_DEVICE="alsa/hw:1,0"        # snd-aloop loopback feeding brutefir (DRC on)
+    # mpv's default ALSA buffer at 192 kHz is a single 32768-frame period (the
+    # loopback's maximum).  A one-period buffer never drains through
+    # snd-aloop -> brutefir: playback freezes on the first frame, silent and
+    # black.  Several periods keep it flowing.
+    AO_OPTS="--alsa-buffer-time=800000 --alsa-periods=8"
 else
     AO="oss"
+    AO_OPTS=""
     # direct DAC (DRC off), by role — see omdrc_audio
     DAC_DEVICE="oss/$([ -e /dev/dsp.dac ] && echo /dev/dsp.dac || echo /dev/dsp0)"
     DRC_DEVICE="oss//dev/dsp.play"  # virtual_oss client device (DRC on)

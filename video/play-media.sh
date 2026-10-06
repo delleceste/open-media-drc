@@ -28,7 +28,7 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 # --- play (-- guards files/URLs that start with '-') -----------------------
 exec mpv --fs \
-    --ao="$AO" --audio-device="$AUDIO_DEVICE" \
+    --ao="$AO" $AO_OPTS --audio-device="$AUDIO_DEVICE" \
     --audio-delay="$AUDIO_DELAY" \
     --sub-delay="$SUB_DELAY" \
     -- "$@"

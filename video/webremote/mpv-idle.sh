@@ -67,7 +67,7 @@ fi
 
 exec mpv --idle=yes --fs \
     --input-ipc-server="$SOCKET" \
-    --ao="$AO" --audio-device="$AUDIO_DEVICE" \
+    --ao="$AO" $AO_OPTS --audio-device="$AUDIO_DEVICE" \
     --audio-channels=stereo \
     --audio-delay="$AUDIO_DELAY" \
     --sub-delay="$SUB_DELAY"
