@@ -1927,7 +1927,9 @@ P.openFull = ({ offset = 0 } = {}) => {
     P.fullEl = h('div', { class: 'scrim qz-full' },
         h('div', { class: 'qz-full-top' },
             h('button', { type: 'button', class: 'btn qz-pbtn', title: 'Back to the search', onclick: () => P.closeFull() }, '⌄'),
-            h('span', { class: 'qz-full-label' }, 'Now playing'), v.maxBtn),
+            h('span', { class: 'qz-full-label' }, 'Now playing'), v.maxBtn,
+            v.aiBtn = h('button', { type: 'button', class: 'btn qz-listening', title: 'Research this music',
+                'aria-label': 'Research this music', onclick: () => K.listening.open(P.listeningTrack()) }, K.listening.icon())),
         h('div', { class: 'qz-full-body' },
             v.cover,
             h('div', { class: 'qz-full-side' },
@@ -1952,6 +1954,8 @@ P.openFull = ({ offset = 0 } = {}) => {
     }
     document.getElementById('overlay-root').append(P.fullEl);
     P.fullView = v;
+    P.paintListeningIcon = () => { if (v.aiBtn.isConnected) K.clear(v.aiBtn).append(K.listening.icon(K.listening.busy ? 'busy' : '')); };
+    P.listeningUnsub = K.listening.onChange(P.paintListeningIcon);
     P.views.push(v);
     P.queueVersion = null;
     P.queueCount = 0;
@@ -1970,6 +1974,7 @@ P.openFull = ({ offset = 0 } = {}) => {
 P.closeFull = () => {
     if (!P.fullEl) return;
     P.closeQueueActions();
+    P.listeningUnsub?.();
     P.queueSizer.disconnect();
     if (P.fullView) P.fullView.ring.destroy();
     P.seekTaps = null;
@@ -2073,6 +2078,13 @@ P.trackInfo = () => {
     return t && typeof t.then !== 'function' ? t : null;
 };
 
+P.listeningTrack = () => {
+    const d = P.now, t = P.trackInfo(), a = t?.album;
+    return d && { ok: true, state: d.state, title: d.title || t?.title || '',
+        artist: d.artist || t?.performer || a?.artist || '', album: d.album || a?.title || '',
+        qobuz_album: a?.id || '', track_id: P.trackId };
+};
+
 P.refreshPlayer = async () => {
     const d = await K.api('/k/api/player', { timeout: 6000 });
     P.now = d.ok ? d : null;
@@ -2102,6 +2114,10 @@ const setCover = (box, src) => {
 P.paintViews = () => {
     const d = P.now, t = P.trackInfo(), album = t ? t.album : null;
     const playing = !!(P.base && P.base.playing);
+    if (P.fullView) {
+        P.fullView.aiBtn.hidden = !d || d.state === 'stop';
+        K.listening.observe(P.listeningTrack());
+    }
     const title = !d ? '—' : d.state === 'stop' && !d.title ? 'Stopped' : (d.title || (t && t.title) || '—');
     const pos = d && d.pos && d.length ? `${d.pos} / ${d.length}` : '';
     for (const v of P.views) {

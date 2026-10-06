@@ -53,6 +53,7 @@ import queue
 import re
 import threading
 import time
+import uuid
 
 from flask import Blueprint, Response, jsonify, request
 
@@ -96,6 +97,8 @@ _played: dict[str, PlayedAlbums] = {}       # one store per file, across reloads
 _learned: dict[str, SearchWords] = {}
 _lowered: dict[str, LoweredList] = {}
 _awarded: dict[str, AwardedAlbums] = {}
+_listening_jobs: dict[str, threading.Event] = {}
+_listening_lock = threading.Lock()
 # The shipped completion list, next to this module; re-read when it changes.
 WORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qobuz_words.txt")
 _words = (None, [])                          # (mtime, entries)
@@ -395,6 +398,50 @@ def ai_recommend():
         return jsonify({"ok": True, **answer})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/ai/listening", methods=["POST"])
+def ai_listening():
+    guard = _guard(False) or _ai_mutation_guard()
+    if guard:
+        return guard
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "Invalid listening request."}), 400
+    job = body.get("job")
+    if not isinstance(job, str) or len(job) != 36:
+        return jsonify({"ok": False, "error": "Invalid research session."}), 400
+    try:
+        uuid.UUID(job)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid research session."}), 400
+    cancel = threading.Event()
+    with _listening_lock:
+        _listening_jobs[job] = cancel
+    try:
+        answer = qobuz_ai.listening_research(_state_dir(), body.get("album"), body.get("tracks"), cancel=cancel)
+        response = jsonify({"ok": True, **answer})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+    finally:
+        with _listening_lock:
+            _listening_jobs.pop(job, None)
+
+
+@bp.route("/ai/listening/cancel", methods=["POST"])
+def ai_listening_cancel():
+    guard = _guard(False) or _ai_mutation_guard()
+    if guard:
+        return guard
+    body = request.get_json(silent=True) or {}
+    job = body.get("job") if isinstance(body, dict) else None
+    with _listening_lock:
+        event = _listening_jobs.get(job) if isinstance(job, str) else None
+        if event:
+            event.set()
+    return jsonify({"ok": True})
 
 
 @bp.route("/genres")

@@ -935,6 +935,15 @@ evidence are insufficient; an absent supporting link is explicitly flagged.
 Hi-Res specifications do not establish engineering quality, and a review of
 one mastering may not apply to another edition.
 
+The **Research music** chip on Now and the AI icon in the full Qobuz player
+open a shared listening guide using the configured provider. It researches the
+album once, with an overview, composition tabs and notes for identifiable
+tracks or movements. The current composition follows playback, including when
+the guide is swiped down to its bottom strip. Swipe up to reopen it; **Close**
+stops following playback and cancels the active research. When Qobuz supplies a
+track list, the guide maps sections to that list. Other sources use the current
+track and album metadata, so section matching is less precise.
+
 Keys are stored only on the server in `<state_dir>/qobuz-ai.json`, atomically
 written with mode `0600`, and never returned by the settings API or saved in
 browser storage. A blank key preserves the selected provider's saved key.

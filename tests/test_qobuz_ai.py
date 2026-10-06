@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 import urllib.error
@@ -106,6 +107,36 @@ class AITest(unittest.TestCase):
         self.assertEqual(ai.configuration(self.root)["key"], "test-secret")
         self.assertNotIn("test-secret", json.dumps(ai.public_settings(self.root)))
 
+    def test_listening_guide_maps_compositions_and_track_notes(self):
+        self.configure("claude")
+        calls = []
+        def post(cfg, body, timeout):
+            calls.append(body)
+            if len(calls) == 1:
+                return {"content": [{"type": "text", "text": "The third and fourth symphonies have distinct histories."},
+                                    {"type": "web_search_tool_result", "content": [self.source]}]}
+            return {"content": [{"type": "tool_use", "name": "listening_guide", "input": {
+                "overview": "Two symphonies on one release.",
+                "compositions": [{"title": "Symphony No. 3", "text": "Historical context", "tracks": [1, 2]},
+                                 {"title": "Symphony No. 4", "text": "Different work", "tracks": [3, 99]}],
+                "track_notes": [{"track": 2, "text": "Second movement"}, {"track": 99, "text": "Invalid"}]}}]}
+        answer = ai.listening_research(self.root, {"title": "Shostakovich Symphonies", "artist": "Orchestra"},
+                                       [{"title": "Symphony 3: I"}, {"title": "Symphony 3: II"},
+                                        {"title": "Symphony 4: I"}], post=post)
+        self.assertEqual(answer["compositions"][1]["tracks"], [3])
+        self.assertEqual(answer["track_notes"], [{"track": 2, "text": "Second movement"}])
+        self.assertEqual(answer["sources"][0]["url"], self.source["url"])
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("test-secret", json.dumps(calls))
+
+    def test_cancelled_listening_guide_does_not_contact_provider(self):
+        self.configure("claude")
+        cancelled = threading.Event()
+        cancelled.set()
+        with self.assertRaisesRegex(ai.AIError, "stopped"):
+            ai.listening_research(self.root, {"title": "The Wall"}, [{"title": "In the Flesh?"}],
+                                  post=lambda *_: self.fail("provider was called"), cancel=cancelled)
+
     def test_missing_key_and_invalid_inputs_do_not_call_provider(self):
         ai.save_settings(self.root, {"provider": "claude"})
         with patch.dict("os.environ", {}, clear=True):
@@ -201,6 +232,20 @@ class RouteTest(unittest.TestCase):
             self.assertEqual(args[3]["awarded_only"], True)
         with patch.object(web, "renderer_running", return_value=False):
             self.assertEqual(self.client.post("/qobuz/ai/recommend", json={"prompt": "Music"}, headers={"X-Qobuz-AI": "1"}).status_code, 409)
+
+    def test_listening_route_requires_guard_and_passes_cancel_event(self):
+        job = "a38cbe40-f3af-44af-a76f-59826db907b1"
+        body = {"job": job, "album": {"title": "The Wall"}, "tracks": [{"title": "In the Flesh?"}]}
+        self.assertEqual(self.client.post("/qobuz/ai/listening", json=body).status_code, 403)
+        headers = {"X-Qobuz-AI": "1"}
+        with patch.object(ai, "listening_research", return_value={"overview": "Album overview", "compositions": []}) as research:
+            result = self.client.post("/qobuz/ai/listening", json=body, headers=headers)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.get_json()["overview"], "Album overview")
+            self.assertEqual(result.headers["Cache-Control"], "no-store")
+            self.assertFalse(research.call_args.kwargs["cancel"].is_set())
+        self.assertEqual(self.client.post("/qobuz/ai/listening", json={**body, "job": []}, headers=headers).status_code, 400)
+        self.assertEqual(self.client.post("/qobuz/ai/listening/cancel", json={"job": []}, headers=headers).status_code, 200)
 
 
 class ClaudeAccountTest(unittest.TestCase):
