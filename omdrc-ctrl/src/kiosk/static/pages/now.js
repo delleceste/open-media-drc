@@ -348,8 +348,13 @@ P.applyLayout = () => {
     // upright, something switched off leaves room: the cover grows and the track goes under it
     P.el.firstChild.classList.toggle('roomy', off || !P.showDr || !P.showBalance);
     P.paintCover();
-    P.applySplit();
+    // applyCols first: it moves the DR strip into the side column (circular
+    // spectrum) and updates P.splitter.hidden accordingly, which applySplit
+    // depends on -- the other order leaves applySplit's old inline flex
+    // (meant for the strip as a row below the meters) stuck on it after the
+    // move, overlapping it with the side column's other cards.
     P.applyCols();
+    P.applySplit();
     P.drWin.textContent = K.dr.windowLabel(K.drEstimate.windowSeconds).replace(' minutes', ' min').replace(' minute', ' min');
 };
 
@@ -642,8 +647,15 @@ P.applyCols = () => {
     // orientation flip, even when the level mode itself doesn't change)
     const drSide = P.mode === 'circular' && !K.portrait();
     P.el.firstChild.classList.toggle('dr-side', drSide);
-    if (drSide) { if (P.drBarBox.parentNode !== P.side) P.side.append(P.drBarBox); }
-    else if (P.drBarBox.parentNode === P.side) P.el.firstChild.insertBefore(P.drBarBox, P.drcLine);
+    const wasSide = P.drBarBox.parentNode === P.side;
+    if (drSide && !wasSide) P.side.append(P.drBarBox);
+    else if (!drSide && wasSide) P.el.firstChild.insertBefore(P.drBarBox, P.drcLine);
+    if (drSide !== wasSide) {
+        // moving between "its own row, split with the meters" and "a card in the side
+        // column" -- drop whatever inline flex applySplit set for the old container,
+        // or it sticks across the move and fights the new one's sizing.
+        P.mainBox.style.flex = ''; P.drBarBox.style.flex = '';
+    }
     P.splitter.hidden = !P.showDr || drSide || (P.mode === 'off' && P.coverMode !== 'square');
     const c = K.pref('now.col', null);
     // upright the columns stack (kiosk.css): a width dragged in landscape must not squeeze the meters
