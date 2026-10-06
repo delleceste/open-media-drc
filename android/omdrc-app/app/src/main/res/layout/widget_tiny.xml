@@ -4,6 +4,12 @@
   stacked the way a launcher icon and its label are: the icon circle on top
   (RemoteViewsBuilder.iconSurface - the static app icon, or the cover
   painted into that same circle), the plain "OMDRC" label underneath.
+
+  Sizes are measured off the Pixel launcher (Pixel 9, default grid) so the
+  tile lines up with the icons in its row: a 53.5dp circle, a 13sp label,
+  3.8dp between them. Everything hangs from the cell's bottom edge (the
+  9.9dp under the label), the one edge the launcher places identically for
+  an icon and a widget in the same row.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
@@ -14,24 +20,18 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:gravity="center_horizontal">
+        android:gravity="bottom|center_horizontal">
 
         <FrameLayout
             android:id="@+id/icon_surface"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_width="53.5dp"
+            android:layout_height="53.5dp">
 
-            <!-- fitEnd pins the circle's bounding square to this frame's
-                 bottom-right corner whatever the cell's aspect, so the label
-                 sits right under it and play_pause_icon (bottom|end) always
-                 lands inside that square. -->
             <ImageView
                 android:id="@+id/cover_art"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:padding="2dp"
-                android:scaleType="fitEnd"
+                android:scaleType="fitXY"
                 android:contentDescription="@null" />
 
             <ImageView
@@ -39,7 +39,6 @@
                 android:layout_width="16dp"
                 android:layout_height="16dp"
                 android:layout_gravity="bottom|end"
-                android:layout_margin="2dp"
                 android:background="@drawable/widget_icon_chip_background"
                 android:padding="3dp"
                 android:contentDescription="@null"
@@ -51,11 +50,12 @@
             android:id="@+id/omdrc_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="3.8dp"
+            android:layout_marginBottom="9.9dp"
             android:singleLine="true"
             android:text="@string/app_name"
             android:textColor="@android:color/white"
-            android:textSize="12sp" />
+            android:textSize="13sp" />
 
     </LinearLayout>
 
