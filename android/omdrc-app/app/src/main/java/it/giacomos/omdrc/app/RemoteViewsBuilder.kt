@@ -243,9 +243,20 @@ object RemoteViewsBuilder {
         views.setViewLayoutMargin(R.id.icon_surface, RemoteViews.MARGIN_TOP, top, dip)
         views.setImageViewBitmap(R.id.omdrc_label, label.bitmap)
         views.setViewLayoutMargin(R.id.omdrc_label, RemoteViews.MARGIN_TOP, gapDp - label.capTopDp, dip)
-        val chip = 0.3f * iconDp
+        // The play/pause chip straddles the icon's bottom-right edge, its
+        // center at 92% across and 98% down the icon's square, kept inside
+        // the cell. It's centered in the cell by gravity, so the margins
+        // are its offset from the cell's center.
+        val chip = 0.42f * iconDp
+        val dx = minOf(0.42f * iconDp, (width - chip) / 2f)
+        val dy = minOf(top + 0.98f * iconDp, height - chip / 2f) - height / 2f
         views.setViewLayoutWidth(R.id.play_pause_icon, chip, dip)
         views.setViewLayoutHeight(R.id.play_pause_icon, chip, dip)
+        views.setViewLayoutMargin(R.id.play_pause_icon, RemoteViews.MARGIN_LEFT, dx, dip)
+        views.setViewLayoutMargin(R.id.play_pause_icon, RemoteViews.MARGIN_TOP, maxOf(dy, 0f), dip)
+        views.setViewLayoutMargin(R.id.play_pause_icon, RemoteViews.MARGIN_BOTTOM, maxOf(-dy, 0f), dip)
+        val pad = (0.18f * chip * context.resources.displayMetrics.density).roundToInt()
+        views.setViewPadding(R.id.play_pause_icon, pad, pad, pad, pad)
     }
 
     private class Label(val bitmap: Bitmap, val capTopDp: Float)
