@@ -783,6 +783,7 @@ P.filtersActive = () => P.selected.size > 0 || pref('date', 'any') !== 'any'
     || pref('order', 'relevance') !== 'relevance' || pref('awarded', false) || pref('hires', false);
 P.resetFilters = () => {
     clearTimeout(soon);
+    P.filtersDirty = false;
     P.selected.clear();
     for (const [key, value] of Object.entries({ labels: [], date: 'any', from: thisYear - 5, to: '', lastN: 2,
         order: 'relevance', awarded: false, hires: false })) setPref(key, value);
@@ -799,6 +800,8 @@ P.paintSummary = () => {
             title: P.filterSummary() || 'Filters', onclick: () => P.openFilters(!P.filtersOpen) },
             h('span', { class: 'qz-fsum-text' }, P.filterSummary()),
             h('span', { class: 'qz-fsum-mark' }, 'Filters' + (P.filtersOpen ? ' ▴' : ' ▾'))));
+    if (P.filtersDirty) P.fsum.append(h('button', { type: 'button', class: 'btn qz-filter-apply',
+        title: 'Search with these filters', onclick: () => P.go() }, 'Apply Filters'));
     if (active) P.fsum.append(h('button', { type: 'button', class: 'btn qz-filter-clear',
         title: 'Clear filters', 'aria-label': 'Clear filters',
         onclick: () => { P.resetFilters(); P.searchSoon(); } }, K.tIcon('clear')));
@@ -995,7 +998,8 @@ P.params = scan => {
 let soon = null;
 P.searchSoon = () => {
     clearTimeout(soon);
-    P.paintStale();
+    P.filtersDirty = true;                        // "Apply" shows until a search uses them
+    P.paintStale(); P.paintSummary();
     if (P.dockedOnNow()) return;                  // down on Now: the next Search uses them
     // Changing a filter never silently starts another paid AI request.
     if (pref('aiMode', false) || P.aiRunning || P.aiStarting || (P.last && P.last.ai)) return;
@@ -1011,6 +1015,7 @@ P.search = async (scan = 0, { quiet = false } = {}) => {
         return;
     }
     setPref('q', P.input.value.trim());
+    if (!scan) { P.filtersDirty = false; P.paintSummary(); }
     if (!scan) { P.previewDismissed = false; P.searchedKey = params.toString(); }
     const seq = ++P.searching;
     P.request = params.toString();
