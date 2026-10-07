@@ -37,7 +37,7 @@ function icon(name) {
 let cur = -1;
 // Only these pages are reached by swiping (and the arrow keys), in this order; they come
 // first in the pager and in the menu.  Every other page is opened from the menu alone.
-const SWIPE_IDS = ['now', 'qobuz', 'drc', 'video'];
+const SWIPE_IDS = ['now', 'qobuz', 'drc'];
 const swipeCount = () => { let n = 0; while (n < K.pages.length && SWIPE_IDS.includes(K.pages[n].id)) n++; return n; };
 const pager = $('#pager'), tabs = $('#tabs');
 const rememberedPages = ['now', 'cover', 'qobuz'];

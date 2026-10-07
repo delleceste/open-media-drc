@@ -12,10 +12,9 @@ down.
 
 ## Pages (swipe, or tap the tab bar; `#drc` etc. deep-links)
 
-Only Now, Qobuz, DRC and Video (in that order) are reached by swiping or the arrow keys;
+Only Now, Qobuz and DRC (in that order) are reached by swiping or the arrow keys;
 a left swipe past the last one cycles back to Now.  Every other page opens from the page
-menu (the wide-screen tab bar lists only the four), and does not swipe.  Video is an
-iframe, so a swipe there starts on the narrow strips along its left and right edges.
+menu (the wide-screen tab bar lists only the three), and does not swipe.
 
 | Page | What it is |
 |---|---|

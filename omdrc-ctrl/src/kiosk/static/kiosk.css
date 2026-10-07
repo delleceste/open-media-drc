@@ -1249,8 +1249,3 @@ html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 3.2
 
 .listening-panel { border-radius: .8rem .8rem 0 0; }
 .listening-panel.collapsed { touch-action: none; }
-
-/* Video is an iframe, which swallows touches: strips along both edges stay with the pager so a swipe can start there. */
-.video-page-body { position: relative; }
-.video-edge { position: absolute; top: 0; bottom: 0; width: 1.6rem; z-index: 2; touch-action: pan-y; }
-.video-edge.l { left: 0; } .video-edge.r { right: 0; }

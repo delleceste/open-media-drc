@@ -11,7 +11,7 @@ P.mount = el => {
     P.offline = h('div', { class: 'video-offline', hidden: true },
         h('p', {}, 'The video remote is unavailable.'),
         h('button', { class: 'btn', type: 'button', onclick: () => P.check() }, 'Retry'));
-    el.append(P.frame, P.offline, h('div', { class: 'video-edge l' }), h('div', { class: 'video-edge r' }));
+    el.append(P.frame, P.offline);
     P.paint();
 };
 P.paint = () => {
