@@ -964,7 +964,9 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-player { position: sticky; bottom: 0; z-index: 2; margin-top: .6rem; display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.3fr); grid-template-areas: "info btns seek";
     gap: .4rem .8rem; align-items: center; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: .6rem;
-    background: var(--surface); box-shadow: 0 -.3rem 1rem var(--shadow); }
+    background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    box-shadow: 0 0 .9rem 1.1rem color-mix(in srgb, var(--bg) 80%, transparent), 0 -.3rem 1rem var(--shadow); }
+/* the shadow veils the results around the strip (and in the gap below it), so the strip stays defined */
 .qz-pinfo { grid-area: info; min-width: 0; display: flex; align-items: center; gap: .6rem; cursor: pointer; }
 .qz-pprog { display: none; }
 .qz-player .qz-pbtns { grid-area: btns; } .qz-player .qz-pseek { grid-area: seek; } .qz-expand { grid-area: expand; }
