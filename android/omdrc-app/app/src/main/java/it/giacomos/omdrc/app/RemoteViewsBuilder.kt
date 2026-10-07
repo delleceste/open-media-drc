@@ -38,6 +38,9 @@ private const val ICON_SURFACE_PX = 256
 // The Pixel launcher's label face.
 private const val PIXEL_LABEL_FONT = "google-sans-text"
 
+// Clear space kept between the play/pause chip and the label's text.
+private const val CHIP_TEXT_MARGIN_PX = 3f
+
 private const val PIXEL_LAUNCHER = "com.google.android.apps.nexuslauncher"
 
 // Font families offered for the label, besides the launcher's and the
@@ -244,12 +247,27 @@ object RemoteViewsBuilder {
         views.setImageViewBitmap(R.id.omdrc_label, label.bitmap)
         views.setViewLayoutMargin(R.id.omdrc_label, RemoteViews.MARGIN_TOP, gapDp - label.capTopDp, dip)
         // The play/pause chip straddles the icon's bottom-right edge, its
-        // center at 92% across and 98% down the icon's square, kept inside
-        // the cell. It's centered in the cell by gravity, so the margins
-        // are its offset from the cell's center.
+        // center 92% across and 98% down the icon's square, kept inside the
+        // cell - and never over the label's text: where the two overlap
+        // across, the chip rises to end CHIP_TEXT_MARGIN_PX above the text's
+        // ink bounds.
+        // It's centered in the cell by gravity, so the margins are its
+        // offset from the cell's center.
         val chip = 0.42f * iconDp
         val dx = minOf(0.42f * iconDp, (width - chip) / 2f)
-        val dy = minOf(top + 0.98f * iconDp, height - chip / 2f) - height / 2f
+        var cy = minOf(top + 0.98f * iconDp, height - chip / 2f)
+        val labelTop = top + iconDp + gapDp - label.capTopDp
+        val margin = CHIP_TEXT_MARGIN_PX / context.resources.displayMetrics.density
+        val text = RectF(label.text).apply {
+            offset(width / 2f, labelTop)
+            inset(-margin, -margin)
+        }
+        val chipLeft = width / 2f + dx - chip / 2f
+        if (chipLeft < text.right && chipLeft + chip > text.left) {
+            cy = minOf(cy, text.top - chip / 2f)
+        }
+        val dy = cy - height / 2f
+        Log.d("OmdrcWidget", "layoutTiny($appWidgetId): text ink $text, chip ${RectF(chipLeft, cy - chip / 2f, chipLeft + chip, cy + chip / 2f)} dp")
         views.setViewLayoutWidth(R.id.play_pause_icon, chip, dip)
         views.setViewLayoutHeight(R.id.play_pause_icon, chip, dip)
         views.setViewLayoutMargin(R.id.play_pause_icon, RemoteViews.MARGIN_LEFT, dx, dip)
@@ -259,13 +277,16 @@ object RemoteViewsBuilder {
         views.setViewPadding(R.id.play_pause_icon, pad, pad, pad, pad)
     }
 
-    private class Label(val bitmap: Bitmap, val capTopDp: Float)
+    /** [text]: the text's ink bounds in dp, across from the bitmap's
+     *  center and down from its top. */
+    private class Label(val bitmap: Bitmap, val capTopDp: Float, val text: RectF)
 
     /** The "OMDRC" label in [typeface], sized so its capitals are [capDp]
      *  tall - in dp, not sp: the launcher's labels follow the grid, not the
      *  font scale setting - and centered in [widthDp] (at least the text's
      *  own width). capTopDp is how far below the bitmap's top the cap line
-     *  sits, to place it a given gap under the icon. */
+     *  sits, to place it a given gap under the icon; text its ink bounds,
+     *  from the font's own glyph metrics. */
     private fun labelBitmap(context: Context, typeface: Typeface, capDp: Float, widthDp: Float): Label {
         val density = context.resources.displayMetrics.density
         val text = context.getString(R.string.app_name)
@@ -285,7 +306,15 @@ object RemoteViewsBuilder {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         bitmap.density = context.resources.displayMetrics.densityDpi
         Canvas(bitmap).drawText(text, width / 2f, baseline, paint)
-        return Label(bitmap, capTop / density)
+        val ink = Rect().also { paint.getTextBounds(text, 0, text.length, it) }
+        // getTextBounds is relative to the drawing origin: the baseline,
+        // and with Align.CENTER the left of the text still - recenter it.
+        val half = paint.measureText(text) / 2f
+        val inkDp = RectF(
+            (ink.left - half) / density, (baseline + ink.top) / density,
+            (ink.right - half) / density, (baseline + ink.bottom) / density,
+        )
+        return Label(bitmap, capTop / density, inkDp)
     }
 
     /** The launcher icon's circle, drawn as one square bitmap so it stays a
