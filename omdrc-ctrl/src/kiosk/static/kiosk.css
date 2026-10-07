@@ -775,10 +775,10 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-perf { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qz-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .6rem; margin-top: .15rem; }
 .qz-meta .chip { min-height: 1.3rem; font-size: .72rem; padding: 0 .45rem; }
-.qz-act { display: flex; flex-direction: column; gap: .2rem; }
+.qz-act { display: flex; flex-direction: column; justify-content: space-between; align-self: stretch; gap: .2rem; }
 .qz-act .btn { min-width: 2.5rem; min-height: 1.75rem; padding: 0; font-size: .95rem; }
 .qz-act .btn .ticon { width: 1rem; height: 1rem; }
-.qz-act .btn.qz-low { color: var(--muted); }
+.qz-act .btn.qz-more-menu { color: var(--muted); font-size: 1.3rem; line-height: 1; }
 .qz-tracks { grid-column: 1 / -1; }
 /* the grid (pages/qobuz.js P.tile): covers in columns, small text under each */
 .qz-list.qz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.6rem, 1fr)); gap: .75rem .6rem; }

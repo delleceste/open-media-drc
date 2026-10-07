@@ -1655,19 +1655,16 @@ P.row = (c, where = '') => {
             href: s.url, target: '_blank', rel: 'noopener noreferrer',
             onclick: e => { e.preventDefault(); K.openExternal(s.url); },
         }, s.title)))));
+    // play stays on the row; add, save and remove live in the ⋯ menu (P.tileMenu)
+    const moreBtn = h('button', { type: 'button', class: 'btn qz-more-menu', title: 'More: add to the queue, save, remove',
+        'aria-label': 'More actions', 'aria-haspopup': 'menu',
+        onclick: () => P.tileMenuEl && P.tileMenuTile === row ? P.closeTileMenu() : P.tileMenu(c, where, row, moreBtn) }, '⋯');
     const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') },
         h('div', { class: 'qz-cover-wrap' }, c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
         body,
         h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),
-            h('button', { type: 'button', class: 'btn qz-add', disabled: off, title: 'Add to the queue', onclick: () => P.play(c, 'append') }, '+'),
-            h('button', { type: 'button', class: 'btn', title: 'Save in Qobuz Library', onclick: () => K.saveQobuzFavorite(c) }, '♡'),
-            // in "Played recently", − only takes it out of that list (P.hideRecent)
-            where === 'recent'
-                ? h('button', { type: 'button', class: 'btn qz-low', title: 'Hide from Recent', onclick: () => P.hideRecent(c, row) }, '−')
-            : c.lowered
-                ? h('button', { type: 'button', class: 'btn qz-low', title: `Lowered (${c.lowered.kind}: ${c.lowered.name}): restore`, onclick: () => P.restore(c.lowered) }, '↺')
-                : h('button', { type: 'button', class: 'btn qz-low', title: 'Lower: show it last, folded away', onclick: () => P.lower(c, row) }, '−')),
+            moreBtn),
         tracks);
     if (P.open.has(c.id)) P.toggleTracks(c, row, tracks, true);
     row.__card = c; row.__where = where;
@@ -1725,7 +1722,7 @@ P.tile = (c, where = '') => {
 // The long press's menu, dropped under the cover (over it when there is no room
 // below): ▶ replaces the queue, + adds to it, and − is the list's −: out of Recent,
 // else lowered (the bar after it can undo).  A lowered album gets ↺ there instead.
-P.tileMenu = (c, where, tile) => {
+P.tileMenu = (c, where, tile, anchor = null) => {
     P.closeTileMenu();
     const off = c.streamable === false;
     const item = (icon, label, run, disabled = false) => h('button', {
@@ -1743,12 +1740,15 @@ P.tileMenu = (c, where, tile) => {
     document.body.append(menu);
     tile.classList.add('menu-open');
     P.tileMenuTile = tile;
-    const r = tile.querySelector('.qz-tcover').getBoundingClientRect();
+    const r = (anchor || tile.querySelector('.qz-tcover')).getBoundingClientRect();
     const w = menu.offsetWidth, hgt = menu.offsetHeight;
-    menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
-    menu.style.top = `${r.bottom + 4 + hgt <= innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top + 8)}px`;
+    // from a list row's ⋯ the menu hangs from the button's right edge, above it when low
+    const x = anchor ? r.right - w : r.left;
+    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - w - 8))}px`;
+    menu.style.top = `${r.bottom + 4 + hgt <= innerHeight - 8 ? r.bottom + 4
+        : anchor ? Math.max(8, r.top - 4 - hgt) : Math.max(8, r.top + 8)}px`;
     // the finger that held lifts after this: only a new touch elsewhere closes it
-    P.tileMenuOutside = e => { if (!menu.contains(e.target)) P.closeTileMenu(); };
+    P.tileMenuOutside = e => { if (!menu.contains(e.target) && !(anchor && anchor.contains(e.target))) P.closeTileMenu(); };
     P.tileMenuKey = e => { if (e.key === 'Escape') P.closeTileMenu(); };
     document.addEventListener('pointerdown', P.tileMenuOutside, true);
     document.addEventListener('keydown', P.tileMenuKey);
