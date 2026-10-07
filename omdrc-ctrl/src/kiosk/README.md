@@ -21,6 +21,7 @@ down.
 | **DRC** | Applied state, sample-rate presets, filter set and design, attenuation, BruteFIR peak/RTI, `drc.sh status` |
 | **DR** | Rolling DR estimate (off until enabled), measure this record, compare masters |
 | **Source** | Renderer switch/restart/activity, MPD state, CD input |
+| **Local** | The local collection MPD indexes: what it is, the music directory (kept per host in `local-library.json` in the state directory; MPD's `music_directory` when unset), and Rescan, which updates MPD and calculates missing DR14 reports in the background (`libexec/omdrc/scripts/omdrc-mpd-update-dr14.sh`, status in `local-scan.txt`). Local albums show in the Qobuz search with ⌂ and their `dr14.txt` DR value |
 | **Chain** | The audio path from renderer to DAC, and who holds each device |
 | **System** | BruteFIR CPU, memory, busiest processes, sound devices, system/application buttons |
 | **Logs** | Recognised alerts and a tail of every configured log |

@@ -51,6 +51,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -60,6 +61,7 @@ from flask import Blueprint, Response, jsonify, request
 import openhome
 import qobuz_ai
 import qobuz_favorites
+import local_db
 import mpd_library
 from qobuz_search import (AWARD_PRESETS, AwardedAlbums, LoweredList, PlayedAlbums,
                           QobuzCatalog, QobuzError, album_card,
@@ -499,7 +501,7 @@ def search():
     if guard:
         return guard
     try:
-        mpd_library.set_music_directory(_music_directory())
+        mpd_library.set_music_directory(_library_root())
         args = _search_args()
         local_only = request.args.get("local", "0").lower() in ("1", "true", "yes")
         try:
@@ -559,14 +561,50 @@ def local_play():
         return jsonify({"ok": False, "error": str(error)}), 503
 
 
+def _library_root() -> str | None:
+    """Where DR14 reports are read from: this host's setting, else MPD's own."""
+    return local_db.music_directory(_state_dir(), _music_directory)
+
+
+@bp.route("/local/status")
+def local_status():
+    return jsonify(local_db.status(_state_dir(), _music_directory,
+                                   shutil.which("dr14_tmeter") is not None))
+
+
+@bp.route("/local/config", methods=["POST"])
+def local_config():
+    """Set (or, with an empty path, forget) this host's music directory."""
+    body = request.get_json(silent=True) or {}
+    try:
+        path = local_db.validate(str(body.get("path", "")))
+        local_db.set_path(_state_dir(), path)
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except OSError as error:
+        return jsonify({"ok": False, "error": f"could not save: {error}"}), 503
+    root = _library_root()
+    if root and os.path.isdir(root):
+        local_db.counts(root, fresh=True)          # recount in the background
+    return jsonify({"ok": True, "message": f"Music directory for this host: {path}"
+                    if path else "Using the music directory from the MPD configuration"})
+
+
 @bp.route("/local/refresh", methods=["POST"])
 def local_refresh():
     """Update MPD's index, then start the host's background DR14 scan."""
     import subprocess
     script = os.path.join(os.environ.get("PREFIX", "/usr/local"),
                           "libexec", "omdrc", "scripts", "omdrc-mpd-update-dr14.sh")
+    scan = local_db.scan_status(_state_dir())
+    if scan["state"] == "running" and time.time() - scan["since"] < local_db.STALE_SCAN:
+        return jsonify({"ok": True, "message": "A DR14 scan is already running"})
+    env = dict(os.environ, OMDRC_SCAN_STATUS=os.path.join(_state_dir(), local_db.SCAN_STATUS_FILE))
+    configured = local_db.configured_path(_state_dir())
+    if configured:
+        env["OMDRC_MUSIC_DIRECTORY"] = configured
     try:
-        result = subprocess.run([script], capture_output=True, text=True, timeout=15)
+        result = subprocess.run([script], capture_output=True, text=True, timeout=15, env=env)
     except (OSError, subprocess.TimeoutExpired) as error:
         return jsonify({"ok": False, "error": str(error)}), 503
     if result.returncode:
@@ -617,7 +655,7 @@ def search_stream():
 
     def run():
         try:
-            mpd_library.set_music_directory(_music_directory())
+            mpd_library.set_music_directory(_library_root())
             try:
                 local = mpd_library.search(args["text"])
                 local_error = ""

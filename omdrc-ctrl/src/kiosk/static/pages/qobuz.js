@@ -102,7 +102,6 @@ P.mount = el => {
                     P.inputBox,
                     P.searchActions = h('div', { class: 'qz-searchactions' },
                         P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
-                        P.refreshButton = h('button', { type: 'button', class: 'btn qz-refresh-mpd', title: 'Refresh MPD database and calculate missing DR14 reports', 'aria-label': 'Refresh MPD database', onclick: () => P.refreshLocal() }, '↻'),
                         // down on Now, once there are results: over to them, in Search's place
                         // until the text or a filter changes (kiosk.css, paintStale)
                         h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›'))),
@@ -1029,21 +1028,6 @@ P.searchSoon = () => {
     // Changing a filter never silently starts another paid AI request.
     if (pref('aiMode', false) || P.aiRunning || P.aiStarting || (P.last && P.last.ai)) return;
     if (P.last || P.request) soon = setTimeout(() => P.search(), 450);
-};
-
-P.refreshLocal = async () => {
-    P.refreshButton.disabled = true;
-    try {
-        const answer = await K.api('/qobuz/local/refresh', { json: {}, timeout: 20000 });
-        if (!answer.ok) throw new Error(answer.error || 'request failed');
-        K.toast(answer.message || 'MPD database refreshed; DR14 scan started');
-        // The MPD update is immediate; refresh visible local result metadata too.
-        if (P.last) P.search(0, { quiet: true });
-    } catch (error) {
-        K.toast(`MPD refresh failed: ${error.message || error}`);
-    } finally {
-        P.refreshButton.disabled = false;
-    }
 };
 
 P.search = async (scan = 0, { quiet = false } = {}) => {
