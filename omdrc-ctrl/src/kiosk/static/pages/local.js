@@ -16,7 +16,7 @@ P.mount = el => {
         h('p', {}, 'The local database is the music on this box that MPD has indexed. There is no second library: MPD’s own index is the database, and this page only tells omdrcctrl where the files are and when to refresh.'),
         h('p', {}, 'It is part of the Qobuz search. Albums in the collection that match what you type appear among the Qobuz results, marked ⌂, and play through the same MPD queue and player strip as a Qobuz album. The Source filter there can limit a search to the local collection only.'),
         h('p', {}, 'Next to ⌂ the album’s DR value is shown, for instance DR12. It is the album average from the dr14.txt report in its folder, read when you search. A folder with no report shows no DR yet.'),
-        h('p', {}, 'The reports are calculated by Rescan, not by searching: it asks MPD to update its index, then in the background runs DR14 T.meter in every folder with audio that has no dr14.txt. A report is calculated once and kept, so a later rescan only does new albums. It uses dr14_tmeter when installed, else the built-in meter (same algorithm).'));
+        h('p', {}, 'The reports are calculated by Rescan, not by searching: it asks MPD to update its index, then in the background calculates the dynamic range of every folder with audio that has no dr14.txt. A report is calculated once and kept, so a later rescan only does new albums. The meter is built in (the TT Dynamic Range algorithm); nothing else needs installing.'));
 
     const where = K.card('Where the music is', P.status,
         h('p', { class: 'muted small' }, 'Read from music_directory in the MPD configuration (musicpd.conf); change it there.'));
