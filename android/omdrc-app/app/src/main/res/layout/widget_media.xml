@@ -81,7 +81,7 @@
                     android:textColor="@color/widget_text_primary"
                     android:textSize="13sp"
                     android:textStyle="bold"
-                    android:maxLines="2"
+                    android:maxLines="4"
                     android:ellipsize="end" />
 
                 <TextView
@@ -99,7 +99,7 @@
                     android:layout_height="wrap_content"
                     android:textColor="@color/widget_text_secondary"
                     android:textSize="11sp"
-                    android:maxLines="2"
+                    android:maxLines="4"
                     android:ellipsize="end" />
 
                 <TextView
