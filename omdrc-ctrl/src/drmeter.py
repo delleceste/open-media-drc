@@ -416,9 +416,51 @@ class AlbumMeasurement:
                 state["message"] = "cancelled"
 
 
+AUDIO_SUFFIXES = (".flac", ".mp3", ".ogg", ".opus", ".wav", ".m4a", ".ape",
+                  ".wv", ".aiff", ".aif")
+
+
+def write_album_report(folder: str) -> int | None:
+    """Measure the audio files in `folder` and write its dr14.txt.
+
+    The report ends with the line `Official DR value: DR<n>`, which is what the
+    local collection reads (mpd_library._dr14_average). Returns the album DR,
+    or None when nothing in the folder could be measured (no file is written).
+    """
+    names = sorted(n for n in os.listdir(folder)
+                   if n.lower().endswith(AUDIO_SUFFIXES)
+                   and os.path.isfile(os.path.join(folder, n)))
+    rows = []
+    for name in names:
+        try:
+            rows.append((name, measure_file(os.path.join(folder, name))))
+        except DrMeterError:
+            continue
+    album = album_dr([r["dr"] for _, r in rows])
+    if album is None:
+        return None
+    rule = "-" * 80
+    lines = ["Dynamic Range Meter (omdrc drmeter, TT Dynamic Range algorithm)",
+             rule, "DR     Peak        RMS         Duration  Track", rule]
+    for i, (name, r) in enumerate(rows, 1):
+        seconds = int(round(r["seconds"]))
+        lines.append(f"DR{r['dr']:<4d} {r['peak_db']:8.2f} dB {r['rms_db']:8.2f} dB"
+                     f"  {seconds // 60}:{seconds % 60:02d}      {i:02d}-{name}")
+    lines += [rule, f"Number of tracks:  {len(rows)}",
+              f"Official DR value: DR{album}", rule]
+    tmp = os.path.join(folder, ".dr14.txt.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(tmp, os.path.join(folder, "dr14.txt"))
+    return album
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[1] == "--album":
+        album = write_album_report(argv[2])
+        return 0 if album is not None else 1
     if len(argv) != 2:
-        print(f"usage: {argv[0]} <audio file>", file=sys.stderr)
+        print(f"usage: {argv[0]} <audio file> | --album <folder>", file=sys.stderr)
         return 2
     try:
         print(json.dumps(measure_file(argv[1])))

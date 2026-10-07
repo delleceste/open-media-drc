@@ -12,7 +12,17 @@ status() { [ -z "${OMDRC_SCAN_STATUS:-}" ] || echo "$*" >"$OMDRC_SCAN_STATUS" 2>
 if [ "${1:-}" = "--calculate" ]; then
 	root=$2
 	status "running $(date +%s)"
-	command -v dr14_tmeter >/dev/null 2>&1 || { status "done $(date +%s) 0"; exit 0; }
+	# dr14_tmeter when installed, else the project's own meter (drmeter.py,
+	# the same algorithm), which sits in the application directory.
+	meter=
+	if command -v dr14_tmeter >/dev/null 2>&1; then meter=dr14
+	else
+		here=$(cd "$(dirname "$0")" && pwd)
+		for d in "$here/../../../lib/omdrcctrl" "$here/../omdrc-ctrl/src" /usr/local/lib/omdrcctrl; do
+			[ -f "$d/drmeter.py" ] && { drmeter=$d/drmeter.py; meter=own; break; }
+		done
+	fi
+	[ -n "$meter" ] || { status "done $(date +%s) 0"; exit 0; }
 	reports() { find "$root" -type f -name dr14.txt | wc -l; }
 	before=$(reports)
 
@@ -22,7 +32,9 @@ if [ "${1:-}" = "--calculate" ]; then
 	while IFS= read -r file; do dirname "$file"; done | sort -u |
 	while IFS= read -r dir; do
 		[ -f "$dir/dr14.txt" ] && continue
-		(cd "$dir" && dr14_tmeter ./ >/dev/null 2>&1) || :
+		if [ "$meter" = dr14 ]; then (cd "$dir" && dr14_tmeter ./ >/dev/null 2>&1) || :
+		else nice -n 19 python3 "$drmeter" --album "$dir" >/dev/null 2>&1 || :
+		fi
 	done
 	status "done $(date +%s) $(($(reports) - before))"
 	exit 0

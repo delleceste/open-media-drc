@@ -190,6 +190,29 @@ class DecodeTest(unittest.TestCase):
             with self.assertRaises(drmeter.DrMeterError):
                 drmeter.measure_file(bogus.name)
 
+    def test_album_report_is_written_where_the_collection_reads_it(self):
+        from mpd_library import set_music_directory, _dr14_average
+        signal = sine(12, 0.5)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = os.path.join(tmp, "Artist", "Album")
+            os.makedirs(folder)
+            with wave.open(os.path.join(folder, "t.wav"), "wb") as out:
+                out.setnchannels(2)
+                out.setsampwidth(2)
+                out.setframerate(RATE)
+                out.writeframes((signal * 32767).astype("<i2").tobytes())
+            open(os.path.join(folder, "junk.flac"), "wb").write(b"no")
+            self.assertEqual(drmeter.write_album_report(folder), 0)
+            set_music_directory(tmp)
+            try:
+                self.assertEqual(_dr14_average("Artist/Album/t.wav"), 0)
+            finally:
+                set_music_directory(None)
+            empty = os.path.join(tmp, "empty")
+            os.makedirs(empty)
+            self.assertIsNone(drmeter.write_album_report(empty))
+            self.assertFalse(os.path.exists(os.path.join(empty, "dr14.txt")))
+
 
 class JobTest(unittest.TestCase):
     """Nothing the job downloads outlives it: each track is deleted once
