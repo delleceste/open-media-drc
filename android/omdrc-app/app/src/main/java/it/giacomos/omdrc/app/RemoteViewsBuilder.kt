@@ -222,7 +222,9 @@ object RemoteViewsBuilder {
             if (hasQueue && player?.pos != null && player.length > 0) "${player.pos} / ${player.length}" else "",
         )
 
-        views.setTextViewText(R.id.media_drc, mediaDrcLine(context, snapshot, drcOn))
+        val drcLine = mediaDrcLine(context, snapshot, drcOn)
+        views.setTextViewText(R.id.media_drc, drcLine)
+        views.setViewVisibility(R.id.media_drc, if (drcLine.isEmpty()) View.GONE else View.VISIBLE)
         views.setImageViewResource(R.id.media_play_pause, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
         return views
     }
