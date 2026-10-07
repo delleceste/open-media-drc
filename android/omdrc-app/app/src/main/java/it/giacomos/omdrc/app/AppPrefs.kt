@@ -16,6 +16,8 @@ object AppPrefs {
     private const val KEY_VIEW = "view_mode"
     private const val KEY_KEEP_ON = "keep_screen_on"
     private const val KEY_PORTRAIT = "last_portrait"
+    private const val KEY_INSTANT = "instant_updates"
+    private const val KEY_CLOSED = "closed"
     const val DEFAULT_PORT = 9090
 
     /** The small-screen kiosk UI served by omdrcctrl at /k/ (the default). */
@@ -65,6 +67,26 @@ object AppPrefs {
 
     fun setLastPortrait(context: Context, portrait: Boolean) {
         prefs(context).edit().putBoolean(KEY_PORTRAIT, portrait).apply()
+    }
+
+    /** Instant updates: LiveStatusService stays on (its notification with
+     *  it) and waits on the box's /now for changes, instead of polling
+     *  only while the dashboard was used in the last minutes. */
+    fun instantUpdates(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_INSTANT, false)
+
+    fun setInstantUpdates(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_INSTANT, on).apply()
+    }
+
+    /** Set by the notification's Close: no background traffic at all - no
+     *  live service, no widget refresh timers - until the app is opened
+     *  again. A widget's own taps still work. */
+    fun closed(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_CLOSED, false)
+
+    fun setClosed(context: Context, closed: Boolean) {
+        prefs(context).edit().putBoolean(KEY_CLOSED, closed).apply()
     }
 
     fun setViewMode(context: Context, mode: String) {

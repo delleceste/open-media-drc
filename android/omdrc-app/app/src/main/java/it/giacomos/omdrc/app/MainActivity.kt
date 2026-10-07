@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
 
     private fun stopMic() { micRun?.cancel() }
 
-    override fun onDestroy() { stopMic(); super.onDestroy() }
+    override fun onDestroy() { stopMic(); unregisterReceiver(closeReceiver); super.onDestroy() }
 
     private fun recordMic(durationMs: Int, stepMs: Int) {
         stopMic()
@@ -295,8 +295,16 @@ class MainActivity : ComponentActivity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
+    // The live notification's Close: leave, so the page stops its requests too.
+    private val closeReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: android.content.Intent) = finishAndRemoveTask()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        LiveStatusService.reopenApp(this)
+        ContextCompat.registerReceiver(this, closeReceiver,
+            android.content.IntentFilter(LiveStatusService.ACTION_CLOSE_APP), ContextCompat.RECEIVER_NOT_EXPORTED)
         requestedOrientation = rememberedOrientation()
         setContentView(R.layout.activity_main)
 
@@ -501,6 +509,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        LiveStatusService.reopenApp(this)
         contentResolver.registerContentObserver(
             Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION), false, autoRotateObserver)
         requestedOrientation = rememberedOrientation()      // the setting may have changed meanwhile
@@ -872,11 +881,13 @@ class MainActivity : ComponentActivity() {
     private fun showSettings() {
         val kiosk = AppPrefs.viewMode(this) == AppPrefs.VIEW_KIOSK
         val keepOn = AppPrefs.keepScreenOn(this)
+        val instant = AppPrefs.instantUpdates(this)
         val items = arrayOf(
             (if (kiosk) "● " else "○ ") + getString(R.string.settings_view_kiosk),
             (if (!kiosk) "● " else "○ ") + getString(R.string.settings_view_web),
             (if (keepOn) "☑ " else "☐ ") + getString(R.string.settings_keep_on),
             getString(R.string.settings_change_server),
+            (if (instant) "☑ " else "☐ ") + getString(R.string.settings_instant_updates),
         )
         AlertDialog.Builder(this)
             .setTitle(R.string.settings_title)
@@ -886,10 +897,23 @@ class MainActivity : ComponentActivity() {
                     1 -> switchView(AppPrefs.VIEW_WEB)
                     2 -> { AppPrefs.setKeepScreenOn(this, !keepOn); applyKeepScreenOn() }
                     3 -> changeServer()
+                    4 -> setInstantUpdates(!instant)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /** Restarts the live service in the mode chosen: instant updates keep
+     *  it (and its notification) on, waiting on the box for changes. */
+    private fun setInstantUpdates(on: Boolean) {
+        AppPrefs.setInstantUpdates(this, on)
+        val host = AppPrefs.defaultHost(this) ?: return
+        startLiveUpdates(host, AppPrefs.defaultPort(this))
+        android.widget.Toast.makeText(
+            this, if (on) R.string.instant_updates_on else R.string.instant_updates_off,
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
     }
 
     private fun switchView(mode: String) {

@@ -41,6 +41,9 @@ private const val PIXEL_LABEL_FONT = "google-sans-text"
 // Clear space kept between the play/pause chip and the label's text.
 private const val CHIP_TEXT_MARGIN_PX = 3f
 
+// Below this the strip over the 1x1 tile's icon isn't drawn at all.
+private const val MIN_STRIP_CAP_DP = 4f
+
 private const val PIXEL_LAUNCHER = "com.google.android.apps.nexuslauncher"
 
 // Font families offered for the label, besides the launcher's and the
@@ -128,18 +131,22 @@ object RemoteViewsBuilder {
     ): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_tiny)
 
-        layoutTiny(context, views, appWidgetId)
-
         // A null song means an empty queue (nothing loaded to play/pause),
         // not just "currently stopped". Out of reach (the phone away from
         // home), the album last seen loaded most likely still is, so its
-        // cover stays; the play/pause control and DRC badge don't, as they
-        // would claim a state the tile can't know.
+        // cover stays; the play/pause control and the strip above the icon
+        // don't, as they would claim a state the tile can't know.
         val reachable = snapshot?.reachable == true
         val hasQueue = snapshot?.mpd?.song != null
         val drcOn = reachable && snapshot?.drc?.running == true
+        val rate = if (reachable && hasQueue) snapshot?.mpd?.let { formatShort(it.sampleRate, it.bitDepth) } else null
+        val strip = listOfNotNull(if (drcOn) context.getString(R.string.drc_badge) else null, rate)
+            .joinToString(" · ")
+
+        layoutTiny(context, views, appWidgetId, strip)
+
         val art = if (hasQueue) WidgetArtCache.load(context, appWidgetId) else null
-        views.setImageViewBitmap(R.id.cover_art, iconSurface(context, art, drcOn))
+        views.setImageViewBitmap(R.id.cover_art, iconSurface(context, art))
 
         if (reachable && hasQueue) {
             val playing = snapshot?.mpd?.state == "playing"
@@ -153,6 +160,13 @@ object RemoteViewsBuilder {
         views.setOnClickPendingIntent(R.id.widget_root, openDashboardIntent(context, appWidgetId, host, port))
 
         return views
+    }
+
+    /** "96/24", "44.1/16": the strip's short source format. */
+    private fun formatShort(rate: Int?, bits: Int?): String? {
+        if (rate == null || rate <= 0) return null
+        val khz = if (rate % 1000 == 0) "${rate / 1000}" else "%.1f".format(java.util.Locale.ROOT, rate / 1000.0)
+        return khz + if (bits != null && bits > 0) "/$bits" else ""
     }
 
     /** Column [column] of PIXEL_GRIDS, linearly interpolated (and
@@ -199,7 +213,7 @@ object RemoteViewsBuilder {
      *  it can take any font and its capitals land exactly at the intended
      *  height. Before Android 12 RemoteViews can't size views at runtime:
      *  the layout's fixed, centered icon applies, with a default label. */
-    private fun layoutTiny(context: Context, views: RemoteViews, appWidgetId: Int) {
+    private fun layoutTiny(context: Context, views: RemoteViews, appWidgetId: Int, strip: String) {
         val tuning = WidgetPrefs.loadTileTuning(context, appWidgetId)
         views.setInt(R.id.widget_root, "setBackgroundResource", if (tuning.outline) R.drawable.widget_outline else 0)
         val typeface = labelTypeface(context, tuning)
@@ -209,6 +223,7 @@ object RemoteViewsBuilder {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || width <= 0f || height <= 0f) {
             val label = labelBitmap(context, typeface, PIXEL_GRIDS[0][3] * tuning.labelScale, 0f)
             views.setImageViewBitmap(R.id.omdrc_label, label.bitmap)
+            views.setViewVisibility(R.id.tiny_strip, View.GONE)
             return
         }
         val icon: Float
@@ -275,6 +290,21 @@ object RemoteViewsBuilder {
         views.setViewLayoutMargin(R.id.play_pause_icon, RemoteViews.MARGIN_BOTTOM, maxOf(-dy, 0f), dip)
         val pad = (0.18f * chip * context.resources.displayMetrics.density).roundToInt()
         views.setViewPadding(R.id.play_pause_icon, pad, pad, pad, pad)
+
+        // The strip above the icon - DRC, the source format - in the
+        // label's face, its capitals at most 80% of the label's, and smaller
+        // still where the space over the icon is short; its ink ends
+        // CHIP_TEXT_MARGIN_PX above the icon, and starts as far below the
+        // cell's top.
+        val stripCap = minOf(0.8f * capDp, top - 2f * margin)
+        if (strip.isEmpty() || stripCap < MIN_STRIP_CAP_DP) {
+            views.setViewVisibility(R.id.tiny_strip, View.GONE)
+        } else {
+            val stripLabel = labelBitmap(context, typeface, stripCap, width, strip, capReference = "DRC")
+            views.setImageViewBitmap(R.id.tiny_strip, stripLabel.bitmap)
+            views.setViewVisibility(R.id.tiny_strip, View.VISIBLE)
+            views.setViewLayoutMargin(R.id.tiny_strip, RemoteViews.MARGIN_TOP, top - margin - stripLabel.text.bottom, dip)
+        }
     }
 
     /** [text]: the text's ink bounds in dp, across from the bitmap's
@@ -287,16 +317,22 @@ object RemoteViewsBuilder {
      *  own width). capTopDp is how far below the bitmap's top the cap line
      *  sits, to place it a given gap under the icon; text its ink bounds,
      *  from the font's own glyph metrics. */
-    private fun labelBitmap(context: Context, typeface: Typeface, capDp: Float, widthDp: Float): Label {
+    private fun labelBitmap(
+        context: Context,
+        typeface: Typeface,
+        capDp: Float,
+        widthDp: Float,
+        text: String = context.getString(R.string.app_name),
+        capReference: String = text,
+    ): Label {
         val density = context.resources.displayMetrics.density
-        val text = context.getString(R.string.app_name)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
             this.typeface = typeface
             color = 0xFFFFFFFF.toInt()
             textAlign = Paint.Align.CENTER
             textSize = 100f
         }
-        val bounds = Rect().also { paint.getTextBounds(text, 0, text.length, it) }
+        val bounds = Rect().also { paint.getTextBounds(capReference, 0, capReference.length, it) }
         paint.textSize = 100f * capDp * density / bounds.height()
         val metrics = paint.fontMetrics
         val baseline = -metrics.top
@@ -320,10 +356,8 @@ object RemoteViewsBuilder {
     /** The launcher icon's circle, drawn as one square bitmap so it stays a
      *  true circle whatever the cell's aspect: the static icon (the
      *  ic_launcher_background gradient + ic_launcher_foreground mark) when
-     *  there's no art, the cover filling that same circle when there is.
-     *  The DRC badge is painted in too, so it stays in the circle's own
-     *  top-right corner rather than the cell's. */
-    private fun iconSurface(context: Context, art: Bitmap?, drcOn: Boolean): Bitmap {
+     *  there's no art, the cover filling that same circle when there is. */
+    private fun iconSurface(context: Context, art: Bitmap?): Bitmap {
         val size = ICON_SURFACE_PX
         val content = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(content)
@@ -353,28 +387,7 @@ object RemoteViewsBuilder {
                 it.draw(canvas)
             }
         }
-        val surface = circularCrop(content)
-        if (drcOn) drawDrcBadge(context, surface)
-        return surface
-    }
-
-    private fun drawDrcBadge(context: Context, surface: Bitmap) {
-        val size = surface.width.toFloat()
-        val canvas = Canvas(surface)
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFFFFFFFF.toInt()
-            textSize = size * 0.13f
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        val text = context.getString(R.string.drc_badge)
-        val padX = size * 0.04f
-        val padY = size * 0.02f
-        val width = textPaint.measureText(text) + 2 * padX
-        val height = textPaint.textSize + 2 * padY
-        val box = RectF(size - width, 0f, size, height)
-        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC000000.toInt() }
-        canvas.drawRoundRect(box, size * 0.04f, size * 0.04f, bgPaint)
-        canvas.drawText(text, box.left + padX, box.bottom - padY - textPaint.descent(), textPaint)
+        return circularCrop(content)
     }
 
     /** RemoteViews/AppWidgetHostView has no clipToOutline support reliable

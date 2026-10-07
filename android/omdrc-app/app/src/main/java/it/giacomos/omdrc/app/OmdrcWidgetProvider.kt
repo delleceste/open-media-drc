@@ -38,12 +38,16 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
                 }
             }
             ACTION_ALARM_TICK -> {
+                // Closed from the notification: the timer stops here, and
+                // opening the app starts it again.
+                if (AppPrefs.closed(context)) return super.onReceive(context, intent)
                 WidgetRefreshWorker.enqueueOneTime(context, null)
                 if (RefreshEngine.activeWidgetIds(context).isNotEmpty()) {
                     AlarmScheduler.scheduleNext(context)
                 }
             }
             Intent.ACTION_BOOT_COMPLETED -> {
+                if (AppPrefs.closed(context)) return super.onReceive(context, intent)
                 // AlarmManager alarms don't survive reboot (unlike
                 // WorkManager's own periodic jobs, which reschedule
                 // themselves automatically) - re-arm here.

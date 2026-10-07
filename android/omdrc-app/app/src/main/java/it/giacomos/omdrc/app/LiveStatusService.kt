@@ -6,14 +6,19 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import it.giacomos.omdrc.app.data.ArtFetch
+import it.giacomos.omdrc.app.data.NowFetch
+import it.giacomos.omdrc.app.data.NowState
 import it.giacomos.omdrc.app.data.OmdrcClient
 import it.giacomos.omdrc.app.data.WidgetSnapshot
+import it.giacomos.omdrc.app.work.WidgetRefreshWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,35 +26,46 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 private const val TAG = "OmdrcWidget"
 
 /**
- * Optional, explicitly user-started: a foreground service that polls the
- * box continuously (matching the web dashboard's own ~2s cadence) and
- * pushes live updates to every widget configured for the same host/port.
- * Android requires a foreground service to show a persistent, non-
- * dismissable notification the entire time it's alive; the "Stop" action on
- * that notification ends it early, same pattern as a music player's
- * playback notification (or the Qobuz app's own service). It also stops
- * itself automatically after IDLE_TIMEOUT_MILLIS with the dashboard not
- * reopened (see AppPrefs.touchForeground/lastForegroundMillis), so leaving
- * it running by accident doesn't poll forever. Starting it is a deliberate
- * trade of "live" for "a permanent notification and continuous network
- * polling," made once when the dashboard is opened, not something hidden
- * from the user.
+ * A foreground service that keeps the widgets and its own notification up to
+ * date with the box, in one of two modes:
+ *
+ *  - Live updates (default): started when the dashboard is opened, it polls
+ *    every 2s - the web dashboard's own cadence, so the large widget's meters
+ *    move - and stops itself after IDLE_TIMEOUT_MILLIS with the dashboard not
+ *    reopened, so it never polls forever by accident.
+ *  - Instant updates (AppPrefs.instantUpdates): it stays on and keeps one
+ *    request waiting on the box's /now, which answers as soon as the track,
+ *    the playback state, the DRC or the film changes - an idle connection,
+ *    not polling. A box without /now is polled every few seconds instead.
+ *
+ * Either way the notification shows what's playing - the cover or the
+ * film's poster, the track - and expanded, the format and the DRC in use.
+ * Android requires a foreground service to show it the whole time; its Close
+ * action stops the service and every other background request of the app
+ * until the app is opened again (see AppPrefs.closed).
  */
 class LiveStatusService : Service() {
 
     private var job: Job? = null
-    private var lastTrack: String? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // What the notification and the widgets were last given.
+    private var musicArtKey: String? = null
+    private var musicArt: Bitmap? = null
+    private var videoArtKey: String? = null
+    private var videoArt: Bitmap? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            Log.d(TAG, "LiveStatusService: stop requested")
+        if (intent?.action == ACTION_CLOSE) {
+            Log.d(TAG, "LiveStatusService: close requested")
+            closeApp(this)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -57,21 +73,30 @@ class LiveStatusService : Service() {
         val host = intent?.getStringExtra(MainActivity.EXTRA_HOST) ?: AppPrefs.defaultHost(this)
         val port = intent?.getIntExtra(MainActivity.EXTRA_PORT, AppPrefs.defaultPort(this))
             ?: AppPrefs.defaultPort(this)
-        if (host == null) {
+        if (host == null || AppPrefs.closed(this)) {
             stopSelf()
             return START_NOT_STICKY
         }
 
         StatusNotifier.ensureChannels(this)
-        startForegroundCompat(buildNotification(host, port, null))
+        startForegroundCompat(buildNotification(host, port, null, null))
 
         job?.cancel()
-        lastTrack = null
-        job = scope.launch { pollLoop(host, port) }
+        musicArtKey = null
+        videoArtKey = null
+        job = scope.launch {
+            if (AppPrefs.instantUpdates(this@LiveStatusService)) instantLoop(host, port) else pollLoop(host, port)
+        }
         return START_STICKY
     }
 
+    /** The box on the network the phone is on now, else the one started
+     *  with: instant updates outlive a move between home and office. */
+    private fun server(host: String, port: Int): Pair<String, Int> =
+        ServerNetwork.currentServer(this) ?: (host to port)
+
     private suspend fun pollLoop(host: String, port: Int) {
+        var nowSupported = true
         while (true) {
             val idleMillis = System.currentTimeMillis() - AppPrefs.lastForegroundMillis(this)
             if (idleMillis > IDLE_TIMEOUT_MILLIS) {
@@ -81,21 +106,82 @@ class LiveStatusService : Service() {
             }
             try {
                 val snapshot = OmdrcClient.fetchSnapshot(host, port)
-                // The cover follows the track: fetched only when the song
-                // or album changes, not every poll.
-                val track = snapshot.mpd?.let { "${it.song}\u0000${it.album}" }
-                val art = if (snapshot.reachable && track != lastTrack) {
-                    OmdrcClient.fetchArt(host, port).also { if (it !is ArtFetch.Failed) lastTrack = track }
+                val now = if (nowSupported && snapshot.reachable) {
+                    when (val fetched = OmdrcClient.fetchNow(host, port, null, 0)) {
+                        is NowFetch.Found -> fetched.now
+                        NowFetch.Unsupported -> { nowSupported = false; null }
+                        NowFetch.Failed -> null
+                    }
                 } else {
                     null
                 }
-                pushToWidgets(host, port, snapshot, art)
-                startForegroundCompat(buildNotification(host, port, snapshot))
+                show(host, port, snapshot, now)
             } catch (e: Exception) {
                 Log.w(TAG, "LiveStatusService poll failed: ${e.message}")
             }
             delay(POLL_INTERVAL_MS)
         }
+    }
+
+    private suspend fun instantLoop(startHost: String, startPort: Int) {
+        var token: String? = null
+        var server = server(startHost, startPort)
+        while (true) {
+            val current = server(startHost, startPort)
+            if (current != server) {
+                server = current
+                token = null
+            }
+            val (host, port) = server
+            try {
+                when (val fetched = OmdrcClient.fetchNow(host, port, token, INSTANT_WAIT_S)) {
+                    is NowFetch.Found -> {
+                        if (fetched.now.token != token) {
+                            token = fetched.now.token
+                            Log.d(TAG, "LiveStatusService: state changed on $host:$port")
+                            show(host, port, OmdrcClient.fetchSnapshot(host, port), fetched.now)
+                        }
+                    }
+                    NowFetch.Unsupported -> {
+                        // An older panel: poll it, more gently than live updates.
+                        show(host, port, OmdrcClient.fetchSnapshot(host, port), null)
+                        delay(FALLBACK_POLL_MS)
+                    }
+                    NowFetch.Failed -> {
+                        token = null
+                        show(host, port, OmdrcClient.fetchSnapshot(host, port), null)
+                        delay(RETRY_MS)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "LiveStatusService instant update failed: ${e.message}")
+                delay(RETRY_MS)
+            }
+        }
+    }
+
+    /** Fetches whatever art changed, then updates widgets and notification. */
+    private suspend fun show(host: String, port: Int, snapshot: WidgetSnapshot, now: NowState?) {
+        var widgetArt: ArtFetch? = null
+        if (now != null && now.music.art != musicArtKey) {
+            val art = if (now.music.art.isEmpty()) ArtFetch.None
+            else OmdrcClient.fetchImage(host, port, now.music.art)
+            if (art !is ArtFetch.Failed) {
+                musicArtKey = now.music.art
+                musicArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }
+                widgetArt = art
+            }
+        }
+        val videoKey = now?.video?.art.orEmpty()
+        if (now?.video != null && videoKey != videoArtKey) {
+            val art = if (videoKey.isEmpty()) ArtFetch.None else OmdrcClient.fetchImage(host, port, videoKey)
+            if (art !is ArtFetch.Failed) {
+                videoArtKey = videoKey
+                videoArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }
+            }
+        }
+        pushToWidgets(host, port, snapshot, widgetArt)
+        startForegroundCompat(buildNotification(host, port, snapshot, now))
     }
 
     /** Only updates widgets showing this exact host/port - a different
@@ -111,13 +197,54 @@ class LiveStatusService : Service() {
         }
     }
 
-    private fun buildNotification(host: String, port: Int, snapshot: WidgetSnapshot?): Notification {
-        val (title, collapsed) = if (snapshot != null) {
-            StatusNotifier.collapsedText(this, snapshot)
-        } else {
-            getString(R.string.live_updates_connecting) to "…"
+    private fun buildNotification(host: String, port: Int, snapshot: WidgetSnapshot?, now: NowState?): Notification {
+        val title: String
+        val collapsed: String
+        val expanded: String
+        var icon: Bitmap? = null
+        when {
+            now?.video != null -> {
+                val video = now.video
+                title = video.title + if (video.year.isNotEmpty()) " (${video.year})" else ""
+                collapsed = listOf(
+                    getString(if (video.paused) R.string.now_film_paused else R.string.now_film_playing),
+                    video.director,
+                ).filter { it.isNotEmpty() }.joinToString(" · ")
+                expanded = listOf(
+                    collapsed,
+                    listOf(video.runtime, video.genre).filter { it.isNotEmpty() }.joinToString(" · "),
+                    if (video.rating.isNotEmpty()) "IMDb ${video.rating}" else "",
+                    drcLine(now.drc),
+                ).filter { it.isNotEmpty() }.joinToString("\n")
+                icon = videoArt
+            }
+            now != null -> {
+                val music = now.music
+                val playing = music.state == "play" || music.state == "pause"
+                title = music.title.ifEmpty { music.line1 }.ifEmpty { getString(R.string.now_nothing_playing) }
+                val artistAlbum = listOf(music.artist, music.album).filter { it.isNotEmpty() }.joinToString(" — ")
+                collapsed = listOf(stateLabel(music.state), artistAlbum).filter { it.isNotEmpty() }.joinToString(" · ")
+                expanded = listOf(
+                    collapsed,
+                    music.edition,
+                    listOf(if (playing) formatLine(music.rate, music.bits) else "", music.renderer)
+                        .filter { it.isNotEmpty() }.joinToString(" · "),
+                    drcLine(now.drc),
+                ).filter { it.isNotEmpty() }.joinToString("\n")
+                icon = if (music.title.isNotEmpty() || music.line1.isNotEmpty()) musicArt else null
+            }
+            snapshot != null -> {
+                val (t, c) = StatusNotifier.collapsedText(this, snapshot)
+                title = t
+                collapsed = c
+                expanded = StatusNotifier.expandedText(snapshot)
+            }
+            else -> {
+                title = getString(R.string.live_updates_connecting)
+                collapsed = "…"
+                expanded = collapsed
+            }
         }
-        val expanded = snapshot?.let { StatusNotifier.expandedText(it) } ?: collapsed
 
         val contentIntent = PendingIntent.getActivity(
             this, 0,
@@ -128,9 +255,9 @@ class LiveStatusService : Service() {
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val stopIntent = PendingIntent.getService(
+        val closeIntent = PendingIntent.getService(
             this, 0,
-            Intent(this, LiveStatusService::class.java).setAction(ACTION_STOP),
+            Intent(this, LiveStatusService::class.java).setAction(ACTION_CLOSE),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val levelsIntent = PendingIntent.getActivity(
@@ -146,14 +273,49 @@ class LiveStatusService : Service() {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(collapsed)
+            .setLargeIcon(icon)
             .setStyle(NotificationCompat.BigTextStyle().bigText(expanded))
             .setContentIntent(contentIntent)
             .addAction(R.drawable.ic_notification, getString(R.string.live_levels), levelsIntent)
-            .addAction(R.drawable.ic_notification, getString(R.string.live_updates_stop), stopIntent)
+            .addAction(R.drawable.ic_notification, getString(R.string.live_close_app), closeIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    private fun stateLabel(state: String): String = getString(
+        when (state) {
+            "play" -> R.string.now_playing
+            "pause" -> R.string.now_paused
+            else -> R.string.now_stopped
+        },
+    )
+
+    /** "DRC: multipos · FDW 6 cycles · −8.0 dB · headroom safe", or "DRC off". */
+    private fun drcLine(drc: NowState.Drc): String {
+        if (!drc.running) return getString(R.string.now_drc_off)
+        val parts = listOfNotNull(
+            drc.geometry,
+            drc.description,
+            drc.attenuationDb?.let { String.format(Locale.ROOT, "−%.1f dB", it) },
+            when (drc.headroomSafe) {
+                true -> getString(R.string.now_headroom_safe)
+                false -> getString(R.string.now_headroom_unsafe)
+                null -> null
+            },
+        ).filter { it.isNotEmpty() }
+        return getString(R.string.now_drc_on, parts.joinToString(" · "))
+    }
+
+    /** A cover or poster scaled for the notification's large icon. */
+    private fun decodeIcon(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (minOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= ICON_PX) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
     private fun startForegroundCompat(notification: Notification) {
@@ -173,9 +335,14 @@ class LiveStatusService : Service() {
 
     companion object {
         private const val NOTIFICATION_ID = 3
-        private const val ACTION_STOP = "it.giacomos.omdrc.app.ACTION_STOP_LIVE"
+        private const val ACTION_CLOSE = "it.giacomos.omdrc.app.ACTION_CLOSE"
+        const val ACTION_CLOSE_APP = "it.giacomos.omdrc.app.ACTION_CLOSE_APP"
         private const val POLL_INTERVAL_MS = 2000L
         private const val IDLE_TIMEOUT_MILLIS = 10 * 60 * 1000L
+        private const val INSTANT_WAIT_S = 25
+        private const val FALLBACK_POLL_MS = 5000L
+        private const val RETRY_MS = 15000L
+        private const val ICON_PX = 256
 
         fun start(context: Context, host: String, port: Int) {
             val intent = Intent(context, LiveStatusService::class.java).apply {
@@ -183,6 +350,33 @@ class LiveStatusService : Service() {
                 putExtra(MainActivity.EXTRA_PORT, port)
             }
             ContextCompat.startForegroundService(context, intent)
+        }
+
+        /** "96 kHz / 24 bit", "44.1 kHz / 16 bit". */
+        fun formatLine(rate: Int?, bits: Int?): String {
+            if (rate == null) return ""
+            val khz = if (rate % 1000 == 0) "${rate / 1000}" else String.format(Locale.ROOT, "%.1f", rate / 1000.0)
+            return "$khz kHz" + if (bits != null) " / $bits bit" else ""
+        }
+
+        /** The notification's Close: the dashboard (and its page's
+         *  requests) goes, the widgets' timers stop, and nothing reaches the
+         *  network again until the app is opened. */
+        fun closeApp(context: Context) {
+            AppPrefs.setClosed(context, true)
+            AlarmScheduler.cancel(context)
+            WidgetRefreshWorker.cancelPeriodic(context)
+            context.sendBroadcast(Intent(ACTION_CLOSE_APP).setPackage(context.packageName))
+        }
+
+        /** Opening the app undoes closeApp. */
+        fun reopenApp(context: Context) {
+            if (!AppPrefs.closed(context)) return
+            AppPrefs.setClosed(context, false)
+            if (RefreshEngine.activeWidgetIds(context).isNotEmpty()) {
+                AlarmScheduler.scheduleNext(context)
+                WidgetRefreshWorker.enqueuePeriodic(context)
+            }
         }
     }
 }

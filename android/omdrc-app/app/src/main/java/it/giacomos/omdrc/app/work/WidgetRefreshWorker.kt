@@ -14,6 +14,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import android.util.Log
+import it.giacomos.omdrc.app.AppPrefs
 import it.giacomos.omdrc.app.RefreshEngine
 import it.giacomos.omdrc.app.StatusNotifier
 import it.giacomos.omdrc.app.WidgetPrefs
@@ -52,6 +53,10 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
                     StatusNotifier.show(applicationContext, hostPort.first, hostPort.second, snapshot)
                 }
             }
+        } else if (AppPrefs.closed(applicationContext)) {
+            // Closed from the notification: no background refresh until
+            // the app is opened again; a widget's own taps still go.
+            Log.d(TAG, "doWork: app closed, skipping background refresh")
         } else {
             RefreshEngine.refreshAll(applicationContext)
         }

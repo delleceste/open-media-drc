@@ -16,6 +16,12 @@ private const val TIMEOUT_MS = 4000
 // The box fetches a cover from Qobuz before answering, the first time.
 private const val ART_TIMEOUT_MS = 10000
 
+sealed interface NowFetch {
+    class Found(val now: NowState) : NowFetch
+    object Unsupported : NowFetch
+    object Failed : NowFetch
+}
+
 sealed interface ArtFetch {
     class Found(val bytes: ByteArray) : ArtFetch
     object None : ArtFetch
@@ -101,8 +107,12 @@ object OmdrcClient {
      *  there's no art; a 502 (the box couldn't fetch the cover itself) or a
      *  timeout - the box may be downloading it from Qobuz first - is a
      *  failed fetch, which mustn't clear the art cached last time. */
-    suspend fun fetchArt(host: String, port: Int): ArtFetch = withContext(Dispatchers.IO) {
-        val url = URL("http://$host:$port/qconnect/art")
+    suspend fun fetchArt(host: String, port: Int): ArtFetch = fetchImage(host, port, "/qconnect/art")
+
+    /** An image the box serves at [path] (a cover, a film's poster): None
+     *  on 404, Failed on any other answer or no answer. */
+    suspend fun fetchImage(host: String, port: Int, path: String): ArtFetch = withContext(Dispatchers.IO) {
+        val url = URL("http://$host:$port$path")
         val connection = url.openConnection() as HttpURLConnection
         connection.connectTimeout = TIMEOUT_MS
         connection.readTimeout = ART_TIMEOUT_MS
@@ -114,8 +124,35 @@ object OmdrcClient {
                 else -> ArtFetch.Failed
             }
         } catch (e: Exception) {
-            Log.w(TAG, "qconnect/art unreachable: ${e.message}")
+            Log.w(TAG, "$path unreachable: ${e.message}")
             ArtFetch.Failed
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** GET /now. With [since], the box holds the answer until its state no
+     *  longer has that token, or [waitS] seconds pass - so this call can
+     *  block that long. Unsupported: a box without /now (older panel). */
+    suspend fun fetchNow(host: String, port: Int, since: String?, waitS: Int): NowFetch = withContext(Dispatchers.IO) {
+        val query = if (since != null) "?since=$since&wait=$waitS" else ""
+        val url = URL("http://$host:$port/now$query")
+        val connection = url.openConnection() as HttpURLConnection
+        connection.connectTimeout = TIMEOUT_MS
+        connection.readTimeout = TIMEOUT_MS + waitS * 1000
+        connection.requestMethod = "GET"
+        try {
+            when (connection.responseCode) {
+                HttpURLConnection.HTTP_OK -> {
+                    val body = BufferedReader(InputStreamReader(connection.inputStream)).use { it.readText() }
+                    NowFetch.Found(NowState.parse(JSONObject(body)))
+                }
+                HttpURLConnection.HTTP_NOT_FOUND -> NowFetch.Unsupported
+                else -> NowFetch.Failed
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "now unreachable: ${e.message}")
+            NowFetch.Failed
         } finally {
             connection.disconnect()
         }
