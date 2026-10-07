@@ -48,13 +48,16 @@ P.refresh = async () => {
     P.pathHead.textContent = `Music directory for ${d.host}`;
     if (!P.dirty && document.activeElement !== P.input) P.input.value = d.configured;
     P.input.placeholder = d.mpd_path || '/path/to/music';
+    // say which directory that is, and offer it only when the configuration names one
+    P.useMpd.textContent = d.mpd_path ? `Use MPD’s: ${d.mpd_path}` : 'Use MPD’s';
+    P.useMpd.disabled = !d.mpd_path || d.source === 'mpd';
     const rows = [
         K.kv('Host', d.host),
         K.kv('In use', d.path || 'none', d.path && !d.exists ? 'bad' : ''),
         K.kv('From', d.source === 'configured' ? 'this page' : d.source === 'mpd' ? 'the MPD configuration' : '—'),
     ];
     if (d.path && !d.exists) rows.push(h('div', { class: 'errbox bad small' }, 'This directory does not exist on this host.'));
-    if (!d.path) rows.push(h('div', { class: 'errbox warn small' }, 'No music directory: MPD’s configuration names none. Set one below.'));
+    if (!d.path) rows.push(h('div', { class: 'errbox warn small' }, 'No music directory: this host’s MPD configuration could not be read or names none. Set one below.'));
     const c = d.counts;
     if (c) {
         rows.push(K.kv('Album folders', c.busy ? 'counting…' : `${c.folders}${c.truncated ? '+' : ''}`));
@@ -79,7 +82,7 @@ P.setPath = async path => {
         P.dirty = false;
         K.toast(d.message);
         P.refresh();
-    } finally { P.save.disabled = P.useMpd.disabled = false; }
+    } finally { P.save.disabled = false; P.refresh(); }
 };
 
 P.rescan = async () => {
