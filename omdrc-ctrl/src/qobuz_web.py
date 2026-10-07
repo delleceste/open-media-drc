@@ -496,13 +496,14 @@ def search():
         return guard
     try:
         args = _search_args()
+        local_only = request.args.get("local", "0").lower() in ("1", "true", "yes")
         try:
             local = mpd_library.search(args["text"])
             local_error = ""
         except mpd_library.MPDError as error:
             local, local_error = [], str(error)
         qobuz_error = ""
-        if renderer_running():
+        if not local_only and renderer_running():
             try:
                 answer = catalog().search(**args)
             except QobuzError as error:
@@ -511,8 +512,13 @@ def search():
                           "labels_seen": [], "queries": [], "query": args["text"],
                           "window": {"from": "", "to": ""}, "considered": 0,
                           "unstreamable": 0, "sort": args["sort"], "lowered": 0}
-        else:
+        elif not local_only:
             qobuz_error = "Qobuz unavailable: upmpdcli is not running"
+            answer = {"results": [], "count": 0, "more": False, "next_scan": 0,
+                      "labels_seen": [], "queries": [], "query": args["text"],
+                      "window": {"from": "", "to": ""}, "considered": 0,
+                      "unstreamable": 0, "sort": args["sort"], "lowered": 0}
+        else:
             answer = {"results": [], "count": 0, "more": False, "next_scan": 0,
                       "labels_seen": [], "queries": [], "query": args["text"],
                       "window": {"from": "", "to": ""}, "considered": 0,
@@ -565,9 +571,10 @@ def search_stream():
         args = _search_args()
     except QobuzError as error:
         return Response(frame({"ok": False, "error": str(error)}), mimetype="text/event-stream")
+    local_only = request.args.get("local", "0").lower() in ("1", "true", "yes")
 
     frames: queue.Queue = queue.Queue()
-    target = catalog()
+    target = None if local_only else catalog()
 
     def run():
         try:
@@ -576,14 +583,19 @@ def search_stream():
                 local_error = ""
             except mpd_library.MPDError as error:
                 local, local_error = [], str(error)
-            if renderer_running():
+            if not local_only and renderer_running():
                 answer = target.search(**args, progress=lambda d: frames.put({"ok": True, **d}))
-            else:
+            elif not local_only:
                 answer = {"results": [], "count": 0, "more": False, "next_scan": 0,
                           "labels_seen": [], "queries": [], "query": args["text"],
                           "window": {"from": "", "to": ""}, "considered": 0,
                           "unstreamable": 0, "sort": args["sort"], "lowered": 0}
                 answer["qobuz_error"] = "Qobuz unavailable: upmpdcli is not running"
+            else:
+                answer = {"results": [], "count": 0, "more": False, "next_scan": 0,
+                          "labels_seen": [], "queries": [], "query": args["text"],
+                          "window": {"from": "", "to": ""}, "considered": 0,
+                          "unstreamable": 0, "sort": args["sort"], "lowered": 0}
             qresults = answer.get("results", [])
             answer["results"] = [item for i in range(max(len(local), len(qresults)))
                                  for item in (([local[i]] if i < len(local) else []) +

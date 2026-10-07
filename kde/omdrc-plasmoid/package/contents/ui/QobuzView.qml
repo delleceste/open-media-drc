@@ -26,6 +26,7 @@ Item {
     property string sort: "relevance"
     property bool awardedOnly: false
     property bool hiResOnly: false
+    property bool localOnly: false
     property bool filtersOpen: false
     property var genres: [{ id: "", name: "All genres" }]
     // Several genres may be filtered at once; empty means all.
@@ -57,6 +58,7 @@ Item {
         add("sort", sort)
         if (awardedOnly) add("awarded", 1)
         if (hiResOnly) add("hires", 1)
+        if (localOnly && !aiMode) add("local", 1)
         if (scan) add("scan", scan)
         return values.join("&")
     }
@@ -106,6 +108,7 @@ Item {
         if (!aiSettings.configured) { settingsDialog.open(); return }
         aiMode = true
         dateMode = "any"; selectedLabels = []; awardedOnly = false; hiResOnly = false
+        localOnly = false
     }
     function search(scan) {
         if (busy) { stop(); return }
@@ -172,6 +175,7 @@ Item {
             sort = "relevance"
             awardedOnly = false
             hiResOnly = false
+            localOnly = false
             tab = "results"
             results = answer.data ? answer.data.results || [] : []
             more = answer.data ? !!answer.data.more : false
@@ -306,6 +310,7 @@ Item {
                     }
                     QQC2.CheckBox { text: i18n("Awarded"); checked: view.awardedOnly; onClicked: view.awardedOnly = checked }
                     QQC2.CheckBox { text: i18n("Hi-Res"); checked: view.hiResOnly; onClicked: view.hiResOnly = checked }
+                    QQC2.CheckBox { text: i18n("Local"); checked: view.localOnly; onClicked: view.localOnly = checked }
                 }
                 PlasmaComponents.Label { text: i18n("Labels") }
                 Flow {

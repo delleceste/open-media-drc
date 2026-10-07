@@ -695,6 +695,26 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertFalse(status["renderer"])
 
+    def test_local_filter_returns_only_local_albums(self):
+        with patch.object(qobuz_web, "catalog", side_effect=AssertionError("Qobuz should be skipped")), \
+                patch.object(qobuz_web.mpd_library, "search", return_value=[{"id": "local:one", "source": "local"}]), \
+                self.running():
+            data = self.client.get("/qobuz/search?q=bruckner&local=1").get_json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual([c["id"] for c in data["results"]], ["local:one"])
+        self.assertFalse(data["qobuz_error"])
+
+    def test_local_filter_stream_skips_qobuz(self):
+        import json
+        with patch.object(qobuz_web, "catalog", side_effect=AssertionError("Qobuz should be skipped")), \
+                patch.object(qobuz_web.mpd_library, "search", return_value=[{"id": "local:one", "source": "local"}]), \
+                self.running():
+            response = self.client.get("/qobuz/search/stream?q=bruckner&local=1")
+        frames = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines()
+                  if line.startswith("data: ")]
+        self.assertTrue(frames[-1]["ok"])
+        self.assertEqual([c["id"] for c in frames[-1]["results"]], ["local:one"])
+
     def test_a_bad_number_is_an_error_not_a_crash(self):
         cat, _ = catalog({})
         with patch.object(qobuz_web, "catalog", return_value=cat), self.running():

@@ -74,6 +74,7 @@ P.mount = el => {
     P.sortBox = h('div', {});
     P.awardedFilterBox = h('div', { class: 'qz-chips' });
     P.qualityBox = h('div', { class: 'qz-chips' });
+    P.sourceBox = h('div', { class: 'qz-chips' });
     // Full width; the filters sit side by side where there is room, and fold
     // into one summary line once results arrive (a tap opens them again).
     P.fsum = h('div', { class: 'qz-fsum' });
@@ -84,6 +85,7 @@ P.mount = el => {
             h('div', { class: 'lbl' }, 'Order'), P.sortBox,
             h('div', { class: 'lbl' }, 'Awarded'), P.awardedFilterBox,
             h('div', { class: 'lbl' }, 'Audio quality'), P.qualityBox,
+            h('div', { class: 'lbl' }, 'Source'), P.sourceBox,
             P.lowLink = h('button', { type: 'button', class: 'btn link qz-lowlink', onclick: () => P.openLowered() }, 'Lowered list ›')));
     P.form = h('div', { class: 'qz-form' },
         K.card(null,
@@ -175,7 +177,7 @@ P.mount = el => {
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.refreshAIIcon();
     P.buildPlayer();
-    P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintQuality(); P.paintLabels();
+    P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintQuality(); P.paintSource(); P.paintLabels();
     P.setLabelsOpen(true);
     P.openFilters(false);                          // the summary line opens them
     P.poll = new K.Poller(P.refreshStatus, 10000);
@@ -776,18 +778,20 @@ P.filterSummary = () => {
     return [P.selected.size ? [...P.selected].join(', ') : '', when,
         pref('order', 'relevance') === 'date' ? 'newest first' : '',
         ...(pref('awarded', false) ? ['awarded only'] : []),
-        ...(pref('hires', false) ? ['Hi-Res: exclude 16/44.1'] : [])].filter(Boolean).join(' · ');
+        ...(pref('hires', false) ? ['Hi-Res: exclude 16/44.1'] : []),
+        ...(pref('localOnly', false) ? ['Local only'] : [])].filter(Boolean).join(' · ');
 };
 
 P.filtersActive = () => P.selected.size > 0 || pref('date', 'any') !== 'any'
-    || pref('order', 'relevance') !== 'relevance' || pref('awarded', false) || pref('hires', false);
+    || pref('order', 'relevance') !== 'relevance' || pref('awarded', false) || pref('hires', false)
+    || pref('localOnly', false);
 P.resetFilters = () => {
     clearTimeout(soon);
     P.filtersDirty = false;
     P.selected.clear();
     for (const [key, value] of Object.entries({ labels: [], date: 'any', from: thisYear - 5, to: '', lastN: 2,
-        order: 'relevance', awarded: false, hires: false })) setPref(key, value);
-    P.paintLabels(); P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintQuality();
+        order: 'relevance', awarded: false, hires: false, localOnly: false })) setPref(key, value);
+    P.paintLabels(); P.paintDate(); P.paintSort(); P.paintAwarded(); P.paintQuality(); P.paintSource();
     P.openFilters(false);
 };
 P.paintSummary = () => {
@@ -839,6 +843,16 @@ P.paintQuality = () => {
         'aria-pressed': String(on), title: 'Exclude 16-bit/44.1 kHz releases',
         onclick: () => { setPref('hires', !on); P.paintQuality(); P.searchSoon(); },
     }, 'Hi-Res'));
+    P.paintSummary();
+};
+
+P.paintSource = () => {
+    const on = pref('localOnly', false);
+    K.clear(P.sourceBox).append(h('button', {
+        type: 'button', class: 'chip tog qz-chip' + (on ? ' on' : ''),
+        'aria-pressed': String(on), title: 'Show only albums in the local collection',
+        onclick: () => { setPref('localOnly', !on); P.paintSource(); P.searchSoon(); },
+    }, 'Local'));
     P.paintSummary();
 };
 
@@ -989,6 +1003,7 @@ P.params = scan => {
     q.set('sort', pref('order', 'relevance'));
     if (pref('awarded', false)) q.set('awarded', '1');
     if (pref('hires', false)) q.set('hires', '1');
+    if (pref('localOnly', false) && !pref('aiMode', false)) q.set('local', '1');
     if (scan) q.set('scan', scan);
     return q;
 };
