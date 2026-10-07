@@ -562,32 +562,13 @@ def local_play():
 
 
 def _library_root() -> str | None:
-    """Where DR14 reports are read from: this host's setting, else MPD's own."""
-    return local_db.music_directory(_state_dir(), _music_directory)
+    """Where DR14 reports are read from: MPD's own music_directory."""
+    return _music_directory()
 
 
 @bp.route("/local/status")
 def local_status():
-    return jsonify(local_db.status(_state_dir(), _music_directory,
-                                   shutil.which("dr14_tmeter") is not None))
-
-
-@bp.route("/local/config", methods=["POST"])
-def local_config():
-    """Set (or, with an empty path, forget) this host's music directory."""
-    body = request.get_json(silent=True) or {}
-    try:
-        path = local_db.validate(str(body.get("path", "")))
-        local_db.set_path(_state_dir(), path)
-    except ValueError as error:
-        return jsonify({"ok": False, "error": str(error)}), 400
-    except OSError as error:
-        return jsonify({"ok": False, "error": f"could not save: {error}"}), 503
-    root = _library_root()
-    if root and os.path.isdir(root):
-        local_db.counts(root, fresh=True)          # recount in the background
-    return jsonify({"ok": True, "message": f"Music directory for this host: {path}"
-                    if path else "Using the music directory from the MPD configuration"})
+    return jsonify(local_db.status(_state_dir(), _music_directory))
 
 
 @bp.route("/local/refresh", methods=["POST"])
@@ -600,9 +581,6 @@ def local_refresh():
     if scan["state"] == "running" and time.time() - scan["since"] < local_db.STALE_SCAN:
         return jsonify({"ok": True, "message": "A DR14 scan is already running"})
     env = dict(os.environ, OMDRC_SCAN_STATUS=os.path.join(_state_dir(), local_db.SCAN_STATUS_FILE))
-    configured = local_db.configured_path(_state_dir())
-    if configured:
-        env["OMDRC_MUSIC_DIRECTORY"] = configured
     try:
         result = subprocess.run([script], capture_output=True, text=True, timeout=15, env=env)
     except (OSError, subprocess.TimeoutExpired) as error:
