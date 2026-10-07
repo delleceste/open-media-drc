@@ -11,6 +11,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import it.giacomos.omdrc.app.data.ArtFetch
 import it.giacomos.omdrc.app.data.OmdrcClient
 import it.giacomos.omdrc.app.data.WidgetSnapshot
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +42,7 @@ private const val TAG = "OmdrcWidget"
 class LiveStatusService : Service() {
 
     private var job: Job? = null
+    private var lastTrack: String? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -64,6 +66,7 @@ class LiveStatusService : Service() {
         startForegroundCompat(buildNotification(host, port, null))
 
         job?.cancel()
+        lastTrack = null
         job = scope.launch { pollLoop(host, port) }
         return START_STICKY
     }
@@ -78,7 +81,15 @@ class LiveStatusService : Service() {
             }
             try {
                 val snapshot = OmdrcClient.fetchSnapshot(host, port)
-                pushToWidgets(host, port, snapshot)
+                // The cover follows the track: fetched only when the song
+                // or album changes, not every poll.
+                val track = snapshot.mpd?.let { "${it.song}\u0000${it.album}" }
+                val art = if (snapshot.reachable && track != lastTrack) {
+                    OmdrcClient.fetchArt(host, port).also { if (it !is ArtFetch.Failed) lastTrack = track }
+                } else {
+                    null
+                }
+                pushToWidgets(host, port, snapshot, art)
                 startForegroundCompat(buildNotification(host, port, snapshot))
             } catch (e: Exception) {
                 Log.w(TAG, "LiveStatusService poll failed: ${e.message}")
@@ -87,14 +98,15 @@ class LiveStatusService : Service() {
         }
     }
 
-    /** Only updates widgets configured for this exact host/port - a
-     *  different widget pointed at a different box must not be overwritten
-     *  with this service's data. */
-    private fun pushToWidgets(host: String, port: Int, snapshot: WidgetSnapshot) {
+    /** Only updates widgets showing this exact host/port - a different
+     *  widget pointed at a different box must not be overwritten with this
+     *  service's data. */
+    private fun pushToWidgets(host: String, port: Int, snapshot: WidgetSnapshot, art: ArtFetch?) {
         for (id in RefreshEngine.activeWidgetIds(this)) {
-            val hostPort = WidgetPrefs.load(this, id) ?: continue
+            val hostPort = RefreshEngine.serverFor(this, id) ?: continue
             if (hostPort.first != host || hostPort.second != port) continue
             WidgetPrefs.saveSnapshot(this, id, snapshot)
+            art?.let { RefreshEngine.saveArt(this, id, it) }
             RefreshEngine.updateViews(this, id, host, port)
         }
     }

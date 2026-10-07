@@ -13,8 +13,14 @@ private const val TAG = "OmdrcWidget"
  *  receiver path and onUpdate's immediate cached render. */
 object RefreshEngine {
 
+    /** The box a widget shows: the one the dashboard last used on the
+     *  current network, so the widget follows the phone between boxes the
+     *  way the dashboard does, else the one set up for the widget. */
+    fun serverFor(context: Context, appWidgetId: Int): Pair<String, Int>? =
+        ServerNetwork.currentServer(context) ?: WidgetPrefs.load(context, appWidgetId)
+
     suspend fun refreshWidget(context: Context, appWidgetId: Int) {
-        val hostPort = WidgetPrefs.load(context, appWidgetId)
+        val hostPort = serverFor(context, appWidgetId)
         if (hostPort == null) {
             Log.w(TAG, "refreshWidget($appWidgetId): no host/port configured, skipping")
             return
@@ -28,13 +34,17 @@ object RefreshEngine {
         // transient outage, nor on a failed art fetch. Only the box saying
         // there's no art for the current track clears it.
         if (snapshot.reachable) {
-            when (val art = OmdrcClient.fetchArt(hostPort.first, hostPort.second)) {
-                is ArtFetch.Found -> WidgetArtCache.save(context, appWidgetId, art.bytes)
-                ArtFetch.None -> WidgetArtCache.save(context, appWidgetId, null)
-                ArtFetch.Failed -> Log.w(TAG, "refreshWidget($appWidgetId): art fetch failed, keeping cached art")
-            }
+            saveArt(context, appWidgetId, OmdrcClient.fetchArt(hostPort.first, hostPort.second))
         }
         updateViews(context, appWidgetId, hostPort.first, hostPort.second)
+    }
+
+    fun saveArt(context: Context, appWidgetId: Int, art: ArtFetch) {
+        when (art) {
+            is ArtFetch.Found -> WidgetArtCache.save(context, appWidgetId, art.bytes)
+            ArtFetch.None -> WidgetArtCache.save(context, appWidgetId, null)
+            ArtFetch.Failed -> Log.w(TAG, "saveArt($appWidgetId): art fetch failed, keeping cached art")
+        }
     }
 
     /** Play/pause toggle from the TINY widget's icon tap. There's no
@@ -43,7 +53,7 @@ object RefreshEngine {
      *  reconciles the icon with whatever the box actually did (the POST
      *  could fail, or another client could race it). */
     suspend fun togglePlayPause(context: Context, appWidgetId: Int) {
-        val hostPort = WidgetPrefs.load(context, appWidgetId)
+        val hostPort = serverFor(context, appWidgetId)
         if (hostPort == null) {
             Log.w(TAG, "togglePlayPause($appWidgetId): no host/port configured, skipping")
             return
@@ -66,7 +76,7 @@ object RefreshEngine {
     /** Renders whatever is already cached, with no network call - used for
      *  an instant first paint while the real fetch is still in flight. */
     fun renderCached(context: Context, appWidgetId: Int) {
-        val hostPort = WidgetPrefs.load(context, appWidgetId)
+        val hostPort = serverFor(context, appWidgetId)
         updateViews(context, appWidgetId, hostPort?.first, hostPort?.second ?: AppPrefs.DEFAULT_PORT)
     }
 
@@ -77,7 +87,7 @@ object RefreshEngine {
     fun showChecking(context: Context, appWidgetId: Int) {
         Log.d(TAG, "showChecking($appWidgetId)")
         val manager = AppWidgetManager.getInstance(context)
-        val hostPort = WidgetPrefs.load(context, appWidgetId)
+        val hostPort = serverFor(context, appWidgetId)
         val snapshot = WidgetPrefs.loadSnapshot(context, appWidgetId)
         val size = sizeFor(manager, appWidgetId)
         val views = RemoteViewsBuilder.build(

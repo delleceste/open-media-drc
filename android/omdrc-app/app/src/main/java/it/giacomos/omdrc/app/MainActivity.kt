@@ -162,19 +162,7 @@ class MainActivity : ComponentActivity() {
     // (gateway address + subnet, readable without location), so later runs and app
     // restarts recognise the network without asking Android for the name again.
     // The page's once-a-second timingNetwork() never touches WifiManager.
-    private val netPrefs get() = getSharedPreferences("wifi-names", MODE_PRIVATE)
-
-    private fun wifiFingerprint(cm: android.net.ConnectivityManager, net: android.net.Network?): String? {
-        val lp = cm.getLinkProperties(net) ?: return null
-        val gw = lp.routes.firstOrNull { it.isDefaultRoute && it.gateway is java.net.Inet4Address }?.gateway?.hostAddress ?: return null
-        val addr = lp.linkAddresses.firstOrNull { it.address is java.net.Inet4Address } ?: return null
-        val prefix = addr.prefixLength
-        val ip = addr.address.address
-        val mask = if (prefix == 0) 0 else -1 shl (32 - prefix)
-        val n = ((ip[0].toInt() and 255) shl 24 or ((ip[1].toInt() and 255) shl 16) or
-            ((ip[2].toInt() and 255) shl 8) or (ip[3].toInt() and 255)) and mask
-        return "$gw/$prefix/${Integer.toHexString(n)}"
-    }
+    private val netPrefs get() = ServerNetwork.names(this)
 
     private var currentServerNetwork: String? = null
     private var loadedServerNetwork: String? = null
@@ -215,20 +203,12 @@ class MainActivity : ComponentActivity() {
 
     private fun serverNetworkKey(): String? {
         val cm = getSystemService(android.net.ConnectivityManager::class.java)
-        val net = cm.activeNetwork ?: return null
-        val caps = cm.getNetworkCapabilities(net) ?: return null
-        val fingerprint = wifiFingerprint(cm, net) ?: return null
-        return when {
-            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> {
-                // Refresh only on network events / foreground entry, never during polling.
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                    == PackageManager.PERMISSION_GRANTED) identifyWifiNow(quiet = true)
-                val name = netPrefs.getString(fingerprint, null)
-                if (name != null) "wifi:$name" else "wifi-network:$fingerprint"
-            }
-            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet:$fingerprint"
-            else -> null
-        }
+        val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+        // Refresh only on network events / foreground entry, never during polling.
+        if (caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            == PackageManager.PERMISSION_GRANTED) identifyWifiNow(quiet = true)
+        return ServerNetwork.currentKey(this)
     }
 
     private fun rememberServer() {
@@ -252,7 +232,7 @@ class MainActivity : ComponentActivity() {
             val ssid = if (caps != null && caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))
                 applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
                     .connectionInfo.ssid?.removeSurrounding("\"") else null
-            val fp = wifiFingerprint(cm, net)
+            val fp = ServerNetwork.fingerprint(cm, net)
             if (!ssid.isNullOrBlank() && ssid != android.net.wifi.WifiManager.UNKNOWN_SSID && fp != null) {
                 netPrefs.edit().putString(fp, ssid).apply()
                 if (!quiet) android.widget.Toast.makeText(this, "Wi-Fi remembered: $ssid", android.widget.Toast.LENGTH_SHORT).show()
@@ -274,7 +254,7 @@ class MainActivity : ComponentActivity() {
             caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) ->
                 out.put("key", "wired").put("label", "Wired")
             caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> {
-                val ssid = wifiFingerprint(cm, active)?.let { netPrefs.getString(it, null) }
+                val ssid = ServerNetwork.fingerprint(cm, active)?.let { netPrefs.getString(it, null) }
                 if (ssid != null) out.put("key", "wifi:$ssid").put("label", ssid)
                 else out.put("key", "unknown").put("label", "Wi-Fi not identified")
             }
