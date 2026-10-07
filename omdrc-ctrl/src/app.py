@@ -1658,6 +1658,11 @@ class SpectrumSource:
         """What to tell the listener when the FIFO exists but nobody writes it."""
         return f"nothing is writing {self.fifo}"
 
+    def detached(self) -> bool:
+        """Has the producer stopped feeding us without anything else showing
+        it?  Checked every few seconds; true makes the analyzer attach again."""
+        return False
+
 
 class MpdSpectrumSource(SpectrumSource):
     """MPD's secondary `fifo` output, enabled only while a browser streams.
@@ -1690,6 +1695,16 @@ class MpdSpectrumSource(SpectrumSource):
 
     def expects_data(self) -> bool:
         return _mpd_is_playing()
+
+    def detached(self) -> bool:
+        """MPD restarted (or someone disabled the output) under a running
+        analyzer.  On FreeBSD the FIFO keeps its name and inode across that,
+        so the identity check never fires: only MPD's own output list shows
+        it, and the DR log, which listens for days, must not go deaf there.
+        An empty list (MPD down, no mpc) proves nothing and is not acted on."""
+        outputs = _mpd_outputs(_resolve_mpd_port())
+        mine = [o for o in outputs if o["name"] == SPECTRUM_OUTPUT_NAME]
+        return bool(mine) and not any(o["enabled"] for o in mine)
 
     def no_writer_hint(self) -> str:
         return (f'MPD is playing with output "{SPECTRUM_OUTPUT_NAME}" enabled '
@@ -2380,6 +2395,7 @@ class SpectrumAnalyzer:
             # already open.  Source activity itself is cached for two seconds,
             # so checking twice a second is cheap and bounds hand-over latency.
             next_source_check = time.monotonic() + 0.5
+            next_detach_check = time.monotonic() + 5.0
             dr_epoch_seen = -1
             dr_estimate: RollingEstimate | None = None
             dr_tail = bytearray()
@@ -2664,6 +2680,11 @@ class SpectrumAnalyzer:
                     if not _same_file(fd, source.fifo):
                         switch_source = True
                         break
+                    if now >= next_detach_check:
+                        next_detach_check = now + 5.0
+                        if source.detached():
+                            switch_source = True
+                            break
                     # Nothing has arrived while the producer says it is playing,
                     # for long enough that it is not a hand-over or a gap
                     # between tracks.  Nothing downstream can fix that, so say

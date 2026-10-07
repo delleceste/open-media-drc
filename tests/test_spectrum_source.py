@@ -198,6 +198,25 @@ class SourceRateTest(unittest.TestCase):
             self.assertEqual(APP._spectrum_resolve_source().rate, 44100)
 
 
+class DetachedTest(unittest.TestCase):
+    """MPD restarted under the analyzer: its output is off again, while the
+    FIFO path (FreeBSD) still names the same inode."""
+
+    def detached(self, outputs):
+        with mock.patch.object(APP, "_mpd_outputs", return_value=outputs):
+            return APP.MpdSpectrumSource("/tmp/x.fifo", 44100).detached()
+
+    def test_a_disabled_output_means_attach_again(self):
+        name = APP.SPECTRUM_OUTPUT_NAME
+        self.assertTrue(self.detached([{"name": name, "enabled": False}]))
+        self.assertFalse(self.detached([{"name": name, "enabled": True}]))
+
+    def test_no_answer_from_mpd_proves_nothing(self):
+        self.assertFalse(self.detached([]))
+        self.assertFalse(self.detached([{"name": "other", "enabled": False}]))
+        self.assertFalse(APP.CdinSpectrumSource("/tmp/y.fifo", 44100).detached())
+
+
 class FifoOwnershipTest(unittest.TestCase):
     """Who is allowed to create the FIFO — the bug that blanked the MPD source.
 
