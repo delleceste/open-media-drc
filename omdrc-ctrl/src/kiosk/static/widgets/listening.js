@@ -184,6 +184,7 @@ G.close = () => {
     G.tabsObserver?.disconnect();
     G.panel?.remove();
     G.panel = null;
+    document.documentElement.removeAttribute('data-ls-strip');
     G.albumKey = '';
     G.guide = null;
     G.queryKey = null;
@@ -353,6 +354,7 @@ G.paint = () => {
     const active = G.guide?.compositions?.[G.selected];
     const label = G.label();
     G.panel.classList.toggle('collapsed', G.collapsed);
+    document.documentElement.toggleAttribute('data-ls-strip', G.collapsed);
     K.clear(G.panel);
     const icon = G.collapsed ? G.stripIcon() : G.icon(G.busy ? 'busy' : '');
     if (G.collapsed) {

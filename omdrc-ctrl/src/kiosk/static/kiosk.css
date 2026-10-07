@@ -965,8 +965,12 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.3fr); grid-template-areas: "info btns seek";
     gap: .4rem .8rem; align-items: center; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: .6rem;
     background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-    box-shadow: 0 0 .9rem 1.1rem color-mix(in srgb, var(--bg) 80%, transparent), 0 -.3rem 1rem var(--shadow); }
+    box-shadow: 0 3rem .9rem 1.1rem color-mix(in srgb, var(--bg) 80%, transparent), 0 -.3rem 1rem var(--shadow); }
 /* the shadow veils the results around the strip (and in the gap below it), so the strip stays defined */
+/* the minimized listening guide is a fixed strip at the screen's bottom, only on Now and Qobuz; the player strip rides above it */
+.listening-panel.collapsed { display: none; }
+html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .listening-panel.collapsed { display: flex; }
+html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(3.2rem + max(.3rem, env(safe-area-inset-bottom)) - .3rem + .4rem); }
 .qz-pinfo { grid-area: info; min-width: 0; display: flex; align-items: center; gap: .6rem; cursor: pointer; }
 .qz-pprog { display: none; }
 .qz-player .qz-pbtns { grid-area: btns; } .qz-player .qz-pseek { grid-area: seek; } .qz-expand { grid-area: expand; }

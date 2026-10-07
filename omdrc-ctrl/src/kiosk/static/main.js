@@ -53,6 +53,7 @@ function activate(i) {
     cur = i;
     if (K.awake) K.awake.sync();
     const page = K.pages[i];
+    document.documentElement.dataset.page = page.id;
     if (rememberedPages.includes(page.id)) K.setPref('lastMainPage', page.id);
     if (!page.mounted) {
         page.mounted = true;
