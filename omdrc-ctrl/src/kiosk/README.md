@@ -12,6 +12,10 @@ down.
 
 ## Pages (swipe, or tap the tab bar; `#drc` etc. deep-links)
 
+Only Now, Qobuz, DRC and Video (in that order) are reached by swiping or the arrow keys;
+a left swipe past the last one cycles back to Now.  Every other page opens from the page
+menu (or its tab, on a wide screen), and does not swipe.
+
 | Page | What it is |
 |---|---|
 | **Now** | Level meters (needles / bars / bars + spectrum), DR bar, channel balance, track + time, and one line saying which DRC is applied |

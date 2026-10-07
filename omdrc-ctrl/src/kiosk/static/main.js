@@ -35,6 +35,10 @@ function icon(name) {
 
 // ── pager ────────────────────────────────────────────────────────────────────
 let cur = -1;
+// Only these pages are reached by swiping (and the arrow keys), in this order; they come
+// first in the pager and in the menu.  Every other page is opened from the menu alone.
+const SWIPE_IDS = ['now', 'qobuz', 'drc', 'video'];
+const swipeCount = () => { let n = 0; while (n < K.pages.length && SWIPE_IDS.includes(K.pages[n].id)) n++; return n; };
 const pager = $('#pager'), tabs = $('#tabs');
 const rememberedPages = ['now', 'cover', 'qobuz'];
 const rememberedPage = () => {
@@ -102,7 +106,9 @@ pager.addEventListener('scroll', () => {
 window.addEventListener('resize', () => { if (cur >= 0) pager.scrollTo({ left: cur * pager.clientWidth, behavior: 'instant' }); });
 document.addEventListener('keydown', e => {
     if (e.target.closest && e.target.closest('input, textarea')) return;
-    if (e.key === 'ArrowRight') K.showPage((K.pages[Math.min(K.pages.length - 1, cur + 1)] || {}).id);
+    const n = swipeCount();
+    if (cur >= n) return;
+    if (e.key === 'ArrowRight') K.showPage((K.pages[Math.min(n - 1, cur + 1)] || {}).id);
     if (e.key === 'ArrowLeft') K.showPage((K.pages[Math.max(0, cur - 1)] || {}).id);
 });
 
@@ -114,7 +120,7 @@ document.addEventListener('keydown', e => {
 let sw = null;
 const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit, .seek-zone, .now-title, .now-info, .now-fav, .qz-library-shortcut';
 pager.addEventListener('pointerdown', e => {
-    if (e.pointerType !== 'touch' || e.target.closest(NO_SWIPE)) return;
+    if (e.pointerType !== 'touch' || e.target.closest(NO_SWIPE) || cur >= swipeCount()) return;
     sw = { id: e.pointerId, x: e.clientX, y: e.clientY, left: pager.scrollLeft, mode: null, lastX: e.clientX, lastT: performance.now(), v: 0 };
 });
 pager.addEventListener('pointermove', e => {
@@ -122,7 +128,7 @@ pager.addEventListener('pointermove', e => {
     const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
     if (!sw.mode) {
         if (Math.abs(dx) > 10 && Math.abs(dx) > 1.4 * Math.abs(dy)) {
-            preparePage(cur + (dx < 0 ? 1 : -1));
+            preparePage(K.clamp(cur + (dx < 0 ? 1 : -1), 0, swipeCount() - 1));
             sw.mode = 'x';
             try { pager.setPointerCapture(e.pointerId); } catch {}
             pager.style.scrollSnapType = 'none';
@@ -143,11 +149,12 @@ function endSwipe(e) {
     const far = Math.min(0.2 * w, 100);          // a fifth of the width, but never more than 100 px
     if (dx < -far || s.v < -0.5) to = from + 1;
     else if (dx > far || s.v > 0.5) to = from - 1;
-    if (to >= K.pages.length) {
-        // A left swipe past the last page cycles straight back to Now.
+    const n = swipeCount();
+    if (to >= n) {
+        // A left swipe past the last swipable page cycles straight back to Now.
         K.showPage('now', false);
     } else {
-        to = K.clamp(to, 0, K.pages.length - 1);
+        to = K.clamp(to, 0, n - 1);
         pager.scrollTo({ left: to * w, behavior: 'smooth' });
     }
     setTimeout(() => { pager.style.scrollSnapType = ''; }, 450);
@@ -289,6 +296,7 @@ $('#top-menu').addEventListener('click', () => {
     menu.append(...K.pages.map((p, n) => h('button', {
         type: 'button', class: 'menu-item', role: 'menuitemradio', 'aria-checked': String(n === cur),
         onclick: () => { close(); K.showPage(p.id); },
+        ...(n === swipeCount() && n > 0 ? { style: 'border-top:1px solid var(--border);margin-top:.25rem' } : {}),
     }, h('span', { class: 'mk' }, n === cur ? '●' : ''), p.title)));
     document.body.append(menu);
     const r = trigger.getBoundingClientRect();
@@ -443,7 +451,9 @@ async function prepareOtherPages() {
 // A page with optional() is in the pager and the tab bar only while that says so
 // (the Cover page: Config → Cover art).  Switching one on or off rebuilds the
 // order in place and keeps the current page on screen.
-const enabledPages = () => K.allPages.filter(p => (!p.optional || p.optional()) && (!K.embed || p.id === K.embed));
+const swipeRank = p => { const i = SWIPE_IDS.indexOf(p.id); return i < 0 ? SWIPE_IDS.length : i; };
+const enabledPages = () => K.allPages.filter(p => (!p.optional || p.optional()) && (!K.embed || p.id === K.embed))
+    .sort((a, b) => swipeRank(a) - swipeRank(b));
 function buildPage(p) {
     p.body = h('div', { class: 'page-body' });
     p.section = h('section', { class: 'page', id: 'page-' + p.id, 'data-id': p.id }, p.body);

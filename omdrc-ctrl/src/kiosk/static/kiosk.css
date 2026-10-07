@@ -94,7 +94,7 @@ body.bar-shown #topbar { transform: none; }
 }
 
 /* ── pager ── */
-#pager { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain;
+#pager { display: flex; overflow-x: hidden; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain;
     touch-action: pan-y; }   /* horizontal touch swipes are handled in main.js */
 #pager::-webkit-scrollbar { display: none; }
 .page { flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; height: 100%; min-width: 0; }
