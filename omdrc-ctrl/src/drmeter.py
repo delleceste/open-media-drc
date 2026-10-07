@@ -219,18 +219,49 @@ def album_dr(track_drs: list[int]) -> int | None:
 
 # ── decoding ─────────────────────────────────────────────────────────────────
 
+def _wvunpack(path: str) -> list[str] | None:
+    """The command that writes a .wv as WAV on stdout, for the files ffmpeg
+    cannot open itself (WavPack self-extractors begin with an executable stub,
+    "MZP"), or None when this is not one or wvunpack is not installed."""
+    exe = shutil.which("wvunpack")
+    if not exe or not path.lower().endswith(".wv"):
+        return None
+    return [exe, "-q", "-y", path, "-o", "-"]
+
+
 def probe(path: str, ffprobe: str = "ffprobe") -> tuple[int, int]:
     """(sample_rate, channels) of the first audio stream."""
     try:
-        out = subprocess.run(
-            [ffprobe, "-v", "error", "-select_streams", "a:0",
-             "-show_entries", "stream=sample_rate,channels", "-of", "json", path],
-            capture_output=True, text=True, timeout=60, check=True).stdout
+        cmd = [ffprobe, "-v", "error", "-select_streams", "a:0",
+               "-show_entries", "stream=sample_rate,channels", "-of", "json", path]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True,
+                                 timeout=60, check=True).stdout
+        except subprocess.CalledProcessError:
+            unpack = _wvunpack(path)
+            if not unpack:
+                raise
+            cmd[-1] = "pipe:0"
+            with subprocess.Popen(unpack, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL) as feeder:
+                try:
+                    out = subprocess.run(cmd, stdin=feeder.stdout, capture_output=True,
+                                         text=True, timeout=60, check=True).stdout
+                finally:
+                    feeder.kill()
         stream = json.loads(out)["streams"][0]
         return int(stream["sample_rate"]), int(stream["channels"])
     except (subprocess.SubprocessError, OSError, KeyError, IndexError,
             ValueError) as error:
         raise DrMeterError(f"cannot probe {os.path.basename(path)}: {error}")
+
+
+def rate_source_is_unpacked(path: str, ffprobe: str) -> bool:
+    """True when ffprobe cannot open `path` but wvunpack can feed it."""
+    if not _wvunpack(path):
+        return False
+    return subprocess.run([ffprobe, "-v", "error", path], capture_output=True,
+                          timeout=60).returncode != 0
 
 
 def measure_file(path: str, ffmpeg: str = "ffmpeg",
@@ -242,9 +273,16 @@ def measure_file(path: str, ffmpeg: str = "ffmpeg",
     want = meter.block * frame_bytes
     # The context manager closes both pipes: the panel is a long-lived
     # process, and a descriptor leaked per track adds up over a year.
+    decode = [ffmpeg, "-v", "error", "-nostdin", "-i", path, "-map", "0:a:0",
+              "-f", "f32le", "-acodec", "pcm_f32le", "-"]
+    feeder = None
+    if rate_source_is_unpacked(path, ffprobe):
+        feeder = subprocess.Popen(_wvunpack(path), stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL)
+        decode[decode.index("-nostdin")] = "-hide_banner"
+        decode[decode.index(path)] = "pipe:0"
     with subprocess.Popen(
-            [ffmpeg, "-v", "error", "-nostdin", "-i", path, "-map", "0:a:0",
-             "-f", "f32le", "-acodec", "pcm_f32le", "-"],
+            decode, stdin=feeder.stdout if feeder else None,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
         try:
             while True:
@@ -267,6 +305,9 @@ def measure_file(path: str, ffmpeg: str = "ffmpeg",
         finally:
             if process.poll() is None:
                 process.kill()
+            if feeder:
+                feeder.kill()
+                feeder.wait()
     if process.returncode != 0:
         raise DrMeterError(f"ffmpeg could not decode {os.path.basename(path)}: {detail}")
     return meter.result()
