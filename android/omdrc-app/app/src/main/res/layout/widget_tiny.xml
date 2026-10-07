@@ -48,15 +48,26 @@
 
     </LinearLayout>
 
-    <!-- The strip above the icon (DRC, the source format), drawn by
-         RemoteViewsBuilder.labelBitmap and placed by layoutTiny. -->
+    <!-- The two badges above the icon, drawn by RemoteViewsBuilder.stripBitmap
+         and placed by layoutTiny/placeBadge: DRC at the icon's left edge,
+         the source format at its right (over the play/pause chip). -->
     <ImageView
-        android:id="@+id/tiny_strip"
+        android:id="@+id/tiny_strip_drc"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="top|center_horizontal"
+        android:layout_gravity="top|start"
         android:contentDescription="@null"
-        android:visibility="gone" />
+        android:visibility="gone"
+        tools:ignore="RtlHardcoded" />
+
+    <ImageView
+        android:id="@+id/tiny_strip_rate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:contentDescription="@null"
+        android:visibility="gone"
+        tools:ignore="RtlHardcoded" />
 
     <!-- Play/pause, over the icon's bottom-right edge towards the label:
          outside icon_surface so it isn't clipped to the icon. Placed from

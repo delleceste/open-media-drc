@@ -146,9 +146,9 @@ object RemoteViewsBuilder {
         val mpd = if (reachable && hasQueue) snapshot?.mpd else null
         val rate = mpd?.let { formatShort(it.sampleRate, it.bitDepth) } ?: ""
         val rateColor = mpd?.let { formatColor(context, it.sampleRate, it.bitDepth) } ?: 0xFFFFFFFF.toInt()
-        val stripLabel = if (drcOn) context.getString(R.string.drc_badge) else ""
+        val drcLabel = if (drcOn) context.getString(R.string.drc_badge) else ""
 
-        layoutTiny(context, views, appWidgetId, stripLabel, rate, rateColor)
+        layoutTiny(context, views, appWidgetId, drcLabel, rate, rateColor)
 
         val art = if (hasQueue) WidgetArtCache.load(context, appWidgetId) else null
         views.setImageViewBitmap(R.id.cover_art, iconSurface(context, art))
@@ -235,9 +235,9 @@ object RemoteViewsBuilder {
         context: Context,
         views: RemoteViews,
         appWidgetId: Int,
-        stripLabel: String,
-        stripValue: String,
-        stripValueColor: Int,
+        drcLabel: String,
+        rateValue: String,
+        rateColor: Int,
     ) {
         val tuning = WidgetPrefs.loadTileTuning(context, appWidgetId)
         views.setInt(R.id.widget_root, "setBackgroundResource", if (tuning.outline) R.drawable.widget_outline else 0)
@@ -248,7 +248,8 @@ object RemoteViewsBuilder {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || width <= 0f || height <= 0f) {
             val label = labelBitmap(context, typeface, PIXEL_GRIDS[0][3] * tuning.labelScale, 0f)
             views.setImageViewBitmap(R.id.omdrc_label, label.bitmap)
-            views.setViewVisibility(R.id.tiny_strip, View.GONE)
+            views.setViewVisibility(R.id.tiny_strip_drc, View.GONE)
+            views.setViewVisibility(R.id.tiny_strip_rate, View.GONE)
             return
         }
         val icon: Float
@@ -316,25 +317,61 @@ object RemoteViewsBuilder {
         val pad = (0.18f * chip * context.resources.displayMetrics.density).roundToInt()
         views.setViewPadding(R.id.play_pause_icon, pad, pad, pad, pad)
 
-        // The strip above the icon - "DRC" at its left, the source format at
-        // its right - on the play/pause chip's backdrop, its capitals at
-        // most 80% of the label's, and smaller still where the space over
-        // the icon is short; the backdrop ends CHIP_TEXT_MARGIN_PX above the
-        // icon, and starts as far below the cell's top.
+        // Two independent badges above the icon, each on its own backdrop
+        // (the play/pause chip's color): "DRC" in green, aligned with the
+        // icon's left edge, and the source format on the right, colored by
+        // formatColor, aligned with its right edge (over the chip). Their
+        // capitals are at most 80% of the label's, and smaller still where
+        // the space over the icon is short; their backdrops end
+        // CHIP_TEXT_MARGIN_PX above the icon, and start as far below the
+        // cell's top.
         val stripCap = minOf(0.8f * capDp, (top - 2f * margin) / (1f + 2f * STRIP_PAD_Y))
-        if ((stripLabel.isEmpty() && stripValue.isEmpty()) || stripCap < MIN_STRIP_CAP_DP) {
-            views.setViewVisibility(R.id.tiny_strip, View.GONE)
-        } else {
-            val strip = stripBitmap(context, typeface, stripCap, stripLabel, stripValue, stripValueColor)
-            views.setImageViewBitmap(R.id.tiny_strip, strip.bitmap)
-            views.setViewVisibility(R.id.tiny_strip, View.VISIBLE)
-            views.setViewLayoutMargin(R.id.tiny_strip, RemoteViews.MARGIN_TOP, top - margin - strip.text.bottom, dip)
-            Log.d(
-                "OmdrcWidget",
-                "layoutTiny($appWidgetId): strip \"$stripLabel\"+\"$stripValue\" cap $stripCap dp, " +
-                    "bitmap ${strip.bitmap.width}x${strip.bitmap.height}px, color ${Integer.toHexString(stripValueColor)}",
-            )
+        val sideMargin = (width - iconDp) / 2f
+        placeBadge(
+            views, R.id.tiny_strip_drc, context, typeface, stripCap, drcLabel,
+            context.getColor(R.color.widget_fmt_green), top, margin, sideMargin, dip,
+        )
+        placeBadge(
+            views, R.id.tiny_strip_rate, context, typeface, stripCap, rateValue,
+            rateColor, top, margin, sideMargin, dip,
+        )
+        Log.d(
+            "OmdrcWidget",
+            "layoutTiny($appWidgetId): DRC \"$drcLabel\", rate \"$rateValue\" cap $stripCap dp, " +
+                "color ${Integer.toHexString(rateColor)}",
+        )
+    }
+
+    /** One badge (DRC or the source format) above the icon: hidden when
+     *  [text] is empty or there's no room ([capDp] too small), else sized
+     *  and colored by [stripBitmap] and placed [sideMargin] in from the
+     *  cell's edge on [viewId]'s own side (its XML layout_gravity: start for
+     *  the DRC badge, end for the format one), its bottom
+     *  CHIP_TEXT_MARGIN_PX above the icon. */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.S)
+    private fun placeBadge(
+        views: RemoteViews,
+        viewId: Int,
+        context: Context,
+        typeface: Typeface,
+        capDp: Float,
+        text: String,
+        color: Int,
+        top: Float,
+        margin: Float,
+        sideMargin: Float,
+        dip: Int,
+    ) {
+        if (text.isEmpty() || capDp < MIN_STRIP_CAP_DP) {
+            views.setViewVisibility(viewId, View.GONE)
+            return
         }
+        val badge = stripBitmap(context, typeface, capDp, text, color)
+        views.setImageViewBitmap(viewId, badge.bitmap)
+        views.setViewVisibility(viewId, View.VISIBLE)
+        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_TOP, top - margin - badge.text.bottom, dip)
+        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_START, sideMargin, dip)
+        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_END, sideMargin, dip)
     }
 
     /** text: the text's ink bounds in dp, across from the bitmap's center
@@ -383,67 +420,48 @@ object RemoteViewsBuilder {
         return Label(bitmap, capTop / density, inkDp)
     }
 
-    /** The 1x1 tile's DRC/format strip: [label] ("DRC", or "" when DRC is
-     *  off) left-aligned in white, [value] (the source format, or "" while
-     *  nothing plays) right of it in [valueColor], both on one rounded
-     *  backdrop sized to fit them - the same color as the play/pause chip's
-     *  - with [capDp]-tall capitals. The bitmap edges are the backdrop's
-     *  own, padded by STRIP_PAD_X/Y of the cap height beyond the text. */
-    private fun stripBitmap(
-        context: Context,
-        typeface: Typeface,
-        capDp: Float,
-        label: String,
-        value: String,
-        valueColor: Int,
-    ): Label {
+    /** One of the 1x1 tile's badges above the icon (DRC, or the source
+     *  format): [text] in [color] on its own rounded backdrop - the same
+     *  color as the play/pause chip's - sized to fit it, with [capDp]-tall
+     *  capitals. The bitmap edges are the backdrop's own, padded by
+     *  STRIP_PAD_X/Y of the cap height beyond the text, which is centered
+     *  on its own drawn ink, not the font's full ascent/descent - digits
+     *  and "DRC" have no descenders, so that reserved space below the
+     *  baseline would otherwise push the text toward the top of the pill. */
+    private fun stripBitmap(context: Context, typeface: Typeface, capDp: Float, text: String, color: Int): Label {
         val density = context.resources.displayMetrics.density
-        val shadow = context.getColor(R.color.widget_strip_text_shadow)
-        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
             this.typeface = typeface
-            color = 0xFFFFFFFF.toInt()
+            this.color = color
             textAlign = Paint.Align.LEFT
             textSize = 100f
         }
         // "DRC" as the cap-height reference regardless of which text is
-        // shown, so the strip's text size doesn't jump between states.
-        val refBounds = Rect().also { labelPaint.getTextBounds("DRC", 0, 3, it) }
-        labelPaint.textSize = 100f * capDp * density / refBounds.height()
+        // shown, so the two badges' text size doesn't jump between states.
+        val refBounds = Rect().also { paint.getTextBounds("DRC", 0, 3, it) }
+        paint.textSize = 100f * capDp * density / refBounds.height()
         val capPx = capDp * density
-        // A dark shadow under the text so a lighter color (the hi-res blue
-        // especially) still reads against whatever the backdrop shows
-        // through it - its own translucency, or a bright cover behind it.
-        labelPaint.setShadowLayer(0.12f * capPx, 0f, 0.05f * capPx, shadow)
-        val valuePaint = Paint(labelPaint).apply { color = valueColor }
+        // A dark shadow so a lighter color (the hi-res blue especially)
+        // still reads against whatever the backdrop shows through it - its
+        // own translucency, or a bright cover behind it.
+        paint.setShadowLayer(0.12f * capPx, 0f, 0.05f * capPx, context.getColor(R.color.widget_strip_text_shadow))
 
-        val gap = if (label.isNotEmpty() && value.isNotEmpty()) 0.6f * capDp * density else 0f
-        val labelWidth = labelPaint.measureText(label)
-        val valueWidth = valuePaint.measureText(value)
+        val textWidth = paint.measureText(text)
         val padX = STRIP_PAD_X * capPx
         val padY = STRIP_PAD_Y * capPx
+        val ink = Rect().also { paint.getTextBounds(text, 0, text.length, it) }
 
-        // Vertically centered on the drawn glyphs' own ink, not the font's
-        // full ascent/descent - digits and "DRC" have no descenders, so
-        // that reserved space below the baseline would otherwise push the
-        // text toward the top of the pill.
-        val labelInk = if (label.isNotEmpty()) Rect().also { labelPaint.getTextBounds(label, 0, label.length, it) } else null
-        val valueInk = if (value.isNotEmpty()) Rect().also { valuePaint.getTextBounds(value, 0, value.length, it) } else null
-        val inkTop = listOfNotNull(labelInk?.top, valueInk?.top).min()
-        val inkBottom = listOfNotNull(labelInk?.bottom, valueInk?.bottom).max()
-
-        val width = (labelWidth + gap + valueWidth + 2f * padX).roundToInt().coerceAtLeast(1)
-        val height = (inkBottom - inkTop + 2f * padY).roundToInt().coerceAtLeast(1)
+        val width = (textWidth + 2f * padX).roundToInt().coerceAtLeast(1)
+        val height = (ink.bottom - ink.top + 2f * padY).roundToInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         bitmap.density = context.resources.displayMetrics.densityDpi
         val canvas = Canvas(bitmap)
         val radius = 0.5f * capPx
         canvas.drawRoundRect(
             0f, 0f, width.toFloat(), height.toFloat(), radius, radius,
-            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.widget_chip_backdrop) },
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = context.getColor(R.color.widget_chip_backdrop) },
         )
-        val baseline = padY - inkTop
-        if (label.isNotEmpty()) canvas.drawText(label, padX, baseline, labelPaint)
-        if (value.isNotEmpty()) canvas.drawText(value, padX + labelWidth + gap, baseline, valuePaint)
+        canvas.drawText(text, padX, padY - ink.top, paint)
         return Label(bitmap, 0f, RectF(0f, 0f, width / density, height / density))
     }
 
