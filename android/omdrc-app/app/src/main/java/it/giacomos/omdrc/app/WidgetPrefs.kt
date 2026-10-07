@@ -11,13 +11,14 @@ import it.giacomos.omdrc.app.data.WidgetSnapshot
 /** The user's adjustments to the 1x1 tile, made by eye against the icons
  *  beside it, since no launcher reports its own icon size: scale factors on
  *  top of RemoteViewsBuilder's computed icon and label sizes, a vertical
- *  nudge, and the label's font family (null: the launcher's, as far as it
- *  can be told). */
+ *  nudge, the label's font family (null: the launcher's, as far as it
+ *  can be told), and an outline of the widget's area to calibrate by. */
 data class TileTuning(
     val iconScale: Float = 1f,
     val labelScale: Float = 1f,
     val offsetDp: Float = 0f,
     val fontFamily: String? = null,
+    val outline: Boolean = false,
 )
 
 /**
@@ -49,6 +50,7 @@ object WidgetPrefs {
             labelScale = p.getFloat("tile_label_scale", 1f),
             offsetDp = p.getFloat("tile_offset_dp", 0f),
             fontFamily = p.getString("tile_font_family", null),
+            outline = p.getBoolean("tile_outline", false),
         )
     }
 
@@ -58,6 +60,7 @@ object WidgetPrefs {
             .putFloat("tile_label_scale", tuning.labelScale)
             .putFloat("tile_offset_dp", tuning.offsetDp)
             .putString("tile_font_family", tuning.fontFamily)
+            .putBoolean("tile_outline", tuning.outline)
             .apply()
     }
 

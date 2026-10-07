@@ -14,6 +14,7 @@
     <string name="tile_font">Label font</string>
     <string name="tile_font_launcher">Launcher\'s (%1$s)</string>
     <string name="tile_font_system">system default</string>
+    <string name="tile_outline">Outline the widget\'s area</string>
     <string name="tile_reset">Reset tile</string>
     <string name="refresh_note">Refreshes automatically every few minutes; tap the refresh icon for an immediate check.</string>
     <string name="status_drc_on">DRC ON</string>

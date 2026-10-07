@@ -198,6 +198,7 @@ object RemoteViewsBuilder {
      *  the layout's fixed, centered icon applies, with a default label. */
     private fun layoutTiny(context: Context, views: RemoteViews, appWidgetId: Int) {
         val tuning = WidgetPrefs.loadTileTuning(context, appWidgetId)
+        views.setInt(R.id.widget_root, "setBackgroundResource", if (tuning.outline) R.drawable.widget_outline else 0)
         val typeface = labelTypeface(context, tuning)
         val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
         val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).toFloat()

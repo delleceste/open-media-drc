@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.SeekBar
 import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import it.giacomos.omdrc.app.work.WidgetRefreshWorker
@@ -101,6 +102,7 @@ class WidgetConfigureActivity : Activity() {
         val offsetLabel = findViewById<TextView>(R.id.offset_label)
         val offsetSeek = findViewById<SeekBar>(R.id.offset_seek)
         val fontSpinner = findViewById<Spinner>(R.id.font_spinner)
+        val outlineSwitch = findViewById<Switch>(R.id.outline_switch)
 
         iconSeek.max = ICON_MAX_PERCENT - ICON_MIN_PERCENT
         labelSeek.max = LABEL_MAX_PERCENT - LABEL_MIN_PERCENT
@@ -140,6 +142,7 @@ class WidgetConfigureActivity : Activity() {
             iconLabel.text = getString(R.string.tile_icon_size, (tuning.iconScale * 100).roundToInt())
             labelLabel.text = getString(R.string.tile_label_size, (tuning.labelScale * 100).roundToInt())
             offsetLabel.text = getString(R.string.tile_offset, tuning.offsetDp)
+            outlineSwitch.isChecked = tuning.outline
         }
 
         fun apply(changed: TileTuning) {
@@ -176,7 +179,8 @@ class WidgetConfigureActivity : Activity() {
 
             override fun onNothingSelected(parent: AdapterView<*>) {}
         }
-        findViewById<Button>(R.id.tile_reset_button).setOnClickListener { apply(TileTuning()) }
+        outlineSwitch.setOnCheckedChangeListener { _, checked -> apply(tuning.copy(outline = checked)) }
+        findViewById<Button>(R.id.tile_reset_button).setOnClickListener { apply(TileTuning(outline = tuning.outline)) }
     }
 
     /** "google-sans-text" -> "Google Sans Text". */

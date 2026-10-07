@@ -107,6 +107,15 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp" />
 
+                <Switch
+                    android:id="@+id/outline_switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/tile_outline"
+                    android:textColor="@color/widget_text_primary"
+                    android:textSize="14sp" />
+
                 <Button
                     android:id="@+id/tile_reset_button"
                     style="?android:attr/borderlessButtonStyle"

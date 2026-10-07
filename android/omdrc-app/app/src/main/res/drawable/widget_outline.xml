@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The 1x1 tile's whole drawable area, outlined while calibrating it
+     against the launcher's icons (TileTuning.outline). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@android:color/transparent" />
+    <stroke
+        android:width="1px"
+        android:color="#FFFF00FF" />
+</shape>
