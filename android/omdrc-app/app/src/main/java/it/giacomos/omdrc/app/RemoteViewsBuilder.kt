@@ -508,9 +508,24 @@ object RemoteViewsBuilder {
         val badge = stripBitmap(context, typeface, capDp, text, color)
         views.setImageViewBitmap(viewId, badge.bitmap)
         views.setViewVisibility(viewId, View.VISIBLE)
-        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_TOP, top - margin - badge.text.bottom, dip)
-        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_START, sideMargin, dip)
-        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_END, sideMargin, dip)
+        val badgeTop = top - margin - badge.text.bottom
+        // The launcher rounds a widget's corners and clips what's drawn
+        // there: keep the badge's outer top corner inside that curve.
+        val radius = cornerRadiusDp(context)
+        val rise = radius - badgeTop.coerceIn(0f, radius)
+        val inset = radius - kotlin.math.sqrt((radius * radius - rise * rise).coerceAtLeast(0f))
+        val side = maxOf(sideMargin, inset)
+        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_TOP, badgeTop, dip)
+        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_START, side, dip)
+        views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_END, side, dip)
+    }
+
+    /** The radius, in dp, the launcher rounds a widget's corners with. */
+    private fun cornerRadiusDp(context: Context): Float {
+        val res = context.resources
+        val id = res.getIdentifier("system_app_widget_background_radius", "dimen", "android")
+        val dp = if (id != 0) res.getDimension(id) / res.displayMetrics.density else 0f
+        return maxOf(dp, 24f)
     }
 
     /** text: the text's ink bounds in dp, across from the bitmap's center

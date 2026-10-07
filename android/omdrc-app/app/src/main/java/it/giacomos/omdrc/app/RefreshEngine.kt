@@ -129,10 +129,14 @@ object RefreshEngine {
         val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
         val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0)
         return when {
-            // A single cell is narrower than tall on the launcher's grids
-            // (79x127dp at 5 columns, 128x174dp at 3), a 2x1 strip wider -
-            // a fixed dp threshold misfires as the grid's cells grow.
-            width < 70 || width < height -> WidgetSize.TINY
+            // One cell is narrower than tall on the launcher's grids
+            // (62x96dp at 5 columns, 79x127, 128x174 at 3), and a 1x2 or
+            // 2x2 is the old text widget: a single cell is told apart by
+            // being narrow and not much taller than it is wide.
+            width < 135 && height < 1.9f * width -> WidgetSize.TINY
+            // Big and tall (3x3): the same tile, scaled up.
+            width >= 190 && height >= 250 && width <= height -> WidgetSize.TINY
+            // Wide and at least two rows: the media widget.
             width >= 250 && height >= MEDIA_MIN_HEIGHT_DP -> WidgetSize.MEDIA
             width >= 250 -> WidgetSize.LARGE
             else -> WidgetSize.SMALL
