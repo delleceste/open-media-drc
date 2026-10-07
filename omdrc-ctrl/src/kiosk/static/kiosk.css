@@ -1231,10 +1231,10 @@ html[data-embed] #pager { grid-row: 1; }
    edge of the screen (negative margin + matching sticky offset), so nothing of the view beneath shows below it.
    With the minimized listening guide present (--ls-h, measured) it rides directly above that strip instead. */
 :root { --dock-gap: max(.6rem, env(safe-area-inset-bottom)); }
-.qz-player { margin-inline: -.8rem; margin-bottom: calc(-1 * var(--dock-gap)); bottom: var(--dock-gap);
+.qz-player { margin-inline: -.8rem; margin-bottom: calc(-1 * var(--dock-gap)); bottom: calc(-1 * var(--dock-gap));
     padding: .6rem 1.4rem calc(.4rem + var(--dock-gap)); border-width: 1px 0 0; border-radius: .8rem .8rem 0 0;
     background: var(--surface); }
-html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--dock-gap) + var(--ls-h, 3.2rem)); padding-bottom: .4rem;
+html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 3.2rem) - var(--dock-gap)); padding-bottom: .4rem;
     margin-bottom: calc(-1 * var(--dock-gap)); border-radius: .8rem .8rem 0 0; }
 .listening-panel.collapsed { border-radius: .8rem .8rem 0 0; background: var(--surface); }
 
