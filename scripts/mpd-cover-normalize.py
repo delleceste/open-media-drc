@@ -39,6 +39,22 @@ def image_type(path: Path) -> str | None:
     return None
 
 
+def _is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError as error:
+        print(f"SKIP unreadable entry: {path}: {error}")
+        return False
+
+
+def _is_symlink(path: Path) -> bool:
+    try:
+        return path.is_symlink()
+    except OSError as error:
+        print(f"SKIP unreadable entry: {path}: {error}")
+        return True
+
+
 def contains_audio(directory: Path, names: list[str]) -> bool:
     return any(Path(name).suffix.lower() in AUDIO_SUFFIXES or Path(name).suffix.lower() == ".cue"
                for name in names)
@@ -67,30 +83,40 @@ def image_score(path: Path, album_dir: Path) -> tuple[int, int, str]:
 def candidates(album_dir: Path) -> list[Path]:
     found = []
     for directory in (album_dir, album_dir / "Artwork"):
-        if not directory.is_dir():
-            continue
         try:
+            if not directory.is_dir():
+                continue
             entries = list(directory.iterdir())
         except OSError:
+            print(f"SKIP unreadable artwork directory: {directory}")
             continue
         found.extend(path for path in entries
-                     if path.is_file() and not path.is_symlink()
+                     if _is_file(path) and not _is_symlink(path)
                      and path.suffix.lower() in IMAGE_SUFFIXES and image_type(path))
     return found
 
 
 def recognized_cover_exists(album_dir: Path) -> bool:
     try:
-        return any(path.is_file() and path.name in MPD_COVERS
+        return any(_is_file(path) and path.name in MPD_COVERS
                    for path in album_dir.iterdir())
     except OSError:
+        print(f"SKIP unreadable album directory: {album_dir}")
         return False
 
 
 def album_directories(root: Path):
-    for directory, subdirs, files in os.walk(root, followlinks=False):
+    def walk_error(error: OSError):
+        print(f"SKIP unreadable directory: {error.filename}: {error}")
+
+    for directory, subdirs, files in os.walk(root, topdown=True, onerror=walk_error, followlinks=False):
         base = Path(directory)
-        subdirs[:] = [name for name in subdirs if not (base / name).is_symlink()]
+        kept = []
+        for name in subdirs:
+            path = base / name
+            if not _is_symlink(path):
+                kept.append(name)
+        subdirs[:] = kept
         if contains_audio(base, files):
             yield base
 
