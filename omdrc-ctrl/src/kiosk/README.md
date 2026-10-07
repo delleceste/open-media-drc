@@ -204,8 +204,11 @@ to be pasted into a bug report as is.
   pollers in `show()` and closes them in `hide()`; the pager only calls `show()`
   once a swipe has settled.  Leaving *Now* closes both analyzer streams.  The DR
   estimate follows one remembered switch, **Estimate** on the DR page (on by default):
-  off hides the DR value and bar on Now and stops the stream.  The screensaver hides
-  the current page.
+  off hides the DR value and bar on Now and stops the stream.  The one exception
+  is the **DR log** (DR page), a server-side switch that keeps the meter running
+  with no page open to store every track's DR; the Audio chain always shows it
+  as its own *DR log* consumer of MPD's FIFO.  The screensaver hides the current
+  page.
 * **Nothing destructive on a bare tap.**  Reboot/power-off and any command marked
   `confirm = yes` in `commands.conf` ask first; filter/design switches and MPD
   restart confirm too.  Chain-rebuilding actions hold a modal spinner until the

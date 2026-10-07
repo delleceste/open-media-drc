@@ -1654,6 +1654,8 @@ P.row = (c, where = '') => {
         h('div', { class: 'qz-meta small' },
             h('span', {}, c.label || '—'), h('span', { class: 'muted' }, c.year || ''),
             quality(c) ? h('span', { class: 'chip ok' }, quality(c)) : null,
+            // the DR log's figure: exact, or ≈ from the tracks heard (widgets/dr.js)
+            K.drLogBadge ? K.drLogBadge(c.dr_log) : null,
             c.played ? h('span', { class: 'chip dim' }, `played ${c.played}×`) : null));
     const off = c.streamable === false;
     const local = c.source === 'local';
@@ -1698,7 +1700,8 @@ P.tile = (c, where = '') => {
             (c.awards && c.awards.length) || c.rating ? h('span', { class: 'qz-taward', title: 'Awarded' }, '🏆') : null,
             c.source === 'local' ? h('span', { class: 'qz-taward qz-local-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null,
             c.source === 'local' && c.dr != null ? h('span', { class: 'qz-tq qz-local-dr', title: 'Average dynamic range from dr14.txt' }, `DR${c.dr}`) : null,
-            quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null),
+            quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null,
+            K.drLogBadge ? K.drLogBadge(c.dr_log, 'qz-tdr') : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-tsub muted' }, c.artist || ''),
         sub ? h('div', { class: 'qz-tsub muted' }, sub) : null);

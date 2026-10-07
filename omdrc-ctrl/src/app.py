@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import collections
 import glob
 import hashlib
 import json
@@ -27,7 +28,9 @@ if os.path.dirname(__file__) not in sys.path:
 from configuration import ConfigurationManager, Settings as ConfigurationSettings
 from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 from audio_diagnostics import AudioDiagnosticsMonitor
-from drmeter import AlbumMeasurement, RollingEstimate
+from drmeter import AlbumMeasurement, RollingEstimate, blocks_dr, BLOCK_SECONDS as DR_BLOCK_SECONDS
+import dr_store
+from dr_store import DrStore, TrackWatch
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
 from drdb import identify as drdb_identify_version
 from drdb import release_year as drdb_release_year
@@ -1904,6 +1907,9 @@ class SpectrumAnalyzer:
         self.dr_history: list = []
         self.dr_revision = 0
         self._dr_json = (-1, "[]")     # history serialized once per revision
+        # The DR log's own listener (see _dr_log_apply): one of `dr_clients`,
+        # held for as long as the log is switched on, page or no page.
+        self.dr_log = False
         self.seq = 0
         self.frame = {
             "ok": False,
@@ -2182,6 +2188,7 @@ class SpectrumAnalyzer:
         source_started = False
         terminal_error = False
         switch_source = False
+        finish_track = None     # the DR log's, once the loop below has one
         # Whether the failure just published is worth another attempt shortly.
         # A producer that is restarting (MPD around a DRC-mode switch) fails to
         # attach for a second or two and then works again.
@@ -2371,13 +2378,49 @@ class SpectrumAnalyzer:
             dr_gap_marked = False
             dr_published_at = 0.0
             next_dr_song_check = 0.0
+            # The track playing (TrackWatch) and the tracks the window spans,
+            # for the bar's dividers: {"start", "end", "title", "dr",
+            # "complete", "seeks"} in absolute block numbers.
+            dr_watch: TrackWatch | None = None
+            dr_segments: collections.deque = collections.deque(maxlen=200)
+
+            def finish_track() -> None:
+                """The track playing has ended (another one started, or the
+                player stopped): close its segment and keep its row."""
+                nonlocal dr_watch
+                if dr_estimate is None or dr_watch is None:
+                    return
+                blocks = dr_estimate.take_track()
+                exact = blocks_dr(blocks)
+                result = dr_watch.result(exact, len(blocks), DR_BLOCK_SECONDS)
+                if dr_segments and dr_segments[-1]["end"] is None:
+                    dr_segments[-1].update(
+                        end=dr_estimate.total_blocks,
+                        dr=round(exact, 2) if exact is not None else None,
+                        complete=bool(result and result["complete"]),
+                        kept=result is not None)
+                if result is not None:
+                    _dr_store_track(dr_watch.song, result, method="live")
+                dr_watch = None
+
+            def start_track(song: dict, now_t: float) -> None:
+                nonlocal dr_watch
+                dr_watch = TrackWatch(song, now_t, dr_estimate.total_blocks)
+                dr_segments.append({
+                    "start": dr_estimate.total_blocks, "end": None,
+                    "title": song.get("title") or os.path.basename(song.get("file", "")),
+                    "dr": None, "complete": None, "kept": None, "seeks": []})
 
             def reset_dr() -> None:
                 nonlocal dr_estimate, dr_track_start_total, dr_gap_next_at, dr_gap_marked
+                nonlocal dr_watch
+                finish_track()
                 dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS, 5400)
                 dr_track_start_total = 0
                 dr_gap_next_at = 0.0
                 dr_gap_marked = False
+                dr_watch = None
+                dr_segments.clear()
                 dr_tail.clear()
                 with self.lock:
                     self.dr_state = {"state": "collecting", "dr": None,
@@ -2397,13 +2440,24 @@ class SpectrumAnalyzer:
                 dr_published_at = now_dr
                 result = dr_estimate.result()
                 age = max(0, dr_estimate.total_blocks - dr_track_start_total)
+                # The tracks inside the window, the one playing with its DR
+                # so far: the bar draws a divider at each start, a dashed one
+                # at each seek, and names the track a tapped segment is in.
+                oldest = dr_estimate.total_blocks - len(dr_estimate.blocks)
+                tracks = [dict(s) for s in dr_segments
+                          if s["end"] is None or s["end"] > oldest]
+                if tracks and tracks[-1]["end"] is None:
+                    exact = blocks_dr(dr_estimate.track)
+                    tracks[-1]["dr"] = round(exact, 2) if exact is not None else None
+                marks = {"total_blocks": dr_estimate.total_blocks, "tracks": tracks,
+                         "log": self.dr_log}
                 with self.lock:
                     self.dr_state = ({"state": "ready", **result,
                                       "track_age_blocks": age,
-                                      "playback_state": dr_playback_state} if result else
+                                      "playback_state": dr_playback_state, **marks} if result else
                                      {"state": "collecting", "dr": None,
                                       "seconds": 0, "track_age_blocks": age,
-                                      "playback_state": dr_playback_state})
+                                      "playback_state": dr_playback_state, **marks})
                     self.dr_history = dr_estimate.history()
                     self.dr_revision += 1
 
@@ -2549,8 +2603,23 @@ class SpectrumAnalyzer:
                                          song_file, song_id):
                         # Keep the shared ring intact; each browser decides
                         # whether to start its window at this boundary.
+                        finish_track()
                         dr_track_start_total = dr_estimate.mark_track_start()
                         dr_tail.clear()
+                        publish_dr()
+                    if dr_playback_state == "stop":
+                        # The end of the queue, or Stop: the last track is
+                        # over even though no other one followed it.
+                        if dr_watch is not None:
+                            finish_track()
+                            publish_dr()
+                    elif song_file and dr_watch is None:
+                        start_track(song, now)
+                    elif dr_watch is not None and dr_watch.observe(
+                            song, now, dr_estimate.total_blocks):
+                        # A seek inside the track: its DR still counts as an
+                        # estimate, but it can no longer be a whole hearing.
+                        dr_segments[-1]["seeks"].append(dr_estimate.total_blocks)
                         publish_dr()
                     if song_file:
                         dr_song_file = song_file
@@ -2744,6 +2813,13 @@ class SpectrumAnalyzer:
                     },
                 })
         finally:
+            if finish_track is not None:
+                # Whatever ends the attachment, a track heard long enough is
+                # still worth its row.
+                try:
+                    finish_track()
+                except Exception:                       # noqa: BLE001
+                    pass
             if reader_stop is not None:
                 reader_stop.set()
             if reader_thread is not None:
@@ -5050,6 +5126,243 @@ def drdb_search():
         return jsonify({"ok": False, "error": str(error)}), 502
 
 
+# ── The DR log: album DR remembered across listening ───────────────────────
+#
+# Every track the live meter hears for long enough is kept (dr_store.py), with
+# whether it was heard whole; the albums those tracks belong to are ranked on
+# the DR page and badged in search.  The live meter normally runs only while a
+# page shows DR; the log is the switch that keeps it running regardless, as a
+# listener of its own on the analyzer, persisted across restarts.  The audio
+# chain draws it as a consumer of MPD's FIFO output of its own ("DR log"), so
+# that output being on with no page open is never a mystery.
+
+_DR_STORE = DrStore(os.path.join(_STATE_DIR, dr_store.DB_FILE))
+_DR_LOG_FILE = os.path.join(_STATE_DIR, "dr-log")
+_DR_LOG_LOCK = threading.Lock()
+_DR_STORE_QUEUE: queue.Queue = queue.Queue(maxsize=500)
+_DR_STORE_WORKER: threading.Thread | None = None
+_DR_QOBUZ_TRACK = re.compile(r"/qobuz/track/(?:version/\d+/trackId/)?(\d+)")
+_DR_IMPORT = {"running": False, "at": 0.0, "result": None, "error": ""}
+_DR_IMPORT_LOCK = threading.Lock()
+
+
+def _dr_log_enabled() -> bool:
+    return _read_state_str(_DR_LOG_FILE) == "on"
+
+
+def _dr_log_apply() -> bool:
+    """Hold or let go of the log's analyzer listener to match the switch.
+    Returns whether the log is listening now."""
+    want = SPECTRUM_ENABLED and _dr_log_enabled()
+    with _DR_LOG_LOCK:
+        if want and not _SPECTRUM.dr_log:
+            _SPECTRUM.dr_log = True
+            _SPECTRUM.acquire("dr")
+        elif not want and _SPECTRUM.dr_log:
+            _SPECTRUM.dr_log = False
+            _SPECTRUM.release(wants_bands=False, wants_dr=True)
+        return _SPECTRUM.dr_log
+
+
+def _dr_album_for(song: dict) -> dict | None:
+    """Which album a played track belongs to, as the store keys it:
+    {"key", "source", "ref", "meta", "track_key", "number"}, or None for a
+    track that belongs to no album that can be named."""
+    file = song.get("file") or ""
+    number = song.get("track_no") if isinstance(song.get("track_no"), int) else None
+    title = song.get("album") or ""
+    artist = song.get("album_artist") or song.get("artist") or ""
+    year = drdb_release_year(song.get("date")) if song.get("date") else None
+    match = _DR_QOBUZ_TRACK.search(file) if "://" in file else None
+    if match:
+        try:
+            import qobuz_web
+            track = qobuz_web.catalog().track(match.group(1))
+            card = track["album"]
+            if card.get("id"):
+                return {"key": "qobuz:" + card["id"], "source": "qobuz", "ref": card["id"],
+                        "meta": {"title": card.get("title"), "artist": card.get("artist"),
+                                 "year": card.get("year"), "label": card.get("label"),
+                                 "genre": card.get("genre"),
+                                 "image": card.get("image_large") or card.get("image"),
+                                 "track_count": card.get("tracks")},
+                        "track_key": match.group(1), "number": number}
+        except Exception:                               # noqa: BLE001
+            pass        # no sign-in, no network: the tags still name it
+    elif file and "://" not in file and not file.startswith("/"):
+        import mpd_library
+        folder = mpd_library.album_folder(file)
+        root = _resolve_mpd_music_directory()
+        # one image and a cue sheet: the files do not say how many tracks
+        count = (dr_store.audio_files(os.path.join(root, folder))
+                 if root and not mpd_library.is_cue_track(file) else 0)
+        parts = [p for p in folder.split("/") if p]
+        return {"key": "local:" + folder, "source": "local", "ref": folder,
+                "meta": {"title": title or (parts[-1] if parts else ""),
+                         "artist": artist, "year": year, "track_count": count or None},
+                "track_key": os.path.basename(file), "number": number}
+    if not title:
+        return None
+    return {"key": dr_store.tags_key(artist, title), "source": "stream", "ref": "",
+            "meta": {"title": title, "artist": artist, "year": year},
+            "track_key": file or f"{number}:{song.get('title', '')}", "number": number}
+
+
+def _dr_store_worker() -> None:
+    while True:
+        item = _DR_STORE_QUEUE.get()
+        try:
+            album = _dr_album_for(item["song"])
+            if album is None:
+                continue
+            _DR_STORE.upsert_album(album["key"], album["source"], album["ref"], **album["meta"])
+            result = item["result"]
+            _DR_STORE.record_track(
+                album["key"], album["track_key"], dr=result["dr"],
+                dr_exact=result["dr_exact"], seconds=result["seconds"],
+                duration=result.get("duration"), complete=result["complete"],
+                method=item["method"], number=album["number"],
+                title=item["song"].get("title") or "")
+        except Exception as error:                      # noqa: BLE001
+            print(f"DR log: could not store a track: {error}", file=sys.stderr)
+
+
+def _dr_store_track(song: dict, result: dict, method: str) -> None:
+    """Hand one track's DR to the writer; resolving its album may need Qobuz,
+    which the analyzer loop must never wait for."""
+    global _DR_STORE_WORKER
+    if _DR_STORE_WORKER is None or not _DR_STORE_WORKER.is_alive():
+        _DR_STORE_WORKER = threading.Thread(target=_dr_store_worker, name="dr-store",
+                                            daemon=True)
+        _DR_STORE_WORKER.start()
+    try:
+        _DR_STORE_QUEUE.put_nowait({"song": dict(song), "result": dict(result),
+                                    "method": method})
+    except queue.Full:
+        pass
+
+
+def _dr_describe_folder(rel: str) -> dict:
+    """The album's names and track count from the tags MPD indexed for the
+    tracks in this folder -- including the tracks of a cue sheet, which MPD
+    expands from one image file -- not from the folder's name."""
+    import mpd_library
+    sock = mpd_library._connect()
+    try:
+        rows = mpd_library._command(sock, "find base " + mpd_library._quote(rel))
+    finally:
+        sock.close()
+    # `find base` is recursive: a CD1/CD2 subfolder is an album of its own
+    rows = [r for r in rows if mpd_library.album_folder(r.get("file", "")) == rel]
+    if not rows:
+        return {}
+    tagged = [{k.casefold(): v for k, v in r.items()} for r in rows]
+    tags = next((t for t in tagged if t.get("album")), tagged[0])
+    return {"title": tags.get("album"),
+            "artist": tags.get("albumartist") or tags.get("artist"),
+            "year": drdb_release_year(tags.get("date")) if tags.get("date") else None,
+            "genre": tags.get("genre"), "label": tags.get("label"),
+            "track_count": len(rows)}
+
+
+def _dr_import_run() -> None:
+    try:
+        root = _resolve_mpd_music_directory()
+        if not root or not os.path.isdir(root):
+            raise RuntimeError("MPD's music_directory is not available")
+        result = _DR_STORE.import_reports(root, describe=_dr_describe_folder)
+        with _DR_IMPORT_LOCK:
+            _DR_IMPORT.update(result=result, error="")
+    except Exception as error:                          # noqa: BLE001
+        with _DR_IMPORT_LOCK:
+            _DR_IMPORT["error"] = str(error)
+    finally:
+        with _DR_IMPORT_LOCK:
+            _DR_IMPORT.update(running=False, at=time.time())
+
+
+def _dr_import_start() -> bool:
+    """Bring the collection's dr14.txt reports in, in the background."""
+    with _DR_IMPORT_LOCK:
+        if _DR_IMPORT["running"]:
+            return False
+        _DR_IMPORT["running"] = True
+    threading.Thread(target=_dr_import_run, name="dr-import", daemon=True).start()
+    return True
+
+
+def _dr_import_watch() -> None:
+    """Import once after startup, then again whenever a DR14 scan finishes."""
+    import local_db
+    time.sleep(20)
+    _dr_import_start()
+    while True:
+        time.sleep(60)
+        scan = local_db.scan_status(_STATE_DIR)
+        if scan.get("state") == "done" and scan.get("at", 0) > _DR_IMPORT["at"]:
+            _dr_import_start()
+
+
+@app.route("/dr/log", methods=["GET", "POST"])
+def dr_log():
+    """The DR log switch: GET its state, POST {"enabled": bool}."""
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body.get("enabled"), bool):
+            return jsonify({"ok": False, "error": "enabled must be true or false"}), 400
+        if body["enabled"] and not SPECTRUM_ENABLED:
+            return jsonify({"ok": False, "error":
+                            "the analyzer is disabled in commands.conf ([spectrum])"}), 409
+        _write_state_str(_DR_LOG_FILE, "on" if body["enabled"] else "off")
+    listening = _dr_log_apply()
+    with _SPECTRUM.lock:
+        source = _SPECTRUM.source_name
+    return jsonify({"ok": True, "enabled": _dr_log_enabled(), "listening": listening,
+                    "source": source, "available": SPECTRUM_ENABLED,
+                    "store": _DR_STORE.stats()})
+
+
+@app.route("/dr/library")
+def dr_library():
+    """?source=qobuz|local|stream &exact=1 &q=text &limit= &offset="""
+    try:
+        limit = max(1, min(500, int(request.args.get("limit", 200))))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        return jsonify({"ok": False, "error": "bad limit or offset"}), 400
+    exact = request.args.get("exact", "0").lower() in ("1", "true", "yes")
+    answer = _DR_STORE.ranking(source=request.args.get("source", ""), exact_only=exact,
+                               text=request.args.get("q", "")[:200], limit=limit,
+                               offset=offset)
+    with _DR_IMPORT_LOCK:
+        imported = dict(_DR_IMPORT)
+    return jsonify({"ok": True, **answer, "import": imported})
+
+
+@app.route("/dr/library/album")
+def dr_library_album():
+    album = _DR_STORE.album(request.args.get("key", ""))
+    if album is None:
+        return jsonify({"ok": False, "error": "unknown album"}), 404
+    return jsonify({"ok": True, "album": album})
+
+
+@app.route("/dr/library/current")
+def dr_library_current():
+    """The stored figure of the album playing now, if it has one."""
+    song = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+    album = _dr_album_for(song) if song.get("file") else None
+    stored = _DR_STORE.album(album["key"]) if album else None
+    return jsonify({"ok": True, "key": album["key"] if album else None,
+                    "album": stored})
+
+
+@app.route("/dr/library/import", methods=["POST"])
+def dr_library_import():
+    started = _dr_import_start()
+    return jsonify({"ok": True, "started": started})
+
+
 # ── Measuring the DR of what is playing ─────────────────────────────────────
 #
 # The DR versions page reports what other people's copies measure; this
@@ -5240,7 +5553,23 @@ def dr_measure_start():
             album=_drdb_plain(playing["album"]) or playing["album"],
             artist="", tracks=tracks, download=_drmeter_download,
             measure=_drmeter_measure, workdir_parent=DRMETER_WORKDIR)
-        threading.Thread(target=_DR_JOB.run, name="drmeter", daemon=True).start()
+        job = _DR_JOB
+
+        def run_and_keep() -> None:
+            job.run()
+            # Every file measured whole: the album becomes exact in the log
+            # once all of its tracks are in.
+            for track, measured in zip(tracks, job.state()["tracks"]):
+                if measured["status"] != "done" or measured["dr"] is None:
+                    continue
+                _dr_store_track(
+                    {"file": track["url"], "title": measured["title"],
+                     "album": playing["album"], "track_no": track["track"]},
+                    {"dr": measured["dr"], "dr_exact": measured["dr_exact"],
+                     "seconds": float(measured.get("seconds") or 0.0),
+                     "duration": None, "complete": True}, method="measured")
+
+        threading.Thread(target=run_and_keep, name="drmeter", daemon=True).start()
         return jsonify({"ok": True, "job": _DR_JOB.state()})
 
 
@@ -7069,7 +7398,11 @@ def _chain_status() -> dict:
             listeners = _SPECTRUM.clients
             spectrum_listeners = _SPECTRUM.band_clients
             dr_listeners = _SPECTRUM.dr_clients
+            dr_log = _SPECTRUM.dr_log
         level_listeners = max(0, listeners - spectrum_listeners - dr_listeners)
+        # The log is one of the DR listeners, but not a page: it is drawn on
+        # its own, so the FIFO output on with no screen open is explained.
+        page_dr_listeners = dr_listeners - (1 if dr_log else 0)
         fifo_node = {
             "id": "spectrum:fifo", "kind": "fifo", "title": "FIFO",
             "sub": SPECTRUM_OUTPUT_NAME,
@@ -7077,8 +7410,8 @@ def _chain_status() -> dict:
         }
         for name, count in (("SPECTRUM", spectrum_listeners),
                             ("LEVEL", level_listeners),
-                            ("DR calc", dr_listeners)):
-            if count:
+                            ("DR calc", page_dr_listeners)):
+            if count > 0:
                 fifo_consumers.append({
                     "id": f"spectrum:{name.lower().replace(' ', '-')}",
                     "kind": "fifo-consumer", "title": name,
@@ -7086,6 +7419,13 @@ def _chain_status() -> dict:
                     "sub": f"{count} listener{'s' if count != 1 else ''}",
                     "active": bool(mpd_node["active"]),
                 })
+        if dr_log:
+            fifo_consumers.append({
+                "id": "spectrum:dr-log", "kind": "fifo-consumer", "title": "DR log",
+                "listeners": 1, "log": True,
+                "sub": "always on · keeps the FIFO output enabled",
+                "active": bool(mpd_node["active"]),
+            })
 
     # Anything downstream is carrying audio exactly when some source is.  An
     # unexpected holder counts as producing: we cannot ask it, and a squatter
@@ -7276,8 +7616,22 @@ def _chain_status() -> dict:
         "devices": [devices[r] for r in _CHAIN_ROLES if r in devices],
         "input": capture_node,
         "output": dac_node,
+        # Shown in every case, not only when the FIFO branch is drawn: a log
+        # that is on but cannot hear anything has to say so.
+        "dr_log": {"enabled": _dr_log_enabled(), "listening": _SPECTRUM.dr_log,
+                   "source": _SPECTRUM.source_name,
+                   "drawn": any(c.get("log") for c in fifo_consumers)},
     }
     status["problems"] = _chain_problems(status, bridge_node, filters, sources)
+    log = status["dr_log"]
+    if log["enabled"] and not log["drawn"]:
+        why = ("the analyzer is disabled in commands.conf" if not SPECTRUM_ENABLED
+               else "the analyzer is on the CD input, where DR is not measured"
+               if log["source"] == "cdin"
+               else "MPD's FIFO output is not enabled yet" if mpd_node is not None
+               else "MPD is not running")
+        status["problems"].append({"severity": "info",
+                                   "text": f"DR log is on but not measuring: {why}"})
     status["summary"] = _chain_summary(status, sources, filters)
     return status
 
@@ -9388,6 +9742,7 @@ try:
                        queue_tail=kiosk.queue_tail, move_to_end=kiosk.move_to_end,
                        music_directory=_resolve_mpd_music_directory,
                        music_config=_mpd_music_config)
+    qobuz_web.set_dr_lookup(_DR_STORE.lookup)
 except Exception as _qobuz_web_error:           # pragma: no cover
     print(f"Qobuz search unavailable: {_qobuz_web_error}", file=sys.stderr)
 
@@ -9422,6 +9777,10 @@ if __name__ == "__main__":
     # Make sure the spectrum FIFO output is off until Start is pressed, even if
     # a previous run was killed mid-stream.
     _SPECTRUM.ensure_disabled()
+    # The DR log, if it was left on, listens again from the start; and the
+    # collection's dr14.txt reports are brought into its album list.
+    _dr_log_apply()
+    threading.Thread(target=_dr_import_watch, name="dr-import-watch", daemon=True).start()
     if platform.system() == "FreeBSD":
         _audio_diagnostics().start()
     app.run(host=args.host, port=args.port, threaded=True,

@@ -1,0 +1,51 @@
+/* Run with node tests/test_dr_bar_tracks.js.  The DR bar stays continuous
+ * across tracks but never lets a segment straddle a track start or a seek. */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+
+const h = (tag, attrs, ...kids) => ({ tag, attrs: attrs || {}, kids: kids.flat() });
+let painted = [];
+const host = {
+    clientWidth: 2000, classList: { toggle() {} }, addEventListener() {},
+    append: (...cells) => { painted = cells; },
+};
+const K = {
+    h, clamp: (v, a, b) => Math.min(b, Math.max(a, v)), clear: el => el,
+    pref: (_k, d) => d, setPref() {}, streams: { open: () => ({ close() {} }) },
+};
+const context = { K, ResizeObserver: class { observe() {} disconnect() {} }, Math };
+vm.createContext(context);
+vm.runInContext(fs.readFileSync('omdrc-ctrl/src/kiosk/static/widgets/dr.js', 'utf8'), context);
+
+const loud = [[0.1, 0.1], [0.9, 0.9]];
+const blocks = Array.from({ length: 20 }, () => loud);
+const bar = new K.DrBar(host);
+// 20 blocks, the oldest is block 100; a track starts at 110 with a seek at 115
+bar.render(blocks, 60, { origin: 100, tracks: [
+    { start: 90, end: 110, title: 'One', dr: 9.4, complete: true, kept: true, seeks: [] },
+    { start: 110, end: null, title: 'Two', dr: 7.1, complete: null, kept: null, seeks: [115] },
+] });
+const cls = painted.map(c => c.attrs.class);
+const at = name => painted.findIndex(c => c.attrs.class.includes(name));
+assert.equal(cls.filter(c => c.includes('cut-track')).length, 1);
+assert.equal(cls.filter(c => c.includes('cut-seek')).length, 1);
+assert.ok(at('cut-track') < at('cut-seek'));
+// a segment names its track and that track's DR
+assert.match(painted[0].attrs.title, /One: track DR9\.4 \(heard whole\)/);
+assert.match(painted[painted.length - 1].attrs.title, /Two: track DR7\.1 \(so far\)/);
+
+// without marks the bar is what it always was: no cuts
+bar.render(blocks, 60);
+assert.ok(painted.every(c => !/cut-/.test(c.attrs.class)));
+
+// the stored-figure badge: exact solid, estimate with ≈
+const exact = K.drLogBadge({ dr: 12, kind: 'exact', basis: 'report', heard: 0 });
+assert.equal(exact.kids[0], 'DR12');
+assert.match(exact.attrs.title, /dr14\.txt/);
+const est = K.drLogBadge({ dr: 9, kind: 'estimate', basis: 'listened', heard: 3, track_count: 11 });
+assert.equal(est.kids[0], '≈DR9');
+assert.match(est.attrs.class, /est/);
+assert.match(est.attrs.title, /3 of 11 tracks heard/);
+assert.equal(K.drLogBadge(null), null);
+console.log('ok');

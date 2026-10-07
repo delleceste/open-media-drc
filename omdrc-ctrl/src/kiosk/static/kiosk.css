@@ -1249,3 +1249,32 @@ html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 3.2
 
 .listening-panel { border-radius: .8rem .8rem 0 0; }
 .listening-panel.collapsed { touch-action: none; }
+
+/* ── DR log: stored album figures, the ranking, the bar's track dividers ───── */
+.drlog { display: inline-flex; align-items: center; min-height: 1.4rem; padding: 0 .4rem; border-radius: .35rem;
+    border: 2px solid transparent; font: 700 .78rem ui-monospace, monospace; white-space: nowrap; }
+.drlog.est { border-style: dashed; background: var(--surface2); color: var(--text); }
+.drlog.none { border-color: var(--border); color: var(--muted); }
+.drlog.big { min-width: 3.6rem; justify-content: center; font-size: .95rem; min-height: 1.9rem; }
+.qz-tdr { position: absolute; top: .25rem; right: .25rem; font-size: .66rem; min-height: 1.1rem; padding: 0 .25rem; }
+.qz-tdr.est { background: rgba(0,0,0,.6); color: #fff; }
+.drlog-now { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: .4rem 0; }
+.dr-status.warn { color: var(--warn-text); }
+.drrank-q { width: 100%; margin-bottom: .4rem; }
+.drrank-chips { flex-wrap: wrap; gap: .3rem; margin-bottom: .5rem; }
+.drrank { display: flex; flex-direction: column; gap: .3rem; max-height: 60vh; overflow-y: auto; }
+.drrank-row { border: 1px solid var(--border); border-radius: .45rem; background: var(--surface2); }
+.drrank-head { display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem; }
+.drrank-n { min-width: 1.6rem; text-align: right; font-variant-numeric: tabular-nums; font-size: .75rem; }
+.drrank-cover { width: 2.6rem; height: 2.6rem; flex: 0 0 auto; border-radius: .25rem; object-fit: cover; background: var(--deep); }
+.drrank-body { flex: 1; min-width: 0; }
+.drrank-title { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drrank-body .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drrank-tracks { padding: .2rem .6rem .5rem 2.4rem; display: flex; flex-direction: column; gap: .2rem; }
+.drrank-track { display: flex; align-items: center; gap: .5rem; font-size: .82rem; }
+.drrank-track > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dr-bar > span.cut-track { box-shadow: inset 2px 0 0 var(--text); }
+.dr-bar > span.cut-seek { box-shadow: inset 2px 0 0 transparent; background-image: linear-gradient(var(--text) 50%, transparent 0); background-size: 2px 6px; background-repeat: repeat-y; }
+.cf-consumer.log { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.cf-branch.live .cf-consumer.log { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 700px) { .drrank-tracks { padding-left: .6rem; } }

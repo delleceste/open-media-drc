@@ -1,6 +1,7 @@
 /* Page 3 — Dynamic range tools: the rolling estimate of what is playing (off
  * until you turn it on, and only computed while this page is showing it), the
- * measurement of the whole record on the wire, and the DR database lookup. */
+ * measurement of the whole record on the wire, the DR database lookup, and the
+ * DR log: the server keeping every track's DR, with the albums ranked. */
 (() => {
 'use strict';
 const { h } = K;
@@ -13,7 +14,8 @@ const badge = (v, big, tip) => h('span', {
     title: tip || null, style: v === null || v === undefined ? {} : { background: badgeColor(v) },
 }, v === null || v === undefined ? '–' : String(v).padStart(2, '0'));
 
-const P = { id: 'dr', label: 'DR', title: 'Dynamic range', on: false, sub: null, job: null, jobTimer: null };
+const P = { id: 'dr', label: 'DR', title: 'Dynamic range', on: false, sub: null, job: null, jobTimer: null,
+    log: null, logTimer: null, rank: { source: '', exact: false, q: '' }, rankOpen: new Set(), rankSeq: 0 };
 
 P.mount = el => {
     P.el = el;
@@ -38,7 +40,7 @@ P.mount = el => {
     P.estBody.hidden = true;
     const note = (title, ...text) => h('div', { class: 'explain' }, h('strong', {}, title + ' '), ...text);
     const estCard = K.card('Estimate', P.toggle,
-        note('What it is.', 'A live figure for what is playing now: the dynamic range of the last few minutes, worked out in 3-second blocks. The bar below is the same estimate you see on Now: each segment is a slice of the window (its height is how loud it was, its number is its DR, red = compressed to green = dynamic). Turning it off also hides the DR value and bar on the Now page, and nothing is computed.'),
+        note('What it is.', 'A live figure for what is playing now: the dynamic range of the last few minutes, worked out in 3-second blocks. The bar below is the same estimate you see on Now: each segment is a slice of the window (its height is how loud it was, its number is its DR, red = compressed to green = dynamic). Turning it off also hides the DR value and bar on the Now page, and nothing is computed for them (the DR log below runs on its own).'),
         P.estBody);
 
     // measurement card
@@ -51,7 +53,24 @@ P.mount = el => {
         note('Compare.', 'Looks this record up in the Dynamic Range database and lists its other masters and pressings with their published DR, so you can see whether another edition has more dynamics than the one you are playing.'),
         P.measBody);
 
-    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, estCard), h('div', { class: 'col' }, measCard)));
+    // the DR log: one switch, kept on the server
+    P.logBtn = h('button', { class: 'btn big-toggle', type: 'button', role: 'switch', 'aria-checked': 'false', onclick: () => P.logSet(!(P.log && P.log.enabled)) }, 'DR log');
+    P.logState = h('div', { class: 'dr-status' }, 'reading…');
+    P.logAlbum = h('div', { class: 'drlog-now' });
+    const logCard = K.card('DR log', P.logBtn, P.logState, P.logAlbum,
+        note('What it is.', 'Keeps the DR of every track played, on the server, whether or not any page is open, and puts together each album’s figure: exact once every track has been heard whole (over as many sessions as it takes), an estimate (≈) from the tracks heard so far, at least two minutes of them. A seek or a late start makes a track count towards the estimate only. Local albums with a dr14.txt use its value.'),
+        note('Cost.', 'While on, MPD’s analyzer FIFO output stays enabled and the server reads it continuously — no FFT, only DR blocks. The Audio chain shows it as “DR log” under MPD’s FIFO. Independent of the Estimate switch.'));
+
+    // the ranking
+    P.rankQ = h('input', { type: 'search', class: 'drrank-q', placeholder: 'Filter: artist, album, label…', oninput: () => { clearTimeout(P.rankTimer); P.rankTimer = setTimeout(() => { P.rank.q = P.rankQ.value.trim(); P.rankLoad(); }, 300); } });
+    P.rankChips = h('div', { class: 'btn-row drrank-chips' });
+    P.rankList = h('div', { class: 'drrank' });
+    P.rankFoot = h('div', { class: 'muted small' });
+    const rankCard = K.card('Albums by dynamic range', P.rankQ, P.rankChips, P.rankList, P.rankFoot,
+        K.cardOpts({ actions: h('button', { class: 'btn', type: 'button', title: 'Read the local collection’s dr14.txt files again', onclick: () => P.rankImport() }, 'Rescan dr14.txt') }));
+    P.paintChips();
+
+    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, estCard, logCard), h('div', { class: 'col' }, measCard, rankCard)));
     P.paintWin();
     P.setOn(K.pref('now.dr', true));      // already running for the Now page: show it here too
 };
@@ -91,7 +110,7 @@ P.paint = E => {
     P.value.style.color = s.value === null ? '' : K.dr.color(s.value).bg;
     P.status.textContent = s.status;
     P.gauge.set(s.value);
-    P.bar.render(E.selected(), E.windowSeconds);
+    P.bar.render(E.selected(), E.windowSeconds, E.marks());
 };
 
 // ── measurement ──────────────────────────────────────────────────────────────
@@ -137,8 +156,110 @@ P.measStart = async () => {
 };
 P.measCancel = async () => { await K.api('/dr/measure/cancel', { method: 'POST' }); P.measPoll(); };
 
-P.show = () => { P.visible = true; P.setOn(K.pref('now.dr', true)); P.measPoll(); };
-P.hide = () => { P.visible = false; P.sync(); clearTimeout(P.jobTimer); };
+// ── the DR log ───────────────────────────────────────────────────────────────
+P.logPaint = d => {
+    P.log = d && d.ok ? d : null;
+    const on = !!(P.log && P.log.enabled);
+    P.logBtn.classList.toggle('active', on);
+    P.logBtn.setAttribute('aria-checked', String(on));
+    P.logBtn.textContent = on ? 'DR log — on (tap to turn off)' : 'DR log — off (tap to turn on)';
+    if (!P.log) { P.logState.textContent = d ? (d.error || 'unavailable') : 'reading…'; return; }
+    const st = P.log.store || {};
+    const stored = `${st.albums || 0} album${st.albums === 1 ? '' : 's'} · ${st.tracks || 0} track${st.tracks === 1 ? '' : 's'} stored`;
+    P.logState.textContent = !P.log.available ? 'Unavailable: the analyzer is disabled in commands.conf'
+        : on && !P.log.listening ? `On, but not listening yet · ${stored}`
+        : on ? `On — measuring every track played · ${stored}` : `Off · ${stored}`;
+    P.logState.classList.toggle('warn', on && !P.log.listening);
+};
+
+P.logPoll = async () => {
+    clearTimeout(P.logTimer);
+    if (!P.visible) return;
+    const [d, cur] = await Promise.all([K.api('/dr/log'), K.api('/dr/library/current')]);
+    P.logPaint(d);
+    P.curPaint(cur);
+    if (P.visible) P.logTimer = setTimeout(P.logPoll, 15000);
+};
+
+P.logSet = async on => {
+    const d = await K.api('/dr/log', { json: { enabled: on } });
+    if (!d.ok) { K.toast(d.error || 'cannot switch the DR log', 'error'); return; }
+    P.logPaint(d);
+    K.toast(on ? 'DR log on' : 'DR log off');
+};
+
+// The album playing, as the log knows it so far.
+P.curPaint = d => {
+    const a = d && d.ok ? d.album : null;
+    if (!a) { K.clear(P.logAlbum).append(h('span', { class: 'muted small' }, d && d.ok && d.key ? 'Album playing: nothing stored yet' : '')); return; }
+    const s = a.dr;
+    K.clear(P.logAlbum).append(h('span', { class: 'muted small' }, 'Album playing: '),
+        K.drLogBadge(s) || h('span', { class: 'drlog none' }, '—'),
+        h('span', { class: 'small' }, ` ${a.title || ''}`),
+        h('span', { class: 'muted small' }, s.dr === null ? ` · ${s.heard} track${s.heard === 1 ? '' : 's'}, under two minutes so far` : ` · ${K.dr.basisText(s)}`));
+};
+
+// ── the ranking ──────────────────────────────────────────────────────────────
+const SOURCES = [['', 'All'], ['qobuz', 'Qobuz'], ['local', 'Local'], ['stream', 'Other']];
+P.paintChips = () => {
+    const chip = (label, on, fn) => h('button', { type: 'button', class: 'chip tog' + (on ? ' on' : ''), onclick: fn }, label);
+    K.clear(P.rankChips).append(
+        ...SOURCES.map(([v, l]) => chip(l, P.rank.source === v, () => { P.rank.source = v; P.paintChips(); P.rankLoad(); })),
+        chip('Exact only', P.rank.exact, () => { P.rank.exact = !P.rank.exact; P.paintChips(); P.rankLoad(); }));
+};
+
+P.rankLoad = async () => {
+    const seq = ++P.rankSeq;
+    const q = new URLSearchParams({ source: P.rank.source, exact: P.rank.exact ? '1' : '0', q: P.rank.q, limit: '200' });
+    const d = await K.api('/dr/library?' + q);
+    if (seq !== P.rankSeq) return;
+    if (!d.ok) { K.clear(P.rankList).append(h('p', { class: 'muted' }, d.error || 'unavailable')); return; }
+    const rows = d.albums.map((a, i) => P.rankRow(a, i + 1));
+    K.clear(P.rankList).append(...(rows.length ? rows : [h('p', { class: 'muted' },
+        P.rank.q || P.rank.source || P.rank.exact ? 'No album matches.' : 'Nothing stored yet: turn the DR log on and play something, or scan the local collection.')]));
+    const t = d.totals || {}, imp = d.import || {};
+    P.rankFoot.textContent = [`${d.count} album${d.count === 1 ? '' : 's'} with a figure`,
+        `stored: ${t.qobuz || 0} Qobuz, ${t.local || 0} local, ${t.stream || 0} other`,
+        imp.running ? 'reading dr14.txt…' : imp.error ? `dr14.txt: ${imp.error}` : ''].filter(Boolean).join(' · ');
+};
+
+P.rankRow = (a, n) => {
+    const tracks = h('div', { class: 'drrank-tracks', hidden: !P.rankOpen.has(a.key) });
+    const paintTracks = () => K.clear(tracks).append(...(a.tracks.length ? a.tracks.map(t => h('div', { class: 'drrank-track' },
+        h('span', { class: 'drlog' + (t.complete ? '' : ' est'), style: t.complete ? { background: K.dr.color(t.dr).bg, color: K.dr.color(t.dr).fg } : { borderColor: K.dr.color(t.dr).bg } }, `DR${t.dr}`),
+        h('span', {}, `${t.number ? t.number + '. ' : ''}${t.title || t.track_key}`),
+        h('span', { class: 'muted small' }, `${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}`)))
+        : [h('div', { class: 'muted small' }, a.report_dr !== null ? 'Album value from dr14.txt; no track heard here yet.' : 'No tracks.')]));
+    if (P.rankOpen.has(a.key)) paintTracks();
+    const sub = [a.artist, a.year, a.label].filter(Boolean).join(' · ');
+    const play = a.source === 'qobuz' ? h('button', { type: 'button', class: 'btn qz-play', title: 'Replace the queue and play', onclick: async e => {
+        e.stopPropagation();
+        const d = await K.api('/qobuz/play', { json: { album_id: a.ref, mode: 'replace' }, timeout: 90000 });
+        K.toast(d.ok ? `Playing ${a.title}` : (d.error || 'cannot play'), d.ok ? 'ok' : 'error');
+    } }, K.tIcon ? K.tIcon('play') : '▶') : null;
+    return h('div', { class: 'drrank-row' },
+        h('div', { class: 'drrank-head tap', onclick: () => {
+            if (P.rankOpen.has(a.key)) P.rankOpen.delete(a.key); else { P.rankOpen.add(a.key); paintTracks(); }
+            tracks.hidden = !P.rankOpen.has(a.key);
+        } },
+            h('span', { class: 'drrank-n muted' }, String(n)),
+            a.image ? h('img', { class: 'drrank-cover', src: a.image, alt: '', loading: 'lazy' }) : h('span', { class: 'drrank-cover' }),
+            K.drLogBadge(a.dr, 'big'),
+            h('div', { class: 'drrank-body' }, h('div', { class: 'drrank-title' }, a.title || '—'),
+                h('div', { class: 'muted small' }, sub),
+                h('div', { class: 'muted small' }, `${{ qobuz: 'Qobuz', local: 'Local', stream: 'Stream' }[a.source] || a.source} · ${K.dr.basisText(a.dr)}`)),
+            play),
+        tracks);
+};
+
+P.rankImport = async () => {
+    const d = await K.api('/dr/library/import', { method: 'POST' });
+    K.toast(d.ok ? (d.started ? 'Reading dr14.txt files…' : 'Already reading them') : (d.error || 'cannot rescan'), d.ok ? 'ok' : 'error');
+    setTimeout(P.rankLoad, 3000);
+};
+
+P.show = () => { P.visible = true; P.setOn(K.pref('now.dr', true)); P.measPoll(); P.logPoll(); P.rankLoad(); };
+P.hide = () => { P.visible = false; P.sync(); clearTimeout(P.jobTimer); clearTimeout(P.logTimer); };
 
 document.addEventListener('visibilitychange', () => P.sync && P.el && P.sync());
 

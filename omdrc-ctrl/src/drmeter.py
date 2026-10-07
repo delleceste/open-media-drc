@@ -141,6 +141,9 @@ class RollingEstimate:
         self.block = int(BLOCK_SECONDS * (rate + (60 if rate == 44100 else 0)))
         self.blocks = deque(maxlen=max(2, int(seconds / BLOCK_SECONDS)))
         self.total_blocks = 0
+        # The blocks of the track playing, gap slots excluded: what its DR is
+        # worked out from when it ends (blocks_dr), however long it ran.
+        self.track: list[tuple[np.ndarray, np.ndarray]] = []
         self.count = 0
         self.sum2 = np.zeros(channels, dtype=np.float64)
         self.peak = np.zeros(channels, dtype=np.float64)
@@ -157,8 +160,9 @@ class RollingEstimate:
             self.count += len(part)
             offset += len(part)
             if self.count == self.block:
-                self.blocks.append((2.0 * self.sum2 / self.block,
-                                    self.peak.copy()))
+                block = (2.0 * self.sum2 / self.block, self.peak.copy())
+                self.blocks.append(block)
+                self.track.append(block)
                 self.total_blocks += 1
                 self.count = 0
                 self.sum2.fill(0)
@@ -183,25 +187,39 @@ class RollingEstimate:
         self.discard_partial()
         return self.total_blocks
 
+    def take_track(self) -> list[tuple[np.ndarray, np.ndarray]]:
+        """The blocks of the track that just ended; the next one starts empty."""
+        self.discard_partial()
+        blocks, self.track = self.track, []
+        return blocks
+
     def result(self) -> dict | None:
-        if len(self.blocks) < 2:
+        exact = blocks_dr(self.blocks)
+        if exact is None:
             return None
-        rms2 = np.vstack([block[0] for block in self.blocks])
-        peaks = np.vstack([block[1] for block in self.blocks])
-        top = max(1, int(len(self.blocks) * TOP_FRACTION))
-        per_channel = []
-        for ch in range(self.channels):
-            rms_upper = math.sqrt(float(np.sort(rms2[:, ch])[-top:].mean()))
-            peak2 = float(np.sort(peaks[:, ch])[-2])
-            per_channel.append(20.0 * math.log10(peak2 / rms_upper)
-                               if rms_upper > 0 and peak2 > 0 else 0.0)
-        exact = float(np.mean(per_channel))
         return {"dr": int(round(exact)), "dr_exact": round(exact, 2),
                 "seconds": int(len(self.blocks) * BLOCK_SECONDS)}
 
     def history(self) -> list[list[list[float]]]:
         """Compact per-block [RMS squared, peak] pairs for the live timeline."""
         return [[rms2.tolist(), peak.tolist()] for rms2, peak in self.blocks]
+
+
+def blocks_dr(blocks) -> float | None:
+    """The TT DR of a run of (RMS squared, peak) blocks, unrounded; None for
+    fewer than two blocks, which have no second-highest peak."""
+    if len(blocks) < 2:
+        return None
+    rms2 = np.vstack([block[0] for block in blocks])
+    peaks = np.vstack([block[1] for block in blocks])
+    top = max(1, int(len(blocks) * TOP_FRACTION))
+    per_channel = []
+    for ch in range(rms2.shape[1]):
+        rms_upper = math.sqrt(float(np.sort(rms2[:, ch])[-top:].mean()))
+        peak2 = float(np.sort(peaks[:, ch])[-2])
+        per_channel.append(20.0 * math.log10(peak2 / rms_upper)
+                           if rms_upper > 0 and peak2 > 0 else 0.0)
+    return float(np.mean(per_channel))
 
 
 def _db(value: float) -> float:
@@ -341,7 +359,7 @@ class AlbumMeasurement:
             "tracks": [{"title": t.get("title", ""), "track": t.get("track"),
                         "disc": t.get("disc"), "status": "waiting",
                         "dr": None, "dr_exact": None, "peak_db": None,
-                        "rms_db": None, "error": ""} for t in tracks],
+                        "rms_db": None, "seconds": None, "error": ""} for t in tracks],
             "current": None,
             "fraction": 0.0,
             "message": "",
@@ -410,7 +428,7 @@ class AlbumMeasurement:
                       message=f"{title}: measuring")
             result = self._measure(path)
             self._track(index, status="done", **{k: result.get(k) for k in
-                        ("dr", "dr_exact", "peak_db", "rms_db")})
+                        ("dr", "dr_exact", "peak_db", "rms_db", "seconds")})
             # The card shows the album value as it builds, not only at the end.
             with self._lock:
                 self._summarise()

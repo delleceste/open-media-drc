@@ -28,7 +28,8 @@ K.chainFlow = {
                 ? h('div', { class: 'cf-branch' + (fifo.active ? ' live' : '') },
                     h('span', { class: 'cf-fifo' }, `FIFO ${fifo.listeners ?? ''}`.trim()),
                     consumers.length
-                        ? consumers.map(c => h('span', { class: 'cf-consumer', title: c.sub }, `${c.title} ${c.listeners ?? ''}`.trim()))
+                        // the DR log is not a page: it says so, and why the FIFO is on
+                        ? consumers.map(c => h('span', { class: 'cf-consumer' + (c.log ? ' log' : ''), title: c.sub }, c.log ? 'DR log · always on' : `${c.title} ${c.listeners ?? ''}`.trim()))
                         : h('span', { class: 'cf-consumer none' }, 'no listeners'))
                 : null;
             row.append(h('div', { class: 'cf-node ' + K.chainState(n) },

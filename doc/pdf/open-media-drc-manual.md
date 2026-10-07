@@ -2368,6 +2368,49 @@ Spectrum and Levels all have no listeners.
   calculation and one serialization of the history for all connected
   browsers; each browser then draws its own window.
 
+### The DR log: album DR remembered across listening
+
+The **DR log** switch on the kiosk's DR page keeps the meter running on the
+server whether or not any page is open, and stores the DR of every track
+played (`dr-albums.sqlite` in the state directory). The switch is saved on the
+server and survives restarts. While it is on, MusicPD's FIFO output stays
+enabled; the Audio chain draws the log as its own consumer of that FIFO,
+**DR log - always on**, and says so when the log is on but cannot measure
+(the CD input, the analyzer disabled, MusicPD down).
+
+- **Per track, not per album.** A track's DR is computed from its own blocks
+  when it ends (the next track starts, or playback stops). A track heard for
+  less than 30 seconds is not kept. A track is *heard whole* when it was
+  heard from its start, never sought, and to its end; a seek or a late start
+  keeps it as a partial measurement.
+- **The album figure is worked out when read**, as the reference does: the
+  mean of the tracks' integer DR values, rounded. It is **exact** when every
+  track of the record has been heard whole (over any number of sessions), when
+  the *Measure* job has measured every file, or when a local folder has a
+  `dr14.txt`. Otherwise, with at least two minutes heard, it is an
+  **estimate**, shown as `~DR9` on the page (with a dashed outline) and in the
+  search results.
+- **Albums** are keyed by their Qobuz album id, by their folder under MusicPD's
+  `music_directory`, or, for other streams, by artist and album tags (never
+  exact: the number of tracks is unknown).
+- **The local collection** is read in: every `dr14.txt` under
+  `music_directory` is imported shortly after start, again after each DR14
+  scan finishes, and on **Rescan dr14.txt**. Names and the track count come
+  from the tags MusicPD indexed for the folder's tracks (a cue sheet's tracks
+  included); only an untagged folder falls back to its name, read as
+  "Artist - Album" when it has that form. A parent folder is never taken for
+  the artist.
+- **Albums by dynamic range** lists every album with a figure, highest first,
+  filtered by source (Qobuz, Local, Other), *Exact only* and free text. Tapping
+  an album shows its tracks; a Qobuz album can be played from there.
+- **The live bar** stays continuous across tracks; it draws a solid divider
+  at each track start and a dashed one at a seek, and a tapped segment names
+  its track and that track's own DR.
+
+The rolling figure of the estimate itself is never stored: it is computed
+over blocks of several tracks at once, which is not how an album's DR is
+defined.
+
 \newpage
 
 # CD input: S/PDIF capture into the DRC chain {#sec:cdin}

@@ -1053,6 +1053,8 @@
         .chain-node.fifo .chain-node-title,
         .chain-node.fifo-consumer .chain-node-title { font-size: .66rem; }
         .chain-node.fifo-consumer .chain-node-sub { display: none; }
+        .chain-node.fifo-consumer.dr-log { border-color: var(--accent, #58a6ff); border-width: 2px; }
+        .chain-node.fifo-consumer.dr-log .chain-node-sub { display: block; font-size: .6rem; }
         .chain-node.mpd-with-fifo { position: relative; align-self: flex-start; }
         .chain-fifo-branch {
             position: absolute; left: calc(100% + 23px); top: 0;
@@ -6222,6 +6224,7 @@ function chainNodeEl(n) {
     if (n.kind === 'device' && !n.present) classes.push('absent');
     if (n.kind === 'bridge' && !n.present) classes.push('absent');
     if (n.idle) classes.push('idle');
+    if (n.log) classes.push('dr-log');     // the DR log: not a page, always on
     if (n.kind === 'app' && n.expected === false) classes.push('intruder');
     if (n.state === 'active' || (n.kind !== 'device' && n.active)) classes.push('live');
     el.className = classes.join(' ');

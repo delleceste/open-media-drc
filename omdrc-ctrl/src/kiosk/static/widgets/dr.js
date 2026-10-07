@@ -62,7 +62,7 @@ const dr = K.dr = {
 // host nothing.  listen() returns a handle; close() when the view hides.
 K.drEstimate = (() => {
     const E = {
-        blocks: [], frame: null, trackAge: 0, subs: new Set(), stream: null,
+        blocks: [], frame: null, trackAge: 0, total: 0, tracks: [], subs: new Set(), stream: null,
         windowSeconds: K.pref('dr.window', 60),
         detect: K.pref('dr.detect', true),
     };
@@ -78,6 +78,10 @@ K.drEstimate = (() => {
         const count = E.detect ? Math.min(want, E.trackAge) : want;
         return count > 0 ? E.blocks.slice(-count) : [];
     };
+
+    // Where the selection sits in the server's block count, and the tracks it
+    // spans: the bar draws a divider at each track start and a dashed one at a seek.
+    E.marks = () => ({ origin: E.total - E.selected().length, tracks: E.tracks });
 
     // What to say and show for the current selection.
     E.summary = () => {
@@ -105,6 +109,8 @@ K.drEstimate = (() => {
         E.frame = f;
         if (Array.isArray(f.dr_blocks)) E.blocks = f.dr_blocks;
         if (Number.isInteger(f.dr && f.dr.track_age_blocks)) E.trackAge = f.dr.track_age_blocks;
+        if (Number.isInteger(f.dr && f.dr.total_blocks)) E.total = f.dr.total_blocks;
+        if (f.dr && Array.isArray(f.dr.tracks)) E.tracks = f.dr.tracks;
         E.emit();
     };
 
@@ -125,32 +131,43 @@ K.drEstimate = (() => {
 // far is divided among as many segments as fit.  A stop, pause or silence is one
 // narrow gap segment of its own.  Numbers sit at the segment base; a segment's
 // fill is as tall as its RMS level.  Tapping a segment reports its details.
+// The view stays continuous across tracks: no segment straddles a track start
+// (a solid divider) or a seek (a dashed one), and a tapped segment also names
+// its track and the DR of that track alone.
 K.DrBar = class DrBar {
     constructor(host, { minCell = 22, onDetail = null, interactive = true } = {}) {
         this.host = host; this.minCell = minCell; this.onDetail = onDetail;
-        this.sel = null; this.blocks = []; this.windowSeconds = 60;
+        this.sel = null; this.blocks = []; this.windowSeconds = 60; this.marks = null;
         host.classList.toggle('static', !interactive);
         if (interactive) host.addEventListener('click', ev => {
             const cell = ev.target.closest('[data-r]');
             if (!cell) return;
             const r = Number(cell.dataset.r);
             this.sel = this.sel === r ? null : r;
-            this.render(this.blocks, this.windowSeconds);
+            this.render(this.blocks, this.windowSeconds, this.marks);
         });
-        this.ro = new ResizeObserver(() => this.render(this.blocks, this.windowSeconds));
+        this.ro = new ResizeObserver(() => this.render(this.blocks, this.windowSeconds, this.marks));
         this.ro.observe(host);
     }
     destroy() { this.ro.disconnect(); }
 
-    render(blocks, windowSeconds) {
-        this.blocks = blocks; this.windowSeconds = windowSeconds;
+    render(blocks, windowSeconds, marks = null) {
+        this.blocks = blocks; this.windowSeconds = windowSeconds; this.marks = marks;
         const count = blocks.length;
+        // cuts, relative to this selection: track starts and seeks inside it
+        const origin = marks ? marks.origin : 0, tracks = (marks && marks.tracks) || [];
+        const cuts = new Map();
+        for (const t of tracks) {
+            for (const s of t.seeks || []) if (s - origin > 0 && s - origin < count) cuts.set(s - origin, 'seek');
+            if (t.start - origin > 0 && t.start - origin < count) cuts.set(t.start - origin, 'track');
+        }
+        const trackAt = i => tracks.find(t => t.start <= origin + i && (t.end === null || origin + i < t.end));
         const runs = [];
         for (let i = 0; i < count;) {
             const silent = dr.silent(blocks[i]);
-            let j = i;
-            while (j < count && dr.silent(blocks[j]) === silent) j++;
-            runs.push({ start: i, end: j, silent });
+            let j = i + 1;
+            while (j < count && dr.silent(blocks[j]) === silent && !cuts.has(j)) j++;
+            runs.push({ start: i, end: j, silent, cut: cuts.get(i) || '' });
             i = j;
         }
         const gapRuns = runs.filter(r => r.silent).length;
@@ -163,7 +180,7 @@ K.DrBar = class DrBar {
             const len = run.end - run.start;
             const n = Math.max(1, Math.min(len, Math.round(budget * len / audioBlocks)));
             for (let k = 0; k < n; k++)
-                parts.push({ start: run.start + Math.floor(k * len / n), end: run.start + Math.floor((k + 1) * len / n), silent: false });
+                parts.push({ start: run.start + Math.floor(k * len / n), end: run.start + Math.floor((k + 1) * len / n), silent: false, cut: k ? '' : run.cut });
         }
         if (!parts.length) parts.push({ start: 0, end: 0, silent: false });
 
@@ -173,9 +190,12 @@ K.DrBar = class DrBar {
             const value = sample.length && !part.silent ? dr.fromBlocks(sample) : null;
             const period = `${Math.round((count - part.end) * BLOCK_S)}–${Math.round((count - part.start) * BLOCK_S)} s before the latest interval`;
             const level = value === null ? -Infinity : dr.levelDb(sample);
+            const t = sample.length && !part.silent ? trackAt(part.start) : null;
+            const whole = !t ? '' : t.end === null ? 'so far' : t.complete ? 'heard whole' : t.kept ? 'heard in part' : 'too short to keep';
+            const about = t ? ` · ${t.title || 'track'}${t.dr !== null && t.dr !== undefined ? `: track DR${Number(t.dr).toFixed(1)} (${whole})` : ''}` : '';
             const title = !sample.length ? 'Waiting for audio'
                 : part.silent ? `${period}: stopped, paused or silent`
-                : `${period}: DR${value.toFixed(1)}, level ${level.toFixed(1)} dB`;
+                : `${period}: DR${value.toFixed(1)}, level ${level.toFixed(1)} dB${about}`;
             const fill = value === null ? 0
                 : Math.max(8, Math.min(100, (1 - Math.max(level, LEVEL_FLOOR_DB) / LEVEL_FLOOR_DB) * 100));
             const col = value === null ? null : dr.color(value);
@@ -184,7 +204,7 @@ K.DrBar = class DrBar {
             if (selected) detail = title;
             return h('span', {
                 dataset: { r: fromRight }, title,
-                class: (part.silent ? 'gap ' : '') + (selected ? 'selected' : ''),
+                class: (part.silent ? 'gap ' : '') + (part.cut ? `cut-${part.cut} ` : '') + (selected ? 'selected' : ''),
                 style: col ? { flex: `${part.end - part.start} 1 0`, color: fill >= 58 ? col.fg : 'var(--text)' } : {},
             }, col ? h('i', { style: { height: fill.toFixed(1) + '%', background: col.bg } }) : null,
                h('b', {}, value === null ? '' : String(K.clamp(Math.round(value), 0, 99))));
@@ -193,6 +213,23 @@ K.DrBar = class DrBar {
         K.clear(this.host).append(...cells);
         if (this.onDetail) this.onDetail(detail, count);
     }
+};
+
+// ── an album's stored figure (the DR log, dr_store.py) ───────────────────────
+// Exact: a solid badge.  Estimate: "≈" and a dashed outline, from part of the
+// record heard.  The tooltip says how it was reached.
+dr.basisText = s => s.basis === 'report' ? 'from dr14.txt'
+    : s.kind === 'exact' ? (s.basis === 'measured' ? 'every track measured' : 'every track heard whole')
+    : `estimate · ${s.heard}${s.track_count ? ` of ${s.track_count}` : ''} track${(s.track_count || s.heard) === 1 ? '' : 's'} heard`;
+K.drLogBadge = (s, extra = '') => {
+    if (!s || s.dr === null || s.dr === undefined) return null;
+    const col = dr.color(s.dr);
+    const est = s.kind !== 'exact';
+    return h('span', {
+        class: 'drlog' + (est ? ' est' : '') + (extra ? ' ' + extra : ''),
+        title: `DR${s.dr} — ${dr.basisText(s)}`,
+        style: est ? { borderColor: col.bg } : { background: col.bg, color: col.fg },
+    }, `${est ? '≈' : ''}DR${s.dr}`);
 };
 
 // ── gauge: a coloured track with a marker at DR 0..14+ ───────────────────────

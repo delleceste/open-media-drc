@@ -82,6 +82,7 @@ _move_to_end = None
 _music_directory = lambda: None
 _music_config = lambda: (None, None)     # (music root, the config file naming it)
 _state_dir = lambda: ""         # noqa: E731 - where the played list lives
+_dr_lookup = lambda keys: {}    # noqa: E731 - album keys -> stored DR (dr_store)
 
 # The path upmpdcli's Qobuz plugin serves its tracks under, and its default
 # port (upmpdcli.conf plgmicrohttpport).
@@ -128,6 +129,39 @@ def init_app(app, settings, upmpdcli_conf, read_options, token_file, plugin_dir,
     _music_directory = music_directory or (lambda: None)
     _music_config = music_config or (lambda: (None, None))
     app.register_blueprint(bp)
+
+
+def set_dr_lookup(lookup) -> None:
+    """`lookup(keys) -> {key: summary}`: the DR log's figure for an album
+    (dr_store.DrStore.lookup), shown as a badge on the results."""
+    global _dr_lookup
+    _dr_lookup = lookup
+
+
+def dr_key(card: dict) -> str:
+    """The DR log's key for a result: its Qobuz album, or its local folder."""
+    if card.get("source") == "local":
+        tracks = card.get("tracks") or []
+        first = tracks[0].get("file", "") if tracks and isinstance(tracks[0], dict) else ""
+        return "local:" + mpd_library.album_folder(first) if first else ""
+    return "qobuz:" + str(card["id"]) if card.get("id") else ""
+
+
+def annotate_dr(results: list) -> list:
+    """Add "dr_log" (exact or estimate, and how it was reached) to the results
+    the log knows; a local album whose dr14.txt was read already keeps that."""
+    try:
+        cards = [c for c in results if isinstance(c, dict)
+                 and not (c.get("source") == "local" and c.get("dr") is not None)]
+        found = _dr_lookup([dr_key(c) for c in cards])
+    except Exception:                       # noqa: BLE001 - a badge is optional
+        return results
+    for card in cards:
+        summary = found.get(dr_key(card))
+        if summary:
+            card["dr_log"] = {k: summary[k] for k in
+                              ("dr", "kind", "basis", "heard", "complete", "track_count")}
+    return results
 
 
 def _app_id_now() -> str:
@@ -539,7 +573,7 @@ def search():
         for i in range(max(len(local), len(qresults))):
             if i < len(local): combined.append(local[i])
             if i < len(qresults): combined.append(qresults[i])
-        answer["results"] = combined
+        answer["results"] = annotate_dr(combined)
         answer["count"] = len(combined)
         answer["local_count"] = len(local)
         answer["local_error"] = local_error
@@ -642,7 +676,8 @@ def search_stream():
             except mpd_library.MPDError as error:
                 local, local_error = [], str(error)
             if not local_only and renderer_running():
-                answer = target.search(**args, progress=lambda d: frames.put({"ok": True, **d}))
+                answer = target.search(**args, progress=lambda d: frames.put(
+                    {"ok": True, **d, "results": annotate_dr(d.get("results") or [])}))
             elif not local_only:
                 answer = {"results": [], "count": 0, "more": False, "next_scan": 0,
                           "labels_seen": [], "queries": [], "query": args["text"],
@@ -658,6 +693,7 @@ def search_stream():
             answer["results"] = [item for i in range(max(len(local), len(qresults)))
                                  for item in (([local[i]] if i < len(local) else []) +
                                               ([qresults[i]] if i < len(qresults) else []))]
+            answer["results"] = annotate_dr(answer["results"])
             answer["count"] = len(answer["results"])
             answer["local_count"] = len(local)
             answer["local_error"] = local_error

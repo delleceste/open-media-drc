@@ -820,7 +820,7 @@ P.paintDr = E => {
     P.drThermo.setAttribute('aria-valuetext', s.value === null ? s.short : `DR${s.value}`);
     if (s.value === null) P.drThermo.removeAttribute('aria-valuenow');
     else P.drThermo.setAttribute('aria-valuenow', String(Math.min(14, s.value)));
-    P.drBar.render(E.selected(), E.windowSeconds);
+    P.drBar.render(E.selected(), E.windowSeconds, E.marks());
 };
 
 // The play/pause/stop chip: a line icon (widgets/icons.js) and the state in words.

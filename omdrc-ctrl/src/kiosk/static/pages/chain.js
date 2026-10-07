@@ -35,23 +35,35 @@ P.paint = d => {
     const flowOk = d.flowing && d.holders_ok !== false;
     kids.push(h('div', { class: 'status-line ' + (flowOk ? 'ok' : 'warn') }, h('i', { class: 'dot' }),
         h('div', {}, h('div', { class: 'big' }, d.summary || '—'),
-            h('div', { class: 'sub' }, `${d.os || ''} · ${d.flowing ? 'audio flowing' : 'nothing flowing'}${d.privileged ? '' : ' · holders unavailable (no privileges)'}`))));
+            h('div', { class: 'sub' }, `${d.os || ''} · ${d.flowing ? 'audio flowing' : 'nothing flowing'}${d.privileged ? '' : ' · holders unavailable (no privileges)'}`),
+            // the DR log keeps MPD's FIFO output on with no page open: always said here
+            d.dr_log && d.dr_log.enabled ? h('div', { class: 'sub' }, h('span', { class: 'chip ' + (d.dr_log.drawn ? 'ok' : 'warn') },
+                d.dr_log.drawn ? 'DR log on · reading MPD’s FIFO' : 'DR log on · not measuring')) : null)));
     (d.problems || []).forEach(p => kids.push(h('div', { class: 'errbox ' + (p.severity || '') }, p.text)));
 
-    // rows of nodes, joined by edge chips
-    const nodes = (d.nodes || []).slice().sort((a, b) => (a.row - b.row));
+    // rows of nodes, joined by edge chips; MPD's analyzer FIFO and its
+    // listeners are a side output, drawn inside the MPD block, not as stages
     const edges = d.edges || [];
+    const all = d.nodes || [];
+    const fifo = all.find(n => n.kind === 'fifo');
+    const fifoSource = fifo && (edges.find(e => e.to === fifo.id) || {}).from;
+    const consumers = all.filter(n => n.kind === 'fifo-consumer');
+    const nodes = all.filter(n => n.kind !== 'fifo' && n.kind !== 'fifo-consumer').sort((a, b) => (a.row - b.row));
     const flow = h('div', { class: 'flow' });
     nodes.forEach((n, i) => {
         const holders = (n.holders || []).map(x => `${x.cmd}${x.mode ? ' (' + x.mode + ')' : ''}`).join(', ');
+        const branch = fifo && n.id === fifoSource ? h('div', { class: 'cf-branch' + (fifo.active ? ' live' : '') },
+            h('span', { class: 'cf-fifo' }, `→ FIFO ${fifo.sub || ''}`.trim()),
+            ...(consumers.length ? consumers.map(c => h('span', { class: 'cf-consumer' + (c.log ? ' log' : ''), title: c.sub },
+                c.log ? 'DR log · always on' : `${c.title} · ${c.sub}`)) : [h('span', { class: 'cf-consumer none' }, 'no listeners')])) : null;
         flow.append(h('div', { class: 'node ' + stateClass(n) },
             h('i', { class: 'dot' }),
             h('div', { class: 'node-body' }, h('div', { class: 'node-title' }, n.title), h('div', { class: 'muted small' }, [n.sub, n.pid ? `pid ${n.pid}` : '', n.user].filter(Boolean).join(' · ')),
-                holders ? h('div', { class: 'small' }, `held by ${holders}`) : null),
+                holders ? h('div', { class: 'small' }, `held by ${holders}`) : null, branch),
             n.kind === 'device' ? h('span', { class: 'chip ' + (n.role === 'dac' ? 'ok' : '') }, n.role || 'device') : null));
         const next = nodes[i + 1];
         if (next) {
-            const e = edges.find(x => x.from === n.id && x.to === next.id) || edges.find(x => x.from === n.id);
+            const e = edges.find(x => x.from === n.id && x.to === next.id) || edges.find(x => x.from === n.id && !/^spectrum:/.test(x.to));
             flow.append(h('div', { class: 'edge ' + (e ? (e.warn ? 'warn' : e.active ? 'ok' : 'off') : 'off') },
                 h('i', { class: 'arrow' }, '↓'), h('span', {}, e ? e.label + (e.warn ? ` — ${e.warn}` : '') : '')));
         }

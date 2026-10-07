@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 from pathlib import Path
+import posixpath
 import re
 import socket
 import urllib.parse
@@ -21,11 +22,25 @@ def set_music_directory(path: str | None) -> None:
     _music_directory = path
 
 
+def album_folder(uri: str) -> str:
+    """The folder an indexed track lives in.  A track of a cue sheet is
+    addressed inside the sheet, as if it were a folder
+    (`Album/Album.cue/track0003`): its album is the folder holding the sheet."""
+    folder = posixpath.dirname(uri)
+    if folder.lower().endswith(".cue"):
+        folder = posixpath.dirname(folder)
+    return folder
+
+
+def is_cue_track(uri: str) -> bool:
+    return posixpath.dirname(uri).lower().endswith(".cue")
+
+
 def _dr14_average(uri: str) -> int | None:
     """Read the album's DR14 T.meter average from its conventional report."""
     if not _music_directory:
         return None
-    report = Path(_music_directory, uri).parent / "dr14.txt"
+    report = Path(_music_directory, album_folder(uri)) / "dr14.txt"
     try:
         text = report.read_text(encoding="utf-8", errors="replace")
     except OSError:

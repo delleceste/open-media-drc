@@ -283,6 +283,31 @@ class Graph(unittest.TestCase):
         self.assertEqual(_node(status, "spectrum:level")["listeners"], 1)
         self.assertEqual(_node(status, "spectrum:dr-calc")["listeners"], 1)
 
+    def test_the_dr_log_is_its_own_fifo_consumer(self):
+        outputs = [{"name": APP.SPECTRUM_OUTPUT_NAME, "enabled": True}]
+        with mock.patch.object(APP._SPECTRUM, "clients", 2), \
+             mock.patch.object(APP._SPECTRUM, "band_clients", 0), \
+             mock.patch.object(APP._SPECTRUM, "dr_clients", 2), \
+             mock.patch.object(APP._SPECTRUM, "dr_log", True), \
+             mock.patch.object(APP, "_dr_log_enabled", return_value=True):
+            status = _status(running=("musicpd",), activity={"mpd": True},
+                             mpd_outputs=outputs)
+        log = _node(status, "spectrum:dr-log")
+        self.assertTrue(log["log"])
+        self.assertIsNotNone(_edge(status, "spectrum:fifo", "spectrum:dr-log"))
+        # the page's own DR listener is counted apart from the log
+        self.assertEqual(_node(status, "spectrum:dr-calc")["listeners"], 1)
+        self.assertTrue(status["dr_log"]["drawn"])
+        self.assertFalse(any("DR log" in p["text"] for p in status["problems"]))
+
+    def test_a_dr_log_that_cannot_listen_says_so(self):
+        with mock.patch.object(APP._SPECTRUM, "dr_log", False), \
+             mock.patch.object(APP, "_dr_log_enabled", return_value=True):
+            status = _status(running=("musicpd",), activity={"mpd": True})
+        self.assertIsNone(_node(status, "spectrum:dr-log"))
+        self.assertTrue(any(p["text"].startswith("DR log is on but not measuring")
+                            for p in status["problems"]))
+
     def test_fifo_is_a_side_output_of_mpd_not_the_dac_route(self):
         outputs = [{"name": APP.SPECTRUM_OUTPUT_NAME, "enabled": True}]
         with mock.patch.object(APP._SPECTRUM, "clients", 1), \
