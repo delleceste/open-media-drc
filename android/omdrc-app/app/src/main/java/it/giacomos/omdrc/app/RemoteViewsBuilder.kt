@@ -26,7 +26,7 @@ import it.giacomos.omdrc.app.data.WidgetSnapshot
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
-enum class WidgetSize { TINY, SMALL, LARGE, MEDIA }
+enum class WidgetSize { TINY, SMALL, LARGE, MEDIA, COMPACT }
 
 // Offsets request codes for the extra PendingIntents below away from the
 // ones keyed on appWidgetId alone (manualRefreshIntent, openDashboardIntent)
@@ -91,6 +91,9 @@ object RemoteViewsBuilder {
     ): RemoteViews {
         if (size == WidgetSize.TINY) {
             return buildTiny(context, appWidgetId, host, port, snapshot)
+        }
+        if (size == WidgetSize.COMPACT) {
+            return buildCompact(context, appWidgetId, host, port, snapshot)
         }
         if (size == WidgetSize.MEDIA) {
             return buildMedia(context, appWidgetId, host, port, snapshot, checking)
@@ -203,6 +206,31 @@ object RemoteViewsBuilder {
         val art = if (cachedQueue) WidgetArtCache.load(context, appWidgetId) else null
         views.setImageViewBitmap(R.id.media_cover, roundedCover(context, art))
 
+        // Fit the cover and the text to the size it was given: the cover
+        // is what's left of the height after the times and the controls,
+        // at most 45% of the width; a narrow widget drops the secondary
+        // text lines instead of squeezing them into a sliver.
+        val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
+        val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).toFloat()
+        val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0).toFloat()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && width > 0f && height > 0f) {
+            // Text grows with the widget (up to 1.6x its size at 2x2).
+            val grow = minOf(width / 218f, height / 202f).coerceIn(1f, 1.6f)
+            val cover = minOf(height - 20f - 70f, 0.42f * (width - 24f)).coerceAtLeast(40f)
+            val dip = TypedValue.COMPLEX_UNIT_DIP
+            views.setViewLayoutWidth(R.id.media_cover, cover, dip)
+            views.setViewLayoutHeight(R.id.media_cover, cover, dip)
+            views.setTextViewTextSize(R.id.media_title, TypedValue.COMPLEX_UNIT_SP, 13f * grow)
+            views.setTextViewTextSize(R.id.media_artist, TypedValue.COMPLEX_UNIT_SP, 12f * grow)
+            views.setTextViewTextSize(R.id.media_edition, TypedValue.COMPLEX_UNIT_SP, 11f * grow)
+            views.setTextViewTextSize(R.id.media_format, TypedValue.COMPLEX_UNIT_SP, 11f * grow)
+            views.setTextViewTextSize(R.id.media_drc, TypedValue.COMPLEX_UNIT_SP, 11f * grow)
+            val text = width - 24f - cover - 12f
+            val room = if (text >= 100f) View.VISIBLE else View.GONE
+            views.setViewVisibility(R.id.media_edition, room)
+            views.setViewVisibility(R.id.media_format, room)
+        }
+
         // Progress: the position at the last fetch, moved on by the time
         // since if it's playing.
         val duration = player?.duration
@@ -222,15 +250,66 @@ object RemoteViewsBuilder {
             if (hasQueue && player?.pos != null && player.length > 0) "${player.pos} / ${player.length}" else "",
         )
 
-        val drcLine = mediaDrcLine(context, snapshot, drcOn)
+        // A tall widget has the room: one DRC figure per line.
+        val tall = (AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
+            .getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0)) >= 260
+        val drcLine = mediaDrcLine(context, snapshot, drcOn, if (tall) "\n" else " · ")
         views.setTextViewText(R.id.media_drc, drcLine)
         views.setViewVisibility(R.id.media_drc, if (drcLine.isEmpty()) View.GONE else View.VISIBLE)
         views.setImageViewResource(R.id.media_play_pause, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
         return views
     }
 
+    /** The short media widget: cover with the play/pause chip, title, artist. */
+    private fun buildCompact(
+        context: Context,
+        appWidgetId: Int,
+        host: String?,
+        port: Int,
+        snapshot: WidgetSnapshot?,
+    ): RemoteViews {
+        val views = RemoteViews(context.packageName, R.layout.widget_media_compact)
+        views.setOnClickPendingIntent(R.id.widget_root, openDashboardIntent(context, appWidgetId, host, port))
+        val reachable = host != null && snapshot?.reachable == true
+        val mpd = snapshot?.mpd
+        val cachedQueue = mpd?.song != null
+        val hasQueue = reachable && cachedQueue
+        val renderer = snapshot?.renderer
+        val title = TrackTitle.titleAndAlbum(renderer?.nowPlaying ?: mpd?.displaySong, mpd?.title, null)
+        views.setTextViewText(
+            R.id.media_title,
+            when {
+                host == null -> context.getString(R.string.status_unconfigured)
+                cachedQueue -> title ?: mpd?.title ?: ""
+                snapshot?.reachable == false -> context.getString(R.string.status_unreachable)
+                else -> context.getString(R.string.mpd_unknown)
+            },
+        )
+        views.setTextViewText(R.id.media_artist, if (cachedQueue) snapshot?.player?.artist ?: "" else "")
+        val art = if (cachedQueue) WidgetArtCache.load(context, appWidgetId) else null
+        views.setImageViewBitmap(R.id.media_cover, roundedCover(context, art))
+        if (hasQueue) {
+            val playing = mpd?.state == "playing"
+            views.setImageViewResource(R.id.media_play_pause, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+            views.setViewVisibility(R.id.media_play_pause, View.VISIBLE)
+            views.setOnClickPendingIntent(R.id.media_play_pause, togglePlayPauseIntent(context, appWidgetId))
+        } else {
+            views.setViewVisibility(R.id.media_play_pause, View.GONE)
+        }
+        val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
+        val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).toFloat()
+        val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0).toFloat()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && width > 0f && height > 0f) {
+            val cover = minOf(height - 16f, 0.45f * (width - 16f)).coerceAtLeast(32f)
+            val dip = TypedValue.COMPLEX_UNIT_DIP
+            views.setViewLayoutWidth(R.id.media_cover_box, cover, dip)
+            views.setViewLayoutHeight(R.id.media_cover_box, cover, dip)
+        }
+        return views
+    }
+
     /** "96/24 → 96 kHz · 1.2 dB · RTI 80% · Peak -3.1 dB" style DRC detail. */
-    private fun mediaDrcLine(context: Context, snapshot: WidgetSnapshot?, drcOn: Boolean): String {
+    private fun mediaDrcLine(context: Context, snapshot: WidgetSnapshot?, drcOn: Boolean, separator: String = " · "): String {
         val drc = snapshot?.drc
         if (!drcOn || drc == null) return ""
         val parts = mutableListOf<String>()
@@ -243,7 +322,7 @@ object RemoteViewsBuilder {
             parts.add("Peak " + (peak.peakDb?.let { "%.1f dB".format(java.util.Locale.ROOT, it) } ?: "−∞ dB") +
                 if (peak.clipped) " ⚠" else "")
         }
-        return parts.filter { it.isNotEmpty() }.joinToString(" · ")
+        return parts.filter { it.isNotEmpty() }.joinToString(separator)
     }
 
     private fun clock(seconds: Double): String {

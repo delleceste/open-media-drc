@@ -9,9 +9,9 @@ import it.giacomos.omdrc.app.data.OmdrcClient
 
 private const val TAG = "OmdrcWidget"
 
-// A wide widget at least this tall (about two launcher rows) is the media
-// widget; shorter, the text-only LARGE one.
-private const val MEDIA_MIN_HEIGHT_DP = 200
+// A widget at least this tall (two launcher rows) and 200dp wide is the media
+// widget; shorter, the text-only LARGE or SMALL one.
+private const val MEDIA_MIN_HEIGHT_DP = 170
 
 /** Shared fetch + persist + render logic, reused by the worker, the alarm
  *  receiver path and onUpdate's immediate cached render. */
@@ -134,11 +134,12 @@ object RefreshEngine {
             // 2x2 is the old text widget: a single cell is told apart by
             // being narrow and not much taller than it is wide.
             width < 135 && height < 1.9f * width -> WidgetSize.TINY
-            // Big and tall (3x3): the same tile, scaled up.
-            width >= 190 && height >= 250 && width <= height -> WidgetSize.TINY
-            // Wide and at least two rows: the media widget.
-            width >= 250 && height >= MEDIA_MIN_HEIGHT_DP -> WidgetSize.MEDIA
+            // Two rows or more (2x2 is 218x202dp here), however large: the
+            // media widget, which fits itself to the size.
+            width >= 200 && height >= MEDIA_MIN_HEIGHT_DP -> WidgetSize.MEDIA
             width >= 250 -> WidgetSize.LARGE
+            // 2x1: cover, title and play/pause.
+            width >= 120 && width < 250 && height >= 80 -> WidgetSize.COMPACT
             else -> WidgetSize.SMALL
         }
     }
