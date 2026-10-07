@@ -1060,7 +1060,7 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
     background: var(--bg); color: var(--text); padding: max(1rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom));
     box-sizing: border-box; }
 .listening-panel.collapsed { inset: auto 0 0; height: auto; min-height: 3.2rem; padding: .3rem .5rem max(.3rem, env(safe-area-inset-bottom));
-    display: flex; align-items: center; gap: .3rem; border-top: 1px solid var(--border); box-shadow: 0 -.3rem 1rem #0004; }
+    align-items: center; gap: .3rem; border-top: 1px solid var(--border); box-shadow: 0 -.3rem 1rem #0004; }
 .listening-head { display: flex; align-items: center; gap: .5rem; position: sticky; top: -1rem;
     padding: .6rem 0; background: var(--bg); z-index: 1; }
 .listening-head strong { flex: 1; }
