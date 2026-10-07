@@ -187,6 +187,15 @@ P.mount = el => {
     // the last results, as they were: the app may have been left, or the page reloaded
     const kept = pref('lastResults', null);
     if (kept && kept.d && Array.isArray(kept.d.results)) {
+        // A previous artwork request may have cached a temporary 404. Give
+        // restored local results a fresh URL so this page load retries it.
+        const artRetry = Date.now();
+        for (const card of kept.d.results) {
+            if (card.source !== 'local' || !card.image) continue;
+            const url = new URL(card.image, location.href);
+            url.searchParams.set('_retry', String(artRetry));
+            card.image = url.pathname + url.search;
+        }
         P.last = kept.d; P.searchedKey = kept.key || null;
         P.paintResults(); P.paintSeen();
     }
@@ -1936,6 +1945,12 @@ P.buildPlayer = () => {
     P.wirePlayerDrawer();
 };
 
+// Where the strip's top edge is: the sheet rises from there, as the strip itself lifting, not from the screen bottom.
+P.stripTop = () => {
+    const r = P.player.getBoundingClientRect();
+    return r.height ? Math.max(0, Math.round(r.top)) : window.innerHeight;
+};
+
 P.wirePlayerDrawer = () => {
     let drag = null, suppressClick = false;
     const control = target => target.closest('button, input, select, a');
@@ -1947,7 +1962,7 @@ P.wirePlayerDrawer = () => {
     P.player.addEventListener('pointerdown', e => {
         if (control(e.target) || e.button !== 0 || P.fullEl) return;
         suppressClick = false;
-        drag = { id: e.pointerId, y: e.clientY, distance: 0, height: window.innerHeight };
+        drag = { id: e.pointerId, y: e.clientY, distance: 0, height: P.stripTop() };
         P.player.setPointerCapture(e.pointerId);
         e.stopPropagation();
     });
@@ -1966,7 +1981,7 @@ P.wirePlayerDrawer = () => {
         const panel = P.fullEl;
         panel.style.pointerEvents = '';
         panel.style.transition = 'transform 180ms ease-out';
-        panel.style.transform = finish ? 'translateY(0)' : 'translateY(100dvh)';
+        panel.style.transform = finish ? 'translateY(0)' : `translateY(${P.stripTop()}px)`;
         if (!finish) setTimeout(() => { if (P.fullEl === panel) P.closeFull(); }, 180);
     };
     P.player.addEventListener('pointerup', end);
@@ -2021,9 +2036,21 @@ P.openFull = ({ offset = 0 } = {}) => {
         onPull: distance => { if (P.fullEl) P.fullEl.style.transform = `translateY(${distance}px)`; } });
     P.seekTaps = null;
     P.wireGrip(v.grip);
+    const top = P.stripTop();
+    P.player.classList.add('lifted');   // the sheet takes the strip's place and rises from it
     if (offset) {
         P.fullEl.style.transform = `translateY(${Math.max(0, offset)}px)`;
         P.fullEl.style.pointerEvents = 'none';
+    } else if (top < window.innerHeight) {
+        // a tap: rise from the strip's position too
+        const sheet = P.fullEl;
+        sheet.style.transform = `translateY(${top}px)`;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (P.fullEl !== sheet) return;
+            sheet.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
+            sheet.style.transform = 'translateY(0)';
+            setTimeout(() => { if (P.fullEl === sheet) sheet.style.transition = ''; }, 240);
+        }));
     }
     document.getElementById('overlay-root').append(P.fullEl);
     P.fullView = v;
@@ -2072,6 +2099,7 @@ P.closeFull = () => {
     P.seekTaps = null;
     P.fullEl.remove();
     P.fullEl = null;
+    P.player.classList.remove('lifted');
     P.views = P.views.filter(v => v !== P.fullView);
     P.fullView = null;
     document.removeEventListener('keydown', P.fullKey);
