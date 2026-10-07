@@ -166,13 +166,15 @@ object RemoteViewsBuilder {
                 else -> R.drawable.ic_status_off
             },
         )
+        // The light only means something while DRC runs: green or red by
+        // the headroom. Off or out of reach, "DRC OFF" says it, or nothing.
+        views.setViewVisibility(R.id.status_icon, if (drcOn) View.VISIBLE else View.GONE)
         views.setTextViewText(
             R.id.title_text,
             when {
                 host == null -> context.getString(R.string.status_unconfigured)
                 snapshot == null -> "…"
-                !snapshot.reachable -> context.getString(R.string.status_unreachable) +
-                    " · " + staleness(snapshot.fetchedAtMillis)
+                !snapshot.reachable -> ""
                 checking -> "Checking…"
                 drcOn -> context.getString(R.string.status_drc_on)
                 else -> context.getString(R.string.status_drc_off)
@@ -233,8 +235,15 @@ object RemoteViewsBuilder {
         val tall = (AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
             .getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0)) >= 260
         val drcLine = mediaDrcLine(context, snapshot, drcOn, if (tall) "\n" else " · ")
-        views.setTextViewText(R.id.media_drc, drcLine)
-        views.setViewVisibility(R.id.media_drc, if (drcLine.isEmpty()) View.GONE else View.VISIBLE)
+        // Out of reach: the track title is stale and goes; the album and
+        // artist stay, and where the controls were, how long it's been.
+        val offline = snapshot != null && !snapshot.reachable && cachedQueue
+        views.setViewVisibility(R.id.media_title, if (offline) View.GONE else View.VISIBLE)
+        val bottomLine = if (offline) {
+            context.getString(R.string.status_unreachable) + " · " + staleness(snapshot!!.fetchedAtMillis)
+        } else drcLine
+        views.setTextViewText(R.id.media_drc, bottomLine)
+        views.setViewVisibility(R.id.media_drc, if (bottomLine.isEmpty()) View.GONE else View.VISIBLE)
         views.setImageViewResource(R.id.media_play_pause, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
         // Nothing to control while the box is out of reach or the queue's empty.
         val controls = if (hasQueue) View.VISIBLE else View.INVISIBLE
@@ -275,7 +284,7 @@ object RemoteViewsBuilder {
             when {
                 !cachedQueue -> ""
                 snapshot?.reachable == false ->
-                    context.getString(R.string.status_unreachable) + " · " + staleness(snapshot.fetchedAtMillis)
+                    offlineLabel(snapshot.fetchedAtMillis)
                 else -> snapshot?.player?.artist ?: ""
             },
         )
@@ -898,6 +907,10 @@ object RemoteViewsBuilder {
             views.setViewVisibility(R.id.meters_text, View.VISIBLE)
         }
     }
+
+    /** "Offline · 5m": short enough for a narrow widget's status line. */
+    private fun offlineLabel(fetchedAtMillis: Long): String =
+        "Offline · " + staleness(fetchedAtMillis).removeSuffix(" ago")
 
     private fun staleness(fetchedAtMillis: Long): String {
         val minutes = TimeUnit.MILLISECONDS.toMinutes(System.currentTimeMillis() - fetchedAtMillis)
