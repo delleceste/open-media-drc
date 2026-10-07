@@ -44,6 +44,10 @@ private const val CHIP_TEXT_MARGIN_PX = 3f
 // Below this the strip over the 1x1 tile's icon isn't drawn at all.
 private const val MIN_STRIP_CAP_DP = 4f
 
+// The strip's backdrop around its text, in cap heights.
+private const val STRIP_PAD_X = 0.45f
+private const val STRIP_PAD_Y = 0.3f
+
 private const val PIXEL_LAUNCHER = "com.google.android.apps.nexuslauncher"
 
 // Font families offered for the label, besides the launcher's and the
@@ -292,23 +296,26 @@ object RemoteViewsBuilder {
         views.setViewPadding(R.id.play_pause_icon, pad, pad, pad, pad)
 
         // The strip above the icon - DRC, the source format - in the
-        // label's face, its capitals at most 80% of the label's, and smaller
-        // still where the space over the icon is short; its ink ends
-        // CHIP_TEXT_MARGIN_PX above the icon, and starts as far below the
-        // cell's top.
-        val stripCap = minOf(0.8f * capDp, top - 2f * margin)
+        // label's face on the play/pause chip's backdrop, its capitals at
+        // most 80% of the label's, and smaller still where the space over
+        // the icon is short; the backdrop ends CHIP_TEXT_MARGIN_PX above the
+        // icon, and starts as far below the cell's top.
+        val stripCap = minOf(0.8f * capDp, (top - 2f * margin) / (1f + 2f * STRIP_PAD_Y))
         if (strip.isEmpty() || stripCap < MIN_STRIP_CAP_DP) {
             views.setViewVisibility(R.id.tiny_strip, View.GONE)
         } else {
-            val stripLabel = labelBitmap(context, typeface, stripCap, width, strip, capReference = "DRC")
+            val stripLabel = labelBitmap(
+                context, typeface, stripCap, width, strip, capReference = "DRC",
+                backdrop = context.getColor(R.color.widget_chip_backdrop),
+            )
             views.setImageViewBitmap(R.id.tiny_strip, stripLabel.bitmap)
             views.setViewVisibility(R.id.tiny_strip, View.VISIBLE)
             views.setViewLayoutMargin(R.id.tiny_strip, RemoteViews.MARGIN_TOP, top - margin - stripLabel.text.bottom, dip)
         }
     }
 
-    /** [text]: the text's ink bounds in dp, across from the bitmap's
-     *  center and down from its top. */
+    /** [text]: the text's ink bounds in dp - its backdrop's, if it has
+     *  one - across from the bitmap's center and down from its top. */
     private class Label(val bitmap: Bitmap, val capTopDp: Float, val text: RectF)
 
     /** The "OMDRC" label in [typeface], sized so its capitals are [capDp]
@@ -316,7 +323,8 @@ object RemoteViewsBuilder {
      *  font scale setting - and centered in [widthDp] (at least the text's
      *  own width). capTopDp is how far below the bitmap's top the cap line
      *  sits, to place it a given gap under the icon; text its ink bounds,
-     *  from the font's own glyph metrics. */
+     *  from the font's own glyph metrics. A [backdrop] color puts a rounded
+     *  rect under the text, padded by STRIP_PAD_X/Y of the cap height. */
     private fun labelBitmap(
         context: Context,
         typeface: Typeface,
@@ -324,6 +332,7 @@ object RemoteViewsBuilder {
         widthDp: Float,
         text: String = context.getString(R.string.app_name),
         capReference: String = text,
+        backdrop: Int? = null,
     ): Label {
         val density = context.resources.displayMetrics.density
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
@@ -335,22 +344,35 @@ object RemoteViewsBuilder {
         val bounds = Rect().also { paint.getTextBounds(capReference, 0, capReference.length, it) }
         paint.textSize = 100f * capDp * density / bounds.height()
         val metrics = paint.fontMetrics
-        val baseline = -metrics.top
+        // Room for the backdrop's padding beyond the font's own extent.
+        val extra = if (backdrop != null) STRIP_PAD_Y * capDp * density else 0f
+        val baseline = -metrics.top + extra
         val capTop = baseline + bounds.top * paint.textSize / 100f
         val width = maxOf(widthDp * density, paint.measureText(text) + 2f).roundToInt().coerceAtLeast(1)
-        val height = (metrics.bottom - metrics.top).roundToInt().coerceAtLeast(1)
+        val height = (metrics.bottom - metrics.top + 2f * extra).roundToInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         bitmap.density = context.resources.displayMetrics.densityDpi
-        Canvas(bitmap).drawText(text, width / 2f, baseline, paint)
         val ink = Rect().also { paint.getTextBounds(text, 0, text.length, it) }
         // getTextBounds is relative to the drawing origin: the baseline,
         // and with Align.CENTER the left of the text still - recenter it.
         val half = paint.measureText(text) / 2f
-        val inkDp = RectF(
-            (ink.left - half) / density, (baseline + ink.top) / density,
-            (ink.right - half) / density, (baseline + ink.bottom) / density,
+        val box = RectF(
+            width / 2f + ink.left - half, baseline + ink.top,
+            width / 2f + ink.right - half, baseline + ink.bottom,
         )
-        return Label(bitmap, capTop / density, inkDp)
+        val canvas = Canvas(bitmap)
+        if (backdrop != null) {
+            val capPx = capDp * density
+            box.inset(-STRIP_PAD_X * capPx, -STRIP_PAD_Y * capPx)
+            val radius = 0.5f * capPx
+            canvas.drawRoundRect(box, radius, radius, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = backdrop })
+        }
+        canvas.drawText(text, width / 2f, baseline, paint)
+        val boxDp = RectF(
+            (box.left - width / 2f) / density, box.top / density,
+            (box.right - width / 2f) / density, box.bottom / density,
+        )
+        return Label(bitmap, capTop / density, boxDp)
     }
 
     /** The launcher icon's circle, drawn as one square bitmap so it stays a

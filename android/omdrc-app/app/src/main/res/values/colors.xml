@@ -8,6 +8,8 @@
     <color name="status_off">#8A8A94</color>
     <color name="icon_background">#FFFFFF</color>
     <color name="icon_glyph">#000000</color>
+    <!-- Under the 1x1 tile's play/pause chip and its DRC / format strip. -->
+    <color name="widget_chip_backdrop">#59000000</color>
     <!-- The kiosk page's palette (omdrc-ctrl/src/kiosk/static/kiosk.css), for native
          screens that stand in for it, like the connection error: its light theme here,
          the dark one in values-night, so they follow the phone as the page does. -->
