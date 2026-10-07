@@ -129,6 +129,34 @@ class Store(unittest.TestCase):
         self.assertIsNone(dr_store.parse_report("nothing"))
 
 
+class Migration(unittest.TestCase):
+    def test_a_database_from_before_sharing_keeps_its_rows(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "old.sqlite")
+            db = sqlite3.connect(path)
+            db.executescript("""
+                CREATE TABLE album (key TEXT PRIMARY KEY, source TEXT NOT NULL, ref TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '', artist TEXT NOT NULL DEFAULT '', year INTEGER,
+                    label TEXT NOT NULL DEFAULT '', genre TEXT NOT NULL DEFAULT '', image TEXT NOT NULL DEFAULT '',
+                    track_count INTEGER, report_dr INTEGER, report_tracks INTEGER, report_mtime REAL,
+                    updated REAL NOT NULL);
+                CREATE TABLE track (album_key TEXT NOT NULL, track_key TEXT NOT NULL, number INTEGER,
+                    title TEXT NOT NULL DEFAULT '', dr INTEGER NOT NULL, dr_exact REAL NOT NULL,
+                    seconds REAL NOT NULL, duration REAL, complete INTEGER NOT NULL, method TEXT NOT NULL,
+                    at REAL NOT NULL, PRIMARY KEY (album_key, track_key));
+                CREATE INDEX track_album ON track (album_key);
+                INSERT INTO album (key, source, track_count, updated) VALUES ('qobuz:1', 'qobuz', 1, 0);
+                INSERT INTO track VALUES ('qobuz:1', 't1', 1, 'A', 9, 9.2, 200, 200, 1, 'live', 0);
+            """)
+            db.commit()
+            db.close()
+            store = DrStore(path)
+            album = store.album("qobuz:1")
+            self.assertEqual((album["dr"]["dr"], album["tracks"][0]["origin"]), (9, ""))
+            self.assertTrue(track(store, "qobuz:1", 2, 11))
+
+
 class Watch(unittest.TestCase):
     SONG = {"file": "a.flac", "state": "play", "elapsed": 0.4, "duration": 200.0}
 

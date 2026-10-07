@@ -2411,6 +2411,43 @@ The rolling figure of the estimate itself is never stored: it is computed
 over blocks of several tracks at once, which is not how an album's DR is
 defined.
 
+#### Which measurement wins
+
+For each track, the best measurement stored is used: a complete one beats a
+partial one, a **measured** one (the *Measure* job: the file fetched again and
+measured whole, the TT algorithm checked sample for sample against
+`dr14_tmeter`) beats one **heard** live, and more seconds beat fewer. A local
+album's `dr14.txt` is used before any of them. *Heard whole* is close to, but
+not the same as, an offline measurement: the live tap is MusicPD's FIFO output
+(resampled to its fixed rate), its 3-second blocks start wherever the track
+boundary was noticed (polled twice a second) rather than at the first sample,
+and the partial last block is dropped. Expect the same integer DR most of the
+time and a difference of one at times; *Measure* settles it.
+
+#### Editions
+
+Every edition is an album of its own and is never merged with another by
+name: Qobuz albums by their album id (a remaster, a mono or a hi-res release
+each have their own, and the stored title carries Qobuz's version, e.g.
+"(2011 Remaster)"), local albums by their folder (the ranking shows the
+folder when the tags name two editions the same). Only streams that are
+neither Qobuz nor local are keyed by artist and album tags.
+
+#### Sharing between boxes
+
+Boxes that cannot reach each other (home and office) share the log through a
+git repository both can reach, configured in `[dr_sync]` of `commands.conf`:
+`repo` (e.g. a private GitHub repository), `box` (this box's name, default
+the host name) and `interval_minutes` (default 10). Each box commits only its
+own file, `boxes/<box>.jsonl` (its own tracks, album names and local
+reports), and imports the other boxes' files; nothing is ever overwritten, so
+a box can stay away for weeks. Rows from other boxes are kept beside this
+box's own, and an album's figure can combine tracks heard on both. Another
+box's local albums appear as `local@<box>:<folder>`. Git runs as the service
+user without prompting: give it credentials first (`gh auth login` and
+`gh auth setup-git`, a token in `~/.git-credentials`, or an SSH deploy key).
+The DR page shows the last round and offers **Share now**.
+
 \newpage
 
 # CD input: S/PDIF capture into the DRC chain {#sec:cdin}

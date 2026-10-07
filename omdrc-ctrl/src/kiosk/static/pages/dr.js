@@ -57,7 +57,8 @@ P.mount = el => {
     P.logBtn = h('button', { class: 'btn big-toggle', type: 'button', role: 'switch', 'aria-checked': 'false', onclick: () => P.logSet(!(P.log && P.log.enabled)) }, 'DR log');
     P.logState = h('div', { class: 'dr-status' }, 'reading…');
     P.logAlbum = h('div', { class: 'drlog-now' });
-    const logCard = K.card('DR log', P.logBtn, P.logState, P.logAlbum,
+    P.syncLine = h('div', { class: 'drlog-sync small' });
+    const logCard = K.card('DR log', P.logBtn, P.logState, P.logAlbum, P.syncLine,
         note('What it is.', 'Keeps the DR of every track played, on the server, whether or not any page is open, and puts together each album’s figure: exact once every track has been heard whole (over as many sessions as it takes), an estimate (≈) from the tracks heard so far, at least two minutes of them. A seek or a late start makes a track count towards the estimate only. Local albums with a dr14.txt use its value.'),
         note('Cost.', 'While on, MPD’s analyzer FIFO output stays enabled and the server reads it continuously — no FFT, only DR blocks. The Audio chain shows it as “DR log” under MPD’s FIFO. Independent of the Estimate switch.'));
 
@@ -170,6 +171,27 @@ P.logPaint = d => {
         : on && !P.log.listening ? `On, but not listening yet · ${stored}`
         : on ? `On — measuring every track played · ${stored}` : `Off · ${stored}`;
     P.logState.classList.toggle('warn', on && !P.log.listening);
+    P.syncPaint(P.log.sync);
+};
+
+// Sharing with the other boxes ([dr_sync] in commands.conf, dr_sync.py)
+const ago = t => { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? 'just now' : m < 90 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+P.syncPaint = s => {
+    if (!s || !s.configured) {
+        K.clear(P.syncLine).append(h('span', { class: 'muted' }, s && s.error ? `Sharing: ${s.error}` : 'Not shared with other boxes ([dr_sync] in commands.conf).'));
+        return;
+    }
+    const others = Object.keys(s.boxes || {});
+    const what = `Shared as “${s.box}”${others.length ? ` with ${others.join(', ')}` : ''}`;
+    const when = s.running ? 'sharing…' : s.last ? `last ${ago(s.last)}` : 'not yet';
+    K.clear(P.syncLine).append(
+        h('span', { class: s.ok === false ? 'warn' : 'muted' }, `${what} · ${when}${s.ok === false ? ` · ${s.error}` : ''}`),
+        h('button', { type: 'button', class: 'btn', disabled: !!s.running, onclick: async e => {
+            e.target.disabled = true; e.target.textContent = 'Sharing…';
+            const d = await K.api('/dr/sync', { method: 'POST', timeout: 240000 });
+            if (d.ok) { P.syncPaint(d.sync); P.rankLoad(); } else K.toast(d.error || 'cannot share', 'error');
+            if (d.ok && d.sync.ok === false) K.toast(d.sync.error, 'error');
+        } }, 'Share now'));
 };
 
 P.logPoll = async () => {
@@ -228,10 +250,15 @@ P.rankRow = (a, n) => {
     const paintTracks = () => K.clear(tracks).append(...(a.tracks.length ? a.tracks.map(t => h('div', { class: 'drrank-track' },
         h('span', { class: 'drlog' + (t.complete ? '' : ' est'), style: t.complete ? { background: K.dr.color(t.dr).bg, color: K.dr.color(t.dr).fg } : { borderColor: K.dr.color(t.dr).bg } }, `DR${t.dr}`),
         h('span', {}, `${t.number ? t.number + '. ' : ''}${t.title || t.track_key}`),
-        h('span', { class: 'muted small' }, `${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}`)))
+        h('span', { class: 'muted small' }, `${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}${t.origin ? ` · ${t.origin}` : ''}`)))
         : [h('div', { class: 'muted small' }, a.report_dr !== null ? 'Album value from dr14.txt; no track heard here yet.' : 'No tracks.')]));
     if (P.rankOpen.has(a.key)) paintTracks();
     const sub = [a.artist, a.year, a.label].filter(Boolean).join(' · ');
+    // where the figure comes from: another box's collection, or tracks heard there
+    const elsewhere = (a.dr.origins || []).filter(Boolean);
+    const box = a.origin ? `at ${a.origin}` : elsewhere.length ? `heard ${(a.dr.origins || []).map(o => o || 'here').join(' + ')}` : '';
+    // a local edition is told apart by its folder: tags often name two the same
+    const folder = a.source === 'local' && a.ref ? a.ref.split('/').pop() : '';
     const play = a.source === 'qobuz' ? h('button', { type: 'button', class: 'btn qz-play', title: 'Replace the queue and play', onclick: async e => {
         e.stopPropagation();
         const d = await K.api('/qobuz/play', { json: { album_id: a.ref, mode: 'replace' }, timeout: 90000 });
@@ -247,7 +274,8 @@ P.rankRow = (a, n) => {
             K.drLogBadge(a.dr, 'big'),
             h('div', { class: 'drrank-body' }, h('div', { class: 'drrank-title' }, a.title || '—'),
                 h('div', { class: 'muted small' }, sub),
-                h('div', { class: 'muted small' }, `${{ qobuz: 'Qobuz', local: 'Local', stream: 'Stream' }[a.source] || a.source} · ${K.dr.basisText(a.dr)}`)),
+                folder && folder !== a.title ? h('div', { class: 'muted small drrank-folder', title: a.ref }, `📁 ${folder}`) : null,
+                h('div', { class: 'muted small' }, [{ qobuz: 'Qobuz', local: 'Local', stream: 'Stream' }[a.source] || a.source, box, K.dr.basisText(a.dr)].filter(Boolean).join(' · '))),
             play),
         tracks);
 };

@@ -72,6 +72,22 @@ dsp_gauge_poll_steps = 1,5,8
 # actually settled -- this makes it hold for a while first.
 dsp_gauge_settle_count = 10
 
+# -- DR log sharing ------------------------------------------------------------
+# The DR log (the DR page's switch: every track's DR kept, albums ranked) can
+# be shared between boxes that cannot reach each other -- one at home, one at
+# the office -- through a git repository both can reach, a private GitHub one
+# for instance.  Each box commits only its own file there (boxes/<box>.jsonl)
+# and merges the others' every interval_minutes; nothing is ever overwritten.
+# Git runs as the service user, non-interactively: give that user credentials
+# first (HTTPS: `gh auth login` and `gh auth setup-git`, or a token in
+# ~/.git-credentials; SSH: a deploy key with write access).
+[dr_sync]
+# repo = https://github.com/<you>/omdrc-dr-log.git
+# This box's name in the shared log (letters, digits, - and _); default: the
+# host name.  Give every box a different one.
+# box = home
+interval_minutes = 10
+
 # -- Dynamic Range database -------------------------------------------------
 # The renderer card's "DR ↗" button looks the record up at dr.loudness-war.info
 # and lists the other masters people have measured, best first.  Read-only and

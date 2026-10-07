@@ -31,6 +31,7 @@ from audio_diagnostics import AudioDiagnosticsMonitor
 from drmeter import AlbumMeasurement, RollingEstimate, blocks_dr, BLOCK_SECONDS as DR_BLOCK_SECONDS
 import dr_store
 from dr_store import DrStore, TrackWatch
+from dr_sync import GitSync, SyncError
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
 from drdb import identify as drdb_identify_version
 from drdb import release_year as drdb_release_year
@@ -321,6 +322,11 @@ DR_PUBLISH_SECONDS = 5.0    # display refresh for the live DR panel
 # After the last DR listener leaves, keep its history (and the analyzer) this long, so a
 # page reload, a network blip or a phone screen that went off briefly finds it intact.
 DR_HOLD_SECONDS = 60.0
+# [dr_sync]: the DR log shared with other boxes through a git repository
+# (dr_sync.py).  No repository, no sharing.
+DR_SYNC_REPO = ""
+DR_SYNC_BOX = ""
+DR_SYNC_INTERVAL_MINUTES = 10.0
 SPECTRUM_BITS = 32
 SPECTRUM_CHANNELS = 2
 SPECTRUM_REFRESH_HZ = 25.0
@@ -709,6 +715,7 @@ def load_config(path: str) -> None:
     global TOPCPU_THRESHOLD, MONITOR_INTERVAL, TOPCPU_INTERVAL
     global SNDSTAT_INTERVAL, BRUTEFIR_INTERVAL, DSP_GAUGE_POLL_STEPS, DSP_GAUGE_SETTLE_COUNT
     global QCONNECT_STATUS_RESYNC_S
+    global DR_SYNC_REPO, DR_SYNC_BOX, DR_SYNC_INTERVAL_MINUTES
     global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
     global SPECTRUM_RATE, SPECTRUM_BITS, SPECTRUM_CHANNELS
     global DR_PUBLISH_SECONDS, DR_HOLD_SECONDS, SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
@@ -868,6 +875,13 @@ def load_config(path: str) -> None:
         )
         _BITPERFECT_MANAGER = None
 
+    if cfg.has_section("dr_sync"):
+        sec = cfg["dr_sync"]
+        DR_SYNC_REPO = sec.get("repo", fallback=DR_SYNC_REPO).strip()
+        DR_SYNC_BOX = sec.get("box", fallback=DR_SYNC_BOX).strip()
+        DR_SYNC_INTERVAL_MINUTES = max(1.0, sec.getfloat(
+            "interval_minutes", fallback=DR_SYNC_INTERVAL_MINUTES))
+
     if cfg.has_section("drdb"):
         sec = cfg["drdb"]
         DRDB = DrDbSettings(
@@ -903,7 +917,7 @@ def load_config(path: str) -> None:
 
     _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth",
                  "qconnect_oauth", "cdin", "chain", "configuration",
-                 "bitperfect", "drdb", "qobuz_search"}
+                 "bitperfect", "drdb", "dr_sync", "qobuz_search"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
@@ -5181,7 +5195,11 @@ def _dr_album_for(song: dict) -> dict | None:
             card = track["album"]
             if card.get("id"):
                 return {"key": "qobuz:" + card["id"], "source": "qobuz", "ref": card["id"],
-                        "meta": {"title": card.get("title"), "artist": card.get("artist"),
+                        # the version names the edition: "(2011 Remaster)", "(Mono)"
+                        "meta": {"title": " ".join(filter(None, (
+                                     card.get("title"),
+                                     f"({card['version']})" if card.get("version") else ""))),
+                                 "artist": card.get("artist"),
                                  "year": card.get("year"), "label": card.get("label"),
                                  "genre": card.get("genre"),
                                  "image": card.get("image_large") or card.get("image"),
@@ -5319,7 +5337,7 @@ def dr_log():
         source = _SPECTRUM.source_name
     return jsonify({"ok": True, "enabled": _dr_log_enabled(), "listening": listening,
                     "source": source, "available": SPECTRUM_ENABLED,
-                    "store": _DR_STORE.stats()})
+                    "store": _DR_STORE.stats(), "sync": _dr_sync_status()})
 
 
 @app.route("/dr/library")
@@ -5361,6 +5379,39 @@ def dr_library_current():
 def dr_library_import():
     started = _dr_import_start()
     return jsonify({"ok": True, "started": started})
+
+
+_DR_SYNC: GitSync | None = None
+_DR_SYNC_ERROR = ""
+
+
+def _dr_sync_start() -> None:
+    """Share the log through [dr_sync] repo, if one is configured."""
+    global _DR_SYNC, _DR_SYNC_ERROR
+    if not DR_SYNC_REPO:
+        return
+    box = DR_SYNC_BOX or socket.gethostname().split(".")[0]
+    try:
+        _DR_SYNC = GitSync(_DR_STORE, DR_SYNC_REPO, box, os.path.join(_STATE_DIR, "dr-sync"),
+                           interval=DR_SYNC_INTERVAL_MINUTES * 60.0)
+    except SyncError as error:
+        _DR_SYNC_ERROR = str(error)
+        return
+    _DR_SYNC.start()
+
+
+def _dr_sync_status() -> dict:
+    if _DR_SYNC is None:
+        return {"configured": False, "error": _DR_SYNC_ERROR}
+    return _DR_SYNC.status()
+
+
+@app.route("/dr/sync", methods=["GET", "POST"])
+def dr_sync():
+    """GET how sharing went; POST to share now (answers when it is done)."""
+    if request.method == "POST" and _DR_SYNC is not None:
+        return jsonify({"ok": True, "sync": _DR_SYNC.run_once()})
+    return jsonify({"ok": True, "sync": _dr_sync_status()})
 
 
 # ── Measuring the DR of what is playing ─────────────────────────────────────
@@ -9781,6 +9832,7 @@ if __name__ == "__main__":
     # collection's dr14.txt reports are brought into its album list.
     _dr_log_apply()
     threading.Thread(target=_dr_import_watch, name="dr-import-watch", daemon=True).start()
+    _dr_sync_start()
     if platform.system() == "FreeBSD":
         _audio_diagnostics().start()
     app.run(host=args.host, port=args.port, threaded=True,

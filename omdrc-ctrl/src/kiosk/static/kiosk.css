@@ -1278,3 +1278,5 @@ html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 3.2
 .cf-consumer.log { border-color: var(--accent); color: var(--accent); font-weight: 700; }
 .cf-branch.live .cf-consumer.log { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 700px) { .drrank-tracks { padding-left: .6rem; } }
+.drlog-sync { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .3rem 0 .5rem; }
+.drlog-sync .warn { color: var(--warn-text); }

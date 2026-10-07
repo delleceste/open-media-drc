@@ -23,6 +23,13 @@ Albums are keyed by where they came from: `qobuz:<album id>`,
 `local:<folder relative to the music directory>`, and, for anything else MPD
 plays that carries an album tag, `tags:<artist>\\x1f<album>` (never exact: the
 number of tracks on such a record is not known).
+
+Several boxes can share what they heard (dr_sync.py).  Every row then says
+where it was measured: `origin` is empty for this box and the other box's name
+for an imported one.  Rows of different origins sit side by side -- a box only
+ever replaces its own, or one box's whole set on import -- and the album figure
+takes the best measurement of each track, wherever it came from.  Another
+box's local albums are keyed `local@<box>:<folder>`: its folders are not ours.
 """
 from __future__ import annotations
 
@@ -67,7 +74,8 @@ CREATE TABLE IF NOT EXISTS album (
     report_dr     INTEGER,
     report_tracks INTEGER,
     report_mtime  REAL,
-    updated       REAL NOT NULL
+    updated       REAL NOT NULL,
+    origin        TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS track (
     album_key  TEXT NOT NULL,
@@ -81,7 +89,8 @@ CREATE TABLE IF NOT EXISTS track (
     complete   INTEGER NOT NULL,
     method     TEXT NOT NULL,
     at         REAL NOT NULL,
-    PRIMARY KEY (album_key, track_key)
+    origin     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (album_key, track_key, origin)
 );
 CREATE INDEX IF NOT EXISTS track_album ON track (album_key);
 """
@@ -93,20 +102,37 @@ def tags_key(artist: str, album: str) -> str:
     return "tags:" + " ".join(artist.split()).casefold() + "\x1f" + " ".join(album.split()).casefold()
 
 
+def _rank(t: dict) -> tuple:
+    return (bool(t["complete"]), t["method"] == "measured", t["seconds"], t.get("at", 0))
+
+
+def best_tracks(tracks: list[dict]) -> list[dict]:
+    """One row per track: the best of the boxes' measurements of it."""
+    best: dict = {}
+    for t in tracks:
+        have = best.get(t["track_key"])
+        if have is None or _rank(t) > _rank(have):
+            best[t["track_key"]] = t
+    return sorted(best.values(), key=lambda t: (t["number"] is None, t["number"] or 0, t["track_key"]))
+
+
 def summary(album: dict, tracks: list[dict]) -> dict:
     """The album's figure from its row and its stored tracks.
 
     {"dr": int | None, "kind": "exact" | "estimate" | None,
      "basis": "report" | "measured" | "listened" | "", "heard": tracks stored,
      "complete": complete tracks, "track_count", "seconds": seconds measured,
-     "dr_mean": unrounded mean of the tracks, to order equal values by}"""
+     "dr_mean": unrounded mean of the tracks, to order equal values by,
+     "origins": the boxes the tracks used were heard on, "" for this one}"""
+    tracks = best_tracks(tracks)
     heard = len(tracks)
     complete = [t for t in tracks if t["complete"]]
     seconds = sum(t["seconds"] for t in tracks)
     count = album.get("track_count")
     out = {"dr": None, "kind": None, "basis": "", "heard": heard,
            "complete": len(complete), "track_count": count,
-           "seconds": round(seconds), "dr_mean": None}
+           "seconds": round(seconds), "dr_mean": None,
+           "origins": sorted({t.get("origin", "") for t in tracks})}
     if album.get("report_dr") is not None:
         out.update(dr=album["report_dr"], kind="exact", basis="report",
                    dr_mean=float(album["report_dr"]))
@@ -221,9 +247,35 @@ class DrStore:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         if not self._ready:
+            self._migrate(db)
             db.executescript(SCHEMA)
             self._ready = True
         return db
+
+    @staticmethod
+    def _migrate(db) -> None:
+        """Bring a database from before sharing up to date: rows get an
+        origin (this box), and a track's key includes it."""
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "album" in tables and "origin" not in {r[1] for r in db.execute("PRAGMA table_info(album)")}:
+            db.execute("ALTER TABLE album ADD COLUMN origin TEXT NOT NULL DEFAULT ''")
+        if "track" in tables and "origin" not in {r[1] for r in db.execute("PRAGMA table_info(track)")}:
+            db.executescript("""
+                ALTER TABLE track RENAME TO track_old;
+                DROP INDEX IF EXISTS track_album;
+                CREATE TABLE track (
+                    album_key TEXT NOT NULL, track_key TEXT NOT NULL, number INTEGER,
+                    title TEXT NOT NULL DEFAULT '', dr INTEGER NOT NULL, dr_exact REAL NOT NULL,
+                    seconds REAL NOT NULL, duration REAL, complete INTEGER NOT NULL,
+                    method TEXT NOT NULL, at REAL NOT NULL, origin TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (album_key, track_key, origin));
+                INSERT INTO track (album_key, track_key, number, title, dr, dr_exact, seconds,
+                                   duration, complete, method, at, origin)
+                    SELECT album_key, track_key, number, title, dr, dr_exact, seconds,
+                           duration, complete, method, at, '' FROM track_old;
+                DROP TABLE track_old;
+            """)
+        db.commit()
 
     def upsert_album(self, key: str, source: str, ref: str = "", **meta) -> None:
         """Create the album or fill in what is known of it; an empty value
@@ -247,7 +299,7 @@ class DrStore:
         rank = (bool(complete), method == "measured", seconds)
         with self._lock, self._connect() as db:
             old = db.execute("SELECT complete, method, seconds FROM track "
-                             "WHERE album_key = ? AND track_key = ?",
+                             "WHERE album_key = ? AND track_key = ? AND origin = ''",
                              (album_key, track_key)).fetchone()
             if old and (bool(old["complete"]), old["method"] == "measured",
                         old["seconds"]) > rank:
@@ -323,6 +375,75 @@ class DrStore:
         for a in page:
             a.pop("report_mtime", None)
         return {"albums": page, "count": len(rated), "totals": totals}
+
+    # -- sharing between boxes (dr_sync.py) --
+
+    def export_rows(self) -> list[dict]:
+        """What this box measured or read itself, for the other boxes: its own
+        tracks, its albums' names, and its local reports.  Deterministic, so
+        an unchanged log exports byte for byte the same file."""
+        with self._lock, self._connect() as db:
+            tracks = [dict(r) for r in db.execute(
+                "SELECT * FROM track WHERE origin = '' ORDER BY album_key, track_key")]
+            keys = {t["album_key"] for t in tracks}
+            albums = [dict(r) for r in db.execute("SELECT * FROM album WHERE origin = '' ORDER BY key")]
+        rows = []
+        for a in albums:
+            if a["key"] not in keys and a["report_dr"] is None:
+                continue
+            rows.append({"album": {k: a[k] for k in ("key", "source", "ref", "title", "artist",
+                                                     "year", "label", "genre", "image",
+                                                     "track_count", "report_dr", "report_tracks")}})
+        for t in tracks:
+            rows.append({"track": {k: t[k] for k in ("album_key", "track_key", "number", "title",
+                                                     "dr", "dr_exact", "seconds", "duration",
+                                                     "complete", "method", "at")}})
+        return rows
+
+    @staticmethod
+    def _foreign_key(key: str, box: str) -> str:
+        """Another box's local folder is not one of ours."""
+        return f"local@{box}:" + key[len("local:"):] if key.startswith("local:") else key
+
+    def import_box(self, box: str, rows: list[dict]) -> dict:
+        """Replace everything known from `box` with `rows` (its export)."""
+        albums = [r["album"] for r in rows if isinstance(r.get("album"), dict)]
+        tracks = [r["track"] for r in rows if isinstance(r.get("track"), dict)]
+        now = time.time()
+        with self._lock, self._connect() as db:
+            db.execute("DELETE FROM track WHERE origin = ?", (box,))
+            db.execute("DELETE FROM album WHERE origin = ?", (box,))
+            for a in albums:
+                key = self._foreign_key(str(a.get("key", "")), box)
+                if not key:
+                    continue
+                own = not key.startswith("local@")
+                db.execute("INSERT OR IGNORE INTO album (key, source, ref, updated, origin) "
+                           "VALUES (?, ?, ?, ?, ?)",
+                           (key, a.get("source") or "stream", a.get("ref") or "", now,
+                            "" if own else box))
+                meta = {k: a.get(k) for k in _META if a.get(k) not in (None, "")}
+                if meta:
+                    # fill in only what this box does not know
+                    sets = ", ".join(f"{k} = CASE WHEN {k} IS NULL OR {k} = '' THEN ? ELSE {k} END"
+                                     for k in meta)
+                    db.execute(f"UPDATE album SET {sets} WHERE key = ?", (*meta.values(), key))
+                if not own and a.get("report_dr") is not None:
+                    db.execute("UPDATE album SET report_dr = ?, report_tracks = ? WHERE key = ?",
+                               (a["report_dr"], a.get("report_tracks"), key))
+            for t in tracks:
+                try:
+                    db.execute("INSERT OR REPLACE INTO track (album_key, track_key, number, title, "
+                               "dr, dr_exact, seconds, duration, complete, method, at, origin) "
+                               "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               (self._foreign_key(str(t["album_key"]), box), str(t["track_key"]),
+                                t.get("number"), t.get("title") or "", int(t["dr"]),
+                                float(t["dr_exact"]), float(t["seconds"]), t.get("duration"),
+                                int(bool(t["complete"])), str(t.get("method") or "live"),
+                                float(t.get("at") or now), box))
+                except (KeyError, TypeError, ValueError):
+                    continue        # a malformed row from elsewhere is skipped, not fatal
+        return {"albums": len(albums), "tracks": len(tracks)}
 
     def stats(self) -> dict:
         with self._lock, self._connect() as db:
