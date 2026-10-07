@@ -77,6 +77,7 @@ _plugin_dir = lambda: ""        # noqa: E731 - upmpdcli's cdplugins/qobuz
 _renderer_running = lambda: False  # noqa: E731
 _queue_tail = None
 _move_to_end = None
+_music_directory = lambda: None
 _state_dir = lambda: ""         # noqa: E731 - where the played list lives
 
 # The path upmpdcli's Qobuz plugin serves its tracks under, and its default
@@ -112,13 +113,16 @@ _openhome: openhome.Renderer | None = None
 
 
 def init_app(app, settings, upmpdcli_conf, read_options, token_file, plugin_dir,
-             renderer_running, state_dir, queue_tail=None, move_to_end=None) -> None:
+             renderer_running, state_dir, queue_tail=None, move_to_end=None,
+             music_directory=None) -> None:
     global _settings, _upmpdcli_conf, _read_options, _token_file, _plugin_dir
     global _renderer_running, _state_dir, _queue_tail, _move_to_end
     _settings, _upmpdcli_conf, _read_options = settings, upmpdcli_conf, read_options
     _token_file, _plugin_dir, _renderer_running = token_file, plugin_dir, renderer_running
     _state_dir = state_dir
     _queue_tail, _move_to_end = queue_tail, move_to_end
+    global _music_directory
+    _music_directory = music_directory or (lambda: None)
     app.register_blueprint(bp)
 
 
@@ -495,6 +499,7 @@ def search():
     if guard:
         return guard
     try:
+        mpd_library.set_music_directory(_music_directory())
         args = _search_args()
         local_only = request.args.get("local", "0").lower() in ("1", "true", "yes")
         try:
@@ -554,6 +559,21 @@ def local_play():
         return jsonify({"ok": False, "error": str(error)}), 503
 
 
+@bp.route("/local/refresh", methods=["POST"])
+def local_refresh():
+    """Update MPD's index, then start the host's background DR14 scan."""
+    import subprocess
+    script = os.path.join(os.environ.get("PREFIX", "/usr/local"),
+                          "libexec", "omdrc", "scripts", "omdrc-mpd-update-dr14.sh")
+    try:
+        result = subprocess.run([script], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return jsonify({"ok": False, "error": str(error)}), 503
+    if result.returncode:
+        return jsonify({"ok": False, "error": (result.stderr or result.stdout).strip()}), 503
+    return jsonify({"ok": True, "message": "MPD database updated; DR14 scan started"})
+
+
 @bp.route("/local/art")
 def local_art():
     """Serve MPD's albumart binary response for one indexed library track."""
@@ -595,6 +615,7 @@ def search_stream():
 
     def run():
         try:
+            mpd_library.set_music_directory(_music_directory())
             try:
                 local = mpd_library.search(args["text"])
                 local_error = ""

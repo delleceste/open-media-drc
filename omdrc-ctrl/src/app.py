@@ -5371,13 +5371,31 @@ def _service_action(name: str, action: str):
 def _resolve_mpd_port() -> str | None:
     """Best-effort MPD port from the common default config locations (Linux and
     FreeBSD).  Returns None to let mpc fall back to its own default."""
-    for p in ("/usr/local/etc/musicpd.conf",
+    for p in ("/usr/local/etc/open-media-drc/musicpd.conf",
+              "/usr/local/etc/musicpd.conf",
               "/usr/local/etc/mpd.conf",
               "/etc/mpd.conf",
               os.path.expanduser("~/.config/mpd/mpd.conf"),
               os.path.expanduser("~/.mpdconf")):
         if os.path.isfile(p):
             return _mpd_port_from_conf(p)
+    return None
+
+
+def _resolve_mpd_music_directory() -> str | None:
+    """Return MPD's configured music root for local collection metadata."""
+    for p in ("/usr/local/etc/open-media-drc/musicpd.conf",
+              "/usr/local/etc/musicpd.conf", "/usr/local/etc/mpd.conf",
+              "/etc/mpd.conf", os.path.expanduser("~/.config/mpd/mpd.conf"),
+              os.path.expanduser("~/.mpdconf")):
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    match = re.match(r'^\s*music_directory\s+(?:"([^"]+)"|(\S+))', line)
+                    if match:
+                        return os.path.expanduser(match.group(1) or match.group(2))
+        except OSError:
+            continue
     return None
 
 
@@ -9362,7 +9380,8 @@ try:
                        plugin_dir=lambda: os.path.dirname(QOBUZ_OAUTH_SCRIPT),
                        renderer_running=lambda: _service_running(UPMPDCLI_SERVICE),
                        state_dir=lambda: _STATE_DIR,
-                       queue_tail=kiosk.queue_tail, move_to_end=kiosk.move_to_end)
+                       queue_tail=kiosk.queue_tail, move_to_end=kiosk.move_to_end,
+                       music_directory=_resolve_mpd_music_directory)
 except Exception as _qobuz_web_error:           # pragma: no cover
     print(f"Qobuz search unavailable: {_qobuz_web_error}", file=sys.stderr)
 

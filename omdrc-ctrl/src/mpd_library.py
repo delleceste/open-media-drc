@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+from pathlib import Path
 import re
 import socket
 import urllib.parse
@@ -10,6 +11,29 @@ import urllib.parse
 
 class MPDError(RuntimeError):
     pass
+
+
+_music_directory: str | None = None
+
+
+def set_music_directory(path: str | None) -> None:
+    global _music_directory
+    _music_directory = path
+
+
+def _dr14_average(uri: str) -> int | None:
+    """Read the album's DR14 T.meter average from its conventional report."""
+    if not _music_directory:
+        return None
+    report = Path(_music_directory, uri).parent / "dr14.txt"
+    try:
+        text = report.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    # DR14 T.meter reports the album average as `DR = 12` in CLI output and
+    # as `Official DR value: DR12` in its generated dr14.txt table.
+    matches = re.findall(r"(?:Official DR value:\s*DR|^\s*DR\s*=\s*)(\d+)", text, re.I | re.M)
+    return int(matches[-1]) if matches else None
 
 
 def _quote(value: str) -> str:
@@ -63,6 +87,8 @@ def search(text: str, limit: int = 5000) -> list[dict]:
         key = (artist.casefold(), album.casefold(), t.get("date", ""))
         card = albums.setdefault(key, {"id": "local:" + hashlib.sha256("\0".join(key).encode()).hexdigest()[:24], "source": "local", "title": album, "artist": artist, "year": (t.get("date", "")[:4] or None), "label": "", "image": "", "image_large": "", "streamable": True, "tracks": [], "track_count": 0})
         card["tracks"].append({"file": t["file"], "title": t.get("title", ""), "duration": int(float(t.get("duration", 0) or 0))})
+        if "dr" not in card:
+            card["dr"] = _dr14_average(t["file"])
         if not card["image"]:
             art_url = "/qobuz/local/art?file=" + urllib.parse.quote(t["file"], safe="")
             card["image"] = card["image_large"] = art_url

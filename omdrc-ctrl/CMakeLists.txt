@@ -115,6 +115,7 @@ install(FILES src/app.py src/configuration.py src/bitperfect.py
 # resolve bitperfect-lib.py next to $0, so shipping one without the others
 # leaves a /bitperfect page that cannot run anything.
 install(PROGRAMS
+        ../scripts/omdrc-mpd-update-dr14.sh
         ../scripts/bitperfect-lib.py
         ../scripts/bitperfect_runner.py
         ../scripts/bitperfect_material.py

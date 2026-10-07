@@ -102,6 +102,7 @@ P.mount = el => {
                     P.inputBox,
                     P.searchActions = h('div', { class: 'qz-searchactions' },
                         P.aiButton = h('button', { type: 'submit', class: 'btn primary qz-go', title: 'Search', 'aria-label': 'Search' }, K.tIcon('search')),
+                        P.refreshButton = h('button', { type: 'button', class: 'btn qz-refresh-mpd', title: 'Refresh MPD database and calculate missing DR14 reports', 'aria-label': 'Refresh MPD database', onclick: () => P.refreshLocal() }, '↻'),
                         // down on Now, once there are results: over to them, in Search's place
                         // until the text or a filter changes (kiosk.css, paintStale)
                         h('button', { type: 'button', class: 'btn qz-toresults', title: 'Open the results', 'aria-label': 'Open the results', onclick: () => P.openResults() }, '›'))),
@@ -1021,6 +1022,21 @@ P.searchSoon = () => {
     if (P.last || P.request) soon = setTimeout(() => P.search(), 450);
 };
 
+P.refreshLocal = async () => {
+    P.refreshButton.disabled = true;
+    try {
+        const answer = await K.api('/qobuz/local/refresh', { json: {}, timeout: 20000 });
+        if (!answer.ok) throw new Error(answer.error || 'request failed');
+        K.toast(answer.message || 'MPD database refreshed; DR14 scan started');
+        // The MPD update is immediate; refresh visible local result metadata too.
+        if (P.last) P.search(0, { quiet: true });
+    } catch (error) {
+        K.toast(`MPD refresh failed: ${error.message || error}`);
+    } finally {
+        P.refreshButton.disabled = false;
+    }
+};
+
 P.search = async (scan = 0, { quiet = false } = {}) => {
     clearTimeout(soon);
     if (P.request || P.aiStarting) P.stopSearch();
@@ -1660,7 +1676,7 @@ P.row = (c, where = '') => {
         'aria-label': 'More actions', 'aria-haspopup': 'menu',
         onclick: () => P.tileMenuEl && P.tileMenuTile === row ? P.closeTileMenu() : P.tileMenu(c, where, row, moreBtn) }, '⋯');
     const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') },
-        h('div', { class: 'qz-cover-wrap' }, c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
+        h('div', { class: 'qz-cover-wrap' }, c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂', c.dr != null ? ` DR${c.dr}` : '') : null),
         body,
         h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),
@@ -1688,6 +1704,7 @@ P.tile = (c, where = '') => {
                 ...(c.image_large ? { srcset: `${c.image} 230w, ${c.image_large} 600w`, sizes: '9rem' } : {}) }) : null,
             (c.awards && c.awards.length) || c.rating ? h('span', { class: 'qz-taward', title: 'Awarded' }, '🏆') : null,
             c.source === 'local' ? h('span', { class: 'qz-taward qz-local-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null,
+            c.source === 'local' && c.dr != null ? h('span', { class: 'qz-tq qz-local-dr', title: 'Average dynamic range from dr14.txt' }, `DR${c.dr}`) : null,
             quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-tsub muted' }, c.artist || ''),
