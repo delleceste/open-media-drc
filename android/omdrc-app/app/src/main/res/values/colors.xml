@@ -10,6 +10,14 @@
     <color name="icon_glyph">#000000</color>
     <!-- Under the 1x1 tile's play/pause chip and its DRC / format strip. -->
     <color name="widget_chip_backdrop">#59000000</color>
+    <!-- The tile's strip colors the source format like the kiosk page's own
+         track strip (kiosk/static/widgets/track.js K.formatColor): hi-res
+         (24-bit, 88kHz+) in the app's existing accent blue - kiosk_accent's
+         dark-theme value, since the widget always renders dark regardless
+         of system theme - 24-bit/176kHz+ in status_safe, already used for
+         the headroom-safe status icon. -->
+    <color name="widget_fmt_hires">#58A6FF</color>
+    <color name="widget_fmt_green">@color/status_safe</color>
     <!-- The kiosk page's palette (omdrc-ctrl/src/kiosk/static/kiosk.css), for native
          screens that stand in for it, like the connection error: its light theme here,
          the dark one in values-night, so they follow the phone as the page does. -->
