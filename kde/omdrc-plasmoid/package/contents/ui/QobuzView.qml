@@ -434,12 +434,15 @@ Item {
 
     QQC2.Dialog {
         id: settingsDialog
+        parent: QQC2.Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(parent ? parent.width - Kirigami.Units.largeSpacing * 2 : 380, 380)
         modal: true
         title: i18n("AI settings")
         standardButtons: QQC2.Dialog.Save | QQC2.Dialog.Cancel
         onAccepted: view.saveAI()
-        ColumnLayout {
-            width: 350
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
             PlasmaComponents.Label {
                 Layout.fillWidth: true
                 text: i18n("Ask AI researches reviews and matches playable Qobuz releases. The request and candidates go to the selected provider.")
