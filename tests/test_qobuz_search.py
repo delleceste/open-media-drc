@@ -715,6 +715,21 @@ class PanelTest(unittest.TestCase):
         self.assertTrue(frames[-1]["ok"])
         self.assertEqual([c["id"] for c in frames[-1]["results"]], ["local:one"])
 
+    def test_local_art_route_serves_mpd_albumart(self):
+        with patch.object(qobuz_web.mpd_library, "albumart", return_value=(b"image-bytes", "image/jpeg")) as art:
+            response = self.client.get("/qobuz/local/art?file=Music%2FAlbum%2Ftrack.flac")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"image-bytes")
+        self.assertEqual(response.mimetype, "image/jpeg")
+        self.assertEqual(art.call_args.args[0], "Music/Album/track.flac")
+        self.assertEqual(response.headers["Cache-Control"], "public, max-age=86400")
+
+    def test_local_art_route_rejects_parent_paths(self):
+        with patch.object(qobuz_web.mpd_library, "albumart") as art:
+            response = self.client.get("/qobuz/local/art?file=Music%2F..%2Foutside.flac")
+        self.assertEqual(response.status_code, 400)
+        art.assert_not_called()
+
     def test_a_bad_number_is_an_error_not_a_crash(self):
         cat, _ = catalog({})
         with patch.object(qobuz_web, "catalog", return_value=cat), self.running():

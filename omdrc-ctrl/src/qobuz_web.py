@@ -554,6 +554,23 @@ def local_play():
         return jsonify({"ok": False, "error": str(error)}), 503
 
 
+@bp.route("/local/art")
+def local_art():
+    """Serve MPD's albumart binary response for one indexed library track."""
+    uri = request.args.get("file", "")
+    if len(uri) > 4096 or not uri:
+        return Response(status=404)
+    if uri.startswith("/") or "\\" in uri or any(part in ("", ".", "..") for part in uri.split("/")):
+        return Response(status=400)
+    try:
+        image, mime = mpd_library.albumart(uri)
+        return Response(image, mimetype=mime,
+                        headers={"Cache-Control": "public, max-age=86400"})
+    except (mpd_library.MPDError, OSError) as error:
+        status = 404 if "not found" in str(error).lower() or "no file exists" in str(error).lower() else 503
+        return Response(status=status, headers={"Cache-Control": "public, max-age=3600"})
+
+
 @bp.route("/search/stream")
 def search_stream():
     """The search above as server-sent events: {"ok": true, "partial": true, ...}
