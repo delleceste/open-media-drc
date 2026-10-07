@@ -51,10 +51,10 @@ MIN_TRACK_SECONDS = 30.0
 # unreliable.
 MIN_ESTIMATE_SECONDS = 120.0
 # A track counts as heard whole when it was heard from (near) its start, never
-# sought, and the blocks cover its length but for this much: the partial last
-# block, and the half-second the boundary is polled at.
+# sought, and what was measured covers its length but for this much (MPD's
+# durations are rounded, and a track's end is placed by the next one's start).
 START_TOLERANCE = 5.0
-END_TOLERANCE = 9.0
+END_TOLERANCE = 4.0
 # An elapsed time this far from where wall-clock time says it should be is a
 # seek (or a restart of the track), not jitter.
 SEEK_TOLERANCE = 3.0
@@ -183,13 +183,28 @@ def audio_files(folder: str) -> int:
 
 class TrackWatch:
     """What the analyzer knows of the track playing: where it was first heard,
-    whether it was sought, how long it is.  Pure bookkeeping, fed MPD's status
+    whether it was sought, how long it is, and at which frame of the PCM
+    stream its first sample went by.  Pure bookkeeping, fed MPD's status
     (currentsong + status, as _mpd_now_playing_via_protocol reads it) every
-    half second; the blocks themselves stay in the RollingEstimate."""
+    half second; the audio's statistics stay in the analyzer (SubBlocks).
 
-    def __init__(self, song: dict, now: float, start_block: int) -> None:
+    The first sample is known exactly when the track began after silence (play
+    after stop: the first frame after the gap is it).  Otherwise -- one track
+    running into the next -- every poll offers an estimate, frames read so far
+    less MPD's elapsed time; their median, less the pipeline's latency, settles
+    within a few seconds, until a seek makes elapsed time useless for it.  A
+    track known both ways measures that latency (latency_sample)."""
+
+    ESTIMATES = 21
+
+    def __init__(self, song: dict, now: float, start_block: int,
+                 start_frame: int | None = None) -> None:
         self.song = dict(song)
         self.start_block = start_block
+        self.exact_start = start_frame
+        self.created = now
+        self.created_frames = -1    # the stream's frame count when it was seen start
+        self.estimates: list[int] = []
         elapsed = song.get("elapsed")
         self.first_elapsed = elapsed if isinstance(elapsed, (int, float)) else None
         self.seeks: list[int] = []
@@ -212,14 +227,42 @@ class TrackWatch:
         if self.first_elapsed is None and elapsed is not None:
             self.first_elapsed = elapsed
         self._elapsed, self._at, self._state = elapsed, now, state
-        for key in ("duration", "title", "album", "artist", "album_artist", "track_no"):
+        for key in ("duration", "title", "album", "artist", "album_artist", "track_no", "audio"):
             if song.get(key) not in (None, ""):
                 self.song[key] = song[key]
         return sought
 
-    def result(self, dr_exact: float | None, blocks: int, block_seconds: float) -> dict | None:
+    def estimate_start(self, frames: int, elapsed, rate: int) -> None:
+        """One poll's guess at the first sample, before latency: `frames` read
+        when MPD said `elapsed` seconds of this track had played."""
+        if (not self.seeks and isinstance(elapsed, (int, float))
+                and len(self.estimates) < self.ESTIMATES):
+            self.estimates.append(int(frames - elapsed * rate))
+
+    def _median(self) -> int:
+        return sorted(self.estimates)[len(self.estimates) // 2]
+
+    def start(self, latency: int = 0) -> int | None:
+        """The frame of the first sample: exact, or estimated less `latency`."""
+        if self.exact_start is not None:
+            return self.exact_start
+        return self._median() - latency if self.estimates else None
+
+    @property
+    def source_rate(self) -> int | None:
+        """The sample rate of the file being played (MPD's "audio" status,
+        rate:bits:channels), which sets the reference meter's block length."""
+        rate = str(self.song.get("audio") or "").split(":")[0]
+        return int(rate) if rate.isdigit() and int(rate) > 0 else None
+
+    def latency_sample(self) -> int | None:
+        """How far the estimates run ahead of a start known exactly."""
+        if self.exact_start is None or len(self.estimates) < 5:
+            return None
+        return self._median() - self.exact_start
+
+    def result(self, dr_exact: float | None, seconds: float) -> dict | None:
         """The track's row once it has ended, or None if too little was heard."""
-        seconds = blocks * block_seconds
         if dr_exact is None or seconds < MIN_TRACK_SECONDS:
             return None
         duration = self.song.get("duration")

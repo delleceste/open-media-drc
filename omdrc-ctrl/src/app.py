@@ -28,7 +28,7 @@ if os.path.dirname(__file__) not in sys.path:
 from configuration import ConfigurationManager, Settings as ConfigurationSettings
 from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 from audio_diagnostics import AudioDiagnosticsMonitor
-from drmeter import AlbumMeasurement, RollingEstimate, blocks_dr, BLOCK_SECONDS as DR_BLOCK_SECONDS
+from drmeter import AlbumMeasurement, RollingEstimate, SubBlocks
 import dr_store
 from dr_store import DrStore, TrackWatch
 from dr_sync import GitSync, SyncError
@@ -1939,6 +1939,9 @@ class SpectrumAnalyzer:
         # The DR log's own listener (see _dr_log_apply): one of `dr_clients`,
         # held for as long as the log is switched on, page or no page.
         self.dr_log = False
+        # Frames by which MPD's elapsed clock runs ahead of the PCM read, as
+        # measured on tracks that started after silence (see start_track).
+        self.dr_latency: collections.deque = collections.deque(maxlen=15)
         self.seq = 0
         self.frame = {
             "ok": False,
@@ -2217,7 +2220,7 @@ class SpectrumAnalyzer:
         source_started = False
         terminal_error = False
         switch_source = False
-        finish_track = None     # the DR log's, once the loop below has one
+        finish_track = settle_due = None   # the DR log's, once the loop below has them
         # Whether the failure just published is worth another attempt shortly.
         # A producer that is restarting (MPD around a DRC-mode switch) fails to
         # attach for a second or two and then works again.
@@ -2413,39 +2416,113 @@ class SpectrumAnalyzer:
             # "complete", "seeks"} in absolute block numbers.
             dr_watch: TrackWatch | None = None
             dr_segments: collections.deque = collections.deque(maxlen=200)
+            # A track's own DR is worked out from sub-blocks, in 3-second
+            # blocks counted from its first sample (drmeter.SubBlocks).  A
+            # track that ran into the next is finished a few seconds later,
+            # once the next one's start -- its end -- has settled:
+            # [(watch, segment, next watch or None, end frame, when)].
+            dr_subs: SubBlocks | None = None
+            dr_pending: list = []
+            # Where the PCM came back after a gap, in frames, and when: a
+            # track starting there starts exactly there.
+            dr_resumed = (-1, 0.0)
 
-            def finish_track() -> None:
-                """The track playing has ended (another one started, or the
-                player stopped): close its segment and keep its row."""
+            def dr_latency() -> int:
+                """Frames between MPD's elapsed clock and what has been read,
+                calibrated on every track that started after silence."""
+                samples = sorted(self.dr_latency)
+                return samples[len(samples) // 2] if samples else 0
+
+            def settle(watch: TrackWatch, segment: dict, end: int) -> None:
+                """Work out one ended track over [its start, end) and keep it."""
+                start = watch.start(dr_latency())
+                if start is None:
+                    start = dr_subs.subs[0][0] if dr_subs.subs else 0
+                exact, seconds = dr_subs.dr_between(
+                    start, end, dr_subs.block_for(watch.source_rate))
+                result = watch.result(exact, seconds)
+                sample = watch.latency_sample()
+                if sample is not None:
+                    self.dr_latency.append(sample)
+                segment.update(dr=round(exact, 2) if exact is not None else None,
+                               complete=bool(result and result["complete"]),
+                               kept=result is not None)
+                if result is not None:
+                    _dr_store_track(watch.song, result, method="live")
+
+            def settle_due(force: bool = False) -> None:
+                """Finish the pending tracks whose end has had time to settle."""
+                if dr_subs is None:
+                    return
+                now_t = time.monotonic()
+                settled = False
+                for item in list(dr_pending):
+                    watch, segment, after, end, due = item
+                    if not force and now_t < due:
+                        continue
+                    if after is not None and after.start(dr_latency()) is not None:
+                        end = after.start(dr_latency())
+                    settle(watch, segment, end)
+                    dr_pending.remove(item)
+                    settled = True
+                # what is still needed: the pending tracks, the one playing,
+                # and a little before (a start estimate can move back)
+                starts = [w.start(dr_latency()) for w, *_ in dr_pending]
+                if dr_watch is not None:
+                    starts.append(dr_watch.start(dr_latency()))
+                known = [f for f in starts if f is not None]
+                # never more than three hours (a radio stream's long "track")
+                keep = dr_subs.frames - 3 * 3600 * rate
+                if known and len(known) == len(starts):
+                    keep = max(keep, min(known) - 10 * rate)
+                dr_subs.trim(keep)
+                if settled:
+                    publish_dr()
+
+            def finish_track(after: TrackWatch | None = None, now_end: bool = False) -> None:
+                """The track playing has ended: another one started (`after`),
+                or the player stopped (`now_end`: it ended where the stream is)."""
                 nonlocal dr_watch
                 if dr_estimate is None or dr_watch is None:
                     return
-                blocks = dr_estimate.take_track()
-                exact = blocks_dr(blocks)
-                result = dr_watch.result(exact, len(blocks), DR_BLOCK_SECONDS)
-                if dr_segments and dr_segments[-1]["end"] is None:
-                    dr_segments[-1].update(
-                        end=dr_estimate.total_blocks,
-                        dr=round(exact, 2) if exact is not None else None,
-                        complete=bool(result and result["complete"]),
-                        kept=result is not None)
-                if result is not None:
-                    _dr_store_track(dr_watch.song, result, method="live")
+                segment = dr_segments[-1] if dr_segments and dr_segments[-1]["end"] is None else {}
+                segment["end"] = dr_estimate.total_blocks
+                dr_pending.append((dr_watch, segment, after, dr_subs.frames,
+                                   time.monotonic() + (0.0 if now_end else 10.0)))
                 dr_watch = None
+                if now_end:
+                    settle_due()
 
-            def start_track(song: dict, now_t: float) -> None:
+            def start_track(song: dict, now_t: float) -> TrackWatch:
                 nonlocal dr_watch
-                dr_watch = TrackWatch(song, now_t, dr_estimate.total_blocks)
+                # Began right after silence (play after stop, or another track
+                # picked while paused): its first sample is the first frame
+                # that came back, and that calibrates the elapsed clock too.
+                exact = None
+                frame, at = dr_resumed
+                elapsed = song.get("elapsed")
+                if (frame >= 0 and now_t - at < 3.0 and isinstance(elapsed, (int, float))
+                        and elapsed <= now_t - at + 1.0):
+                    exact = frame
+                dr_watch = TrackWatch(song, now_t, dr_estimate.total_blocks, start_frame=exact)
+                dr_watch.created_frames = dr_subs.frames
                 dr_segments.append({
                     "start": dr_estimate.total_blocks, "end": None,
                     "title": song.get("title") or os.path.basename(song.get("file", "")),
-                    "dr": None, "complete": None, "kept": None, "seeks": []})
+                    "dr": None, "complete": None, "kept": None, "seeks": [],
+                    "anchor": "exact" if exact is not None else "estimated"})
+                return dr_watch
 
             def reset_dr() -> None:
                 nonlocal dr_estimate, dr_track_start_total, dr_gap_next_at, dr_gap_marked
-                nonlocal dr_watch
-                finish_track()
+                nonlocal dr_watch, dr_subs, dr_resumed
+                if dr_subs is not None:
+                    finish_track(now_end=True)
+                    settle_due(force=True)
                 dr_estimate = RollingEstimate(rate, SPECTRUM_CHANNELS, 5400)
+                dr_subs = SubBlocks(rate, SPECTRUM_CHANNELS)
+                dr_pending.clear()
+                dr_resumed = (-1, 0.0)
                 dr_track_start_total = 0
                 dr_gap_next_at = 0.0
                 dr_gap_marked = False
@@ -2476,11 +2553,19 @@ class SpectrumAnalyzer:
                 oldest = dr_estimate.total_blocks - len(dr_estimate.blocks)
                 tracks = [dict(s) for s in dr_segments
                           if s["end"] is None or s["end"] > oldest]
-                if tracks and tracks[-1]["end"] is None:
-                    exact = blocks_dr(dr_estimate.track)
+                if tracks and tracks[-1]["end"] is None and dr_watch is not None:
+                    start = dr_watch.start(dr_latency())
+                    exact, _ = dr_subs.dr_between(
+                        start if start is not None else dr_subs.frames - 3600 * rate,
+                        dr_subs.frames + 1, dr_subs.block_for(dr_watch.source_rate))
                     tracks[-1]["dr"] = round(exact, 2) if exact is not None else None
                 marks = {"total_blocks": dr_estimate.total_blocks, "tracks": tracks,
-                         "log": self.dr_log}
+                         "log": self.dr_log,
+                         # MPD's elapsed clock against the PCM read, calibrated
+                         "latency_ms": round(dr_latency() * 1000 / rate),
+                         "latency_samples": len(self.dr_latency),
+                         "frames": dr_subs.frames if dr_subs else 0,
+                         "resumed_frame": dr_resumed[0]}
                 with self.lock:
                     self.dr_state = ({"state": "ready", **result,
                                       "track_age_blocks": age,
@@ -2575,6 +2660,7 @@ class SpectrumAnalyzer:
                     at = time.monotonic()
                     gap_since_last_pcm = bool(last_data_at and
                                               at - last_data_at > silence_timeout)
+                    first_pcm = not last_data_at
                     if gap_since_last_pcm:
                         # Resuming after a real gap, so the retained history is
                         # the tail of whatever played BEFORE it — and the
@@ -2594,6 +2680,21 @@ class SpectrumAnalyzer:
                     if not dr_only:
                         buf.extend(data)
                     if dr_on and dr_estimate is not None:
+                        if gap_since_last_pcm or first_pcm:
+                            # audio (re)starts here: after silence, or the
+                            # first this attachment has heard
+                            dr_resumed = (dr_subs.frames, at)
+                            # MPD says "playing" before the first PCM arrives
+                            # (a stream buffers for seconds): a track seen at
+                            # its very beginning that has had no audio at all
+                            # yet starts here -- not one paused half-way
+                            if (dr_watch is not None and dr_watch.exact_start is None
+                                    and not dr_watch.seeks
+                                    and dr_watch.created_frames == dr_subs.frames
+                                    and (dr_watch.first_elapsed or 0.0) < 3.0):
+                                dr_watch.exact_start = dr_subs.frames
+                                if dr_segments:
+                                    dr_segments[-1]["anchor"] = "exact"
                         if gap_since_last_pcm and not dr_gap_marked:
                             dr_estimate.add_gap()
                             dr_tail.clear()
@@ -2610,7 +2711,9 @@ class SpectrumAnalyzer:
                         if usable:
                             pcm = np.frombuffer(bytes(dr_tail[:usable]), dtype="<i4")
                             pcm = pcm.reshape(-1, SPECTRUM_CHANNELS)
-                            if dr_estimate.feed(pcm.astype(np.float32) / 2147483648.0):
+                            pcm = pcm.astype(np.float32) / 2147483648.0
+                            dr_subs.feed(pcm)
+                            if dr_estimate.feed(pcm):
                                 publish_dr(throttle=True)
                             del dr_tail[:usable]
                 if dr_only:
@@ -2633,16 +2736,22 @@ class SpectrumAnalyzer:
                                          song_file, song_id):
                         # Keep the shared ring intact; each browser decides
                         # whether to start its window at this boundary.
-                        finish_track()
+                        ended = dr_watch is not None
+                        if ended:
+                            finish_track()
                         dr_track_start_total = dr_estimate.mark_track_start()
                         dr_tail.clear()
+                        if song_file and dr_playback_state != "stop":
+                            following = start_track(song, now)
+                            if ended:
+                                # the track that ended ends where this one starts
+                                dr_pending[-1] = dr_pending[-1][:2] + (following,) + dr_pending[-1][3:]
                         publish_dr()
                     if dr_playback_state == "stop":
                         # The end of the queue, or Stop: the last track is
                         # over even though no other one followed it.
                         if dr_watch is not None:
-                            finish_track()
-                            publish_dr()
+                            finish_track(now_end=True)
                     elif song_file and dr_watch is None:
                         start_track(song, now)
                     elif dr_watch is not None and dr_watch.observe(
@@ -2651,6 +2760,10 @@ class SpectrumAnalyzer:
                         # estimate, but it can no longer be a whole hearing.
                         dr_segments[-1]["seeks"].append(dr_estimate.total_blocks)
                         publish_dr()
+                    if dr_watch is not None and dr_playback_state == "play":
+                        dr_watch.estimate_start(dr_subs.frames, song.get("elapsed"), rate)
+                    if dr_pending:
+                        settle_due()
                     if song_file:
                         dr_song_file = song_file
                         dr_song_id = song_id
@@ -2852,7 +2965,8 @@ class SpectrumAnalyzer:
                 # Whatever ends the attachment, a track heard long enough is
                 # still worth its row.
                 try:
-                    finish_track()
+                    finish_track(now_end=True)
+                    settle_due(force=True)
                 except Exception:                       # noqa: BLE001
                     pass
             if reader_stop is not None:

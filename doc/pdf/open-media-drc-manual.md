@@ -2417,12 +2417,23 @@ For each track, the best measurement stored is used: a complete one beats a
 partial one, a **measured** one (the *Measure* job: the file fetched again and
 measured whole, the TT algorithm checked sample for sample against
 `dr14_tmeter`) beats one **heard** live, and more seconds beat fewer. A local
-album's `dr14.txt` is used before any of them. *Heard whole* is close to, but
-not the same as, an offline measurement: the live tap is MusicPD's FIFO output
-(resampled to its fixed rate), its 3-second blocks start wherever the track
-boundary was noticed (polled twice a second) rather than at the first sample,
-and the partial last block is dropped. Expect the same integer DR most of the
-time and a difference of one at times; *Measure* settles it.
+album's `dr14.txt` is used before any of them.
+
+*Heard whole* is measured the way the meter measures a file: the analyzer
+keeps 50 ms sub-blocks of the stream and, once a track has ended, groups them
+into 3-second blocks counted from the track's own first sample, the last one
+partial, with the block length of the track's source (3 x 44 160 samples at
+44.1 kHz, exactly 3 s at any other rate). The first sample is known exactly
+when the track starts after silence; when one track runs into the next it is
+placed from MusicPD's elapsed time, corrected by the latency measured on the
+tracks that did start after silence. Cutting the blocks wherever they happen
+to fall is not good enough: on a short track it alone moves the result by
+half a DR. Measured this way, a live track reads what an offline meter reads
+on the same 44.1 kHz signal, to within 0.01. What remains is the tap itself:
+MusicPD resamples a hi-res track to the FIFO's 44.1 kHz, which removes
+ultrasonic content and can move the second-highest peak; on two 96 kHz test
+tracks that made the live value 0.08 higher than the file's, the same integer
+DR. *Measure* reads the file at its own rate and settles it.
 
 #### Editions
 

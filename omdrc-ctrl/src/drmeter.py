@@ -141,9 +141,6 @@ class RollingEstimate:
         self.block = int(BLOCK_SECONDS * (rate + (60 if rate == 44100 else 0)))
         self.blocks = deque(maxlen=max(2, int(seconds / BLOCK_SECONDS)))
         self.total_blocks = 0
-        # The blocks of the track playing, gap slots excluded: what its DR is
-        # worked out from when it ends (blocks_dr), however long it ran.
-        self.track: list[tuple[np.ndarray, np.ndarray]] = []
         self.count = 0
         self.sum2 = np.zeros(channels, dtype=np.float64)
         self.peak = np.zeros(channels, dtype=np.float64)
@@ -160,9 +157,7 @@ class RollingEstimate:
             self.count += len(part)
             offset += len(part)
             if self.count == self.block:
-                block = (2.0 * self.sum2 / self.block, self.peak.copy())
-                self.blocks.append(block)
-                self.track.append(block)
+                self.blocks.append((2.0 * self.sum2 / self.block, self.peak.copy()))
                 self.total_blocks += 1
                 self.count = 0
                 self.sum2.fill(0)
@@ -187,12 +182,6 @@ class RollingEstimate:
         self.discard_partial()
         return self.total_blocks
 
-    def take_track(self) -> list[tuple[np.ndarray, np.ndarray]]:
-        """The blocks of the track that just ended; the next one starts empty."""
-        self.discard_partial()
-        blocks, self.track = self.track, []
-        return blocks
-
     def result(self) -> dict | None:
         exact = blocks_dr(self.blocks)
         if exact is None:
@@ -203,6 +192,106 @@ class RollingEstimate:
     def history(self) -> list[list[list[float]]]:
         """Compact per-block [RMS squared, peak] pairs for the live timeline."""
         return [[rms2.tolist(), peak.tolist()] for rms2, peak in self.blocks]
+
+
+class SubBlocks:
+    """A PCM stream's statistics in short sub-blocks, numbered by frame, so a
+    track's DR can be worked out the way Meter works it out on the file: in
+    3-second blocks counted from the track's own first sample, the last one
+    partial -- wherever in the stream that first sample turns out to be.
+
+    The rolling estimate cuts the stream into blocks as it arrives, and where
+    those cuts fall against a track is chance.  For the TT algorithm that is
+    not a detail: it keeps the loudest 20 % of blocks and the second-highest
+    block peak, a handful of blocks on a short track, and moving the cuts
+    alone moved a 44-second track by half a DR.  Sub-blocks of 1/60 of a
+    block (50 ms) let the cuts be placed afterwards, to within 25 ms of the
+    track's start, once that start is known.
+
+    The block's length is the source's, not the stream's: the reference counts
+    3 x 44 160 samples at 44.1 kHz but exactly 3 s at any other rate, so a
+    96 kHz file read here at 44.1 kHz has blocks of 132 300 frames, not
+    132 480.  Kept at the stream's own length, the grid would drift 4 ms a
+    block -- most of a second by the end of a long track."""
+
+    PARTS = 60
+
+    def __init__(self, rate: int, channels: int) -> None:
+        if rate <= 0 or channels <= 0:
+            raise DrMeterError("invalid PCM format")
+        self.rate = rate
+        self.channels = channels
+        self.block = int(BLOCK_SECONDS * (rate + (60 if rate == 44100 else 0)))
+        self.sub = self.block // self.PARTS
+        self.frames = 0                 # frames fed so far: the stream's clock
+        self.subs: deque = deque()      # (first frame, sum of squares, peak, frames)
+        self._first = 0
+        self._sum2 = np.zeros(channels, dtype=np.float64)
+        self._peak = np.zeros(channels, dtype=np.float64)
+        self._count = 0
+
+    def feed(self, frames: np.ndarray) -> None:
+        offset = 0
+        while offset < len(frames):
+            part = frames[offset:offset + self.sub - self._count]
+            values = part.astype(np.float64, copy=False)
+            if not self._count:
+                self._first = self.frames
+            self._sum2 += np.square(values).sum(axis=0)
+            self._peak = np.maximum(self._peak, np.max(np.abs(values), axis=0))
+            self._count += len(part)
+            self.frames += len(part)
+            offset += len(part)
+            if self._count == self.sub:
+                self.subs.append((self._first, self._sum2.copy(), self._peak.copy(), self._count))
+                self._sum2.fill(0)
+                self._peak.fill(0)
+                self._count = 0
+
+    def trim(self, before: int) -> None:
+        """Forget the sub-blocks wholly before frame `before`."""
+        while self.subs and self.subs[0][0] + self.subs[0][3] <= before:
+            self.subs.popleft()
+
+    def block_for(self, source_rate: int | None) -> float:
+        """Frames of this stream in one block of a `source_rate` source."""
+        if not source_rate or source_rate <= 0:
+            return float(self.block)
+        quirk = 60 if source_rate == 44100 else 0
+        return BLOCK_SECONDS * self.rate * (source_rate + quirk) / source_rate
+
+    def dr_between(self, start: int, end: int, block: float | None = None) -> tuple[float | None, float]:
+        """(TT DR unrounded, seconds) of frames [start, end): blocks of
+        `block` frames (default: this stream's own) from `start`, the last one
+        partial, each sub-block counted in the block its middle falls in."""
+        block = block or float(self.block)
+        subs = list(self.subs)
+        if self._count:
+            subs.append((self._first, self._sum2, self._peak, self._count))
+        groups: dict[int, list] = {}
+        for s in subs:
+            middle = s[0] + s[3] / 2
+            if start <= middle < end:
+                groups.setdefault(int((middle - start) // block), []).append(s)
+        if not groups:
+            return None, 0.0
+        chosen = [s for g in groups.values() for s in g]
+        rms2, peaks = [], []
+        for _, group in sorted(groups.items()):
+            count = sum(s[3] for s in group)
+            rms2.append(2.0 * sum(s[1] for s in group) / count)
+            peaks.append(np.max([s[2] for s in group], axis=0))
+        seconds = sum(s[3] for s in chosen) / self.rate
+        rms2, peaks = np.vstack(rms2), np.vstack(peaks)
+        top = max(1, int(len(rms2) * TOP_FRACTION))
+        per_channel = []
+        for ch in range(self.channels):
+            rms_upper = math.sqrt(float(np.sort(rms2[:, ch])[-top:].mean()))
+            ordered = np.sort(peaks[:, ch])
+            peak2 = float(ordered[-2] if len(ordered) > 1 else ordered[-1])
+            per_channel.append(20.0 * math.log10(peak2 / rms_upper)
+                               if rms_upper > 0 and peak2 > 0 else 0.0)
+        return float(np.mean(per_channel)), seconds
 
 
 def blocks_dr(blocks) -> float | None:

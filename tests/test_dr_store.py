@@ -164,18 +164,37 @@ class Watch(unittest.TestCase):
         w = TrackWatch(self.SONG, 100.0, 0)
         for i in range(1, 400):
             self.assertFalse(w.observe({**self.SONG, "elapsed": 0.4 + i * 0.5}, 100.0 + i * 0.5, i))
-        self.assertTrue(w.result(10.3, 66, 3.0)["complete"])
-        self.assertFalse(w.result(10.3, 50, 3.0)["complete"])      # 150 of 200 s
-        self.assertIsNone(w.result(10.3, 5, 3.0))                  # 15 s: not kept
+        self.assertTrue(w.result(10.3, 198.0)["complete"])
+        self.assertFalse(w.result(10.3, 150.0)["complete"])         # 150 of 200 s
+        self.assertIsNone(w.result(10.3, 15.0))                     # 15 s: not kept
 
     def test_a_seek_or_a_late_start_makes_it_partial(self):
         w = TrackWatch(self.SONG, 100.0, 0)
         w.observe({**self.SONG, "elapsed": 1.0}, 100.6, 1)
         self.assertTrue(w.observe({**self.SONG, "elapsed": 60.0}, 101.1, 2))
         self.assertEqual(w.seeks, [2])
-        self.assertFalse(w.result(10.0, 66, 3.0)["complete"])
+        self.assertFalse(w.result(10.0, 200.0)["complete"])
         late = TrackWatch({**self.SONG, "elapsed": 40.0}, 100.0, 0)
-        self.assertFalse(late.result(10.0, 66, 3.0)["complete"])
+        self.assertFalse(late.result(10.0, 200.0)["complete"])
+
+    def test_the_start_is_exact_or_the_median_of_estimates(self):
+        self.assertEqual(TrackWatch(self.SONG, 0.0, 0, start_frame=1234).start(500), 1234)
+        w = TrackWatch(self.SONG, 0.0, 0)
+        self.assertIsNone(w.start())
+        for frames, elapsed in ((44100, 0.5), (66150 + 900, 1.0), (88200, 1.5)):
+            w.estimate_start(frames, elapsed, 44100)
+        self.assertEqual(w.start(latency=100), 22050 - 100)        # the odd one out ignored
+        w.seeks.append(5)
+        w.estimate_start(10 ** 9, 2.0, 44100)                       # after a seek: not used
+        self.assertEqual(len(w.estimates), 3)
+
+    def test_a_start_known_both_ways_measures_the_latency(self):
+        w = TrackWatch(self.SONG, 0.0, 0, start_frame=10000)
+        for i in range(4):
+            w.estimate_start(10000 + 700 + 4410 * i, 0.1 * i, 44100)
+        self.assertIsNone(w.latency_sample())                       # too few yet
+        w.estimate_start(10000 + 700 + 4410 * 4, 0.4, 44100)
+        self.assertEqual(w.latency_sample(), 700)
 
     def test_a_pause_is_not_a_seek(self):
         w = TrackWatch(self.SONG, 100.0, 0)
@@ -183,22 +202,67 @@ class Watch(unittest.TestCase):
         self.assertFalse(w.observe({**self.SONG, "elapsed": 10.2}, 500.0, 3))
 
 
-class TrackBlocks(unittest.TestCase):
-    def test_gap_slots_stay_out_of_the_track(self):
-        estimate = drmeter.RollingEstimate(100, 2)
-        tone = np.full((300, 2), 0.25, dtype=np.float32)
-        tone[::50] = 0.5
-        estimate.feed(tone)
-        estimate.add_gap()
-        estimate.feed(tone)
-        self.assertEqual(len(estimate.blocks), 3)
-        blocks = estimate.take_track()
-        self.assertEqual(len(blocks), 2)
-        self.assertEqual(estimate.track, [])
-        self.assertAlmostEqual(drmeter.blocks_dr(blocks),
-                               20 * np.log10(0.5 / np.sqrt(2 * np.mean(tone[:, 0] ** 2))),
-                               places=4)
-        self.assertIsNone(drmeter.blocks_dr(blocks[:1]))
+class SubBlockTiming(unittest.TestCase):
+    """A track measured inside a stream, from its own first sample, reads
+    what the meter reads on the file."""
+    RATE = 6000          # 3-second blocks of 18 000 frames, sub-blocks of 300
+
+    def music(self, seconds, seed):
+        rng = np.random.default_rng(seed)
+        envelope = np.repeat(rng.uniform(0.05, 0.6, size=seconds * 4), self.RATE // 4)
+        return (rng.standard_normal((len(envelope), 2)) * envelope[:, None] * 0.3).clip(-1, 1)
+
+    def meter(self, x):
+        m = drmeter.Meter(self.RATE, 2)
+        block = m.block
+        for i in range(0, len(x), block):
+            m.feed(x[i:i + block])
+        return m.result()["dr_exact"]
+
+    def stream(self, *parts):
+        subs = drmeter.SubBlocks(self.RATE, 2)
+        for part in parts:
+            for i in range(0, len(part), 977):        # arbitrary chunking
+                subs.feed(part[i:i + 977])
+        return subs
+
+    def test_from_the_first_sample_it_is_the_files_value(self):
+        track = self.music(47, 1)                     # ends in a partial block
+        subs = self.stream(track)
+        exact, seconds = subs.dr_between(0, len(track))
+        self.assertAlmostEqual(round(exact, 2), self.meter(track), places=2)
+        self.assertAlmostEqual(seconds, 47.0)
+
+    def test_inside_a_stream_it_counts_from_the_tracks_start(self):
+        # the previous track, then 1300 frames of silence: not on a sub-block edge
+        before = np.vstack([self.music(20, 2), np.zeros((1300, 2))])
+        track, after = self.music(47, 3), self.music(10, 4)
+        start = len(before)
+        subs = self.stream(before, track, after)
+        exact, seconds = subs.dr_between(start, start + len(track))
+        self.assertAlmostEqual(exact, self.meter(track), delta=0.05)
+        self.assertAlmostEqual(seconds, 47.0, delta=0.1)
+
+    def test_blocks_are_the_sources_length(self):
+        subs = drmeter.SubBlocks(44100, 2)
+        self.assertEqual(subs.block_for(44100), 132480)        # the reference's quirk
+        self.assertEqual(subs.block_for(None), 132480)
+        self.assertAlmostEqual(subs.block_for(96000), 132300)  # exactly 3 s
+        self.assertEqual(TrackWatch({"audio": "96000:24:2"}, 0, 0).source_rate, 96000)
+        self.assertIsNone(TrackWatch({"audio": ""}, 0, 0).source_rate)
+
+    def test_a_longer_block_moves_the_cuts(self):
+        track = self.music(47, 6)
+        subs = self.stream(track)
+        own, _ = subs.dr_between(0, len(track))
+        longer, seconds = subs.dr_between(0, len(track), subs.block * 1.5)
+        self.assertNotEqual(round(own, 3), round(longer, 3))
+        self.assertAlmostEqual(seconds, 47.0)
+
+    def test_trim_forgets_only_what_is_behind(self):
+        subs = self.stream(self.music(10, 5))
+        subs.trim(subs.sub * 5 + 1)
+        self.assertEqual(subs.subs[0][0], subs.sub * 5)
 
 
 
