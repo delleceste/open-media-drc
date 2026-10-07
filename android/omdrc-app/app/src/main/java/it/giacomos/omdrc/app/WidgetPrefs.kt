@@ -98,16 +98,8 @@ object WidgetPrefs {
                 editor.putBoolean("upmpdcli", renderer.upmpdcli)
                 editor.putString("now_playing", renderer.nowPlaying)
             }
-            editor.remove("player_ok").remove("player_elapsed").remove("player_duration").remove("player_pos")
-            snapshot.player?.let { pl ->
-                editor.putBoolean("player_ok", true)
-                pl.elapsed?.let { editor.putFloat("player_elapsed", it.toFloat()) }
-                pl.duration?.let { editor.putFloat("player_duration", it.toFloat()) }
-                pl.pos?.let { editor.putInt("player_pos", it) }
-                editor.putInt("player_length", pl.length)
-                editor.putString("player_artist", pl.artist)
-                editor.putString("player_edition", pl.edition)
-            }
+            editor.putString("player_artist", snapshot.player?.artist)
+            editor.putString("player_edition", snapshot.player?.edition)
             // rti/peak are null (not just absent) whenever DRC isn't
             // running - clear any previously-cached figures so an old
             // reading doesn't linger under a now-stale "DRC ON" label.
@@ -164,14 +156,10 @@ object WidgetPrefs {
             upmpdcli = p.getBoolean("upmpdcli", false),
             nowPlaying = p.getString("now_playing", null),
         ) else null
-        val player = if (p.contains("player_ok")) PlayerStatus(
-            elapsed = if (p.contains("player_elapsed")) p.getFloat("player_elapsed", 0f).toDouble() else null,
-            duration = if (p.contains("player_duration")) p.getFloat("player_duration", 0f).toDouble() else null,
-            pos = if (p.contains("player_pos")) p.getInt("player_pos", 0) else null,
-            length = p.getInt("player_length", 0),
+        val player = PlayerStatus(
             artist = p.getString("player_artist", null),
             edition = p.getString("player_edition", null),
-        ) else null
+        )
         return WidgetSnapshot(
             player = player,
             drc = drc,
@@ -182,6 +170,13 @@ object WidgetPrefs {
             fetchedAtMillis = p.getLong("fetched_at", 0L),
             reachable = p.getBoolean("reachable", false),
         )
+    }
+
+    /** The cover link the cached art was fetched for. */
+    fun loadArtKey(context: Context, appWidgetId: Int): String? = prefs(context, appWidgetId).getString("art_key", null)
+
+    fun saveArtKey(context: Context, appWidgetId: Int, key: String?) {
+        prefs(context, appWidgetId).edit().putString("art_key", key).apply()
     }
 
     fun delete(context: Context, appWidgetId: Int) {

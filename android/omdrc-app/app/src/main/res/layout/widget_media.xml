@@ -114,37 +114,6 @@
             </LinearLayout>
         </LinearLayout>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/media_elapsed"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:textColor="@color/widget_text_secondary"
-                android:textSize="10sp" />
-
-            <TextView
-                android:id="@+id/media_queue"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/widget_text_secondary"
-                android:textSize="10sp" />
-
-            <TextView
-                android:id="@+id/media_duration"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:gravity="end"
-                android:textColor="@color/widget_text_secondary"
-                android:textSize="10sp" />
-        </LinearLayout>
-
         <TextView
             android:id="@+id/media_drc"
             android:layout_width="match_parent"
@@ -190,14 +159,4 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- A thin, non-interactive position line along the bottom edge. -->
-    <ProgressBar
-        android:id="@+id/media_progress"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="2dp"
-        android:layout_gravity="bottom"
-        android:max="1000"
-        android:progressTint="@color/widget_fmt_hires"
-        android:progressBackgroundTint="@color/widget_chip_backdrop" />
 </FrameLayout>

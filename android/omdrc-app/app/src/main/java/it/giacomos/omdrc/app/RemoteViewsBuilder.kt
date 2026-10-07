@@ -151,8 +151,7 @@ object RemoteViewsBuilder {
         val mpd = snapshot?.mpd
         val hasQueue = reachable && mpd?.song != null
         val playing = hasQueue && mpd?.state == "playing"
-        val player = snapshot?.player
-
+        
         // Status line: the DRC state (icon), or why there is nothing to show.
         val drc = snapshot?.drc
         val drcOn = reachable && drc?.running == true
@@ -182,6 +181,7 @@ object RemoteViewsBuilder {
         // transport and progress don't, as they'd claim a live state.
         val cached = snapshot?.mpd
         val cachedQueue = cached?.song != null
+        val player = snapshot?.player
         val renderer = snapshot?.renderer
         val title = TrackTitle.titleAndAlbum(
             renderer?.nowPlaying ?: cached?.displaySong, cached?.title, null,
@@ -216,7 +216,7 @@ object RemoteViewsBuilder {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && width > 0f && height > 0f) {
             // Text grows with the widget (up to 1.6x its size at 2x2).
             val grow = minOf(width / 218f, height / 202f).coerceIn(1f, 1.6f)
-            val cover = minOf(height - 20f - 70f, 0.42f * (width - 24f)).coerceAtLeast(40f)
+            val cover = minOf(height - 20f - 36f, 0.42f * (width - 24f)).coerceAtLeast(40f)
             val dip = TypedValue.COMPLEX_UNIT_DIP
             views.setViewLayoutWidth(R.id.media_cover, cover, dip)
             views.setViewLayoutHeight(R.id.media_cover, cover, dip)
@@ -230,25 +230,6 @@ object RemoteViewsBuilder {
             views.setViewVisibility(R.id.media_edition, room)
             views.setViewVisibility(R.id.media_format, room)
         }
-
-        // Progress: the position at the last fetch, moved on by the time
-        // since if it's playing.
-        val duration = player?.duration
-        if (hasQueue && player != null && duration != null && duration > 0) {
-            val since = if (playing) (System.currentTimeMillis() - snapshot!!.fetchedAtMillis) / 1000.0 else 0.0
-            val elapsed = ((player.elapsed ?: 0.0) + since).coerceIn(0.0, duration)
-            views.setProgressBar(R.id.media_progress, 1000, (1000 * elapsed / duration).roundToInt(), false)
-            views.setTextViewText(R.id.media_elapsed, clock(elapsed))
-            views.setTextViewText(R.id.media_duration, clock(duration))
-        } else {
-            views.setProgressBar(R.id.media_progress, 1000, 0, false)
-            views.setTextViewText(R.id.media_elapsed, "")
-            views.setTextViewText(R.id.media_duration, "")
-        }
-        views.setTextViewText(
-            R.id.media_queue,
-            if (hasQueue && player?.pos != null && player.length > 0) "${player.pos} / ${player.length}" else "",
-        )
 
         // A tall widget has the room: one DRC figure per line.
         val tall = (AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
@@ -305,6 +286,15 @@ object RemoteViewsBuilder {
             views.setViewLayoutWidth(R.id.media_cover_box, cover, dip)
             views.setViewLayoutHeight(R.id.media_cover_box, cover, dip)
         }
+        // Wide enough: previous / next beside the title.
+        val wide = width >= 250f && hasQueue
+        val skip = if (wide) View.VISIBLE else View.GONE
+        views.setViewVisibility(R.id.media_prev, skip)
+        views.setViewVisibility(R.id.media_next, skip)
+        if (wide) {
+            views.setOnClickPendingIntent(R.id.media_prev, transportIntent(context, appWidgetId, "prev"))
+            views.setOnClickPendingIntent(R.id.media_next, transportIntent(context, appWidgetId, "next"))
+        }
         return views
     }
 
@@ -323,11 +313,6 @@ object RemoteViewsBuilder {
                 if (peak.clipped) " ⚠" else "")
         }
         return parts.filter { it.isNotEmpty() }.joinToString(separator)
-    }
-
-    private fun clock(seconds: Double): String {
-        val s = seconds.toInt()
-        return "%d:%02d".format(java.util.Locale.ROOT, s / 60, s % 60)
     }
 
     /** The cover as a rounded square, or the app's mark when there's none. */

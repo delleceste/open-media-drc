@@ -30,7 +30,82 @@ sealed interface ArtFetch {
 
 object OmdrcClient {
 
-    suspend fun fetchSnapshot(host: String, port: Int): WidgetSnapshot = withContext(Dispatchers.IO) {
+    /** What a widget shows, from one /now request (plus RTI and peak while
+     *  DRC runs); a box without /now is asked the older way. */
+    suspend fun fetchSnapshot(host: String, port: Int): WidgetSnapshot {
+        return when (val fetched = fetchNow(host, port, null, 0)) {
+            is NowFetch.Found -> snapshotFromNow(host, port, fetched.now)
+            NowFetch.Failed -> WidgetSnapshot(
+                drc = null, mpd = null, rti = null, peak = null, renderer = null,
+                fetchedAtMillis = System.currentTimeMillis(), reachable = false,
+            )
+            NowFetch.Unsupported -> fetchLegacySnapshot(host, port)
+        }
+    }
+
+    private suspend fun snapshotFromNow(host: String, port: Int, now: NowState): WidgetSnapshot =
+        withContext(Dispatchers.IO) {
+            val music = now.music
+            val drc = DrcStatus(
+                ok = true,
+                running = now.drc.running,
+                geometry = now.drc.geometry,
+                designId = null,
+                description = now.drc.description,
+                effectiveAttenuationDb = now.drc.attenuationDb,
+                effectiveAttenuationSource = null,
+                headroomSafe = now.drc.headroomSafe,
+                error = null,
+            )
+            // A loaded queue is a title or the card's line, even stopped.
+            val song = music.title.ifEmpty { music.line1 }.ifEmpty { null }
+            val mpd = MpdStatus(
+                ok = true,
+                state = when (music.state) {
+                    "play" -> "playing"
+                    "pause" -> "paused"
+                    else -> "stopped"
+                },
+                song = song,
+                title = music.title.ifEmpty { null },
+                album = music.album.ifEmpty { null },
+                sampleRate = music.rate,
+                bitDepth = music.bits,
+                brutefirRate = null,
+            )
+            val renderer = RendererStatus(
+                qobuzconnect2mpd = music.renderer.contains("qobuzconnect2mpd"),
+                upmpdcli = music.renderer.contains("upmpdcli"),
+                nowPlaying = music.line1.ifEmpty { null },
+            )
+            var rti: RtiStatus? = null
+            var peak: PeakStatus? = null
+            if (drc.running) {
+                rti = try {
+                    RtiStatus.parse(get(host, port, "/drc/brutefir-rti"))
+                } catch (e: Exception) {
+                    Log.w(TAG, "brutefir-rti unreachable: ${e.message}")
+                    null
+                }
+                peak = try {
+                    PeakStatus.parse(get(host, port, "/drc/brutefir-peak"))
+                } catch (e: Exception) {
+                    Log.w(TAG, "brutefir-peak unreachable: ${e.message}")
+                    null
+                }
+            }
+            WidgetSnapshot(
+                drc = drc, mpd = mpd, rti = rti, peak = peak, renderer = renderer,
+                fetchedAtMillis = System.currentTimeMillis(), reachable = true,
+                player = PlayerStatus(
+                    artist = music.artist.ifEmpty { null },
+                    edition = music.edition.ifEmpty { null },
+                ),
+                artPath = music.art,
+            )
+        }
+
+    private suspend fun fetchLegacySnapshot(host: String, port: Int): WidgetSnapshot = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val drcJson = try {
             get(host, port, "/drc/brutefir-config")
@@ -96,17 +171,9 @@ object OmdrcClient {
             peak = null
         }
 
-        // Position and queue, for the media widget's progress bar.
-        val player = try {
-            PlayerStatus.parse(get(host, port, "/k/api/player"))
-        } catch (e: Exception) {
-            Log.w(TAG, "k/api/player unreachable: ${e.message}")
-            null
-        }
-
         WidgetSnapshot(
             drc = drc, mpd = mpd, rti = rti, peak = peak, renderer = renderer,
-            fetchedAtMillis = now, reachable = true, player = player,
+            fetchedAtMillis = now, reachable = true,
         )
     }
 

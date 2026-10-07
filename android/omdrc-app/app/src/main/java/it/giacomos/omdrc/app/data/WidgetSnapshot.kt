@@ -14,4 +14,8 @@ data class WidgetSnapshot(
     val fetchedAtMillis: Long,
     val reachable: Boolean,
     val player: PlayerStatus? = null,
+    /** The box's link to the current cover, which changes only with the
+     *  cover: "" for none, null when the box doesn't say (the cover is then
+     *  fetched every time). Not persisted. */
+    val artPath: String? = null,
 )

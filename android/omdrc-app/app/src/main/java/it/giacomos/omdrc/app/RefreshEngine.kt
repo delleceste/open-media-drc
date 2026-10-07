@@ -38,9 +38,28 @@ object RefreshEngine {
         // transient outage, nor on a failed art fetch. Only the box saying
         // there's no art for the current track clears it.
         if (snapshot.reachable) {
-            saveArt(context, appWidgetId, OmdrcClient.fetchArt(hostPort.first, hostPort.second))
+            refreshArt(context, appWidgetId, hostPort.first, hostPort.second, snapshot.artPath)
         }
         updateViews(context, appWidgetId, hostPort.first, hostPort.second)
+    }
+
+    /** Fetches the cover only when the box's link to it has changed (or
+     *  there's none cached); a box that doesn't give a link is asked every
+     *  time. */
+    private suspend fun refreshArt(context: Context, appWidgetId: Int, host: String, port: Int, artPath: String?) {
+        if (artPath == null) {
+            saveArt(context, appWidgetId, OmdrcClient.fetchArt(host, port))
+            return
+        }
+        if (artPath.isEmpty()) {
+            saveArt(context, appWidgetId, ArtFetch.None)
+            WidgetPrefs.saveArtKey(context, appWidgetId, "")
+            return
+        }
+        if (artPath == WidgetPrefs.loadArtKey(context, appWidgetId) && WidgetArtCache.exists(context, appWidgetId)) return
+        val art = OmdrcClient.fetchImage(host, port, artPath)
+        saveArt(context, appWidgetId, art)
+        if (art !is ArtFetch.Failed) WidgetPrefs.saveArtKey(context, appWidgetId, artPath)
     }
 
     fun saveArt(context: Context, appWidgetId: Int, art: ArtFetch) {
@@ -137,9 +156,10 @@ object RefreshEngine {
             // Two rows or more (2x2 is 218x202dp here), however large: the
             // media widget, which fits itself to the size.
             width >= 200 && height >= MEDIA_MIN_HEIGHT_DP -> WidgetSize.MEDIA
+            // One row, 2 columns or more: cover, title, play/pause (and
+            // previous / next when wide).
+            width >= 120 && height >= 80 -> WidgetSize.COMPACT
             width >= 250 -> WidgetSize.LARGE
-            // 2x1: cover, title and play/pause.
-            width >= 120 && width < 250 && height >= 80 -> WidgetSize.COMPACT
             else -> WidgetSize.SMALL
         }
     }

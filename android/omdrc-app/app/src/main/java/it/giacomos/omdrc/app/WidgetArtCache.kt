@@ -27,6 +27,8 @@ object WidgetArtCache {
         f.writeBytes(bytes)
     }
 
+    fun exists(context: Context, appWidgetId: Int): Boolean = file(context, appWidgetId).exists()
+
     fun load(context: Context, appWidgetId: Int): Bitmap? {
         val f = file(context, appWidgetId)
         if (!f.exists()) return null
