@@ -70,8 +70,8 @@ def counts(path: str, fresh: bool = False) -> dict:
 
 
 def scan_status(state_dir: str) -> dict:
-    """The last DR14 scan, from the line the script leaves: `running <t>` or
-    `done <t> <calculated>`."""
+    """The last DR14 scan, from the line the script leaves: `running <t> [<done> <total>]`
+    or `done <t> <calculated>`."""
     try:
         with open(os.path.join(state_dir, SCAN_STATUS_FILE), encoding="utf-8") as f:
             parts = f.read().split()
@@ -82,7 +82,10 @@ def scan_status(state_dir: str) -> dict:
             since = int(parts[1])
             if time.time() - since > STALE_SCAN:
                 return {"state": "interrupted", "since": since}
-            return {"state": "running", "since": since}
+            out = {"state": "running", "since": since}
+            if len(parts) >= 4:                  # folders done / to do, once counted
+                out["done"], out["total"] = int(parts[2]), int(parts[3])
+            return out
         if parts and parts[0] == "done":
             return {"state": "done", "at": int(parts[1]), "calculated": int(parts[2])}
     except (IndexError, ValueError):

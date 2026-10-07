@@ -48,10 +48,16 @@ P.refresh = async () => {
     }
     const s = d.scan;
     rows.push(K.kv('DR14 scan',
-        s.state === 'running' ? `running since ${when(s.since)}`
+        s.state === 'running' ? (s.total ? `${s.done} of ${s.total} folders` : `counting folders… (since ${when(s.since)})`)
         : s.state === 'done' ? `finished ${when(s.at)} — ${s.calculated} report${s.calculated === 1 ? '' : 's'} calculated`
         : s.state === 'interrupted' ? `interrupted (started ${when(s.since)})` : 'not run yet',
         s.state === 'running' ? 'warn' : ''));
+    if (s.state === 'running' && s.total) {
+        const pct = Math.round(100 * s.done / s.total);
+        rows.push(h('div', { class: 'local-progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100',
+            'aria-valuenow': String(pct), title: `${pct}%` }, h('span', { style: `width:${pct}%` })));
+    }
+    rows.push(K.kv('Meter', 'built in: TT Dynamic Range (drmeter.py), run with ffmpeg'));
     K.clear(P.status).append(...rows);
     P.scan.disabled = s.state === 'running';
 };

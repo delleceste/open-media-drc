@@ -30,6 +30,9 @@ class Scan(unittest.TestCase):
         now = int(time.time())
         write(f"running {now}\n")
         self.assertEqual(local_db.scan_status(self.state), {"state": "running", "since": now})
+        write(f"running {now} 3 10\n")
+        self.assertEqual(local_db.scan_status(self.state),
+                         {"state": "running", "since": now, "done": 3, "total": 10})
         write(f"done {now} 7\n")
         self.assertEqual(local_db.scan_status(self.state), {"state": "done", "at": now, "calculated": 7})
         write(f"running {now - local_db.STALE_SCAN - 5}\n")

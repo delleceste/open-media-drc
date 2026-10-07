@@ -3,7 +3,7 @@
 # folders containing audio that do not already have the canonical dr14.txt.
 #
 # OMDRC_MUSIC_DIRECTORY  scan this tree instead of MPD's music_directory
-# OMDRC_SCAN_STATUS      file that gets `running <t>`, then `done <t> <n>` (n =
+# OMDRC_SCAN_STATUS      file that gets `running <t> <folders done> <folders total>`, then `done <t> <n>` (n =
 #                        reports calculated), for the kiosk's Local database page
 set -eu
 
@@ -11,7 +11,7 @@ status() { [ -z "${OMDRC_SCAN_STATUS:-}" ] || echo "$*" >"$OMDRC_SCAN_STATUS" 2>
 
 if [ "${1:-}" = "--calculate" ]; then
 	root=$2
-	status "running $(date +%s)"
+	started=$(date +%s)
 	# The project's own meter (drmeter.py, the TT Dynamic Range algorithm) sits
 	# in the application directory: next to this script's prefix, or installed.
 	here=$(cd "$(dirname "$0")" && pwd)
@@ -23,14 +23,22 @@ if [ "${1:-}" = "--calculate" ]; then
 	reports() { find "$root" -type f -name dr14.txt | wc -l; }
 	before=$(reports)
 
+	# The folders with audio but no report, so progress can be shown as n of total.
+	list=$(mktemp "${TMPDIR:-/tmp}/omdrc-dr14.XXXXXX") || exit 1
+	trap 'rm -f "$list"' EXIT
 	find "$root" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' \
 		-o -iname '*.opus' -o -iname '*.wav' -o -iname '*.m4a' -o -iname '*.ape' \
 		-o -iname '*.wv' -o -iname '*.aiff' -o -iname '*.aif' \) -print |
 	while IFS= read -r file; do dirname "$file"; done | sort -u |
+	while IFS= read -r dir; do [ -f "$dir/dr14.txt" ] || printf '%s\n' "$dir"; done >"$list"
+	total=$(wc -l <"$list" | tr -d ' ')
+	n=0
+	status "running $started 0 $total"
 	while IFS= read -r dir; do
-		[ -f "$dir/dr14.txt" ] && continue
 		nice -n 19 python3 "$drmeter" --album "$dir" >/dev/null 2>&1 || :
-	done
+		n=$((n + 1))
+		status "running $started $n $total"
+	done <"$list"
 	status "done $(date +%s) $(($(reports) - before))"
 	exit 0
 fi
