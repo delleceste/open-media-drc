@@ -92,27 +92,20 @@
                     android:textSize="12sp"
                     android:maxLines="2"
                     android:ellipsize="end" />
-
-                <TextView
-                    android:id="@+id/media_edition"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/widget_text_secondary"
-                    android:textSize="11sp"
-                    android:maxLines="4"
-                    android:ellipsize="end" />
-
-                <TextView
-                    android:id="@+id/media_format"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:textColor="@color/widget_text_secondary"
-                    android:textSize="11sp"
-                    android:maxLines="1"
-                    android:ellipsize="end" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- The album and edition start under the cover and span the
+             whole width. -->
+        <TextView
+            android:id="@+id/media_edition"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/widget_text_secondary"
+            android:textSize="11sp"
+            android:maxLines="3"
+            android:ellipsize="end" />
 
         <TextView
             android:id="@+id/media_drc"
@@ -130,6 +123,12 @@
             android:layout_marginTop="0dp"
             android:gravity="center"
             android:orientation="horizontal">
+
+            <!-- Balances the rate at the right, so the controls stay centered. -->
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
 
             <ImageView
                 android:id="@+id/media_prev"
@@ -156,6 +155,16 @@
                 android:padding="6dp"
                 android:src="@drawable/ic_skip_next"
                 android:contentDescription="@string/media_next" />
+
+            <TextView
+                android:id="@+id/media_format"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end|center_vertical"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="11sp"
+                android:maxLines="1" />
         </LinearLayout>
     </LinearLayout>
 

@@ -195,13 +195,6 @@ object RemoteViewsBuilder {
             R.id.media_edition,
             if (cachedQueue) listOfNotNull(cached?.album, player?.edition).joinToString(" · ") else "",
         )
-        views.setTextViewText(
-            R.id.media_format,
-            if (hasQueue) listOfNotNull(
-                formatShort(mpd?.sampleRate, mpd?.bitDepth),
-                renderer?.label,
-            ).joinToString(" · ") else "",
-        )
 
         val art = if (cachedQueue) WidgetArtCache.load(context, appWidgetId) else null
         views.setImageViewBitmap(R.id.media_cover, roundedCover(context, art))
@@ -216,21 +209,23 @@ object RemoteViewsBuilder {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && width > 0f && height > 0f) {
             // Text grows with the widget (up to 1.6x its size at 2x2).
             val grow = minOf(width / 218f, height / 202f).coerceIn(1f, 1.6f)
-            val cover = minOf(height - 20f - 36f, 0.42f * (width - 24f)).coerceAtLeast(40f)
+            val cover = minOf(height - 20f - 36f - 40f, 0.42f * (width - 24f)).coerceAtLeast(40f)
             val dip = TypedValue.COMPLEX_UNIT_DIP
             views.setViewLayoutWidth(R.id.media_cover, cover, dip)
             views.setViewLayoutHeight(R.id.media_cover, cover, dip)
             views.setTextViewTextSize(R.id.media_title, TypedValue.COMPLEX_UNIT_SP, 13f * grow)
             views.setTextViewTextSize(R.id.media_artist, TypedValue.COMPLEX_UNIT_SP, 12f * grow)
             views.setTextViewTextSize(R.id.media_edition, TypedValue.COMPLEX_UNIT_SP, 11f * grow)
-            views.setTextViewTextSize(R.id.media_format, TypedValue.COMPLEX_UNIT_SP, 11f * grow)
             views.setTextViewTextSize(R.id.media_drc, TypedValue.COMPLEX_UNIT_SP, 11f * grow)
-            val text = width - 24f - cover - 12f
-            val room = if (text >= 100f) View.VISIBLE else View.GONE
-            views.setViewVisibility(R.id.media_edition, room)
-            views.setViewVisibility(R.id.media_format, room)
+            views.setTextViewTextSize(R.id.media_format, TypedValue.COMPLEX_UNIT_SP, 11f * grow)
         }
 
+        // The source rate, to the right of the controls.
+        views.setTextViewText(
+            R.id.media_format,
+            if (hasQueue) formatShort(mpd?.sampleRate, mpd?.bitDepth) ?: "" else "",
+        )
+        views.setTextColor(R.id.media_format, formatColor(context, mpd?.sampleRate, mpd?.bitDepth))
         // A tall widget has the room: one DRC figure per line.
         val tall = (AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
             .getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0)) >= 260
