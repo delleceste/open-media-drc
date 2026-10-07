@@ -965,12 +965,11 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.3fr); grid-template-areas: "info btns seek";
     gap: .4rem .8rem; align-items: center; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: .6rem;
     background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-    box-shadow: 0 3rem .9rem 1.1rem color-mix(in srgb, var(--bg) 92%, transparent), 0 -.3rem 1rem var(--shadow); }
+    box-shadow: 0 0 .9rem 1.1rem color-mix(in srgb, var(--bg) 92%, transparent), 0 -.3rem 1rem var(--shadow); }
 /* the shadow veils the results around the strip (and in the gap below it), so the strip stays defined */
 /* the minimized listening guide is a fixed strip at the screen's bottom, only on Now and Qobuz; the player strip rides above it */
 .listening-panel.collapsed { display: none; }
 html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .listening-panel.collapsed { display: flex; }
-html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(3.2rem + max(.3rem, env(safe-area-inset-bottom)) - .3rem + .4rem); }
 /* the grabber pill on both strips: the usual hint (Material bottom sheet, iOS) that they swipe up */
 .qz-player::before, .listening-panel.collapsed::before { content: ''; position: absolute; top: .2rem; left: 50%; width: 2.2rem; height: .2rem;
     margin-left: -1.1rem; border-radius: .1rem; background: var(--muted); opacity: .7; pointer-events: none; }
@@ -1227,3 +1226,14 @@ html[data-embed] .qz-player, html[data-embed] .qz-back { display: none !importan
 html[data-embed] body, html[data-embed] body.bar-persistent { grid-template-rows: minmax(0, 1fr); }
 html[data-embed] #pager { grid-row: 1; }
 .embed-missing { margin: auto; padding: 2rem; color: var(--muted); text-align: center; }
+
+/* The Qobuz player strip is docked: full width and carried down over the page's bottom padding to the very
+   edge of the screen (negative margin + matching sticky offset), so nothing of the view beneath shows below it.
+   With the minimized listening guide present (--ls-h, measured) it rides directly above that strip instead. */
+:root { --dock-gap: max(.6rem, env(safe-area-inset-bottom)); }
+.qz-player { margin-inline: -.8rem; margin-bottom: calc(-1 * var(--dock-gap)); bottom: var(--dock-gap);
+    padding: .6rem 1.4rem calc(.4rem + var(--dock-gap)); border-width: 1px 0 0; border-radius: .8rem .8rem 0 0;
+    background: var(--surface); }
+html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--dock-gap) + var(--ls-h, 3.2rem)); padding-bottom: .4rem;
+    margin-bottom: calc(-1 * var(--dock-gap)); border-radius: .8rem .8rem 0 0; }
+.listening-panel.collapsed { border-radius: .8rem .8rem 0 0; background: var(--surface); }

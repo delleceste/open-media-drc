@@ -355,6 +355,9 @@ G.paint = () => {
     const label = G.label();
     G.panel.classList.toggle('collapsed', G.collapsed);
     document.documentElement.toggleAttribute('data-ls-strip', G.collapsed);
+    requestAnimationFrame(() => {
+        if (G.panel && G.collapsed) document.documentElement.style.setProperty('--ls-h', `${G.panel.offsetHeight}px`);
+    });
     K.clear(G.panel);
     const icon = G.collapsed ? G.stripIcon() : G.icon(G.busy ? 'busy' : '');
     if (G.collapsed) {
