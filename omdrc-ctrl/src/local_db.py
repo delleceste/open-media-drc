@@ -12,6 +12,8 @@ import threading
 import time
 
 SCAN_STATUS_FILE = "local-scan.txt"       # written by omdrc-mpd-update-dr14.sh
+SCAN_LOG_FILE = "local-scan.log"         # one line per folder, same script
+LOG_LINES = 200
 
 AUDIO = (".flac", ".mp3", ".ogg", ".opus", ".wav", ".m4a", ".ape", ".wv", ".aiff", ".aif")
 REPORT = "dr14.txt"
@@ -71,7 +73,7 @@ def counts(path: str, fresh: bool = False) -> dict:
 
 def scan_status(state_dir: str) -> dict:
     """The last DR14 scan, from the line the script leaves: `running <t> [<done> <total>]`
-    or `done <t> <calculated>`."""
+    or `done <t> <calculated> [<failed>]`."""
     try:
         with open(os.path.join(state_dir, SCAN_STATUS_FILE), encoding="utf-8") as f:
             parts = f.read().split()
@@ -87,10 +89,20 @@ def scan_status(state_dir: str) -> dict:
                 out["done"], out["total"] = int(parts[2]), int(parts[3])
             return out
         if parts and parts[0] == "done":
-            return {"state": "done", "at": int(parts[1]), "calculated": int(parts[2])}
+            return {"state": "done", "at": int(parts[1]), "calculated": int(parts[2]),
+                    "failed": int(parts[3]) if len(parts) > 3 else 0}
     except (IndexError, ValueError):
         pass
     return {"state": "never"}
+
+
+def scan_log(state_dir: str) -> list[str]:
+    """The last lines of the scan log (the file is cleared by each scan)."""
+    try:
+        with open(os.path.join(state_dir, SCAN_LOG_FILE), encoding="utf-8", errors="replace") as f:
+            return [line.rstrip("\n") for line in f.readlines()[-LOG_LINES:]]
+    except OSError:
+        return []
 
 
 def status(state_dir: str, mpd_default, conf: str | None = None) -> dict:
@@ -99,5 +111,5 @@ def status(state_dir: str, mpd_default, conf: str | None = None) -> dict:
     return {
         "ok": True, "host": host(), "path": path, "exists": exists, "conf": conf or "",
         "counts": counts(path) if exists else None,
-        "scan": scan_status(state_dir),
+        "scan": scan_status(state_dir), "log": scan_log(state_dir),
     }

@@ -33,10 +33,20 @@ class Scan(unittest.TestCase):
         write(f"running {now} 3 10\n")
         self.assertEqual(local_db.scan_status(self.state),
                          {"state": "running", "since": now, "done": 3, "total": 10})
+        write(f"done {now} 7 2\n")
+        self.assertEqual(local_db.scan_status(self.state),
+                         {"state": "done", "at": now, "calculated": 7, "failed": 2})
         write(f"done {now} 7\n")
-        self.assertEqual(local_db.scan_status(self.state), {"state": "done", "at": now, "calculated": 7})
+        self.assertEqual(local_db.scan_status(self.state)["failed"], 0)
         write(f"running {now - local_db.STALE_SCAN - 5}\n")
         self.assertEqual(local_db.scan_status(self.state)["state"], "interrupted")
+
+    def test_log_tail(self):
+        self.assertEqual(local_db.scan_log(self.state), [])
+        with open(os.path.join(self.state, local_db.SCAN_LOG_FILE), "w") as f:
+            f.write("".join(f"line {i}\n" for i in range(300)))
+        got = local_db.scan_log(self.state)
+        self.assertEqual((len(got), got[-1]), (local_db.LOG_LINES, "line 299"))
 
     def test_count_folders_with_audio_and_reports(self):
         for sub, files in (("a", ["x.FLAC", "dr14.txt"]), ("b", ["y.mp3"]), ("c", ["notes.txt"])):

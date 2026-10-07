@@ -475,10 +475,12 @@ def write_album_report(folder: str) -> int | None:
     for name in names:
         try:
             rows.append((name, measure_file(os.path.join(folder, name))))
-        except DrMeterError:
-            continue
+        except DrMeterError as error:
+            # one line per track that could not be measured; the scan script logs it
+            print(f"skipped {name}: {error}", file=sys.stderr)
     album = album_dr([r["dr"] for _, r in rows])
     if album is None:
+        print("no audio file could be measured" if names else "no audio files", file=sys.stderr)
         return None
     rule = "-" * 80
     lines = ["Dynamic Range Meter (omdrc drmeter, TT Dynamic Range algorithm)",
@@ -499,6 +501,8 @@ def write_album_report(folder: str) -> int | None:
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[1] == "--album":
         album = write_album_report(argv[2])
+        if album is not None:
+            print(f"DR{album}")
         return 0 if album is not None else 1
     if len(argv) != 2:
         print(f"usage: {argv[0]} <audio file> | --album <folder>", file=sys.stderr)

@@ -1241,6 +1241,8 @@ html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 3.2
 /* Local database page (pages/local.js) */
 .local-progress { height: .5rem; margin: .3rem 0 .5rem; border-radius: .25rem; overflow: hidden; background: var(--surface2); }
 .local-progress span { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.local-log { margin: 0; height: 14rem; overflow: auto; padding: .5rem .6rem; border-radius: .5rem; background: var(--surface2);
+    font: .75rem/1.4 ui-monospace, monospace; white-space: pre; user-select: text; }
 .local-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-top: .3rem; }
 .local-path { flex: 1 1 14rem; min-width: 0; height: 2.6rem; padding: 0 .7rem; box-sizing: border-box; border-radius: .5rem;
     border: 1px solid var(--border); background: var(--deep); color: var(--text); font: inherit; font-size: 1rem; }

@@ -24,7 +24,10 @@ P.mount = el => {
     const rescan = K.card('Rescan',
         h('p', {}, 'Update MPD’s index with new, moved and removed files, and calculate the missing DR14 reports. It can run for a long time on a large library; the page shows how it is going.'),
         h('div', { class: 'btn-row' }, P.scan));
-    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, where, rescan), h('div', { class: 'col' }, about)));
+    P.logEl = h('pre', { class: 'local-log', role: 'log', 'aria-label': 'DR scan log' });
+    P.logCard = K.card('Scan log', P.logEl);
+    P.logCard.hidden = true;
+    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, where, rescan, P.logCard), h('div', { class: 'col' }, about)));
     P.poll = new K.Poller(P.refresh, 4000);
 };
 P.show = () => P.poll.start();
@@ -48,9 +51,9 @@ P.refresh = async () => {
     const s = d.scan;
     rows.push(K.kv('DR14 scan',
         s.state === 'running' ? (s.total ? `${s.done} of ${s.total} folders` : `counting folders… (since ${when(s.since)})`)
-        : s.state === 'done' ? `finished ${when(s.at)} — ${s.calculated} report${s.calculated === 1 ? '' : 's'} calculated`
+        : s.state === 'done' ? `finished ${when(s.at)} — ${s.calculated} report${s.calculated === 1 ? '' : 's'} calculated${s.failed ? `, ${s.failed} failed (see the log)` : ''}`
         : s.state === 'interrupted' ? `interrupted (started ${when(s.since)})` : 'not run yet',
-        s.state === 'running' ? 'warn' : ''));
+        s.state === 'running' || (s.state === 'done' && s.failed) ? 'warn' : ''));
     if (s.state === 'running' && s.total) {
         const pct = Math.round(100 * s.done / s.total);
         rows.push(h('div', { class: 'local-progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100',
@@ -61,7 +64,19 @@ P.refresh = async () => {
     P.confNote.textContent = d.conf ? `Read from music_directory in ${d.conf}; change it there.`
         : 'Read from music_directory in the MPD configuration (none found); change it there.';
     K.clear(P.status).append(...rows);
+    P.paintLog(d.log || []);
     P.scan.disabled = s.state === 'running';
+};
+
+// The scan's log, newest line last; it follows the end unless scrolled up.
+P.paintLog = lines => {
+    P.logCard.hidden = !lines.length;
+    const text = lines.join('\n');
+    if (text === P.logText) return;
+    P.logText = text;
+    const el = P.logEl, atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    el.textContent = text;
+    if (atEnd) el.scrollTop = el.scrollHeight;
 };
 
 P.rescan = async () => {

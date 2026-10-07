@@ -3,10 +3,14 @@
 # folders containing audio that do not already have the canonical dr14.txt.
 #
 # OMDRC_MUSIC_DIRECTORY  scan this tree instead of MPD's music_directory
-# OMDRC_SCAN_STATUS      file that gets `running <t> <folders done> <folders total>`, then `done <t> <n>` (n =
+# OMDRC_SCAN_STATUS      (its directory also gets local-scan.log) file that gets `running <t> <folders done> <folders total>`, then `done <t> <n> <failed>` (n =
 #                        reports calculated), for the kiosk's Local database page
 set -eu
 
+# The scan's log: one line per folder, next to the status file, for the Local page.
+log=
+[ -z "${OMDRC_SCAN_STATUS:-}" ] || log=$(dirname "$OMDRC_SCAN_STATUS")/local-scan.log
+logline() { [ -z "$log" ] || printf '%s\n' "$*" >>"$log" 2>/dev/null || :; }
 status() { [ -z "${OMDRC_SCAN_STATUS:-}" ] || echo "$*" >"$OMDRC_SCAN_STATUS" 2>/dev/null || :; }
 
 if [ "${1:-}" = "--calculate" ]; then
@@ -33,13 +37,26 @@ if [ "${1:-}" = "--calculate" ]; then
 	while IFS= read -r dir; do [ -f "$dir/dr14.txt" ] || printf '%s\n' "$dir"; done >"$list"
 	total=$(wc -l <"$list" | tr -d ' ')
 	n=0
+	failed=0
+	: >"$log" 2>/dev/null || :
 	status "running $started 0 $total"
 	while IFS= read -r dir; do
-		nice -n 19 python3 "$drmeter" --album "$dir" >/dev/null 2>&1 || :
 		n=$((n + 1))
+		name=${dir#"$root"/}
+		logline "[$n/$total] measuring $name"
+		if out=$(nice -n 19 python3 "$drmeter" --album "$dir" 2>&1); then
+			# stdout is the album value; stderr lines are tracks that were skipped
+			logline "[$n/$total] $(printf '%s' "$out" | tail -n 1)  $name"
+			printf '%s\n' "$out" | sed -n '/^skipped /p' | while IFS= read -r l; do logline "    $l"; done
+		else
+			failed=$((failed + 1))
+			logline "[$n/$total] FAILED  $name: $(printf '%s' "$out" | tail -n 1)"
+			printf '%s\n' "$out" | sed -n '/^skipped /p' | while IFS= read -r l; do logline "    $l"; done
+		fi
 		status "running $started $n $total"
 	done <"$list"
-	status "done $(date +%s) $(($(reports) - before))"
+	logline "finished: $((n - failed)) of $n folders measured, $failed failed"
+	status "done $(date +%s) $(($(reports) - before)) $failed"
 	exit 0
 fi
 
