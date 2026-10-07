@@ -25,6 +25,7 @@ Rectangle {
     // denser and shows more albums at once.
     readonly property int titleSize: Kirigami.Theme.smallFont.pixelSize
     readonly property int bodySize: Math.max(9, Kirigami.Theme.smallFont.pixelSize - 1)
+    readonly property int coverSide: compact ? 32 : bigCover ? 92 : 46
 
     width: parent ? parent.width : 320
     implicitHeight: body.implicitHeight + 2 * Kirigami.Units.smallSpacing
@@ -40,6 +41,14 @@ Rectangle {
         return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0")
     }
     function play(mode, start) {
+        if (album.source === "local") {
+            card.error = ""
+            app.request("POST", "/qobuz/local/play", { album_id: String(album.id), mode: mode, tracks: album.tracks }, function (status, data) {
+                if (!data || !data.ok) { card.error = data && data.error || i18n("Could not queue the album"); return }
+                card.played(mode); app.poll()
+            }, 90000)
+            return
+        }
         const body = { album_id: String(album.id), mode: mode, query: query }
         if (start) body.start = String(start)
         card.error = ""
@@ -52,6 +61,7 @@ Rectangle {
     function toggleTracks() {
         expanded = !expanded
         if (!expanded || tracks.length) return
+        if (album.source === "local") { tracks = album.tracks || []; return }
         app.request("GET", "/qobuz/album/" + encodeURIComponent(String(album.id)), null,
                     function (status, data) {
             if (!data || !data.ok) { card.error = data && data.error || i18n("Could not load tracks"); return }
@@ -66,14 +76,25 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
-            Image {
-                readonly property int side: card.compact ? 32 : card.bigCover ? 92 : 46
-                Layout.preferredWidth: side
-                Layout.preferredHeight: side
+            Item {
+                Layout.preferredWidth: card.coverSide
+                Layout.preferredHeight: card.coverSide
                 Layout.alignment: Qt.AlignTop
-                source: card.album.image || ""
-                asynchronous: true
-                fillMode: Image.PreserveAspectFit
+                Image {
+                    anchors.fill: parent
+                    source: card.album.image || ""
+                    asynchronous: true
+                    fillMode: Image.PreserveAspectFit
+                }
+                PlasmaComponents.Label {
+                    anchors { right: parent.right; bottom: parent.bottom }
+                    visible: card.album.source === "local"
+                    text: "⌂"
+                    Accessible.name: i18n("Local collection")
+                    font.bold: true
+                    padding: 2
+                    background: Rectangle { color: Kirigami.Theme.backgroundColor; radius: 3 }
+                }
             }
             // Recent: one terse line, "artist / title".
             PlasmaComponents.Label {

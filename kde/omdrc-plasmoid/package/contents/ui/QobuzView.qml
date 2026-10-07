@@ -109,7 +109,7 @@ Item {
     }
     function search(scan) {
         if (busy) { stop(); return }
-        if (!usable) { fail(null, i18n("Start upmpdcli and sign in to Qobuz first")); return }
+        if (!usable && aiMode) { fail(null, i18n("Start upmpdcli and sign in to Qobuz first")); return }
         if (!query.trim() && !selectedLabels.length) { fail(null, i18n("Enter search text or select a label")); return }
         if (aiMode && !query.trim()) { fail(null, i18n("Describe the recordings you want")); return }
         const seq = ++serial
@@ -124,7 +124,10 @@ Item {
             results = data.results || []
             more = !aiMode && !!data.more
             nextScan = data.next_scan || 0
-            notice(data.ai && data.ai.summary ? data.ai.summary : i18n("%1 albums", data.count || results.length))
+            let statusText = data.ai && data.ai.summary ? data.ai.summary : i18n("%1 albums", data.count || results.length)
+            if (data.local_error) statusText += " · " + i18n("Local collection unavailable: %1", data.local_error)
+            if (data.qobuz_error) statusText += " · " + i18n("Qobuz unavailable: %1", data.qobuz_error)
+            notice(statusText)
         }, aiMode ? 240000 : 120000, aiMode ? { "X-Qobuz-AI": "1" } : null)
     }
     function stop() {
@@ -407,7 +410,7 @@ Item {
                         compact: view.tab === "recent"
                         bigCover: view.tab === "discover"
                         query: view.tab === "results" ? view.query : ""
-                        canPlay: view.usable
+                        canPlay: view.usable || modelData.source === "local"
                         onPlayed: (mode) => view.notice(mode === "append" ? i18n("Added to queue") : i18n("Playing"))
                     }
                 }

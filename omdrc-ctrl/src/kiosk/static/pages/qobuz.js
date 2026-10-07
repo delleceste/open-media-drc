@@ -1066,6 +1066,8 @@ P.paintResults = () => {
         d.sort === 'ai' ? ' · AI recommendations' : d.sort === 'date' ? ' · newest first' : '',
         d.unstreamable ? ` · ${d.unstreamable} not available` : '',
         P.lowCount(d) ? ` · ${P.lowCount(d)} lowered` : '')];
+    if (d.local_error) kids.push(h('div', { class: 'errbox warn small' }, `Local collection unavailable: ${d.local_error}`));
+    if (d.qobuz_error) kids.push(h('div', { class: 'errbox warn small' }, `Qobuz results unavailable: ${d.qobuz_error}`));
     if (d.ai) {
         if (d.ai.summary) kids.push(h('p', { class: 'small qz-ai-summary' }, d.ai.summary));
         if (d.count < d.ai.requested) kids.push(h('p', { class: 'small muted' }, `Found ${d.count} verified releases of ${d.ai.requested} requested.`));
@@ -1625,6 +1627,7 @@ P.row = (c, where = '') => {
             quality(c) ? h('span', { class: 'chip ok' }, quality(c)) : null,
             c.played ? h('span', { class: 'chip dim' }, `played ${c.played}×`) : null));
     const off = c.streamable === false;
+    const local = c.source === 'local';
     if (c.ai) body.append(h('div', { class: 'qz-ai-reason small', onclick: e => e.stopPropagation() },
         h('p', {}, c.ai.reason),
         c.ai.uncertain ? h('p', { class: 'muted' }, 'Limited evidence: no supporting review linked.') : null,
@@ -1633,11 +1636,11 @@ P.row = (c, where = '') => {
             onclick: e => { e.preventDefault(); K.openExternal(s.url); },
         }, s.title)))));
     const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') },
-        c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }),
+        h('div', { class: 'qz-cover-wrap' }, c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
         body,
         h('div', { class: 'qz-act' },
-            h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: off ? 'Not available on Qobuz' : 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),
-            h('button', { type: 'button', class: 'btn qz-add', disabled: off, title: off ? 'Not available on Qobuz' : 'Add to the queue', onclick: () => P.play(c, 'append') }, '+'),
+            h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),
+            h('button', { type: 'button', class: 'btn qz-add', disabled: off, title: 'Add to the queue', onclick: () => P.play(c, 'append') }, '+'),
             h('button', { type: 'button', class: 'btn', title: 'Save in Qobuz Library', onclick: () => K.saveQobuzFavorite(c) }, '♡'),
             // in "Played recently", − only takes it out of that list (P.hideRecent)
             where === 'recent'
@@ -1667,6 +1670,7 @@ P.tile = (c, where = '') => {
             c.image ? h('img', { src: c.image_large || c.image, alt: '', loading: 'lazy', draggable: 'false',
                 ...(c.image_large ? { srcset: `${c.image} 230w, ${c.image_large} 600w`, sizes: '9rem' } : {}) }) : null,
             (c.awards && c.awards.length) || c.rating ? h('span', { class: 'qz-taward', title: 'Awarded' }, '🏆') : null,
+            c.source === 'local' ? h('span', { class: 'qz-taward qz-local-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null,
             quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-tsub muted' }, c.artist || ''),
@@ -1712,8 +1716,8 @@ P.tileMenu = (c, where, tile) => {
         h('div', { class: 'qz-tilemenu-head' }, c.title),
         item(K.tIcon('play'), off ? 'Not available on Qobuz' : 'Play (replace the queue)', () => P.play(c, 'replace'), off),
         item('+', 'Add to the queue', () => P.play(c, 'append'), off),
-        item('♡', 'Save in Qobuz Library', () => K.saveQobuzFavorite(c)),
-        where === 'recent' ? item('−', 'Remove from Recent', () => P.hideRecent(c, tile))
+        c.source === 'local' ? null : item('♡', 'Save in Qobuz Library', () => K.saveQobuzFavorite(c)),
+        c.source === 'local' ? null : where === 'recent' ? item('−', 'Remove from Recent', () => P.hideRecent(c, tile))
         : c.lowered ? item('↺', `Restore (lowered ${c.lowered.kind}: ${c.lowered.name})`, () => P.restore(c.lowered))
         : item('−', 'Remove (lower it)', () => P.lower(c, tile)));
     document.body.append(menu);
@@ -1742,11 +1746,27 @@ P.closeTileMenu = () => {
 };
 
 // The details page from the grid: with ▶ and + for this album.
-P.details = c => K.albumInfo(c.id, {
+P.details = c => {
+    if (c.source === 'local') {
+        const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) scrim.remove(); } },
+            h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': `${c.title} — Local collection` },
+                h('h2', {}, c.title), h('p', { class: 'muted' }, [c.artist, 'Local collection'].filter(Boolean).join(' · ')),
+                h('div', { class: 'qz-local-tracks' }, (c.tracks || []).map((t, i) => h('div', { class: 'qz-track' },
+                    h('span', { class: 'qz-num muted' }, i + 1), h('span', { class: 'qz-ttitle' }, t.title || t.file),
+                    h('span', { class: 'qz-dur muted' }, K.fmtClock(t.duration))))),
+                h('div', { class: 'sheet-actions' },
+                    h('button', { type: 'button', class: 'btn primary', onclick: () => { scrim.remove(); P.play(c, 'replace'); } }, '▶ Play'),
+                    h('button', { type: 'button', class: 'btn', onclick: () => { scrim.remove(); P.play(c, 'append'); } }, '+ Add'),
+                    h('button', { type: 'button', class: 'btn', onclick: () => scrim.remove() }, 'Close'))));
+        document.getElementById('overlay-root').append(scrim);
+        return;
+    }
+    return K.albumInfo(c.id, {
     off: c.streamable === false,
     play: () => P.play(c, 'replace'),
     add: () => P.play(c, 'append'),
-});
+    });
+};
 
 P.album = id => {
     if (!P.albums.has(id)) {
@@ -1762,6 +1782,12 @@ P.toggleTracks = async (c, row, box, keep = false) => {
     if (!keep && P.open.has(c.id)) { P.open.delete(c.id); row.classList.remove('open'); K.clear(box); return; }
     P.open.add(c.id);
     row.classList.add('open');
+    if (c.source === 'local') {
+        K.clear(box).append(...(c.tracks || []).map((t, i) => h('div', { class: 'qz-track' },
+            h('span', { class: 'qz-num muted' }, i + 1), h('span', { class: 'qz-ttitle' }, t.title || t.file),
+            h('span', { class: 'qz-dur muted' }, K.fmtClock(t.duration)))))
+        return;
+    }
     K.clear(box).append(h('div', { class: 'spinner small' }));
     const d = await P.album(c.id);
     if (!P.open.has(c.id)) return;
@@ -1786,6 +1812,14 @@ P.toggleTracks = async (c, row, box, keep = false) => {
 
 // ── play ─────────────────────────────────────────────────────────────────────
 P.play = async (c, mode, track = null) => {
+    if (c.source === 'local') {
+        const busy = K.busy(mode === 'append' ? `Adding “${c.title}”…` : `Queueing “${c.title}”…`);
+        const d = await K.api('/qobuz/local/play', { json: { album_id: c.id, mode, tracks: c.tracks }, timeout: 90000 });
+        busy.done();
+        if (!d.ok) { K.toast(d.error || 'could not queue the album', 'error'); return; }
+        K.toast(mode === 'append' ? `Added ${d.queued} tracks to the queue` : `Playing — ${d.queued} tracks queued`, 'ok', mode !== 'append');
+        P.playerPoll.now(); return;
+    }
     if (!P.usable()) { K.toast('Switch the renderer to upmpdcli first', 'error'); return; }
     const busy = K.busy(mode === 'append' ? `Adding “${c.title}”…` : `Queueing “${c.title}”…`);
     const body = { album_id: c.id, mode };

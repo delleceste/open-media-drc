@@ -60,6 +60,7 @@ from flask import Blueprint, Response, jsonify, request
 import openhome
 import qobuz_ai
 import qobuz_favorites
+import mpd_library
 from qobuz_search import (AWARD_PRESETS, AwardedAlbums, LoweredList, PlayedAlbums,
                           QobuzCatalog, QobuzError, album_card,
                           SearchWords, ArtistLabels, discover_app_id, read_word_list,
@@ -490,14 +491,61 @@ def search():
     """?q=text&label=Pentatone&label=Decca (or label=Pentatone,Decca)
     &last=2 (years back from today) or &from=2021&to=2026 (calendar years)
     &sort=relevance|date &awarded=1 &scan=<albums per query> &enrich=0"""
-    guard = _guard()
+    guard = _guard(False)
     if guard:
         return guard
     try:
-        answer = catalog().search(**_search_args())
+        args = _search_args()
+        try:
+            local = mpd_library.search(args["text"])
+            local_error = ""
+        except mpd_library.MPDError as error:
+            local, local_error = [], str(error)
+        qobuz_error = ""
+        if renderer_running():
+            try:
+                answer = catalog().search(**args)
+            except QobuzError as error:
+                qobuz_error = str(error)
+                answer = {"results": [], "count": 0, "more": False, "next_scan": 0,
+                          "labels_seen": [], "queries": [], "query": args["text"],
+                          "window": {"from": "", "to": ""}, "considered": 0,
+                          "unstreamable": 0, "sort": args["sort"], "lowered": 0}
+        else:
+            qobuz_error = "Qobuz unavailable: upmpdcli is not running"
+            answer = {"results": [], "count": 0, "more": False, "next_scan": 0,
+                      "labels_seen": [], "queries": [], "query": args["text"],
+                      "window": {"from": "", "to": ""}, "considered": 0,
+                      "unstreamable": 0, "sort": args["sort"], "lowered": 0}
+        # Local collection results are plain text matches. Qobuz facets and AI
+        # remain attached only to the Qobuz catalog response.
+        combined = []
+        qresults = answer.get("results", [])
+        for i in range(max(len(local), len(qresults))):
+            if i < len(local): combined.append(local[i])
+            if i < len(qresults): combined.append(qresults[i])
+        answer["results"] = combined
+        answer["count"] = len(combined)
+        answer["local_count"] = len(local)
+        answer["local_error"] = local_error
+        answer["qobuz_error"] = qobuz_error
         return jsonify({"ok": True, **answer})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/local/play", methods=["POST"])
+def local_play():
+    body = request.get_json(silent=True) or {}
+    try:
+        tracks = body.get("tracks")
+        if (not isinstance(tracks, list) or any(not isinstance(t, dict) or not isinstance(t.get("file"), str)
+                or t["file"].startswith("/") or ".." in t["file"].split("/") for t in tracks)):
+            return jsonify({"ok": False, "error": "invalid local album"}), 400
+        queued = mpd_library.queue(str(body.get("album_id", "")), body.get("mode", "replace"), tracks)
+        return jsonify({"ok": True, "queued": queued})
+    except mpd_library.MPDError as error:
+        return jsonify({"ok": False, "error": str(error)}), 503
 
 
 @bp.route("/search/stream")
@@ -509,7 +557,7 @@ def search_stream():
     def frame(d):
         return f"data: {json.dumps(d, separators=(',', ':'))}\n\n"
 
-    guard = _guard()
+    guard = _guard(False)
     if guard:
         body = guard[0].get_json()
         return Response(frame(body), mimetype="text/event-stream")
@@ -523,10 +571,37 @@ def search_stream():
 
     def run():
         try:
-            answer = target.search(**args, progress=lambda d: frames.put({"ok": True, **d}))
+            try:
+                local = mpd_library.search(args["text"])
+                local_error = ""
+            except mpd_library.MPDError as error:
+                local, local_error = [], str(error)
+            if renderer_running():
+                answer = target.search(**args, progress=lambda d: frames.put({"ok": True, **d}))
+            else:
+                answer = {"results": [], "count": 0, "more": False, "next_scan": 0,
+                          "labels_seen": [], "queries": [], "query": args["text"],
+                          "window": {"from": "", "to": ""}, "considered": 0,
+                          "unstreamable": 0, "sort": args["sort"], "lowered": 0}
+                answer["qobuz_error"] = "Qobuz unavailable: upmpdcli is not running"
+            qresults = answer.get("results", [])
+            answer["results"] = [item for i in range(max(len(local), len(qresults)))
+                                 for item in (([local[i]] if i < len(local) else []) +
+                                              ([qresults[i]] if i < len(qresults) else []))]
+            answer["count"] = len(answer["results"])
+            answer["local_count"] = len(local)
+            answer["local_error"] = local_error
             frames.put({"ok": True, **answer})
         except QobuzError as error:
-            frames.put({"ok": False, "error": str(error)})
+            try:
+                local = mpd_library.search(args["text"])
+                frames.put({"ok": True, "query": args["text"], "results": local,
+                            "count": len(local), "local_count": len(local), "more": False,
+                            "next_scan": 0, "qobuz_error": str(error), "queries": [],
+                            "window": {"from": "", "to": ""}, "considered": 0,
+                            "unstreamable": 0, "sort": args["sort"], "lowered": 0})
+            except mpd_library.MPDError as local_error:
+                frames.put({"ok": False, "error": f"{error}; local collection unavailable: {local_error}"})
         except Exception as error:      # noqa: BLE001 - the page must hear of it
             frames.put({"ok": False, "error": f"search failed: {error}"})
         frames.put(None)

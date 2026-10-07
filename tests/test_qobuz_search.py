@@ -682,13 +682,16 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("upmpdcli", response.get_data(as_text=True))
 
-    def test_no_search_without_upmpdcli(self):
+    def test_local_search_remains_available_without_upmpdcli(self):
         cat, calls = catalog(SearchTest.SEARCHES)
-        with patch.object(qobuz_web, "catalog", return_value=cat), self.running(False):
+        with patch.object(qobuz_web, "catalog", return_value=cat), \
+                patch.object(qobuz_web.mpd_library, "search", return_value=[{"id": "local:one", "source": "local"}]), \
+                self.running(False):
             response = self.client.get("/qobuz/search?q=bruckner+7")
             status = self.client.get("/qobuz/status").get_json()
-        self.assertEqual(response.status_code, 409)
-        self.assertIn("upmpdcli", response.get_json()["error"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["results"][0]["id"], "local:one")
+        self.assertIn("upmpdcli", response.get_json()["qobuz_error"])
         self.assertEqual(calls, [])
         self.assertFalse(status["renderer"])
 
@@ -699,16 +702,14 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertIn("last", response.get_json()["error"])
 
-    def test_no_token_says_what_to_do(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".config") as token_file:
-            token_file.write("user_id = 42\n")
-            token_file.flush()
-            with patch.object(APP, "QOBUZ_CACHE_CONFIG", token_file.name), self.running():
-                data = self.client.get("/qobuz/search?q=x").get_json()
-                status = self.client.get("/qobuz/status").get_json()
-        self.assertFalse(data["ok"])
-        self.assertIn("sign-in", data["error"])
-        self.assertFalse(status["token"])
+    def test_no_token_keeps_local_search_results(self):
+        with patch.object(qobuz_web, "catalog", side_effect=qs.QobuzAuthError("sign-in required")), \
+                patch.object(qobuz_web.mpd_library, "search", return_value=[{"id": "local:one", "source": "local"}]), \
+                self.running():
+            data = self.client.get("/qobuz/search?q=x").get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["results"][0]["id"], "local:one")
+        self.assertIn("sign-in", data["qobuz_error"])
 
     def test_lowered_route_adds_restores_and_clears(self):
         with tempfile.TemporaryDirectory() as tmp:
