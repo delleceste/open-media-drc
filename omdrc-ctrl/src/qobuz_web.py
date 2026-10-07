@@ -80,6 +80,7 @@ _renderer_running = lambda: False  # noqa: E731
 _queue_tail = None
 _move_to_end = None
 _music_directory = lambda: None
+_music_config = lambda: (None, None)     # (music root, the config file naming it)
 _state_dir = lambda: ""         # noqa: E731 - where the played list lives
 
 # The path upmpdcli's Qobuz plugin serves its tracks under, and its default
@@ -116,15 +117,16 @@ _openhome: openhome.Renderer | None = None
 
 def init_app(app, settings, upmpdcli_conf, read_options, token_file, plugin_dir,
              renderer_running, state_dir, queue_tail=None, move_to_end=None,
-             music_directory=None) -> None:
+             music_directory=None, music_config=None) -> None:
     global _settings, _upmpdcli_conf, _read_options, _token_file, _plugin_dir
     global _renderer_running, _state_dir, _queue_tail, _move_to_end
     _settings, _upmpdcli_conf, _read_options = settings, upmpdcli_conf, read_options
     _token_file, _plugin_dir, _renderer_running = token_file, plugin_dir, renderer_running
     _state_dir = state_dir
     _queue_tail, _move_to_end = queue_tail, move_to_end
-    global _music_directory
+    global _music_directory, _music_config
     _music_directory = music_directory or (lambda: None)
+    _music_config = music_config or (lambda: (None, None))
     app.register_blueprint(bp)
 
 
@@ -568,7 +570,7 @@ def _library_root() -> str | None:
 
 @bp.route("/local/status")
 def local_status():
-    return jsonify(local_db.status(_state_dir(), _music_directory))
+    return jsonify(local_db.status(_state_dir(), _music_directory, _music_config()[1]))
 
 
 @bp.route("/local/refresh", methods=["POST"])

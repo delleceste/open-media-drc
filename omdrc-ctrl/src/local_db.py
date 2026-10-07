@@ -93,11 +93,11 @@ def scan_status(state_dir: str) -> dict:
     return {"state": "never"}
 
 
-def status(state_dir: str, mpd_default) -> dict:
+def status(state_dir: str, mpd_default, conf: str | None = None) -> dict:
     path = mpd_default() or ""
     exists = bool(path) and os.path.isdir(path)
     return {
-        "ok": True, "host": host(), "path": path, "exists": exists,
+        "ok": True, "host": host(), "path": path, "exists": exists, "conf": conf or "",
         "counts": counts(path) if exists else None,
         "scan": scan_status(state_dir),
     }

@@ -5382,8 +5382,8 @@ def _resolve_mpd_port() -> str | None:
     return None
 
 
-def _resolve_mpd_music_directory() -> str | None:
-    """Return MPD's configured music root for local collection metadata."""
+def _mpd_music_config() -> tuple[str | None, str | None]:
+    """(music root, the MPD configuration file that names it) for the local collection."""
     for p in ("/usr/local/etc/open-media-drc/musicpd.conf",
               "/usr/local/etc/musicpd.conf", "/usr/local/etc/mpd.conf",
               "/etc/mpd.conf", os.path.expanduser("~/.config/mpd/mpd.conf"),
@@ -5393,10 +5393,15 @@ def _resolve_mpd_music_directory() -> str | None:
                 for line in f:
                     match = re.match(r'^\s*music_directory\s+(?:"([^"]+)"|(\S+))', line)
                     if match:
-                        return os.path.expanduser(match.group(1) or match.group(2))
+                        return os.path.expanduser(match.group(1) or match.group(2)), p
         except OSError:
             continue
-    return None
+    return None, None
+
+
+def _resolve_mpd_music_directory() -> str | None:
+    """Return MPD's configured music root for local collection metadata."""
+    return _mpd_music_config()[0]
 
 
 def _mpc_quiesce():
@@ -9381,7 +9386,8 @@ try:
                        renderer_running=lambda: _service_running(UPMPDCLI_SERVICE),
                        state_dir=lambda: _STATE_DIR,
                        queue_tail=kiosk.queue_tail, move_to_end=kiosk.move_to_end,
-                       music_directory=_resolve_mpd_music_directory)
+                       music_directory=_resolve_mpd_music_directory,
+                       music_config=_mpd_music_config)
 except Exception as _qobuz_web_error:           # pragma: no cover
     print(f"Qobuz search unavailable: {_qobuz_web_error}", file=sys.stderr)
 

@@ -18,8 +18,8 @@ P.mount = el => {
         h('p', {}, 'Next to ⌂ the album’s DR value is shown, for instance DR12. It is the album average from the dr14.txt report in its folder, read when you search. A folder with no report shows no DR yet.'),
         h('p', {}, 'The reports are calculated by Rescan, not by searching: it asks MPD to update its index, then in the background calculates the dynamic range of every folder with audio that has no dr14.txt. A report is calculated once and kept, so a later rescan only does new albums. The meter is built in (the TT Dynamic Range algorithm); nothing else needs installing.'));
 
-    const where = K.card('Where the music is', P.status,
-        h('p', { class: 'muted small' }, 'Read from music_directory in the MPD configuration (musicpd.conf); change it there.'));
+    P.confNote = h('p', { class: 'muted small' }, 'Read from music_directory in the MPD configuration; change it there.');
+    const where = K.card('Where the music is', P.dirRow = h('div', {}), P.confNote, P.status);
 
     const rescan = K.card('Rescan',
         h('p', {}, 'Update MPD’s index with new, moved and removed files, and calculate the missing DR14 reports. It can run for a long time on a large library; the page shows how it is going.'),
@@ -37,7 +37,6 @@ P.refresh = async () => {
     if (!d.ok) { K.clear(P.status).append(h('p', { class: 'muted' }, d.error || 'unavailable')); return; }
     const rows = [
         K.kv('Host', d.host),
-        K.kv('Music directory', d.path || 'none', d.path && !d.exists ? 'bad' : ''),
     ];
     if (d.path && !d.exists) rows.push(h('div', { class: 'errbox bad small' }, 'This directory does not exist on this host.'));
     if (!d.path) rows.push(h('div', { class: 'errbox warn small' }, 'No music directory: this host’s MPD configuration could not be read or names none.'));
@@ -58,6 +57,9 @@ P.refresh = async () => {
             'aria-valuenow': String(pct), title: `${pct}%` }, h('span', { style: `width:${pct}%` })));
     }
     rows.push(K.kv('Meter', 'built in: TT Dynamic Range (drmeter.py), run with ffmpeg'));
+    K.clear(P.dirRow).append(K.kv('Music directory', d.path || 'none', d.path && !d.exists ? 'bad' : ''));
+    P.confNote.textContent = d.conf ? `Read from music_directory in ${d.conf}; change it there.`
+        : 'Read from music_directory in the MPD configuration (none found); change it there.';
     K.clear(P.status).append(...rows);
     P.scan.disabled = s.state === 'running';
 };
