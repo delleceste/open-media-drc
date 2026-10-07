@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -197,7 +199,8 @@ object RemoteViewsBuilder {
         )
 
         val art = if (cachedQueue) WidgetArtCache.load(context, appWidgetId) else null
-        views.setImageViewBitmap(R.id.media_cover, roundedCover(context, art))
+        val coverBitmap = roundedCover(context, art)
+        views.setImageViewBitmap(R.id.media_cover, if (snapshot != null && !snapshot.reachable) disabled(coverBitmap) else coverBitmap)
 
         // Fit the cover and the text to the size it was given: the cover
         // is what's left of the height after the times and the controls,
@@ -233,6 +236,11 @@ object RemoteViewsBuilder {
         views.setTextViewText(R.id.media_drc, drcLine)
         views.setViewVisibility(R.id.media_drc, if (drcLine.isEmpty()) View.GONE else View.VISIBLE)
         views.setImageViewResource(R.id.media_play_pause, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+        // Nothing to control while the box is out of reach or the queue's empty.
+        val controls = if (hasQueue) View.VISIBLE else View.INVISIBLE
+        views.setViewVisibility(R.id.media_prev, controls)
+        views.setViewVisibility(R.id.media_play_pause, controls)
+        views.setViewVisibility(R.id.media_next, controls)
         return views
     }
 
@@ -261,9 +269,19 @@ object RemoteViewsBuilder {
                 else -> context.getString(R.string.mpd_unknown)
             },
         )
-        views.setTextViewText(R.id.media_artist, if (cachedQueue) snapshot?.player?.artist ?: "" else "")
+        // Out of reach, the cached track stays but says how old it is.
+        views.setTextViewText(
+            R.id.media_artist,
+            when {
+                !cachedQueue -> ""
+                snapshot?.reachable == false ->
+                    context.getString(R.string.status_unreachable) + " · " + staleness(snapshot.fetchedAtMillis)
+                else -> snapshot?.player?.artist ?: ""
+            },
+        )
         val art = if (cachedQueue) WidgetArtCache.load(context, appWidgetId) else null
-        views.setImageViewBitmap(R.id.media_cover, roundedCover(context, art))
+        val coverBitmap = roundedCover(context, art)
+        views.setImageViewBitmap(R.id.media_cover, if (snapshot != null && !snapshot.reachable) disabled(coverBitmap) else coverBitmap)
         if (hasQueue) {
             val playing = mpd?.state == "playing"
             views.setImageViewResource(R.id.media_play_pause, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
@@ -310,6 +328,20 @@ object RemoteViewsBuilder {
         return parts.filter { it.isNotEmpty() }.joinToString(separator)
     }
 
+    /** [bitmap] greyed and darkened: how the widget's icon looks while the
+     *  box can't be reached. */
+    private fun disabled(bitmap: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        out.density = bitmap.density
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+            colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
+        }
+        canvas.drawBitmap(bitmap, 0f, 0f, paint)
+        canvas.drawColor(0x99000000.toInt(), PorterDuff.Mode.SRC_ATOP)
+        return out
+    }
+
     /** The cover as a rounded square, or the app's mark when there's none. */
     private fun roundedCover(context: Context, art: Bitmap?): Bitmap {
         val square = iconSurface(context, art, circle = false)
@@ -351,7 +383,8 @@ object RemoteViewsBuilder {
         layoutTiny(context, views, appWidgetId, drcLabel, rate, rateColor)
 
         val art = if (hasQueue) WidgetArtCache.load(context, appWidgetId) else null
-        views.setImageViewBitmap(R.id.cover_art, iconSurface(context, art))
+        val surface = iconSurface(context, art)
+        views.setImageViewBitmap(R.id.cover_art, if (snapshot != null && !snapshot.reachable) disabled(surface) else surface)
 
         if (reachable && hasQueue) {
             val playing = snapshot?.mpd?.state == "playing"
