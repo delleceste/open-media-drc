@@ -18,6 +18,7 @@ import time
 import tempfile
 from pathlib import Path
 import sys
+import urllib.request
 from urllib.parse import quote, unquote, urlsplit
 import markdown as md_lib
 from flask import Flask, Response, render_template, jsonify, redirect, request, send_from_directory
@@ -4568,6 +4569,121 @@ def qconnect_status():
         return jsonify({"ok": False, **_QC_STATUS_EMPTY})
     except OSError as e:
         return jsonify({"ok": False, **_QC_STATUS_EMPTY, "error": str(e)})
+
+
+# ── Now playing, for the phone ──────────────────────────────────────────────
+#
+# One answer with what a phone's notification and widget show: the music (or
+# the film the video remote is playing), the cover, the DRC in use.  A client
+# names the token of the state it has and how long it will wait: the answer
+# then comes as soon as anything changes, or at the end of the wait - one idle
+# connection instead of polling.
+
+VIDEO_REMOTE_URL = "http://127.0.0.1:9080"
+NOW_MAX_WAIT_S = 30
+_NOW_DRC = {}                   # BruteFIR .conf path -> its summary
+_NOW_CACHE = {"at": 0.0, "state": None}
+_NOW_LOCK = threading.Lock()
+
+
+def _now_drc() -> dict:
+    """The DRC in use. The full inspection reads and analyses the filters,
+    so it runs once per loaded configuration; only the process check, to
+    see which one that is, runs every time."""
+    process = _active_brutefir_process()
+    if not process:
+        return {"running": False}
+    conf = process["config"]
+    summary = _NOW_DRC.get(conf)
+    if summary is None:
+        summary = {"running": True,
+                   "geometry": os.path.basename(os.path.dirname(conf))}
+        try:
+            full = _active_brutefir_configuration()
+            summary.update({key: full.get(key) for key in (
+                "geometry", "rate", "design_id", "description",
+                "effective_attenuation_db", "headroom_safe")})
+        except Exception:
+            pass
+        _NOW_DRC.clear()
+        _NOW_DRC[conf] = summary
+    return summary
+
+
+def _now_video() -> dict | None:
+    """The film the video remote's mpv is playing, None when none is."""
+    try:
+        with urllib.request.urlopen(VIDEO_REMOTE_URL + "/api/now", timeout=0.5) as response:
+            now = json.load(response)
+    except (OSError, ValueError):
+        return None
+    if not now.get("playing"):
+        return None
+    video = {key: now.get(key, "") for key in
+             ("title", "year", "director", "runtime", "genre", "rating")}
+    video["paused"] = bool(now.get("paused"))
+    art = now.get("art", "")
+    video["art"] = "/now/video-art?" + art.partition("?")[2] if art else ""
+    return video
+
+
+def _now_state() -> dict:
+    """The current state and its token; built at most once a second, however
+    many phones are waiting on it."""
+    with _NOW_LOCK:
+        if _NOW_CACHE["state"] and time.monotonic() - _NOW_CACHE["at"] < 1.0:
+            return _NOW_CACHE["state"]
+        card = qconnect_status().get_json() or {}
+        np = _mpd_now_playing_via_protocol(_resolve_mpd_port())
+        fmt = (np.get("audio") or "").split(":")
+        music = {
+            "state": np.get("state") or "stop",
+            "title": np.get("title", ""),
+            "artist": np.get("artist") or np.get("album_artist", ""),
+            "album": np.get("album", ""),
+            "line1": card.get("line1", ""),
+            "edition": card.get("edition", ""),
+            "art": card.get("art", ""),
+            "rate": int(fmt[0]) if fmt[0].isdigit() else None,
+            "bits": int(fmt[1]) if len(fmt) > 1 and fmt[1].isdigit() else None,
+            "format": np.get("audio", ""),
+            "renderer": _current_renderer(),
+        }
+        state = {"ok": True, "music": music, "drc": _now_drc(), "video": _now_video()}
+        state["token"] = hashlib.sha1(
+            json.dumps(state, sort_keys=True).encode()).hexdigest()[:16]
+        _NOW_CACHE.update(at=time.monotonic(), state=state)
+        return state
+
+
+@app.route("/now")
+def now_playing():
+    """?since=<token>&wait=<s>: hold the answer while the state still has
+    that token, for up to `wait` seconds (at most NOW_MAX_WAIT_S)."""
+    since = request.args.get("since", "")
+    try:
+        wait = min(max(float(request.args.get("wait", 0)), 0.0), NOW_MAX_WAIT_S)
+    except ValueError:
+        wait = 0.0
+    deadline = time.monotonic() + wait
+    state = _now_state()
+    while since and state["token"] == since and time.monotonic() < deadline:
+        time.sleep(1.0)
+        state = _now_state()
+    return jsonify(state)
+
+
+@app.route("/now/video-art")
+def now_video_art():
+    """The playing film's poster or thumbnail, from the video remote."""
+    try:
+        with urllib.request.urlopen(VIDEO_REMOTE_URL + "/api/now/art", timeout=8) as response:
+            content_type = response.headers.get("Content-Type", "image/jpeg")
+            data = response.read(8 * 1024 * 1024)
+    except OSError:
+        return "", 404
+    return Response(data, mimetype=content_type,
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 # ── Dynamic Range database ──────────────────────────────────────────────────

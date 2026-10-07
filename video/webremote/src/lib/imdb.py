@@ -83,12 +83,13 @@ def _map(raw: dict) -> dict:
 
 
 def lookup(title: str, year: str | None, api_key: str | None,
-           cache_dir: str, timeout: float = 6.0) -> dict | None:
+           cache_dir: str, timeout: float = 6.0, cached_only: bool = False) -> dict | None:
     """Return an enriched record for (title, year), or None if unavailable.
 
     None means "no enrichment" (no key, or network/lookup failed) — the caller
     should fall back to the search link. A dict with found=False means OMDb was
-    reached but had no match.
+    reached but had no match. cached_only never asks OMDb, for callers polled
+    often: what the library browser already looked up.
     """
     if not title or not api_key:
         return None
@@ -97,6 +98,8 @@ def lookup(title: str, year: str | None, api_key: str | None,
     cached = _read_cache(cache_path)
     if cached is not None:
         return cached["data"]
+    if cached_only:
+        return None
 
     # Exact title match first; if OMDb doesn't find it, fall back to search and
     # take the top hit so the title is verified against the real database.

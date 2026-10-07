@@ -11,10 +11,12 @@ See ../ARCHITECTURE.md. Security: bind to the LAN only, never the internet, and
 never serve a path outside the configured roots (see lib/roots.py).
 """
 import configparser
+import hashlib
 import os
 import platform
 import threading
 import time
+import urllib.request
 
 from flask import Flask, jsonify, render_template, request, send_file
 
@@ -618,6 +620,107 @@ def api_status():
         "volume": g("volume"),
         "mute": bool(g("mute", False)),
     })
+
+
+def _playing_item():
+    """(realpath, kind) of the library item mpv is playing, or None: a file
+    by its path, a Blu-ray / DVD rip by the device folder its bd:// or
+    dvd:// URL was opened from. Physical discs and anything outside the
+    media folders have no library item."""
+    path = mpvipc.get_property(MPV_SOCKET, "path", "") or ""
+    if path.startswith("bd://"):
+        path = mpvipc.get_property(MPV_SOCKET, "bluray-device", "") or ""
+    elif path.startswith("dvd://"):
+        path = mpvipc.get_property(MPV_SOCKET, "dvd-device", "") or ""
+    realpath = rootlib.safe_resolve(path, ROOTS)
+    kind = classify.classify(realpath) if realpath else None
+    return (realpath, kind) if kind in ("file", "bdmv", "dvd") else None
+
+
+def _now_info(item) -> dict:
+    """The playing item's IMDb record as the library browser cached it - no
+    OMDb request from here, this is polled - or {} when there's none."""
+    realpath, kind = item
+    title, year = titles.parse_title(os.path.basename(realpath), kind == "file")
+    data = None
+    if titles.can_deduce(title, year, kind):
+        data = imdb.lookup(title, year, OMDB_KEY, os.path.expanduser(CACHE_DIR),
+                           cached_only=True)
+    if data and data.get("found"):
+        return data
+    return {"title": title, "year": year or ""}
+
+
+@app.route("/api/now")
+def api_now():
+    """What's playing, for a phone's notification: the film's title and
+    details from the library's IMDb cache, and a token-versioned art URL
+    (its poster, else the library thumbnail)."""
+    if not mpvipc.is_running(MPV_SOCKET):
+        return jsonify({"ok": True, "playing": False})
+    try:
+        if mpvipc.get_property(MPV_SOCKET, "idle-active", True):
+            return jsonify({"ok": True, "playing": False})
+        paused = bool(mpvipc.get_property(MPV_SOCKET, "pause", False))
+        media_title = mpvipc.get_property(MPV_SOCKET, "media-title", "") or ""
+        item = _playing_item()
+    except mpvipc.MpvNotRunning:
+        return jsonify({"ok": True, "playing": False})
+    now = {"ok": True, "playing": True, "paused": paused, "title": media_title}
+    if item:
+        info = _now_info(item)
+        now.update({key: info.get(key, "") for key in
+                    ("title", "year", "director", "runtime", "genre", "rating")})
+        now["title"] = now["title"] or media_title
+        now["art"] = "/api/now/art?v=" + hashlib.sha1(
+            (item[0] + "|" + info.get("poster", "")).encode()).hexdigest()[:10]
+    return jsonify(now)
+
+
+@app.route("/api/now/art")
+def api_now_art():
+    """The playing film's poster (fetched once, then kept in the cache), or
+    its library thumbnail; 404 with neither."""
+    try:
+        item = _playing_item()
+    except mpvipc.MpvNotRunning:
+        item = None
+    if not item:
+        return "nothing playing", 404
+    poster = _now_info(item).get("poster", "")
+    if poster.startswith("https://") or poster.startswith("http://"):
+        cached = _cached_poster(poster)
+        if cached:
+            resp = send_file(cached, mimetype="image/jpeg")
+            resp.headers["Cache-Control"] = "public, max-age=86400"
+            return resp
+    path = thumbs.thumb(item[0], item[1], CACHE_DIR, SEEK_PCT, MAX_W)
+    if not path:
+        return "no art", 404
+    resp = send_file(path, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+def _cached_poster(url: str) -> str | None:
+    """Local copy of an OMDb poster URL, downloaded on first use."""
+    folder = os.path.join(os.path.expanduser(CACHE_DIR), "posters")
+    path = os.path.join(folder, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+    if os.path.isfile(path):
+        return path
+    try:
+        os.makedirs(folder, exist_ok=True)
+        with urllib.request.urlopen(url, timeout=6) as response:
+            if not (response.headers.get("Content-Type") or "").startswith("image/"):
+                return None
+            data = response.read(8 * 1024 * 1024)
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp, path)
+        return path
+    except OSError:
+        return None
 
 
 @app.route("/api/avsync", methods=["GET", "POST"])
