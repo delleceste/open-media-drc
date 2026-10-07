@@ -1955,7 +1955,11 @@ P.wirePlayerDrawer = () => {
         drag.distance = Math.max(0, drag.y - e.clientY);
         if (Math.abs(drag.y - e.clientY) > 8) suppressClick = true;
         if (drag.distance > 8 && !P.fullEl) P.openFull({ offset: drag.height - drag.distance });
-        if (P.fullEl) P.fullEl.style.transform = `translateY(${Math.max(0, drag.height - drag.distance)}px)`;
+        if (P.fullEl) {
+            const at = Math.max(0, drag.height - drag.distance);
+            P.fullEl.style.transform = `translateY(${at}px)`;
+            K.riseVeil(P.fullEl, at, drag.height);
+        }
     });
     const end = e => {
         if (!drag || e.pointerId !== drag.id) return;
@@ -1964,7 +1968,8 @@ P.wirePlayerDrawer = () => {
         if (!P.fullEl) return;
         const panel = P.fullEl;
         panel.style.pointerEvents = '';
-        panel.style.transition = 'transform 180ms ease-out';
+        panel.style.transition = 'transform 180ms ease-out, background-color 180ms';
+        if (finish) panel.style.backgroundColor = ''; else K.riseVeil(panel, P.stripTop(), P.stripTop());
         panel.style.transform = finish ? 'translateY(0)' : `translateY(${P.stripTop()}px)`;
         if (!finish) setTimeout(() => { if (P.fullEl === panel) P.closeFull(); }, 180);
     };
@@ -2029,9 +2034,11 @@ P.openFull = ({ offset = 0 } = {}) => {
         // a tap: rise from the strip's position too
         const sheet = P.fullEl;
         sheet.style.transform = `translateY(${top}px)`;
+        K.riseVeil(sheet, top, top);
         requestAnimationFrame(() => requestAnimationFrame(() => {
             if (P.fullEl !== sheet) return;
-            sheet.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
+            sheet.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1), background-color 220ms';
+            sheet.style.backgroundColor = '';
             sheet.style.transform = 'translateY(0)';
             setTimeout(() => { if (P.fullEl === sheet) sheet.style.transition = ''; }, 240);
         }));

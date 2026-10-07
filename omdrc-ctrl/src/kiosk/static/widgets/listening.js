@@ -278,6 +278,7 @@ G.makePanel = () => {
         }
         return false;
     };
+    G.wireStripDrawer();
     G.panel.addEventListener('touchstart', e => {
         const point = e.touches[0];
         touch = point && G.panel.scrollTop <= 1 && !nestedScroller(e.target)
@@ -316,7 +317,7 @@ G.makePanel = () => {
                 preview?.remove();
                 if (G.swipePreview === preview) G.swipePreview = null;
             };
-        } else if (distance < -45 && G.collapsed) { G.collapsed = false; G.remember(); G.paint(); }
+        }
         touch = null;
     }, { passive: true });
     G.panel.addEventListener('touchcancel', () => {
@@ -325,6 +326,60 @@ G.makePanel = () => {
         G.swipePreview = null;
         touch = null;
     }, { passive: true });
+};
+// The minimized strip opens like the Qobuz player strip: the sheet takes the strip's place and rises with the finger
+// (a tap rises on its own); released short of the threshold it sinks back into the strip.
+G.wireStripDrawer = () => {
+    const panel = G.panel;
+    let drag = null, rose = false;
+    const open = top => {
+        G.collapsed = false;
+        G.remember();
+        G.paint();
+        panel.style.transform = `translateY(${top}px)`;
+        K.riseVeil(panel, top, top);
+    };
+    const settle = (to, then) => {
+        panel.style.transition = 'transform 200ms cubic-bezier(.2,.8,.2,1), background-color 200ms';
+        panel.style.transform = `translateY(${to}px)`;
+        if (to === 0) panel.style.backgroundColor = '';
+        setTimeout(() => { if (G.panel !== panel) return; panel.style.transition = ''; panel.style.transform = ''; panel.style.backgroundColor = ''; panel.style.backdropFilter = ''; then?.(); }, 220);
+    };
+    panel.addEventListener('pointerdown', e => {
+        if (!G.collapsed || e.button !== 0 || e.target.closest('.listening-close')) return;
+        drag = { id: e.pointerId, y: e.clientY, top: Math.round(panel.getBoundingClientRect().top), dist: 0 };
+        rose = false;
+    });
+    panel.addEventListener('pointermove', e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        drag.dist = Math.max(0, drag.y - e.clientY);
+        if (!rose && drag.dist > 8) {
+            rose = true;
+            try { panel.setPointerCapture(e.pointerId); } catch {}
+            open(drag.top);
+        }
+        if (rose) {
+            const at = Math.max(0, drag.top - drag.dist);
+            panel.style.transform = `translateY(${at}px)`;
+            K.riseVeil(panel, at, drag.top);
+        }
+    });
+    const end = e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const d = drag;
+        drag = null;
+        if (!rose) {
+            if (e.type === 'pointerup' && G.collapsed && !e.target.closest('.listening-close')) {
+                open(d.top);
+                requestAnimationFrame(() => requestAnimationFrame(() => { if (G.panel === panel) settle(0); }));
+            }
+            return;
+        }
+        if (e.type !== 'pointercancel' && d.dist > Math.min(100, innerHeight * .2)) settle(0);
+        else settle(d.top, () => { G.collapsed = true; G.remember(); G.paint(); });
+    };
+    panel.addEventListener('pointerup', end);
+    panel.addEventListener('pointercancel', end);
 };
 G.minimize = () => { G.collapsed = true; G.remember(); G.paint(); };
 G.singleTrackSections = () => {

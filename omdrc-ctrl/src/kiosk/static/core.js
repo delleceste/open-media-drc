@@ -28,6 +28,12 @@ K.h = function h(tag, attrs, ...kids) {
 };
 K.$ = (sel, root = document) => root.querySelector(sel);
 K.clear = el => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+// A sheet rising from its strip: more opaque as it climbs (65% at the strip, solid at the top), with a blur that fades out so the view beneath stays legible.
+K.riseVeil = (el, top, from) => {
+    const rise = from > 0 ? Math.min(1, Math.max(0, 1 - top / from)) : 1;
+    el.style.backgroundColor = rise >= 1 ? '' : `color-mix(in srgb, var(--bg) ${Math.round(65 + 35 * rise)}%, transparent)`;
+    el.style.backdropFilter = el.style.webkitBackdropFilter = rise >= 1 ? '' : `blur(${Math.round(10 * (1 - rise))}px)`;
+};
 K.clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 K.portrait = () => matchMedia('(orientation: portrait)').matches;
 
