@@ -36,6 +36,11 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
         val notify = inputData.getBoolean(KEY_NOTIFY, false)
         val togglePlayPause = inputData.getBoolean(KEY_TOGGLE_PLAY_PAUSE, false)
         Log.d(TAG, "doWork start, targetId=$targetId, notify=$notify, togglePlayPause=$togglePlayPause")
+        val transport = inputData.getString(KEY_TRANSPORT)
+        if (transport != null && targetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            RefreshEngine.transport(applicationContext, targetId, transport)
+            return Result.success()
+        }
         if (togglePlayPause && targetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
             RefreshEngine.togglePlayPause(applicationContext, targetId)
             return Result.success()
@@ -68,6 +73,7 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
         private const val KEY_APPWIDGET_ID = "appWidgetId"
         private const val KEY_NOTIFY = "notify"
         private const val KEY_TOGGLE_PLAY_PAUSE = "togglePlayPause"
+        private const val KEY_TRANSPORT = "transport"
         private const val PERIODIC_WORK_NAME = "omdrc_periodic_refresh"
         private val NETWORK_CONSTRAINTS = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -108,6 +114,17 @@ class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Coroutin
             val uniqueName = "omdrc_toggle_$appWidgetId"
             Log.d(TAG, "enqueueTogglePlayPause: $uniqueName")
             WorkManager.getInstance(context).enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
+        }
+
+        /** The media widget's previous/next buttons. */
+        fun enqueueTransport(context: Context, appWidgetId: Int, action: String) {
+            val request = OneTimeWorkRequestBuilder<WidgetRefreshWorker>()
+                .setInputData(workDataOf(KEY_APPWIDGET_ID to appWidgetId, KEY_TRANSPORT to action))
+                .setConstraints(NETWORK_CONSTRAINTS)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build()
+            WorkManager.getInstance(context)
+                .enqueueUniqueWork("omdrc_transport_$appWidgetId", ExistingWorkPolicy.REPLACE, request)
         }
 
         fun enqueuePeriodic(context: Context) {

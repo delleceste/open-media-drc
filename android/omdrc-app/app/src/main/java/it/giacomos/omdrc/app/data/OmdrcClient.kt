@@ -96,9 +96,17 @@ object OmdrcClient {
             peak = null
         }
 
+        // Position and queue, for the media widget's progress bar.
+        val player = try {
+            PlayerStatus.parse(get(host, port, "/k/api/player"))
+        } catch (e: Exception) {
+            Log.w(TAG, "k/api/player unreachable: ${e.message}")
+            null
+        }
+
         WidgetSnapshot(
             drc = drc, mpd = mpd, rti = rti, peak = peak, renderer = renderer,
-            fetchedAtMillis = now, reachable = true,
+            fetchedAtMillis = now, reachable = true, player = player,
         )
     }
 
@@ -158,7 +166,7 @@ object OmdrcClient {
         }
     }
 
-    /** POST /k/api/transport {"action": "play"|"pause"} - the same endpoint
+    /** POST /k/api/transport {"action": "play"|"pause"|"next"|"prev"} - the same endpoint
      *  the kiosk touchscreen UI's transport buttons use. No "toggle" action
      *  exists server-side; the caller decides play vs pause from the last
      *  known MPD state. Returns whether the box accepted it; the caller's

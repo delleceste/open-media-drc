@@ -9,6 +9,10 @@ import it.giacomos.omdrc.app.data.OmdrcClient
 
 private const val TAG = "OmdrcWidget"
 
+// A wide widget at least this tall (about two launcher rows) is the media
+// widget; shorter, the text-only LARGE one.
+private const val MEDIA_MIN_HEIGHT_DP = 200
+
 /** Shared fetch + persist + render logic, reused by the worker, the alarm
  *  receiver path and onUpdate's immediate cached render. */
 object RefreshEngine {
@@ -61,6 +65,14 @@ object RefreshEngine {
         val cached = WidgetPrefs.loadSnapshot(context, appWidgetId)
         val action = if (cached?.mpd?.state == "playing") "pause" else "play"
         Log.d(TAG, "togglePlayPause($appWidgetId): sending $action")
+        OmdrcClient.sendTransport(hostPort.first, hostPort.second, action)
+        refreshWidget(context, appWidgetId)
+    }
+
+    /** prev/next from the media widget. */
+    suspend fun transport(context: Context, appWidgetId: Int, action: String) {
+        val hostPort = serverFor(context, appWidgetId) ?: return
+        Log.d(TAG, "transport($appWidgetId): sending $action")
         OmdrcClient.sendTransport(hostPort.first, hostPort.second, action)
         refreshWidget(context, appWidgetId)
     }
@@ -121,6 +133,7 @@ object RefreshEngine {
             // (79x127dp at 5 columns, 128x174dp at 3), a 2x1 strip wider -
             // a fixed dp threshold misfires as the grid's cells grow.
             width < 70 || width < height -> WidgetSize.TINY
+            width >= 250 && height >= MEDIA_MIN_HEIGHT_DP -> WidgetSize.MEDIA
             width >= 250 -> WidgetSize.LARGE
             else -> WidgetSize.SMALL
         }

@@ -4,6 +4,7 @@ import android.content.Context
 import it.giacomos.omdrc.app.data.DrcStatus
 import it.giacomos.omdrc.app.data.MpdStatus
 import it.giacomos.omdrc.app.data.PeakStatus
+import it.giacomos.omdrc.app.data.PlayerStatus
 import it.giacomos.omdrc.app.data.RendererStatus
 import it.giacomos.omdrc.app.data.RtiStatus
 import it.giacomos.omdrc.app.data.WidgetSnapshot
@@ -97,6 +98,16 @@ object WidgetPrefs {
                 editor.putBoolean("upmpdcli", renderer.upmpdcli)
                 editor.putString("now_playing", renderer.nowPlaying)
             }
+            editor.remove("player_ok").remove("player_elapsed").remove("player_duration").remove("player_pos")
+            snapshot.player?.let { pl ->
+                editor.putBoolean("player_ok", true)
+                pl.elapsed?.let { editor.putFloat("player_elapsed", it.toFloat()) }
+                pl.duration?.let { editor.putFloat("player_duration", it.toFloat()) }
+                pl.pos?.let { editor.putInt("player_pos", it) }
+                editor.putInt("player_length", pl.length)
+                editor.putString("player_artist", pl.artist)
+                editor.putString("player_edition", pl.edition)
+            }
             // rti/peak are null (not just absent) whenever DRC isn't
             // running - clear any previously-cached figures so an old
             // reading doesn't linger under a now-stale "DRC ON" label.
@@ -153,7 +164,16 @@ object WidgetPrefs {
             upmpdcli = p.getBoolean("upmpdcli", false),
             nowPlaying = p.getString("now_playing", null),
         ) else null
+        val player = if (p.contains("player_ok")) PlayerStatus(
+            elapsed = if (p.contains("player_elapsed")) p.getFloat("player_elapsed", 0f).toDouble() else null,
+            duration = if (p.contains("player_duration")) p.getFloat("player_duration", 0f).toDouble() else null,
+            pos = if (p.contains("player_pos")) p.getInt("player_pos", 0) else null,
+            length = p.getInt("player_length", 0),
+            artist = p.getString("player_artist", null),
+            edition = p.getString("player_edition", null),
+        ) else null
         return WidgetSnapshot(
+            player = player,
             drc = drc,
             mpd = mpd,
             rti = rti,

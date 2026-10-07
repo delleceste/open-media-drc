@@ -37,6 +37,13 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
                     WidgetRefreshWorker.enqueueTogglePlayPause(context, id)
                 }
             }
+            ACTION_TRANSPORT -> {
+                val id = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+                val action = intent.getStringExtra(EXTRA_TRANSPORT_ACTION)
+                if (id != AppWidgetManager.INVALID_APPWIDGET_ID && action != null) {
+                    WidgetRefreshWorker.enqueueTransport(context, id, action)
+                }
+            }
             ACTION_ALARM_TICK -> {
                 // Closed from the notification: the timer stops here, and
                 // opening the app starts it again.
@@ -101,6 +108,8 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
     companion object {
         const val ACTION_MANUAL_REFRESH = "it.giacomos.omdrc.app.ACTION_MANUAL_REFRESH"
         const val ACTION_ALARM_TICK = "it.giacomos.omdrc.app.ACTION_ALARM_TICK"
+        const val ACTION_TRANSPORT = "it.giacomos.omdrc.app.ACTION_TRANSPORT"
+        const val EXTRA_TRANSPORT_ACTION = "transportAction"
         const val ACTION_TOGGLE_PLAY_PAUSE = "it.giacomos.omdrc.app.ACTION_TOGGLE_PLAY_PAUSE"
     }
 }

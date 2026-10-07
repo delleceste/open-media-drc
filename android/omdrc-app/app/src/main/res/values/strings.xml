@@ -23,6 +23,9 @@
     <string name="status_unconfigured">Tap to set up</string>
     <string name="mpd_unknown">—</string>
     <string name="drc_badge">DRC</string>
+    <string name="media_prev">Previous</string>
+    <string name="media_play_pause">Play or pause</string>
+    <string name="media_next">Next</string>
     <string name="notification_channel_name">DRC status</string>
     <string name="notification_channel_description">A dismissable status snapshot shown when you open the app or tap the widget\'s refresh icon.</string>
     <string name="notification_live_channel_name">DRC live updates</string>

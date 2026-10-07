@@ -13,4 +13,5 @@ data class WidgetSnapshot(
     val renderer: RendererStatus?,
     val fetchedAtMillis: Long,
     val reachable: Boolean,
+    val player: PlayerStatus? = null,
 )

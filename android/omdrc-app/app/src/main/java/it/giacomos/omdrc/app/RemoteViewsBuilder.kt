@@ -26,12 +26,14 @@ import it.giacomos.omdrc.app.data.WidgetSnapshot
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
-enum class WidgetSize { TINY, SMALL, LARGE }
+enum class WidgetSize { TINY, SMALL, LARGE, MEDIA }
 
 // Offsets request codes for the extra PendingIntents below away from the
 // ones keyed on appWidgetId alone (manualRefreshIntent, openDashboardIntent)
 // so they never collide for the same widget instance.
 private const val TOGGLE_REQUEST_CODE_OFFSET = 1_000_000
+
+private const val TRANSPORT_REQUEST_CODE_OFFSET = 2_000_000
 
 private const val ICON_SURFACE_PX = 256
 
@@ -90,6 +92,9 @@ object RemoteViewsBuilder {
         if (size == WidgetSize.TINY) {
             return buildTiny(context, appWidgetId, host, port, snapshot)
         }
+        if (size == WidgetSize.MEDIA) {
+            return buildMedia(context, appWidgetId, host, port, snapshot, checking)
+        }
         val layout = if (size == WidgetSize.LARGE) R.layout.widget_large else R.layout.widget_small
         val views = RemoteViews(context.packageName, layout)
 
@@ -121,6 +126,140 @@ object RemoteViewsBuilder {
         views.setOnClickPendingIntent(R.id.refresh_button, manualRefreshIntent(context, appWidgetId))
 
         return views
+    }
+
+    /** The tall media widget: cover, track, progress, DRC and transport. */
+    private fun buildMedia(
+        context: Context,
+        appWidgetId: Int,
+        host: String?,
+        port: Int,
+        snapshot: WidgetSnapshot?,
+        checking: Boolean,
+    ): RemoteViews {
+        val views = RemoteViews(context.packageName, R.layout.widget_media)
+        views.setOnClickPendingIntent(R.id.widget_root, openDashboardIntent(context, appWidgetId, host, port))
+        views.setOnClickPendingIntent(R.id.refresh_button, manualRefreshIntent(context, appWidgetId))
+        views.setOnClickPendingIntent(R.id.media_prev, transportIntent(context, appWidgetId, "prev"))
+        views.setOnClickPendingIntent(R.id.media_next, transportIntent(context, appWidgetId, "next"))
+        views.setOnClickPendingIntent(R.id.media_play_pause, togglePlayPauseIntent(context, appWidgetId))
+
+        val reachable = host != null && snapshot?.reachable == true
+        val mpd = snapshot?.mpd
+        val hasQueue = reachable && mpd?.song != null
+        val playing = hasQueue && mpd?.state == "playing"
+        val player = snapshot?.player
+
+        // Status line: the DRC state (icon), or why there is nothing to show.
+        val drc = snapshot?.drc
+        val drcOn = reachable && drc?.running == true
+        views.setImageViewResource(
+            R.id.status_icon,
+            when {
+                !drcOn -> R.drawable.ic_status_off
+                drc?.headroomSafe == true -> R.drawable.ic_status_safe
+                drc?.headroomSafe == false -> R.drawable.ic_status_unsafe
+                else -> R.drawable.ic_status_off
+            },
+        )
+        views.setTextViewText(
+            R.id.title_text,
+            when {
+                host == null -> context.getString(R.string.status_unconfigured)
+                snapshot == null -> "…"
+                !snapshot.reachable -> context.getString(R.string.status_unreachable) +
+                    " · " + staleness(snapshot.fetchedAtMillis)
+                checking -> "Checking…"
+                drcOn -> context.getString(R.string.status_drc_on)
+                else -> context.getString(R.string.status_drc_off)
+            },
+        )
+
+        // Out of reach, the last cover and track stay, as on the tile; the
+        // transport and progress don't, as they'd claim a live state.
+        val cached = snapshot?.mpd
+        val cachedQueue = cached?.song != null
+        val renderer = snapshot?.renderer
+        val title = TrackTitle.titleAndAlbum(
+            renderer?.nowPlaying ?: cached?.displaySong, cached?.title, null,
+        )
+        views.setTextViewText(
+            R.id.media_title,
+            if (cachedQueue) title ?: cached?.title ?: "" else context.getString(R.string.mpd_unknown),
+        )
+        views.setTextViewText(R.id.media_artist, if (cachedQueue) player?.artist ?: "" else "")
+        views.setTextViewText(
+            R.id.media_edition,
+            if (cachedQueue) listOfNotNull(cached?.album, player?.edition).joinToString(" · ") else "",
+        )
+        views.setTextViewText(
+            R.id.media_format,
+            if (hasQueue) listOfNotNull(
+                formatShort(mpd?.sampleRate, mpd?.bitDepth),
+                renderer?.label,
+            ).joinToString(" · ") else "",
+        )
+
+        val art = if (cachedQueue) WidgetArtCache.load(context, appWidgetId) else null
+        views.setImageViewBitmap(R.id.media_cover, roundedCover(context, art))
+
+        // Progress: the position at the last fetch, moved on by the time
+        // since if it's playing.
+        val duration = player?.duration
+        if (hasQueue && player != null && duration != null && duration > 0) {
+            val since = if (playing) (System.currentTimeMillis() - snapshot!!.fetchedAtMillis) / 1000.0 else 0.0
+            val elapsed = ((player.elapsed ?: 0.0) + since).coerceIn(0.0, duration)
+            views.setProgressBar(R.id.media_progress, 1000, (1000 * elapsed / duration).roundToInt(), false)
+            views.setTextViewText(R.id.media_elapsed, clock(elapsed))
+            views.setTextViewText(R.id.media_duration, clock(duration))
+        } else {
+            views.setProgressBar(R.id.media_progress, 1000, 0, false)
+            views.setTextViewText(R.id.media_elapsed, "")
+            views.setTextViewText(R.id.media_duration, "")
+        }
+        views.setTextViewText(
+            R.id.media_queue,
+            if (hasQueue && player?.pos != null && player.length > 0) "${player.pos} / ${player.length}" else "",
+        )
+
+        views.setTextViewText(R.id.media_drc, mediaDrcLine(context, snapshot, drcOn))
+        views.setImageViewResource(R.id.media_play_pause, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+        return views
+    }
+
+    /** "96/24 → 96 kHz · 1.2 dB · RTI 80% · Peak -3.1 dB" style DRC detail. */
+    private fun mediaDrcLine(context: Context, snapshot: WidgetSnapshot?, drcOn: Boolean): String {
+        val drc = snapshot?.drc
+        if (!drcOn || drc == null) return ""
+        val parts = mutableListOf<String>()
+        parts.add(drc.description ?: drc.designId ?: drc.geometry ?: "")
+        drc.effectiveAttenuationDb?.let { parts.add("%.1f dB".format(java.util.Locale.ROOT, it)) }
+        val rti = snapshot.rti
+        if (rti != null && rti.available && rti.rti != null) parts.add("RTI ${(rti.rti * 100).roundToInt()}%")
+        val peak = snapshot.peak
+        if (peak != null && peak.available) {
+            parts.add("Peak " + (peak.peakDb?.let { "%.1f dB".format(java.util.Locale.ROOT, it) } ?: "−∞ dB") +
+                if (peak.clipped) " ⚠" else "")
+        }
+        return parts.filter { it.isNotEmpty() }.joinToString(" · ")
+    }
+
+    private fun clock(seconds: Double): String {
+        val s = seconds.toInt()
+        return "%d:%02d".format(java.util.Locale.ROOT, s / 60, s % 60)
+    }
+
+    /** The cover as a rounded square, or the app's mark when there's none. */
+    private fun roundedCover(context: Context, art: Bitmap?): Bitmap {
+        val square = iconSurface(context, art, circle = false)
+        val out = Bitmap.createBitmap(square.width, square.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val r = square.width * 0.08f
+        canvas.drawRoundRect(0f, 0f, square.width.toFloat(), square.height.toFloat(), r, r, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(square, 0f, 0f, paint)
+        return out
     }
 
     /** The 1x1 tile, made to look like the launcher icon + its label: no
@@ -469,7 +608,7 @@ object RemoteViewsBuilder {
      *  true circle whatever the cell's aspect: the static icon (the
      *  ic_launcher_background gradient + ic_launcher_foreground mark) when
      *  there's no art, the cover filling that same circle when there is. */
-    private fun iconSurface(context: Context, art: Bitmap?): Bitmap {
+    private fun iconSurface(context: Context, art: Bitmap?, circle: Boolean = true): Bitmap {
         val size = ICON_SURFACE_PX
         val content = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(content)
@@ -499,7 +638,7 @@ object RemoteViewsBuilder {
                 it.draw(canvas)
             }
         }
-        return circularCrop(content)
+        return if (circle) circularCrop(content) else content
     }
 
     /** RemoteViews/AppWidgetHostView has no clipToOutline support reliable
@@ -516,6 +655,19 @@ object RemoteViewsBuilder {
         val top = (bitmap.height - size) / 2
         canvas.drawBitmap(bitmap, Rect(left, top, left + size, top + size), Rect(0, 0, size, size), paint)
         return output
+    }
+
+    private fun transportIntent(context: Context, appWidgetId: Int, action: String): PendingIntent {
+        val intent = Intent(context, OmdrcWidgetProvider::class.java).apply {
+            this.action = OmdrcWidgetProvider.ACTION_TRANSPORT
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+            putExtra(OmdrcWidgetProvider.EXTRA_TRANSPORT_ACTION, action)
+        }
+        val code = TRANSPORT_REQUEST_CODE_OFFSET + 2 * appWidgetId + if (action == "next") 1 else 0
+        return PendingIntent.getBroadcast(
+            context, code, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun togglePlayPauseIntent(context: Context, appWidgetId: Int): PendingIntent {
