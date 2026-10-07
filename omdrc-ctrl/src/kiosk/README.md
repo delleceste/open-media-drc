@@ -14,7 +14,8 @@ down.
 
 Only Now, Qobuz, DRC and Video (in that order) are reached by swiping or the arrow keys;
 a left swipe past the last one cycles back to Now.  Every other page opens from the page
-menu (or its tab, on a wide screen), and does not swipe.
+menu (the wide-screen tab bar lists only the four), and does not swipe.  Video is an
+iframe, so a swipe there starts on the narrow strips along its left and right edges.
 
 | Page | What it is |
 |---|---|

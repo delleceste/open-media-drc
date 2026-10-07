@@ -458,6 +458,7 @@ function buildPage(p) {
     p.body = h('div', { class: 'page-body' });
     p.section = h('section', { class: 'page', id: 'page-' + p.id, 'data-id': p.id }, p.body);
     p.tab = h('button', { type: 'button', class: 'tab', onclick: () => K.showPage(p.id) }, p.label);
+    p.tab.hidden = !SWIPE_IDS.includes(p.id);       // the tab bar lists the swipe pages; the rest are in the menu
 }
 K.refreshPages = () => {
     if (!K.allPages) return;
