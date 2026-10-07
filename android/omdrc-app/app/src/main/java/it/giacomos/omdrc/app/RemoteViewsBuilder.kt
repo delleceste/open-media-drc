@@ -398,6 +398,7 @@ object RemoteViewsBuilder {
         valueColor: Int,
     ): Label {
         val density = context.resources.displayMetrics.density
+        val shadow = context.getColor(R.color.widget_strip_text_shadow)
         val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
             this.typeface = typeface
             color = 0xFFFFFFFF.toInt()
@@ -406,19 +407,32 @@ object RemoteViewsBuilder {
         }
         // "DRC" as the cap-height reference regardless of which text is
         // shown, so the strip's text size doesn't jump between states.
-        val bounds = Rect().also { labelPaint.getTextBounds("DRC", 0, 3, it) }
-        labelPaint.textSize = 100f * capDp * density / bounds.height()
+        val refBounds = Rect().also { labelPaint.getTextBounds("DRC", 0, 3, it) }
+        labelPaint.textSize = 100f * capDp * density / refBounds.height()
+        val capPx = capDp * density
+        // A dark shadow under the text so a lighter color (the hi-res blue
+        // especially) still reads against whatever the backdrop shows
+        // through it - its own translucency, or a bright cover behind it.
+        labelPaint.setShadowLayer(0.12f * capPx, 0f, 0.05f * capPx, shadow)
         val valuePaint = Paint(labelPaint).apply { color = valueColor }
 
         val gap = if (label.isNotEmpty() && value.isNotEmpty()) 0.6f * capDp * density else 0f
         val labelWidth = labelPaint.measureText(label)
         val valueWidth = valuePaint.measureText(value)
-        val metrics = labelPaint.fontMetrics
-        val capPx = capDp * density
         val padX = STRIP_PAD_X * capPx
         val padY = STRIP_PAD_Y * capPx
+
+        // Vertically centered on the drawn glyphs' own ink, not the font's
+        // full ascent/descent - digits and "DRC" have no descenders, so
+        // that reserved space below the baseline would otherwise push the
+        // text toward the top of the pill.
+        val labelInk = if (label.isNotEmpty()) Rect().also { labelPaint.getTextBounds(label, 0, label.length, it) } else null
+        val valueInk = if (value.isNotEmpty()) Rect().also { valuePaint.getTextBounds(value, 0, value.length, it) } else null
+        val inkTop = listOfNotNull(labelInk?.top, valueInk?.top).min()
+        val inkBottom = listOfNotNull(labelInk?.bottom, valueInk?.bottom).max()
+
         val width = (labelWidth + gap + valueWidth + 2f * padX).roundToInt().coerceAtLeast(1)
-        val height = (metrics.bottom - metrics.top + 2f * padY).roundToInt().coerceAtLeast(1)
+        val height = (inkBottom - inkTop + 2f * padY).roundToInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         bitmap.density = context.resources.displayMetrics.densityDpi
         val canvas = Canvas(bitmap)
@@ -427,7 +441,7 @@ object RemoteViewsBuilder {
             0f, 0f, width.toFloat(), height.toFloat(), radius, radius,
             Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.widget_chip_backdrop) },
         )
-        val baseline = padY - metrics.top
+        val baseline = padY - inkTop
         if (label.isNotEmpty()) canvas.drawText(label, padX, baseline, labelPaint)
         if (value.isNotEmpty()) canvas.drawText(value, padX + labelWidth + gap, baseline, valuePaint)
         return Label(bitmap, 0f, RectF(0f, 0f, width / density, height / density))

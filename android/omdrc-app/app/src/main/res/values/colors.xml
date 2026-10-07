@@ -12,12 +12,17 @@
     <color name="widget_chip_backdrop">#59000000</color>
     <!-- The tile's strip colors the source format like the kiosk page's own
          track strip (kiosk/static/widgets/track.js K.formatColor): hi-res
-         (24-bit, 88kHz+) in the app's existing accent blue - kiosk_accent's
-         dark-theme value, since the widget always renders dark regardless
-         of system theme - 24-bit/176kHz+ in status_safe, already used for
-         the headroom-safe status icon. -->
-    <color name="widget_fmt_hires">#58A6FF</color>
+         (24-bit, 88kHz+) in blue, 24-bit/176kHz+ in status_safe, already
+         used for the headroom-safe status icon. kiosk_accent's own dark-
+         theme blue (#58A6FF) read too close to the strip's backdrop over a
+         busy cover, so this is a brighter, more saturated blue instead,
+         plus the text shadow below - kept close enough to still read as
+         "the same blue" as the rest of the app. -->
+    <color name="widget_fmt_hires">#4FC3FF</color>
     <color name="widget_fmt_green">@color/status_safe</color>
+    <!-- Behind the strip's text (setShadowLayer), so a bright or busy
+         cover showing through the backdrop never washes it out. -->
+    <color name="widget_strip_text_shadow">#CC000000</color>
     <!-- The kiosk page's palette (omdrc-ctrl/src/kiosk/static/kiosk.css), for native
          screens that stand in for it, like the connection error: its light theme here,
          the dark one in values-night, so they follow the phone as the page does. -->
