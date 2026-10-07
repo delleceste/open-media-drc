@@ -1996,8 +1996,9 @@ P.openFull = ({ offset = 0 } = {}) => {
             };
         });
     P.fullEl = h('div', { class: 'scrim qz-full' },
+        v.grip = h('div', { class: 'qz-grip', role: 'button', tabindex: '0', title: 'Swipe down or tap to close',
+            'aria-label': 'Close the player' }, h('i')),
         h('div', { class: 'qz-full-top' },
-            h('button', { type: 'button', class: 'btn qz-pbtn', title: 'Back to the search', onclick: () => P.closeFull() }, '⌄'),
             h('span', { class: 'qz-full-label' }, 'Now playing'), v.maxBtn,
             v.aiBtn = h('button', { type: 'button', class: 'btn qz-listening', title: 'Research this music',
                 'aria-label': 'Research this music', onclick: e => K.listening.open(P.listeningTrack(), e.currentTarget) }, K.listening.icon())),
@@ -2019,6 +2020,7 @@ P.openFull = ({ offset = 0 } = {}) => {
         onMinimize: () => P.closeFull(),
         onPull: distance => { if (P.fullEl) P.fullEl.style.transform = `translateY(${distance}px)`; } });
     P.seekTaps = null;
+    P.wireGrip(v.grip);
     if (offset) {
         P.fullEl.style.transform = `translateY(${Math.max(0, offset)}px)`;
         P.fullEl.style.pointerEvents = 'none';
@@ -2042,6 +2044,25 @@ P.openFull = ({ offset = 0 } = {}) => {
     P.playerPoll.now();
 };
 
+// The handle at the top edge: a tap or Enter closes, a downward drag pulls the sheet and closes past 70 px.
+P.wireGrip = grip => {
+    let y0 = null, dy = 0;
+    grip.addEventListener('pointerdown', e => { y0 = e.clientY; dy = 0; grip.setPointerCapture(e.pointerId); });
+    grip.addEventListener('pointermove', e => {
+        if (y0 === null) return;
+        dy = Math.max(0, e.clientY - y0);
+        if (P.fullEl) P.fullEl.style.transform = dy ? `translateY(${dy}px)` : '';
+    });
+    const end = e => {
+        if (y0 === null) return;
+        y0 = null;
+        if (e.type === 'pointerup' && (dy > 70 || dy < 6)) P.closeFull();
+        else if (P.fullEl) P.fullEl.style.transform = '';
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+    grip.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.closeFull(); } });
+};
 P.closeFull = () => {
     if (!P.fullEl) return;
     P.closeQueueActions();

@@ -1017,6 +1017,9 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 /* the full-screen player: cover left and the rest beside it in landscape, stacked on a phone */
 .scrim.qz-full { flex-direction: column; align-items: stretch; justify-content: flex-start; background: var(--bg); z-index: 55;
     padding: .5rem .9rem max(.6rem, env(safe-area-inset-bottom)); }
+.qz-grip { flex: 0 0 auto; align-self: center; width: 40%; max-width: 12rem; padding: .35rem 0 .6rem; cursor: grab; touch-action: none; }
+.qz-grip i { display: block; height: .3rem; border-radius: .15rem; background: var(--muted); opacity: .6; width: 2.6rem; margin: 0 auto; }
+.qz-grip:active i, .qz-grip:focus-visible i { opacity: 1; }
 .qz-full-top { display: flex; align-items: center; gap: .7rem; flex: 0 0 auto; margin-bottom: .5rem; }
 .qz-full-label { color: var(--muted); font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; }
 /* the cover's maximize button, out of the art and onto this row instead, pushed to the right */
