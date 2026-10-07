@@ -730,6 +730,13 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         art.assert_not_called()
 
+    def test_local_art_misses_are_not_cached(self):
+        with patch.object(qobuz_web.mpd_library, "albumart",
+                          side_effect=qobuz_web.mpd_library.MPDError("ACK {albumart} No file exists")):
+            response = self.client.get("/qobuz/local/art?file=Music%2FAlbum%2Ftrack.flac")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
     def test_a_bad_number_is_an_error_not_a_crash(self):
         cat, _ = catalog({})
         with patch.object(qobuz_web, "catalog", return_value=cat), self.running():

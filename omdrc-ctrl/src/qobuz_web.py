@@ -588,7 +588,9 @@ def local_art():
                         headers={"Cache-Control": "public, max-age=86400"})
     except (mpd_library.MPDError, OSError) as error:
         status = 404 if "not found" in str(error).lower() or "no file exists" in str(error).lower() else 503
-        return Response(status=status, headers={"Cache-Control": "public, max-age=3600"})
+        # Never let a temporary MPD miss poison this stable artwork URL: the
+        # browser can otherwise keep showing a broken image after a reload.
+        return Response(status=status, headers={"Cache-Control": "no-store"})
 
 
 @bp.route("/search/stream")
