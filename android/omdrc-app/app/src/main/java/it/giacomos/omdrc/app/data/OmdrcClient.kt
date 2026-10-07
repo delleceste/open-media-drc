@@ -13,6 +13,15 @@ import java.net.URL
 private const val TAG = "OmdrcClient"
 private const val TIMEOUT_MS = 4000
 
+// The box fetches a cover from Qobuz before answering, the first time.
+private const val ART_TIMEOUT_MS = 10000
+
+sealed interface ArtFetch {
+    class Found(val bytes: ByteArray) : ArtFetch
+    object None : ArtFetch
+    object Failed : ArtFetch
+}
+
 object OmdrcClient {
 
     suspend fun fetchSnapshot(host: String, port: Int): WidgetSnapshot = withContext(Dispatchers.IO) {
@@ -88,21 +97,25 @@ object OmdrcClient {
     }
 
     /** Current track's cover art, straight from GET /qconnect/art (same
-     *  image the kiosk UI's "Now"/cover pages show) - null on 404 (nothing
-     *  playing / no art) or any transport failure, both best-effort like
-     *  the other secondary fetches above. */
-    suspend fun fetchArt(host: String, port: Int): ByteArray? = withContext(Dispatchers.IO) {
+     *  image the kiosk UI's "Now"/cover pages show). Only a 404 means
+     *  there's no art; a 502 (the box couldn't fetch the cover itself) or a
+     *  timeout - the box may be downloading it from Qobuz first - is a
+     *  failed fetch, which mustn't clear the art cached last time. */
+    suspend fun fetchArt(host: String, port: Int): ArtFetch = withContext(Dispatchers.IO) {
         val url = URL("http://$host:$port/qconnect/art")
         val connection = url.openConnection() as HttpURLConnection
         connection.connectTimeout = TIMEOUT_MS
-        connection.readTimeout = TIMEOUT_MS
+        connection.readTimeout = ART_TIMEOUT_MS
         connection.requestMethod = "GET"
         try {
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) return@withContext null
-            connection.inputStream.use { it.readBytes() }
+            when (connection.responseCode) {
+                HttpURLConnection.HTTP_OK -> ArtFetch.Found(connection.inputStream.use { it.readBytes() })
+                HttpURLConnection.HTTP_NOT_FOUND -> ArtFetch.None
+                else -> ArtFetch.Failed
+            }
         } catch (e: Exception) {
             Log.w(TAG, "qconnect/art unreachable: ${e.message}")
-            null
+            ArtFetch.Failed
         } finally {
             connection.disconnect()
         }

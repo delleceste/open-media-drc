@@ -8,6 +8,18 @@ import it.giacomos.omdrc.app.data.RendererStatus
 import it.giacomos.omdrc.app.data.RtiStatus
 import it.giacomos.omdrc.app.data.WidgetSnapshot
 
+/** The user's adjustments to the 1x1 tile, made by eye against the icons
+ *  beside it, since no launcher reports its own icon size: scale factors on
+ *  top of RemoteViewsBuilder's computed icon and label sizes, a vertical
+ *  nudge, and the label's font family (null: the launcher's, as far as it
+ *  can be told). */
+data class TileTuning(
+    val iconScale: Float = 1f,
+    val labelScale: Float = 1f,
+    val offsetDp: Float = 0f,
+    val fontFamily: String? = null,
+)
+
 /**
  * Per-appWidgetId configuration + last-good snapshot cache. Each widget
  * instance gets its own SharedPreferences file so multiple widgets can (in
@@ -28,6 +40,25 @@ object WidgetPrefs {
         val p = prefs(context, appWidgetId)
         val host = p.getString("host", null) ?: return null
         return host to p.getInt("port", AppPrefs.DEFAULT_PORT)
+    }
+
+    fun loadTileTuning(context: Context, appWidgetId: Int): TileTuning {
+        val p = prefs(context, appWidgetId)
+        return TileTuning(
+            iconScale = p.getFloat("tile_icon_scale", 1f),
+            labelScale = p.getFloat("tile_label_scale", 1f),
+            offsetDp = p.getFloat("tile_offset_dp", 0f),
+            fontFamily = p.getString("tile_font_family", null),
+        )
+    }
+
+    fun saveTileTuning(context: Context, appWidgetId: Int, tuning: TileTuning) {
+        prefs(context, appWidgetId).edit()
+            .putFloat("tile_icon_scale", tuning.iconScale)
+            .putFloat("tile_label_scale", tuning.labelScale)
+            .putFloat("tile_offset_dp", tuning.offsetDp)
+            .putString("tile_font_family", tuning.fontFamily)
+            .apply()
     }
 
     fun saveSnapshot(context: Context, appWidgetId: Int, snapshot: WidgetSnapshot) {

@@ -8,6 +8,9 @@
   minWidth is the 1-cell floor (70*1-30=40dp), well below targetCellWidth's
   2-cell default placement, so a newly-added widget still lands at its usual
   2x1 size but can be resized down to a 1x1 cover-art tile (WidgetSize.TINY).
+
+  reconfigurable: the launcher offers the setup screen again on a placed
+  widget (long press), to retune the tile after a grid change.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="40dp"
@@ -20,4 +23,5 @@
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/widget_small"
     android:configure="it.giacomos.omdrc.app.WidgetConfigureActivity"
+    android:widgetFeatures="reconfigurable"
     android:widgetCategory="home_screen" />

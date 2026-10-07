@@ -6,6 +6,15 @@
     <string name="hint_port">Port</string>
     <string name="default_port">9090</string>
     <string name="save">Save</string>
+    <string name="tile_heading">1×1 tile</string>
+    <string name="tile_note">Changes show on the home screen as you make them: match the icons beside the tile.</string>
+    <string name="tile_icon_size">Icon size: %1$d%%</string>
+    <string name="tile_label_size">Label size: %1$d%%</string>
+    <string name="tile_offset">Vertical position: %1$+.1f dp</string>
+    <string name="tile_font">Label font</string>
+    <string name="tile_font_launcher">Launcher\'s (%1$s)</string>
+    <string name="tile_font_system">system default</string>
+    <string name="tile_reset">Reset tile</string>
     <string name="refresh_note">Refreshes automatically every few minutes; tap the refresh icon for an immediate check.</string>
     <string name="status_drc_on">DRC ON</string>
     <string name="status_drc_off">DRC OFF</string>

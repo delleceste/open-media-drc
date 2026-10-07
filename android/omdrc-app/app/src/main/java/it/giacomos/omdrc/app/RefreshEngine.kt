@@ -4,6 +4,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.util.Log
+import it.giacomos.omdrc.app.data.ArtFetch
 import it.giacomos.omdrc.app.data.OmdrcClient
 
 private const val TAG = "OmdrcWidget"
@@ -24,12 +25,14 @@ object RefreshEngine {
         WidgetPrefs.saveSnapshot(context, appWidgetId, snapshot)
         // Only touched while actually reachable - same reasoning as
         // WidgetPrefs.saveSnapshot not overwriting the last-good status on a
-        // transient outage. A null here (no art for the current track) does
-        // still clear it, since that's a real "no art" answer, not a fetch
-        // failure.
+        // transient outage, nor on a failed art fetch. Only the box saying
+        // there's no art for the current track clears it.
         if (snapshot.reachable) {
-            val art = OmdrcClient.fetchArt(hostPort.first, hostPort.second)
-            WidgetArtCache.save(context, appWidgetId, art)
+            when (val art = OmdrcClient.fetchArt(hostPort.first, hostPort.second)) {
+                is ArtFetch.Found -> WidgetArtCache.save(context, appWidgetId, art.bytes)
+                ArtFetch.None -> WidgetArtCache.save(context, appWidgetId, null)
+                ArtFetch.Failed -> Log.w(TAG, "refreshWidget($appWidgetId): art fetch failed, keeping cached art")
+            }
         }
         updateViews(context, appWidgetId, hostPort.first, hostPort.second)
     }
@@ -98,7 +101,7 @@ object RefreshEngine {
         return manager.getAppWidgetIds(ComponentName(context, OmdrcWidgetProvider::class.java))
     }
 
-    private fun sizeFor(manager: AppWidgetManager, appWidgetId: Int): WidgetSize {
+    fun sizeFor(manager: AppWidgetManager, appWidgetId: Int): WidgetSize {
         val options = manager.getAppWidgetOptions(appWidgetId)
         // Portrait size: the narrowest width and the tallest height.
         val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)

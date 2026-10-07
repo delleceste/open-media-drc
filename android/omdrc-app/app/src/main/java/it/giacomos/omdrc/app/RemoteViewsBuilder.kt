@@ -35,18 +35,26 @@ private const val TOGGLE_REQUEST_CODE_OFFSET = 1_000_000
 
 private const val ICON_SURFACE_PX = 256
 
-// The Pixel launcher's label face; falls back to the default sans
-// elsewhere. Must match widget_tiny.xml's omdrc_label fontFamily.
-private const val LABEL_FONT_FAMILY = "google-sans-text"
+// The Pixel launcher's label face.
+private const val PIXEL_LABEL_FONT = "google-sans-text"
 
 private const val PIXEL_LAUNCHER = "com.google.android.apps.nexuslauncher"
 
-// Pixel launcher on a Pixel 9, measured off screenshots, in dp: cell width,
-// icon diameter, icon bottom to the label's cap line, label cap height.
-// Small, medium, large and extra-large icon grids, by cell width - the
-// cell's height doesn't order them (medium's cell is the shortest).
+// Font families offered for the label, besides the launcher's and the
+// system default; only the ones this device has are listed.
+private val LABEL_FONT_CANDIDATES = listOf(
+    "google-sans-text", "google-sans", "sans-serif", "sans-serif-medium",
+    "sans-serif-condensed", "roboto-flex", "serif", "monospace",
+    "barlow", "karla", "lato", "rubik", "fraunces", "lustria",
+)
+
+// Pixel launcher on a Pixel 9, in dp: cell width (as the widget reports
+// it), icon diameter, icon bottom to the label's cap line, label cap
+// height, measured off screenshots. Small, medium, large and extra-large
+// icon grids, by cell width - the cell's height doesn't order them
+// (medium's cell is the shortest).
 private val PIXEL_GRIDS = arrayOf(
-    floatArrayOf(64.3f, 52.6f, 8.4f, 8.76f),
+    floatArrayOf(62f, 52.6f, 8.4f, 8.76f),
     floatArrayOf(81.1f, 59.4f, 13.5f, 10.1f),
     floatArrayOf(112f, 83f, 14.9f, 12.2f),
     floatArrayOf(175.8f, 144.1f, 22.7f, 17.5f),
@@ -120,15 +128,17 @@ object RemoteViewsBuilder {
         layoutTiny(context, views, appWidgetId)
 
         // A null song means an empty queue (nothing loaded to play/pause),
-        // not just "currently stopped". Unreachable, the cached song and art
-        // are only last-known, so the tile falls back to the plain app icon
-        // with no control rather than showing them as current.
-        val hasQueue = snapshot?.reachable == true && snapshot.mpd?.song != null
-        val drcOn = snapshot?.reachable == true && snapshot.drc?.running == true
+        // not just "currently stopped". Out of reach (the phone away from
+        // home), the album last seen loaded most likely still is, so its
+        // cover stays; the play/pause control and DRC badge don't, as they
+        // would claim a state the tile can't know.
+        val reachable = snapshot?.reachable == true
+        val hasQueue = snapshot?.mpd?.song != null
+        val drcOn = reachable && snapshot?.drc?.running == true
         val art = if (hasQueue) WidgetArtCache.load(context, appWidgetId) else null
         views.setImageViewBitmap(R.id.cover_art, iconSurface(context, art, drcOn))
 
-        if (hasQueue) {
+        if (reachable && hasQueue) {
             val playing = snapshot?.mpd?.state == "playing"
             views.setImageViewResource(R.id.play_pause_icon, if (playing) R.drawable.ic_pause else R.drawable.ic_play)
             views.setViewVisibility(R.id.play_pause_icon, View.VISIBLE)
@@ -158,22 +168,45 @@ object RemoteViewsBuilder {
         return resolved?.activityInfo?.packageName == PIXEL_LAUNCHER
     }
 
+    /** The launcher's label font family, as far as it can be told: no
+     *  launcher reports it, but the Pixel launcher's is known, and most
+     *  others use the system default (null). */
+    fun launcherFontFamily(context: Context): String? =
+        if (isPixelLauncher(context)) PIXEL_LABEL_FONT else null
+
+    /** LABEL_FONT_CANDIDATES this device has: an unknown family resolves
+     *  to the default typeface. */
+    fun availableLabelFonts(): List<String> = LABEL_FONT_CANDIDATES.filter {
+        it == "sans-serif" || Typeface.create(it, Typeface.NORMAL) != Typeface.DEFAULT
+    }
+
+    private fun labelTypeface(context: Context, tuning: TileTuning): Typeface {
+        val family = tuning.fontFamily ?: launcherFontFamily(context) ?: return Typeface.DEFAULT
+        return Typeface.create(family, Typeface.NORMAL)
+    }
+
     /** Sizes the tile like the launcher's own icons in the same cell. A
      *  launcher reports a widget cell as big as an icon cell and centers
      *  icon + label in it. No API exposes the launcher's icon size, so on
      *  the Pixel launcher icon, gap and label are interpolated between its
      *  measured grids (PIXEL_GRIDS), and anywhere else they're plain
      *  proportions of the cell - close to a launcher icon, if not exact.
-     *  The label's size and offset come from its typeface's own metrics,
-     *  so its capitals come out at the intended height. Before Android 12
-     *  RemoteViews can't size views at runtime, and the layout's fixed,
-     *  centered defaults apply. */
+     *  The user's TileTuning, set by eye in WidgetConfigureActivity, then
+     *  scales and nudges the result. The label is drawn into a bitmap, so
+     *  it can take any font and its capitals land exactly at the intended
+     *  height. Before Android 12 RemoteViews can't size views at runtime:
+     *  the layout's fixed, centered icon applies, with a default label. */
     private fun layoutTiny(context: Context, views: RemoteViews, appWidgetId: Int) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val tuning = WidgetPrefs.loadTileTuning(context, appWidgetId)
+        val typeface = labelTypeface(context, tuning)
         val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId)
         val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).toFloat()
         val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0).toFloat()
-        if (width <= 0f || height <= 0f) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || width <= 0f || height <= 0f) {
+            val label = labelBitmap(context, typeface, PIXEL_GRIDS[0][3] * tuning.labelScale, 0f)
+            views.setImageViewBitmap(R.id.omdrc_label, label.bitmap)
+            return
+        }
         val icon: Float
         val gap: Float
         val capHeight: Float
@@ -189,37 +222,58 @@ object RemoteViewsBuilder {
             gap = 0.18f * fit
             capHeight = 0.14f * fit
         }
+        val tunedIcon = icon * tuning.iconScale
+        val tunedCap = capHeight * tuning.labelScale
         // Never more than the cell holds.
-        val scale = minOf(1f, width / icon, height / (icon + gap + capHeight))
-        val iconDp = (icon * scale).coerceAtLeast(16f)
+        val scale = minOf(1f, width / tunedIcon, height / (tunedIcon + gap + tunedCap))
+        val iconDp = (tunedIcon * scale).coerceAtLeast(16f)
         val gapDp = (gap * scale).coerceAtLeast(1f)
-        val capDp = (capHeight * scale).coerceAtLeast(4f)
+        val capDp = (tunedCap * scale).coerceAtLeast(4f)
 
-        // Per unit of text size: the cap height, and how far below the
-        // TextView's top (font padding included) the cap line sits.
-        val paint = Paint().apply {
-            typeface = Typeface.create(LABEL_FONT_FAMILY, Typeface.NORMAL)
-            textSize = 100f
-        }
-        val bounds = Rect().also { paint.getTextBounds("OMDRC", 0, 5, it) }
-        val capRatio = bounds.height() / 100f
-        val capTopRatio = (bounds.top - paint.fontMetrics.top) / 100f
-        val textDp = capDp / capRatio
-        val top = ((height - (iconDp + gapDp + capDp)) / 2f).coerceAtLeast(0f)
-        Log.d("OmdrcWidget", "layoutTiny($appWidgetId): cell ${width}x$height dp -> icon $iconDp dp, label $textDp dp, top $top dp")
+        val label = labelBitmap(context, typeface, capDp, width)
+        val top = ((height - (iconDp + gapDp + capDp)) / 2f + tuning.offsetDp)
+            .coerceIn(0f, (height - iconDp).coerceAtLeast(0f))
+        Log.d("OmdrcWidget", "layoutTiny($appWidgetId): cell ${width}x$height dp -> icon $iconDp dp, caps $capDp dp, top $top dp, $tuning")
 
         val dip = TypedValue.COMPLEX_UNIT_DIP
         views.setInt(R.id.tiny_column, "setGravity", Gravity.TOP or Gravity.CENTER_HORIZONTAL)
         views.setViewLayoutWidth(R.id.icon_surface, iconDp, dip)
         views.setViewLayoutHeight(R.id.icon_surface, iconDp, dip)
         views.setViewLayoutMargin(R.id.icon_surface, RemoteViews.MARGIN_TOP, top, dip)
-        // dp, not sp: the launcher's labels follow the grid, not the font
-        // scale setting, and these were measured off them.
-        views.setTextViewTextSize(R.id.omdrc_label, dip, textDp)
-        views.setViewLayoutMargin(R.id.omdrc_label, RemoteViews.MARGIN_TOP, gapDp - capTopRatio * textDp, dip)
+        views.setImageViewBitmap(R.id.omdrc_label, label.bitmap)
+        views.setViewLayoutMargin(R.id.omdrc_label, RemoteViews.MARGIN_TOP, gapDp - label.capTopDp, dip)
         val chip = 0.3f * iconDp
         views.setViewLayoutWidth(R.id.play_pause_icon, chip, dip)
         views.setViewLayoutHeight(R.id.play_pause_icon, chip, dip)
+    }
+
+    private class Label(val bitmap: Bitmap, val capTopDp: Float)
+
+    /** The "OMDRC" label in [typeface], sized so its capitals are [capDp]
+     *  tall - in dp, not sp: the launcher's labels follow the grid, not the
+     *  font scale setting - and centered in [widthDp] (at least the text's
+     *  own width). capTopDp is how far below the bitmap's top the cap line
+     *  sits, to place it a given gap under the icon. */
+    private fun labelBitmap(context: Context, typeface: Typeface, capDp: Float, widthDp: Float): Label {
+        val density = context.resources.displayMetrics.density
+        val text = context.getString(R.string.app_name)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+            this.typeface = typeface
+            color = 0xFFFFFFFF.toInt()
+            textAlign = Paint.Align.CENTER
+            textSize = 100f
+        }
+        val bounds = Rect().also { paint.getTextBounds(text, 0, text.length, it) }
+        paint.textSize = 100f * capDp * density / bounds.height()
+        val metrics = paint.fontMetrics
+        val baseline = -metrics.top
+        val capTop = baseline + bounds.top * paint.textSize / 100f
+        val width = maxOf(widthDp * density, paint.measureText(text) + 2f).roundToInt().coerceAtLeast(1)
+        val height = (metrics.bottom - metrics.top).roundToInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        bitmap.density = context.resources.displayMetrics.densityDpi
+        Canvas(bitmap).drawText(text, width / 2f, baseline, paint)
+        return Label(bitmap, capTop / density)
     }
 
     /** The launcher icon's circle, drawn as one square bitmap so it stays a

@@ -67,7 +67,9 @@
         <activity
             android:name=".WidgetConfigureActivity"
             android:exported="true"
-            android:label="@string/configure_widget_title">
+            android:label="@string/configure_widget_title"
+            android:theme="@style/Theme.OmdrcWidget.Configure"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
             </intent-filter>

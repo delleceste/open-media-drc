@@ -1,52 +1,136 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  A panel docked at the bottom of a translucent window, so the home screen
+  stays visible above it: the 1x1 tile settings apply to the placed widget
+  as they change, to be matched by eye against the icons beside it.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="24dp"
-    android:background="@color/widget_background">
+    android:fitsSystemWindows="true">
 
-    <TextView
+    <ScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        android:text="@string/configure_widget_title"
-        android:textColor="@color/widget_text_primary"
-        android:textSize="18sp"
-        android:textStyle="bold" />
+        android:layout_gravity="bottom"
+        android:background="@drawable/configure_panel_background">
 
-    <EditText
-        android:id="@+id/host_input"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="@string/hint_host"
-        android:inputType="textUri"
-        android:textColor="@color/widget_text_primary"
-        android:textColorHint="@color/widget_text_secondary" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
 
-    <EditText
-        android:id="@+id/port_input"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:hint="@string/hint_port"
-        android:inputType="number"
-        android:text="@string/default_port"
-        android:textColor="@color/widget_text_primary"
-        android:textColorHint="@color/widget_text_secondary" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:text="@string/configure_widget_title"
+                android:textColor="@color/widget_text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:layout_marginBottom="16dp"
-        android:text="@string/refresh_note"
-        android:textColor="@color/widget_text_secondary"
-        android:textSize="12sp" />
+            <EditText
+                android:id="@+id/host_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/hint_host"
+                android:inputType="textUri"
+                android:textColor="@color/widget_text_primary"
+                android:textColorHint="@color/widget_text_secondary" />
 
-    <Button
-        android:id="@+id/save_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/save" />
-</LinearLayout>
+            <EditText
+                android:id="@+id/port_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="@string/hint_port"
+                android:inputType="number"
+                android:text="@string/default_port"
+                android:textColor="@color/widget_text_primary"
+                android:textColorHint="@color/widget_text_secondary" />
+
+            <LinearLayout
+                android:id="@+id/tile_section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tile_heading"
+                    android:textColor="@color/widget_text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/tile_note"
+                    android:textColor="@color/widget_text_secondary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/icon_size_label"
+                    style="@style/ConfigureSliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/icon_size_seek"
+                    style="@style/ConfigureSlider" />
+
+                <TextView
+                    android:id="@+id/label_size_label"
+                    style="@style/ConfigureSliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/label_size_seek"
+                    style="@style/ConfigureSlider" />
+
+                <TextView
+                    android:id="@+id/offset_label"
+                    style="@style/ConfigureSliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/offset_seek"
+                    style="@style/ConfigureSlider" />
+
+                <TextView
+                    style="@style/ConfigureSliderLabel"
+                    android:text="@string/tile_font" />
+
+                <Spinner
+                    android:id="@+id/font_spinner"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" />
+
+                <Button
+                    android:id="@+id/tile_reset_button"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/tile_reset" />
+
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="16dp"
+                android:text="@string/refresh_note"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/save_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/save" />
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>
