@@ -137,21 +137,28 @@ P.attCard = s => {
     const cur = P.attDb !== null ? P.attDb : Number(a.db);
     const out = h('div', { class: 'att-value' }, `−${cur.toFixed(1)} dB`);
     const slider = h('input', { type: 'range', min, max, step: .1, value: cur, class: 'att-slider' });
+    // Moving the slider or the steps only chooses a value; Apply sends it.
+    const apply = h('button', { class: 'btn primary', type: 'button', disabled: true }, 'Apply');
     const set = v => {
         v = K.clamp(Math.round(v * 10) / 10, min, max);
         P.attDb = v; slider.value = v; out.textContent = `−${v.toFixed(1)} dB`;
-        clearTimeout(P.attTimer);
-        P.attTimer = setTimeout(async () => {          // one POST after the finger stops
-            const d = await K.api('/drc/attenuation', { json: { db: v } });
-            K.toast(d.ok ? (d.running ? `BruteFIR attenuation ${Number(d.db).toFixed(1)} dB` : `${Number(d.db).toFixed(1)} dB saved for next DRC start`) : (d.error || 'failed'), d.ok ? 'ok' : 'error');
-            P.attDb = null;
-            await K.drcState.refresh();
-        }, 700);
+        apply.disabled = v === Number(a.db);
     };
+    apply.addEventListener('click', async () => {
+        const v = P.attDb;
+        if (v === null) return;
+        apply.disabled = true;
+        const d = await K.api('/drc/attenuation', { json: { db: v } });
+        K.toast(d.ok ? (d.running ? `BruteFIR attenuation ${Number(d.db).toFixed(1)} dB` : `${Number(d.db).toFixed(1)} dB saved for next DRC start`) : (d.error || 'failed'), d.ok ? 'ok' : 'error');
+        if (d.ok) P.attDb = null; else apply.disabled = false;
+        await K.drcState.refresh();
+    });
+    apply.disabled = cur === Number(a.db);
     slider.addEventListener('input', () => set(Number(slider.value)));
     const step = dv => h('button', { class: 'btn step', type: 'button', onclick: () => set((P.attDb !== null ? P.attDb : Number(a.db)) + dv) }, (dv > 0 ? '+' : '−') + Math.abs(dv));
     return K.card('Attenuation', out,
         h('div', { class: 'att-row' }, step(-1), step(-.1), slider, step(.1), step(1)),
+        h('div', { class: 'saved-line' }, h('span', { class: 'muted' }, 'Move the slider, then Apply'), apply),
         h('div', { class: 'saved-line' },
             h('span', { class: 'muted' }, a.running ? 'Applied live to BruteFIR' : 'Saved for the next DRC start'),
             h('button', { class: 'btn', type: 'button', onclick: async () => {
