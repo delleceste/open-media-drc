@@ -220,13 +220,30 @@ K.Spectrum = class Spectrum {
         ctx.textBaseline = 'middle';
         const space = ctx.measureText(' ').width;
         for (const [side, a, peak, sign] of [['L', -Math.PI * 2 / 3, peaks[0], -1], ['R', -Math.PI / 3, peaks[1], 1]]) {
-            const x = cx + Math.cos(a) * labelR, y = cy + Math.sin(a) * labelR;
+            const text = Number.isFinite(peak) && peak > -100 ? String(Math.round(peak)) : '—';
+            // Same CLIP states as the VU meter: confirmed count, or blinking suspect.
+            const v = this.levels, ch = sign < 0 ? 'left' : 'right';
+            const state = !v ? '' : v.clips[ch] ? 'clip' : v.suspects[ch] && v.blinkOn ? 'warn' : '';
+            const clip = state === 'clip' ? `CLIP ${v.clips[ch]}` : state ? 'CLIP?' : '';
+            // Label, value and CLIP run outwards; shift inwards if they would leave the
+            // canvas, reserving the CLIP width so the label does not jump as it blinks.
+            const half = ctx.measureText(side).width / 2;
+            const outer = half + space + ctx.measureText('-99').width + space
+                + Math.max(ctx.measureText('CLIP 99').width, ctx.measureText(clip).width);
+            let x = cx + Math.cos(a) * labelR;
+            const y = cy + Math.sin(a) * labelR, margin = 4 * dpr;
+            x = sign < 0 ? Math.max(x, margin + outer) : Math.min(x, w - margin - outer);
             ctx.textAlign = 'center'; ctx.fillStyle = K.css('--muted');
             ctx.fillText(side, x, y);
-            const text = Number.isFinite(peak) && peak > -100 ? String(Math.round(peak)) : '—';
             ctx.textAlign = sign < 0 ? 'right' : 'left';
             ctx.fillStyle = peak >= -1 ? '#f85149' : K.css('--muted');
-            ctx.fillText(text, x + sign * (ctx.measureText(side).width / 2 + space), y);
+            let tx = x + sign * (half + space);
+            ctx.fillText(text, tx, y);
+            if (clip) {
+                tx += sign * (ctx.measureText(text).width + space);
+                ctx.fillStyle = state === 'clip' ? K.css('--red') : K.theme() === 'light' ? '#a54800' : '#ffa726';
+                ctx.fillText(clip, tx, y);
+            }
         }
     }
 };

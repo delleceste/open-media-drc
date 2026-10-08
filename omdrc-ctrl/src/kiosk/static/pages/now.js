@@ -210,6 +210,7 @@ P.mount = el => {
         P.vu.setClips(P.clipChannels);
     };
     P.spec = new K.Spectrum(P.specCanvas);
+    P.spec.levels = P.vu;  // circular view shows the VU meter's CLIP state
     // Frames dropped because the network lagged: "LAG!" for a few seconds where CLIP shows.
     K.streams.onLag(mode => {
         if (mode === 'dr') return;
