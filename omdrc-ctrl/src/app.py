@@ -5510,9 +5510,19 @@ def dr_library_album():
     if album is None:
         return jsonify({"ok": False, "error": "unknown album"}), 404
     album["report_track_rows"] = []
+    album["single_flac_cue"] = False
     if album["report_dr"] is not None:
         folder = _dr_local_album_folder(album)
         if folder:
+            try:
+                files = [p for p in folder.iterdir()
+                         if p.is_file() and p.resolve().is_relative_to(folder)]
+                album["single_flac_cue"] = (
+                    sum(p.suffix.lower() == ".flac" for p in files) == 1
+                    and sum(p.suffix.lower() == ".cue" for p in files) == 1
+                    and sum(p.suffix.lower() in dr_store.AUDIO_SUFFIXES for p in files) == 1)
+            except OSError:
+                pass
             path = folder / dr_store.REPORT
             try:
                 if path.resolve().is_relative_to(folder) and path.is_file():

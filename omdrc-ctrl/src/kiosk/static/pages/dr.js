@@ -396,8 +396,9 @@ A.openAlbum = async a => {
         const fileCount = d.ok && d.album ? d.album.report_tracks : null;
         const songCount = d.ok && d.album ? d.album.track_count : null;
         const note = reportRows.length && fileCount && songCount && songCount > fileCount
-            ? h('p', { class: 'muted small' },
-                `dr14.txt measured ${fileCount} audio file${fileCount === 1 ? '' : 's'}, while this album has ${songCount} indexed songs. Separate song DR values are not in the report.`)
+            ? h('p', { class: 'muted small' }, d.album.single_flac_cue
+                ? `1 FLAC + 1 CUE: dr14.txt measured the whole FLAC. The cue sheet has ${songCount} indexed songs, but separate song DR values are not in the report.`
+                : `dr14.txt measured ${fileCount} audio file${fileCount === 1 ? '' : 's'}, while this album has ${songCount} indexed songs. Separate song DR values are not in the report.`)
             : null;
         K.clear(list).append(...(note ? [note] : []), ...(reportRows.length ? reportRows.map(A.reportRow)
             : [h('p', { class: 'muted' }, d.ok

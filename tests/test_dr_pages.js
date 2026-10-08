@@ -30,7 +30,7 @@ const K = {
     dr: { color: () => ({ bg: '#fff', fg: '#000' }), basisText: () => 'estimate' },
     drLogBadge: value => value?.dr ? h('badge', {}, `DR${value.dr}`) : null,
     api: async url => url.startsWith('/dr/library/recent') ? recent
-        : url.startsWith('/dr/library/album') ? { ok: true, album: { report_tracks: 1, track_count: 8, report_track_rows: [
+        : url.startsWith('/dr/library/album') ? { ok: true, album: { report_tracks: 1, track_count: 8, single_flac_cue: true, report_track_rows: [
             { number: 1, title: 'Reported Song', dr: 12 },
         ] } } : ranked,
 };
@@ -66,7 +66,7 @@ vm.runInNewContext(fs.readFileSync('omdrc-ctrl/src/kiosk/static/pages/dr.js', 'u
     assert.equal(A.browse.hidden, false);
     const reportButton = A.rankList.kids[1].kids[0].kids[1];
     await reportButton.attrs.onclick();
-    assert.match(A.detail.kids[1].kids[0].kids[0], /Separate song DR values are not in the report/);
+    assert.match(A.detail.kids[1].kids[0].kids[0], /1 FLAC \+ 1 CUE: dr14.txt measured the whole FLAC/);
     assert.equal(A.detail.kids[1].kids[1].kids[1].kids[0].kids[0], '1. Reported Song');
     console.log('PASS: recent DR groups albums, leaves singles, and both DR lists drill down and back');
 })().catch(e => { console.error(e); process.exitCode = 1; });
