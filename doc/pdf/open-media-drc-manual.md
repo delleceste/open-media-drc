@@ -2459,6 +2459,85 @@ user without prompting: give it credentials first (`gh auth login` and
 `gh auth setup-git`, a token in `~/.git-credentials`, or an SSH deploy key).
 The DR page shows the last round and offers **Share now**.
 
+#### Setting up the private repository {#sec:dr-sync-setup}
+
+Done once, then once per box. `<service user>` is the account the panel runs
+as (`AUDIO_USER`; `omdrcctrl_user` under FreeBSD); the git credentials must
+belong to *that* user, not to root or to your login.
+
+1. **Create the repository** (any machine, once). It must be private: it
+   lists the albums you play. With the GitHub CLI:
+
+   ```
+   gh repo create omdrc-dr-log --private
+   ```
+
+   Leave it empty. The first box to sync creates the `main` branch.
+
+2. **Give each box access**, as the service user (`su - <service user>` or
+   `sudo -u <service user> -H sh`). Pick one:
+
+   - *HTTPS with the GitHub CLI:* `gh auth login`, then
+     `gh auth setup-git`. This stores a token in the user's home; use a
+     fine-grained token limited to this repository, with Contents:
+     read and write.
+   - *SSH deploy key (no account login on the box):*
+
+     ```
+     ssh-keygen -t ed25519 -N '' -f ~/.ssh/omdrc-dr-log
+     cat ~/.ssh/omdrc-dr-log.pub
+     ```
+
+     Add the public key under the repository's Settings, Deploy keys,
+     with **Allow write access**. Point SSH at it in `~/.ssh/config`:
+
+     ```
+     Host github-omdrc
+         HostName github.com
+         User git
+         IdentityFile ~/.ssh/omdrc-dr-log
+         IdentitiesOnly yes
+     ```
+
+     and use `git@github-omdrc:<you>/omdrc-dr-log.git` as the `repo`.
+     A deploy key serves one repository only, so a second box needs its
+     own key.
+
+3. **Check that git works non-interactively**, still as the service user.
+   This is exactly what the panel does and it never prompts:
+
+   ```
+   GIT_TERMINAL_PROMPT=0 git ls-remote <repo>
+   ```
+
+   An empty answer on a new repository is correct; a password prompt
+   or an error means step 2 is not finished.
+
+4. **Configure the box** in `commands.conf`
+   (`/usr/local/etc/omdrcctrl/commands.conf` under FreeBSD):
+
+   ```
+   [dr_sync]
+   repo = https://github.com/<you>/omdrc-dr-log.git
+   box = home
+   interval_minutes = 10
+   ```
+
+   `box` must differ on every box (letters, digits, `-`, `_`). It names
+   the box's file, so renaming it later abandons the old file.
+
+5. **Restart the panel** (`systemctl restart omdrcctrl` on Linux,
+   `service omdrcctrl restart` on FreeBSD). The first round starts after
+   about 30 seconds; press **Share now** on the DR page to see it at once.
+   The page shows the last round, any error, and each other box with its
+   last import. The working clone is `dr-sync/` in the state directory and
+   can be deleted safely: it is cloned again.
+
+Repeat steps 2 to 5 on the other box with a different `box` name. Each box
+then holds its own `boxes/<box>.jsonl` and imports the others'. Nothing
+else is needed: there is no server, and a box that is off or offline simply
+catches up at its next round.
+
 \newpage
 
 # CD input: S/PDIF capture into the DRC chain {#sec:cdin}
