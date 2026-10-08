@@ -68,6 +68,7 @@ These milestones summarize changes in commits that updated this manual:
 
 | Date | Documentation changes |
 |---|---|
+| 2026-10-08 | Gave the DR log its own chapter: how a new track measurement is kept, how the album figure is decided, and what the live meter does on an album that already has a value. |
 | 2026-09-27 to 2026-09-29 | Added the kiosk and Android app section (orientation and auto-rotate, keep-awake, fast start) and the Qobuz album search (Qobuz's own order, label and date filters, lowering, completions, the player). |
 | 2026-09-24 | Split the manual into common, Linux and FreeBSD parts; added the glossary and source index; documented the live DR estimate and its DR bar. |
 | 2026-09-15 to 2026-09-23 | Documented filter provenance and publication, deployment steps, runtime configuration, MPD routing recovery, DR measurement and pressing identification. |
@@ -84,9 +85,9 @@ means the working tree has uncommitted changes.
 
 | Part | Read it if you run | Contents |
 |---|---|---|
-| **I. Common** (chapters 1--9) | either | components, common build, `drc.sh`, filters and their provenance, the web panel, bit-perfect and dynamic-range tools, CD input concept |
-| **II. Linux** (chapters 10--11) | **Linux** | packages, systemd/udev, `snd-aloop`, ALSA browser audio, the Linux CD bridge |
-| **III. FreeBSD** (chapters 12--19) | **FreeBSD** | packages, rc.d/devd, `virtual_oss`, video, the CD daemon, known issues, kernel patches, port plan |
+| **I. Common** (chapters 1--10) | either | components, common build, `drc.sh`, filters and their provenance, the web panel, bit-perfect and dynamic-range tools, the DR log, CD input concept |
+| **II. Linux** (chapters 11--13) | **Linux** | packages, systemd/udev, `snd-aloop`, ALSA browser audio, the Linux CD bridge |
+| **III. FreeBSD** (chapters 14--21) | **FreeBSD** | packages, rc.d/devd, `virtual_oss`, video, the CD daemon, known issues, kernel patches, port plan |
 | **Appendices** | either | bit-perfect test assets and cross-OS comparison; source-document index; glossary |
 
 A Linux reader can skip Part III entirely, and a FreeBSD reader Part II; no
@@ -472,6 +473,7 @@ how).
 | `bitperfect_runner.py`, `bitperfect_material.py` | Run a tap through a chosen playback path and prepare its material; back the `/bitperfect` page (chapter \ref{sec:bitperfect}) |
 | `bitperfect-compare.py` | Compare two tap artifacts from either OS |
 | `omdrc-ctrl/src/drmeter.py` | The DR meter behind *Measure DR* and the live *Estimate DR* (chapter \ref{sec:dynamic-range}) |
+| `omdrc-ctrl/src/dr_store.py` | The DR log's album store: which track measurement is kept and how the album figure is decided (chapter \ref{sec:dr-log}) |
 
 
 \newpage
@@ -2152,6 +2154,9 @@ The first two report other people's measurements of other people's copies;
 the last two measure what you are hearing --- *Measure DR* the whole record,
 *Estimate DR* the passage in progress.
 
+What the live meter hears can also be kept: the DR log (chapter
+\ref{sec:dr-log}) stores every track's DR and ranks albums by it.
+
 ## What the renderers tell the panel
 
 
@@ -2466,7 +2471,9 @@ Spectrum and Levels all have no listeners.
   calculation and one serialization of the history for all connected
   browsers; each browser then draws its own window.
 
-### The DR log: album DR remembered across listening
+\newpage
+
+# The DR log: album DR remembered across listening {#sec:dr-log}
 
 The **DR log** switch on the kiosk's DR page keeps the meter running on the
 server whether or not any page is open, and stores the DR of every track
@@ -2509,7 +2516,7 @@ The rolling figure of the estimate itself is never stored: it is computed
 over blocks of several tracks at once, which is not how an album's DR is
 defined.
 
-#### Which measurement wins
+## Which measurement wins
 
 For each track, the best measurement stored is used: a complete one beats a
 partial one, a **measured** one (the *Measure* job: the file fetched again and
@@ -2533,7 +2540,75 @@ ultrasonic content and can move the second-highest peak; on two 96 kHz test
 tracks that made the live value 0.08 higher than the file's, the same integer
 DR. *Measure* reads the file at its own rate and settles it.
 
-#### Editions
+The same order decides whether a new track measurement is kept at all
+(`DrStore.record_track()`). This box keeps one row per track and replaces it
+only with a row that ranks at least as high, comparing in turn:
+
+1. complete beats partial;
+2. `measured` beats `live`;
+3. more seconds measured beat fewer;
+4. on a tie, the newer row wins.
+
+So a live hearing never replaces a complete *Measure* result, a partial
+hearing never replaces a complete one, a second complete hearing replaces the
+first, and a longer partial hearing improves a shorter one. Rows from other
+boxes are stored beside this box's own and never replaced by it. When the
+album figure is read, the best row of each track is taken, from whichever box
+measured it.
+
+The album figure is then decided in this order (`dr_store.summary()`):
+
+| Case | Figure | Shown as |
+|---|---|---|
+| The album has a `dr14.txt` value | the report's album value | exact, *from dr14.txt* |
+| Every track has a complete row | rounded mean of the tracks' integer DRs | exact, *measured* or *listened* |
+| At least 120 s stored over its tracks | the same mean over the tracks stored | estimate, `~DR` |
+| Less than that | none | *under two minutes so far* |
+
+The report's value comes from this box's own scan or, for an album on a drive
+with a volume marker, from another box that read the drive's report, until
+this box reads it itself.
+
+## The live meter on an album that already has a value {#sec:dr-log-existing}
+
+The live meter does not look at what the store already knows. It computes the
+rolling figure for the DR panel and the Now page, works out each track's own
+DR when the track ends, and hands every track heard for at least 30 seconds
+to the store as a `live` row, whatever the album is. What happens next
+depends on what the album already has.
+
+**An album with a `dr14.txt`.** The live rows are stored beside the report,
+but they do not change the album's figure: the report wins outright, and the
+album stays *exact, from dr14.txt*. The live rows are still used for these
+things:
+
+- **Recent DR** lists them as tracks heard on this box, the same way as on
+  any other album;
+- **Ordering of equal values.** Among albums with the same integer DR, the
+  ranking orders by the unrounded mean of the stored tracks; a reported album
+  with no stored tracks uses its report value;
+- **Sharing.** They are exported to the other boxes like any track row;
+- **A fallback.** If the `dr14.txt` is deleted, the next import clears the
+  report value but keeps the album because it has tracks, and the figure is
+  then worked out from them.
+
+The album page of a local reported album shows the per-song rows read from
+the `dr14.txt` itself, not the live rows.
+
+**An album measured or heard before, without a report.** The new live row
+competes with the stored one for its track under the order above: it is kept
+only if it ranks at least as high. A complete *Measure* result therefore
+stays, and listening again can only complete or lengthen what was heard. The
+album figure is recomputed from the best row of each track the next time it
+is read, so an estimate becomes exact once the last missing track has been
+heard whole.
+
+**The rolling figure.** The rolling session figure on the DR panel is never
+stored and never compared with a stored value. It is computed over blocks from
+several tracks at once, so the DR panel can show a value next to the album's
+stored figure that differs from it.
+
+## Editions
 
 Every edition is an album of its own and is never merged with another by
 name: Qobuz albums by their album id (a remaster, a mono or a hi-res release
@@ -2542,7 +2617,7 @@ each have their own, and the stored title carries Qobuz's version, e.g.
 folder when the tags name two editions the same). Only streams that are
 neither Qobuz nor local are keyed by artist and album tags.
 
-#### Sharing between boxes
+## Sharing between boxes
 
 Boxes that cannot reach each other (home and office) share the log through a
 git repository both can reach, configured by `DR_SYNC_REPO` and
@@ -2553,12 +2628,24 @@ own file, `boxes/<box>.jsonl` (its own tracks, album names and local
 reports), and imports the other boxes' files; nothing is ever overwritten, so
 a box can stay away for weeks. Rows from other boxes are kept beside this
 box's own, and an album's figure can combine tracks heard on both. Another
-box's local albums appear as `local@<box>:<folder>`. Git runs as the service
+box's local albums appear as `local@<box>:<folder>`.
+
+A drive that moves between boxes is the exception. The first box that sees a
+writable drive in the music directory writes a marker at its root,
+`.omdrc-volume` (a random id; `uuidgen > <mount>/.omdrc-volume` does the same
+by hand on a read-only drive). Its albums are then keyed
+`vol:<id>:<folder on the drive>`, the same on every box whatever the mount
+point or the link that reaches it, so the albums are not duplicated and
+tracks heard on either box add up. The `dr14.txt` reports travel with the
+drive: plugged into another box, they are read within a minute, without a
+rescan, and until then that box shows the values the other box shared. An
+unplugged drive keeps its albums. Older `local:` rows are rekeyed the first
+time their drive is seen with a marker. Git runs as the service
 user without prompting: give it credentials first (`gh auth login` and
 `gh auth setup-git`, a token in `~/.git-credentials`, or an SSH deploy key).
 The DR page shows the last round and offers **Share now**.
 
-#### Setting up the private repository {#sec:dr-sync-setup}
+## Setting up the private repository {#sec:dr-sync-setup}
 
 Done once, then once per box. `<service user>` is the account the panel runs
 as (`AUDIO_USER`; `omdrcctrl_user` under FreeBSD); the git credentials must
@@ -5474,7 +5561,7 @@ Terms in alphabetical order. **OS** shows where the term applies: *both*,
 | **design / `@design`** | both | One immutable filter revision inside a geometry, with a provenance manifest | \ref{sec:provenance} |
 | **devd** | FreeBSD | FreeBSD's device event daemon; the project rule fires on `pcm` attach/detach | \ref{sec:fbsd-inventory} |
 | **`dmix`** | Linux | ALSA software mixer that lets browser streams share the DAC | \ref{sec:browser-audio} |
-| **DR (dynamic range)** | both | TT Dynamic Range value of a master; *Measure DR* measures the stream itself, *Estimate DR* the passage playing now | \ref{sec:dynamic-range}, \ref{sec:measure-dr}, \ref{sec:live-dr} |
+| **DR (dynamic range)** | both | TT Dynamic Range value of a master; *Measure DR* measures the stream itself, *Estimate DR* the passage playing now; the DR log keeps it per album | \ref{sec:dynamic-range}, \ref{sec:measure-dr}, \ref{sec:live-dr}, \ref{sec:dr-log} |
 | **DRC** | both | Digital Room Correction: FIR filtering applied before the DAC | \ref{sec:usage} |
 | **`drc.sh`** | both | The single control point of the DRC pipeline | \ref{sec:usage} |
 | **`drc.lock` / `device.lock`** | FreeBSD | The two non-nested locks guarding the chain transition and the role transaction | \ref{sec:fbsd-lifecycle} |

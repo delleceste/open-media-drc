@@ -49,19 +49,23 @@ OS's material entirely. Part I never depends on Part II or III and only
    known-device policy.
 7. **Bit-perfect verification** --- the `/bitperfect` page and its
    implementation.
-8. **Dynamic range** --- DR versions, pressing identification, *Measure DR*.
-9. **CD input** --- concept, exclusive-source rule, ESI U24 XL facts, web card.
+8. **Dynamic range** --- DR versions, pressing identification, *Measure DR*,
+   the live estimate.
+9. **The DR log** --- album DR remembered across listening: which track
+   measurement is kept, how the album figure is decided, the live meter on an
+   album that already has a value, editions, sharing between boxes.
+10. **CD input** --- concept, exclusive-source rule, ESI U24 XL facts, web card.
 
-**Part II --- Linux**: 10 installation and lifecycle (packages, /etc files,
+**Part II --- Linux**: 11 installation and lifecycle (packages, /etc files,
 MPD drop-in, udev/systemd hotplug, `snd-aloop`, audio roles, browser ALSA,
-the panel on Linux); 11 CD input with `alsaloop`; 12 Blu-ray decryption
+the panel on Linux); 12 CD input with `alsaloop`; 13 Blu-ray decryption
 with MakeMKV (`libmmbd` for mpv and Kodi, beta-key renewal).
 
-**Part III --- FreeBSD**: 13 installation (packages, rc.conf, network);
-14 services, device roles and lifecycle (rc.d/devd, locks); 15 OSS audio
-stack, panel, glitch detection, bit-perfect on FreeBSD, browsers; 16 video;
-17 CD input with `omdrc-cdin` (incl. the ESI traps); 18 known issues;
-19 kernel/userland patches; 20 port plan and image.
+**Part III --- FreeBSD**: 14 installation (packages, rc.conf, network);
+15 services, device roles and lifecycle (rc.d/devd, locks); 16 OSS audio
+stack, panel, glitch detection, bit-perfect on FreeBSD, browsers; 17 video;
+18 CD input with `omdrc-cdin` (incl. the ESI traps); 19 known issues;
+20 kernel/userland patches; 21 port plan and image.
 
 **Appendices** --- A: bit-perfect test assets and cross-OS comparison;
 B: source-document index (split Common / Linux / FreeBSD) and the update
