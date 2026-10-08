@@ -63,6 +63,7 @@ const dr = K.dr = {
 K.drEstimate = (() => {
     const E = {
         blocks: [], frame: null, trackAge: 0, total: 0, tracks: [], subs: new Set(), stream: null,
+        viewStart: null, viewEnd: null,
         windowSeconds: K.pref('dr.window', 60),
         detect: K.pref('dr.detect', true),
     };
@@ -79,9 +80,26 @@ K.drEstimate = (() => {
         return count > 0 ? E.blocks.slice(-count) : [];
     };
 
-    // Where the selection sits in the server's block count, and the tracks it
-    // spans: the bar draws a divider at each track start and a dashed one at a seek.
-    E.marks = () => ({ origin: E.total - E.selected().length, tracks: E.tracks });
+    // Only the bar uses this viewport. The estimate still uses selected(), and
+    // the server's track measurements and database never see these settings.
+    E.availableStart = () => E.total - E.blocks.length;
+    E.viewRange = () => {
+        const oldest = E.availableStart();
+        const end = K.clamp(E.viewEnd ?? E.total, oldest, E.total);
+        const start = K.clamp(E.viewStart ?? E.total - E.selected().length, oldest, end);
+        return { start, end };
+    };
+    E.viewBlocks = () => {
+        const { start, end } = E.viewRange();
+        return E.blocks.slice(start - E.availableStart(), end - E.availableStart());
+    };
+    E.viewMarks = () => ({ origin: E.viewRange().start, tracks: E.tracks });
+    E.setView = (start, end) => {
+        E.viewStart = K.clamp(Math.round(start), E.availableStart(), E.total);
+        E.viewEnd = end >= E.total ? null : K.clamp(Math.round(end), E.viewStart, E.total);
+        E.emit();
+    };
+    E.resetView = () => E.setView(E.total, E.total);
 
     // What to say and show for the current selection.
     E.summary = () => {
@@ -109,7 +127,11 @@ K.drEstimate = (() => {
         E.frame = f;
         if (Array.isArray(f.dr_blocks)) E.blocks = f.dr_blocks;
         if (Number.isInteger(f.dr && f.dr.track_age_blocks)) E.trackAge = f.dr.track_age_blocks;
-        if (Number.isInteger(f.dr && f.dr.total_blocks)) E.total = f.dr.total_blocks;
+        if (Number.isInteger(f.dr && f.dr.total_blocks)) {
+            const next = f.dr.total_blocks;
+            if (next < E.total) { E.viewStart = null; E.viewEnd = null; }
+            E.total = next;
+        }
         if (f.dr && Array.isArray(f.dr.tracks)) E.tracks = f.dr.tracks;
         E.emit();
     };
@@ -125,6 +147,108 @@ K.drEstimate = (() => {
     };
     return E;
 })();
+
+// A time-axis viewport for the bar. Drag the rectangle to pan, or its edges
+// to change the visible span. The right edge follows live audio when at Now.
+K.drViewPopup = (() => {
+    let closeCurrent = null;
+    return () => {
+        if (closeCurrent) closeCurrent();
+        const E = K.drEstimate;
+        const axis = h('div', { class: 'dr-view-axis', role: 'group', 'aria-label': 'DR history time axis' });
+        const selection = h('div', { class: 'dr-view-selection' },
+            h('span', { class: 'dr-view-handle', dataset: { edge: 'start' }, title: 'Drag start' }),
+            h('span', { class: 'dr-view-handle', dataset: { edge: 'end' }, title: 'Drag end' }));
+        axis.append(selection);
+        const oldest = h('span', {}), middle = h('span', {}), range = h('span', { class: 'dr-view-range' });
+        const step = dir => {
+            const { start, end } = E.viewRange();
+            const width = end - start;
+            if (!width && dir < 0) { E.setView(start - 20, end); return; }
+            const nextStart = K.clamp(start + dir * 20, E.availableStart(), E.total - width);
+            E.setView(nextStart, nextStart + width);
+        };
+        const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) close(); } },
+            h('div', { class: 'sheet dr-view-sheet' },
+                h('h2', {}, 'DR history window'),
+                h('p', { class: 'muted small' }, 'Drag the window to look back; drag either edge to change its span. The live DR estimate and saved album records continue unchanged.'),
+                h('div', { class: 'dr-view-controls' },
+                    h('button', { class: 'btn', type: 'button', title: 'One minute earlier', onclick: () => step(-1) }, '−'),
+                    axis,
+                    h('button', { class: 'btn', type: 'button', title: 'One minute later', onclick: () => step(1) }, '+')),
+                h('div', { class: 'dr-view-labels' }, oldest, middle, h('span', {}, 'Now')),
+                range,
+                h('div', { class: 'sheet-actions' },
+                    h('button', { class: 'btn', type: 'button', onclick: () => E.resetView() }, 'Reset'),
+                    h('button', { class: 'btn primary', type: 'button', onclick: () => close() }, 'Done'))));
+        const paint = () => {
+            const first = E.availableStart(), total = E.total;
+            const { start, end } = E.viewRange();
+            const span = Math.max(1, total - first);
+            const axisWidth = axis.clientWidth || 280;
+            const width = Math.max(36, (end - start) / span * axisWidth);
+            selection.style.left = `${Math.min((start - first) / span * axisWidth, axisWidth - width)}px`;
+            selection.style.width = `${width}px`;
+            oldest.textContent = `−${dr.elapsedLabel((total - first) * BLOCK_S)}`;
+            middle.textContent = `−${dr.elapsedLabel(Math.round((total - first) * BLOCK_S / 2))}`;
+            range.textContent = `Showing ${dr.elapsedLabel((end - start) * BLOCK_S)} · ${dr.elapsedLabel((total - end) * BLOCK_S)} behind live`;
+        };
+        const sub = E.listen(paint);
+        const close = () => { resize.disconnect(); sub.close(); scrim.remove(); if (closeCurrent === close) closeCurrent = null; };
+        closeCurrent = close;
+        document.getElementById('overlay-root').append(scrim);
+        paint();
+        const resize = new ResizeObserver(paint);
+        resize.observe(axis);
+        let drag = null;
+        axis.addEventListener('pointerdown', e => {
+            const { start, end } = E.viewRange();
+            drag = { id: e.pointerId, x: e.clientX, start, end,
+                edge: e.target.dataset.edge || (selection.contains(e.target) ? 'move' : 'seek') };
+            axis.setPointerCapture(e.pointerId);
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        axis.addEventListener('pointermove', e => {
+            if (!drag || drag.id !== e.pointerId) return;
+            const width = axis.getBoundingClientRect().width || 1;
+            const delta = Math.round((e.clientX - drag.x) / width * E.blocks.length);
+            const first = E.availableStart();
+            if (drag.edge === 'start') E.setView(K.clamp(drag.start + delta, first, drag.end), drag.end);
+            else if (drag.edge === 'end') E.setView(drag.start, K.clamp(drag.end + delta, drag.start, E.total));
+            else if (drag.edge === 'move') {
+                const span = drag.end - drag.start;
+                const start = K.clamp(drag.start + delta, first, E.total - span);
+                E.setView(start, start + span);
+            } else {
+                const point = K.clamp(first + Math.round((e.clientX - axis.getBoundingClientRect().left) / width * E.blocks.length), first, E.total);
+                const span = drag.end - drag.start;
+                const start = K.clamp(point - Math.round(span / 2), first, E.total - span);
+                E.setView(start, start + span);
+            }
+        });
+        const endDrag = e => { if (drag && drag.id === e.pointerId) drag = null; };
+        axis.addEventListener('pointerup', endDrag);
+        axis.addEventListener('pointercancel', endDrag);
+    };
+})();
+
+K.wireDrViewPopup = host => {
+    let timer = null, start = null, held = false;
+    const cancel = () => { clearTimeout(timer); timer = null; };
+    host.addEventListener('pointerdown', e => {
+        if (e.button || e.target.closest('.splitter')) return;
+        held = false;
+        start = { x: e.clientX, y: e.clientY };
+        timer = setTimeout(() => { held = true; timer = null; K.drViewPopup(); }, 600);
+    });
+    host.addEventListener('pointermove', e => {
+        if (timer && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) cancel();
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(type => host.addEventListener(type, cancel));
+    host.addEventListener('click', e => { if (held) { held = false; e.preventDefault(); e.stopPropagation(); } }, true);
+    host.addEventListener('contextmenu', e => { e.preventDefault(); if (timer || e.pointerType === 'mouse') { cancel(); held = true; K.drViewPopup(); } });
+};
 
 // ── segmented history bar ────────────────────────────────────────────────────
 // The bar always spans the full width and holds the whole window; the audio so

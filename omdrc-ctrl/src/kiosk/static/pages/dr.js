@@ -32,6 +32,7 @@ P.mount = el => {
     P.detail = h('div', { class: 'dr-detail', hidden: true });
     P.oldest = h('span', {});
     P.bar = new K.DrBar(P.barHost, { onDetail: (text, count) => { P.detail.hidden = !text; P.detail.textContent = text || ''; P.oldest.textContent = count ? `−${K.dr.elapsedLabel(count * 3)}` : ''; } });
+    K.wireDrViewPopup(P.barHost);
     P.estBody = h('div', { class: 'est-body' },
         h('div', { class: 'dr-head' }, P.value, P.status), P.gaugeHost,
         h('div', { class: 'win-row' }, h('span', { class: 'lbl' }, 'Rolling window'), P.slider, P.winLabel, P.detect),
@@ -111,7 +112,7 @@ P.paint = E => {
     P.value.style.color = s.value === null ? '' : K.dr.color(s.value).bg;
     P.status.textContent = s.status;
     P.gauge.set(s.value);
-    P.bar.render(E.selected(), E.windowSeconds, E.marks());
+    P.bar.render(E.viewBlocks(), E.windowSeconds, E.viewMarks());
 };
 
 // ── measurement ──────────────────────────────────────────────────────────────

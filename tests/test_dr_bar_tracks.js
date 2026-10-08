@@ -6,13 +6,14 @@ const vm = require('node:vm');
 
 const h = (tag, attrs, ...kids) => ({ tag, attrs: attrs || {}, kids: kids.flat() });
 let painted = [];
+let frameReceived;
 const host = {
     clientWidth: 2000, classList: { toggle() {} }, addEventListener() {},
     append: (...cells) => { painted = cells; },
 };
 const K = {
     h, clamp: (v, a, b) => Math.min(b, Math.max(a, v)), clear: el => el,
-    pref: (_k, d) => d, setPref() {}, streams: { open: () => ({ close() {} }) },
+    pref: (_k, d) => d, setPref() {}, streams: { open: (_mode, fn) => { frameReceived = fn; return { close() {} }; } },
 };
 const context = { K, ResizeObserver: class { observe() {} disconnect() {} }, Math };
 vm.createContext(context);
@@ -48,4 +49,22 @@ assert.equal(est.kids[0], '≈DR9');
 assert.match(est.attrs.class, /est/);
 assert.match(est.attrs.title, /3 of 11 tracks heard/);
 assert.equal(K.drLogBadge(null), null);
+
+// Reset and navigation change the painted viewport, never the live estimate's
+// selected blocks. Earlier blocks remain available for looking back.
+const estimate = K.drEstimate;
+const listener = estimate.listen(() => {});
+frameReceived({ ok: true, source: 'mpd', dr: { state: 'ready', track_age_blocks: 100, total_blocks: 100 }, dr_blocks: Array.from({ length: 100 }, () => loud) });
+const liveValue = estimate.summary().value;
+assert.equal(estimate.viewBlocks().length, 20);
+estimate.resetView();
+assert.equal(estimate.viewBlocks().length, 0);
+assert.equal(estimate.selected().length, 20);
+assert.equal(estimate.summary().value, liveValue);
+frameReceived({ ok: true, source: 'mpd', dr: { state: 'ready', track_age_blocks: 101, total_blocks: 101 }, dr_blocks: Array.from({ length: 101 }, () => loud) });
+assert.equal(estimate.viewBlocks().length, 1);
+estimate.setView(80, 101);
+assert.equal(estimate.viewBlocks().length, 21);
+assert.equal(estimate.summary().value, liveValue);
+listener.close();
 console.log('ok');

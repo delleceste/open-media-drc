@@ -171,6 +171,7 @@ P.mount = el => {
         P.drDetail.hidden = !text; P.drDetail.textContent = text || '';
         P.drOldest.textContent = count ? `−${K.dr.elapsedLabel(count * 3)}` : '';
     } });
+    K.wireDrViewPopup(P.drBarHost);
 
     P.balHost = h('div', { class: 'now-bal card' });
     P.balance = new K.Balance(P.balHost);
@@ -832,7 +833,7 @@ P.paintDr = E => {
     P.drThermo.setAttribute('aria-valuetext', s.value === null ? s.short : `DR${s.value}`);
     if (s.value === null) P.drThermo.removeAttribute('aria-valuenow');
     else P.drThermo.setAttribute('aria-valuenow', String(Math.min(14, s.value)));
-    P.drBar.render(E.selected(), E.windowSeconds, E.marks());
+    P.drBar.render(E.viewBlocks(), E.windowSeconds, E.viewMarks());
 };
 
 // The play/pause/stop chip: a line icon (widgets/icons.js) and the state in words.

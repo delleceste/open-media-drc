@@ -36,6 +36,12 @@ embedding it in something else such as the KDE Plasma widget: no top bar, tab
 bar, Qobuz player strip or screen saver.  A page the box does not offer says
 so instead.
 
+Long press the DR history bar on Now or DR to open its time-axis window. Drag the
+rectangle to look back, drag its edges to change the span, or use −/+ to move by
+one minute. Reset moves the visible start to now; new audio fills the bar again.
+Older blocks remain available within the analyzer's 90-minute memory, and the
+live estimate and the local DR log are unaffected by this view control.
+
 ## Light and dark
 
 Config -> **Theme**: *Automatic* (the default) follows the device's own light or
