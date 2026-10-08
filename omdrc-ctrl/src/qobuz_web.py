@@ -607,6 +607,18 @@ def local_status():
     return jsonify(local_db.status(_state_dir(), _music_directory, _music_config()[1]))
 
 
+@bp.route("/local/stop", methods=["POST"])
+def local_stop():
+    root = _music_directory()
+    if not root:
+        return jsonify({"ok": False, "error": "Music directory is not configured"}), 503
+    try:
+        result = local_db.stop_scan(_state_dir(), root)
+    except OSError as error:
+        return jsonify({"ok": False, "error": str(error)}), 503
+    return jsonify(result), 200 if result["ok"] else 503
+
+
 @bp.route("/local/refresh", methods=["POST"])
 def local_refresh():
     """Update MPD's index, then start the host's background DR14 scan."""

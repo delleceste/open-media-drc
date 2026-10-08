@@ -1,6 +1,7 @@
 """The Local database page's backend: the scan
 status the script leaves, and the routes that use them."""
 import os
+import signal
 import sys
 import tempfile
 import time
@@ -40,6 +41,28 @@ class Scan(unittest.TestCase):
         self.assertEqual(local_db.scan_status(self.state)["failed"], 0)
         write(f"running {now - local_db.STALE_SCAN - 5}\n")
         self.assertEqual(local_db.scan_status(self.state)["state"], "interrupted")
+        write(f"stopped {now} 4 10\n")
+        self.assertEqual(local_db.scan_status(self.state),
+                         {"state": "stopped", "at": now, "done": 4, "total": 10})
+
+    def test_stop_terminates_scan_tree_and_releases_rescan(self):
+        with open(os.path.join(self.state, local_db.SCAN_STATUS_FILE), "w") as f:
+            f.write(f"running {int(time.time()) - 60} 4 10\n")
+        processes = [{"pid": 10, "parent": 1, "kind": "Scanner"},
+                     {"pid": 11, "parent": 10, "kind": "DR meter"},
+                     {"pid": 12, "parent": 11, "kind": "Decoder"}]
+        with patch.object(local_db, "scan_activity", side_effect=[processes, [], [], [], []]), \
+             patch.object(local_db.os, "kill") as kill:
+            result = local_db.stop_scan(self.state, "/music")
+        self.assertTrue(result["ok"])
+        self.assertEqual(kill.call_args_list, [
+            unittest.mock.call(10, signal.SIGSTOP),
+            unittest.mock.call(12, signal.SIGTERM),
+            unittest.mock.call(11, signal.SIGTERM),
+            unittest.mock.call(10, signal.SIGTERM),
+            unittest.mock.call(10, signal.SIGCONT),
+        ])
+        self.assertEqual(local_db.scan_status(self.state)["state"], "stopped")
 
     def test_activity_follows_only_the_current_scan_process_tree(self):
         output = ("PID PPID %CPU ELAPSED COMMAND\n"
@@ -170,6 +193,11 @@ class Routes(unittest.TestCase):
             answer = self.client.post("/qobuz/local/refresh").get_json()
         run.assert_not_called()
         self.assertIn("already running", answer["message"])
+
+    def test_stop_route_targets_the_configured_music_root(self):
+        with patch.object(local_db, "stop_scan", return_value={"ok": True}) as stop:
+            self.assertTrue(self.client.post("/qobuz/local/stop").get_json()["ok"])
+        stop.assert_called_once_with(self.tmp.name, "/from/mpd")
 
 
 if __name__ == "__main__":

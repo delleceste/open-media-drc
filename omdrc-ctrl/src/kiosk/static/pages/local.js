@@ -10,7 +10,7 @@ const P = { id: 'local', label: 'Local', title: 'Local database' };
 P.mount = el => {
     P.el = el;
     P.status = h('div', {});
-    P.scan = h('button', { type: 'button', class: 'btn primary', onclick: () => P.rescan() }, 'Rescan');
+    P.scan = h('button', { type: 'button', class: 'btn primary', onclick: () => P.action() }, 'Rescan');
 
     const about = K.card('What this is',
         h('p', {}, 'The local database is the music on this box that MPD has indexed. There is no second library: MPD’s own index is the database, and this page only tells omdrcctrl where the files are and when to refresh.'),
@@ -44,7 +44,7 @@ P.refresh = async () => {
     const seq = P.seq = (P.seq || 0) + 1;
     const d = await K.api('/qobuz/local/status');
     // an answer asked for before Rescan was pressed would show the old scan
-    if (seq !== P.seq || P.starting) return;
+    if (seq !== P.seq || P.starting || P.stopping) return;
     if (!d.ok) { K.clear(P.status).append(h('p', { class: 'muted' }, d.error || 'unavailable')); return; }
     const rows = [
         K.kv('Host', d.host),
@@ -60,6 +60,7 @@ P.refresh = async () => {
     rows.push(K.kv('DR14 scan',
         s.state === 'running' ? (s.total ? `${s.done} of ${s.total} folders` : `looking for folders to measure… (since ${when(s.since)})`)
         : s.state === 'done' ? `finished ${when(s.at)} — ${s.calculated} report${s.calculated === 1 ? '' : 's'} calculated${s.failed ? `, ${s.failed} failed (see the log)` : ''}`
+        : s.state === 'stopped' ? `stopped after ${s.done} of ${s.total} ${s.phase === 'cue' ? 'CUE folders' : 'folders'}`
         : s.state === 'interrupted' ? `interrupted (started ${when(s.since)})` : 'not run yet',
         s.state === 'running' || (s.state === 'done' && s.failed) ? 'warn' : ''));
     if (s.state === 'running' && s.total) {
@@ -95,8 +96,24 @@ P.paintActivity = (running, processes) => {
 P.busyBar = () => h('div', { class: 'local-progress busy', role: 'progressbar', 'aria-label': 'Starting' }, h('span', {}));
 
 P.paintButton = running => {
-    P.scan.disabled = running || P.starting;
-    P.scan.textContent = P.starting ? 'Starting…' : running ? 'Scanning…' : 'Rescan';
+    P.running = running;
+    P.scan.disabled = !!(P.starting || P.stopping);
+    P.scan.className = running ? 'btn danger' : 'btn primary';
+    P.scan.textContent = P.starting ? 'Starting…' : P.stopping ? 'Stopping…'
+        : running ? 'Scanning… Stop' : 'Rescan';
+};
+
+P.action = () => P.running ? P.stop() : P.rescan();
+
+P.stop = async () => {
+    P.stopping = true;
+    P.seq = (P.seq || 0) + 1;
+    P.paintButton(true);
+    const d = await K.api('/qobuz/local/stop', { json: {}, timeout: 10000 });
+    P.stopping = false;
+    K.toast(d.ok ? (d.message || 'Scan stopped') : `Could not stop scan: ${d.error || 'request failed'}`,
+        d.ok ? 'ok' : 'error');
+    P.refresh();
 };
 
 // The scan's log, newest line last; it follows the end unless scrolled up.

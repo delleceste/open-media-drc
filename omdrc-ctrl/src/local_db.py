@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import signal
 import socket
 import subprocess
 import threading
@@ -97,6 +98,13 @@ def scan_status(state_dir: str) -> dict:
         if parts and parts[0] == "done":
             return {"state": "done", "at": int(parts[1]), "calculated": int(parts[2]),
                     "failed": int(parts[3]) if len(parts) > 3 else 0}
+        if parts and parts[0] == "stopped":
+            out = {"state": "stopped", "at": int(parts[1])}
+            if len(parts) >= 5 and parts[2] == "cue":
+                out.update(phase="cue", done=int(parts[3]), total=int(parts[4]))
+            elif len(parts) >= 4:
+                out["done"], out["total"] = int(parts[2]), int(parts[3])
+            return out
     except (IndexError, ValueError):
         pass
     return {"state": "never"}
@@ -142,10 +150,56 @@ def scan_activity(root: str) -> list[dict]:
             return "Decoder"
         return "Scanner"
     order = {"Scanner": 0, "DR meter": 1, "Decoder": 2}
-    return [{"kind": kind(processes[pid][3]), "pid": pid,
+    return [{"kind": kind(processes[pid][3]), "pid": pid, "parent": processes[pid][0],
              "cpu": processes[pid][1], "elapsed": processes[pid][2],
              "command": processes[pid][3]}
             for pid in sorted(selected, key=lambda p: (order[kind(processes[p][3])], p))]
+
+
+def stop_scan(state_dir: str, root: str) -> dict:
+    """Stop only the running scan for this music root and its descendants."""
+    scan = scan_status(state_dir)
+    if scan["state"] != "running":
+        return {"ok": True, "message": "The scan is no longer running"}
+    activity = scan_activity(root)
+    selected = {item["pid"] for item in activity}
+    scanners = [item["pid"] for item in activity if item["parent"] not in selected]
+    if not scanners and time.time() - scan["since"] < 5:
+        return {"ok": False, "error": "The scan is still starting; try Stop again"}
+
+    def send(pid: int, sig: int) -> None:
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            pass
+
+    # Freeze the coordinator so it cannot start another album while its
+    # children are being stopped. The decoder goes first, then the meter.
+    for pid in scanners:
+        send(pid, signal.SIGSTOP)
+    descendants = [item["pid"] for item in reversed(activity)
+                   if item["pid"] not in scanners]
+    for pid in descendants:
+        send(pid, signal.SIGTERM)
+    for pid in scanners:
+        send(pid, signal.SIGTERM)
+        send(pid, signal.SIGCONT)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and scan_activity(root):
+        time.sleep(0.1)
+    for item in scan_activity(root):
+        send(item["pid"], signal.SIGKILL)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and scan_activity(root):
+        time.sleep(0.1)
+    if scan_activity(root):
+        return {"ok": False, "error": "A scan process did not stop; check Scan activity"}
+    phase = "cue " if scan.get("phase") == "cue" else ""
+    with open(os.path.join(state_dir, SCAN_STATUS_FILE), "w", encoding="utf-8") as f:
+        f.write(f"stopped {int(time.time())} {phase}{scan.get('done', 0)} {scan.get('total', 0)}\n")
+    with open(os.path.join(state_dir, SCAN_LOG_FILE), "a", encoding="utf-8") as f:
+        f.write("Scan stopped by user\n")
+    return {"ok": True, "message": "Scan stopped; Rescan is available"}
 
 
 ARTIST_CHARS = 28
