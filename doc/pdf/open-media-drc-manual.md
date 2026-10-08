@@ -3197,8 +3197,8 @@ if [ "$(uname)" = "Linux" ] && [ -z "${LIBAACS_PATH:-}" ]; then
 fi
 ```
 
-* **Linux only** --- FreeBSD keeps the stock environment until MakeMKV is
-  tested there (section \ref{sec:video}).
+* **Linux only** --- FreeBSD keeps the stock environment and `KEYDB.cfg`, by
+  design (section \ref{sec:video}).
 * **Only when MakeMKV is installed** --- `/usr/lib/libmmbd.so.0` is where the
   Arch `makemkv` package puts it. Without it, nothing changes.
 * **Never over an explicit choice** --- a `LIBAACS_PATH` already set is kept,
@@ -3262,6 +3262,8 @@ Installing a key is always a click, never automatic.
 * A **banner on the video page** appears from **7 days before the installed
   key expires**, or when no key is installed, on boxes whose players use
   `libmmbd`. Tapping it opens the Blu-ray check.
+* All of this is **Linux-only**. On FreeBSD the key entry and menu item are
+  hidden and the key API is refused (section \ref{sec:video}).
 
 How it works (`video/webremote/src/lib/makemkv_key.py`):
 
@@ -4394,15 +4396,23 @@ update path.
   gcache. Kodi's internal player cannot do it.
 * Kodi's OSS sink does not enumerate cuse userspace devices at all --- the
   in-tree Kodi patch fixes that (section \ref{sec:kodi-patch}).
-* Decryption on FreeBSD is still stock libaacs + `~/.config/aacs/KEYDB.cfg`,
-  with both of its limits: discs missing from FindVUK do not decrypt, and a
-  drive that rejects libaacs's revoked host certificate reads no AACS disc
-  at all (mpv log: `has been revoked by your drive`). The MakeMKV route of
-  section \ref{sec:linux-bd-decrypt} is untested here: it would need a
-  FreeBSD build of `makemkvcon`/`libmmbd`, `pass(4)` access to the drive and
-  the same periodic beta-key renewal (section \ref{sec:makemkv-key}).
-  Until then the Blu-ray check treats `KEYDB.cfg` as the decryption path, as
-  before, and the panel's Kodi wrapper runs plain `kodi`.
+* Decryption on FreeBSD is stock libaacs + `~/.config/aacs/KEYDB.cfg`, **by
+  design**. The MakeMKV route of section \ref{sec:linux-bd-decrypt} cannot
+  work here: the FreeBSD port (`multimedia/makemkv`) builds MakeMKV with the
+  Linux toolchain for the Linux ABI layer, so its `libmmbd.so.0` is a Linux
+  library that the native libbluray of mpv and Kodi cannot load. Every
+  MakeMKV switch is therefore Linux-only: `makemkv-env.sh` exports nothing,
+  the panel's Kodi wrapper runs plain `kodi`, the web remote hides the
+  MakeMKV key entry and refuses its key API, and the Blu-ray check reports
+  *Decryption: libaacs + KEYDB.cfg*. FreeBSD keeps both libaacs limits:
+  discs missing from FindVUK do not decrypt, and a drive that rejects
+  libaacs's revoked host certificate reads no AACS disc (mpv log:
+  `has been revoked by your drive`). Keep `KEYDB.cfg` current through the
+  Blu-ray check's upload.
+* The Linux-only playback tuning of `drc-audio.sh` (ALSA buffer and periods,
+  `--autosync`, hardware decoding, the read-ahead options) and the drive-speed
+  request in `disc.sh` are confined to the Linux branch; FreeBSD gets no extra
+  mpv options and keeps the gcache path.
 
 
 \newpage

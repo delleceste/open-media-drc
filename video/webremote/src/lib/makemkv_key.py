@@ -76,9 +76,16 @@ def libmmbd() -> str | None:
     return next((path for path in LIBMMBD_PATHS if os.path.exists(path)), None)
 
 
+def supported() -> bool:
+    """MakeMKV decryption is a Linux feature.  FreeBSD decrypts with libaacs and
+    KEYDB.cfg by design: the FreeBSD MakeMKV port's libmmbd is a Linux library
+    (Linuxulator) that the native libbluray of mpv and Kodi cannot load."""
+    return platform.system() == "Linux"
+
+
 def players_use_libmmbd() -> bool:
     """Mirrors lib/makemkv-env.sh: the players switch to libmmbd only on Linux."""
-    return platform.system() == "Linux" and libmmbd() is not None
+    return supported() and libmmbd() is not None
 
 
 def fingerprint(key: str) -> str:
@@ -250,7 +257,7 @@ def status(path: str, today: date | None = None) -> dict:
     online = state.get("online") or {}
     seen = state.get("keys") or {}
     key = installed_key()
-    result = {"settings": str(settings_path()), "libmmbd": libmmbd(),
+    result = {"supported": supported(), "settings": str(settings_path()), "libmmbd": libmmbd(),
               "players_use_libmmbd": players_use_libmmbd(),
               "makemkvcon": shutil.which("makemkvcon"),
               "installed": bool(key), "installed_expires": None, "days_left": None,

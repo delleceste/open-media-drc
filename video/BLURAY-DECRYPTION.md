@@ -51,7 +51,7 @@ Costs, all accepted:
   only with a **beta key that expires** (next section).
 * `libmmbd` needs raw SCSI access to the drive: the `sg` device on Linux, so
   the playing user must be able to open `/dev/sg*` (normally the `optical`
-  or `cdrom` group); `pass(4)` on FreeBSD.
+  or `cdrom` group).
 * Decryption now depends on a closed binary that must be kept up to date.
 
 `KEYDB.cfg` stays useful: on a box without MakeMKV, libbluray loads stock
@@ -158,8 +158,8 @@ if [ "$(uname)" = "Linux" ] && [ -z "${LIBAACS_PATH:-}" ]; then
 fi
 ```
 
-* **Linux only.** FreeBSD keeps the stock environment until MakeMKV is tested
-  there.
+* **Linux only.** FreeBSD keeps the stock environment and `KEYDB.cfg`, by
+  design (see *FreeBSD* below).
 * **Only when MakeMKV is installed** (`/usr/lib/libmmbd.so.0`, where the Arch
   package puts it, or under `/usr/local`). Without it, libbluray loads stock
   libaacs and `KEYDB.cfg`.
@@ -196,14 +196,30 @@ box and a package update silently undoes it.
 To confirm that Kodi uses MakeMKV, play a disc missing from `KEYDB.cfg` (for
 example *Pulse*): it plays only through `libmmbd`.
 
-### FreeBSD
+### FreeBSD: KEYDB.cfg, by design
 
-Untested. `/dev/cd0` must be read through libbluray in mpv anyway (Kodi cannot
-read a physical Blu-ray on FreeBSD, see `README.md`). If the drive reports the
-revoked certificate there too, MakeMKV would need a FreeBSD build of
-`makemkvcon`/`libmmbd` and `pass(4)` access to the drive; the guard in
-`lib/makemkv-env.sh` would then be extended to FreeBSD. Until then FreeBSD
-uses stock libaacs and `KEYDB.cfg`.
+FreeBSD decrypts with stock libaacs and `KEYDB.cfg`, and nothing in the project
+switches it to MakeMKV:
+
+* `lib/makemkv-env.sh` exports nothing unless `uname` is `Linux`, so mpv and
+  `kodi.sh` keep libaacs.
+* The web remote's MakeMKV key support is Linux-only: on FreeBSD the key entry
+  and **Update MakeMKV key** are hidden, `POST /api/makemkv-key` is refused,
+  nothing is fetched and `makemkvcon` is never run. The Blu-ray check reports
+  *Decryption: libaacs + KEYDB.cfg* and checks `KEYDB.cfg` as the primary path.
+
+Why: MakeMKV does exist for FreeBSD (`multimedia/makemkv`), but the port builds
+it with the Linux toolchain and runs it under the Linux ABI layer. Its
+`/usr/local/lib/makemkv/libmmbd.so.0` is a **Linux** library, which the native
+FreeBSD libbluray in mpv and Kodi cannot load, so the `LIBAACS_PATH` switch
+cannot work there. MakeMKV on FreeBSD is only usable as `makemkvcon` itself
+(ripping, decrypted backup, or its streaming server), which the project does
+not use.
+
+The consequence is that FreeBSD keeps both limits of libaacs: discs missing
+from FindVUK do not decrypt, and a drive that rejects libaacs's host
+certificate reads no AACS disc. Keep `KEYDB.cfg` current with the Blu-ray
+check's upload.
 
 ## The Blu-ray check and KEYDB.cfg
 
@@ -212,5 +228,6 @@ Where the players use `libmmbd`, the Blu-ray check reports **MakeMKV
 `libbdplus`, and shows `KEYDB.cfg` as **AACS keys (fallback)**: its problems
 are listed but do not count, and the KEYDB.cfg links and upload move into a
 collapsed *Fallback* section. On Linux without MakeMKV the check warns that
-decryption falls back to libaacs + `KEYDB.cfg`. On FreeBSD `KEYDB.cfg` remains
-the decryption path and is checked as before.
+decryption falls back to libaacs + `KEYDB.cfg`. On FreeBSD `KEYDB.cfg` is the
+decryption path and is checked as before, and the MakeMKV key entry is not
+shown.

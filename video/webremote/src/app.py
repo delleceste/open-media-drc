@@ -593,6 +593,9 @@ def api_makemkv_key():
     state = makemkv_key_file()
     if request.method == "GET":
         return jsonify({"ok": True, **makemkv_key.status(state)})
+    if not makemkv_key.supported():
+        return jsonify({"ok": False, "error": "MakeMKV is not used on this OS: Blu-rays are "
+                        "decrypted with libaacs and KEYDB.cfg"}), 400
     op = (request.get_json(silent=True) or {}).get("op")
     if op not in ("check", "apply"):
         return jsonify({"ok": False, "error": f"unknown op: {op}"}), 400

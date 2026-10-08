@@ -139,7 +139,7 @@ Open `http://<host>:9080` on the phone.
 
 ### Blu-ray readiness
 
-Where MakeMKV is installed (Linux), the players decrypt Blu-rays through its
+On Linux with MakeMKV installed, the players decrypt Blu-rays through its
 `libmmbd`, and that needs a **MakeMKV beta key** that expires every month or
 two. The first entry of **Blu-ray check** is that key: each time the check
 opens it looks up the currently published key on the MakeMKV forum, records
@@ -147,8 +147,9 @@ its expiry, shows the installed key's expiry and days left, and offers
 **Download and apply the new key** when the installed one is missing, expired,
 within 2 days of expiring or superseded. **Update MakeMKV key** in the same
 menu fetches and applies it in one step. From 7 days before the expiry a
-banner on the main page links to the check. Details:
-`../BLURAY-DECRYPTION.md`.
+banner on the main page links to the check. All of this is Linux-only: on
+FreeBSD the players use libaacs + `KEYDB.cfg`, the key entry and menu item are
+hidden and the key API is refused. Details: `../BLURAY-DECRYPTION.md`.
 
 Tap **Blu-ray check** in the video remote to inspect the installed libraries,
 `mpv`, the title scanner, optical device and the service user's AACS key file.

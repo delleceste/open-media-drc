@@ -32,11 +32,12 @@ Isolate with `ao=null`: if drops vanish, it is the audio clock.
    32768-frame loopback period is Linux snd-aloop/BruteFIR specific; FreeBSD
    goes through `virtual_oss`, so the one-period buffer deadlock probably does
    not apply, but confirm that `time-pos` advances.
-3. **Decryption.** The same drive may reject the stock libaacs certificate.
-   Check the mpv log for `has been revoked by your drive`. If so, try MakeMKV's
-   `libmmbd` with `LIBAACS_PATH` / `LIBBDPLUS_PATH` as above (needs the MakeMKV
-   port and `sg`-style access to the drive: on FreeBSD that is `pass(4)`).
-   Background, the beta-key renewal and Kodi: `BLURAY-DECRYPTION.md`.
+3. **Decryption.** FreeBSD uses stock libaacs + `KEYDB.cfg` by design: the
+   FreeBSD MakeMKV port's `libmmbd` is a Linux library that the native
+   libbluray cannot load (`BLURAY-DECRYPTION.md`). If the mpv log says
+   `has been revoked by your drive`, this drive cannot play AACS discs on
+   FreeBSD through libaacs; a disc missing from FindVUK needs a newer
+   `KEYDB.cfg`.
 4. **Cache.** `mpv/mpv.conf` already carries the large-read and read-ahead
    settings; compare with the values above.
 

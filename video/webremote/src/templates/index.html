@@ -27,6 +27,7 @@
   .more-options button { display:block; width:100%; text-align:left; padding:10px; color:var(--fg);
           background:transparent; border:0; border-radius:5px; font:inherit; cursor:pointer; }
   .more-options button:active { background:#21262d; }
+  .more-options button[hidden] { display:none; }
   #path { color:var(--muted); font-size:13px; word-break:break-all; min-height:18px; }
 
   /* list view (compact) */
@@ -157,7 +158,7 @@
       <div class="more-options">
         <button type="button" id="mediaFolders">Media folders</button>
         <button type="button" id="blurayDiag">Blu-ray check</button>
-        <button type="button" id="makemkvKey">Update MakeMKV key</button>
+        <button type="button" id="makemkvKey" hidden>Update MakeMKV key</button>
         <button type="button" id="rescan">Rescan thumbnails</button>
       </div>
     </details>
@@ -382,10 +383,15 @@ function paintKeyBanner(k) {
   keyBanner.classList.toggle("error", k.level === "error");
   keyBanner.textContent = "⚠ MakeMKV beta key: " + k.summary + ". Tap to check and update.";
 }
+// MakeMKV is Linux-only; on FreeBSD the key entry and menu item stay hidden.
+let keySupported = false;
 async function refreshKeyBanner() {
   try {
     const k = await (await fetch("/api/makemkv-key", { cache:"no-store" })).json();
-    if (k.ok) paintKeyBanner(k);
+    if (!k.ok) return;
+    keySupported = !!k.supported;
+    document.getElementById("makemkvKey").hidden = !keySupported;
+    paintKeyBanner(k);
   } catch (e) { /* the banner is advisory */ }
 }
 keyBanner.onclick = () => showBlurayDiagnostic();
@@ -463,10 +469,13 @@ async function showBlurayDiagnostic() {
   scrim.classList.add("show");
   sheet.replaceChildren();
   const title = document.createElement("h2"); title.textContent = "Blu-ray diagnostic";
-  const loading = document.createElement("p"); loading.textContent = "Checking MakeMKV, packages and drive…";
-  const keyRow = document.createElement("div");
-  sheet.append(title, loading, keyRow);
-  keyOperation(keyRow, "check");
+  const loading = document.createElement("p"); loading.textContent = "Checking packages, drive and keys…";
+  sheet.append(title, loading);
+  if (keySupported) {
+    const keyRow = document.createElement("div");
+    sheet.append(keyRow);
+    keyOperation(keyRow, "check");
+  }
   try {
     const response = await fetch("/api/bluray-diagnostic", { cache:"no-store" });
     const data = await response.json();

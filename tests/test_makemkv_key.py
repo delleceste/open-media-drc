@@ -2,6 +2,7 @@
 from datetime import date, datetime, timezone
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -60,6 +61,9 @@ class StateTests(unittest.TestCase):
         patcher = mock.patch.object(KEY, "settings_path", return_value=self.settings)
         patcher.start()
         self.addCleanup(patcher.stop)
+        linux = mock.patch.object(KEY, "supported", return_value=True)
+        linux.start()
+        self.addCleanup(linux.stop)
         mmbd = mock.patch.object(KEY, "libmmbd", return_value="/usr/lib/libmmbd.so.0")
         mmbd.start()
         self.addCleanup(mmbd.stop)
@@ -165,6 +169,71 @@ class ApiTests(StateTests):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.get_json()["last_error"]["message"], "offline")
         self.assertFalse(self.settings.exists())
+
+
+class FreeBSDTests(unittest.TestCase):
+    """FreeBSD decrypts with libaacs + KEYDB.cfg: no key lookup, no install, no banner."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+        for target, value in ((VIDEO, ("CACHE_DIR", str(self.base / "cache"))),):
+            patcher = mock.patch.object(target, *value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        system = mock.patch.object(KEY.platform, "system", return_value="FreeBSD")
+        system.start()
+        self.addCleanup(system.stop)
+        self.client = VIDEO.app.test_client()
+
+    def test_key_operations_are_refused_and_nothing_is_fetched(self):
+        with mock.patch.object(KEY, "fetch") as fetch, mock.patch.object(KEY, "apply") as apply:
+            for op in ("check", "apply"):
+                response = self.client.post("/api/makemkv-key", json={"op": op})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("KEYDB.cfg", response.get_json()["error"])
+        fetch.assert_not_called()
+        apply.assert_not_called()
+        status = self.client.get("/api/makemkv-key").get_json()
+        self.assertFalse(status["supported"])
+        self.assertFalse(status["notify"])
+
+    def test_even_a_present_libmmbd_is_not_used(self):
+        with mock.patch.object(KEY, "libmmbd", return_value="/usr/local/lib/libmmbd.so.0"):
+            self.assertFalse(KEY.players_use_libmmbd())
+
+    def test_makemkv_env_is_linux_only(self):
+        env = (ROOT / "video/lib/makemkv-env.sh").read_text()
+        self.assertIn('if [ "$(uname)" = "Linux" ]', env)
+
+
+class ShellBranchTests(unittest.TestCase):
+    """Source the real launcher libraries under a faked uname: the Linux-only
+    mpv options never reach FreeBSD, and FreeBSD never switches to libmmbd."""
+
+    def source(self, system):
+        with tempfile.TemporaryDirectory() as temp:
+            fake = Path(temp) / "uname"
+            fake.write_text(f"#!/bin/sh\necho {system}\n")
+            fake.chmod(0o755)
+            script = ('HERE="$1"; DRC_SKIP_RESAMP=1; DRC_VIDEO_DELAY=0.5; '
+                      'unset LIBAACS_PATH LIBBDPLUS_PATH; . "$HERE/drc-audio.sh" >/dev/null; '
+                      'printf "%s|%s|%s" "$AO" "$AO_OPTS" "${LIBAACS_PATH:-unset}"')
+            env = {"PATH": f"{temp}:/usr/bin:/bin:/usr/local/bin"}
+            out = subprocess.run(["sh", "-c", script, "sh", str(ROOT / "video/lib")],
+                                 capture_output=True, text=True, env=env, timeout=30)
+        return out.stdout.split("|")
+
+    def test_freebsd_gets_oss_no_linux_options_and_keydb(self):
+        ao, options, aacs = self.source("FreeBSD")
+        self.assertEqual((ao, options, aacs), ("oss", "", "unset"))
+
+    def test_linux_gets_alsa_and_the_loopback_options(self):
+        ao, options, _ = self.source("Linux")
+        self.assertEqual(ao, "alsa")
+        self.assertIn("--alsa-periods=8", options)
+        self.assertIn("--autosync=30", options)
 
 
 class WiringTests(unittest.TestCase):

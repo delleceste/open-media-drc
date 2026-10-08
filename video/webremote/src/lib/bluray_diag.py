@@ -42,9 +42,7 @@ def diagnose(disc_enabled: bool, disc_device: str, mpv_running: bool,
             "FindVUK and fails on drives that reject its host certificate",
             "Install MakeMKV (Arch: the makemkv AUR package), then restart the idle mpv")
     else:
-        add("MakeMKV (libmmbd)", "ok",
-            ("Found at " + mmbd + ", but " if mmbd else "") +
-            f"not used on {system}: decryption is libaacs + KEYDB.cfg (MakeMKV is untested here)")
+        add("Decryption", "ok", f"libaacs + KEYDB.cfg (on {system} MakeMKV is not used, by design)")
     add("Disc playback", "ok" if disc_enabled else "error",
         "Enabled in webremote.conf" if disc_enabled else "Disabled in webremote.conf",
         "Set [disc] enabled = yes in webremote.conf" if not disc_enabled else "")
