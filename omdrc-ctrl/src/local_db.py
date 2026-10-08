@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import socket
+import subprocess
 import threading
 import time
 
@@ -100,6 +102,52 @@ def scan_status(state_dir: str) -> dict:
     return {"state": "never"}
 
 
+def scan_activity(root: str) -> list[dict]:
+    """Live scanner and its children, including the current meter and decoder."""
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid,ppid,%cpu,etime,command"], capture_output=True,
+            text=True, timeout=2, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    processes = {}
+    for line in result.stdout.splitlines()[1:]:
+        fields = line.split(None, 4)
+        if len(fields) != 5:
+            continue
+        try:
+            pid, parent = int(fields[0]), int(fields[1])
+        except ValueError:
+            continue
+        processes[pid] = (parent, fields[2], fields[3], fields[4])
+    scanners = []
+    for pid, (_, _, _, command) in processes.items():
+        try:
+            words = shlex.split(command)
+        except ValueError:
+            continue
+        if any(os.path.basename(word) == "omdrc-mpd-update-dr14.sh" and
+               words[i + 1:i + 3] == ["--calculate", root]
+               for i, word in enumerate(words)):
+            scanners.append(pid)
+    if not scanners:
+        return []
+    selected = set(scanners)
+    for _ in range(3):  # scanner -> meter -> ffmpeg; allow one wrapper level
+        selected.update(pid for pid, (parent, _, _, _) in processes.items() if parent in selected)
+    def kind(command):
+        if "drmeter.py" in command:
+            return "DR meter"
+        if "ffmpeg" in command:
+            return "Decoder"
+        return "Scanner"
+    order = {"Scanner": 0, "DR meter": 1, "Decoder": 2}
+    return [{"kind": kind(processes[pid][3]), "pid": pid,
+             "cpu": processes[pid][1], "elapsed": processes[pid][2],
+             "command": processes[pid][3]}
+            for pid in sorted(selected, key=lambda p: (order[kind(processes[p][3])], p))]
+
+
 ARTIST_CHARS = 28
 ALBUM_CHARS = 40
 MESSAGE_CHARS = 100
@@ -187,4 +235,5 @@ def status(state_dir: str, mpd_default, conf: str | None = None) -> dict:
         # a finished scan added reports: count again rather than show the old figure
         "counts": counts(path, since=scan.get("at", 0)) if exists else None,
         "scan": scan, "log": scan_log(state_dir, path),
+        "activity": scan_activity(path) if scan["state"] == "running" and path else [],
     }

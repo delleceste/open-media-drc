@@ -27,7 +27,10 @@ P.mount = el => {
     P.logEl = h('pre', { class: 'local-log', role: 'log', 'aria-label': 'DR scan log' });
     P.logCard = K.card('Scan log', P.logEl);
     P.logCard.hidden = true;
-    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, where, rescan, P.logCard), h('div', { class: 'col' }, about)));
+    P.activity = h('div', { class: 'local-activity' });
+    P.activityCard = K.card('Scan activity', P.activity);
+    P.activityCard.hidden = true;
+    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, where, rescan, P.logCard, P.activityCard), h('div', { class: 'col' }, about)));
     P.poll = new K.Poller(P.refresh, 4000);
 };
 P.show = () => P.poll.start();
@@ -70,7 +73,21 @@ P.refresh = async () => {
         : 'Read from music_directory in the MPD configuration (none found); change it there.';
     K.clear(P.status).append(...rows);
     P.paintLog(d.log || []);
+    P.paintActivity(s.state === 'running', d.activity || []);
     P.paintButton(s.state === 'running');
+};
+
+P.paintActivity = (running, processes) => {
+    P.activityCard.hidden = !running;
+    if (!running) return;
+    K.clear(P.activity);
+    if (!processes.length) {
+        P.activity.append(h('p', { class: 'muted small' }, 'No scan process found. The status may be stale.'));
+        return;
+    }
+    P.activity.append(...processes.map(p => h('div', { class: 'local-process' },
+        h('div', { class: 'local-process-summary' }, `${p.kind} · PID ${p.pid} · CPU ${p.cpu}% · elapsed ${p.elapsed}`),
+        h('pre', { class: 'local-process-command' }, p.command))));
 };
 
 P.busyBar = () => h('div', { class: 'local-progress busy', role: 'progressbar', 'aria-label': 'Starting' }, h('span', {}));

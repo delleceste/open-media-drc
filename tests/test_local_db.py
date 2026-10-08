@@ -41,6 +41,27 @@ class Scan(unittest.TestCase):
         write(f"running {now - local_db.STALE_SCAN - 5}\n")
         self.assertEqual(local_db.scan_status(self.state)["state"], "interrupted")
 
+    def test_activity_follows_only_the_current_scan_process_tree(self):
+        output = ("PID PPID %CPU ELAPSED COMMAND\n"
+                  "10 1 0.0 10:00 /bin/sh /usr/local/libexec/omdrc/scripts/omdrc-mpd-update-dr14.sh --calculate /music\n"
+                  "11 10 4.2 02:00 python3 /usr/local/lib/omdrcctrl/drmeter.py --album /music/Album\n"
+                  "12 11 23.0 00:45 ffmpeg -i /music/Album/track.flac -f f32le -\n"
+                  "13 1 90.0 00:10 ffmpeg -i /unrelated.flac -\n")
+        with patch.object(local_db.subprocess, "run") as run:
+            run.return_value.stdout = output
+            activity = local_db.scan_activity("/music")
+            self.assertEqual([item["pid"] for item in activity], [10, 11, 12])
+            self.assertEqual(activity[-1]["cpu"], "23.0")
+            self.assertEqual(local_db.scan_activity("/other"), [])
+
+    def test_status_shows_missing_process_during_a_running_scan(self):
+        with open(os.path.join(self.state, local_db.SCAN_STATUS_FILE), "w") as f:
+            f.write(f"running {int(time.time())} 100 297\n")
+        with patch.object(local_db, "scan_activity", return_value=[]) as activity:
+            result = local_db.status(self.state, lambda: "/missing")
+        self.assertEqual(result["activity"], [])
+        activity.assert_called_once_with("/missing")
+
     def test_log_tail(self):
         self.assertEqual(local_db.scan_log(self.state), [])
         with open(os.path.join(self.state, local_db.SCAN_LOG_FILE), "w") as f:
