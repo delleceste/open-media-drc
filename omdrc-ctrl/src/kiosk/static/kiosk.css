@@ -1267,6 +1267,12 @@ html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 3.2
 @keyframes local-busy { from { margin-left: -30%; } to { margin-left: 100%; } }
 .local-log { margin: 0; height: 14rem; overflow: auto; padding: .5rem .6rem; border-radius: .5rem; background: var(--surface2);
     font: .75rem/1.4 ui-monospace, monospace; white-space: pre; user-select: text; }
+.local-log-line { min-height: 1.4em; }
+.local-log-led { display: inline-block; width: .55rem; height: .55rem; margin-right: .4rem;
+    border-radius: 50%; vertical-align: .02rem; }
+.local-log-led.ok { background: var(--green); box-shadow: 0 0 .35rem var(--green); }
+.local-log-led.warn { background: var(--yellow); box-shadow: 0 0 .35rem var(--yellow); }
+.local-log-led.bad { background: var(--red); box-shadow: 0 0 .35rem var(--red); }
 .local-activity { display: grid; gap: .5rem; }
 .local-process { min-width: 0; padding: .5rem .6rem; border-radius: .5rem; background: var(--surface2); }
 .local-process-summary { font-size: .8rem; font-weight: 600; }

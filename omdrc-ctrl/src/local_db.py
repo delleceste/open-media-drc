@@ -7,6 +7,7 @@ reports are read from, and calculated in, that tree) and how the last scan went.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 import re
 import shlex
 import signal
@@ -266,7 +267,33 @@ def _readable(line: str, root: str) -> str:
     return f"[{tag}] {word}  {album_label(fields[0], fields[1], fields[2])}"
 
 
-def scan_log(state_dir: str, root: str = "") -> list[str]:
+@lru_cache(maxsize=1024)
+def _cue_skip_level(line: str, root: str) -> str:
+    """Classify an existing CUE log entry without changing the album."""
+    if not line.startswith("[cue] skipped "):
+        return ""
+    folder, separator, reason = line[len("[cue] skipped "):].partition(
+        ": CUE split failed; original retained: ")
+    if not separator:
+        return "warn"
+    if "codec can't decode" in reason or "UnicodeDecodeError" in reason:
+        return "bad"
+    if reason == "folder needs one FLAC, one CUE and no other audio" and root:
+        try:
+            with os.scandir(os.path.join(root, folder)) as entries:
+                if sum(entry.is_file() and entry.name.lower().endswith(".flac")
+                       for entry in entries) > 1:
+                    return "ok"
+        except OSError:
+            pass
+    if reason in ("folder needs one FLAC, one CUE and no other audio",
+                  "CUE must reference exactly this FLAC",
+                  "CUE track count and breakpoints disagree"):
+        return "warn"
+    return "bad"
+
+
+def scan_log(state_dir: str, root: str = "", *, with_levels: bool = False):
     """The last lines of the scan log (the file is restarted by each rescan),
     for reading: a folder's or a step's progress lines give way to its latest
     one (`measuring` to the result), and names replace paths."""
@@ -274,7 +301,7 @@ def scan_log(state_dir: str, root: str = "") -> list[str]:
         with open(os.path.join(state_dir, SCAN_LOG_FILE), encoding="utf-8", errors="replace") as f:
             raw = [line.rstrip("\n") for line in f]
     except OSError:
-        return []
+        return ([], []) if with_levels else []
     out: list[str] = []
     last_tag = None
     for line in raw:
@@ -286,17 +313,22 @@ def scan_log(state_dir: str, root: str = "") -> list[str]:
             out.append(line)
         if not line.startswith("    "):                # a skipped track keeps its folder's place
             last_tag = tag
-    return [_readable(line, root) for line in out[-LOG_LINES:]]
+    rows = out[-LOG_LINES:]
+    readable = [_readable(line, root) for line in rows]
+    if with_levels:
+        return readable, [_cue_skip_level(line, root) for line in rows]
+    return readable
 
 
 def status(state_dir: str, mpd_default, conf: str | None = None) -> dict:
     path = mpd_default() or ""
     exists = bool(path) and os.path.isdir(path)
     scan = scan_status(state_dir)
+    log, log_levels = scan_log(state_dir, path, with_levels=True)
     return {
         "ok": True, "host": host(), "path": path, "exists": exists, "conf": conf or "",
         # a finished scan added reports: count again rather than show the old figure
         "counts": counts(path, since=scan.get("at", 0)) if exists else None,
-        "scan": scan, "log": scan_log(state_dir, path),
+        "scan": scan, "log": log, "log_levels": log_levels,
         "activity": scan_activity(path) if scan["state"] == "running" and path else [],
     }

@@ -29,7 +29,7 @@ P.mount = el => {
         h('div', { class: 'btn-row' }, P.scan, P.splitCueLabel),
         P.splitCueHint = h('p', { class: 'muted small' }, 'Checking for CUE tools…'));
     const tools = K.card('DR14 tools', P.toolsEl);
-    P.logEl = h('pre', { class: 'local-log', role: 'log', 'aria-label': 'DR scan log' });
+    P.logEl = h('div', { class: 'local-log', role: 'log', 'aria-label': 'DR scan log' });
     P.logCard = K.card('Scan log', P.logEl);
     P.logCard.hidden = true;
     P.activity = h('div', { class: 'local-activity' });
@@ -99,7 +99,7 @@ P.refresh = async () => {
     P.confNote.textContent = d.conf ? `Read from music_directory in ${d.conf}; change it there.`
         : 'Read from music_directory in the MPD configuration (none found); change it there.';
     K.clear(P.status).append(...rows);
-    P.paintLog(d.log || []);
+    P.paintLog(d.log || [], d.log_levels || []);
     P.paintActivity(s.state === 'running', d.activity || []);
     P.paintButton(s.state === 'running');
 };
@@ -142,13 +142,25 @@ P.stop = async () => {
 };
 
 // The scan's log, newest line last; it follows the end unless scrolled up.
-P.paintLog = lines => {
+P.paintLog = (lines, levels = []) => {
     P.logCard.hidden = !lines.length;
-    const text = lines.join('\n');
+    const text = JSON.stringify([lines, levels]);
     if (text === P.logText) return;
     P.logText = text;
     const el = P.logEl, atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-    el.textContent = text;
+    const fragment = document.createDocumentFragment();
+    lines.forEach((line, index) => {
+        const level = levels[index];
+        const row = h('div', { class: 'local-log-line' });
+        if (['ok', 'warn', 'bad'].includes(level)) {
+            const label = level === 'ok' ? 'Already split into tracks'
+                : level === 'warn' ? 'Not eligible for automatic splitting' : 'CUE processing error';
+            row.append(h('span', { class: `local-log-led ${level}`, role: 'img', 'aria-label': label, title: label }));
+        }
+        row.append(document.createTextNode(line));
+        fragment.append(row);
+    });
+    K.clear(el).append(fragment);
     if (atEnd) el.scrollTop = el.scrollHeight;
 };
 
