@@ -280,7 +280,7 @@ def scan_log(state_dir: str, root: str = "") -> list[str]:
     for line in raw:
         m = _LINE.match(line)
         tag = m.group(1) if m else None
-        if tag is not None and tag == last_tag:
+        if tag is not None and tag == last_tag and tag != "cue":
             out[-1] = line
         else:
             out.append(line)

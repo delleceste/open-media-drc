@@ -95,6 +95,14 @@ class Scan(unittest.TestCase):
         got = local_db.scan_log(self.state)
         self.assertEqual((len(got), got[-1]), (local_db.LOG_LINES, "line 299"))
 
+    def test_cue_log_keeps_each_album_result(self):
+        with open(os.path.join(self.state, local_db.SCAN_LOG_FILE), "w") as f:
+            f.write("[cue] Album A: split into 8 verified track FLACs\n"
+                    "[cue] skipped Album B: unsupported CUE\n")
+        self.assertEqual(local_db.scan_log(self.state),
+                         ["[cue] Album A: split into 8 verified track FLACs",
+                          "[cue] skipped Album B: unsupported CUE"])
+
     def test_the_log_shows_each_folders_last_line_by_name(self):
         with open(os.path.join(self.state, local_db.SCAN_LOG_FILE), "w") as f:
             f.write("Rescan started\n"
