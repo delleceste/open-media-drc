@@ -41,10 +41,14 @@ centre four-arrow grip to move the whole window, drag either edge grip to change
 only that edge, or use −/+ to move by one minute. Extend left/right buttons grow
 the window one minute per tap, including when it is too small to grab. Reset
 moves the visible start to now and new audio fills the bar again. Full window
-shows all blocks still in the analyzer's 90-minute memory. Cancel restores the
-window from before the popup opened; Done keeps the selection. These view
-controls leave the live
-estimate and the local DR log unchanged.
+follows all blocks in the analyzer's 90-minute memory as new audio arrives.
+Cancel restores the window from before the popup opened; Done keeps the live
+selection. These view controls leave the live estimate and the local DR log
+unchanged.
+
+Tap a DR history segment on Now or DR to show a short song title and the
+segment's start and end as offsets from the latest block. Tap it again to hide
+the label; the full measurement detail remains in the segment tooltip.
 
 ## Light and dark
 

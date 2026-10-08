@@ -156,7 +156,7 @@ P.mount = el => {
         'aria-valuemin': '0', 'aria-valuemax': '14' });
     P.drWin = h('button', { class: 'chip', type: 'button', onclick: ev => P.cycleWindow(ev) });
     P.drBarHost = h('div', { class: 'dr-bar' });
-    P.drDetail = h('div', { class: 'dr-detail', hidden: true });
+    P.drDetail = h('div', { class: 'dr-detail', hidden: true, role: 'status' });
     P.drOldest = h('span', {});
     // The value lives in the side column; the segmented history is a
     // full-width strip along the bottom, where finer segments fit
@@ -165,10 +165,10 @@ P.mount = el => {
     P.gauge = K.drGauge(P.drThermo);
     P.drBarBox = h('div', { class: 'now-drbar card' }, P.drBarHost,
         h('div', { class: 'dr-times' }, P.drOldest, P.drDetail, P.drModeBox(), h('span', {}, 'Latest')));
-    // On Now the bar is for looking at: a tap there is an ordinary tap on the page
-    // (it shows the top bar); its segments are inspected on the DR page.
-    P.drBar = new K.DrBar(P.drBarHost, { interactive: false, onDetail: (text, count) => {
-        P.drDetail.hidden = !text; P.drDetail.textContent = text || '';
+    // Tapping a segment names the song and the time range it covers.
+    P.drBar = new K.DrBar(P.drBarHost, { onDetail: (text, count, label) => {
+        P.drDetail.hidden = !label; P.drDetail.textContent = label || '';
+        P.drDetail.title = text || '';
         P.drOldest.textContent = count ? `−${K.dr.elapsedLabel(count * 3)}` : '';
     } });
     K.wireDrViewPopup(P.drBarHost);

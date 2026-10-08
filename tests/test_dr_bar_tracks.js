@@ -13,7 +13,8 @@ let painted = [];
 let frameReceived;
 const overlay = h('div');
 const host = {
-    clientWidth: 2000, classList: { toggle() {} }, addEventListener() {},
+    clientWidth: 2000, classList: { toggle() {} }, listeners: {},
+    addEventListener(type, fn) { this.listeners[type] = fn; },
     append: (...cells) => { painted = cells; },
 };
 const K = {
@@ -26,7 +27,8 @@ vm.runInContext(fs.readFileSync('omdrc-ctrl/src/kiosk/static/widgets/dr.js', 'ut
 
 const loud = [[0.1, 0.1], [0.9, 0.9]];
 const blocks = Array.from({ length: 20 }, () => loud);
-const bar = new K.DrBar(host);
+let selectedLabel = null;
+const bar = new K.DrBar(host, { onDetail: (_text, _count, label) => { selectedLabel = label; } });
 // 20 blocks, the oldest is block 100; a track starts at 110 with a seek at 115
 bar.render(blocks, 60, { origin: 100, tracks: [
     { start: 90, end: 110, title: 'One', dr: 9.4, complete: true, kept: true, seeks: [] },
@@ -40,6 +42,11 @@ assert.ok(at('cut-track') < at('cut-seek'));
 // a segment names its track and that track's DR
 assert.match(painted[0].attrs.title, /One: track DR9\.4 \(heard whole\)/);
 assert.match(painted[painted.length - 1].attrs.title, /Two: track DR7\.1 \(so far\)/);
+host.listeners.click({ target: { closest: () => ({ dataset: { r: '19' } }) } });
+assert.equal(selectedLabel, 'One · −1:00 → −0:57');
+bar.render(blocks, 60, { origin: 100, tracks: [{ start: 100, end: null,
+    title: 'A very long song title that should be abbreviated here', seeks: [] }] });
+assert.match(selectedLabel, /^A very long song title that s… · −1:00 → −0:57$/);
 
 // without marks the bar is what it always was: no cuts
 bar.render(blocks, 60);
@@ -99,4 +106,10 @@ K.drViewPopup();
 controls()['Full window'].attrs.onclick();
 controls().Done.attrs.onclick();
 assert.equal(estimate.viewBlocks().length, 101);
+frameReceived({ ok: true, source: 'mpd', dr: { state: 'ready', track_age_blocks: 102, total_blocks: 102 }, dr_blocks: Array.from({ length: 102 }, () => loud) });
+assert.equal(estimate.viewBlocks().length, 102, 'Done must leave Full window attached to growing history');
+K.drViewPopup();
+controls().Reset.attrs.onclick();
+controls().Cancel.attrs.onclick();
+assert.equal(estimate.viewBlocks().length, 102, 'Cancel must restore a dynamic Full window');
 console.log('ok');

@@ -55,6 +55,11 @@ const dr = K.dr = {
         if (hh) return `${hh} h ${String(m).padStart(2, '0')} min`;
         return m ? (s ? `${m} min ${s} s` : `${m} min`) : `${s} s`;
     },
+    clockLabel(seconds) {
+        const h = Math.floor(seconds / 3600), m = Math.floor(seconds % 3600 / 60), s = Math.floor(seconds % 60);
+        return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+            : `${m}:${String(s).padStart(2, '0')}`;
+    },
 };
 
 // ── shared estimator ─────────────────────────────────────────────────────────
@@ -86,7 +91,7 @@ K.drEstimate = (() => {
     E.viewRange = () => {
         const oldest = E.availableStart();
         const end = K.clamp(E.viewEnd ?? E.total, oldest, E.total);
-        const start = K.clamp(E.viewStart ?? E.total - E.selected().length, oldest, end);
+        const start = K.clamp(E.viewStart === 'full' ? oldest : E.viewStart ?? E.total - E.selected().length, oldest, end);
         return { start, end };
     };
     E.viewBlocks = () => {
@@ -100,7 +105,9 @@ K.drEstimate = (() => {
         E.emit();
     };
     E.resetView = () => E.setView(E.total, E.total);
-    E.fullView = () => E.setView(E.availableStart(), E.total);
+    // Keep the left edge attached to the oldest retained block, including
+    // blocks that arrive after the popup is closed.
+    E.fullView = () => { E.viewStart = 'full'; E.viewEnd = null; E.emit(); };
     E.extendView = edge => {
         const { start, end } = E.viewRange();
         if (edge === 'start') E.setView(start - 20, end);
@@ -181,7 +188,7 @@ K.drViewPopup = (() => {
         const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) cancel(); } },
             h('div', { class: 'sheet dr-view-sheet' },
                 h('h2', {}, 'DR history window'),
-                h('p', { class: 'muted small' }, 'Drag the centre arrows to move the whole window, or an edge grip to change only that edge. Reset starts a new visible bar at Now; Full window shows all retained blocks. Saved DR records and the live estimate are unchanged.'),
+                h('p', { class: 'muted small' }, 'Drag the centre arrows to move the whole window, or an edge grip to change only that edge. Reset starts a new visible bar at Now; Full window follows all retained blocks as time passes. Done keeps the live view. Saved DR records and the live estimate are unchanged.'),
                 h('div', { class: 'dr-view-controls' },
                     h('button', { class: 'btn', type: 'button', title: 'One minute earlier', onclick: () => step(-1) }, '−'),
                     axis,
@@ -322,13 +329,13 @@ K.DrBar = class DrBar {
         }
         if (!parts.length) parts.push({ start: 0, end: 0, silent: false });
 
-        let detail = null;
+        let detail = null, detailLabel = null;
         const cells = parts.map((part, i) => {
             const sample = blocks.slice(part.start, part.end);
             const value = sample.length && !part.silent ? dr.fromBlocks(sample) : null;
             const period = `${Math.round((count - part.end) * BLOCK_S)}–${Math.round((count - part.start) * BLOCK_S)} s before the latest interval`;
             const level = value === null ? -Infinity : dr.levelDb(sample);
-            const t = sample.length && !part.silent ? trackAt(part.start) : null;
+            const t = sample.length ? trackAt(part.start) : null;
             const whole = !t ? '' : t.end === null ? 'so far' : t.complete ? 'heard whole' : t.kept ? 'heard in part' : 'too short to keep';
             const about = t ? ` · ${t.title || 'track'}${t.dr !== null && t.dr !== undefined ? `: track DR${Number(t.dr).toFixed(1)} (${whole})` : ''}` : '';
             const title = !sample.length ? 'Waiting for audio'
@@ -339,7 +346,13 @@ K.DrBar = class DrBar {
             const col = value === null ? null : dr.color(value);
             const fromRight = parts.length - 1 - i;
             const selected = fromRight === this.sel;
-            if (selected) detail = title;
+            if (selected) {
+                detail = title;
+                const name = t && t.title ? t.title : part.silent ? 'Silence' : 'Unknown song';
+                const chars = [...name];
+                const short = chars.length > 30 ? chars.slice(0, 29).join('') + '…' : name;
+                detailLabel = `${short} · −${dr.clockLabel((count - part.start) * BLOCK_S)} → −${dr.clockLabel((count - part.end) * BLOCK_S)}`;
+            }
             return h('span', {
                 dataset: { r: fromRight }, title,
                 class: (part.silent ? 'gap ' : '') + (part.cut ? `cut-${part.cut} ` : '') + (selected ? 'selected' : ''),
@@ -349,7 +362,7 @@ K.DrBar = class DrBar {
         });
         if (detail === null) this.sel = null;
         K.clear(this.host).append(...cells);
-        if (this.onDetail) this.onDetail(detail, count);
+        if (this.onDetail) this.onDetail(detail, count, detailLabel);
     }
 };
 

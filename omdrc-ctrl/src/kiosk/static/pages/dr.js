@@ -29,9 +29,9 @@ P.mount = el => {
     P.slider = h('input', { type: 'range', min: 60, max: 5400, step: 60, oninput: e => K.drEstimate.setWindow(e.target.value) });
     P.detect = h('button', { class: 'chip', type: 'button', role: 'switch', onclick: () => K.drEstimate.setDetect(!K.drEstimate.detect) });
     P.barHost = h('div', { class: 'dr-bar tall' });
-    P.detail = h('div', { class: 'dr-detail', hidden: true });
+    P.detail = h('div', { class: 'dr-detail', hidden: true, role: 'status' });
     P.oldest = h('span', {});
-    P.bar = new K.DrBar(P.barHost, { onDetail: (text, count) => { P.detail.hidden = !text; P.detail.textContent = text || ''; P.oldest.textContent = count ? `−${K.dr.elapsedLabel(count * 3)}` : ''; } });
+    P.bar = new K.DrBar(P.barHost, { onDetail: (text, count, label) => { P.detail.hidden = !label; P.detail.textContent = label || ''; P.detail.title = text || ''; P.oldest.textContent = count ? `−${K.dr.elapsedLabel(count * 3)}` : ''; } });
     K.wireDrViewPopup(P.barHost);
     P.estBody = h('div', { class: 'est-body' },
         h('div', { class: 'dr-head' }, P.value, P.status), P.gaugeHost,
