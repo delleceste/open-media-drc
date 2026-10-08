@@ -2615,6 +2615,28 @@ belong to *that* user, not to root or to your login.
    last import. The working clone is `dr-sync/` in the state directory and
    can be deleted safely: it is cloned again.
 
+**Where things live.** Nothing has to be initialised or cloned by hand: the
+panel clones the repository itself on its first round, and creates the
+`main` branch if the repository is empty.
+
+- *The repository URL* is read from `[dr_sync]` in the `commands.conf` the
+  service was started with (`--config`; check with `ps` on the running
+  `app.py`). The installed file is `<prefix>/etc/omdrcctrl/commands.conf`. The
+  program's built-in default, `<prefix>/etc/open-media-drc/commands.conf`,
+  applies only when neither `--config` nor `$OMDRCCTRL_CONF` is given. Nothing
+  needs to be inside `etc/open-media-drc`.
+- *The working clone* is `dr-sync/` in the state directory, with
+  `dr-sync.imported.json` beside it (which other-box files were already
+  imported). The state directory is `$OMDRC_STATE_DIR` if set, else
+  `/var/db/omdrc` when running as root, else
+  `${XDG_STATE_HOME:-~/.local/state}/omdrc` of the service user, which is the
+  usual case. Both can be deleted: they are rebuilt on the next round.
+- *The database* is `dr-albums.sqlite` in the same state directory. It is not
+  in the repository; only the exported rows are.
+- *Git credentials* are the service user's own: `~/.gitconfig`,
+  `~/.git-credentials` or the `gh` configuration, and `~/.ssh`. They are
+  never stored in `commands.conf` or in the repository.
+
 Repeat steps 2 to 5 on the other box with a different `box` name. Each box
 then holds its own `boxes/<box>.jsonl` and imports the others'. Nothing
 else is needed: there is no server, and a box that is off or offline simply
