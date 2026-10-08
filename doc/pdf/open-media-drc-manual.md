@@ -1541,6 +1541,12 @@ icon is generated with the launcher icon by `artwork/draw-app-icon.py`
 (`--notification` writes it alone), with a thicker stem so that it stays
 visible at that size.
 
+In the pulled-down shade, Android 16 and later show the app's launcher icon on
+the left of the entry, not the status-bar icon. To link the two, the
+notification's picture (top right) carries the same white note on a dark disc
+in its top-right corner. With no cover or poster, the note on its disc takes
+the picture's place.
+
 The notification uses the channel *DRC live updates* with **default
 importance and no sound or vibration**. A low-importance channel is a
 *silent* notification: Pixels hide silent notifications from the status bar

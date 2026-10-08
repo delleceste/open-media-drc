@@ -8,6 +8,10 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
@@ -47,7 +51,9 @@ private const val TAG = "OmdrcWidget"
  *
  * Either way the notification shows what's playing - the cover or the
  * film's poster, the track - and expanded, the format and the DRC in use;
- * the status bar shows the app's note, the launcher icon's "d".
+ * the status bar shows the app's note, the launcher icon's "d", and the
+ * notification carries the same note on its picture (top right in the
+ * shade, where Android now puts the app's icon on the left instead).
  * Android requires a foreground service to show it the whole time; its Close
  * action stops the service and every other background request of the app
  * until the app is opened again (see AppPrefs.closed).
@@ -239,7 +245,7 @@ class LiveStatusService : Service() {
             else OmdrcClient.fetchImage(host, port, now.music.art)
             if (art !is ArtFetch.Failed) {
                 musicArtKey = now.music.art
-                musicArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }
+                musicArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }?.let { withNote(it) }
                 widgetArt = art
             }
         }
@@ -248,7 +254,7 @@ class LiveStatusService : Service() {
             val art = if (videoKey.isEmpty()) ArtFetch.None else OmdrcClient.fetchImage(host, port, videoKey)
             if (art !is ArtFetch.Failed) {
                 videoArtKey = videoKey
-                videoArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }
+                videoArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }?.let { withNote(it) }
             }
         }
         observe(snapshot.reachable || now != null, now, snapshot)
@@ -345,7 +351,7 @@ class LiveStatusService : Service() {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(collapsed)
-            .setLargeIcon(icon)
+            .setLargeIcon(icon ?: noteAlone)
             .setStyle(NotificationCompat.BigTextStyle().bigText(expanded))
             .setContentIntent(contentIntent)
             .addAction(R.drawable.ic_notification, getString(R.string.live_levels), levelsIntent)
@@ -379,6 +385,37 @@ class LiveStatusService : Service() {
             },
         ).filter { it.isNotEmpty() }
         return getString(R.string.now_drc_on, parts.joinToString(" · "))
+    }
+
+    /** With no picture, the note alone takes its place. */
+    private val noteAlone: Bitmap by lazy { withNote(null) }
+
+    /** The picture for the notification's large icon: the cover cut square,
+     *  with the status bar's note - white, on a dark disc - in its corner, so
+     *  the shade's entry shows which app that status-bar icon belongs to.
+     *  Without a cover, the note's disc fills it. */
+    private fun withNote(art: Bitmap?): Bitmap {
+        val out = Bitmap.createBitmap(ICON_PX, ICON_PX, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        if (art != null) {
+            val side = minOf(art.width, art.height)
+            canvas.drawBitmap(
+                art,
+                Rect((art.width - side) / 2, (art.height - side) / 2, (art.width + side) / 2, (art.height + side) / 2),
+                Rect(0, 0, ICON_PX, ICON_PX),
+                Paint(Paint.FILTER_BITMAP_FLAG),
+            )
+        }
+        val disc = if (art != null) ICON_PX * NOTE_BADGE else ICON_PX.toFloat()
+        val cx = ICON_PX - disc / 2
+        val cy = if (art != null) disc / 2 else ICON_PX / 2f
+        canvas.drawCircle(cx, cy, disc / 2, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = NOTE_DISC })
+        val note = ContextCompat.getDrawable(this, R.drawable.ic_notification)!!.mutate()
+        note.setTint(Color.WHITE)
+        val half = (disc * 0.36f).toInt()
+        note.setBounds((cx - half).toInt(), (cy - half).toInt(), (cx + half).toInt(), (cy + half).toInt())
+        note.draw(canvas)
+        return out
     }
 
     /** A cover or poster scaled for the notification's large icon. */
@@ -426,6 +463,8 @@ class LiveStatusService : Service() {
         private const val FALLBACK_POLL_MS = 5000L
         private const val RETRY_MS = 15000L
         private const val ICON_PX = 256
+        private const val NOTE_BADGE = 0.42f            // of the picture's side
+        private const val NOTE_DISC = 0xD9101418.toInt()
         private const val STOPPED_GRACE_MS = 30 * 1000L
         private const val PAUSE_TIMEOUT_MS = 15 * 60 * 1000L
         private const val UNREACHABLE_GRACE_MS = 60 * 1000L
