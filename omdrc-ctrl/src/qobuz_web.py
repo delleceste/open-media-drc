@@ -85,6 +85,7 @@ _music_directory = lambda: None
 _music_config = lambda: (None, None)     # (music root, the config file naming it)
 _state_dir = lambda: ""         # noqa: E731 - where the played list lives
 _dr_lookup = lambda keys: {}    # noqa: E731 - album keys -> stored DR (dr_store)
+_dr_refresh = None                # local folders -> their dr14.txt read into the log
 
 # The path upmpdcli's Qobuz plugin serves its tracks under, and its default
 # port (upmpdcli.conf plgmicrohttpport).
@@ -133,35 +134,53 @@ def init_app(app, settings, upmpdcli_conf, read_options, token_file, plugin_dir,
     app.register_blueprint(bp)
 
 
-def set_dr_lookup(lookup) -> None:
+def set_dr_lookup(lookup, refresh=None) -> None:
     """`lookup(keys) -> {key: summary}`: the DR log's figure for an album
-    (dr_store.DrStore.lookup), shown as a badge on the results."""
-    global _dr_lookup
+    (dr_store.DrStore.lookup), shown as a badge on the results.
+    `refresh(folders)` reads those local folders' dr14.txt into the log."""
+    global _dr_lookup, _dr_refresh
     _dr_lookup = lookup
+    _dr_refresh = refresh
 
 
 def dr_key(card: dict) -> str:
     """The DR log's key for a result: its Qobuz album, or its local folder."""
     if card.get("source") == "local":
-        tracks = card.get("tracks") or []
-        first = tracks[0].get("file", "") if tracks and isinstance(tracks[0], dict) else ""
-        return dr_volumes.album_key(_music_directory(), mpd_library.album_folder(first)) if first else ""
+        folder = _local_folder(card)
+        return dr_volumes.album_key(_music_directory(), folder) if folder else ""
     return "qobuz:" + str(card["id"]) if card.get("id") else ""
+
+
+def _local_folder(card: dict) -> str:
+    tracks = card.get("tracks") or []
+    first = tracks[0].get("file", "") if tracks and isinstance(tracks[0], dict) else ""
+    return mpd_library.album_folder(first) if first else ""
 
 
 def annotate_dr(results: list) -> list:
     """Add "dr_log" (exact or estimate, and how it was reached) to the results
-    the log knows.  A local album's own dr14.txt, read with the search, is its
-    figure whatever the log holds: the report always wins, and the log may not
-    have imported a report written moments ago."""
+    the log knows.  The log is the one source of the figure; a local album
+    whose dr14.txt, read with the search, the log has not read yet is read
+    into it first; one whose report gives another value than the log holds is
+    measured again, and keeps the log's value until then.  Only when the log
+    cannot be reached does the file's own value stand in."""
     cards = [c for c in results if isinstance(c, dict)]
+    reported = lambda c, s: (c.get("source") == "local" and c.get("dr") is not None
+                             and (s.get("basis") != "report" or s.get("dr") != c["dr"]))
     try:
         found = _dr_lookup([dr_key(c) for c in cards])
+        stale = [c for c in cards if reported(c, found.get(dr_key(c)) or {})]
+        if stale and _dr_refresh:
+            _dr_refresh([_local_folder(c) for c in stale])
+            found.update(_dr_lookup([dr_key(c) for c in stale]))
+        reachable = True
     except Exception:                       # noqa: BLE001 - a badge is optional
-        found = {}
+        found, reachable = {}, False
     for card in cards:
         summary = found.get(dr_key(card)) or {}
-        if card.get("source") == "local" and card.get("dr") is not None:
+        # a report that disagrees with the log is being measured again, and
+        # the log's value stands until then
+        if not reachable and reported(card, summary):
             summary = {**summary, "dr": card["dr"], "kind": "exact", "basis": "report"}
         if summary.get("dr") is not None:
             card["dr_log"] = {k: summary.get(k) for k in
@@ -662,30 +681,40 @@ def _dr14_tools_at(_minute: int) -> dict:
 @bp.route("/local/refresh", methods=["POST"])
 def local_refresh():
     """Update MPD's index, then start the host's background DR14 scan."""
-    import subprocess
     body = request.get_json(silent=True) or {}
     split_cue = body.get("split_cue", False)
     if not isinstance(split_cue, bool):
         return jsonify({"ok": False, "error": "split_cue must be true or false"}), 400
     if split_cue and not _dr14_tools()["cue_split_available"]:
         return jsonify({"ok": False, "error": "CUE splitting tools are not installed"}), 400
+    started, message = start_scan(split_cue)
+    if started is None:
+        return jsonify({"ok": False, "error": message}), 503
+    return jsonify({"ok": True, "message": message})
+
+
+def start_scan(split_cue: bool = False) -> tuple[bool | None, str]:
+    """Update MPD's index and start the background DR14 scan, unless one is
+    running: (True, message) when started, (False, message) when one already
+    runs, (None, error) when it could not start."""
+    import subprocess
     script = os.path.join(os.environ.get("PREFIX", "/usr/local"),
                           "libexec", "omdrc", "scripts", "omdrc-mpd-update-dr14.sh")
     scan = local_db.scan_status(_state_dir())
     if scan["state"] == "running" and time.time() - scan["since"] < local_db.STALE_SCAN:
-        return jsonify({"ok": True, "message": "A DR14 scan is already running"})
+        return False, "A DR14 scan is already running"
     env = dict(os.environ, OMDRC_SCAN_STATUS=os.path.join(_state_dir(), local_db.SCAN_STATUS_FILE))
     env["OMDRC_SPLIT_CUE"] = "1" if split_cue else "0"
     try:
         result = subprocess.run([script], capture_output=True, text=True, timeout=15, env=env)
     except (OSError, subprocess.TimeoutExpired) as error:
-        return jsonify({"ok": False, "error": str(error)}), 503
+        return None, str(error)
     if result.returncode:
-        return jsonify({"ok": False, "error": (result.stderr or result.stdout).strip()}), 503
+        return None, (result.stderr or result.stdout).strip()
     root = _music_directory()
     if root and os.path.isdir(root):
         local_db.counts(root, fresh=True)        # MPD may have found new folders
-    return jsonify({"ok": True, "message": "MPD database updated; DR14 scan started"})
+    return True, "MPD database updated; DR14 scan started"
 
 
 @bp.route("/local/art")

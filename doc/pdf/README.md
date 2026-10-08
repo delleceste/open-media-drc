@@ -53,7 +53,8 @@ OS's material entirely. Part I never depends on Part II or III and only
    the live estimate.
 9. **The DR log** --- album DR remembered across listening: which track
    measurement is kept, how the album figure is decided, the live meter on an
-   album that already has a value, editions, sharing between boxes.
+   album that already has a value, how dr14.txt values reach the database
+   (a disputed one is measured again), editions, sharing between boxes.
 10. **CD input** --- concept, exclusive-source rule, ESI U24 XL facts, web card.
 
 **Part II --- Linux**: 11 installation and lifecycle (packages, /etc files,

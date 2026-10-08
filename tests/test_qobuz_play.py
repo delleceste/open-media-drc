@@ -12,6 +12,7 @@ import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import struct
@@ -19,6 +20,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 from unittest.mock import patch
 from xml.sax.saxutils import escape, unescape
 
@@ -239,12 +241,12 @@ class AnnotateDrTest(unittest.TestCase):
         [card] = self.annotate([{"id": "q"}], lambda keys: {"qobuz:q": self.ESTIMATE})
         self.assertEqual(card["dr_log"], self.ESTIMATE)
 
-    def test_a_local_report_is_the_exact_figure_whatever_was_heard(self):
-        [card] = self.annotate([{"id": "l", "source": "local", "dr": 12}],
-                               lambda keys: {"local:l": self.ESTIMATE})
-        self.assertEqual((card["dr_log"]["dr"], card["dr_log"]["kind"], card["dr_log"]["basis"]),
-                         (12, "exact", "report"))
-        self.assertEqual(card["dr_log"]["heard"], 2)
+    def test_the_log_value_stands_while_a_disputed_report_is_measured_again(self):
+        held = {**self.ESTIMATE, "dr": 10, "kind": "exact", "basis": "report"}
+        with patch.object(qobuz_web, "_dr_refresh", lambda folders: None):
+            [card] = self.annotate([{"id": "l", "source": "local", "dr": 12}],
+                                   lambda keys: {"local:l": held})
+        self.assertEqual((card["dr_log"]["dr"], card["dr_log"]["basis"]), (10, "report"))
 
     def test_a_local_report_is_badged_before_the_log_imports_it(self):
         def down(keys):
@@ -253,10 +255,76 @@ class AnnotateDrTest(unittest.TestCase):
         self.assertEqual(cards[0]["dr_log"]["dr"], 11)
         self.assertNotIn("dr_log", cards[1])
 
+    def test_a_report_the_log_has_not_read_is_read_into_it_first(self):
+        log = {"local:l": self.ESTIMATE}
+        asked = []
+
+        def refresh(folders):
+            asked.extend(folders)
+            log["local:l"] = {**self.ESTIMATE, "dr": 12, "kind": "exact", "basis": "report"}
+        card = {"id": "l", "source": "local", "dr": 12, "tracks": [{"file": "Rock/A/1.flac"}]}
+        with patch.object(qobuz_web, "_dr_refresh", refresh):
+            [card] = self.annotate([card], lambda keys: {k: log[k] for k in keys if k in log})
+        self.assertEqual(asked, ["Rock/A"])
+        self.assertEqual((card["dr_log"]["dr"], card["dr_log"]["basis"]), (12, "report"))
+
     def test_an_album_without_a_figure_gets_no_badge(self):
         none = {"dr": None, "kind": None, "basis": "", "heard": 1}
         [card] = self.annotate([{"id": "q"}], lambda keys: {"qobuz:q": none})
         self.assertNotIn("dr_log", card)
+
+
+class ScanReportsTest(unittest.TestCase):
+    """The DR log follows the scan's list of folders with a report as it grows."""
+
+    def test_new_lines_once_whole_lines_only_and_a_new_scan_starts_over(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "local-scan.reports")
+            reports = APP._ScanReports(path)
+            self.assertEqual(reports.new(), [])                 # no scan yet
+            with open(path, "w") as f:
+                f.write("Copied In\nNew/Alb")
+            self.assertEqual(reports.new(), ["Copied In"])      # a line still being written waits
+            with open(path, "a") as f:
+                f.write("um\n")
+            self.assertEqual(reports.new(), ["New/Album"])
+            self.assertEqual(reports.new(), [])
+            with open(path, "w") as f:                          # the next scan
+                f.write("X\n")
+            self.assertEqual(reports.new(), ["X"])
+
+
+class RecheckTest(unittest.TestCase):
+    """A dr14.txt that disagrees with the log is queued for the scan once per
+    version of the file, and a scan is started for it."""
+
+    def test_found_and_measured_lines_and_one_recheck_per_file_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, state = os.path.join(tmp, "music"), os.path.join(tmp, "state")
+            os.makedirs(os.path.join(root, "Disputed"))
+            os.makedirs(state)
+            with open(os.path.join(root, "Disputed", "dr14.txt"), "w") as f:
+                f.write("Official DR value: DR9\n")
+            calls = []
+
+            def import_folders(r, folders, describe=None, measured=False):
+                calls.append((list(folders), measured))
+                return {"read": 0, "recheck": [] if measured else ["Disputed"]}
+            started = []
+            store = unittest.mock.Mock(import_folders=import_folders)
+            with patch.object(APP, "_DR_STORE", store), patch.object(APP, "_STATE_DIR", state), \
+                 patch.object(APP, "_resolve_mpd_music_directory", return_value=root), \
+                 patch.object(APP, "_DR_RECHECKED", {}), \
+                 patch.object(qobuz_web, "start_scan", lambda: started.append(1) or (True, "")), \
+                 patch.object(APP.threading, "Thread",
+                              lambda target, **kw: unittest.mock.Mock(start=target)):
+                APP._dr_take_reports(["found\tDisputed", "measured\tNew/Album", "Old Style"])
+                APP._dr_take_reports(["found\tDisputed"])        # the same file again
+            self.assertEqual(calls, [(["Disputed", "Old Style"], False), (["New/Album"], True),
+                                     (["Disputed"], False)])
+            with open(os.path.join(state, "local-scan.recheck")) as f:
+                self.assertEqual(f.read(), "Disputed\n")
+            self.assertEqual(started, [1])
 
 
 class PlayedTest(unittest.TestCase):

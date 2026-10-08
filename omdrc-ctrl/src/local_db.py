@@ -18,6 +18,8 @@ import time
 
 SCAN_STATUS_FILE = "local-scan.txt"       # written by omdrc-mpd-update-dr14.sh
 SCAN_LOG_FILE = "local-scan.log"         # one line per folder, same script
+SCAN_REPORTS_FILE = "local-scan.reports"  # folders with a dr14.txt, as the scan finds or writes them
+SCAN_RECHECK_FILE = "local-scan.recheck"  # folders the next scan measures again (the DR log's)
 LOG_LINES = 200
 
 AUDIO = (".flac", ".mp3", ".ogg", ".opus", ".wav", ".m4a", ".ape", ".wv", ".aiff", ".aif")

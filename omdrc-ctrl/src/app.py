@@ -5427,6 +5427,7 @@ def _dr_import_run() -> None:
         result = _DR_STORE.import_reports(root, describe=_dr_describe_folder)
         with _DR_IMPORT_LOCK:
             _DR_IMPORT.update(result=result, error="")
+        _dr_recheck(result["recheck"])
     except Exception as error:                          # noqa: BLE001
         with _DR_IMPORT_LOCK:
             _DR_IMPORT["error"] = str(error)
@@ -5445,20 +5446,131 @@ def _dr_import_start() -> bool:
     return True
 
 
-def _dr_import_watch() -> None:
-    """Import once after startup, then again whenever a DR14 scan finishes or a
-    drive comes or goes in the music directory (its reports travel with it)."""
+class _ScanReports:
+    """The folders a DR14 scan lists in local-scan.reports (omdrc-mpd-update-
+    dr14.sh): each one found with a dr14.txt -- a folder copied in with its
+    report -- and each one the scan has just written.  Only the lines added
+    since the last look are returned; a new scan starts the file over."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.offset = 0
+        self.inode = None
+
+    def new(self) -> list[str]:
+        try:
+            st = os.stat(self.path)
+        except OSError:
+            return []
+        if st.st_ino != self.inode or st.st_size < self.offset:
+            self.inode, self.offset = st.st_ino, 0
+        if st.st_size == self.offset:
+            return []
+        with open(self.path, "rb") as f:
+            f.seek(self.offset)
+            data = f.read()
+        whole = data.rfind(b"\n") + 1      # a line still being written waits
+        self.offset += whole
+        return [line for line in data[:whole].decode("utf-8", "replace").splitlines() if line]
+
+
+# A dr14.txt whose value differs from the one the log holds is measured again
+# by the next DR14 scan (local-scan.recheck), once per version of the file: a
+# folder the meter cannot measure is not sent back on every look.
+_DR_RECHECKED: dict[str, float] = {}
+_DR_RECHECK_LOCK = threading.Lock()
+
+
+def _dr_recheck(folders: list[str]) -> None:
+    """Ask the DR14 scan to measure these folders again, starting a scan
+    unless one is running (it measures them when it next runs)."""
     import local_db
+    root = _resolve_mpd_music_directory()
+    queued = []
+    with _DR_RECHECK_LOCK:
+        for rel in folders:
+            try:
+                mtime = os.stat(os.path.join(root, rel, dr_store.REPORT)).st_mtime
+            except OSError:
+                continue
+            if _DR_RECHECKED.get(rel) != mtime:
+                _DR_RECHECKED[rel] = mtime
+                queued.append(rel)
+        if queued:
+            with open(os.path.join(_STATE_DIR, local_db.SCAN_RECHECK_FILE), "a",
+                      encoding="utf-8") as f:
+                f.write("".join(rel + "\n" for rel in queued))
+    if queued:
+        print(f"DR log: {len(queued)} dr14.txt disagree with the log; measuring again: "
+              + ", ".join(queued[:5]), file=sys.stderr)
+        # a search may have found it: never keep the answer waiting on MPD
+        threading.Thread(target=_dr_recheck_start, name="dr-recheck", daemon=True).start()
+
+
+def _dr_recheck_start() -> None:
+    """Start a DR14 scan for the folders waiting to be measured again."""
+    import local_db
+    path = os.path.join(_STATE_DIR, local_db.SCAN_RECHECK_FILE)
+    try:
+        if not os.path.getsize(path):
+            return
+    except OSError:
+        return
+    import qobuz_web
+    started, message = qobuz_web.start_scan()
+    if started is None:
+        print(f"DR log: could not start the DR14 scan: {message}", file=sys.stderr)
+
+
+def _dr_import_folders(folders: list[str], measured: bool = False) -> None:
+    root = _resolve_mpd_music_directory()
+    if not folders or not root or not os.path.isdir(root):
+        return
+    try:
+        result = _DR_STORE.import_folders(root, folders, describe=_dr_describe_folder,
+                                          measured=measured)
+    except Exception as error:                          # noqa: BLE001
+        print(f"DR log: could not read the scan's reports: {error}", file=sys.stderr)
+        return
+    _dr_recheck(result["recheck"])
+
+
+def _dr_take_reports(lines: list[str]) -> None:
+    """`found<TAB>folder` and `measured<TAB>folder` lines from the scan."""
+    found, measured = [], []
+    for line in lines:
+        kind, sep, folder = line.partition("\t")
+        (measured if sep and kind == "measured" else found).append(folder if sep else line)
+    _dr_import_folders(found)
+    _dr_import_folders(measured, measured=True)
+
+
+def _dr_import_watch() -> None:
+    """Import once after startup; read each report a DR14 scan lists as soon
+    as it lists it (a folder copied in with its dr14.txt, or one just
+    measured); and walk the whole collection again when a scan finishes (a
+    report may have gone) or a drive comes or goes in the music directory
+    (its reports travel with it)."""
+    import local_db
+    reports = _ScanReports(os.path.join(_STATE_DIR, local_db.SCAN_REPORTS_FILE))
     time.sleep(20)
     mounted = dr_volumes.signature(_resolve_mpd_music_directory())
+    reports.new()           # what an earlier scan listed is in the first import
     _dr_import_start()
+    tick = 0
     while True:
-        time.sleep(60)
+        time.sleep(5)
+        _dr_take_reports(reports.new())
+        tick += 1
+        if tick % 12:
+            continue
         scan = local_db.scan_status(_STATE_DIR)
         now = dr_volumes.signature(_resolve_mpd_music_directory())
         if (scan.get("state") == "done" and scan.get("at", 0) > _DR_IMPORT["at"]) or now != mounted:
             if _dr_import_start():
                 mounted = now
+        elif scan.get("state") != "running":
+            _dr_recheck_start()     # what came in while the last scan was running
 
 
 @app.route("/dr/log", methods=["GET", "POST"])
@@ -10008,7 +10120,7 @@ try:
                        queue_tail=kiosk.queue_tail, move_to_end=kiosk.move_to_end,
                        music_directory=_resolve_mpd_music_directory,
                        music_config=_mpd_music_config)
-    qobuz_web.set_dr_lookup(_DR_STORE.lookup)
+    qobuz_web.set_dr_lookup(_DR_STORE.lookup, refresh=_dr_import_folders)
 except Exception as _qobuz_web_error:           # pragma: no cover
     print(f"Qobuz search unavailable: {_qobuz_web_error}", file=sys.stderr)
 

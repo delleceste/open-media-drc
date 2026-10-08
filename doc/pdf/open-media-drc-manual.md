@@ -68,7 +68,7 @@ These milestones summarize changes in commits that updated this manual:
 
 | Date | Documentation changes |
 |---|---|
-| 2026-10-08 | Gave the DR log its own chapter: how a new track measurement is kept, how the album figure is decided, and what the live meter does on an album that already has a value. |
+| 2026-10-08 | Gave the DR log its own chapter: how a new track measurement is kept, how the album figure is decided, what the live meter does on an album that already has a value, and how dr14.txt values reach the database (and a disputed one is measured again). |
 | 2026-09-27 to 2026-09-29 | Added the kiosk and Android app section (orientation and auto-rotate, keep-awake, fast start) and the Qobuz album search (Qobuz's own order, label and date filters, lowering, completions, the player). |
 | 2026-09-24 | Split the manual into common, Linux and FreeBSD parts; added the glossary and source index; documented the live DR estimate and its DR bar. |
 | 2026-09-15 to 2026-09-23 | Documented filter provenance and publication, deployment steps, runtime configuration, MPD routing recovery, DR measurement and pressing identification. |
@@ -2499,8 +2499,9 @@ enabled; the Audio chain draws the log as its own consumer of that FIFO,
   `music_directory`, or, for other streams, by artist and album tags (never
   exact: the number of tracks is unknown).
 - **The local collection** is read in: every `dr14.txt` under
-  `music_directory` is imported shortly after start, again after each DR14
-  scan finishes, and on **Rescan dr14.txt**. Names and the track count come
+  `music_directory` is imported shortly after start, as the DR14 scan comes
+  across it or writes it (section \ref{sec:dr-log-reports}), and on
+  **Rescan dr14.txt**. Names and the track count come
   from the tags MusicPD indexed for the folder's tracks (a cue sheet's tracks
   included); only an untagged folder falls back to its name, read as
   "Artist - Album" when it has that form. A parent folder is never taken for
@@ -2569,6 +2570,40 @@ The report's value comes from this box's own scan or, for an album on a drive
 with a volume marker, from another box that read the drive's report, until
 this box reads it itself.
 
+## Where a dr14.txt value comes from {#sec:dr-log-reports}
+
+The database is the one source of every figure shown, search results
+included; the `dr14.txt` files are what it is kept in step with. MusicPD does
+not watch the music directory (`auto_update "no"`), so a folder copied in is
+seen when the library is rescanned: **Rescan** on the Local page runs
+`omdrc-mpd-update-dr14.sh`, which updates MusicPD's index and then runs the
+DR14 scan. The scan names every folder with a report in
+`local-scan.reports` in the state directory, one line each, as it goes:
+
+- `found<TAB><folder>` for a folder that already has a `dr14.txt` (one copied
+  in with its report), listed while the scan walks the library, before it
+  measures anything;
+- `measured<TAB><folder>` for each folder it has just measured and written a
+  `dr14.txt` for (one copied in without a report).
+
+omdrc-ctrl reads the new lines every 5 seconds and reads just those folders'
+reports, so a folder appears with its figure within seconds, not when the
+scan ends. An unchanged report is skipped by its modification time. When the
+scan finishes, the whole collection is walked once more, which also notices
+a report that was deleted. A local album that a search finds with a
+`dr14.txt` the database has not read yet is read in on the spot.
+
+**A report that disagrees.** When a folder's `dr14.txt` gives a different
+value from the one the database already holds for it (a folder copied over
+with another report, a report edited by hand), one of the two is wrong. The
+new value is not taken. The folder is written to `local-scan.recheck`, a DR14
+scan is started (or the next one is used, if one is running), and the scan
+measures that folder's audio again, although it has a report, and rewrites
+its `dr14.txt`. The database takes the measured value; until then it keeps
+the old one. Each version of a disputed file is sent once: a folder the
+meter cannot measure is not sent back on every look (until omdrc-ctrl
+restarts).
+
 ## The live meter on an album that already has a value {#sec:dr-log-existing}
 
 The live meter does not look at what the store already knows. It computes the
@@ -2588,9 +2623,9 @@ things:
   ranking orders by the unrounded mean of the stored tracks; a reported album
   with no stored tracks uses its report value;
 - **Sharing.** They are exported to the other boxes like any track row;
-- **A fallback.** If the `dr14.txt` is deleted, the next import clears the
-  report value but keeps the album because it has tracks, and the figure is
-  then worked out from them.
+- **A fallback.** If the `dr14.txt` is deleted, the walk at the end of the
+  next DR14 scan clears the report value but keeps the album because it has
+  tracks, and the figure is then worked out from them.
 
 The album page of a local reported album shows the per-song rows read from
 the `dr14.txt` itself, not the live rows.

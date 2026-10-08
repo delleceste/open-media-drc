@@ -111,14 +111,37 @@ class Store(unittest.TestCase):
                          ("Album", "", 3))
         self.assertEqual((album["dr"]["dr"], album["dr"]["basis"]), (12, "report"))
         self.assertEqual(self.store.import_reports(root)["changed"], 0)   # unchanged mtime
-        with open(report, "w") as f:
+        with open(report, "w") as f:                  # rewritten, same value: taken
+            f.write("Number of tracks:  3\nOfficial DR value: DR12\n")
+        os.utime(report, (2, 2))
+        self.assertEqual(self.store.import_reports(root)["changed"], 1)
+        with open(report, "w") as f:                  # another value: measured again first
             f.write("DR = 9\n")
         os.utime(report, (1, 1))
-        self.assertEqual(self.store.import_reports(root)["changed"], 1)
+        result = self.store.import_reports(root)
+        self.assertEqual((result["changed"], result["recheck"]), (0, ["Artist/Album"]))
+        self.assertEqual(self.store.album("local:Artist/Album")["dr"]["dr"], 12)
+        # the scan's own new measurement settles it
+        self.assertEqual(self.store.import_folders(root, ["Artist/Album"], measured=True),
+                         {"read": 1, "recheck": []})
         self.assertEqual(self.store.album("local:Artist/Album")["dr"]["dr"], 9)
         os.remove(report)
         self.assertEqual(self.store.import_reports(root)["removed"], 1)
         self.assertIsNone(self.store.album("local:Artist/Album"))
+
+    def test_only_the_folders_named_are_read(self):
+        root = os.path.join(self.tmp.name, "music")
+        for rel, dr in (("Copied In", 11), ("Other", 8)):
+            os.makedirs(os.path.join(root, rel))
+            with open(os.path.join(root, rel, "dr14.txt"), "w") as f:
+                f.write(f"Official DR value: DR{dr}\n")
+        self.assertEqual(self.store.import_folders(root, ["Copied In", "Copied In"],
+                                                   describe=lambda rel: {})["read"], 1)
+        self.assertEqual(self.store.album("local:Copied In")["dr"]["dr"], 11)
+        self.assertIsNone(self.store.album("local:Other"))
+        self.assertEqual(self.store.import_folders(root, ["Copied In"])["read"], 0)   # unchanged
+        self.assertEqual(self.store.import_folders(
+            root, ["../music/Other", "/etc", "Missing"])["read"], 0)
 
     def test_a_disk_linked_into_the_library_is_imported(self):
         disk = os.path.join(self.tmp.name, "disk", "Roxy Music - Avalon")

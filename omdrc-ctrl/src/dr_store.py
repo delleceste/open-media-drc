@@ -558,6 +558,80 @@ class DrStore:
 
     # -- the local collection's reports --
 
+    def _read_report(self, root: str, rel: str, key: str, known, describe,
+                     measured: bool = False) -> str:
+        """Read one folder's dr14.txt into its album unless it is unchanged
+        since it was last read: "read", "unchanged", or "recheck".
+
+        `known` is (report mtime, report DR) as stored, or None.  A report that
+        now gives another value than the one stored is not taken: one of the
+        two is wrong, and the audio is measured again to settle it ("recheck",
+        the stored value stays meanwhile).  A report the DR14 scan has just
+        `measured` is that settlement, and is always taken."""
+        folder = os.path.join(root, rel)
+        path = os.path.join(folder, REPORT)
+        known_mtime, known_dr = known or (None, None)
+        try:
+            mtime = os.stat(path).st_mtime
+            if known_mtime == mtime:
+                return "unchanged"
+            with open(path, encoding="utf-8", errors="replace") as f:
+                report = parse_report(f.read())
+        except OSError:
+            return "unchanged"
+        if report is None:
+            return "unchanged"
+        if not measured and known_dr is not None and report["dr"] != known_dr:
+            return "recheck"
+        meta = {}
+        if describe:
+            try:
+                meta = describe(rel) or {}
+            except Exception:               # noqa: BLE001 - names fall back
+                meta = {}
+        # a tag MPD does not have must not hide the folder's name
+        meta = {k: v for k, v in meta.items() if v not in (None, "")}
+        parts = [p for p in rel.split("/") if p]
+        name = parts[-1] if parts else os.path.basename(root)
+        # untagged rips (one image and a cue sheet) are usually named
+        # "Artist - Album (year)": take both from that, else the folders
+        artist, sep, album = name.partition(" - ")
+        if sep and artist.strip() and album.strip():
+            meta.setdefault("artist", artist.strip())
+            meta.setdefault("title", album.strip())
+        meta.setdefault("title", name)
+        meta.setdefault("track_count", report["tracks"] or audio_files(folder) or None)
+        self.upsert_album(key, "local", rel, **meta)
+        self.set_report(key, report["dr"], report["tracks"], mtime)
+        return "read"
+
+    def _known_reports(self) -> dict:
+        with self._lock, self._connect() as db:
+            return {r["key"]: (r["report_mtime"], r["report_dr"]) for r in db.execute(
+                "SELECT key, report_mtime, report_dr FROM album "
+                "WHERE source = 'local' AND origin = ''")}
+
+    def import_folders(self, root: str, folders, describe=None, measured: bool = False) -> dict:
+        """Read the dr14.txt of just these folders, relative to `root` as MPD
+        names them (a linked disk stays under its link): the ones a DR14 scan
+        has listed or just `measured`, without walking the whole collection.
+        Returns {"read": how many, "recheck": [folders to measure again]}."""
+        root = os.path.realpath(root)
+        known = self._known_reports()
+        read, recheck = 0, []
+        for folder in dict.fromkeys(folders):
+            rel = os.path.normpath(folder) if folder else ""
+            if rel == ".":
+                rel = ""
+            if os.path.isabs(rel) or rel == ".." or rel.startswith("../"):
+                continue
+            key = dr_volumes.album_key(root, rel, self.volumes)
+            outcome = self._read_report(root, rel, key, known.get(key), describe, measured)
+            read += outcome == "read"
+            if outcome == "recheck":
+                recheck.append(rel)
+        return {"read": read, "recheck": recheck}
+
     def import_reports(self, root: str, describe=None, limit: int = 200000) -> dict:
         """Walk the music directory and bring every dr14.txt in: new or changed
         reports are read, unchanged ones skipped, and a local album whose report
@@ -570,13 +644,14 @@ class DrStore:
         for the artist (it is as often a genre, or a shelf, as an artist).
 
         A folder on a drive with a volume marker is keyed by the drive; a report
-        of a drive that is not plugged in is kept, not taken for deleted."""
+        of a drive that is not plugged in is kept, not taken for deleted.  A
+        report that now gives another value than the one stored is not taken
+        but listed in "recheck", to be measured again (see _read_report)."""
         root = os.path.realpath(root)
         adopted = self.adopt_volumes(root)
-        with self._lock, self._connect() as db:
-            known = {r["key"]: r["report_mtime"] for r in db.execute(
-                "SELECT key, report_mtime FROM album WHERE source = 'local' AND origin = ''")}
+        known = self._known_reports()
         seen, present, added, changed, folders = set(), set(), 0, 0, 0
+        recheck = []
         # followlinks: a disk linked into the library (USBHD2 -> /media/...) is
         # part of the collection like any folder; `limit` bounds a link loop.
         for folder, _dirs, files in os.walk(root, followlinks=True):
@@ -593,45 +668,18 @@ class DrStore:
             on = dr_volumes.parse(key)
             if on:
                 present.add(on[0])
-            path = os.path.join(folder, REPORT)
-            try:
-                mtime = os.stat(path).st_mtime
-                if known.get(key) == mtime:
-                    continue
-                with open(path, encoding="utf-8", errors="replace") as f:
-                    report = parse_report(f.read())
-            except OSError:
-                continue
-            if report is None:
-                continue
-            meta = {}
-            if describe:
-                try:
-                    meta = describe(rel) or {}
-                except Exception:               # noqa: BLE001 - names fall back
-                    meta = {}
-            # a tag MPD does not have must not hide the folder's name
-            meta = {k: v for k, v in meta.items() if v not in (None, "")}
-            parts = [p for p in rel.split("/") if p]
-            name = parts[-1] if parts else os.path.basename(root)
-            # untagged rips (one image and a cue sheet) are usually named
-            # "Artist - Album (year)": take both from that, else the folders
-            artist, sep, album = name.partition(" - ")
-            if sep and artist.strip() and album.strip():
-                meta.setdefault("artist", artist.strip())
-                meta.setdefault("title", album.strip())
-            meta.setdefault("title", name)
-            meta.setdefault("track_count", report["tracks"] or audio_files(folder) or None)
-            self.upsert_album(key, "local", rel, **meta)
-            self.set_report(key, report["dr"], report["tracks"], mtime)
-            if key in known:
-                changed += 1
-            else:
-                added += 1
+            outcome = self._read_report(root, rel, key, known.get(key), describe)
+            if outcome == "recheck":
+                recheck.append(rel)
+            elif outcome == "read":
+                if key in known:
+                    changed += 1
+                else:
+                    added += 1
         removed = 0
         if folders <= limit:
             # a drive that is not here has not lost its albums
-            gone = [key for key, mtime in known.items() if mtime is not None and key not in seen
+            gone = [key for key, (mtime, _dr) in known.items() if mtime is not None and key not in seen
                     and (dr_volumes.parse(key) or ("",))[0] in present | {""}]
             with self._lock, self._connect() as db:
                 for key in gone:
@@ -641,7 +689,7 @@ class DrStore:
                                "(SELECT 1 FROM track WHERE album_key = ?)", (key, key))
                     removed += 1
         return {"added": added, "changed": changed, "removed": removed, "adopted": adopted,
-                "reports": len(seen), "truncated": folders > limit}
+                "reports": len(seen), "truncated": folders > limit, "recheck": recheck}
 
     def adopt_volumes(self, root: str) -> int:
         """Rekey this box's `local:` albums that are on a drive with a volume

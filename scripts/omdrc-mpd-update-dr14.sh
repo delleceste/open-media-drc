@@ -5,13 +5,24 @@
 # OMDRC_MUSIC_DIRECTORY  scan this tree instead of MPD's music_directory
 # OMDRC_SPLIT_CUE        1 to replace verified one-FLAC+CUE albums with tracks
 # OMDRC_SCAN_STATUS      (its directory also gets local-scan.log) file that gets `running <t> <folders done> <folders total>`, then `done <t> <n> <failed>` (n =
-#                        reports written), for the kiosk's Local database page
+#                        reports written), for the kiosk's Local database page.
+#                        local-scan.reports beside it lists, as they come and
+#                        relative to the music directory, `found<TAB><folder>`
+#                        for each folder that has a dr14.txt and
+#                        `measured<TAB><folder>` for each one written: the DR
+#                        log reads those reports at once.  The folders listed
+#                        in local-scan.recheck beside it (the DR log's: their
+#                        dr14.txt disagrees with the value it holds) are
+#                        measured again although they have a report
 set -eu
 
 # The scan's log: one line per folder, next to the status file, for the Local page.
 log=
 [ -z "${OMDRC_SCAN_STATUS:-}" ] || log=$(dirname "$OMDRC_SCAN_STATUS")/local-scan.log
 logline() { [ -z "$log" ] || printf '%s\n' "$*" >>"$log" 2>/dev/null || :; }
+reports=
+[ -z "${OMDRC_SCAN_STATUS:-}" ] || reports=$(dirname "$OMDRC_SCAN_STATUS")/local-scan.reports
+reported() { [ -z "$reports" ] || printf '%s\t%s\n' "$1" "$2" >>"$reports" 2>/dev/null || :; }
 status() { [ -z "${OMDRC_SCAN_STATUS:-}" ] || echo "$*" >"$OMDRC_SCAN_STATUS" 2>/dev/null || :; }
 fail() { logline "$*"; echo "$*" >&2; exit 1; }
 
@@ -21,6 +32,16 @@ if [ "${1:-}" = "--calculate" ]; then
 	# Running from the start: the walk below takes minutes on a big library on
 	# a slow disk, and until then the Local page would still show the last scan.
 	status "running $started"
+	# a new file, not an emptied one: the DR log tells a new scan by it
+	[ -z "$reports" ] || rm -f "$reports"
+	# what this scan measures again; the DR log adds to a new file meanwhile
+	recheck=
+	if [ -n "$reports" ]; then
+		recheck=$(dirname "$reports")/local-scan.recheck.$$
+		mv "$(dirname "$reports")/local-scan.recheck" "$recheck" 2>/dev/null || :
+		[ -f "$recheck" ] || : >"$recheck"
+		trap 'rm -f "$recheck"' EXIT
+	fi
 	# The project's own meter (drmeter.py, the TT Dynamic Range algorithm) sits
 	# in the application directory: next to this script's prefix, or installed.
 	here=$(cd "$(dirname "$0")" && pwd)
@@ -70,7 +91,7 @@ if [ "${1:-}" = "--calculate" ]; then
 	# it, as MPD sees it; find reports a link loop instead of following it.
 	logline "Looking for album folders without a dr14.txt…"
 	list=$(mktemp "${TMPDIR:-/tmp}/omdrc-dr14.XXXXXX") || exit 1
-	trap 'rm -f "$list"' EXIT
+	trap 'rm -f "$list" ${recheck:+"$recheck"}' EXIT
 	find -L "$root" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' \
 		-o -iname '*.opus' -o -iname '*.wav' -o -iname '*.m4a' -o -iname '*.ape' \
 		-o -iname '*.wv' -o -iname '*.aiff' -o -iname '*.aif' \) -print |
@@ -79,7 +100,12 @@ if [ "${1:-}" = "--calculate" ]; then
 		folders=0
 		while IFS= read -r dir; do
 			folders=$((folders + 1))
-			[ -f "$dir/dr14.txt" ] || printf '%s\n' "$dir" >>"$list"
+			if [ ! -f "$dir/dr14.txt" ] ||
+				{ [ -s "${recheck:-}" ] && grep -qxF -- "${dir#"$root"/}" "$recheck"; }; then
+				printf '%s\n' "$dir" >>"$list"
+			else
+				reported found "${dir#"$root"/}"
+			fi
 			[ $((folders % 20)) -ne 0 ] ||
 				logline "[listing] $folders folders with audio so far, $(wc -l <"$list" | tr -d ' ') without a report"
 		done
@@ -100,6 +126,7 @@ if [ "${1:-}" = "--calculate" ]; then
 			# stdout ends with `DR<x><TAB><artist><TAB><album>`; stderr lines are tracks that were skipped
 			last=$(printf '%s\n' "$out" | tail -n 1)
 			logline "[$n/$total] ${last%%	*}  $name	$(printf '%s' "$last" | cut -s -f 2-)"
+			reported measured "$name"
 		else
 			failed=$((failed + 1))
 			logline "[$n/$total] FAILED  $name	$(printf '%s' "$out" | tail -n 1)"

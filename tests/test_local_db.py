@@ -251,3 +251,61 @@ class Routes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SCRIPT = os.path.join(os.path.dirname(__file__), "..", "scripts", "omdrc-mpd-update-dr14.sh")
+
+
+class ScanReportsList(unittest.TestCase):
+    """The scan names every folder with a report, as it finds or writes it, so
+    the DR log reads them at once instead of after the whole scan."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = os.path.join(self.tmp.name, "music")
+        self.state = os.path.join(self.tmp.name, "state")
+        os.makedirs(self.state)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def folder(self, rel, files):
+        path = os.path.join(self.root, rel)
+        os.makedirs(path, exist_ok=True)
+        for name, data in files.items():
+            with open(os.path.join(path, name), "wb") as f:
+                f.write(data)
+
+    def test_copied_and_measured_folders_are_listed_and_a_failure_is_not(self):
+        import io
+        import math
+        import struct
+        import subprocess
+        import wave
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(44100)
+            w.writeframes(b"".join(struct.pack("<hh", v, v) for v in (
+                int(8000 * math.sin(i / 20) * (1 + (i // 22050) % 3)) for i in range(44100 * 8))))
+        self.folder("Copied In", {"1.flac": b"x", "dr14.txt": b"Official DR value: DR11\n"})
+        self.folder("New/Album", {"1.wav": buf.getvalue()})
+        self.folder("Disputed", {"1.wav": buf.getvalue(), "dr14.txt": b"Official DR value: DR1\n"})
+        self.folder("Broken", {"1.flac": b"not audio"})
+        with open(os.path.join(self.state, local_db.SCAN_RECHECK_FILE), "w") as f:
+            f.write("Disputed\n")
+        status = os.path.join(self.state, local_db.SCAN_STATUS_FILE)
+        subprocess.run(["sh", SCRIPT, "--calculate", self.root], check=True, timeout=300,
+                       env=dict(os.environ, OMDRC_SCAN_STATUS=status))
+        with open(os.path.join(self.state, local_db.SCAN_REPORTS_FILE)) as f:
+            listed = f.read().splitlines()
+        self.assertEqual(sorted(listed), ["found\tCopied In", "measured\tDisputed",
+                                          "measured\tNew/Album"])
+        self.assertEqual(listed[0], "found\tCopied In")   # found before anything is measured
+        self.assertTrue(os.path.exists(os.path.join(self.root, "New/Album", "dr14.txt")))
+        with open(os.path.join(self.root, "Disputed", "dr14.txt")) as f:
+            self.assertIn("omdrc drmeter", f.read())            # measured again, rewritten
+        self.assertEqual(sorted(os.listdir(self.state)),       # the recheck list was taken
+                         sorted([local_db.SCAN_STATUS_FILE, local_db.SCAN_LOG_FILE,
+                                 local_db.SCAN_REPORTS_FILE]))

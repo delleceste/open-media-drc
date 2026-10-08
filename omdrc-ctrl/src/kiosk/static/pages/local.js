@@ -19,7 +19,7 @@ P.mount = el => {
         h('p', {}, 'The local database is the music on this box that MPD has indexed. There is no second library: MPD’s own index is the database, and this page only tells omdrcctrl where the files are and when to refresh.'),
         h('p', {}, 'It is part of the Qobuz search. Albums in the collection that match what you type appear among the Qobuz results, marked ⌂, and play through the same MPD queue and player strip as a Qobuz album. The Source filter there can limit a search to the local collection only.'),
         h('p', {}, 'Next to ⌂ the album’s DR value is shown, for instance DR12. It is the album average from the dr14.txt report in its folder, read when you search. A folder with no report shows no DR yet.'),
-        h('p', {}, 'Rescan asks MPD to update its index, then calculates missing dr14.txt reports. The meter is built in. When the CUE option is checked, albums with one FLAC and one CUE are split into tagged track FLACs, verified against the original audio, and measured per track. The original FLAC is removed only after verification.'));
+        h('p', {}, 'Rescan asks MPD to update its index, then calculates missing dr14.txt reports, and measures again any report whose value disagrees with the one the DR log holds. The meter is built in. When the CUE option is checked, albums with one FLAC and one CUE are split into tagged track FLACs, verified against the original audio, and measured per track. The original FLAC is removed only after verification.'));
 
     P.confNote = h('p', { class: 'muted small' }, 'Read from music_directory in the MPD configuration; change it there.');
     const where = K.card('Where the music is', P.dirRow = h('div', {}), P.confNote, P.status);
