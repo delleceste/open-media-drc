@@ -73,11 +73,17 @@ def split(folder: Path, *, verify_only: bool = False) -> tuple[int, int, int | N
         raise SplitError("source FLAC and CUE must be regular files")
     if shutil.disk_usage(folder).free < source.stat().st_size * 2:
         raise SplitError("not enough free space to verify tracks while keeping the source")
-    # shnsplit accepts one source; reject a sheet referring to another file.
-    referenced = re.findall(r'^\s*FILE\s+"([^"]+)"\s+\S+',
+    # Some sheets retain the WAV name after the CD image was encoded as FLAC.
+    # The sole audio file and an exact matching stem make that alias unambiguous.
+    referenced = re.findall(r'^\s*FILE\s+"([^"]+)"\s+(\S+)',
                             cue.read_text(encoding="utf-8-sig", errors="replace"), re.I | re.M)
-    if referenced != [source.name]:
-        raise SplitError("CUE must reference exactly this FLAC")
+    direct = len(referenced) == 1 and referenced[0][0] == source.name
+    wav_alias = (len(referenced) == 1 and referenced[0][1].upper() == "WAVE" and
+                 referenced[0][0] == Path(referenced[0][0]).name and
+                 Path(referenced[0][0]).stem == source.stem and
+                 Path(referenced[0][0]).suffix.lower() == ".wav")
+    if not (direct or wav_alias):
+        raise SplitError("CUE must reference this FLAC or its same-name WAV image")
     track_modes = re.findall(r"^\s*TRACK\s+\d+\s+(\S+)",
                              cue.read_text(encoding="utf-8-sig", errors="replace"), re.I | re.M)
     if not track_modes or any(mode.upper() != "AUDIO" for mode in track_modes):

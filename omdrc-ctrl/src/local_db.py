@@ -268,29 +268,47 @@ def _readable(line: str, root: str) -> str:
 
 
 @lru_cache(maxsize=1024)
-def _cue_skip_level(line: str, root: str) -> str:
-    """Classify an existing CUE log entry without changing the album."""
+def _cue_skip_display(line: str, root: str) -> tuple[str, str]:
+    """Classify and explain an existing CUE log entry without changing the album."""
     if not line.startswith("[cue] skipped "):
-        return ""
+        return "", line
     folder, separator, reason = line[len("[cue] skipped "):].partition(
         ": CUE split failed; original retained: ")
     if not separator:
-        return "warn"
+        return "warn", line
     if "codec can't decode" in reason or "UnicodeDecodeError" in reason:
-        return "bad"
+        return "bad", line
     if reason == "folder needs one FLAC, one CUE and no other audio" and root:
         try:
-            with os.scandir(os.path.join(root, folder)) as entries:
-                if sum(entry.is_file() and entry.name.lower().endswith(".flac")
-                       for entry in entries) > 1:
-                    return "ok"
+            directory = os.path.join(root, folder)
+            with os.scandir(directory) as entries:
+                names = [entry.name for entry in entries if entry.is_file()]
+            flacs = [name for name in names if name.lower().endswith(".flac")]
+            cues = [name for name in names if name.lower().endswith(".cue")]
+            audio = [name for name in names if name.lower().endswith(AUDIO)]
+            if len(flacs) > 1 and len(cues) == 1 and len(audio) == len(flacs):
+                with open(os.path.join(directory, cues[0]), encoding="utf-8-sig", errors="replace") as f:
+                    cue = f.read()
+                references = re.findall(r'^\s*FILE\s+"([^"]+)"\s+\S+', cue, re.I | re.M)
+                flac_stems = {os.path.splitext(name)[0] for name in flacs}
+                reference_stems = {os.path.splitext(name)[0] for name in references}
+                if (len(flac_stems) == len(flacs) == len(reference_stems) == len(references)
+                        and flac_stems == reference_stems
+                        and all(name == os.path.basename(name) and
+                                os.path.splitext(name)[1].lower() in (".flac", ".wav")
+                                for name in references)):
+                    return "ok", f"[cue] skipped {folder}: already split into {len(flacs)} FLAC tracks; CUE matches"
+            if len(flacs) > 1:
+                return "warn", f"[cue] skipped {folder}: {len(flacs)} FLACs; CUE/track layout needs manual review"
+            if len(audio) == 1 and not flacs:
+                return "warn", f"[cue] skipped {folder}: single {os.path.splitext(audio[0])[1].upper().lstrip('.')} image; FLAC splitter cannot process it"
         except OSError:
             pass
     if reason in ("folder needs one FLAC, one CUE and no other audio",
                   "CUE must reference exactly this FLAC",
                   "CUE track count and breakpoints disagree"):
-        return "warn"
-    return "bad"
+        return "warn", line
+    return "bad", line
 
 
 def scan_log(state_dir: str, root: str = "", *, with_levels: bool = False):
@@ -314,9 +332,10 @@ def scan_log(state_dir: str, root: str = "", *, with_levels: bool = False):
         if not line.startswith("    "):                # a skipped track keeps its folder's place
             last_tag = tag
     rows = out[-LOG_LINES:]
-    readable = [_readable(line, root) for line in rows]
+    displays = [_cue_skip_display(line, root) for line in rows]
+    readable = [_readable(display, root) for _level, display in displays]
     if with_levels:
-        return readable, [_cue_skip_level(line, root) for line in rows]
+        return readable, [level for level, _display in displays]
     return readable
 
 

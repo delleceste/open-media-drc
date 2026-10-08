@@ -106,22 +106,30 @@ class Scan(unittest.TestCase):
     def test_cue_skip_levels_reflect_folder_layout_and_error(self):
         root = os.path.join(self.state, "music")
         for folder, files in (("tracks", ["01.flac", "02.flac", "album.cue"]),
-                              ("image", ["album.wv", "album.cue"])):
+                              ("image", ["album.wv", "album.cue"]),
+                              ("unmatched", ["01.flac", "02.flac", "album.cue"])):
             path = os.path.join(root, folder)
             os.makedirs(path)
             for name in files:
                 with open(os.path.join(path, name), "w"):
                     pass
+        with open(os.path.join(root, "tracks", "album.cue"), "w") as f:
+            f.write('FILE "01.wav" WAVE\n  TRACK 01 AUDIO\n'
+                    'FILE "02.wav" WAVE\n  TRACK 02 AUDIO\n')
         prefix = "CUE split failed; original retained: "
         with open(os.path.join(self.state, local_db.SCAN_LOG_FILE), "w") as f:
             f.write("[cue] skipped tracks: " + prefix + "folder needs one FLAC, one CUE and no other audio\n"
                     "[cue] skipped image: " + prefix + "folder needs one FLAC, one CUE and no other audio\n"
                     "[cue] skipped wav-name: " + prefix + "CUE must reference exactly this FLAC\n"
                     "[cue] skipped bom: " + prefix + "'utf-8' codec can't decode byte 0xef\n"
-                    "[cue] skipped single: " + prefix + "CUE track count and breakpoints disagree\n")
+                    "[cue] skipped single: " + prefix + "CUE track count and breakpoints disagree\n"
+                    "[cue] skipped unmatched: " + prefix + "folder needs one FLAC, one CUE and no other audio\n")
         lines, levels = local_db.scan_log(self.state, root, with_levels=True)
-        self.assertEqual(len(lines), 5)
-        self.assertEqual(levels, ["ok", "warn", "warn", "bad", "warn"])
+        self.assertEqual(len(lines), 6)
+        self.assertEqual(levels, ["ok", "warn", "warn", "bad", "warn", "warn"])
+        self.assertIn("already split into 2 FLAC tracks; CUE matches", lines[0])
+        self.assertIn("single WV image", lines[1])
+        self.assertIn("CUE/track layout needs manual review", lines[-1])
 
     def test_the_log_shows_each_folders_last_line_by_name(self):
         with open(os.path.join(self.state, local_db.SCAN_LOG_FILE), "w") as f:

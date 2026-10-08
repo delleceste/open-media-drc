@@ -70,3 +70,29 @@ class CueSplitTest(unittest.TestCase):
             with self.assertRaises(SPLIT.SplitError):
                 SPLIT.split(folder)
             self.assertEqual((folder / "album.flac").read_bytes(), b"original")
+
+    def test_same_name_wav_reference_can_verify_flac_without_changing_album(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            rate = 44100
+            samples = (12000 * np.sin(2 * np.pi * 440 * np.arange(rate * 8) / rate)).astype("<i2")
+            with wave.open(str(folder / "album.wav"), "wb") as output:
+                output.setnchannels(2)
+                output.setsampwidth(2)
+                output.setframerate(rate)
+                output.writeframes(np.column_stack((samples, samples)).astype("<i2").tobytes())
+            subprocess.run(["flac", "-s", "-o", str(folder / "album.flac"),
+                            str(folder / "album.wav")], check=True)
+            (folder / "album.wav").unlink()
+            cue = folder / "album.cue"
+            cue.write_text('PERFORMER "Test Artist"\nTITLE "Test Album"\n'
+                           'FILE "album.wav" WAVE\n'
+                           '  TRACK 01 AUDIO\n    TITLE "First"\n    INDEX 01 00:00:00\n'
+                           '  TRACK 02 AUDIO\n    TITLE "Second"\n    INDEX 01 00:04:00\n')
+            self.assertEqual(SPLIT.split(folder, verify_only=True), (0, 2, None))
+            self.assertTrue((folder / "album.flac").exists())
+            self.assertFalse(list(folder.glob(".omdrc-cue-split-*")))
+            cue.write_text(cue.read_text().replace('"album.wav"', '"other.wav"'))
+            with self.assertRaisesRegex(SPLIT.SplitError, "same-name WAV"):
+                SPLIT.split(folder, verify_only=True)
+            self.assertTrue((folder / "album.flac").exists())
