@@ -119,12 +119,19 @@ class AITest(unittest.TestCase):
                 "overview": "Two symphonies on one release.",
                 "compositions": [{"title": "Symphony No. 3", "text": "Historical context", "tracks": [1, 2]},
                                  {"title": "Symphony No. 4", "text": "Different work", "tracks": [3, 99]}],
-                "track_notes": [{"track": 2, "text": "Second movement"}, {"track": 99, "text": "Invalid"}]}}]}
+                "track_notes": [{"track": 2, "text": "Second movement"}, {"track": 99, "text": "Invalid"}],
+                "composers": [{"name": "Dmitri Shostakovich", "text": "Born in St Petersburg."},
+                              {"name": "", "text": "Nameless"}],
+                "performers": [{"name": "Orchestra", "text": "Founded in 1930."}]}}]}
         answer = ai.listening_research(self.root, {"title": "Shostakovich Symphonies", "artist": "Orchestra"},
                                        [{"title": "Symphony 3: I"}, {"title": "Symphony 3: II"},
                                         {"title": "Symphony 4: I"}], post=post)
         self.assertEqual(answer["compositions"][1]["tracks"], [3])
         self.assertEqual(answer["track_notes"], [{"track": 2, "text": "Second movement"}])
+        self.assertEqual(answer["composers"], [{"name": "Dmitri Shostakovich", "text": "Born in St Petersburg."}])
+        self.assertEqual(answer["performers"][0]["name"], "Orchestra")
+        self.assertIn("biography", calls[0]["messages"][0]["content"])
+        self.assertIn("composers", calls[1]["tools"][0]["input_schema"]["required"])
         self.assertEqual(answer["sources"][0]["url"], self.source["url"])
         self.assertEqual(len(calls), 2)
         self.assertNotIn("test-secret", json.dumps(calls))

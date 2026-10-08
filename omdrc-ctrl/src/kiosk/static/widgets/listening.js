@@ -17,7 +17,7 @@ const newJob = () => {
 const keyOf = t => t && (t.qobuz_album ? 'q:' + t.qobuz_album :
     'a:' + norm(t.album || t.title) + '|' + norm(t.artist) + '|' + norm(t.title));
 const STORAGE_KEY = 'omdrc.listening.v1';
-const CACHE_KEY = 'omdrc.listening.last-result.v1';
+const CACHE_KEY = 'omdrc.listening.last-result.v2';
 G.materialKey = (albumKey, tracks) => JSON.stringify({ albumKey, provider: G.provider, model: G.model,
     tracks: tracks.map(t => ({ title: t.title, work: t.work, composer: t.composer })) });
 G.cachedResult = (key, materialKey) => {
@@ -481,6 +481,8 @@ G.paint = () => {
     } : active || items[0];
     const content = h('div', { class: 'listening-content' },
         h('h2', {}, shown.title), ...String(shown.text || '').split(/\n\s*\n/).filter(Boolean).map(p => h('p', {}, p)));
+    if (shown === items[0]) [...(G.guide.composers || []), ...(G.guide.performers || [])].forEach(c => content.append(
+        h('h3', {}, c.name), ...String(c.text || '').split(/\n\s*\n/).filter(Boolean).map(p => h('p', {}, p))));
     if (G.guide.research_status) G.panel.append(h('p', { class: 'muted small', role: 'status' }, G.guide.research_status));
     G.panel.append(content);
     if (singleTrackSections && !G.selectedTrack && G.selected >= 0) {
