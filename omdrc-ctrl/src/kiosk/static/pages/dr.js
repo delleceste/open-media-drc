@@ -345,7 +345,7 @@ K.openDrAlbums = () => {
 
 document.addEventListener('visibilitychange', () => P.sync && P.el && P.sync());
 
-K.registerPage(P);
 K.registerPage(A);
 K.registerPage(R);
+K.registerPage(P);
 })();
