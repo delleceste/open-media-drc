@@ -8,9 +8,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Rect
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
@@ -18,7 +15,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.drawable.IconCompat
 import it.giacomos.omdrc.app.data.ArtFetch
 import it.giacomos.omdrc.app.data.NowFetch
 import it.giacomos.omdrc.app.data.NowState
@@ -33,7 +29,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
-import kotlin.math.roundToInt
 
 private const val TAG = "OmdrcWidget"
 
@@ -52,7 +47,7 @@ private const val TAG = "OmdrcWidget"
  *
  * Either way the notification shows what's playing - the cover or the
  * film's poster, the track - and expanded, the format and the DRC in use;
- * the status bar shows the cover itself, as a small monochrome icon.
+ * the status bar shows the app's note, the launcher icon's "d".
  * Android requires a foreground service to show it the whole time; its Close
  * action stops the service and every other background request of the app
  * until the app is opened again (see AppPrefs.closed).
@@ -74,8 +69,6 @@ class LiveStatusService : Service() {
     private var musicArt: Bitmap? = null
     private var videoArtKey: String? = null
     private var videoArt: Bitmap? = null
-    private var musicIcon: Bitmap? = null
-    private var videoIcon: Bitmap? = null
 
     // What the box was last seen doing, and since when: the idle stop.
     private var activity = Activity.UNKNOWN
@@ -247,7 +240,6 @@ class LiveStatusService : Service() {
             if (art !is ArtFetch.Failed) {
                 musicArtKey = now.music.art
                 musicArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }
-                musicIcon = musicArt?.let { statusIcon(it) }
                 widgetArt = art
             }
         }
@@ -257,7 +249,6 @@ class LiveStatusService : Service() {
             if (art !is ArtFetch.Failed) {
                 videoArtKey = videoKey
                 videoArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }
-                videoIcon = videoArt?.let { statusIcon(it) }
             }
         }
         observe(snapshot.reachable || now != null, now, snapshot)
@@ -283,7 +274,6 @@ class LiveStatusService : Service() {
         val collapsed: String
         val expanded: String
         var icon: Bitmap? = null
-        var statusIcon: Bitmap? = null
         when {
             now?.video != null -> {
                 val video = now.video
@@ -299,7 +289,6 @@ class LiveStatusService : Service() {
                     drcLine(now.drc),
                 ).filter { it.isNotEmpty() }.joinToString("\n")
                 icon = videoArt
-                statusIcon = videoIcon
             }
             now != null -> {
                 val music = now.music
@@ -314,10 +303,7 @@ class LiveStatusService : Service() {
                         .filter { it.isNotEmpty() }.joinToString(" · "),
                     drcLine(now.drc),
                 ).filter { it.isNotEmpty() }.joinToString("\n")
-                if (music.title.isNotEmpty() || music.line1.isNotEmpty()) {
-                    icon = musicArt
-                    statusIcon = musicIcon
-                }
+                icon = if (music.title.isNotEmpty() || music.line1.isNotEmpty()) musicArt else null
             }
             snapshot != null -> {
                 val (t, c) = StatusNotifier.collapsedText(this, snapshot)
@@ -356,10 +342,7 @@ class LiveStatusService : Service() {
         )
 
         return NotificationCompat.Builder(this, StatusNotifier.LIVE_CHANNEL_ID)
-            .apply {
-                if (statusIcon != null) setSmallIcon(IconCompat.createWithBitmap(statusIcon))
-                else setSmallIcon(R.drawable.ic_notification)
-            }
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(collapsed)
             .setLargeIcon(icon)
@@ -407,48 +390,6 @@ class LiveStatusService : Service() {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
-    /** The cover as a status-bar icon: the system draws only its alpha, in
-     *  the bar's own colour, so the cover's brightness becomes the alpha -
-     *  stretched between its 5th and 95th percentiles so a dark or a pale
-     *  cover still shows its shapes. A cover with no contrast to speak of
-     *  would be a plain square: null, and the app's glyph is shown. */
-    private fun statusIcon(art: Bitmap): Bitmap? {
-        val px = (STATUS_ICON_DP * resources.displayMetrics.density).roundToInt()
-        val side = minOf(art.width, art.height)
-        val square = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
-        Canvas(square).drawBitmap(
-            art,
-            Rect((art.width - side) / 2, (art.height - side) / 2, (art.width + side) / 2, (art.height + side) / 2),
-            Rect(0, 0, px, px),
-            Paint(Paint.FILTER_BITMAP_FLAG),
-        )
-        val pixels = IntArray(px * px)
-        square.getPixels(pixels, 0, px, 0, 0, px, px)
-        val luma = IntArray(pixels.size) {
-            val c = pixels[it]
-            (299 * (c shr 16 and 0xff) + 587 * (c shr 8 and 0xff) + 114 * (c and 0xff)) / 1000
-        }
-        val histogram = IntArray(256)
-        luma.forEach { histogram[it]++ }
-        fun percentile(p: Int): Int {
-            var count = 0
-            for (v in 0..255) {
-                count += histogram[v]
-                if (count * 100 >= luma.size * p) return v
-            }
-            return 255
-        }
-        val lo = percentile(5)
-        val hi = percentile(95)
-        if (hi - lo < MIN_ICON_CONTRAST) return null
-        for (i in pixels.indices) {
-            val a = ((luma[i] - lo) * 255 / (hi - lo)).coerceIn(0, 255)
-            pixels[i] = (a shl 24) or 0xffffff
-        }
-        square.setPixels(pixels, 0, px, 0, 0, px, px)
-        return square
-    }
-
     private fun startForegroundCompat(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -485,8 +426,6 @@ class LiveStatusService : Service() {
         private const val FALLBACK_POLL_MS = 5000L
         private const val RETRY_MS = 15000L
         private const val ICON_PX = 256
-        private const val STATUS_ICON_DP = 24
-        private const val MIN_ICON_CONTRAST = 24
         private const val STOPPED_GRACE_MS = 30 * 1000L
         private const val PAUSE_TIMEOUT_MS = 15 * 60 * 1000L
         private const val UNREACHABLE_GRACE_MS = 60 * 1000L

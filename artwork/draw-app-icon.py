@@ -13,25 +13,27 @@ to its own shape (a circle on a Pixel, a squircle or rounded square elsewhere):
               circle, the part every mask keeps
   monochrome  the same in one colour, for Android 13+ themed icons
 
+The note alone is also the status-bar icon (ic_notification): Android draws that
+from its alpha in the bar's colour, so it is one white silhouette, 24 x 24 dp.
+
 Writes the app's drawables, SVG copies, the Google Play icon (512 px, full square:
 Play masks it) and a sheet previewing the icon under a circle and a squircle at
 192, 96 and 48 px, and themed:
 
   android/omdrc-app/app/src/main/res/drawable/ic_launcher_{background,foreground,monochrome}.xml
+  android/omdrc-app/app/src/main/res/drawable/ic_notification.xml
   artwork/app-icon/{background,foreground,monochrome,icon}.svg
   artwork/app-icon/playstore-512.png, artwork/app-icon/preview.png
 
     python3 artwork/draw-app-icon.py     (needs fontTools -- pip install fonttools --
                                           and, for the PNGs, rsvg-convert and magick)
+    python3 artwork/draw-app-icon.py --notification    (the status-bar icon alone:
+                                          the note needs no font, nor anything else)
 """
 import math
 import os
 import subprocess
-
-from fontTools.pens.boundsPen import BoundsPen
-from fontTools.pens.svgPathPen import SVGPathPen
-from fontTools.pens.transformPen import TransformPen
-from fontTools.ttLib import TTFont
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "app-icon")
@@ -49,17 +51,18 @@ MONO = "#000000"
 SLANT = math.tan(math.radians(12))   # the italic's angle
 
 
-def note_d():
+def note_d(stem=52):
     """The note that stands for the d, in the d's font units (y up): a head in the
-    d's bowl, a stem rising well above the letters, an eighth-note flag -- slanted
-    with the italic.  Each shape a closed polygon."""
+    d's bowl, a stem `stem` wide rising well above the letters, an eighth-note
+    flag -- slanted with the italic.  Each shape a closed polygon."""
     cx, cy, rx, ry, tilt = 232, 150, 232, 160, math.radians(22)
     head = []
     for i in range(64):
         a = 2 * math.pi * i / 64
         x, y = rx * math.cos(a), ry * math.sin(a)
         head.append((cx + x * math.cos(tilt) - y * math.sin(tilt), cy + x * math.sin(tilt) + y * math.cos(tilt)))
-    top, sx0, sx1 = 1180, 418, 470
+    top, sx1 = 1180, 470
+    sx0 = sx1 - stem
     stem = [(sx0, 190), (sx1, 225), (sx1, top), (sx0, top)]
     # the flag, full enough for the tall stem: out and down along an outer curve,
     # back up along an inner one, the body between them thick at its middle
@@ -73,9 +76,50 @@ def note_d():
     return [[(x + y * SLANT, y) for x, y in shape] for shape in (head, stem, flag)]
 
 
+NOTE_DP = 24                     # the status-bar icon's side
+NOTE_MARGIN = 1.5                # the system's own icons keep about this much clear
+NOTE_STEM = 100                  # at 24 dp the launcher's stem would be a hairline
+
+
+def counterclockwise(shape):
+    """The shape wound one way: overlapping shapes then add up under the
+    nonzero rule, instead of cutting each other where they cross."""
+    area = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(shape, shape[1:] + shape[:1]))
+    return shape if area > 0 else shape[::-1]
+
+
+def notification_icon():
+    """ic_notification: the note, centred and as tall as the margin allows."""
+    note = [counterclockwise(shape) for shape in note_d(NOTE_STEM)]
+    xs = [x for shape in note for x, _ in shape]
+    ys = [y for shape in note for _, y in shape]
+    s = (NOTE_DP - 2 * NOTE_MARGIN) / max(max(xs) - min(xs), max(ys) - min(ys))
+    ox = NOTE_DP / 2 - s * (min(xs) + max(xs)) / 2
+    oy = NOTE_DP / 2 + s * (min(ys) + max(ys)) / 2
+    path = " ".join("M " + " L ".join(f"{ox + s * x:.2f} {oy - s * y:.2f}" for x, y in shape) + " Z"
+                    for shape in note)
+    return (HEADER + '<!-- The status-bar icon: the launcher icon\'s note, one white silhouette\n'
+            '     (the system tints it). -->\n'
+            '<vector xmlns:android="http://schemas.android.com/apk/res/android"\n'
+            f'    android:width="{NOTE_DP}dp" android:height="{NOTE_DP}dp"\n'
+            f'    android:viewportWidth="{NOTE_DP}" android:viewportHeight="{NOTE_DP}">\n'
+            f'    <path android:fillColor="#FFFFFF" android:pathData="{path}"/>\n</vector>\n')
+
+
+def write_notification_icon():
+    with open(os.path.join(RES, "ic_notification.xml"), "w", encoding="utf-8") as f:
+        f.write(notification_icon())
+    print("wrote ic_notification.xml")
+
+
 def mark():
     """[(SVG path data, colour)] in the 108-unit layer: the letters and the note,
     centred and scaled to stay inside the safe circle."""
+    from fontTools.pens.boundsPen import BoundsPen
+    from fontTools.pens.svgPathPen import SVGPathPen
+    from fontTools.pens.transformPen import TransformPen
+    from fontTools.ttLib import TTFont
+
     font = TTFont(WORD_FONT)
     glyphs, cmap = font.getGlyphSet(), font.getBestCmap()
     placed, x = [], 0
@@ -161,6 +205,9 @@ def vector_mark(shapes, mono=None):
 
 
 def main():
+    write_notification_icon()
+    if "--notification" in sys.argv[1:]:
+        return
     os.makedirs(OUT, exist_ok=True)
     shapes = mark()
     files = {

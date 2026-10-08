@@ -1532,14 +1532,14 @@ than polling. A box without `/now` is polled every 5 s instead.
 **The notification.** It shows the track, or the film, with its cover or
 poster; expanded, it adds the format, the renderer and the DRC in use. Its
 actions are **Levels** (the PiP meters) and **Close app**. The status bar shows
-the cover itself as a small icon. Android draws status-bar icons from their
-alpha channel only, in the bar's own colour, so the app turns the cover's
-brightness into alpha: light areas are drawn and dark areas are left
-transparent. The brightness range is stretched between the cover's 5th and
-95th percentiles, so dark or pale covers still show their shapes. A cover with
-almost no contrast would be a plain square, so the app's own ring glyph is used
-instead, as it is when nothing is loaded. Covers with bold graphics or
-lettering are recognisable at that size; busy photographs are much less so.
+the note from the launcher icon (the "d" of *omdrc*). Android draws
+status-bar icons as a single-colour silhouette in the bar's own colour, so the
+icon is monochrome. Because the service runs only while there is music (see
+below), the note in the status bar means that the box is playing or paused.
+A cover reduced to a 24 dp silhouette was tried first and was unreadable. The
+icon is generated with the launcher icon by `artwork/draw-app-icon.py`
+(`--notification` writes it alone), with a thicker stem so that it stays
+visible at that size.
 
 The notification uses the channel *DRC live updates* with **default
 importance and no sound or vibration**. A low-importance channel is a
