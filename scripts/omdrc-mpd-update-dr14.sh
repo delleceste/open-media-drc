@@ -45,7 +45,7 @@ if [ "${1:-}" = "--calculate" ]; then
 		while IFS= read -r dir; do
 			folders=$((folders + 1))
 			[ -f "$dir/dr14.txt" ] || printf '%s\n' "$dir" >>"$list"
-			[ $((folders % 100)) -ne 0 ] ||
+			[ $((folders % 20)) -ne 0 ] ||
 				logline "[listing] $folders folders with audio so far, $(wc -l <"$list" | tr -d ' ') without a report"
 		done
 		logline "[listing] $folders folders with audio, $(wc -l <"$list" | tr -d ' ') without a report"
