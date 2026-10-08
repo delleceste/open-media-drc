@@ -2,7 +2,10 @@
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "omdrc-ctrl", "src"))
 
@@ -132,6 +135,27 @@ class DriveKeys(unittest.TestCase):
                          os.path.join(os.path.realpath(self.disk), "musica", "Roxy Music - Avalon"))
         self.assertIsNone(self.a.volumes.folder("vol:" + "0" * 36 + ":x"))
         self.assertIsNone(self.a.volumes.folder(self.key().rsplit(":", 1)[0] + ":../x"))
+
+    def test_threads_racing_on_a_new_drive_agree_on_its_id(self):
+        # a fusefs whose exclusive create is not exclusive: every writer wins
+        real_open = open
+
+        def loose_open(path, mode="r", *args, **kwargs):
+            if mode == "x":
+                time.sleep(0.05)
+                mode = "w"
+            return real_open(path, mode, *args, **kwargs)
+
+        volumes = Drives(self.disk)
+        keys = []
+        with mock.patch("builtins.open", loose_open):
+            threads = [threading.Thread(target=lambda: keys.append(volumes.key(self.music_b)))
+                       for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertEqual(set(keys), {self.key().rsplit(":", 1)[0] + ":musica"})
 
     def test_the_signature_changes_when_a_drive_comes(self):
         before = dr_volumes.signature(self.music_a)

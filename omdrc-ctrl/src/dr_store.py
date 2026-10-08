@@ -658,23 +658,27 @@ class DrStore:
                 moves[old] = new
         if not moves:
             return 0
-        fill = ", ".join(f"{k} = CASE WHEN {k} IS NULL OR {k} = '' THEN "
-                         f"(SELECT {k} FROM album WHERE key = :old) ELSE {k} END" for k in _META)
         with self._lock, self._connect() as db:
             for old, new in moves.items():
-                # a track already known under the new key was heard since: it stays
-                db.execute("UPDATE OR IGNORE track SET album_key = ? WHERE album_key = ?", (new, old))
-                db.execute("DELETE FROM track WHERE album_key = ?", (old,))
-                if db.execute("SELECT 1 FROM album WHERE key = ?", (new,)).fetchone() is None:
-                    db.execute("UPDATE album SET key = ? WHERE key = ?", (new, old))
-                    continue
-                names = {"old": old, "new": new}
-                db.execute(f"UPDATE album SET {fill} WHERE key = :new", names)
-                db.execute("""UPDATE album SET (report_dr, report_tracks, report_mtime, report_origin) =
-                                  (SELECT report_dr, report_tracks, report_mtime, report_origin
-                                   FROM album WHERE key = :old)
-                              WHERE key = :new AND (report_dr IS NULL OR report_origin != '')
-                                AND (SELECT report_dr FROM album WHERE key = :old) IS NOT NULL""",
-                           names)
-                db.execute("DELETE FROM album WHERE key = ?", (old,))
+                self._move(db, old, new)
         return len(moves)
+
+    @staticmethod
+    def _move(db, old: str, new: str) -> None:
+        """Give album `old` the key `new`, merged into what is known there."""
+        # a track already known under the new key was heard since: it stays
+        db.execute("UPDATE OR IGNORE track SET album_key = ? WHERE album_key = ?", (new, old))
+        db.execute("DELETE FROM track WHERE album_key = ?", (old,))
+        if db.execute("SELECT 1 FROM album WHERE key = ?", (new,)).fetchone() is None:
+            db.execute("UPDATE album SET key = ? WHERE key = ?", (new, old))
+            return
+        names = {"old": old, "new": new}
+        fill = ", ".join(f"{k} = CASE WHEN {k} IS NULL OR {k} = '' THEN "
+                         f"(SELECT {k} FROM album WHERE key = :old) ELSE {k} END" for k in _META)
+        db.execute(f"UPDATE album SET {fill} WHERE key = :new", names)
+        db.execute("""UPDATE album SET (report_dr, report_tracks, report_mtime, report_origin) =
+                          (SELECT report_dr, report_tracks, report_mtime, report_origin
+                           FROM album WHERE key = :old)
+                      WHERE key = :new AND (report_dr IS NULL OR report_origin != '')
+                        AND (SELECT report_dr FROM album WHERE key = :old) IS NOT NULL""", names)
+        db.execute("DELETE FROM album WHERE key = ?", (old,))

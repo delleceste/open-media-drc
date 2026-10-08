@@ -40,6 +40,7 @@ class Volumes:
     def __init__(self, create: bool = True) -> None:
         self.create = create
         self._lock = threading.Lock()
+        self._writing = threading.Lock()
         self._by_dev: dict[int, tuple[str, str | None, float]] = {}
         self._by_id: dict[str, str] = {}
 
@@ -62,20 +63,26 @@ class Volumes:
         return vid if _ID_RE.match(vid) else None
 
     def _read(self, mount: str) -> str | None:
-        """The drive's id, writing a marker on a drive that has none yet."""
-        vid = self._marker(mount)
-        marker = os.path.join(mount, MARKER)
-        if vid or not self.create or mount == os.sep or os.path.lexists(marker):
-            return vid
-        vid = str(uuid.uuid4())
-        try:
-            with open(marker, "x", encoding="ascii") as f:
-                f.write(vid + "\n")
-        except FileExistsError:
+        """The drive's id, writing a marker on a drive that has none yet.
+
+        One thread at a time: two writing their own ids at once would each
+        believe theirs (an exclusive create is not atomic on every fusefs).
+        What is on the drive afterwards is the id, whoever wrote it."""
+        with self._writing:
+            vid = self._marker(mount)
+            marker = os.path.join(mount, MARKER)
+            if vid or not self.create or mount == os.sep or os.path.lexists(marker):
+                return vid
+            try:
+                with open(marker, "x", encoding="ascii") as f:
+                    f.write(str(uuid.uuid4()) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+            except FileExistsError:
+                pass
+            except OSError:
+                return None
             return self._marker(mount)
-        except OSError:
-            return None
-        return vid
 
     def volume(self, path: str) -> tuple[str, str] | None:
         """(mount, volume id) of the drive holding `path`, None without a marker."""
