@@ -102,6 +102,18 @@ class Store(unittest.TestCase):
         self.assertEqual(self.store.import_reports(root)["removed"], 1)
         self.assertIsNone(self.store.album("local:Artist/Album"))
 
+    def test_a_disk_linked_into_the_library_is_imported(self):
+        disk = os.path.join(self.tmp.name, "disk", "Roxy Music - Avalon")
+        os.makedirs(disk)
+        with open(os.path.join(disk, "dr14.txt"), "w") as f:
+            f.write("Official DR value: DR13\n")
+        root = os.path.join(self.tmp.name, "music")
+        os.makedirs(root)
+        os.symlink(os.path.join(self.tmp.name, "disk"), os.path.join(root, "USBHD2"))
+        self.store.import_reports(root, describe=lambda rel: {})
+        album = self.store.album("local:USBHD2/Roxy Music - Avalon")   # MPD's path, through the link
+        self.assertEqual(album["dr"]["dr"], 13)
+
     def test_an_untagged_rip_is_named_from_its_folder(self):
         folder = os.path.join(self.tmp.name, "music", "Rock", "The Band - Stage Fright (1970)")
         os.makedirs(folder)

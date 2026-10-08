@@ -24,13 +24,15 @@ if [ "${1:-}" = "--calculate" ]; then
 		[ -f "$d/drmeter.py" ] && { drmeter=$d/drmeter.py; break; }
 	done
 	[ -n "$drmeter" ] || { status "done $(date +%s) 0"; exit 0; }
-	reports() { find "$root" -type f -name dr14.txt | wc -l; }
+	# -L: a disk linked into the library (USBHD2 -> /media/...) is part of
+	# it, as MPD sees it; find reports a link loop instead of following it.
+	reports() { find -L "$root" -type f -name dr14.txt | wc -l; }
 	before=$(reports)
 
 	# The folders with audio but no report, so progress can be shown as n of total.
 	list=$(mktemp "${TMPDIR:-/tmp}/omdrc-dr14.XXXXXX") || exit 1
 	trap 'rm -f "$list"' EXIT
-	find "$root" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' \
+	find -L "$root" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' \
 		-o -iname '*.opus' -o -iname '*.wav' -o -iname '*.m4a' -o -iname '*.ape' \
 		-o -iname '*.wv' -o -iname '*.aiff' -o -iname '*.aif' \) -print |
 	while IFS= read -r file; do dirname "$file"; done | sort -u |

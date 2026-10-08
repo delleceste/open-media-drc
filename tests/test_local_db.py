@@ -56,6 +56,16 @@ class Scan(unittest.TestCase):
         got = local_db._count(self.state)
         self.assertEqual((got["folders"], got["reports"]), (2, 1))
 
+    def test_a_disk_linked_into_the_library_is_counted(self):
+        disk = tempfile.TemporaryDirectory()
+        self.addCleanup(disk.cleanup)
+        os.makedirs(os.path.join(disk.name, "Album"))
+        for name in ("x.flac", "dr14.txt"):
+            open(os.path.join(disk.name, "Album", name), "w").close()
+        os.symlink(disk.name, os.path.join(self.state, "USBHD2"))
+        got = local_db._count(self.state)
+        self.assertEqual((got["folders"], got["reports"]), (1, 1))
+
 
 class Routes(unittest.TestCase):
     def setUp(self):

@@ -36,7 +36,8 @@ def host() -> str:
 
 def _count(path: str) -> dict:
     folders = reports = seen = 0
-    for _root, _dirs, files in os.walk(path):
+    # followlinks: a disk linked into the library counts like any folder
+    for _root, _dirs, files in os.walk(path, followlinks=True):
         seen += 1
         if seen > COUNT_LIMIT:
             break

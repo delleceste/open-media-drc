@@ -510,7 +510,9 @@ class DrStore:
             known = {r["ref"]: r["report_mtime"] for r in db.execute(
                 "SELECT ref, report_mtime FROM album WHERE source = 'local'")}
         seen, added, changed, folders = set(), 0, 0, 0
-        for folder, _dirs, files in os.walk(root):
+        # followlinks: a disk linked into the library (USBHD2 -> /media/...) is
+        # part of the collection like any folder; `limit` bounds a link loop.
+        for folder, _dirs, files in os.walk(root, followlinks=True):
             folders += 1
             if folders > limit:
                 break
