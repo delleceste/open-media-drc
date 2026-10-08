@@ -46,6 +46,14 @@ set(GEOMETRIES   "flat"                    CACHE STRING "Extra filter sets to in
 set(MUSIC_DIR    "/media/USBHD2/musica"    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR    "/media/USBHD2/video"     CACHE PATH   "Video library root (omdrcvideo)")
 
+# DR log sharing between boxes (commands.conf [dr_sync]).  Rendered into the
+# installed commands.conf, so a reinstall keeps it.  Blank repo = no sharing.
+# The service user still needs git credentials (gh auth login, or an SSH
+# deploy key); see the manual, "Setting up the private repository".
+# DR_SYNC_BOX must differ on every box; blank = the host name.
+set(DR_SYNC_REPO "" CACHE STRING "Git URL of the private DR log repository")
+set(DR_SYNC_BOX  "" CACHE STRING "This box's name in the shared DR log")
+
 # upmpdcli / Qobuz.  The streaming password is NOT stored here.  Blank disables.
 set(QOBUZ_USER   ""                        CACHE STRING "Qobuz account username")
 set(FRIENDLY_NAME ""                       CACHE STRING "UPnP renderer name (blank = hostname)")

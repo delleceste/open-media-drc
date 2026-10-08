@@ -85,6 +85,19 @@ string(REPLACE "@AUDIO_HOME@" "${OMDRCCTRL_AUDIO_HOME}" _cc "${_cc}")
 # The CD capture source's rate, from the top-level project, so the button
 # never claims a rate the chain would not actually be built at.
 string(REPLACE "@CDIN_RATE@" "${CDIN_RATE}" _cc "${_cc}")
+# [dr_sync]: from host.cmake, so a reinstall does not switch sharing off.
+if(DR_SYNC_REPO)
+    set(_dr_repo_line "repo = ${DR_SYNC_REPO}")
+else()
+    set(_dr_repo_line "# repo = https://github.com/<you>/omdrc-dr-log.git")
+endif()
+if(DR_SYNC_BOX)
+    set(_dr_box_line "box = ${DR_SYNC_BOX}")
+else()
+    set(_dr_box_line "# box = home")
+endif()
+string(REPLACE "@DR_SYNC_REPO_LINE@" "${_dr_repo_line}" _cc "${_cc}")
+string(REPLACE "@DR_SYNC_BOX_LINE@"  "${_dr_box_line}"  _cc "${_cc}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/commands.conf" "${_cc}")
 
 if(OMDRCCTRL_SERVICE_MANAGER STREQUAL "systemd")

@@ -202,7 +202,8 @@ git clone --recursive https://github.com/delleceste/open-media-drc ~/DRC/open-me
 cd ~/DRC/open-media-drc
 cp host.cmake.sample host.cmake   # AUDIO_USER, GEOMETRY, GEOMETRIES,
 $EDITOR host.cmake                #   OMDRC_SITE_DATA_DIRS, MUSIC_DIR,
-                                  #   VIDEO_DIR, OMDB_API_KEY
+                                  #   VIDEO_DIR, OMDB_API_KEY,
+                                  #   DR_SYNC_REPO, DR_SYNC_BOX
 mkdir build && cd build
 cmake .. -C ../host.cmake
 make
@@ -2535,7 +2536,8 @@ neither Qobuz nor local are keyed by artist and album tags.
 #### Sharing between boxes
 
 Boxes that cannot reach each other (home and office) share the log through a
-git repository both can reach, configured in `[dr_sync]` of `commands.conf`:
+git repository both can reach, configured by `DR_SYNC_REPO` and
+`DR_SYNC_BOX` in `host.cmake` (rendered into `[dr_sync]` of `commands.conf`):
 `repo` (e.g. a private GitHub repository), `box` (this box's name, default
 the host name) and `interval_minutes` (default 10). Each box commits only its
 own file, `boxes/<box>.jsonl` (its own tracks, album names and local
@@ -2601,8 +2603,17 @@ belong to *that* user, not to root or to your login.
    An empty answer on a new repository is correct; a password prompt
    or an error means step 2 is not finished.
 
-4. **Configure the box** in `commands.conf`
-   (`/usr/local/etc/omdrcctrl/commands.conf` under FreeBSD):
+4. **Configure the box in `host.cmake`**, then install:
+
+   ```
+   set(DR_SYNC_REPO "https://github.com/<you>/omdrc-dr-log.git" CACHE STRING "")
+   set(DR_SYNC_BOX  "home" CACHE STRING "")
+   ```
+
+   CMake renders these into the installed `commands.conf`, so every
+   reinstall keeps sharing on (`commands.conf` itself is overwritten by each
+   install; edits made only there are lost). Use a fresh build directory
+   when adding them to an existing build. The rendered result is:
 
    ```
    [dr_sync]

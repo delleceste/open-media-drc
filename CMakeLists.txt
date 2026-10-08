@@ -42,6 +42,9 @@ set(OMDRC_STATE_DIR "${AUDIO_HOME}/.local/state/omdrc" CACHE PATH
 # 44.1 kHz because Red Book says so.  Rendered into both omdrc.conf and the
 # panel's button label so the two cannot drift apart.
 set(CDIN_RATE   "44100" CACHE STRING "Sample rate of the CD / S-PDIF input")
+# DR log sharing (commands.conf [dr_sync]); host.cmake sets them per box.
+set(DR_SYNC_REPO "" CACHE STRING "Git URL of the private DR log repository")
+set(DR_SYNC_BOX  "" CACHE STRING "This box's name in the shared DR log")
 set(MUSIC_DIR     ""                    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR     ""                    CACHE PATH   "Video library root (omdrcvideo)")
 set(QOBUZ_USER    ""                    CACHE STRING "Qobuz account username for upmpdcli (blank disables)")

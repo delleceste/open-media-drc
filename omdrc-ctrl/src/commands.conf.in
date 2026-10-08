@@ -82,13 +82,14 @@ dsp_gauge_settle_count = 10
 # first (HTTPS: `gh auth login` and `gh auth setup-git`, or a token in
 # ~/.git-credentials; SSH: a deploy key with write access).
 [dr_sync]
+# Set DR_SYNC_REPO and DR_SYNC_BOX in host.cmake (kept on reinstall).
 # Nothing to clone by hand: the panel clones the repo into <state dir>/dr-sync
 # (state dir: $OMDRC_STATE_DIR, else ~/.local/state/omdrc of the service user)
 # and uses that user's git credentials (gh auth login / ~/.ssh).
-# repo = https://github.com/<you>/omdrc-dr-log.git
+@DR_SYNC_REPO_LINE@
 # This box's name in the shared log (letters, digits, - and _); default: the
 # host name.  Give every box a different one.
-# box = home
+@DR_SYNC_BOX_LINE@
 interval_minutes = 10
 
 # -- Dynamic Range database -------------------------------------------------
