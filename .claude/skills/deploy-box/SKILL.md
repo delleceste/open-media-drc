@@ -13,9 +13,12 @@ under `/usr/local`, restart the omdrc services). Nothing else on the system.
 
 | host | OS | role | `DR_SYNC_BOX` | service manager |
 |------|----|------|---------------|-----------------|
-| dal  | FreeBSD | office | `dal`  | rc.d (`service omdrcctrl ...`) |
-| bee  | FreeBSD | home   | `bee`  | rc.d |
-| arki | Linux   | home   | `arki` | systemd (`systemctl ... omdrcctrl`) |
+| dal  | FreeBSD 15 | office | `dal`  | rc.d (`service omdrcctrl ...`) |
+| bee  | FreeBSD 15 | home   | `bee`  | rc.d |
+| arki | Arch Linux | home   | `arki` | systemd (`systemctl ... omdrcctrl`) |
+
+bee and dal are the same FreeBSD 15 setup. arki is Arch (pacman; packages
+may differ from Debian-style names).
 
 `DR_SYNC_REPO` is `https://github.com/delleceste/omdrc-dr-log.git` on all of them.
 
