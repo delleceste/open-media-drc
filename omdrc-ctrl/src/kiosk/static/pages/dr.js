@@ -83,7 +83,7 @@ A.mount = el => {
     A.rankChips = h('div', { class: 'btn-row drrank-chips' });
     A.rankList = h('div', { class: 'drrank' });
     A.rankFoot = h('div', { class: 'muted small' });
-    A.browse = h('div', {}, A.rankQ, A.rankChips, A.rankList, A.rankFoot);
+    A.browse = h('div', { class: 'drrank-browse' }, A.rankQ, A.rankChips, A.rankList, A.rankFoot);
     A.detail = h('div', { class: 'dr-detail-page', hidden: true });
     el.append(K.card('Albums by dynamic range', A.browse, A.detail,
         K.cardOpts({ actions: h('button', { class: 'btn', type: 'button', title: 'Read the local collection’s dr14.txt files again', onclick: () => A.rankImport() }, 'Rescan dr14.txt') })));
@@ -393,7 +393,13 @@ A.openAlbum = async a => {
         const d = await K.api(`/dr/library/album?key=${encodeURIComponent(a.key)}`);
         if (seq !== A.detailSeq || A.detail.hidden) return;
         const reportRows = d.ok && d.album ? d.album.report_track_rows || [] : [];
-        K.clear(list).append(...(reportRows.length ? reportRows.map(A.reportRow)
+        const fileCount = d.ok && d.album ? d.album.report_tracks : null;
+        const songCount = d.ok && d.album ? d.album.track_count : null;
+        const note = reportRows.length && fileCount && songCount && songCount > fileCount
+            ? h('p', { class: 'muted small' },
+                `dr14.txt measured ${fileCount} audio file${fileCount === 1 ? '' : 's'}, while this album has ${songCount} indexed songs. Separate song DR values are not in the report.`)
+            : null;
+        K.clear(list).append(...(note ? [note] : []), ...(reportRows.length ? reportRows.map(A.reportRow)
             : [h('p', { class: 'muted' }, d.ok
                 ? 'This dr14.txt has an album value but no per-song DR rows.'
                 : d.error || 'Could not read the track values from dr14.txt.') ]));
