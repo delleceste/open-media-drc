@@ -28,7 +28,9 @@ P.mount = el => {
     P.logCard = K.card('Scan log', P.logEl);
     P.logCard.hidden = true;
     P.activity = h('div', { class: 'local-activity' });
-    P.activityCard = K.card('Scan activity', P.activity);
+    P.activityCard = K.card('Scan activity',
+        h('p', { class: 'muted small' }, 'Scanner manages the folders; DR meter measures the current album; Decoder (ffmpeg) reads the current track.'),
+        P.activity);
     P.activityCard.hidden = true;
     el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, where, rescan, P.logCard, P.activityCard), h('div', { class: 'col' }, about)));
     P.poll = new K.Poller(P.refresh, 4000);
