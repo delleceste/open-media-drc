@@ -18,6 +18,14 @@ const albumCover = (image, source, key, cls) => {
     return h('img', { class: cls, src, alt: '', loading: 'lazy',
         onerror: e => e.target.replaceWith(h('span', { class: cls }, '♪')) });
 };
+const detailParent = ({ image, source, key, title, lines, dr, back, backLabel }) =>
+    h('button', { class: 'dr-detail-album dr-detail-parent', type: 'button',
+        'aria-label': backLabel, onclick: back },
+        h('span', { class: 'dr-detail-return', 'aria-hidden': 'true' }, '‹'),
+        albumCover(image, source, key, 'dr-detail-cover'),
+        h('span', { class: 'dr-detail-title' }, h('strong', {}, title || 'Album'),
+            lines.map(line => h('span', { class: 'muted small' }, line))),
+        K.drLogBadge(dr, 'big') || h('span', { class: 'drlog none' }, '—'));
 
 const P = { id: 'dr', label: 'DR Configure', title: 'Configure', menuGroup: 'Dynamic range', on: false, sub: null, job: null, jobTimer: null,
     log: null, logTimer: null };
@@ -132,13 +140,9 @@ R.openGroup = group => {
         a.number !== null && b.number !== null ? a.number - b.number : b.at - a.at);
     R.savedScroll = R.body ? R.body.scrollTop : 0;
     K.clear(R.detail).append(
-        h('button', { class: 'btn dr-detail-back', type: 'button', onclick: R.back }, '‹ Back'),
-        h('div', { class: 'dr-detail-album' },
-            albumCover(t.image, t.source, t.album_key, 'dr-detail-cover'),
-            h('div', { class: 'dr-detail-title' }, h('strong', {}, t.album_title || 'Album'),
-                h('span', { class: 'muted small' }, t.artist || ''),
-                h('span', { class: 'muted small' }, `${tracks.length} saved track${tracks.length === 1 ? '' : 's'} in this period`)),
-            K.drLogBadge(dr, 'big') || h('span', { class: 'drlog none' }, '—')),
+        detailParent({ image: t.image, source: t.source, key: t.album_key,
+            title: t.album_title, lines: [t.artist || '', `${tracks.length} saved track${tracks.length === 1 ? '' : 's'} in this period`],
+            dr, back: R.back, backLabel: 'Back to recent DR albums' }),
         h('div', { class: 'drrecent' }, tracks.map(R.trackRow)));
     R.browse.hidden = true;
     R.detail.hidden = false;
@@ -378,13 +382,9 @@ A.openAlbum = async a => {
         : a.tracks.length ? a.tracks.map(A.trackRow) : [h('p', { class: 'muted' }, 'No saved track measurements.')];
     const list = h('div', { class: 'drrecent' }, rows);
     K.clear(A.detail).append(
-        h('button', { class: 'btn dr-detail-back', type: 'button', onclick: A.back }, '‹ Back'),
-        h('div', { class: 'dr-detail-album' },
-            albumCover(a.image, a.source, a.key, 'dr-detail-cover'),
-            h('div', { class: 'dr-detail-title' }, h('strong', {}, a.title || 'Album'),
-                h('span', { class: 'muted small' }, [a.artist, a.year, a.label].filter(Boolean).join(' · ')),
-                h('span', { class: 'muted small' }, K.dr.basisText(a.dr))),
-            K.drLogBadge(a.dr, 'big')),
+        detailParent({ image: a.image, source: a.source, key: a.key, title: a.title,
+            lines: [[a.artist, a.year, a.label].filter(Boolean).join(' · '), K.dr.basisText(a.dr)],
+            dr: a.dr, back: A.back, backLabel: 'Back to albums by DR' }),
         list);
     A.browse.hidden = true;
     A.detail.hidden = false;

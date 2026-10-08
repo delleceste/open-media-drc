@@ -48,7 +48,9 @@ vm.runInNewContext(fs.readFileSync('omdrc-ctrl/src/kiosk/static/pages/dr.js', 'u
     R.list.kids[0].attrs.onclick();
     assert.equal(R.browse.hidden, true);
     assert.equal(R.detail.hidden, false);
-    assert.equal(R.detail.kids[2].kids.length, 2, 'album child list contains both tracks');
+    assert.equal(R.detail.kids[0].tag, 'button', 'album header is the back target');
+    assert.equal(R.detail.kids[0].kids[0].kids[0], '‹');
+    assert.equal(R.detail.kids[1].kids.length, 2, 'album child list contains both tracks');
     R.detail.kids[0].attrs.onclick();
     assert.equal(R.browse.hidden, false);
 
@@ -57,12 +59,14 @@ vm.runInNewContext(fs.readFileSync('omdrc-ctrl/src/kiosk/static/pages/dr.js', 'u
     const albumButton = A.rankList.kids[0].kids[0].kids[1];
     albumButton.attrs.onclick();
     assert.equal(A.browse.hidden, true);
-    assert.equal(A.detail.kids[2].kids.length, 2);
+    assert.equal(A.detail.kids[0].tag, 'button');
+    assert.equal(A.detail.kids[0].kids[0].kids[0], '‹');
+    assert.equal(A.detail.kids[1].kids.length, 2);
     A.detail.kids[0].attrs.onclick();
     assert.equal(A.browse.hidden, false);
     const reportButton = A.rankList.kids[1].kids[0].kids[1];
     await reportButton.attrs.onclick();
-    assert.match(A.detail.kids[2].kids[0].kids[0], /Separate song DR values are not in the report/);
-    assert.equal(A.detail.kids[2].kids[1].kids[1].kids[0].kids[0], '1. Reported Song');
+    assert.match(A.detail.kids[1].kids[0].kids[0], /Separate song DR values are not in the report/);
+    assert.equal(A.detail.kids[1].kids[1].kids[1].kids[0].kids[0], '1. Reported Song');
     console.log('PASS: recent DR groups albums, leaves singles, and both DR lists drill down and back');
 })().catch(e => { console.error(e); process.exitCode = 1; });
