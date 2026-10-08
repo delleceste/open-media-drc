@@ -57,6 +57,12 @@ sector-aligned UDF parsing + AACS), which is the only thing that works here.
 > AACS decrypted via `~/.config/aacs/KEYDB.cfg`). This whole song-and-dance is
 > only for *physical* discs.
 
+> **Decryption:** `KEYDB.cfg` only covers discs someone has submitted to
+> FindVUK, and some drives reject libaacs's revoked host certificate. On Linux
+> the launchers switch libbluray to MakeMKV's `libmmbd` when it is installed;
+> its beta key must be renewed periodically. See
+> [**BLURAY-DECRYPTION.md**](BLURAY-DECRYPTION.md), also for doing the same in Kodi.
+
 ## The slow-drive fix: gcache read-ahead
 
 The USB BD drive sustains ~9.5 MB/s **only when read in ~1 MB chunks**. libbluray
@@ -246,4 +252,5 @@ video/
     mpv.conf                vo=gpu+opengl, large cache/read buffer, IPC socket
     input.conf              e / E cycle Blu-ray titles (editions)
   AV-SYNC-DELAY.md          theory + code behind the DRC video-delay figure
+  BLURAY-DECRYPTION.md      libaacs + KEYDB.cfg vs MakeMKV libmmbd; beta key renewal; Kodi
 ```

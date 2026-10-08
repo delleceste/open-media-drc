@@ -36,6 +36,7 @@ Isolate with `ao=null`: if drops vanish, it is the audio clock.
    Check the mpv log for `has been revoked by your drive`. If so, try MakeMKV's
    `libmmbd` with `LIBAACS_PATH` / `LIBBDPLUS_PATH` as above (needs the MakeMKV
    port and `sg`-style access to the drive: on FreeBSD that is `pass(4)`).
+   Background, the beta-key renewal and Kodi: `BLURAY-DECRYPTION.md`.
 4. **Cache.** `mpv/mpv.conf` already carries the large-read and read-ahead
    settings; compare with the values above.
 

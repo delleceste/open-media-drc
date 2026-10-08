@@ -163,6 +163,11 @@ validated and installed with mode `0600` for the video service user. If there
 was an earlier file it is kept as `KEYDB.cfg.previous`; an invalid upload leaves
 the installed file unchanged.
 
+`KEYDB.cfg` is not the whole story: it only covers discs submitted to FindVUK,
+and some drives reject libaacs's host certificate. On Linux with MakeMKV
+installed the players decrypt through `libmmbd` instead, and this check does
+not yet inspect it or its beta key. See `../BLURAY-DECRYPTION.md`.
+
 The **i** button beside **Idle mpv** explains its graphical-session setup:
 install from the top-level CMake build, run the `user-install` target as the
 audio user, and start `mpv-idle.sh` from that user's desktop session if needed.

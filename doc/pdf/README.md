@@ -54,13 +54,14 @@ OS's material entirely. Part I never depends on Part II or III and only
 
 **Part II --- Linux**: 10 installation and lifecycle (packages, /etc files,
 MPD drop-in, udev/systemd hotplug, `snd-aloop`, audio roles, browser ALSA,
-the panel on Linux); 11 CD input with `alsaloop`.
+the panel on Linux); 11 CD input with `alsaloop`; 12 Blu-ray decryption
+with MakeMKV (`libmmbd` for mpv and Kodi, beta-key renewal).
 
-**Part III --- FreeBSD**: 12 installation (packages, rc.conf, network);
-13 services, device roles and lifecycle (rc.d/devd, locks); 14 OSS audio
-stack, panel, glitch detection, bit-perfect on FreeBSD, browsers; 15 video;
-16 CD input with `omdrc-cdin` (incl. the ESI traps); 17 known issues;
-18 kernel/userland patches; 19 port plan and image.
+**Part III --- FreeBSD**: 13 installation (packages, rc.conf, network);
+14 services, device roles and lifecycle (rc.d/devd, locks); 15 OSS audio
+stack, panel, glitch detection, bit-perfect on FreeBSD, browsers; 16 video;
+17 CD input with `omdrc-cdin` (incl. the ESI traps); 18 known issues;
+19 kernel/userland patches; 20 port plan and image.
 
 **Appendices** --- A: bit-perfect test assets and cross-OS comparison;
 B: source-document index (split Common / Linux / FreeBSD) and the update

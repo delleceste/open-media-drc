@@ -2803,8 +2803,8 @@ Linux); the FreeBSD `sudoers` grant the button needs is in section
 
 Everything a Linux (Arch) host needs beyond Part I: packages, systemd and
 udev integration, the `snd-aloop` loopback, ALSA audio roles, browser audio,
-the panel's Linux behaviour and the CD bridge. **On FreeBSD, skip to Part
-III**; nothing in Part I depends on this part.
+the panel's Linux behaviour, the CD bridge and Blu-ray decryption with
+MakeMKV. **On FreeBSD, skip to Part III**; nothing in Part I depends on this part.
 
 \newpage
 
@@ -3114,6 +3114,169 @@ spelling and actually pins the loopback's `hw_ptr` to the DAC rate, and
 whether `--sync=playshift` finds the shift control on real hardware (the
 supervisor logs a warning naming the control if not; `--sync=samplerate` is
 the documented fallback).
+
+
+\newpage
+
+# Linux: Blu-ray decryption with MakeMKV {#sec:linux-bd-decrypt}
+
+The video launchers and the web remote are described for FreeBSD in section
+\ref{sec:video}; on Linux the same scripts run with the ALSA settings of
+`video/lib/drc-audio.sh` and the tuning recorded in
+`video/BLURAY-PLAYBACK-TUNING.md`. This chapter covers the one part that
+differs in kind: how encrypted Blu-rays are decrypted, and the maintenance
+that choice brings.
+
+## libbluray, libaacs and KEYDB.cfg
+
+A commercial Blu-ray is AACS-encrypted, and some titles add BD+. Neither mpv
+nor Kodi decrypts anything itself: both read discs through **libbluray**,
+which loads the decryption code at runtime as two plugin libraries.
+
+| Plugin | Job | Stock library | Overridden by |
+|---|---|---|---|
+| AACS | drive authentication, disc keys, title decryption | `libaacs` | `LIBAACS_PATH` |
+| BD+ | BD+ fix-ups on some titles | `libbdplus` | `LIBBDPLUS_PATH` |
+
+The two variables name the library libbluray opens (`libmmbd` is enough; the
+loader finds `libmmbd.so.0`). They are read by **libbluray**, not by the
+player, so they act the same way on mpv, Kodi and `bd_list_titles`.
+
+With the stock plugins, decryption depends on `~/.config/aacs/KEYDB.cfg`, the
+FindVUK key database, which the web remote's **Blu-ray check** helps install.
+On this setup that is not enough, for two independent reasons:
+
+1. **Bus encryption: the drive rejects libaacs's host certificate.** Before
+   the drive releases the disc's volume ID, the host must authenticate with an
+   AACS host certificate. The certificates libaacs can use are public and
+   revoked, and a drive with a recent firmware MKB refuses them. mpv logs
+   `Host key / Certificate ... has been revoked by your drive` and the picture
+   stays black **even when `KEYDB.cfg` holds the disc's key**. This is what
+   happened on 2026-10-06 with the Samsung SE-506CB USB drive on the Linux box.
+2. **Key coverage: `KEYDB.cfg` only knows discs that someone has submitted.**
+   For a recent disc there is no public processing key for its MKB version, so
+   libaacs needs that disc's own VUK in the file. A title missing from FindVUK
+   does not decrypt, however fresh the download. Example: *Pink Floyd ---
+   Pulse* on Blu-ray is not in the current database.
+
+## Why MakeMKV, and why it is required here
+
+MakeMKV ships **`libmmbd`**, which exports the libaacs and libbdplus
+interfaces, so libbluray can load it in place of either. Behind those it runs
+MakeMKV's own engine (`makemkvcon`): it authenticates to the drive in a way
+current firmware accepts, and it derives the disc keys itself instead of
+looking them up in `KEYDB.cfg`. It also covers BD+.
+
+For **physical discs on this drive** MakeMKV is therefore required, not a
+convenience: without it, reason 1 blocks every AACS disc, and even on a drive
+that accepted the libaacs certificate, reason 2 would block every disc missing
+from FindVUK. The costs, accepted deliberately:
+
+* MakeMKV is proprietary; the Linux build is free while "in beta", but only
+  with a **beta key that expires** (section \ref{sec:makemkv-key}).
+* `libmmbd` needs raw SCSI access to the drive (`/dev/sg*`): the player's
+  account must be in the group that owns it (normally `optical` or `cdrom`).
+* Decryption depends on a closed binary that has to be kept current.
+
+`KEYDB.cfg` keeps its role on a box without MakeMKV: libbluray then loads the
+stock libaacs and the key file, as before.
+
+## How mpv is told to use libmmbd
+
+`video/lib/drc-audio.sh` is sourced by all three mpv launchers
+(`play-bluray.sh`, `play-media.sh`, `webremote/mpv-idle.sh`) before mpv
+starts. It exports:
+
+```sh
+if $IS_LINUX && [ -z "${LIBAACS_PATH:-}" ] && [ -e /usr/lib/libmmbd.so.0 ]; then
+    export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd
+fi
+```
+
+* **Linux only** --- FreeBSD keeps the stock environment until MakeMKV is
+  tested there (section \ref{sec:video}).
+* **Only when MakeMKV is installed** --- `/usr/lib/libmmbd.so.0` is where the
+  Arch `makemkv` package puts it. Without it, nothing changes.
+* **Never over an explicit choice** --- a `LIBAACS_PATH` already set is kept,
+  so `LIBAACS_PATH=libaacs play-bluray.sh` still tests the stock path.
+
+The idle mpv inherits the variables when it starts, so a disc started from
+the web remote is decrypted by `libmmbd` too. Restart the idle mpv after
+installing MakeMKV.
+
+## How to tell Kodi to use libmmbd
+
+Kodi reads discs through the same libbluray, so the same two variables switch
+it to `libmmbd`. **The install does not set them for Kodi yet**: the panel
+launches it as plain `kodi` (`omdrc-ctrl/src/commands.conf.in`, section
+`[kodi]`), so Kodi still uses stock libaacs and `KEYDB.cfg`, with both limits
+above --- for physical discs and for Blu-ray folders or ISOs on disk alike.
+Give Kodi the variables in one of these ways:
+
+* **Panel launcher (preferred).** Change the `[kodi]` entry to
+  `cmd = env LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd kodi`.
+* **Whole Plasma session.** Put
+  `export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd` in
+  `~/.config/plasma-workspace/env/makemkv.sh` of the desktop user, then log
+  out and in. Every program started in the session inherits it, including
+  Kodi started from the application menu.
+* **systemd unit**, if Kodi runs as a service:
+  `Environment=LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd`.
+
+Avoid the common recipe of replacing `libaacs.so.0` and `libbdplus.so.0`
+with symlinks to `libmmbd.so.0`: it changes every program on the box, and a
+package update silently undoes it. To confirm that Kodi uses MakeMKV, play a
+disc missing from `KEYDB.cfg` (*Pulse*, for example); only `libmmbd` can play
+it.
+
+## Renewing the MakeMKV beta key {#sec:makemkv-key}
+
+The free Linux MakeMKV works only with a **beta registration key**, and each
+key carries an expiry date, typically a month or two ahead. When it expires,
+`makemkvcon` refuses to work, `libmmbd` returns no keys and **every Blu-ray
+stops playing again**, with the same black screen or AACS error as without
+MakeMKV. Nothing on the box renews the key automatically.
+
+The current key is published by the MakeMKV author in the forum thread
+*"MakeMKV is free while in beta"*
+(<https://forum.makemkv.com/forum/viewtopic.php?t=1053>). The post states
+the date until which it is valid; a new key appears before the old one
+expires.
+
+The key belongs to **the account that runs the player**, because `libmmbd`
+reads that account's MakeMKV settings: on these boxes, the desktop user who
+runs the idle mpv and Kodi (the same account whose `KEYDB.cfg` the web remote
+checks). Install a new key either:
+
+* from the MakeMKV GUI, as that user: **Help -> Register**, paste the key; or
+* by editing that user's `~/.MakeMKV/settings.conf` (create it if missing):
+  `app_Key = "T-..."` with the key from the forum.
+
+As the same user, `makemkvcon -r info disc:9999` prints MakeMKV's version and
+registration state among its first messages; an expired key or a release
+that is too old is reported there.
+
+MakeMKV releases also age out: an old build can refuse to run until it is
+updated, independently of the key. If a new key does not help, update the
+package (Arch: `makemkv` from the AUR).
+
+**Routine maintenance, roughly monthly:**
+
+1. Check the expiry date of the installed key (forum post or `makemkvcon`).
+2. Before it expires, install the new key for the player's account.
+3. Update MakeMKV when a release ages out.
+
+A purchased MakeMKV licence makes the registration permanent and removes
+step 2; step 3 still applies.
+
+## Known gap: the Blu-ray check
+
+The web remote's **Blu-ray check** inspects `KEYDB.cfg` and the stock
+libraries only. It does not know about `libmmbd` or the beta key: on a
+MakeMKV box it may warn about an old `KEYDB.cfg` that no longer matters, and
+it does not warn when the beta key is about to expire.
+
+Source: `video/BLURAY-DECRYPTION.md`.
 
 
 \newpage
@@ -4130,7 +4293,9 @@ system sndiod was already running.
 
 # FreeBSD: video --- mpv playback and the phone web remote {#sec:video}
 
-Video is documented for FreeBSD only (`video/README.md`).
+Video is documented here for FreeBSD (`video/README.md`). The scripts are the
+same on Linux; Blu-ray decryption with MakeMKV, which is Linux-only today, is
+in section \ref{sec:linux-bd-decrypt}.
 
 ![Video playback and control paths.](build/chain-video.pdf){width=92%}
 
@@ -4203,6 +4368,13 @@ update path.
   gcache. Kodi's internal player cannot do it.
 * Kodi's OSS sink does not enumerate cuse userspace devices at all --- the
   in-tree Kodi patch fixes that (section \ref{sec:kodi-patch}).
+* Decryption on FreeBSD is still stock libaacs + `~/.config/aacs/KEYDB.cfg`,
+  with both of its limits: discs missing from FindVUK do not decrypt, and a
+  drive that rejects libaacs's revoked host certificate reads no AACS disc
+  at all (mpv log: `has been revoked by your drive`). The MakeMKV route of
+  section \ref{sec:linux-bd-decrypt} is untested here: it would need a
+  FreeBSD build of `makemkvcon`/`libmmbd`, `pass(4)` access to the drive and
+  the same periodic beta-key renewal (section \ref{sec:makemkv-key}).
 
 
 \newpage
@@ -5185,6 +5357,7 @@ CMake build, grouped by the same split as the manual itself.
 |---|---|
 | Browser ALSA management | `browser-nodrc/README.md`, `cmake/browser-alsa-linux.cmake` |
 | CD / S-PDIF bridge (alsaloop) | `doc/CDIN-LINUX.md` |
+| Blu-ray decryption (MakeMKV `libmmbd`, beta key, Kodi) | `video/BLURAY-DECRYPTION.md`, `video/BLURAY-PLAYBACK-TUNING.md` |
 | Service and module glue | `etc/systemd/`, `etc/modules-load.d/`, `etc/modprobe.d/` |
 
 **FreeBSD (Part III)**
@@ -5245,6 +5418,7 @@ Terms in alphabetical order. **OS** shows where the term applies: *both*,
 | Term | OS | Meaning | See |
 |---|---|---|---|
 | **alsaloop** | Linux | `alsa-utils` tool that bridges the CD capture card into `snd-aloop`, correcting drift with the rate-shift control | \ref{sec:cdin-linux} |
+| **AACS** | both | Blu-ray encryption; decrypted by libbluray's plugin, stock `libaacs` or MakeMKV's `libmmbd` | \ref{sec:linux-bd-decrypt} |
 | **analysis file** | both | Precomputed response traces of a design (`analysis/<design>.json`), shown only when the bundle verifies | \ref{sec:provenance}, \ref{sec:live-installs} |
 | **attenuation** | both | Per-config BruteFIR gain reduction that prevents clipping where a filter has gain above 0 dB; computed by `headroom_calc.py` | \ref{sec:usage} |
 | **bit-perfect** | both | The DAC receives the source bytes unchanged: no resampling, volume, dither or format conversion | \ref{sec:bitperfect}, \ref{sec:fbsd-verify} |
@@ -5271,9 +5445,11 @@ Terms in alphabetical order. **OS** shows where the term applies: *both*,
 | **glitch detection** | FreeBSD | Monitor, USB tap and analyzer that classify dropouts | \ref{sec:fbsd-glitch} |
 | **`host.cmake`** | both | Initial CMake cache holding every box-specific value; read only by `-C` on a fresh build directory | \ref{sec:install} |
 | **hotplug** | both | Reacting to DAC plug/unplug: udev + systemd (Linux), devd + rc.d (FreeBSD) | \ref{sec:linux-hotplug}, \ref{sec:fbsd-inventory} |
+| **`KEYDB.cfg`** | both | FindVUK key database read by stock `libaacs`; covers only submitted discs | \ref{sec:linux-bd-decrypt}, \ref{sec:video} |
 | **known-device list** | both | Cards previously applied to a role; drives automatic DAC swapping | \ref{sec:known-dac-policy} |
 | **lead** | FreeBSD | Audio buffered ahead of the output: drift margin, startup delay and transport lag at once | \ref{sec:cdin-freebsd} |
 | **loopback** | both | Device MPD writes and BruteFIR reads: `snd-aloop` (Linux), `virtual_oss` (FreeBSD) | \ref{sec:linux-aloop}, \ref{sec:fbsd-audio} |
+| **MakeMKV / `libmmbd`** | Linux | Proprietary Blu-ray engine; `libmmbd` replaces `libaacs`/`libbdplus` via `LIBAACS_PATH`/`LIBBDPLUS_PATH`; needs a periodically renewed beta key | \ref{sec:linux-bd-decrypt}, \ref{sec:makemkv-key} |
 | **manifest** | both | JSON of hashes and metadata for a design; written last as the commit marker | \ref{sec:provenance} |
 | **MPD / `musicpd`** | both | The player; `mpd` on Linux, `musicpd` on FreeBSD | \ref{sec:mpd-outputs}, \ref{sec:fbsd-packages} |
 | **MPD outputs** | both | `OKTO-DAC` (direct), `DRC-native`, `DRC-resamp` | \ref{sec:mpd-outputs} |
