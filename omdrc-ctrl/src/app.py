@@ -5492,11 +5492,34 @@ def dr_library():
     return jsonify({"ok": True, **answer, "import": imported})
 
 
+def _dr_local_album_folder(album: dict | None) -> Path | None:
+    """Find a local album beneath MPD's library, including linked disks."""
+    root_name = _resolve_mpd_music_directory()
+    if not album or album["source"] != "local" or album["origin"] or not album["ref"] or not root_name:
+        return None
+    relative = Path(album["ref"])
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    folder = (Path(root_name).resolve() / relative).resolve()
+    return folder if folder.is_dir() else None
+
+
 @app.route("/dr/library/album")
 def dr_library_album():
     album = _DR_STORE.album(request.args.get("key", ""))
     if album is None:
         return jsonify({"ok": False, "error": "unknown album"}), 404
+    album["report_track_rows"] = []
+    if album["report_dr"] is not None:
+        folder = _dr_local_album_folder(album)
+        if folder:
+            path = folder / dr_store.REPORT
+            try:
+                if path.resolve().is_relative_to(folder) and path.is_file():
+                    with open(path, encoding="utf-8", errors="replace") as report:
+                        album["report_track_rows"] = dr_store.parse_report_track_rows(report.read(1_000_000))
+            except OSError:
+                pass
     return jsonify({"ok": True, "album": album})
 
 
@@ -5518,14 +5541,8 @@ def dr_library_art():
     """A local album's cover, restricted to its MPD music folder."""
     key = request.args.get("key", "")
     album = _DR_STORE.album(key) if key.startswith("local:") else None
-    root_name = _resolve_mpd_music_directory()
-    if not album or album["source"] != "local" or album["origin"] or not album["ref"] or not root_name:
-        return "", 404
-    relative = Path(album["ref"])
-    if relative.is_absolute() or ".." in relative.parts:
-        return "", 404
-    folder = (Path(root_name).resolve() / relative).resolve()
-    if not folder.is_dir():
+    folder = _dr_local_album_folder(album)
+    if not folder:
         return "", 404
     for directory in (folder, folder / "Covers"):
         if not directory.resolve().is_relative_to(folder) or not directory.is_dir():

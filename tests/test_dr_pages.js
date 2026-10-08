@@ -16,9 +16,12 @@ const track = (album_key, number, title, at) => ({ album_key, number, title, at,
 const recent = { ok: true, count: 3, summaries: { 'local:a': summary }, tracks: [
     track('local:a', 2, 'Avalon', 3), track('local:b', 1, 'Only song', 2), track('local:a', 1, 'More Than This', 1),
 ] };
-const ranked = { ok: true, count: 1, totals: {}, import: {}, albums: [{
+const ranked = { ok: true, count: 2, totals: {}, import: {}, albums: [{
     key: 'local:a', title: 'Avalon', artist: 'Roxy Music', image: '', source: 'local', ref: 'a',
-    dr: summary, tracks: recent.tracks.filter(t => t.album_key === 'local:a'),
+    report_dr: null, dr: summary, tracks: recent.tracks.filter(t => t.album_key === 'local:a'),
+}, {
+    key: 'local:report', title: 'Report album', artist: 'Artist', image: '', source: 'local', ref: 'report',
+    report_dr: 12, dr: { dr: 12, kind: 'exact', basis: 'report', origins: [] }, tracks: [],
 }] };
 const K = {
     pages: [], h, clear: el => { el.kids = []; return el; },
@@ -26,7 +29,10 @@ const K = {
     card: (_title, ...kids) => h('section', {}, ...kids), cardOpts: () => null,
     dr: { color: () => ({ bg: '#fff', fg: '#000' }), basisText: () => 'estimate' },
     drLogBadge: value => value?.dr ? h('badge', {}, `DR${value.dr}`) : null,
-    api: async url => url.startsWith('/dr/library/recent') ? recent : ranked,
+    api: async url => url.startsWith('/dr/library/recent') ? recent
+        : url.startsWith('/dr/library/album') ? { ok: true, album: { report_track_rows: [
+            { number: 1, title: 'Reported Song', dr: 12 },
+        ] } } : ranked,
 };
 vm.runInNewContext(fs.readFileSync('omdrc-ctrl/src/kiosk/static/pages/dr.js', 'utf8'), {
     K, document: { addEventListener() {} }, URLSearchParams, Date, Math,
@@ -54,5 +60,8 @@ vm.runInNewContext(fs.readFileSync('omdrc-ctrl/src/kiosk/static/pages/dr.js', 'u
     assert.equal(A.detail.kids[2].kids.length, 2);
     A.detail.kids[0].attrs.onclick();
     assert.equal(A.browse.hidden, false);
+    const reportButton = A.rankList.kids[1].kids[0].kids[1];
+    await reportButton.attrs.onclick();
+    assert.equal(A.detail.kids[2].kids[0].kids[1].kids[0].kids[0], '1. Reported Song');
     console.log('PASS: recent DR groups albums, leaves singles, and both DR lists drill down and back');
 })().catch(e => { console.error(e); process.exitCode = 1; });

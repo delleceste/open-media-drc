@@ -155,6 +155,13 @@ class Store(unittest.TestCase):
                          {"dr": 7, "tracks": 10})
         self.assertEqual(dr_store.parse_report("DR = 14"), {"dr": 14, "tracks": None})
         self.assertIsNone(dr_store.parse_report("nothing"))
+        rows = dr_store.parse_report_track_rows(
+            "DR     Peak       RMS       Duration  Track\n"
+            "DR13  -0.00 dB  -18.48 dB  17:08  02-02 - Dogs.flac\n"
+            "DR10  -1.20 dB  -15.10 dB  04:31  03-Sheep.wav\n"
+            "Official DR value: DR12\n")
+        self.assertEqual(rows, [{"number": 1, "title": "Dogs", "dr": 13},
+                                {"number": 2, "title": "Sheep", "dr": 10}])
 
 
 class Migration(unittest.TestCase):

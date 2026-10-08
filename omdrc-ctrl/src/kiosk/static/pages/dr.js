@@ -350,6 +350,7 @@ A.rankLoad = async () => {
 };
 
 A.back = () => {
+    A.detailSeq = (A.detailSeq || 0) + 1;
     A.detail.hidden = true;
     A.browse.hidden = false;
     if (A.body) A.body.scrollTop = A.savedScroll || 0;
@@ -361,10 +362,21 @@ A.trackRow = t => h('div', { class: 'drrecent-row' },
     h('span', { class: 'drrecent-body' },
         h('strong', {}, `${t.number ? t.number + '. ' : ''}${t.title || t.track_key}`),
         h('span', { class: 'muted small' }, `${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}${t.origin ? ` · ${t.origin}` : ''}`)));
-A.openAlbum = a => {
+A.reportRow = t => {
+    const color = K.dr.color(t.dr);
+    return h('div', { class: 'drrecent-row' },
+        h('span', { class: 'drlog', style: { background: color.bg, color: color.fg } }, `DR${t.dr}`),
+        h('span', { class: 'drrecent-body' },
+            h('strong', {}, `${t.number}. ${t.title}`),
+            h('span', { class: 'muted small' }, 'from dr14.txt')));
+};
+A.openAlbum = async a => {
     A.savedScroll = A.body ? A.body.scrollTop : 0;
-    const rows = a.tracks.length ? a.tracks.map(A.trackRow)
-        : [h('div', { class: 'muted small' }, a.report_dr !== null ? 'Album value from dr14.txt; no track heard here yet.' : 'No tracks.')];
+    const report = a.source === 'local' && !a.origin && a.report_dr !== null;
+    const seq = A.detailSeq = (A.detailSeq || 0) + 1;
+    const rows = report ? [h('p', { class: 'muted' }, 'Reading per-song DR from dr14.txt…')]
+        : a.tracks.length ? a.tracks.map(A.trackRow) : [h('p', { class: 'muted' }, 'No saved track measurements.')];
+    const list = h('div', { class: 'drrecent' }, rows);
     K.clear(A.detail).append(
         h('button', { class: 'btn dr-detail-back', type: 'button', onclick: A.back }, '‹ Back'),
         h('div', { class: 'dr-detail-album' },
@@ -373,10 +385,19 @@ A.openAlbum = a => {
                 h('span', { class: 'muted small' }, [a.artist, a.year, a.label].filter(Boolean).join(' · ')),
                 h('span', { class: 'muted small' }, K.dr.basisText(a.dr))),
             K.drLogBadge(a.dr, 'big')),
-        h('div', { class: 'drrecent' }, rows));
+        list);
     A.browse.hidden = true;
     A.detail.hidden = false;
     if (A.body) A.body.scrollTop = 0;
+    if (report) {
+        const d = await K.api(`/dr/library/album?key=${encodeURIComponent(a.key)}`);
+        if (seq !== A.detailSeq || A.detail.hidden) return;
+        const reportRows = d.ok && d.album ? d.album.report_track_rows || [] : [];
+        K.clear(list).append(...(reportRows.length ? reportRows.map(A.reportRow)
+            : [h('p', { class: 'muted' }, d.ok
+                ? 'This dr14.txt has an album value but no per-song DR rows.'
+                : d.error || 'Could not read the track values from dr14.txt.') ]));
+    }
 };
 A.rankRow = (a, n) => {
     const sub = [a.artist, a.year, a.label].filter(Boolean).join(' · ');

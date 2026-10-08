@@ -158,6 +158,7 @@ def summary(album: dict, tracks: list[dict]) -> dict:
 
 _ALBUM_RE = re.compile(r"(?:Official DR value:\s*DR|^\s*DR\s*=\s*)(\d+)", re.I | re.M)
 _TRACKS_RE = re.compile(r"Number of tracks:\s*(\d+)", re.I)
+_REPORT_ROW_RE = re.compile(r"^\s*DR\s*(\d{1,2})\s+.*?\s+\d{1,3}(?::\d{2}){1,2}\s+(.+?)\s*$", re.I)
 
 
 def parse_report(text: str) -> dict | None:
@@ -168,6 +169,22 @@ def parse_report(text: str) -> dict | None:
         return None
     tracks = _TRACKS_RE.search(text)
     return {"dr": int(values[-1]), "tracks": int(tracks.group(1)) if tracks else None}
+
+
+def parse_report_track_rows(text: str) -> list[dict]:
+    """Per-song DR figures in the table of an omdrc, dr14_tmeter or foobar report."""
+    rows = []
+    for line in text.splitlines():
+        match = _REPORT_ROW_RE.match(line)
+        if not match:
+            continue
+        raw = match.group(2).strip()
+        name = re.sub(r"^\d{1,3}\s*[-.]\s*", "", raw, count=1)
+        name = os.path.splitext(name)[0]
+        name = re.sub(r"^\d{1,3}\s*[-.]\s*", "", name, count=1)
+        rows.append({"number": len(rows) + 1, "title": name or raw,
+                     "dr": int(match.group(1))})
+    return rows
 
 
 def audio_files(folder: str) -> int:

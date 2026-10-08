@@ -86,12 +86,18 @@ class KioskTests(unittest.TestCase):
             covers = root / "album" / "Covers"
             covers.mkdir(parents=True)
             (covers / "1.jpg").write_bytes(b"cover")
-            album = {"source": "local", "origin": "", "ref": "album"}
+            (root / "album" / "dr14.txt").write_text(
+                "DR     Peak       RMS       Duration  Track\n"
+                "DR12  -0.20 dB  -15.00 dB  04:31  01-First Song.flac\n"
+                "Official DR value: DR12\n")
+            album = {"source": "local", "origin": "", "ref": "album", "report_dr": 12}
             with patch.object(APP._DR_STORE, "album", return_value=album), \
                  patch.object(APP, "_resolve_mpd_music_directory", return_value=tmp):
                 response = self.client.get("/dr/library/art?key=local:album")
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.data, b"cover")
+                rows = self.client.get("/dr/library/album?key=local:album").get_json()["album"]["report_track_rows"]
+                self.assertEqual(rows, [{"number": 1, "title": "First Song", "dr": 12}])
                 self.assertEqual(self.client.get("/dr/library/art?key=qobuz:album").status_code, 404)
                 music = root / "music"
                 music.mkdir()
