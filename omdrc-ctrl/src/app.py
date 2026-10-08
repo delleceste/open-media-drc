@@ -5631,7 +5631,9 @@ def _drmeter_tracks(entries: list[dict], song: int | None) -> list[dict]:
         number, disc = entry["track"], None
         if isinstance(number, int) and number >= 1000:
             disc, number = number // 1000, number % 1000
-        tracks.append({"url": entry["file"], "title": _drdb_plain(entry["title"]),
+        # the title as the record names it: "(Live)", "(Case Study House No. 8)"
+        # are part of it here, only a database lookup wants them off
+        tracks.append({"url": entry["file"], "title": entry["title"].strip(),
                        "track": number, "disc": disc})
     return tracks
 
@@ -5736,7 +5738,7 @@ def dr_measure_start():
         _drmeter_sweep_stale()
         playing = entries[song]
         _DR_JOB = AlbumMeasurement(
-            album=_drdb_plain(playing["album"]) or playing["album"],
+            album=playing["album"].strip(),
             artist="", tracks=tracks, download=_drmeter_download,
             measure=_drmeter_measure, workdir_parent=DRMETER_WORKDIR)
         job = _DR_JOB

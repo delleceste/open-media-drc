@@ -423,6 +423,12 @@ class TrackSelectionTest(unittest.TestCase):
         got = APP._drmeter_tracks(entries, 0)
         self.assertEqual([(t["disc"], t["track"]) for t in got], [(1, 5), (2, 3)])
 
+    def test_titles_keep_their_brackets(self):
+        entries = self.queue(["A"])
+        entries[0]["title"] = "So Calm (Case Study House No. 8)"
+        self.assertEqual(APP._drmeter_tracks(entries, 0)[0]["title"],
+                         "So Calm (Case Study House No. 8)")
+
     def test_nothing_playing_selects_nothing(self):
         self.assertEqual(APP._drmeter_tracks(self.queue(["A"]), None), [])
 
