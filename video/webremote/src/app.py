@@ -21,7 +21,7 @@ import urllib.request
 from flask import Flask, jsonify, render_template, request, send_file
 
 from lib import (avsync, bluray_diag, classify, favorites, imdb, keydb_install,
-                 media_settings, mpvipc, play, thumbs,
+                 makemkv_key, media_settings, mpvipc, play, thumbs,
                  titles, videodelay, roots as rootlib)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +54,10 @@ def fav_file() -> str:
 
 def avsync_file() -> str:
     return os.path.join(os.path.expanduser(CACHE_DIR), "avsync.json")
+
+
+def makemkv_key_file() -> str:
+    return os.path.join(os.path.expanduser(CACHE_DIR), "makemkv-key.json")
 
 
 def load_config(path: str | None) -> None:
@@ -580,6 +584,35 @@ def api_disc():
 def api_bluray_diagnostic():
     return jsonify(bluray_diag.diagnose(DISC_ENABLED, DISC_DEV,
                                         mpvipc.is_running(MPV_SOCKET), disc_cache=DISC_CACHE))
+
+
+@app.route("/api/makemkv-key", methods=["GET", "POST"])
+def api_makemkv_key():
+    """GET: stored state only (the page banner).  POST op=check: look the beta key
+    up online and record its expiry.  POST op=apply: the same, then install it."""
+    state = makemkv_key_file()
+    if request.method == "GET":
+        return jsonify({"ok": True, **makemkv_key.status(state)})
+    op = (request.get_json(silent=True) or {}).get("op")
+    if op not in ("check", "apply"):
+        return jsonify({"ok": False, "error": f"unknown op: {op}"}), 400
+    try:
+        found = makemkv_key.fetch()
+    except makemkv_key.KeyLookupError as error:
+        makemkv_key.record_error(state, str(error))
+        return jsonify({"ok": False, "error": str(error), **makemkv_key.status(state)}), 502
+    makemkv_key.record(state, found)
+    applied = None
+    if op == "apply":
+        try:
+            applied = makemkv_key.apply(found["key"])
+        except (OSError, ValueError) as error:
+            return jsonify({"ok": False, "error": str(error), **makemkv_key.status(state)}), 500
+    # makemkvcon's own verdict on the key; skipped while a disc plays through it.
+    playing_disc = str(mpvipc.get_property(MPV_SOCKET, "path", "") or "").startswith("bd://")
+    problem = None if playing_disc else makemkv_key.registration_problem()
+    return jsonify({"ok": True, "applied": applied, "makemkvcon_problem": problem,
+                    "makemkvcon_skipped": playing_disc, **makemkv_key.status(state)})
 
 
 @app.route("/api/play", methods=["POST"])

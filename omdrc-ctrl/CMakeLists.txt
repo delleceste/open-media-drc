@@ -55,6 +55,8 @@ endif()
 string(REPLACE "@UPMPDCLI_CONSOLE_LOG@" "${_UPMPDCLI_CONSOLE_LOG}" _cc "${_cc}")
 string(REPLACE "@OMDRC_DRC_STATUS@" "${CMAKE_INSTALL_PREFIX}/bin/omdrc-status" _cc "${_cc}")
 string(REPLACE "@OMDRC_DRC@"        "${CMAKE_INSTALL_PREFIX}/bin/omdrc"        _cc "${_cc}")
+# video/webremote installs it beside the other video launchers.
+string(REPLACE "@OMDRC_KODI@"       "${CMAKE_INSTALL_PREFIX}/lib/omdrcvideo/kodi.sh" _cc "${_cc}")
 set(_OMDRC_CONFIG_SITE_ROOT "${CMAKE_INSTALL_PREFIX}/etc/open-media-drc")
 set(_OMDRC_CONFIG_DESIGN_ROOT "${OMDRC_FILTER_DESIGN_ROOT}")
 set(_OMDRC_FILTER_TOOLS_ROOT "${CMAKE_INSTALL_PREFIX}/share/omdrc/filter-tools")

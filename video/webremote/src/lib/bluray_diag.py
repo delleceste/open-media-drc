@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import urllib.request
 
+from . import makemkv_key
+
 KEY_SOURCE = "https://fvonline-db.bplaced.net/"
 KEY_ARCHIVE = KEY_SOURCE + "export/keydb_eng.zip"
 STALE_DAYS = 90
@@ -29,6 +31,20 @@ def diagnose(disc_enabled: bool, disc_device: str, mpv_running: bool,
     package_hint = ("sudo pkg install mpv libbluray libaacs libudfread libbdplus"
                     if system == "FreeBSD" else
                     "Install mpv, libbluray, libaacs, libudfread and libbdplus from your distribution")
+    mmbd = makemkv_key.libmmbd()
+    uses_mmbd = makemkv_key.players_use_libmmbd()
+    if uses_mmbd:
+        add("MakeMKV (libmmbd)", "ok", f"{mmbd}: mpv and Kodi decrypt through MakeMKV; "
+            "KEYDB.cfg and libaacs are only the fallback")
+    elif system == "Linux":
+        add("MakeMKV (libmmbd)", "warning",
+            "Not installed: decryption falls back to libaacs + KEYDB.cfg, which misses discs not in "
+            "FindVUK and fails on drives that reject its host certificate",
+            "Install MakeMKV (Arch: the makemkv AUR package), then restart the idle mpv")
+    else:
+        add("MakeMKV (libmmbd)", "ok",
+            ("Found at " + mmbd + ", but " if mmbd else "") +
+            f"not used on {system}: decryption is libaacs + KEYDB.cfg (MakeMKV is untested here)")
     add("Disc playback", "ok" if disc_enabled else "error",
         "Enabled in webremote.conf" if disc_enabled else "Disabled in webremote.conf",
         "Set [disc] enabled = yes in webremote.conf" if not disc_enabled else "")
@@ -37,6 +53,8 @@ def diagnose(disc_enabled: bool, disc_device: str, mpv_running: bool,
                                     ("libudfread", "udfread", False),
                                     ("libbdplus", "bdplus", False)):
         found = ctypes.util.find_library(library)
+        if uses_mmbd and library in ("aacs", "bdplus"):
+            required = False   # libmmbd stands in for both
         add(name, "ok" if found else ("error" if required else "warning"),
             found or ("Not found; needed for some Blu-ray discs" if not required else "Not found"),
             package_hint if not found else "")
@@ -59,8 +77,9 @@ def diagnose(disc_enabled: bool, disc_device: str, mpv_running: bool,
         account_home = Path.home()
     config_home = os.environ.get("XDG_CONFIG_HOME") or str(account_home / ".config")
     key_file = Path(config_home) / "aacs" / "KEYDB.cfg"
-    key = {"path": str(key_file), "source": KEY_SOURCE,
+    key = {"path": str(key_file), "source": KEY_SOURCE, "fallback": uses_mmbd,
            "archive": KEY_ARCHIVE, "age_days": None, "remote_updated": None}
+    keydb_start = len(rows)
     if not key_file.is_file():
         add("AACS keys", "error", f"Missing {key_file} (the filename is KEYDB.cfg, not KEYS.db)",
             "Download the English KEYDB.cfg archive from the link below and extract KEYDB.cfg to this path")
@@ -97,6 +116,14 @@ def diagnose(disc_enabled: bool, disc_device: str, mpv_running: bool,
             add("AACS keys", "warning" if stale else "ok", detail,
                 "A newer database is available; download and replace KEYDB.cfg" if newer else
                 "Check the linked database for updates" if stale else "")
+
+    if uses_mmbd:
+        # MakeMKV decrypts; the AACS key file matters only if libmmbd is removed.
+        for row in rows[keydb_start:]:
+            row["label"] = "AACS keys (fallback)"
+            if row["status"] != "ok":
+                row["detail"] += " (not used while MakeMKV decrypts)"
+                row["status"], row["fix"] = "ok", ""
 
     device = Path("/dev") / disc_device
     exists = device.exists()

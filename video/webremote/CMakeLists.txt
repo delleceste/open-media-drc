@@ -64,8 +64,10 @@ install(DIRECTORY src/
 
 # helper scripts, one level above src/ (app.py calls ../disc.sh; mpv-idle.sh
 # finds drc-audio.sh next to itself).  drc-audio.sh is the shared video lib.
-install(PROGRAMS disc.sh mpv-idle.sh ../lib/drc-audio.sh
+install(PROGRAMS disc.sh mpv-idle.sh ../lib/drc-audio.sh ../lib/makemkv-env.sh
         DESTINATION lib/omdrcvideo)
+# The panel's Kodi button (commands.conf [kodi]): Kodi with libmmbd decryption.
+install(PROGRAMS ../kodi.sh DESTINATION lib/omdrcvideo)
 
 # The two desktop mpv launchers live one level up in video/, not in webremote/,
 # but they share drc-audio.sh with mpv-idle.sh and so install beside it — which

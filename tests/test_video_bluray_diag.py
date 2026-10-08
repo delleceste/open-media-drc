@@ -1,16 +1,15 @@
 """Blu-ray diagnostic reports missing keys and newer database releases."""
 from datetime import datetime, timezone
-import importlib.util
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-SOURCE = Path(__file__).resolve().parents[1] / "video/webremote/src/lib/bluray_diag.py"
-SPEC = importlib.util.spec_from_file_location("bluray_diag_under_test", SOURCE)
-DIAG = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(DIAG)
+SOURCE = Path(__file__).resolve().parents[1] / "video/webremote/src"
+sys.path.insert(0, str(SOURCE))
+from lib import bluray_diag as DIAG  # noqa: E402  (a package module: it imports makemkv_key)
 
 
 class BluRayDiagnosticTests(unittest.TestCase):

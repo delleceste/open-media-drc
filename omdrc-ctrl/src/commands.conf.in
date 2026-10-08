@@ -684,12 +684,14 @@ type   = WRITE
 button = Launch
 cmd    = google-chrome
 
+# Through the video wrapper so libbluray decrypts Blu-rays with MakeMKV's
+# libmmbd when it is installed (video/BLURAY-DECRYPTION.md).
 [kodi]
 what   = Kodi media center
 group  = apps
 type   = WRITE
 button = Launch
-cmd    = kodi
+cmd    = @OMDRC_KODI@
 
 [reboot]
 what    = Reboot system

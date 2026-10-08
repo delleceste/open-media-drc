@@ -139,6 +139,17 @@ Open `http://<host>:9080` on the phone.
 
 ### Blu-ray readiness
 
+Where MakeMKV is installed (Linux), the players decrypt Blu-rays through its
+`libmmbd`, and that needs a **MakeMKV beta key** that expires every month or
+two. The first entry of **Blu-ray check** is that key: each time the check
+opens it looks up the currently published key on the MakeMKV forum, records
+its expiry, shows the installed key's expiry and days left, and offers
+**Download and apply the new key** when the installed one is missing, expired,
+within 2 days of expiring or superseded. **Update MakeMKV key** in the same
+menu fetches and applies it in one step. From 7 days before the expiry a
+banner on the main page links to the check. Details:
+`../BLURAY-DECRYPTION.md`.
+
 Tap **Blu-ray check** in the video remote to inspect the installed libraries,
 `mpv`, the title scanner, optical device and the service user's AACS key file.
 On FreeBSD it checks `/dev/cd0`, `gcache`, `kldload` and the passwordless sudo
@@ -164,9 +175,10 @@ was an earlier file it is kept as `KEYDB.cfg.previous`; an invalid upload leaves
 the installed file unchanged.
 
 `KEYDB.cfg` is not the whole story: it only covers discs submitted to FindVUK,
-and some drives reject libaacs's host certificate. On Linux with MakeMKV
-installed the players decrypt through `libmmbd` instead, and this check does
-not yet inspect it or its beta key. See `../BLURAY-DECRYPTION.md`.
+and some drives reject libaacs's host certificate. Where the players use
+MakeMKV's `libmmbd`, the check labels the key file **AACS keys (fallback)**,
+does not count its problems, and folds the KEYDB.cfg links and upload into a
+collapsed *Fallback* section. See `../BLURAY-DECRYPTION.md`.
 
 The **i** button beside **Idle mpv** explains its graphical-session setup:
 install from the top-level CMake build, run the `user-install` target as the
@@ -240,6 +252,9 @@ app changes).
 | `GET /api/imdb?path=` | IMDb info (OMDb-enriched or search-link fallback) |
 | `GET/POST/DELETE /api/favorites` | list / pin / unpin a folder |
 | `POST /api/rescan` | trigger a background thumbnail prewarm pass |
+| `GET /api/bluray-diagnostic` | the Blu-ray check (libraries, MakeMKV, drive, KEYDB.cfg) |
+| `GET /api/makemkv-key` | stored MakeMKV beta-key state (installed key's expiry, banner flag); no network |
+| `POST /api/makemkv-key {op}` | `check`: look the beta key up online and record its expiry; `apply`: the same, then install it |
 
 ---
 
@@ -268,6 +283,8 @@ video/webremote/
     play.py                    item -> mpv loadfile commands (BD longest-title probe)
     favorites.py               pinned-folder storage
     avsync.py                  A/V sync trim on mpv's baseline audio-delay
+    bluray_diag.py             the Blu-ray check
+    makemkv_key.py             MakeMKV beta key: forum lookup, expiry record, settings.conf
   src/templates/index.html     mobile-first dark UI (grid/list, transport, IMDb sheet)
   webremote.conf               live configuration
   mpv-idle.sh                  starts the hidden persistent idle mpv

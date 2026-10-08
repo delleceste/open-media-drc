@@ -129,6 +129,14 @@
   .diag-info { border:1px solid var(--line); border-radius:50%; width:22px; height:22px;
           background:#21262d; color:var(--accent); font-weight:700; cursor:pointer; }
   .diag-links { display:flex; flex-wrap:wrap; gap:8px; margin-top:15px; }
+  .key-banner { display:none; margin:4px 0 6px; padding:8px 10px; border:1px solid var(--gold);
+          border-radius:8px; color:var(--gold); background:#21262d; font-size:14px; cursor:pointer; }
+  .key-banner.show { display:block; }
+  .key-banner.error { border-color:#f85149; color:#f85149; }
+  .diag-row.key-row { border-top:0; }
+  .diag-row .setup-row { margin-top:8px; }
+  .diag-fallback { margin-top:15px; border-top:1px solid var(--line); padding-top:9px; }
+  .diag-fallback summary { cursor:pointer; color:var(--muted); }
   .setup-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
   .setup-row input[type=file] { max-width:100%; }
   .folder-path { overflow-wrap:anywhere; color:var(--accent); margin:8px 0; }
@@ -149,10 +157,12 @@
       <div class="more-options">
         <button type="button" id="mediaFolders">Media folders</button>
         <button type="button" id="blurayDiag">Blu-ray check</button>
+        <button type="button" id="makemkvKey">Update MakeMKV key</button>
         <button type="button" id="rescan">Rescan thumbnails</button>
       </div>
     </details>
   </div>
+  <div id="keyBanner" class="key-banner" role="button" tabindex="0"></div>
   <div id="path"></div>
 </header>
 <div id="list" class="grid"><div class="msg">Loading…</div></div>
@@ -358,13 +368,105 @@ document.addEventListener("pointerdown", event => {
   if (!moreMenu.contains(event.target)) moreMenu.open = false;
 });
 
+// ---- MakeMKV beta key ------------------------------------------------------
+// The key row is the Blu-ray check's first entry and the whole "Update MakeMKV
+// key" sheet.  Every check looks the key up online (the server records its
+// expiry); installing it is always a click.
+const keyBanner = document.getElementById("keyBanner");
+
+function keyMark(level) { return level === "ok" ? "✓ " : level === "warning" ? "⚠ " : "✕ "; }
+
+function paintKeyBanner(k) {
+  keyBanner.classList.toggle("show", !!(k && k.notify));
+  if (!k || !k.notify) return;
+  keyBanner.classList.toggle("error", k.level === "error");
+  keyBanner.textContent = "⚠ MakeMKV beta key: " + k.summary + ". Tap to check and update.";
+}
+async function refreshKeyBanner() {
+  try {
+    const k = await (await fetch("/api/makemkv-key", { cache:"no-store" })).json();
+    if (k.ok) paintKeyBanner(k);
+  } catch (e) { /* the banner is advisory */ }
+}
+keyBanner.onclick = () => showBlurayDiagnostic();
+keyBanner.onkeydown = (event) => { if (event.key === "Enter") showBlurayDiagnostic(); };
+
+// Run op ("check" or "apply") and paint the outcome into row.
+async function keyOperation(row, op) {
+  row.className = "diag-row key-row warning"; row.replaceChildren();
+  const heading = document.createElement("strong");
+  heading.textContent = "… MakeMKV beta key";
+  const progress = document.createElement("small");
+  progress.textContent = op === "apply" ? "Downloading the current key from the MakeMKV forum and applying it…"
+                                        : "Looking up the current beta key on the MakeMKV forum…";
+  row.append(heading, progress);
+  let k;
+  try {
+    const response = await fetch("/api/makemkv-key", { method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({ op }) });
+    k = await response.json();
+  } catch (e) { progress.textContent = "Network error"; progress.className = "err"; return null; }
+  paintKeyRow(row, k, op);
+  paintKeyBanner(k);
+  return k;
+}
+
+function paintKeyRow(row, k, op) {
+  row.replaceChildren();
+  const level = !k.ok || k.makemkvcon_problem ? "error" : k.level;
+  row.className = "diag-row key-row " + level;
+  const heading = document.createElement("strong");
+  heading.textContent = keyMark(level) + "MakeMKV beta key";
+  const line = (text, cls) => { const el = document.createElement("small"); el.textContent = text;
+    if (cls) el.className = cls; row.append(el); };
+  row.append(heading);
+  if (op === "apply" && k.ok && k.applied) line("Applied to " + k.applied.path +
+    (k.applied.backup ? " (previous settings kept as " + k.applied.backup + ")" : ""));
+  line(k.summary || "");
+  if (!k.ok) line("Online lookup failed: " + (k.error || "unknown error"), "err");
+  else if (k.online_expires) line("Online: the current key is valid until " + k.online_expires +
+    (k.checked_at ? " · checked " + new Date(k.checked_at).toLocaleString() : ""));
+  else line("Online: key found, but its expiry could not be read" +
+    (k.online_expiry_text ? " from \"" + k.online_expiry_text + "\"" : " (the page wording changed)"), "err");
+  if (k.makemkvcon_problem) line("makemkvcon says: " + k.makemkvcon_problem, "err");
+  else if (k.makemkvcon_skipped) line("makemkvcon not asked: a disc is playing through it");
+  if (!k.players_use_libmmbd) line(k.libmmbd ? "MakeMKV is installed but the players on this OS do not use it"
+                                             : "MakeMKV (libmmbd) is not installed on this box");
+  const actions = document.createElement("div"); actions.className = "setup-row";
+  if (k.offer_update) {
+    const update = document.createElement("button"); update.className = "btn play"; update.type = "button";
+    update.textContent = k.installed ? "Download and apply the new key" : "Download and apply the key";
+    update.onclick = () => keyOperation(row, "apply");
+    actions.append(update);
+  }
+  const again = document.createElement("button"); again.className = "btn"; again.type = "button";
+  again.textContent = "Check again";
+  again.onclick = () => keyOperation(row, "check");
+  const forum = document.createElement("a"); forum.className = "btn"; forum.href = k.forum;
+  forum.target = "_blank"; forum.rel = "noopener noreferrer"; forum.textContent = "MakeMKV key page ↗";
+  actions.append(again, forum);
+  row.append(actions);
+}
+
+document.getElementById("makemkvKey").onclick = async () => {
+  moreMenu.open = false;
+  scrim.classList.add("show"); sheet.replaceChildren();
+  const title = document.createElement("h2"); title.textContent = "MakeMKV beta key";
+  const row = document.createElement("div");
+  sheet.append(title, row);
+  const k = await keyOperation(row, "apply");
+  if (k && k.ok && k.applied) toast("MakeMKV key applied" + (k.online_expires ? ", valid until " + k.online_expires : ""));
+};
+
 async function showBlurayDiagnostic() {
   moreMenu.open = false;
   scrim.classList.add("show");
   sheet.replaceChildren();
   const title = document.createElement("h2"); title.textContent = "Blu-ray diagnostic";
-  const loading = document.createElement("p"); loading.textContent = "Checking packages, drive and AACS keys…";
-  sheet.append(title, loading);
+  const loading = document.createElement("p"); loading.textContent = "Checking MakeMKV, packages and drive…";
+  const keyRow = document.createElement("div");
+  sheet.append(title, loading, keyRow);
+  keyOperation(keyRow, "check");
   try {
     const response = await fetch("/api/bluray-diagnostic", { cache:"no-store" });
     const data = await response.json();
@@ -391,6 +493,15 @@ async function showBlurayDiagnostic() {
       sheet.append(row);
     }
     const note = document.createElement("p"); note.className = "syncinfo"; note.textContent = data.note;
+    sheet.append(note);
+    // KEYDB.cfg: the libaacs path.  Where MakeMKV decrypts it is only the fallback.
+    let keydbBox = sheet;
+    if (data.keydb.fallback) {
+      keydbBox = document.createElement("details"); keydbBox.className = "diag-fallback";
+      const summary = document.createElement("summary");
+      summary.textContent = "Fallback: KEYDB.cfg for libaacs (used only without MakeMKV)";
+      keydbBox.append(summary); sheet.append(keydbBox);
+    }
     const links = document.createElement("div"); links.className = "diag-links";
     const source = document.createElement("a"); source.className = "btn";
     source.href = data.keydb.source; source.target = "_blank"; source.rel = "noopener noreferrer";
@@ -398,7 +509,7 @@ async function showBlurayDiagnostic() {
     const archive = document.createElement("a"); archive.className = "btn";
     archive.href = data.keydb.archive; archive.target = "_blank"; archive.rel = "noopener noreferrer";
     archive.textContent = "Download English KEYDB.cfg ZIP ↗";
-    links.append(source, archive); sheet.append(note, links);
+    links.append(source, archive); keydbBox.append(links);
     const installRow = document.createElement("div"); installRow.className = "setup-row";
     const upload = document.createElement("input"); upload.type = "file";
     upload.accept = ".cfg,.zip,application/zip";
@@ -418,7 +529,7 @@ async function showBlurayDiagnostic() {
         toast("KEYDB.cfg installed; previous file backed up when present");
       } catch (error) { result.textContent = error.message || "Upload failed"; install.disabled = false; }
     };
-    installRow.append(upload, install, result); sheet.append(installRow);
+    installRow.append(upload, install, result); keydbBox.append(installRow);
   } catch (error) { loading.textContent = error.message || "Network error"; loading.className = "err"; }
 }
 document.getElementById("blurayDiag").onclick = showBlurayDiagnostic;
@@ -780,6 +891,8 @@ setInterval(updateStatus, 1000);
 
 setView(view);
 updateStatus();
+refreshKeyBanner();
+setInterval(refreshKeyBanner, 3600 * 1000);   // the kiosk keeps this page open for days
 syncFetch();      // label the A/V sync button with a trim carried over from before
 </script>
 </body>

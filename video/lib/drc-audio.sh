@@ -33,15 +33,8 @@ fi
 IS_LINUX=false
 [ "$(uname)" = "Linux" ] && IS_LINUX=true
 
-# --- MakeMKV decryption for libbluray (Linux) --------------------------------
-# libbluray would otherwise load the stock libaacs, whose host certificate the
-# USB drive rejects ("has been revoked by your drive"), leaving AACS discs
-# unreadable.  MakeMKV's libmmbd is a drop-in for libaacs and libbdplus.  Only
-# set when MakeMKV is installed and the caller has not chosen otherwise.  The
-# FreeBSD side is untested: see BLURAY-PLAYBACK-TUNING.md.
-if $IS_LINUX && [ -z "${LIBAACS_PATH:-}" ] && [ -e /usr/lib/libmmbd.so.0 ]; then
-    export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd
-fi
+# --- MakeMKV decryption for libbluray (Linux): shared with kodi.sh -----------
+[ -r "$HERE/makemkv-env.sh" ] && . "$HERE/makemkv-env.sh"
 
 
 # DRC-on / DRC-off audio devices differ by OS:

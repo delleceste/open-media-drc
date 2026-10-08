@@ -3181,15 +3181,19 @@ from FindVUK. The costs, accepted deliberately:
 `KEYDB.cfg` keeps its role on a box without MakeMKV: libbluray then loads the
 stock libaacs and the key file, as before.
 
-## How mpv is told to use libmmbd
+## How the players are told to use libmmbd
 
-`video/lib/drc-audio.sh` is sourced by all three mpv launchers
-(`play-bluray.sh`, `play-media.sh`, `webremote/mpv-idle.sh`) before mpv
-starts. It exports:
+`video/lib/makemkv-env.sh` holds the switch, shared by every player launcher:
 
 ```sh
-if $IS_LINUX && [ -z "${LIBAACS_PATH:-}" ] && [ -e /usr/lib/libmmbd.so.0 ]; then
-    export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd
+if [ "$(uname)" = "Linux" ] && [ -z "${LIBAACS_PATH:-}" ]; then
+    for _omdrc_mmbd in /usr/lib/libmmbd.so.0 /usr/local/lib/libmmbd.so.0; do
+        if [ -e "$_omdrc_mmbd" ]; then
+            export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd
+            break
+        fi
+    done
+    unset _omdrc_mmbd
 fi
 ```
 
@@ -3200,28 +3204,20 @@ fi
 * **Never over an explicit choice** --- a `LIBAACS_PATH` already set is kept,
   so `LIBAACS_PATH=libaacs play-bluray.sh` still tests the stock path.
 
-The idle mpv inherits the variables when it starts, so a disc started from
-the web remote is decrypted by `libmmbd` too. Restart the idle mpv after
-installing MakeMKV.
+**mpv.** `video/lib/drc-audio.sh` sources it, and is itself sourced by all
+three mpv launchers (`play-bluray.sh`, `play-media.sh`,
+`webremote/mpv-idle.sh`). The idle mpv inherits the variables when it starts,
+so a disc started from the web remote is decrypted by `libmmbd` too. Restart
+the idle mpv after installing MakeMKV.
 
-## How to tell Kodi to use libmmbd
-
-Kodi reads discs through the same libbluray, so the same two variables switch
-it to `libmmbd`. **The install does not set them for Kodi yet**: the panel
-launches it as plain `kodi` (`omdrc-ctrl/src/commands.conf.in`, section
-`[kodi]`), so Kodi still uses stock libaacs and `KEYDB.cfg`, with both limits
-above --- for physical discs and for Blu-ray folders or ISOs on disk alike.
-Give Kodi the variables in one of these ways:
-
-* **Panel launcher (preferred).** Change the `[kodi]` entry to
-  `cmd = env LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd kodi`.
-* **Whole Plasma session.** Put
-  `export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd` in
-  `~/.config/plasma-workspace/env/makemkv.sh` of the desktop user, then log
-  out and in. Every program started in the session inherits it, including
-  Kodi started from the application menu.
-* **systemd unit**, if Kodi runs as a service:
-  `Environment=LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd`.
+**Kodi.** The panel's **Kodi** button runs `<prefix>/lib/omdrcvideo/kodi.sh`
+(`commands.conf` section `[kodi]`), which sources `makemkv-env.sh` and then
+executes `kodi`; on FreeBSD or without MakeMKV it is plain `kodi`. Kodi
+started another way (application menu, autostart) does not pass through the
+wrapper: start `kodi.sh` instead, or set the variables for the whole Plasma
+session with `export LIBAACS_PATH=libmmbd LIBBDPLUS_PATH=libmmbd` in
+`~/.config/plasma-workspace/env/makemkv.sh` of the desktop user, then log in
+again.
 
 Avoid the common recipe of replacing `libaacs.so.0` and `libbdplus.so.0`
 with symlinks to `libmmbd.so.0`: it changes every program on the box, and a
@@ -3235,46 +3231,76 @@ The free Linux MakeMKV works only with a **beta registration key**, and each
 key carries an expiry date, typically a month or two ahead. When it expires,
 `makemkvcon` refuses to work, `libmmbd` returns no keys and **every Blu-ray
 stops playing again**, with the same black screen or AACS error as without
-MakeMKV. Nothing on the box renews the key automatically.
+MakeMKV.
 
 The current key is published by the MakeMKV author in the forum thread
 *"MakeMKV is free while in beta"*
-(<https://forum.makemkv.com/forum/viewtopic.php?t=1053>). The post states
-the date until which it is valid; a new key appears before the old one
-expires.
+(<https://forum.makemkv.com/forum/viewtopic.php?t=1053>), in a sentence such
+as *"The current beta key is T-... and is valid until end of October 2026."*
+A new key appears before the old one expires.
 
-The key belongs to **the account that runs the player**, because `libmmbd`
-reads that account's MakeMKV settings: on these boxes, the desktop user who
-runs the idle mpv and Kodi (the same account whose `KEYDB.cfg` the web remote
-checks). Install a new key either:
+The key belongs to **the account that runs the player**: `libmmbd` reads
+that account's `~/.MakeMKV/settings.conf`, line `app_Key = "T-..."`. On these
+boxes that is the desktop user who runs the idle mpv, Kodi and the
+`omdrcvideo` web remote.
 
-* from the MakeMKV GUI, as that user: **Help -> Register**, paste the key; or
-* by editing that user's `~/.MakeMKV/settings.conf` (create it if missing):
-  `app_Key = "T-..."` with the key from the forum.
+### From the video web remote
 
-As the same user, `makemkvcon -r info disc:9999` prints MakeMKV's version and
-registration state among its first messages; an expired key or a release
-that is too old is reported there.
+Installing a key is always a click, never automatic.
+
+* **Blu-ray check** (menu, top right). Its first entry is the **MakeMKV beta
+  key**. Every time the check opens it fetches the forum page, showing the
+  progress in that entry, then lists the installed key's expiry and days
+  left, the key currently published and its expiry, and any complaint
+  `makemkvcon` itself raises about the key or an outdated release (it is not
+  asked while a disc is playing). When the installed key is missing, expired,
+  within **2 days** of its expiry, or superseded by a published key with a
+  later date, the entry offers **Download and apply the new key**; **Check
+  again** repeats the lookup.
+* **Update MakeMKV key** (same menu) fetches the published key and applies it
+  at once.
+* A **banner on the video page** appears from **7 days before the installed
+  key expires**, or when no key is installed, on boxes whose players use
+  `libmmbd`. Tapping it opens the Blu-ray check.
+
+How it works (`video/webremote/src/lib/makemkv_key.py`):
+
+* The page is read with **regular expressions**, so small changes of wording
+  are tolerated: the key is the `T-...` string (preferably in the post's code
+  box), the expiry the phrase after *valid until / till / through*. Accepted
+  dates: *end of October 2026* or *October 2026* (the last day of that
+  month), *October 31, 2026*, *31st of October 2026*, *2026-10-31*. A key
+  found with an unreadable date is reported with the phrase quoted; a page
+  without a key fails with a message.
+* **Every lookup saves the expiry of the key it saw**, by key fingerprint, in
+  `makemkv-key.json` in the web remote's cache directory (default
+  `~/.cache/omdrc-video`). The installed key's expiry is then known without
+  the network, which is what the banner reads.
+* A later lookup that finds a **different key with a later date** means a new
+  key is out, and the entry offers it. Once applied, its recorded date
+  becomes the next expiry. A key installed by hand and never seen by a lookup
+  has an unknown expiry; the published one is offered when it differs.
+* **Applying** rewrites only the `app_Key` line of `settings.conf` (or creates
+  the file), atomically and with mode `0600`, keeping the old file as
+  `settings.conf.previous`.
+
+The same can be done by hand: MakeMKV GUI **Help -> Register** as that user,
+or the `app_Key` line above. `makemkvcon -r info disc:9999`, as the same user,
+prints MakeMKV's version and registration state among its first messages.
 
 MakeMKV releases also age out: an old build can refuse to run until it is
 updated, independently of the key. If a new key does not help, update the
-package (Arch: `makemkv` from the AUR).
+package (Arch: `makemkv` from the AUR). A purchased MakeMKV licence makes the
+registration permanent; updating a release that aged out still applies.
 
-**Routine maintenance, roughly monthly:**
+## The Blu-ray check and KEYDB.cfg
 
-1. Check the expiry date of the installed key (forum post or `makemkvcon`).
-2. Before it expires, install the new key for the player's account.
-3. Update MakeMKV when a release ages out.
-
-A purchased MakeMKV licence makes the registration permanent and removes
-step 2; step 3 still applies.
-
-## Known gap: the Blu-ray check
-
-The web remote's **Blu-ray check** inspects `KEYDB.cfg` and the stock
-libraries only. It does not know about `libmmbd` or the beta key: on a
-MakeMKV box it may warn about an old `KEYDB.cfg` that no longer matters, and
-it does not warn when the beta key is about to expire.
+Where the players use `libmmbd`, the web remote's **Blu-ray check** reports
+**MakeMKV (libmmbd)** as the decryption path, no longer requires `libaacs`
+and `libbdplus`, and shows `KEYDB.cfg` as **AACS keys (fallback)**: its
+problems are listed but do not count, and the KEYDB.cfg links and upload move
+into a collapsed *Fallback* section. On Linux without MakeMKV the check warns
+that decryption falls back to libaacs + `KEYDB.cfg`.
 
 Source: `video/BLURAY-DECRYPTION.md`.
 
@@ -4375,6 +4401,8 @@ update path.
   section \ref{sec:linux-bd-decrypt} is untested here: it would need a
   FreeBSD build of `makemkvcon`/`libmmbd`, `pass(4)` access to the drive and
   the same periodic beta-key renewal (section \ref{sec:makemkv-key}).
+  Until then the Blu-ray check treats `KEYDB.cfg` as the decryption path, as
+  before, and the panel's Kodi wrapper runs plain `kodi`.
 
 
 \newpage
@@ -5357,7 +5385,7 @@ CMake build, grouped by the same split as the manual itself.
 |---|---|
 | Browser ALSA management | `browser-nodrc/README.md`, `cmake/browser-alsa-linux.cmake` |
 | CD / S-PDIF bridge (alsaloop) | `doc/CDIN-LINUX.md` |
-| Blu-ray decryption (MakeMKV `libmmbd`, beta key, Kodi) | `video/BLURAY-DECRYPTION.md`, `video/BLURAY-PLAYBACK-TUNING.md` |
+| Blu-ray decryption (MakeMKV `libmmbd`, beta key, Kodi) | `video/BLURAY-DECRYPTION.md`, `video/BLURAY-PLAYBACK-TUNING.md`, `video/webremote/README.md` |
 | Service and module glue | `etc/systemd/`, `etc/modules-load.d/`, `etc/modprobe.d/` |
 
 **FreeBSD (Part III)**
@@ -5449,7 +5477,7 @@ Terms in alphabetical order. **OS** shows where the term applies: *both*,
 | **known-device list** | both | Cards previously applied to a role; drives automatic DAC swapping | \ref{sec:known-dac-policy} |
 | **lead** | FreeBSD | Audio buffered ahead of the output: drift margin, startup delay and transport lag at once | \ref{sec:cdin-freebsd} |
 | **loopback** | both | Device MPD writes and BruteFIR reads: `snd-aloop` (Linux), `virtual_oss` (FreeBSD) | \ref{sec:linux-aloop}, \ref{sec:fbsd-audio} |
-| **MakeMKV / `libmmbd`** | Linux | Proprietary Blu-ray engine; `libmmbd` replaces `libaacs`/`libbdplus` via `LIBAACS_PATH`/`LIBBDPLUS_PATH`; needs a periodically renewed beta key | \ref{sec:linux-bd-decrypt}, \ref{sec:makemkv-key} |
+| **MakeMKV / `libmmbd`** | Linux | Proprietary Blu-ray engine; `libmmbd` replaces `libaacs`/`libbdplus` via `LIBAACS_PATH`/`LIBBDPLUS_PATH` (`makemkv-env.sh`, for mpv and Kodi); needs a beta key that the video web remote looks up and renews | \ref{sec:linux-bd-decrypt}, \ref{sec:makemkv-key} |
 | **manifest** | both | JSON of hashes and metadata for a design; written last as the commit marker | \ref{sec:provenance} |
 | **MPD / `musicpd`** | both | The player; `mpd` on Linux, `musicpd` on FreeBSD | \ref{sec:mpd-outputs}, \ref{sec:fbsd-packages} |
 | **MPD outputs** | both | `OKTO-DAC` (direct), `DRC-native`, `DRC-resamp` | \ref{sec:mpd-outputs} |

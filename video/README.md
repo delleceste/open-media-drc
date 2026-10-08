@@ -60,8 +60,9 @@ sector-aligned UDF parsing + AACS), which is the only thing that works here.
 > **Decryption:** `KEYDB.cfg` only covers discs someone has submitted to
 > FindVUK, and some drives reject libaacs's revoked host certificate. On Linux
 > the launchers switch libbluray to MakeMKV's `libmmbd` when it is installed;
-> its beta key must be renewed periodically. See
-> [**BLURAY-DECRYPTION.md**](BLURAY-DECRYPTION.md), also for doing the same in Kodi.
+> its beta key expires every month or two; the web remote's **Blu-ray check**
+> looks it up and applies a new one on request, and the panel's Kodi button
+> uses `libmmbd` too. See [**BLURAY-DECRYPTION.md**](BLURAY-DECRYPTION.md).
 
 ## The slow-drive fix: gcache read-ahead
 
@@ -248,6 +249,8 @@ video/
   play-media.desktop.in     KDE "Open With" template (rendered by CMake)
   lib/
     drc-audio.sh            shared DRC-aware audio routing (sourced by both)
+    makemkv-env.sh          libbluray -> MakeMKV libmmbd switch (drc-audio.sh, kodi.sh)
+  kodi.sh                   Kodi with libmmbd decryption (the panel's Kodi button)
   mpv/
     mpv.conf                vo=gpu+opengl, large cache/read buffer, IPC socket
     input.conf              e / E cycle Blu-ray titles (editions)
