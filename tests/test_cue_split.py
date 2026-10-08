@@ -33,6 +33,8 @@ class CueSplitTest(unittest.TestCase):
                 output.writeframes(np.column_stack((samples, samples)).astype("<i2").tobytes())
             subprocess.run(["flac", "-s", "-o", str(folder / "album.flac"), str(folder / "album.wav")], check=True)
             (folder / "album.wav").unlink()
+            subprocess.run(["metaflac", "--set-tag=DATE=2014", "--set-tag=GENRE=Classical",
+                            str(folder / "album.flac")], check=True)
             (folder / "album.cue").write_text(
                 'PERFORMER "Test Artist"\nTITLE "Test Album"\nFILE "album.flac" WAVE\n'
                 '  TRACK 01 AUDIO\n    TITLE "First"\n    INDEX 01 00:00:00\n'
@@ -57,6 +59,8 @@ class CueSplitTest(unittest.TestCase):
                                   check=True, capture_output=True, text=True).stdout
             self.assertIn("TITLE=First", tags)
             self.assertIn("ALBUMARTIST=Test Artist", tags)
+            self.assertIn("DATE=2014", tags)
+            self.assertIn("GENRE=Classical", tags)
 
     def test_mismatched_cue_keeps_original(self):
         with tempfile.TemporaryDirectory() as tmp:

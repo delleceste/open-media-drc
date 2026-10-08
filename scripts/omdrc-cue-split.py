@@ -50,6 +50,11 @@ def track_name(number: int, title: str) -> str:
     return f"{number:02d} - {clean or f'Track {number:02d}'}.flac"
 
 
+def source_tag(source: Path, name: str) -> str:
+    shown = run("metaflac", f"--show-tag={name}", str(source))
+    return shown.partition("=")[2] if shown else ""
+
+
 def split(folder: Path, *, verify_only: bool = False) -> tuple[int, int, int | None]:
     for command in ("cuebreakpoints", "cueprint", "cuetag.sh", "shnsplit", "shnhash", "flac", "metaflac"):
         if not shutil.which(command):
@@ -104,8 +109,8 @@ def split(folder: Path, *, verify_only: bool = False) -> tuple[int, int, int | N
         if len(tracks) != count:
             raise SplitError(f"expected {count} tracks, got {len(tracks)}")
         run("cuetag.sh", str(cue), *(str(p) for p in tracks))
-        date = run("metaflac", "--show-tag=DATE", str(source)).removeprefix("DATE=")
-        genre = run("metaflac", "--show-tag=GENRE", str(source)).removeprefix("GENRE=")
+        date = source_tag(source, "DATE")
+        genre = source_tag(source, "GENRE")
         album_artist = run("cueprint", "-d", "%P", str(cue))
         for number, track in enumerate(tracks, 1):
             tags = []
