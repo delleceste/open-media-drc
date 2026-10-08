@@ -198,7 +198,7 @@ K.showMeterTapHint = () => {
         h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'meter-tap-title',
             onkeydown: e => { if (e.key === 'Escape') close(); } },
             h('h2', { id: 'meter-tap-title' }, 'Meter controls'),
-            h('p', {}, 'Double tap the level meters to switch between VU needles and bars. A single tap shows the top bar. Hold the meters or spectrum to inspect the applied timing.'),
+            h('p', {}, 'Double tap the level meters to step to the next display, in the order of the View menu: needles, bars, the spectrum views and the circular ones. A single tap shows the top bar. Hold the meters or spectrum to inspect the applied timing.'),
             h('label', { class: 'meter-hint-check' }, understood, 'Understood — don’t show this again'),
             h('div', { class: 'sheet-actions' }, h('button', { class: 'btn primary', onclick: close }, 'Close'))));
     document.getElementById('overlay-root').append(scrim);

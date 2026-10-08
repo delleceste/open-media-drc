@@ -6,8 +6,17 @@
 'use strict';
 const { h } = K;
 const MODES = ['needles', 'bars', 'spectrum', 'circular', 'circularbars', 'off'];
-const MODE_LABEL = { needles: 'Needles', bars: 'Bars', spectrum: 'Bars + spectrum',
-    circular: 'Circular spectrum', circularbars: 'Bars + circular spectrum', off: 'Level off' };
+// The level displays in View-menu order.  A double tap on the meters steps to the
+// next one (wrapping, never to Level off), so menu and gesture share this one list.
+const VIEWS = [
+    { mode: 'needles', label: 'Needles' },
+    { mode: 'bars', label: 'Bars' },
+    { mode: 'spectrum', separate: false, label: 'Bars + spectrum' },
+    { mode: 'spectrum', separate: true, label: 'Bars + separate L/R spectrum' },
+    { mode: 'circular', label: 'Circular spectrum' },
+    { mode: 'circularbars', label: 'Bars + circular spectrum' },
+    { mode: 'off', label: 'Level off' },
+];
 const usesSpectrum = mode => mode === 'spectrum' || mode === 'circular' || mode === 'circularbars';
 const WINDOWS = [60, 300, 900, 1800, 3600, 5400];
 
@@ -345,8 +354,8 @@ P.applyLayout = () => {
     P.artBox.classList.add('seek-zone');   // the seek ring's: no page swipe, no top bar
     P.el.firstChild.classList.toggle('cover-sq', square);
     if (!off) P.vu.setMode(P.mode === 'needles' ? 'needles' : 'bars');
-    // Level gestures reveal navigation, inspect timing, or double-tap the style
-    P.lvlBody.classList.toggle('tap', P.mode === 'needles' || P.mode === 'bars');
+    // Level gestures reveal navigation, inspect timing, or double-tap the next display
+    P.lvlBody.classList.toggle('tap', !off);
     P.paintTiming();
     P.el.firstChild.classList.toggle('lvl-off', off);
     P.drBox.hidden = !P.showDr;
@@ -385,6 +394,15 @@ P.setSpectrumLayout = separate => {
     P.setMode('spectrum');
 };
 
+P.isView = v => P.mode === v.mode && (v.mode !== 'spectrum' || !!P.spec?.separate === v.separate);
+P.setView = v => v.mode === 'spectrum' ? P.setSpectrumLayout(v.separate) : P.setMode(v.mode);
+
+// The double tap: the View menu's next display after the current one, Level off skipped.
+P.nextView = () => {
+    const cycle = VIEWS.filter(v => v.mode !== 'off');
+    P.setView(cycle[(cycle.findIndex(P.isView) + 1) % cycle.length]);
+};
+
 // The View menu: the level display (one of) and the switches (any of).  It stays open
 // for another pick; a tap outside it, or leaving the page, closes it.
 P.openViewMenu = () => {
@@ -396,12 +414,7 @@ P.openViewMenu = () => {
     const menu = P.menu = h('div', { class: 'menu-pop', role: 'menu',
         style: { width: 'min(18rem, calc(100vw - 16px))' } });
     const paint = () => K.clear(menu).append(
-        ...MODES.flatMap(m => m === 'spectrum' ? [
-            item(P.mode === 'spectrum' && !P.spec.separate, MODE_LABEL.spectrum,
-                () => P.setSpectrumLayout(false), true),
-            item(P.mode === 'spectrum' && P.spec.separate, 'Bars + separate L/R spectrum',
-                () => P.setSpectrumLayout(true), true),
-        ] : [item(P.mode === m, MODE_LABEL[m], () => P.setMode(m), true)]),
+        ...VIEWS.map(v => item(P.isView(v), v.label, () => P.setView(v), true)),
         ...(usesSpectrum(P.mode) ? [P.floorRow()] : []),
         h('div', { class: 'menu-sep' }),
         item(P.coverWanted(), 'Album cover', () => P.flipCover()),
@@ -727,7 +740,7 @@ P.wireResetTap = () => {
     });
 };
 
-// Single tap reveals navigation; double tap changes only the level style.
+// Single tap reveals navigation; double tap steps to the next level display (P.nextView).
 // Holds inspect timing. Movement cancels both, preserving swipes/cover drags.
 P.wireMeterTap = () => {
     let down = null, last = null, holdTimer = null, tapTimer = null, held = false;
@@ -758,11 +771,10 @@ P.wireMeterTap = () => {
         e.stopPropagation(); // neither layout-reset double tap nor the global bar toggle
         if (held) { held = false; return; }
         K.showBar(true);
-        if (P.mode !== 'needles' && P.mode !== 'bars') return;
         const now = performance.now();
         if (last && now - last.t < 350 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 30) {
             clearTimeout(tapTimer); last = null;
-            P.setMode(P.mode === 'needles' ? 'bars' : 'needles');
+            P.nextView();
         } else {
             clearTimeout(tapTimer);
             last = { t: now, x: e.clientX, y: e.clientY };

@@ -1366,14 +1366,16 @@ The values refresh while the dialog is open. Its small timing diagram is the
 same screen-wait example used by **How it works**; it is not drawn to the live
 values. **How it works** opens the full diagrams, and **Close** returns to Now.
 
-A **single tap** on VU needles or level bars shows the top bar and leaves the
-style alone. After the double-tap interval it also offers a small gesture hint.
+A **single tap** on the meters or spectrum shows the top bar and leaves the
+display alone. After the double-tap interval it also offers a small gesture hint.
 Tick **Understood --- don't show this again** before closing to suppress future
-hints in this browser's storage. A **double tap** switches needles <-> bars and
-keeps the top bar visible; it does not reset the layout. Double tap the vertical
-layout handle to restore the default layout. The choice remains
-specific to the current orientation. In bars-plus-spectrum mode a short tap
-shows navigation; use the View menu to change display mode. Swipes, diagonal
+hints in this browser's storage. A **double tap** steps to the next display in
+the order of the View menu --- needles, bars, bars + spectrum, bars + separate
+L/R spectrum, circular spectrum, bars + circular spectrum --- and wraps back to
+needles; **Level off** is reached only from the menu. The menu's mark follows
+the double tap. A double tap keeps the top bar visible and does not reset the
+layout. Double tap the vertical layout handle to restore the default layout.
+The choice remains specific to the current orientation. Swipes, diagonal
 cover-opacity drags and canceled touches do not count as meter taps or holds.
 The separate CLIP indicator still resets its channel on a short tap.
 

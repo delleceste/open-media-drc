@@ -91,6 +91,19 @@
         check(suggestion && suggestion.textContent.includes('every network, sample rate and filter'), 'Successful calibration shows the repeat-all-combinations reminder');
         check(getComputedStyle(suggestion).color === getComputedStyle(document.documentElement).getPropertyValue('--yellow').trim() || getComputedStyle(suggestion).color === 'rgb(210, 153, 34)', 'Reminder is yellow');
         card.remove();
+        // Double tap walks the View menu's displays in order, skipping Level off.
+        P.spec = { separate: false, setSeparate(on) { this.separate = on; } };
+        const viewName = () => P.mode + (P.mode === 'spectrum' ? (P.spec.separate ? '/LR' : '/mix') : '');
+        const cycleMode = P.mode, cycleToggled = toggled, seen = [];
+        P.mode = 'needles';
+        for (let i = 0; i < 7; i++) { P.nextView(); seen.push(viewName()); }
+        check(seen.join() === 'bars,spectrum/mix,spectrum/LR,circular,circularbars,needles,bars',
+            'Double tap order follows the View menu and wraps past Level off: ' + seen.join());
+        P.mode = 'circular'; tap(); await sleep(100); tap(); await sleep(380);
+        check(P.mode === 'circularbars', 'Double tap on the circular spectrum steps to bars + circular');
+        P.mode = 'off'; P.nextView();
+        check(P.mode === 'needles', 'From Level off the next display is needles');
+        K.setPref('now.spectrumSeparate', false); P.spec = undefined; P.mode = cycleMode; toggled = cycleToggled;
         // Mount the actual Now notice and verify its Configure chip targets Meter timing.
         K.drGauge = () => {}; K.DrBar = K.Balance = K.Spectrum = class {};
         K.VuMeter = class { setClips() {} setTimingMissing() {} };
@@ -128,7 +141,7 @@
         check(P.timingNotice.hidden && K.pref('now.hideTimingNotice', false), 'Never show again persists and suppresses the warning');
         K.setPref('now.hideTimingNotice', false);
         host.remove();
-        document.getElementById('result').textContent = 'PASS: tap, double tap, hold, spectrum, drag, cancellation, suppression and profile inspection';
+        document.getElementById('result').textContent = 'PASS: tap, double tap, view cycle, hold, spectrum, drag, cancellation, suppression and profile inspection';
     } catch (e) { document.getElementById('result').textContent = 'FAIL: ' + e.message; }
 })();
 </script>
