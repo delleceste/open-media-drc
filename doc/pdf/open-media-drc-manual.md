@@ -451,7 +451,11 @@ otherwise the old process keeps both its audio configuration and its old DRC
 relationship.
 
 How the browser reaches the DAC while DRC is off is OS-specific: Linux section
-\ref{sec:browser-audio}, FreeBSD section \ref{sec:fbsd-browser}.
+\ref{sec:browser-audio}, FreeBSD section \ref{sec:fbsd-browser}. On FreeBSD,
+Chromium and Chrome have no sound at all without a sound server, and this box
+cannot run PulseAudio or PipeWire; the launcher starts a private `sndiod` for
+the browser session instead (section \ref{sec:fbsd-browser} explains why and
+how).
 
 ## Helper scripts
 
@@ -3723,24 +3727,277 @@ what MPD plays.
 
 ## Browser audio on FreeBSD {#sec:fbsd-browser}
 
-The No DRC launchers (section \ref{sec:browser-nodrc}) stop DRC and let the
-browser open the DAC. No ALSA file is installed here; the backend depends on
-the browser (`browser-nodrc/lib.sh`):
+The No DRC launchers (section \ref{sec:browser-nodrc}) stop DRC so that a
+browser can play straight to the DAC. On Linux this is ordinary ALSA (section
+\ref{sec:browser-audio}). On FreeBSD it is not simple, and Chromium in
+particular **does not play at all** on this box unless the launcher steps in.
+This section explains why, what the launcher does about it, and how to check
+it. The implementation is `browser-nodrc/lib.sh`, `browser-nodrc/chromium-nodrc.sh`,
+`browser-nodrc/chrome-nodrc.sh` and `cmake/browser-audio.cmake`.
 
-* **Chromium / Chrome** have no OSS output; their backends are PulseAudio,
-  sndio and ALSA, in that probe order. The launcher starts a **playback-only
-  `sndiod`** (`-m play -s default`) on `rsnd/<unit>`, pinned to the rate the
-  DAC already runs so its clock is not switched; Chromium then picks sndio by
-  itself. `sndiod` lives only for the browser session and is stopped before
-  DRC is restored, because it holds the DAC; an already-running system
-  `sndiod` is reused and left alone. A `chrome://flags` *Audio Backend*
-  choice pinned in the profile overrides this and silences the browser (the
-  launcher warns).
-* **Firefox** uses its cubeb OSS backend directly.
-* `BROWSER_AUDIO=alsa` selects an ALSA shim for the Chromium family. On
-  FreeBSD "ALSA" is a userland shim over `libasound_module_pcm_oss.so`, handed
-  to the browser only through `ALSA_CONFIG_PATH`, pinned to the DAC's current
-  rate and format with `plug` resampling.
+In short:
+
+| Browser | Audio path on FreeBSD during a No DRC session |
+|---|---|
+| Firefox | its own OSS backend, straight to `/dev/dsp` (the DAC) |
+| Chromium, Chrome | Chromium's sndio backend -> a `sndiod` started by the launcher for this session -> `rsnd/<unit>` (the DAC) |
+| (not used) | PulseAudio and PipeWire: deliberately absent; the installer prevents PulseAudio from starting |
+
+### Why Chromium is silent on this box without help
+
+**FreeBSD's native audio API is OSS** (`/dev/dspN`). MPD, BruteFIR, the CD
+bridge and Firefox (through its cubeb OSS backend) all use it directly.
+
+**Chromium has no OSS backend at all.** The FreeBSD Chromium port (installed
+as `chrome`; there is no `chromium` command) can produce sound through only
+three back ends, which it probes in this order:
+
+1. **PulseAudio**, the sound server;
+2. **sndio**, the small OpenBSD sound server (package `audio/sndio`);
+3. **ALSA**, which on FreeBSD is only a userland library (`alsa-lib`) with no
+   kernel part: its single PCM plugin, `libasound_module_pcm_oss.so`, opens
+   `/dev/dspN` again.
+
+On an ordinary FreeBSD desktop, Chromium plays through **PulseAudio**, or
+through PipeWire's PulseAudio-compatible server. A desktop session (KDE
+Plasma, for example) starts that server, and Chromium finds it first. That is
+why "Chromium needs PulseAudio or PipeWire on FreeBSD" is the usual advice,
+and why Chromium works on a normal desktop and is silent here.
+
+**This box cannot run PulseAudio or PipeWire.** The DRC chain is bit-perfect:
+`omdrc_audio` sets `bitperfect=1` and `play.vchans=0` on the DAC's `pcm` unit,
+which removes the kernel's mixer and virtual channels (section "OSS,
+virtual_oss and cuse" above, and section \ref{sec:fbsd-roles}), so **the DAC
+can be opened by only one process at a time**. A sound server is a long-lived
+daemon that opens the default unit (`hw.snd.default_unit`, which is the DAC)
+and keeps it:
+
+* while DRC is on, BruteFIR could no longer open the DAC, and music would stop;
+* during a No DRC session it would still hold the DAC when the browser exits,
+  so the launcher could not restore DRC;
+* it resamples and mixes everything that passes through it, and nothing in
+  this project starts or stops it.
+
+PipeWire has the same problem: it is the same kind of daemon holding the same
+device.
+
+**Without a sound server, the other back ends fail on their own:**
+
+* **ALSA.** With the stock configuration, Chromium's `default` PCM is
+  `plug:oss`, i.e. whatever `/dev/dsp` is, at **a rate Chromium picks**. With
+  no virtual channels, opening the device at a new rate reprograms the DAC's
+  clock, and the OKTO routes silence on a cold open after a rate change
+  (section \ref{sec:fbsd-prime}). The ALSA backend is also not chosen by the
+  probe: it has to be selected per profile in `chrome://flags`.
+* **Single open.** Worse, Chromium opens and closes the output around each
+  playback. A second tab, a page sound, or simply the end of one stream
+  overlapping the start of the next needs **a second, concurrent open** of
+  the DAC. There is none: the open fails with `PcmOpen: <dev>,Device busy`,
+  **Chromium never retries**, and the browser is silent for the rest of the
+  session, with no message to the user.
+
+Any working Chromium path on this box therefore needs something that
+**mixes** Chromium's streams into one, **holds the DAC only while the
+browser runs**, and **does not change the DAC's rate**.
+
+### The launcher's answer: a private sndiod for the browser session
+
+`sndiod` is that something. It is a small server that opens the device once,
+mixes all its clients into one stream and converts rate and format. It does
+not start itself, so the launcher can start it and stop it. Chromium already
+has a sndio backend, and when there is no PulseAudio its probe reaches sndio
+on its own: **no command-line flag and no `chrome://flags` setting is
+needed.**
+
+The No DRC launcher for Chromium (and Chrome) does the following:
+
+1. Saves the DRC state (`omdrc session`) and arms a trap that restores
+   it on any exit, including a crash or a kill (section
+   \ref{sec:browser-nodrc}).
+2. Runs `omdrc off`: BruteFIR stops and the DAC is free.
+3. **Reads the DAC's current rate** from `dev.pcm.<unit>.feedback_rate` and
+   snaps it to the nearest standard rate (the USB feedback figure reads, for
+   example, 44101 for 44100). If it cannot be read, it falls back to
+   `BROWSER_ALSA_RATE` (default 48000).
+4. **Starts sndiod** on the DAC:
+
+    ```
+    sndiod -r <current rate> -f rsnd/<unit> -m play -s default
+    ```
+
+    * `-r <current rate>` keeps the DAC at the rate it is already running,
+      so its clock is never switched and there is no cold-open silence;
+      sndiod converts Chromium's 44.1 or 48 kHz in software. This is lossy
+      streaming material outside the bit-perfect paths, so the conversion
+      costs nothing that matters.
+    * `-f rsnd/<unit>` names the DAC by unit number (`rsnd/3` is
+      `/dev/dsp3`), taken from the `/dev/dsp.dac` role link, so the right
+      card is used on a box with several cards.
+    * `-m play -s default` makes the server **playback only**. sndiod's
+      default is play+record, which would also open a duplex USB DAC for
+      capture; on FreeBSD's `uaudio` that lets the capture stream replace
+      the DAC's own feedback endpoint as the playback clock, and wastes USB
+      bandwidth. The order matters: per-device options come before `-f`,
+      per-sub-device options before `-s`.
+
+5. Waits until nothing holds the DAC (`fuser`, up to `DAC_FREE_WAIT`
+   seconds, default 8), so Chromium's first open cannot lose a race with a
+   previous browser that is still shutting down, or with MPD's direct output.
+   If the DAC is still held, it names the process that holds it.
+6. Runs Chromium in the foreground. Every tab and page sound now goes to
+   sndiod, which mixes them; no "device busy" can happen. (Tested with two
+   tabs playing at once: no errors.)
+7. When Chromium exits, it **stops the sndiod it started** and waits for
+   it to release the DAC, and only then restores DRC, because BruteFIR has to
+   open the DAC itself.
+
+Details and limits:
+
+* **Only an instance the launcher started is stopped.** If a `sndiod` is
+  already running (started by someone else, or as a system service), it is
+  reused and left running. Its settings are then not the ones above. By
+  default sndiod releases the device when it has no clients, so a system
+  instance does not block DRC between browser sessions. Enabling it as a
+  service is still not recommended on this box.
+* **`chrome://flags` -> *Audio Backend*.** A choice made there overrides the
+  probe. A profile set to ALSA, for example by the older ALSA route below,
+  bypasses sndiod, opens the raw DAC that sndiod holds, gets `EBUSY` and is
+  silent. The setting is stored per profile and cannot be changed from
+  outside the browser. The launcher warns when it finds one in
+  `~/.config/chromium/Local State` (`~/.config/google-chrome` for Chrome).
+  Set it back to *Default* and relaunch.
+* **An already-running Chromium.** A second `chrome` command passes its URL
+  to the running browser and exits at once. The launcher therefore leaves DRC
+  alone and only opens the URL when Chromium is already running. Quit Chromium
+  completely before using its No DRC entry.
+* **Missing `sndiod`.** Without `audio/sndio` the launcher says so and starts
+  the browser anyway, without sound. Install it with `pkg install sndio`.
+
+### The PulseAudio guard
+
+Removing PulseAudio is not practical: the package is pulled in by the desktop
+(`plasma6-plasma-pa`, `plasma6-kinfocenter`, `qt6-multimedia`,
+`speech-dispatcher`), and two of its defaults start a server **on the DAC**:
+
+* its **XDG autostart entry**, which starts a server with every desktop
+  login;
+* **`autospawn = yes`** in `client.conf`, which lets *any* program that uses
+  the PulseAudio library start a server when it needs one. That includes
+  Chromium's backend probe: without this guard, the **first launch of
+  Chromium would itself put a PulseAudio server on the DAC**.
+
+On FreeBSD, `make install` turns off both without editing any package-owned
+file:
+
+| File installed | Effect |
+|---|---|
+| `<pulse etc>/client.conf.d/10-omdrc-no-autospawn.conf` | `autospawn = no`; read after the package's `client.conf` |
+| `~<audio user>/.config/autostart/pulseaudio.desktop` | a same-named user entry with `Hidden=true`, which masks the system autostart entry |
+
+`<pulse etc>` is found automatically (`/usr/local/etc/pulse` on a normal
+install) or set with `-DOMDRC_PULSE_ETC_DIR`. If PulseAudio is not installed,
+the drop-in is put in place anyway, so the guard is ready if PulseAudio is
+added later. The autostart mask is never written over a `pulseaudio.desktop`
+the user made themselves (one without the project's marker); the installer
+keeps it and prints what to add. Under `DESTDIR` (package builds) the mask is
+not written into a home directory; the installer prints the command to run
+on the target. The guard takes effect from the next login and does nothing to
+a server that is already running. The installer warns if one is running;
+stop it with `pulseaudio --kill`.
+
+With PulseAudio unable to start, Chromium's probe finds no server and moves
+on to sndio, which is exactly what the launcher needs.
+
+### Firefox
+
+Firefox has its own OSS backend (cubeb) and opens the DAC directly; it needs
+neither sndiod nor any other setup. It runs with `--no-remote`, so the
+launcher always owns a new instance.
+
+### The ALSA route (kept as a fallback, not recommended)
+
+Before sndiod, the launcher drove Chromium through ALSA. That code is still in
+`lib.sh` (`browser_alsa_begin`) and works, but **it does not mix**, so it has
+the single-open problem described above: one stream at a time, and a
+collision makes the whole session silent. To use it, change `BROWSER_AUDIO=sndio`
+to `BROWSER_AUDIO=alsa` in the launcher script (an environment variable does
+not override it) and, once per profile, set `chrome://flags` -> *Audio
+Backend* -> *ALSA*. The command line cannot select the ALSA backend; the
+launcher warns if the flag is missing.
+
+What it does:
+
+* writes an ALSA configuration **for this run only** to a temporary directory
+  and passes it to the browser alone through `ALSA_CONFIG_PATH`. No system
+  ALSA file is touched, and MPD, BruteFIR and the CD bridge do not use
+  `libasound`, so the configuration cannot reach the bit-perfect paths;
+* defines `pcm.omdrc_dac` as `plug` over the OSS plugin on the DAC, **set to
+  the DAC's current rate** (as for sndiod) and to **`S32_LE`**;
+* replaces `default` through a second `@hooks` entry, because `alsa.conf`
+  loads `/usr/local/etc/asound.conf`, whose `default` is `plug:oss`, *after*
+  the top-level file;
+* passes `--audio-backend=alsa --alsa-output-device=omdrc_dac`.
+
+The format has to be fixed. Left to negotiation, the OSS plugin offers
+`S24_LE`; for a 16-bit browser stream `plug` picks it, the device runs 32-bit,
+and the samples arrive **256 times (48 dB) too quiet**. That sounds like
+silence, with no error anywhere. A DAC that cannot take `S32_LE` needs
+`BROWSER_ALSA_FORMAT`.
+
+### Checking it and fixing silence
+
+Run the launcher from a terminal to see its messages (the menu entry hides
+them):
+
+```sh
+/usr/local/libexec/omdrc/browser-nodrc/chromium-nodrc.sh
+```
+
+A healthy start prints:
+
+```
+browser-nodrc: disabling DRC for direct DAC output
+browser-nodrc: playback-only sndiod mixing on rsnd/<unit> at 44100 Hz (pid NNNN)
+```
+
+and, after Chromium is closed:
+
+```
+browser-nodrc: sndiod stopped
+browser-nodrc: restoring DRC (<mode>)
+```
+
+While a page plays, in a second terminal:
+
+```sh
+pgrep -lx sndiod                     # the launcher's sndiod is running
+pgrep -lx pulseaudio                 # must print nothing
+fuser /dev/dsp.dac                   # only sndiod's pid holds the DAC
+sysctl dev.pcm.<unit>.feedback_rate  # still the rate from before the launch
+```
+
+If Chromium is silent, check in this order:
+
+1. **Was Chromium already running?** The launcher said "already running ---
+   DRC left unchanged". Quit every Chromium window (and any Chromium still
+   running in the background) and launch again.
+2. **Is PulseAudio running?** `pgrep -lx pulseaudio`. Stop it with
+   `pulseaudio --kill`, then check that both guard files above exist.
+3. **Is an *Audio Backend* set in `chrome://flags`?** Set it back to
+   *Default* and relaunch.
+4. **Is the DAC held by something else?** The launcher prints the holder after
+   `DAC_FREE_WAIT`: usually a previous browser still shutting down, or MPD
+   playing through its direct output. Stop it and relaunch.
+5. **Is sndiod there?** "sndiod not found" means `pkg install sndio`;
+   "sndiod failed to start" usually means the DAC was busy (item 4).
+6. **Does the DAC play at all?** Close the browser, run `omdrc off`, and play
+   a test tone directly: `sox -n -t ossdsp /dev/dsp.dac synth 2 sine 440 vol 0.1`.
+   If that is silent too, the problem is the DAC or its rate (section
+   \ref{sec:fbsd-prime}), not the browser.
+
+After the browser exits, `omdrc session` should show the power and mode it had
+before the launch, and `pgrep -x sndiod` should print nothing, unless a
+system sndiod was already running.
 
 
 \newpage
@@ -4809,6 +5066,7 @@ CMake build, grouped by the same split as the manual itself.
 | Topic | Source document |
 |---|---|
 | Stable sound-device names and lifecycle | `etc/rc.d/omdrc_audio`, `etc/devd/omdrc-audio.conf` |
+| Browser audio (Chromium via sndiod, PulseAudio guard) | `browser-nodrc/lib.sh`, `cmake/browser-audio.cmake`, `etc/pulse/client.conf.d/10-omdrc-no-autospawn.conf` |
 | CD / S-PDIF bridge | `cdin/README.md` |
 | ESI U24 XL configuration and traps | `cdin/ESI-U24XL.md` |
 | Video playback + Blu-ray | `video/README.md` |
@@ -4897,6 +5155,7 @@ Terms in alphabetical order. **OS** shows where the term applies: *both*,
 | **omdrc-ctrl / `omdrcctrl`** | both | The Flask web control panel (port 9090) | \ref{sec:omdrcctrl}, \ref{sec:linux-panel}, \ref{sec:fbsd-panel} |
 | **`omdrc_audio`** | FreeBSD | The rc.d service that owns device roles and the DRC lifecycle | \ref{sec:fbsd-inventory}, \ref{sec:fbsd-roles} |
 | **priming** | FreeBSD | Opening the DAC once at a new rate so the real open does not route silence | \ref{sec:fbsd-prime} |
+| **PulseAudio guard** | FreeBSD | `autospawn = no` drop-in plus a masked autostart entry, so no sound server can take the single-open DAC | \ref{sec:fbsd-browser} |
 | **provenance** | both | The hash chain from REW exports to the coefficients BruteFIR loaded | \ref{sec:provenance} |
 | **reconcile** | both | Level-triggered comparison of saved intent with reality; repairs only a mismatch | \ref{sec:usage}, \ref{sec:fbsd-lifecycle} |
 | **REW** | both | Room EQ Wizard, the measurement tool the filters are designed in | \ref{sec:provenance} |
