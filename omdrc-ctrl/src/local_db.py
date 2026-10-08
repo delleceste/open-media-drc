@@ -7,6 +7,7 @@ reports are read from, and calculated in, that tree) and how the last scan went.
 from __future__ import annotations
 
 import os
+import re
 import socket
 import threading
 import time
@@ -99,13 +100,82 @@ def scan_status(state_dir: str) -> dict:
     return {"state": "never"}
 
 
-def scan_log(state_dir: str) -> list[str]:
-    """The last lines of the scan log (the file is cleared by each scan)."""
+ARTIST_CHARS = 28
+ALBUM_CHARS = 40
+MESSAGE_CHARS = 100
+_YEAR = re.compile(r"[(\[]?(19|20)\d\d[)\]]?")
+_FORMAT = re.compile(r"\s*[(\[][^)\]]*\b(flac|mp3|wav|alac|aac|ape|wv|hi-?res|\d+\s*-?\s*bits?|\d+(\.\d+)?\s*k(hz)?)\b[^)\]]*[)\]]\s*$", re.I)
+_DISC = re.compile(r"(cd|disc|disk)\s*\d+", re.I)
+_LINE = re.compile(r"^\[([^\]]+)\] (.*)$")
+
+
+def _short(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip(" -,.") + "…"
+
+
+def album_label(folder: str, artist: str = "", album: str = "") -> str:
+    """`Artist — Album`, each cut to a readable length: from the tags when the
+    meter read them, otherwise guessed from the folder's name (`Artist - Year -
+    Album`, `Year - Album` under an artist folder, ...)."""
+    disc = ""
+    if not (artist or album):
+        parts = [p for p in folder.split("/") if p]
+        if len(parts) >= 2 and _DISC.fullmatch(parts[-1]):    # Album/CD2: the album, then the disc
+            disc = " · " + " ".join(parts.pop().split())
+        name = _FORMAT.sub("", parts[-1] if parts else folder).lstrip("!").strip()
+        bits = [b.strip() for b in name.split(" - ") if b.strip() and not _YEAR.fullmatch(b.strip())]
+        if len(bits) >= 2:
+            artist, album = bits[0], " - ".join(bits[1:])
+        else:
+            album = bits[0] if bits else name
+            artist = parts[-2] if len(parts) >= 3 else ""
+    return " — ".join(x for x in (_short(artist, ARTIST_CHARS), _short(album, ALBUM_CHARS)) if x) + disc
+
+
+def _readable(line: str, root: str) -> str:
+    """One log line as the page shows it: names instead of paths."""
+    if root:
+        line = line.replace(root.rstrip("/") + "/", "")
+    m = _LINE.match(line)
+    if not m or "/" not in m.group(1):                 # not a folder's line
+        return "    " + _short(line, MESSAGE_CHARS) if line.startswith("    ") else line
+    tag, body = m.groups()
+    word, _, rest = body.partition(" ")
+    rest = rest.lstrip()
+    if word == "measuring":
+        return f"[{tag}] measuring {album_label(rest)}"
+    fields = rest.split("\t")
+    if word == "FAILED":
+        if len(fields) == 1:                           # before the tab-separated form
+            fields = rest.split(": ", 1)
+        why = fields[1] if len(fields) > 1 else ""
+        return f"[{tag}] FAILED  {album_label(fields[0])}" + (f": {_short(why, MESSAGE_CHARS)}" if why else "")
+    fields += ["", ""]
+    return f"[{tag}] {word}  {album_label(fields[0], fields[1], fields[2])}"
+
+
+def scan_log(state_dir: str, root: str = "") -> list[str]:
+    """The last lines of the scan log (the file is restarted by each rescan),
+    for reading: a folder's or a step's progress lines give way to its latest
+    one (`measuring` to the result), and names replace paths."""
     try:
         with open(os.path.join(state_dir, SCAN_LOG_FILE), encoding="utf-8", errors="replace") as f:
-            return [line.rstrip("\n") for line in f.readlines()[-LOG_LINES:]]
+            raw = [line.rstrip("\n") for line in f]
     except OSError:
         return []
+    out: list[str] = []
+    last_tag = None
+    for line in raw:
+        m = _LINE.match(line)
+        tag = m.group(1) if m else None
+        if tag is not None and tag == last_tag:
+            out[-1] = line
+        else:
+            out.append(line)
+        if not line.startswith("    "):                # a skipped track keeps its folder's place
+            last_tag = tag
+    return [_readable(line, root) for line in out[-LOG_LINES:]]
 
 
 def status(state_dir: str, mpd_default, conf: str | None = None) -> dict:
@@ -116,5 +186,5 @@ def status(state_dir: str, mpd_default, conf: str | None = None) -> dict:
         "ok": True, "host": host(), "path": path, "exists": exists, "conf": conf or "",
         # a finished scan added reports: count again rather than show the old figure
         "counts": counts(path, since=scan.get("at", 0)) if exists else None,
-        "scan": scan, "log": scan_log(state_dir),
+        "scan": scan, "log": scan_log(state_dir, path),
     }

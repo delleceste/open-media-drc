@@ -36,6 +36,7 @@ never take cycles from the DRC convolution running on the same box.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -568,6 +569,24 @@ AUDIO_SUFFIXES = (".flac", ".mp3", ".ogg", ".opus", ".wav", ".m4a", ".ape",
                   ".wv", ".aiff", ".aif")
 
 
+def album_tags(path: str, ffprobe: str = "ffprobe") -> tuple[str, str]:
+    """(artist, album) from a track's tags, album artist first; empty when
+    there are none or ffprobe cannot read them."""
+    try:
+        out = subprocess.run([ffprobe, "-v", "error", "-show_entries",
+                              "format_tags:stream_tags", "-of", "json", path],
+                             capture_output=True, text=True, timeout=60, check=True).stdout
+        data = json.loads(out)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return "", ""
+    tags: dict[str, str] = {}
+    # Ogg and Opus keep their tags on the stream, the rest on the container
+    for block in [data.get("format", {})] + data.get("streams", []):
+        for key, value in (block.get("tags") or {}).items():
+            tags.setdefault(key.lower(), str(value).strip())
+    return tags.get("album_artist") or tags.get("albumartist") or tags.get("artist", ""), tags.get("album", "")
+
+
 def write_album_report(folder: str) -> int | None:
     """Measure the audio files in `folder` and write its dr14.txt.
 
@@ -598,10 +617,17 @@ def write_album_report(folder: str) -> int | None:
                      f"  {seconds // 60}:{seconds % 60:02d}      {i:02d}-{name}")
     lines += [rule, f"Number of tracks:  {len(rows)}",
               f"Official DR value: DR{album}", rule]
-    tmp = os.path.join(folder, ".dr14.txt.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-    os.replace(tmp, os.path.join(folder, "dr14.txt"))
+    # a name of its own: two scans of one folder must not rename each other's
+    fd, tmp = tempfile.mkstemp(prefix=".dr14.", suffix=".tmp", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(folder, "dr14.txt"))
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
     return album
 
 
@@ -609,7 +635,12 @@ def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[1] == "--album":
         album = write_album_report(argv[2])
         if album is not None:
-            print(f"DR{album}")
+            # the scan's log line: the value, then whose album it is
+            first = next((os.path.join(argv[2], n) for n in sorted(os.listdir(argv[2]))
+                          if n.lower().endswith(AUDIO_SUFFIXES)), "")
+            artist, title = album_tags(first) if first else ("", "")
+            clean = lambda v: " ".join(v.split())           # noqa: E731 (no tabs, newlines)
+            print(f"DR{album}\t{clean(artist)}\t{clean(title)}")
         return 0 if album is not None else 1
     if len(argv) != 2:
         print(f"usage: {argv[0]} <audio file> | --album <folder>", file=sys.stderr)

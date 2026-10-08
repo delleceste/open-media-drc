@@ -53,7 +53,7 @@ P.refresh = async () => {
     }
     const s = d.scan;
     rows.push(K.kv('DR14 scan',
-        s.state === 'running' ? (s.total ? `${s.done} of ${s.total} folders` : `counting folders… (since ${when(s.since)})`)
+        s.state === 'running' ? (s.total ? `${s.done} of ${s.total} folders` : `looking for folders to measure… (since ${when(s.since)})`)
         : s.state === 'done' ? `finished ${when(s.at)} — ${s.calculated} report${s.calculated === 1 ? '' : 's'} calculated${s.failed ? `, ${s.failed} failed (see the log)` : ''}`
         : s.state === 'interrupted' ? `interrupted (started ${when(s.since)})` : 'not run yet',
         s.state === 'running' || (s.state === 'done' && s.failed) ? 'warn' : ''));
@@ -61,6 +61,8 @@ P.refresh = async () => {
         const pct = Math.round(100 * s.done / s.total);
         rows.push(h('div', { class: 'local-progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100',
             'aria-valuenow': String(pct), title: `${pct}%` }, h('span', { style: `width:${pct}%` })));
+    } else if (s.state === 'running') {
+        rows.push(P.busyBar());                   // the folder count is not known yet: moving, not filling
     }
     rows.push(K.kv('Meter', 'built in: TT Dynamic Range (drmeter.py), run with ffmpeg'));
     K.clear(P.dirRow).append(K.kv('Music directory', d.path || 'none', d.path && !d.exists ? 'bad' : ''));
@@ -70,6 +72,8 @@ P.refresh = async () => {
     P.paintLog(d.log || []);
     P.paintButton(s.state === 'running');
 };
+
+P.busyBar = () => h('div', { class: 'local-progress busy', role: 'progressbar', 'aria-label': 'Starting' }, h('span', {}));
 
 P.paintButton = running => {
     P.scan.disabled = running || P.starting;
@@ -92,6 +96,9 @@ P.rescan = async () => {
     P.seq = (P.seq || 0) + 1;
     P.paintButton(true);
     K.toast('Updating MPD’s index…');
+    // the server's own log replaces these lines at the next look
+    P.paintLog(['Rescan started', 'Updating MPD’s index…']);
+    P.status.append(P.busyBar());
     const d = await K.api('/qobuz/local/refresh', { json: {}, timeout: 20000 });
     P.starting = false;
     K.toast(d.ok ? (d.message || 'Rescan started') : `Rescan failed: ${d.error || 'request failed'}`, d.ok ? 'ok' : 'error');

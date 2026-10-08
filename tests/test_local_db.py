@@ -48,6 +48,34 @@ class Scan(unittest.TestCase):
         got = local_db.scan_log(self.state)
         self.assertEqual((len(got), got[-1]), (local_db.LOG_LINES, "line 299"))
 
+    def test_the_log_shows_each_folders_last_line_by_name(self):
+        with open(os.path.join(self.state, local_db.SCAN_LOG_FILE), "w") as f:
+            f.write("Rescan started\n"
+                    "[listing] 100 folders with audio so far, 3 without a report\n"
+                    "[listing] 120 folders with audio, 4 without a report\n"
+                    "[1/4] measuring Rock/Sparklehorse - 1998 - Good Morning Spider (FLAC)\n"
+                    "[1/4] DR9  Rock/Sparklehorse - 1998 - Good Morning Spider (FLAC)\tSparklehorse\tGood Morning Spider\n"
+                    "    skipped 03.flac: cannot probe 03.flac\n"
+                    "[2/4] measuring Organ/Norrlands Orgel/CD2\n"
+                    "[2/4] FAILED  Organ/Norrlands Orgel/CD2\tno audio file could be measured\n"
+                    "[3/4] measuring Jazz/Some Artist/1959 - An Album\n")
+        self.assertEqual(local_db.scan_log(self.state, "/music"), [
+            "Rescan started",
+            "[listing] 120 folders with audio, 4 without a report",
+            "[1/4] DR9  Sparklehorse — Good Morning Spider",
+            "    skipped 03.flac: cannot probe 03.flac",
+            "[2/4] FAILED  Norrlands Orgel · CD2: no audio file could be measured",
+            "[3/4] measuring Some Artist — An Album",
+        ])
+
+    def test_names_are_cut_to_a_readable_length(self):
+        label = local_db.album_label("x/y", "A" * 60, "B" * 90)
+        artist, album = label.split(" — ")
+        self.assertEqual((len(artist), len(album)), (local_db.ARTIST_CHARS, local_db.ALBUM_CHARS))
+        self.assertTrue(artist.endswith("…") and album.endswith("…"))
+        self.assertEqual(local_db.album_label("Classica/!Luigi Nono - La fabbrica illuminata"),
+                         "Luigi Nono — La fabbrica illuminata")
+
     def test_count_folders_with_audio_and_reports(self):
         for sub, files in (("a", ["x.FLAC", "dr14.txt"]), ("b", ["y.mp3"]), ("c", ["notes.txt"])):
             os.makedirs(os.path.join(self.state, sub))
