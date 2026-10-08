@@ -5500,6 +5500,19 @@ def dr_library_album():
     return jsonify({"ok": True, "album": album})
 
 
+@app.route("/dr/library/recent")
+def dr_library_recent():
+    """Recently saved local track measurements, up to one week back."""
+    try:
+        hours = int(request.args.get("hours", 24))
+        limit = int(request.args.get("limit", 20))
+    except ValueError:
+        return jsonify({"ok": False, "error": "bad hours or limit"}), 400
+    if not 1 <= hours <= 168 or not 1 <= limit <= 500:
+        return jsonify({"ok": False, "error": "hours must be 1–168 and limit 1–500"}), 400
+    return jsonify({"ok": True, **_DR_STORE.recent_tracks(time.time() - hours * 3600, limit)})
+
+
 @app.route("/dr/library/current")
 def dr_library_current():
     """The stored figure of the album playing now, if it has one."""

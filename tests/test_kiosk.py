@@ -71,6 +71,14 @@ class KioskTests(unittest.TestCase):
         self.assertEqual(data["commands"][0]["confirm"], "yes")
         self.assertEqual(set(data["features"]), {"drdb", "cdin", "drc", "qobuz_search"})
 
+    def test_recent_dr_route_bounds_the_lookback_and_uses_saved_tracks(self):
+        with patch.object(APP._DR_STORE, "recent_tracks", return_value={"tracks": [{"dr": 12}], "count": 1}) as recent:
+            data = self.client.get("/dr/library/recent?hours=168&limit=20").get_json()
+            self.assertEqual(data["tracks"], [{"dr": 12}])
+            self.assertEqual(data["count"], 1)
+            self.assertEqual(recent.call_args.args[1], 20)
+        self.assertEqual(self.client.get("/dr/library/recent?hours=169").status_code, 400)
+
     def test_video_page_follows_the_local_remote_health(self):
         import kiosk
         class Reply:

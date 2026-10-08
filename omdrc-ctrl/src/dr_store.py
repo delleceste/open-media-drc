@@ -419,6 +419,24 @@ class DrStore:
             a.pop("report_mtime", None)
         return {"albums": page, "count": len(rated), "totals": totals}
 
+    def recent_tracks(self, since: float, limit: int = 20) -> dict:
+        """Recently kept measurements made on this box, including unrated albums.
+
+        The track table keeps the best row per track, not a play-by-play log.
+        Imported rows and dr14.txt report rows are not recent listening here.
+        """
+        where = "t.origin = '' AND t.method IN ('live', 'measured') AND t.at >= ?"
+        with self._lock, self._connect() as db:
+            count = db.execute(f"SELECT COUNT(*) FROM track t WHERE {where}", (since,)).fetchone()[0]
+            rows = [dict(r) for r in db.execute(f"""
+                SELECT t.track_key, t.number, t.title, t.dr, t.dr_exact, t.seconds,
+                       t.complete, t.method, t.at, a.key AS album_key,
+                       a.title AS album_title, a.artist, a.source, a.ref
+                FROM track t JOIN album a ON a.key = t.album_key
+                WHERE {where} ORDER BY t.at DESC LIMIT ?
+            """, (since, limit))]
+        return {"tracks": rows, "count": count}
+
     # -- sharing between boxes (dr_sync.py) --
 
     def export_rows(self) -> list[dict]:

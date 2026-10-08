@@ -1,7 +1,5 @@
-/* Page 3 — Dynamic range tools: the rolling estimate of what is playing (off
- * until you turn it on, and only computed while this page is showing it), the
- * measurement of the whole record on the wire, the DR database lookup, and the
- * DR log: the server keeping every track's DR, with the albums ranked. */
+/* Dynamic range: Configure holds the live estimate, measurement and DR log;
+ * Albums by DR is a separate page for the stored ranking. */
 (() => {
 'use strict';
 const { h } = K;
@@ -14,8 +12,12 @@ const badge = (v, big, tip) => h('span', {
     title: tip || null, style: v === null || v === undefined ? {} : { background: badgeColor(v) },
 }, v === null || v === undefined ? '–' : String(v).padStart(2, '0'));
 
-const P = { id: 'dr', label: 'DR', title: 'Dynamic range', on: false, sub: null, job: null, jobTimer: null,
-    log: null, logTimer: null, rank: { source: '', exact: false, q: '' }, rankOpen: new Set(), rankSeq: 0 };
+const P = { id: 'dr', label: 'DR Configure', title: 'Configure', menuGroup: 'Dynamic range', on: false, sub: null, job: null, jobTimer: null,
+    log: null, logTimer: null };
+const A = { id: 'dr_albums', label: 'Albums by DR', title: 'Albums by DR', menuGroup: 'Dynamic range',
+    rank: { source: '', exact: false, q: '' }, rankOpen: new Set(), rankSeq: 0 };
+const R = { id: 'dr_recent', label: 'Recent DR', title: 'Recent DR', menuGroup: 'Dynamic range',
+    hours: 24, limit: 20, seq: 0 };
 
 P.mount = el => {
     P.el = el;
@@ -63,18 +65,61 @@ P.mount = el => {
         note('What it is.', 'Keeps the DR of every track played, on the server, whether or not any page is open, and puts together each album’s figure: exact once every track has been heard whole (over as many sessions as it takes), an estimate (≈) from the tracks heard so far, at least two minutes of them. A seek or a late start makes a track count towards the estimate only. Local albums with a dr14.txt use its value.'),
         note('Cost.', 'While on, MPD’s analyzer FIFO output stays enabled and the server reads it continuously — no FFT, only DR blocks. The Audio chain shows it as “DR log” under MPD’s FIFO. Independent of the Estimate switch.'));
 
-    // the ranking
-    P.rankQ = h('input', { type: 'search', class: 'drrank-q', placeholder: 'Filter: artist, album, label…', oninput: () => { clearTimeout(P.rankTimer); P.rankTimer = setTimeout(() => { P.rank.q = P.rankQ.value.trim(); P.rankLoad(); }, 300); } });
-    P.rankChips = h('div', { class: 'btn-row drrank-chips' });
-    P.rankList = h('div', { class: 'drrank' });
-    P.rankFoot = h('div', { class: 'muted small' });
-    const rankCard = K.card('Albums by dynamic range', P.rankQ, P.rankChips, P.rankList, P.rankFoot,
-        K.cardOpts({ actions: h('button', { class: 'btn', type: 'button', title: 'Read the local collection’s dr14.txt files again', onclick: () => P.rankImport() }, 'Rescan dr14.txt') }));
-    P.paintChips();
-
-    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, estCard, logCard), h('div', { class: 'col' }, measCard, rankCard)));
+    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, estCard, logCard), h('div', { class: 'col' }, measCard)));
     P.paintWin();
     P.setOn(K.pref('now.dr', true));      // already running for the Now page: show it here too
+};
+
+A.mount = el => {
+    A.el = el;
+    A.rankQ = h('input', { type: 'search', class: 'drrank-q', placeholder: 'Filter: artist, album, label…', oninput: () => { clearTimeout(A.rankTimer); A.rankTimer = setTimeout(() => { A.rank.q = A.rankQ.value.trim(); A.rankLoad(); }, 300); } });
+    A.rankChips = h('div', { class: 'btn-row drrank-chips' });
+    A.rankList = h('div', { class: 'drrank' });
+    A.rankFoot = h('div', { class: 'muted small' });
+    el.append(K.card('Albums by dynamic range', A.rankQ, A.rankChips, A.rankList, A.rankFoot,
+        K.cardOpts({ actions: h('button', { class: 'btn', type: 'button', title: 'Read the local collection’s dr14.txt files again', onclick: () => A.rankImport() }, 'Rescan dr14.txt') })));
+    A.paintChips();
+};
+
+R.mount = el => {
+    R.el = el;
+    R.chips = h('div', { class: 'btn-row drrecent-chips' });
+    R.list = h('div', { class: 'drrecent' });
+    R.foot = h('div', { class: 'muted small' });
+    R.more = h('button', { class: 'btn', type: 'button', hidden: true,
+        onclick: () => { R.limit = Math.min(500, R.limit + 20); R.load(); } }, 'Show 20 more');
+    el.append(K.card('Recent DR',
+        h('p', { class: 'muted small' }, 'Newest saved track measurements on this box. The DR log retains the best measurement per track, so replaying a track may not add a new row.'),
+        R.chips, R.list, R.foot, R.more));
+    R.paintChips();
+};
+
+R.paintChips = () => K.clear(R.chips).append(...[[24, '24 hours'], [72, '3 days'], [168, '7 days']].map(([hours, label]) =>
+    h('button', { class: 'chip tog' + (R.hours === hours ? ' on' : ''), type: 'button',
+        onclick: () => { R.hours = hours; R.limit = 20; R.paintChips(); R.load(); } }, label)));
+
+R.row = t => {
+    const color = K.dr.color(t.dr);
+    const when = new Date(t.at * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return h('div', { class: 'drrecent-row' },
+        h('span', { class: 'drlog' + (t.complete ? '' : ' est'),
+            style: t.complete ? { background: color.bg, color: color.fg } : { borderColor: color.bg } }, `DR${t.dr}`),
+        h('div', { class: 'drrecent-body' },
+            h('strong', {}, t.title || t.track_key || 'Track'),
+            h('span', { class: 'muted small' }, [t.artist, t.album_title].filter(Boolean).join(' — ')),
+            h('span', { class: 'muted small' }, `${when} · ${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}`)));
+};
+
+R.load = async () => {
+    const seq = ++R.seq;
+    K.clear(R.list).append(h('p', { class: 'muted' }, 'Loading recent DR…'));
+    const d = await K.api(`/dr/library/recent?hours=${R.hours}&limit=${R.limit}`);
+    if (seq !== R.seq) return;
+    if (!d.ok) { K.clear(R.list).append(h('p', { class: 'muted' }, d.error || 'unavailable')); R.more.hidden = true; return; }
+    K.clear(R.list).append(...(d.tracks.length ? d.tracks.map(R.row)
+        : [h('p', { class: 'muted' }, 'No saved DR measurements in this period. Try a longer range or play a track with the DR log on.')]));
+    R.foot.textContent = `Showing ${d.tracks.length} of ${d.count} saved track${d.count === 1 ? '' : 's'}`;
+    R.more.hidden = d.count <= R.limit || R.limit >= 500;
 };
 
 P.paintWin = () => {
@@ -190,7 +235,7 @@ P.syncPaint = s => {
         h('button', { type: 'button', class: 'btn', disabled: !!s.running, onclick: async e => {
             e.target.disabled = true; e.target.textContent = 'Sharing…';
             const d = await K.api('/dr/sync', { method: 'POST', timeout: 240000 });
-            if (d.ok) { P.syncPaint(d.sync); P.rankLoad(); } else K.toast(d.error || 'cannot share', 'error');
+            if (d.ok) { P.syncPaint(d.sync); if (A.el) A.rankLoad(); } else K.toast(d.error || 'cannot share', 'error');
             if (d.ok && d.sync.ok === false) K.toast(d.sync.error, 'error');
         } }, 'Share now'));
 };
@@ -224,36 +269,36 @@ P.curPaint = d => {
 
 // ── the ranking ──────────────────────────────────────────────────────────────
 const SOURCES = [['', 'All'], ['qobuz', 'Qobuz'], ['local', 'Local'], ['stream', 'Other']];
-P.paintChips = () => {
+A.paintChips = () => {
     const chip = (label, on, fn) => h('button', { type: 'button', class: 'chip tog' + (on ? ' on' : ''), onclick: fn }, label);
-    K.clear(P.rankChips).append(
-        ...SOURCES.map(([v, l]) => chip(l, P.rank.source === v, () => { P.rank.source = v; P.paintChips(); P.rankLoad(); })),
-        chip('Exact only', P.rank.exact, () => { P.rank.exact = !P.rank.exact; P.paintChips(); P.rankLoad(); }));
+    K.clear(A.rankChips).append(
+        ...SOURCES.map(([v, l]) => chip(l, A.rank.source === v, () => { A.rank.source = v; A.paintChips(); A.rankLoad(); })),
+        chip('Exact only', A.rank.exact, () => { A.rank.exact = !A.rank.exact; A.paintChips(); A.rankLoad(); }));
 };
 
-P.rankLoad = async () => {
-    const seq = ++P.rankSeq;
-    const q = new URLSearchParams({ source: P.rank.source, exact: P.rank.exact ? '1' : '0', q: P.rank.q, limit: '200' });
+A.rankLoad = async () => {
+    const seq = ++A.rankSeq;
+    const q = new URLSearchParams({ source: A.rank.source, exact: A.rank.exact ? '1' : '0', q: A.rank.q, limit: '200' });
     const d = await K.api('/dr/library?' + q);
-    if (seq !== P.rankSeq) return;
-    if (!d.ok) { K.clear(P.rankList).append(h('p', { class: 'muted' }, d.error || 'unavailable')); return; }
-    const rows = d.albums.map((a, i) => P.rankRow(a, i + 1));
-    K.clear(P.rankList).append(...(rows.length ? rows : [h('p', { class: 'muted' },
-        P.rank.q || P.rank.source || P.rank.exact ? 'No album matches.' : 'Nothing stored yet: turn the DR log on and play something, or scan the local collection.')]));
+    if (seq !== A.rankSeq) return;
+    if (!d.ok) { K.clear(A.rankList).append(h('p', { class: 'muted' }, d.error || 'unavailable')); return; }
+    const rows = d.albums.map((a, i) => A.rankRow(a, i + 1));
+    K.clear(A.rankList).append(...(rows.length ? rows : [h('p', { class: 'muted' },
+        A.rank.q || A.rank.source || A.rank.exact ? 'No album matches.' : 'Nothing stored yet: turn the DR log on and play something, or scan the local collection.')]));
     const t = d.totals || {}, imp = d.import || {};
-    P.rankFoot.textContent = [`${d.count} album${d.count === 1 ? '' : 's'} with a figure`,
+    A.rankFoot.textContent = [`${d.count} album${d.count === 1 ? '' : 's'} with a figure`,
         `stored: ${t.qobuz || 0} Qobuz, ${t.local || 0} local, ${t.stream || 0} other`,
         imp.running ? 'reading dr14.txt…' : imp.error ? `dr14.txt: ${imp.error}` : ''].filter(Boolean).join(' · ');
 };
 
-P.rankRow = (a, n) => {
-    const tracks = h('div', { class: 'drrank-tracks', hidden: !P.rankOpen.has(a.key) });
+A.rankRow = (a, n) => {
+    const tracks = h('div', { class: 'drrank-tracks', hidden: !A.rankOpen.has(a.key) });
     const paintTracks = () => K.clear(tracks).append(...(a.tracks.length ? a.tracks.map(t => h('div', { class: 'drrank-track' },
         h('span', { class: 'drlog' + (t.complete ? '' : ' est'), style: t.complete ? { background: K.dr.color(t.dr).bg, color: K.dr.color(t.dr).fg } : { borderColor: K.dr.color(t.dr).bg } }, `DR${t.dr}`),
         h('span', {}, `${t.number ? t.number + '. ' : ''}${t.title || t.track_key}`),
         h('span', { class: 'muted small' }, `${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}${t.origin ? ` · ${t.origin}` : ''}`)))
         : [h('div', { class: 'muted small' }, a.report_dr !== null ? 'Album value from dr14.txt; no track heard here yet.' : 'No tracks.')]));
-    if (P.rankOpen.has(a.key)) paintTracks();
+    if (A.rankOpen.has(a.key)) paintTracks();
     const sub = [a.artist, a.year, a.label].filter(Boolean).join(' · ');
     // where the figure comes from: another box's collection, or tracks heard there
     const elsewhere = (a.dr.origins || []).filter(Boolean);
@@ -267,8 +312,8 @@ P.rankRow = (a, n) => {
     } }, K.tIcon ? K.tIcon('play') : '▶') : null;
     return h('div', { class: 'drrank-row' },
         h('div', { class: 'drrank-head tap', onclick: () => {
-            if (P.rankOpen.has(a.key)) P.rankOpen.delete(a.key); else { P.rankOpen.add(a.key); paintTracks(); }
-            tracks.hidden = !P.rankOpen.has(a.key);
+            if (A.rankOpen.has(a.key)) A.rankOpen.delete(a.key); else { A.rankOpen.add(a.key); paintTracks(); }
+            tracks.hidden = !A.rankOpen.has(a.key);
         } },
             h('span', { class: 'drrank-n muted' }, String(n)),
             a.image ? h('img', { class: 'drrank-cover', src: a.image, alt: '', loading: 'lazy' }) : h('span', { class: 'drrank-cover' }),
@@ -281,16 +326,26 @@ P.rankRow = (a, n) => {
         tracks);
 };
 
-P.rankImport = async () => {
+A.rankImport = async () => {
     const d = await K.api('/dr/library/import', { method: 'POST' });
     K.toast(d.ok ? (d.started ? 'Reading dr14.txt files…' : 'Already reading them') : (d.error || 'cannot rescan'), d.ok ? 'ok' : 'error');
-    setTimeout(P.rankLoad, 3000);
+    setTimeout(A.rankLoad, 3000);
 };
 
-P.show = () => { P.visible = true; P.setOn(K.pref('now.dr', true)); P.measPoll(); P.logPoll(); P.rankLoad(); };
+P.show = () => { P.visible = true; P.setOn(K.pref('now.dr', true)); P.measPoll(); P.logPoll(); };
 P.hide = () => { P.visible = false; P.sync(); clearTimeout(P.jobTimer); clearTimeout(P.logTimer); };
+A.show = () => { A.visible = true; A.rankLoad(); };
+A.hide = () => { A.visible = false; clearTimeout(A.rankTimer); A.rankSeq++; };
+R.show = () => { R.visible = true; R.load(); };
+R.hide = () => { R.visible = false; R.seq++; };
+K.openDrAlbums = () => {
+    K.showPage('dr_albums', false);
+    if (A.body) A.body.scrollTop = 0;
+};
 
 document.addEventListener('visibilitychange', () => P.sync && P.el && P.sync());
 
 K.registerPage(P);
+K.registerPage(A);
+K.registerPage(R);
 })();

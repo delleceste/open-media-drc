@@ -306,11 +306,29 @@ $('#top-menu').addEventListener('click', () => {
     menu.closeMenu = close;
     const outside = e => { if (!menu.contains(e.target) && e.target !== trigger) close(); };
     const escape = e => { if (e.key === 'Escape') { close(); trigger.focus(); } };
-    menu.append(...K.pages.map((p, n) => h('button', {
-        type: 'button', class: 'menu-item', role: 'menuitemradio', 'aria-checked': String(n === cur),
+    const pageButton = (p, n, child = false) => h('button', {
+        type: 'button', class: 'menu-item' + (child ? ' menu-subitem' : ''),
+        role: 'menuitemradio', 'aria-checked': String(n === cur),
         onclick: () => { close(); K.showPage(p.id); },
-        ...(n === swipeCount() && n > 0 ? { style: 'border-top:1px solid var(--border);margin-top:.25rem' } : {}),
-    }, h('span', { class: 'mk' }, n === cur ? '●' : ''), p.title)));
+        ...(n === swipeCount() && n > 0 && !child ? { style: 'border-top:1px solid var(--border);margin-top:.25rem' } : {}),
+    }, h('span', { class: 'mk' }, n === cur ? '●' : ''), p.title);
+    const groups = new Set();
+    K.pages.forEach((p, n) => {
+        if (!p.menuGroup) { menu.append(pageButton(p, n)); return; }
+        if (groups.has(p.menuGroup)) return;
+        groups.add(p.menuGroup);
+        const members = K.pages.map((page, index) => ({ page, index })).filter(x => x.page.menuGroup === p.menuGroup);
+        let expanded = members.some(x => x.index === cur);
+        const children = h('div', { class: 'menu-submenu', role: 'group', 'aria-label': p.menuGroup, hidden: !expanded },
+            members.map(x => pageButton(x.page, x.index, true)));
+        const arrow = h('span', { class: 'mk' }, expanded ? '▾' : '▸');
+        const group = h('button', {
+            type: 'button', class: 'menu-item menu-group', role: 'menuitem', 'aria-expanded': String(expanded),
+            onclick: () => { expanded = !expanded; children.hidden = !expanded; group.setAttribute('aria-expanded', String(expanded)); arrow.textContent = expanded ? '▾' : '▸'; },
+            ...(n === swipeCount() && n > 0 ? { style: 'border-top:1px solid var(--border);margin-top:.25rem' } : {}),
+        }, arrow, p.menuGroup);
+        menu.append(group, children);
+    });
     document.body.append(menu);
     const r = trigger.getBoundingClientRect();
     menu.style.top = `${r.bottom + 4}px`;

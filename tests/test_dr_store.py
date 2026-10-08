@@ -2,6 +2,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 import numpy as np
@@ -75,6 +76,19 @@ class Store(unittest.TestCase):
                          ["local:a"])
         self.assertEqual(self.store.ranking(text="partial")["count"], 1)
         self.assertEqual(set(self.store.lookup(["qobuz:1", "qobuz:9", ""])), {"qobuz:1"})
+
+    def test_recent_tracks_include_unrated_albums_and_only_local_measurements(self):
+        self.store.upsert_album("qobuz:1", "qobuz", "1", title="New album", artist="X")
+        track(self.store, "qobuz:1", 1, 10, seconds=40, complete=False)
+        self.store.upsert_album("qobuz:2", "qobuz", "2", title="Old album")
+        track(self.store, "qobuz:2", 1, 8)
+        with self.store._lock, self.store._connect() as db:
+            db.execute("UPDATE track SET at = ? WHERE album_key = ?", (time.time() - 8 * 86400, "qobuz:2"))
+        recent = self.store.recent_tracks(time.time() - 86400)
+        self.assertEqual(recent["count"], 1)
+        self.assertEqual((recent["tracks"][0]["album_title"], recent["tracks"][0]["dr"]),
+                         ("New album", 10))
+        self.assertIsNone(self.store.album("qobuz:1")["dr"]["dr"])
 
     def test_reports_are_imported_updated_and_dropped(self):
         root = os.path.join(self.tmp.name, "music")

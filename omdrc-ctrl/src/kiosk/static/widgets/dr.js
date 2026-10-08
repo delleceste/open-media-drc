@@ -196,6 +196,7 @@ K.drViewPopup = (() => {
                 h('div', { class: 'dr-view-labels' }, oldest, middle, h('span', {}, 'Now')),
                 h('div', { class: 'dr-view-extend' }, extendLeft, extendRight),
                 range,
+                h('button', { class: 'btn dr-view-albums', type: 'button', onclick: () => { close(); K.openDrAlbums(); } }, 'Albums by DR →'),
                 h('div', { class: 'sheet-actions' },
                     h('button', { class: 'btn', type: 'button', onclick: () => cancel() }, 'Cancel'),
                     h('button', { class: 'btn', type: 'button', title: 'Start the visible bar again at Now', onclick: () => E.resetView() }, 'Reset'),
