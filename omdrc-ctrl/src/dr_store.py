@@ -30,6 +30,11 @@ for an imported one.  Rows of different origins sit side by side -- a box only
 ever replaces its own, or one box's whole set on import -- and the album figure
 takes the best measurement of each track, wherever it came from.  Another
 box's local albums are keyed `local@<box>:<folder>`: its folders are not ours.
+
+An album on a drive that carries a volume marker (dr_volumes.py) is keyed
+`vol:<volume id>:<folder on the drive>` instead, the same on every box: the
+drive can move between boxes and its albums stay one.  Such an album's report
+may come from another box (`report_origin`), until this box reads it itself.
 """
 from __future__ import annotations
 
@@ -39,6 +44,7 @@ import sqlite3
 import threading
 import time
 
+import dr_volumes
 from drmeter import AUDIO_SUFFIXES, album_dr
 
 DB_FILE = "dr-albums.sqlite"
@@ -75,7 +81,8 @@ CREATE TABLE IF NOT EXISTS album (
     report_tracks INTEGER,
     report_mtime  REAL,
     updated       REAL NOT NULL,
-    origin        TEXT NOT NULL DEFAULT ''
+    origin        TEXT NOT NULL DEFAULT '',
+    report_origin TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS track (
     album_key  TEXT NOT NULL,
@@ -296,8 +303,9 @@ class TrackWatch:
 # ── the store ────────────────────────────────────────────────────────────────
 
 class DrStore:
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, volumes: dr_volumes.Volumes | None = None) -> None:
         self.path = path
+        self.volumes = volumes or dr_volumes.VOLUMES
         self._lock = threading.Lock()
         self._ready = False
 
@@ -319,6 +327,8 @@ class DrStore:
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         if "album" in tables and "origin" not in {r[1] for r in db.execute("PRAGMA table_info(album)")}:
             db.execute("ALTER TABLE album ADD COLUMN origin TEXT NOT NULL DEFAULT ''")
+        if "album" in tables and "report_origin" not in {r[1] for r in db.execute("PRAGMA table_info(album)")}:
+            db.execute("ALTER TABLE album ADD COLUMN report_origin TEXT NOT NULL DEFAULT ''")
         if "track" in tables and "origin" not in {r[1] for r in db.execute("PRAGMA table_info(track)")}:
             db.executescript("""
                 ALTER TABLE track RENAME TO track_old;
@@ -376,7 +386,8 @@ class DrStore:
                    mtime: float | None) -> None:
         with self._lock, self._connect() as db:
             db.execute("UPDATE album SET report_dr = ?, report_tracks = ?, report_mtime = ?, "
-                       "updated = ? WHERE key = ?", (dr, tracks, mtime, time.time(), key))
+                       "report_origin = '', updated = ? WHERE key = ?",
+                       (dr, tracks, mtime, time.time(), key))
 
     def _albums(self, db, where: str = "", args: tuple = ()) -> list[dict]:
         albums = [dict(r) for r in db.execute(f"SELECT * FROM album {where}", args)]
@@ -470,6 +481,8 @@ class DrStore:
             albums = [dict(r) for r in db.execute("SELECT * FROM album WHERE origin = '' ORDER BY key")]
         rows = []
         for a in albums:
+            if a["report_origin"]:          # another box's report, not ours to pass on
+                a["report_dr"] = a["report_tracks"] = None
             if a["key"] not in keys and a["report_dr"] is None:
                 continue
             rows.append({"album": {k: a[k] for k in ("key", "source", "ref", "title", "artist",
@@ -494,6 +507,10 @@ class DrStore:
         with self._lock, self._connect() as db:
             db.execute("DELETE FROM track WHERE origin = ?", (box,))
             db.execute("DELETE FROM album WHERE origin = ?", (box,))
+            reported = [r[0] for r in db.execute(
+                "SELECT key FROM album WHERE report_origin = ?", (box,))]
+            db.execute("UPDATE album SET report_dr = NULL, report_tracks = NULL, "
+                       "report_origin = '' WHERE report_origin = ?", (box,))
             for a in albums:
                 key = self._foreign_key(str(a.get("key", "")), box)
                 if not key:
@@ -512,6 +529,11 @@ class DrStore:
                 if not own and a.get("report_dr") is not None:
                     db.execute("UPDATE album SET report_dr = ?, report_tracks = ? WHERE key = ?",
                                (a["report_dr"], a.get("report_tracks"), key))
+                elif key.startswith(dr_volumes.PREFIX) and a.get("report_dr") is not None:
+                    # a drive's report read elsewhere, until this box reads it itself
+                    db.execute("UPDATE album SET report_dr = ?, report_tracks = ?, "
+                               "report_origin = ? WHERE key = ? AND report_dr IS NULL",
+                               (a["report_dr"], a.get("report_tracks"), box, key))
             for t in tracks:
                 try:
                     db.execute("INSERT OR REPLACE INTO track (album_key, track_key, number, title, "
@@ -524,6 +546,9 @@ class DrStore:
                                 float(t.get("at") or now), box))
                 except (KeyError, TypeError, ValueError):
                     continue        # a malformed row from elsewhere is skipped, not fatal
+            for key in reported:    # a report the box no longer has, and nothing else
+                db.execute("DELETE FROM album WHERE key = ? AND report_dr IS NULL AND NOT EXISTS "
+                           "(SELECT 1 FROM track WHERE album_key = ?)", (key, key))
         return {"albums": len(albums), "tracks": len(tracks)}
 
     def stats(self) -> dict:
@@ -542,12 +567,16 @@ class DrStore:
         MPD ({"title", "artist", "year", ..., "track_count"}).  Only what it
         does not know is taken from the folder's name: "Artist - Album" gives
         both, any other name the title alone; a parent folder is never taken
-        for the artist (it is as often a genre, or a shelf, as an artist)."""
+        for the artist (it is as often a genre, or a shelf, as an artist).
+
+        A folder on a drive with a volume marker is keyed by the drive; a report
+        of a drive that is not plugged in is kept, not taken for deleted."""
         root = os.path.realpath(root)
+        adopted = self.adopt_volumes(root)
         with self._lock, self._connect() as db:
-            known = {r["ref"]: r["report_mtime"] for r in db.execute(
-                "SELECT ref, report_mtime FROM album WHERE source = 'local'")}
-        seen, added, changed, folders = set(), 0, 0, 0
+            known = {r["key"]: r["report_mtime"] for r in db.execute(
+                "SELECT key, report_mtime FROM album WHERE source = 'local' AND origin = ''")}
+        seen, present, added, changed, folders = set(), set(), 0, 0, 0
         # followlinks: a disk linked into the library (USBHD2 -> /media/...) is
         # part of the collection like any folder; `limit` bounds a link loop.
         for folder, _dirs, files in os.walk(root, followlinks=True):
@@ -559,11 +588,15 @@ class DrStore:
             rel = os.path.relpath(folder, root)
             if rel == ".":
                 rel = ""
-            seen.add(rel)
+            key = dr_volumes.album_key(root, rel, self.volumes)
+            seen.add(key)
+            on = dr_volumes.parse(key)
+            if on:
+                present.add(on[0])
             path = os.path.join(folder, REPORT)
             try:
                 mtime = os.stat(path).st_mtime
-                if known.get(rel) == mtime:
+                if known.get(key) == mtime:
                     continue
                 with open(path, encoding="utf-8", errors="replace") as f:
                     report = parse_report(f.read())
@@ -571,7 +604,6 @@ class DrStore:
                 continue
             if report is None:
                 continue
-            key = "local:" + rel
             meta = {}
             if describe:
                 try:
@@ -592,20 +624,57 @@ class DrStore:
             meta.setdefault("track_count", report["tracks"] or audio_files(folder) or None)
             self.upsert_album(key, "local", rel, **meta)
             self.set_report(key, report["dr"], report["tracks"], mtime)
-            if rel in known:
+            if key in known:
                 changed += 1
             else:
                 added += 1
         removed = 0
         if folders <= limit:
-            gone = [ref for ref, mtime in known.items() if mtime is not None and ref not in seen]
+            # a drive that is not here has not lost its albums
+            gone = [key for key, mtime in known.items() if mtime is not None and key not in seen
+                    and (dr_volumes.parse(key) or ("",))[0] in present | {""}]
             with self._lock, self._connect() as db:
-                for ref in gone:
-                    key = "local:" + ref
+                for key in gone:
                     db.execute("UPDATE album SET report_dr = NULL, report_tracks = NULL, "
                                "report_mtime = NULL WHERE key = ?", (key,))
                     db.execute("DELETE FROM album WHERE key = ? AND NOT EXISTS "
                                "(SELECT 1 FROM track WHERE album_key = ?)", (key, key))
                     removed += 1
-        return {"added": added, "changed": changed, "removed": removed,
+        return {"added": added, "changed": changed, "removed": removed, "adopted": adopted,
                 "reports": len(seen), "truncated": folders > limit}
+
+    def adopt_volumes(self, root: str) -> int:
+        """Rekey this box's `local:` albums that are on a drive with a volume
+        marker as `vol:` ones, merged into what is already known under that
+        key; a folder that is not here now keeps its key until it is."""
+        with self._lock, self._connect() as db:
+            keys = {r[0] for r in db.execute(
+                "SELECT key FROM album WHERE key LIKE 'local:%' AND origin = '' "
+                "UNION SELECT album_key FROM track WHERE album_key LIKE 'local:%' AND origin = ''")}
+        moves = {}
+        for old in sorted(keys):
+            new = dr_volumes.album_key(root, old[len("local:"):], self.volumes)
+            if new != old:
+                moves[old] = new
+        if not moves:
+            return 0
+        fill = ", ".join(f"{k} = CASE WHEN {k} IS NULL OR {k} = '' THEN "
+                         f"(SELECT {k} FROM album WHERE key = :old) ELSE {k} END" for k in _META)
+        with self._lock, self._connect() as db:
+            for old, new in moves.items():
+                # a track already known under the new key was heard since: it stays
+                db.execute("UPDATE OR IGNORE track SET album_key = ? WHERE album_key = ?", (new, old))
+                db.execute("DELETE FROM track WHERE album_key = ?", (old,))
+                if db.execute("SELECT 1 FROM album WHERE key = ?", (new,)).fetchone() is None:
+                    db.execute("UPDATE album SET key = ? WHERE key = ?", (new, old))
+                    continue
+                names = {"old": old, "new": new}
+                db.execute(f"UPDATE album SET {fill} WHERE key = :new", names)
+                db.execute("""UPDATE album SET (report_dr, report_tracks, report_mtime, report_origin) =
+                                  (SELECT report_dr, report_tracks, report_mtime, report_origin
+                                   FROM album WHERE key = :old)
+                              WHERE key = :new AND (report_dr IS NULL OR report_origin != '')
+                                AND (SELECT report_dr FROM album WHERE key = :old) IS NOT NULL""",
+                           names)
+                db.execute("DELETE FROM album WHERE key = ?", (old,))
+        return len(moves)

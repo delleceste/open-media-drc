@@ -12,7 +12,7 @@ const badge = (v, big, tip) => h('span', {
     title: tip || null, style: v === null || v === undefined ? {} : { background: badgeColor(v) },
 }, v === null || v === undefined ? '–' : String(v).padStart(2, '0'));
 const albumCover = (image, source, key, cls) => {
-    const src = image || (source === 'local' && key.startsWith('local:')
+    const src = image || (source === 'local' && /^(local|vol):/.test(key)
         ? `/dr/library/art?key=${encodeURIComponent(key)}` : '');
     if (!src) return h('span', { class: cls }, '♪');
     return h('img', { class: cls, src, alt: '', loading: 'lazy',

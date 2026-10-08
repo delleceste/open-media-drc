@@ -30,6 +30,7 @@ from bitperfect import BitPerfectManager, Settings as BitPerfectSettings
 from audio_diagnostics import AudioDiagnosticsMonitor
 from drmeter import AlbumMeasurement, RollingEstimate, SubBlocks
 import dr_store
+import dr_volumes
 from dr_store import DrStore, TrackWatch
 from dr_sync import GitSync, SyncError
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
@@ -5350,7 +5351,7 @@ def _dr_album_for(song: dict) -> dict | None:
         count = (dr_store.audio_files(os.path.join(root, folder))
                  if root and not mpd_library.is_cue_track(file) else 0)
         parts = [p for p in folder.split("/") if p]
-        return {"key": "local:" + folder, "source": "local", "ref": folder,
+        return {"key": dr_volumes.album_key(root, folder), "source": "local", "ref": folder,
                 "meta": {"title": title or (parts[-1] if parts else ""),
                          "artist": artist, "year": year, "track_count": count or None},
                 "track_key": os.path.basename(file), "number": number}
@@ -5445,15 +5446,19 @@ def _dr_import_start() -> bool:
 
 
 def _dr_import_watch() -> None:
-    """Import once after startup, then again whenever a DR14 scan finishes."""
+    """Import once after startup, then again whenever a DR14 scan finishes or a
+    drive comes or goes in the music directory (its reports travel with it)."""
     import local_db
     time.sleep(20)
+    mounted = dr_volumes.signature(_resolve_mpd_music_directory())
     _dr_import_start()
     while True:
         time.sleep(60)
         scan = local_db.scan_status(_STATE_DIR)
-        if scan.get("state") == "done" and scan.get("at", 0) > _DR_IMPORT["at"]:
-            _dr_import_start()
+        now = dr_volumes.signature(_resolve_mpd_music_directory())
+        if (scan.get("state") == "done" and scan.get("at", 0) > _DR_IMPORT["at"]) or now != mounted:
+            if _dr_import_start():
+                mounted = now
 
 
 @app.route("/dr/log", methods=["GET", "POST"])
@@ -5494,6 +5499,9 @@ def dr_library():
 
 def _dr_local_album_folder(album: dict | None) -> Path | None:
     """Find a local album beneath MPD's library, including linked disks."""
+    if album and album["source"] == "local" and dr_volumes.parse(album.get("key", "")):
+        folder = dr_volumes.VOLUMES.folder(album["key"])
+        return Path(folder).resolve() if folder else None
     root_name = _resolve_mpd_music_directory()
     if not album or album["source"] != "local" or album["origin"] or not album["ref"] or not root_name:
         return None
@@ -5550,7 +5558,7 @@ def dr_library_recent():
 def dr_library_art():
     """A local album's cover, restricted to its MPD music folder."""
     key = request.args.get("key", "")
-    album = _DR_STORE.album(key) if key.startswith("local:") else None
+    album = _DR_STORE.album(key) if key.startswith(("local:", dr_volumes.PREFIX)) else None
     folder = _dr_local_album_folder(album)
     if not folder:
         return "", 404

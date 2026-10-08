@@ -112,6 +112,13 @@ class KioskTests(unittest.TestCase):
                     self.assertEqual(self.client.get("/dr/library/art?key=local:album").data, b"cover")
                 album["ref"] = "../outside"
                 self.assertEqual(self.client.get("/dr/library/art?key=local:album").status_code, 404)
+                # an album on a marked drive is found by the drive, not by its ref
+                vol = "vol:" + "a" * 36 + ":album"
+                album["key"] = vol
+                with patch.object(APP.dr_volumes.VOLUMES, "folder", return_value=str(root / "album")):
+                    self.assertEqual(self.client.get(f"/dr/library/art?key={vol}").data, b"cover")
+                with patch.object(APP.dr_volumes.VOLUMES, "folder", return_value=None):
+                    self.assertEqual(self.client.get(f"/dr/library/art?key={vol}").status_code, 404)
 
     def test_video_page_follows_the_local_remote_health(self):
         import kiosk

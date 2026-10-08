@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "omdrc-ctrl", "src"))
 
+import dr_volumes                                  # noqa: E402
 from dr_store import DrStore                       # noqa: E402
 from dr_sync import GitSync, SyncError, safe_repo  # noqa: E402
 
@@ -24,7 +25,7 @@ class TwoBoxes(unittest.TestCase):
         self.tmp.cleanup()
 
     def box(self, name):
-        store = DrStore(os.path.join(self.tmp.name, name, "dr.sqlite"))
+        store = DrStore(os.path.join(self.tmp.name, name, "dr.sqlite"), dr_volumes.Volumes(create=False))
         sync = GitSync(store, self.repo, name, os.path.join(self.tmp.name, name, "dr-sync"))
         return store, sync
 

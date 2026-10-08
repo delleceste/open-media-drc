@@ -64,6 +64,7 @@ import qobuz_ai
 import qobuz_favorites
 import local_db
 import mpd_library
+import dr_volumes
 from qobuz_search import (AWARD_PRESETS, AwardedAlbums, LoweredList, PlayedAlbums,
                           QobuzCatalog, QobuzError, album_card,
                           SearchWords, ArtistLabels, discover_app_id, read_word_list,
@@ -144,7 +145,7 @@ def dr_key(card: dict) -> str:
     if card.get("source") == "local":
         tracks = card.get("tracks") or []
         first = tracks[0].get("file", "") if tracks and isinstance(tracks[0], dict) else ""
-        return "local:" + mpd_library.album_folder(first) if first else ""
+        return dr_volumes.album_key(_music_directory(), mpd_library.album_folder(first)) if first else ""
     return "qobuz:" + str(card["id"]) if card.get("id") else ""
 
 

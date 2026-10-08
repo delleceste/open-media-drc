@@ -10,6 +10,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "omdrc-ctrl", "src"))
 
 import dr_store                                    # noqa: E402
+import dr_volumes                                  # noqa: E402
 import drmeter                                     # noqa: E402
 from dr_store import DrStore, TrackWatch           # noqa: E402
 
@@ -22,7 +23,8 @@ def track(store, key, n, dr, seconds=240.0, complete=True, method="live"):
 class Store(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = DrStore(os.path.join(self.tmp.name, "state", dr_store.DB_FILE))
+        self.store = DrStore(os.path.join(self.tmp.name, "state", dr_store.DB_FILE),
+                             dr_volumes.Volumes(create=False))
 
     def tearDown(self):
         self.tmp.cleanup()
