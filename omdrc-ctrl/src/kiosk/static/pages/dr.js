@@ -11,13 +11,20 @@ const badge = (v, big, tip) => h('span', {
     class: 'drb' + (v === null || v === undefined ? ' none' : '') + (big ? ' big' : ''),
     title: tip || null, style: v === null || v === undefined ? {} : { background: badgeColor(v) },
 }, v === null || v === undefined ? '–' : String(v).padStart(2, '0'));
+const albumCover = (image, source, key, cls) => {
+    const src = image || (source === 'local' && key.startsWith('local:')
+        ? `/dr/library/art?key=${encodeURIComponent(key)}` : '');
+    if (!src) return h('span', { class: cls }, '♪');
+    return h('img', { class: cls, src, alt: '', loading: 'lazy',
+        onerror: e => e.target.replaceWith(h('span', { class: cls }, '♪')) });
+};
 
 const P = { id: 'dr', label: 'DR Configure', title: 'Configure', menuGroup: 'Dynamic range', on: false, sub: null, job: null, jobTimer: null,
     log: null, logTimer: null };
 const A = { id: 'dr_albums', label: 'Albums by DR', title: 'Albums by DR', menuGroup: 'Dynamic range',
-    rank: { source: '', exact: false, q: '' }, rankOpen: new Set(), rankSeq: 0 };
+    rank: { source: '', exact: false, q: '' }, rankSeq: 0 };
 const R = { id: 'dr_recent', label: 'Recent DR', title: 'Recent DR', menuGroup: 'Dynamic range',
-    hours: 24, limit: 20, seq: 0 };
+    hours: 24, limit: 20, seq: 0, groups: [], count: 0 };
 
 P.mount = el => {
     P.el = el;
@@ -76,7 +83,9 @@ A.mount = el => {
     A.rankChips = h('div', { class: 'btn-row drrank-chips' });
     A.rankList = h('div', { class: 'drrank' });
     A.rankFoot = h('div', { class: 'muted small' });
-    el.append(K.card('Albums by dynamic range', A.rankQ, A.rankChips, A.rankList, A.rankFoot,
+    A.browse = h('div', {}, A.rankQ, A.rankChips, A.rankList, A.rankFoot);
+    A.detail = h('div', { class: 'dr-detail-page', hidden: true });
+    el.append(K.card('Albums by dynamic range', A.browse, A.detail,
         K.cardOpts({ actions: h('button', { class: 'btn', type: 'button', title: 'Read the local collection’s dr14.txt files again', onclick: () => A.rankImport() }, 'Rescan dr14.txt') })));
     A.paintChips();
 };
@@ -87,10 +96,12 @@ R.mount = el => {
     R.list = h('div', { class: 'drrecent' });
     R.foot = h('div', { class: 'muted small' });
     R.more = h('button', { class: 'btn', type: 'button', hidden: true,
-        onclick: () => { R.limit = Math.min(500, R.limit + 20); R.load(); } }, 'Show 20 more');
+        onclick: () => { R.limit = Math.min(R.groups.length, R.limit + 20); R.paint(); } }, 'Show 20 more');
+    R.browse = h('div', {}, R.chips, R.list, R.foot, R.more);
+    R.detail = h('div', { class: 'dr-detail-page', hidden: true });
     el.append(K.card('Recent DR',
         h('p', { class: 'muted small' }, 'Newest saved track measurements on this box. The DR log retains the best measurement per track, so replaying a track may not add a new row.'),
-        R.chips, R.list, R.foot, R.more));
+        R.browse, R.detail));
     R.paintChips();
 };
 
@@ -98,28 +109,75 @@ R.paintChips = () => K.clear(R.chips).append(...[[24, '24 hours'], [72, '3 days'
     h('button', { class: 'chip tog' + (R.hours === hours ? ' on' : ''), type: 'button',
         onclick: () => { R.hours = hours; R.limit = 20; R.paintChips(); R.load(); } }, label)));
 
-R.row = t => {
+const recentWhen = t => new Date(t.at * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+R.trackRow = t => {
     const color = K.dr.color(t.dr);
-    const when = new Date(t.at * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     return h('div', { class: 'drrecent-row' },
         h('span', { class: 'drlog' + (t.complete ? '' : ' est'),
             style: t.complete ? { background: color.bg, color: color.fg } : { borderColor: color.bg } }, `DR${t.dr}`),
         h('div', { class: 'drrecent-body' },
-            h('strong', {}, t.title || t.track_key || 'Track'),
+            h('strong', {}, `${t.number ? t.number + '. ' : ''}${t.title || t.track_key || 'Track'}`),
             h('span', { class: 'muted small' }, [t.artist, t.album_title].filter(Boolean).join(' — ')),
-            h('span', { class: 'muted small' }, `${when} · ${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}`)));
+            h('span', { class: 'muted small' }, `${recentWhen(t)} · ${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}`)));
 };
 
+R.back = () => {
+    R.detail.hidden = true;
+    R.browse.hidden = false;
+    if (R.body) R.body.scrollTop = R.savedScroll || 0;
+};
+R.openGroup = group => {
+    const t = group.tracks[0], dr = group.dr;
+    const tracks = [...group.tracks].sort((a, b) =>
+        a.number !== null && b.number !== null ? a.number - b.number : b.at - a.at);
+    R.savedScroll = R.body ? R.body.scrollTop : 0;
+    K.clear(R.detail).append(
+        h('button', { class: 'btn dr-detail-back', type: 'button', onclick: R.back }, '‹ Back'),
+        h('div', { class: 'dr-detail-album' },
+            albumCover(t.image, t.source, t.album_key, 'dr-detail-cover'),
+            h('div', { class: 'dr-detail-title' }, h('strong', {}, t.album_title || 'Album'),
+                h('span', { class: 'muted small' }, t.artist || ''),
+                h('span', { class: 'muted small' }, `${tracks.length} saved track${tracks.length === 1 ? '' : 's'} in this period`)),
+            K.drLogBadge(dr, 'big') || h('span', { class: 'drlog none' }, '—')),
+        h('div', { class: 'drrecent' }, tracks.map(R.trackRow)));
+    R.browse.hidden = true;
+    R.detail.hidden = false;
+    if (R.body) R.body.scrollTop = 0;
+};
+R.row = group => {
+    if (group.tracks.length === 1) return R.trackRow(group.tracks[0]);
+    const t = group.tracks[0];
+    return h('button', { class: 'drrecent-row drrecent-parent', type: 'button', onclick: () => R.openGroup(group) },
+        albumCover(t.image, t.source, t.album_key, 'drrecent-cover'),
+        K.drLogBadge(group.dr) || h('span', { class: 'drlog none' }, '—'),
+        h('span', { class: 'drrecent-body' },
+            h('strong', {}, t.album_title || 'Album'),
+            h('span', { class: 'muted small' }, t.artist || ''),
+            h('span', { class: 'muted small' }, `${group.tracks.length} saved tracks · latest ${recentWhen(t)}`)),
+        h('span', { class: 'drrecent-next', 'aria-hidden': 'true' }, '›'));
+};
+R.paint = () => {
+    const shown = R.groups.slice(0, R.limit);
+    K.clear(R.list).append(...(shown.length ? shown.map(R.row)
+        : [h('p', { class: 'muted' }, 'No saved DR measurements in this period. Try a longer range or play a track with the DR log on.')]));
+    R.foot.textContent = `Showing ${shown.length} of ${R.groups.length} albums/songs from ${Math.min(R.count, 500)} saved tracks${R.count > 500 ? ` (latest 500 of ${R.count})` : ''}`;
+    R.more.hidden = R.limit >= R.groups.length;
+};
 R.load = async () => {
     const seq = ++R.seq;
+    R.back();
     K.clear(R.list).append(h('p', { class: 'muted' }, 'Loading recent DR…'));
-    const d = await K.api(`/dr/library/recent?hours=${R.hours}&limit=${R.limit}`);
+    const d = await K.api(`/dr/library/recent?hours=${R.hours}&limit=500`);
     if (seq !== R.seq) return;
     if (!d.ok) { K.clear(R.list).append(h('p', { class: 'muted' }, d.error || 'unavailable')); R.more.hidden = true; return; }
-    K.clear(R.list).append(...(d.tracks.length ? d.tracks.map(R.row)
-        : [h('p', { class: 'muted' }, 'No saved DR measurements in this period. Try a longer range or play a track with the DR log on.')]));
-    R.foot.textContent = `Showing ${d.tracks.length} of ${d.count} saved track${d.count === 1 ? '' : 's'}`;
-    R.more.hidden = d.count <= R.limit || R.limit >= 500;
+    const groups = new Map();
+    d.tracks.forEach(t => {
+        if (!groups.has(t.album_key)) groups.set(t.album_key, { tracks: [], dr: d.summaries[t.album_key] });
+        groups.get(t.album_key).tracks.push(t);
+    });
+    R.groups = [...groups.values()];
+    R.count = d.count;
+    R.paint();
 };
 
 P.paintWin = () => {
@@ -291,14 +349,36 @@ A.rankLoad = async () => {
         imp.running ? 'reading dr14.txt…' : imp.error ? `dr14.txt: ${imp.error}` : ''].filter(Boolean).join(' · ');
 };
 
+A.back = () => {
+    A.detail.hidden = true;
+    A.browse.hidden = false;
+    if (A.body) A.body.scrollTop = A.savedScroll || 0;
+};
+A.trackRow = t => h('div', { class: 'drrecent-row' },
+    h('span', { class: 'drlog' + (t.complete ? '' : ' est'),
+        style: t.complete ? { background: K.dr.color(t.dr).bg, color: K.dr.color(t.dr).fg }
+            : { borderColor: K.dr.color(t.dr).bg } }, `DR${t.dr}`),
+    h('span', { class: 'drrecent-body' },
+        h('strong', {}, `${t.number ? t.number + '. ' : ''}${t.title || t.track_key}`),
+        h('span', { class: 'muted small' }, `${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}${t.origin ? ` · ${t.origin}` : ''}`)));
+A.openAlbum = a => {
+    A.savedScroll = A.body ? A.body.scrollTop : 0;
+    const rows = a.tracks.length ? a.tracks.map(A.trackRow)
+        : [h('div', { class: 'muted small' }, a.report_dr !== null ? 'Album value from dr14.txt; no track heard here yet.' : 'No tracks.')];
+    K.clear(A.detail).append(
+        h('button', { class: 'btn dr-detail-back', type: 'button', onclick: A.back }, '‹ Back'),
+        h('div', { class: 'dr-detail-album' },
+            albumCover(a.image, a.source, a.key, 'dr-detail-cover'),
+            h('div', { class: 'dr-detail-title' }, h('strong', {}, a.title || 'Album'),
+                h('span', { class: 'muted small' }, [a.artist, a.year, a.label].filter(Boolean).join(' · ')),
+                h('span', { class: 'muted small' }, K.dr.basisText(a.dr))),
+            K.drLogBadge(a.dr, 'big')),
+        h('div', { class: 'drrecent' }, rows));
+    A.browse.hidden = true;
+    A.detail.hidden = false;
+    if (A.body) A.body.scrollTop = 0;
+};
 A.rankRow = (a, n) => {
-    const tracks = h('div', { class: 'drrank-tracks', hidden: !A.rankOpen.has(a.key) });
-    const paintTracks = () => K.clear(tracks).append(...(a.tracks.length ? a.tracks.map(t => h('div', { class: 'drrank-track' },
-        h('span', { class: 'drlog' + (t.complete ? '' : ' est'), style: t.complete ? { background: K.dr.color(t.dr).bg, color: K.dr.color(t.dr).fg } : { borderColor: K.dr.color(t.dr).bg } }, `DR${t.dr}`),
-        h('span', {}, `${t.number ? t.number + '. ' : ''}${t.title || t.track_key}`),
-        h('span', { class: 'muted small' }, `${t.method === 'measured' ? 'measured' : t.complete ? 'heard whole' : `heard ${Math.round(t.seconds)} s`}${t.origin ? ` · ${t.origin}` : ''}`)))
-        : [h('div', { class: 'muted small' }, a.report_dr !== null ? 'Album value from dr14.txt; no track heard here yet.' : 'No tracks.')]));
-    if (A.rankOpen.has(a.key)) paintTracks();
     const sub = [a.artist, a.year, a.label].filter(Boolean).join(' · ');
     // where the figure comes from: another box's collection, or tracks heard there
     const elsewhere = (a.dr.origins || []).filter(Boolean);
@@ -311,19 +391,17 @@ A.rankRow = (a, n) => {
         K.toast(d.ok ? `Playing ${a.title}` : (d.error || 'cannot play'), d.ok ? 'ok' : 'error');
     } }, K.tIcon ? K.tIcon('play') : '▶') : null;
     return h('div', { class: 'drrank-row' },
-        h('div', { class: 'drrank-head tap', onclick: () => {
-            if (A.rankOpen.has(a.key)) A.rankOpen.delete(a.key); else { A.rankOpen.add(a.key); paintTracks(); }
-            tracks.hidden = !A.rankOpen.has(a.key);
-        } },
+        h('div', { class: 'drrank-head' },
             h('span', { class: 'drrank-n muted' }, String(n)),
-            a.image ? h('img', { class: 'drrank-cover', src: a.image, alt: '', loading: 'lazy' }) : h('span', { class: 'drrank-cover' }),
-            K.drLogBadge(a.dr, 'big'),
-            h('div', { class: 'drrank-body' }, h('div', { class: 'drrank-title' }, a.title || '—'),
-                h('div', { class: 'muted small' }, sub),
-                folder && folder !== a.title ? h('div', { class: 'muted small drrank-folder', title: a.ref }, `📁 ${folder}`) : null,
-                h('div', { class: 'muted small' }, [{ qobuz: 'Qobuz', local: 'Local', stream: 'Stream' }[a.source] || a.source, box, K.dr.basisText(a.dr)].filter(Boolean).join(' · '))),
-            play),
-        tracks);
+            h('button', { class: 'drrank-open', type: 'button', onclick: () => A.openAlbum(a) },
+                albumCover(a.image, a.source, a.key, 'drrank-cover'),
+                K.drLogBadge(a.dr, 'big'),
+                h('span', { class: 'drrank-body' }, h('span', { class: 'drrank-title' }, a.title || '—'),
+                    h('span', { class: 'muted small' }, sub),
+                    folder && folder !== a.title ? h('span', { class: 'muted small drrank-folder', title: a.ref }, `📁 ${folder}`) : null,
+                    h('span', { class: 'muted small' }, [{ qobuz: 'Qobuz', local: 'Local', stream: 'Stream' }[a.source] || a.source, box, K.dr.basisText(a.dr)].filter(Boolean).join(' · '))),
+                h('span', { class: 'drrecent-next', 'aria-hidden': 'true' }, '›')),
+            play));
 };
 
 A.rankImport = async () => {
@@ -334,7 +412,7 @@ A.rankImport = async () => {
 
 P.show = () => { P.visible = true; P.setOn(K.pref('now.dr', true)); P.measPoll(); P.logPoll(); };
 P.hide = () => { P.visible = false; P.sync(); clearTimeout(P.jobTimer); clearTimeout(P.logTimer); };
-A.show = () => { A.visible = true; A.rankLoad(); };
+A.show = () => { A.visible = true; if (A.detail && !A.detail.hidden) A.back(); A.rankLoad(); };
 A.hide = () => { A.visible = false; clearTimeout(A.rankTimer); A.rankSeq++; };
 R.show = () => { R.visible = true; R.load(); };
 R.hide = () => { R.visible = false; R.seq++; };

@@ -5513,6 +5513,36 @@ def dr_library_recent():
     return jsonify({"ok": True, **_DR_STORE.recent_tracks(time.time() - hours * 3600, limit)})
 
 
+@app.route("/dr/library/art")
+def dr_library_art():
+    """A local album's cover, restricted to its MPD music folder."""
+    key = request.args.get("key", "")
+    album = _DR_STORE.album(key) if key.startswith("local:") else None
+    root_name = _resolve_mpd_music_directory()
+    if not album or album["source"] != "local" or album["origin"] or not album["ref"] or not root_name:
+        return "", 404
+    relative = Path(album["ref"])
+    if relative.is_absolute() or ".." in relative.parts:
+        return "", 404
+    folder = (Path(root_name).resolve() / relative).resolve()
+    if not folder.is_dir():
+        return "", 404
+    for directory in (folder, folder / "Covers"):
+        if not directory.resolve().is_relative_to(folder) or not directory.is_dir():
+            continue
+        try:
+            images = [p for p in directory.iterdir()
+                      if p.is_file() and p.resolve().is_relative_to(folder)
+                      and p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
+        except OSError:
+            continue
+        images.sort(key=lambda p: (next((i for i, name in enumerate(("cover", "folder", "front", "album", "1"))
+                                        if p.stem.lower() == name), 5), p.name.lower()))
+        if images:
+            return send_from_directory(str(directory), images[0].name, max_age=86400)
+    return "", 404
+
+
 @app.route("/dr/library/current")
 def dr_library_current():
     """The stored figure of the album playing now, if it has one."""

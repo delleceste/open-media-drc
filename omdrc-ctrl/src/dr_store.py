@@ -431,11 +431,14 @@ class DrStore:
             rows = [dict(r) for r in db.execute(f"""
                 SELECT t.track_key, t.number, t.title, t.dr, t.dr_exact, t.seconds,
                        t.complete, t.method, t.at, a.key AS album_key,
-                       a.title AS album_title, a.artist, a.source, a.ref
+                       a.title AS album_title, a.artist, a.source, a.ref, a.image
                 FROM track t JOIN album a ON a.key = t.album_key
                 WHERE {where} ORDER BY t.at DESC LIMIT ?
             """, (since, limit))]
-        return {"tracks": rows, "count": count}
+            keys = list(dict.fromkeys(row["album_key"] for row in rows))
+            albums = self._albums(db, f"WHERE key IN ({','.join('?' * len(keys))})", tuple(keys)) if keys else []
+        summaries = {album["key"]: album["dr"] for album in albums}
+        return {"tracks": rows, "count": count, "summaries": summaries}
 
     # -- sharing between boxes (dr_sync.py) --
 

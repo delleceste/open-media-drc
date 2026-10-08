@@ -23,8 +23,8 @@ menu (the wide-screen tab bar lists only the three), and does not swipe.
 | **Qobuz** | *Optional* (`[qobuz_search] enabled`): album search with label check boxes and a release-date window (year spinners: drag, or tap for a picker); unfiltered, the results are Qobuz's own list in Qobuz's order ("Newest first" is a choice), read on as the list is scrolled; each with ▶ (replace upmpdcli's queue and play) and **+** (append), a tap shows the tracks, and a player strip (previous, play/pause, stop, next, seek) that opens into a full-screen player with the cover and the queue. The search field completes from a classical word list and from what was played. The form is full width; the filters fold into a one-line summary once results arrive. The magnifier in the top bar opens this page. − on a result lowers it (see the panel README). Greyed out while upmpdcli is not the running renderer |
 | **Video** | *Optional* while the local `omdrcvideo` service answers on port 9080: its media browser and playback remote inside the kiosk. The kiosk checks again every 30 seconds. |
 | **DRC** | Applied state, sample-rate presets, filter set and design, attenuation, BruteFIR peak/RTI, `drc.sh status` |
-| **Dynamic range → Albums by DR** | Stored album DR ranking, filters and local dr14.txt rescan |
-| **Dynamic range → Recent DR** | Latest saved track DR values on this box: 20 at first, with more rows and a lookback up to seven days |
+| **Dynamic range → Albums by DR** | Stored album DR ranking; tap an album to see its tracks, then use Back to return. Includes filters and local dr14.txt rescan |
+| **Dynamic range → Recent DR** | Latest saved track DR values on this box, grouped by album when multiple tracks were saved; 20 album/song rows at first, with more rows and a lookback up to seven days |
 | **Dynamic range → Configure** | Rolling DR estimate, DR log switch, measure this record, compare masters |
 | **Source** | Renderer switch/restart/activity, MPD state, CD input |
 | **Local** | The local collection MPD indexes: what it is, the music directory (MPD's `music_directory`, read from its configuration), and Rescan, which updates MPD and calculates missing DR14 reports in the background (`libexec/omdrc/scripts/omdrc-mpd-update-dr14.sh`, status in `local-scan.txt`). Local albums show in the Qobuz search with ⌂ and their `dr14.txt` DR value |
@@ -52,6 +52,11 @@ Recent DR reads the same local DR database as the album ranking. It shows the
 latest saved measurement for each track, including tracks on albums that do not
 yet have an album DR figure. Replaying a track may leave its older, better
 measurement in place, so this is a list of saved values rather than every play.
+An album with multiple recent tracks has one cover and album DR badge. Tap it
+to see its tracks, then use Back to return; a lone track stays on the first
+screen. Album badges use the stored exact or estimated figure, or show a dash
+until enough audio has been heard. The list reads at most the latest 500 saved
+tracks in the selected period.
 
 Tap a DR history segment on Now or DR to show a short song title and the
 segment's start and end as offsets from the latest block. Tap it again to hide

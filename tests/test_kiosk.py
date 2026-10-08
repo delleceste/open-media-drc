@@ -10,6 +10,7 @@ import importlib.util
 import re
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -78,6 +79,28 @@ class KioskTests(unittest.TestCase):
             self.assertEqual(data["count"], 1)
             self.assertEqual(recent.call_args.args[1], 20)
         self.assertEqual(self.client.get("/dr/library/recent?hours=169").status_code, 400)
+
+    def test_local_dr_cover_is_read_only_and_stays_in_music_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            covers = root / "album" / "Covers"
+            covers.mkdir(parents=True)
+            (covers / "1.jpg").write_bytes(b"cover")
+            album = {"source": "local", "origin": "", "ref": "album"}
+            with patch.object(APP._DR_STORE, "album", return_value=album), \
+                 patch.object(APP, "_resolve_mpd_music_directory", return_value=tmp):
+                response = self.client.get("/dr/library/art?key=local:album")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data, b"cover")
+                self.assertEqual(self.client.get("/dr/library/art?key=qobuz:album").status_code, 404)
+                music = root / "music"
+                music.mkdir()
+                (music / "USBHD2").symlink_to(root, target_is_directory=True)
+                album["ref"] = "USBHD2/album"
+                with patch.object(APP, "_resolve_mpd_music_directory", return_value=str(music)):
+                    self.assertEqual(self.client.get("/dr/library/art?key=local:album").data, b"cover")
+                album["ref"] = "../outside"
+                self.assertEqual(self.client.get("/dr/library/art?key=local:album").status_code, 404)
 
     def test_video_page_follows_the_local_remote_health(self):
         import kiosk
