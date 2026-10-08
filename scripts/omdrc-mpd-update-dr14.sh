@@ -16,6 +16,9 @@ status() { [ -z "${OMDRC_SCAN_STATUS:-}" ] || echo "$*" >"$OMDRC_SCAN_STATUS" 2>
 if [ "${1:-}" = "--calculate" ]; then
 	root=$2
 	started=$(date +%s)
+	# Running from the start: the walks below take minutes on a big library on
+	# a slow disk, and until then the Local page would still show the last scan.
+	status "running $started"
 	# The project's own meter (drmeter.py, the TT Dynamic Range algorithm) sits
 	# in the application directory: next to this script's prefix, or installed.
 	here=$(cd "$(dirname "$0")" && pwd)
@@ -84,6 +87,9 @@ port=
 if [ -n "$port" ]; then mpc -p "$port" update >/dev/null
 else mpc update >/dev/null
 fi
+# Marked running before this returns, so the page's next look already sees it
+# (and a second Rescan does not start another scan) however late the child starts.
+status "running $(date +%s)"
 if command -v nohup >/dev/null 2>&1; then
 	nohup "$0" --calculate "$root" >/dev/null 2>&1 </dev/null &
 else

@@ -48,13 +48,15 @@ def _count(path: str) -> dict:
     return {"at": time.time(), "folders": folders, "reports": reports, "truncated": seen > COUNT_LIMIT}
 
 
-def counts(path: str, fresh: bool = False) -> dict:
+def counts(path: str, fresh: bool = False, since: float = 0) -> dict:
     """Folders with audio and how many have a dr14.txt: {"busy": True} while the
-    first count runs, then the last one (recounted in the background when old)."""
+    first count runs, then the last one (recounted in the background when old,
+    when `fresh`, or when made before `since`)."""
     with _lock:
         have = _counts.get(path)
         stale = None
-        if have and not have.get("busy") and not fresh and time.time() - have["at"] < COUNT_TTL:
+        if (have and not have.get("busy") and not fresh and have["at"] >= since
+                and time.time() - have["at"] < COUNT_TTL):
             return have
         if have and have.get("busy"):
             return {"busy": True}
@@ -109,8 +111,10 @@ def scan_log(state_dir: str) -> list[str]:
 def status(state_dir: str, mpd_default, conf: str | None = None) -> dict:
     path = mpd_default() or ""
     exists = bool(path) and os.path.isdir(path)
+    scan = scan_status(state_dir)
     return {
         "ok": True, "host": host(), "path": path, "exists": exists, "conf": conf or "",
-        "counts": counts(path) if exists else None,
-        "scan": scan_status(state_dir), "log": scan_log(state_dir),
+        # a finished scan added reports: count again rather than show the old figure
+        "counts": counts(path, since=scan.get("at", 0)) if exists else None,
+        "scan": scan, "log": scan_log(state_dir),
     }

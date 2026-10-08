@@ -36,7 +36,10 @@ P.hide = () => P.poll.stop();
 const when = t => new Date(t * 1000).toLocaleString();
 
 P.refresh = async () => {
+    const seq = P.seq = (P.seq || 0) + 1;
     const d = await K.api('/qobuz/local/status');
+    // an answer asked for before Rescan was pressed would show the old scan
+    if (seq !== P.seq || P.starting) return;
     if (!d.ok) { K.clear(P.status).append(h('p', { class: 'muted' }, d.error || 'unavailable')); return; }
     const rows = [
         K.kv('Host', d.host),
@@ -65,7 +68,12 @@ P.refresh = async () => {
         : 'Read from music_directory in the MPD configuration (none found); change it there.';
     K.clear(P.status).append(...rows);
     P.paintLog(d.log || []);
-    P.scan.disabled = s.state === 'running';
+    P.paintButton(s.state === 'running');
+};
+
+P.paintButton = running => {
+    P.scan.disabled = running || P.starting;
+    P.scan.textContent = P.starting ? 'Starting…' : running ? 'Scanning…' : 'Rescan';
 };
 
 // The scan's log, newest line last; it follows the end unless scrolled up.
@@ -80,9 +88,14 @@ P.paintLog = lines => {
 };
 
 P.rescan = async () => {
-    P.scan.disabled = true;
+    P.starting = true;
+    P.seq = (P.seq || 0) + 1;
+    P.paintButton(true);
+    K.toast('Updating MPD’s index…');
     const d = await K.api('/qobuz/local/refresh', { json: {}, timeout: 20000 });
+    P.starting = false;
     K.toast(d.ok ? (d.message || 'Rescan started') : `Rescan failed: ${d.error || 'request failed'}`, d.ok ? 'ok' : 'error');
+    P.paintButton(d.ok);
     P.refresh();
 };
 

@@ -623,6 +623,9 @@ def local_refresh():
         return jsonify({"ok": False, "error": str(error)}), 503
     if result.returncode:
         return jsonify({"ok": False, "error": (result.stderr or result.stdout).strip()}), 503
+    root = _music_directory()
+    if root and os.path.isdir(root):
+        local_db.counts(root, fresh=True)        # MPD may have found new folders
     return jsonify({"ok": True, "message": "MPD database updated; DR14 scan started"})
 
 

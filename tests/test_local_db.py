@@ -56,6 +56,19 @@ class Scan(unittest.TestCase):
         got = local_db._count(self.state)
         self.assertEqual((got["folders"], got["reports"]), (2, 1))
 
+    def test_a_finished_scan_makes_the_counts_fresh(self):
+        os.makedirs(os.path.join(self.state, "a"))
+        open(os.path.join(self.state, "a", "x.flac"), "w").close()
+        local_db._counts[self.state] = {"at": time.time() - 10, "folders": 9, "reports": 0}
+        self.addCleanup(local_db._counts.pop, self.state, None)
+        self.assertEqual(local_db.counts(self.state)["folders"], 9)       # still recent
+        # a scan done after the count: counted again, the old figure meanwhile
+        with patch.object(local_db, "_count", return_value={"at": time.time(), "folders": 1, "reports": 1}), \
+                patch.object(local_db.threading, "Thread") as thread:
+            self.assertEqual(local_db.counts(self.state, since=time.time() - 5)["folders"], 9)
+            thread.call_args.kwargs["target"]()
+        self.assertEqual(local_db.counts(self.state)["reports"], 1)
+
     def test_a_disk_linked_into_the_library_is_counted(self):
         disk = tempfile.TemporaryDirectory()
         self.addCleanup(disk.cleanup)
@@ -93,6 +106,13 @@ class Routes(unittest.TestCase):
             self.assertTrue(self.client.post("/qobuz/local/refresh").get_json()["ok"])
         env = run.call_args.kwargs["env"]
         self.assertEqual(env["OMDRC_SCAN_STATUS"], os.path.join(self.tmp.name, local_db.SCAN_STATUS_FILE))
+
+    def test_refresh_counts_the_folders_again(self):
+        qobuz_web._music_directory = lambda: self.music.name
+        with patch("subprocess.run") as run, patch.object(local_db, "counts") as counts:
+            run.return_value.returncode = 0
+            self.client.post("/qobuz/local/refresh")
+        counts.assert_called_once_with(self.music.name, fresh=True)
 
     def test_refresh_does_not_start_a_second_scan(self):
         with open(os.path.join(self.tmp.name, local_db.SCAN_STATUS_FILE), "w") as f:
