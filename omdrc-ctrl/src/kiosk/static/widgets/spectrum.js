@@ -195,13 +195,36 @@ K.Spectrum = class Spectrum {
             if (right > .005) arc(r, Math.PI / 2, Math.PI / 2 - Math.PI * right, color, .95);
         }
         ctx.globalAlpha = 1;
-        const font = Math.max(9, Math.min(13, inner / dpr * .35)) * dpr;
+        // Centre: one half disc per channel, filled bottom-up by the peak level.
+        const ri = Math.max(1, inner - pitch * .2), gap = Math.max(1, dpr);
+        const font = Math.max(9, Math.min(13, ri / dpr * .32)) * dpr;
         ctx.font = `700 ${font}px ui-monospace, monospace`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        for (const [side, x, peak] of [['L', cx - inner * .48, this.peaks.left], ['R', cx + inner * .48, this.peaks.right]]) {
-            ctx.fillStyle = K.css('--muted'); ctx.fillText(side, x, cy - font * .6);
-            ctx.fillStyle = peak >= -1 ? '#f85149' : K.css('--text');
-            ctx.fillText(Number.isFinite(peak) && peak > -100 ? String(Math.round(peak)) : '—', x, cy + font * .65);
+        for (const [sign, peak, fill] of [[-1, this.peaks.left, 'rgba(255,255,255,.55)'],
+            [1, this.peaks.right, 'rgba(248,81,73,.6)']]) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx + sign * gap, cy, ri, -Math.PI / 2, Math.PI / 2, sign < 0);
+            ctx.closePath(); ctx.clip();
+            ctx.fillStyle = 'rgba(255,255,255,.07)';
+            ctx.fillRect(cx - ri - gap, cy - ri, 2 * (ri + gap), 2 * ri);
+            const frac = Number.isFinite(peak) ? K.clamp(peak / -fl + 1, 0, 1) : 0;
+            ctx.fillStyle = fill;
+            ctx.fillRect(cx - ri - gap, cy + ri - 2 * ri * frac, 2 * (ri + gap), 2 * ri * frac);
+            ctx.restore();
+            const text = Number.isFinite(peak) && peak > -100 ? String(Math.round(peak)) : '—';
+            const x = cx + sign * ri * .48;
+            ctx.lineWidth = 3 * dpr; ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(0,0,0,.75)';
+            ctx.strokeText(text, x, cy);
+            ctx.fillStyle = peak >= -1 ? '#f85149' : '#ffffff';
+            ctx.fillText(text, x, cy);
+        }
+        // Channel labels outside the rings at 11 and 1 o'clock.
+        const labelR = radius + 7 * dpr;
+        ctx.font = `700 ${Math.max(9 * dpr, font * .85)}px ui-monospace, monospace`;
+        ctx.fillStyle = K.css('--muted');
+        for (const [side, a] of [['L', -Math.PI * 2 / 3], ['R', -Math.PI / 3]]) {
+            ctx.fillText(side, cx + Math.cos(a) * labelR, cy + Math.sin(a) * labelR);
         }
     }
 };
