@@ -413,6 +413,15 @@ class PlayRouteTest(OpenHomeCase):
             data = self.client.get("/qobuz/played").get_json()
         self.assertEqual([(a["id"], a["played"]) for a in data["albums"]], [("a1", 1)])
 
+    def test_played_list_carries_the_dr_log_badge(self):
+        self.play(album_id="a1", mode="replace")
+        summary = {"dr": 9, "kind": "estimate", "basis": "listened", "heard": 2,
+                   "complete": 1, "track_count": 4}
+        with patch.object(qobuz_web, "played", return_value=self.catalog.played), \
+             patch.object(qobuz_web, "_dr_lookup", lambda keys: {"qobuz:a1": summary}):
+            data = self.client.get("/qobuz/played").get_json()
+        self.assertEqual(data["albums"][0]["dr_log"], summary)
+
     def test_a_play_from_a_search_teaches_the_search_field(self):
         """Played after searching "bruckner 7": the text, the album's artist
         and its composer become completions, newest first."""

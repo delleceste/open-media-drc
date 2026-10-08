@@ -522,10 +522,11 @@ def discover():
     if guard:
         return guard
     try:
-        return jsonify({"ok": True, **catalog().discover(
+        found = catalog().discover(
             request.args.get("genre", ""), _number("offset", int) or 0,
             request.args.getlist("label"), request.args.get("awarded") == "1",
-            request.args.get("hires") == "1")})
+            request.args.get("hires") == "1")
+        return jsonify({"ok": True, **found, "albums": annotate_dr(found.get("albums") or [])})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
 
@@ -805,7 +806,7 @@ def played_albums():
         if "awards" in card:
             card["awards"] = awarded().merged(card["id"], card["awards"])
         card["rating"] = awarded().rating(card["id"])
-    return jsonify({"ok": True, "albums": albums})
+    return jsonify({"ok": True, "albums": annotate_dr(albums)})
 
 
 def _queue(album: dict, mode: str, start: str) -> dict:
@@ -1028,7 +1029,8 @@ def awarded_albums():
     if guard:
         return guard
     if request.method == "GET":
-        return jsonify({"ok": True, "albums": awarded().albums(), "presets": list(AWARD_PRESETS)})
+        return jsonify({"ok": True, "albums": annotate_dr(awarded().albums()),
+                        "presets": list(AWARD_PRESETS)})
     body = request.get_json(silent=True) or {}
     album_id = str(body.get("album_id") or "").strip()
     action = body.get("action")
