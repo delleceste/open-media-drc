@@ -165,11 +165,13 @@ const clock = s => Number.isFinite(s) && s > 0 ? `${Math.floor(s / 60)}:${String
 
 let open = null;
 const close = () => {
-    if (!open) return;
+    if (!open) return false;
     open.remove();
     open = null;
     document.removeEventListener('keydown', onKey);
+    return true;
 };
+K.closeAlbumInfo = close;
 const onKey = e => { if (e.key === 'Escape') close(); };
 
 // Just the label and year, for a caller (K.openCoverMax) that only has the

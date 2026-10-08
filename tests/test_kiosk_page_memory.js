@@ -13,7 +13,8 @@ function launch(ids = ['now', 'cover', 'qobuz', 'drc', 'config']) {
         setPref: (key, value) => { prefs[key] = value; },
         setTopExtra() {},
     };
-    const context = { K, $: () => ({ children: [], textContent: '' }),
+    const context = { K, $: () => ({ children: [], textContent: '', hidden: false }),
+        document: { documentElement: { dataset: {} } },
         safe: fn => fn(), syncBarMode() {}, syncAppScreen() {}, reportScroll() {}, applyOrientation() {},
         history: { replaceState() {} } };
     vm.createContext(context);

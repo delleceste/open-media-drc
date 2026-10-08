@@ -2098,6 +2098,11 @@ P.closeFull = () => {
     P.fullView = null;
     document.removeEventListener('keydown', P.fullKey);
 };
+K.closeQobuzPlayer = () => {
+    if (!P.fullEl) return false;
+    P.closeFull();
+    return true;
+};
 P.fullKey = e => { if (e.key === 'Escape') { if (P.queueActions) { P.closeQueueActions(); P.queueHead.focus(); } else P.closeFull(); } };
 
 // In portrait the outer sheet travels until the transport reaches its top edge.

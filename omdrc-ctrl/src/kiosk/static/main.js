@@ -96,6 +96,19 @@ K.showPage = (id, smooth = true) => {
     if (!smooth) activate(i);
 };
 
+// Android Back first closes a detail/player overlay, then leaves Now for Qobuz.
+// Return false when the kiosk has no navigation to handle so the app can use
+// WebView history (or move to the background) as before.
+K.handleAndroidBack = () => {
+    if (K.closeAlbumInfo && K.closeAlbumInfo()) return true;
+    if (K.closeQobuzPlayer && K.closeQobuzPlayer()) return true;
+    if (cur >= 0 && K.pages[cur].id === 'now' && K.pages.some(p => p.id === 'qobuz')) {
+        K.showPage('qobuz', false);
+        return true;
+    }
+    return false;
+};
+
 // Commit the page only once the scroll settles, so tapping from page 1 to page
 // 6 does not start and stop the four in between.
 let settle = null;

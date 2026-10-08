@@ -478,9 +478,15 @@ class MainActivity : ComponentActivity() {
         }
 
         onBackPressedDispatcher.addCallback(this) {
-            // Back leaves the app like Home does: the page stays alive behind it, so
-            // coming back shows it as it was, with nothing to load.
-            if (webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
+            val fallback = {
+                // Back leaves the app like Home does when the kiosk has no view to close.
+                if (webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
+            }
+            if (AppPrefs.viewMode(this@MainActivity) == AppPrefs.VIEW_KIOSK && !loadFailed) {
+                webView.evaluateJavascript("window.K && K.handleAndroidBack ? K.handleAndroidBack() : false") { result ->
+                    if (result != "true") fallback()
+                }
+            } else fallback()
         }
 
         settingsButton = findViewById(R.id.settings_button)
