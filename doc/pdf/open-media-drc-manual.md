@@ -1533,23 +1533,29 @@ than polling. A box without `/now` is polled every 5 s instead.
 **The notification.** It shows the track, or the film, with its cover or
 poster; expanded, it adds the format, the renderer and the DRC in use. Its
 actions are **Levels** (the PiP meters) and **Close app**. The status bar shows
-the note from the launcher icon (the "d" of *omdrc*). Android draws
+the note from the launcher icon (the "d" of *omdrc*), with a small play,
+pause or stop glyph in its top-left corner, the part of the icon the note
+leaves free. Android draws
 status-bar icons as a single-colour silhouette in the bar's own colour, so the
 icon is monochrome. Because the service runs only while there is music (see
 below), the note in the status bar means that the box is playing or paused.
 A cover reduced to a 24 dp silhouette was tried first and was unreadable. The
 icon is generated with the launcher icon by `artwork/draw-app-icon.py`
-(`--notification` writes it alone), with a thicker stem so that it stays
-visible at that size.
+(`--notification` writes it alone): `ic_notification` without a glyph (used
+until the box's state is known) and `ic_notification_{play,pause,stop}`. The
+note has a thicker stem than in the launcher icon so that it stays visible at
+that size.
 
 In the pulled-down shade, Android 16 and later show the app's launcher icon on
 the left of the entry, not the status-bar icon; its green "d" is the same note,
-which links the two. The picture on the right is the cover or poster alone,
-with a small badge in its top-left corner: play, pause, or the stop square. It
-follows every state change the box reports, including stop, even though the
-notification then disappears 30 s later. With nothing loaded there is no
-picture. (A copy of the note in the picture's corner was tried and dropped:
-an icon on each side made the entry too heavy.)
+which links the two. The picture on the right is the cover or poster, plain;
+with nothing loaded there is none. (A copy of the note in the picture's corner
+was tried and dropped: an icon on each side made the entry too heavy.)
+
+The status-bar glyph follows every state change the box reports, stop
+included, even though the notification disappears 30 s after a stop. While
+the box is unreachable, the glyph keeps its last state until the service
+stops.
 
 The notification uses the channel *DRC live updates* with **default
 importance and no sound or vibration**. A low-importance channel is a

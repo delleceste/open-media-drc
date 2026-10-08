@@ -15,13 +15,15 @@ to its own shape (a circle on a Pixel, a squircle or rounded square elsewhere):
 
 The note alone is also the status-bar icon (ic_notification): Android draws that
 from its alpha in the bar's colour, so it is one white silhouette, 24 x 24 dp.
+Three more carry the playback state in the corner the note leaves free, top
+left: ic_notification_{play,pause,stop}.
 
 Writes the app's drawables, SVG copies, the Google Play icon (512 px, full square:
 Play masks it) and a sheet previewing the icon under a circle and a squircle at
 192, 96 and 48 px, and themed:
 
   android/omdrc-app/app/src/main/res/drawable/ic_launcher_{background,foreground,monochrome}.xml
-  android/omdrc-app/app/src/main/res/drawable/ic_notification.xml
+  android/omdrc-app/app/src/main/res/drawable/ic_notification{,_play,_pause,_stop}.xml
   artwork/app-icon/{background,foreground,monochrome,icon}.svg
   artwork/app-icon/playstore-512.png, artwork/app-icon/preview.png
 
@@ -88,8 +90,19 @@ def counterclockwise(shape):
     return shape if area > 0 else shape[::-1]
 
 
-def notification_icon():
-    """ic_notification: the note, centred and as tall as the margin allows."""
+# The state glyphs, in the 24-unit icon: the note leaves the top-left corner free
+# (nothing of it lies left of x 12 above y 10).
+STATE_GLYPH = {
+    "play": [[(2.6, 1.8), (2.6, 8.2), (8.2, 5.0)]],
+    "pause": [[(2.3, 1.8), (2.3, 8.2), (4.3, 8.2), (4.3, 1.8)],
+              [(5.7, 1.8), (5.7, 8.2), (7.7, 8.2), (7.7, 1.8)]],
+    "stop": [[(2.4, 2.4), (2.4, 7.6), (7.6, 7.6), (7.6, 2.4)]],
+}
+
+
+def notification_icon(state=None):
+    """ic_notification: the note, centred and as tall as the margin allows;
+    with a state, its glyph in the top-left corner."""
     note = [counterclockwise(shape) for shape in note_d(NOTE_STEM)]
     xs = [x for shape in note for x, _ in shape]
     ys = [y for shape in note for _, y in shape]
@@ -98,8 +111,11 @@ def notification_icon():
     oy = NOTE_DP / 2 + s * (min(ys) + max(ys)) / 2
     path = " ".join("M " + " L ".join(f"{ox + s * x:.2f} {oy - s * y:.2f}" for x, y in shape) + " Z"
                     for shape in note)
-    return (HEADER + '<!-- The status-bar icon: the launcher icon\'s note, one white silhouette\n'
-            '     (the system tints it). -->\n'
+    for shape in STATE_GLYPH.get(state, []):
+        path += " M " + " L ".join(f"{x:.2f} {y:.2f}" for x, y in shape) + " Z"
+    what = f", with the {state} glyph" if state else ""
+    return (HEADER + f'<!-- The status-bar icon: the launcher icon\'s note{what}, one white\n'
+            '     silhouette (the system tints it). -->\n'
             '<vector xmlns:android="http://schemas.android.com/apk/res/android"\n'
             f'    android:width="{NOTE_DP}dp" android:height="{NOTE_DP}dp"\n'
             f'    android:viewportWidth="{NOTE_DP}" android:viewportHeight="{NOTE_DP}">\n'
@@ -107,9 +123,11 @@ def notification_icon():
 
 
 def write_notification_icon():
-    with open(os.path.join(RES, "ic_notification.xml"), "w", encoding="utf-8") as f:
-        f.write(notification_icon())
-    print("wrote ic_notification.xml")
+    for state in (None, *STATE_GLYPH):
+        name = "ic_notification" + (f"_{state}" if state else "") + ".xml"
+        with open(os.path.join(RES, name), "w", encoding="utf-8") as f:
+            f.write(notification_icon(state))
+        print("wrote", name)
 
 
 def mark():

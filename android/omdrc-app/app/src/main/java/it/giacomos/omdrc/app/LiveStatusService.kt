@@ -8,12 +8,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
-import android.graphics.Rect
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
@@ -53,9 +47,9 @@ private const val TAG = "OmdrcWidget"
  *
  * Either way the notification shows what's playing - the cover or the
  * film's poster, the track - and expanded, the format and the DRC in use;
- * the status bar shows the app's note, the launcher icon's "d" (in the
- * shade, Android shows the launcher icon itself on the left), and the
- * cover carries a small play, pause or stop badge in its top-left corner.
+ * the status bar shows the app's note, the launcher icon's "d", with a
+ * small play, pause or stop glyph in its top-left corner (in the shade,
+ * Android shows the launcher icon itself instead).
  * Android requires a foreground service to show it the whole time; its Close
  * action stops the service and every other background request of the app
  * until the app is opened again (see AppPrefs.closed).
@@ -296,7 +290,7 @@ class LiveStatusService : Service() {
                     if (video.rating.isNotEmpty()) "IMDb ${video.rating}" else "",
                     drcLine(now.drc),
                 ).filter { it.isNotEmpty() }.joinToString("\n")
-                icon = videoArt?.let { withState(it, if (video.paused) "pause" else "play") }
+                icon = videoArt
             }
             now != null -> {
                 val music = now.music
@@ -311,7 +305,7 @@ class LiveStatusService : Service() {
                         .filter { it.isNotEmpty() }.joinToString(" · "),
                     drcLine(now.drc),
                 ).filter { it.isNotEmpty() }.joinToString("\n")
-                icon = if (music.title.isNotEmpty() || music.line1.isNotEmpty()) musicArt?.let { withState(it, music.state) } else null
+                icon = if (music.title.isNotEmpty() || music.line1.isNotEmpty()) musicArt else null
             }
             snapshot != null -> {
                 val (t, c) = StatusNotifier.collapsedText(this, snapshot)
@@ -350,7 +344,14 @@ class LiveStatusService : Service() {
         )
 
         return NotificationCompat.Builder(this, StatusNotifier.LIVE_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(
+                when (activity) {
+                    Activity.PLAYING -> R.drawable.ic_notification_play
+                    Activity.PAUSED -> R.drawable.ic_notification_pause
+                    Activity.IDLE -> R.drawable.ic_notification_stop
+                    Activity.UNKNOWN -> R.drawable.ic_notification
+                },
+            )
             .setContentTitle(title)
             .setContentText(collapsed)
             .setLargeIcon(icon)
@@ -387,42 +388,6 @@ class LiveStatusService : Service() {
             },
         ).filter { it.isNotEmpty() }
         return getString(R.string.now_drc_on, parts.joinToString(" · "))
-    }
-
-    /** The notification's picture: the cover cut square, with a small badge
-     *  in its top-left corner - play, pause, or the stop square - redrawn
-     *  with every state the box reports, stop included. */
-    private fun withState(art: Bitmap, state: String): Bitmap {
-        val out = Bitmap.createBitmap(ICON_PX, ICON_PX, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(out)
-        val side = minOf(art.width, art.height)
-        canvas.drawBitmap(
-            art,
-            Rect((art.width - side) / 2, (art.height - side) / 2, (art.width + side) / 2, (art.height + side) / 2),
-            Rect(0, 0, ICON_PX, ICON_PX),
-            Paint(Paint.FILTER_BITMAP_FLAG),
-        )
-        val d = ICON_PX * STATE_BADGE
-        val inset = ICON_PX * 0.05f
-        val c = inset + d / 2
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = STATE_DISC }
-        canvas.drawCircle(c, c, d / 2, paint)
-        paint.color = Color.WHITE
-        val g = d * 0.2f                    // half the glyph's height
-        when (state) {
-            "play" -> canvas.drawPath(Path().apply {
-                moveTo(c - g * 0.75f, c - g)
-                lineTo(c + g * 1.05f, c)
-                lineTo(c - g * 0.75f, c + g)
-                close()
-            }, paint)
-            "pause" -> {
-                canvas.drawRect(RectF(c - g * 0.8f, c - g, c - g * 0.25f, c + g), paint)
-                canvas.drawRect(RectF(c + g * 0.25f, c - g, c + g * 0.8f, c + g), paint)
-            }
-            else -> canvas.drawRect(RectF(c - g * 0.8f, c - g * 0.8f, c + g * 0.8f, c + g * 0.8f), paint)
-        }
-        return out
     }
 
     /** A cover or poster scaled for the notification's large icon. */
@@ -470,8 +435,6 @@ class LiveStatusService : Service() {
         private const val FALLBACK_POLL_MS = 5000L
         private const val RETRY_MS = 15000L
         private const val ICON_PX = 256
-        private const val STATE_BADGE = 0.3f            // of the picture's side
-        private const val STATE_DISC = 0xD9101418.toInt()
         private const val STOPPED_GRACE_MS = 30 * 1000L
         private const val PAUSE_TIMEOUT_MS = 15 * 60 * 1000L
         private const val UNREACHABLE_GRACE_MS = 60 * 1000L
