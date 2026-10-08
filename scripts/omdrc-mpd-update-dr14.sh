@@ -39,7 +39,8 @@ if [ "${1:-}" = "--calculate" ]; then
 	find -L "$root" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' \
 		-o -iname '*.opus' -o -iname '*.wav' -o -iname '*.m4a' -o -iname '*.ape' \
 		-o -iname '*.wv' -o -iname '*.aiff' -o -iname '*.aif' \) -print |
-	while IFS= read -r file; do dirname "$file"; done | awk '!seen[$0]++' | {
+	# each folder once, passed on at once (awk would hold a pipe's output back)
+	awk '{ sub("/[^/]*$", "") } !seen[$0]++ { print; fflush() }' | {
 		folders=0
 		while IFS= read -r dir; do
 			folders=$((folders + 1))
