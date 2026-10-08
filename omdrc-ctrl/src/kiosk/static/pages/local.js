@@ -11,28 +11,33 @@ P.mount = el => {
     P.el = el;
     P.status = h('div', {});
     P.scan = h('button', { type: 'button', class: 'btn primary', onclick: () => P.action() }, 'Rescan');
+    P.splitCue = h('input', { type: 'checkbox', disabled: true });
+    P.splitCueLabel = h('label', { class: 'small' }, P.splitCue, ' Split single-FLAC CUE albums for per-track DR');
+    P.toolsEl = h('div', {});
 
     const about = K.card('What this is',
         h('p', {}, 'The local database is the music on this box that MPD has indexed. There is no second library: MPD’s own index is the database, and this page only tells omdrcctrl where the files are and when to refresh.'),
         h('p', {}, 'It is part of the Qobuz search. Albums in the collection that match what you type appear among the Qobuz results, marked ⌂, and play through the same MPD queue and player strip as a Qobuz album. The Source filter there can limit a search to the local collection only.'),
         h('p', {}, 'Next to ⌂ the album’s DR value is shown, for instance DR12. It is the album average from the dr14.txt report in its folder, read when you search. A folder with no report shows no DR yet.'),
-        h('p', {}, 'The reports are calculated by Rescan, not by searching: it asks MPD to update its index, then in the background calculates the dynamic range of every folder with audio that has no dr14.txt. A report is calculated once and kept, so a later rescan only does new albums. The meter is built in (the TT Dynamic Range algorithm); nothing else needs installing.'));
+        h('p', {}, 'Rescan asks MPD to update its index, then calculates missing dr14.txt reports. The meter is built in. When the CUE option is checked, albums with one FLAC and one CUE are split into tagged track FLACs, verified against the original audio, and measured per track. The original FLAC is removed only after verification.'));
 
     P.confNote = h('p', { class: 'muted small' }, 'Read from music_directory in the MPD configuration; change it there.');
     const where = K.card('Where the music is', P.dirRow = h('div', {}), P.confNote, P.status);
 
     const rescan = K.card('Rescan',
         h('p', {}, 'Update MPD’s index with new, moved and removed files, and calculate the missing DR14 reports. It can run for a long time on a large library; the page shows how it is going.'),
-        h('div', { class: 'btn-row' }, P.scan));
+        h('div', { class: 'btn-row' }, P.scan, P.splitCueLabel),
+        P.splitCueHint = h('p', { class: 'muted small' }, 'Checking for CUE tools…'));
+    const tools = K.card('DR14 tools', P.toolsEl);
     P.logEl = h('pre', { class: 'local-log', role: 'log', 'aria-label': 'DR scan log' });
     P.logCard = K.card('Scan log', P.logEl);
     P.logCard.hidden = true;
     P.activity = h('div', { class: 'local-activity' });
     P.activityCard = K.card('Scan activity',
-        h('p', { class: 'muted small' }, 'Scanner manages the folders; DR meter measures the current album; Decoder (ffmpeg) reads the current track.'),
+        h('p', { class: 'muted small' }, 'Scanner manages folders; CUE splitter creates track FLACs; Audio verifier compares their PCM hash; DR meter calculates each track.'),
         P.activity);
     P.activityCard.hidden = true;
-    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, where, rescan, P.logCard, P.activityCard), h('div', { class: 'col' }, about)));
+    el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, where, rescan, tools, P.logCard, P.activityCard), h('div', { class: 'col' }, about)));
     P.poll = new K.Poller(P.refresh, 4000);
 };
 P.show = () => P.poll.start();
@@ -57,8 +62,27 @@ P.refresh = async () => {
         if (!c.busy) rows.push(K.kv('With a DR14 report', `${c.reports} of ${c.folders}`, c.reports < c.folders ? 'warn' : ''));
     }
     const s = d.scan;
+    const tools = d.dr14_tools || { cue_split_available: false, tools: [], meter: {} };
+    const ready = !!tools.cue_split_available;
+    if (P.cueReady === undefined || (!P.cueReady && ready)) P.splitCue.checked = ready;
+    if (!ready) P.splitCue.checked = false;
+    P.cueReady = ready;
+    P.splitCueHint.textContent = ready
+        ? 'Checked by default. The source FLAC is removed only after a lossless audio hash check and per-track DR report.'
+        : 'Install cuetools, shntool and FLAC to enable verified CUE splitting.';
+    const toolKey = JSON.stringify(tools);
+    if (toolKey !== P.toolKey) {
+        P.toolKey = toolKey;
+        K.clear(P.toolsEl).append(
+            K.kv('Custom DR meter', tools.meter?.available ? tools.meter.path : 'missing', tools.meter?.available ? '' : 'warn'),
+            h('p', { class: 'muted small' }, tools.meter?.purpose || 'Measures audio tracks and writes dr14.txt.'),
+            ...(tools.tools || []).map(tool => h('div', {},
+                K.kv(tool.name, tool.path ? tool.version || tool.path : 'not installed', tool.path ? '' : 'warn'),
+                h('p', { class: 'muted small' }, tool.purpose))));
+    }
     rows.push(K.kv('DR14 scan',
-        s.state === 'running' ? (s.total ? `${s.done} of ${s.total} folders` : `looking for folders to measure… (since ${when(s.since)})`)
+        s.state === 'running' ? (s.phase === 'cue' ? `checking CUE albums: ${s.done} of ${s.total}`
+            : s.total ? `${s.done} of ${s.total} folders` : `looking for folders to measure… (since ${when(s.since)})`)
         : s.state === 'done' ? `finished ${when(s.at)} — ${s.calculated} report${s.calculated === 1 ? '' : 's'} calculated${s.failed ? `, ${s.failed} failed (see the log)` : ''}`
         : s.state === 'stopped' ? `stopped after ${s.done} of ${s.total} ${s.phase === 'cue' ? 'CUE folders' : 'folders'}`
         : s.state === 'interrupted' ? `interrupted (started ${when(s.since)})` : 'not run yet',
@@ -98,6 +122,7 @@ P.busyBar = () => h('div', { class: 'local-progress busy', role: 'progressbar', 
 P.paintButton = running => {
     P.running = running;
     P.scan.disabled = !!(P.starting || P.stopping);
+    P.splitCue.disabled = running || P.starting || !P.cueReady;
     P.scan.className = running ? 'btn danger' : 'btn primary';
     P.scan.textContent = P.starting ? 'Starting…' : P.stopping ? 'Stopping…'
         : running ? 'Scanning… Stop' : 'Rescan';
@@ -135,7 +160,7 @@ P.rescan = async () => {
     // the server's own log replaces these lines at the next look
     P.paintLog(['Rescan started', 'Updating MPD’s index…']);
     P.status.append(P.busyBar());
-    const d = await K.api('/qobuz/local/refresh', { json: {}, timeout: 20000 });
+    const d = await K.api('/qobuz/local/refresh', { json: { split_cue: P.splitCue.checked }, timeout: 20000 });
     P.starting = false;
     K.toast(d.ok ? (d.message || 'Rescan started') : `Rescan failed: ${d.error || 'request failed'}`, d.ok ? 'ok' : 'error');
     P.paintButton(d.ok);

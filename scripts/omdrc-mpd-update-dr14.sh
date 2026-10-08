@@ -3,6 +3,7 @@
 # folders containing audio that do not already have the canonical dr14.txt.
 #
 # OMDRC_MUSIC_DIRECTORY  scan this tree instead of MPD's music_directory
+# OMDRC_SPLIT_CUE        1 to replace verified one-FLAC+CUE albums with tracks
 # OMDRC_SCAN_STATUS      (its directory also gets local-scan.log) file that gets `running <t> <folders done> <folders total>`, then `done <t> <n> <failed>` (n =
 #                        reports written), for the kiosk's Local database page
 set -eu
@@ -28,6 +29,40 @@ if [ "${1:-}" = "--calculate" ]; then
 		[ -f "$d/drmeter.py" ] && { drmeter=$d/drmeter.py; break; }
 	done
 	[ -n "$drmeter" ] || { logline "drmeter.py not found: nothing measured"; status "done $(date +%s) 0"; exit 0; }
+	if [ "${OMDRC_SPLIT_CUE:-}" = 1 ]; then
+		converter="$here/omdrc-cue-split.py"
+		[ -f "$converter" ] || fail 'CUE splitter is not installed'
+		for tool in cuebreakpoints cueprint cuetag.sh shnsplit shnhash flac metaflac; do
+			command -v "$tool" >/dev/null 2>&1 || fail "CUE splitter needs $tool"
+		done
+		cue_list=$(mktemp "${TMPDIR:-/tmp}/omdrc-cue.XXXXXX") || exit 1
+		find -L "$root" -type f -iname '*.cue' -print |
+			awk '{ sub("/[^/]*$", "") } !seen[$0]++ { print }' >"$cue_list"
+		cue_total=$(wc -l <"$cue_list" | tr -d ' ')
+		cue_done=0
+		status "running $started cue $cue_done $cue_total"
+		logline "Checking $cue_total CUE folders for track splitting…"
+		converted=0
+		while IFS= read -r dir; do
+			[ -n "$dir" ] || continue
+			if out=$(nice -n 19 python3 "$converter" "$dir" 2>&1); then
+				converted=$((converted + 1))
+				logline "[cue] ${dir#"$root"/}: $out"
+			else
+				logline "[cue] skipped ${dir#"$root"/}: $(printf '%s' "$out" | tail -n 1)"
+			fi
+			cue_done=$((cue_done + 1))
+			status "running $started cue $cue_done $cue_total"
+		done <"$cue_list"
+		rm -f "$cue_list"
+		if [ "$converted" -gt 0 ]; then
+			logline "Updating MPD's index after $converted CUE album conversions…"
+			if [ -n "${OMDRC_MPD_PORT:-}" ]; then mpc -p "$OMDRC_MPD_PORT" update >/dev/null
+			else mpc update >/dev/null
+			fi
+		fi
+		status "running $started"
+	fi
 
 	# The folders with audio but no report, so progress can be shown as n of
 	# total; one walk, with a running count in the log while it goes.
@@ -103,6 +138,7 @@ port=
 if [ -n "$port" ]; then mpc -p "$port" update >/dev/null
 else mpc update >/dev/null
 fi
+export OMDRC_MPD_PORT="$port"
 # Marked running before this returns, so the page's next look already sees it
 # (and a second Rescan does not start another scan) however late the child starts.
 status "running $(date +%s)"

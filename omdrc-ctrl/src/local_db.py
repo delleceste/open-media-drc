@@ -92,7 +92,9 @@ def scan_status(state_dir: str) -> dict:
             if time.time() - since > STALE_SCAN:
                 return {"state": "interrupted", "since": since}
             out = {"state": "running", "since": since}
-            if len(parts) >= 4:                  # folders done / to do, once counted
+            if len(parts) >= 5 and parts[2] == "cue":
+                out.update(phase="cue", done=int(parts[3]), total=int(parts[4]))
+            elif len(parts) >= 4:                # folders done / to do, once counted
                 out["done"], out["total"] = int(parts[2]), int(parts[3])
             return out
         if parts and parts[0] == "done":
@@ -144,12 +146,19 @@ def scan_activity(root: str) -> list[dict]:
     for _ in range(3):  # scanner -> meter -> ffmpeg; allow one wrapper level
         selected.update(pid for pid, (parent, _, _, _) in processes.items() if parent in selected)
     def kind(command):
+        if "omdrc-cue-split.py" in command:
+            return "CUE splitter"
+        if "shnsplit" in command:
+            return "Splitter"
+        if "shnhash" in command:
+            return "Audio verifier"
         if "drmeter.py" in command:
             return "DR meter"
         if "ffmpeg" in command:
             return "Decoder"
         return "Scanner"
-    order = {"Scanner": 0, "DR meter": 1, "Decoder": 2}
+    order = {"Scanner": 0, "CUE splitter": 1, "Splitter": 2, "Audio verifier": 2,
+             "DR meter": 2, "Decoder": 3}
     return [{"kind": kind(processes[pid][3]), "pid": pid, "parent": processes[pid][0],
              "cpu": processes[pid][1], "elapsed": processes[pid][2],
              "command": processes[pid][3]}

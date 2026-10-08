@@ -55,6 +55,7 @@ import shutil
 import threading
 import time
 import uuid
+from functools import lru_cache
 
 from flask import Blueprint, Response, jsonify, request
 
@@ -604,7 +605,8 @@ def _library_root() -> str | None:
 
 @bp.route("/local/status")
 def local_status():
-    return jsonify(local_db.status(_state_dir(), _music_directory, _music_config()[1]))
+    return jsonify({**local_db.status(_state_dir(), _music_directory, _music_config()[1]),
+                    "dr14_tools": _dr14_tools()})
 
 
 @bp.route("/local/stop", methods=["POST"])
@@ -619,16 +621,56 @@ def local_stop():
     return jsonify(result), 200 if result["ok"] else 503
 
 
+def _dr14_tools() -> dict:
+    """Refresh installed-tool availability within a minute without busy polling."""
+    return _dr14_tools_at(int(time.monotonic() // 60))
+
+
+@lru_cache(maxsize=2)
+def _dr14_tools_at(_minute: int) -> dict:
+    import subprocess
+    prefix = os.environ.get("PREFIX", "/usr/local")
+    meter = os.path.join(prefix, "lib", "omdrcctrl", "drmeter.py")
+    converter = os.path.join(prefix, "libexec", "omdrc", "scripts", "omdrc-cue-split.py")
+    specs = (("cuetools", "cuebreakpoints", "-V", "Reads track boundaries from the CUE sheet"),
+             ("shntool", "shnsplit", "-v", "Splits the FLAC and verifies the combined audio hash"),
+             ("FLAC", "flac", "--version", "Encodes and checks lossless track files"),
+             ("metaflac", "metaflac", "--version", "Writes and checks track tags"))
+    tools = []
+    for name, command, option, purpose in specs:
+        path = shutil.which(command)
+        version = ""
+        if path:
+            try:
+                result = subprocess.run([path, option], capture_output=True, text=True, timeout=3)
+                version = (result.stdout or result.stderr).splitlines()[0].strip()
+            except (OSError, subprocess.TimeoutExpired, IndexError):
+                pass
+        tools.append({"name": name, "version": version, "path": path or "", "purpose": purpose})
+    needed = ("cuebreakpoints", "cueprint", "cuetag.sh", "shnsplit", "shnhash", "flac", "metaflac")
+    return {"cue_split_available": all(shutil.which(command) for command in needed)
+            and os.path.isfile(converter) and os.path.isfile(meter),
+            "tools": tools, "meter": {"path": meter, "available": os.path.isfile(meter),
+                                        "purpose": "Measures each FLAC track with the TT Dynamic Range algorithm and writes dr14.txt"}}
+
+
 @bp.route("/local/refresh", methods=["POST"])
 def local_refresh():
     """Update MPD's index, then start the host's background DR14 scan."""
     import subprocess
+    body = request.get_json(silent=True) or {}
+    split_cue = body.get("split_cue", False)
+    if not isinstance(split_cue, bool):
+        return jsonify({"ok": False, "error": "split_cue must be true or false"}), 400
+    if split_cue and not _dr14_tools()["cue_split_available"]:
+        return jsonify({"ok": False, "error": "CUE splitting tools are not installed"}), 400
     script = os.path.join(os.environ.get("PREFIX", "/usr/local"),
                           "libexec", "omdrc", "scripts", "omdrc-mpd-update-dr14.sh")
     scan = local_db.scan_status(_state_dir())
     if scan["state"] == "running" and time.time() - scan["since"] < local_db.STALE_SCAN:
         return jsonify({"ok": True, "message": "A DR14 scan is already running"})
     env = dict(os.environ, OMDRC_SCAN_STATUS=os.path.join(_state_dir(), local_db.SCAN_STATUS_FILE))
+    env["OMDRC_SPLIT_CUE"] = "1" if split_cue else "0"
     try:
         result = subprocess.run([script], capture_output=True, text=True, timeout=15, env=env)
     except (OSError, subprocess.TimeoutExpired) as error:

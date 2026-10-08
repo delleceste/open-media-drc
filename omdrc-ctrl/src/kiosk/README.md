@@ -27,7 +27,7 @@ menu (the wide-screen tab bar lists only the three), and does not swipe.
 | **Dynamic range → Recent DR** | Latest saved track DR values on this box, grouped by album when multiple tracks were saved; 20 album/song rows at first, with more rows and a lookback up to seven days |
 | **Dynamic range → Configure** | Rolling DR estimate, DR log switch, measure this record, compare masters |
 | **Source** | Renderer switch/restart/activity, MPD state, CD input |
-| **Local** | The local collection MPD indexes: what it is, the music directory (MPD's `music_directory`, read from its configuration), and Rescan, which updates MPD and calculates missing DR14 reports in the background (`libexec/omdrc/scripts/omdrc-mpd-update-dr14.sh`, status in `local-scan.txt`). Local albums show in the Qobuz search with ⌂ and their `dr14.txt` DR value |
+| **Local** | The MPD collection, its music directory, Rescan, and a DR14 tools box with installed CUE tool versions and the custom meter location. Rescan updates MPD and calculates missing reports in the background (`libexec/omdrc/scripts/omdrc-mpd-update-dr14.sh`). When the tools are installed, the checked-by-default CUE option converts single-FLAC CUE albums to verified track FLACs and calculates per-track DR; the original FLAC is removed only after verification. Scan status is in `local-scan.txt`. Local albums show in Qobuz search with ⌂ and their `dr14.txt` DR value |
 | **Chain** | The audio path from renderer to DAC, and who holds each device |
 | **System** | BruteFIR CPU, memory, busiest processes, sound devices, system/application buttons |
 | **Logs** | Recognised alerts and a tail of every configured log |

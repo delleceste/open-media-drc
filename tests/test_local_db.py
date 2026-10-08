@@ -34,6 +34,9 @@ class Scan(unittest.TestCase):
         write(f"running {now} 3 10\n")
         self.assertEqual(local_db.scan_status(self.state),
                          {"state": "running", "since": now, "done": 3, "total": 10})
+        write(f"running {now} cue 2 11\n")
+        self.assertEqual(local_db.scan_status(self.state),
+                         {"state": "running", "since": now, "phase": "cue", "done": 2, "total": 11})
         write(f"done {now} 7 2\n")
         self.assertEqual(local_db.scan_status(self.state),
                          {"state": "done", "at": now, "calculated": 7, "failed": 2})
@@ -178,6 +181,16 @@ class Routes(unittest.TestCase):
             self.assertTrue(self.client.post("/qobuz/local/refresh").get_json()["ok"])
         env = run.call_args.kwargs["env"]
         self.assertEqual(env["OMDRC_SCAN_STATUS"], os.path.join(self.tmp.name, local_db.SCAN_STATUS_FILE))
+        self.assertEqual(env["OMDRC_SPLIT_CUE"], "0")
+
+    def test_cue_split_requires_tools_and_is_passed_to_the_scan(self):
+        with patch.object(qobuz_web, "_dr14_tools", return_value={"cue_split_available": False}):
+            self.assertEqual(self.client.post("/qobuz/local/refresh", json={"split_cue": True}).status_code, 400)
+        with patch.object(qobuz_web, "_dr14_tools", return_value={"cue_split_available": True}), \
+             patch("subprocess.run") as run:
+            run.return_value.returncode = 0
+            self.assertTrue(self.client.post("/qobuz/local/refresh", json={"split_cue": True}).get_json()["ok"])
+        self.assertEqual(run.call_args.kwargs["env"]["OMDRC_SPLIT_CUE"], "1")
 
     def test_refresh_counts_the_folders_again(self):
         qobuz_web._music_directory = lambda: self.music.name
