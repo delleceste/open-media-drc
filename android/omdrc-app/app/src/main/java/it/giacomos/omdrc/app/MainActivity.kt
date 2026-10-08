@@ -531,6 +531,9 @@ class MainActivity : ComponentActivity() {
         // Resets LiveStatusService's idle clock every time the dashboard
         // becomes visible again, not just on first open.
         AppPrefs.touchForeground(this)
+        // It stops itself when nothing plays: opening the app brings it back.
+        LiveStatusService.appVisible = true
+        AppPrefs.defaultHost(this)?.let { LiveStatusService.ensureRunning(this, it, AppPrefs.defaultPort(this)) }
     }
 
     // The Wi-Fi name is read at startup / resume and then every 5 minutes while the app
@@ -565,6 +568,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         foreground = false
+        LiveStatusService.appVisible = false
         networkHandler.removeCallbacks(networkChanged)
         if (networkWatching) {
             getSystemService(android.net.ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback)

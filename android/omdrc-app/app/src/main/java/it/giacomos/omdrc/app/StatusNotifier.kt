@@ -25,7 +25,12 @@ import kotlin.math.roundToInt
  */
 object StatusNotifier {
     private const val CHANNEL_ID = "drc_status"
-    const val LIVE_CHANNEL_ID = "drc_live_status"
+    /** Default importance, without sound or vibration: a low-importance
+     *  ("silent") channel would be kept out of the status bar on Pixels.
+     *  An app cannot raise a channel's importance once created, hence a new
+     *  id; the former one is deleted. */
+    const val LIVE_CHANNEL_ID = "drc_live_icon"
+    private const val OLD_LIVE_CHANNEL_ID = "drc_live_status"
     private const val NOTIFICATION_ID = 1
 
     fun show(context: Context, host: String, port: Int, snapshot: WidgetSnapshot) {
@@ -89,12 +94,18 @@ object StatusNotifier {
                 NotificationManager.IMPORTANCE_LOW,
             ).apply { description = context.getString(R.string.notification_channel_description) },
         )
+        manager.deleteNotificationChannel(OLD_LIVE_CHANNEL_ID)
         manager.createNotificationChannel(
             NotificationChannel(
                 LIVE_CHANNEL_ID,
                 context.getString(R.string.notification_live_channel_name),
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = context.getString(R.string.notification_live_channel_description) },
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = context.getString(R.string.notification_live_channel_description)
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            },
         )
     }
 

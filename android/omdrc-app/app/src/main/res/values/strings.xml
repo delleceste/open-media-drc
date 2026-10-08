@@ -29,7 +29,7 @@
     <string name="notification_channel_name">DRC status</string>
     <string name="notification_channel_description">A dismissable status snapshot shown when you open the app or tap the widget\'s refresh icon.</string>
     <string name="notification_live_channel_name">DRC live updates</string>
-    <string name="notification_live_channel_description">What the box is playing, while live or instant updates run; Close app on it stops them.</string>
+    <string name="notification_live_channel_description">What the box is playing, with its cover in the status bar; it goes away by itself when nothing plays. Close app on it stops everything.</string>
     <string name="live_updates_connecting">Live updates</string>
     <string name="live_close_app">Close app</string>
     <string name="settings_instant_updates">Instant updates (permanent notification)</string>

@@ -132,10 +132,36 @@ the Linux JDK and SDK setup.
    closes that stream, allowing the server-side analyzer to stop immediately
    when it has no other listeners.
 
+## Status notification and lifecycle
+
+`LiveStatusService` is a foreground service that keeps the widgets and an
+ongoing notification up to date: *live updates* poll every 2 s for 10 minutes
+after the app was last opened; *instant updates* (App settings) wait on the
+box's `/now` for changes instead. The notification shows the track or film
+with its cover; the **status bar shows the cover as a small monochrome icon**
+(its brightness, contrast-stretched, becomes the icon's alpha; covers without
+contrast fall back to the app's glyph).
+
+The channel (`drc_live_icon`) has default importance with no sound or
+vibration: a low-importance channel counts as "silent", and Pixels hide silent
+notifications from the status bar and lock screen. It replaces the former
+`drc_live_status` channel, which is deleted.
+
+The service stops itself, with its notification, after 30 s with nothing
+playing, 15 min paused, 60 s with the box unreachable, or at Android 15's 6-hour
+daily limit for `dataSync` services — never while the app is on screen. Then
+nothing of the app runs except the widgets' own timers. Android forbids
+starting it again from the background, so it comes back only when the app is
+opened, or when a widget's refresh icon is tapped with instant updates on.
+Full description: manual section *The Android app's lifecycle and status
+notification*.
+
 ## Known gaps (deliberately out of scope for this first pass)
 
 - No mDNS/zeroconf discovery — the box doesn't advertise itself, so host
   entry is manual (matches how the web UI is reached today).
 - No Play Store packaging/signing — personal sideload only.
-- No foreground-service/push-based real-time refresh.
+- No push-based refresh: the live-status service stops itself when nothing
+  plays and only reopening the app (or a widget refresh tap with instant
+  updates on) brings it back — see "Status notification and lifecycle".
 - App icon is a placeholder vector glyph, not real artwork.

@@ -1514,6 +1514,82 @@ sent it. The kiosk draws at most one frame per display refresh, the newest;
 frames that keep arriving more than 1.2 s late mean a backlog queued in the
 network, and the stream is reopened to drop it.
 
+### The Android app's lifecycle and status notification {#sec:app-lifecycle}
+
+Besides the dashboard, the app runs one background component: a foreground
+service (`LiveStatusService`) that keeps the home-screen widgets and a
+notification up to date. Android requires a foreground service to show a
+notification for as long as it runs, so the notification and the service live
+and die together.
+
+**Two modes.** *Live updates* (the default) start when the dashboard is opened
+and poll the box every 2 s, so the large widget's meters move; they stop 10
+minutes after the app was last on screen. *Instant updates* (App settings) keep
+one request waiting on the box's `/now`, which answers only when the track, the
+playback state, the DRC or the film changes. This is an idle connection rather
+than polling. A box without `/now` is polled every 5 s instead.
+
+**The notification.** It shows the track, or the film, with its cover or
+poster; expanded, it adds the format, the renderer and the DRC in use. Its
+actions are **Levels** (the PiP meters) and **Close app**. The status bar shows
+the cover itself as a small icon. Android draws status-bar icons from their
+alpha channel only, in the bar's own colour, so the app turns the cover's
+brightness into alpha: light areas are drawn and dark areas are left
+transparent. The brightness range is stretched between the cover's 5th and
+95th percentiles, so dark or pale covers still show their shapes. A cover with
+almost no contrast would be a plain square, so the app's own ring glyph is used
+instead, as it is when nothing is loaded. Covers with bold graphics or
+lettering are recognisable at that size; busy photographs are much less so.
+
+The notification uses the channel *DRC live updates* with **default
+importance and no sound or vibration**. A low-importance channel is a
+*silent* notification: Pixels hide silent notifications from the status bar
+and the lock screen by default ("Hide silent notifications in status bar").
+Android does not let an app raise a channel's importance once created, so the
+channel has a new id (`drc_live_icon`) and the former one (`drc_live_status`)
+is deleted. Users who changed its settings must set them again. This is not a
+media notification: there are no media controls in the shade or on the lock
+screen.
+
+**When it stops by itself.** In both modes the service ends, and its
+notification disappears, when there is nothing to show:
+
+| Condition | Stops after |
+|---|---|
+| Nothing playing (stopped, no film) | 30 s |
+| Paused (music or film) | 15 min |
+| Box unreachable (disconnected, other network, box off) | 60 s |
+| Live updates mode, app not opened again | 10 min |
+| Android 15+ daily limit for this kind of service (`dataSync`, 6 h per 24 h) | at the limit |
+
+The short grace periods let a change of album or a brief Wi-Fi drop pass
+without the notification disappearing. The service never stops itself while
+the app is on screen; after the app is left, the conditions are checked again
+at the next update, at most about 25 s later. A box that reports no playback
+state at all never counts as idle; only unreachability stops the service then.
+Once it has stopped, nothing of the app is running: Android removes the
+process when it needs the memory. The widgets keep their own timers, a
+roughly 5-minute alarm and a 15-minute WorkManager job, which run only while
+widgets exist and the app has not been closed.
+
+**What brings it back, and the compromise.** With the service stopped, nothing
+on the phone watches the box. Since Android 12 an app in the background may not
+start a foreground service, so playback started from the kiosk, a browser or
+another phone does **not** make the notification reappear. It returns when:
+
+- the app is opened (or brought back to the screen), in either mode;
+- a widget's refresh icon is tapped while instant updates are on. Android
+  allows this because a tap on a widget is user interaction; if it still
+  refuses, the next opening of the app starts the service.
+
+The only way round this would be a push from the box through Google's push
+service, which the project does not use. The rule is therefore: **no resources
+while idle, at the cost of reopening the app** after playback starts elsewhere.
+
+**Close app** is stronger than the idle stop. It stops the service, the
+widgets' timers and every background request until the app is opened again.
+The widgets' own taps still work.
+
 ## The KDE Plasma widget {#sec:plasmoid}
 
 **OMDRC Monitor** (`kde/omdrc-plasmoid`) is a KDE Plasma 6 widget showing what

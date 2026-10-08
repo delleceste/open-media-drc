@@ -28,6 +28,7 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
                 if (id != AppWidgetManager.INVALID_APPWIDGET_ID) {
                     RefreshEngine.showChecking(context, id)
                     WidgetRefreshWorker.enqueueOneTime(context, id, notify = true)
+                    resumeInstantUpdates(context, id)
                 }
             }
             ACTION_TOGGLE_PLAY_PAUSE -> {
@@ -64,6 +65,20 @@ class OmdrcWidgetProvider : AppWidgetProvider() {
             }
         }
         super.onReceive(context, intent)
+    }
+
+    /** With instant updates on, a refresh tap also brings back the status
+     *  notification, which stops itself when nothing plays. A tap on the
+     *  widget is one of the few moments Android lets a background app start
+     *  a foreground service; should it refuse, the app's next opening will. */
+    private fun resumeInstantUpdates(context: Context, id: Int) {
+        if (!AppPrefs.instantUpdates(context) || AppPrefs.closed(context)) return
+        val (host, port) = RefreshEngine.serverFor(context, id) ?: return
+        try {
+            LiveStatusService.ensureRunning(context, host, port)
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "status notification not resumed: ${e.message}")
+        }
     }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {

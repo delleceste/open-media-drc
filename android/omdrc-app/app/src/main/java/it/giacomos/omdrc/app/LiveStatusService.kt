@@ -8,11 +8,17 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.IconCompat
 import it.giacomos.omdrc.app.data.ArtFetch
 import it.giacomos.omdrc.app.data.NowFetch
 import it.giacomos.omdrc.app.data.NowState
@@ -27,6 +33,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val TAG = "OmdrcWidget"
 
@@ -44,10 +51,18 @@ private const val TAG = "OmdrcWidget"
  *    not polling. A box without /now is polled every few seconds instead.
  *
  * Either way the notification shows what's playing - the cover or the
- * film's poster, the track - and expanded, the format and the DRC in use.
+ * film's poster, the track - and expanded, the format and the DRC in use;
+ * the status bar shows the cover itself, as a small monochrome icon.
  * Android requires a foreground service to show it the whole time; its Close
  * action stops the service and every other background request of the app
  * until the app is opened again (see AppPrefs.closed).
+ *
+ * In both modes the service goes away by itself once there is nothing to
+ * show - nothing playing for STOPPED_GRACE_MS, paused for PAUSE_TIMEOUT_MS,
+ * the box unreachable for UNREACHABLE_GRACE_MS - but never while the app is
+ * on screen. Nothing is left running then: it comes back only when the app
+ * is opened, or a widget's refresh icon is tapped with instant updates on,
+ * since Android does not let an app start it from the background.
  */
 class LiveStatusService : Service() {
 
@@ -59,6 +74,13 @@ class LiveStatusService : Service() {
     private var musicArt: Bitmap? = null
     private var videoArtKey: String? = null
     private var videoArt: Bitmap? = null
+    private var musicIcon: Bitmap? = null
+    private var videoIcon: Bitmap? = null
+
+    // What the box was last seen doing, and since when: the idle stop.
+    private var activity = Activity.UNKNOWN
+    private var activitySince = 0L
+    private var unreachableSince: Long? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -82,8 +104,11 @@ class LiveStatusService : Service() {
         startForegroundCompat(buildNotification(host, port, null, null))
 
         job?.cancel()
+        startedFor = host to port
         musicArtKey = null
         videoArtKey = null
+        activity = Activity.UNKNOWN
+        unreachableSince = null
         job = scope.launch {
             if (AppPrefs.instantUpdates(this@LiveStatusService)) instantLoop(host, port) else pollLoop(host, port)
         }
@@ -118,7 +143,9 @@ class LiveStatusService : Service() {
                 show(host, port, snapshot, now)
             } catch (e: Exception) {
                 Log.w(TAG, "LiveStatusService poll failed: ${e.message}")
+                observe(false, null, null)
             }
+            if (stopIfIdle()) return
             delay(POLL_INTERVAL_MS)
         }
     }
@@ -136,6 +163,7 @@ class LiveStatusService : Service() {
             try {
                 when (val fetched = OmdrcClient.fetchNow(host, port, token, INSTANT_WAIT_S)) {
                     is NowFetch.Found -> {
+                        observe(true, fetched.now, null)
                         if (fetched.now.token != token) {
                             token = fetched.now.token
                             Log.d(TAG, "LiveStatusService: state changed on $host:$port")
@@ -145,19 +173,69 @@ class LiveStatusService : Service() {
                     NowFetch.Unsupported -> {
                         // An older panel: poll it, more gently than live updates.
                         show(host, port, OmdrcClient.fetchSnapshot(host, port), null)
+                        if (stopIfIdle()) return
                         delay(FALLBACK_POLL_MS)
                     }
                     NowFetch.Failed -> {
                         token = null
                         show(host, port, OmdrcClient.fetchSnapshot(host, port), null)
+                        if (stopIfIdle()) return
                         delay(RETRY_MS)
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "LiveStatusService instant update failed: ${e.message}")
+                observe(false, null, null)
+                if (stopIfIdle()) return
                 delay(RETRY_MS)
             }
+            if (stopIfIdle()) return
         }
+    }
+
+    /** Notes whether the box answered and what it is doing. A box without
+     *  /now is judged by MPD's state alone; one that says neither never
+     *  counts as idle. */
+    private fun observe(reachable: Boolean, now: NowState?, snapshot: WidgetSnapshot?) {
+        val t = SystemClock.elapsedRealtime()
+        if (!reachable) {
+            if (unreachableSince == null) unreachableSince = t
+            return
+        }
+        unreachableSince = null
+        val state = when {
+            now?.video != null -> if (now.video.paused) "pause" else "play"
+            now != null -> now.music.state
+            snapshot?.mpd?.ok == true -> snapshot.mpd.state
+            else -> null
+        }
+        val seen = when (state) {
+            "play" -> Activity.PLAYING
+            "pause" -> Activity.PAUSED
+            null -> Activity.UNKNOWN
+            else -> Activity.IDLE
+        }
+        if (seen != activity) {
+            activity = seen
+            activitySince = t
+        }
+    }
+
+    /** Stops the service, and with it the notification, once there has been
+     *  nothing to show for long enough; true if it did. */
+    private fun stopIfIdle(): Boolean {
+        if (appVisible) return false
+        val t = SystemClock.elapsedRealtime()
+        val reason = when {
+            unreachableSince?.let { t - it >= UNREACHABLE_GRACE_MS } == true -> "box unreachable"
+            activity == Activity.IDLE && t - activitySince >= STOPPED_GRACE_MS -> "nothing playing"
+            activity == Activity.PAUSED && t - activitySince >= PAUSE_TIMEOUT_MS -> "paused too long"
+            else -> return false
+        }
+        Log.d(TAG, "LiveStatusService: stopping, $reason")
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        return true
     }
 
     /** Fetches whatever art changed, then updates widgets and notification. */
@@ -169,6 +247,7 @@ class LiveStatusService : Service() {
             if (art !is ArtFetch.Failed) {
                 musicArtKey = now.music.art
                 musicArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }
+                musicIcon = musicArt?.let { statusIcon(it) }
                 widgetArt = art
             }
         }
@@ -178,8 +257,10 @@ class LiveStatusService : Service() {
             if (art !is ArtFetch.Failed) {
                 videoArtKey = videoKey
                 videoArt = (art as? ArtFetch.Found)?.let { decodeIcon(it.bytes) }
+                videoIcon = videoArt?.let { statusIcon(it) }
             }
         }
+        observe(snapshot.reachable || now != null, now, snapshot)
         pushToWidgets(host, port, snapshot, widgetArt)
         startForegroundCompat(buildNotification(host, port, snapshot, now))
     }
@@ -202,6 +283,7 @@ class LiveStatusService : Service() {
         val collapsed: String
         val expanded: String
         var icon: Bitmap? = null
+        var statusIcon: Bitmap? = null
         when {
             now?.video != null -> {
                 val video = now.video
@@ -217,6 +299,7 @@ class LiveStatusService : Service() {
                     drcLine(now.drc),
                 ).filter { it.isNotEmpty() }.joinToString("\n")
                 icon = videoArt
+                statusIcon = videoIcon
             }
             now != null -> {
                 val music = now.music
@@ -231,7 +314,10 @@ class LiveStatusService : Service() {
                         .filter { it.isNotEmpty() }.joinToString(" · "),
                     drcLine(now.drc),
                 ).filter { it.isNotEmpty() }.joinToString("\n")
-                icon = if (music.title.isNotEmpty() || music.line1.isNotEmpty()) musicArt else null
+                if (music.title.isNotEmpty() || music.line1.isNotEmpty()) {
+                    icon = musicArt
+                    statusIcon = musicIcon
+                }
             }
             snapshot != null -> {
                 val (t, c) = StatusNotifier.collapsedText(this, snapshot)
@@ -270,7 +356,10 @@ class LiveStatusService : Service() {
         )
 
         return NotificationCompat.Builder(this, StatusNotifier.LIVE_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
+            .apply {
+                if (statusIcon != null) setSmallIcon(IconCompat.createWithBitmap(statusIcon))
+                else setSmallIcon(R.drawable.ic_notification)
+            }
             .setContentTitle(title)
             .setContentText(collapsed)
             .setLargeIcon(icon)
@@ -281,7 +370,7 @@ class LiveStatusService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
     }
 
@@ -318,6 +407,48 @@ class LiveStatusService : Service() {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
+    /** The cover as a status-bar icon: the system draws only its alpha, in
+     *  the bar's own colour, so the cover's brightness becomes the alpha -
+     *  stretched between its 5th and 95th percentiles so a dark or a pale
+     *  cover still shows its shapes. A cover with no contrast to speak of
+     *  would be a plain square: null, and the app's glyph is shown. */
+    private fun statusIcon(art: Bitmap): Bitmap? {
+        val px = (STATUS_ICON_DP * resources.displayMetrics.density).roundToInt()
+        val side = minOf(art.width, art.height)
+        val square = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+        Canvas(square).drawBitmap(
+            art,
+            Rect((art.width - side) / 2, (art.height - side) / 2, (art.width + side) / 2, (art.height + side) / 2),
+            Rect(0, 0, px, px),
+            Paint(Paint.FILTER_BITMAP_FLAG),
+        )
+        val pixels = IntArray(px * px)
+        square.getPixels(pixels, 0, px, 0, 0, px, px)
+        val luma = IntArray(pixels.size) {
+            val c = pixels[it]
+            (299 * (c shr 16 and 0xff) + 587 * (c shr 8 and 0xff) + 114 * (c and 0xff)) / 1000
+        }
+        val histogram = IntArray(256)
+        luma.forEach { histogram[it]++ }
+        fun percentile(p: Int): Int {
+            var count = 0
+            for (v in 0..255) {
+                count += histogram[v]
+                if (count * 100 >= luma.size * p) return v
+            }
+            return 255
+        }
+        val lo = percentile(5)
+        val hi = percentile(95)
+        if (hi - lo < MIN_ICON_CONTRAST) return null
+        for (i in pixels.indices) {
+            val a = ((luma[i] - lo) * 255 / (hi - lo)).coerceIn(0, 255)
+            pixels[i] = (a shl 24) or 0xffffff
+        }
+        square.setPixels(pixels, 0, px, 0, 0, px, px)
+        return square
+    }
+
     private fun startForegroundCompat(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -327,11 +458,22 @@ class LiveStatusService : Service() {
         }
     }
 
+    /** Android 15 allows a dataSync service six hours a day: past them it
+     *  must stop, and comes back when the app is next opened. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.d(TAG, "LiveStatusService: Android's daily time limit reached, stopping")
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        startedFor = null
         job?.cancel()
         scope.cancel()
     }
+
+    private enum class Activity { PLAYING, PAUSED, IDLE, UNKNOWN }
 
     companion object {
         private const val NOTIFICATION_ID = 3
@@ -343,6 +485,26 @@ class LiveStatusService : Service() {
         private const val FALLBACK_POLL_MS = 5000L
         private const val RETRY_MS = 15000L
         private const val ICON_PX = 256
+        private const val STATUS_ICON_DP = 24
+        private const val MIN_ICON_CONTRAST = 24
+        private const val STOPPED_GRACE_MS = 30 * 1000L
+        private const val PAUSE_TIMEOUT_MS = 15 * 60 * 1000L
+        private const val UNREACHABLE_GRACE_MS = 60 * 1000L
+
+        /** The app is on screen: the service never stops itself meanwhile,
+         *  so the notification doesn't vanish under the user's eyes. */
+        @Volatile
+        var appVisible = false
+
+        /** The box the service was last started for, until it stops. */
+        @Volatile
+        private var startedFor: Pair<String, Int>? = null
+
+        /** Starts the service unless it already runs for this box. */
+        fun ensureRunning(context: Context, host: String, port: Int) {
+            if (startedFor == host to port) return
+            start(context, host, port)
+        }
 
         fun start(context: Context, host: String, port: Int) {
             val intent = Intent(context, LiveStatusService::class.java).apply {
@@ -350,6 +512,7 @@ class LiveStatusService : Service() {
                 putExtra(MainActivity.EXTRA_PORT, port)
             }
             ContextCompat.startForegroundService(context, intent)
+            startedFor = host to port
         }
 
         /** "96 kHz / 24 bit", "44.1 kHz / 16 bit". */
