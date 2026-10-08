@@ -224,6 +224,41 @@ def raw_album(album_id="a1", label="PENTATONE", date="2025-01-10"):
     }
 
 
+class AnnotateDrTest(unittest.TestCase):
+    """Every album's DR is one badge: Qobuz and local, heard or reported."""
+    ESTIMATE = {"dr": 9, "kind": "estimate", "basis": "listened", "heard": 2,
+                "complete": 1, "track_count": 10}
+
+    def annotate(self, cards, lookup):
+        local = lambda c: "local:" + c["id"] if c.get("source") == "local" else "qobuz:" + c["id"]
+        with patch.object(qobuz_web, "_dr_lookup", lookup), \
+             patch.object(qobuz_web, "dr_key", local):
+            return qobuz_web.annotate_dr(cards)
+
+    def test_a_partial_hearing_stays_an_estimate(self):
+        [card] = self.annotate([{"id": "q"}], lambda keys: {"qobuz:q": self.ESTIMATE})
+        self.assertEqual(card["dr_log"], self.ESTIMATE)
+
+    def test_a_local_report_is_the_exact_figure_whatever_was_heard(self):
+        [card] = self.annotate([{"id": "l", "source": "local", "dr": 12}],
+                               lambda keys: {"local:l": self.ESTIMATE})
+        self.assertEqual((card["dr_log"]["dr"], card["dr_log"]["kind"], card["dr_log"]["basis"]),
+                         (12, "exact", "report"))
+        self.assertEqual(card["dr_log"]["heard"], 2)
+
+    def test_a_local_report_is_badged_before_the_log_imports_it(self):
+        def down(keys):
+            raise RuntimeError("store unavailable")
+        cards = self.annotate([{"id": "l", "source": "local", "dr": 11}, {"id": "q"}], down)
+        self.assertEqual(cards[0]["dr_log"]["dr"], 11)
+        self.assertNotIn("dr_log", cards[1])
+
+    def test_an_album_without_a_figure_gets_no_badge(self):
+        none = {"dr": None, "kind": None, "basis": "", "heard": 1}
+        [card] = self.annotate([{"id": "q"}], lambda keys: {"qobuz:q": none})
+        self.assertNotIn("dr_log", card)
+
+
 class PlayedTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -1671,7 +1671,7 @@ P.row = (c, where = '') => {
         'aria-label': 'More actions', 'aria-haspopup': 'menu',
         onclick: () => P.tileMenuEl && P.tileMenuTile === row ? P.closeTileMenu() : P.tileMenu(c, where, row, moreBtn) }, '⋯');
     const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') },
-        h('div', { class: 'qz-cover-wrap' }, c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂', c.dr != null ? ` DR${c.dr}` : '') : null),
+        h('div', { class: 'qz-cover-wrap' }, c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
         body,
         h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),
@@ -1699,7 +1699,6 @@ P.tile = (c, where = '') => {
                 ...(c.image_large ? { srcset: `${c.image} 230w, ${c.image_large} 600w`, sizes: '9rem' } : {}) }) : null,
             (c.awards && c.awards.length) || c.rating ? h('span', { class: 'qz-taward', title: 'Awarded' }, '🏆') : null,
             c.source === 'local' ? h('span', { class: 'qz-taward qz-local-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null,
-            c.source === 'local' && c.dr != null ? h('span', { class: 'qz-tq qz-local-dr', title: 'Average dynamic range from dr14.txt' }, `DR${c.dr}`) : null,
             quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null,
             K.drLogBadge ? K.drLogBadge(c.dr_log, 'qz-tdr') : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),

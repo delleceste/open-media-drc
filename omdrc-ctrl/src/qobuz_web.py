@@ -151,17 +151,20 @@ def dr_key(card: dict) -> str:
 
 def annotate_dr(results: list) -> list:
     """Add "dr_log" (exact or estimate, and how it was reached) to the results
-    the log knows; a local album whose dr14.txt was read already keeps that."""
+    the log knows.  A local album's own dr14.txt, read with the search, is its
+    figure whatever the log holds: the report always wins, and the log may not
+    have imported a report written moments ago."""
+    cards = [c for c in results if isinstance(c, dict)]
     try:
-        cards = [c for c in results if isinstance(c, dict)
-                 and not (c.get("source") == "local" and c.get("dr") is not None)]
         found = _dr_lookup([dr_key(c) for c in cards])
     except Exception:                       # noqa: BLE001 - a badge is optional
-        return results
+        found = {}
     for card in cards:
-        summary = found.get(dr_key(card))
-        if summary:
-            card["dr_log"] = {k: summary[k] for k in
+        summary = found.get(dr_key(card)) or {}
+        if card.get("source") == "local" and card.get("dr") is not None:
+            summary = {**summary, "dr": card["dr"], "kind": "exact", "basis": "report"}
+        if summary.get("dr") is not None:
+            card["dr_log"] = {k: summary.get(k) for k in
                               ("dr", "kind", "basis", "heard", "complete", "track_count")}
     return results
 

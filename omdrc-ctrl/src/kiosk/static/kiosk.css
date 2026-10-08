@@ -920,7 +920,6 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
     border-radius: .3rem; background: rgba(0,0,0,.6); color: #fff; }
 .qz-taward { left: .25rem; }
 .qz-tq { right: .25rem; font-weight: 650; font-variant-numeric: tabular-nums; }
-.qz-local-dr { right: .25rem; }
 .qz-ttl { margin-top: .3rem; font-size: .78rem; font-weight: 650; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qz-tsub { font-size: .7rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip.qz-viewicon { padding: 0 .7rem; display: inline-flex; align-items: center; }
