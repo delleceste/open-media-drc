@@ -198,8 +198,7 @@ K.Spectrum = class Spectrum {
         // Centre: one half disc per channel, filled bottom-up by the peak level.
         const ri = Math.max(1, inner - pitch * .2), gap = Math.max(1, dpr);
         const font = Math.max(9, Math.min(13, ri / dpr * .32)) * dpr;
-        ctx.font = `700 ${font}px ui-monospace, monospace`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const peaks = [];
         for (const [sign, peak, fill] of [[-1, this.peaks.left, 'rgba(255,255,255,.55)'],
             [1, this.peaks.right, 'rgba(248,81,73,.6)']]) {
             ctx.save();
@@ -212,19 +211,22 @@ K.Spectrum = class Spectrum {
             ctx.fillStyle = fill;
             ctx.fillRect(cx - ri - gap, cy + ri - 2 * ri * frac, 2 * (ri + gap), 2 * ri * frac);
             ctx.restore();
-            const text = Number.isFinite(peak) && peak > -100 ? String(Math.round(peak)) : '—';
-            const x = cx + sign * ri * .48;
-            ctx.lineWidth = 3 * dpr; ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(0,0,0,.75)';
-            ctx.strokeText(text, x, cy);
-            ctx.fillStyle = peak >= -1 ? '#f85149' : '#ffffff';
-            ctx.fillText(text, x, cy);
+            peaks.push(peak);
         }
-        // Channel labels outside the rings at 11 and 1 o'clock.
+        // Channel labels and peak dB outside the rings at 11 and 1 o'clock,
+        // the value on the outer side of its label.
         const labelR = radius + 7 * dpr;
         ctx.font = `700 ${Math.max(9 * dpr, font * .85)}px ui-monospace, monospace`;
-        ctx.fillStyle = K.css('--muted');
-        for (const [side, a] of [['L', -Math.PI * 2 / 3], ['R', -Math.PI / 3]]) {
-            ctx.fillText(side, cx + Math.cos(a) * labelR, cy + Math.sin(a) * labelR);
+        ctx.textBaseline = 'middle';
+        const space = ctx.measureText(' ').width;
+        for (const [side, a, peak, sign] of [['L', -Math.PI * 2 / 3, peaks[0], -1], ['R', -Math.PI / 3, peaks[1], 1]]) {
+            const x = cx + Math.cos(a) * labelR, y = cy + Math.sin(a) * labelR;
+            ctx.textAlign = 'center'; ctx.fillStyle = K.css('--muted');
+            ctx.fillText(side, x, y);
+            const text = Number.isFinite(peak) && peak > -100 ? String(Math.round(peak)) : '—';
+            ctx.textAlign = sign < 0 ? 'right' : 'left';
+            ctx.fillStyle = peak >= -1 ? '#f85149' : K.css('--muted');
+            ctx.fillText(text, x + sign * (ctx.measureText(side).width / 2 + space), y);
         }
     }
 };
