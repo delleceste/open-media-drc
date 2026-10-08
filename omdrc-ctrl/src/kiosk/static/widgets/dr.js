@@ -100,6 +100,12 @@ K.drEstimate = (() => {
         E.emit();
     };
     E.resetView = () => E.setView(E.total, E.total);
+    E.fullView = () => E.setView(E.availableStart(), E.total);
+    E.extendView = edge => {
+        const { start, end } = E.viewRange();
+        if (edge === 'start') E.setView(start - 20, end);
+        if (edge === 'end') E.setView(start, end + 20);
+    };
 
     // What to say and show for the current selection.
     E.summary = () => {
@@ -148,38 +154,45 @@ K.drEstimate = (() => {
     return E;
 })();
 
-// A time-axis viewport for the bar. Drag the rectangle to pan, or its edges
-// to change the visible span. The right edge follows live audio when at Now.
+// A time-axis viewport for the bar. Only the centre grip pans; the edge grips
+// resize. The right edge follows live audio when at Now.
 K.drViewPopup = (() => {
     let closeCurrent = null;
     return () => {
         if (closeCurrent) closeCurrent();
         const E = K.drEstimate;
+        const original = { start: E.viewStart, end: E.viewEnd };
         const axis = h('div', { class: 'dr-view-axis', role: 'group', 'aria-label': 'DR history time axis' });
         const selection = h('div', { class: 'dr-view-selection' },
-            h('span', { class: 'dr-view-handle', dataset: { edge: 'start' }, title: 'Drag start' }),
-            h('span', { class: 'dr-view-handle', dataset: { edge: 'end' }, title: 'Drag end' }));
+            h('span', { class: 'dr-view-handle', dataset: { edge: 'start' }, title: 'Drag left edge to change start' }, '⋮'),
+            h('span', { class: 'dr-view-move', title: 'Drag here to move the whole window' },
+                h('span', {}, '↑'), h('span', {}, '← · →'), h('span', {}, '↓')),
+            h('span', { class: 'dr-view-handle', dataset: { edge: 'end' }, title: 'Drag right edge to change end' }, '⋮'));
         axis.append(selection);
         const oldest = h('span', {}), middle = h('span', {}), range = h('span', { class: 'dr-view-range' });
         const step = dir => {
             const { start, end } = E.viewRange();
             const width = end - start;
-            if (!width && dir < 0) { E.setView(start - 20, end); return; }
             const nextStart = K.clamp(start + dir * 20, E.availableStart(), E.total - width);
             E.setView(nextStart, nextStart + width);
         };
-        const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) close(); } },
+        const extendLeft = h('button', { class: 'btn', type: 'button', onclick: () => E.extendView('start') }, '← Extend left');
+        const extendRight = h('button', { class: 'btn', type: 'button', onclick: () => E.extendView('end') }, 'Extend right →');
+        const scrim = h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) cancel(); } },
             h('div', { class: 'sheet dr-view-sheet' },
                 h('h2', {}, 'DR history window'),
-                h('p', { class: 'muted small' }, 'Drag the window to look back; drag either edge to change its span. The live DR estimate and saved album records continue unchanged.'),
+                h('p', { class: 'muted small' }, 'Drag the centre arrows to move the whole window, or an edge grip to change only that edge. Reset starts a new visible bar at Now; Full window shows all retained blocks. Saved DR records and the live estimate are unchanged.'),
                 h('div', { class: 'dr-view-controls' },
                     h('button', { class: 'btn', type: 'button', title: 'One minute earlier', onclick: () => step(-1) }, '−'),
                     axis,
                     h('button', { class: 'btn', type: 'button', title: 'One minute later', onclick: () => step(1) }, '+')),
                 h('div', { class: 'dr-view-labels' }, oldest, middle, h('span', {}, 'Now')),
+                h('div', { class: 'dr-view-extend' }, extendLeft, extendRight),
                 range,
                 h('div', { class: 'sheet-actions' },
-                    h('button', { class: 'btn', type: 'button', onclick: () => E.resetView() }, 'Reset'),
+                    h('button', { class: 'btn', type: 'button', onclick: () => cancel() }, 'Cancel'),
+                    h('button', { class: 'btn', type: 'button', title: 'Start the visible bar again at Now', onclick: () => E.resetView() }, 'Reset'),
+                    h('button', { class: 'btn', type: 'button', title: 'Show all DR blocks still held in memory', onclick: () => E.fullView() }, 'Full window'),
                     h('button', { class: 'btn primary', type: 'button', onclick: () => close() }, 'Done'))));
         const paint = () => {
             const first = E.availableStart(), total = E.total;
@@ -189,12 +202,16 @@ K.drViewPopup = (() => {
             const width = Math.max(36, (end - start) / span * axisWidth);
             selection.style.left = `${Math.min((start - first) / span * axisWidth, axisWidth - width)}px`;
             selection.style.width = `${width}px`;
+            selection.classList.toggle('compact', width < 80 || end === start);
+            extendLeft.disabled = start <= first;
+            extendRight.disabled = end >= total;
             oldest.textContent = `−${dr.elapsedLabel((total - first) * BLOCK_S)}`;
             middle.textContent = `−${dr.elapsedLabel(Math.round((total - first) * BLOCK_S / 2))}`;
             range.textContent = `Showing ${dr.elapsedLabel((end - start) * BLOCK_S)} · ${dr.elapsedLabel((total - end) * BLOCK_S)} behind live`;
         };
         const sub = E.listen(paint);
         const close = () => { resize.disconnect(); sub.close(); scrim.remove(); if (closeCurrent === close) closeCurrent = null; };
+        const cancel = () => { E.viewStart = original.start; E.viewEnd = original.end; E.emit(); close(); };
         closeCurrent = close;
         document.getElementById('overlay-root').append(scrim);
         paint();
@@ -202,9 +219,11 @@ K.drViewPopup = (() => {
         resize.observe(axis);
         let drag = null;
         axis.addEventListener('pointerdown', e => {
+            const edge = e.target.closest('.dr-view-handle')?.dataset.edge;
+            const move = e.target.closest('.dr-view-move');
+            if (!edge && !move) return;
             const { start, end } = E.viewRange();
-            drag = { id: e.pointerId, x: e.clientX, start, end,
-                edge: e.target.dataset.edge || (selection.contains(e.target) ? 'move' : 'seek') };
+            drag = { id: e.pointerId, x: e.clientX, start, end, edge: edge || 'move' };
             axis.setPointerCapture(e.pointerId);
             e.preventDefault();
             e.stopPropagation();
@@ -219,11 +238,6 @@ K.drViewPopup = (() => {
             else if (drag.edge === 'move') {
                 const span = drag.end - drag.start;
                 const start = K.clamp(drag.start + delta, first, E.total - span);
-                E.setView(start, start + span);
-            } else {
-                const point = K.clamp(first + Math.round((e.clientX - axis.getBoundingClientRect().left) / width * E.blocks.length), first, E.total);
-                const span = drag.end - drag.start;
-                const start = K.clamp(point - Math.round(span / 2), first, E.total - span);
                 E.setView(start, start + span);
             }
         });

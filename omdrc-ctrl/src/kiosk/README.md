@@ -37,10 +37,14 @@ bar, Qobuz player strip or screen saver.  A page the box does not offer says
 so instead.
 
 Long press the DR history bar on Now or DR to open its time-axis window. Drag the
-rectangle to look back, drag its edges to change the span, or use −/+ to move by
-one minute. Reset moves the visible start to now; new audio fills the bar again.
-Older blocks remain available within the analyzer's 90-minute memory, and the
-live estimate and the local DR log are unaffected by this view control.
+centre four-arrow grip to move the whole window, drag either edge grip to change
+only that edge, or use −/+ to move by one minute. Extend left/right buttons grow
+the window one minute per tap, including when it is too small to grab. Reset
+moves the visible start to now and new audio fills the bar again. Full window
+shows all blocks still in the analyzer's 90-minute memory. Cancel restores the
+window from before the popup opened; Done keeps the selection. These view
+controls leave the live
+estimate and the local DR log unchanged.
 
 ## Light and dark
 

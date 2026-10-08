@@ -355,16 +355,22 @@ button.award { font: inherit; font-size: .8rem; font-weight: 650; cursor: pointe
 .dr-bar > span > b { position: relative; font: 300 .72rem ui-monospace, monospace; }
 .dr-bar > span.gap { flex: 0 0 12px; background: repeating-linear-gradient(45deg, var(--gap-a), var(--gap-a) 3px, var(--gap-b) 3px, var(--gap-b) 6px); }
 .dr-bar > span.selected { outline: 2px solid var(--text); outline-offset: -2px; }
-.dr-view-sheet { width: min(32rem, 94vw); }
+.dr-view-sheet { width: min(36rem, 94vw); }
+.dr-view-sheet .sheet-actions { flex-wrap: wrap; margin-top: .8rem; }
 .dr-view-controls { display: flex; align-items: center; gap: .5rem; }
 .dr-view-controls > .btn { flex: 0 0 2.5rem; padding: .45rem; font-size: 1.3rem; }
-.dr-view-axis { position: relative; flex: 1; height: 3rem; border-radius: .35rem; background: var(--deep); border: 1px solid var(--border); touch-action: none; cursor: crosshair; }
+.dr-view-axis { position: relative; flex: 1; height: 3rem; border-radius: .35rem; background: var(--deep); border: 1px solid var(--border); touch-action: none; }
 .dr-view-axis::before { content: ''; position: absolute; inset: 50% .4rem auto; border-top: 1px solid var(--text); opacity: .45; }
 .dr-view-axis::after { content: ''; position: absolute; inset: calc(50% - .3rem) .4rem auto; height: .6rem; background: repeating-linear-gradient(90deg, var(--text) 0 1px, transparent 1px calc(25% - 1px), var(--text) calc(25% - 1px) 25%); opacity: .45; }
-.dr-view-selection { position: absolute; top: .35rem; bottom: .35rem; border: 2px solid var(--text); border-radius: .25rem; background: color-mix(in srgb, var(--text) 23%, transparent); cursor: grab; }
-.dr-view-handle { position: absolute; top: -.2rem; bottom: -.2rem; width: .9rem; background: var(--text); border-radius: .2rem; cursor: ew-resize; }
-.dr-view-handle:first-child { left: -.45rem; } .dr-view-handle:last-child { right: -.45rem; }
+.dr-view-selection { position: absolute; top: .35rem; bottom: .35rem; border: 2px solid var(--text); border-radius: .25rem; background: color-mix(in srgb, var(--text) 23%, transparent); }
+.dr-view-handle { position: absolute; top: -.2rem; bottom: -.2rem; width: .9rem; display: grid; place-items: center; background: var(--text); color: var(--deep); border-radius: .2rem; font-weight: bold; cursor: ew-resize; touch-action: none; }
+.dr-view-handle[data-edge=start] { left: -.45rem; } .dr-view-handle[data-edge=end] { right: -.45rem; }
+.dr-view-move { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; justify-content: center; width: 2.5rem; height: 2.1rem; border-radius: .3rem; background: var(--surface); color: var(--text); opacity: .65; font-size: .68rem; font-weight: bold; line-height: .55rem; white-space: nowrap; cursor: grab; touch-action: none; }
+.dr-view-move:active { cursor: grabbing; opacity: 1; }
+.dr-view-selection.compact .dr-view-move { display: none; }
 .dr-view-labels { display: flex; justify-content: space-between; padding: .25rem 3rem 0; font-size: .8rem; }
+.dr-view-extend { display: flex; justify-content: space-between; gap: .5rem; margin-top: .55rem; }
+.dr-view-extend .btn { flex: 1 1 0; }
 .dr-view-range { display: block; text-align: center; margin-top: .6rem; font-size: .85rem; }
 .dr-detail { margin-top: .3rem; font-size: .75rem; }
 .explain { margin-top: .65rem; color: var(--muted); font-size: .82rem; line-height: 1.4; }
