@@ -1543,10 +1543,13 @@ icon is generated with the launcher icon by `artwork/draw-app-icon.py`
 visible at that size.
 
 In the pulled-down shade, Android 16 and later show the app's launcher icon on
-the left of the entry, not the status-bar icon. To link the two, the
-notification's picture (top right) carries the same white note on a dark disc
-in its top-right corner. With no cover or poster, the note on its disc takes
-the picture's place.
+the left of the entry, not the status-bar icon; its green "d" is the same note,
+which links the two. The picture on the right is the cover or poster alone,
+with a small badge in its top-left corner: play, pause, or the stop square. It
+follows every state change the box reports, including stop, even though the
+notification then disappears 30 s later. With nothing loaded there is no
+picture. (A copy of the note in the picture's corner was tried and dropped:
+an icon on each side made the entry too heavy.)
 
 The notification uses the channel *DRC live updates* with **default
 importance and no sound or vibration**. A low-importance channel is a
