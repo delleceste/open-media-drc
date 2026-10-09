@@ -896,5 +896,50 @@ class DiscoverTests(unittest.TestCase):
         self.assertEqual([a["id"] for a in catalog.discover("", 0, labels=["Tiny Label"])["albums"]],
                          ["match"])
 
+
+class ScopedListsTest(unittest.TestCase):
+    """The search box filters the History and Awarded lists."""
+
+    def test_recent_filters_by_words_and_leaves_hidden_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = qs.PlayedAlbums(tmp + "/p.json")
+            store.record(album("a", "Symphony No. 4", "BIS", "2025-05-05", composer="Johannes Brahms"), [])
+            store.record(album("b", "Symphony No. 4", "BIS", "2025-05-05"), [{"name": "Herbert Blomstedt"}])
+            store.record(album("c", "Requiem", "BIS", "2025-05-05", composer="Johannes Brahms"), [])
+            store.hide("c")
+            self.assertEqual([c["id"] for c in store.recent(text="BRAHMS")], ["a"])
+            self.assertEqual([c["id"] for c in store.recent(text="symphony blomstedt")], ["b"])
+            self.assertEqual([c["id"] for c in store.recent(1, text="bis")], ["b"])
+            self.assertEqual([c["id"] for c in store.recent(text="")], ["b", "a"])
+
+    def test_awarded_filters_by_words_and_award_names_with_the_users_marks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = qs.AwardedAlbums(tmp + "/aw.json")
+            store.seen(qs.album_card(album("q", "Symphony No. 2", "Halle", "2025-10-01")),
+                       [{"name": "Gramophone: Editor's Choice", "publication": "Gramophone", "date": ""}])
+            store.mark(qs.album_card(album("m", "Symphony No. 2", "Channel", "2006-01-01")),
+                       "Diapason d'Or", "Diapason")
+            store.rate(qs.album_card(album("r", "Requiem", "BIS", "2020-01-01")), 2)
+            self.assertEqual([a["id"] for a in store.albums("symphony")], ["m", "q"])
+            self.assertEqual([a["id"] for a in store.albums("gramophone")], ["q"])
+            self.assertEqual([a["id"] for a in store.albums("diapason channel")], ["m"])
+            self.assertEqual([a["id"] for a in store.albums("bis")], ["r"])
+            self.assertEqual(len(store.albums()), 3)
+
+    def test_routes_pass_the_text(self):
+        client = APP.app.test_client()
+        with patch.object(qobuz_web, "_settings", return_value=qs.Settings(enabled=True)), \
+             patch.object(qobuz_web, "played") as played, \
+             patch.object(qobuz_web, "awarded") as awarded, \
+             patch.object(qobuz_web, "_guard", return_value=None), \
+             patch.object(qobuz_web, "annotate_dr", side_effect=lambda cards: cards):
+            played.return_value.recent.return_value = []
+            awarded.return_value.albums.return_value = []
+            self.assertTrue(client.get("/qobuz/played?limit=100&q=brahms").get_json()["ok"])
+            played.return_value.recent.assert_called_with(100, "brahms")
+            self.assertTrue(client.get("/qobuz/awarded?q=gramophone").get_json()["ok"])
+            awarded.return_value.albums.assert_called_with("gramophone")
+
+
 if __name__ == "__main__":
     unittest.main()

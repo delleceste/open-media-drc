@@ -881,6 +881,9 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .fav-tree-name { display: grid; min-width: 0; }
 .fav-tree-name strong, .fav-tree-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fav-tree-name small { color: var(--muted); }
+.fav-found-paths { display: flex; flex-wrap: wrap; gap: 0 .6rem; min-width: 0; }
+.fav-found-paths .btn.link { min-height: 1.8rem; padding: 0; border: 0; background: none;
+    color: var(--accent); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .fav-tree-controls, .fav-tree-actions { display: flex; flex: 0 0 auto; gap: .2rem; }
 .fav-tree-controls .btn, .fav-tree-actions .btn { min-width: 2.4rem; min-height: 2.4rem; padding: .2rem; }
 @media (max-width: 640px) {
@@ -997,6 +1000,10 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-pv-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qz-pv-line.low { opacity: .55; }
 .qz-toresults { display: none; min-width: 2.8rem; font-size: 1.2rem; }
+/* the box over History, Awarded or Favorites filters that list: the catalog's AI,
+   filters and results arrow are not for it */
+.qz-scoped .qz-ai-toggle, .qz-scoped .qz-fsum, .qz-scoped .qz-filters,
+.qz-scoped .qz-toresults { display: none !important; }
 .qz-docked.qz-has-res .qz-toresults { display: inline-flex; align-items: center; justify-content: center; }
 .qz-docked.qz-has-res:not(.qz-stale) .qz-go, .qz-docked.qz-has-res.qz-stale .qz-toresults { display: none; }
 /* search-field completions, under the field */

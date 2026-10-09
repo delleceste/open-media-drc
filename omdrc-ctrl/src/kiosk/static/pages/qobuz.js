@@ -42,7 +42,10 @@ P.makeInput = enabled => {
         enterkeyhint: enabled ? 'enter' : 'search',
         autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
         onkeydown: e => P.suggestKey(e),
-        oninput: () => { P.dismissEditedPreview(); P.suggestSoon(); P.syncLabels(); P.paintStale(); },
+        oninput: () => {
+            if (P.scoped()) { P.filterSoon(); P.suggestSoon(); return; }
+            P.dismissEditedPreview(); P.suggestSoon(); P.syncLabels(); P.paintStale();
+        },
         onfocus: () => P.suggestSoon(),
         onblur: () => setTimeout(() => P.showSuggestions([]), 150),
     });
@@ -52,7 +55,7 @@ P.makeInput = enabled => {
 
 P.clearInput = () => {
     P.input.value = '';
-    setPref('q', '');
+    if (!P.scoped()) setPref('q', '');
     P.input.dispatchEvent(new Event('input', { bubbles: true }));
 };
 
@@ -172,6 +175,10 @@ P.mount = el => {
         h('span', { class: 'qz-reshead-title' }, 'Search results'));
     P.libraryBox = h('div', { class: 'qz-library', hidden: true });
     K.library.mount(P.libraryBox);
+    K.library.onFindEnd = () => {                  // a found album's folder opened
+        setPref(P.textKey('library'), '');
+        if (P.scopeShown === 'library') P.input.value = '';
+    };
     P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow,
         P.recentBox, P.results, P.discoverBox, P.awardedBox, P.libraryBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
@@ -200,7 +207,7 @@ P.mount = el => {
     }
     P.paintView();
     if ('IntersectionObserver' in window) new IntersectionObserver(es => {
-        P.searchHint.hidden = es[es.length - 1].isIntersecting;
+        P.searchHint.hidden = es[es.length - 1].isIntersecting || P.formHome.hidden;
     }, { root: P.el, rootMargin: '-24px 0px 0px 0px' }).observe(P.formHome);   // a sliver at the top edge is not "in view"
     P.loadWords();
     K.api('/qobuz/lowered').then(d => { if (d.ok) { P.lowCountCache = d.entries.length; P.paintLowLink(); } });
@@ -238,11 +245,12 @@ P.show = () => {
     P.fromNow = false;
     P.resHead.hidden = !P.fromNowShown;
     P.viewRow.hidden = P.fromNowShown;
+    P.paintScope();
     if (P.fromNowShown) P.setView('results');
     else if (P.view() === 'recent') P.recent();
     else if (P.view() === 'discover') P.discover();
     else if (P.view() === 'awarded') P.awardedList();
-    else if (P.view() === 'library') K.library.show();
+    else if (P.view() === 'library') P.showLibrary();
     if (!P.fromNowShown) P.undock();
     P.poll.start();
     P.playerPoll.start();
@@ -288,7 +296,7 @@ P.setView = (v, scroll = false) => {
     const wasLibrary = P.view() === 'library';
     setPref('view', v); P.paintView();
     if (wasLibrary && v !== 'library') K.library.hide();
-    if (v === 'library') { if (P.visible && !K.library.visible) K.library.show(); }
+    if (v === 'library') { if (P.visible && !K.library.visible) P.showLibrary(); }
     else if (v === 'recent') P.recent();
     else if (v === 'awarded') P.awardedList();
     else if (v === 'discover') P.discover();
@@ -307,10 +315,68 @@ P.paintView = () => {
     P.discoverBox.hidden = v !== 'discover';
     P.libraryBox.hidden = v !== 'library';
     P.layoutBtn.hidden = v === 'library';
+    P.paintScope();
     if (v === 'results' && !P.results.firstChild)
         P.results.append(h('p', { class: 'muted' }, 'No search yet: the search is at the top.'));
 };
 P.prefetch = () => P.refreshStatus();     // which also loads the labels
+
+// ── what the box searches ────────────────────────────────────────────────────
+// Results: the Qobuz catalog, as ever (and always from Now, and from the top bar's
+// Search).  History, Awarded, Favorites: that list, narrowed as the words are typed,
+// each view with its own text.  Discover has no box: Qobuz's new releases take no
+// words (a catalog search, newest first, is Results' Order: date).  Its place is
+// taken away only while it is out of sight above, the scroll moved by as much in
+// the same frame, so nothing on screen jumps: the view chips are then the top.
+P.scope = () => (P.dockedOnNow() || P.fromNowShown) ? 'results' : P.view();
+P.scoped = () => !!P.form && ['recent', 'awarded', 'library'].includes(P.scope());
+P.textKey = scope => 'q.' + scope;
+P.placeholders = { recent: 'Find in history…', awarded: 'Find among awarded…', library: 'Find in favorites…' };
+P.aiInput = () => pref('aiMode', false) && !P.scoped();
+P.paintScope = () => {
+    if (!P.form) return;
+    const scope = P.scope();
+    P.paintBoxHome(scope);
+    const shown = ['recent', 'awarded', 'library'].includes(scope) ? scope : 'results';
+    if (shown === P.scopeShown) return;
+    if (P.scopeShown === 'results') P.resultsDraft = P.input.value;    // typed, maybe not searched yet
+    const ai = shown === 'results' && pref('aiMode', false);
+    if ((P.input.tagName === 'TEXTAREA') !== ai) P.swapInput(ai);
+    P.input.value = shown === 'results' ? (P.resultsDraft ?? pref('q', '')) : pref(P.textKey(shown), '');
+    P.input.placeholder = shown === 'results'
+        ? (ai ? 'Describe the recordings you want…' : 'Composer, work, performer…') : P.placeholders[shown];
+    P.input.enterKeyHint = ai ? 'enter' : 'search';
+    P.form.classList.toggle('qz-scoped', shown !== 'results');
+    P.scopeShown = shown;
+    P.showSuggestions([]);
+    if (shown === 'results') P.paintStale();
+};
+P.paintBoxHome = scope => {
+    if (P.dockedOnNow()) return;                  // its place here stays empty meanwhile
+    const hide = scope === 'discover';
+    if (P.formHome.hidden === hide) return;
+    if (hide && document.activeElement === P.input) P.input.blur();
+    const top = P.el.scrollTop, before = P.formHome.hidden ? 0 : P.formHome.offsetHeight;
+    P.formHome.hidden = hide;
+    P.el.scrollTop = Math.max(0, top + (hide ? 0 : P.formHome.offsetHeight) - before);
+    if (hide) P.searchHint.hidden = true;
+};
+let filterTimer = null;
+P.filterSoon = () => {
+    clearTimeout(filterTimer);
+    if (!P.scoped()) return;
+    setPref(P.textKey(P.scope()), P.input.value);
+    filterTimer = setTimeout(P.filterNow, 250);
+};
+P.filterNow = () => {
+    clearTimeout(filterTimer);
+    const scope = P.scope();
+    if (!['recent', 'awarded', 'library'].includes(scope)) return;
+    setPref(P.textKey(scope), P.input.value);
+    if (scope === 'recent') P.recent();
+    else if (scope === 'awarded') P.awardedList();
+    else K.library.find(P.input.value);
+};
 
 // ── list or grid ─────────────────────────────────────────────────────────────
 // The grid is Qobuz's Discover: covers in columns, the title and artist small under
@@ -348,6 +414,8 @@ P.dockedOnNow = () => !!P.form && P.form.parentElement !== P.formHome;
 // page keeps the box scrolled out of sight above the lists.
 K.qobuzSearch = () => {
     P.wantSearch = true;
+    if (P.mounted && P.view() !== 'results') P.setView('results');
+    else if (!P.mounted) setPref('view', 'results');
     K.showPage(P.id);
 };
 K.qobuzDock = slot => {
@@ -357,6 +425,7 @@ K.qobuzDock = slot => {
     slot.append(P.preview, P.fetchProgress, P.form);
     P.form.classList.add('qz-docked');
     P.formHome.hidden = true;
+    P.paintScope();
 };
 P.undock = () => {
     if (!P.dockedOnNow()) return;
@@ -364,12 +433,14 @@ P.undock = () => {
     P.preview.remove();
     P.fetchProgress.remove();
     P.formHome.append(P.form);
-    P.formHome.hidden = false;
+    P.formHome.hidden = P.scope() === 'discover';
+    P.paintScope();
 };
 
 // An explicit search (the button, Enter).  From Now it stays there: the results show
 // as a preview above the box, and › opens them here.
 P.go = () => {
+    if (P.scoped()) { P.input.blur(); P.showSuggestions([]); P.filterNow(); return; }
     if (P.request || P.aiStarting) return P.stopSearch();
     if (pref('aiMode', false)) return P.askAI();
     P.input.blur();
@@ -905,18 +976,21 @@ P.setAIMode = enabled => {
     setPref('aiMode', enabled);
     P.aiToggle.classList.toggle('active', enabled);
     P.aiToggle.setAttribute('aria-pressed', String(enabled));
-    const oldInput = P.input;
-    const focused = document.activeElement === oldInput;
-    P.input = P.makeInput(enabled);
-    P.input.value = oldInput.value;
-    oldInput.replaceWith(P.input);
+    P.swapInput(enabled);
     if (enabled) P.searchActions.append(P.fsum);
     else P.searchWrap.after(P.fsum);
     P.showSuggestions([]);
-    if (focused) P.input.focus();
     if (enabled) P.resetFilters();
     P.paintSummary();
     P.searchedKey = null; P.paintStale();
+};
+P.swapInput = ai => {
+    const oldInput = P.input;
+    const focused = document.activeElement === oldInput;
+    P.input = P.makeInput(ai);
+    P.input.value = oldInput.value;
+    oldInput.replaceWith(P.input);
+    if (focused) P.input.focus();
 };
 P.toggleAI = async () => {
     if (P.aiToggle.disabled) return;
@@ -1362,10 +1436,17 @@ P.watchMore = (button, d) => {
 
 // The albums played from here, newest first (the "Played recently" view).
 P.recent = async () => {
-    const d = await K.api('/qobuz/played?limit=30');
-    if (!d.ok) return;
+    const q = pref(P.textKey('recent'), '').trim();
+    const seq = P.recentSeq = (P.recentSeq || 0) + 1;
+    const d = await K.api('/qobuz/played?' + new URLSearchParams(q ? { limit: 100, q } : { limit: 30 }));
+    if (!d.ok || seq !== P.recentSeq) return;
     K.clear(P.recentBox).append(d.albums.length ? P.list(d.albums, 'recent')
-        : h('p', { class: 'muted' }, 'Nothing played from here yet.'));
+        : h('p', { class: 'muted' }, q ? `Nothing in history matches “${q}”.` : 'Nothing played from here yet.'));
+};
+P.showLibrary = () => {
+    K.library.findText = pref(P.textKey('library'), '').trim();   // before its first paint
+    K.library.show();
+    if (K.library.findText) K.library.find(K.library.findText);
 };
 
 P.loadGenres = async () => {
@@ -1500,12 +1581,18 @@ P.discover = async (offset = 0) => {
 // Every album met with an award or marked awarded, most recent first: to look at
 // together (the "Awarded" view).
 P.awardedList = async () => {
-    const d = await K.api('/qobuz/awarded');
+    const q = pref(P.textKey('awarded'), '').trim();
+    const seq = P.awardedSeq = (P.awardedSeq || 0) + 1;
+    const d = await K.api('/qobuz/awarded' + (q ? '?' + new URLSearchParams({ q }) : ''));
+    if (seq !== P.awardedSeq) return;
     if (!d.ok) { K.clear(P.awardedBox).append(h('div', { class: 'errbox' }, d.error || 'the list cannot be read')); return; }
-    K.clear(P.awardedBox).append(d.albums.length
-        ? h('div', {}, h('div', { class: 'qz-summary small muted' }, `${d.albums.length} album${d.albums.length === 1 ? '' : 's'} with an award, met in searches or marked by you`),
+    const n = d.albums.length, albums = `${n} album${n === 1 ? '' : 's'}`;
+    K.clear(P.awardedBox).append(n
+        ? h('div', {}, h('div', { class: 'qz-summary small muted' }, q
+            ? `${albums} with an award matching “${q}”` : `${albums} with an award, met in searches or marked by you`),
             P.list(d.albums))
-        : h('p', { class: 'muted' }, 'None yet: albums with an award are listed here as searches meet them, and so are the ones you mark awarded (Album details).'));
+        : h('p', { class: 'muted' }, q ? `No awarded album matches “${q}”.`
+            : 'None yet: albums with an award are listed here as searches meet them, and so are the ones you mark awarded (Album details).'));
 };
 
 // Out of "Played recently" only: still counted as played, not lowered in searches.
@@ -1597,7 +1684,7 @@ P.suggestions = (value, caret) => {
 
 let suggestTimer = null;
 P.suggestSoon = () => {
-    if (pref('aiMode', false)) { P.showSuggestions([]); return; }
+    if (P.aiInput()) { P.showSuggestions([]); return; }
     clearTimeout(suggestTimer);
     suggestTimer = setTimeout(() => {
         if (document.activeElement !== P.input) return;
@@ -1628,15 +1715,15 @@ P.pick = n => {
     const v = P.input.value;
     const head = v.slice(0, s.from) + s.e.text + ' ';
     P.input.value = head + v.slice(s.to).replace(/^\s+/, '');
-    P.syncLabels();
-    P.paintStale();
+    if (P.scoped()) P.filterSoon();
+    else { P.syncLabels(); P.paintStale(); }
     P.input.setSelectionRange(head.length, head.length);
     P.input.focus();
     P.showSuggestions([]);
 };
 
 P.suggestKey = e => {
-    if (pref('aiMode', false)) return;
+    if (P.aiInput()) return;
     const n = (P.shown || []).length;
     if (n && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
         e.preventDefault();

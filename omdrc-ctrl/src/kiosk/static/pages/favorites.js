@@ -11,8 +11,9 @@ P.mount = el => {
     P.grid = h('div', { class: 'fav-grid' });
     P.tree = h('div', { class: 'fav-tree' });
     P.message = h('div', { class: 'muted' });
+    P.found = h('div', { class: 'fav-tree fav-found', hidden: true });
     P.layout = K.pref('favorites.layout', matchMedia('(max-width: 640px)').matches ? 'list' : 'grid');
-    el.append(h('div', { class: 'fav-page' }, P.head, P.message, P.grid, P.tree));
+    el.append(h('div', { class: 'fav-page' }, P.head, P.message, P.grid, P.tree, P.found));
 };
 P.show = () => { P.visible = true; P.refresh(); };
 P.hide = () => { P.visible = false; if (P.activeHoldCancel) P.activeHoldCancel(); };
@@ -264,6 +265,7 @@ P.paintTree = async seq => {
 P.paint = async () => {
     const path = P.pathName(), seq = P.paintSeq = (P.paintSeq || 0) + 1;
     P.loading = false;
+    if (P.findText) { P.grid.hidden = P.tree.hidden = true; return; }    // the search's list instead
     P.message.textContent = '';
     K.clear(P.head).append(...[
         P.layout === 'grid' && P.path.length ? h('button', { type: 'button', class: 'btn', onclick: P.back }, '‹ Back') : null,
@@ -561,6 +563,56 @@ K.saveQobuzFavorite = async a => {
     };
     document.getElementById('overlay-root').append(scrim);
     paint();
+};
+
+// The Qobuz page's search box over the Library (/qobuz/favorites/search): the albums
+// holding the words, in folders or among the unfiled hearts, as one flat list, each
+// with the folders it is in.  An empty text is the folders again.
+P.find = async text => {
+    P.findText = (text || '').trim();
+    const seq = P.findSeq = (P.findSeq || 0) + 1;
+    if (!P.findText) {
+        P.found.hidden = true;
+        K.clear(P.found);
+        if (P.el && P.folders.length) P.paint();
+        return;
+    }
+    P.grid.hidden = P.tree.hidden = true;
+    P.found.hidden = false;
+    if (!P.found.firstChild) P.message.textContent = 'Searching the Library…';
+    const d = await K.api('/qobuz/favorites/search?' + new URLSearchParams({ q: P.findText }), { timeout: 60000 });
+    if (seq !== P.findSeq || !P.findText) return;
+    P.message.textContent = '';
+    if (!d.ok) { P.message.textContent = d.error || 'Could not search the Library'; K.clear(P.found); return; }
+    K.clear(P.found).append(d.albums.length
+        ? h('div', { class: 'fav-children' }, d.albums.map(P.foundRow))
+        : h('p', { class: 'muted' }, `Nothing in the Library matches “${P.findText}”.`));
+};
+P.foundRow = album => h('div', { class: 'fav-tree-entry' },
+    h('div', { class: 'fav-tree-row' },
+        h('div', { class: 'fav-tree-album' },
+            h('button', { type: 'button', class: 'fav-tree-cover', title: `Details: ${album.title}`,
+                onclick: () => K.albumInfo(album.id, { off: album.streamable === false,
+                    play: () => P.play(album, 'replace'), add: () => P.play(album, 'append') }) },
+            album.image ? h('img', { src: album.image, alt: '', loading: 'lazy' }) : '♪'),
+            h('span', { class: 'fav-tree-name' }, h('strong', {}, album.title), h('small', {}, album.artist || ''),
+                h('span', { class: 'fav-found-paths' }, album.paths.map(path => h('button', {
+                    type: 'button', class: 'btn link small', title: `Open ${path}`,
+                    onclick: () => P.openFound(path) }, path === 'Qobuz' ? '♡ Qobuz' : path))))),
+        h('div', { class: 'fav-tree-actions' },
+            h('button', { type: 'button', class: 'btn', title: 'Play album', disabled: album.streamable === false,
+                onclick: () => P.play(album, 'replace') }, '▶'),
+            h('button', { type: 'button', class: 'btn', title: 'Add album to queue', disabled: album.streamable === false,
+                onclick: () => P.play(album, 'append') }, '+'),
+            h('button', { type: 'button', class: 'btn', title: 'Add to a folder', onclick: () => K.saveQobuzFavorite(album) }, '♡'))));
+// A folder of a found album: the search ends (the box is emptied: onFindEnd), the folder opens.
+P.openFound = path => {
+    const parts = path.split('/');
+    P.path = parts;
+    for (let i = 1; i <= parts.length; i++) P.expanded.add(parts.slice(0, i).join('/'));
+    if (P.onFindEnd) P.onFindEnd();
+    P.find('');
+    P.reveal();
 };
 K.library = P;
 })();

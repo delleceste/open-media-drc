@@ -433,25 +433,30 @@ class PlayedAlbums:
         with self._lock:
             return {str(e["item"].get("id")): e.get("count", 1) for e in self._load()}
 
+    @staticmethod
+    def _has(entry: dict, words: list[str]) -> bool:
+        """Every word in the album's title, artist, composer, label or performers."""
+        card = album_card(entry["item"])
+        haystack = _fold(" ".join([card["title"], card["version"], card["artist"],
+                                   card["composer"], card["label"]]
+                                  + entry.get("performers", [])))
+        return all(word in haystack for word in words)
+
     def matching(self, text: str) -> list[dict]:
         """The played albums containing every word of `text` in their title,
         artist, composer, label or performers (all of them for no text)."""
         words = _fold(text).split()
         with self._lock:
             entries = list(self._load())
-        out = []
-        for entry in entries:
-            card = album_card(entry["item"])
-            haystack = _fold(" ".join([card["title"], card["version"], card["artist"],
-                                       card["composer"], card["label"]]
-                                      + entry.get("performers", [])))
-            if all(word in haystack for word in words):
-                out.append(entry["item"])
-        return out
+        return [entry["item"] for entry in entries if self._has(entry, words)]
 
-    def recent(self, limit: int = 50) -> list[dict]:
+    def recent(self, limit: int = 50, text: str = "") -> list[dict]:
+        """The albums of the "played recently" list, newest first; with `text`,
+        only the ones holding all its words (see matching)."""
+        words = _fold(text).split()
         with self._lock:
-            entries = [e for e in self._load() if not e.get("hidden")][:limit]
+            entries = [e for e in self._load()
+                       if not e.get("hidden") and self._has(e, words)][:limit]
         out = []
         for entry in entries:
             card = album_card(entry["item"])
@@ -856,14 +861,26 @@ class AwardedAlbums:
             entry = next((e for e in self._load() if e["id"] == str(album_id)), None)
         return self._merge(qobuz, entry.get("mine", []) if entry else [])
 
-    def albums(self) -> list[dict]:
+    def albums(self, text: str = "") -> list[dict]:
         """Every awarded album, most recently met or marked first, as cards
-        with their awards merged."""
+        with their awards merged; with `text`, only the ones holding all its
+        words in the title, artist, composer, label or an award's name."""
+        words = _fold(text).split()
         with self._lock:
             entries = list(self._load())
-        return [{**e["card"], "id": e["id"], "awards": self._merge(e.get("qobuz", []), e.get("mine", [])),
-                 "rating": int(e.get("rating") or 0), "awarded_changed": e.get("changed", "")}
-                for e in entries]
+        out = []
+        for e in entries:
+            awards = self._merge(e.get("qobuz", []), e.get("mine", []))
+            if words:
+                card = e["card"]
+                haystack = _fold(" ".join(
+                    [str(card.get(k) or "") for k in ("title", "version", "artist", "composer", "label")]
+                    + [f"{a.get('name', '')} {a.get('publication', '')}" for a in awards]))
+                if not all(word in haystack for word in words):
+                    continue
+            out.append({**e["card"], "id": e["id"], "awards": awards,
+                        "rating": int(e.get("rating") or 0), "awarded_changed": e.get("changed", "")})
+        return out
 
 
 

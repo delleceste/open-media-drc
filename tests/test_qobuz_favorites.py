@@ -163,6 +163,32 @@ class FolderTest(unittest.TestCase):
             self.assertEqual(store.all()["Other/2026"],
                              ["f:Other/2026/July", "f:Other/2026/June"])
 
+    def test_find_searches_folders_and_unfiled_hearts(self):
+        cat = FakeCatalog()
+        cat.playlists = [{"id": 7, "name": "Blow Up/2026/June", "owner": {"id": 11}},
+                         {"id": 9, "name": "Classical/Gramophone", "owner": {"id": 11}}]
+        hearts = [{"id": "abc", "title": "First", "artist": {"name": "A"}},
+                  {"id": "lone", "title": "Brahms Sonatas", "artist": {"name": "B"}}]
+        plain = cat._call
+        cat._call = lambda endpoint, params: (
+            {"albums": {"items": hearts, "total": len(hearts)}}
+            if endpoint == "favorite/getUserFavorites" else plain(endpoint, params))
+        fav.invalidate("11")
+        found = fav.find(cat, "11", "first")
+        self.assertEqual([(a["id"], a["paths"]) for a in found],
+                         [("abc", ["Blow Up/2026/June", "Classical/Gramophone"])])
+        self.assertNotIn("playlist_track_ids", found[0])
+        self.assertEqual([a["id"] for a in fav.find(cat, "11", "gramophone")], ["abc"])
+        self.assertEqual([(a["id"], a["paths"]) for a in fav.find(cat, "11", "BRAHMS")],
+                         [("lone", ["Qobuz"])])
+        self.assertEqual(fav.find(cat, "11", "  "), [])
+        reads = len(cat.calls)
+        fav.find(cat, "11", "sonatas")                  # typed on: from the cache
+        self.assertEqual(len(cat.calls), reads)
+        fav.invalidate("11")
+        fav.find(cat, "11", "sonatas")
+        self.assertGreater(len(cat.calls), reads)
+
 
 if __name__ == "__main__":
     unittest.main()

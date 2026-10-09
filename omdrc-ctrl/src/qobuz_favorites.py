@@ -19,8 +19,9 @@ PAGE = 500
 MONTHS = {"GEN": "January", "MAR": "March", "JUN": "June", "SEP": "September",
           "DEC": "December"}
 _membership_lock = threading.Lock()
-_membership = {}  # user ID -> (monotonic time, playlist IDs, album IDs, cover URLs)
+_membership = {}  # user ID -> (monotonic time, playlist IDs, album IDs, cover URLs, [(path, albums)])
 _order_lock = threading.Lock()
+_found = {}  # user ID -> (monotonic time, [album with "paths"]): the Library as find() reads it
 
 CLASSICAL_NAMES = {
     "* classica *": "Classical/**",
@@ -98,33 +99,80 @@ def favorites(cat, user_id: str) -> list[dict]:
                                                {"user_id": user_id, "type": "albums"}, "albums")]
 
 
-def library_snapshot(cat, user_id: str, own: list[dict], cards: list[dict]) -> tuple[list[dict], dict]:
-    """Unfiled album hearts and up to three cover images for each folder tile."""
+def _membership_of(cat, user_id: str, own: list[dict]) -> tuple:
+    """(album IDs in folders, folder cover URLs, [(folder path, albums)]),
+    read from every own playlist and kept five minutes."""
     ids = tuple(sorted(str(p["id"]) + ":" + str(p.get("updated_at")) for p in own))
     with _membership_lock:
         cached = _membership.get(user_id)
     if cached and cached[1] == ids and time.monotonic() - cached[0] < 300:
-        categorized, covers = cached[2], cached[3]
-    else:
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            groups = list(pool.map(lambda p: playlist_albums(cat, str(p["id"])), own))
-        categorized = {a["id"] for group in groups for a in group}
-        covers, seen = {}, {}
-        for playlist, albums in zip(own, groups):
-            parts = legacy_path(playlist["name"]).split("/")
-            for length in range(1, len(parts) + 1):
-                path = "/".join(parts[:length])
-                images, ids_seen = covers.setdefault(path, []), seen.setdefault(path, set())
-                for album in albums:
-                    if len(images) >= 3:
-                        break
-                    if album["id"] not in ids_seen and album.get("image"):
-                        ids_seen.add(album["id"])
-                        images.append(album["image"])
-        with _membership_lock:
-            _membership[user_id] = (time.monotonic(), ids, categorized, covers)
+        return cached[2], cached[3], cached[4]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        groups = list(pool.map(lambda p: playlist_albums(cat, str(p["id"])), own))
+    categorized = {a["id"] for group in groups for a in group}
+    covers, seen = {}, {}
+    for playlist, albums in zip(own, groups):
+        parts = legacy_path(playlist["name"]).split("/")
+        for length in range(1, len(parts) + 1):
+            path = "/".join(parts[:length])
+            images, ids_seen = covers.setdefault(path, []), seen.setdefault(path, set())
+            for album in albums:
+                if len(images) >= 3:
+                    break
+                if album["id"] not in ids_seen and album.get("image"):
+                    ids_seen.add(album["id"])
+                    images.append(album["image"])
+    folders = [(legacy_path(p["name"]), albums) for p, albums in zip(own, groups)]
+    with _membership_lock:
+        _membership[user_id] = (time.monotonic(), ids, categorized, covers, folders)
+    return categorized, covers, folders
+
+
+def library_snapshot(cat, user_id: str, own: list[dict], cards: list[dict]) -> tuple[list[dict], dict]:
+    """Unfiled album hearts and up to three cover images for each folder tile."""
+    categorized, covers, _ = _membership_of(cat, user_id, own)
     unfiled = [a for a in cards if a["id"] not in categorized]
     return unfiled, {**covers, "Qobuz": [a["image"] for a in unfiled if a.get("image")][:3]}
+
+
+def find(cat, user_id: str, text: str, limit: int = 200) -> list[dict]:
+    """The Library's albums (in folders, or hearts not filed) holding every
+    word of `text` in their title, artist, composer, label or folder path, each
+    with the folder paths it is in ("Qobuz" for an unfiled heart).  Qobuz has
+    no search within a user's library: this reads the same playlists the
+    folder view reads, from the same cache."""
+    words = re.sub(r"\s+", " ", (text or "").casefold()).split()
+    if not words:
+        return []
+    with _membership_lock:
+        cached = _found.get(user_id)
+    if cached and time.monotonic() - cached[0] < 60:     # typed letter by letter
+        library = cached[1]
+    else:
+        own = playlists(cat, user_id)
+        _, _, folders = _membership_of(cat, user_id, own)
+        found: dict[str, dict] = {}
+        for path, albums in folders:
+            for album in albums:
+                entry = found.setdefault(album["id"], {
+                    **{k: v for k, v in album.items() if k != "playlist_track_ids"}, "paths": []})
+                if path not in entry["paths"]:
+                    entry["paths"].append(path)
+        for card in favorites(cat, user_id):
+            found.setdefault(card["id"], {**card, "paths": ["Qobuz"]})
+        library = list(found.values())
+        with _membership_lock:
+            _found[user_id] = (time.monotonic(), library)
+    out = []
+    for album in library:
+        haystack = " ".join([str(album.get(k) or "") for k in
+                             ("title", "version", "artist", "composer", "label")]
+                            + album["paths"]).casefold()
+        if all(word in haystack for word in words):
+            out.append(album)
+            if len(out) >= limit:
+                break
+    return out
 
 
 class LibraryOrder:
@@ -210,6 +258,7 @@ class LibraryOrder:
 def invalidate(user_id: str) -> None:
     with _membership_lock:
         _membership.pop(user_id, None)
+        _found.pop(user_id, None)
 
 
 def playlist_albums(cat, playlist_id: str) -> list[dict]:

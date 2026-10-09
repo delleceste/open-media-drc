@@ -855,7 +855,7 @@ def played_albums():
             return jsonify({"ok": False, "error": "not in the played list, or it cannot be saved"}), 409
         return jsonify({"ok": True})
     limit = request.args.get("limit", "50")
-    albums = played().recent(int(limit) if limit.isdigit() else 50)
+    albums = played().recent(int(limit) if limit.isdigit() else 50, (request.args.get("q") or "")[:200])
     for card in albums:                  # the user's own awards too (see AwardedAlbums)
         if "awards" in card:
             card["awards"] = awarded().merged(card["id"], card["awards"])
@@ -999,12 +999,27 @@ def favorites():
             return jsonify({"ok": True, "folder_removed": folder_removed})
         if action == "unfavorite":
             cat._call("favorite/delete", {"album_ids": album_id})
+            qobuz_favorites.invalidate(user_id)
             return jsonify({"ok": True})
         if action == "favorite":
             if album_id not in {a["id"] for a in qobuz_favorites.favorites(cat, user_id)}:
                 cat._call("favorite/create", {"album_ids": album_id})
+            qobuz_favorites.invalidate(user_id)
             return jsonify({"ok": True})
         raise QobuzError("unknown favorites action")
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/favorites/search")
+def favorite_search():
+    """?q=words: the Library's albums holding them, with the folders they are in."""
+    guard = _guard(renderer_needed=False)
+    if guard:
+        return guard
+    try:
+        albums = qobuz_favorites.find(catalog(), _qobuz_user_id(), (request.args.get("q") or "")[:200])
+        return jsonify({"ok": True, "albums": annotate_dr(albums)})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 400
 
@@ -1083,7 +1098,7 @@ def awarded_albums():
     if guard:
         return guard
     if request.method == "GET":
-        return jsonify({"ok": True, "albums": annotate_dr(awarded().albums()),
+        return jsonify({"ok": True, "albums": annotate_dr(awarded().albums((request.args.get("q") or "")[:200])),
                         "presets": list(AWARD_PRESETS)})
     body = request.get_json(silent=True) or {}
     album_id = str(body.get("album_id") or "").strip()
