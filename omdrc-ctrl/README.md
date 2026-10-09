@@ -948,6 +948,27 @@ divides them differently. Jazz records and live anthologies show separate song
 sections; concept albums retain a whole-album section. If web research times
 out, the guide labels its fallback to model knowledge and album metadata.
 
+The prompts sent to the AI are plain text files in `src/prompts/` (installed
+to `lib/omdrcctrl/prompts/`). To customize one on a box, copy it to
+`<state_dir>/prompts/` under the same name and edit it; the copy is read on
+every request, so no restart is needed. Delete it to return to the default.
+`${name}` placeholders are filled in by the service and must stay in the file:
+
+| File | Stage | Required placeholders |
+|------|-------|-----------------------|
+| `system.txt` | system prompt (Claude account mode) | — |
+| `listening-research.txt` | listening guide web research | `${metadata}` (album and track list JSON) |
+| `listening-guide.txt` | listening guide JSON structuring | `${metadata}`, `${research}` |
+| `recommend-research.txt` | recommendation web research | `${quantity}` (how many recordings), `${request}` (user's text) |
+| `recommend-queries.txt` | Qobuz search planning | `${research}` |
+| `recommend-select.txt` | album selection | `${quantity}`, `${data}` (request, research, sources and candidates JSON) |
+
+A custom file missing a required placeholder is rejected with an error naming
+it. Any other `$` text is sent as written. The JSON output schemas stay in
+`qobuz_ai.py`, so a prompt can change tone, language or emphasis but not the
+fields the app reads. The kiosk keeps the last listening guide in browser
+storage; reopen a different album to see a changed prompt's effect.
+
 Keys are stored only on the server in `<state_dir>/qobuz-ai.json`, atomically
 written with mode `0600`, and never returned by the settings API or saved in
 browser storage. A blank key preserves the selected provider's saved key.

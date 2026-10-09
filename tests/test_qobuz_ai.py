@@ -136,6 +136,36 @@ class AITest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertNotIn("test-secret", json.dumps(calls))
 
+    def test_custom_prompt_files_replace_defaults_and_keep_placeholders(self):
+        self.configure("claude")
+        calls = []
+        def post(cfg, body, timeout):
+            calls.append(body)
+            if len(calls) == 1:
+                return {"content": [{"type": "text", "text": "Research notes."}]}
+            return {"content": [{"type": "tool_use", "name": "listening_guide", "input": {
+                "form": "single_work", "overview": "Context", "compositions": [], "track_notes": []}}]}
+        custom = Path(self.root) / "prompts"
+        custom.mkdir()
+        (custom / "listening-research.txt").write_text("Rispondi in italiano, $5 budget.\n${metadata}\n")
+        ai.listening_research(self.root, {"title": "Requiem"}, [{"title": "Introitus"}], post=post)
+        research = calls[0]["messages"][0]["content"]
+        self.assertTrue(research.startswith("Rispondi in italiano, $5 budget.\n{"))
+        self.assertIn('"Requiem"', research)
+        self.assertIn("Research:\nResearch notes.", calls[1]["messages"][0]["content"])
+        (custom / "listening-research.txt").write_text("Research this album.\n")
+        calls.clear()
+        with self.assertRaisesRegex(ai.AIError, r"\$\{metadata\}"):
+            ai.listening_research(self.root, {"title": "Requiem"}, [{"title": "Introitus"}], post=post)
+        self.assertEqual(calls, [])
+
+    def test_default_prompts_declare_their_placeholders(self):
+        for name, keys in ai.PROMPTS.items():
+            with self.subTest(prompt=name):
+                text = ai._prompt("", name, **{k: "<" + k + ">" for k in keys})
+                self.assertNotIn("${", text)
+                self.assertEqual(ai.prompt_path(self.root, name), ai.PROMPT_DIR / f"{name}.txt")
+
     def test_cancelled_listening_guide_does_not_contact_provider(self):
         self.configure("claude")
         cancelled = threading.Event()

@@ -155,6 +155,8 @@ install(PROGRAMS ../scripts/omdrc-config-helper.py
         DESTINATION libexec/omdrc RENAME omdrc-config-helper)
 
 # The small-screen kiosk UI (blueprint, templates and static files together)
+# Default AI prompts; <state_dir>/prompts/<name>.txt overrides one per box.
+install(DIRECTORY src/prompts DESTINATION lib/omdrcctrl)
 install(DIRECTORY src/kiosk DESTINATION lib/omdrcctrl
         PATTERN "__pycache__" EXCLUDE)
 
