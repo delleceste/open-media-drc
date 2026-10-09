@@ -962,6 +962,20 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-preview[hidden] { display: none; }
 .qz-ai-trace { margin: .75rem 0; padding: .65rem; border: 1px solid var(--border); border-radius: .5rem; }
 .qz-ai-trace summary { cursor: pointer; font-weight: 600; }
+.qz-ai-trace > details > summary { display: flex; align-items: center; gap: .4rem; }
+.qz-ai-trace > details > summary::before { content: '▸'; }
+.qz-ai-trace > details[open] > summary::before { content: '▾'; }
+.qz-ai-usage { margin-left: auto; font-variant-numeric: tabular-nums; }
+.qz-ai-usage.low { color: var(--ok-text); }
+.qz-ai-usage.medium { color: #f39c12; }
+:root[data-theme=light] .qz-ai-usage.medium { color: #b45f00; }
+.qz-ai-usage.high { color: var(--bad-text); }
+.qz-ai-estimate { flex: 1 1 3rem; max-width: 9rem; min-width: 2rem; height: .25rem;
+    border-radius: 1rem; overflow: hidden; background: var(--surface2); }
+.qz-ai-estimate-fill { display: block; height: 100%; width: 100%; background: var(--accent);
+    transform-origin: left; animation: qz-ai-estimate 90s linear infinite; }
+@keyframes qz-ai-estimate { from { transform: scaleX(.02); } to { transform: scaleX(.96); } }
+@media (prefers-reduced-motion: reduce) { .qz-ai-estimate-fill { animation: none; transform: scaleX(.45); } }
 .qz-ai-trace h4 { margin: 1rem 0 .35rem; }
 .qz-ai-trace pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow: auto;
     padding: .55rem; background: var(--deep); border-radius: .35rem; font-size: .78rem; }

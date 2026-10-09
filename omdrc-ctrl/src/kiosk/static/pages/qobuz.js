@@ -1031,6 +1031,7 @@ P.askAI = async () => {
     P.aiStarting = false; P.paintSearchControl(); P.paintAIIcon(settings);
     if (!settings.ok) { P.aiButton.disabled = false; K.toast(settings.error, 'error'); return; }
     if (!settings.configured) { P.aiButton.disabled = false; P.aiSettings(true); return; }
+    P.aiAccountUsage = settings.provider === 'claude_account' ? settings.account_usage : null;
     if (!prompt) { P.aiButton.disabled = false; K.toast('Type a recommendation request first', 'error'); return; }
     P.input.blur(); P.showSuggestions([]);
     const params = P.params(0);
@@ -1163,10 +1164,23 @@ P.paintError = error => {
 P.aiTraceBlock = () => {
     if (!P.aiTrace?.length) return null;
     const userPrompt = P.aiUserPrompt || P.last?.query || P.input?.value?.trim() || '';
+    const reported = [...P.aiTrace].reverse().find(item => item.account_usage)?.account_usage || P.aiAccountUsage;
+    const percentages = ['five_hour', 'seven_day'].map(key => reported?.windows?.[key]?.used_percent)
+        .filter(value => Number.isFinite(value) && value >= 0 && value <= 100);
+    const percentage = percentages.length ? Math.max(...percentages) : null;
+    const level = percentage === null ? '' : percentage < 50 ? 'low' : percentage < 80 ? 'medium' : 'high';
     return h('div', { class: 'qz-ai-trace' },
         userPrompt ? h('div', { class: 'qz-ai-user-prompt' },
             h('strong', {}, 'Your request'), h('pre', {}, userPrompt)) : null,
-        h('details', {}, h('summary', {}, 'AI prompt and replies'),
+        h('details', {}, h('summary', {}, h('span', {}, 'AI prompt and replies'),
+            P.aiRunning ? h('span', { class: 'qz-ai-estimate', role: 'progressbar',
+                'aria-label': 'Estimated AI search progress',
+                'aria-valuetext': 'Estimated progress; repeats until the AI replies',
+                title: 'Estimated progress; restarts while research continues' },
+                h('span', { class: 'qz-ai-estimate-fill' })) : null,
+            percentage === null ? null : h('span', { class: 'qz-ai-usage ' + level,
+                title: 'Claude account usage: ' + P.accountUsageText(reported) + '. Higher limit used.',
+                'aria-label': `Claude account usage ${percentage}%` }, `${percentage}%`)),
         ...P.aiTrace.flatMap(item => [
             h('h4', {}, item.stage),
             item.system_prompt ? h('details', {}, h('summary', {}, 'System prompt'),

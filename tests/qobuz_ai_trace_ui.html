@@ -1,5 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
 <div id="result">RUNNING</div>
 <div id="results"></div>
 <div id="overlay-root"></div>
@@ -17,16 +18,31 @@
             system_prompt: 'Research music.', reply: '', activity: 'WebSearch: {"query":"The Wire"}',
             usage: { input_tokens: 13, output_tokens: 21 },
             account_usage: { windows: { five_hour: { used_percent: 42, resets_at: 1791540000 } } } }];
+        P.aiRunning = true;
         P.paintWorking('Waiting for AI reply…');
+        check(P.results.querySelector('.qz-ai-trace summary [role=progressbar]'), 'Estimated progress is visible while running');
+        let badge = () => P.results.querySelector('.qz-ai-trace > details > summary .qz-ai-usage');
+        check(badge()?.textContent === '42%' && badge().classList.contains('low'), 'Usage starts green below 50%');
+        const green = getComputedStyle(badge()).color;
         check(P.results.querySelector('.qz-ai-user-prompt').textContent.includes(P.aiUserPrompt), 'User prompt visible while waiting');
         check(!P.results.querySelector('.qz-ai-trace > details').open, 'AI prompt and replies start minimized');
         check(!P.results.querySelector('.qz-ai-trace details details').open, 'System prompt starts minimized');
         check(!P.results.querySelector('script'), 'Prompt is rendered as text');
         P.aiTrace[0].reply = 'A review was found.';
+        P.aiTrace[0].account_usage.windows.five_hour.used_percent = 50;
+        P.aiRunning = false;
         P.paintError('A later stage timed out');
+        check(!P.results.querySelector('.qz-ai-trace summary [role=progressbar]'), 'Progress stops after the reply');
+        check(badge()?.textContent === '50%' && badge().classList.contains('medium'), 'Usage turns orange at 50%');
+        const orange = getComputedStyle(badge()).color;
+        check(orange !== green, 'Orange usage is visually distinct from green');
+        P.aiTrace[0].account_usage.windows.seven_day = { used_percent: 80 };
+        P.paintError('A later stage timed out');
+        check(badge()?.textContent === '80%' && badge().classList.contains('high'), 'Usage turns red at 80%');
+        check(getComputedStyle(badge()).color !== orange, 'Red usage is visually distinct from orange');
         check(P.results.textContent.includes('A review was found.'), 'Reply remains visible after error');
         check(P.results.textContent.includes('13 input, 21 output'), 'Request usage visible');
-        check(P.results.textContent.includes('5-hour: 42% used'), 'Account usage visible');
+        check(P.results.textContent.includes('5-hour: 50% used'), 'Account usage visible');
         P.lowCount = () => 0;
         P.list = () => K.h('div', { id: 'album-result' }, 'Album result');
         P.last = { ok: true, query: P.aiUserPrompt, queries: [], count: 1, considered: 1,

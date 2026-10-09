@@ -942,7 +942,11 @@ one mastering may not apply to another edition.
 
 The Results view keeps your request visible and starts **AI prompt and replies**
 collapsed. Its system prompt is also collapsed inside the panel. When results
-are ready, the panel follows the album list. It includes each rendered prompt,
+are ready, the panel follows the album list. The collapsed header shows the
+higher of Claude's five-hour and seven-day usage percentages, refreshed after
+each search: green below 50%, orange below 80%, red from 80%. An estimated
+progress bar advances and restarts in the collapsed header while research runs.
+The panel includes each rendered prompt,
 reply, Claude tool activity and token counts when provided. If a stage times
 out, available partial Claude output stays visible. The AI settings dialog shows account
 sign-in status, Claude Code's last reported five-hour and seven-day usage
