@@ -994,7 +994,7 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 /* the grabber pill on both strips: the usual hint (Material bottom sheet, iOS) that they swipe up */
 .qz-player::before, .listening-panel.collapsed::before { content: ''; position: absolute; top: .2rem; left: 50%; width: 2.2rem; height: .2rem;
     margin-left: -1.1rem; border-radius: .1rem; background: var(--muted); opacity: .7; pointer-events: none; }
-.listening-panel.collapsed { padding-top: .5rem; }
+.listening-panel.collapsed { padding-top: .45rem; }
 .qz-player { padding-top: .6rem; }
 .qz-pinfo { grid-area: info; min-width: 0; display: flex; align-items: center; gap: .6rem; cursor: pointer; }
 .qz-pprog { display: none; }
@@ -1082,7 +1082,8 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 .listening-panel { position: fixed; z-index: 67; inset: 0; overflow: auto; overscroll-behavior: contain;
     background: var(--bg); color: var(--text); padding: 0 1rem max(1.5rem, env(safe-area-inset-bottom));
     box-sizing: border-box; }
-.listening-panel.collapsed { inset: auto 0 0; height: auto; min-height: 3.2rem; padding: .3rem .5rem max(.3rem, env(safe-area-inset-bottom));
+/* no safe-area-inset-bottom: the app already pads the WebView above the navigation bar (see .listening-panel) */
+.listening-panel.collapsed { inset: auto 0 0; height: auto; min-height: 2.5rem; padding: .45rem .5rem .15rem;
     align-items: center; gap: .3rem; border-top: 1px solid var(--border); box-shadow: 0 -.3rem 1rem #0004; }
 .listening-head { display: flex; align-items: center; gap: .5rem; position: sticky; top: 0;
     padding: 1rem 0 .6rem; background: var(--bg); z-index: 1; }
@@ -1092,9 +1093,9 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 .listening-head strong { flex: 1; }
 .listening-subtitle { color: var(--muted); margin-bottom: .6rem; }
 .listening-strip-open { display: flex; align-items: center; gap: .5rem; flex: 1; min-width: 0;
-    background: none; border: 0; color: var(--text); text-align: left; min-height: 2.5rem; }
+    background: none; border: 0; color: var(--text); text-align: left; min-height: 2rem; }
 .listening-strip-open span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.listening-close { border: 0; background: none; color: var(--text); font-size: 1.5rem; min-width: 2.5rem; min-height: 2.5rem; }
+.listening-close { border: 0; background: none; color: var(--text); font-size: 1.3rem; min-width: 2.5rem; min-height: 2rem; padding: 0; }
 .listening-tabs-wrap { position: relative; }
 .listening-tabs { display: flex; gap: .4rem; overflow-x: auto; padding: .35rem 0; }
 .listening-tabs .chip { flex: 0 0 auto; white-space: nowrap; }
@@ -1257,14 +1258,14 @@ html[data-embed] #pager { grid-row: 1; }
    edge of the screen (negative margin + matching sticky offset), so nothing of the view beneath shows below it.
    With the minimized listening guide present (--ls-h, measured) it rides directly above that strip instead. */
 :root { --dock-gap: max(.6rem, env(safe-area-inset-bottom)); }
-/* The two docked strips each have their own shade, both set off from the page (--bg): the player one step up,
-   the listening guide's strip beneath it tinted with the accent, as the AI's. */
-:root { --strip-player: #1a212b; --strip-guide: color-mix(in srgb, var(--accent) 12%, #161b22); }
-:root[data-theme=light] { --strip-player: #ffffff; --strip-guide: color-mix(in srgb, var(--accent) 9%, #ffffff); }
+/* The two docked strips each have their own neutral grey, both set off from the page (--bg): the player one
+   step from it, the listening guide's strip beneath it a further step. */
+:root { --strip-player: #25282d; --strip-guide: #33363b; }
+:root[data-theme=light] { --strip-player: #e2e4e7; --strip-guide: #d3d6da; }
 .qz-player { margin-inline: -.8rem; margin-bottom: calc(-1 * var(--dock-gap)); bottom: calc(-1 * var(--dock-gap));
     padding: .6rem 1.4rem calc(.4rem + var(--dock-gap)); border-width: 1px 0 0; border-radius: .8rem .8rem 0 0;
     background: var(--strip-player); }
-html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 3.2rem) - var(--dock-gap)); padding-bottom: .4rem;
+html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 2.5rem) - var(--dock-gap)); padding-bottom: .4rem;
     margin-bottom: calc(-1 * var(--dock-gap)); border-radius: .8rem .8rem 0 0; }
 .listening-panel.collapsed { border-radius: .8rem .8rem 0 0; background: var(--strip-guide); }
 
