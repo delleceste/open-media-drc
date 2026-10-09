@@ -85,6 +85,77 @@ function weigh(img) {
     return { cx, cy, spread: Math.sqrt(sv / sw), lum, n: N };
 }
 
+// ── strip colours ────────────────────────────────────────────────────────────
+// The docked strips take their shades from the playing cover: the player strip
+// its dominant colour, the listening guide strip the next distinct one (or the
+// dominant darkened, for a cover of one colour).  kiosk.css mixes them into the
+// theme (--art1, --art2 under html[data-art]); no cover, the theme's own shades.
+const paletteCache = new Map();
+K.cover.palette = url => {
+    if (paletteCache.has(url)) return paletteCache.get(url);
+    const job = new Promise(resolve => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';         // Qobuz covers are served with CORS *, ours are same origin
+        img.onload = () => { try { resolve(dominant(img)); } catch { resolve(null); } };
+        img.onerror = () => resolve(null);
+        img.src = url;
+    });
+    paletteCache.set(url, job);
+    while (paletteCache.size > 8) paletteCache.delete(paletteCache.keys().next().value);
+    return job;
+};
+function dominant(img) {
+    const M = 32, c = document.createElement('canvas');
+    c.width = c.height = M;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, M, M);
+    const px = ctx.getImageData(0, 0, M, M).data;
+    // 4 bits a channel: 4096 boxes; each keeps its pixel count and colour sum
+    const boxes = new Map();
+    for (let i = 0; i < px.length; i += 4) {
+        if (px[i + 3] < 128) continue;
+        const key = (px[i] >> 4) << 8 | (px[i + 1] >> 4) << 4 | px[i + 2] >> 4;
+        const b = boxes.get(key) || boxes.set(key, { n: 0, r: 0, g: 0, b: 0 }).get(key);
+        b.n++; b.r += px[i]; b.g += px[i + 1]; b.b += px[i + 2];
+    }
+    // neighbouring boxes are one colour: merge them, largest first, within a radius
+    const colours = [];
+    for (const b of [...boxes.values()].sort((x, y) => y.n - x.n)) {
+        const rgb = [b.r / b.n, b.g / b.n, b.b / b.n];
+        const near = colours.find(k => Math.hypot(k.rgb[0] - rgb[0], k.rgb[1] - rgb[1], k.rgb[2] - rgb[2]) < 48);
+        if (near) {
+            const n = near.n + b.n;
+            near.rgb = near.rgb.map((v, i) => (v * near.n + rgb[i] * b.n) / n);
+            near.n = n;
+        } else colours.push({ n: b.n, rgb });
+    }
+    colours.sort((x, y) => y.n - x.n);
+    if (!colours.length) return null;
+    // a grey or near-black/white colour weighs less: a cover's character is in its hues
+    const chroma = ([r, g, b]) => (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+    const score = k => k.n * (.35 + chroma(k.rgb));
+    const ranked = [...colours].sort((x, y) => score(y) - score(x));
+    const first = ranked[0].rgb;
+    const other = ranked.slice(1).find(k => k.n >= M * M * .04
+        && Math.hypot(k.rgb[0] - first[0], k.rgb[1] - first[1], k.rgb[2] - first[2]) > 70);
+    return { first, second: other ? other.rgb : first.map(v => v * .55) };
+}
+let stripUrl = null;
+K.cover.tintStrips = url => {
+    if (url === stripUrl) return;
+    stripUrl = url;
+    const root = document.documentElement;
+    if (!url) { root.removeAttribute('data-art'); return; }
+    K.cover.palette(url).then(p => {
+        if (stripUrl !== url) return;
+        if (!p) { root.removeAttribute('data-art'); return; }
+        const css = rgb => `rgb(${rgb.map(Math.round).join(' ')})`;
+        root.style.setProperty('--art1', css(p.first));
+        root.style.setProperty('--art2', css(p.second));
+        root.setAttribute('data-art', '');
+    });
+};
+
 // ── vertical level bars ──────────────────────────────────────────────────────
 // The same ballistics as the meters (instant attack, glide down, peak hold), as
 // two upright LED ladders.

@@ -385,7 +385,9 @@ button.chip.state { color: inherit; }
 /* transport (widgets/icons.js): plain line icons, no fill */
 .ticon { width: 1.3em; height: 1.3em; display: block; flex: 0 0 auto; }
 .btn.qz-pbtn, .btn.qz-play, .btn.qz-tplay, .now-ctl .chip { background: none; border: 1.5px solid transparent; color: var(--text); box-shadow: none; }
-.btn.qz-pbtn.primary, .btn.qz-play.primary { border-color: var(--accent); }
+/* play and search are actions, not a choice among options: no accent border (that marks a selection) */
+.btn.qz-pbtn.primary, .btn.qz-play.primary { border-color: var(--border); }
+.btn.primary.qz-go { border-color: var(--border); }
 .btn.qz-pbtn:active, .btn.qz-play:active, .btn.qz-tplay:active, .now-ctl .chip:active { background: var(--press); }
 .btn.qz-pbtn, .btn.qz-play, .btn.qz-tplay, .now-skip { display: inline-flex; align-items: center; justify-content: center; }
 .now-ctl .chip.state { display: inline-flex; align-items: center; gap: .35rem; }
@@ -1150,6 +1152,8 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
        open; a thin progress line along its top.  The rest is in the full player. */
     .qz-player { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "info btns"; gap: .5rem; padding: .45rem .5rem .4rem; overflow: hidden; }
     .qz-player .qz-pbtns .btn:not(.qz-toggle), .qz-player .qz-pseek { display: none; }
+    .qz-player .btn.qz-pbtn { min-height: 2.2rem; min-width: 2.5rem; }
+    .qz-player .qz-pcover { width: 2.4rem; height: 2.4rem; }
     .qz-pprog { display: block; position: absolute; left: 0; right: 0; top: 0; height: .18rem; background: rgba(139,148,158,.25); }
     .qz-pprog i { display: block; height: 100%; width: 0; background: var(--accent); }
     .qz-snack { bottom: 4.3rem; }
@@ -1269,6 +1273,16 @@ html[data-embed] #pager { grid-row: 1; }
     --strip-guide: linear-gradient(#2e2236, #241a2b); --strip-guide-edge: #45334f; }
 :root[data-theme=light] { --strip-player: linear-gradient(#e6eef9, #d9e4f3); --strip-player-edge: #c2d1e6;
     --strip-guide: linear-gradient(#f2e8f3, #e8dbea); --strip-guide-edge: #d3c0d6; }
+/* With a cover playing (cover.js tintStrips): the player strip a light wash of its dominant colour, the guide
+   strip one of its second colour; over the dark theme the wash is mixed into near-black so the text keeps its contrast. */
+html[data-art] { --strip-player: linear-gradient(color-mix(in srgb, var(--art1) 30%, #161a20), color-mix(in srgb, var(--art1) 22%, #111419));
+    --strip-player-edge: color-mix(in srgb, var(--art1) 45%, #161a20);
+    --strip-guide: linear-gradient(color-mix(in srgb, var(--art2) 34%, #161a20), color-mix(in srgb, var(--art2) 26%, #111419));
+    --strip-guide-edge: color-mix(in srgb, var(--art2) 50%, #161a20); }
+html[data-art][data-theme=light] { --strip-player: linear-gradient(color-mix(in srgb, var(--art1) 16%, #fff), color-mix(in srgb, var(--art1) 22%, #fff));
+    --strip-player-edge: color-mix(in srgb, var(--art1) 35%, #fff);
+    --strip-guide: linear-gradient(color-mix(in srgb, var(--art2) 24%, #fff), color-mix(in srgb, var(--art2) 30%, #fff));
+    --strip-guide-edge: color-mix(in srgb, var(--art2) 45%, #fff); }
 .qz-player { margin-inline: -.8rem; margin-bottom: calc(-1 * var(--dock-gap)); bottom: calc(-1 * var(--dock-gap));
     padding: .6rem 1.4rem calc(.4rem + var(--dock-gap)); border-width: 1px 0 0; border-radius: .8rem .8rem 0 0;
     background: var(--strip-player); border-top-color: var(--strip-player-edge); }

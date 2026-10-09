@@ -2352,6 +2352,7 @@ P.paintViews = () => {
             K.clear(v.toggle).append(K.tIcon(v.toggle.dataset.icon));
         }
         setCover(v.cover, album ? (v.full ? album.image_large || album.image : album.image || album.image_large) : '');
+        if (!v.full) K.cover.tintStrips(v.cover.dataset.src);
         if (v.full) {
             v.maxBtn.hidden = !v.cover.dataset.src;
             v.infoBtn.hidden = !(album && album.id);
