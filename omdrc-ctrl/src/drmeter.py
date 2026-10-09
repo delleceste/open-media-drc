@@ -389,9 +389,12 @@ def measure_file(path: str, ffmpeg: str = "ffmpeg",
                                   stderr=subprocess.DEVNULL)
         decode[decode.index("-nostdin")] = "-hide_banner"
         decode[decode.index(path)] = "pipe:0"
-    with subprocess.Popen(
+    # ffmpeg's messages go to a file, not a pipe: a damaged file can make it
+    # write far more than a pipe holds before any audio, and with nobody
+    # reading that pipe until the end both sides waited for ever.
+    with tempfile.TemporaryFile() as messages, subprocess.Popen(
             decode, stdin=feeder.stdout if feeder else None,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+            stdout=subprocess.PIPE, stderr=messages) as process:
         try:
             while True:
                 # A pipe hands back whatever it has; a block is only a block
@@ -408,8 +411,9 @@ def measure_file(path: str, ffmpeg: str = "ffmpeg",
                     meter.feed(frames.reshape(-1, channels))
                 if len(chunk) < want:
                     break
-            detail = process.stderr.read().decode("utf-8", "replace").strip()[:300]
             process.wait(timeout=60)
+            messages.seek(0)
+            detail = messages.read(4096).decode("utf-8", "replace").strip()[:300]
         finally:
             if process.poll() is None:
                 process.kill()

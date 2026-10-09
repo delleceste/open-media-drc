@@ -190,6 +190,25 @@ class DecodeTest(unittest.TestCase):
             with self.assertRaises(drmeter.DrMeterError):
                 drmeter.measure_file(bogus.name)
 
+    def test_a_decoder_that_says_a_lot_does_not_hang_the_measurement(self):
+        # A damaged FLAC made ffmpeg print warnings by the hundred kilobyte
+        # before its audio; with them in an unread pipe both sides waited.
+        signal = sine(12, 0.5)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "tone.wav")
+            with wave.open(path, "wb") as out:
+                out.setnchannels(2)
+                out.setsampwidth(2)
+                out.setframerate(RATE)
+                out.writeframes((signal * 32767).astype("<i2").tobytes())
+            chatty = os.path.join(tmp, "ffmpeg")
+            with open(chatty, "w") as script:
+                script.write('#!/bin/sh\nhead -c 1000000 /dev/zero | tr "\\0" x >&2\n'
+                             f'exec {shutil.which("ffmpeg")} "$@"\n')
+            os.chmod(chatty, 0o755)
+            got = drmeter.measure_file(path, ffmpeg=chatty)
+        self.assertAlmostEqual(got["seconds"], 12.0, delta=0.1)
+
     def test_album_report_is_written_where_the_collection_reads_it(self):
         from mpd_library import set_music_directory, _dr14_average
         signal = sine(12, 0.5)
