@@ -377,6 +377,24 @@ class MainActivity : ComponentActivity() {
         }
 
         webView.webViewClient = object : WebViewClient() {
+            // A link that leaves the box (an "open on dr.loudness-war.info" in the DR
+            // versions frame, say) goes to the phone's browser: shown in place, it
+            // replaced the kiosk, and Back loaded the kiosk again behind the splash.
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?,
+            ): Boolean {
+                val uri = request?.url ?: return false
+                if (!request.isForMainFrame || lastUrl == null || isCurrentServer(uri)) return false
+                if (uri.scheme != "https" && uri.scheme != "http") return false
+                try {
+                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                } catch (e: android.content.ActivityNotFoundException) {
+                    android.widget.Toast.makeText(this@MainActivity, "Nothing on this phone opens $uri", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return true
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 if (url == null || !isCurrentServer(Uri.parse(url))) return
                 // A new document knows nothing about the old one's request:
