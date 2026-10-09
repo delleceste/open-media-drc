@@ -186,6 +186,7 @@ G.close = () => {
     G.swipePreview?.remove();
     G.swipePreview = null;
     G.tabsObserver?.disconnect();
+    G.sizeObserver?.disconnect();
     G.panel?.remove();
     G.panel = null;
     document.documentElement.removeAttribute('data-ls-strip');
@@ -272,6 +273,14 @@ G.research = async () => {
 G.makePanel = () => {
     G.panel = h('div', { class: 'listening-panel' });
     document.getElementById('overlay-root').append(G.panel);
+    // The Qobuz player strip rides on the minimized strip (--ls-h). The strip is hidden off Now and Qobuz, as at
+    // launch while the restored guide waits for its page, so its height is taken whenever it shows or changes.
+    G.sizeObserver?.disconnect();
+    G.sizeObserver = new ResizeObserver(() => {
+        if (G.panel?.classList.contains('collapsed') && G.panel.offsetHeight)
+            document.documentElement.style.setProperty('--ls-h', `${G.panel.offsetHeight}px`);
+    });
+    G.sizeObserver.observe(G.panel);
     let touch = null;
     const nestedScroller = target => {
         for (let el = target; el && el !== G.panel; el = el.parentElement) {
@@ -449,9 +458,6 @@ G.paint = () => {
     const label = G.label();
     G.panel.classList.toggle('collapsed', G.collapsed);
     document.documentElement.toggleAttribute('data-ls-strip', G.collapsed);
-    requestAnimationFrame(() => {
-        if (G.panel && G.collapsed) document.documentElement.style.setProperty('--ls-h', `${G.panel.offsetHeight}px`);
-    });
     K.clear(G.panel);
     const icon = G.collapsed ? G.stripIcon() : G.icon(G.busy ? 'busy' : '');
     if (G.collapsed) {
