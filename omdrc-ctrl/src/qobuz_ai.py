@@ -58,9 +58,13 @@ def prompt_path(state_dir, name):
 def _prompt(state_dir, name, **values):
     path = prompt_path(state_dir, name)
     try:
-        text = path.read_text(encoding="utf-8").strip()
+        lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
         raise AIError(f"Could not read the AI prompt {path}.") from None
+    # The leading '#' lines say where the prompt is used; they are never sent.
+    while lines and (lines[0].startswith("#") or not lines[0].strip()):
+        lines.pop(0)
+    text = "\n".join(lines).strip()
     template = Template(text)
     found = {m.group("named") or m.group("braced") for m in template.pattern.finditer(text)}
     missing = [key for key in PROMPTS[name] if key not in found]

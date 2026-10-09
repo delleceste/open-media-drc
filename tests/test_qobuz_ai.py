@@ -147,13 +147,13 @@ class AITest(unittest.TestCase):
                 "form": "single_work", "overview": "Context", "compositions": [], "track_notes": []}}]}
         custom = Path(self.root) / "prompts"
         custom.mkdir()
-        (custom / "listening-research.txt").write_text("Rispondi in italiano, $5 budget.\n${metadata}\n")
+        (custom / "listening-research.txt").write_text("# Mine: ${metadata}\n\nRispondi in italiano, $5 budget.\n${metadata}\n")
         ai.listening_research(self.root, {"title": "Requiem"}, [{"title": "Introitus"}], post=post)
         research = calls[0]["messages"][0]["content"]
         self.assertTrue(research.startswith("Rispondi in italiano, $5 budget.\n{"))
         self.assertIn('"Requiem"', research)
         self.assertIn("Research:\nResearch notes.", calls[1]["messages"][0]["content"])
-        (custom / "listening-research.txt").write_text("Research this album.\n")
+        (custom / "listening-research.txt").write_text("# Needs ${metadata}\nResearch this album.\n")
         calls.clear()
         with self.assertRaisesRegex(ai.AIError, r"\$\{metadata\}"):
             ai.listening_research(self.root, {"title": "Requiem"}, [{"title": "Introitus"}], post=post)
@@ -164,6 +164,8 @@ class AITest(unittest.TestCase):
             with self.subTest(prompt=name):
                 text = ai._prompt("", name, **{k: "<" + k + ">" for k in keys})
                 self.assertNotIn("${", text)
+                self.assertNotIn("Placeholders", text)
+                self.assertIn("# Used:", (ai.PROMPT_DIR / f"{name}.txt").read_text())
                 self.assertEqual(ai.prompt_path(self.root, name), ai.PROMPT_DIR / f"{name}.txt")
 
     def test_cancelled_listening_guide_does_not_contact_provider(self):

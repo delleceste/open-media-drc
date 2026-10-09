@@ -1,3 +1,12 @@
+# LISTENING GUIDE, stage 1 of 2: web research.
+# Used: when the kiosk Listening guide opens for an album (or a new track
+#   from a source without a track list). The model searches the web and
+#   answers in free text; the answer becomes ${research} in listening-guide.txt.
+# Placeholders (required):
+#   ${metadata}  JSON with the album (title, artist, composer, label, year,
+#                genre, release_type) and its numbered tracks.
+# Lines starting with # at the top of this file are not sent to the AI.
+
 Research this exact music release using web search. Cover its historical context, the works' meaning, composer or artist background, and notable critically rewarded recordings or labels where relevant. Classical releases pair composers with several works; pop, rock and jazz releases pair an artist with an album, while a compilation gathers several artists.
 
 Above all, explain the cultural context: the historical, intellectual and philosophical outlook of each composer's age and how composer and works fit it. For every composer, or for the artist or band of a pop, rock or jazz album, give a real biography: origins and training, career and main posts, style, influences and circle, and their standing then and now. For a compilation, cover each artist briefly and each track's background.

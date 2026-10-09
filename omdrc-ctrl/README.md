@@ -952,11 +952,13 @@ The prompts sent to the AI are plain text files in `src/prompts/` (installed
 to `lib/omdrcctrl/prompts/`). To customize one on a box, copy it to
 `<state_dir>/prompts/` under the same name and edit it; the copy is read on
 every request, so no restart is needed. Delete it to return to the default.
-`${name}` placeholders are filled in by the service and must stay in the file:
+Each file starts with `#` comment lines saying where it is used and what its
+placeholders hold; leading `#` lines are never sent to the AI. `${name}`
+placeholders are filled in by the service and must stay in the prompt text:
 
 | File | Stage | Required placeholders |
 |------|-------|-----------------------|
-| `system.txt` | system prompt (Claude account mode) | — |
+| `system.txt` | system prompt for every call, Claude account provider only (API modes send none) | — |
 | `listening-research.txt` | listening guide web research | `${metadata}` (album and track list JSON) |
 | `listening-guide.txt` | listening guide JSON structuring | `${metadata}`, `${research}` |
 | `recommend-research.txt` | recommendation web research | `${quantity}` (how many recordings), `${request}` (user's text) |
