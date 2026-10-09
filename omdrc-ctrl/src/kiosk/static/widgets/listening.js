@@ -83,7 +83,8 @@ G.trackNumber = () => {
     if (byId >= 0) return byId + 1;
     const title = norm(G.track.title);
     return title ? G.tracks.findIndex(t => norm(t.title) === title ||
-        norm(t.title + ' ' + (t.version || '')) === title) + 1 : 0;
+        norm(t.title + ' ' + (t.version || '')) === title ||
+        (t.work && norm(t.work + ' ' + t.title) === title)) + 1 : 0;
 };
 G.selectPlaying = () => {
     if (!G.guide) return;
@@ -115,7 +116,10 @@ G.observe = t => {
         G.selectedTrack = null;
         G.userSelected = false;
         G.research();
-    } else if (G.track?.title !== t.title || G.track?.track_id !== t.track_id) {
+    } else if (norm(G.track?.title) !== norm(t.title)
+        || (t.track_id && String(t.track_id) !== String(G.track?.track_id || ''))) {
+        // Now, the Qobuz player and this guide's own poll all report the track, not all with its id:
+        // a report without one is the same track, not a change (which flickered the guide to Overview).
         G.track = t;
         G.selectPlaying();
         G.remember();
