@@ -940,10 +940,11 @@ evidence are insufficient; an absent supporting link is explicitly flagged.
 Hi-Res specifications do not establish engineering quality, and a review of
 one mastering may not apply to another edition.
 
-The Results view shows **AI prompt and replies** while a search runs and after
-it finishes, including the rendered prompt, each stage's reply, Claude tool
-activity and token counts when provided. If a stage times out, available
-partial Claude output stays visible. The AI settings dialog shows account
+The Results view keeps your request visible and starts **AI prompt and replies**
+collapsed. Its system prompt is also collapsed inside the panel. When results
+are ready, the panel follows the album list. It includes each rendered prompt,
+reply, Claude tool activity and token counts when provided. If a stage times
+out, available partial Claude output stays visible. The AI settings dialog shows account
 sign-in status, Claude Code's last reported five-hour and seven-day usage
 percentages after a request, and a link to the provider's usage page. The
 local CLI does not expose the account's monetary balance. The panel also

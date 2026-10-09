@@ -1039,6 +1039,7 @@ P.askAI = async () => {
     setPref('q', prompt);
     P.aiRunning = true;
     P.aiTrace = [];
+    P.aiUserPrompt = prompt;
     const ctl = P.searchController = new AbortController();
     P.paintSearchControl();
     P.paintWorking('Preparing AI request…');
@@ -1103,6 +1104,7 @@ P.searchSoon = () => {
 P.search = async (scan = 0, { quiet = false } = {}) => {
     clearTimeout(soon);
     P.aiTrace = [];
+    P.aiUserPrompt = '';
     if (P.request || P.aiStarting) P.stopSearch();
     const params = P.params(scan);
     if (!params.has('q') && !params.has('label')) {
@@ -1160,11 +1162,14 @@ P.paintError = error => {
 
 P.aiTraceBlock = () => {
     if (!P.aiTrace?.length) return null;
-    return h('details', { class: 'qz-ai-trace', open: true },
-        h('summary', {}, 'AI prompt and replies'),
+    const userPrompt = P.aiUserPrompt || P.last?.query || P.input?.value?.trim() || '';
+    return h('div', { class: 'qz-ai-trace' },
+        userPrompt ? h('div', { class: 'qz-ai-user-prompt' },
+            h('strong', {}, 'Your request'), h('pre', {}, userPrompt)) : null,
+        h('details', {}, h('summary', {}, 'AI prompt and replies'),
         ...P.aiTrace.flatMap(item => [
             h('h4', {}, item.stage),
-            item.system_prompt ? h('div', {}, h('strong', {}, 'System prompt'),
+            item.system_prompt ? h('details', {}, h('summary', {}, 'System prompt'),
                 item.system_prompt_source ? h('div', { class: 'small muted' }, item.system_prompt_source) : null,
                 h('pre', {}, item.system_prompt)) : null,
             h('div', {}, h('strong', {}, 'Sent to AI'),
@@ -1176,7 +1181,7 @@ P.aiTraceBlock = () => {
                 `Request tokens: ${item.usage.input_tokens ?? '?'} input, ${item.usage.output_tokens ?? '?'} output`) : null,
             item.account_usage ? h('p', { class: 'small muted' },
                 `Claude account usage: ${P.accountUsageText(item.account_usage)}`) : null
-        ].filter(Boolean)));
+        ].filter(Boolean))));
 };
 
 P.paintResults = () => {
@@ -1196,7 +1201,6 @@ P.paintResults = () => {
         if (d.ai.model_notice) kids.push(h('p', { class: 'small qz-ai-model-notice' }, d.ai.model_notice));
         if (d.ai.summary) kids.push(h('p', { class: 'small qz-ai-summary' }, d.ai.summary));
         if (d.count < d.ai.requested) kids.push(h('p', { class: 'small muted' }, `Found ${d.count} verified releases of ${d.ai.requested} requested.`));
-        if (P.aiTrace?.length) kids.push(P.aiTraceBlock());
     }
     failed.forEach(q => kids.push(h('div', { class: 'errbox warn small' }, `“${q.query}”: stopped after ${q.fetched} albums: ${q.error}`)));
     if (!d.results.length) kids.push(h('p', { class: 'muted' }, d.more
@@ -1216,6 +1220,7 @@ P.paintResults = () => {
         kids.push(more);
         P.watchMore(more, d);
     }
+    if (d.ai && P.aiTrace?.length) kids.push(P.aiTraceBlock());
     K.clear(P.results).append(...kids);
     setPref('lastResults', { d, key: P.searchedKey });   // kept on this device (see mount)
 };
