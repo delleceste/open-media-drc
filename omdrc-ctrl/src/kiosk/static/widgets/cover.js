@@ -87,8 +87,7 @@ function weigh(img) {
 
 // ── strip colours ────────────────────────────────────────────────────────────
 // The docked strips take their shades from the playing cover: the player strip
-// its dominant colour, the listening guide strip the next distinct one (or the
-// dominant darkened, for a cover of one colour).  kiosk.css mixes them into the
+// its dominant colour, the listening guide strip the next distinct one.  kiosk.css mixes them into the
 // theme (--art1, --art2 under html[data-art]); no cover, the theme's own shades.
 const paletteCache = new Map();
 K.cover.palette = url => {
@@ -104,41 +103,48 @@ K.cover.palette = url => {
     while (paletteCache.size > 8) paletteCache.delete(paletteCache.keys().next().value);
     return job;
 };
+// Colourful pixels (not grey, near-black or near-white) are gathered by hue, each
+// weighing by its chroma, so a black frame or a white border never wins over the
+// colours they surround.  The first colour is the strongest hue, the second the
+// strongest one at least 60 degrees away; a cover of one hue, or a grey one (too
+// few colourful pixels: its average), takes its first colour darkened.
 function dominant(img) {
-    const M = 32, c = document.createElement('canvas');
+    const M = 32, B = 24, c = document.createElement('canvas');
     c.width = c.height = M;
     const ctx = c.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(img, 0, 0, M, M);
     const px = ctx.getImageData(0, 0, M, M).data;
-    // 4 bits a channel: 4096 boxes; each keeps its pixel count and colour sum
-    const boxes = new Map();
+    const bins = Array.from({ length: B }, () => [0, 0, 0, 0]);
+    const sum = [0, 0, 0];
+    let vivid = 0;
     for (let i = 0; i < px.length; i += 4) {
-        if (px[i + 3] < 128) continue;
-        const key = (px[i] >> 4) << 8 | (px[i + 1] >> 4) << 4 | px[i + 2] >> 4;
-        const b = boxes.get(key) || boxes.set(key, { n: 0, r: 0, g: 0, b: 0 }).get(key);
-        b.n++; b.r += px[i]; b.g += px[i + 1]; b.b += px[i + 2];
+        const r = px[i], g = px[i + 1], b = px[i + 2];
+        sum[0] += r; sum[1] += g; sum[2] += b;
+        const max = Math.max(r, g, b), min = Math.min(r, g, b), chroma = (max - min) / 255, light = (max + min) / 510;
+        if (chroma < .15 || light < .1 || light > .92) continue;
+        let hue = max === r ? (g - b) / (max - min) : max === g ? 2 + (b - r) / (max - min) : 4 + (r - g) / (max - min);
+        hue = ((hue / 6) % 1 + 1) % 1;
+        const bin = bins[Math.floor(hue * B) % B];
+        bin[0] += chroma; bin[1] += r * chroma; bin[2] += g * chroma; bin[3] += b * chroma;
+        vivid++;
     }
-    // neighbouring boxes are one colour: merge them, largest first, within a radius
-    const colours = [];
-    for (const b of [...boxes.values()].sort((x, y) => y.n - x.n)) {
-        const rgb = [b.r / b.n, b.g / b.n, b.b / b.n];
-        const near = colours.find(k => Math.hypot(k.rgb[0] - rgb[0], k.rgb[1] - rgb[1], k.rgb[2] - rgb[2]) < 48);
-        if (near) {
-            const n = near.n + b.n;
-            near.rgb = near.rgb.map((v, i) => (v * near.n + rgb[i] * b.n) / n);
-            near.n = n;
-        } else colours.push({ n: b.n, rgb });
+    const darker = rgb => rgb.map(v => v * .55);
+    if (vivid < M * M * .04) {
+        const grey = sum.map(v => v / (M * M));
+        return { first: grey, second: darker(grey) };
     }
-    colours.sort((x, y) => y.n - x.n);
-    if (!colours.length) return null;
-    // a grey or near-black/white colour weighs less: a cover's character is in its hues
-    const chroma = ([r, g, b]) => (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
-    const score = k => k.n * (.35 + chroma(k.rgb));
-    const ranked = [...colours].sort((x, y) => score(y) - score(x));
-    const first = ranked[0].rgb;
-    const other = ranked.slice(1).find(k => k.n >= M * M * .04
-        && Math.hypot(k.rgb[0] - first[0], k.rgb[1] - first[1], k.rgb[2] - first[2]) > 70);
-    return { first, second: other ? other.rgb : first.map(v => v * .55) };
+    const at = i => bins[(i + B) % B];
+    const weight = [...bins.keys()].map(i => at(i - 1)[0] * .5 + at(i)[0] + at(i + 1)[0] * .5);
+    const colour = i => {
+        const near = [at(i - 1), at(i), at(i + 1)], w = near.reduce((t, x) => t + x[0], 0);
+        return [1, 2, 3].map(j => near.reduce((t, x) => t + x[j], 0) / w);
+    };
+    const best = list => list.reduce((x, y) => weight[y] > weight[x] ? y : x);
+    const i1 = best([...bins.keys()]);
+    const far = [...bins.keys()].filter(i => Math.min((i - i1 + B) % B, (i1 - i + B) % B) >= B / 6
+        && weight[i] >= weight[i1] * .15);
+    const first = colour(i1);
+    return { first, second: far.length ? colour(best(far)) : darker(first) };
 }
 let stripUrl = null;
 K.cover.tintStrips = url => {
