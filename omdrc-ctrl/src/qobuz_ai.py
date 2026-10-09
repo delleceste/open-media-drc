@@ -270,6 +270,9 @@ def save_settings(state_dir, body):
 
 
 def _post(cfg, body, timeout):
+    # The same system brief as account mode: Anthropic calls it system, OpenAI instructions.
+    body = {**body, "instructions" if cfg["provider"] == "openai" else "system":
+            _prompt(cfg.get("state_dir"), "system")}
     headers = {"Content-Type": "application/json"}
     if cfg["provider"] == "openai":
         headers["Authorization"] = "Bearer " + cfg["key"]

@@ -261,6 +261,20 @@ class AITest(unittest.TestCase):
                 self.run_recommend_with_real_post()
         self.assertNotIn("test-secret", str(error.exception))
 
+    def test_api_calls_carry_the_system_prompt_file(self):
+        Path(self.root, "prompts").mkdir()
+        Path(self.root, "prompts", "system.txt").write_text("# header\nAnswer in Italian.\n")
+        for provider, field in (("claude", "system"), ("openai", "instructions")):
+            with self.subTest(provider=provider):
+                self.configure(provider)
+                response = MagicMock()
+                response.__enter__.return_value.read.return_value = b"{}"
+                with patch.object(ai.urllib.request, "urlopen", return_value=response) as urlopen:
+                    ai._post(ai.configuration(self.root), {"model": "m"}, 5)
+                sent = json.loads(urlopen.call_args.args[0].data)
+                self.assertEqual(sent[field], "Answer in Italian.")
+                self.assertEqual(sent["model"], "m")
+
     def run_recommend_with_real_post(self):
         cat, _ = catalog([raw("good")])
         return ai.recommend(self.root, cat, "Music", {})

@@ -958,7 +958,7 @@ placeholders are filled in by the service and must stay in the prompt text:
 
 | File | Stage | Required placeholders |
 |------|-------|-----------------------|
-| `system.txt` | system prompt for every call, Claude account provider only (API modes send none) | — |
+| `system.txt` | system prompt: the standing brief sent with every call, for all providers | — |
 | `listening-research.txt` | listening guide web research | `${metadata}` (album and track list JSON) |
 | `listening-guide.txt` | listening guide JSON structuring | `${metadata}`, `${research}` |
 | `recommend-research.txt` | recommendation web research | `${quantity}` (how many recordings), `${request}` (user's text) |
