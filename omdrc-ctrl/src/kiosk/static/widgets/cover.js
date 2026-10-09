@@ -131,7 +131,7 @@ function dominant(img) {
     const darker = rgb => rgb.map(v => v * .55);
     if (vivid < M * M * .04) {
         const grey = sum.map(v => v / (M * M));
-        return { first: grey, second: darker(grey) };
+        return { first: grey, second: darker(grey), third: darker(grey) };
     }
     const at = i => bins[(i + B) % B];
     const weight = [...bins.keys()].map(i => at(i - 1)[0] * .5 + at(i)[0] + at(i + 1)[0] * .5);
@@ -141,10 +141,13 @@ function dominant(img) {
     };
     const best = list => list.reduce((x, y) => weight[y] > weight[x] ? y : x);
     const i1 = best([...bins.keys()]);
-    const far = [...bins.keys()].filter(i => Math.min((i - i1 + B) % B, (i1 - i + B) % B) >= B / 6
-        && weight[i] >= weight[i1] * .15);
-    const first = colour(i1);
-    return { first, second: far.length ? colour(best(far)) : darker(first) };
+    const apart = (i, j) => Math.min((i - j + B) % B, (j - i + B) % B) >= B / 6;
+    const far = [...bins.keys()].filter(i => apart(i, i1) && weight[i] >= weight[i1] * .15);
+    const first = colour(i1), i2 = far.length ? best(far) : -1;
+    const farther = far.filter(i => i !== i2 && apart(i, i2));
+    // the third colour, for the player strip's gradient: another hue, else the second, else the first deepened
+    return { first, second: i2 < 0 ? darker(first) : colour(i2),
+        third: farther.length ? colour(best(farther)) : i2 < 0 ? first.map(v => v * .75) : colour(i2) };
 }
 let stripUrl = null;
 K.cover.tintStrips = url => {
@@ -158,6 +161,7 @@ K.cover.tintStrips = url => {
         const css = rgb => `rgb(${rgb.map(Math.round).join(' ')})`;
         root.style.setProperty('--art1', css(p.first));
         root.style.setProperty('--art2', css(p.second));
+        root.style.setProperty('--art3', css(p.third));
         root.setAttribute('data-art', '');
     });
 };

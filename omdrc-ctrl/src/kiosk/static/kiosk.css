@@ -1273,22 +1273,24 @@ html[data-embed] #pager { grid-row: 1; }
     --strip-guide: linear-gradient(#2e2236, #241a2b); --strip-guide-edge: #45334f; }
 :root[data-theme=light] { --strip-player: linear-gradient(#e6eef9, #d9e4f3); --strip-player-edge: #c2d1e6;
     --strip-guide: linear-gradient(#f2e8f3, #e8dbea); --strip-guide-edge: #d3c0d6; }
-/* With a cover playing (cover.js tintStrips): the player strip a light wash of its dominant colour, the guide
-   strip one of its second colour; over the dark theme the wash is mixed into near-black so the text keeps its contrast. */
-html[data-art] { --strip-player: linear-gradient(color-mix(in srgb, var(--art1) 30%, #161a20), color-mix(in srgb, var(--art1) 22%, #111419));
+/* With a cover playing (cover.js tintStrips): the player strip a wash running from the cover's dominant colour,
+   by its thumbnail, to its third; the guide strip one of its second colour. Over the dark theme the wash is mixed
+   into near-black so the text keeps its contrast. */
+html[data-art] { --strip-player: linear-gradient(90deg, color-mix(in srgb, var(--art1) 36%, #161a20), color-mix(in srgb, var(--art3) 26%, #131619));
     --strip-player-edge: color-mix(in srgb, var(--art1) 45%, #161a20);
     --strip-guide: linear-gradient(color-mix(in srgb, var(--art2) 34%, #161a20), color-mix(in srgb, var(--art2) 26%, #111419));
     --strip-guide-edge: color-mix(in srgb, var(--art2) 50%, #161a20); }
-html[data-art][data-theme=light] { --strip-player: linear-gradient(color-mix(in srgb, var(--art1) 16%, #fff), color-mix(in srgb, var(--art1) 22%, #fff));
+html[data-art][data-theme=light] { --strip-player: linear-gradient(90deg, color-mix(in srgb, var(--art1) 24%, #fff), color-mix(in srgb, var(--art3) 16%, #fff));
     --strip-player-edge: color-mix(in srgb, var(--art1) 35%, #fff);
     --strip-guide: linear-gradient(color-mix(in srgb, var(--art2) 24%, #fff), color-mix(in srgb, var(--art2) 30%, #fff));
     --strip-guide-edge: color-mix(in srgb, var(--art2) 45%, #fff); }
 .qz-player { margin-inline: -.8rem; margin-bottom: calc(-1 * var(--dock-gap)); bottom: calc(-1 * var(--dock-gap));
-    padding: .6rem 1.4rem calc(.4rem + var(--dock-gap)); border-width: 1px 0 0; border-radius: .8rem .8rem 0 0;
+    padding: .6rem 1.4rem calc(.4rem + var(--dock-gap)); border-width: 1px 0 0; border-radius: 0;
     background: var(--strip-player); border-top-color: var(--strip-player-edge); }
 html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 2.5rem) - var(--dock-gap)); padding-bottom: .4rem;
-    margin-bottom: calc(-1 * var(--dock-gap)); border-radius: .8rem .8rem 0 0; }
-.listening-panel.collapsed { border-radius: .8rem .8rem 0 0; background: var(--strip-guide); border-top-color: var(--strip-guide-edge); }
+    margin-bottom: calc(-1 * var(--dock-gap)); border-radius: 0; }
+/* docked bars sit square on the screen's edge; only the guide rising from its strip is a sheet with rounded top corners */
+.listening-panel.collapsed { border-radius: 0; background: var(--strip-guide); border-top-color: var(--strip-guide-edge); }
 
 /* Local database page (pages/local.js) */
 .local-progress { height: .5rem; margin: .3rem 0 .5rem; border-radius: .25rem; overflow: hidden; background: var(--surface2); }
