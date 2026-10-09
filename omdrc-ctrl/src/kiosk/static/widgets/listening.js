@@ -323,7 +323,7 @@ G.makePanel = () => {
         if (G.panel?.classList.contains('collapsed') && G.panel.offsetHeight)
             document.documentElement.style.setProperty('--ls-h', `${G.panel.offsetHeight}px`);
     });
-    G.sizeObserver.observe(G.panel);
+    G.sizeObserver.observe(G.panel, { box: 'border-box' });   // its padding changes too: the inset under the bar
     let touch = null;
     const nestedScroller = target => {
         for (let el = target; el && el !== G.panel; el = el.parentElement) {
