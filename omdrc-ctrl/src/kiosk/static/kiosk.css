@@ -17,7 +17,7 @@
     /* the format colours of Now's "24/96" (widgets/track.js) */
     --fmt-hires: #79c0ff; --fmt-24: #e3b341; --fmt-48: #d2a8ff;
     color-scheme: dark;
-    --top: 2.4rem; --tabs: 3rem;
+    --top: 2.4rem; --tabs: calc(3rem + env(safe-area-inset-bottom));
 }
 /* The light theme: Config -> Theme (per screen), "Automatic" following the device's
    own light/dark setting (core.js sets data-theme on <html>).  Only the colours that
@@ -78,7 +78,7 @@ body.bar-shown #topbar { transform: none; }
 .dot { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
 .dot.ok { background: var(--green); box-shadow: 0 0 .5rem var(--green); } .dot.bad { background: var(--red); box-shadow: 0 0 .5rem var(--red); }
 .dot.warn { background: var(--yellow); } .dot.off { background: var(--off-dot); }
-#tabs { display: flex; border-top: 1px solid var(--border); background: var(--surface); }
+#tabs { display: flex; border-top: 1px solid var(--border); background: var(--surface); padding-bottom: env(safe-area-inset-bottom); }
 .tab { flex: 1; background: none; border: 0; border-top: .18rem solid transparent; color: var(--muted); font-size: .95rem; font-weight: 600; padding: 0; }
 .tab.on { color: var(--accent); border-top-color: var(--accent); background: rgba(88,166,255,.07); }
 
@@ -1112,8 +1112,9 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 .listening-panel { position: fixed; z-index: 67; inset: 0; overflow: auto; overscroll-behavior: contain;
     background: var(--bg); color: var(--text); padding: 0 1rem max(1.5rem, env(safe-area-inset-bottom));
     box-sizing: border-box; }
-/* no safe-area-inset-bottom: the app already pads the WebView above the navigation bar (see .listening-panel) */
-.listening-panel.collapsed { inset: auto 0 0; height: auto; min-height: 2.5rem; padding: .45rem .5rem .15rem;
+/* the app runs the kiosk on under the navigation bar (edge to edge): the strip's colour reaches the screen's
+   edge and its content stays above the bar */
+.listening-panel.collapsed { inset: auto 0 0; height: auto; min-height: 2.5rem; padding: .45rem .5rem calc(.15rem + env(safe-area-inset-bottom));
     align-items: center; gap: .3rem; border-top: 1px solid var(--border); box-shadow: 0 -.3rem 1rem #0004; }
 .listening-head { display: flex; align-items: center; gap: .5rem; position: sticky; top: 0;
     padding: 1rem 0 .6rem; background: var(--bg); z-index: 1; }

@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
@@ -29,6 +30,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.drawToBitmap
+import androidx.core.view.updateLayoutParams
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.WindowInsetsCompat
@@ -322,7 +324,17 @@ class MainActivity : ComponentActivity() {
             // and the keyboard while it is up: the page shrinks above it rather than
             // under it (the Qobuz search box sits at the bottom of Now, upright)
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime))
+            // The kiosk runs on under the navigation bar, as Android 15 recommends: its
+            // bottom strips carry their colour to the screen's edge and keep their content
+            // above the bar (CSS env(safe-area-inset-bottom), which the WebView reports).
+            // The app's own panels over it stay above the bar.
+            val underBar = AppPrefs.viewMode(this) == AppPrefs.VIEW_KIOSK && ime == 0
+            view.setPadding(bars.left, bars.top, bars.right, if (underBar) 0 else maxOf(bars.bottom, ime))
+            val panelBottom = if (underBar) bars.bottom else 0
+            for (id in intArrayOf(R.id.loading_ring, R.id.conn_error)) {
+                val panel = view.findViewById<View>(id)
+                panel.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = panelBottom }
+            }
             insets
         }
 
@@ -948,6 +960,7 @@ class MainActivity : ComponentActivity() {
         if (AppPrefs.viewMode(this) == mode) return
         AppPrefs.setViewMode(this, mode)
         nowPage = false
+        ViewCompat.requestApplyInsets(findViewById(R.id.root_container))   // the kiosk runs under the navigation bar
         applySystemBars()
         updateSettingsButton()
         loadDashboard()
