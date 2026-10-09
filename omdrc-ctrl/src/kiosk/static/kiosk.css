@@ -1303,6 +1303,8 @@ html[data-art][data-theme=light] { --strip-player: linear-gradient(90deg, color-
     background: var(--strip-player); border-top-color: var(--strip-player-edge); }
 html[data-ls-strip][data-page="qobuz"] .qz-player { bottom: calc(var(--ls-h, 2.5rem) - var(--dock-gap)); padding-bottom: .4rem;
     margin-bottom: calc(-1 * var(--dock-gap)); border-radius: 0; }
+/* The raised player strip must not cover the last search result or the AI trace. */
+html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--ls-h, 2.5rem) + .75rem); }
 /* docked bars sit square on the screen's edge; only the guide rising from its strip is a sheet with rounded top corners */
 .listening-panel.collapsed { border-radius: 0; background: var(--strip-guide); border-top-color: var(--strip-guide-edge); }
 

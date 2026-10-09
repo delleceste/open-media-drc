@@ -22,10 +22,12 @@
         P.paintWorking('Waiting for AI reply…');
         check(P.results.querySelector('.qz-ai-trace summary [role=progressbar]'), 'Estimated progress is visible while running');
         let badge = () => P.results.querySelector('.qz-ai-trace > details > summary .qz-ai-usage');
-        check(badge()?.textContent === '42%' && badge().classList.contains('low'), 'Usage starts green below 50%');
+        check(badge()?.textContent === 'AI usage: 42%' && badge().classList.contains('low'), 'Labeled usage starts green below 50%');
         const green = getComputedStyle(badge()).color;
-        check(P.results.querySelector('.qz-ai-user-prompt').textContent.includes(P.aiUserPrompt), 'User prompt visible while waiting');
-        check(!P.results.querySelector('.qz-ai-trace > details').open, 'AI prompt and replies start minimized');
+        const outer = P.results.querySelector('.qz-ai-trace > details');
+        const request = P.results.querySelector('.qz-ai-user-prompt');
+        check(outer.contains(request) && request.textContent.includes(P.aiUserPrompt), 'User prompt is inside the expandable trace while waiting');
+        check(!outer.open && !request.checkVisibility(), 'User prompt stays hidden while trace is minimized');
         check(!P.results.querySelector('.qz-ai-trace details details').open, 'System prompt starts minimized');
         check(!P.results.querySelector('script'), 'Prompt is rendered as text');
         P.aiTrace[0].reply = 'A review was found.';
@@ -33,12 +35,12 @@
         P.aiRunning = false;
         P.paintError('A later stage timed out');
         check(!P.results.querySelector('.qz-ai-trace summary [role=progressbar]'), 'Progress stops after the reply');
-        check(badge()?.textContent === '50%' && badge().classList.contains('medium'), 'Usage turns orange at 50%');
+        check(badge()?.textContent === 'AI usage: 50%' && badge().classList.contains('medium'), 'Usage turns orange at 50%');
         const orange = getComputedStyle(badge()).color;
         check(orange !== green, 'Orange usage is visually distinct from green');
         P.aiTrace[0].account_usage.windows.seven_day = { used_percent: 80 };
         P.paintError('A later stage timed out');
-        check(badge()?.textContent === '80%' && badge().classList.contains('high'), 'Usage turns red at 80%');
+        check(badge()?.textContent === 'AI usage: 80%' && badge().classList.contains('high'), 'Usage turns red at 80%');
         check(getComputedStyle(badge()).color !== orange, 'Red usage is visually distinct from orange');
         check(P.results.textContent.includes('A review was found.'), 'Reply remains visible after error');
         check(P.results.textContent.includes('13 input, 21 output'), 'Request usage visible');
@@ -54,6 +56,26 @@
         check(album.compareDocumentPosition(trace) & Node.DOCUMENT_POSITION_FOLLOWING,
             'AI prompt and replies follow the results');
         check(!trace.querySelector('details').open, 'Trace stays minimized after results');
+        check(trace.querySelector('details').contains(trace.querySelector('.qz-ai-user-prompt')),
+            'User prompt remains inside the trace after results');
+        const viewport = document.createElement('div');
+        viewport.className = 'page-body'; viewport.style.height = '320px'; viewport.style.overflowY = 'auto';
+        const page = document.createElement('div'), main = document.createElement('div');
+        page.className = 'qz'; main.className = 'qz-main';
+        const longResults = document.createElement('div'); longResults.className = 'qz-results';
+        for (let i = 0; i < 30; i++) {
+            const row = document.createElement('div'); row.style.height = '36px'; longResults.append(row);
+        }
+        const lastTrace = trace.cloneNode(true); longResults.append(lastTrace);
+        const player = document.createElement('div'); player.className = 'qz-player'; player.style.height = '64px';
+        main.append(longResults); page.append(main, player); viewport.append(page); document.body.append(viewport);
+        document.documentElement.setAttribute('data-page', 'qobuz');
+        document.documentElement.setAttribute('data-ls-strip', '');
+        document.documentElement.style.setProperty('--ls-h', '56px');
+        viewport.scrollTop = viewport.scrollHeight;
+        check(lastTrace.getBoundingClientRect().bottom <= player.getBoundingClientRect().top,
+            'The final AI trace scrolls above the raised player strip');
+        viewport.remove();
         K.api = async () => ({ ok: true, provider: 'claude_account', model: 'sonnet',
             configured: true, account_ready: true,
             account_usage: { windows: { five_hour: { used_percent: 42, resets_at: 1791540000 } } },

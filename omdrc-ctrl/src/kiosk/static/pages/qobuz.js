@@ -1170,8 +1170,6 @@ P.aiTraceBlock = () => {
     const percentage = percentages.length ? Math.max(...percentages) : null;
     const level = percentage === null ? '' : percentage < 50 ? 'low' : percentage < 80 ? 'medium' : 'high';
     return h('div', { class: 'qz-ai-trace' },
-        userPrompt ? h('div', { class: 'qz-ai-user-prompt' },
-            h('strong', {}, 'Your request'), h('pre', {}, userPrompt)) : null,
         h('details', {}, h('summary', {}, h('span', {}, 'AI prompt and replies'),
             P.aiRunning ? h('span', { class: 'qz-ai-estimate', role: 'progressbar',
                 'aria-label': 'Estimated AI search progress',
@@ -1180,7 +1178,9 @@ P.aiTraceBlock = () => {
                 h('span', { class: 'qz-ai-estimate-fill' })) : null,
             percentage === null ? null : h('span', { class: 'qz-ai-usage ' + level,
                 title: 'Claude account usage: ' + P.accountUsageText(reported) + '. Higher limit used.',
-                'aria-label': `Claude account usage ${percentage}%` }, `${percentage}%`)),
+                'aria-label': `AI usage ${percentage}%` }, `AI usage: ${percentage}%`)),
+        userPrompt ? h('div', { class: 'qz-ai-user-prompt' },
+            h('strong', {}, 'Your request'), h('pre', {}, userPrompt)) : null,
         ...P.aiTrace.flatMap(item => [
             h('h4', {}, item.stage),
             item.system_prompt ? h('details', {}, h('summary', {}, 'System prompt'),

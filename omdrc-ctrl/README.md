@@ -940,9 +940,10 @@ evidence are insufficient; an absent supporting link is explicitly flagged.
 Hi-Res specifications do not establish engineering quality, and a review of
 one mastering may not apply to another edition.
 
-The Results view keeps your request visible and starts **AI prompt and replies**
-collapsed. Its system prompt is also collapsed inside the panel. When results
-are ready, the panel follows the album list. The collapsed header shows the
+The Results view starts **AI prompt and replies** collapsed, with your request
+and the system prompt inside it. When results are ready, the panel follows the
+album list; both docked strips leave enough room to scroll it fully into view.
+The collapsed header shows the
 higher of Claude's five-hour and seven-day usage percentages, refreshed after
 each search: green below 50%, orange below 80%, red from 80%. An estimated
 progress bar advances and restarts in the collapsed header while research runs.
