@@ -1173,7 +1173,8 @@ P.aiTraceBlock = () => {
     const usageLabel = 'AI usage: ' + windows.map(({ label, value }, index) =>
         index ? `[${label} ${value}%]` : `${label} ${value}%`).join(' ');
     return h('div', { class: 'qz-ai-trace' },
-        h('details', {}, h('summary', {}, h('span', {}, 'AI prompt and replies'),
+        h('details', {}, h('summary', { class: P.aiRunning ? 'qz-ai-running' : '' },
+            h('span', { class: 'qz-ai-heading' }, 'AI prompt and replies'),
             P.aiRunning ? h('span', { class: 'qz-ai-estimate', role: 'progressbar',
                 'aria-label': 'Estimated AI search progress',
                 'aria-valuetext': 'Estimated progress; repeats until the AI replies',

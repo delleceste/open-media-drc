@@ -965,6 +965,12 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-ai-trace > details > summary { display: flex; align-items: center; gap: .4rem; }
 .qz-ai-trace > details > summary::before { content: '▸'; }
 .qz-ai-trace > details[open] > summary::before { content: '▾'; }
+.qz-ai-trace > details > summary.qz-ai-running { display: grid; grid-template-columns: auto auto minmax(2rem, 1fr);
+    grid-template-rows: auto auto; column-gap: .4rem; row-gap: .35rem; }
+.qz-ai-running::before { grid-column: 1; grid-row: 1; }
+.qz-ai-running .qz-ai-heading { grid-column: 2; grid-row: 1; }
+.qz-ai-running .qz-ai-estimate { grid-column: 3; grid-row: 1; width: 100%; max-width: none; }
+.qz-ai-running .qz-ai-usage { grid-column: 2 / 4; grid-row: 2; margin-left: 0; justify-self: start; }
 .qz-ai-usage { margin-left: auto; flex-shrink: 0; white-space: nowrap; font-size: .75rem; font-variant-numeric: tabular-nums; }
 .qz-ai-usage.low { color: var(--ok-text); }
 .qz-ai-usage.medium { color: #f39c12; }
