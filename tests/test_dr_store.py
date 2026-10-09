@@ -94,6 +94,19 @@ class Store(unittest.TestCase):
                          (11, "estimate"))
         self.assertNotIn("qobuz:2", recent["summaries"])
 
+    def test_recent_tracks_include_this_boxs_fresh_reports(self):
+        now = time.time()
+        for key, mtime, origin in (("local:new", now - 60, ""), ("local:old", now - 8 * 86400, ""),
+                                   ("local:theirs", now - 60, "bee")):
+            self.store.upsert_album(key, "local", key[6:], title=key)
+            self.store.set_report(key, 9, 15, mtime)
+        with self.store._lock, self.store._connect() as db:
+            db.execute("UPDATE album SET report_origin = 'bee' WHERE key = 'local:theirs'")
+        recent = self.store.recent_tracks(now - 86400)
+        self.assertEqual([a["key"] for a in recent["reports"]], ["local:new"])
+        self.assertEqual(recent["summaries"]["local:new"]["basis"], "report")
+        self.assertEqual(recent["count"], 0)
+
     def test_reports_are_imported_updated_and_dropped(self):
         root = os.path.join(self.tmp.name, "music")
         folder = os.path.join(root, "Artist", "Album")

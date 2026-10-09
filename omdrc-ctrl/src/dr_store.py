@@ -448,12 +448,16 @@ class DrStore:
         return {"albums": page, "count": len(rated), "totals": totals}
 
     def recent_tracks(self, since: float, limit: int = 20) -> dict:
-        """Recently kept measurements made on this box, including unrated albums.
+        """Recently kept measurements made on this box, including unrated albums,
+        and the local dr14.txt reports written since (a Rescan measures whole
+        albums into a report, not into tracks), dated by the report's file.
 
         The track table keeps the best row per track, not a play-by-play log.
-        Imported rows and dr14.txt report rows are not recent listening here.
+        Imported rows and other boxes' reports are not recent listening here.
         """
         where = "t.origin = '' AND t.method IN ('live', 'measured') AND t.at >= ?"
+        reported = ("source = 'local' AND origin = '' AND report_origin = '' "
+                    "AND report_dr IS NOT NULL AND report_mtime >= ?")
         with self._lock, self._connect() as db:
             count = db.execute(f"SELECT COUNT(*) FROM track t WHERE {where}", (since,)).fetchone()[0]
             rows = [dict(r) for r in db.execute(f"""
@@ -463,10 +467,11 @@ class DrStore:
                 FROM track t JOIN album a ON a.key = t.album_key
                 WHERE {where} ORDER BY t.at DESC LIMIT ?
             """, (since, limit))]
+            reports = self._albums(db, f"WHERE {reported} ORDER BY report_mtime DESC LIMIT ?", (since, limit))
             keys = list(dict.fromkeys(row["album_key"] for row in rows))
             albums = self._albums(db, f"WHERE key IN ({','.join('?' * len(keys))})", tuple(keys)) if keys else []
-        summaries = {album["key"]: album["dr"] for album in albums}
-        return {"tracks": rows, "count": count, "summaries": summaries}
+        summaries = {album["key"]: album["dr"] for album in albums + reports}
+        return {"tracks": rows, "count": count, "summaries": summaries, "reports": reports}
 
     # -- sharing between boxes (dr_sync.py) --
 

@@ -13,9 +13,11 @@ const summary = { dr: 11, kind: 'estimate', basis: 'listened', heard: 2, track_c
 const track = (album_key, number, title, at) => ({ album_key, number, title, at,
     album_title: album_key === 'local:a' ? 'Avalon' : 'Single album', artist: 'Roxy Music',
     source: 'local', image: '', dr: 10 + number, complete: false, seconds: 100, method: 'live' });
+const fresh = { key: 'local:fresh', title: 'Unplugged', artist: 'Nirvana', image: '', source: 'local', ref: 'fresh',
+    origin: '', report_dr: 9, report_tracks: 14, report_mtime: 2.5, tracks: [], dr: { dr: 9, kind: 'exact', basis: 'report' } };
 const recent = { ok: true, count: 3, summaries: { 'local:a': summary }, tracks: [
     track('local:a', 2, 'Avalon', 3), track('local:b', 1, 'Only song', 2), track('local:a', 1, 'More Than This', 1),
-] };
+], reports: [fresh, { ...fresh, key: 'local:a', report_mtime: 4 }] };
 const ranked = { ok: true, count: 2, totals: {}, import: {}, albums: [{
     key: 'local:a', title: 'Avalon', artist: 'Roxy Music', image: '', source: 'local', ref: 'a',
     report_dr: null, dr: summary, tracks: recent.tracks.filter(t => t.album_key === 'local:a'),
@@ -41,10 +43,15 @@ vm.runInNewContext(fs.readFileSync('omdrc-ctrl/src/kiosk/static/pages/dr.js', 'u
 (async () => {
     const R = K.pages.find(page => page.id === 'dr_recent');
     R.body = h('div'); R.mount(R.body); await R.load();
-    assert.equal(R.groups.length, 2);
+    assert.equal(R.groups.length, 3, 'a report of an album with saved tracks adds no row');
     assert.equal(R.list.kids[0].tag, 'button', 'two tracks become one album row');
     assert.match(R.list.kids[0].kids[0].attrs.src, /\/dr\/library\/art\?key=local%3Aa/);
-    assert.equal(R.list.kids[1].tag, 'div', 'isolated song stays in the first list');
+    assert.equal(R.list.kids[1].kids[2].kids[0].kids[0], 'Unplugged', 'a fresh dr14.txt is listed by its time');
+    assert.match(R.list.kids[1].kids[2].kids[2].kids[0], /dr14\.txt of 14 tracks/);
+    assert.equal(R.list.kids[2].tag, 'div', 'isolated song stays in the first list');
+    await R.list.kids[1].attrs.onclick();
+    assert.equal(R.detail.kids[1].kids[1].kids[1].kids[0].kids[0], '1. Reported Song', 'report opens its per-song rows');
+    R.detail.kids[0].attrs.onclick();
     R.list.kids[0].attrs.onclick();
     assert.equal(R.browse.hidden, true);
     assert.equal(R.detail.hidden, false);

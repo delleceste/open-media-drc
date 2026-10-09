@@ -24,7 +24,7 @@ menu (the wide-screen tab bar lists only the three), and does not swipe.
 | **Video** | *Optional* while the local `omdrcvideo` service answers on port 9080: its media browser and playback remote inside the kiosk. The kiosk checks again every 30 seconds. |
 | **DRC** | Applied state, sample-rate presets, filter set and design, attenuation, BruteFIR peak/RTI, `drc.sh status` |
 | **Dynamic range → Albums by DR** | Stored album DR ranking; tap an album to see each measured row's DR from its local dr14.txt report (or saved measurements when there is no report), then tap the album header or its ‹ to return. A folder with one FLAC and one CUE shows a warning when its report contains one whole-file DR; the meter has no cue-track option. Includes filters and local dr14.txt rescan |
-| **Dynamic range → Recent DR** | Latest saved track DR values on this box, grouped by album when multiple tracks were saved; 20 album/song rows at first, with more rows and a lookback up to seven days |
+| **Dynamic range → Recent DR** | Latest saved track DR values on this box, grouped by album when multiple tracks were saved, plus albums whose `dr14.txt` a Rescan has just written; 20 album/song rows at first, with more rows and a lookback up to seven days |
 | **Dynamic range → Configure** | Rolling DR estimate, DR log switch, measure this record, compare masters |
 | **Source** | Renderer switch/restart/activity, MPD state, CD input |
 | **Local** | The MPD collection, its music directory, Rescan, and a DR14 tools box with installed CUE tool versions and the custom meter location. Rescan updates MPD and calculates missing reports in the background (`libexec/omdrc/scripts/omdrc-mpd-update-dr14.sh`). When the tools are installed, the checked-by-default CUE option converts single-FLAC CUE albums to verified track FLACs and calculates per-track DR; the original FLAC is removed only after verification. Scan status is in `local-scan.txt`. Local albums show in Qobuz search with ⌂ and their `dr14.txt` DR value |
@@ -55,7 +55,10 @@ measurement in place, so this is a list of saved values rather than every play.
 An album with multiple recent tracks has one cover and album DR badge. Tap it
 to see its tracks, then tap the album header or its ‹ to return; a lone track stays on the first
 screen. Album badges use the stored exact or estimated figure, or show a dash
-until enough audio has been heard. The list reads at most the latest 500 saved
+until enough audio has been heard. An album a Rescan measured into a new
+`dr14.txt` (no saved tracks of its own) is listed by the report file's time,
+with its report DR; tap it for the per-song values in the report. Reports read
+from another box are not listed. The list reads at most the latest 500 saved
 tracks in the selected period.
 
 Tap a DR history segment on Now or DR to show a short song title and the

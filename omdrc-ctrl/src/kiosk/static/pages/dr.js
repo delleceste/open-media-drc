@@ -108,7 +108,7 @@ R.mount = el => {
     R.browse = h('div', {}, R.chips, R.list, R.foot, R.more);
     R.detail = h('div', { class: 'dr-detail-page', hidden: true });
     el.append(K.card('Recent DR',
-        h('p', { class: 'muted small' }, 'Newest saved track measurements on this box. The DR log retains the best measurement per track, so replaying a track may not add a new row.'),
+        h('p', { class: 'muted small' }, 'Newest saved track measurements on this box, and dr14.txt reports newly written in its collection (a Rescan measures whole albums into those). The DR log retains the best measurement per track, so replaying a track may not add a new row.'),
         R.browse, R.detail));
     R.paintChips();
 };
@@ -130,6 +130,7 @@ R.trackRow = t => {
 };
 
 R.back = () => {
+    R.detailSeq = (R.detailSeq || 0) + 1;
     R.detail.hidden = true;
     R.browse.hidden = false;
     if (R.body) R.body.scrollTop = R.savedScroll || 0;
@@ -148,7 +149,18 @@ R.openGroup = group => {
     R.detail.hidden = false;
     if (R.body) R.body.scrollTop = 0;
 };
+// An album a Rescan measured into its dr14.txt: no saved tracks, the report is the news.
+R.reportRow = a => h('button', { class: 'drrecent-row drrecent-parent', type: 'button',
+        onclick: () => openAlbum(R, a, 'Back to recent DR albums') },
+    albumCover(a.image, a.source, a.key, 'drrecent-cover'),
+    K.drLogBadge(a.dr) || h('span', { class: 'drlog none' }, '—'),
+    h('span', { class: 'drrecent-body' },
+        h('strong', {}, a.title || 'Album'),
+        h('span', { class: 'muted small' }, a.artist || ''),
+        h('span', { class: 'muted small' }, `${recentWhen({ at: a.report_mtime })} · dr14.txt${a.report_tracks ? ` of ${a.report_tracks} track${a.report_tracks === 1 ? '' : 's'}` : ''}`)),
+    h('span', { class: 'drrecent-next', 'aria-hidden': 'true' }, '›'));
 R.row = group => {
+    if (group.report) return R.reportRow(group.report);
     if (group.tracks.length === 1) return R.trackRow(group.tracks[0]);
     const t = group.tracks[0];
     return h('button', { class: 'drrecent-row drrecent-parent', type: 'button', onclick: () => R.openGroup(group) },
@@ -164,7 +176,8 @@ R.paint = () => {
     const shown = R.groups.slice(0, R.limit);
     K.clear(R.list).append(...(shown.length ? shown.map(R.row)
         : [h('p', { class: 'muted' }, 'No saved DR measurements in this period. Try a longer range or play a track with the DR log on.')]));
-    R.foot.textContent = `Showing ${shown.length} of ${R.groups.length} albums/songs from ${Math.min(R.count, 500)} saved tracks${R.count > 500 ? ` (latest 500 of ${R.count})` : ''}`;
+    const reports = R.reports ? ` and ${R.reports} dr14.txt report${R.reports === 1 ? '' : 's'}` : '';
+    R.foot.textContent = `Showing ${shown.length} of ${R.groups.length} albums/songs from ${Math.min(R.count, 500)} saved tracks${R.count > 500 ? ` (latest 500 of ${R.count})` : ''}${reports}`;
     R.more.hidden = R.limit >= R.groups.length;
 };
 R.load = async () => {
@@ -176,11 +189,15 @@ R.load = async () => {
     if (!d.ok) { K.clear(R.list).append(h('p', { class: 'muted' }, d.error || 'unavailable')); R.more.hidden = true; return; }
     const groups = new Map();
     d.tracks.forEach(t => {
-        if (!groups.has(t.album_key)) groups.set(t.album_key, { tracks: [], dr: d.summaries[t.album_key] });
+        if (!groups.has(t.album_key)) groups.set(t.album_key, { tracks: [], dr: d.summaries[t.album_key], at: t.at });
         groups.get(t.album_key).tracks.push(t);
     });
-    R.groups = [...groups.values()];
+    // an album with saved tracks keeps its track list; the others show the report
+    const reports = (d.reports || []).filter(a => !groups.has(a.key));
+    reports.forEach(a => groups.set(a.key, { tracks: [], dr: a.dr, at: a.report_mtime, report: a }));
+    R.groups = [...groups.values()].sort((a, b) => b.at - a.at);
     R.count = d.count;
+    R.reports = reports.length;
     R.paint();
 };
 
@@ -374,24 +391,26 @@ A.reportRow = t => {
             h('strong', {}, `${t.number}. ${t.title}`),
             h('span', { class: 'muted small' }, 'from dr14.txt')));
 };
-A.openAlbum = async a => {
-    A.savedScroll = A.body ? A.body.scrollTop : 0;
+// One stored album in `page`'s detail pane: its saved tracks, or for a local
+// report the per-song values read from its dr14.txt.
+const openAlbum = async (page, a, backLabel) => {
+    page.savedScroll = page.body ? page.body.scrollTop : 0;
     const report = a.source === 'local' && !a.origin && a.report_dr !== null;
-    const seq = A.detailSeq = (A.detailSeq || 0) + 1;
+    const seq = page.detailSeq = (page.detailSeq || 0) + 1;
     const rows = report ? [h('p', { class: 'muted' }, 'Reading per-song DR from dr14.txt…')]
         : a.tracks.length ? a.tracks.map(A.trackRow) : [h('p', { class: 'muted' }, 'No saved track measurements.')];
     const list = h('div', { class: 'drrecent' }, rows);
-    K.clear(A.detail).append(
+    K.clear(page.detail).append(
         detailParent({ image: a.image, source: a.source, key: a.key, title: a.title,
             lines: [[a.artist, a.year, a.label].filter(Boolean).join(' · '), K.dr.basisText(a.dr)],
-            dr: a.dr, back: A.back, backLabel: 'Back to albums by DR' }),
+            dr: a.dr, back: page.back, backLabel }),
         list);
-    A.browse.hidden = true;
-    A.detail.hidden = false;
-    if (A.body) A.body.scrollTop = 0;
+    page.browse.hidden = true;
+    page.detail.hidden = false;
+    if (page.body) page.body.scrollTop = 0;
     if (report) {
         const d = await K.api(`/dr/library/album?key=${encodeURIComponent(a.key)}`);
-        if (seq !== A.detailSeq || A.detail.hidden) return;
+        if (seq !== page.detailSeq || page.detail.hidden) return;
         const reportRows = d.ok && d.album ? d.album.report_track_rows || [] : [];
         const fileCount = d.ok && d.album ? d.album.report_tracks : null;
         const songCount = d.ok && d.album ? d.album.track_count : null;
@@ -406,6 +425,7 @@ A.openAlbum = async a => {
                 : d.error || 'Could not read the track values from dr14.txt.') ]));
     }
 };
+A.openAlbum = a => openAlbum(A, a, 'Back to albums by DR');
 A.rankRow = (a, n) => {
     const sub = [a.artist, a.year, a.label].filter(Boolean).join(' · ');
     // where the figure comes from: another box's collection, or tracks heard there
