@@ -17,7 +17,7 @@
 const { h } = K;
 
 const P = {
-    id: 'qobuz', label: 'Qobuz', title: 'Qobuz search',
+    id: 'qobuz', label: 'Qobuz', title: 'Qobuz',
     noPullReload: true,        // main.js: a pull down here only scrolls up to the box
     optional: () => !!K.state.features.qobuz_search,
     status: null,              // /qobuz/status
