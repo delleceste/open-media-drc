@@ -985,6 +985,15 @@ it. Any other `$` text is sent as written. The JSON output schemas stay in
 fields the app reads. The kiosk keeps the last listening guide in browser
 storage; reopen a different album to see a changed prompt's effect.
 
+AI settings (Configuration → **AI settings**, or opened automatically by Ask AI
+or the listening guide while no provider is configured) choose the model from a
+list. In Claude account mode the entries are Claude Code aliases (`sonnet`,
+`opus`, `fable`, `haiku`), which resolve to the newest model of that tier on
+every call, so the list never needs refreshing; **Other…** accepts an exact
+model name to pin one. The model a call actually ran on is recorded in
+`<state_dir>/qobuz-ai-models.json`; when it changes, the next AI result shows a
+one-time notice (above the AI results, or as a toast in the listening guide).
+
 Keys are stored only on the server in `<state_dir>/qobuz-ai.json`, atomically
 written with mode `0600`, and never returned by the settings API or saved in
 browser storage. A blank key preserves the selected provider's saved key.

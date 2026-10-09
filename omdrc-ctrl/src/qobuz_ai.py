@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -22,8 +23,13 @@ from urllib.parse import urlsplit
 
 from qobuz_search import QobuzError, is_cd_quality
 
-DEFAULT_MODELS = {"openai": "gpt-5.4", "claude": "claude-sonnet-4-6",
-                  "claude_account": "claude-sonnet-4-6"}
+DEFAULT_MODELS = {"openai": "gpt-5.4", "claude": "claude-sonnet-5-5", "claude_account": "sonnet"}
+# The models offered in AI settings; any other exact name can still be typed.
+# Claude Code resolves an alias to the newest model of that tier on every
+# call, so the account list never goes stale. The API lists are full names.
+MODEL_CHOICES = {"claude_account": ["sonnet", "opus", "fable", "haiku"],
+                 "claude": ["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-haiku-5-5"],
+                 "openai": ["gpt-5.4"]}
 ENDPOINTS = {"openai": "https://api.openai.com/v1/responses",
              "claude": "https://api.anthropic.com/v1/messages"}
 MAX_BYTES = 2 * 1024 * 1024
@@ -242,6 +248,7 @@ def _claude_post(cfg, body, timeout, cancel=None):
         if len(stdout.encode()) > MAX_BYTES:
             raise AIError("The Claude account response was too large.")
         events = [json.loads(line) for line in stdout.splitlines() if line.strip().startswith("{")]
+        _note_model(cfg, next((e.get("model") for e in events if e.get("type") == "system"), ""))
         usage_status = _record_account_usage(stdout)
         result = next((event for event in reversed(events) if event.get("type") == "result"), {})
         if process.returncode != 0 or result.get("is_error") or not result:
@@ -307,6 +314,64 @@ def configuration(state_dir):
             "key": saved.get("key") or os.environ.get(env, ""), "state_dir": state_dir}
 
 
+def _model_label(name):
+    match = re.fullmatch(r"claude-([a-z]+)-(\d+)-(\d+)(?:-\d{8})?", name)
+    return f"Claude {match[1].title()} {match[2]}.{match[3]}" if match else name
+
+
+def _note_model(cfg, used):
+    """Remember the model a configured name ran on; a change is shown once."""
+    if not cfg.get("state_dir") or not isinstance(used, str) or not used.strip():
+        return
+    path = Path(cfg["state_dir"]) / "qobuz-ai-models.json"
+    with _settings_lock:
+        try:
+            seen = json.loads(path.read_text())
+            seen = seen if isinstance(seen, dict) else {}
+        except (OSError, ValueError):
+            seen = {}
+        key = cfg["provider"] + ":" + cfg["model"]
+        before = seen.get(key) if isinstance(seen.get(key), dict) else {}
+        if before.get("model") == used:
+            return
+        seen[key] = {"model": used, "previous": before.get("model", ""), "notice": True}
+        _write_json(path, seen)
+
+
+def _take_model_notice(cfg):
+    """The one-time text announcing a newly resolved model, or ''."""
+    if not cfg.get("state_dir"):
+        return ""
+    path = Path(cfg["state_dir"]) / "qobuz-ai-models.json"
+    with _settings_lock:
+        try:
+            seen = json.loads(path.read_text())
+            entry = seen[cfg["provider"] + ":" + cfg["model"]]
+        except (OSError, ValueError, KeyError, TypeError):
+            return ""
+        if not isinstance(entry, dict) or not entry.get("notice"):
+            return ""
+        entry["notice"] = False
+        _write_json(path, seen)
+    now, before = _model_label(str(entry.get("model"))), _model_label(str(entry.get("previous") or ""))
+    if not before:
+        return f"AI model \u201c{cfg['model']}\u201d is running {now}."
+    return f"New AI model: \u201c{cfg['model']}\u201d now runs {now} (previously {before})."
+
+
+def _write_json(path, data):
+    fd, name = tempfile.mkstemp(prefix="." + path.stem + "-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(data, stream)
+        os.replace(name, path)
+    except OSError:
+        pass
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
 def public_settings(state_dir):
     cfg = configuration(state_dir)
     ready = account_ready()
@@ -314,7 +379,8 @@ def public_settings(state_dir):
         usage = _account_usage
     return {"provider": cfg["provider"], "model": cfg["model"],
             "configured": ready if cfg["provider"] == "claude_account" else bool(cfg["key"]),
-            "account_ready": ready, "account_usage": usage, "defaults": DEFAULT_MODELS}
+            "account_ready": ready, "account_usage": usage, "defaults": DEFAULT_MODELS,
+            "choices": MODEL_CHOICES}
 
 
 def save_settings(state_dir, body):
@@ -367,6 +433,7 @@ def _post(cfg, body, timeout):
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise ValueError()
+        _note_model(cfg, data.get("model"))
         return data
     except urllib.error.HTTPError as error:
         # Do not surface provider bodies: they can contain account data or keys.
@@ -567,7 +634,7 @@ def listening_research(state_dir, album, tracks, post=None, cancel=None):
     return {"form": form or "song_collection", "overview": guide["overview"][:10000], "compositions": sections,
             "track_notes": notes, "composers": people("composers"),
             "performers": people("performers"), "sources": _sources(raw), "research_status": research_status,
-            "provider": cfg["provider"]}
+            "provider": cfg["provider"], "model_notice": _take_model_notice(cfg)}
 
 
 SELECTION_SCHEMA = {
@@ -736,5 +803,5 @@ def _recommend(cfg, catalog, prompt, filters, count, post, trace):
             "sort": "ai", "results": results, "count": len(results), "considered": len(candidates),
             "queries": searches, "labels_seen": [], "more": False, "unstreamable": 0,
             "enriched": len(results), "lowered": 0, "scan": 0,
-            "ai": {"provider": provider, "summary": str(picks.get("summary", ""))[:2000],
+            "ai": {"provider": provider, "model_notice": _take_model_notice(cfg), "summary": str(picks.get("summary", ""))[:2000],
                    "requested": count, "trace": trace}, "exclude_cd": bool(filters.get("exclude_cd"))}

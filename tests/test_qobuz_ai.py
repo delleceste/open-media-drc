@@ -313,6 +313,29 @@ class AITest(unittest.TestCase):
                 self.assertEqual(sent[field], "Answer in Italian.")
                 self.assertEqual(sent["model"], "m")
 
+    def test_a_newly_resolved_model_is_announced_once(self):
+        cfg = {"provider": "claude_account", "model": "sonnet", "state_dir": self.root}
+        ai._note_model(cfg, "claude-sonnet-5-5")
+        self.assertEqual(ai._take_model_notice(cfg), "AI model \u201csonnet\u201d is running Claude Sonnet 5.5.")
+        self.assertEqual(ai._take_model_notice(cfg), "")
+        ai._note_model(cfg, "claude-sonnet-5-5")
+        self.assertEqual(ai._take_model_notice(cfg), "")
+        ai._note_model(cfg, "claude-sonnet-6-0-20270301")
+        self.assertIn("now runs Claude Sonnet 6.0 (previously Claude Sonnet 5.5)", ai._take_model_notice(cfg))
+        self.assertEqual(ai._take_model_notice({**cfg, "model": "opus"}), "")
+        self.assertEqual(ai.public_settings(self.root)["choices"]["claude_account"][0], "sonnet")
+
+    def test_account_mode_records_the_model_claude_code_resolved(self):
+        process = MagicMock(returncode=0)
+        process.communicate.return_value = ("\n".join(json.dumps(e) for e in (
+            {"type": "system", "subtype": "init", "model": "claude-opus-5-5"},
+            {"type": "result", "structured_output": {"picks": []}, "is_error": False})), "")
+        cfg = {"provider": "claude_account", "model": "opus", "state_dir": self.root}
+        with patch.object(ai, "_claude_binary", return_value="/bin/claude"), patch.object(ai.subprocess, "Popen", return_value=process):
+            ai._claude_post(cfg, {"tools": [{"name": "select_albums", "input_schema": ai.SELECTION_SCHEMA}],
+                                  "messages": [{"content": "Select IDs"}]}, 30)
+        self.assertIn("Claude Opus 5.5", ai._take_model_notice(cfg))
+
     def run_recommend_with_real_post(self):
         cat, _ = catalog([raw("good")])
         return ai.recommend(self.root, cat, "Music", {})

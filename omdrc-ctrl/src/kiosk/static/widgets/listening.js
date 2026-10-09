@@ -298,6 +298,7 @@ G.research = async () => {
         if (serial !== G.serial || !G.active) return;
         if (!answer.ok) throw new Error(answer.error || 'AI research failed');
         G.guide = answer;
+        if (answer.model_notice) K.toast(answer.model_notice);
         G.cacheResult(cacheKey, answer, materialKey);
         G.selectPlaying();
     } catch (error) {

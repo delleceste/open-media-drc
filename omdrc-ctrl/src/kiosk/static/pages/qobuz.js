@@ -953,7 +953,22 @@ P.aiSettings = K.openAISettings = async (required = false) => {
         h('option', { value: 'claude_account' }, 'Claude account (server login)'),
         h('option', { value: 'claude' }, 'Claude API'), h('option', { value: 'openai' }, 'OpenAI API'));
     provider.value = d.provider;
-    const model = h('input', { type: 'text', value: d.model, 'aria-label': 'Model', autocomplete: 'off' });
+    // Account aliases follow the newest model of their tier, so the list never needs refreshing.
+    const tiers = { sonnet: 'Sonnet (latest) · balanced, recommended', opus: 'Opus (latest) · most thorough, slower, uses limits faster',
+        fable: 'Fable (latest) · top tier', haiku: 'Haiku (latest) · fastest, lightest' };
+    const model = h('select', { 'aria-label': 'Model' });
+    const custom = h('input', { type: 'text', 'aria-label': 'Exact model name', autocomplete: 'off', placeholder: 'Exact model name' });
+    const modelHint = h('span', { class: 'small muted' });
+    const paintModels = value => {
+        const list = d.choices?.[provider.value] || [];
+        K.clear(model).append(...list.map(m => h('option', { value: m }, tiers[m] || m)), h('option', { value: '' }, 'Other…'));
+        model.value = list.includes(value) ? value : '';
+        custom.value = list.includes(value) ? '' : value;
+        custom.hidden = model.value !== '';
+        modelHint.textContent = provider.value === 'claude_account'
+            ? '“Latest” moves to each new model of that tier automatically; the next AI research tells you when it does.' : '';
+    };
+    model.onchange = () => { custom.hidden = model.value !== ''; if (!custom.hidden) custom.focus(); };
     const key = h('input', { type: 'password', 'aria-label': 'API key', autocomplete: 'off',
         placeholder: d.configured ? 'Key configured; leave blank to keep it' : 'Paste your API key' });
     const keyLabel = h('label', {}, 'API key', key);
@@ -977,12 +992,13 @@ P.aiSettings = K.openAISettings = async (required = false) => {
                 : 'Claude Code usage appears here after an AI request.'));
         }
     };
-    provider.onchange = () => { model.value = d.defaults[provider.value]; key.value = ''; key.placeholder = 'API key (blank keeps any saved key)'; paintAccount(); };
+    provider.onchange = () => { paintModels(d.defaults[provider.value]); key.value = ''; key.placeholder = 'API key (blank keeps any saved key)'; paintAccount(); };
+    paintModels(d.model);
     paintAccount();
     const error = h('div', { class: 'errbox', hidden: true });
     const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
         save.disabled = true;
-        const r = await P.aiPost('/qobuz/ai/settings', { provider: provider.value, model: model.value.trim(), key: key.value.trim() });
+        const r = await P.aiPost('/qobuz/ai/settings', { provider: provider.value, model: (model.value || custom.value).trim(), key: key.value.trim() });
         save.disabled = false;
         if (!r.ok) { error.hidden = false; error.textContent = r.error; return; }
         P.paintAIIcon(r);
@@ -992,7 +1008,7 @@ P.aiSettings = K.openAISettings = async (required = false) => {
         h('div', { class: 'sheet qz-ai-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'AI settings' }, h('h2', {}, 'AI settings'),
             required ? h('p', {}, 'Configure an AI provider to use Ask AI: use the server’s Claude account login, or an API provider with a key. You can also change these settings in Configuration.') : null,
             h('p', { class: 'small muted' }, 'Ask AI researches reviews and finds playable Qobuz releases. Your request and album candidates are sent to the selected provider.'),
-            h('label', {}, 'Provider', provider), h('label', {}, 'Model', model), keyLabel, note, usage,
+            h('label', {}, 'Provider', provider), h('label', {}, 'Model', model, custom, modelHint), keyLabel, note, usage,
             h('details', { class: 'small' },
                 h('summary', {}, 'How AI search works'),
                 h('p', {}, 'Web research + Qobuz catalog + AI reasoning. The selected model researches reviews using web search, then proposes Qobuz searches. It can also draw on its learned knowledge; answers are not based exclusively on web pages.'),
@@ -1177,6 +1193,7 @@ P.paintResults = () => {
     if (d.local_error) kids.push(h('div', { class: 'errbox warn small' }, `Local collection unavailable: ${d.local_error}`));
     if (d.qobuz_error) kids.push(h('div', { class: 'errbox warn small' }, `Qobuz results unavailable: ${d.qobuz_error}`));
     if (d.ai) {
+        if (d.ai.model_notice) kids.push(h('p', { class: 'small qz-ai-model-notice' }, d.ai.model_notice));
         if (d.ai.summary) kids.push(h('p', { class: 'small qz-ai-summary' }, d.ai.summary));
         if (d.count < d.ai.requested) kids.push(h('p', { class: 'small muted' }, `Found ${d.count} verified releases of ${d.ai.requested} requested.`));
         if (P.aiTrace?.length) kids.push(P.aiTraceBlock());
