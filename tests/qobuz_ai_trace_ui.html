@@ -28,9 +28,11 @@
         const progress = runningSummary.querySelector('[role=progressbar]');
         check(progress && runningSummary.classList.contains('qz-ai-running'), 'Estimated progress is visible while running');
         let badge = () => P.results.querySelector('.qz-ai-trace > details > summary .qz-ai-usage');
-        check(badge()?.textContent === `AI usage: 42% until ${resetTime(fiveHourReset)}` && badge().classList.contains('low'),
+        check(badge()?.textContent === `AI usage: 42% → ${resetTime(fiveHourReset)}` && badge().classList.contains('low'),
             'Five-hour usage shows its local reset time and starts green below 50%');
         const heading = runningSummary.querySelector('.qz-ai-heading');
+        check(heading.textContent === 'AI' && heading.querySelector('svg.ticon path'),
+            'AI heading uses the chat icon');
         check(badge().getBoundingClientRect().top >= heading.getBoundingClientRect().bottom,
             'Usage moves beneath the heading during search');
         check(progress.getBoundingClientRect().width > 60 &&
@@ -52,18 +54,18 @@
         check(!finishedSummary.classList.contains('qz-ai-running') &&
             Math.abs(badge().getBoundingClientRect().top - finishedSummary.querySelector('.qz-ai-heading').getBoundingClientRect().top) < 2,
             'Usage returns beside the heading after search');
-        check(badge()?.textContent === `AI usage: 50% until ${resetTime(fiveHourReset)}` && badge().classList.contains('medium'),
+        check(badge()?.textContent === `AI usage: 50% → ${resetTime(fiveHourReset)}` && badge().classList.contains('medium'),
             'Usage turns orange at 50%');
         const orange = getComputedStyle(badge()).color;
         check(orange !== green, 'Orange usage is visually distinct from green');
         P.aiTrace[0].account_usage.windows.seven_day = { used_percent: 80, resets_at: 1791871200 };
         P.paintError('A later stage timed out');
-        check(badge()?.textContent === `AI usage: 50% until ${resetTime(fiveHourReset)} [7d 80%]` &&
+        check(badge()?.textContent === `AI usage: 50% → ${resetTime(fiveHourReset)} [7d 80%]` &&
             badge().classList.contains('high'), 'Five-hour reset time and seven-day usage are shown');
         P.aiTrace[0].account_usage.windows.five_hour.used_percent = 80;
         P.aiTrace[0].account_usage.windows.seven_day.used_percent = 55;
         P.paintError('A later stage timed out');
-        check(badge()?.textContent === `AI usage: 80% until ${resetTime(fiveHourReset)} [7d 55%]` &&
+        check(badge()?.textContent === `AI usage: 80% → ${resetTime(fiveHourReset)} [7d 55%]` &&
             badge().classList.contains('high'),
             'Both windows update after research and the higher five-hour usage turns red');
         check(badge().getBoundingClientRect().right <= P.results.getBoundingClientRect().right,
@@ -81,7 +83,7 @@
         const album = P.results.querySelector('#album-result');
         const trace = P.results.querySelector('.qz-ai-trace');
         check(album.compareDocumentPosition(trace) & Node.DOCUMENT_POSITION_FOLLOWING,
-            'AI prompt and replies follow the results');
+            'AI chat panel follows the results');
         check(!trace.querySelector('details').open, 'Trace stays minimized after results');
         check(trace.querySelector('details').contains(trace.querySelector('.qz-ai-user-prompt')),
             'User prompt remains inside the trace after results');

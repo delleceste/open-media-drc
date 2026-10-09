@@ -1174,13 +1174,13 @@ P.aiTraceBlock = () => {
     const usageLabel = 'AI usage: ' + windows.map(({ key, label, value, resetsAt }, index) => {
         const date = key === 'five_hour' && Number.isFinite(resetsAt) && resetsAt > 0
             ? new Date(resetsAt * 1000) : null;
-        const time = date ? ` until ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '';
+        const time = date ? ` → ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '';
         const labelWithReset = `${key === 'five_hour' ? '' : `${label} `}${value}%${time}`;
         return index ? `[${labelWithReset}]` : labelWithReset;
     }).join(' ');
     return h('div', { class: 'qz-ai-trace' },
         h('details', {}, h('summary', { class: P.aiRunning ? 'qz-ai-running' : '' },
-            h('span', { class: 'qz-ai-heading' }, 'AI prompt and replies'),
+            h('span', { class: 'qz-ai-heading' }, 'AI', K.tIcon('chat')),
             P.aiRunning ? h('span', { class: 'qz-ai-estimate', role: 'progressbar',
                 'aria-label': 'Estimated AI search progress',
                 'aria-valuetext': 'Estimated progress; repeats until the AI replies',

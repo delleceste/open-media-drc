@@ -940,11 +940,11 @@ evidence are insufficient; an absent supporting link is explicitly flagged.
 Hi-Res specifications do not establish engineering quality, and a review of
 one mastering may not apply to another edition.
 
-The Results view starts **AI prompt and replies** collapsed, with your request
+The Results view starts the **AI chat** panel collapsed, with your request
 and the system prompt inside it. When results are ready, the panel follows the
 album list; both docked strips leave enough room to scroll it fully into view.
 The collapsed header shows Claude's five-hour usage and its local reset time alongside
-the seven-day percentage, for example `AI usage: 80% until 14:00 [7d 55%]`, refreshed after each search. Its colour follows
+the seven-day percentage, for example `AI usage: 80% → 14:00 [7d 55%]`, refreshed after each search. Its colour follows
 the higher percentage: green below 50%, orange below 80%, red from 80%. An estimated
 progress bar advances and restarts in the collapsed header while research runs.
 The panel includes each rendered prompt,

@@ -11,6 +11,8 @@ const SHAPES = {
     maximize: [['path', { d: 'M4 9 V4 H9 M15 4 H20 V9 M20 15 V20 H15 M9 20 H4 V15' }]],
     clear: [['path', { d: 'M20 3 L12 11 M10 9 L15 14 L12 21 L3 12 Z M7 11 L13 17 M6 15 L9 12 M9 18 L12 15' }]],
     search: [['circle', { cx: 10, cy: 10, r: 6 }], ['path', { d: 'M14.5 14.5 L21 21' }]],
+    chat: [['path', { d: 'M4 4 H14 A2 2 0 0 1 16 6 V12 A2 2 0 0 1 14 14 H8 L4 17 V14 A2 2 0 0 1 2 12 V6 A2 2 0 0 1 4 4 Z' }],
+        ['path', { d: 'M10 9 H20 A2 2 0 0 1 22 11 V17 A2 2 0 0 1 20 19 H18 V22 L14 19 H10 A2 2 0 0 1 8 17 V11 A2 2 0 0 1 10 9 Z' }]],
     play: [['path', { d: 'M8 5.5 L18.5 12 L8 18.5 Z' }]],
     pause: [['path', { d: 'M9 6 V18 M15 6 V18' }]],
     stop: [['rect', { x: 6.5, y: 6.5, width: 11, height: 11, rx: 1.8 }]],

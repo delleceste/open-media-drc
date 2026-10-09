@@ -963,6 +963,8 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-ai-trace { margin: .75rem 0; padding: .65rem; border: 1px solid var(--border); border-radius: .5rem; }
 .qz-ai-trace summary { cursor: pointer; font-weight: 600; }
 .qz-ai-trace > details > summary { display: flex; align-items: center; gap: .4rem; }
+.qz-ai-heading { display: inline-flex; align-items: center; gap: .22rem; }
+.qz-ai-heading .ticon { width: 1.15em; height: 1.15em; }
 .qz-ai-trace > details > summary::before { content: '▸'; }
 .qz-ai-trace > details[open] > summary::before { content: '▾'; }
 .qz-ai-trace > details > summary.qz-ai-running { display: grid; grid-template-columns: auto auto minmax(2rem, 1fr);
