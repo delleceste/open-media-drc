@@ -12,20 +12,24 @@
     const check = (condition, message) => { if (!condition) throw Error(message); };
     try {
         const P = K.pages.find(page => page.id === 'qobuz');
+        const resetTime = seconds => new Date(seconds * 1000).toLocaleTimeString(undefined,
+            { hour: '2-digit', minute: '2-digit', hour12: false });
+        const fiveHourReset = 1791540000;
         P.results = document.getElementById('results');
         P.results.style.width = '340px';
         P.aiUserPrompt = 'The Wire recording of the month';
         P.aiTrace = [{ stage: 'Web research', prompt: 'User request: The Wire <scr' + 'ipt>alert(1)</scr' + 'ipt>',
             system_prompt: 'Research music.', reply: '', activity: 'WebSearch: {"query":"The Wire"}',
             usage: { input_tokens: 13, output_tokens: 21 },
-            account_usage: { windows: { five_hour: { used_percent: 42, resets_at: 1791540000 } } } }];
+            account_usage: { windows: { five_hour: { used_percent: 42, resets_at: fiveHourReset } } } }];
         P.aiRunning = true;
         P.paintWorking('Waiting for AI reply…');
         const runningSummary = P.results.querySelector('.qz-ai-trace > details > summary');
         const progress = runningSummary.querySelector('[role=progressbar]');
         check(progress && runningSummary.classList.contains('qz-ai-running'), 'Estimated progress is visible while running');
         let badge = () => P.results.querySelector('.qz-ai-trace > details > summary .qz-ai-usage');
-        check(badge()?.textContent === 'AI usage: 5h 42%' && badge().classList.contains('low'), 'Five-hour usage starts green below 50%');
+        check(badge()?.textContent === `AI usage: 42% until ${resetTime(fiveHourReset)}` && badge().classList.contains('low'),
+            'Five-hour usage shows its local reset time and starts green below 50%');
         const heading = runningSummary.querySelector('.qz-ai-heading');
         check(badge().getBoundingClientRect().top >= heading.getBoundingClientRect().bottom,
             'Usage moves beneath the heading during search');
@@ -48,18 +52,22 @@
         check(!finishedSummary.classList.contains('qz-ai-running') &&
             Math.abs(badge().getBoundingClientRect().top - finishedSummary.querySelector('.qz-ai-heading').getBoundingClientRect().top) < 2,
             'Usage returns beside the heading after search');
-        check(badge()?.textContent === 'AI usage: 5h 50%' && badge().classList.contains('medium'), 'Usage turns orange at 50%');
+        check(badge()?.textContent === `AI usage: 50% until ${resetTime(fiveHourReset)}` && badge().classList.contains('medium'),
+            'Usage turns orange at 50%');
         const orange = getComputedStyle(badge()).color;
         check(orange !== green, 'Orange usage is visually distinct from green');
-        P.aiTrace[0].account_usage.windows.seven_day = { used_percent: 80 };
+        P.aiTrace[0].account_usage.windows.seven_day = { used_percent: 80, resets_at: 1791871200 };
         P.paintError('A later stage timed out');
-        check(badge()?.textContent === 'AI usage: 5h 50% [7d 80%]' && badge().classList.contains('high'),
-            'Both windows are shown and the higher seven-day usage turns red');
+        check(badge()?.textContent === `AI usage: 50% until ${resetTime(fiveHourReset)} [7d 80%]` &&
+            badge().classList.contains('high'), 'Five-hour reset time and seven-day usage are shown');
         P.aiTrace[0].account_usage.windows.five_hour.used_percent = 80;
         P.aiTrace[0].account_usage.windows.seven_day.used_percent = 55;
         P.paintError('A later stage timed out');
-        check(badge()?.textContent === 'AI usage: 5h 80% [7d 55%]' && badge().classList.contains('high'),
+        check(badge()?.textContent === `AI usage: 80% until ${resetTime(fiveHourReset)} [7d 55%]` &&
+            badge().classList.contains('high'),
             'Both windows update after research and the higher five-hour usage turns red');
+        check(badge().getBoundingClientRect().right <= P.results.getBoundingClientRect().right,
+            'Usage remains inside the result panel at phone width');
         check(getComputedStyle(badge()).color !== orange, 'Red usage is visually distinct from orange');
         check(P.results.textContent.includes('A review was found.'), 'Reply remains visible after error');
         check(P.results.textContent.includes('13 input, 21 output'), 'Request usage visible');

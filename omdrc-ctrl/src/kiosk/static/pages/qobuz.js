@@ -1166,12 +1166,18 @@ P.aiTraceBlock = () => {
     const userPrompt = P.aiUserPrompt || P.last?.query || P.input?.value?.trim() || '';
     const reported = [...P.aiTrace].reverse().find(item => item.account_usage)?.account_usage || P.aiAccountUsage;
     const windows = [['five_hour', '5h'], ['seven_day', '7d']].map(([key, label]) =>
-        ({ label, value: reported?.windows?.[key]?.used_percent }))
+        ({ key, label, value: reported?.windows?.[key]?.used_percent,
+            resetsAt: reported?.windows?.[key]?.resets_at }))
         .filter(({ value }) => Number.isFinite(value) && value >= 0 && value <= 100);
     const percentage = windows.length ? Math.max(...windows.map(({ value }) => value)) : null;
     const level = percentage === null ? '' : percentage < 50 ? 'low' : percentage < 80 ? 'medium' : 'high';
-    const usageLabel = 'AI usage: ' + windows.map(({ label, value }, index) =>
-        index ? `[${label} ${value}%]` : `${label} ${value}%`).join(' ');
+    const usageLabel = 'AI usage: ' + windows.map(({ key, label, value, resetsAt }, index) => {
+        const date = key === 'five_hour' && Number.isFinite(resetsAt) && resetsAt > 0
+            ? new Date(resetsAt * 1000) : null;
+        const time = date ? ` until ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}` : '';
+        const labelWithReset = `${key === 'five_hour' ? '' : `${label} `}${value}%${time}`;
+        return index ? `[${labelWithReset}]` : labelWithReset;
+    }).join(' ');
     return h('div', { class: 'qz-ai-trace' },
         h('details', {}, h('summary', { class: P.aiRunning ? 'qz-ai-running' : '' },
             h('span', { class: 'qz-ai-heading' }, 'AI prompt and replies'),
