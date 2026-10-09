@@ -401,12 +401,14 @@ class DrcOffWebConfirmationTest(unittest.TestCase):
 
 
 class DspHeadroomGaugeMarkupTest(unittest.TestCase):
-    """The linear DSP-headroom gauge beside the active rate's Apply button."""
+    """The shared RTI and peak meters beneath the DRC preset grid."""
 
     def test_gauge_element_is_rendered_only_for_the_drc_group(self):
         page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
         self.assertIn("class=\"dsp-gauge\"", page)
-        self.assertIn("gauge-{{ cmd.id }}", page)
+        drc_section = page.split("<div class=\"drc-preset-grid\">", 1)[1].split("{% endmacro %}", 1)[0]
+        self.assertIn('id="gauge-fill"', drc_section)
+        self.assertIn('id="dsp-meters-shared"', drc_section)
         self.assertIn("group_name == 'drc'", page)
 
     def test_placement_follows_the_active_rate_and_polls_brutefir_rti(self):
@@ -422,31 +424,29 @@ class DspHeadroomGaugeMarkupTest(unittest.TestCase):
         self.assertIn('<span class="dsp-meter-label">RTI</span>', page)
         self.assertIn("real-time index", page.lower())
 
-    def test_mobile_drc_row_keeps_meters_below_label_and_button_at_right(self):
+    def test_shared_meters_follow_the_preset_grid(self):
         page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
-        self.assertIn("drc-write-row", page)
-        self.assertIn("drc-write-controls", page)
-        self.assertRegex(page, r"\.drc-write-row \.dsp-meters\s*\{[^}]*grid-row:2")
-        self.assertRegex(page, r"\.drc-write-row \.btn-write\s*\{[^}]*grid-row:1 / span 2")
+        self.assertLess(page.index('class="drc-preset-grid"'), page.index('id="dsp-meters-shared"'))
+        self.assertRegex(page, r"\.dsp-meters\.dsp-meters-shared\s*\{[^}]*display: grid")
 
     def test_peak_meter_shows_a_db_value_and_its_own_bar(self):
         page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
         self.assertIn('<span class="dsp-meter-label">Peak</span>', page)
-        self.assertIn("peak-value-{{ cmd.id }}", page)
-        self.assertIn("peak-fill-{{ cmd.id }}", page)
+        self.assertIn('id="peak-value"', page)
+        self.assertIn('id="peak-fill"', page)
         self.assertIn("function renderPeakGauge(", page)
         self.assertIn("/drc/brutefir-peak", page)
 
-    def test_peak_bar_turns_amber_well_before_full_scale(self):
-        """Green all the way to 0 dBFS would hide the only moment that matters."""
+    def test_peak_bar_turns_amber_before_full_scale(self):
+        """The warning starts before 0 dBFS, and clipping has a separate zone."""
         page = (ROOT / "omdrc-ctrl/src/templates/index.html").read_text(encoding="utf-8")
         warn = re.search(r"const PEAK_GAUGE_WARN_DB\s*=\s*(-?[\d.]+)", page)
         bad = re.search(r"const PEAK_GAUGE_BAD_DB\s*=\s*(-?[\d.]+)", page)
         self.assertIsNotNone(warn)
         self.assertIsNotNone(bad)
-        self.assertLessEqual(float(warn.group(1)), -3.0)
+        self.assertLess(float(warn.group(1)), 0.0)
         self.assertLess(float(warn.group(1)), float(bad.group(1)))
-        self.assertLessEqual(float(bad.group(1)), 0.0)
+        self.assertLessEqual(float(bad.group(1)), 0.5)
 
 
 

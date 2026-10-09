@@ -23,6 +23,7 @@ SPEC = importlib.util.spec_from_file_location("omdrc_kiosk_app", SRC / "app.py")
 APP = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(APP)
+import kiosk
 
 
 class KioskTests(unittest.TestCase):
@@ -32,9 +33,12 @@ class KioskTests(unittest.TestCase):
         APP.COMMANDS = [{"id": "drc_off", "what": "OFF", "group": "drc", "type": "WRITE",
                          "button": "Apply", "confirm": "yes", "cmd": "/bin/secret --flag"}]
         APP.CMD_MAP = {c["id"]: c for c in APP.COMMANDS}
+        self._saved_kiosk_commands = kiosk._commands
+        kiosk._commands = lambda: APP.COMMANDS
 
     def tearDown(self):
         APP.COMMANDS, APP.CMD_MAP = self._saved
+        kiosk._commands = self._saved_kiosk_commands
 
     def test_shell_is_served_and_lists_existing_scripts(self):
         page = self.client.get("/k/")

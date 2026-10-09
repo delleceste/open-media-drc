@@ -125,6 +125,7 @@ class CMakeBrowserInstallTest(unittest.TestCase):
     def install(self, **kwargs):
         return self.command("cmake", "--install", str(self.build), **kwargs)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "ALSA install runs on Linux only")
     def test_preserves_original_and_is_idempotent(self):
         path = self.home / ".asoundrc"
         original = '# Custom settings\ndefaults.pcm.card 0\npcm.custom { type null }\n'
@@ -140,6 +141,7 @@ class CMakeBrowserInstallTest(unittest.TestCase):
         self.assertEqual(backup.read_text(), original)
         self.assertTrue((self.prefix / "etc/open-media-drc/browser-alsa.conf").is_file())
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "ALSA install runs on Linux only")
     def test_existing_xdg_file_gets_last_override(self):
         old = self.home / ".asoundrc"
         old.write_text('defaults.pcm.card 0\n')

@@ -37,11 +37,12 @@ the loopback is snd-aloop, a kernel ring buffer, while on FreeBSD it is
 virtual_oss, a userspace mixer with its own format conversion and resampler.
 Those elements sit in the audible path and have never been byte-verified.
 
-A DRC-route verdict is only meaningful when the convolver is a pass-through,
-so the route refuses to run unless the loaded filter is a dirac pulse at 0 dB
-(the shipped `flat` geometry) and every rate in the chain matches the
-material.  It then re-reads the chain while audio is flowing and records
-whether MPD's output rate and the loopback's rate agreed.
+A source-byte DRC-route verdict requires a dirac pulse at 0 dB and matching
+rates throughout the chain. The shipped `flat` geometry applies 8 dB of
+attenuation, so use `--reference capture` with the normal filter, or load a
+separate zero-attenuation identity config for a source verdict. The runner
+re-reads the chain while audio is flowing and records whether MPD's output
+rate and the loopback's rate agreed.
 
 Progress grammar
 ================
@@ -964,8 +965,9 @@ def assert_drc_route(material: dict | None, reference: str = "source",
         if not identity and reference == "source":
             blocking += reasons + [
                 "the loaded filter is not a pass-through, so a byte verdict "
-                "against the source is meaningless. Switch to the flat "
-                "geometry (`drc.sh geometry flat`) and restart the chain."]
+                "against the source is meaningless. Use `--reference capture` "
+                "for this filter, or load a dirac pulse at 0 dB for a source "
+                "verdict (the shipped flat geometry has 8 dB attenuation)."]
     elif chain["brutefir_rate"] is not None:
         blocking.append("brutefir is running but its config could not be read "
                         "from its command line")
@@ -1107,9 +1109,10 @@ def main() -> int:
                    help="which path to the DAC to tap: 'direct' is MPD "
                         "straight to the raw device (the chain must be down); "
                         "'drc' is MPD -> loopback -> brutefir -> DAC, the path "
-                        "music actually takes. The DRC route requires a "
-                        "pass-through filter (the flat geometry) and a chain "
-                        "started at the material's own rate.")
+                        "music actually takes. A source verdict requires a "
+                        "zero-attenuation dirac filter and a chain started at "
+                        "the material's own rate; --reference capture accepts "
+                        "the normal filter.")
     p.add_argument("--input", help="WAV/FLAC to verify (not used by --source live)")
     p.add_argument("--out", required=True, help="artifact prefix")
     p.add_argument("--card", default=None,

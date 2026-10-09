@@ -789,7 +789,9 @@ class PanelTest(unittest.TestCase):
     def test_the_shipped_config_parses(self):
         import configparser
         cfg = configparser.ConfigParser()
-        cfg.read(SRC / "commands.conf.in")
+        template = (SRC / "commands.conf.in").read_text()
+        cfg.read_string(template.replace("@DR_SYNC_REPO_LINE@", "# no DR sync repository")
+                              .replace("@DR_SYNC_BOX_LINE@", "# default box name"))
         groups = qs.parse_labels(cfg["qobuz_search"]["labels"])
         self.assertIn("Pentatone", [g.name for g in groups])
         self.assertEqual(len(groups), len(qs.parse_labels(qs.DEFAULT_LABELS)))

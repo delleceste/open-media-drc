@@ -150,12 +150,13 @@ class IdentityGuard(unittest.TestCase):
         path.write_text(text)
         return path
 
-    def test_shipped_flat_geometry_is_a_pass_through(self):
+    def test_shipped_flat_geometry_has_attenuation(self):
         for rate in (44100, 48000, 88200, 96000, 192000):
             conf = ROOT / f"configs/flat/brutefir-{rate}.conf"
             with self.subTest(rate=rate):
                 ok, why = BP.conf_is_identity(conf)
-                self.assertTrue(ok, why)
+                self.assertFalse(ok)
+                self.assertTrue(any("attenuation 8.0 dB" in reason for reason in why), why)
 
     def test_room_filter_is_refused(self):
         ok, why = BP.conf_is_identity(self.conf('''
@@ -186,7 +187,12 @@ class RouteGuard(unittest.TestCase):
     """assert_drc_route refuses; it never lets a bad run reach a verdict."""
 
     def setUp(self):
-        self.flat = ROOT / "configs/flat/brutefir-44100.conf"
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.flat = Path(self.tmp.name) / "flat/brutefir-44100.conf"
+        self.flat.parent.mkdir()
+        self.flat.write_text('coeff "c-l" { filename: "dirac pulse"; attenuation: 0.0; };\n'
+                             'coeff "c-r" { filename: "dirac pulse"; attenuation: 0.0; };\n')
         unittest.mock.patch.object(
             BP, "drc_script", lambda: "/usr/local/bin/omdrc").start()
         self.addCleanup(unittest.mock.patch.stopall)
@@ -215,7 +221,7 @@ class RouteGuard(unittest.TestCase):
         room.write_text('coeff "c" { filename: "L.raw"; attenuation: 0.0; };')
         with self.assertRaises(SystemExit) as caught:
             self.route(STATUS_MATCHED, room, {"rate": 44100})
-        self.assertIn("geometry flat", str(caught.exception))
+        self.assertIn("--reference capture", str(caught.exception))
 
     def test_material_rate_below_the_chain_rate_is_refused(self):
         """44.1 kHz material into a 96 kHz chain: MPD or the loopback resamples."""
@@ -259,7 +265,7 @@ class GeometryProvenance(unittest.TestCase):
              unittest.mock.patch.object(BP, "running_brutefir_conf",
                                         lambda: flat), \
              unittest.mock.patch.object(BP, "say", said.append):
-            chain = BP.assert_drc_route({"rate": 44100})
+            chain = BP.assert_drc_route({"rate": 44100}, reference="capture")
         self.assertEqual(chain["geometry_running"], "flat")
         self.assertEqual(said, [])          # they agree here: nothing to say
 

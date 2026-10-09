@@ -271,12 +271,14 @@ class StatusRateLabel(unittest.TestCase):
         self.assertIn("Attenuation:      5.6 dB (applied)", out)
         self.assertNotIn("from configuration", out)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux status output")
     def test_native_mode_is_a_bare_mismatch(self):
         line = self._status("192000")
         self.assertIn("MPD 44100 Hz != brutefir 192000 Hz", line)
         self.assertIn("[MISMATCH]", line)
         self.assertNotIn("deliberate", line)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux status output")
     def test_resamp_mode_says_the_resample_is_deliberate(self):
         line = self._status("resamp")
         self.assertIn("MISMATCH", line)
