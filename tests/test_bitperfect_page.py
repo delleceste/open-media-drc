@@ -242,7 +242,7 @@ class PageTest(unittest.TestCase):
         fakebin = self.tmp / "fakebin"
         fakebin.mkdir(exist_ok=True)
         pgrep = fakebin / "pgrep"
-        pgrep.write_text(f"#!/bin/sh\nexit {0 if found else 1}\n")
+        pgrep.write_text(f"#!/bin/sh\n[ \"$2\" = brutefir ] || exit 1\nexit {0 if found else 1}\n")
         pgrep.chmod(0o755)
         return {**os.environ, "PATH": f"{fakebin}:{os.environ['PATH']}"}
 
@@ -262,17 +262,21 @@ class PageTest(unittest.TestCase):
                          "a refused run must not leave a verdict behind")
 
     def test_allow_drc_overrides_the_refusal(self):
-        """The guard is a guard, not a wall: an operator who knows what the
-        DRC path is may still want the capture."""
-        wav = self.music / "t.wav"
-        counter_wav(wav)
-        r = subprocess.run(
-            [sys.executable, str(ROOT / "scripts/bitperfect_runner.py"),
-             "--source", "mpd", "--input", str(wav), "--out", str(self.tmp / "y"),
-             "--allow-drc"], capture_output=True, text=True,
-            env=self._fake_pgrep(True))
-        self.assertNotIn("not bit-perfect by design",
-                         (r.stdout + r.stderr).lower())
+        """Reach material loading without touching a real renderer or MPD."""
+        class ReachedMaterial(Exception):
+            pass
+
+        argv = ["bitperfect_runner.py", "--source", "mpd", "--input",
+                str(self.music / "t.wav"), "--out", str(self.tmp / "y"), "--allow-drc"]
+        with mock.patch.object(RUNNER, "discover", return_value={"os": "linux"}), \
+             mock.patch.object(RUNNER, "brutefir_running", return_value=True), \
+             mock.patch.object(RUNNER, "dac_busy", return_value=None), \
+             mock.patch.object(RUNNER, "RendererArbiter") as arbiter, \
+             mock.patch.object(RUNNER, "load_material", side_effect=ReachedMaterial), \
+             mock.patch.object(sys, "argv", argv):
+            with self.assertRaises(ReachedMaterial):
+                RUNNER.main()
+        arbiter.assert_called_once_with("mpd")
 
     def test_readiness_blocks_while_brutefir_runs(self):
         manager = APP._bitperfect()

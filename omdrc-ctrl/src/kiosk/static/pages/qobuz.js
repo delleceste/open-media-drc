@@ -477,6 +477,22 @@ P.refreshStatus = async () => {
     P.paintBanner();
 };
 
+P.startRenderer = async () => {
+    if (P.startingRenderer) return;
+    P.startingRenderer = true;
+    P.startError = null;
+    P.paintBanner();
+    const busy = K.busy('Starting upmpdcli…');
+    const d = await K.api('/qconnect/switch', { json: { target: 'upmpdcli' }, timeout: 90000 });
+    busy.done();
+    P.startingRenderer = false;
+    if (!d.ok) {
+        P.startError = d.error || 'Could not start upmpdcli.';
+        K.toast(P.startError, 'error');
+    } else K.toast('upmpdcli started');
+    await P.refreshStatus();
+};
+
 K.qobuzBusy = () => !!P.request;     // a search running: main.js waits with a reload
 P.usable = () => !!(P.status && P.status.ok && P.status.enabled && P.status.renderer);
 
@@ -487,8 +503,12 @@ P.paintBanner = () => {
     else if (!s.ok) box = h('div', { class: 'errbox' }, s.error || 'The Qobuz search cannot be reached.');
     else if (!s.renderer) box = h('div', { class: 'errbox warn qz-banner' },
         h('div', {}, h('strong', {}, 'upmpdcli is not running.'),
-            h('div', { class: 'small' }, 'Albums found here play through upmpdcli on the box. Switch the renderer to upmpdcli to use this page.')),
-        h('button', { type: 'button', class: 'btn', onclick: () => K.goto('source') }, 'Source page'));
+            h('div', { class: 'small' }, 'Albums found here play through upmpdcli on the box.'),
+            P.startError ? h('div', { class: 'small' }, P.startError) : null),
+        h('div', { class: 'qz-banner-actions' },
+            h('button', { type: 'button', class: 'btn primary', disabled: P.startingRenderer,
+                onclick: () => P.startRenderer() }, P.startingRenderer ? 'Starting…' : 'Start now'),
+            h('button', { type: 'button', class: 'btn', onclick: () => K.goto('source') }, 'Source page')));
     else if (!s.token) box = h('div', { class: 'errbox warn qz-banner' },
         h('div', {}, h('strong', {}, 'Not signed in to Qobuz.'),
             h('div', { class: 'small' }, 'upmpdcli’s Qobuz plugin has no sign-in yet. Sign in from the full panel.')),

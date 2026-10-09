@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+<div id="result">RUNNING</div>
+<div id="banner" style="width:340px"></div>
+<div id="main"></div><div id="player"></div><div id="form"></div>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
+<script>
+(async () => {
+    const check = (condition, message) => { if (!condition) throw Error(message); };
+    try {
+        const P = K.pages.find(page => page.id === 'qobuz');
+        P.banner = document.getElementById('banner');
+        P.main = document.getElementById('main');
+        P.player = document.getElementById('player');
+        P.form = document.getElementById('form');
+        P.dockedOnNow = () => false;
+        P.closeFull = () => {};
+        P.favouritesLoaded = true;
+        P.status = { ok: true, enabled: true, renderer: false, token: true };
+        P.paintBanner();
+        const buttons = [...P.banner.querySelectorAll('button')];
+        check(buttons.map(button => button.textContent).join('|') === 'Start now|Source page',
+            'Start now precedes Source page');
+        check(buttons[1].getBoundingClientRect().right <= P.banner.getBoundingClientRect().right,
+            'Both actions fit at phone width');
+        let target, finishSwitch, refreshed = false, sourceOpened = false;
+        K.busy = () => ({ done: () => {} });
+        K.toast = () => {};
+        K.goto = page => { sourceOpened = page === 'source'; };
+        K.api = (url, options) => {
+            if (url === '/qconnect/switch') {
+                target = options.json.target;
+                return new Promise(resolve => { finishSwitch = resolve; });
+            }
+            if (url === '/qobuz/status') {
+                refreshed = true;
+                return Promise.resolve({ ok: true, enabled: true, renderer: true, token: true });
+            }
+            throw Error('Unexpected request: ' + url);
+        };
+        buttons[0].click();
+        check(target === 'upmpdcli' && P.banner.querySelector('button').disabled,
+            'Start now uses the renderer switch route and disables repeat taps');
+        finishSwitch({ ok: true });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        check(refreshed && !P.banner.querySelector('.qz-banner') && !P.main.classList.contains('qz-disabled'),
+            'Successful start refreshes status and enables Qobuz');
+        P.status.renderer = false;
+        P.paintBanner();
+        K.api = async url => url === '/qconnect/switch'
+            ? { ok: false, error: 'Startup failed' }
+            : { ok: true, enabled: true, renderer: false, token: true };
+        P.banner.querySelector('button').click();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        check(P.banner.textContent.includes('Startup failed') && !P.banner.querySelector('button').disabled,
+            'Startup error remains visible and Start now can be retried');
+        P.banner.querySelectorAll('button')[1].click();
+        check(sourceOpened, 'Source page remains the second choice');
+        document.getElementById('result').textContent = 'PASS';
+    } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
+})();
+</script>
