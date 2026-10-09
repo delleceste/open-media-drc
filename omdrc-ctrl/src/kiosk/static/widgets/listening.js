@@ -283,8 +283,12 @@ G.makePanel = () => {
         return false;
     };
     G.wireStripDrawer();
+    // A sideways swipe on the open sheet steps through the tabs, wrapping round at either end.
+    let side = null;
     G.panel.addEventListener('touchstart', e => {
         const point = e.touches[0];
+        side = point && e.touches.length === 1 && !G.collapsed && !e.target.closest('.listening-tabs-wrap')
+            ? { x: point.clientX, y: point.clientY } : null;
         touch = point && G.panel.scrollTop <= 1 && !nestedScroller(e.target)
             && !e.target.closest('button, a, input, select, textarea')
             ? { x: point.clientX, y: point.clientY, distance: 0, dragging: false } : null;
@@ -307,6 +311,12 @@ G.makePanel = () => {
         G.panel.style.transform = `translate3d(0, ${touch.distance}px, 0)`;
     }, { passive: false });
     G.panel.addEventListener('touchend', e => {
+        const end = e.changedTouches[0];
+        if (side && end && !touch?.dragging) {
+            const dx = end.clientX - side.x, dy = end.clientY - side.y;
+            if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) G.step(dx < 0 ? 1 : -1);
+        }
+        side = null;
         if (!touch) return;
         const distance = e.changedTouches[0].clientY - touch.y;
         if (touch.dragging) {
@@ -341,13 +351,14 @@ G.wireStripDrawer = () => {
         G.remember();
         G.paint();
         panel.style.transform = `translateY(${top}px)`;
+        panel.classList.add('rising');
         K.riseVeil(panel, top, top);
     };
     const settle = (to, then) => {
         panel.style.transition = 'transform 200ms cubic-bezier(.2,.8,.2,1), background-color 200ms';
         panel.style.transform = `translateY(${to}px)`;
         if (to === 0) panel.style.backgroundColor = '';
-        setTimeout(() => { if (G.panel !== panel) return; panel.style.transition = ''; panel.style.transform = ''; panel.style.backgroundColor = ''; panel.style.backdropFilter = ''; then?.(); }, 220);
+        setTimeout(() => { if (G.panel !== panel) return; panel.style.transition = ''; panel.style.transform = ''; panel.style.backgroundColor = ''; panel.style.backdropFilter = ''; panel.classList.remove('rising'); then?.(); }, 220);
     };
     panel.addEventListener('pointerdown', e => {
         if (!G.collapsed || e.button !== 0 || e.target.closest('.listening-close')) return;
@@ -384,6 +395,30 @@ G.wireStripDrawer = () => {
     };
     panel.addEventListener('pointerup', end);
     panel.addEventListener('pointercancel', end);
+};
+// The tabs in their strip order: Overview, the compositions, then the tracks when they have tabs of their own.
+G.tabStops = () => {
+    if (!G.guide) return [];
+    const stops = [-1, ...G.guide.compositions.keys()].map(selected => ({ selected, track: null }));
+    if (G.tracks?.length && !G.singleTrackSections()) G.tracks.forEach((_, index) => stops.push({
+        selected: G.guide.compositions.findIndex(s => s.tracks.includes(index + 1)), track: index + 1 }));
+    return stops;
+};
+G.step = dir => {
+    const stops = G.tabStops();
+    if (stops.length < 2) return;
+    const at = stops.findIndex(stop => G.selectedTrack ? stop.track === G.selectedTrack
+        : !stop.track && stop.selected === G.selected);
+    const next = stops[((at < 0 ? 0 : at) + dir + stops.length) % stops.length];
+    G.userSelected = true;
+    G.selected = next.selected;
+    G.selectedTrack = next.track;
+    G.remember();
+    G.paint();
+    G.panel.scrollTop = 0;
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) G.panel.querySelector('.listening-content')?.animate([
+        { transform: `translateX(${dir * 2.5}rem)`, opacity: 0 }, { transform: 'translateX(0)', opacity: 1 },
+    ], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
 };
 G.minimize = () => { G.collapsed = true; G.remember(); G.paint(); };
 G.singleTrackSections = () => {
