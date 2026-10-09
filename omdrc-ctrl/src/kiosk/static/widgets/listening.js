@@ -144,32 +144,74 @@ G.open = async (t, source) => {
     G.remember();
     G.animateToStrip(sourceRect);
 };
+// The research starts out of sight, in the strip: the flight from the tapped button
+// to it must be seen, or the tap looks like it did nothing.  A ring bursts off the
+// button, a glowing badge with a trail arcs over the page to the strip, and the strip
+// flashes where it lands.
 G.animateToStrip = source => {
     if (!source?.width || !G.panel?.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const destination = G.panel.querySelector('.listening-strip-open .listening-icon')?.getBoundingClientRect();
     if (!destination) return;
+    const root = document.getElementById('overlay-root');
+    const ring = (x, y, size, delay) => {
+        const el = h('div', {});
+        Object.assign(el.style, {
+            position: 'fixed', zIndex: '68', pointerEvents: 'none', left: `${x - size / 2}px`, top: `${y - size / 2}px`,
+            width: `${size}px`, height: `${size}px`, borderRadius: '50%', border: '3px solid var(--accent)',
+            boxShadow: '0 0 24px var(--accent)', opacity: '0',
+        });
+        root.append(el);
+        const burst = el.animate([
+            { transform: 'scale(.25)', opacity: .95 },
+            { transform: 'scale(1)', opacity: 0 },
+        ], { duration: 850, delay, easing: 'cubic-bezier(.1,.7,.3,1)' });
+        burst.onfinish = burst.oncancel = () => el.remove();
+    };
+    const sx = source.left + source.width / 2, sy = source.top + source.height / 2;
+    const ex = destination.left + destination.width / 2, ey = destination.top + destination.height / 2;
+    ring(sx, sy, 150, 0); ring(sx, sy, 150, 180);
     G.panel.animate([
         { transform: 'translateY(100%)', opacity: .35 },
         { transform: 'translateY(0)', opacity: 1 },
-    ], { duration: 950, easing: 'cubic-bezier(.2,.8,.2,1)' });
-    const flyer = h('div', {}, G.icon());
-    Object.assign(flyer.style, {
-        position: 'fixed', zIndex: '68', pointerEvents: 'none',
-        left: `${source.left + source.width / 2 - 18}px`,
-        top: `${source.top + source.height / 2 - 18}px`,
-        width: '36px', height: '36px', display: 'grid', placeItems: 'center',
-        borderRadius: '50%', color: 'var(--text)', background: 'var(--bg)',
-        border: '1px solid var(--accent)', boxShadow: '0 0 18px var(--accent)',
+    ], { duration: 700, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    // A quadratic arc whose top is well above both ends; the badge pops up, then
+    // shrinks into the strip's icon.
+    const cx = (sx + ex) / 2, cy = Math.max(60, Math.min(sy, ey) - 160);
+    const steps = 12, size = 64, duration = 1500;
+    const frames = Array.from({ length: steps + 1 }, (_, i) => {
+        const t = i / steps, u = 1 - t;
+        const x = u * u * sx + 2 * u * t * cx + t * t * ex, y = u * u * sy + 2 * u * t * cy + t * t * ey;
+        const scale = t < .15 ? .5 + t / .15 * .9 : 1.4 - (t - .15) / .85 * .9;
+        return { transform: `translate(${x - sx}px, ${y - sy}px) scale(${scale})`, offset: t };
     });
-    document.getElementById('overlay-root').append(flyer);
-    const dx = destination.left + destination.width / 2 - source.left - source.width / 2;
-    const dy = destination.top + destination.height / 2 - source.top - source.height / 2;
-    const flight = flyer.animate([
-        { transform: 'translate(0, 0) scale(1)', opacity: 1 },
-        { transform: `translate(${dx * .5}px, ${dy * .45 - 30}px) scale(1.12)`, opacity: 1, offset: .5 },
-        { transform: `translate(${dx}px, ${dy}px) scale(.55)`, opacity: 0 },
-    ], { duration: 1250, easing: 'cubic-bezier(.2,.7,.25,1)' });
-    flight.onfinish = flight.oncancel = () => flyer.remove();
+    const flyer = (n) => {
+        const el = h('div', {}, G.icon());
+        Object.assign(el.style, {
+            position: 'fixed', zIndex: '68', pointerEvents: 'none',
+            left: `${sx - size / 2}px`, top: `${sy - size / 2}px`, width: `${size}px`, height: `${size}px`,
+            display: 'grid', placeItems: 'center', borderRadius: '50%', color: 'var(--text)',
+            background: n ? 'var(--accent)' : 'var(--bg)', border: '3px solid var(--accent)',
+            boxShadow: '0 0 28px 6px var(--accent)', opacity: n ? String(.45 - n * .07) : '1',
+        });
+        if (n) el.firstChild.style.visibility = 'hidden';   // the trail: glowing dots only
+        root.append(el);
+        const flight = el.animate(frames, { duration, delay: n * 70, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'backwards' });
+        flight.onfinish = flight.oncancel = () => el.remove();
+        return flight;
+    };
+    for (let n = 5; n > 0; n--) flyer(n);
+    flyer(0).onfinish = function () {
+        this.effect.target.remove();
+        if (!G.panel) return;
+        ring(ex, ey, 170, 0);
+        G.panel.animate([
+            { boxShadow: '0 0 0 0 var(--accent)', filter: 'brightness(1)' },
+            { boxShadow: '0 -4px 36px 6px var(--accent)', filter: 'brightness(1.6)', offset: .2 },
+            { boxShadow: '0 0 0 0 var(--accent)', filter: 'brightness(1)', offset: .5 },
+            { boxShadow: '0 -4px 28px 4px var(--accent)', filter: 'brightness(1.35)', offset: .7 },
+            { boxShadow: '0 0 0 0 var(--accent)', filter: 'brightness(1)' },
+        ], { duration: 1300, easing: 'ease-in-out' });
+    };
 };
 G.close = () => {
     if (G.guide && !G.queryKey && G.tracks?.length) {

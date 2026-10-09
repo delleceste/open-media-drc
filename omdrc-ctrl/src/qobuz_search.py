@@ -45,6 +45,8 @@ DEFAULT_BASE_URL = "https://www.qobuz.com/api.json/0.2"
 # Albums per catalog/search request.  upmpdcli's plugin asks for 50 albums at
 # a time; stay with what is known to work.
 PAGE_SIZE = 50
+# Pages one Discover request reads at most while a filter lets too few through.
+DISCOVER_PAGES = 10
 
 # One line per label group: "Name" or "Name: pattern, pattern".  Qobuz spells
 # one label many ways ("Decca Music Group Ltd.", "Decca (UMO)", "Decca
@@ -955,6 +957,55 @@ class QobuzCatalog:
             raise QobuzError("genre must be a numeric Qobuz genre id")
         if offset < 0:
             raise QobuzError("offset must be non-negative")
+        groups = self.label_groups(labels or [])
+        awarded_ids = (self.awarded.awarded_ids() if self.awarded else set()) if awarded_only else None
+        today = self._today().isoformat()
+
+        def keep(item: dict) -> dict | None:
+            if item.get("streamable") is False:
+                return None
+            card = album_card(item)
+            if groups and not any(group.matches(card["label"]) for group in groups):
+                return None
+            if awarded_ids is not None and card["id"] not in awarded_ids:
+                return None
+            if exclude_cd and is_cd_quality(card):
+                return None
+            return card
+
+        # Qobuz's new releases stop a few hundred albums back, which holds only
+        # a handful of one label's: a label's own catalogue, newest first, goes
+        # back to its first release.  A label Qobuz's search cannot place is
+        # still looked for in the new releases.
+        label_ids = [i for group in groups for i in self.label_ids(group)]
+        if label_ids:
+            wanted = set(ids)
+
+            def window(start: int) -> tuple[list[dict], int, bool]:
+                items, more = self._label_releases(label_ids, start + PAGE_SIZE)
+                items = [item for item in items[start:]
+                         # announced, not out yet: nothing to play
+                         if album_date(item) <= today
+                         and (not wanted or wanted & {str(g) for g in
+                                                      (item.get("genre") or {}).get("path") or []})]
+                return items, start + PAGE_SIZE, more
+        else:
+            def window(start: int) -> tuple[list[dict], int, bool]:
+                page = self._featured(genre, ids, start)
+                return page["items"], page["next_offset"], page["more"]
+
+        # A filter can empty whole pages: read on until a screenful passes, so
+        # the list keeps growing as it is scrolled, within a bound per request.
+        cards, more, next_offset = [], True, offset
+        for _ in range(DISCOVER_PAGES):
+            items, next_offset, more = window(next_offset)
+            cards += [card for card in map(keep, items) if card]
+            if len(cards) >= self.settings.want or not more:
+                break
+        return {"albums": cards, "next_offset": next_offset, "more": more}
+
+    def _featured(self, genre: str, ids: list[str], offset: int) -> dict:
+        """One page of Qobuz's new releases, in one genre or several."""
         def make():
             params = {"type": "new-releases", "limit": PAGE_SIZE, "offset": offset}
             if ids:
@@ -966,22 +1017,65 @@ class QobuzCatalog:
             return {"items": items, "next_offset": next_offset,
                     "more": bool(items) and (next_offset < total if isinstance(total, int)
                                              else len(items) == PAGE_SIZE)}
-        page = self._cached(f"discover:{genre}:{offset}", self.settings.cache_ttl, make)
-        groups = self.label_groups(labels or [])
-        awarded_ids = (self.awarded.awarded_ids() if self.awarded else set()) if awarded_only else None
-        cards = []
-        for item in page["items"]:
-            if item.get("streamable") is False:
-                continue
-            card = album_card(item)
-            if groups and not any(group.matches(card["label"]) for group in groups):
-                continue
-            if awarded_ids is not None and card["id"] not in awarded_ids:
-                continue
-            if exclude_cd and is_cd_quality(card):
-                continue
-            cards.append(card)
-        return {"albums": cards, "next_offset": page["next_offset"], "more": page["more"]}
+        return self._cached(f"discover:{genre}:{offset}", self.settings.cache_ttl, make)
+
+    def label_ids(self, group: LabelGroup) -> list[str]:
+        """Qobuz's ids of the labels a group names, read off the labels of the
+        albums a search for each pattern finds: Qobuz has no label search, and
+        one name is often several labels ("Decca Music Group Ltd.", "Decca
+        Classics")."""
+        def make():
+            found: dict[str, None] = {}
+            for pattern in group.patterns:
+                items, _ = self._page(pattern, 0)
+                for item in items:
+                    label = item.get("label") or {}
+                    if label.get("id") is not None and group.matches(_name(label)):
+                        found.setdefault(str(label["id"]), None)
+            return list(found)
+        return self._cached(f"labelids:{group.name}:{'|'.join(group.patterns)}",
+                            self.settings.album_cache_ttl, make)
+
+    def _label_page(self, label_id: str, offset: int) -> tuple[list[dict], int | None]:
+        """One page of a label's albums, newest first, and the total Qobuz reports."""
+        def make():
+            data = self._call("label/get", {"label_id": label_id, "extra": "albums",
+                                            "limit": PAGE_SIZE, "offset": offset})
+            block = data.get("albums") or {}
+            return block.get("items") or [], block.get("total")
+        return self._cached(f"label:{label_id}:{offset}", self.settings.cache_ttl, make)
+
+    def _label_releases(self, label_ids: list[str], end: int) -> tuple[list[dict], bool]:
+        """The first `end` albums of several labels together, newest first, and
+        whether any are left.  Each label's list is newest first already: they
+        merge by always taking the newest head, reading a label's next page
+        only when its head is used up (pages are cached, so a deeper call
+        re-reads nothing)."""
+        lists = {i: {"items": [], "at": 0, "done": False} for i in dict.fromkeys(label_ids)}
+
+        def head(label_id: str) -> dict | None:
+            s = lists[label_id]
+            if s["at"] >= len(s["items"]) and not s["done"]:
+                items, total = self._label_page(label_id, len(s["items"]))
+                s["items"] += items
+                s["done"] = not items or (len(s["items"]) >= total if isinstance(total, int)
+                                          else len(items) < PAGE_SIZE)
+            return s["items"][s["at"]] if s["at"] < len(s["items"]) else None
+
+        merged, seen = [], set()
+        while len(merged) < end:
+            heads = [(album_date(item), label_id) for label_id in lists
+                     if (item := head(label_id)) is not None]
+            if not heads:
+                return merged, False
+            label_id = max(heads)[1]
+            s = lists[label_id]
+            item = s["items"][s["at"]]
+            s["at"] += 1
+            if str(item.get("id", "")) not in seen:
+                seen.add(str(item.get("id", "")))
+                merged.append(item)
+        return merged, any(head(label_id) is not None for label_id in lists)
 
     def _page(self, query: str, offset: int) -> tuple[list[dict], int | None]:
         """One page of one query's albums, and the total Qobuz reports."""

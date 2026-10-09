@@ -209,6 +209,16 @@ P.mount = el => {
 // Prepare before the pager moves: bringing the form back after the swipe settles
 // would insert it into an already visible page. Keep it above the viewport.
 P.prepareEnter = from => {
+    if (P.wantSearch) {
+        // the top bar's Search: this page with its box in view, from wherever
+        P.wantSearch = false;
+        P.ensureMounted();
+        P.dismissPreview();
+        P.fromNow = false;
+        P.undock();
+        P.el.scrollTo({ top: 0, behavior: 'instant' });
+        return;
+    }
     if (from !== 'now') return;
     P.ensureMounted();
     P.dismissPreview();
@@ -334,6 +344,12 @@ P.ensureMounted = () => {
     if (!P.mounted) { P.mounted = true; P.mount(P.body); P.refreshStatus(); }
 };
 P.dockedOnNow = () => !!P.form && P.form.parentElement !== P.formHome;
+// The top bar's Search, from any page.  Reached otherwise (a swipe, a tab), this
+// page keeps the box scrolled out of sight above the lists.
+K.qobuzSearch = () => {
+    P.wantSearch = true;
+    K.showPage(P.id);
+};
 K.qobuzDock = slot => {
     P.ensureMounted();
     if (P.form.parentElement === slot) return;

@@ -567,7 +567,7 @@ async function boot() {
         const search = $('#top-search');
         search.hidden = false;
         search.append(icon('search'));
-        search.addEventListener('click', () => { K.showBar(false); K.goto('qobuz'); });
+        search.addEventListener('click', () => { K.showBar(false); K.qobuzSearch(); });
     }
     paintRotate();
     // Top-right: release the screen.  Off = the OS may switch the display off after its own

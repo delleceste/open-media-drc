@@ -803,7 +803,7 @@ class DiscoverTests(unittest.TestCase):
             return {"albums": {"items": [album("new", "New", "Label", "2026-09-30"),
                                         album("blocked", "Blocked", "Label", streamable=False)],
                                "total": 55}}
-        catalog = qs.QobuzCatalog(fetch=fetch)
+        catalog = qs.QobuzCatalog(qs.Settings(want=1), fetch=fetch)
         result = catalog.discover("80", 50)
         self.assertEqual([a["id"] for a in result["albums"]], ["new"])
         self.assertEqual(result["next_offset"], 52)
@@ -825,23 +825,20 @@ class DiscoverTests(unittest.TestCase):
         with self.assertRaises(qs.QobuzError):
             catalog.discover(offset=-1)
 
-    def test_discover_filters_keep_qobuz_page_offsets(self):
-        """Label, awarded and quality filters do not alter the Qobuz page cursor."""
+    def test_discover_filters_read_on_until_enough_pass(self):
+        """Awarded and quality filters read further new-release pages, up to a
+        bound, rather than answer a page they emptied."""
         calls = []
         def fetch(endpoint, params):
-            calls.append(params)
-            return {"albums": {"items": [
-                album("match", "Match", "Decca Classics", "2026-09-30"),
-                album("other", "Other", "Sony", "2026-09-29"),
-            ], "total": 4}}
-        catalog = qs.QobuzCatalog(fetch=fetch)
-        result = catalog.discover("", 0, labels=["Decca"])
-        self.assertEqual([card["id"] for card in result["albums"]], ["match"])
-        self.assertEqual(result["next_offset"], 2)
-        self.assertTrue(result["more"])
-        self.assertEqual(catalog.discover("", 0, labels=["Sony"])["albums"][0]["id"], "other")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(catalog.discover("", 0, awarded_only=True)["albums"], [])
+            calls.append(params["offset"])
+            return {"albums": {"items": [album(f"a{params['offset']}", "A", "Decca Classics", "2026-09-30"),
+                                         album(f"b{params['offset']}", "B", "Sony")], "total": 6}}
+        catalog = qs.QobuzCatalog(qs.Settings(want=1), fetch=fetch)
+        result = catalog.discover("", 0, awarded_only=True)
+        self.assertEqual(result["albums"], [])
+        self.assertEqual(result["next_offset"], 6)
+        self.assertFalse(result["more"])
+        self.assertEqual(calls, [0, 2, 4])
         cd = album("cd", "CD", "Decca Classics", "2026-09-28")
         cd["maximum_bit_depth"] = 16
         cd["maximum_sampling_rate"] = 44.1
@@ -850,6 +847,52 @@ class DiscoverTests(unittest.TestCase):
         quality_catalog = qs.QobuzCatalog(fetch=fetch_quality)
         self.assertEqual([card["id"] for card in quality_catalog.discover(exclude_cd=True)["albums"]], ["hires"])
 
+    def test_label_filter_reads_the_labels_own_catalogues(self):
+        """A label filter finds the label ids through album search, then merges
+        the labels' catalogues newest first: deeper than Qobuz's new releases,
+        without unreleased albums, and in the chosen genre."""
+        def labelled(album_id, label_id, name, date, genre=10):
+            item = album(album_id, album_id, name, date)
+            item["label"]["id"] = label_id
+            item["genre"]["path"] = [genre, genre + 100]
+            return item
+        catalogues = {
+            "11": [labelled("future", 11, "Decca Classics", "2099-01-01"),
+                   labelled("d3", 11, "Decca Classics", "2026-09-01"),
+                   labelled("d1", 11, "Decca Classics", "2026-01-01", genre=80)],
+            "12": [labelled("d4", 12, "Decca Music Group Ltd.", "2026-10-01"),
+                   labelled("d2", 12, "Decca Music Group Ltd.", "2026-05-01"),
+                   labelled("d3", 12, "Decca Music Group Ltd.", "2026-09-01")],
+        }
+        calls = []
+        def fetch(endpoint, params):
+            calls.append((endpoint, params))
+            if endpoint == "catalog/search":
+                return {"albums": {"items": [catalogues["11"][1], catalogues["12"][0],
+                                             album("x", "X", "Sony")], "total": 3}}
+            self.assertEqual(endpoint, "label/get")
+            items = catalogues[params["label_id"]]
+            return {"albums": {"items": items[params["offset"]:params["offset"] + 2],
+                               "total": len(items)}}
+        catalog = qs.QobuzCatalog(fetch=fetch, today=lambda: dt.date(2026, 10, 9))
+        result = catalog.discover("", 0, labels=["Decca"])
+        self.assertEqual([a["id"] for a in result["albums"]], ["d4", "d3", "d2", "d1"])
+        self.assertFalse(result["more"])
+        self.assertEqual(catalog.label_ids(qs.LabelGroup("Decca", ("decca",))), ["11", "12"])
+        self.assertEqual([a["id"] for a in catalog.discover("10", 0, labels=["Decca"])["albums"]],
+                         ["d4", "d3", "d2"])
+        self.assertNotIn("album/getFeatured", [endpoint for endpoint, _ in calls])
+
+    def test_unplaceable_label_filters_the_new_releases(self):
+        """A label no album search places is still matched in the new releases."""
+        def fetch(endpoint, params):
+            if endpoint == "catalog/search":
+                return {"albums": {"items": [], "total": 0}}
+            return {"albums": {"items": [album("match", "Match", "Tiny Label", "2026-09-30"),
+                                        album("other", "Other", "Sony", "2026-09-29")], "total": 2}}
+        catalog = qs.QobuzCatalog(fetch=fetch)
+        self.assertEqual([a["id"] for a in catalog.discover("", 0, labels=["Tiny Label"])["albums"]],
+                         ["match"])
 
 if __name__ == "__main__":
     unittest.main()
