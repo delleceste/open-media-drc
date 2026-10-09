@@ -96,6 +96,10 @@ class AITest(unittest.TestCase):
                 self.assertTrue(any(e == "album/get" for e, _ in calls))
                 self.assertEqual(len(self.sent), 3)
                 self.assertNotIn("test-secret", json.dumps(self.sent))
+                self.assertEqual([t["stage"] for t in answer["ai"]["trace"]],
+                                 ["Web research", "Qobuz search plan", "Album selection"])
+                self.assertIn("Three Beethoven", answer["ai"]["trace"][0]["prompt"])
+                self.assertIn("Review", answer["ai"]["trace"][0]["reply"])
 
     def test_settings_keep_each_providers_key_private_and_owner_only(self):
         cfg = self.configure()
@@ -230,6 +234,40 @@ class AITest(unittest.TestCase):
         with self.assertRaises(ai.AIError):
             ai.save_settings(self.root, {"provider": []})
 
+    def test_failed_recommendation_keeps_research_and_prompt_trace(self):
+        self.configure()
+        calls = 0
+        def post(_cfg, _body, _timeout):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {"content": [{"type": "text", "text": "The Wire has no Recording of the Month feature."}]}
+            error = ai.AIError("Search planning failed.")
+            error.reply = "No catalog query could be formed."
+            raise error
+        cat, _ = catalog([raw("good")])
+        with self.assertRaisesRegex(ai.AIError, "Search planning failed") as caught:
+            ai.recommend(self.root, cat, "The Wire best recording of the month", {}, post=post)
+        trace = caught.exception.trace
+        self.assertEqual([entry["stage"] for entry in trace], ["Web research", "Qobuz search plan"])
+        self.assertIn("The Wire", trace[0]["prompt"])
+        self.assertIn("no Recording", trace[0]["reply"])
+        self.assertIn("No catalog query", trace[1]["reply"])
+        self.assertIn("music researcher", trace[0]["system_prompt"])
+
+    def test_no_supported_titles_is_reported_as_research_outcome(self):
+        self.configure()
+        def post(_cfg, _body, _timeout):
+            if not hasattr(post, "called"):
+                post.called = True
+                return {"content": [{"type": "text", "text": "No Recording of the Month feature found."}]}
+            return {"content": [{"type": "tool_use", "name": "plan_searches",
+                                 "input": {"search_queries": []}}]}
+        cat, _ = catalog([raw("good")])
+        with self.assertRaisesRegex(ai.AIError, "no supported recording titles") as caught:
+            ai.recommend(self.root, cat, "The Wire recording of the month", {}, post=post)
+        self.assertIn("No Recording", caught.exception.trace[0]["reply"])
+
     def test_invented_ids_duplicates_and_unverified_sources_are_discarded(self):
         self.configure()
         self.picks = [{"id": "invented", "reason": "Fake", "source_indices": [0]},
@@ -326,6 +364,16 @@ class RouteTest(unittest.TestCase):
         with patch.object(web, "renderer_running", return_value=False):
             self.assertEqual(self.client.post("/qobuz/ai/recommend", json={"prompt": "Music"}, headers={"X-Qobuz-AI": "1"}).status_code, 409)
 
+    def test_prompt_preview_is_rendered_and_guarded(self):
+        path = "/qobuz/ai/recommend/prompt"
+        body = {"prompt": "The Wire magazine, last six months"}
+        self.assertEqual(self.client.post(path, json=body).status_code, 403)
+        response = self.client.post(path, json=body, headers={"X-Qobuz-AI": "1"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(body["prompt"], response.get_json()["prompt"])
+        self.assertNotIn("${request}", response.get_json()["prompt"])
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
     def test_listening_route_requires_guard_and_passes_cancel_event(self):
         job = "a38cbe40-f3af-44af-a76f-59826db907b1"
         body = {"job": job, "album": {"title": "The Wall"}, "tracks": [{"title": "In the Flesh?"}]}
@@ -346,6 +394,19 @@ class RouteTest(unittest.TestCase):
 
 
 class ClaudeAccountTest(unittest.TestCase):
+    def test_rate_limit_event_keeps_only_usage_windows(self):
+        event = {"type": "rate_limit_event", "session_id": "private", "rate_limit_info": {
+            "status": "allowed", "unifiedWindows": {
+                "five_hour": {"utilization": 0.42, "resetsAt": 1791540000},
+                "seven_day": {"utilization": 0.54, "resetsAt": 1791871200}}}}
+        with patch.object(ai, "_account_usage", None):
+            usage = ai._record_account_usage(json.dumps(event))
+            self.assertEqual(usage["windows"]["five_hour"]["used_percent"], 42)
+            self.assertEqual(usage["windows"]["seven_day"]["used_percent"], 54)
+            self.assertNotIn("private", json.dumps(usage))
+            with tempfile.TemporaryDirectory() as root:
+                self.assertEqual(ai.public_settings(root)["account_usage"], usage)
+
     def test_freebsd_package_is_found_with_a_minimal_service_path(self):
         with patch.dict("os.environ", {"OMDRC_CLAUDE_BIN": "", "PATH": "/usr/bin:/bin"}), patch.object(ai.shutil, "which", return_value=None), patch.object(ai.Path, "is_file", lambda p: str(p) == "/usr/local/bin/claude"), patch.object(ai.os, "access", return_value=True):
             self.assertEqual(ai._claude_binary(), "/usr/local/bin/claude")
@@ -401,7 +462,9 @@ class ClaudeAccountTest(unittest.TestCase):
             self.assertIn("--safe-mode", command)
             self.assertIn("--no-session-persistence", command)
             self.assertIn("--strict-mcp-config", command)
-            self.assertEqual(command[command.index("--tools") + 1], "WebSearch")
+            self.assertEqual(command[command.index("--tools") + 1], "WebSearch,WebFetch")
+            self.assertEqual(command[command.index("--allowedTools") + 1], "WebSearch,WebFetch")
+            self.assertEqual(command[command.index("--permission-prompts") + 1], "none")
             self.assertNotIn("ANTHROPIC_API_KEY", popen.call_args.kwargs["env"])
             self.assertNotIn("CLAUDECODE", popen.call_args.kwargs["env"])
             self.assertEqual(ai._sources(answer)[0]["url"], "https://reviews.example/5")

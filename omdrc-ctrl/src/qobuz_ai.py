@@ -31,10 +31,23 @@ _settings_lock = threading.Lock()
 _research_lock = threading.Lock()
 _account_status = (0.0, False)
 _account_lock = threading.Lock()
+_account_usage = None
 
 
 class AIError(QobuzError):
     pass
+
+
+def recommendation_prompt(state_dir, request, count=None):
+    """Return the exact first user message used for recommendation research."""
+    if not isinstance(request, str) or not 1 <= len(request.strip()) <= 2000:
+        raise AIError("Enter a request of up to 2,000 characters.")
+    if count is not None and (type(count) is not int or not 1 <= count <= 6):
+        raise AIError("Ask for between one and six albums.")
+    quantity = (f"Select up to {count} recordings." if count is not None else
+                "Use the number of recordings requested by the user; if unspecified, choose a suitable number. "
+                "Return at most 20 recordings.")
+    return _prompt(state_dir, "recommend-research", quantity=quantity, request=request.strip())
 
 
 # Prompt templates and the ${placeholders} each one must keep. The shipped
@@ -120,6 +133,35 @@ def account_ready():
         return ready
 
 
+def _record_account_usage(stdout):
+    """Keep only the rate-limit figures Claude Code reports, never account IDs."""
+    global _account_usage
+    latest = None
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") != "rate_limit_event":
+            continue
+        info = event.get("rate_limit_info") or {}
+        windows = info.get("unifiedWindows") or {}
+        usage = {}
+        for key in ("five_hour", "seven_day"):
+            window = windows.get(key) or {}
+            value, reset = window.get("utilization"), window.get("resetsAt")
+            if type(value) in (int, float) and 0 <= value <= 1:
+                usage[key] = {"used_percent": round(value * 100),
+                              "resets_at": reset if type(reset) is int else None}
+        if usage:
+            latest = {"status": info.get("status") if info.get("status") in ("allowed", "rejected") else "unknown",
+                      "windows": usage, "checked_at": int(time.time())}
+    if latest:
+        with _account_lock:
+            _account_usage = latest
+    return latest
+
+
 def _search_links(events):
     """Read links from actual WebSearch tool results, not generated prose."""
     ids, sources = set(), []
@@ -160,11 +202,12 @@ def _claude_post(cfg, body, timeout, cancel=None):
     tool = body["tools"][0]
     research = tool.get("name") == "web_search"
     command = [binary, "-p", "--model", cfg["model"], "--effort", "low", "--output-format", "stream-json", "--verbose",
+               "--permission-prompts", "none",
                "--safe-mode", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
-               "--setting-sources", "", "--tools", "WebSearch" if research else "",
+               "--setting-sources", "", "--tools", "WebSearch,WebFetch" if research else "",
                "--system-prompt", _prompt(cfg.get("state_dir"), "system")]
     if research:
-        command.extend(["--allowedTools", "WebSearch"])
+        command.extend(["--allowedTools", "WebSearch,WebFetch"])
     else:
         command.extend(["--json-schema", json.dumps(tool["input_schema"])])
     prompt = body["messages"][0]["content"]
@@ -184,27 +227,61 @@ def _claude_post(cfg, body, timeout, cancel=None):
                     wait = timeout if cancel is None else min(1, max(.01, deadline - time.monotonic()))
                     stdout, _ = process.communicate(pending, timeout=wait)
                     break
-                except subprocess.TimeoutExpired:
+                except subprocess.TimeoutExpired as expired:
                     pending = None
                     if time.monotonic() >= deadline:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.communicate()
-                        raise AIError("Claude account research timed out. Try a more specific request.") from None
+                        error = AIError(f"Claude account research timed out after {round(timeout)} seconds.")
+                        partial = expired.output or b""
+                        if isinstance(partial, bytes):
+                            partial = partial.decode("utf-8", errors="replace")
+                        error.account_usage = _record_account_usage(partial)
+                        error.reply = _claude_activity(partial)
+                        raise error from None
         if len(stdout.encode()) > MAX_BYTES:
             raise AIError("The Claude account response was too large.")
         events = [json.loads(line) for line in stdout.splitlines() if line.strip().startswith("{")]
+        usage_status = _record_account_usage(stdout)
         result = next((event for event in reversed(events) if event.get("type") == "result"), {})
         if process.returncode != 0 or result.get("is_error") or not result:
-            raise AIError("Claude account request failed. Check Claude login and account usage limits on this server.")
+            error = AIError("Claude account request failed. Check Claude login, permissions and account usage limits on this server.")
+            error.reply = (str(result.get("result") or "") + "\n" + _claude_activity(stdout)).strip()[:16000]
+            error.account_usage = usage_status
+            raise error
         if research:
             return {"content": [{"type": "text", "text": result.get("result", "")},
-                                {"type": "web_search_tool_result", "content": _search_links(events)}]}
+                                {"type": "web_search_tool_result", "content": _search_links(events)}],
+                    "activity": _claude_activity(stdout), "usage": result.get("usage"),
+                    "account_usage": usage_status}
         value = result.get("structured_output")
         if not isinstance(value, dict):
             value = _json(result.get("result", ""))
-        return {"content": [{"type": "tool_use", "name": tool["name"], "input": value}]}
+        return {"content": [{"type": "tool_use", "name": tool["name"], "input": value}],
+                "activity": _claude_activity(stdout), "usage": result.get("usage"),
+                "account_usage": usage_status}
     except (OSError, ValueError):
         raise AIError("Could not run Claude with the server's account login.") from None
+
+
+def _claude_activity(stdout):
+    """Show assistant text and tool requests, without dumping internal CLI events."""
+    lines = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") != "assistant":
+            continue
+        for block in (event.get("message") or {}).get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text" and block.get("text"):
+                lines.append(block["text"])
+            elif block.get("type") == "tool_use":
+                lines.append(f"{block.get('name', 'Tool')}: " + json.dumps(block.get("input", {}), ensure_ascii=False))
+    return "\n".join(lines)[:16000]
 
 
 def _load(state_dir):
@@ -233,9 +310,11 @@ def configuration(state_dir):
 def public_settings(state_dir):
     cfg = configuration(state_dir)
     ready = account_ready()
+    with _account_lock:
+        usage = _account_usage
     return {"provider": cfg["provider"], "model": cfg["model"],
             "configured": ready if cfg["provider"] == "claude_account" else bool(cfg["key"]),
-            "account_ready": ready, "defaults": DEFAULT_MODELS}
+            "account_ready": ready, "account_usage": usage, "defaults": DEFAULT_MODELS}
 
 
 def save_settings(state_dir, body):
@@ -504,10 +583,7 @@ SELECTION_SCHEMA = {
 
 
 def recommend(state_dir, catalog, prompt, filters, count=None, post=None):
-    if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 2000:
-        raise AIError("Enter a request of up to 2,000 characters.")
-    if count is not None and (type(count) is not int or not 1 <= count <= 6):
-        raise AIError("Ask for between one and six albums.")
+    recommendation_prompt(state_dir, prompt, count)
     cfg = configuration(state_dir)
     if cfg["provider"] == "claude_account" and not account_ready():
         if not _claude_binary():
@@ -520,50 +596,85 @@ def recommend(state_dir, catalog, prompt, filters, count=None, post=None):
         raise AIError("An AI recommendation is already running. Please wait.")
     try:
         transport = _claude_post if cfg["provider"] == "claude_account" else _post
-        return _recommend(cfg, catalog, prompt.strip(), filters, count, post or transport)
+        trace = []
+        try:
+            return _recommend(cfg, catalog, prompt.strip(), filters, count, post or transport, trace)
+        except QobuzError as error:
+            error.trace = trace
+            raise
     finally:
         _research_lock.release()
 
 
-def _recommend(cfg, catalog, prompt, filters, count, post):
-    deadline = time.monotonic() + 210
+def _recommend(cfg, catalog, prompt, filters, count, post, trace):
+    deadline = time.monotonic() + 360
 
-    def call(body):
+    def call(body, stage, source=None):
+        prompt_text = body.get("input") or body["messages"][0]["content"]
+        item = {"stage": stage, "prompt": prompt_text, "reply": ""}
+        item["system_prompt"] = _prompt(cfg["state_dir"], "system")
+        item["system_prompt_source"] = str(prompt_path(cfg["state_dir"], "system"))
+        if source:
+            item["prompt_source"] = str(prompt_path(cfg["state_dir"], source))
+        trace.append(item)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise AIError("AI research timed out. Try a more specific request.")
-        stage_limit = 150 if cfg["provider"] == "claude_account" else 90
-        return post(cfg, body, min(stage_limit, remaining))
+        stage_limit = 240 if cfg["provider"] == "claude_account" else 90
+        try:
+            answer = post(cfg, body, min(stage_limit, remaining))
+        except AIError as error:
+            item["reply"] = getattr(error, "reply", "")
+            if getattr(error, "account_usage", None):
+                item["account_usage"] = error.account_usage
+            raise
+        item["reply"] = _text(answer, cfg["provider"])
+        if not item["reply"]:
+            if cfg["provider"] == "openai":
+                calls = [b.get("arguments", "") for b in answer.get("output", []) if b.get("type") == "function_call"]
+            else:
+                calls = [json.dumps(b.get("input", {}), ensure_ascii=False) for b in answer.get("content", []) if b.get("type") == "tool_use"]
+            item["reply"] = "\n".join(calls)
+        if answer.get("activity"):
+            item["activity"] = answer["activity"]
+        if answer.get("account_usage"):
+            item["account_usage"] = answer["account_usage"]
+        usage = answer.get("usage")
+        if isinstance(usage, dict):
+            item["usage"] = {key: usage[key] for key in ("input_tokens", "output_tokens")
+                             if type(usage.get(key)) is int}
+        item["reply"] = item["reply"][:16000]
+        return answer
 
-    def structured(prompt_text, name, schema):
+    def structured(prompt_text, name, schema, stage, source):
         if cfg["provider"] == "openai":
             answer = call({"model": cfg["model"], "store": False, "max_output_tokens": 4000,
                            "input": prompt_text,
                            "tools": [{"type": "function", "name": name, "strict": True,
                                       "description": "Return the requested structured result.", "parameters": schema}],
-                           "tool_choice": {"type": "function", "name": name}})
+                           "tool_choice": {"type": "function", "name": name}}, stage, source)
             blocks = [b for b in answer.get("output", []) if b.get("type") == "function_call" and b.get("name") == name]
             return _json(blocks[0].get("arguments", "")) if blocks else {}
         answer = call({"model": cfg["model"], "max_tokens": 4000,
                        "messages": [{"role": "user", "content": prompt_text}],
                        "tools": [{"name": name, "description": "Return the requested structured result.", "input_schema": schema}],
-                       "tool_choice": {"type": "tool", "name": name}})
+                       "tool_choice": {"type": "tool", "name": name}}, stage, source)
         blocks = [b for b in answer.get("content", []) if b.get("type") == "tool_use" and b.get("name") == name]
         return blocks[0].get("input", {}) if blocks else {}
 
     quantity = (f"Select up to {count} recordings." if count is not None else
                 "Use the number of recordings requested by the user; if unspecified, choose a suitable number. "
                 "Return at most 20 recordings.")
-    research_prompt = _prompt(cfg["state_dir"], "recommend-research", quantity=quantity, request=prompt)
+    research_prompt = recommendation_prompt(cfg["state_dir"], prompt, count)
     provider = cfg["provider"]
     if provider == "openai":
         research = call({"model": cfg["model"], "store": False,
                          "tools": [{"type": "web_search"}], "max_tool_calls": 4,
-                         "max_output_tokens": 4000, "input": research_prompt})
+                         "max_output_tokens": 4000, "input": research_prompt}, "Web research", "recommend-research")
     else:
         research = call({"model": cfg["model"], "max_tokens": 4000,
                          "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
-                         "messages": [{"role": "user", "content": research_prompt}]})
+                         "messages": [{"role": "user", "content": research_prompt}]}, "Web research", "recommend-research")
     research_text = _text(research, provider)
     if not research_text:
         raise AIError("The AI returned no research. Check web-search access and try again.")
@@ -571,12 +682,12 @@ def _recommend(cfg, catalog, prompt, filters, count, post):
                       "plan_searches",
                       {"type": "object", "additionalProperties": False,
                        "properties": {"search_queries": {"type": "array", "items": {"type": "string"}}},
-                       "required": ["search_queries"]})
+                       "required": ["search_queries"]}, "Qobuz search plan", "recommend-queries")
     if not isinstance(plan, dict):
         raise AIError("The AI returned an invalid search plan. Try again.")
     queries = plan.get("search_queries")
     if not isinstance(queries, list) or not queries:
-        raise AIError("The AI did not suggest any catalog searches. Try a more specific request.")
+        raise AIError("AI research completed, but found no supported recording titles to search in Qobuz. Review the research reply below.")
     sources = _sources(research)
     candidates, searches = {}, []
     for query in queries[:4]:
@@ -590,14 +701,14 @@ def _recommend(cfg, catalog, prompt, filters, count, post):
             if card.get("streamable") is not False and not card.get("lowered"):
                 candidates[card["id"]] = card
     if not candidates:
-        raise AIError("No playable Qobuz releases matched the recommendations and your filters.")
+        raise AIError("AI research completed, but no playable Qobuz titles matched its suggestions and your filters. Review the AI reply and search plan below.")
     # These are the only album IDs the selector may return. No generated ID is trusted.
     fields = ("id", "title", "version", "artist", "composer", "label", "date", "bits", "rate", "performers")
     data = json.dumps({"request": prompt, "research": research_text[:14000], "sources": sources,
                        "candidates": [{k: card.get(k) for k in fields} for card in candidates.values()]},
                       ensure_ascii=False)
     selection_prompt = _prompt(cfg["state_dir"], "recommend-select", quantity=quantity, data=data)
-    picks = structured(selection_prompt, "select_albums", SELECTION_SCHEMA)
+    picks = structured(selection_prompt, "select_albums", SELECTION_SCHEMA, "Album selection", "recommend-select")
     if not isinstance(picks, dict) or not isinstance(picks.get("picks"), list):
         raise AIError("The AI did not return a valid album selection. Try again.")
     results, seen = [], set()
@@ -626,4 +737,4 @@ def _recommend(cfg, catalog, prompt, filters, count, post):
             "queries": searches, "labels_seen": [], "more": False, "unstreamable": 0,
             "enriched": len(results), "lowered": 0, "scan": 0,
             "ai": {"provider": provider, "summary": str(picks.get("summary", ""))[:2000],
-                   "requested": count}, "exclude_cd": bool(filters.get("exclude_cd"))}
+                   "requested": count, "trace": trace}, "exclude_cd": bool(filters.get("exclude_cd"))}

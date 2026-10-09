@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<div id="result">RUNNING</div>
+<div id="results"></div>
+<div id="overlay-root"></div>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
+<script>
+(async () => {
+    const check = (condition, message) => { if (!condition) throw Error(message); };
+    try {
+        const P = K.pages.find(page => page.id === 'qobuz');
+        P.results = document.getElementById('results');
+        P.aiTrace = [{ stage: 'Web research', prompt: 'User request: The Wire <scr' + 'ipt>alert(1)</scr' + 'ipt>',
+            system_prompt: 'Research music.', reply: '', activity: 'WebSearch: {"query":"The Wire"}',
+            usage: { input_tokens: 13, output_tokens: 21 },
+            account_usage: { windows: { five_hour: { used_percent: 42, resets_at: 1791540000 } } } }];
+        P.paintWorking('Waiting for AI reply…');
+        check(P.results.textContent.includes('User request: The Wire'), 'Prompt visible while waiting');
+        check(!P.results.querySelector('script'), 'Prompt is rendered as text');
+        P.aiTrace[0].reply = 'A review was found.';
+        P.paintError('A later stage timed out');
+        check(P.results.textContent.includes('A review was found.'), 'Reply remains visible after error');
+        check(P.results.textContent.includes('13 input, 21 output'), 'Request usage visible');
+        check(P.results.textContent.includes('5-hour: 42% used'), 'Account usage visible');
+        K.api = async () => ({ ok: true, provider: 'claude_account', model: 'sonnet',
+            configured: true, account_ready: true,
+            account_usage: { windows: { five_hour: { used_percent: 42, resets_at: 1791540000 } } },
+            defaults: { claude_account: 'sonnet', claude: 'sonnet', openai: 'gpt' } });
+        await P.aiSettings();
+        const dialog = document.querySelector('.qz-ai-sheet');
+        check(dialog.textContent.includes('Claude is signed in'), 'Account status visible');
+        check(dialog.querySelector('a[href="https://claude.ai/settings/usage"]'), 'Usage link visible');
+        check(dialog.textContent.includes('5-hour: 42% used'), 'Account usage appears in settings');
+        document.getElementById('result').textContent = 'PASS';
+    } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
+})();
+</script>

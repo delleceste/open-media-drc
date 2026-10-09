@@ -896,10 +896,14 @@ usage limits or Agent SDK credits; availability and billing depend on the
 account's plan. See [Claude's programmatic usage documentation](https://code.claude.com/docs/en/headless)
 and [account usage rules](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan).
 No API key is required. The backend starts isolated, non-persistent Claude Code
-requests in safe mode, with only WebSearch allowed during research and no tools
+requests in safe mode, with only WebSearch and WebFetch allowed during research and no tools
 during structured selection. Shell, file, MCP, hook and plugin access are
 disabled. Account mode does not fall back to an API key. Claude's own login
 stores the account credentials; omdrcctrl neither copies nor returns them.
+Both research tools are approved when the CLI starts. Claude Code runs in
+noninteractive print mode, so it cannot forward an interactive permission
+dialog to the kiosk; other tool requests are denied. Website permissions in
+Claude's browser interface are separate from this CLI session.
 
 An existing Claude installation is reused the same way on Linux and FreeBSD:
 the service runs Claude as its own Unix user, with that user's `HOME`. On
@@ -934,6 +938,16 @@ keep AI recommendation order. Fewer results may be returned when matches or
 evidence are insufficient; an absent supporting link is explicitly flagged.
 Hi-Res specifications do not establish engineering quality, and a review of
 one mastering may not apply to another edition.
+
+The Results view shows **AI prompt and replies** while a search runs and after
+it finishes, including the rendered prompt, each stage's reply, Claude tool
+activity and token counts when provided. If a stage times out, available
+partial Claude output stays visible. The AI settings dialog shows account
+sign-in status, Claude Code's last reported five-hour and seven-day usage
+percentages after a request, and a link to the provider's usage page. The
+local CLI does not expose the account's monetary balance. The panel also
+shows the effective system prompt for every provider; a file in
+`<state_dir>/prompts/` takes precedence over the installed default.
 
 The **Research music** chip on Now and the AI icon in the full Qobuz player
 open a shared listening guide using the configured provider. It researches the

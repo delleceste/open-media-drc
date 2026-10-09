@@ -465,7 +465,29 @@ def ai_recommend():
                                     filters, body.get("count"))
         return jsonify({"ok": True, **answer})
     except QobuzError as error:
-        return jsonify({"ok": False, "error": str(error)}), 502
+        return jsonify({"ok": False, "error": str(error), "trace": getattr(error, "trace", [])}), 502
+
+
+@bp.route("/ai/recommend/prompt", methods=["POST"])
+def ai_recommend_prompt():
+    guard = _guard() or _ai_mutation_guard()
+    if guard:
+        return guard
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "Invalid recommendation request."}), 400
+    try:
+        prompt = qobuz_ai.recommendation_prompt(_state_dir(), body.get("prompt"), body.get("count"))
+        cfg = qobuz_ai.configuration(_state_dir())
+        answer = {"ok": True, "prompt": prompt, "provider": cfg["provider"],
+                  "prompt_source": str(qobuz_ai.prompt_path(_state_dir(), "recommend-research")),
+                  "system_prompt_source": str(qobuz_ai.prompt_path(_state_dir(), "system"))}
+        answer["system_prompt"] = qobuz_ai._prompt(_state_dir(), "system")
+        response = jsonify(answer)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
 
 
 @bp.route("/ai/listening", methods=["POST"])

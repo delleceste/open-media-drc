@@ -925,7 +925,7 @@ P.paintAIIcon = settings => {
     P.aiToggle.setAttribute('aria-label', name + ' search mode');
 };
 P.aiPost = async (url, json, ctl = new AbortController()) => {
-    const timer = setTimeout(() => ctl.abort(), 240000);
+    const timer = setTimeout(() => ctl.abort(), 420000);
     try {
         return await (await fetch(url, { method: 'POST', signal: ctl.signal,
             headers: { 'Content-Type': 'application/json', 'X-Qobuz-AI': '1' },
@@ -933,6 +933,17 @@ P.aiPost = async (url, json, ctl = new AbortController()) => {
     } catch (e) {
         return { ok: false, error: e.name === 'AbortError' ? 'AI research timed out. Try again.' : 'Could not reach AI recommendations.' };
     } finally { clearTimeout(timer); }
+};
+
+P.accountUsageText = status => {
+    if (!status?.windows) return '';
+    const names = { five_hour: '5-hour', seven_day: '7-day' };
+    return Object.entries(names).map(([key, label]) => {
+        const window = status.windows[key];
+        if (!window) return '';
+        const reset = window.resets_at ? ` · resets ${new Date(window.resets_at * 1000).toLocaleString()}` : '';
+        return `${label}: ${window.used_percent}% used${reset}`;
+    }).filter(Boolean).join(' · ');
 };
 
 P.aiSettings = K.openAISettings = async (required = false) => {
@@ -947,12 +958,24 @@ P.aiSettings = K.openAISettings = async (required = false) => {
         placeholder: d.configured ? 'Key configured; leave blank to keep it' : 'Paste your API key' });
     const keyLabel = h('label', {}, 'API key', key);
     const note = h('p', { class: 'small muted' });
+    const usage = h('p', { class: 'small' });
     const paintAccount = () => {
         const account = provider.value === 'claude_account';
         keyLabel.hidden = account;
         note.textContent = account
             ? (d.account_ready ? 'Claude is signed in on this server. Requests use that account and its applicable usage limits or credits.' : 'Sign in to Claude Code on this server as the web service user. No API key is needed for account mode.')
             : 'API requests use separately billed provider credits. The key is saved on this server and is never returned to the browser. A blank key keeps the saved key.';
+        const link = account ? 'https://claude.ai/settings/usage' : provider.value === 'openai'
+            ? 'https://platform.openai.com/usage' : 'https://console.anthropic.com/settings/usage';
+        K.clear(usage).append(h('a', { href: link, target: '_blank', rel: 'noopener noreferrer' },
+            account ? 'View Claude account usage and remaining limits' : 'View API usage and billing'),
+            h('span', { class: 'muted' }, ' · Balance is managed by the provider.'));
+        if (account) {
+            const reported = P.accountUsageText(d.account_usage);
+            usage.append(h('div', { class: 'small muted' }, reported
+                ? `Claude Code last reported: ${reported}`
+                : 'Claude Code usage appears here after an AI request.'));
+        }
     };
     provider.onchange = () => { model.value = d.defaults[provider.value]; key.value = ''; key.placeholder = 'API key (blank keeps any saved key)'; paintAccount(); };
     paintAccount();
@@ -969,7 +992,7 @@ P.aiSettings = K.openAISettings = async (required = false) => {
         h('div', { class: 'sheet qz-ai-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'AI settings' }, h('h2', {}, 'AI settings'),
             required ? h('p', {}, 'Configure an AI provider to use Ask AI: use the server’s Claude account login, or an API provider with a key. You can also change these settings in Configuration.') : null,
             h('p', { class: 'small muted' }, 'Ask AI researches reviews and finds playable Qobuz releases. Your request and album candidates are sent to the selected provider.'),
-            h('label', {}, 'Provider', provider), h('label', {}, 'Model', model), keyLabel, note,
+            h('label', {}, 'Provider', provider), h('label', {}, 'Model', model), keyLabel, note, usage,
             h('details', { class: 'small' },
                 h('summary', {}, 'How AI search works'),
                 h('p', {}, 'Web research + Qobuz catalog + AI reasoning. The selected model researches reviews using web search, then proposes Qobuz searches. It can also draw on its learned knowledge; answers are not based exclusively on web pages.'),
@@ -999,15 +1022,30 @@ P.askAI = async () => {
     P.searchedKey = params.toString(); P.request = params.toString();
     setPref('q', prompt);
     P.aiRunning = true;
+    P.aiTrace = [];
     const ctl = P.searchController = new AbortController();
     P.paintSearchControl();
-    P.paintWorking('Researching reviews and matching Qobuz releases…');
-    P.paintPreview('Researching reviews and matching Qobuz releases…'); P.revealPreview();
+    P.paintWorking('Preparing AI request…');
+    P.paintPreview('Preparing AI request…'); P.revealPreview();
     if (!P.dockedOnNow()) P.setView('results');
+    const prepared = await P.aiPost('/qobuz/ai/recommend/prompt', { prompt }, ctl);
+    if (seq !== P.searching) return;
+    if (!prepared.ok) {
+        P.searchController = null; P.aiRunning = false; P.request = null;
+        P.fetchProgress.hidden = true; P.paintSearchControl();
+        P.paintError(prepared.error); P.paintPreview(prepared.error); return;
+    }
+    P.aiTrace = [{ stage: 'Web research', prompt: prepared.prompt,
+        prompt_source: prepared.prompt_source, system_prompt: prepared.system_prompt,
+        system_prompt_source: prepared.system_prompt_source, reply: '' }];
+    P.paintWorking('Waiting for AI reply…');
+    P.paintPreview('Prompt sent to AI; waiting for reply…');
     const d = await P.aiPost('/qobuz/ai/recommend?' + params, { prompt }, ctl);
     if (seq !== P.searching) return;
     P.searchController = null; P.aiRunning = false;
     P.request = null; P.fetchProgress.hidden = true; P.paintSearchControl();
+    if (d.trace) P.aiTrace = d.trace;
+    if (d.ai?.trace) P.aiTrace = d.ai.trace;
     if (!d.ok) { P.paintError(d.error); P.paintPreview(d.error); return; }
     P.last = d; P.autoMore = false;
     P.paintSeen(); P.paintResults(); P.paintPreview(); P.paintStale(); P.openFilters(false);
@@ -1048,6 +1086,7 @@ P.searchSoon = () => {
 
 P.search = async (scan = 0, { quiet = false } = {}) => {
     clearTimeout(soon);
+    P.aiTrace = [];
     if (P.request || P.aiStarting) P.stopSearch();
     const params = P.params(scan);
     if (!params.has('q') && !params.has('label')) {
@@ -1094,15 +1133,39 @@ P.paintWorking = (text, more_) => {
     // A "Load more" keeps the list on screen and only turns its button into a spinner.
     const more = more_ && P.results.querySelector('.qz-more');
     if (more) { K.clear(more).append(h('div', { class: 'spinner small' }), h('span', {}, text)); return; }
-    K.clear(P.results).append(h('div', { class: 'qz-working' }, h('div', { class: 'spinner' }), h('div', { class: 'muted' }, text)));
+    K.clear(P.results).append(h('div', { class: 'qz-working' }, h('div', { class: 'spinner' }), h('div', { class: 'muted' }, text)),
+        ...(P.aiTrace?.length ? [P.aiTraceBlock()] : []));
 };
 
 P.paintError = error => {
-    K.clear(P.results).append(h('div', { class: 'errbox' }, error));
+    K.clear(P.results).append(h('div', { class: 'errbox' }, error),
+        ...(P.aiTrace?.length ? [P.aiTraceBlock()] : []));
+};
+
+P.aiTraceBlock = () => {
+    if (!P.aiTrace?.length) return null;
+    return h('details', { class: 'qz-ai-trace', open: true },
+        h('summary', {}, 'AI prompt and replies'),
+        ...P.aiTrace.flatMap(item => [
+            h('h4', {}, item.stage),
+            item.system_prompt ? h('div', {}, h('strong', {}, 'System prompt'),
+                item.system_prompt_source ? h('div', { class: 'small muted' }, item.system_prompt_source) : null,
+                h('pre', {}, item.system_prompt)) : null,
+            h('div', {}, h('strong', {}, 'Sent to AI'),
+                item.prompt_source ? h('div', { class: 'small muted' }, item.prompt_source) : null,
+                h('pre', {}, item.prompt)),
+            h('div', {}, h('strong', {}, 'AI reply'), h('pre', {}, item.reply || 'No reply received yet.')),
+            item.activity ? h('div', {}, h('strong', {}, 'Claude tool activity'), h('pre', {}, item.activity)) : null,
+            item.usage && Object.keys(item.usage).length ? h('p', { class: 'small muted' },
+                `Request tokens: ${item.usage.input_tokens ?? '?'} input, ${item.usage.output_tokens ?? '?'} output`) : null,
+            item.account_usage ? h('p', { class: 'small muted' },
+                `Claude account usage: ${P.accountUsageText(item.account_usage)}`) : null
+        ].filter(Boolean)));
 };
 
 P.paintResults = () => {
     const d = P.last;
+    if (d.ai?.trace) P.aiTrace = d.ai.trace;
     const failed = d.queries.filter(q => q.error);
     const kids = [h('div', { class: 'qz-summary small muted' },
         `${d.count} album${d.count === 1 ? '' : 's'}`,
@@ -1116,6 +1179,7 @@ P.paintResults = () => {
     if (d.ai) {
         if (d.ai.summary) kids.push(h('p', { class: 'small qz-ai-summary' }, d.ai.summary));
         if (d.count < d.ai.requested) kids.push(h('p', { class: 'small muted' }, `Found ${d.count} verified releases of ${d.ai.requested} requested.`));
+        if (P.aiTrace?.length) kids.push(P.aiTraceBlock());
     }
     failed.forEach(q => kids.push(h('div', { class: 'errbox warn small' }, `“${q.query}”: stopped after ${q.fetched} albums: ${q.error}`)));
     if (!d.results.length) kids.push(h('p', { class: 'muted' }, d.more
@@ -1179,7 +1243,11 @@ P.paintPreview = (text, d = P.last) => {
     P.updatePreviewAction();
     P.preview.hidden = false;
     P.fetchProgress.hidden = !P.request;
-    if (text) { K.clear(P.preview).append(h('div', { class: 'qz-pv-line muted' }, text)); return; }
+    if (text) {
+        K.clear(P.preview).append(h('div', { class: 'qz-pv-line muted' }, text),
+            ...(P.aiTrace?.length ? [P.aiTraceBlock()] : []));
+        return;
+    }
     if (!d) { P.preview.hidden = true; P.fetchProgress.hidden = true; return; }
     // the artist only if the search was not for them ("rolling stones" leaves out
     // "The Rolling Stones"); then the year and the label
