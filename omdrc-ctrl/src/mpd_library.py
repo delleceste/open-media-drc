@@ -84,6 +84,34 @@ def _connect(timeout: float = 3):
     return s
 
 
+# Folder levels that name a disc or a stream rather than the album, as in
+# `Album/CD2` or `Album (DVD Audio)/Artist/Stereo Tracks`.
+_GENERIC_FOLDER = re.compile(
+    r"(?:cd|disc|disk|dvd|sacd|side|vol(?:ume)?)\.?\s*[-_]?\s*(?:\d{1,2}|[ivx]{1,4}|[a-d])?"
+    r"|(?:stereo|multi-?channel|surround|5\.1|2\.0)(?:\s+(?:tracks|mix))?"
+    r"|tracks|audio|audio_ts|flac|mp3|wav|dsf|dff", re.I)
+
+
+def _folder_names(folder: str) -> tuple[str, str]:
+    """(artist, album) guessed from the folders of untagged tracks: the album
+    is the innermost folder that is not a disc or stream subfolder, nor a
+    repeat of an outer folder; the artist is the folder holding it."""
+    parts = [p for p in folder.split("/") if p]
+    while len(parts) > 1 and (_GENERIC_FOLDER.fullmatch(parts[-1].strip()) or
+                              parts[-1].casefold() in {p.casefold() for p in parts[:-1]}):
+        parts.pop()
+    album = parts[-1] if parts else "Unknown album"
+    artist = parts[-2] if len(parts) > 1 else ""
+    if artist and album.casefold().startswith(artist.casefold() + " - "):
+        album = album[len(artist) + 3:]
+    return artist, album
+
+
+def _file_title(uri: str) -> str:
+    stem = posixpath.splitext(posixpath.basename(uri))[0]
+    return re.sub(r"^\d{1,3}\s*[-._)]\s*", "", stem) or stem
+
+
 def search(text: str, limit: int = 5000) -> list[dict]:
     words = re.findall(r"[^\s]+", text or "")[:8]
     if not words: return []
@@ -92,16 +120,25 @@ def search(text: str, limit: int = 5000) -> list[dict]:
         tracks = None
         for word in words:
             found = _command(s, "search any " + _quote(word))
+            # MPD's `any` reads tags only; tracks without an album tag (raw
+            # .ac3 rips, untagged .wav) are found by their path instead.
+            files = {x.get("file") for x in found}
+            found += [x for x in _command(s, "search " + _quote(
+                f"((file contains {_quote(word)}) AND (album == \"\"))"))
+                if x.get("file") not in files]
             tracks = found if tracks is None else [x for x in tracks if x.get("file") in {y.get("file") for y in found}]
             if not tracks: break
     finally: s.close()
     albums = {}
     for raw in (tracks or [])[:limit]:
         t = {key.casefold(): value for key, value in raw.items()}
-        title, artist, album = t.get("album", "Unknown album"), t.get("albumartist", t.get("artist", "")), t.get("album", "Unknown album")
+        artist, album = t.get("albumartist", t.get("artist", "")), t.get("album", "")
+        if not album or not artist:
+            folder_artist, folder_album = _folder_names(album_folder(t["file"]))
+            album, artist = album or folder_album, artist or folder_artist
         key = (artist.casefold(), album.casefold(), t.get("date", ""))
         card = albums.setdefault(key, {"id": "local:" + hashlib.sha256("\0".join(key).encode()).hexdigest()[:24], "source": "local", "title": album, "artist": artist, "year": (t.get("date", "")[:4] or None), "label": "", "image": "", "image_large": "", "streamable": True, "tracks": [], "track_count": 0})
-        card["tracks"].append({"file": t["file"], "title": t.get("title", ""), "duration": int(float(t.get("duration", 0) or 0))})
+        card["tracks"].append({"file": t["file"], "title": t.get("title") or _file_title(t["file"]), "duration": int(float(t.get("duration", 0) or 0))})
         if "dr" not in card:
             card["dr"] = _dr14_average(t["file"])
         if not card["image"]:
