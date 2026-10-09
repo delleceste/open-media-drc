@@ -1916,12 +1916,14 @@ P.makeView = full => {
         oninput: () => { P.seeking = true; v.elapsed.textContent = K.fmtClock(+v.seek.value); },
         onchange: () => P.seekTo(+v.seek.value),
     });
-    v.favoriteDivider = h('span', { class: 'qz-pdivider', hidden: true, 'aria-hidden': 'true' });
-    v.favorite = btn('♡', 'Save playing album in Library', () => {
-        const album = P.trackInfo()?.album;
-        if (album && album.id) K.saveQobuzFavorite(album);
-    }, 'qz-favorite');
-    v.favorite.hidden = true;
+    if (full) {   // the full player only: the strip keeps just play/pause
+        v.favoriteDivider = h('span', { class: 'qz-pdivider', hidden: true, 'aria-hidden': 'true' });
+        v.favorite = btn('♡', 'Save playing album in Library', () => {
+            const album = P.trackInfo()?.album;
+            if (album && album.id) K.saveQobuzFavorite(album);
+        }, 'qz-favorite');
+        v.favorite.hidden = true;
+    }
     v.buttons = h('div', { class: 'qz-pbtns' },
         full ? btn('<<', 'Seek backward within this track', () => P.stepSeek(-1), 'qz-step') : null,
         btn(K.tIcon('prev'), 'Previous track', () => P.transport('prev')),
@@ -2256,8 +2258,10 @@ P.paintViews = () => {
     const pos = d && d.pos && d.length ? `${d.pos} / ${d.length}` : '';
     for (const v of P.views) {
         v.title.textContent = title;
-        v.favorite.hidden = !(album && album.id);
-        v.favoriteDivider.hidden = v.favorite.hidden;
+        if (v.favorite) {
+            v.favorite.hidden = !(album && album.id);
+            v.favoriteDivider.hidden = v.favorite.hidden;
+        }
         if (v.toggle.dataset.icon !== (playing ? 'pause' : 'play')) {
             v.toggle.dataset.icon = playing ? 'pause' : 'play';
             K.clear(v.toggle).append(K.tIcon(v.toggle.dataset.icon));

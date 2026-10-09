@@ -1144,7 +1144,7 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
     /* upright, the strip is one row as in Qobuz's app: cover and title, play/pause,
        open; a thin progress line along its top.  The rest is in the full player. */
     .qz-player { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "info btns"; gap: .5rem; padding: .45rem .5rem .4rem; overflow: hidden; }
-    .qz-player .qz-pbtns .btn:not(.qz-toggle):not(.qz-favorite), .qz-player .qz-pseek { display: none; }
+    .qz-player .qz-pbtns .btn:not(.qz-toggle), .qz-player .qz-pseek { display: none; }
     .qz-pprog { display: block; position: absolute; left: 0; right: 0; top: 0; height: .18rem; background: rgba(139,148,158,.25); }
     .qz-pprog i { display: block; height: 100%; width: 0; background: var(--accent); }
     .qz-snack { bottom: 4.3rem; }
