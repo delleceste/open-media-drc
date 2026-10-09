@@ -965,7 +965,7 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-ai-trace > details > summary { display: flex; align-items: center; gap: .4rem; }
 .qz-ai-trace > details > summary::before { content: '▸'; }
 .qz-ai-trace > details[open] > summary::before { content: '▾'; }
-.qz-ai-usage { margin-left: auto; font-variant-numeric: tabular-nums; }
+.qz-ai-usage { margin-left: auto; flex-shrink: 0; white-space: nowrap; font-size: .75rem; font-variant-numeric: tabular-nums; }
 .qz-ai-usage.low { color: var(--ok-text); }
 .qz-ai-usage.medium { color: #f39c12; }
 :root[data-theme=light] .qz-ai-usage.medium { color: #b45f00; }

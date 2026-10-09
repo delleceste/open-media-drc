@@ -1165,10 +1165,13 @@ P.aiTraceBlock = () => {
     if (!P.aiTrace?.length) return null;
     const userPrompt = P.aiUserPrompt || P.last?.query || P.input?.value?.trim() || '';
     const reported = [...P.aiTrace].reverse().find(item => item.account_usage)?.account_usage || P.aiAccountUsage;
-    const percentages = ['five_hour', 'seven_day'].map(key => reported?.windows?.[key]?.used_percent)
-        .filter(value => Number.isFinite(value) && value >= 0 && value <= 100);
-    const percentage = percentages.length ? Math.max(...percentages) : null;
+    const windows = [['five_hour', '5h'], ['seven_day', '7d']].map(([key, label]) =>
+        ({ label, value: reported?.windows?.[key]?.used_percent }))
+        .filter(({ value }) => Number.isFinite(value) && value >= 0 && value <= 100);
+    const percentage = windows.length ? Math.max(...windows.map(({ value }) => value)) : null;
     const level = percentage === null ? '' : percentage < 50 ? 'low' : percentage < 80 ? 'medium' : 'high';
+    const usageLabel = 'AI usage: ' + windows.map(({ label, value }, index) =>
+        index ? `[${label} ${value}%]` : `${label} ${value}%`).join(' ');
     return h('div', { class: 'qz-ai-trace' },
         h('details', {}, h('summary', {}, h('span', {}, 'AI prompt and replies'),
             P.aiRunning ? h('span', { class: 'qz-ai-estimate', role: 'progressbar',
@@ -1178,7 +1181,7 @@ P.aiTraceBlock = () => {
                 h('span', { class: 'qz-ai-estimate-fill' })) : null,
             percentage === null ? null : h('span', { class: 'qz-ai-usage ' + level,
                 title: 'Claude account usage: ' + P.accountUsageText(reported) + '. Higher limit used.',
-                'aria-label': `AI usage ${percentage}%` }, `AI usage: ${percentage}%`)),
+                'aria-label': 'AI usage: ' + P.accountUsageText(reported) }, usageLabel)),
         userPrompt ? h('div', { class: 'qz-ai-user-prompt' },
             h('strong', {}, 'Your request'), h('pre', {}, userPrompt)) : null,
         ...P.aiTrace.flatMap(item => [
