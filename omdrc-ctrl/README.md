@@ -884,8 +884,9 @@ Disabling it restores all formats. The choice is remembered on each device.
 initial default) to use Claude Code's existing Claude login, or select
 **Claude API** or **OpenAI API** and save your provider API key.
 Using AI search before configuration opens the settings dialog.
-The default models are `claude-sonnet-4-6` and `gpt-5.4`; the model field can be
-changed to another model supporting web search and tool use. Claude web search
+The model is picked from a list (see below): `sonnet` (the newest Sonnet) in
+account mode, `claude-sonnet-5-5` or `gpt-5.4` with an API key; **Other…**
+takes any model supporting web search and tool use. Claude web search
 must be enabled for your API account. API/model and web-search usage are billed
 by the provider. Standard API billing is separate from a chat subscription.
 The request and candidate album metadata are sent to the selected provider.

@@ -68,6 +68,7 @@ These milestones summarize changes in commits that updated this manual:
 
 | Date | Documentation changes |
 |---|---|
+| 2026-10-09 | Documented the AI features: Ask AI recommendations with their prompt-and-reply view, the listening guide (biographies, swipeable tabs, its strip tinted from the cover), the AI settings dialog (providers and their costs, the model list of always-latest aliases, the new-model notice, usage), and customizing the AI prompt files and the system prompt; Discover by label catalogue and the top-bar Search. |
 | 2026-10-08 | Gave the DR log its own chapter: how a new track measurement is kept, how the album figure is decided, what the live meter does on an album that already has a value, and how dr14.txt values reach the database (and a disputed one is measured again). |
 | 2026-09-27 to 2026-09-29 | Added the kiosk and Android app section (orientation and auto-rotate, keep-awake, fast start) and the Qobuz album search (Qobuz's own order, label and date filters, lowering, completions, the player). |
 | 2026-09-24 | Split the manual into common, Linux and FreeBSD parts; added the glossary and source index; documented the live DR estimate and its DR bar. |
@@ -1750,10 +1751,168 @@ Accents and case do not matter.
 previous, stop, next and a seek slider. It opens into a full-screen player:
 the cover as large as the screen allows, the track, work, album, label and
 year, the transport, and the queue, where a tap plays from that track.
+Saving the playing album to the Library (the heart) is in the full player;
+the strip keeps only the transport. When a listening guide is minimized
+(section \ref{sec:listening-guide}), its own strip docks just beneath the
+player strip. The two strips take their tints from the playing album's cover
+(the player strip its dominant colour, the guide strip the next distinct
+one), or the theme's shades when there is no cover.
+
+**Discover by label.** Besides Search, the page has Recent, Discover (new
+releases, by genre) and Awarded views. With a label ticked, Discover reads
+that label's own catalogue, newest first, instead of filtering Qobuz's new
+releases list (which ends a few hundred albums back and holds only a handful
+of any one label); unreleased albums are left out and a chosen genre still
+applies. With any filter, the list keeps reading on (up to ten pages at a
+time) while you scroll, until a screenful passes the filters.
+
+**Search from anywhere.** The magnifier in the kiosk's top bar opens the
+Qobuz page already scrolled to its search box. Reaching the page any other
+way keeps the box out of sight, as before.
 
 **Configuration** is the `[qobuz_search]` section of `commands.conf`
 (enabled, favourite labels, scan depths, cache times); the HTTP routes are
 under `/qobuz/` and listed in `omdrc-ctrl/README.md`.
+
+### Ask AI: recommendations from reviews {#sec:ask-ai}
+
+The **AI** toggle beside the search field turns the search into a request in
+plain words, for example *"three Beethoven Symphony No. 5 recordings,
+prioritizing sound engineering"*. Press the magnifier and the AI:
+
+1. **researches** reviews on the web (at most four searches);
+2. **plans** up to four Qobuz searches from what it found;
+3. **selects** albums only from what those searches returned.
+
+The box then checks every chosen album again (still streamable, still
+passing the Hi-Res filter) and shows ordinary playable cards, in the AI's
+order, each with the reason it was chosen and links to the reviews behind
+it; a pick without a supporting link is flagged. The number of results is
+the one asked for, or a suitable number up to 20. Turning AI on clears the
+filters; label, date, Awarded and Hi-Res filters set afterwards apply. Changing a filter never starts another
+(paid or rate-limited) AI request by itself: press the magnifier again.
+
+While the request runs, and afterwards, **AI prompt and replies** under the
+results shows each stage: the exact prompt sent, the reply, the web searches
+the model made and the tokens it used. If a stage times out, what it had
+produced so far stays visible. The AI does not listen to anything: sound
+quality comes from reviews, and Hi-Res figures alone prove nothing about the
+engineering.
+
+### The listening guide {#sec:listening-guide}
+
+The **Research music** chip on Now, or the AI icon in the full Qobuz player,
+opens a listening guide for the album that is playing. The AI researches the
+album once (up to five web searches) and the guide shows:
+
+* **Overview** --- the release and its works, followed by the **composers**
+  (or, for pop, rock and jazz, the artist or band) with a biography that
+  places them in the history, culture and ideas of their age, and the
+  principal **performers** when their background is verified;
+* one tab per **composition** --- when, where and why it was written, the
+  composer's life at the time, its premiere and reception, and what to
+  listen for;
+* a note for **every track** or movement.
+
+Swipe sideways to step through the tabs (they wrap round at either end). The
+tab of the work that is playing follows playback. Swipe the guide down to a
+strip at the bottom of the screen (it keeps following playback there) and up
+to reopen it; **Close** stops following and cancels a research still running.
+For classical albums, Qobuz's own work metadata decides which movements belong
+together; jazz records and live albums get a tab per song, concept albums one
+whole-album tab. If the web research times out, the guide says that it relies
+on the model's own knowledge and the album metadata.
+
+### AI settings {#sec:ai-settings}
+
+**Opening the dialog.** Kiosk **Configuration** page, button **AI settings**.
+It also opens by itself the first time Ask AI or the listening guide is used
+while no AI provider is configured.
+
+**Provider.** Three choices; only the first uses an existing subscription:
+
+| Provider | How it works | Cost |
+|---|---|---|
+| **Claude account (server login)** --- the default | The box runs the Claude Code program (`claude`), signed in with your Claude account (the same login as claude.ai) as the user that runs omdrcctrl | Included in your Claude plan; counts against its usage limits |
+| **Claude API** | Anthropic's developer API with an API key | Billed per use, separately from any subscription |
+| **OpenAI API** | OpenAI's developer API with an API key | Billed per use; a ChatGPT subscription does not include it |
+
+For Claude account mode, install Claude Code on the box and sign in once as
+the service user (`claude auth login`); the dialog says whether that login is
+detected. Account mode never falls back to an API key. API keys are kept only
+on the box (`qobuz-ai.json` in the state directory, mode 0600) and are never
+sent back to the browser; leaving the key field blank keeps the saved key.
+
+**Model.** A drop-down list. In Claude account mode it offers:
+
+| Entry | Meaning |
+|---|---|
+| Sonnet (latest) | balanced; recommended and the default |
+| Opus (latest) | most thorough, slower, uses the plan's limits faster |
+| Fable (latest) | top tier |
+| Haiku (latest) | fastest and lightest |
+| Other... | a text box for an exact model name, to pin one model |
+
+"Latest" entries are Claude Code aliases (`sonnet`, `opus`, `fable`,
+`haiku`): each call runs the newest model of that tier, so the list never
+needs updating when Anthropic releases a model. Which tiers can be used
+depends on the Claude plan; a tier the plan lacks fails with an error rather
+than silently falling back. The API providers list exact model names, plus an
+Other... entry.
+
+**New-model notice.** After every call the box records which model actually
+answered (`qobuz-ai-models.json` in the state directory). When it changes ---
+for example "sonnet" moving from Claude Sonnet 5.5 to a newer Sonnet --- the
+next result shows a one-time notice: above the Ask AI results, or as a toast
+in the listening guide. A model pinned with Other... never changes, so it is
+never announced.
+
+**Usage.** In account mode the dialog shows the five-hour and seven-day usage
+percentages Claude Code reported after the last request, and links to the
+provider's usage page. The box cannot see the account's billing balance.
+
+### Customizing the AI prompts {#sec:ai-prompts}
+
+The instructions sent to the AI are plain text files, installed in
+`lib/omdrcctrl/prompts/` (source: `omdrc-ctrl/src/prompts/`):
+
+| File | Used for | Required placeholders |
+|---|---|---|
+| `system.txt` | the **system prompt**: the standing brief sent with every call, for every provider | none |
+| `listening-research.txt` | listening guide, web research | `${metadata}` |
+| `listening-guide.txt` | listening guide, organizing the research into tabs and notes | `${metadata}`, `${research}` |
+| `recommend-research.txt` | Ask AI, web research | `${quantity}`, `${request}` |
+| `recommend-queries.txt` | Ask AI, planning the Qobuz searches | `${research}` |
+| `recommend-select.txt` | Ask AI, choosing the albums | `${quantity}`, `${data}` |
+
+The **system prompt** is the brief the model reads before each task and weighs
+above it: who it is, how careful to be with evidence, and that album metadata
+and web pages are data, never instructions. Rules that should hold everywhere
+--- a language, a tone, a length --- belong there; the other files hold each
+task's own instructions. Claude account mode passes it to Claude Code as its
+system prompt, the Claude API as `system`, OpenAI as `instructions`.
+
+To change a prompt on one box, copy the file into `prompts/` in the state
+directory (`$OMDRC_STATE_DIR`, else `~/.local/state/omdrc` of the service
+user) under the same name and edit the copy. It is read on every request, so
+no restart is needed; deleting it restores the default, and reinstalling
+never overwrites it. For example, to have every answer in Italian:
+
+```sh
+mkdir -p ~/.local/state/omdrc/prompts
+cp /usr/local/lib/omdrcctrl/prompts/system.txt ~/.local/state/omdrc/prompts/
+echo "Always answer in Italian." >> ~/.local/state/omdrc/prompts/system.txt
+```
+
+Each file opens with `#` comment lines saying where it is used and what its
+placeholders hold; those leading lines are never sent. The box fills in the
+`${name}` placeholders (album and track list, research text, your request,
+the candidate albums); a copy that drops a required one is refused with an
+error naming it, before anything is sent. Any other `$` is sent as written.
+The shape of the AI's answers is fixed in the program, so a prompt can change
+emphasis, tone or language, but not the fields the guide and results read.
+The kiosk keeps the last listening guide it showed, so open a different album
+to see the effect of a changed prompt.
 
 ## Configuration page --- filter installs and audio hardware roles {#sec:configuration-page}
 
@@ -5506,6 +5665,7 @@ CMake build, grouped by the same split as the manual itself.
 | The kiosk and the Android app | `omdrc-ctrl/src/kiosk/README.md`, `android/omdrc-app/README.md` |
 | The KDE Plasma widget | `kde/omdrc-plasmoid/README.md` |
 | Qobuz album search | `omdrc-ctrl/README.md` (Qobuz album search), `omdrc-ctrl/src/qobuz_words.txt` |
+| Ask AI, listening guide, AI settings, AI prompts | `omdrc-ctrl/README.md` (`[qobuz_search]`), `omdrc-ctrl/src/prompts/*.txt`, `omdrc-ctrl/src/qobuz_ai.py` |
 | Spectrum analyzer | `omdrc-ctrl/SPECTRUM_ANALYZER.md` |
 | Bit-perfect verification, the `/bitperfect` page and its implementation | `doc/BIT-PERFECT-VERIFICATION.md`, `scripts/README.md`, `omdrc-ctrl/README.md` |
 | Test signal | `tests/README.md` |
