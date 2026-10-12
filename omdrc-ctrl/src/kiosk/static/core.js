@@ -178,6 +178,7 @@ K.frame = (url, title) => {
             K.h('span', { class: 'spacer' }),
             K.h('button', { class: 'btn', onclick: close }, '✕ Close')),
         K.h('iframe', { src: url, title: title || url }));
+    scrim.backClose = close;
     root().append(scrim);
 };
 

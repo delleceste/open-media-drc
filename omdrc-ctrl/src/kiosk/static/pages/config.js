@@ -364,6 +364,7 @@ P.tuneSheet = () => {
             h('div', {}, h('strong', {}, 'Start'), ' measures and sets the meter delay, then runs a second pass to verify it.'),
             h('div', {}, h('strong', {}, 'Check again'), ' verifies the current timing. If the error exceeds ±30 ms, it corrects it; otherwise the delay stays unchanged.')) : null,
         h('div', { class: 'btn-row' }, startBtn, againBtn, logBtn, closeBtn)));
+    scrim.backClose = () => close();
     document.getElementById('overlay-root').append(scrim);
 };
 
@@ -399,6 +400,7 @@ P.logSheet = title => {
             h('button', { class: 'btn primary', type: 'button', onclick: copy }, 'Copy'),
             h('button', { class: 'btn', type: 'button', onclick: selectAll }, 'Select all'),
             h('button', { class: 'btn', type: 'button', onclick: close }, 'Close'))));
+    scrim.backClose = close;
     document.getElementById('overlay-root').append(scrim);
     return {
         append(line) {

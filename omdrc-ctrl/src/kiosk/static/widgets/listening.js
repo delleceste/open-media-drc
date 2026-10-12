@@ -500,6 +500,7 @@ G.paint = () => {
     const active = G.guide?.compositions?.[G.selected];
     const label = G.label();
     G.panel.classList.toggle('collapsed', G.collapsed);
+    G.panel.backClose = G.collapsed ? null : G.minimize;     // Android Back (main.js)
     document.documentElement.toggleAttribute('data-ls-strip', G.collapsed);
     K.clear(G.panel);
     const icon = G.collapsed ? G.stripIcon() : G.icon(G.busy ? 'busy' : '');

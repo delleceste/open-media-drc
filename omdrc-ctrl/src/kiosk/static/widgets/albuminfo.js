@@ -171,7 +171,6 @@ const close = () => {
     document.removeEventListener('keydown', onKey);
     return true;
 };
-K.closeAlbumInfo = close;
 const onKey = e => { if (e.key === 'Escape') close(); };
 
 // Just the label and year, for a caller (K.openCoverMax) that only has the
@@ -201,6 +200,7 @@ K.albumInfo = async (albumId, actions = null) => {
             h('span', { class: 'ai-label' }, 'Album details')),
         body);
     const mine = open;
+    open.backClose = close;
     document.getElementById('overlay-root').append(open);
     document.addEventListener('keydown', onKey);
     const d = await K.api('/qobuz/album/' + encodeURIComponent(albumId), { timeout: 20000 });

@@ -96,12 +96,21 @@ K.showPage = (id, smooth = true) => {
     if (!smooth) activate(i);
 };
 
-// Android Back first closes a detail/player overlay, then leaves Now for Qobuz.
-// Return false when the kiosk has no navigation to handle so the app can use
-// WebView history (or move to the background) as before.
+// Android Back first closes the popup on top: through its backClose when it has
+// one (a page or sheet with no backdrop to tap), else as a tap on its backdrop
+// would, so Cancel / Close keep their meaning.  A popup that cannot close now (a
+// busy spinner) still takes the press.  Then Back leaves Now for Qobuz.  Return
+// false when the kiosk has no navigation to handle so the app can use WebView
+// history (or move to the background) as before.
 K.handleAndroidBack = () => {
-    if (K.closeAlbumInfo && K.closeAlbumInfo()) return true;
-    if (K.closeQobuzPlayer && K.closeQobuzPlayer()) return true;
+    const z = el => parseInt(getComputedStyle(el).zIndex, 10) || 0;
+    const top = [...document.querySelectorAll('#overlay-root > *, body > .scrim')]
+        .filter(el => el.backClose || el.classList.contains('scrim'))
+        .reduce((a, b) => (a && z(a) > z(b) ? a : b), null);
+    if (top) {
+        if (top.backClose) top.backClose(); else top.click();
+        return true;
+    }
     if (cur >= 0 && K.pages[cur].id === 'now' && K.pages.some(p => p.id === 'qobuz')) {
         K.showPage('qobuz', false);
         return true;

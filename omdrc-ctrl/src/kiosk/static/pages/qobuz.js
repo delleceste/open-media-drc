@@ -2284,6 +2284,7 @@ P.openFull = ({ offset = 0 } = {}) => {
             setTimeout(() => { if (P.fullEl === sheet) sheet.style.transition = ''; }, 240);
         }));
     }
+    P.fullEl.backClose = P.closeFull;
     document.getElementById('overlay-root').append(P.fullEl);
     P.fullView = v;
     P.paintListeningIcon = () => { if (v.aiBtn.isConnected) K.clear(v.aiBtn).append(K.listening.icon(K.listening.busy ? 'busy' : '')); };
@@ -2335,11 +2336,6 @@ P.closeFull = () => {
     P.views = P.views.filter(v => v !== P.fullView);
     P.fullView = null;
     document.removeEventListener('keydown', P.fullKey);
-};
-K.closeQobuzPlayer = () => {
-    if (!P.fullEl) return false;
-    P.closeFull();
-    return true;
 };
 P.fullKey = e => { if (e.key === 'Escape') { if (P.queueActions) { P.closeQueueActions(); P.queueHead.focus(); } else P.closeFull(); } };
 
