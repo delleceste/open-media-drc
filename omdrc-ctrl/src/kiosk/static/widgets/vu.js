@@ -236,16 +236,18 @@ K.VuMeter = class VuMeter {
                 ctx.fillStyle = K.css('--meter-mark');
                 ctx.fillRect(x(rms) - 1.5 * dpr, y - 3 * dpr, 3 * dpr, barH + 6 * dpr);
             }
+            // a suspected clip turns the peak-hold line dark red
+            const ch = i ? 'right' : 'left';
             if (hold > SCALE_FLOOR) {
-                ctx.fillStyle = hold > -1 ? '#ff5b52' : K.css('--meter-hold');
+                ctx.fillStyle = this.suspects[ch] ? (K.theme() === 'light' ? '#a40e26' : '#c4141c')
+                    : hold > -1 ? '#ff5b52' : K.css('--meter-hold');
                 ctx.fillRect(x(hold) - 1 * dpr, y, 2 * dpr, barH);
             }
             ctx.fillStyle = K.css('--muted');
             ctx.font = `600 ${13 * dpr}px system-ui, sans-serif`;
             ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
             ctx.fillText(label, 6 * dpr, cy);
-            const ch = i ? 'right' : 'left';
-            const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : this.lag ? 'lag' : '';
+            const state = this.clips[ch] ? 'clip' : this.lag ? 'lag' : '';
             if (state) {
                 ctx.save();
                 ctx.translate(w - 13 * dpr, cy);
@@ -253,7 +255,7 @@ K.VuMeter = class VuMeter {
                 ctx.fillStyle = state === 'clip' ? K.css('--red') : K.theme() === 'light' ? '#a54800' : '#ffa726';
                 ctx.font = `800 ${11 * dpr}px system-ui, sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : state === 'lag' ? 'LAG!' : 'CLIP?';
+                const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : 'LAG!';
                 ctx.fillText(text, 0, 0, rowH - 8 * dpr);
                 ctx.restore();
                 if (state === 'clip') this.clipTargets[ch] = { canvas, x0: w / dpr - 32, x1: w / dpr,
@@ -384,12 +386,14 @@ K.VuMeter = class VuMeter {
             }
         }
 
-        // needle: white, tapered, with a soft glow; pivot with a dark cap and white ring
+        // needle: white, tapered, with a soft glow (red on a suspected clip); pivot with
+        // a dark cap and white ring
+        const ch = label === 'L' ? 'left' : 'right';
         const a = ang(peakDb), len = R * .98, base = 3.2 * dpr;
         const nx = Math.cos(a), ny = Math.sin(a), px = -ny, py = nx;
         ctx.save();
         ctx.shadowColor = I.glow; ctx.shadowBlur = 8 * dpr;
-        ctx.fillStyle = I.ink;
+        ctx.fillStyle = this.suspects[ch] ? I.red : I.ink;
         ctx.beginPath();
         ctx.moveTo(cx + px * base, cy + py * base);
         ctx.lineTo(cx + nx * len, cy + ny * len);
@@ -418,10 +422,9 @@ K.VuMeter = class VuMeter {
         }
         ctx.fillText(this.calibrating ? 'CALIBRATING…' : this.timingMissing ? '' : `PK ${fmtDb(peakDb)}  RMS ${fmtDb(rmsDb)}`, w - 11 * dpr, 11 * dpr);
         halo(false);
-        const ch = label === 'L' ? 'left' : 'right';
-        const state = this.clips[ch] ? 'clip' : this.suspects[ch] && this.blinkOn ? 'warn' : this.lag ? 'lag' : '';
+        const state = this.clips[ch] ? 'clip' : this.lag ? 'lag' : '';
         if (state) {
-            const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : state === 'lag' ? 'LAG!' : 'CLIP?';
+            const text = state === 'clip' ? `CLIP ${this.clips[ch]}` : 'LAG!';
             // Sit beside the full-scale needle, with the word parallel to it.
             const [zeroX, zeroY] = at(aTop, R * .93);
             const tx = Math.min(w - 19 * dpr, zeroX + 9 * dpr);
