@@ -876,7 +876,7 @@ class CompactStreamTest(unittest.TestCase):
     def test_a_compact_dr_stream_sends_dr_changes_only(self):
         an, (dr,) = self.frames("?mode=dr&compact=1")
         first = self.read(dr)
-        self.assertEqual(first["dr_blocks"], [])
+        self.assertEqual((first["dr_blocks"], first["dr_blocks_end"], first["dr_blocks_len"]), ([], 0, 0))
         an._publish({**self.LEVEL, "vu": {"left_peak": -3.0}})
         self.assertEqual(self.read(dr)["dr"]["state"], "collecting")   # the first DR state
         an._publish({**self.LEVEL, "vu": {"left_peak": -4.0}})
@@ -890,11 +890,32 @@ class CompactStreamTest(unittest.TestCase):
         self.assertNotIn("left", frame)
         self.assertNotIn("dr_blocks", frame, "the history did not change")
         self.assertEqual((frame["ok"], frame["source"], frame["rate"]), (True, "mpd", 44100))
+
+        def history(blocks, end, peak):
+            with an.lock:                            # what publish_dr does
+                an.dr_history = [[[b, b], [b, b]] for b in blocks]
+                an.dr_history_end = end
+                an.dr_revision += 1
+            an._publish({**self.LEVEL, "vu": {"left_peak": peak}})
+            return self.read(dr)
+
+        frame = history([1], 1, -6.0)
+        self.assertEqual((frame["dr_blocks_add"], frame["dr_blocks_end"], frame["dr_blocks_len"]),
+                         ([[[1, 1], [1, 1]]], 1, 1), "only the block it has not had")
+        self.assertNotIn("dr_blocks", frame)
+        frame = history([1, 2], 2, -7.0)
+        self.assertEqual(frame["dr_blocks_add"], [[[2, 2], [2, 2]]])
+        frame = history([2, 3], 3, -8.0)             # the window let block 1 go
+        self.assertEqual((frame["dr_blocks_add"], frame["dr_blocks_len"]), ([[[3, 3], [3, 3]]], 2))
+        frame = history([6, 7], 7, -9.0)             # blocks 4 and 5 are gone already
+        self.assertEqual(frame["dr_blocks"], [[[6, 6], [6, 6]], [[7, 7], [7, 7]]])
         with an.lock:
-            an.dr_history = [[[0.1, 0.1], [0.5, 0.5]]]
-            an.dr_revision += 1
-        an._publish({**self.LEVEL, "vu": {"left_peak": -6.0}})
-        self.assertEqual(self.read(dr)["dr_blocks"], [[[0.1, 0.1], [0.5, 0.5]]])
+            an._clear_dr_history_locked()            # started afresh
+        an._publish({**self.LEVEL, "vu": {"left_peak": -10.0}})
+        frame = self.read(dr)
+        self.assertEqual((frame["dr_blocks"], frame["dr_blocks_end"]), ([], 0))
+        frame = history([0], 1, -11.0)
+        self.assertEqual(frame["dr_blocks_add"], [[[0, 0], [0, 0]]])
 
     def test_a_compact_level_stream_sends_the_bands_when_they_change(self):
         an, (music, dr) = self.frames("?mode=music&compact=1", "?mode=dr")

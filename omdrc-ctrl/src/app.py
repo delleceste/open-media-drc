@@ -1936,6 +1936,12 @@ class SpectrumAnalyzer:
                          "track_age_blocks": 0}
         self.dr_history: list = []
         self.dr_revision = 0
+        # The history only grows at its end (and loses blocks off its start, a
+        # bounded window) until it is started afresh: a new `dr_history_gen`.
+        # `dr_history_end` numbers the block after its last, so a compact
+        # stream can send each client just the blocks it has not had yet.
+        self.dr_history_gen = 0
+        self.dr_history_end = 0
         self._dr_json = (-1, "[]")     # history serialized once per revision
         # The DR log's own listener (see _dr_log_apply): one of `dr_clients`,
         # held for as long as the log is switched on, page or no page.
@@ -2004,8 +2010,7 @@ class SpectrumAnalyzer:
             self.dr_epoch += 1
             self.dr_state = {"state": "collecting", "dr": None, "seconds": 0,
                              "track_age_blocks": 0}
-            self.dr_history = []
-            self.dr_revision += 1
+            self._clear_dr_history_locked()
         elif mode != "vu":
             self.band_clients += 1
         self.mode = mode
@@ -2047,8 +2052,7 @@ class SpectrumAnalyzer:
                             self.dr_epoch += 1
                             self.dr_state = {"state": "collecting", "dr": None,
                                              "seconds": 0, "track_age_blocks": 0}
-                            self.dr_history = []
-                            self.dr_revision += 1
+                            self._clear_dr_history_locked()
                         self.dr_clients += 1
                     elif mode != "vu":
                         self.band_clients += 1
@@ -2090,6 +2094,30 @@ class SpectrumAnalyzer:
     def snapshot(self) -> tuple[int, dict]:
         with self.lock:
             return self.seq, dict(self.frame)
+
+    def _clear_dr_history_locked(self) -> None:
+        # caller holds self.lock
+        self.dr_history = []
+        self.dr_history_gen += 1
+        self.dr_history_end = 0
+        self.dr_revision += 1
+
+    def dr_history_since(self, gen: int, end: int) -> tuple[int, int, int, int, bool, str]:
+        """(revision, gen, end, length, whole, blocks as JSON): the blocks after
+        block `end` of history `gen`; or, when that is not this history or some
+        of the blocks in between are no longer in it, the whole of it (whole)."""
+        with self.lock:
+            history, cur_end = self.dr_history, self.dr_history_end
+            start = cur_end - len(history)
+            if gen == self.dr_history_gen and start <= end <= cur_end:
+                whole, blocks = False, json.dumps(history[end - start:], separators=(",", ":"))
+            else:
+                if self._dr_json[0] != self.dr_revision:
+                    self._dr_json = (self.dr_revision, json.dumps(
+                        history, separators=(",", ":")))
+                whole, blocks = True, self._dr_json[1]
+            return (self.dr_revision, self.dr_history_gen, cur_end, len(history),
+                    whole, blocks)
 
     def dr_history_json(self) -> tuple[int, str]:
         """The history as JSON, built once per revision and shared by clients."""
@@ -2533,8 +2561,7 @@ class SpectrumAnalyzer:
                 with self.lock:
                     self.dr_state = {"state": "collecting", "dr": None,
                                      "seconds": 0, "track_age_blocks": 0}
-                    self.dr_history = []
-                    self.dr_revision += 1
+                    self._clear_dr_history_locked()
 
             def publish_dr(throttle: bool = False) -> None:
                 # Blocks stay 3 s long (the DR standard); only the display
@@ -2575,6 +2602,7 @@ class SpectrumAnalyzer:
                                       "seconds": 0, "track_age_blocks": age,
                                       "playback_state": dr_playback_state, **marks})
                     self.dr_history = dr_estimate.history()
+                    self.dr_history_end = dr_estimate.total_blocks
                     self.dr_revision += 1
 
             def keep_bytes() -> int:
@@ -2635,8 +2663,7 @@ class SpectrumAnalyzer:
                         self.dr_state = {"state": "unavailable", "dr": None,
                                          "seconds": 0, "track_age_blocks": 0}
                         if self.dr_history:
-                            self.dr_history = []
-                            self.dr_revision += 1
+                            self._clear_dr_history_locked()
                 if dr_on and self.dr_epoch != dr_epoch_seen:
                     dr_epoch_seen = self.dr_epoch
                     dr_song_file = ""
@@ -8925,7 +8952,10 @@ def spectrum_stream():
     max_s = min(3600.0, max(5.0, max_s)) if math.isfinite(max_s) and max_s > 0 else 0.0
     # compact=1 (the kiosk): send each stream only what its mode is for.  A DR
     # stream carries the DR fields alone, and only when they change (every
-    # DR_PUBLISH_SECONDS while playing) instead of every 25-Hz level frame; a
+    # DR_PUBLISH_SECONDS while playing) instead of every 25-Hz level frame,
+    # and of the history only the blocks this connection has not had yet
+    # ("dr_blocks_add"; the whole of it, "dr_blocks", on connecting and
+    # whenever it starts afresh), with its length and end to keep in step; a
     # level/spectrum stream drops the DR state, and leaves out "bands" (the
     # static labels and edges) while they are the ones this connection last
     # sent, for the client to fill back in.  Without it, every frame whole, as
@@ -8937,16 +8967,28 @@ def spectrum_stream():
         deadline = time.monotonic() + max_s if max_s else None
         dr_revision = -1
         dr_last = None              # compact DR: the fields last sent
+        dr_gen, dr_end = -1, 0      # compact DR: the history this connection has
         bands_last = None           # compact levels: the bands last sent
 
         def payload(frame):
-            nonlocal dr_revision, dr_last, bands_last
+            nonlocal dr_revision, dr_last, bands_last, dr_gen, dr_end
             if compact and mode == "dr":
                 frame = {k: frame[k] for k in _DR_STREAM_FIELDS if k in frame}
-                revision = _SPECTRUM.dr_history_json()[0]
-                if frame == dr_last and revision == dr_revision:
+                fresh = _SPECTRUM.dr_revision != dr_revision     # read again, locked, below
+                if frame == dr_last and not fresh:
                     return None
                 dr_last = frame
+                body = json.dumps({**frame, "sent": int(time.time() * 1000)},
+                                  separators=(",", ":"))
+                if not fresh:
+                    return f"data: {body}\n\n"
+                dr_revision, dr_gen, dr_end, length, whole, blocks = \
+                    _SPECTRUM.dr_history_since(dr_gen, dr_end)
+                end = dr_end
+                key = "dr_blocks" if whole else "dr_blocks_add"
+                sep = "," if len(body) > 2 else ""
+                return (f'data: {body[:-1]}{sep}"dr_blocks_end":{end},"dr_blocks_len":{length},'
+                        f'"{key}":{blocks}}}\n\n')
             elif compact:
                 frame = {k: v for k, v in frame.items() if k != "dr"}
                 if "bands" in frame:

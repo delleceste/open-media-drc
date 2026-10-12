@@ -140,13 +140,31 @@ K.drEstimate = (() => {
     // every cell, so it must not run for each level frame of a stream that is not
     // compact (core.js asks for compact; this is the guard).
     let lastKey = null;
+    // A compact stream (core.js) sends the whole history on connecting and when it
+    // starts afresh (dr_blocks), and after that only the blocks that follow the ones
+    // already here (dr_blocks_add); dr_blocks_end numbers the block after the last,
+    // dr_blocks_len is the window the box keeps.  Blocks that do not follow on (never
+    // expected: the stream is ordered) are not guessed at: the stream is opened again,
+    // and its first frame brings the whole history (the box holds it meanwhile).
+    let blocksEnd = null;
+    const resync = () => {
+        lastKey = null; blocksEnd = null;
+        if (E.stream) { E.stream.close(); E.stream = null; }
+        setTimeout(() => { if (E.subs.size && !E.stream) E.stream = K.streams.open('dr', onFrame); }, 0);
+    };
     const onFrame = f => {
         // what this estimator reads of a frame (summary(), above)
         const key = JSON.stringify([f.ok, f.state, f.error, f.source, f.dr]);
-        if (!Array.isArray(f.dr_blocks) && key === lastKey) return;
+        const whole = Array.isArray(f.dr_blocks), added = Array.isArray(f.dr_blocks_add);
+        if (!whole && !added && key === lastKey) return;
+        if (added && (blocksEnd === null || blocksEnd !== f.dr_blocks_end - f.dr_blocks_add.length)) { resync(); return; }
         lastKey = key;
         E.frame = f;
-        if (Array.isArray(f.dr_blocks)) E.blocks = f.dr_blocks;
+        if (whole) E.blocks = f.dr_blocks;
+        else if (added && f.dr_blocks_add.length) E.blocks = E.blocks.concat(f.dr_blocks_add);
+        if ((whole || added) && Number.isInteger(f.dr_blocks_len) && E.blocks.length > f.dr_blocks_len)
+            E.blocks = f.dr_blocks_len > 0 ? E.blocks.slice(-f.dr_blocks_len) : [];
+        if (whole || added) blocksEnd = Number.isInteger(f.dr_blocks_end) ? f.dr_blocks_end : null;
         if (Number.isInteger(f.dr && f.dr.track_age_blocks)) E.trackAge = f.dr.track_age_blocks;
         if (Number.isInteger(f.dr && f.dr.total_blocks)) {
             const next = f.dr.total_blocks;
