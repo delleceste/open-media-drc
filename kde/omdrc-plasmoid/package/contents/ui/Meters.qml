@@ -1,10 +1,18 @@
 import QtQuick
+import QtQuick.Shapes
 import org.kde.kirigami as Kirigami
 import "levels.js" as L
 
 /* Two-channel level meters, as LED-style bars or analogue needles, with the
- * kiosk's ballistics: instant attack, knee-gated fall, a held peak. */
-Canvas {
+ * kiosk's ballistics: instant attack, knee-gated fall, a held peak.
+ *
+ * What moves is drawn by the scene graph, on the GPU: the lit segments are a
+ * still picture revealed by a clipping item, the markers and the needle are
+ * rectangles, the level bands are shapes.  Only what stands still - faces,
+ * scales, labels, the segments themselves - is painted, on a Canvas, and only
+ * when the size, the style or the theme changes: a Canvas is drawn by the CPU
+ * and uploaded as a texture, too costly to redo at every display frame. */
+Item {
     id: meters
 
     property string style: "bars"     // "bars" | "needles"
@@ -15,6 +23,7 @@ Canvas {
     property real glass: 1             // < 1: a cover behind the meters shows through
 
     readonly property bool vertical: pair === "side" ? true : pair === "stacked" ? false : height > width * 1.1
+    readonly property bool needles: style === "needles"
     readonly property var keys: ["left_rms", "right_rms", "left_peak", "right_peak"]
     property var disp: ({ left_rms: L.FLOOR, right_rms: L.FLOOR, left_peak: L.FLOOR, right_peak: L.FLOOR })
     property var hold: ({ left: { db: L.FLOOR, at: 0 }, right: { db: L.FLOOR, at: 0 } })
@@ -23,12 +32,17 @@ Canvas {
     readonly property color textColor: Kirigami.Theme.textColor
     readonly property color faceColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.10)
 
+    // The geometry of the still parts, worked out once per layout.
+    property var geo: null
+
     onVuChanged: { settled = false }
-    onStyleChanged: requestPaint()
-    onGlassChanged: requestPaint()
-    onWidthChanged: requestPaint()
-    onHeightChanged: requestPaint()
-    onTextColorChanged: requestPaint()
+    onStyleChanged: relayout()
+    onVerticalChanged: relayout()
+    onGlassChanged: relayout()
+    onWidthChanged: relayout()
+    onHeightChanged: relayout()
+    onTextColorChanged: relayout()
+    Component.onCompleted: relayout()
 
     FrameAnimation {
         running: !meters.settled && meters.visible
@@ -55,14 +69,55 @@ Canvas {
             if (h.db > p + 0.05) still = false
         }
         settled = still
-        requestPaint()
+        update()
     }
 
-    onPaint: {
-        const ctx = getContext("2d")
-        ctx.reset()
-        if (style === "needles") paintNeedles(ctx)
-        else paintBars(ctx)
+    // Size, style or theme changed: the still parts are worked out and painted
+    // again (once, at the end of the current event), then the moving ones placed.
+    property bool relayoutPending: false
+    function relayout() {
+        if (relayoutPending) return
+        relayoutPending = true
+        Qt.callLater(() => {
+            relayoutPending = false
+            geo = needles ? needleGeometry() : barGeometry()
+            under.requestPaint()
+            over.requestPaint()
+            for (let i = 0; i < 2; i++) {
+                const row = rows.itemAt(i)
+                if (row) row.lit.requestPaint()
+            }
+            update()
+        })
+    }
+
+    // The moving parts, placed for the levels on display now.
+    function update() {
+        if (!geo || geo.needles !== needles) return          // a relayout is on its way
+        const levels = [[disp.left_rms, disp.left_peak, hold.left.db],
+                        [disp.right_rms, disp.right_peak, hold.right.db]]
+        for (let i = 0; i < 2; i++) {
+            const [rms, peak, held] = levels[i]
+            if (needles) {
+                const g = gauges.itemAt(i)
+                if (g) placeGauge(g, geo.gauges[i], rms, peak, held)
+            } else {
+                const row = rows.itemAt(i)
+                if (row) placeBar(row, geo.rows[i], rms, peak, held)
+            }
+        }
+    }
+
+    Canvas {
+        id: under
+        anchors.fill: parent
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            if (!meters.geo) return
+            if (meters.geo.needles) meters.geo.gauges.forEach(g => meters.paintGaugeFace(ctx, g))
+            else meters.paintBarFace(ctx, meters.geo)
+        }
     }
 
     MouseArea {
@@ -74,7 +129,7 @@ Canvas {
     }
 
     // ── bars ────────────────────────────────────────────────────────────────
-    function paintBars(ctx) {
+    function barGeometry() {
         const W = width, H = height
         // along: the meter's length; across: the room for both channels
         const along = vertical ? H : W, across = vertical ? W : H
@@ -85,69 +140,126 @@ Canvas {
         const rowW = (across - scaleW - 2) / 2
         const barW = Math.max(2, Math.min(rowW * 0.78, 40))
         const len = along - lead - tail
-        // position along the meter for a level; vertical meters grow upwards
-        const pos = db => lead + len * L.clamp(L.voltageFrac(db, L.SCALE_FLOOR), 0, 1)
-        const rect = (a, c, la, lc) => vertical ? ctx.fillRect(c, H - a - la, lc, la)
-                                                : ctx.fillRect(a, c, la, lc)
-        const grad = vertical ? L.levelGradient(ctx, 0, H - lead, 0, H - lead - len)
-                              : L.levelGradient(ctx, lead, 0, lead + len, 0)
-        const seg = Math.max(2, len / 60), gap = Math.max(1, seg * 0.3)
-        const rows = [["L", disp.left_peak, disp.left_rms, hold.left.db],
-                      ["R", disp.right_peak, disp.right_rms, hold.right.db]]
-        rows.forEach(([label, peak, rms, held], i) => {
-            const c = 1 + rowW * i + (rowW - barW) / 2
+        return {
+            needles: false, W: W, H: H, vertical: vertical, across: across, labels: labels, scale: scale,
+            lead: lead, len: len, scaleW: scaleW, barW: barW,
+            seg: Math.max(2, len / 60), gap: Math.max(1, Math.max(2, len / 60) * 0.3),
+            rows: [0, 1].map(i => ({ label: i ? "R" : "L", c: 1 + rowW * i + (rowW - barW) / 2 })),
+        }
+    }
+
+    // position along the meter for a level; vertical meters grow upwards
+    function barPos(g, db) { return g.lead + g.len * L.clamp(L.voltageFrac(db, L.SCALE_FLOOR), 0, 1) }
+    // a rectangle given along/across the meter, in item coordinates
+    function barRect(g, a, c, la, lc) {
+        return g.vertical ? { x: c, y: g.H - a - la, w: lc, h: la } : { x: a, y: c, w: la, h: lc }
+    }
+
+    function paintBarFace(ctx, g) {
+        const rect = (a, c, la, lc) => { const r = barRect(g, a, c, la, lc); ctx.fillRect(r.x, r.y, r.w, r.h) }
+        for (const row of g.rows) {
             ctx.globalAlpha = glass
             ctx.fillStyle = faceColor
-            rect(lead, c, len, barW)
+            rect(g.lead, row.c, g.len, g.barW)
             ctx.globalAlpha = 1
-            ctx.fillStyle = grad
-            const to = pos(peak)
-            for (let a = lead; a < to; a += seg + gap)
-                rect(a, c + 1, Math.min(seg, to - a), barW - 2)
-            if (rms > L.SCALE_FLOOR) {
-                ctx.fillStyle = textColor
-                rect(pos(rms) - 1, c - 1, 2, barW + 2)
-            }
-            if (held > L.SCALE_FLOOR) {
-                ctx.fillStyle = held > -1 ? "#ff5b52" : Qt.rgba(textColor.r, textColor.g, textColor.b, 0.7)
-                rect(pos(held) - 1, c, 2, barW)
-            }
-            if (labels) {
+            if (g.labels) {
                 ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.6)
-                ctx.font = "bold " + Math.round(Math.min(11, barW + 2)) + "px sans-serif"
+                ctx.font = "bold " + Math.round(Math.min(11, g.barW + 2)) + "px sans-serif"
                 ctx.textAlign = "center"
                 ctx.textBaseline = "middle"
-                if (vertical) ctx.fillText(label, c + barW / 2, H - lead / 2)
-                else ctx.fillText(label, lead / 2, c + barW / 2)
+                if (g.vertical) ctx.fillText(row.label, row.c + g.barW / 2, g.H - g.lead / 2)
+                else ctx.fillText(row.label, g.lead / 2, row.c + g.barW / 2)
             }
-        })
-        if (scale) {
+        }
+        if (g.scale) {
             ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.55)
             ctx.font = "9px sans-serif"
             ctx.textAlign = "center"
             ctx.textBaseline = "middle"
-            const c = across - scaleW / 2
-            for (const db of len >= 300 ? [-40, -20, -12, -6, -3, 0] : [-20, -12, -6, -3, 0]) {
-                const a = pos(db)
-                if (vertical) ctx.fillText(String(db), c, Math.min(H - 6, Math.max(6, H - a)))
-                else ctx.fillText(String(db), Math.min(W - 8, Math.max(8, a)), c)
+            const c = g.across - g.scaleW / 2
+            for (const db of g.len >= 300 ? [-40, -20, -12, -6, -3, 0] : [-20, -12, -6, -3, 0]) {
+                const a = barPos(g, db)
+                if (g.vertical) ctx.fillText(String(db), c, Math.min(g.H - 6, Math.max(6, g.H - a)))
+                else ctx.fillText(String(db), Math.min(g.W - 8, Math.max(8, a)), c)
             }
         }
     }
 
-    // ── needles ─────────────────────────────────────────────────────────────
-    function paintNeedles(ctx) {
-        const side = width >= height
-        const gw = side ? width / 2 : width, gh = side ? height : height / 2
-        paintGauge(ctx, 0, 0, gw, gh, "L", disp.left_rms, disp.left_peak, hold.left.db)
-        paintGauge(ctx, side ? gw : 0, side ? 0 : gh, gw, gh, "R",
-                   disp.right_rms, disp.right_peak, hold.right.db)
+    // Every segment of a row lit, painted once: the level shows as much of it
+    // as its clip lets through.
+    function paintBarSegments(ctx, g, row) {
+        const grad = g.vertical ? L.levelGradient(ctx, 0, g.H - g.lead, 0, g.H - g.lead - g.len)
+                                : L.levelGradient(ctx, g.lead, 0, g.lead + g.len, 0)
+        ctx.fillStyle = grad
+        const to = g.lead + g.len
+        for (let a = g.lead; a < to; a += g.seg + g.gap) {
+            const r = barRect(g, a, row.c + 1, Math.min(g.seg, to - a), g.barW - 2)
+            ctx.fillRect(r.x, r.y, r.w, r.h)
+        }
     }
 
-    function paintGauge(ctx, x, y, w, h, label, rms, peak, held) {
-        const A0 = -140, SPAN = 100                 // degrees, canvas convention
-        const rad = d => d * Math.PI / 180
-        const ang = db => rad(A0 + SPAN * L.voltageFrac(db, L.SCALE_FLOOR))
+    function setRect(item, r) { item.x = r.x; item.y = r.y; item.width = r.w; item.height = r.h }
+
+    function placeBar(item, row, rms, peak, held) {
+        const g = geo
+        const to = barPos(g, peak)
+        setRect(item.clipper, barRect(g, g.lead, row.c + 1, Math.max(0, to - g.lead), g.barW - 2))
+        item.rmsMark.visible = rms > L.SCALE_FLOOR
+        if (item.rmsMark.visible) setRect(item.rmsMark, barRect(g, barPos(g, rms) - 1, row.c - 1, 2, g.barW + 2))
+        item.holdMark.visible = held > L.SCALE_FLOOR
+        if (item.holdMark.visible) {
+            setRect(item.holdMark, barRect(g, barPos(g, held) - 1, row.c, 2, g.barW))
+            item.holdMark.color = held > -1 ? "#ff5b52" : Qt.rgba(textColor.r, textColor.g, textColor.b, 0.7)
+        }
+    }
+
+    Repeater {
+        id: rows
+        model: meters.needles ? 0 : 2
+        delegate: Item {
+            id: row
+            required property int index
+            anchors.fill: parent
+            property alias clipper: clipper
+            property alias lit: lit
+            property alias rmsMark: rmsMark
+            property alias holdMark: holdMark
+            Item {
+                id: clipper
+                clip: true
+                Canvas {
+                    id: lit
+                    x: -clipper.x
+                    y: -clipper.y
+                    width: meters.width
+                    height: meters.height
+                    onPaint: {
+                        const ctx = getContext("2d")
+                        ctx.reset()
+                        if (meters.geo && !meters.geo.needles) meters.paintBarSegments(ctx, meters.geo, meters.geo.rows[row.index])
+                    }
+                }
+            }
+            Rectangle { id: rmsMark; color: meters.textColor; visible: false }
+            Rectangle { id: holdMark; visible: false }
+            Component.onCompleted: { lit.requestPaint(); meters.update() }
+        }
+    }
+
+    // ── needles ─────────────────────────────────────────────────────────────
+    readonly property real gaugeA0: -140                // degrees, canvas convention
+    readonly property real gaugeSpan: 100
+    function rad(d) { return d * Math.PI / 180 }
+    function gaugeDeg(db) { return gaugeA0 + gaugeSpan * L.voltageFrac(db, L.SCALE_FLOOR) }
+
+    function needleGeometry() {
+        const side = width >= height
+        const gw = side ? width / 2 : width, gh = side ? height : height / 2
+        return { needles: true, gauges: [gaugeGeometry(0, 0, gw, gh, "L"),
+                          gaugeGeometry(side ? gw : 0, side ? 0 : gh, gw, gh, "R")] }
+    }
+
+    function gaugeGeometry(x, y, w, h, label) {
         const pad = Math.max(1, Math.min(w, h) * 0.04)
         // the painted area; the needle's pivot stays at least a pixel inside
         // its bottom edge, so the needle never starts under the clip
@@ -155,24 +267,29 @@ Canvas {
         // sized so the arc spans the width or the needle (0.97 R at full scale)
         // and its hub (0.018 R) the height, so nothing reaches past the clip;
         // a gauge narrower than its face is centred in it
-        const R = Math.max(4, Math.min((w / 2 - pad) / Math.sin(rad(SPAN / 2)), (bottom - top - 2) / 0.99))
+        const R = Math.max(4, Math.min((w / 2 - pad) / Math.sin(rad(gaugeSpan / 2)), (bottom - top - 2) / 0.99))
         const needleW = Math.max(1, R * 0.012), hubR = Math.max(1.5, needleW * 1.5)
         // on a pixel centre, so the needle's antialiased foot does not flicker
         const cx = Math.floor(x + w / 2) + 0.5
         const cy = Math.min(Math.floor(bottom - 1 - hubR),
                             Math.round(top + R + Math.max(0, (bottom - top - R) / 2))) + 0.5
-        const small = R < 40
+        return { x: x, y: y, w: w, h: h, label: label, pad: pad, R: R, needleW: needleW, hubR: hubR,
+                 cx: cx, cy: cy, small: R < 40, rScale: R * 0.86, rLvl: R * 0.74,
+                 // the clip: the face, in item coordinates
+                 fx: x + pad, fy: y + pad, fw: w - 2 * pad, fh: h - 2 * pad }
+    }
 
+    function paintGaugeFace(ctx, g) {
+        const ang = db => rad(gaugeDeg(db))
+        const R = g.R, cx = g.cx, cy = g.cy, rScale = g.rScale, small = g.small
         ctx.globalAlpha = glass
         ctx.fillStyle = faceColor
-        ctx.fillRect(x + pad, y + pad, w - 2 * pad, h - 2 * pad)
+        ctx.fillRect(g.fx, g.fy, g.fw, g.fh)
         ctx.globalAlpha = 1
         ctx.save()
         ctx.beginPath()
-        ctx.rect(x + pad, y + pad, w - 2 * pad, h - 2 * pad)
+        ctx.rect(g.fx, g.fy, g.fw, g.fh)
         ctx.clip()
-
-        const rScale = R * 0.86, rLvl = R * 0.74
         // the scale: plain to -6 dB, then red
         ctx.lineWidth = Math.max(1, R * 0.015)
         ctx.strokeStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.8)
@@ -196,46 +313,137 @@ Canvas {
                 ctx.fillText(String(db), cx + Math.cos(a) * rScale * 0.88, cy + Math.sin(a) * rScale * 0.88)
             }
         }
-        // the level: a soft band for the RMS, a brighter one for the peak
-        const grad = L.levelGradient(ctx, cx - R, 0, cx + R, 0)
-        ctx.strokeStyle = grad
-        ctx.lineCap = "round"
-        if (rms > L.SCALE_FLOOR) {
-            ctx.globalAlpha = 0.45
-            ctx.lineWidth = Math.max(2, R * 0.07)
-            ctx.beginPath(); ctx.arc(cx, cy, rLvl, ang(L.SCALE_FLOOR), ang(rms)); ctx.stroke()
-        }
-        if (peak > L.SCALE_FLOOR) {
-            ctx.globalAlpha = 1
-            ctx.lineWidth = Math.max(1, R * 0.025)
-            ctx.beginPath(); ctx.arc(cx, cy, rLvl, ang(L.SCALE_FLOOR), ang(peak)); ctx.stroke()
-        }
-        ctx.globalAlpha = 1
-        if (held > L.SCALE_FLOOR) {
-            const a = ang(held)
-            ctx.fillStyle = held > -1 ? "#ff5b52" : textColor
-            ctx.beginPath()
-            ctx.arc(cx + Math.cos(a) * rLvl, cy + Math.sin(a) * rLvl, Math.max(1.5, R * 0.025), 0, 2 * Math.PI)
-            ctx.fill()
-        }
-        // the needle follows the peak
-        const a = ang(Math.max(L.SCALE_FLOOR, peak))
-        ctx.strokeStyle = textColor
-        ctx.lineWidth = needleW
-        ctx.beginPath()
-        ctx.moveTo(cx, cy)
-        ctx.lineTo(cx + Math.cos(a) * R * 0.97, cy + Math.sin(a) * R * 0.97)
-        ctx.stroke()
-        // the hub the needle turns on
-        ctx.fillStyle = textColor
-        ctx.beginPath(); ctx.arc(cx, cy, hubR, 0, 2 * Math.PI); ctx.fill()
         ctx.restore()
+    }
 
-        if (h >= 24) {
-            ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.6)
-            ctx.font = "bold " + Math.round(Math.max(8, Math.min(12, h * 0.14))) + "px sans-serif"
-            ctx.textAlign = "left"; ctx.textBaseline = "bottom"
-            ctx.fillText(label, x + pad + 3, y + h - pad - 2)
+    function paintGaugeLabel(ctx, g) {
+        if (g.h < 24) return
+        ctx.fillStyle = Qt.rgba(textColor.r, textColor.g, textColor.b, 0.6)
+        ctx.font = "bold " + Math.round(Math.max(8, Math.min(12, g.h * 0.14))) + "px sans-serif"
+        ctx.textAlign = "left"; ctx.textBaseline = "bottom"
+        ctx.fillText(g.label, g.x + g.pad + 3, g.y + g.h - g.pad - 2)
+    }
+
+    // An arc of radius r and width w from the scale's floor to `deg`, with round
+    // ends: an annular sector and a disc at either end, all drawn clockwise so
+    // that where they overlap they still fill (WindingFill).
+    function bandPath(g, deg, r, w) {
+        const ox = g.cx - g.fx, oy = g.cy - g.fy                   // centre, in the clip
+        const a0 = rad(gaugeA0), a1 = rad(deg), ro = r + w / 2, ri = Math.max(0, r - w / 2)
+        const pt = (a, rr) => [ox + Math.cos(a) * rr, oy + Math.sin(a) * rr]
+        const disc = a => {
+            const [x, y] = pt(a, r), h = w / 2
+            return "M " + (x + h) + " " + y + " A " + h + " " + h + " 0 0 1 " + (x - h) + " " + y
+                 + " A " + h + " " + h + " 0 0 1 " + (x + h) + " " + y + " Z "
+        }
+        const [x0, y0] = pt(a0, ro), [x1, y1] = pt(a1, ro), [x2, y2] = pt(a1, ri), [x3, y3] = pt(a0, ri)
+        return "M " + x0 + " " + y0 + " A " + ro + " " + ro + " 0 0 1 " + x1 + " " + y1
+             + " L " + x2 + " " + y2 + " A " + ri + " " + ri + " 0 0 0 " + x3 + " " + y3 + " Z "
+             + disc(a0) + disc(a1)
+    }
+
+    function placeGauge(item, g, rms, peak, held) {
+        const R = g.R
+        setRect(item, { x: g.fx, y: g.fy, w: g.fw, h: g.fh })
+        // the level: a soft band for the RMS, a brighter one for the peak
+        item.rmsBand.visible = rms > L.SCALE_FLOOR
+        if (item.rmsBand.visible) item.rmsPath.path = bandPath(g, gaugeDeg(rms), g.rLvl, Math.max(2, R * 0.07))
+        item.peakBand.visible = peak > L.SCALE_FLOOR
+        if (item.peakBand.visible) item.peakPath.path = bandPath(g, gaugeDeg(peak), g.rLvl, Math.max(1, R * 0.025))
+        item.gradStart = g.cx - R - g.fx
+        item.gradEnd = g.cx + R - g.fx
+        item.holdDot.visible = held > L.SCALE_FLOOR
+        if (item.holdDot.visible) {
+            const a = rad(gaugeDeg(held)), d = Math.max(1.5, R * 0.025)
+            item.holdDot.width = item.holdDot.height = 2 * d
+            item.holdDot.x = g.cx + Math.cos(a) * g.rLvl - d - g.fx
+            item.holdDot.y = g.cy + Math.sin(a) * g.rLvl - d - g.fy
+            item.holdDot.color = held > -1 ? "#ff5b52" : textColor
+        }
+        // the needle follows the peak: up from its pivot, turned to the level
+        const len = R * 0.97
+        item.needle.width = g.needleW
+        item.needle.height = len
+        item.needle.x = g.cx - g.needleW / 2 - g.fx
+        item.needle.y = g.cy - len - g.fy
+        item.needleTurn.origin.x = g.needleW / 2
+        item.needleTurn.origin.y = len
+        item.needleTurn.angle = gaugeDeg(Math.max(L.SCALE_FLOOR, peak)) + 90
+        // the hub the needle turns on
+        item.hub.width = item.hub.height = 2 * g.hubR
+        item.hub.x = g.cx - g.hubR - g.fx
+        item.hub.y = g.cy - g.hubR - g.fy
+    }
+
+    component LevelGradient: LinearGradient {
+        GradientStop { position: 0; color: "#1f8f3a" }
+        GradientStop { position: L.clamp(L.voltageFrac(-18, L.SCALE_FLOOR), 0, 1); color: "#3fb950" }
+        GradientStop { position: L.clamp(L.voltageFrac(-9, L.SCALE_FLOOR), 0, 1); color: "#d8c23a" }
+        GradientStop { position: L.clamp(L.voltageFrac(-4, L.SCALE_FLOOR), 0, 1); color: "#e3892b" }
+        GradientStop { position: L.clamp(L.voltageFrac(-1, L.SCALE_FLOOR), 0, 1); color: "#f85149" }
+        GradientStop { position: 1; color: "#ff2d2d" }
+    }
+
+    Repeater {
+        id: gauges
+        model: meters.needles ? 2 : 0
+        delegate: Item {
+            id: gauge
+            clip: true
+            property real gradStart: 0
+            property real gradEnd: 1
+            property alias rmsBand: rmsBand
+            property alias rmsPath: rmsPath
+            property alias peakBand: peakBand
+            property alias peakPath: peakPath
+            property alias holdDot: holdDot
+            property alias needle: needle
+            property alias needleTurn: needleTurn
+            property alias hub: hub
+            Shape {
+                id: rmsBand
+                anchors.fill: parent
+                opacity: 0.45
+                visible: false
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    strokeWidth: -1
+                    fillRule: ShapePath.WindingFill
+                    fillGradient: LevelGradient { x1: gauge.gradStart; x2: gauge.gradEnd; y1: 0; y2: 0 }
+                    PathSvg { id: rmsPath }
+                }
+            }
+            Shape {
+                id: peakBand
+                anchors.fill: parent
+                visible: false
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    strokeWidth: -1
+                    fillRule: ShapePath.WindingFill
+                    fillGradient: LevelGradient { x1: gauge.gradStart; x2: gauge.gradEnd; y1: 0; y2: 0 }
+                    PathSvg { id: peakPath }
+                }
+            }
+            Rectangle { id: holdDot; radius: width / 2; antialiasing: true; visible: false }
+            Rectangle {
+                id: needle
+                color: meters.textColor
+                antialiasing: true
+                transform: Rotation { id: needleTurn }
+            }
+            Rectangle { id: hub; radius: width / 2; color: meters.textColor; antialiasing: true }
+            Component.onCompleted: meters.update()
+        }
+    }
+
+    Canvas {
+        id: over
+        anchors.fill: parent
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            if (meters.geo && meters.geo.needles) meters.geo.gauges.forEach(g => meters.paintGaugeLabel(ctx, g))
         }
     }
 }
