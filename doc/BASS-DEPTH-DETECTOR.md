@@ -1,0 +1,124 @@
+# Bass depth detector (`tools/bass_depth.py`)
+
+Goal: tell from an orchestral recording whether the double basses sit at the
+back of the stage or are spot-mic'd "into the mix". If it works, it becomes a
+real omdrc tool (it lives in `tools/` for that reason).
+
+Status as of 2026-10-12: **v1 synthetically validated; first real recording
+analysed** (see "Case study 1" below). More labelled recordings to come.
+
+## How to run
+
+```sh
+tools/bass_depth.py track.flac [more.flac ...] --plot DIR [--json out.json]
+tools/bass_depth.py track.flac --segments 4:12-4:30,7:05-7:40   # known exposed bass
+tools/bass_depth.py --selftest        # synthetic natural / spot / aligned spot
+```
+
+Deps: numpy, scipy, ffmpeg on PATH (decodes any FLAC/rate to 16 kHz stereo),
+matplotlib only for `--plot`. No pip installs needed on this box.
+
+## What v1 detects
+
+An **unaligned bass spot mic**: the basses reach the mix through the spot
+first, then Δ later through the main pair (Δ = path difference / 343 m/s,
+typically 5–40 ms). Verdicts: `none`, `likely` (GCC only), `double-arrival`
+(GCC + AC agree), `possible` (AC only), `insufficient` (too little exposed
+bass or fewer than 4 distinct notes).
+
+Pipeline:
+1. **Bass frames**: per 256 ms frame, best f0 in 29–66 Hz (below cello C2).
+   Bass frame = first 6 harmonics carry ≥ 50% of 25–1500 Hz energy (`--dom`)
+   AND ≥ 5 of those 6 are spectral peaks (`--min-peaks`). Accepts ~68% of
+   exposed-bass frames, ~6% of tutti (synthetic).
+2. **Pool per semitone**, then per note compute:
+   - **GCC** (decides): coherence-weighted PHAT of the L/R cross-spectrum in
+     150–2500 Hz. Unaligned spot shows at +(Δ+ITD_R) and −(Δ+ITD_L).
+   - **AC** (corroborates): mono whitened autocorrelation.
+3. **Pitch-masked average across notes**: each note's curve repeats every
+   feature (even GCC's main peak) at k·T0; mask those lags per note, average
+   complex curves; only a geometry-fixed delay survives.
+4. Peak must have robust z ≥ 5.5 (`--z`), be ≥ −20 dB vs main peak, and be
+   ≥ 6 dB above the orchestra reference (non-bass frames, 300–4000 Hz) at the
+   same lag (`--specific-db`). Search window 5–60 ms.
+
+## Lessons from building it (don't relearn these)
+
+- Pitch period (15–35 ms) overlaps Δ: naive cepstrum/autocorr finds pitch.
+  Harmonic sources make GCC pitch-periodic too (false 21.4 ms = F#1 period).
+- Mono AC is inherently weak: within a note the comb is sampled only at
+  harmonics → Δ ambiguous mod T0. Hence GCC decides.
+- A low-f0 comb fits subharmonics of any upper note (cello at 3·f0 passes an
+  odd-harmonic test) → hence the "first 6 harmonics + peak count" rule.
+- Bands: 150–2500 Hz beat 80–1500 (low harmonics carry long reverb).
+- Min lag 5 ms: at 3 ms the main-peak skirt gave a false positive.
+- L/R coherence did NOT separate aligned spot from natural synthetically
+  (0.57 vs 0.60) — kept as informational only.
+
+## Synthetic validation (8 seeds, Δ 12–33 ms, bass DRR 0 and −4 dB)
+
+- unaligned spot: 16/16 detected, Δ within 0.6 ms
+- natural: 16/16 none; aligned spot: 16/16 none
+- spot 8 dB under the hall pickup: missed (sensitivity limit)
+- **thin margin**: worst null z = 5.2 vs threshold 5.5 → calibrate on real data
+
+## Next steps: labelled real tracks
+
+Bring (FLACs from Qobuz, any rate):
+- 3–4 tracks where the basses sound properly *back*
+- 3–4 where they sound *forward / spotlit*
+- 1–2 unsure
+- best of all: **the same work, different labels/engineers**
+
+For each, one line in a labels file, e.g. `tools/bass_depth_labels.txt`:
+
+```
+path/to/file.flac | good | 4:12-4:30 pizz basses exposed | basses woolly but behind
+path/to/other.flac | bad | 1:05-1:40 | basses dry, sharp, narrow hard right
+```
+
+Then:
+1. Run all with `--plot`; compare verdicts to labels.
+2. For disagreements, inspect plots + listen to listed segments: wrong
+   passages (tuba/contrabassoon/cello doubling)? aligned spot (v1 is blind
+   to it)? coincident main pair?
+3. Recalibrate `--z`, `--dom`, `--min-peaks` on the real set.
+4. v2: relative depth cues for aligned spots — DRR proxy (onset energy vs
+   tail) and pizzicato attack rise time, basses vs violins; build a "bass
+   depth index".
+5. Optional: Aalto anechoic orchestra recordings (Pätynen/Pulkki/Lokki 2008)
+   + stage RIRs for controlled ground truth.
+6. Once useful: integrate as a proper omdrc tool, commit, doc section.
+
+Known risks on real material: tuba/contrabassoon pass the bass test; cellos
+an octave up leak into the band; added reverb on the spot; coincident (XY/
+Blumlein) main pairs have no ITD.
+
+## Case study 1 (2026-10-12): Shostakovich, BSO / Nelsons (DG 2023, 24/96) — label: good depth
+
+Tracks 01 (Sym 2 Ia), 02 (Sym 2 Ib), 07 (Sym 12 I), from the USBHD2 download.
+
+Exposed bass found where the user said:
+- Sym 2 Ia: 10:53–11:11 (A1/A♯1 then F♯1/G1, C1 → basses with C extension).
+- Sym 12 I: bass passage 4:23–5:25 (mostly A♯1, also C2/B1/A1/G♯1/F1), again 5:33–5:46.
+- Sym 2 Ib ~1:00 with the choir: basses never dominate (only 3.4 s of bass frames
+  across the whole track) → unusable for v1.
+
+v1 results:
+- GCC (the deciding estimator): nothing above z 5.5 in any run; best peaks
+  inconsistent across tracks (−17 ms, +8.7 ms, +25 ms) → **no unaligned spot**.
+- AC: "possible" at 8.5 ms and 17.2 ms in BOTH tracks. **This is a pitch artefact.**
+  17.2 ms = period of A♯1 and 8.6 ms = period of A♯2. A♯1 dominates both passages,
+  and its energy (sustain + hall tail) leaks into the frames grouped under other notes.
+  Example: Sym 2 F♯1 frames have more A♯1 comb energy than F♯1 energy, and Sym 12
+  C2 frames have A♯1 only 7 dB below C2. Each group masks only its own k·T0.
+- Main ITD 0.00 ms for both the bass and the orchestra. Either the main array is
+  coincident, or the image is level-panned. Basses sit +1.5 dB to the right.
+
+Fixes this suggests:
+1. Pitch mask: per group, also mask k·T0 of every note whose comb is within ~10 dB of
+   the group's own (or of the passage's dominant notes). Mask T0/2 as well
+   (the octave-up partner).
+2. Verdict: "AC only" should require the peak to survive across ≥2 notes
+   with no shared pitch.
+3. ITD≈0 → flag "coincident/level-panned: GCC delay method weak" in the report.
