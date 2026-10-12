@@ -839,6 +839,91 @@ class PublishDeduplicationTest(unittest.TestCase):
                     stream.close()
 
 
+class CompactStreamTest(unittest.TestCase):
+    """compact=1 (the kiosk) sends a stream only what its mode is for: a DR
+    stream the DR fields, when they change, not every 25-Hz level frame; a
+    level stream no DR state, and the bands only when they differ from the
+    ones last sent on that connection.  Nothing a widget reads may go missing,
+    and a stream without compact keeps every frame whole."""
+
+    LEVEL = {"ok": True, "state": "running", "error": "", "source": "mpd",
+             "rate": 44100, "left": [], "right": []}
+    BANDS = [{"freq": 31.5, "label": "31", "lo": 22.0, "hi": 44.0}]
+
+    def frames(self, *queries):
+        an = APP.SpectrumAnalyzer()
+        patches = [mock.patch.object(APP, "_SPECTRUM", an),
+                   mock.patch.object(APP, "SPECTRUM_ENABLED", True),
+                   mock.patch.object(APP, "DR_HOLD_SECONDS", 0),
+                   mock.patch.object(an, "_run", side_effect=lambda: an.stop_event.wait(5))]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        client = APP.app.test_client()
+        streams = [client.get("/spectrum/stream" + q, buffered=False) for q in queries]
+        for stream in streams:
+            self.addCleanup(stream.close)
+        return an, [stream.response for stream in streams]
+
+    @staticmethod
+    def read(it):
+        chunk = next(it)
+        chunk = chunk.decode() if isinstance(chunk, bytes) else chunk
+        if chunk.startswith(":"):
+            return None                              # keepalive
+        return json.loads(chunk.removeprefix("data: "))
+
+    def test_a_compact_dr_stream_sends_dr_changes_only(self):
+        an, (dr,) = self.frames("?mode=dr&compact=1")
+        first = self.read(dr)
+        self.assertEqual(first["dr_blocks"], [])
+        an._publish({**self.LEVEL, "vu": {"left_peak": -3.0}})
+        self.assertEqual(self.read(dr)["dr"]["state"], "collecting")   # the first DR state
+        an._publish({**self.LEVEL, "vu": {"left_peak": -4.0}})
+        self.assertIsNone(self.read(dr), "a level change alone is not sent")
+        with an.lock:
+            an.dr_state = {"state": "ready", "dr": 11, "total_blocks": 2}
+        an._publish({**self.LEVEL, "vu": {"left_peak": -5.0}})
+        frame = self.read(dr)
+        self.assertEqual(frame["dr"], {"state": "ready", "dr": 11, "total_blocks": 2})
+        self.assertNotIn("vu", frame)
+        self.assertNotIn("left", frame)
+        self.assertNotIn("dr_blocks", frame, "the history did not change")
+        self.assertEqual((frame["ok"], frame["source"], frame["rate"]), (True, "mpd", 44100))
+        with an.lock:
+            an.dr_history = [[[0.1, 0.1], [0.5, 0.5]]]
+            an.dr_revision += 1
+        an._publish({**self.LEVEL, "vu": {"left_peak": -6.0}})
+        self.assertEqual(self.read(dr)["dr_blocks"], [[[0.1, 0.1], [0.5, 0.5]]])
+
+    def test_a_compact_level_stream_sends_the_bands_when_they_change(self):
+        an, (music, dr) = self.frames("?mode=music&compact=1", "?mode=dr")
+        self.read(music)
+        self.read(dr)
+        an._publish({**self.LEVEL, "bands": self.BANDS, "left": [-20.0]})
+        frame = self.read(music)
+        self.assertEqual(frame["bands"], self.BANDS)
+        self.assertNotIn("dr", frame)
+        self.assertIn("dr", self.read(dr), "the full DR stream is unchanged")
+        an._publish({**self.LEVEL, "bands": self.BANDS, "left": [-21.0]})
+        frame = self.read(music)
+        self.assertNotIn("bands", frame)
+        self.assertEqual(frame["left"], [-21.0])
+        an._publish({**self.LEVEL, "bands": [], "left": []})
+        self.assertEqual(self.read(music)["bands"], [])
+
+    def test_without_compact_every_frame_is_whole(self):
+        an, (music, dr) = self.frames("?mode=music", "?mode=dr")
+        self.read(music)
+        self.read(dr)
+        for left in (-20.0, -21.0):
+            an._publish({**self.LEVEL, "bands": self.BANDS, "left": [left]})
+            frame = self.read(music)
+            self.assertEqual(frame["bands"], self.BANDS)
+            self.assertIn("dr", frame)
+            self.assertEqual(self.read(dr)["left"], [left])
+
+
 class CdinSourceStartTest(unittest.TestCase):
     def test_without_a_capture_pcm_nothing_is_spawned(self):
         """FreeBSD, where omdrc-cdin tees the FIFO itself: opening the read end

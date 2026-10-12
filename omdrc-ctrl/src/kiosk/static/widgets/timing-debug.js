@@ -25,7 +25,7 @@ const release = () => {
     if (!f) return;
     fault = null; clearTimeout(f.timer);
     record('faultEnd', { kind: f.kind, queued: f.queue.length });
-    for (const [ev, receive] of f.queue) receive(ev);
+    for (const [d, receive] of f.queue) receive(d);
 };
 const D = K.timingDebug = {
     record,
@@ -61,13 +61,13 @@ const D = K.timingDebug = {
         fault = { kind, mode, every, n: 0, queue: [], timer: setTimeout(release, ms) };
         record('faultStart', { kind, mode, ms, every });
     },
-    ingress(mode, ev, receive) {
+    ingress(mode, d, receive) {
         const f = fault;
-        if (!f || f.mode !== mode) { receive(ev); return; }
+        if (!f || f.mode !== mode) { receive(d); return; }
         if (f.kind === 'drop') {
             if (++f.n % f.every === 0) record('injectedDrop', { mode });
-            else receive(ev);
-        } else if (f.queue.length < 500) f.queue.push([ev, receive]);
+            else receive(d);
+        } else if (f.queue.length < 500) f.queue.push([d, receive]);
         else record('injectedDrop', { mode });
     }
 };

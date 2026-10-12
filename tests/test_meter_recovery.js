@@ -9,9 +9,9 @@ const K = { state: { spectrum: { enabled: true } }, sync: { delayMs: () => 200 }
 const source = fs.readFileSync('omdrc-ctrl/src/kiosk/static/core.js', 'utf8');
 vm.runInNewContext(source.slice(source.indexOf('K.streams ='), source.indexOf('// Code that needs the boot config')), {
     K, document: { hidden: false, addEventListener() {} }, Date: { now: () => now },
-    EventSource: class { constructor() { streams.push(this); } close() {} },
+    EventSource: class { constructor(url) { this.url = url; streams.push(this); } close() {} },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); }, clearTimeout() {},
-    requestAnimationFrame: fn => { timers.push({ fn, ms: 0 }); return 1; }, encodeURIComponent
+    requestAnimationFrame: fn => { timers.push({ fn, ms: 0 }); return 1; }, cancelAnimationFrame() {}, encodeURIComponent
 });
 K.streams.open('vu', d => drawn.push(d.id));
 const send = (id, lag, es = streams.at(-1), extra = {}) => { now += 50;
@@ -60,3 +60,15 @@ const countBefore = tapped.length;
 now += 50;
 streams.at(-1).onmessage({ data: JSON.stringify({ id: 30, ok: true, state: 'running', sent: now - 20, published: now - 2020 }) });
 assert.equal(tapped.length, countBefore, 'an old snapshot sent now remains stale');
+// compact=1: a frame without bands is given the ones this connection last received,
+// before the taps and the widgets see it.
+assert.match(streams.at(-1).url, /[?&]compact=1(&|$)/);
+K.streamTap = (_, d) => tapped.push(JSON.stringify(d.bands));   // the vm's own realm
+const bands = [{ freq: 31.5, label: '31', lo: 22, hi: 44 }];
+send(40, 20, streams.at(-1), { bands });
+send(41, 20);
+assert.deepEqual(tapped.slice(-2), Array(2).fill(JSON.stringify(bands)), 'the bands are filled back in');
+send(42, 20, streams.at(-1), { bands: [] });
+send(43, 20);
+assert.deepEqual(tapped.slice(-2), ['[]', '[]'], 'new bands replace the remembered ones');
+console.log('Compact frames: passed');

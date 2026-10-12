@@ -242,7 +242,9 @@ K.streams = (() => {
     };
     const open = (mode, replacing = null) => {
         const s = S[mode];
-        const es = new EventSource('/spectrum/stream?mode=' + encodeURIComponent(mode));
+        // compact: the box leaves out of a frame what this connection already has (app.py,
+        // spectrum_stream); `bands` is filled back in below, before anything sees the frame.
+        const es = new EventSource('/spectrum/stream?compact=1&mode=' + encodeURIComponent(mode));
         const tapMode = mode.endsWith('-clip') ? mode.slice(0, -5) : mode;
         s.es = es;
         // An old connection's RAF must not consume the new connection's frame.
@@ -250,7 +252,7 @@ K.streams = (() => {
         s.raf = 0; s.next = null;
         trace('connect', mode, { replacement: !!replacing });
         if (replacing) setTimeout(() => replacing.close(), 1500);
-        let best = Infinity, bestAt = 0, late = 0, received = 0, newestDraw = 0;
+        let best = Infinity, bestAt = 0, late = 0, received = 0, newestDraw = 0, bands;
         const deliver = d => {
             trace('draw', mode, { published: d.published, usable: d.ok === true && d.state === 'running' &&
                 (Number.isFinite(d.vu?.left_peak) || Number.isFinite(d.vu?.right_peak) || !!d.bands?.length), ageMs: Date.now() - (d._timingArrival ?? Date.now()),
@@ -274,10 +276,8 @@ K.streams = (() => {
                 if (x && s.es === es && Date.now() <= xDue + STALE_MS) deliver(x);
             });
         };
-        const receive = ev => {
+        const receive = d => {
             if (s.es !== es) return;
-            let d;
-            try { d = JSON.parse(ev.data); } catch { return; }
             const now = Date.now(), order = ++received;
             trace('receive', mode, { sent: d.sent, published: d.published });
             let origin = now;
@@ -315,8 +315,13 @@ K.streams = (() => {
             else draw(d, due, order);
         };
         es.onmessage = ev => {
-            if (K.timingDebug) K.timingDebug.ingress(mode, ev, receive);
-            else receive(ev);
+            let d;
+            try { d = JSON.parse(ev.data); } catch { return; }
+            // Every frame, even one the timing debugger then holds or drops.
+            if ('bands' in d) bands = d.bands;
+            else if (bands) d.bands = bands;
+            if (K.timingDebug) K.timingDebug.ingress(mode, d, receive);
+            else receive(d);
         };
         es.onerror = () => {
             trace('disconnect', mode);

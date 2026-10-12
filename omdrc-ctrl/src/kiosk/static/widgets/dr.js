@@ -136,7 +136,15 @@ K.drEstimate = (() => {
         return out;
     };
 
+    // A frame that says what the last one said repaints nothing: the bar rebuilds
+    // every cell, so it must not run for each level frame of a stream that is not
+    // compact (core.js asks for compact; this is the guard).
+    let lastKey = null;
     const onFrame = f => {
+        // what this estimator reads of a frame (summary(), above)
+        const key = JSON.stringify([f.ok, f.state, f.error, f.source, f.dr]);
+        if (!Array.isArray(f.dr_blocks) && key === lastKey) return;
+        lastKey = key;
         E.frame = f;
         if (Array.isArray(f.dr_blocks)) E.blocks = f.dr_blocks;
         if (Number.isInteger(f.dr && f.dr.track_age_blocks)) E.trackAge = f.dr.track_age_blocks;

@@ -8879,6 +8879,11 @@ def spectrum_margin():
                     "drc_delay_terms_ms": _drc_delay_terms_ms(terms)})
 
 
+# What a compact DR stream carries (the kiosk's widgets/dr.js reads no more):
+# the analyzer's status, and the DR state and history.
+_DR_STREAM_FIELDS = ("ok", "state", "error", "rate", "source", "source_label", "dr")
+
+
 def _release_stream(mode: str, wants_bands: bool, wants_clip: bool = False):
     """Let go of an analyzer stream.  A DR stream is let go of only after
     DR_HOLD_SECONDS: the rolling DR history lives only while a DR listener is
@@ -8918,14 +8923,37 @@ def spectrum_stream():
     except ValueError:
         max_s = 0.0
     max_s = min(3600.0, max(5.0, max_s)) if math.isfinite(max_s) and max_s > 0 else 0.0
+    # compact=1 (the kiosk): send each stream only what its mode is for.  A DR
+    # stream carries the DR fields alone, and only when they change (every
+    # DR_PUBLISH_SECONDS while playing) instead of every 25-Hz level frame; a
+    # level/spectrum stream drops the DR state, and leaves out "bands" (the
+    # static labels and edges) while they are the ones this connection last
+    # sent, for the client to fill back in.  Without it, every frame whole, as
+    # the panel, the plasmoid and the Android levels screen read them.
+    compact = request.args.get("compact") == "1"
 
     def events():
         _SPECTRUM.acquire(mode, wants_clip=wants_clip)
         deadline = time.monotonic() + max_s if max_s else None
         dr_revision = -1
+        dr_last = None              # compact DR: the fields last sent
+        bands_last = None           # compact levels: the bands last sent
 
         def payload(frame):
-            nonlocal dr_revision
+            nonlocal dr_revision, dr_last, bands_last
+            if compact and mode == "dr":
+                frame = {k: frame[k] for k in _DR_STREAM_FIELDS if k in frame}
+                revision = _SPECTRUM.dr_history_json()[0]
+                if frame == dr_last and revision == dr_revision:
+                    return None
+                dr_last = frame
+            elif compact:
+                frame = {k: v for k, v in frame.items() if k != "dr"}
+                if "bands" in frame:
+                    if frame["bands"] == bands_last:
+                        del frame["bands"]
+                    else:
+                        bands_last = frame["bands"]
             # When it was sent (ms, this host's clock): a screen that finds the frames
             # reaching it ever later is reading a backlog queued in the network and
             # reconnects to drop it (kiosk core.js, K.streams).
@@ -8944,19 +8972,25 @@ def spectrum_stream():
         try:
             seq, frame = _SPECTRUM.snapshot()
             yield payload(frame)
+            written = time.monotonic()
             while deadline is None or time.monotonic() < deadline:
                 next_seq, frame = _SPECTRUM.wait_next(seq, timeout=1.0)
-                if next_seq == seq:
-                    # A silent or paused source produces no changed frames.
-                    # Keep the connection writable so a closed/hidden tab is
-                    # noticed promptly and its last listener disables MPD's
-                    # otherwise idle 48-kHz FIFO output.
+                if next_seq != seq:
+                    seq = next_seq
+                    chunk = payload(frame)
+                    if chunk is not None:
+                        yield chunk
+                        written = time.monotonic()
+                    if _SPECTRUM.stop_event.is_set():
+                        break
+                # A silent or paused source produces no changed frames, and a
+                # compact DR stream skips the ones that change nothing it carries.
+                # Keep the connection writable so a closed/hidden tab is
+                # noticed promptly and its last listener disables MPD's
+                # otherwise idle 48-kHz FIFO output.
+                if time.monotonic() - written >= 1.0:
                     yield ": keepalive\n\n"
-                    continue
-                seq = next_seq
-                yield payload(frame)
-                if _SPECTRUM.stop_event.is_set():
-                    break
+                    written = time.monotonic()
         except GeneratorExit:
             pass
         finally:
