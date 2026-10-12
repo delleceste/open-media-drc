@@ -2284,7 +2284,7 @@ P.openFull = ({ offset = 0 } = {}) => {
             setTimeout(() => { if (P.fullEl === sheet) sheet.style.transition = ''; }, 240);
         }));
     }
-    P.fullEl.backClose = P.closeFull;
+    P.fullEl.backClose = () => P.queueActions ? P.closeQueueActions() : P.closeFull();   // as Escape (P.fullKey)
     document.getElementById('overlay-root').append(P.fullEl);
     P.fullView = v;
     P.paintListeningIcon = () => { if (v.aiBtn.isConnected) K.clear(v.aiBtn).append(K.listening.icon(K.listening.busy ? 'busy' : '')); };
