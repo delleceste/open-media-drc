@@ -57,13 +57,13 @@ Item {
     function step(dt) {
         const now = Date.now()
         let still = true
-        for (const k of keys) {
-            const t = target(k)
+        for (let i = 0; i < keys.length; i++) {      // indexed: no iterator per frame
+            const k = keys[i], t = target(k)
             disp[k] = L.ease(disp[k], t, dt)
             if (Math.abs(disp[k] - t) > 0.05) still = false
         }
-        for (const ch of ["left", "right"]) {
-            const h = hold[ch], p = disp[ch + "_peak"]
+        for (let i = 0; i < 2; i++) {
+            const h = i ? hold.right : hold.left, p = i ? disp.right_peak : disp.left_peak
             if (p >= h.db) { h.db = p; h.at = now }
             else if (now - h.at > L.HOLD_MS) h.db = Math.max(p, h.db - L.HOLD_FALL * dt)
             if (h.db > p + 0.05) still = false
@@ -94,10 +94,10 @@ Item {
     // The moving parts, placed for the levels on display now.
     function update() {
         if (!geo || geo.needles !== needles) return          // a relayout is on its way
-        const levels = [[disp.left_rms, disp.left_peak, hold.left.db],
-                        [disp.right_rms, disp.right_peak, hold.right.db]]
         for (let i = 0; i < 2; i++) {
-            const [rms, peak, held] = levels[i]
+            const rms = i ? disp.right_rms : disp.left_rms
+            const peak = i ? disp.right_peak : disp.left_peak
+            const held = i ? hold.right.db : hold.left.db
             if (needles) {
                 const g = gauges.itemAt(i)
                 if (g) placeGauge(g, geo.gauges[i], rms, peak, held)
@@ -199,17 +199,22 @@ Item {
     }
 
     function setRect(item, r) { item.x = r.x; item.y = r.y; item.width = r.w; item.height = r.h }
+    // the same as setRect(item, barRect(...)), without an object per call
+    function setBarRect(item, g, a, c, la, lc) {
+        if (g.vertical) { item.x = c; item.y = g.H - a - la; item.width = lc; item.height = la }
+        else { item.x = a; item.y = c; item.width = la; item.height = lc }
+    }
 
     function placeBar(item, row, rms, peak, held) {
         const g = geo
         const to = barPos(g, peak)
-        setRect(item.clipper, barRect(g, g.lead, row.c + 1, Math.max(0, to - g.lead), g.barW - 2))
+        setBarRect(item.clipper, g, g.lead, row.c + 1, Math.max(0, to - g.lead), g.barW - 2)
         item.rmsMark.visible = rms > L.SCALE_FLOOR
-        if (item.rmsMark.visible) setRect(item.rmsMark, barRect(g, barPos(g, rms) - 1, row.c - 1, 2, g.barW + 2))
+        if (item.rmsMark.visible) setBarRect(item.rmsMark, g, barPos(g, rms) - 1, row.c - 1, 2, g.barW + 2)
         item.holdMark.visible = held > L.SCALE_FLOOR
         if (item.holdMark.visible) {
-            setRect(item.holdMark, barRect(g, barPos(g, held) - 1, row.c, 2, g.barW))
-            item.holdMark.color = held > -1 ? "#ff5b52" : Qt.rgba(textColor.r, textColor.g, textColor.b, 0.7)
+            setBarRect(item.holdMark, g, barPos(g, held) - 1, row.c, 2, g.barW)
+            item.holdRed = held > -1
         }
     }
 
@@ -241,7 +246,12 @@ Item {
                 }
             }
             Rectangle { id: rmsMark; color: meters.textColor; visible: false }
-            Rectangle { id: holdMark; visible: false }
+            property bool holdRed: false
+            Rectangle {
+                id: holdMark
+                visible: false
+                color: row.holdRed ? "#ff5b52" : Qt.rgba(meters.textColor.r, meters.textColor.g, meters.textColor.b, 0.7)
+            }
             Component.onCompleted: { lit.requestPaint(); meters.update() }
         }
     }
@@ -325,31 +335,37 @@ Item {
     }
 
     // An arc of radius r and width w from the scale's floor to `deg`, with round
-    // ends: an annular sector and a disc at either end, all drawn clockwise so
-    // that where they overlap they still fill (WindingFill).
-    function bandPath(g, deg, r, w) {
+    // ends, as one simple outline: the outer edge, the end cap, the inner edge
+    // back, the start cap.  It never crosses itself, so the renderer has no
+    // intersections to resolve, and nothing is rebuilt from a string.
+    function setBand(band, g, deg, r, w) {
         const ox = g.cx - g.fx, oy = g.cy - g.fy                   // centre, in the clip
-        const a0 = rad(gaugeA0), a1 = rad(deg), ro = r + w / 2, ri = Math.max(0, r - w / 2)
-        const pt = (a, rr) => [ox + Math.cos(a) * rr, oy + Math.sin(a) * rr]
-        const disc = a => {
-            const [x, y] = pt(a, r), h = w / 2
-            return "M " + (x + h) + " " + y + " A " + h + " " + h + " 0 0 1 " + (x - h) + " " + y
-                 + " A " + h + " " + h + " 0 0 1 " + (x + h) + " " + y + " Z "
-        }
-        const [x0, y0] = pt(a0, ro), [x1, y1] = pt(a1, ro), [x2, y2] = pt(a1, ri), [x3, y3] = pt(a0, ri)
-        return "M " + x0 + " " + y0 + " A " + ro + " " + ro + " 0 0 1 " + x1 + " " + y1
-             + " L " + x2 + " " + y2 + " A " + ri + " " + ri + " 0 0 0 " + x3 + " " + y3 + " Z "
-             + disc(a0) + disc(a1)
+        const h = w / 2, a0 = gaugeA0, a1 = Math.max(deg, a0 + 0.01)
+        const c0 = rad(a0), c1 = rad(a1)
+        band.outer.centerX = ox; band.outer.centerY = oy
+        band.outer.radiusX = band.outer.radiusY = r + h
+        band.outer.startAngle = a0; band.outer.sweepAngle = a1 - a0
+        band.endCap.centerX = ox + Math.cos(c1) * r; band.endCap.centerY = oy + Math.sin(c1) * r
+        band.endCap.radiusX = band.endCap.radiusY = h
+        band.endCap.startAngle = a1
+        band.inner.centerX = ox; band.inner.centerY = oy
+        band.inner.radiusX = band.inner.radiusY = Math.max(0, r - h)
+        band.inner.startAngle = a1; band.inner.sweepAngle = a0 - a1
+        band.startCap.centerX = ox + Math.cos(c0) * r; band.startCap.centerY = oy + Math.sin(c0) * r
+        band.startCap.radiusX = band.startCap.radiusY = h
+        band.startCap.startAngle = a0 + 180
     }
 
     function placeGauge(item, g, rms, peak, held) {
         const R = g.R
-        setRect(item, { x: g.fx, y: g.fy, w: g.fw, h: g.fh })
+        if (item.x !== g.fx || item.width !== g.fw) {
+            item.x = g.fx; item.y = g.fy; item.width = g.fw; item.height = g.fh
+        }
         // the level: a soft band for the RMS, a brighter one for the peak
         item.rmsBand.visible = rms > L.SCALE_FLOOR
-        if (item.rmsBand.visible) item.rmsPath.path = bandPath(g, gaugeDeg(rms), g.rLvl, Math.max(2, R * 0.07))
+        if (item.rmsBand.visible) setBand(item.rmsBand, g, gaugeDeg(rms), g.rLvl, Math.max(2, R * 0.07))
         item.peakBand.visible = peak > L.SCALE_FLOOR
-        if (item.peakBand.visible) item.peakPath.path = bandPath(g, gaugeDeg(peak), g.rLvl, Math.max(1, R * 0.025))
+        if (item.peakBand.visible) setBand(item.peakBand, g, gaugeDeg(peak), g.rLvl, Math.max(1, R * 0.025))
         item.gradStart = g.cx - R - g.fx
         item.gradEnd = g.cx + R - g.fx
         item.holdDot.visible = held > L.SCALE_FLOOR
@@ -358,7 +374,7 @@ Item {
             item.holdDot.width = item.holdDot.height = 2 * d
             item.holdDot.x = g.cx + Math.cos(a) * g.rLvl - d - g.fx
             item.holdDot.y = g.cy + Math.sin(a) * g.rLvl - d - g.fy
-            item.holdDot.color = held > -1 ? "#ff5b52" : textColor
+            item.holdRed = held > -1
         }
         // the needle follows the peak: up from its pivot, turned to the level
         const len = R * 0.97
@@ -366,8 +382,6 @@ Item {
         item.needle.height = len
         item.needle.x = g.cx - g.needleW / 2 - g.fx
         item.needle.y = g.cy - len - g.fy
-        item.needleTurn.origin.x = g.needleW / 2
-        item.needleTurn.origin.y = len
         item.needleTurn.angle = gaugeDeg(Math.max(L.SCALE_FLOOR, peak)) + 90
         // the hub the needle turns on
         item.hub.width = item.hub.height = 2 * g.hubR
@@ -384,6 +398,29 @@ Item {
         GradientStop { position: 1; color: "#ff2d2d" }
     }
 
+    // A level band (setBand): four arcs, each continuing where the last ended.
+    component LevelBand: Shape {
+        id: band
+        property real gradStart: 0
+        property real gradEnd: 1
+        property alias outer: outer
+        property alias endCap: endCap
+        property alias inner: inner
+        property alias startCap: startCap
+        anchors.fill: parent
+        visible: false
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeWidth: -1
+            pathHints: ShapePath.PathSolid | ShapePath.PathNonIntersecting
+            fillGradient: LevelGradient { x1: band.gradStart; x2: band.gradEnd; y1: 0; y2: 0 }
+            PathAngleArc { id: outer; moveToStart: true }
+            PathAngleArc { id: endCap; moveToStart: false; sweepAngle: 180 }
+            PathAngleArc { id: inner; moveToStart: false }
+            PathAngleArc { id: startCap; moveToStart: false; sweepAngle: 180 }
+        }
+    }
+
     Repeater {
         id: gauges
         model: meters.needles ? 2 : 0
@@ -393,44 +430,27 @@ Item {
             property real gradStart: 0
             property real gradEnd: 1
             property alias rmsBand: rmsBand
-            property alias rmsPath: rmsPath
             property alias peakBand: peakBand
-            property alias peakPath: peakPath
             property alias holdDot: holdDot
             property alias needle: needle
             property alias needleTurn: needleTurn
             property alias hub: hub
-            Shape {
-                id: rmsBand
-                anchors.fill: parent
-                opacity: 0.45
+            LevelBand { id: rmsBand; opacity: 0.45; gradStart: gauge.gradStart; gradEnd: gauge.gradEnd }
+            LevelBand { id: peakBand; gradStart: gauge.gradStart; gradEnd: gauge.gradEnd }
+            property bool holdRed: false
+            Rectangle {
+                id: holdDot
+                radius: width / 2
+                antialiasing: true
                 visible: false
-                preferredRendererType: Shape.CurveRenderer
-                ShapePath {
-                    strokeWidth: -1
-                    fillRule: ShapePath.WindingFill
-                    fillGradient: LevelGradient { x1: gauge.gradStart; x2: gauge.gradEnd; y1: 0; y2: 0 }
-                    PathSvg { id: rmsPath }
-                }
+                color: gauge.holdRed ? "#ff5b52" : meters.textColor
             }
-            Shape {
-                id: peakBand
-                anchors.fill: parent
-                visible: false
-                preferredRendererType: Shape.CurveRenderer
-                ShapePath {
-                    strokeWidth: -1
-                    fillRule: ShapePath.WindingFill
-                    fillGradient: LevelGradient { x1: gauge.gradStart; x2: gauge.gradEnd; y1: 0; y2: 0 }
-                    PathSvg { id: peakPath }
-                }
-            }
-            Rectangle { id: holdDot; radius: width / 2; antialiasing: true; visible: false }
             Rectangle {
                 id: needle
                 color: meters.textColor
                 antialiasing: true
-                transform: Rotation { id: needleTurn }
+                // turns on the foot of the needle (bindings: set again only on resize)
+                transform: Rotation { id: needleTurn; origin.x: needle.width / 2; origin.y: needle.height }
             }
             Rectangle { id: hub; radius: width / 2; color: meters.textColor; antialiasing: true }
             Component.onCompleted: meters.update()

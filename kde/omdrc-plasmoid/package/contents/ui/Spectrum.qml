@@ -63,6 +63,14 @@ Item {
         onTriggered: spectrum.step(Math.min(0.1, frameTime))
     }
 
+    // A band's peak cap: up at once, held, then falling.  True once it rests on the bar.
+    function stepCap(cap, at, i, v, now, dt) {
+        const fl = floorDb - 5
+        if (v >= (cap[i] ?? fl)) { cap[i] = v; at[i] = now }
+        else if (now - (at[i] || 0) > capHoldMs) cap[i] = Math.max(v, cap[i] - capFall * dt)
+        return !(cap[i] > v + 0.1)
+    }
+
     function step(dt) {
         const n = bands.length, now = Date.now(), fl = floorDb - 5
         let still = true
@@ -73,11 +81,8 @@ Item {
             r[i] = Math.max(tr, (r[i] ?? fl) - L.SPECTRUM_FALL * dt)
             if (Math.abs(l[i] - tl) > 0.1 || Math.abs(r[i] - tr) > 0.1) still = false
             if (peakHold) {
-                for (const [cap, at, v] of [[capL, capAtL, l[i]], [capR, capAtR, r[i]]]) {
-                    if (v >= (cap[i] ?? fl)) { cap[i] = v; at[i] = now }
-                    else if (now - (at[i] || 0) > capHoldMs) cap[i] = Math.max(v, cap[i] - capFall * dt)
-                    if (cap[i] > v + 0.1) still = false
-                }
+                if (!stepCap(capL, capAtL, i, l[i], now, dt)) still = false
+                if (!stepCap(capR, capAtR, i, r[i], now, dt)) still = false
             }
         }
         settled = still

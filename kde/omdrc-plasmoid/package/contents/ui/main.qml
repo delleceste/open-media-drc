@@ -446,17 +446,25 @@ PlasmoidItem {
         const ws = [0.3, 1, 3, 5, 15, 30, 60], i = ws.indexOf(balanceWindow)
         setConfig("balanceWindow", ws[(i + 1) % ws.length])
     }
+    // A minute of samples is kept whatever the window, so a longer one has its
+    // history at once; they are kept in place, in time order (25 a second: no
+    // copy of the minute per frame), and only the window's are summed.
     function updateBalance(vu) {
         const now = Date.now(), l = Number(vu.left_rms), r = Number(vu.right_rms)
-        let samples = balanceSamples.slice()
-        if (samples.length && now - samples[samples.length - 1].at > 1000) samples = []
+        const samples = balanceSamples
+        if (samples.length && now - samples[samples.length - 1].at > 1000) samples.length = 0
         if (Number.isFinite(l) && Number.isFinite(r) && Math.max(l, r) > -60)
             samples.push({ at: now, left: Math.pow(10, l / 10), right: Math.pow(10, r / 10) })
-        samples = samples.filter(s => s.at >= now - Math.max(60000, balanceWindow * 1000))
-        balanceSamples = samples
+        const keep = now - Math.max(60000, balanceWindow * 1000)
+        let old = 0
+        while (old < samples.length && samples[old].at < keep) old++
+        if (old) samples.splice(0, old)
         const start = Math.min(now - balanceWindow * 1000, samples.length ? samples[samples.length - 1].at : now)
         let left = 0, right = 0
-        for (const s of samples) if (s.at >= start) { left += s.left; right += s.right }
+        for (let i = samples.length - 1; i >= 0 && samples[i].at >= start; i--) {
+            left += samples[i].left
+            right += samples[i].right
+        }
         balanceDb = left || right ? 10 * Math.log10(Math.max(right, 1e-12) / Math.max(left, 1e-12)) : NaN
     }
 

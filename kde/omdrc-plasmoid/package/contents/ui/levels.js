@@ -11,10 +11,10 @@ var SPECTRUM_FALL = 30;                            // dB/s
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 // 0..1 along a scale that is linear in voltage, as the kiosk meters are
+// (no closure inside: the meters call it several times a display frame)
 function voltageFrac(db, floor) {
-    var c = clamp(Number(db), floor, 0);
-    var a = function (v) { return Math.pow(10, v / 20); };
-    return (a(c) - a(floor)) / (1 - a(floor));
+    var c = clamp(Number(db), floor, 0), f = Math.pow(10, floor / 20);
+    return (Math.pow(10, c / 20) - f) / (1 - f);
 }
 
 // instant attack; a fast glide for small drops, slow for large ones
