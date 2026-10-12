@@ -917,6 +917,33 @@ class CompactStreamTest(unittest.TestCase):
         frame = history([0], 1, -11.0)
         self.assertEqual(frame["dr_blocks_add"], [[[0, 0], [0, 0]]])
 
+    def test_a_reconnecting_client_gets_only_what_follows_its_history(self):
+        # The plasmoid's bounded streams reconnect every few seconds and say
+        # which history they hold: the next connection continues it.
+        an = APP.SpectrumAnalyzer()
+        with an.lock:
+            an.dr_history = [[[b, b], [b, b]] for b in (1, 2, 3)]
+            an.dr_history_end = 3
+        gen = an.dr_history_gen
+        with mock.patch.object(APP, "_SPECTRUM", an), \
+                mock.patch.object(APP, "SPECTRUM_ENABLED", True), \
+                mock.patch.object(APP, "DR_HOLD_SECONDS", 0), \
+                mock.patch.object(an, "_run", side_effect=lambda: an.stop_event.wait(5)), \
+                mock.patch.object(an, "_clear_dr_history_locked"):   # a join resets nothing here
+            client = APP.app.test_client()
+            for query, expect in ((f"dr_gen={gen}&dr_end=2", ("dr_blocks_add", [[[3, 3], [3, 3]]])),
+                                  (f"dr_gen={gen}&dr_end=3", ("dr_blocks_add", [])),
+                                  (f"dr_gen={gen - 1}&dr_end=2", ("dr_blocks", an.dr_history)),
+                                  ("dr_gen=x", ("dr_blocks", an.dr_history))):
+                stream = client.get("/spectrum/stream?mode=dr&compact=1&" + query, buffered=False)
+                try:
+                    frame = self.read(stream.response)
+                finally:
+                    stream.close()
+                key, blocks = expect
+                self.assertEqual(frame[key], blocks, query)
+                self.assertEqual((frame["dr_blocks_gen"], frame["dr_blocks_end"]), (gen, 3))
+
     def test_a_compact_level_stream_sends_the_bands_when_they_change(self):
         an, (music, dr) = self.frames("?mode=music&compact=1", "?mode=dr")
         self.read(music)

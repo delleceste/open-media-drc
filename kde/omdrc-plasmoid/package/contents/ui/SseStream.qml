@@ -16,6 +16,7 @@ Item {
     visible: false
 
     property string url: ""          // empty: closed
+    property string query: ""        // "k=v&...": added to each connection's URL as it opens
     property bool connected: false
     property string error: ""
 
@@ -81,7 +82,8 @@ Item {
                 retry.restart()
             }
         }
-        xhr.open("GET", url + (url.indexOf("?") >= 0 ? "&" : "?") + "max_s=" + maxSeconds)
+        xhr.open("GET", url + (url.indexOf("?") >= 0 ? "&" : "?") + "max_s=" + maxSeconds
+                 + (query ? "&" + query : ""))
         xhr.setRequestHeader("Accept", "text/event-stream")
         xhr.send()
         lastData = Date.now()

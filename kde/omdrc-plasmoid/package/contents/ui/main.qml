@@ -11,6 +11,7 @@ import "dr.js" as DR
  * omdrcctrl's HTTP endpoints, the same ones the kiosk and the Android app use:
  *
  *   /spectrum/stream?mode=vu|music   levels (and bands), server-sent events
+ *   /spectrum/stream?mode=dr         the rolling DR history, new blocks only
  *   /spectrum/settings               the spectrum's dB floor
  *   /k/api/player                    state and current song, polled
  *   /k/api/transport                 play / pause / next / prev
@@ -122,12 +123,14 @@ PlasmoidItem {
     property double bestTransitAt: 0
 
     readonly property bool wantsLevels: meterStyle !== "off" || showSpectrum || showDr || showBalance
+    readonly property bool wantsLevelStream: meterStyle !== "off" || showSpectrum || showBalance
     readonly property bool wantsCover: coverMode !== "off" || !wantsLevels
     readonly property string coverUrl: !wantsCover || base === "" || !artPath ? "" : base + artPath
 
     readonly property string problem: host === "" ? i18n("Set the box's address in the widget's settings.")
         : !reachable ? i18n("Cannot reach %1:%2 — %3", host, port, pollError)
         : levels.url !== "" && levels.error !== "" ? levels.error
+        : drStream.url !== "" && drStream.error !== "" ? drStream.error
         : ""
 
     Plasmoid.configurationRequired: host === ""
@@ -331,16 +334,32 @@ PlasmoidItem {
         })
     }
 
-    function receiveLevelFrame(data) {
-        // DR is a history/statistics view, not a time-critical level display.
-        if (data.dr && Array.isArray(data.dr_blocks)) {
-            drFrame = data
-            drBlocks = data.dr_blocks
-            drTrackAge = Number(data.dr.track_age_blocks) || 0
+    // The DR stream (compact): the whole history when the connection does not
+    // continue the one held here, else only the blocks that follow, with the
+    // window's length to trim to.  Blocks that do not follow on are not guessed
+    // at: the history is dropped and the stream asked for all of it again.
+    property double drGen: -1
+    property double drEnd: 0
+    function receiveDrFrame(data) {
+        const whole = Array.isArray(data.dr_blocks), added = Array.isArray(data.dr_blocks_add)
+        if (added && (data.dr_blocks_gen !== drGen || data.dr_blocks_end - data.dr_blocks_add.length !== drEnd)) {
+            drGen = -1
+            drEnd = 0
+            drStream.restart()
+            return
         }
-        const displayFrame = Object.assign({}, data)
-        delete displayFrame.dr
-        delete displayFrame.dr_blocks
+        drFrame = data
+        if (data.dr) drTrackAge = Number(data.dr.track_age_blocks) || 0
+        if (!whole && !added) return
+        let blocks = whole ? data.dr_blocks : drBlocks.concat(data.dr_blocks_add)
+        const len = Number(data.dr_blocks_len)
+        if (Number.isInteger(len) && blocks.length > len) blocks = len > 0 ? blocks.slice(-len) : []
+        drBlocks = blocks
+        drGen = Number.isFinite(Number(data.dr_blocks_gen)) ? Number(data.dr_blocks_gen) : -1
+        drEnd = Number(data.dr_blocks_end) || 0
+    }
+
+    function receiveLevelFrame(data) {
         // Due when it would have arrived with nothing in the way, plus this
         // screen's wait.  Past due by more than frameStaleMs - a network backlog,
         // or a GUI thread (shared by the whole shell) that fell behind - it is
@@ -364,7 +383,7 @@ PlasmoidItem {
         // Always through the timer, even when already due: a burst read in one
         // go from the stream then draws only its newest frame.
         const queue = delayedFrames.slice()
-        queue.push({ due: due, live: live, sequence: ++receivedFrameSequence, data: displayFrame })
+        queue.push({ due: due, live: live, sequence: ++receivedFrameSequence, data: data })
         queue.sort((a, b) => a.due - b.due)
         // Bound memory if a UI thread stalls; old frames are no longer useful
         // once a newer analyzer frame is due.
@@ -404,11 +423,6 @@ PlasmoidItem {
         if (data.vu && data.vu.left_rms !== undefined) {
             vu = data.vu
             updateBalance(data.vu)
-        }
-        if (data.dr && Array.isArray(data.dr_blocks)) {
-            drFrame = data
-            drBlocks = data.dr_blocks
-            drTrackAge = Number(data.dr.track_age_blocks) || 0
         }
         if (Array.isArray(data.bands) && data.bands.length) {
             const key = JSON.stringify(data.bands)
@@ -552,11 +566,15 @@ PlasmoidItem {
 
     // Only while there is something to show: the box enables MPD's analyzer
     // FIFO output for as long as anyone listens.
+    // compact=1: the box leaves out of a level frame the DR state (the DR stream
+    // has it) and the bands while they are the ones last sent on the connection;
+    // they are filled back in here, so every frame reaches the views whole.
     SseStream {
         id: levels
         property string bandsKey: ""
-        url: root.base !== "" && root.reachable && root.wantsLevels && (root.playing || root.cdinActive)
-             ? root.base + "/spectrum/stream?mode=" + (root.showSpectrum ? "music" : root.showDr ? "dr" : "vu")
+        property var lastBands: []
+        url: root.base !== "" && root.reachable && root.wantsLevelStream && (root.playing || root.cdinActive)
+             ? root.base + "/spectrum/stream?compact=1&mode=" + (root.showSpectrum ? "music" : "vu")
              : ""
         onUrlChanged: if (url === "") {
             root.bestTransitMs = -1
@@ -567,26 +585,30 @@ PlasmoidItem {
             root.specRight = root.specLeft
             root.balanceSamples = []
             root.balanceDb = NaN
+        }
+        onFrame: (data) => {
+            if ("bands" in data) lastBands = data.bands
+            else data.bands = lastBands
+            root.receiveLevelFrame(data)
+        }
+    }
+
+    // The rolling three-second DR history, on a stream of its own (the level
+    // stream carries none of it), sent only when it changes.  Every connection
+    // says which history is held here, so the bounded streams' rotation every
+    // few seconds sends the new blocks only, not the whole window again.
+    SseStream {
+        id: drStream
+        url: root.base !== "" && root.reachable && root.showDr
+             && (root.playing || root.cdinActive) ? root.base + "/spectrum/stream?compact=1&mode=dr" : ""
+        query: "dr_gen=" + root.drGen + "&dr_end=" + root.drEnd
+        onUrlChanged: if (url === "") {
             root.drFrame = null
             root.drBlocks = []
             root.drTrackAge = 0
+            root.drGen = -1
+            root.drEnd = 0
         }
-        onFrame: (data) => root.receiveLevelFrame(data)
-    }
-
-    // Music mode carries FFT bands; DR mode carries the rolling three-second
-    // history.  When both views are enabled each subscription asks only for
-    // the data it needs, while the server shares the FIFO reader.
-    SseStream {
-        id: drStream
-        url: root.base !== "" && root.reachable && root.showDr && root.showSpectrum
-             && (root.playing || root.cdinActive) ? root.base + "/spectrum/stream?mode=dr" : ""
-        onFrame: (data) => {
-            if (data.dr && Array.isArray(data.dr_blocks)) {
-                root.drFrame = data
-                root.drBlocks = data.dr_blocks
-                root.drTrackAge = Number(data.dr.track_age_blocks) || 0
-            }
-        }
+        onFrame: (data) => root.receiveDrFrame(data)
     }
 }

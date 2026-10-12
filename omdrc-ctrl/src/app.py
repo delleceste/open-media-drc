@@ -1940,7 +1940,9 @@ class SpectrumAnalyzer:
         # bounded window) until it is started afresh: a new `dr_history_gen`.
         # `dr_history_end` numbers the block after its last, so a compact
         # stream can send each client just the blocks it has not had yet.
-        self.dr_history_gen = 0
+        # Unique to this run (ms at start, then counting up): a client that kept
+        # a history across a restart of the box must not find its number again.
+        self.dr_history_gen = int(time.time() * 1000)
         self.dr_history_end = 0
         self._dr_json = (-1, "[]")     # history serialized once per revision
         # The DR log's own listener (see _dr_log_apply): one of `dr_clients`,
@@ -8955,19 +8957,26 @@ def spectrum_stream():
     # DR_PUBLISH_SECONDS while playing) instead of every 25-Hz level frame,
     # and of the history only the blocks this connection has not had yet
     # ("dr_blocks_add"; the whole of it, "dr_blocks", on connecting and
-    # whenever it starts afresh), with its length and end to keep in step; a
+    # whenever it starts afresh), with its length, end and generation to keep
+    # in step.  A client that reconnects all the time (the plasmoid's bounded
+    # streams) says which history it has, dr_gen and dr_end, and is sent only
+    # what follows that; a
     # level/spectrum stream drops the DR state, and leaves out "bands" (the
     # static labels and edges) while they are the ones this connection last
     # sent, for the client to fill back in.  Without it, every frame whole, as
     # the panel, the plasmoid and the Android levels screen read them.
     compact = request.args.get("compact") == "1"
+    try:
+        held = (int(request.args.get("dr_gen", "-1")), int(request.args.get("dr_end", "0")))
+    except ValueError:
+        held = (-1, 0)
 
     def events():
         _SPECTRUM.acquire(mode, wants_clip=wants_clip)
         deadline = time.monotonic() + max_s if max_s else None
         dr_revision = -1
         dr_last = None              # compact DR: the fields last sent
-        dr_gen, dr_end = -1, 0      # compact DR: the history this connection has
+        dr_gen, dr_end = held       # compact DR: the history this connection has
         bands_last = None           # compact levels: the bands last sent
 
         def payload(frame):
@@ -8987,8 +8996,8 @@ def spectrum_stream():
                 end = dr_end
                 key = "dr_blocks" if whole else "dr_blocks_add"
                 sep = "," if len(body) > 2 else ""
-                return (f'data: {body[:-1]}{sep}"dr_blocks_end":{end},"dr_blocks_len":{length},'
-                        f'"{key}":{blocks}}}\n\n')
+                return (f'data: {body[:-1]}{sep}"dr_blocks_gen":{dr_gen},"dr_blocks_end":{end},'
+                        f'"dr_blocks_len":{length},"{key}":{blocks}}}\n\n')
             elif compact:
                 frame = {k: v for k, v in frame.items() if k != "dr"}
                 if "bands" in frame:

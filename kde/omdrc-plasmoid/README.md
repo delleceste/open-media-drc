@@ -52,9 +52,9 @@ runs on the desktop besides the widget.
 
 | What | Endpoint |
 |---|---|
-| levels (and bands) | `/spectrum/stream?mode=vu` or `mode=music`, server-sent events |
+| levels (and bands) | `/spectrum/stream?compact=1&mode=vu` or `mode=music`, server-sent events |
 | spectrum floor and delay estimate | `/spectrum/settings` |
-| live DR | `/spectrum/stream?mode=dr` |
+| live DR | `/spectrum/stream?compact=1&mode=dr&dr_gen=…&dr_end=…`: new history blocks only |
 | state and track, polled | `/k/api/player`, `/cdin/status` |
 | prev / play / pause / next / stop / seek | `/k/api/transport` |
 | play queue | `/k/api/queue` |
