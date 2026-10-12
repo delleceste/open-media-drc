@@ -24,12 +24,20 @@ K.Spectrum = class Spectrum {
     setRingCount(count) { this.ringCount = K.clamp(Math.round(count), 4, 24); this.draw(); }
 
     update(frame) {
-        if (Array.isArray(frame.bands) && frame.bands.length) this.bands = frame.bands;
+        const bandsChanged = Array.isArray(frame.bands) && frame.bands.length
+            && frame.bands !== this.bands;
+        if (bandsChanged) this.bands = frame.bands;
         const n = this.bands.length;
         const pick = a => Array.isArray(a) && a.length === n ? a : new Array(n).fill(-200);
-        this.tl = pick(frame.left); this.tr = pick(frame.right);
-        this.peaks = { left: Number(frame.vu?.left_peak ?? -120), right: Number(frame.vu?.right_peak ?? -120) };
-        if (!this.raf) { this.last = 0; this.raf = requestAnimationFrame(ts => this.step(ts)); }
+        const tl = pick(frame.left), tr = pick(frame.right);
+        const peaks = { left: Number(frame.vu?.left_peak ?? -120), right: Number(frame.vu?.right_peak ?? -120) };
+        const changed = bandsChanged || tl.length !== this.tl.length || tr.length !== this.tr.length
+            || tl.some((v, i) => v !== this.tl[i]) || tr.some((v, i) => v !== this.tr[i])
+            || peaks.left !== this.peaks.left || peaks.right !== this.peaks.right;
+        this.tl = tl; this.tr = tr; this.peaks = peaks;
+        // Preserve the falling animation, but skip a new canvas pass when it
+        // has settled and this frame changes no visible target.
+        if (changed && !this.raf) { this.last = 0; this.raf = requestAnimationFrame(ts => this.step(ts)); }
     }
     clear() {
         this.tl = this.tr = new Array(this.bands.length).fill(-200);

@@ -157,8 +157,15 @@ K.VuMeter = class VuMeter {
     /** New analyzer frame's `vu` object. */
     update(vu) {
         const v = vu || {};
-        KEYS.forEach(k => { this.tgt[k] = Number.isFinite(Number(v[k])) && v[k] !== null ? Number(v[k]) : FLOOR; });
-        if (!this.raf) { this.last = 0; this.raf = requestAnimationFrame(ts => this.step(ts)); }
+        let changed = false;
+        KEYS.forEach(k => {
+            const next = Number.isFinite(Number(v[k])) && v[k] !== null ? Number(v[k]) : FLOOR;
+            if (next !== this.tgt[k]) changed = true;
+            this.tgt[k] = next;
+        });
+        // A settled meter with identical targets has no new pixels to paint.
+        // An active fall or peak hold already owns an animation frame.
+        if (changed && !this.raf) { this.last = 0; this.raf = requestAnimationFrame(ts => this.step(ts)); }
     }
 
     /** Jump to a level without animating (idle, disconnect). */

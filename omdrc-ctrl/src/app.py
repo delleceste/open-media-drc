@@ -8911,6 +8911,12 @@ def spectrum_margin():
 # What a compact DR stream carries (the kiosk's widgets/dr.js reads no more):
 # the analyzer's status, and the DR state and history.
 _DR_STREAM_FIELDS = ("ok", "state", "error", "rate", "source", "source_label", "dr")
+# Both compact level consumers (kiosk and plasmoid) use these fields. In
+# particular, a VU listener must not inherit FFT arrays merely because another
+# listener enabled bands on their shared analyzer thread.
+_LEVEL_STREAM_FIELDS = ("ok", "state", "error", "rate", "source", "source_label",
+                        "vu", "published")
+_MUSIC_STREAM_FIELDS = _LEVEL_STREAM_FIELDS + ("bands", "left", "right")
 
 
 def _release_stream(mode: str, wants_bands: bool, wants_clip: bool = False):
@@ -8999,7 +9005,8 @@ def spectrum_stream():
                 return (f'data: {body[:-1]}{sep}"dr_blocks_gen":{dr_gen},"dr_blocks_end":{end},'
                         f'"dr_blocks_len":{length},"{key}":{blocks}}}\n\n')
             elif compact:
-                frame = {k: v for k, v in frame.items() if k != "dr"}
+                fields = _LEVEL_STREAM_FIELDS if mode == "vu" else _MUSIC_STREAM_FIELDS
+                frame = {k: frame[k] for k in fields if k in frame}
                 if "bands" in frame:
                     if frame["bands"] == bands_last:
                         del frame["bands"]

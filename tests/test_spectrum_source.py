@@ -960,6 +960,26 @@ class CompactStreamTest(unittest.TestCase):
         an._publish({**self.LEVEL, "bands": [], "left": []})
         self.assertEqual(self.read(music)["bands"], [])
 
+    def test_compact_vu_does_not_inherit_another_clients_fft(self):
+        an, (vu, music) = self.frames("?mode=vu&compact=1", "?mode=music&compact=1")
+        self.read(vu)
+        self.read(music)
+        an._publish({**self.LEVEL, "mode": "music", "fft_size": 8192,
+                     "drc_delay": 0.1, "drc_delay_base": 0.2,
+                     "bands": self.BANDS, "left": [-20.0], "right": [-21.0],
+                     "vu": {"left_peak": -3.0}, "dr": {"state": "ready"}})
+        lean = self.read(vu)
+        rich = self.read(music)
+        for key in ("bands", "left", "right", "dr", "mode", "fft_size",
+                    "drc_delay", "drc_delay_base"):
+            self.assertNotIn(key, lean)
+        self.assertEqual(lean["vu"], {"left_peak": -3.0})
+        self.assertIn("published", lean)
+        self.assertEqual(rich["bands"], self.BANDS)
+        self.assertEqual((rich["left"], rich["right"]), ([-20.0], [-21.0]))
+        for key in ("dr", "mode", "fft_size", "drc_delay", "drc_delay_base"):
+            self.assertNotIn(key, rich)
+
     def test_without_compact_every_frame_is_whole(self):
         an, (music, dr) = self.frames("?mode=music", "?mode=dr")
         self.read(music)
