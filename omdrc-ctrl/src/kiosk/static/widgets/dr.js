@@ -395,7 +395,7 @@ K.DrBar = class DrBar {
 
 // ── an album's stored figure (the DR log, dr_store.py) ───────────────────────
 // Exact: a solid badge.  Estimate: "≈" and a dashed outline, from part of the
-// record heard.  The tooltip says how it was reached.
+// record heard.  A tap explains how it was reached, and what the marks mean.
 dr.basisText = s => s.basis === 'report' ? 'from dr14.txt'
     : s.kind === 'exact' ? (s.basis === 'measured' ? 'every track measured' : 'every track heard whole')
     : `estimate · ${s.heard}${s.track_count ? ` of ${s.track_count}` : ''} track${(s.track_count || s.heard) === 1 ? '' : 's'} heard`;
@@ -403,12 +403,25 @@ K.drLogBadge = (s, extra = '') => {
     if (!s || s.dr === null || s.dr === undefined) return null;
     const col = dr.color(s.dr);
     const est = s.kind !== 'exact';
+    const label = `${est ? '≈' : ''}DR${s.dr}`;
     return h('span', {
-        class: 'drlog' + (est ? ' est' : '') + (extra ? ' ' + extra : ''),
-        title: `DR${s.dr} — ${dr.basisText(s)}`,
+        class: 'drlog tappable' + (est ? ' est' : '') + (extra ? ' ' + extra : ''),
+        role: 'button', title: `DR${s.dr} — ${dr.basisText(s)} (tap: what it means)`,
         style: est ? { borderColor: col.bg } : { background: col.bg, color: col.fg },
-    }, `${est ? '≈' : ''}DR${s.dr}`);
+        onclick: e => { e.stopPropagation(); e.preventDefault(); K.drLogHelp(`${label}: ${dr.basisText(s)}.`); },
+    }, label);
 };
+
+// What the DR log's badges mean, opened by a badge tap or an "i" button.
+K.drLogHelp = (about = '') => K.info('DR figures',
+    ...(about ? [h('p', {}, h('strong', {}, about))] : []),
+    'The DR log keeps the dynamic range of every track the box plays, and puts each album’s figure together from its tracks.',
+    h('p', {}, h('span', { class: 'drlog', style: { background: dr.color(12).bg, color: dr.color(12).fg } }, 'DR12'),
+        ' Solid: exact. Every track was measured, or heard whole, or the album folder’s dr14.txt says so.'),
+    h('p', {}, h('span', { class: 'drlog est', style: { borderColor: dr.color(12).bg } }, '≈DR12'),
+        ' Dashed, with ≈: an estimate from the tracks heard so far (at least two minutes of them). A seek or a late start makes a track count towards the estimate only.'),
+    'The live meter on the Now page is separate: it measures what plays right now and is not stored.');
+K.drLogInfoButton = () => K.infoButton('What the DR figures mean', () => K.drLogHelp());
 
 // ── gauge: a coloured track with a marker at DR 0..14+ ───────────────────────
 K.drGauge = host => {

@@ -78,7 +78,8 @@ P.mount = el => {
     P.syncLine = h('div', { class: 'drlog-sync small' });
     const logCard = K.card('DR log', P.logBtn, P.logState, P.logAlbum, P.syncLine,
         note('What it is.', 'Keeps the DR of every track played, on the server, whether or not any page is open, and puts together each album’s figure: exact once every track has been heard whole (over as many sessions as it takes), an estimate (≈) from the tracks heard so far, at least two minutes of them. A seek or a late start makes a track count towards the estimate only. Local albums with a dr14.txt use its value.'),
-        note('Cost.', 'While on, MPD’s analyzer FIFO output stays enabled and the server reads it continuously — no FFT, only DR blocks. The Audio chain shows it as “DR log” under MPD’s FIFO. Independent of the Estimate switch.'));
+        note('Cost.', 'While on, MPD’s analyzer FIFO output stays enabled and the server reads it continuously — no FFT, only DR blocks. The Audio chain shows it as “DR log” under MPD’s FIFO. Independent of the Estimate switch.'),
+        K.cardOpts({ actions: K.drLogInfoButton() }));
 
     el.append(h('div', { class: 'two-col' }, h('div', { class: 'col' }, estCard, logCard), h('div', { class: 'col' }, measCard)));
     P.paintWin();
@@ -94,7 +95,8 @@ A.mount = el => {
     A.browse = h('div', { class: 'drrank-browse' }, A.rankQ, A.rankChips, A.rankList, A.rankFoot);
     A.detail = h('div', { class: 'dr-detail-page', hidden: true });
     el.append(K.card('Albums by dynamic range', A.browse, A.detail,
-        K.cardOpts({ actions: h('button', { class: 'btn', type: 'button', title: 'Read the local collection’s dr14.txt files again', onclick: () => A.rankImport() }, 'Rescan dr14.txt') })));
+        K.cardOpts({ actions: h('span', { style: { display: 'flex', gap: '.5rem', alignItems: 'center' } }, K.drLogInfoButton(),
+            h('button', { class: 'btn', type: 'button', title: 'Read the local collection’s dr14.txt files again', onclick: () => A.rankImport() }, 'Rescan dr14.txt')) })));
     A.paintChips();
 };
 
@@ -109,7 +111,7 @@ R.mount = el => {
     R.detail = h('div', { class: 'dr-detail-page', hidden: true });
     el.append(K.card('Recent DR',
         h('p', { class: 'muted small' }, 'Newest saved track measurements on this box, and dr14.txt reports newly written in its collection (a Rescan measures whole albums into those). The DR log retains the best measurement per track, so replaying a track may not add a new row.'),
-        R.browse, R.detail));
+        R.browse, R.detail, K.cardOpts({ actions: K.drLogInfoButton() })));
     R.paintChips();
 };
 

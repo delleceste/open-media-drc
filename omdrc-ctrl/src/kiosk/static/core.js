@@ -158,6 +158,20 @@ K.confirm = ({ title, message, ok = 'Confirm', cancel = 'Cancel', danger = false
     return p;
 };
 
+// An explanation: a sheet with a title, paragraphs (strings or nodes) and OK.
+K.info = (title, ...paras) => {
+    const close = () => scrim.remove();
+    const scrim = K.h('div', { class: 'scrim', onclick: e => { if (e.target === scrim) close(); } },
+        K.h('div', { class: 'sheet info-sheet' },
+            K.h('h2', {}, title),
+            ...paras.map(p => typeof p === 'string' ? K.h('p', {}, p) : p),
+            K.h('div', { class: 'sheet-actions' }, K.h('button', { class: 'btn primary', onclick: close }, 'OK'))));
+    root().append(scrim);
+};
+// The round "i" that opens one: what a figure or a convention on screen means.
+K.infoButton = (label, onTap) => K.h('button', { class: 'btn info-btn', type: 'button', title: label, 'aria-label': label,
+    onclick: e => { e.stopPropagation(); onTap(); } }, 'i');
+
 // A modal spinner for the long, chain-rebuilding operations (a filter switch
 // takes tens of seconds).  Touches are swallowed so nothing is pressed twice.
 K.busy = text => {

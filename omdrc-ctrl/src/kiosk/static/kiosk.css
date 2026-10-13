@@ -1359,6 +1359,9 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
     border: 2px solid transparent; font: 700 .78rem ui-monospace, monospace; white-space: nowrap; }
 .drlog.est { border-style: dashed; background: var(--surface2); color: var(--text); }
 .drlog.none { border-color: var(--border); color: var(--muted); }
+.drlog.tappable { cursor: pointer; }
+.info-btn { min-width: 2rem; width: 2rem; height: 2rem; padding: 0; border-radius: 50%; font: italic 700 1rem Georgia, serif; }
+.info-sheet p { color: var(--text); }
 .drlog.big { min-width: 3.6rem; justify-content: center; font-size: .95rem; min-height: 1.9rem; }
 .qz-tdr { position: absolute; top: .25rem; right: .25rem; font-size: .66rem; min-height: 1.1rem; padding: 0 .25rem; }
 .qz-tdr.est { background: rgba(0,0,0,.6); color: #fff; }

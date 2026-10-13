@@ -1557,21 +1557,13 @@ something plays.
 
 In both forms the cover carries the widget's badges: **DRC** with its output
 rate (`DRC 192`) while the DRC runs, nothing when it is off; the source format
-(`96/24`, colored as on the widget); and the DR log's figure, which is never
-the live meter's:
-
-- `DR11`: the track's own final figure, from a full measurement, a complete
-  listen, or its row in the album's `dr14.txt` (matched by title, else by
-  track number);
-- the same with a leading "approximately" sign: the track's figure from a
-  partial listen;
-- `DR12 album`: the album's figure, when the track has none: its `dr14.txt`
-  value, or the value of all its tracks measured;
-- `DR12 album` with that sign: an album estimate from the tracks heard so
-  far.
-
-A track heard for the first time shows its album's figure: what is being
-heard counts only once the track ends, when its figure is saved. `/now`
+(`96/24`, colored as on the widget); and the DR log's figure for the track
+itself, never the live meter's: `DR11` when final (measured, heard to the end,
+or its row in the album's `dr14.txt`, matched by title, else by track number),
+the same with a leading "approximately" sign from a partial listen, as the
+kiosk marks estimates. A track without a figure of its own shows none: an
+album's figure there would read as the track's. What is being heard counts
+only once the track ends, when its figure is saved. `/now`
 reports the figures (`music.dr`), looked up once per track and refreshed once
 a minute. In the media player the badges are rows at the top centre of the
 part of the cover Android leaves in view, no wider than the gap between the
@@ -2705,7 +2697,9 @@ enabled; the Audio chain draws the log as its own consumer of that FIFO,
   the *Measure* job has measured every file, or when a local folder has a
   `dr14.txt`. Otherwise, with at least two minutes heard, it is an
   **estimate**, shown as `~DR9` on the page (with a dashed outline) and in the
-  search results.
+  search results. A tap on any of these badges explains how its figure was
+  reached and what the marks mean, as does the **i** button on the *DR log*,
+  *Albums by DR* and *Recent DR* cards.
 - **Albums** are keyed by their Qobuz album id, by their folder under MusicPD's
   `music_directory`, or, for other streams, by artist and album tags (never
   exact: the number of tracks is unknown).

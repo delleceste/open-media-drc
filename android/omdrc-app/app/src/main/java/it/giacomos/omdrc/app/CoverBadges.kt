@@ -12,9 +12,8 @@ import java.util.Locale
 /**
  * The notification's cover with the widget's badges drawn on it: the DRC
  * in use with its output rate ("DRC 192", only while the DRC runs), the
- * source format ("96/24", colored as on the widget) and the stored DR of
- * the track ("DR11"), or of its album ("DR12 album"), with "≈" when it is
- * not final (see drLabel).
+ * source format ("96/24", colored as on the widget) and the track's
+ * stored DR ("DR11", "≈DR11" from a partial listen; see drLabel).
  *
  * Two layouts, for the two ways Android shows the picture:
  *  - MEDIA: the media player stretches the art across a wide card and
@@ -120,14 +119,11 @@ object CoverBadges {
 
     private fun gap(cap: Float) = 0.5f * cap
 
-    /** The track's figure, "DR11" - "≈DR11" from a partial listen - else
-     *  the album's, "DR12 album" - "≈DR12 album" for an estimate from some
-     *  of its tracks - else null. */
-    fun drLabel(track: Int?, trackExact: Boolean, album: Int?, albumExact: Boolean): String? = when {
-        track != null -> (if (trackExact) "" else "≈") + "DR$track"
-        album != null -> (if (albumExact) "" else "≈") + "DR$album album"
-        else -> null
-    }
+    /** The track's own figure: "DR11", or "≈DR11" from a partial listen -
+     *  the kiosk's convention for an estimate. Null without one: an
+     *  album's figure in its place would read as the track's. */
+    fun drLabel(track: Int?, trackExact: Boolean): String? =
+        track?.let { (if (trackExact) "" else "≈") + "DR$it" }
 
     /** 192000 -> "192", 44100 -> "44.1". */
     private fun khz(rate: Int): String =
