@@ -50,6 +50,7 @@ private const val TAG = "OmdrcWidget"
  * the status bar shows the app's note, the launcher icon's "d", with a
  * small play, pause or stop glyph in its top-left corner (in the shade,
  * Android shows the launcher icon itself instead).
+ * Expanded, it offers Play or Pause while music is loaded, Levels, Close.
  * Android requires a foreground service to show it the whole time; its Close
  * action stops the service and every other background request of the app
  * until the app is opened again (see AppPrefs.closed).
@@ -85,6 +86,10 @@ class LiveStatusService : Service() {
             closeApp(this)
             stopSelf()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_PLAY_PAUSE) {
+            playPause(intent)
+            return START_STICKY
         }
 
         val host = intent?.getStringExtra(MainActivity.EXTRA_HOST) ?: AppPrefs.defaultHost(this)
@@ -233,6 +238,46 @@ class LiveStatusService : Service() {
         return true
     }
 
+    /** The notification's Play/Pause: the box is told, and the update it
+     *  causes repaints the notification - at once with instant updates, on
+     *  the next poll with live updates. Only MPD takes transport commands,
+     *  so a film never gets the action. */
+    private fun playPause(intent: Intent) {
+        val host = intent.getStringExtra(MainActivity.EXTRA_HOST)
+        val action = intent.getStringExtra(EXTRA_TRANSPORT_ACTION)
+        val running = job?.isActive == true
+        if (host == null || action == null) {
+            if (!running) stopSelf()
+            return
+        }
+        val port = intent.getIntExtra(MainActivity.EXTRA_PORT, AppPrefs.defaultPort(this))
+        Log.d(TAG, "LiveStatusService: $action requested from the notification")
+        scope.launch {
+            OmdrcClient.sendTransport(host, port, action)
+            // Started by the tap alone (the service had been killed): no
+            // loop to show the result, so nothing left to do.
+            if (!running) stopSelf()
+        }
+    }
+
+    /** "pause" while music plays, "play" while it is paused, else null. */
+    private fun playPauseAction(snapshot: WidgetSnapshot?, now: NowState?): String? {
+        val state = when {
+            now?.video != null -> return null
+            now != null -> now.music.state
+            else -> when (snapshot?.mpd?.state) {
+                "playing" -> "play"
+                "paused" -> "pause"
+                else -> null
+            }
+        }
+        return when (state) {
+            "play" -> "pause"
+            "pause" -> "play"
+            else -> null
+        }
+    }
+
     /** Fetches whatever art changed, then updates widgets and notification. */
     private suspend fun show(host: String, port: Int, snapshot: WidgetSnapshot, now: NowState?) {
         var widgetArt: ArtFetch? = null
@@ -343,7 +388,7 @@ class LiveStatusService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        return NotificationCompat.Builder(this, StatusNotifier.LIVE_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, StatusNotifier.LIVE_CHANNEL_ID)
             .setSmallIcon(
                 when (activity) {
                     Activity.PLAYING -> R.drawable.ic_notification_play
@@ -357,12 +402,30 @@ class LiveStatusService : Service() {
             .setLargeIcon(icon)
             .setStyle(NotificationCompat.BigTextStyle().bigText(expanded))
             .setContentIntent(contentIntent)
-            .addAction(R.drawable.ic_notification, getString(R.string.live_levels), levelsIntent)
-            .addAction(R.drawable.ic_notification, getString(R.string.live_close_app), closeIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        playPauseAction(snapshot, now)?.let { action ->
+            val playPauseIntent = PendingIntent.getService(
+                this, 1,
+                Intent(this, LiveStatusService::class.java).apply {
+                    setAction(ACTION_PLAY_PAUSE)
+                    putExtra(MainActivity.EXTRA_HOST, host)
+                    putExtra(MainActivity.EXTRA_PORT, port)
+                    putExtra(EXTRA_TRANSPORT_ACTION, action)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            if (action == "pause") {
+                builder.addAction(R.drawable.ic_pause, getString(R.string.live_pause), playPauseIntent)
+            } else {
+                builder.addAction(R.drawable.ic_play, getString(R.string.live_play), playPauseIntent)
+            }
+        }
+        return builder
+            .addAction(R.drawable.ic_notification, getString(R.string.live_levels), levelsIntent)
+            .addAction(R.drawable.ic_notification, getString(R.string.live_close_app), closeIntent)
             .build()
     }
 
@@ -429,6 +492,8 @@ class LiveStatusService : Service() {
         private const val NOTIFICATION_ID = 3
         private const val ACTION_CLOSE = "it.giacomos.omdrc.app.ACTION_CLOSE"
         const val ACTION_CLOSE_APP = "it.giacomos.omdrc.app.ACTION_CLOSE_APP"
+        private const val ACTION_PLAY_PAUSE = "it.giacomos.omdrc.app.ACTION_PLAY_PAUSE"
+        private const val EXTRA_TRANSPORT_ACTION = "transportAction"
         private const val POLL_INTERVAL_MS = 2000L
         private const val IDLE_TIMEOUT_MILLIS = 10 * 60 * 1000L
         private const val INSTANT_WAIT_S = 25

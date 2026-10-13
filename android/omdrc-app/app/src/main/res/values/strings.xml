@@ -46,6 +46,8 @@
     <string name="now_headroom_safe">headroom safe</string>
     <string name="now_headroom_unsafe">headroom NOT safe</string>
     <string name="live_levels">Levels</string>
+    <string name="live_play">Play</string>
+    <string name="live_pause">Pause</string>
     <string name="settings_change_server">Change server address</string>
     <string name="settings_title">OMDRC settings</string>
     <string name="settings_view_kiosk">Kiosk view (small screen)</string>
