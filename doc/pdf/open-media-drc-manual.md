@@ -1527,15 +1527,20 @@ notification for as long as it runs, so the notification and the service live
 and die together.
 
 **Two modes.** *Live updates* (the default) start when the dashboard is opened
-and poll the box every 2 s, so the large widget's meters move; they stop 10
-minutes after the app was last on screen. *Instant updates* (App settings) keep
+and poll the box every 2 s, so the large widget's meters move. 10 minutes
+after the app was last on screen they stop polling and wait on `/now` as
+instant updates do, so the notification stays while something plays.
+*Instant updates* (App settings) keep
 one request waiting on the box's `/now`, which answers only when the track, the
 playback state, the DRC or the film changes. This is an idle connection rather
 than polling. A box without `/now` is polled every 5 s instead.
 
 **The notification.** It shows the track, or the film, with its cover or
 poster; expanded, it adds the format, the renderer and the DRC in use. Its
-actions are **Levels** (the PiP meters) and **Close app**. The status bar shows
+actions are **Pause** while music or a film plays (**Play** while it is
+paused), **Levels** (the PiP meters) and **Close app**. Pause and Play go
+to `/k/api/transport`; for a film, with `"target": "video"`, which passes
+them to the video remote's mpv instead of MPD. The status bar shows
 the note from the launcher icon (the "d" of *omdrc*), with a small play,
 pause or stop glyph in its top-left corner, the part of the icon the note
 leaves free. Android draws
@@ -1567,8 +1572,8 @@ and the lock screen by default ("Hide silent notifications in status bar").
 Android does not let an app raise a channel's importance once created, so the
 channel has a new id (`drc_live_icon`) and the former one (`drc_live_status`)
 is deleted. Users who changed its settings must set them again. This is not a
-media notification: there are no media controls in the shade or on the lock
-screen.
+media notification: apart from its Play/Pause action there are no media
+controls in the shade or on the lock screen.
 
 **When it stops by itself.** In both modes the service ends, and its
 notification disappears, when there is nothing to show:
@@ -1578,7 +1583,6 @@ notification disappears, when there is nothing to show:
 | Nothing playing (stopped, no film) | 30 s |
 | Paused (music or film) | 15 min |
 | Box unreachable (disconnected, other network, box off) | 60 s |
-| Live updates mode, app not opened again | 10 min |
 | Android 15+ daily limit for this kind of service (`dataSync`, 6 h per 24 h) | at the limit |
 
 The short grace periods let a change of album or a brief Wi-Fi drop pass

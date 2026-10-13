@@ -34,7 +34,7 @@
     <string name="live_close_app">Close app</string>
     <string name="settings_instant_updates">Instant updates (permanent notification)</string>
     <string name="instant_updates_on">Instant updates on: the notification stays, and Close app on it stops all traffic</string>
-    <string name="instant_updates_off">Instant updates off: live updates stop a few minutes after you leave the app</string>
+    <string name="instant_updates_off">Instant updates off: live updates slow down to changes only a few minutes after you leave the app</string>
     <string name="now_nothing_playing">Nothing playing</string>
     <string name="now_playing">Playing</string>
     <string name="now_paused">Paused</string>

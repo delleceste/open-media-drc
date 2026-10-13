@@ -38,8 +38,10 @@ private const val TAG = "OmdrcWidget"
  *
  *  - Live updates (default): started when the dashboard is opened, it polls
  *    every 2s - the web dashboard's own cadence, so the large widget's meters
- *    move - and stops itself after IDLE_TIMEOUT_MILLIS with the dashboard not
- *    reopened, so it never polls forever by accident.
+ *    move. After IDLE_TIMEOUT_MILLIS with the dashboard not reopened it
+ *    stops polling and carries on as instant updates do, so it never polls
+ *    forever by accident, yet the notification (and its Pause) stays while
+ *    something plays.
  *  - Instant updates (AppPrefs.instantUpdates): it stays on and keeps one
  *    request waiting on the box's /now, which answers as soon as the track,
  *    the playback state, the DRC or the film changes - an idle connection,
@@ -126,8 +128,8 @@ class LiveStatusService : Service() {
         while (true) {
             val idleMillis = System.currentTimeMillis() - AppPrefs.lastForegroundMillis(this)
             if (idleMillis > IDLE_TIMEOUT_MILLIS) {
-                Log.d(TAG, "LiveStatusService: stopping after ${idleMillis / 60000} min with the app not reopened")
-                stopSelf()
+                Log.d(TAG, "LiveStatusService: ${idleMillis / 60000} min with the app not reopened, waiting on /now instead of polling")
+                instantLoop(host, port)
                 return
             }
             try {
