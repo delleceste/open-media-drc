@@ -40,6 +40,7 @@
     <string name="media_notification_off">Media notification off: a plain status notification</string>
     <string name="live_previous">Previous</string>
     <string name="live_next">Next</string>
+    <string name="live_stop">Stop</string>
     <string name="now_nothing_playing">Nothing playing</string>
     <string name="now_playing">Playing</string>
     <string name="now_paused">Paused</string>

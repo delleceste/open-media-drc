@@ -281,7 +281,10 @@ class LiveStatusService : Service() {
                 override fun onSkipToPrevious() = send("prev")
                 override fun onSeekTo(pos: Long) = send("seek", pos / 1000.0)
                 override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
-                    if (action == CUSTOM_CLOSE) close()
+                    when (action) {
+                        CUSTOM_CLOSE -> close()
+                        CUSTOM_STOP -> send("stop")
+                    }
                 }
             }, Handler(Looper.getMainLooper()))
         }
@@ -292,13 +295,26 @@ class LiveStatusService : Service() {
         session = null
     }
 
-    /** A media-controls button: a film takes only play and pause. */
+    /** A media-controls button: a film takes only play, pause and stop. */
     private fun send(action: String, seconds: Double? = null) {
         val to = target ?: return
-        if (to.video && action != "play" && action != "pause") return
+        if (to.video && action !in VIDEO_ACTIONS) return
         if (!to.video && !to.music) return
         Log.d(TAG, "LiveStatusService: $action from the media controls")
-        scope.launch { OmdrcClient.sendTransport(to.host, to.port, action, to.video, seconds) }
+        scope.launch {
+            OmdrcClient.sendTransport(to.host, to.port, action, to.video, seconds)
+            if (action == "stop") closeAfterStop()
+        }
+    }
+
+    /** Stop from the notification: once the box has stopped, the app closes
+     *  after STOP_CLOSE_MS rather than the idle stop's STOPPED_GRACE_MS -
+     *  unless something plays again meanwhile. */
+    private suspend fun closeAfterStop() {
+        delay(STOP_CLOSE_MS)
+        if (activity == Activity.PLAYING) return
+        Log.d(TAG, "LiveStatusService: closing after a stop from the notification")
+        Handler(Looper.getMainLooper()).post { close() }
     }
 
     /** A notification button (Play/Pause, previous, next): the box is told,
@@ -321,6 +337,7 @@ class LiveStatusService : Service() {
             // Started by the tap alone (the service had been killed): no
             // loop to show the result, so nothing left to do.
             if (!running) stopSelf()
+            else if (action == "stop") closeAfterStop()
         }
     }
 
@@ -503,6 +520,10 @@ class LiveStatusService : Service() {
                     transportIntent(host, port, "next", false, 4))
                 compact += count++
             }
+            if (playPause != null) {
+                builder.addAction(R.drawable.ic_stop, getString(R.string.live_stop),
+                    transportIntent(host, port, "stop", video, 5))
+            }
             builder.addAction(R.drawable.ic_close, getString(R.string.live_close_app), closeIntent)
             return builder
                 .setStyle(
@@ -522,6 +543,8 @@ class LiveStatusService : Service() {
             } else {
                 builder.addAction(R.drawable.ic_play, getString(R.string.live_play), playPauseIntent)
             }
+            builder.addAction(R.drawable.ic_stop, getString(R.string.live_stop),
+                transportIntent(host, port, "stop", video, 5))
         }
         return builder
             .addAction(R.drawable.ic_notification, getString(R.string.live_levels), levelsIntent)
@@ -584,6 +607,15 @@ class LiveStatusService : Service() {
                 .setActions(actions)
                 .setState(state, position, if (state == PlaybackStateCompat.STATE_PLAYING) 1f else 0f,
                     SystemClock.elapsedRealtime())
+                .apply {
+                    if (playPause != null) {
+                        addCustomAction(
+                            PlaybackStateCompat.CustomAction.Builder(
+                                CUSTOM_STOP, getString(R.string.live_stop), R.drawable.ic_stop,
+                            ).build(),
+                        )
+                    }
+                }
                 .addCustomAction(
                     PlaybackStateCompat.CustomAction.Builder(
                         CUSTOM_CLOSE, getString(R.string.live_close_app), R.drawable.ic_close,
@@ -686,6 +718,9 @@ class LiveStatusService : Service() {
         const val ACTION_CLOSE_APP = "it.giacomos.omdrc.app.ACTION_CLOSE_APP"
         private const val ACTION_TRANSPORT = "it.giacomos.omdrc.app.ACTION_LIVE_TRANSPORT"
         private const val CUSTOM_CLOSE = "close"
+        private const val CUSTOM_STOP = "stop"
+        private val VIDEO_ACTIONS = setOf("play", "pause", "stop")
+        private const val STOP_CLOSE_MS = 5 * 1000L
         private const val EXTRA_TRANSPORT_ACTION = "transportAction"
         private const val EXTRA_TRANSPORT_VIDEO = "transportVideo"
         private const val POLL_INTERVAL_MS = 2000L

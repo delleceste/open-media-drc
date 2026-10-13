@@ -116,9 +116,9 @@ def video_available():
 # an argument, and that goes through as a number we format ourselves.
 _TRANSPORT = {"play": ["play"], "pause": ["pause"], "stop": ["stop"],
               "next": ["next"], "prev": ["prev"]}
-# With "target": "video", play and pause go to the film instead, through the
-# video remote's own transport (its /api/cmd ops of the same names).
-_VIDEO_TRANSPORT = ("play", "pause")
+# With "target": "video", play, pause and stop go to the film instead, through
+# the video remote's own transport (its /api/cmd ops of the same names).
+_VIDEO_TRANSPORT = ("play", "pause", "stop")
 
 
 def _clock(seconds: int) -> str:

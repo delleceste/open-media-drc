@@ -180,14 +180,15 @@ class KioskTests(unittest.TestCase):
             return io.BytesIO(b'{"ok": true}')
         try:
             with patch.object(kiosk.urllib.request, "urlopen", side_effect=remote):
-                for word in ("pause", "play"):
+                for word in ("pause", "play", "stop"):
                     r = self.client.post("/k/api/transport", json={"action": word, "target": "video"})
                     self.assertEqual((r.status_code, r.get_json()), (200, {"ok": True}), word)
-                for bad in ("next", "stop", "seek", ""):
+                for bad in ("next", "prev", "seek", ""):
                     r = self.client.post("/k/api/transport", json={"action": bad, "target": "video"})
                     self.assertEqual(r.status_code, 400, bad)
             self.assertEqual(sent, [("http://127.0.0.1:9080/api/cmd", {"op": "pause"}),
-                                    ("http://127.0.0.1:9080/api/cmd", {"op": "play"})])
+                                    ("http://127.0.0.1:9080/api/cmd", {"op": "play"}),
+                                    ("http://127.0.0.1:9080/api/cmd", {"op": "stop"})])
             self.assertEqual(mpc, [])
             with patch.object(kiosk.urllib.request, "urlopen", side_effect=OSError("refused")):
                 r = self.client.post("/k/api/transport", json={"action": "pause", "target": "video"})
