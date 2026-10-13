@@ -1546,13 +1546,14 @@ something plays.
   track or film, its cover, and for music the position (`/now` reports
   `elapsed` and `duration`; Android moves the bar on by itself, so the
   position costs no extra requests). Music offers previous, play/pause, next
-  and seeking; a film, play/pause. **Close** is the player's extra button.
+  and seeking; a film, play/pause. **Stop** and **Close** are the player's
+  extra buttons.
   The service then runs as a `mediaPlayback` foreground service, which has no
   daily time limit.
 - *Plain notification* (the setting off): the track or film with its cover;
   expanded, the format, the renderer and the DRC in use. Its actions are
   **Pause** while music or a film plays (**Play** while it is paused),
-  **Levels** (the PiP meters) and **Close app**.
+  **Stop**, **Levels** (the PiP meters) and **Close app**.
 
 In both forms the cover carries the widget's badges: **DRC** with its output
 rate (`DRC 192`) while the DRC runs, nothing when it is off; the source format
@@ -1567,8 +1568,10 @@ computes it only while something watches the meters, and a value changing
 every few seconds would wake the phone as often.
 
 All the buttons go to `/k/api/transport`; for a film, with `"target":
-"video"`, which passes play and pause to the video remote's mpv instead of
-MPD. **Swiping the notification away is the same as Close app** (below): the
+"video"`, which passes play, pause and stop to the video remote's mpv
+instead of MPD. **Stop** stops playback and closes the app 5 s later, as Close
+does, rather than after the 30 s idle grace, unless something plays again
+meanwhile. **Swiping the notification away is the same as Close app** (below): the
 notification is not marked ongoing, and its delete intent closes the app.
 The app has no media browser service, so Android does not keep a stopped
 player in the media controls for resuming later: the player goes when the
