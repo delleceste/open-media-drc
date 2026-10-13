@@ -4839,6 +4839,8 @@ NOW_MAX_WAIT_S = 300   # a phone waits up to 5 min per request: few wake-ups
 _NOW_DRC = {}                   # BruteFIR .conf path -> its summary
 _NOW_CACHE = {"at": 0.0, "state": None}
 _NOW_LOCK = threading.Lock()
+_NOW_DR = {"file": None, "at": 0.0, "dr": None}   # the stored DR of the track playing
+NOW_DR_REFRESH_S = 60.0
 
 
 def _now_drc() -> dict:
@@ -4863,6 +4865,33 @@ def _now_drc() -> dict:
         _NOW_DRC.clear()
         _NOW_DRC[conf] = summary
     return summary
+
+
+def _now_dr(song: dict) -> dict | None:
+    """The DR log's figures for the track playing and its album:
+    {"track": int | None, "album": int | None, "album_kind": "exact" |
+    "estimate" | None}, None when it stores neither.  Looked up again only
+    for a new track, or once a minute: a track measured while it plays gets
+    its figure when it ends."""
+    file = song.get("file") or ""
+    if not file:
+        return None
+    if _NOW_DR["file"] == file and time.monotonic() - _NOW_DR["at"] < NOW_DR_REFRESH_S:
+        return _NOW_DR["dr"]
+    dr = None
+    try:
+        album = _dr_album_for(song)
+        stored = _DR_STORE.album(album["key"]) if album else None
+        if stored:
+            track = next((t["dr"] for t in stored.get("tracks", [])
+                          if t.get("track_key") == album.get("track_key")), None)
+            figure = stored.get("dr") or {}
+            if track is not None or figure.get("dr") is not None:
+                dr = {"track": track, "album": figure.get("dr"), "album_kind": figure.get("kind")}
+    except Exception:                                   # noqa: BLE001
+        dr = None       # no store, a tag it cannot read: no figure, never an error
+    _NOW_DR.update(file=file, at=time.monotonic(), dr=dr)
+    return dr
 
 
 def _now_video() -> dict | None:
@@ -4904,6 +4933,7 @@ def _now_state() -> dict:
             "format": np.get("audio", ""),
             "renderer": _current_renderer(),
             "duration": np.get("duration"),
+            "dr": _now_dr(np),
         }
         state = {"ok": True, "music": music, "drc": _now_drc(), "video": _now_video()}
         # The position moves every second, so it stays out of the token: a

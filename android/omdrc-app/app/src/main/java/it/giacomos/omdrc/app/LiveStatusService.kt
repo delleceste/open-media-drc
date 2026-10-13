@@ -83,6 +83,9 @@ class LiveStatusService : Service() {
     private var musicArt: Bitmap? = null
     private var videoArtKey: String? = null
     private var videoArt: Bitmap? = null
+    // The art with its badges, redrawn only when what it shows changes.
+    private var badgedKey: Any? = null
+    private var badged: Bitmap? = null
 
     // What the box was last seen doing, and since when: the idle stop.
     private var activity = Activity.UNKNOWN
@@ -453,6 +456,9 @@ class LiveStatusService : Service() {
         val video = now?.video != null
         val music = !video && playPause != null
         target = Target(host, port, video, music)
+        if (now != null && (icon != null || playPause != null)) {
+            icon = badgedArt(icon, now, video, if (session != null) CoverBadges.Layout.MEDIA else CoverBadges.Layout.ICON)
+        }
 
         val builder = NotificationCompat.Builder(this, StatusNotifier.LIVE_CHANNEL_ID)
             .setSmallIcon(
@@ -521,6 +527,21 @@ class LiveStatusService : Service() {
             .addAction(R.drawable.ic_notification, getString(R.string.live_levels), levelsIntent)
             .addAction(R.drawable.ic_notification, getString(R.string.live_close_app), closeIntent)
             .build()
+    }
+
+    /** The cover with the DRC, the format and the stored DR on it. */
+    private fun badgedArt(art: Bitmap?, now: NowState, video: Boolean, layout: CoverBadges.Layout): Bitmap? {
+        val m = now.music
+        val drcOn = now.drc.running
+        val rate = if (video) null else m.rate
+        val bits = if (video) null else m.bits
+        val dr = if (video) null else CoverBadges.drLabel(m.drTrack, m.drAlbum, m.drAlbumExact)
+        val key = listOf(System.identityHashCode(art), layout, drcOn, now.drc.rate, rate, bits, dr)
+        if (key != badgedKey) {
+            badged = CoverBadges.draw(this, art, layout, now.drc.rate, drcOn, rate, bits, dr)
+            badgedKey = key
+        }
+        return badged
     }
 
     /** What Android's media controls show and offer: the track or film, its

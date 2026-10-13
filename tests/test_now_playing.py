@@ -40,6 +40,7 @@ class NowPlayingTest(unittest.TestCase):
     def setUp(self):
         APP._NOW_CACHE.update(at=0.0, state=None)
         APP._NOW_DRC.clear()
+        APP._NOW_DR.update(file=None, at=0.0, dr=None)
         self.np = dict(NP)
         patches = [
             mock.patch.object(APP, "_mpd_now_playing_via_protocol", side_effect=lambda port: dict(self.np)),
@@ -91,6 +92,25 @@ class NowPlayingTest(unittest.TestCase):
         self.assertEqual((first["music"]["elapsed"], first["music"]["duration"]), (12.5, 240.0))
         self.assertEqual(second["music"]["elapsed"], 13.5)
         self.assertEqual(second["token"], first["token"])
+
+    def test_reports_the_stored_dr_of_the_track_and_album(self):
+        self.np["file"] = "Artist/Album/02.flac"
+        stored = {"dr": {"dr": 12, "kind": "estimate"},
+                  "tracks": [{"track_key": "01.flac", "dr": 13}, {"track_key": "02.flac", "dr": 11}]}
+        with self._card(), \
+             mock.patch.object(APP, "_dr_album_for", return_value={"key": "k", "track_key": "02.flac"}) as album, \
+             mock.patch.object(APP._DR_STORE, "album", return_value=stored):
+            data = self.client.get("/now").get_json()
+            APP._NOW_CACHE.update(at=0.0, state=None)
+            self.client.get("/now")
+        self.assertEqual(data["music"]["dr"], {"track": 11, "album": 12, "album_kind": "estimate"})
+        self.assertEqual(album.call_count, 1, "looked up once per track, not per answer")
+
+    def test_no_dr_without_a_stored_album(self):
+        self.np["file"] = "Artist/Album/02.flac"
+        with self._card(), mock.patch.object(APP, "_dr_album_for", return_value=None):
+            data = self.client.get("/now").get_json()
+        self.assertIsNone(data["music"]["dr"])
 
     def test_waits_while_nothing_changes(self):
         with self._card():

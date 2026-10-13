@@ -1554,6 +1554,18 @@ something plays.
   **Pause** while music or a film plays (**Play** while it is paused),
   **Levels** (the PiP meters) and **Close app**.
 
+In both forms the cover carries the widget's badges: **DRC** with its output
+rate (`DRC 192`) while the DRC runs, nothing when it is off; the source format
+(`96/24`, colored as on the widget); and the DR log's figure for the track
+(`DR11`), else for its album (marked as approximate when it is only an estimate). `/now` reports
+the figures (`music.dr`), looked up once per track and refreshed once a
+minute, so a track measured while it plays shows its figure when it ends. In
+the media player the badges are a row at the top centre of the part of the
+cover Android leaves in view; on the plain notification's thumbnail, one
+larger row along its bottom. The live DR of the meters is not shown: the box
+computes it only while something watches the meters, and a value changing
+every few seconds would wake the phone as often.
+
 All the buttons go to `/k/api/transport`; for a film, with `"target":
 "video"`, which passes play and pause to the video remote's mpv instead of
 MPD. **Swiping the notification away is the same as Close app** (below): the

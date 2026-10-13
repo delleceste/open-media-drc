@@ -25,10 +25,16 @@ data class NowState(
         /** Seconds into the track when the box answered, and its length. */
         val elapsed: Double?,
         val duration: Double?,
+        /** The DR log's figures for this track and its album, if stored. */
+        val drTrack: Int?,
+        val drAlbum: Int?,
+        val drAlbumExact: Boolean,
     )
 
     data class Drc(
         val running: Boolean,
+        /** BruteFIR's output rate. */
+        val rate: Int?,
         val geometry: String?,
         val description: String?,
         val attenuationDb: Double?,
@@ -66,9 +72,13 @@ data class NowState(
                     renderer = music.optString("renderer"),
                     elapsed = if (music.isNull("elapsed")) null else music.optDouble("elapsed"),
                     duration = if (music.isNull("duration")) null else music.optDouble("duration"),
+                    drTrack = music.optJSONObject("dr")?.optIntOrNull("track"),
+                    drAlbum = music.optJSONObject("dr")?.optIntOrNull("album"),
+                    drAlbumExact = music.optJSONObject("dr")?.optString("album_kind") == "exact",
                 ),
                 drc = Drc(
                     running = drc.optBoolean("running", false),
+                    rate = drc.optIntOrNull("rate"),
                     geometry = drc.optStringOrNull("geometry"),
                     description = drc.optStringOrNull("description") ?: drc.optStringOrNull("design_id"),
                     attenuationDb = if (drc.isNull("effective_attenuation_db")) null

@@ -410,7 +410,7 @@ object RemoteViewsBuilder {
     }
 
     /** "96/24", "44.1/16": the strip's short source format. */
-    private fun formatShort(rate: Int?, bits: Int?): String? {
+    internal fun formatShort(rate: Int?, bits: Int?): String? {
         if (rate == null || rate <= 0) return null
         val khz = if (rate % 1000 == 0) "${rate / 1000}" else "%.1f".format(java.util.Locale.ROOT, rate / 1000.0)
         return khz + if (bits != null && bits > 0) "/$bits" else ""
@@ -420,7 +420,7 @@ object RemoteViewsBuilder {
      *  track strip uses (kiosk/static/widgets/track.js K.formatColor):
      *  24-bit/176kHz+ in the app's existing "safe" green, 24-bit/88kHz+ (hi-
      *  res) in its existing accent blue, anything else plain white. */
-    private fun formatColor(context: Context, rate: Int?, bits: Int?): Int {
+    internal fun formatColor(context: Context, rate: Int?, bits: Int?): Int {
         if (rate == null || bits == null || bits < 24) return 0xFFFFFFFF.toInt()
         return when {
             rate >= 176000 -> context.getColor(R.color.widget_fmt_green)
