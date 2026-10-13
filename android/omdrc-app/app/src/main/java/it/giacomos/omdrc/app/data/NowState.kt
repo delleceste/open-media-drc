@@ -27,6 +27,9 @@ data class NowState(
         val duration: Double?,
         /** The DR log's figures for this track and its album, if stored. */
         val drTrack: Int?,
+        /** The track's figure is final: measured or heard to the end, or
+         *  from the album's dr14.txt; not from a partial listen. */
+        val drTrackExact: Boolean,
         val drAlbum: Int?,
         val drAlbumExact: Boolean,
     )
@@ -73,6 +76,7 @@ data class NowState(
                     elapsed = if (music.isNull("elapsed")) null else music.optDouble("elapsed"),
                     duration = if (music.isNull("duration")) null else music.optDouble("duration"),
                     drTrack = music.optJSONObject("dr")?.optIntOrNull("track"),
+                    drTrackExact = music.optJSONObject("dr")?.optBoolean("track_exact", false) == true,
                     drAlbum = music.optJSONObject("dr")?.optIntOrNull("album"),
                     drAlbumExact = music.optJSONObject("dr")?.optString("album_kind") == "exact",
                 ),

@@ -28,6 +28,11 @@ NP = {"title": "Song", "album": "Album", "artist": "Artist", "album_artist": "",
       "state": "play", "audio": "96000:24:2"}
 
 
+def _track(key, number, dr, complete, seconds=200.0):
+    return {"track_key": key, "number": number, "dr": dr, "complete": complete,
+            "method": "live", "seconds": seconds}
+
+
 class _Response(io.BytesIO):
     def __enter__(self):
         return self
@@ -95,16 +100,46 @@ class NowPlayingTest(unittest.TestCase):
 
     def test_reports_the_stored_dr_of_the_track_and_album(self):
         self.np["file"] = "Artist/Album/02.flac"
-        stored = {"dr": {"dr": 12, "kind": "estimate"},
-                  "tracks": [{"track_key": "01.flac", "dr": 13}, {"track_key": "02.flac", "dr": 11}]}
+        stored = {"dr": {"dr": 12, "kind": "estimate"}, "report_dr": None,
+                  "tracks": [_track("01.flac", 1, 13, True), _track("02.flac", 2, 11, False, 50),
+                             _track("02.flac", 2, 10, True, 300)]}
         with self._card(), \
              mock.patch.object(APP, "_dr_album_for", return_value={"key": "k", "track_key": "02.flac"}) as album, \
              mock.patch.object(APP._DR_STORE, "album", return_value=stored):
             data = self.client.get("/now").get_json()
             APP._NOW_CACHE.update(at=0.0, state=None)
             self.client.get("/now")
-        self.assertEqual(data["music"]["dr"], {"track": 11, "album": 12, "album_kind": "estimate"})
+        self.assertEqual(data["music"]["dr"],
+                         {"track": 10, "track_exact": True, "album": 12, "album_kind": "estimate"},
+                         "the complete listen wins over the partial one")
         self.assertEqual(album.call_count, 1, "looked up once per track, not per answer")
+
+    def test_a_partly_heard_track_is_not_exact(self):
+        self.np["file"] = "Artist/Album/02.flac"
+        stored = {"dr": {"dr": None, "kind": None}, "report_dr": None,
+                  "tracks": [_track("02.flac", 2, 11, False, 60)]}
+        with self._card(), \
+             mock.patch.object(APP, "_dr_album_for", return_value={"key": "k", "track_key": "02.flac"}), \
+             mock.patch.object(APP._DR_STORE, "album", return_value=stored):
+            data = self.client.get("/now").get_json()
+        self.assertEqual(data["music"]["dr"],
+                         {"track": 11, "track_exact": False, "album": None, "album_kind": None})
+
+    def test_an_unheard_track_takes_its_row_in_the_dr14_report(self):
+        """By title, else by track number (disc * 1000 + track from UPnP)."""
+        stored = {"dr": {"dr": 12, "kind": "exact"}, "report_dr": 12, "tracks": []}
+        rows = [{"number": 1, "title": "Intro", "dr": 14}, {"number": 2, "title": "Song", "dr": 9}]
+        cases = ({"file": "A/B/x.flac", "title": "Song"}, {"file": "A/B/y.flac", "title": "Other", "track_no": 1001})
+        for song, figure in zip(cases, (9, 14)):
+            self.np.update(song)
+            APP._NOW_CACHE.update(at=0.0, state=None)
+            with self._card(), \
+                 mock.patch.object(APP, "_dr_album_for", return_value={"key": "k", "track_key": "z"}), \
+                 mock.patch.object(APP._DR_STORE, "album", return_value=stored), \
+                 mock.patch.object(APP, "_dr_report_rows", return_value=rows):
+                data = self.client.get("/now").get_json()
+            self.assertEqual(data["music"]["dr"],
+                             {"track": figure, "track_exact": True, "album": 12, "album_kind": "exact"})
 
     def test_no_dr_without_a_stored_album(self):
         self.np["file"] = "Artist/Album/02.flac"

@@ -558,7 +558,7 @@ class LiveStatusService : Service() {
         val drcOn = now.drc.running
         val rate = if (video) null else m.rate
         val bits = if (video) null else m.bits
-        val dr = if (video) null else CoverBadges.drLabel(m.drTrack, m.drAlbum, m.drAlbumExact)
+        val dr = if (video) null else CoverBadges.drLabel(m.drTrack, m.drTrackExact, m.drAlbum, m.drAlbumExact)
         val key = listOf(System.identityHashCode(art), layout, drcOn, now.drc.rate, rate, bits, dr)
         if (key != badgedKey) {
             badged = CoverBadges.draw(this, art, layout, now.drc.rate, drcOn, rate, bits, dr)

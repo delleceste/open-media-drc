@@ -4869,10 +4869,13 @@ def _now_drc() -> dict:
 
 def _now_dr(song: dict) -> dict | None:
     """The DR log's figures for the track playing and its album:
-    {"track": int | None, "album": int | None, "album_kind": "exact" |
-    "estimate" | None}, None when it stores neither.  Looked up again only
-    for a new track, or once a minute: a track measured while it plays gets
-    its figure when it ends."""
+    {"track": int | None, "track_exact": bool, "album": int | None,
+    "album_kind": "exact" | "estimate" | None}, None when it has neither.
+
+    The track's figure is its stored one - exact once measured or heard to
+    the end, partial otherwise - else its row in the album's dr14.txt, which
+    is exact.  Looked up again only for a new track, or once a minute: a
+    track heard while it plays gets its figure when it ends."""
     file = song.get("file") or ""
     if not file:
         return None
@@ -4883,15 +4886,36 @@ def _now_dr(song: dict) -> dict | None:
         album = _dr_album_for(song)
         stored = _DR_STORE.album(album["key"]) if album else None
         if stored:
-            track = next((t["dr"] for t in stored.get("tracks", [])
-                          if t.get("track_key") == album.get("track_key")), None)
+            row = next((t for t in dr_store.best_tracks(stored.get("tracks", []))
+                        if t.get("track_key") == album.get("track_key")), None)
+            track, exact = (row["dr"], bool(row["complete"])) if row else (None, False)
+            if track is None and stored.get("report_dr") is not None:
+                track = _dr_report_track(stored, song)
+                exact = track is not None
             figure = stored.get("dr") or {}
             if track is not None or figure.get("dr") is not None:
-                dr = {"track": track, "album": figure.get("dr"), "album_kind": figure.get("kind")}
+                dr = {"track": track, "track_exact": exact,
+                      "album": figure.get("dr"), "album_kind": figure.get("kind")}
     except Exception:                                   # noqa: BLE001
         dr = None       # no store, a tag it cannot read: no figure, never an error
     _NOW_DR.update(file=file, at=time.monotonic(), dr=dr)
     return dr
+
+
+def _dr_report_track(album: dict, song: dict) -> int | None:
+    """The song's figure in its album's dr14.txt: the row with its title,
+    else the row at its track number."""
+    rows = _dr_report_rows(album)
+    if not rows:
+        return None
+    plain = lambda text: re.sub(r"[^0-9a-z]+", "", (text or "").lower())   # noqa: E731
+    title = plain(song.get("title"))
+    match = next((r for r in rows if title and plain(r["title"]) == title), None)
+    number = song.get("track_no")
+    if match is None and isinstance(number, int):
+        number %= 1000          # disc * 1000 + track, as a UPnP server numbers it
+        match = next((r for r in rows if r["number"] == number), None)
+    return match["dr"] if match else None
 
 
 def _now_video() -> dict | None:
@@ -5706,14 +5730,23 @@ def dr_library_album():
                     and sum(p.suffix.lower() in dr_store.AUDIO_SUFFIXES for p in files) == 1)
             except OSError:
                 pass
-            path = folder / dr_store.REPORT
-            try:
-                if path.resolve().is_relative_to(folder) and path.is_file():
-                    with open(path, encoding="utf-8", errors="replace") as report:
-                        album["report_track_rows"] = dr_store.parse_report_track_rows(report.read(1_000_000))
-            except OSError:
-                pass
+            album["report_track_rows"] = _dr_report_rows(album, folder)
     return jsonify({"ok": True, "album": album})
+
+
+def _dr_report_rows(album: dict, folder: Path | None = None) -> list[dict]:
+    """The per-song rows of a local album's dr14.txt, [] without one."""
+    folder = folder or _dr_local_album_folder(album)
+    if not folder:
+        return []
+    path = folder / dr_store.REPORT
+    try:
+        if path.resolve().is_relative_to(folder) and path.is_file():
+            with open(path, encoding="utf-8", errors="replace") as report:
+                return dr_store.parse_report_track_rows(report.read(1_000_000))
+    except OSError:
+        pass
+    return []
 
 
 @app.route("/dr/library/recent")

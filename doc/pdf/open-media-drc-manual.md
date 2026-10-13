@@ -1557,14 +1557,27 @@ something plays.
 
 In both forms the cover carries the widget's badges: **DRC** with its output
 rate (`DRC 192`) while the DRC runs, nothing when it is off; the source format
-(`96/24`, colored as on the widget); and the DR log's figure for the track
-(`DR11`), else for its album (marked as approximate when it is only an estimate). `/now` reports
-the figures (`music.dr`), looked up once per track and refreshed once a
-minute, so a track measured while it plays shows its figure when it ends. In
-the media player the badges are a row at the top centre of the part of the
-cover Android leaves in view; on the plain notification's thumbnail, one
-larger row along its bottom. The live DR of the meters is not shown: the box
-computes it only while something watches the meters, and a value changing
+(`96/24`, colored as on the widget); and the DR log's figure, which is never
+the live meter's:
+
+- `DR11`: the track's own final figure, from a full measurement, a complete
+  listen, or its row in the album's `dr14.txt` (matched by title, else by
+  track number);
+- the same with a leading "approximately" sign: the track's figure from a
+  partial listen;
+- `DR12 album`: the album's figure, when the track has none: its `dr14.txt`
+  value, or the value of all its tracks measured;
+- `DR12 album` with that sign: an album estimate from the tracks heard so
+  far.
+
+A track heard for the first time shows its album's figure: what is being
+heard counts only once the track ends, when its figure is saved. `/now`
+reports the figures (`music.dr`), looked up once per track and refreshed once
+a minute. In the media player the badges are rows at the top centre of the
+part of the cover Android leaves in view, no wider than the gap between the
+player's app icon and its output chip; on the plain notification's thumbnail,
+one larger row along its bottom. The live DR of the meters is not shown: the
+box computes it only while something watches the meters, and a value changing
 every few seconds would wake the phone as often.
 
 All the buttons go to `/k/api/transport`; for a film, with `"target":
