@@ -53,7 +53,7 @@ object CoverBadges {
 
         val cap = SIZE_PX * if (layout == Layout.MEDIA) 0.045f else 0.11f
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
             textSize = 100f
         }
         val ref = Rect().also { paint.getTextBounds("DRC", 0, 3, it) }
