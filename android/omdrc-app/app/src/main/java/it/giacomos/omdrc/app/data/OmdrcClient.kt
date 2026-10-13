@@ -239,8 +239,11 @@ object OmdrcClient {
      *  known MPD state. Returns whether the box accepted it; the caller's
      *  own refresh right afterward is what reconciles the widget with
      *  whatever actually happened. */
-    /** [video]: play/pause the film the box's video remote plays, not MPD. */
-    suspend fun sendTransport(host: String, port: Int, action: String, video: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+    /** [video]: play/pause the film the box's video remote plays, not MPD.
+     *  [seconds]: the position for "seek". */
+    suspend fun sendTransport(
+        host: String, port: Int, action: String, video: Boolean = false, seconds: Double? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
         val url = URL("http://$host:$port/k/api/transport")
         val connection = url.openConnection() as HttpURLConnection
         connection.connectTimeout = TIMEOUT_MS
@@ -250,7 +253,9 @@ object OmdrcClient {
         connection.setRequestProperty("Content-Type", "application/json")
         try {
             connection.outputStream.use {
-                val body = if (video) mapOf("action" to action, "target" to "video") else mapOf("action" to action)
+                val body = mutableMapOf<String, Any>("action" to action)
+                if (video) body["target"] = "video"
+                seconds?.let { body["seconds"] = it }
                 it.write(JSONObject(body).toString().toByteArray(Charsets.UTF_8))
             }
             val ok = connection.responseCode in 200..299

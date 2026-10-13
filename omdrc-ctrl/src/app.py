@@ -4835,7 +4835,7 @@ def qconnect_status():
 # connection instead of polling.
 
 VIDEO_REMOTE_URL = "http://127.0.0.1:9080"
-NOW_MAX_WAIT_S = 30
+NOW_MAX_WAIT_S = 300   # a phone waits up to 5 min per request: few wake-ups
 _NOW_DRC = {}                   # BruteFIR .conf path -> its summary
 _NOW_CACHE = {"at": 0.0, "state": None}
 _NOW_LOCK = threading.Lock()
@@ -4903,10 +4903,14 @@ def _now_state() -> dict:
             "bits": int(fmt[1]) if len(fmt) > 1 and fmt[1].isdigit() else None,
             "format": np.get("audio", ""),
             "renderer": _current_renderer(),
+            "duration": np.get("duration"),
         }
         state = {"ok": True, "music": music, "drc": _now_drc(), "video": _now_video()}
+        # The position moves every second, so it stays out of the token: a
+        # phone extrapolates it, and gets it afresh with any other change.
         state["token"] = hashlib.sha1(
             json.dumps(state, sort_keys=True).encode()).hexdigest()[:16]
+        music["elapsed"] = np.get("elapsed")
         _NOW_CACHE.update(at=time.monotonic(), state=state)
         return state
 

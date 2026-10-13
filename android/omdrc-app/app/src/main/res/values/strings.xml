@@ -32,9 +32,14 @@
     <string name="notification_live_channel_description">What the box is playing, with its cover in the status bar; it goes away by itself when nothing plays. Close app on it stops everything.</string>
     <string name="live_updates_connecting">Live updates</string>
     <string name="live_close_app">Close app</string>
-    <string name="settings_instant_updates">Instant updates (permanent notification)</string>
-    <string name="instant_updates_on">Instant updates on: the notification stays, and Close app on it stops all traffic</string>
-    <string name="instant_updates_off">Instant updates off: live updates slow down to changes only a few minutes after you leave the app</string>
+    <string name="settings_instant_updates">Instant updates (the box tells of changes)</string>
+    <string name="instant_updates_on">Instant updates on: the phone waits for the box to report changes, no polling</string>
+    <string name="instant_updates_off">Instant updates off: the phone polls every 2 s while you use the app, then waits for changes</string>
+    <string name="settings_media_notification">Media notification (player controls)</string>
+    <string name="media_notification_on">Media notification on: the box\'s player is in the media controls while something plays</string>
+    <string name="media_notification_off">Media notification off: a plain status notification</string>
+    <string name="live_previous">Previous</string>
+    <string name="live_next">Next</string>
     <string name="now_nothing_playing">Nothing playing</string>
     <string name="now_playing">Playing</string>
     <string name="now_paused">Paused</string>

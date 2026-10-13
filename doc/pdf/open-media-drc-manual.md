@@ -1526,21 +1526,41 @@ notification up to date. Android requires a foreground service to show a
 notification for as long as it runs, so the notification and the service live
 and die together.
 
-**Two modes.** *Live updates* (the default) start when the dashboard is opened
-and poll the box every 2 s, so the large widget's meters move. 10 minutes
-after the app was last on screen they stop polling and wait on `/now` as
-instant updates do, so the notification stays while something plays.
-*Instant updates* (App settings) keep
-one request waiting on the box's `/now`, which answers only when the track, the
-playback state, the DRC or the film changes. This is an idle connection rather
-than polling. A box without `/now` is polled every 5 s instead.
+**Two modes.** *Instant updates* (the default; App settings) keep one request
+waiting on the box's `/now`, which answers only when the track, the playback
+state, the DRC or the film changes, or after 5 minutes with no change, when
+the phone asks again. This is an idle connection rather than polling: with
+nothing changing, the phone wakes for it about every 5 minutes. A box without
+`/now` is polled every 5 s instead. *Live updates* (instant updates off) poll
+the box every 2 s while the dashboard is used, so the large widget's meters
+move; 10 minutes after the app was last on screen they stop polling and wait on
+`/now` as instant updates do. In both modes the notification stays while
+something plays.
 
-**The notification.** It shows the track, or the film, with its cover or
-poster; expanded, it adds the format, the renderer and the DRC in use. Its
-actions are **Pause** while music or a film plays (**Play** while it is
-paused), **Levels** (the PiP meters) and **Close app**. Pause and Play go
-to `/k/api/transport`; for a film, with `"target": "video"`, which passes
-them to the video remote's mpv instead of MPD. The status bar shows
+**The notification.** It comes in two forms, chosen in App settings with
+**Media notification**:
+
+- *Media notification* (the default): the box's player appears in Android's
+  media controls, at the top of the shade and on the lock screen, as a music
+  app's does. The app holds a `MediaSession` for it, fed from `/now`: the
+  track or film, its cover, and for music the position (`/now` reports
+  `elapsed` and `duration`; Android moves the bar on by itself, so the
+  position costs no extra requests). Music offers previous, play/pause, next
+  and seeking; a film, play/pause. **Close** is the player's extra button.
+  The service then runs as a `mediaPlayback` foreground service, which has no
+  daily time limit.
+- *Plain notification* (the setting off): the track or film with its cover;
+  expanded, the format, the renderer and the DRC in use. Its actions are
+  **Pause** while music or a film plays (**Play** while it is paused),
+  **Levels** (the PiP meters) and **Close app**.
+
+All the buttons go to `/k/api/transport`; for a film, with `"target":
+"video"`, which passes play and pause to the video remote's mpv instead of
+MPD. **Swiping the notification away is the same as Close app** (below): the
+notification is not marked ongoing, and its delete intent closes the app.
+The app has no media browser service, so Android does not keep a stopped
+player in the media controls for resuming later: the player goes when the
+notification does. The status bar shows
 the note from the launcher icon (the "d" of *omdrc*), with a small play,
 pause or stop glyph in its top-left corner, the part of the icon the note
 leaves free. Android draws
@@ -1571,9 +1591,8 @@ importance and no sound or vibration**. A low-importance channel is a
 and the lock screen by default ("Hide silent notifications in status bar").
 Android does not let an app raise a channel's importance once created, so the
 channel has a new id (`drc_live_icon`) and the former one (`drc_live_status`)
-is deleted. Users who changed its settings must set them again. This is not a
-media notification: apart from its Play/Pause action there are no media
-controls in the shade or on the lock screen.
+is deleted. Users who changed its settings must set them again. The media
+notification uses the same channel.
 
 **When it stops by itself.** In both modes the service ends, and its
 notification disappears, when there is nothing to show:
@@ -1583,12 +1602,12 @@ notification disappears, when there is nothing to show:
 | Nothing playing (stopped, no film) | 30 s |
 | Paused (music or film) | 15 min |
 | Box unreachable (disconnected, other network, box off) | 60 s |
-| Android 15+ daily limit for this kind of service (`dataSync`, 6 h per 24 h) | at the limit |
+| Android 15+ daily limit, plain notification only (`dataSync`, 6 h per 24 h) | at the limit |
 
 The short grace periods let a change of album or a brief Wi-Fi drop pass
 without the notification disappearing. The service never stops itself while
 the app is on screen; after the app is left, the conditions are checked again
-at the next update, at most about 25 s later. A box that reports no playback
+at the next update, at most about 5 minutes later. A box that reports no playback
 state at all never counts as idle; only unreachability stops the service then.
 Once it has stopped, nothing of the app is running: Android removes the
 process when it needs the memory. The widgets keep their own timers, a
@@ -1609,7 +1628,8 @@ The only way round this would be a push from the box through Google's push
 service, which the project does not use. The rule is therefore: **no resources
 while idle, at the cost of reopening the app** after playback starts elsewhere.
 
-**Close app** is stronger than the idle stop. It stops the service, the
+**Close app**, or swiping the notification away, is stronger than the idle
+stop. It stops the service, the
 widgets' timers and every background request until the app is opened again.
 The widgets' own taps still work.
 

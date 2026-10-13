@@ -17,6 +17,7 @@ object AppPrefs {
     private const val KEY_KEEP_ON = "keep_screen_on"
     private const val KEY_PORTRAIT = "last_portrait"
     private const val KEY_INSTANT = "instant_updates"
+    private const val KEY_MEDIA = "media_notification"
     private const val KEY_CLOSED = "closed"
     const val DEFAULT_PORT = 9090
 
@@ -69,14 +70,25 @@ object AppPrefs {
         prefs(context).edit().putBoolean(KEY_PORTRAIT, portrait).apply()
     }
 
-    /** Instant updates: LiveStatusService stays on (its notification with
-     *  it) and waits on the box's /now for changes, instead of polling
-     *  only while the dashboard was used in the last minutes. */
+    /** Instant updates (the default): LiveStatusService waits on the box's
+     *  /now for changes from the start, instead of polling every 2 s while
+     *  the dashboard was used in the last minutes. */
     fun instantUpdates(context: Context): Boolean =
-        prefs(context).getBoolean(KEY_INSTANT, false)
+        prefs(context).getBoolean(KEY_INSTANT, true)
 
     fun setInstantUpdates(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean(KEY_INSTANT, on).apply()
+    }
+
+    /** The status notification as a media notification: the box's player in
+     *  Android's media controls (shade and lock screen), with a MediaSession
+     *  for play/pause, previous/next and seeking. Off, it is a plain
+     *  notification with Play/Pause, Levels and Close actions. */
+    fun mediaNotification(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_MEDIA, true)
+
+    fun setMediaNotification(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_MEDIA, on).apply()
     }
 
     /** Set by the notification's Close: no background traffic at all - no

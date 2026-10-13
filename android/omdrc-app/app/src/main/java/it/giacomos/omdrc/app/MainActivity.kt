@@ -922,12 +922,14 @@ class MainActivity : ComponentActivity() {
         val kiosk = AppPrefs.viewMode(this) == AppPrefs.VIEW_KIOSK
         val keepOn = AppPrefs.keepScreenOn(this)
         val instant = AppPrefs.instantUpdates(this)
+        val media = AppPrefs.mediaNotification(this)
         val items = arrayOf(
             (if (kiosk) "● " else "○ ") + getString(R.string.settings_view_kiosk),
             (if (!kiosk) "● " else "○ ") + getString(R.string.settings_view_web),
             (if (keepOn) "☑ " else "☐ ") + getString(R.string.settings_keep_on),
             getString(R.string.settings_change_server),
             (if (instant) "☑ " else "☐ ") + getString(R.string.settings_instant_updates),
+            (if (media) "☑ " else "☐ ") + getString(R.string.settings_media_notification),
         )
         AlertDialog.Builder(this)
             .setTitle(R.string.settings_title)
@@ -938,6 +940,7 @@ class MainActivity : ComponentActivity() {
                     2 -> { AppPrefs.setKeepScreenOn(this, !keepOn); applyKeepScreenOn() }
                     3 -> changeServer()
                     4 -> setInstantUpdates(!instant)
+                    5 -> setMediaNotification(!media)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -952,6 +955,17 @@ class MainActivity : ComponentActivity() {
         startLiveUpdates(host, AppPrefs.defaultPort(this))
         android.widget.Toast.makeText(
             this, if (on) R.string.instant_updates_on else R.string.instant_updates_off,
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
+    }
+
+    /** Restarts the live service, which posts its notification anew. */
+    private fun setMediaNotification(on: Boolean) {
+        AppPrefs.setMediaNotification(this, on)
+        val host = AppPrefs.defaultHost(this) ?: return
+        startLiveUpdates(host, AppPrefs.defaultPort(this))
+        android.widget.Toast.makeText(
+            this, if (on) R.string.media_notification_on else R.string.media_notification_off,
             android.widget.Toast.LENGTH_LONG,
         ).show()
     }

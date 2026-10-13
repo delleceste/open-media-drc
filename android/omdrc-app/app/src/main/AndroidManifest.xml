@@ -22,9 +22,13 @@
          Bluetooth/NFC/USB/UWB companion-device links and requires one of
          those specific permissions - a SecurityException at runtime for a
          plain network poll like this one. dataSync is the correct type for
-         "periodically sync data over the network". -->
+         "periodically sync data over the network". With the media
+         notification on (AppPrefs.mediaNotification) it runs as
+         mediaPlayback instead: it then holds a MediaSession for the box's
+         player, and that type has no daily time limit. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <!-- The 1x1 widget sizes itself from measurements of the Pixel launcher
          when that's the home app (RemoteViewsBuilder.isPixelLauncher). -->
@@ -109,7 +113,7 @@
         <service
             android:name=".LiveStatusService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|mediaPlayback" />
 
     </application>
 </manifest>

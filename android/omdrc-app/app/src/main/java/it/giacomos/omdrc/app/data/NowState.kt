@@ -22,6 +22,9 @@ data class NowState(
         val rate: Int?,
         val bits: Int?,
         val renderer: String,
+        /** Seconds into the track when the box answered, and its length. */
+        val elapsed: Double?,
+        val duration: Double?,
     )
 
     data class Drc(
@@ -61,6 +64,8 @@ data class NowState(
                     rate = music.optIntOrNull("rate"),
                     bits = music.optIntOrNull("bits"),
                     renderer = music.optString("renderer"),
+                    elapsed = if (music.isNull("elapsed")) null else music.optDouble("elapsed"),
+                    duration = if (music.isNull("duration")) null else music.optDouble("duration"),
                 ),
                 drc = Drc(
                     running = drc.optBoolean("running", false),

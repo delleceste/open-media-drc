@@ -9,8 +9,13 @@ import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.SystemClock
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -52,8 +57,11 @@ private const val TAG = "OmdrcWidget"
  * the status bar shows the app's note, the launcher icon's "d", with a
  * small play, pause or stop glyph in its top-left corner (in the shade,
  * Android shows the launcher icon itself instead).
- * Expanded, it offers Play or Pause while music or a film is loaded,
- * Levels, Close.
+ * With the media notification on (the default, AppPrefs.mediaNotification)
+ * it is the box's player in Android's media controls, backed by a
+ * MediaSession: play/pause, previous/next and seeking for music, play/pause
+ * for a film, and Close. Off, it is a plain notification offering Play or
+ * Pause, Levels and Close. Swiping either away is the same as Close.
  * Android requires a foreground service to show it the whole time; its Close
  * action stops the service and every other background request of the app
  * until the app is opened again (see AppPrefs.closed).
@@ -81,17 +89,26 @@ class LiveStatusService : Service() {
     private var activitySince = 0L
     private var unreachableSince: Long? = null
 
+    /** The box's player as Android's media controls see it; null with the
+     *  media notification off. Created and released on the main thread. */
+    private var session: MediaSessionCompat? = null
+
+    /** Where the session's buttons send their commands: the box and what it
+     *  plays, as last shown. */
+    private data class Target(val host: String, val port: Int, val video: Boolean, val music: Boolean)
+    @Volatile
+    private var target: Target? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CLOSE) {
             Log.d(TAG, "LiveStatusService: close requested")
-            closeApp(this)
-            stopSelf()
+            close()
             return START_NOT_STICKY
         }
-        if (intent?.action == ACTION_PLAY_PAUSE) {
-            playPause(intent)
+        if (intent?.action == ACTION_TRANSPORT) {
+            transport(intent)
             return START_STICKY
         }
 
@@ -104,6 +121,7 @@ class LiveStatusService : Service() {
         }
 
         StatusNotifier.ensureChannels(this)
+        if (AppPrefs.mediaNotification(this)) openSession() else releaseSession()
         startForegroundCompat(buildNotification(host, port, null, null))
 
         job?.cancel()
@@ -241,11 +259,50 @@ class LiveStatusService : Service() {
         return true
     }
 
-    /** The notification's Play/Pause: the box is told, and the update it
-     *  causes repaints the notification - at once with instant updates, on
-     *  the next poll with live updates. A film's goes to the box's video
-     *  remote instead of MPD. */
-    private fun playPause(intent: Intent) {
+    /** Close, or the notification swiped away: everything stops until the
+     *  app is opened again. */
+    private fun close() {
+        closeApp(this)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun openSession() {
+        if (session != null) return
+        session = MediaSessionCompat(this, "omdrc").apply {
+            setSessionActivity(dashboardIntent(AppPrefs.defaultHost(this@LiveStatusService), AppPrefs.defaultPort(this@LiveStatusService)))
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() = send("play")
+                override fun onPause() = send("pause")
+                override fun onSkipToNext() = send("next")
+                override fun onSkipToPrevious() = send("prev")
+                override fun onSeekTo(pos: Long) = send("seek", pos / 1000.0)
+                override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
+                    if (action == CUSTOM_CLOSE) close()
+                }
+            }, Handler(Looper.getMainLooper()))
+        }
+    }
+
+    private fun releaseSession() {
+        session?.release()
+        session = null
+    }
+
+    /** A media-controls button: a film takes only play and pause. */
+    private fun send(action: String, seconds: Double? = null) {
+        val to = target ?: return
+        if (to.video && action != "play" && action != "pause") return
+        if (!to.video && !to.music) return
+        Log.d(TAG, "LiveStatusService: $action from the media controls")
+        scope.launch { OmdrcClient.sendTransport(to.host, to.port, action, to.video, seconds) }
+    }
+
+    /** A notification button (Play/Pause, previous, next): the box is told,
+     *  and the update it causes repaints the notification - at once with
+     *  instant updates, on the next poll with live updates. A film's goes
+     *  to the box's video remote instead of MPD. */
+    private fun transport(intent: Intent) {
         val host = intent.getStringExtra(MainActivity.EXTRA_HOST)
         val action = intent.getStringExtra(EXTRA_TRANSPORT_ACTION)
         val running = job?.isActive == true
@@ -326,6 +383,8 @@ class LiveStatusService : Service() {
         val collapsed: String
         val expanded: String
         var icon: Bitmap? = null
+        var artist: String
+        var album = ""
         when {
             now?.video != null -> {
                 val video = now.video
@@ -341,6 +400,7 @@ class LiveStatusService : Service() {
                     drcLine(now.drc),
                 ).filter { it.isNotEmpty() }.joinToString("\n")
                 icon = videoArt
+                artist = collapsed
             }
             now != null -> {
                 val music = now.music
@@ -356,29 +416,25 @@ class LiveStatusService : Service() {
                     drcLine(now.drc),
                 ).filter { it.isNotEmpty() }.joinToString("\n")
                 icon = if (music.title.isNotEmpty() || music.line1.isNotEmpty()) musicArt else null
+                artist = music.artist.ifEmpty { collapsed }
+                album = music.album
             }
             snapshot != null -> {
                 val (t, c) = StatusNotifier.collapsedText(this, snapshot)
                 title = t
                 collapsed = c
                 expanded = StatusNotifier.expandedText(snapshot)
+                artist = collapsed
             }
             else -> {
                 title = getString(R.string.live_updates_connecting)
                 collapsed = "…"
                 expanded = collapsed
+                artist = ""
             }
         }
 
-        val contentIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra(MainActivity.EXTRA_HOST, host)
-                putExtra(MainActivity.EXTRA_PORT, port)
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        val contentIntent = dashboardIntent(host, port)
         val closeIntent = PendingIntent.getService(
             this, 0,
             Intent(this, LiveStatusService::class.java).setAction(ACTION_CLOSE),
@@ -393,6 +449,11 @@ class LiveStatusService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val playPause = playPauseAction(snapshot, now)
+        val video = now?.video != null
+        val music = !video && playPause != null
+        target = Target(host, port, video, music)
+
         val builder = NotificationCompat.Builder(this, StatusNotifier.LIVE_CHANNEL_ID)
             .setSmallIcon(
                 when (activity) {
@@ -405,24 +466,51 @@ class LiveStatusService : Service() {
             .setContentTitle(title)
             .setContentText(collapsed)
             .setLargeIcon(icon)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(expanded))
             .setContentIntent(contentIntent)
-            .setOngoing(true)
+            // Swiping it away closes the app, as Close does.
+            .setOngoing(false)
+            .setDeleteIntent(closeIntent)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-        playPauseAction(snapshot, now)?.let { action ->
-            val playPauseIntent = PendingIntent.getService(
-                this, 1,
-                Intent(this, LiveStatusService::class.java).apply {
-                    setAction(ACTION_PLAY_PAUSE)
-                    putExtra(MainActivity.EXTRA_HOST, host)
-                    putExtra(MainActivity.EXTRA_PORT, port)
-                    putExtra(EXTRA_TRANSPORT_ACTION, action)
-                    putExtra(EXTRA_TRANSPORT_VIDEO, now?.video != null)
-                },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
+
+        val session = session
+        if (session != null) {
+            updateSession(session, title, artist, album, icon, now, playPause, music)
+            val compact = mutableListOf<Int>()
+            var count = 0
+            if (music) {
+                builder.addAction(R.drawable.ic_skip_previous, getString(R.string.live_previous),
+                    transportIntent(host, port, "prev", false, 3))
+                compact += count++
+            }
+            playPause?.let { action ->
+                builder.addAction(
+                    if (action == "pause") R.drawable.ic_pause else R.drawable.ic_play,
+                    getString(if (action == "pause") R.string.live_pause else R.string.live_play),
+                    transportIntent(host, port, action, video, 1),
+                )
+                compact += count++
+            }
+            if (music) {
+                builder.addAction(R.drawable.ic_skip_next, getString(R.string.live_next),
+                    transportIntent(host, port, "next", false, 4))
+                compact += count++
+            }
+            builder.addAction(R.drawable.ic_close, getString(R.string.live_close_app), closeIntent)
+            return builder
+                .setStyle(
+                    androidx.media.app.NotificationCompat.MediaStyle()
+                        .setMediaSession(session.sessionToken)
+                        .setShowActionsInCompactView(*compact.toIntArray()),
+                )
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .build()
+        }
+
+        builder.setStyle(NotificationCompat.BigTextStyle().bigText(expanded))
+        playPause?.let { action ->
+            val playPauseIntent = transportIntent(host, port, action, video, 1)
             if (action == "pause") {
                 builder.addAction(R.drawable.ic_pause, getString(R.string.live_pause), playPauseIntent)
             } else {
@@ -434,6 +522,79 @@ class LiveStatusService : Service() {
             .addAction(R.drawable.ic_notification, getString(R.string.live_close_app), closeIntent)
             .build()
     }
+
+    /** What Android's media controls show and offer: the track or film, its
+     *  cover, where the track is (Android moves the bar on by itself between
+     *  updates), and the buttons that make sense for it. */
+    private fun updateSession(
+        session: MediaSessionCompat, title: String, artist: String, album: String, art: Bitmap?,
+        now: NowState?, playPause: String?, music: Boolean,
+    ) {
+        val duration = now?.music?.duration?.takeIf { music && it > 0 }
+        session.setMetadata(
+            MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
+                .apply {
+                    art?.let { putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it) }
+                    duration?.let { putLong(MediaMetadataCompat.METADATA_KEY_DURATION, (it * 1000).toLong()) }
+                }
+                .build(),
+        )
+        val state = when (playPause) {
+            "pause" -> PlaybackStateCompat.STATE_PLAYING
+            "play" -> PlaybackStateCompat.STATE_PAUSED
+            else -> if (now == null) PlaybackStateCompat.STATE_NONE else PlaybackStateCompat.STATE_STOPPED
+        }
+        var actions = 0L
+        if (playPause != null) {
+            actions = actions or PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
+                PlaybackStateCompat.ACTION_PLAY_PAUSE
+        }
+        if (music) {
+            actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+            if (duration != null) actions = actions or PlaybackStateCompat.ACTION_SEEK_TO
+        }
+        val position = now?.music?.elapsed?.takeIf { music }?.let { (it * 1000).toLong() }
+            ?: PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN
+        session.setPlaybackState(
+            PlaybackStateCompat.Builder()
+                .setActions(actions)
+                .setState(state, position, if (state == PlaybackStateCompat.STATE_PLAYING) 1f else 0f,
+                    SystemClock.elapsedRealtime())
+                .addCustomAction(
+                    PlaybackStateCompat.CustomAction.Builder(
+                        CUSTOM_CLOSE, getString(R.string.live_close_app), R.drawable.ic_close,
+                    ).build(),
+                )
+                .build(),
+        )
+        session.isActive = true
+    }
+
+    private fun dashboardIntent(host: String?, port: Int): PendingIntent = PendingIntent.getActivity(
+        this, 0,
+        Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            host?.let { putExtra(MainActivity.EXTRA_HOST, it) }
+            putExtra(MainActivity.EXTRA_PORT, port)
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun transportIntent(host: String, port: Int, action: String, video: Boolean, requestCode: Int) =
+        PendingIntent.getService(
+            this, requestCode,
+            Intent(this, LiveStatusService::class.java).apply {
+                setAction(ACTION_TRANSPORT)
+                putExtra(MainActivity.EXTRA_HOST, host)
+                putExtra(MainActivity.EXTRA_PORT, port)
+                putExtra(EXTRA_TRANSPORT_ACTION, action)
+                putExtra(EXTRA_TRANSPORT_VIDEO, video)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
     private fun stateLabel(state: String): String = getString(
         when (state) {
@@ -470,14 +631,17 @@ class LiveStatusService : Service() {
 
     private fun startForegroundCompat(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            val type = if (session != null) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            startForeground(NOTIFICATION_ID, notification, type)
         } else {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notification)
         }
     }
 
-    /** Android 15 allows a dataSync service six hours a day: past them it
+    /** Android 15 allows a dataSync service six hours a day (a mediaPlayback
+     *  one, with the media notification on, has no limit): past them it
      *  must stop, and comes back when the app is next opened. */
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.d(TAG, "LiveStatusService: Android's daily time limit reached, stopping")
@@ -490,6 +654,7 @@ class LiveStatusService : Service() {
         startedFor = null
         job?.cancel()
         scope.cancel()
+        releaseSession()
     }
 
     private enum class Activity { PLAYING, PAUSED, IDLE, UNKNOWN }
@@ -498,12 +663,13 @@ class LiveStatusService : Service() {
         private const val NOTIFICATION_ID = 3
         private const val ACTION_CLOSE = "it.giacomos.omdrc.app.ACTION_CLOSE"
         const val ACTION_CLOSE_APP = "it.giacomos.omdrc.app.ACTION_CLOSE_APP"
-        private const val ACTION_PLAY_PAUSE = "it.giacomos.omdrc.app.ACTION_PLAY_PAUSE"
+        private const val ACTION_TRANSPORT = "it.giacomos.omdrc.app.ACTION_LIVE_TRANSPORT"
+        private const val CUSTOM_CLOSE = "close"
         private const val EXTRA_TRANSPORT_ACTION = "transportAction"
         private const val EXTRA_TRANSPORT_VIDEO = "transportVideo"
         private const val POLL_INTERVAL_MS = 2000L
         private const val IDLE_TIMEOUT_MILLIS = 10 * 60 * 1000L
-        private const val INSTANT_WAIT_S = 25
+        private const val INSTANT_WAIT_S = 290   // the box holds a request up to 300 s
         private const val FALLBACK_POLL_MS = 5000L
         private const val RETRY_MS = 15000L
         private const val ICON_PX = 256

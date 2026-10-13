@@ -79,6 +79,19 @@ class NowPlayingTest(unittest.TestCase):
         self.assertNotEqual(second["token"], first["token"])
         self.assertEqual(second["music"]["title"], "Next song")
 
+    def test_position_is_reported_but_does_not_change_the_token(self):
+        """A playing track's position moves every second; if it changed the
+        token, every waiting phone would be answered every second."""
+        self.np.update(elapsed=12.5, duration=240.0)
+        with self._card():
+            first = self.client.get("/now").get_json()
+            APP._NOW_CACHE.update(at=0.0, state=None)
+            self.np["elapsed"] = 13.5
+            second = self.client.get("/now").get_json()
+        self.assertEqual((first["music"]["elapsed"], first["music"]["duration"]), (12.5, 240.0))
+        self.assertEqual(second["music"]["elapsed"], 13.5)
+        self.assertEqual(second["token"], first["token"])
+
     def test_waits_while_nothing_changes(self):
         with self._card():
             first = self.client.get("/now").get_json()
