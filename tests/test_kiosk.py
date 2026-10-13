@@ -165,6 +165,36 @@ class KioskTests(unittest.TestCase):
         finally:
             kiosk._mpc = saved
 
+    def test_video_target_plays_and_pauses_the_film_not_mpd(self):
+        """The phone notification's Play/Pause during a film: play and pause
+        go to the video remote's /api/cmd, never to mpc; nothing else does."""
+        import io
+        import json
+        import kiosk
+        mpc, sent = [], []
+        saved = kiosk._mpc
+        kiosk._mpc = lambda args: (mpc.append(args) or (True, ""))
+
+        def remote(call, timeout):
+            sent.append((call.full_url, json.loads(call.data)))
+            return io.BytesIO(b'{"ok": true}')
+        try:
+            with patch.object(kiosk.urllib.request, "urlopen", side_effect=remote):
+                for word in ("pause", "play"):
+                    r = self.client.post("/k/api/transport", json={"action": word, "target": "video"})
+                    self.assertEqual((r.status_code, r.get_json()), (200, {"ok": True}), word)
+                for bad in ("next", "stop", "seek", ""):
+                    r = self.client.post("/k/api/transport", json={"action": bad, "target": "video"})
+                    self.assertEqual(r.status_code, 400, bad)
+            self.assertEqual(sent, [("http://127.0.0.1:9080/api/cmd", {"op": "pause"}),
+                                    ("http://127.0.0.1:9080/api/cmd", {"op": "play"})])
+            self.assertEqual(mpc, [])
+            with patch.object(kiosk.urllib.request, "urlopen", side_effect=OSError("refused")):
+                r = self.client.post("/k/api/transport", json={"action": "pause", "target": "video"})
+                self.assertEqual(r.status_code, 503)
+        finally:
+            kiosk._mpc = saved
+
     def test_seek_passes_only_a_number_formatted_here(self):
         """The player strip's seek: the request's seconds become an H:MM:SS
         we format ourselves; anything that is not a non-negative number is

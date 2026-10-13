@@ -21,6 +21,7 @@ import re
 import struct
 import threading
 import time
+import urllib.error
 import urllib.request
 import json
 import wave
@@ -55,6 +56,7 @@ _features = lambda: {}          # noqa: E731
 _mpc = None                     # (args) -> (ok, stdout | error), set by init_app()
 _playback_rate = lambda: 48000  # noqa: E731 - the rate to make a click track at
 _mpd_port = lambda: None        # noqa: E731 - MPD's port (None: 6600)
+_VIDEO_REMOTE = "http://127.0.0.1:9080"   # video/webremote: the film's mpv
 
 
 def _asset_version() -> str:
@@ -101,7 +103,7 @@ def config():
 def video_available():
     """Check the local video remote before offering its kiosk page."""
     try:
-        with urllib.request.urlopen("http://127.0.0.1:9080/api/roots", timeout=0.5) as response:
+        with urllib.request.urlopen(_VIDEO_REMOTE + "/api/roots", timeout=0.5) as response:
             available = response.status == 200 and json.load(response).get("ok") is True
     except (OSError, ValueError):
         available = False
@@ -114,6 +116,9 @@ def video_available():
 # an argument, and that goes through as a number we format ourselves.
 _TRANSPORT = {"play": ["play"], "pause": ["pause"], "stop": ["stop"],
               "next": ["next"], "prev": ["prev"]}
+# With "target": "video", play and pause go to the film instead, through the
+# video remote's own transport (its /api/cmd ops of the same names).
+_VIDEO_TRANSPORT = ("play", "pause")
 
 
 def _clock(seconds: int) -> str:
@@ -125,6 +130,8 @@ def _clock(seconds: int) -> str:
 def transport():
     body = request.get_json(silent=True) or {}
     action = str(body.get("action", ""))
+    if body.get("target") == "video":
+        return _video_transport(action)
     if action == "seek":
         try:
             seconds = float(body.get("seconds"))
@@ -146,6 +153,27 @@ def transport():
         return jsonify({"ok": False, "error": "no MPD client configured"}), 503
     ok, error = _mpc(args)
     return jsonify({"ok": ok, "error": error} if not ok else {"ok": True})
+
+
+def _video_transport(action: str):
+    if action not in _VIDEO_TRANSPORT:
+        return jsonify({"ok": False, "error": "unknown video transport action"}), 400
+    call = urllib.request.Request(
+        _VIDEO_REMOTE + "/api/cmd", data=json.dumps({"op": action}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(call, timeout=2) as response:
+            reply = json.load(response)
+    except urllib.error.HTTPError as e:
+        try:
+            reply = json.load(e)
+        except ValueError:
+            reply = {"ok": False, "error": f"video remote: HTTP {e.code}"}
+    except (OSError, ValueError) as e:
+        return jsonify({"ok": False, "error": f"video remote unreachable: {e}"}), 503
+    if reply.get("ok") is True:
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": str(reply.get("error") or "video remote refused")})
 
 
 QUEUE_LIMIT = 500
