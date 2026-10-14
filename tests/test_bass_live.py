@@ -281,6 +281,7 @@ class Worker(unittest.TestCase):
         self.assertEqual(rows[0]["taps"], 1)
         self.assertEqual([r["track_id"] for r in self.live.catalog("sibelius")], ["qobuz:9|7"])
         mine = self.live.track_view("local:Album|01.flac")
+        self.assertTrue(mine["track"]["kept"])
         self.assertEqual(mine["analysis"]["result"]["depth"]["score"], 8.5)
         self.assertEqual(mine["taps"][0]["note"], "deep")
         theirs = self.live.track_view("qobuz:9|7", "arki")

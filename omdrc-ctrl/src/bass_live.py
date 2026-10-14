@@ -640,7 +640,9 @@ class BassLive:
             result = a["result"]
         return {"track": {"id": tid, "title": a.get("title", ""), "artist": a.get("artist", ""),
                           "album": a.get("album", ""), "duration": (result or {}).get("duration_s"),
-                          "origin": origin, "at": a.get("at"), "saved": a.get("saved", "")},
+                          "origin": origin, "at": a.get("at"), "saved": a.get("saved", ""),
+                          # the copy on the drive, if the drive is here (this box's analyses only)
+                          "kept": not origin and bool(a.get("saved")) and os.path.isfile(a["saved"])},
                 "analysis": {"status": "done", "version": a.get("version", ""), "result": result,
                              "current": a.get("version") == self.version},
                 "taps": taps}

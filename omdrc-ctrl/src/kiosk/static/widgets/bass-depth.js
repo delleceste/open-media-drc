@@ -144,7 +144,7 @@ function mount(root) {
             const cur = S.browseView.analysis.current;
             browseText.textContent = `Not playing: an analysis from ${t.origin ? `box ${t.origin}` : 'this box'}${when ? `, ${when}` : ''}${cur ? '' : ', by an older detector'}.`;
             // this box's own analyses can be redone from the copy kept on the drive
-            keptAgainBtn.hidden = !!t.origin || !t.saved || S.reanalysing;
+            keptAgainBtn.hidden = !t.kept || S.reanalysing;
         }
         clear(trackLine);
         if (t) trackLine.append(h('strong', {}, t.title || 'Untitled'), ' — ', t.artist || '', t.album ? h('span', { class: 'bd-muted' }, ` · ${t.album}`) : null);
