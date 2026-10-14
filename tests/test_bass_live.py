@@ -78,9 +78,12 @@ class Worker(unittest.TestCase):
         self.song = {"file": "Album/01.flac", "state": "play", "title": "Largo",
                      "artist": "BSO", "album": "Sym 2", "elapsed": 100.0, "duration": 600.0}
         self.downloads = []
-        self.kept = os.path.join(self.dir, "drive", "musica", "Classica")
+        self.drive = os.path.join(self.dir, "drive")
+        self.kept = os.path.join(self.drive, "musica", "bass-analysis")
         os.makedirs(self.kept)
-        mounted = patch.object(bass_live, "on_mounted_drive", lambda p: True)
+        # the "drive" folder stands for a mounted USB drive, the rest for the system disk
+        mounted = patch.object(bass_live, "mount_of",
+                               lambda p: "/drive" if os.path.realpath(p).startswith(os.path.realpath(self.drive)) else "/")
         mounted.start()
         self.addCleanup(mounted.stop)
         self.live = bass_live.BassLive(
@@ -163,8 +166,16 @@ class Worker(unittest.TestCase):
         self.assertEqual(a["saved"], os.path.join(self.kept, "BSO", "Sym 2 (2023)", "01 - Largo.flac"))
         with open(a["saved"]) as f:
             self.assertEqual(f.read(), "local audio")
-        inside = os.path.join(self.kept, "x.flac")
-        self.assertEqual(self.live._keep_local(inside, {"meta": {}, "track_id": "t"}, self.kept), inside)
+
+    def test_a_local_track_already_on_the_drive_stays_where_it_is(self):
+        elsewhere = os.path.join(self.drive, "musica", "Classica", "Album")
+        os.makedirs(elsewhere)
+        shutil.move(os.path.join(self.music, "Album", "01.flac"), os.path.join(elsewhere, "01.flac"))
+        self.live.local_path = lambda file: os.path.join(self.drive, "musica", "Classica", file)
+        self.live.step()
+        a = self.store.analysis("local:Album|01.flac")
+        self.assertEqual(a["saved"], os.path.join(elsewhere, "01.flac"))
+        self.assertEqual(os.listdir(self.kept), [])
 
     def test_unreadable_sources_are_skipped_with_a_reason(self):
         self.song["file"] = "cdda:///1"
@@ -310,7 +321,7 @@ class Routes(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "commands.conf")
             with open(path, "w", encoding="utf-8") as f:
-                f.write(text.replace("save_dir = /media/USBHD2/musica/Classica", f"save_dir = {tmp}"))
+                f.write(text.replace("save_dir = /media/USBHD2/musica/bass-analysis", f"save_dir = {tmp}"))
             saved = (APP.COMMANDS, APP.CMD_MAP, APP.BASS_SAVE_DIR, APP._BASS.save_dir)
             try:
                 APP.load_config(path)

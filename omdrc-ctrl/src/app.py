@@ -330,7 +330,7 @@ DR_SYNC_REPO = ""
 DR_SYNC_BOX = ""
 DR_SYNC_INTERVAL_MINUTES = 10.0
 # [bass_depth] save_dir: where a tracking session's tracks are kept (bass_live.py)
-BASS_SAVE_DIR = "/media/USBHD2/musica/Classica"
+BASS_SAVE_DIR = "/media/USBHD2/musica/bass-analysis"
 SPECTRUM_BITS = 32
 SPECTRUM_CHANNELS = 2
 SPECTRUM_REFRESH_HZ = 25.0

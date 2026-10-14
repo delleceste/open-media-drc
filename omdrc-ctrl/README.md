@@ -365,11 +365,11 @@ ends it. During a session:
   at a time: a few seconds for a 15-minute track. Tracks over 45 minutes and
   sources that cannot be read again (CD input, cue-sheet tracks) are skipped.
 - The track is kept on the music drive, in `[bass_depth] save_dir`
-  (`/media/USBHD2/musica/Classica` by default), as
+  (`/media/USBHD2/musica/bass-analysis` by default), as
   `<artist>/<album (year)>/<NN - title>.<ext>`: a streamed track is fetched
   again into it, the way **Meas.** does (so each streamed track crosses the
-  network twice); a local track outside it is copied. A track kept by an
-  earlier session is reused. The drive can then travel to another box with
+  network twice); a local track is copied unless it is already on the same
+  drive. A track kept by an earlier session is reused. The drive can then travel to another box with
   the same recordings on it. The folder is never created: when it is missing
   or not on a mounted drive (an unmounted drive's empty mount point lies on
   the system disk) tracks are analysed from a work directory and not kept,

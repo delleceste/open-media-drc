@@ -96,11 +96,12 @@ interval_minutes = 10
 # Tracking sessions (the Bass depth card): while one runs, every track played
 # is analysed for how far back the double basses sit, and kept here as
 # <artist>/<album (year)>/<NN - title> -- streamed tracks are fetched again,
-# local ones copied -- so the drive can be carried to another box.  Nothing is
+# local ones copied unless already on the same drive -- so the drive can be
+# carried to another box.  Nothing is
 # kept when the folder is missing or not on a mounted drive: it is never
 # created, so an unmounted drive's empty mount point stays empty.
 [bass_depth]
-save_dir = /media/USBHD2/musica/Classica
+save_dir = /media/USBHD2/musica/bass-analysis
 
 # -- Dynamic Range database -------------------------------------------------
 # The renderer card's "DR ↗" button looks the record up at dr.loudness-war.info

@@ -42,7 +42,8 @@ sessions"):
    kiosk page) and **Start tracking session**, naming the recordings you mean
    to evaluate. Outside a session nothing is fetched or analysed.
 2. Play them. Each track is analysed in a few seconds and kept on the USB
-   drive under `musica/Classica/<artist>/<album (year)>/`.
+   drive under `musica/bass-analysis/<artist>/<album (year)>/` (local tracks
+   already on that drive stay where they are).
 3. Whenever the basses catch your ear, tap **Forward**, **In between** or
    **Back**, and add a note if you like. The tap records the moment heard and
    the timeline passage under it.

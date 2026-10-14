@@ -7,10 +7,11 @@ against the moment heard.  Outside a session nothing is fetched or analysed.
 The analysis reads the track's source again, not the audio on its way to the
 DAC: a local file directly, a streamed track fetched the way the DR Measure
 job does.  A session's tracks are kept under `save_dir` ([bass_depth] in
-commands.conf; /media/USBHD2/musica/Classica by default), as
+commands.conf; /media/USBHD2/musica/bass-analysis by default), as
 <artist>/<album (year)>/<NN - title>.<ext>, so the drive can be carried to
 another box and the same recordings studied there.  A streamed track is
-fetched straight into that folder; a local track outside it is copied there.
+fetched straight into that folder; a local track is copied there unless it
+is already on the same drive, which travels with it anyway.
 When the folder is missing or not on a mounted drive -- an unmounted drive
 leaves an empty mount point on the system disk, which must never fill up --
 tracks are still analysed, from a work directory, but not kept.
@@ -107,15 +108,20 @@ def _component(text: str, fallback: str) -> str:
     return (text or fallback)[:120]
 
 
-def on_mounted_drive(path: str) -> bool:
-    """True when `path` lies below a mount point other than /: below an
-    unmounted drive's empty mount point it would be on the system disk."""
+def mount_of(path: str) -> str:
+    """The mount point `path` lies on ("/" for the system disk)."""
     p = os.path.realpath(path)
     while p not in ("/", ""):
         if os.path.ismount(p):
-            return True
+            return p
         p = os.path.dirname(p)
-    return False
+    return "/"
+
+
+def on_mounted_drive(path: str) -> bool:
+    """True when `path` lies below a mount point other than /: below an
+    unmounted drive's empty mount point it would be on the system disk."""
+    return mount_of(path) != "/"
 
 
 def kept_name(root: str, meta: dict) -> str:
@@ -486,10 +492,10 @@ class BassLive:
         return found[0] if found else None
 
     def _keep_local(self, path: str, ident: dict, root: str) -> str:
-        """A local track in the kept folder: where it already is, if it is
-        there; otherwise a copy (kept from an earlier session if one is)."""
-        real, base = os.path.realpath(path), os.path.realpath(root)
-        if real == base or real.startswith(base + os.sep):
+        """A local track on the drive: where it already is, if it is on the
+        same drive as the kept folder (it travels with it); otherwise a copy
+        in the kept folder (from an earlier session, if one is there)."""
+        if mount_of(path) == mount_of(root):
             return path
         dest = kept_name(root, ident["meta"]) + os.path.splitext(path)[1].lower()
         if os.path.exists(dest) and os.path.getsize(dest) == os.path.getsize(path):
