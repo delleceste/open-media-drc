@@ -141,18 +141,19 @@ document.addEventListener('keydown', e => {
 // the next page if you moved a fifth of the width (at most 100 px) or flicked.
 let sw = null;
 const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit, .seek-zone, .now-title, .now-info, .now-fav, .qz-library-shortcut';
-pager.addEventListener('pointerdown', e => {
-    if (e.pointerType !== 'touch' || e.target.closest(NO_SWIPE) || cur >= swipeCount()) return;
-    sw = { id: e.pointerId, x: e.clientX, y: e.clientY, left: pager.scrollLeft, mode: null, lastX: e.clientX, lastT: performance.now(), v: 0 };
-});
-pager.addEventListener('pointermove', e => {
+function startSwipe(e, el) {
+    const no = e.target.closest(NO_SWIPE);   // a sheet swiping the pager is itself a .scrim
+    if (e.pointerType !== 'touch' || (no && no !== el) || cur >= swipeCount()) return;
+    sw = { id: e.pointerId, el, x: e.clientX, y: e.clientY, left: pager.scrollLeft, mode: null, lastX: e.clientX, lastT: performance.now(), v: 0 };
+}
+function moveSwipe(e) {
     if (!sw || e.pointerId !== sw.id) return;
     const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
     if (!sw.mode) {
         if (Math.abs(dx) > 10 && Math.abs(dx) > 1.4 * Math.abs(dy)) {
             preparePage(K.clamp(cur + (dx < 0 ? 1 : -1), 0, swipeCount() - 1));
             sw.mode = 'x';
-            try { pager.setPointerCapture(e.pointerId); } catch {}
+            try { sw.el.setPointerCapture(e.pointerId); } catch {}
             pager.style.scrollSnapType = 'none';
         } else if (Math.abs(dy) > 10) { sw = null; return; }
         else return;
@@ -161,7 +162,7 @@ pager.addEventListener('pointermove', e => {
     sw.v = (e.clientX - sw.lastX) / Math.max(1, now - sw.lastT);   // px per ms
     sw.lastX = e.clientX; sw.lastT = now;
     pager.scrollLeft = K.clamp(sw.left - dx, 0, pager.scrollWidth - pager.clientWidth);
-});
+}
 function endSwipe(e) {
     if (!sw || e.pointerId !== sw.id) return;
     const s = sw; sw = null;
@@ -181,11 +182,24 @@ function endSwipe(e) {
     }
     setTimeout(() => { pager.style.scrollSnapType = ''; }, 450);
 }
-pager.addEventListener('pointerup', endSwipe);
-pager.addEventListener('pointercancel', e => {
+// The pager's swipe on el too: a full-screen sheet over a swipe page (the Qobuz
+// player) drags the pager under it; the page itself makes the sheet follow
+// (K.onPagerScroll).  `skip`: places in el with a horizontal gesture of their own.
+K.pagerSwipe = (el, skip = null) => {
+    el.addEventListener('pointerdown', e => { if (!(skip && e.target.closest(skip))) startSwipe(e, el); });
+    el.addEventListener('pointermove', moveSwipe);
+    el.addEventListener('pointerup', endSwipe);
+    el.addEventListener('pointercancel', cancelSwipe);
+};
+function cancelSwipe(e) {
     if (sw && sw.mode === 'x') endSwipe(e);
     else if (sw && e.pointerId === sw.id) sw = null;
-});
+}
+pager.addEventListener('pointerdown', e => startSwipe(e, pager));
+pager.addEventListener('pointermove', moveSwipe);
+pager.addEventListener('pointerup', endSwipe);
+pager.addEventListener('pointercancel', cancelSwipe);
+K.onPagerScroll = fn => pager.addEventListener('scroll', fn, { passive: true });
 
 // ── the Android app's bridge (window.OmdrcApp), when we run inside it ──────────
 // The app keeps the screen on only while this page asks for it: exactly while

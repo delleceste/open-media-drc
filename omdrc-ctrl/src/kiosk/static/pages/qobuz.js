@@ -61,6 +61,7 @@ P.clearInput = () => {
 
 P.mount = el => {
     P.el = el;
+    K.onPagerScroll?.(P.followPager);
     P.banner = h('div', {});
     P.input = P.makeInput(pref('aiMode', false));
     P.suggestBox = h('div', { class: 'qz-suggest', role: 'listbox' });
@@ -226,6 +227,12 @@ P.prepareEnter = from => {
         P.el.scrollTo({ top: 0, behavior: 'instant' });
         return;
     }
+    if (P.fullWanted && !P.fromNow) {
+        // left with the player open: it comes back with the page, sliding in beside it
+        P.ensureMounted();
+        P.openFull({ instant: true });
+        if (P.fullEl) P.fullEl.style.transform = `translateX(${P.fullX()}px)`;
+    }
     if (from !== 'now') return;
     P.ensureMounted();
     P.dismissPreview();
@@ -252,12 +259,18 @@ P.show = () => {
     else if (P.view() === 'awarded') P.awardedList();
     else if (P.view() === 'library') P.showLibrary();
     if (!P.fromNowShown) P.undock();
+    if (P.fullWanted && !P.fromNowShown) P.openFull({ instant: true });
+    if (P.fullEl) P.fullEl.style.transform = '';
     P.poll.start();
     P.playerPoll.start();
     P.clock = setInterval(P.paintTime, 500);
 };
 P.hide = () => {
     P.visible = false;
+    // the player open here stays open for the next visit (P.prepareEnter, P.show)
+    const full = !!P.fullEl;
+    P.closeFull();
+    P.fullWanted = full;
     K.library.hide();
     P.closeTileMenu();
     if (P.discoverObserver) P.discoverObserver.disconnect();
@@ -2220,7 +2233,7 @@ P.wirePlayerDrawer = () => {
 
 // Full screen, like Qobuz's own player: the cover as large as the screen
 // allows, the track, the transport, and the queue (a tap plays from there).
-P.openFull = ({ offset = 0 } = {}) => {
+P.openFull = ({ offset = 0, instant = false } = {}) => {
     if (P.fullEl || !P.usable()) return;
     const v = P.makeView(true);
     v.work = h('div', { class: 'qz-fwork muted' });
@@ -2271,7 +2284,7 @@ P.openFull = ({ offset = 0 } = {}) => {
     if (offset) {
         P.fullEl.style.transform = `translateY(${Math.max(0, offset)}px)`;
         P.fullEl.style.pointerEvents = 'none';
-    } else if (top < window.innerHeight) {
+    } else if (!instant && top < window.innerHeight) {
         // a tap: rise from the strip's position too
         const sheet = P.fullEl;
         sheet.style.transform = `translateY(${top}px)`;
@@ -2284,6 +2297,9 @@ P.openFull = ({ offset = 0 } = {}) => {
             setTimeout(() => { if (P.fullEl === sheet) sheet.style.transition = ''; }, 240);
         }));
     }
+    // a sideways swipe goes to the next page, as on the page under it; the queue rows
+    // swipe to remove, the grip drags the sheet down
+    K.pagerSwipe?.(P.fullEl, '.qz-qrow, .qz-grip');
     P.fullEl.backClose = () => P.queueActions ? P.closeQueueActions() : P.closeFull();   // as Escape (P.fullKey)
     document.getElementById('overlay-root').append(P.fullEl);
     P.fullView = v;
@@ -2324,6 +2340,7 @@ P.wireGrip = grip => {
     grip.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.closeFull(); } });
 };
 P.closeFull = () => {
+    P.fullWanted = false;
     if (!P.fullEl) return;
     P.closeQueueActions();
     P.listeningUnsub?.();
@@ -2336,6 +2353,16 @@ P.closeFull = () => {
     P.views = P.views.filter(v => v !== P.fullView);
     P.fullView = null;
     document.removeEventListener('keydown', P.fullKey);
+};
+// The sheet covers the screen, not the page: while the pager moves it goes with the
+// page, and once the page is off screen without being shown it closes (a swipe from
+// a neighbour that brought it in and then turned back), staying wanted.
+P.fullX = () => Math.round(P.el.getBoundingClientRect().left - P.el.closest('#pager').getBoundingClientRect().left);
+P.followPager = () => {
+    if (!P.fullEl) return;
+    const x = P.fullX();
+    if (!P.visible && Math.abs(x) >= P.el.clientWidth - 1) { P.closeFull(); P.fullWanted = true; return; }
+    P.fullEl.style.transform = x ? `translateX(${x}px)` : '';
 };
 P.fullKey = e => { if (e.key === 'Escape') { if (P.queueActions) { P.closeQueueActions(); P.queueHead.focus(); } else P.closeFull(); } };
 
