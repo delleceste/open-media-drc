@@ -588,4 +588,4 @@ The user's observation, in one recording: pizzicato often sounds prominent,
 "in the speaker", while tuttis with the basses at the back sound deeper. So
 depth can differ by context within one recording, and one number per
 recording hides that. Per-context scores, and feedback per context, are the
-natural next step (see the live-feedback plan).
+natural next step, best collected live on the box (a Start / Stop section sampler with feedback: proposed, not built yet).
