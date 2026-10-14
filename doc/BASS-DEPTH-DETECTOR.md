@@ -122,3 +122,35 @@ Fixes this suggests:
 2. Verdict: "AC only" should require the peak to survive across ≥2 notes
    with no shared pitch.
 3. ITD≈0 → flag "coincident/level-panned: GCC delay method weak" in the report.
+
+## Case study 2 (2026-10-14): Mahler 3/I, Czech Phil / Bychkov (2025, 24/96) — label: bass not convincingly back
+
+User passage "around minute 9". Exposed bass is at 7:50–8:08 (A1) and 9:29–9:51 (D1/A1,
+quiet). Around 9:00 itself the passage is loud and the basses never dominate.
+
+v1 results:
+- Whole track: **"likely unaligned spot" at +15.25 ms** (GCC z 5.8, −8.7 dB, 13 dB
+  above the orchestra), corroborated by AC. **Not trustworthy:**
+  - z is barely over the 5.5 threshold (the thin margin seen in synthetic tests).
+  - The peak is one-sided (+ only: R later). A spot mic picked up by both main
+    mics should show on both sides.
+  - Split into 60 s windows, no window shows it (z ≤ 3.2 at +15.25). The best
+    peak per window wanders (−51…+36 ms) at z ≈ 4, i.e. noise level.
+  - It is not the C2 period (15.29 ms): the C2 group shows nothing there; the
+    A1 group (z 5.1) and D1 group (z 2.6) carry it.
+- The user's passages only (`--segments 7:50-8:08,9:28-9:52`): GCC none;
+  AC 8.9 / 13.4 / 26.9 ms = A2 period, D1 half period, D1 period → pitch
+  artefacts again (same weakness as case 1).
+
+Cues that DO differ from case 1 (n = 2, so hints only):
+
+| | Shostakovich/Nelsons (good) | Mahler/Bychkov (not back) |
+|---|---|---|
+| L/R coherence bass vs orchestra | 0.45–0.50 vs 0.39–0.46 (×1.1–1.2) | 0.37–0.42 vs 0.24 (×1.5–1.75) |
+| energy < 70 Hz in exposed-bass seconds | 20–50 % | 1–7 % |
+
+A bass much more coherent than the orchestra means its L/R pickup is more direct
+(less diffuse hall) than everything else. A weak fundamental with strong upper
+harmonics fits a close mic (bow and string detail over hall bass). Both cues are
+confounded by dynamics, register (D1 fundamental is 37 Hz) and hall, and need more
+labelled tracks before they become a v2 "depth index".
