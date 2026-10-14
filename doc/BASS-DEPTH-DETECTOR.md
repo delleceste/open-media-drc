@@ -10,6 +10,9 @@ calibrated on only three recordings labelled by ear. Treat it as provisional
 and recalibrate it (`SCORE_*` constants in the script) as labelled material
 comes in. The scoreboard below collects every recording analysed so far.
 
+Every algorithm (detector, live sessions, calibration, validation) is
+described in [BASS-DEPTH-ALGORITHMS.md](BASS-DEPTH-ALGORITHMS.md).
+
 ## How to run
 
 ```sh
@@ -825,6 +828,11 @@ those terms.
 
 ### Next steps, in order
 
+0. **Validation against known geometry** (started 2026-10-14): the
+   `tools/bassval/` suite renders recordings from the Aalto anechoic
+   orchestra parts in a simulated hall, with the basses at known distances,
+   four main-pair setups and planted spot microphones, and checks every cue
+   against the truth (algorithms: BASS-DEPTH-ALGORITHMS.md section 4).
 1. Blind mode for sessions.
 2. A room check from the REW measurements: bass decay, early reflections,
    L/R symmetry above 300 Hz.
