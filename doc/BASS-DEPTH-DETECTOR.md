@@ -708,3 +708,31 @@ Not pursued: a pizzicato detector for fast plucks (Sibelius 2/I from 2:00,
 notes 88–160 ms apart, which the 256 ms frames and the 320 ms decay test
 cannot see). Finding more plucks does not help while the cues do not track
 the ear.
+
+### Balance as heard: the recording plus the room (2026-10-14)
+
+Sibelius 2/I, Minnesota: the user hears the bass centre of gravity move from
+left (plucks at 2:00) to right (heavy bowed passages later). The players do
+not move, so three causes were checked. The score (needed for who plays
+when) was not consulted: Sibelius's works are not public domain in the EU
+until 2028 and IMSLP marks both full scores so.
+
+The room (`DRC-120.green`, REW API, filter `120.green.multipos.fdw6`): the
+correction below 80 Hz is common to both channels by design (target / L+R
+sum, 25–80 Hz), so the room's left/right differences there survive it, and
+80–225 Hz is corrected per channel by cuts only. At the listening position,
+1/48 octave, L−R after correction: A1 +8.9, A♯1 +11.8 (left), C♯2 −7.2,
+D2 −11.1, D♯2 −9.6 (right), F2 +8.2, G2 −8.4 dB. Across the five
+measurement positions, 30–50 Hz is louder on the left (+3.5…+8.5 dB) and
+70–90 Hz on the right (−1…−4 dB) everywhere; 50–70 Hz swings (−1.3…+3.9).
+
+Weighting the room's L−R by each 4 s window's spectrum and adding the
+file's own balance (R−L, dB): plucks at 2:00–2:08 are heard −6.9 (110–260
+Hz: file −4.0, room −3.0) and −8.5 (35–110 Hz, A1/A♯1: room −7.8, the part
+that varies with position); heavy bowed passages at 6:34 and 8:44 are heard
++2.0 and +1.7 in 35–110 Hz, from the file (+3.6, +2.9), the room taking
+1–2 dB off. So the left at the plucks is the recording (low strings in the
+cello range) made stronger by the room; the right later is the recording.
+A note-to-note room L−R of ±10 dB means even a narrow bass register can
+move with the notes played. Inter-channel delays in the file are 0: a
+coincident main pair or panned spots, so position is level only.
