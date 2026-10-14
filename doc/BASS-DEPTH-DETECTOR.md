@@ -225,3 +225,23 @@ Real cases, before → after:
 
 AC "possible" still lands on periods of pitches above the bass range (6.8 ms =
 D3, cellos), which no bass-range mask covers. Treat it as a listening hint only.
+
+## Case study 5 (2026-10-14): Shostakovich 13/II "Humor", Chicago SO / Muti (live, 2020, 24/96) — blind guess
+
+7.3 s of exposed bass in 23 short bits (loud, staccato scherzo), 4 notes.
+v1.1: none (GCC −14.1 ms z 5.4, one-sided).
+Cues: coherence bass 0.51 / orchestra 0.48 = **×1.07** (case-1-like, natural);
+< 70 Hz median **4 %** (IQR 1–14 %; case-2/4-like, but short staccato notes
+never build up their fundamental). Guess: natural, moderately back; low confidence.
+
+## Case study 6 (2026-10-14): Naji Hakim, *Påskeblomst* 1. Hymne, St. Michael's Strings / Komulainen, Lehtola organ (DSD) — blind guess
+
+52 s, 9 s low notes on 3 pitches → v1.1 "insufficient". With `--min-notes 1`:
+AC possible 10.2 ms (unreliable on 3 notes). Cues: coherence **×1.00**,
+< 70 Hz median **15 %** (IQR 4–23 %).
+**Most low notes are probably organ pedal, not basses.** Pitch wobble on the
+2nd–4th harmonics is 3–6 cents (sd) on C2 and F1, against 23–30 cents for bowed basses
+(Nelsons Sym 12, 4:24–4:43). An A♯1 at 0:47 wobbles 17 cents (strings?). The
+cues then describe the organ (far, in the room), not the string basses. A
+pitch-steadiness test should become part of bass-frame detection (organ, also
+synths, sustained tuba).
