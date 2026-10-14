@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -155,6 +156,25 @@ class Worker(unittest.TestCase):
         self.assertIn("missing", self.live.save_status()["why"])
         self.assertFalse(os.path.exists(self.kept))                    # never created
         self.assertEqual([n for n in os.listdir(self.dir) if n.startswith("omdrc-bass-")], [])
+
+    def test_a_kept_track_is_analysed_again_without_playing(self):
+        self.song["file"] = "http://box:49149/qobuz/track/123"
+        self.live.step()
+        old = self.store.analysis("local:Album|123")
+        self.live.version = "10.0"
+        self.live.reanalyse_kept("local:Album|123")
+        for _ in range(100):
+            new = self.store.analysis("local:Album|123")
+            if new["at"] != old["at"]:
+                break
+            time.sleep(0.05)
+        self.assertEqual((new["version"], new["saved"], new["session"]), ("10.0", old["saved"], old["session"]))
+        self.assertEqual(len(self.downloads), 1)                       # from the kept copy
+        os.remove(old["saved"])
+        with self.assertRaises(LookupError):
+            self.live.reanalyse_kept("local:Album|123")
+        with self.assertRaises(LookupError):
+            self.live.reanalyse_kept("nope")
 
     def test_a_folder_on_the_system_disk_is_refused(self):
         with patch.object(bass_live, "on_mounted_drive", lambda p: False):

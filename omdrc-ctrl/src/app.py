@@ -6179,6 +6179,18 @@ def bass_track():
     return jsonify({"ok": True, **view})
 
 
+@app.route("/bass/track/reanalyse", methods=["POST"])
+def bass_track_reanalyse():
+    """{"id": <track id>}: this box's analysis of a track, done again by the
+    current detector from the copy kept on the drive."""
+    body = request.get_json(silent=True) or {}
+    try:
+        _BASS.reanalyse_kept(str(body.get("id", "")))
+    except LookupError as error:
+        return jsonify({"ok": False, "error": str(error)}), 409
+    return jsonify({"ok": True})
+
+
 @app.route("/bass/recent")
 def bass_recent():
     return jsonify({"ok": True, "analyses": _BASS_STORE.recent_analyses(),

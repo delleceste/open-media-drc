@@ -75,7 +75,9 @@ function mount(root) {
     listSearch.addEventListener('input', () => { clearTimeout(listTimer); listTimer = setTimeout(loadList, 250); });
     const listRows = h('div', { class: 'bd-list-rows' });
     const listBox = h('div', { class: 'bd-list', hidden: true }, listSearch, listRows);
-    const browseLine = h('div', { class: 'bd-browse', hidden: true });
+    const browseText = h('span', {});
+    const keptAgainBtn = h('button', { type: 'button', class: 'bd-btn bd-mini', onclick: reanalyseKept, hidden: true }, 'Analyse again');
+    const browseLine = h('div', { class: 'bd-browse', hidden: true }, browseText, ' ', keptAgainBtn);
     const trackLine = h('div', { class: 'bd-track' });
     const score = h('div', { class: 'bd-score' });
     const timeline = h('div', { class: 'bd-tl', onclick: pick });
@@ -139,7 +141,10 @@ function mount(root) {
         browseLine.hidden = !S.browse;
         if (S.browse) {
             const when = t.at ? new Date(t.at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
-            browseLine.textContent = `Not playing: an analysis from ${t.origin ? `box ${t.origin}` : 'this box'}${when ? `, ${when}` : ''}${S.browseView.analysis.current ? '' : ' (older detector)'}.`;
+            const cur = S.browseView.analysis.current;
+            browseText.textContent = `Not playing: an analysis from ${t.origin ? `box ${t.origin}` : 'this box'}${when ? `, ${when}` : ''}${cur ? '' : ', by an older detector'}.`;
+            // this box's own analyses can be redone from the copy kept on the drive
+            keptAgainBtn.hidden = !!t.origin || !t.saved || S.reanalysing;
         }
         clear(trackLine);
         if (t) trackLine.append(h('strong', {}, t.title || 'Untitled'), ' — ', t.artist || '', t.album ? h('span', { class: 'bd-muted' }, ` · ${t.album}`) : null);
@@ -351,6 +356,28 @@ function mount(root) {
         S.cursor = null;
         toggleList(false);
         paintAnalysis(); paintHead(); paintMarks(); paintTaps(); paintPlayhead();
+    }
+
+    async function reanalyseKept() {
+        const id = S.browse && S.browse.id;
+        if (!id) return;
+        const before = S.browseView.track.at;
+        const d = await api('/bass/track/reanalyse', { id });
+        if (!d.ok) { msg.textContent = d.error || 'failed'; return; }
+        S.reanalysing = true;
+        msg.textContent = 'Analysing again from the kept copy…';
+        paintHead();
+        for (let i = 0; i < 60 && S.browse && S.browse.id === id; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            const v = await api(`/bass/track?id=${encodeURIComponent(id)}`);
+            if (v.ok && v.track.at !== before) {
+                S.browseView = v; S.analysis = v.analysis.result;
+                msg.textContent = 'Analysed again.';
+                break;
+            }
+        }
+        S.reanalysing = false;
+        if (S.browse && S.browse.id === id) { paintAnalysis(); paintHead(); paintMarks(); paintTaps(); }
     }
 
     function backToLive() {

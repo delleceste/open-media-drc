@@ -336,6 +336,7 @@ class BassLive:
         self._last_file = ""
         self._ident: dict = {}          # MPD file -> identity, for the track playing
         self._force: set[str] = set()
+        self._run_lock = threading.Lock()   # one detector at a time, live or on request
 
     # -- sessions --
 
@@ -524,9 +525,33 @@ class BassLive:
         os.replace(dest + ".part", dest)
         return dest
 
+    def reanalyse_kept(self, tid: str) -> None:
+        """Analyse a track again from its copy kept on the drive, without
+        playing it (in a thread; the card polls the track for the result)."""
+        a = self.store.analysis(tid)
+        if not a:
+            raise LookupError("no such analysis")
+        if not a["saved"] or not os.path.isfile(a["saved"]):
+            raise LookupError("the kept copy is not here (is the drive mounted?)")
+
+        def run():
+            meta = {k: a.get(k) for k in _META}
+            try:
+                result = self.run_detector(a["saved"])
+                self.store.save_analysis(tid, a["album_key"], a["track_key"], meta, self.version,
+                                         "done", compact(result), "", a["saved"], a["session"])
+            except Exception as error:                  # noqa: BLE001 - the old analysis stays
+                self._set(status="error", track_id=tid, message=str(error)[:300])
+
+        threading.Thread(target=run, name="bass-reanalyse", daemon=True).start()
+
     def run_detector(self, path: str) -> dict:
         """bass_depth.py on one file, in a subprocess at the lowest CPU
-        priority: it shares the box with the DRC convolution."""
+        priority: it shares the box with the DRC convolution.  One at a time."""
+        with self._run_lock:
+            return self._run_detector(path)
+
+    def _run_detector(self, path: str) -> dict:
         with tempfile.TemporaryDirectory(prefix="omdrc-bass-json-") as tmp:
             out = os.path.join(tmp, "result.json")
             done = subprocess.run(["nice", "-n", "19", self.python, self.script, "--json", out, path],
