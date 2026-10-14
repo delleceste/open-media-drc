@@ -196,3 +196,32 @@ Cues (compare case 1 ×1.1–1.2 / 20–50 %, case 2 ×1.5–1.75 / 1–7 %):
 
 Both cues sit on the "not back" side, further out than Mahler, which matches the
 user's memory. So far 3 classical recordings, ordered consistently by both cues.
+
+## v1.1 fixes (2026-10-14)
+
+1. **Pitch leak** (`group_pitches`): each note group masks the periods of its own
+   note, of other bass notes whose non-shared harmonics are within `--leak-db`
+   (10 dB) of its own, and the octave (T0/2) of each. Harmonics within 3 bins of
+   the group's own count as its own (Hann main lobe). With a 1.5-bin radius,
+   semitone neighbours looked like leaks and coverage at the true Δ fell to 9 %.
+2. **Noise scaling** (`pitch_masked_mean`): returns the noise floor of the
+   weighted mean relative to the unmasked one (√Σm²/Σm); peaks and robust z
+   are taken on env / noise. Reported dB levels still use the raw envelope.
+
+Synthetic sweep (8 seeds × DRR 0/−4 dB): spot 15/16 (miss at z 5.4, Δ 33 ms,
+DRR −4), Δ error ≤ 0.4 ms, false positives 0/32, worst null z 5.1. v1: 16/16, 5.2.
+
+Real cases, before → after:
+
+| Case | v1 | v1.1 |
+|---|---|---|
+| Sym 2 Ia, whole | AC possible 17.2 ms (A♯1) | none |
+| Sym 2 Ia, 10:53–11:12 | AC possible 17.2 ms | none |
+| Sym 12 I, whole | AC possible 8.1 ms | AC possible 8.0 ms |
+| Sym 12 I, 4:23–5:46 | AC possible 8.5 ms (A♯2) | none |
+| Mahler 3/I, whole | **likely spot +15.25 ms** (z 5.8) | none (z 5.2) |
+| Mahler 3/I, 7:50–9:52 | AC possible 8.9 ms | AC possible 13.4 ms |
+| Dvořák 8/I, whole | AC possible 10.1 ms; GCC +15.25 z 5.4 | AC possible 6.8 ms; GCC +15.19 z 4.7 |
+
+AC "possible" still lands on periods of pitches above the bass range (6.8 ms =
+D3, cellos), which no bass-range mask covers. Treat it as a listening hint only.

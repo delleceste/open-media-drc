@@ -30,7 +30,10 @@ Two estimators sidestep that, each in its own way:
 
 Both estimators pool frames per semitone and average the per-note curves
 while masking each note's period multiples: a harmonic source repeats every
-lag-domain feature (even GCC's main peak) at k·T0.
+lag-domain feature (even GCC's main peak) at k·T0. Each group also masks its
+octave (T0/2) and the periods of other bass notes ringing into its frames;
+peak scores are taken against the noise floor of however many notes remain
+at each lag.
 
 Both are compared against an orchestra reference (non-bass frames, 300–4000
 Hz): a peak that the whole orchestra shares is hall/array geometry (e.g. a
@@ -209,7 +212,7 @@ def lag_peaks(env, lags_ms, window, exclude=None):
     pk, _ = find_peaks(e, distance=max(1, int(0.001 * SR)))
     pk = [p for p in pk if win[p]]
     pk.sort(key=lambda p: -e[p])
-    out = [{"lag_ms": float(lags_ms[p]), "env": float(env[p]),
+    out = [{"i": int(p), "lag_ms": float(lags_ms[p]), "env": float(env[p]),
             "z": (float(env[p]) - med) / mad} for p in pk[:3]]
     return out, med, mad
 
@@ -259,18 +262,65 @@ def band_stats(S, taper):
     }
 
 
-def pitch_masked_mean(curves, f0s, weights, lags, tol):
+def group_pitches(S, f0, fmin, fmax, df, rel_db):
+    """Pitches whose periods repeat in a note group's lag curves: the note
+    itself and, from the rest of the bass range, every note whose own
+    harmonics (those not shared with f0's) stand within rel_db of f0's in the
+    group's spectrum — a sustained or reverberating previous note bleeds into
+    the frames of the next one. Each comes with its octave, whose period
+    (T0/2) a strong second harmonic also imprints."""
+    P = S["MM"]
+
+    def harmonics(f, excl=None):
+        out = []
+        for h in range(1, 7):
+            b = h * f / df
+            if excl is not None:
+                r = b / (excl / df)
+                # Hann main lobe: ±2 bins of f0's own harmonic are f0's.
+                if round(r) >= 1 and abs(r - round(r)) * excl / df <= 3.0:
+                    continue
+            i = int(round(b))
+            out.append(P[max(i - 1, 0):i + 2].max())
+        return out
+
+    own = np.mean(harmonics(f0))
+    pitches = [f0]
+    m_lo = math.ceil(12 * math.log2(fmin / 440.0) + 69)
+    m_hi = math.floor(12 * math.log2(fmax / 440.0) + 69)
+    for m in range(m_lo, m_hi + 1):
+        g = 440.0 * 2 ** ((m - 69) / 12)
+        if abs(g / f0 - 1) < 0.02:
+            continue
+        h = harmonics(g, excl=f0)
+        if len(h) >= 2 and np.mean(h) >= own * 10 ** (-rel_db / 10):
+            pitches.append(g)
+    return pitches + [2 * p for p in pitches]
+
+
+def pitch_masked_mean(curves, pitches, weights, lags, tol):
     """Average complex lag curves of different notes, skipping for each note
-    the lags within tol (samples) of a multiple of its period. A harmonic
-    source only has energy on its harmonic lines, so each note's curve
-    repeats every period; only a delay fixed by the geometry survives the
-    average. Returns (mean, coverage)."""
-    per = np.abs(lags)[None, :] * f0s[:, None] / SR
-    kk = np.rint(per)
-    dist = np.abs(per - kk) * SR / f0s[:, None]
-    m = ((dist > tol) | (kk == 0)) * weights[:, None]
-    mean = (curves * m).sum(0) / (m.sum(0) + EPS)
-    return mean, m.sum(0) / weights.sum()
+    the lags within tol (samples) of a multiple of any period in its pitch
+    list. A harmonic source only has energy on its harmonic lines, so each
+    note's curve repeats every period; only a delay fixed by the geometry
+    survives the average.
+
+    Where notes are skipped, fewer curves are averaged and the noise floor
+    rises; peak scores must be taken on mean / noise. Returns (mean,
+    coverage, noise), noise relative to the unmasked average."""
+    m = np.empty(curves.shape)
+    for i, (ps, w) in enumerate(zip(pitches, weights)):
+        keep = np.ones(len(lags), bool)
+        for f in ps:
+            per = np.abs(lags) * f / SR
+            kk = np.rint(per)
+            keep &= (np.abs(per - kk) * SR / f > tol) | (kk == 0)
+        m[i] = keep * w
+    s = m.sum(0)
+    mean = (curves * m).sum(0) / (s + EPS)
+    noise = np.where(s > 0, np.sqrt((m ** 2).sum(0)) / (s + EPS), np.inf)
+    noise /= np.sqrt((weights ** 2).sum()) / weights.sum()
+    return mean, s / weights.sum(), noise
 
 
 def peak_rel_to_ref(peaks, lags_ms, ref_env, ref_norm):
@@ -361,8 +411,9 @@ def analyze(x, opts, name="input"):
     if Sr["n"]:
         res["ref_stats"] = band_stats(Sr, tr)
 
-    gf0 = np.array([440.0 * 2 ** (k / 12) for k in groups])
     gw = np.sqrt([g["n"] for g in groups.values()])
+    gp = [group_pitches(g, 440.0 * 2 ** (k / 12), opts.fmin, opts.fmax, df,
+                        opts.leak_db) for k, g in groups.items()]
     tol = opts.pitch_tol / 1000.0 * SR
 
     # --- GCC
@@ -374,13 +425,14 @@ def analyze(x, opts, name="input"):
     main_i = int(np.argmax(np.where(near, pooled, 0)))
     res["main_itd_ms"] = float(lags_ms[main_i])
     # The main peak repeats at k·T0 ± ITD: widen the mask by the ITD.
-    cb, gcover = pitch_masked_mean(gc, gf0, gw, lags,
-                                   tol + abs(lags[main_i]))
+    cb, gcover, gnoise = pitch_masked_mean(gc, gp, gw, lags,
+                                           tol + abs(lags[main_i]))
     envb = np.abs(cb)
     main_env = envb[main_i]
-    pk, _, _ = lag_peaks(envb, lags_ms, (opts.min_lag, opts.max_lag),
+    pk, _, _ = lag_peaks(envb / gnoise, lags_ms, (opts.min_lag, opts.max_lag),
                          exclude=gcover < opts.min_cover)
     for p in pk:
+        p["env"] = float(envb[p["i"]])
         p["rel_db"] = 20 * np.log10(p["env"] / (main_env + EPS) + EPS)
     envr = None
     if Sr["n"]:
@@ -392,11 +444,12 @@ def analyze(x, opts, name="input"):
     alags = np.arange(maxlag + 1)
     ac_ms = alags / SR * 1000.0
     ac = np.array([ac_curve(g, tb, smooth, maxlag) for g in groups.values()])
-    A, acover = pitch_masked_mean(ac, gf0, gw, alags, tol)
+    A, acover, anoise = pitch_masked_mean(ac, gp, gw, alags, tol)
     envA = np.abs(A)
-    pka, _, _ = lag_peaks(envA, ac_ms, (opts.min_lag, opts.max_lag),
+    pka, _, _ = lag_peaks(envA / anoise, ac_ms, (opts.min_lag, opts.max_lag),
                           exclude=acover < opts.min_cover)
     for p in pka:
+        p["env"] = float(envA[p["i"]])
         p["rel_db"] = 20 * np.log10(p["env"] + EPS)
     envAr = None
     if Sr["n"]:
@@ -665,6 +718,9 @@ def build_parser():
     g.add_argument("--max-lag", type=float, default=60.0, help="ms")
     g.add_argument("--pitch-tol", type=float, default=1.0,
                    help="ms masked around each pitch-period multiple")
+    g.add_argument("--leak-db", type=float, default=10.0,
+                   help="another bass note this close to a group's own note "
+                        "(harmonic level) has its periods masked too")
     g.add_argument("--min-cover", type=float, default=0.3,
                    help="AC lags masked in more frames than this are skipped")
     g.add_argument("--z", type=float, default=5.5,
