@@ -222,6 +222,21 @@ class BassStore:
                  json.dumps(result, separators=(",", ":")) if result is not None else None,
                  saved, session))
 
+    def list_analyses(self) -> list[dict]:
+        """Every finished analysis, newest first, with its score and the
+        number of taps on it: the card's list of tracks to look at again."""
+        with self._lock, self._connect() as db:
+            rows = [dict(r) for r in db.execute(
+                "SELECT track_id, title, artist, album, label, year, version, at, session, result "
+                "FROM analysis WHERE status = 'done' ORDER BY at DESC")]
+            taps = dict(db.execute("SELECT track_id, COUNT(*) FROM tap GROUP BY track_id").fetchall())
+        for r in rows:
+            res = json.loads(r.pop("result") or "null") or {}
+            r["depth"] = res.get("depth")
+            r["duration"] = res.get("duration_s")
+            r["taps"] = taps.get(r["track_id"], 0)
+        return rows
+
     def recent_analyses(self, limit: int = 30) -> list[dict]:
         with self._lock, self._connect() as db:
             rows = [dict(r) for r in db.execute(
@@ -276,21 +291,18 @@ class BassStore:
     # -- sharing (dr_sync.py) --
 
     def export_rows(self) -> list[dict]:
-        """Every session and tap, and every finished analysis: whole for
-        tapped tracks, without its timeline for the rest (their scores still
-        count).  Deterministic, so an unchanged store exports the same file."""
+        """Every session, tap and finished analysis, timelines included:
+        analyses only happen in sessions, on the recordings being studied,
+        and the other boxes show them too.  Deterministic, so an unchanged
+        store exports the same file."""
         with self._lock, self._connect() as db:
             sessions = [dict(r) for r in db.execute("SELECT * FROM session ORDER BY id")]
             taps = [dict(r) for r in db.execute("SELECT * FROM tap ORDER BY id")]
             analyses = [dict(r) for r in db.execute(
                 "SELECT * FROM analysis WHERE status = 'done' ORDER BY track_id")]
-        tapped = {t["track_id"] for t in taps}
         rows = [{"session": s} for s in sessions]
         for a in analyses:
-            res = json.loads(a.pop("result") or "null") or {}
-            if a["track_id"] not in tapped:
-                res.pop("blocks", None)
-            a["result"] = res
+            a["result"] = json.loads(a.pop("result") or "null") or {}
             rows.append({"bass": a})
         rows += [{"tap": t} for t in taps]
         return rows
@@ -312,6 +324,10 @@ class BassLive:
         self.workdir = workdir
         self.version = version
         self.save_dir = save_dir
+        # the DR log sync's clone: other boxes' bass/<box>.jsonl, read-only
+        self.shared_dir = ""
+        self.box = ""
+        self._shared_cache: dict[str, tuple[float, dict]] = {}
         self.min_free = min_free
         self.python = python
         self.lock = threading.Lock()
@@ -524,6 +540,85 @@ class BassLive:
             lines = (done.stderr or "the detector gave no result").strip().splitlines()
             raise RuntimeError((lines[-1] if lines else "the detector failed")[:300])
         return results[0]
+
+    # -- analyses to look at again, this box's and the other boxes' --
+
+    def _shared(self) -> dict[str, dict]:
+        """{box: {"analyses": {track id: row}, "taps": [rows]}} from the other
+        boxes' files in the sync clone, re-read when a file changes."""
+        out = {}
+        folder = self.shared_dir
+        for name in sorted(os.listdir(folder)) if folder and os.path.isdir(folder) else []:
+            box, ext = os.path.splitext(name)
+            if ext != ".jsonl" or box == self.box:
+                continue
+            path = os.path.join(folder, name)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            cached = self._shared_cache.get(path)
+            if cached and cached[0] == mtime:
+                out[box] = cached[1]
+                continue
+            data = {"analyses": {}, "taps": []}
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(row.get("bass"), dict) and row["bass"].get("track_id"):
+                        data["analyses"][row["bass"]["track_id"]] = row["bass"]
+                    elif isinstance(row.get("tap"), dict):
+                        data["taps"].append(row["tap"])
+            self._shared_cache[path] = (mtime, data)
+            out[box] = data
+        return out
+
+    def catalog(self, q: str = "", limit: int = 300) -> list[dict]:
+        """Analysed tracks, newest first: this box's (origin "") and those
+        the other boxes share; `q` filters on title, artist and album."""
+        rows = [dict(r, origin="") for r in self.store.list_analyses()]
+        for box, data in self._shared().items():
+            counts: dict[str, int] = {}
+            for t in data["taps"]:
+                counts[t.get("track_id")] = counts.get(t.get("track_id"), 0) + 1
+            for tid, a in data["analyses"].items():
+                res = a.get("result") or {}
+                rows.append({"track_id": tid, "title": a.get("title", ""), "artist": a.get("artist", ""),
+                             "album": a.get("album", ""), "label": a.get("label", ""), "year": a.get("year"),
+                             "version": a.get("version", ""), "at": a.get("at", 0), "session": a.get("session"),
+                             "depth": res.get("depth"), "duration": res.get("duration_s"),
+                             "taps": counts.get(tid, 0), "origin": box,
+                             "timeline": bool(res.get("blocks"))})
+        words = [w.casefold() for w in q.split()]
+        if words:
+            rows = [r for r in rows if all(w in f"{r['title']} {r['artist']} {r['album']}".casefold() for w in words)]
+        rows.sort(key=lambda r: -(r.get("at") or 0))
+        return rows[:limit]
+
+    def track_view(self, tid: str, origin: str = "") -> dict | None:
+        """One analysed track as the card draws it, without playback."""
+        if origin:
+            data = self._shared().get(origin)
+            a = data and data["analyses"].get(tid)
+            if not a:
+                return None
+            taps = sorted((t for t in data["taps"] if t.get("track_id") == tid), key=lambda t: t.get("pos", 0))
+            result = a.get("result")
+        else:
+            a = self.store.analysis(tid)
+            if not a or a["status"] != "done":
+                return None
+            taps = self.store.taps(tid)
+            result = a["result"]
+        return {"track": {"id": tid, "title": a.get("title", ""), "artist": a.get("artist", ""),
+                          "album": a.get("album", ""), "duration": (result or {}).get("duration_s"),
+                          "origin": origin, "at": a.get("at"), "saved": a.get("saved", "")},
+                "analysis": {"status": "done", "version": a.get("version", ""), "result": result,
+                             "current": a.get("version") == self.version},
+                "taps": taps}
 
     # -- what the pages ask --
 

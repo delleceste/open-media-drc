@@ -221,7 +221,7 @@ class Worker(unittest.TestCase):
         again = self.live.now_view(view["analysis"]["stamp"])
         self.assertNotIn("result", again["analysis"])
 
-    def test_export_keeps_timelines_only_for_tapped_tracks(self):
+    def test_export_keeps_every_timeline(self):
         self.live.step()
         self.song["file"] = "Album/02.flac"
         shutil.copy(os.path.join(self.music, "Album", "01.flac"), os.path.join(self.music, "Album", "02.flac"))
@@ -231,12 +231,43 @@ class Worker(unittest.TestCase):
         rows = self.store.export_rows()
         self.assertEqual(rows[0]["session"]["name"], "Nelsons")
         bass = {r["bass"]["track_id"]: r["bass"] for r in rows if "bass" in r}
-        self.assertNotIn("blocks", bass["local:Album|01.flac"]["result"])
+        self.assertIn("blocks", bass["local:Album|01.flac"]["result"])
         self.assertIn("blocks", bass["local:Album|02.flac"]["result"])
         self.assertEqual([r["tap"]["note"] for r in rows if "tap" in r], ["basses and cellos"])
         self.assertEqual(rows, self.store.export_rows())
         self.assertTrue(self.store.delete_tap(tap["id"]))
         self.assertEqual(self.store.taps(), [])
+
+
+    def test_analysed_tracks_can_be_looked_at_again(self):
+        self.live.step()
+        self.live.tap("back", "deep")
+        # another box's shared file, as the DR log sync leaves it in its clone
+        shared = os.path.join(self.dir, "dr-sync", "bass")
+        os.makedirs(shared)
+        other = {"track_id": "qobuz:9|7", "title": "Allegretto", "artist": "Minnesota", "album": "Sibelius 2",
+                 "version": "9.9", "at": 2e9, "result": {"duration_s": 600, "depth": {"score": 6.0, "band": "yellow"},
+                                                         "blocks": BLOCKS}}
+        with open(os.path.join(shared, "arki.jsonl"), "w") as f:
+            f.write(json.dumps({"bass": other}) + "\n")
+            f.write(json.dumps({"tap": {"track_id": "qobuz:9|7", "pos": 120.0, "verdict": "forward", "note": "left"}}) + "\n")
+        with open(os.path.join(shared, "dal.jsonl"), "w") as f:      # this box's own file: not listed twice
+            f.write(json.dumps({"bass": dict(other, track_id="own|1")}) + "\n")
+        self.live.shared_dir, self.live.box = shared, "dal"
+        rows = self.live.catalog()
+        self.assertEqual([(r["track_id"], r["origin"]) for r in rows],
+                         [("qobuz:9|7", "arki"), ("local:Album|01.flac", "")])
+        self.assertEqual(rows[1]["taps"], 1)
+        self.assertEqual(rows[0]["taps"], 1)
+        self.assertEqual([r["track_id"] for r in self.live.catalog("sibelius")], ["qobuz:9|7"])
+        mine = self.live.track_view("local:Album|01.flac")
+        self.assertEqual(mine["analysis"]["result"]["depth"]["score"], 8.5)
+        self.assertEqual(mine["taps"][0]["note"], "deep")
+        theirs = self.live.track_view("qobuz:9|7", "arki")
+        self.assertEqual((theirs["track"]["origin"], theirs["track"]["duration"]), ("arki", 600))
+        self.assertEqual(theirs["taps"][0]["note"], "left")
+        self.assertIsNone(self.live.track_view("nope"))
+        self.assertIsNone(self.live.track_view("qobuz:9|7", "bee"))
 
 
 @unittest.skipUnless(shutil.which("git"), "git not installed")
@@ -303,6 +334,15 @@ class Routes(unittest.TestCase):
         self.assertEqual(self.client.post("/bass/tap", json={"verdict": "x"}).status_code, 400)
         self.assertTrue(self.client.post(f"/bass/tap/{tid}/delete").get_json()["ok"])
         self.assertEqual(self.client.post(f"/bass/tap/{tid}/delete").status_code, 404)
+
+    def test_tracks_and_track(self):
+        self.store.save_analysis("q:1|2", "q:1", "2", {"title": "Largo", "artist": "BSO"}, "1.2", "done",
+                                 {"duration_s": 60, "depth": None, "blocks": []})
+        rows = self.client.get("/bass/tracks?q=largo").get_json()["tracks"]
+        self.assertEqual([r["track_id"] for r in rows], ["q:1|2"])
+        d = self.client.get("/bass/track?id=q:1|2").get_json()
+        self.assertEqual(d["track"]["title"], "Largo")
+        self.assertEqual(self.client.get("/bass/track?id=missing").status_code, 404)
 
     def test_sessions(self):
         self.assertEqual(self.client.post("/bass/session", json={"action": "pause"}).status_code, 400)

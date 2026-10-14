@@ -5821,6 +5821,9 @@ def _dr_sync_start() -> None:
     if not DR_SYNC_REPO:
         return
     box = DR_SYNC_BOX or socket.gethostname().split(".")[0]
+    # the bass depth card shows what the other boxes share, from the same clone
+    _BASS.shared_dir = os.path.join(_STATE_DIR, "dr-sync", "bass")
+    _BASS.box = box
     try:
         _DR_SYNC = GitSync(_DR_STORE, DR_SYNC_REPO, box, os.path.join(_STATE_DIR, "dr-sync"),
                            interval=DR_SYNC_INTERVAL_MINUTES * 60.0,
@@ -6159,6 +6162,21 @@ def bass_reanalyse():
         return jsonify({"ok": False, "error": "nothing identifiable is playing"}), 409
     _BASS.reanalyse(view["track"]["id"])
     return jsonify({"ok": True})
+
+
+@app.route("/bass/tracks")
+def bass_tracks():
+    """Analysed tracks to look at again: this box's and the other boxes'."""
+    return jsonify({"ok": True, "tracks": _BASS.catalog(request.args.get("q", "")[:200])})
+
+
+@app.route("/bass/track")
+def bass_track():
+    """One analysed track, as the card draws it: ?id=<track id>&origin=<box>."""
+    view = _BASS.track_view(request.args.get("id", ""), request.args.get("origin", ""))
+    if view is None:
+        return jsonify({"ok": False, "error": "no such analysis"}), 404
+    return jsonify({"ok": True, **view})
 
 
 @app.route("/bass/recent")

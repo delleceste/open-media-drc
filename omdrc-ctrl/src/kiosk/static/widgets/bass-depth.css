@@ -6,6 +6,15 @@
 .bass-depth .bd-start { border-color: #2ea043; font-weight: 600; }
 .bass-depth .bd-save { font-size: .88em; }
 .bass-depth .bd-warn { color: #d29922; opacity: 1; }
+.bass-depth .bd-list { display: flex; flex-direction: column; gap: .4rem; max-height: 22rem; overflow: auto;
+    padding: .4rem; border: 1px solid var(--border, rgba(127, 127, 127, .35)); border-radius: 6px; }
+.bass-depth .bd-list-rows { display: flex; flex-direction: column; gap: .2rem; }
+.bass-depth .bd-list-row { display: flex; align-items: center; gap: .6rem; text-align: left; font: inherit; color: inherit;
+    background: none; border: none; border-bottom: 1px solid var(--border, rgba(127, 127, 127, .2)); padding: .35rem .2rem; cursor: pointer; }
+.bass-depth .bd-list-text { display: flex; flex-wrap: wrap; column-gap: .3rem; }
+.bass-depth .bd-list-meta { flex-basis: 100%; font-size: .85em; }
+.bass-depth .bd-badge.small { font-size: .95em; min-width: 2.4em; padding: .05em .3em; }
+.bass-depth .bd-browse { font-size: .9em; padding: .3rem .5rem; border-radius: 6px; background: rgba(56, 139, 253, .12); }
 .bass-depth .bd-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; }
 .bass-depth .bd-spacer { flex: 1; }
 .bass-depth .bd-status { font-weight: 600; }

@@ -55,7 +55,8 @@ const STATUS = {
 };
 
 function mount(root) {
-    const S = { view: null, analysis: null, stamp: '', timer: null, tick: null, polledAt: 0, lastTap: null, cursor: null };
+    const S = { view: null, analysis: null, stamp: '', timer: null, tick: null, polledAt: 0, lastTap: null, cursor: null,
+        browse: null, browseView: null };   // browse: {id, origin} of an analysed track shown without playback
 
     const statusLine = h('div', { class: 'bd-status' });
     const sessionName = h('input', { type: 'text', class: 'bd-note', maxlength: 200, placeholder: 'What will you evaluate? e.g. Altinoglu, Shostakovich 8' });
@@ -67,6 +68,14 @@ function mount(root) {
         h('button', { type: 'button', class: 'bd-btn', onclick: stopSession }, 'Stop session'));
     const saveLine = h('div', { class: 'bd-muted bd-save' });
     const againBtn = h('button', { type: 'button', class: 'bd-btn', onclick: reanalyse, hidden: true }, 'Analyse again');
+    const listBtn = h('button', { type: 'button', class: 'bd-btn', onclick: () => toggleList() }, 'Analysed tracks');
+    const backBtn = h('button', { type: 'button', class: 'bd-btn bd-start', onclick: backToLive, hidden: true }, 'Back to now playing');
+    const listSearch = h('input', { type: 'search', class: 'bd-note', placeholder: 'Filter: title, artist, album…' });
+    let listTimer = null;
+    listSearch.addEventListener('input', () => { clearTimeout(listTimer); listTimer = setTimeout(loadList, 250); });
+    const listRows = h('div', { class: 'bd-list-rows' });
+    const listBox = h('div', { class: 'bd-list', hidden: true }, listSearch, listRows);
+    const browseLine = h('div', { class: 'bd-browse', hidden: true });
     const trackLine = h('div', { class: 'bd-track' });
     const score = h('div', { class: 'bd-score' });
     const timeline = h('div', { class: 'bd-tl', onclick: pick });
@@ -90,8 +99,8 @@ function mount(root) {
 
     clear(root).append(h('div', { class: 'bass-depth' },
         startBox, runBox, saveLine,
-        h('div', { class: 'bd-head' }, statusLine, h('span', { class: 'bd-spacer' }), againBtn),
-        trackLine, score, timeline, cursorRow, tableHead, table,
+        h('div', { class: 'bd-head' }, statusLine, h('span', { class: 'bd-spacer' }), againBtn, listBtn, backBtn),
+        listBox, browseLine, trackLine, score, timeline, cursorRow, tableHead, table,
         h('div', { class: 'bd-fb' },
             h('div', { class: 'bd-fb-q' }, 'How deep do the basses sound right now?'),
             fbButtons, noteBox, msg, tapList),
@@ -123,11 +132,20 @@ function mount(root) {
         if (a && !own && a.status === 'done') text = a.current ? 'Analysed' : 'Analysed by an older detector: playing it again re-analyses it';
         if (a && !own && a.status !== 'done') text = `${STATUS[a.status] || a.status}${a.error ? ' — ' + a.error : ''}`;
         statusLine.textContent = text;
-        againBtn.hidden = !v.track || !v.enabled;
-        const t = v.track;
+        againBtn.hidden = !v.track || !v.enabled || !!S.browse;
+        backBtn.hidden = !S.browse;
+        const live = v.track;
+        const t = S.browse ? S.browseView.track : live;
+        browseLine.hidden = !S.browse;
+        if (S.browse) {
+            const when = t.at ? new Date(t.at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+            browseLine.textContent = `Not playing: an analysis from ${t.origin ? `box ${t.origin}` : 'this box'}${when ? `, ${when}` : ''}${S.browseView.analysis.current ? '' : ' (older detector)'}.`;
+        }
         clear(trackLine);
         if (t) trackLine.append(h('strong', {}, t.title || 'Untitled'), ' — ', t.artist || '', t.album ? h('span', { class: 'bd-muted' }, ` · ${t.album}`) : null);
-        fbButtons.querySelectorAll('button').forEach(b => { b.disabled = !t || !v.enabled; });
+        // feedback is for what is playing: off while looking at another track
+        const tappable = live && v.enabled && (!S.browse || S.browse.id === live.id);
+        fbButtons.querySelectorAll('button').forEach(b => { b.disabled = !tappable; });
         if (t && t.id !== S.trackId) { S.trackId = t.id; S.lastTap = null; noteBox.hidden = true; }
     }
 
@@ -219,10 +237,12 @@ function mount(root) {
             }));
     }
 
+    const shownTaps = () => (S.browse ? S.browseView.taps : S.view && S.view.taps) || [];
+
     function paintMarks() {
         if (!S.marks) return;
         clear(S.marks);
-        const taps = (S.view && S.view.taps) || [];
+        const taps = shownTaps();
         for (const t of taps) {
             S.marks.append(h('span', { class: `bd-mark ${t.verdict}`, style: { left: `${100 * t.pos / S.dur}%` },
                 title: `${VERDICT_LABEL[t.verdict]} at ${clock(t.pos)}${t.note ? ': ' + t.note : ''}` }));
@@ -231,6 +251,7 @@ function mount(root) {
 
     function position() {
         const t = S.view && S.view.track;
+        if (S.browse && (!t || t.id !== S.browse.id)) return null;   // not the track shown
         if (!t || !Number.isFinite(t.pos)) return null;
         const extra = t.state === 'play' ? (Date.now() - S.polledAt) / 1000 : 0;
         return t.pos + extra;
@@ -262,14 +283,15 @@ function mount(root) {
 
     function paintTaps() {
         clear(tapList);
-        const taps = (S.view && S.view.taps) || [];
+        const taps = shownTaps();
+        const own = !S.browse || !S.browse.origin;          // another box's taps are read-only
         if (!taps.length) return;
         tapList.append(h('div', { class: 'bd-muted' }, `Your taps on this track (${taps.length}):`),
             ...taps.map(t => h('div', { class: 'bd-tap' },
                 h('span', { class: `bd-dot ${t.verdict}` }), h('span', { class: 'bd-tap-at' }, clock(t.pos)),
                 h('span', {}, VERDICT_LABEL[t.verdict]), t.context ? h('span', { class: 'bd-muted' }, `(${t.context})`) : null,
                 h('span', { class: 'bd-tap-note' }, t.note || ''),
-                h('button', { type: 'button', class: 'bd-x', title: 'Delete this tap', onclick: () => delTap(t.id) }, '×'))));
+                own ? h('button', { type: 'button', class: 'bd-x', title: 'Delete this tap', onclick: () => delTap(t.id) }, '×') : null)));
     }
 
     async function poll() {
@@ -277,6 +299,10 @@ function mount(root) {
         if (!d.ok) { statusLine.textContent = d.error || 'unavailable'; return; }
         S.view = d;
         S.polledAt = Date.now();
+        if (S.browse) {                       // the shown analysis stays put; only the live parts move
+            paintHead(); paintMarks(); paintTaps(); paintPlayhead();
+            return;
+        }
         const a = d.analysis;
         const stamp = a && a.status === 'done' ? a.stamp : '';
         if (stamp !== S.stamp || (a && a.result) || !S.painted) {
@@ -290,6 +316,49 @@ function mount(root) {
         paintMarks();
         paintTaps();
         paintPlayhead();
+    }
+
+    async function toggleList(open) {
+        open = open === undefined ? listBox.hidden : open;
+        listBox.hidden = !open;
+        listBtn.classList.toggle('on', open);
+        if (open) loadList();
+    }
+
+    async function loadList() {
+        const d = await api(`/bass/tracks?q=${encodeURIComponent(listSearch.value.trim())}`);
+        clear(listRows);
+        if (!d.ok) { listRows.append(h('div', { class: 'bd-muted' }, d.error || 'unavailable')); return; }
+        if (!d.tracks.length) { listRows.append(h('div', { class: 'bd-muted' }, 'No analysed tracks yet: they come from tracking sessions.')); return; }
+        listRows.append(...d.tracks.map(r => {
+            const dd = r.depth;
+            const when = r.at ? new Date(r.at * 1000).toLocaleDateString() : '';
+            return h('button', { type: 'button', class: 'bd-list-row', onclick: () => openTrack(r) },
+                h('span', { class: `bd-badge small ${dd ? dd.band : 'none'}` }, dd ? dd.score.toFixed(1) : '–'),
+                h('span', { class: 'bd-list-text' }, h('strong', {}, r.title || 'Untitled'),
+                    h('span', { class: 'bd-muted' }, ` — ${r.artist || ''}${r.album ? ` · ${r.album}` : ''}`),
+                    h('span', { class: 'bd-muted bd-list-meta' }, [when, r.origin ? `box ${r.origin}` : 'this box',
+                        r.taps ? `${r.taps} tap${r.taps === 1 ? '' : 's'}` : '', r.origin && r.timeline === false ? 'no timeline' : ''].filter(Boolean).join(' · '))));
+        }));
+    }
+
+    async function openTrack(r) {
+        const d = await api(`/bass/track?id=${encodeURIComponent(r.track_id)}&origin=${encodeURIComponent(r.origin || '')}`);
+        if (!d.ok) { msg.textContent = d.error || 'failed'; return; }
+        S.browse = { id: r.track_id, origin: r.origin || '' };
+        S.browseView = d;
+        S.analysis = d.analysis.result;
+        S.cursor = null;
+        toggleList(false);
+        paintAnalysis(); paintHead(); paintMarks(); paintTaps(); paintPlayhead();
+    }
+
+    function backToLive() {
+        S.browse = S.browseView = null;
+        S.stamp = '';
+        S.painted = false;
+        S.cursor = null;
+        poll();
     }
 
     async function startSession() {

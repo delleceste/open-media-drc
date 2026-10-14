@@ -386,7 +386,11 @@ ends it. During a session:
 
 Sessions, taps and analyses are stored in `<state dir>/bass-depth.sqlite` and
 shared through the DR log's repository (`[dr_sync]`), in `bass/<box>.jsonl`,
-next to `boxes/`. `tools/bass_depth_calibrate.py <clone>` compares the taps
+next to `boxes/`. **Analysed tracks** on the card lists them, this box's and
+those the other boxes share (read from the sync's own clone, so they appear
+after the next sync), searchable; picking one draws its timeline, table and
+taps without playing it, and **Back to now playing** returns to the live
+view. Taps are only taken on the track playing. `tools/bass_depth_calibrate.py <clone>` compares the taps
 with the detector there. The method, its sources and its calibration are in
 `doc/BASS-DEPTH-DETECTOR.md`.
 
