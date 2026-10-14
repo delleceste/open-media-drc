@@ -618,3 +618,49 @@ The user's observation, in one recording: pizzicato often sounds prominent,
 depth can differ by context within one recording, and one number per
 recording hides that. Per-context scores, and feedback per context, are the
 natural next step, best collected live on the box (a Start / Stop section sampler with feedback: proposed, not built yet).
+
+### Pizzicato above C2 (2026-10-14, detector 1.3)
+
+The user's reference track, Mahler 2/II (Rattle, Qobuz album of 2011):
+the opening pizzicato is prominent and, to the user, placed wrong. The
+detector found 3 plucks in the whole movement and none where the user hears
+them, about 20 s in.
+
+What the score says (UE 1910, p. 57): strings only. From bar 5 the
+**double basses alone play pizz., p**, while the divided cellos play arco
+(sempre p, stacc. from bar 5), the second cellos doubling the bass line an
+octave higher. From bar 13 the second cellos are also pizz. on the same line.
+At rehearsal 2 the second cellos are marked "p (aber deutlich)"; the basses
+rest three bars and return p.
+
+Why it was missed:
+
+1. The plucks around 20 s sound on E♭2 (78.8 Hz), F2 and D2 (bars 13–20:
+   written E♭3 etc., sounding an octave lower), above the C2 (65.4 Hz)
+   ceiling every context used. Below the ceiling they are clean combs:
+   83–91 % of the low band on the comb, 5–6 harmonic peaks, rising 13–21 dB
+   and falling 11–14 dB in 320 ms.
+2. In bars 5–12 (A♭1, 52 Hz) the fundamental lies 7–11 dB under the hall's
+   20–33 Hz rumble, and the second harmonic coincides with the second cellos'
+   arco line: frames there fail the 5-of-6-peaks presence test. A looser
+   rule (fundamental a peak + 3 harmonics, below B1) was tried: it finds
+   2.5× more bass on this track and adds little on cello-only material, but
+   cannot help where the fundamental is under the rumble, and it changes
+   every score (Mahler 3 and Dvořák 8 move from red to yellow). Kept out
+   for now.
+3. A single pluck (0.4 s) never reached the 0.8 s a passage needed for a
+   score of its own: pizzicato was always grey.
+
+Fix (1.3): pizzicato is searched on its own comb up to `--pizz-fmax` 100 Hz
+(G2), and a pluck needs 5 frames (0.3 s) for a score. Bowed contexts and the
+track score keep the C2 ceiling, so the calibration does not move (Nelsons
+8.6, Mahler 3 3.3, Dvořák 8 3.9). Above C2 a plucked cello line can be
+counted (synthetic plucked cellos C♯2–G2: 15 notes in 6 min; G♯2 and above:
+none); the card says so.
+
+Result on the reference track: 21 plucks, among them 12.4, 19.1, 22.9 and
+33.8 s, each **red** (×coh 2.1–3.0 against the orchestra at rest), while
+the bowed bass reads ×1.13. The plucks reach the microphones far more
+directly than the rest of the orchestra: consistent with the user's ear and
+with a close pickup on the basses, not yet a proof of one. Synthetic recall
+is unchanged (pizz 4–11 of 17–27 found, ≤ 1 bowed note flagged).

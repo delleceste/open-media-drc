@@ -90,7 +90,7 @@ function mount(root) {
             h('div', { class: 'bd-fb-q' }, 'How deep do the basses sound right now?'),
             fbButtons, noteBox, msg, tapList),
         h('details', { class: 'bd-explain' }, h('summary', {}, 'How this works'),
-            h('p', {}, 'Nothing happens until you start a tracking session, for the recordings you mean to evaluate. During a session every track played is analysed in the background and kept on the music drive (a streamed track is fetched again, a local one copied), so the drive can travel with you. The analysis finds the passages where the double basses play alone, with other sections, under a tutti, or pizzicato. Each passage gets a depth score from 0 (forward, spot-mic’d) to 10 (back, in the hall): green 7 and above, yellow 4–7, red below 4. Grey passages are too short to score. Only solo and with-sections passages count towards the track score; tutti and pizzicato are shown but not yet calibrated.'),
+            h('p', {}, 'Nothing happens until you start a tracking session, for the recordings you mean to evaluate. During a session every track played is analysed in the background and kept on the music drive (a streamed track is fetched again, a local one copied), so the drive can travel with you. The analysis finds the passages where the double basses play alone, with other sections, under a tutti, or pizzicato. Each passage gets a depth score from 0 (forward, spot-mic’d) to 10 (back, in the hall): green 7 and above, yellow 4–7, red below 4. Grey passages are too short to score (a single plucked note is scored on its own). Only solo and with-sections passages count towards the track score; tutti and pizzicato are shown but not yet calibrated. Bowed basses are searched below C2 (65 Hz), where no cello reaches; plucked lines sit higher, so pizzicato is searched up to G2 (98 Hz), and there it may include cellos playing the same notes.'),
             h('p', {}, 'Tap Forward, In between or Back whenever the basses catch your ear. The box records the moment you heard (the DRC delay is taken off) and the passage under it, plus your note. Sessions, taps and analyses travel with the DR log’s sync, and are used to recalibrate the score.'),
             h('p', {}, 'Background: doc/BASS-DEPTH-DETECTOR.md in the open-media-drc repository.'))));
 
@@ -165,7 +165,7 @@ function mount(root) {
                 const x = c[ctx] || {};
                 return h('div', { class: 'bd-tr' }, h('span', {}, label), h('span', {}, num(x.seconds, 1)),
                     h('span', {}, num(x.coh_ratio)), h('span', {}, num(x.fund_db, 1, true)),
-                    h('span', { class: 'bd-muted' }, SCORED.has(ctx) ? 'in the score' : (ctx === 'pizzicato' && Number.isFinite(x.clarity_db) ? `${x.notes} notes, clarity ${num(x.clarity_db, 1, true)} dB` : 'not calibrated yet')));
+                    h('span', { class: 'bd-muted' }, SCORED.has(ctx) ? 'in the score' : (ctx === 'pizzicato' ? `${x.notes || 0} notes${Number.isFinite(x.clarity_db) ? `, clarity ${num(x.clarity_db, 1, true)} dB` : ''}; not in the score, may include cellos above C2` : 'not in the score yet')));
             }));
     }
 
