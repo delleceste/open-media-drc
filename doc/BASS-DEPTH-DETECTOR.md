@@ -173,3 +173,26 @@ Nothing supports "at the back": dry, mono, loud all read as front. Caveat: mono
 lows were standard for vinyl cutting in 1979, so centre/mono alone is no
 depth cue. A dark tone (few upper harmonics) can read as distance, but it can't be
 separated from the guitars in a full mix.
+
+## Case study 4 (2026-10-14): Dvořák 8/I, Budapest Festival Orch. / Fischer (DSD64) — label: weak depth (from memory)
+
+Only 7.7 s of exposed bass (G1 0:37, C2 1:22–1:30, B1 3:39–3:42, …), 5 notes.
+
+v1: GCC best +15.25 ms (z 5.4, just under threshold), AC "possible" at 10.1 ms.
+- AC 10.1 / 8.1 / 16.2 ms = G2, B2, B1 periods → pitch artefacts (G major movement).
+- **GCC +15.25 ms is a method artefact; this also explains case 2.** It is the
+  same lag as Mahler, in a different hall. It is the C2 period, and C2 carries
+  about half the note weight. At the lags where a heavy note is masked,
+  `pitch_masked_mean` averages fewer notes, so noise peaks are taller:
+  95th percentile of the envelope 3.3× the baseline where coverage is < 0.6,
+  2.2× where coverage is ≥ 0.95. The peak sits at coverage 0.49. The robust z
+  is computed over all lags as if the noise were uniform. No 60 s window shows it.
+  **Fix:** normalise the masked mean by its expected noise per lag
+  (env · Σm / √Σm²), or z-score per coverage bin.
+
+Cues (compare case 1 ×1.1–1.2 / 20–50 %, case 2 ×1.5–1.75 / 1–7 %):
+- coherence bass 0.59 vs orchestra 0.28 → **×2.1**
+- energy < 70 Hz in bass frames: median **3 %** (IQR 1–6 %)
+
+Both cues sit on the "not back" side, further out than Mahler, which matches the
+user's memory. So far 3 classical recordings, ordered consistently by both cues.
