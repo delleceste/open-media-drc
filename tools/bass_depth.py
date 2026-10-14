@@ -78,7 +78,7 @@ from scipy.signal import find_peaks
 
 # Bumped whenever results change: the box re-analyses tracks stored under an
 # older version, and calibration only compares results of one version.
-VERSION = "1.5"
+VERSION = "1.6"
 
 SR = 16000          # analysis rate: everything of interest is below 4 kHz
 NFFT = 4096         # 256 ms frames, 3.9 Hz bins: resolves 30 Hz fundamentals
@@ -437,8 +437,11 @@ def classify_contexts(mono, f0, dom, npk, energy, gate, opts, pizz_comb=None):
              "pizzicato": pizz}, onsets, env)
 
 
-def _coh(acc):
+def _coh(acc, weights=None):
     w = np.sqrt(acc["ll"] * acc["rr"])
+    if weights is not None:
+        return float((np.abs(acc["lr"]) / (w + EPS) * weights).sum()
+                     / (np.sum(weights) + EPS))
     return float(np.abs(acc["lr"]).sum() / (w.sum() + EPS))
 
 
@@ -457,7 +460,15 @@ def _equal_weight(XL, XR, band):
     return XL / p, XR / p
 
 
-def reference_coherence(L, R, frames, df):
+def _comb_mask(pitches, df):
+    bins = np.arange(NFFT // 2 + 1)
+    b0 = np.asarray(pitches)[:, None] / df
+    harmonic = np.rint(bins / b0)
+    return ((bins >= int(CTX_BAND[0] / df)) & (bins <= int(CTX_BAND[1] / df))
+            & (np.abs(bins - harmonic * b0) <= 1.0) & (harmonic >= 2))
+
+
+def reference_coherence(L, R, frames, df, pitches=None, weights=None):
     """L/R coherence of the orchestra where the basses do not play, in the
     band the bass harmonics are judged in."""
     acc = _acc_new()
@@ -466,56 +477,67 @@ def reference_coherence(L, R, frames, df):
     for s in range(0, len(frames), 256):
         fi = frames[s:s + 256]
         XL, XR = _equal_weight(spectra(L, fi), spectra(R, fi), band)
-        acc["lr"][band] += (np.conj(XL) * XR).sum(0)[band]
-        acc["ll"][band] += (np.abs(XL) ** 2).sum(0)[band]
-        acc["rr"][band] += (np.abs(XR) ** 2).sum(0)[band]
-    return _coh(acc)
+        mask = band if pitches is None else _comb_mask(pitches[s:s + 256], df)
+        acc["lr"] += (np.conj(XL) * XR * mask).sum(0)
+        acc["ll"] += (np.abs(XL) ** 2 * mask).sum(0)
+        acc["rr"] += (np.abs(XR) ** 2 * mask).sum(0)
+    return _coh(acc, weights)
 
 
 REF_DRAWS = 8          # orchestra draws per matched reference
-REF_PIECE = 64         # longest run of consecutive frames one draw piece takes
 
 
 class MatchedReference:
-    """The orchestra's coherence where the basses rest, measured over frames
-    shaped like the ones it is compared with: the same lengths of runs of
-    consecutive frames.  Coherence over few frames reads high whatever the
-    source (Mahler 2/II: the orchestra over 6-frame runs ×2.47 its long-run
-    value, bowed bass ×2.65), so a short passage judged against the long-run
-    value always looked forward."""
+    """Reference with the target's run lengths, per-frame comb masks and
+    frequency weights. Draws never reuse frames or split a run. An unmatched
+    context has no ratio. This controls sampling geometry, but source spectra
+    and temporal dependence can still differ: it is not a calibrated DRR."""
 
     def __init__(self, L, R, rest, df, seed=0):
         self.L, self.R, self.df = L, R, df
         self.runs = [(a, b) for a, b in runs(np.isin(np.arange(len(L) // HOP + 2), rest))]
-        self.lens = np.array([b - a for a, b in self.runs])
-        self.rng = np.random.default_rng(seed)
-        self.whole = reference_coherence(L, R, rest, df) if len(rest) else None
+        self.seed = seed
 
-    def _piece(self, n):
-        ok = np.flatnonzero(self.lens >= n)
-        if not len(ok):
-            ok = np.array([int(np.argmax(self.lens))])
-            n = int(self.lens[ok[0]])
-        w = self.lens[ok] - n + 1
-        a, b = self.runs[int(self.rng.choice(ok, p=w / w.sum()))]
-        s0 = a + int(self.rng.integers(0, b - a - n + 1))
-        return list(range(s0, s0 + n)), n
+    def _draw(self, frames, rng):
+        """Place whole runs without replacement; never split long runs.
 
-    def __call__(self, frames):
-        if self.whole is None or not len(self.lens):
+        Keep separate runs' FFT windows from overlapping in the reference.
+        If a complete matching draw cannot be made, abstain.
+        """
+        # Preserve short gaps too: frames less than one FFT apart share samples.
+        groups = np.split(np.arange(len(frames)),
+                          np.flatnonzero(np.diff(frames) >= NFFT // HOP) + 1)
+        available = list(self.runs)
+        picked = np.empty(len(frames), dtype=int)
+        guard = NFFT // HOP - 1
+        span = lambda indices: int(frames[indices[-1]] - frames[indices[0]] + 1)
+        for indices in sorted(groups, key=span, reverse=True):
+            n = span(indices)
+            choices = [(a, b) for a, b in available if b - a >= n]
+            if not choices:
+                return None
+            weights = np.array([b - a - n + 1 for a, b in choices], dtype=float)
+            a, b = choices[int(rng.choice(len(choices), p=weights / weights.sum()))]
+            start = int(rng.integers(a, b - n + 1))
+            picked[indices] = start + frames[indices] - frames[indices[0]]
+            available.remove((a, b))
+            if start - guard > a:
+                available.append((a, start - guard))
+            if start + n + guard < b:
+                available.append((start + n + guard, b))
+        return picked
+
+    def __call__(self, frames, pitches=None, weights=None):
+        if not len(frames) or not self.runs:
             return None
-        m = np.zeros(int(frames.max()) + 2, bool)
-        m[frames] = True
-        need = [b - a for a, b in runs(m)]
+        # A query is deterministic and independent of previous contexts/blocks.
+        rng = np.random.default_rng(np.random.SeedSequence([self.seed, *map(int, frames)]))
         vals = []
         for _ in range(REF_DRAWS):
-            pick = []
-            for n in need:
-                while n > 0:
-                    got, k = self._piece(min(n, REF_PIECE))
-                    pick += got
-                    n -= k
-            vals.append(reference_coherence(self.L, self.R, np.array(pick), self.df))
+            pick = self._draw(frames, rng)
+            if pick is None:
+                return None
+            vals.append(reference_coherence(self.L, self.R, pick, self.df, pitches, weights))
         return float(np.median(vals))
 
 
@@ -547,11 +569,10 @@ def context_cues(L, R, f0, frames, df, coh_ref):
     for s in range(0, len(frames), 256):
         fi = frames[s:s + 256]
         XL, XR = _equal_weight(spectra(L, fi), spectra(R, fi), band)
+        combs = _comb_mask(f0[fi], df)
         for j, i in enumerate(fi):
             b0 = f0[i] / df
-            r = bins / b0
-            comb = (band & (np.abs(r - np.rint(r)) * b0 <= 1.0)
-                    & (np.rint(r) >= 2))
+            comb = combs[j]
             xl, xr = XL[j], XR[j]
             acc["lr"][comb] += (np.conj(xl) * xr)[comb]
             acc["ll"][comb] += (np.abs(xl) ** 2)[comb]
@@ -565,7 +586,7 @@ def context_cues(L, R, f0, frames, df, coh_ref):
             fund.append(10 * np.log10(h[0] / (np.mean(h[1:]) + EPS) + EPS))
     cc = _coh(acc)
     if callable(coh_ref):
-        coh_ref = coh_ref(np.asarray(frames))
+        coh_ref = coh_ref(np.asarray(frames), f0[frames], np.sqrt(acc["ll"] * acc["rr"]))
     return {"coh_comb": cc, "coh_ref": coh_ref,
             "coh_ratio": cc / (coh_ref + EPS) if coh_ref else None,
             "fund_db": float(np.median(fund)) if fund else None,
@@ -614,14 +635,14 @@ def context_blocks(L, R, t_frame, f0s, masks, coh_ref):
                    "end": round(float(t_frame[b - 1] + NFFT / 2 / SR), 2),
                    "seconds": round(float(len(fr) * HOP / SR), 2)}
             least = PIZZ_BLOCK_MIN_FRAMES if name == "pizzicato" else BLOCK_MIN_FRAMES
-            if len(fr) >= least and coh_ref:
+            if len(fr) >= least:
                 c = context_cues(L, R, f0s[name], fr, df, coh_ref)
-                d = depth_score([{"solo": {"seconds": blk["seconds"], **c}}])
-                blk.update(coh_ratio=round(c["coh_ratio"], 3),
-                           fund_db=round(c["fund_db"], 2),
-                           balance_db=round(c["balance_db"], 2),
-                           balance_fund_db=round(c["balance_fund_db"], 2),
-                           score=round(d["score"], 2), band=d["band"])
+                d = depth_score([{name: {"seconds": blk["seconds"], **c}}])
+                for key in ("coh_comb", "coh_ref", "coh_ratio", "fund_db", "balance_db", "balance_fund_db"):
+                    blk[key] = round(c[key], 3) if c[key] is not None else None
+                if d is not None:
+                    blk.update(score=round(d["score"], 2), band=d["band"],
+                               low_material=d["low_material"], experimental=True)
             blocks.append(blk)
     blocks.sort(key=lambda x: (x["start"], CONTEXTS.index(x["context"])))
     return blocks
@@ -635,8 +656,7 @@ def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts, pizz_comb=
     f0s = {name: f0 for name in CONTEXTS}
     if pizz_comb is not None:
         f0s["pizzicato"] = pizz_comb[0]
-    rest = np.flatnonzero(gate & ~masks["solo"] & ~masks["with-sections"]
-                          & ~masks["tutti"])
+    rest = reference_frames(gate, masks)
     coh_ref = MatchedReference(L, R, rest, df) if len(rest) >= 20 else None
     out = {}
     for name in CONTEXTS:
@@ -657,6 +677,14 @@ def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts, pizz_comb=
         out[name] = c
     out["blocks"] = context_blocks(L, R, t_frame, f0s, masks, coh_ref)
     return out, masks
+
+
+def reference_frames(gate, masks):
+    """No detected bass, including pizzicato; exclude overlapping FFT windows."""
+    playing = np.logical_or.reduce(list(masks.values()))
+    guard = NFFT // HOP - 1
+    contaminated = np.convolve(playing.astype(int), np.ones(2 * guard + 1), mode="same") > 0
+    return np.flatnonzero(gate & ~contaminated)
 
 
 # ---------------------------------------------------------------- score
@@ -680,17 +708,18 @@ def depth_score(ctxs):
     for c in ctxs:
         for k in ("solo", "with-sections"):
             x = c.get(k, {})
-            if x.get("coh_ratio"):
+            if x.get("coh_ratio") is not None and x.get("seconds", 0) > 0:
                 coh.append((x["seconds"], x["coh_ratio"]))
         x = c.get("solo", {})
-        if x.get("fund_db") is not None:
+        if x.get("fund_db") is not None and x.get("seconds", 0) > 0:
             fund.append((x["seconds"], x["fund_db"]))
     if not coh:
         return None
     ratio = np.average([v for _, v in coh], weights=[s for s, _ in coh])
     s_coh = 10 * (SCORE_COH[1] - ratio) / (SCORE_COH[1] - SCORE_COH[0])
     out = {"coh_ratio": float(ratio), "seconds": float(sum(s for s, _ in coh)),
-           "coh_score": float(np.clip(s_coh, 0, 10))}
+           "coh_score": float(np.clip(s_coh, 0, 10)), "experimental": True,
+           "fund_seconds": float(sum(s for s, _ in fund))}
     score = out["coh_score"]
     if fund:
         fd = np.average([v for _, v in fund], weights=[s for s, _ in fund])
@@ -702,7 +731,8 @@ def depth_score(ctxs):
     out["score"] = float(score)
     out["band"], out["meaning"] = next((b, m) for t, b, m in SCORE_BANDS
                                        if score >= t)
-    out["low_material"] = out["seconds"] < SCORE_MIN_S
+    out["low_material"] = (out["seconds"] < SCORE_MIN_S
+                           or bool(fund) and out["fund_seconds"] < SCORE_MIN_S)
     return out
 
 
@@ -902,10 +932,10 @@ def fmt_depth(d):
     dot = "●"
     if sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
         dot = f"{ANSI[d['band']]}●\033[0m"
-    s = (f"{d['score']:.1f}/10 {dot} {d['band']} ({d['meaning']}) — "
+    s = (f"experimental {d['score']:.1f}/10 {dot} {d['band']} ({d['meaning']}) — "
          f"×coh {d['coh_ratio']:.2f}")
     if "fund_db" in d:
-        s += f", solo fund {d['fund_db']:+.1f} dB"
+        s += f", solo fund {d['fund_db']:+.1f} dB ({d.get('fund_seconds', 0):.1f}s)"
     s += f", {d['seconds']:.0f}s"
     if d["low_material"]:
         s += " — LOW MATERIAL, provisional"

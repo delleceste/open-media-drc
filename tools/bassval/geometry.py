@@ -105,8 +105,12 @@ def main_pair(setup: str, centre, tilt_deg: float = -15.0) -> tuple[Mic, Mic]:
     c = np.asarray(centre, float)
     half = np.array([s["spacing"] / 2.0, 0.0, 0.0])
     a = PATTERN[s["pattern"]]
-    left = Mic(c + half, _axis(+s["angle"], tilt_deg), a)
-    right = Mic(c - half, _axis(-s["angle"], tilt_deg), a)
+    # Tilt the complete array rigidly about x; preserve the included angle.
+    tilt = np.radians(tilt_deg)
+    rotation = np.array([[1, 0, 0], [0, np.cos(tilt), np.sin(tilt)],
+                         [0, -np.sin(tilt), np.cos(tilt)]])
+    left = Mic(c + half, rotation @ _axis(+s["angle"]), a)
+    right = Mic(c - half, rotation @ _axis(-s["angle"]), a)
     return left, right
 
 

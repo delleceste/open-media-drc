@@ -9,6 +9,8 @@ is 4.5 m from the back wall, about 10 m from the main pair.
 from __future__ import annotations
 
 import itertools
+import hashlib
+import json
 from dataclasses import asdict, dataclass
 
 
@@ -21,11 +23,15 @@ class Scene:
     spot: str = "none"           # none | aligned | unaligned
     spot_db: float = -6.0        # spot's basses relative to the main pair's
     seed: int = 1
+    section_mode: str = "recorded"  # independent recorded parts; copies is a diagnostic
 
     @property
     def key(self) -> str:
-        return (f"{self.piece}-{self.setup}-rt{self.rt_mid:.1f}-b{self.bass_shift:+.0f}"
-                f"-{self.spot}{'' if self.spot == 'none' else f'{self.spot_db:+.0f}'}-s{self.seed}")
+        identity = asdict(self)
+        if self.spot == "none":
+            identity.pop("spot_db")
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
+        return f"{self.piece}-{self.setup}-{self.spot}-s{self.seed}-{digest}"
 
     def as_dict(self) -> dict:
         return asdict(self) | {"key": self.key}
@@ -45,9 +51,9 @@ GRIDS = {
 }
 
 
-def grid(name: str, pieces: list[str], seed: int = 1) -> list[Scene]:
+def grid(name: str, pieces: list[str], seed: int = 1, section_mode: str = "recorded") -> list[Scene]:
     """All scenes of a named grid for the given pieces."""
     g = GRIDS[name]
-    return [Scene(piece, setup, rt, shift, spot, seed=seed)
+    return [Scene(piece, setup, rt, shift, spot, seed=seed, section_mode=section_mode)
             for piece, setup, rt, shift, spot in itertools.product(
                 pieces, g["setup"], g["rt_mid"], g["bass_shift"], g["spot"])]

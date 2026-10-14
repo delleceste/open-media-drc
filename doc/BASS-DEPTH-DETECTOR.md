@@ -4,11 +4,20 @@ Goal: tell from an orchestral recording whether the double basses sit at the
 back of the stage or are spot-mic'd "into the mix". If it works, it becomes a
 real omdrc tool (it lives in `tools/` for that reason).
 
-Status as of 2026-10-14: spot-mic detector (v1.1) plus per-context depth
-cues and a **0–10 depth score** with a 🟢 / 🟡 / 🔴 marker. The score is
-calibrated on only three recordings labelled by ear. Treat it as provisional
-and recalibrate it (`SCORE_*` constants in the script) as labelled material
-comes in. The scoreboard below collects every recording analysed so far.
+Current implementation: **detector 1.6 / bassval renderer 2**. The audit
+found uncontrolled randomisation in the renderer, unmatched frequency
+sampling in the reference and pizzicato contaminating the reference pool.
+These are corrected; passage scoring now follows the track's context rules,
+and confidence flags account for the seconds supporting each cue.
+
+The 0–10 score remains **experimental**. The historical scoreboard and scene
+results below describe earlier versions. They do not validate the revised
+implementation, and the old simulation's proposed explanations for failure
+must be retested with the corrected controls. See
+[BASS-DEPTH-AUDIT-FIXES.md](BASS-DEPTH-AUDIT-FIXES.md) for changes, tests and
+current recording reruns. Minnesota/Vänskä's critical reputation is background,
+not a ground-truth depth label; the listener's own tentative impression is that
+it may not be particularly deep.
 
 Every algorithm (detector, live sessions, calibration, validation) is
 described in [BASS-DEPTH-ALGORITHMS.md](BASS-DEPTH-ALGORITHMS.md).
@@ -64,7 +73,7 @@ sessions"):
 change alters them, so the boxes re-analyse and calibration compares like
 with like.
 
-## Scoreboard
+## Historical scoreboard (detector 1.4)
 
 Higher score = basses further back, in the hall. 🟢 ≥ 7 back / natural,
 🟡 4–7 in between, 🔴 < 4 forward. "Material" = seconds of solo plus
@@ -840,6 +849,14 @@ those terms.
    labelled recordings; decide then whether the depth score stays.
 
 ## Validation against known geometry: first results (2026-10-14)
+
+**Historical renderer-1 results; causal interpretation withdrawn pending rerun.**
+The renderer did not hold other players and main responses fixed when distance,
+hall or spot changed. The matched reference also had frequency-mask bias. The
+numbers below are preserved as the development record, not as validation of
+renderer 2 or proof of why a cue fails. The claim that contexts themselves were
+validated was too strong: the old suite had no comparison with source activity.
+
 
 `tools/bassval` (algorithms: BASS-DEPTH-ALGORITHMS.md §4), detector 1.5,
 Aalto anechoic parts of Beethoven 7/I, Bruckner 8/II and Mahler 1/IV,

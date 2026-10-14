@@ -153,7 +153,10 @@ def late_tails(mics: list[Mic], hall: Hall, fs: int, length: int, start: int,
     n = length - start
     t = np.arange(n) / fs
     bands = _band_filters(hall.rt60.keys(), fs)
-    noises = [rng.standard_normal(n) for _ in mics]
+    # Fixed seed per capsule: changing the requested length must not change
+    # the other capsule's random excitation. Generate relative to tail onset.
+    seeds = rng.integers(0, 2**63, size=len(mics), dtype=np.int64)
+    noises = [np.random.default_rng(int(seed)).standard_normal(n) for seed in seeds]
     shaped = []
     for x in noises:
         y = np.zeros(n)

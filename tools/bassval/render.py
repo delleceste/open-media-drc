@@ -23,6 +23,7 @@ at the main pair (from the impulse responses), and the spot's true Δ.
 from __future__ import annotations
 
 import math
+import hashlib
 
 import numpy as np
 from scipy.signal import fftconvolve
@@ -33,6 +34,14 @@ from . import geometry, room, stems
 SECTION_PLAYERS = {"vl1": 8, "vl2": 6, "vla": 4, "vc": 4, "kb": 4}
 MAIN_CENTRE = (0.0, 14.0, 3.5)     # x from the centre line, y, z
 SPOT_DISTANCE = 1.5
+VERSION = "2"
+
+
+def random_stream(seed, *identity):
+    """Stable independent streams; adding a mic/source cannot move other players."""
+    digest = hashlib.sha256("/".join(map(str, identity)).encode()).digest()
+    return np.random.default_rng(np.random.SeedSequence(
+        [seed, *np.frombuffer(digest, dtype="<u4").tolist()]))
 
 
 def pan_gains(position: float) -> tuple[float, float]:
@@ -41,10 +50,10 @@ def pan_gains(position: float) -> tuple[float, float]:
     return math.sin(a), math.cos(a)
 
 
-def render_scene(scene, parts: dict[str, list[np.ndarray]], fs: int) -> tuple[np.ndarray, dict]:
+def render_scene(scene, parts: dict[str, list[np.ndarray]], fs: int,
+                 components: dict | None = None) -> tuple[np.ndarray, dict]:
     """The stereo recording (2, n) of `scene` (scenes.Scene) made from the
     anechoic `parts` of its piece, and its ground truth."""
-    rng = np.random.default_rng(scene.seed)
     hall = geometry.hall_with_rt(scene.rt_mid)
     centre = np.array([hall.width / 2 + MAIN_CENTRE[0], MAIN_CENTRE[1], MAIN_CENTRE[2]])
     left, right = geometry.main_pair(scene.setup, centre)
@@ -56,32 +65,45 @@ def render_scene(scene, parts: dict[str, list[np.ndarray]], fs: int) -> tuple[np
 
     main = np.zeros((2, n + length - 1))
     main_kb = np.zeros((2, n + length - 1))
+    other_main = np.zeros_like(main)
+    dry_bass = np.zeros(n)
     spot_all = np.zeros(n + length - 1) if spot else None
     spot_kb = np.zeros(n + length - 1) if spot else None
     kb_dist, kb_drr = [], []
     for section, recorded in sorted(parts.items()):
-        count = SECTION_PLAYERS.get(section, len(recorded))
-        players = stems.section_players(recorded, count, fs, rng)
-        pos = geometry.positions(section, len(players), hall, rng,
+        count = (SECTION_PLAYERS.get(section, len(recorded))
+                 if scene.section_mode == "copies" else len(recorded))
+        players = stems.section_players(recorded, count, fs,
+                                        random_stream(scene.seed, section, "performance"))
+        pos = geometry.positions(section, len(players), hall,
+                                 random_stream(scene.seed, section, "layout"),
                                  shift if section == "kb" else (0.0, 0.0))
-        for x, p in zip(players, pos):
-            pr = room.pair_responses(p, [left, right], hall, fs, rng, length)
+        for player, (x, p) in enumerate(zip(players, pos)):
+            pr = room.pair_responses(p, [left, right], hall, fs,
+                                    random_stream(scene.seed, section, player, "main"), length)
             for ch in (0, 1):
                 y = fftconvolve(x, pr["h"][ch])
                 main[ch] += y
                 if section == "kb":
                     main_kb[ch] += y
+                else:
+                    other_main[ch] += y
             if section == "kb":
+                dry_bass[:len(x)] += x
                 kb_dist.append(float(np.linalg.norm(p - centre)))
                 kb_drr.append(10 * math.log10(sum(pr["direct_e"]) / sum(pr["reverb_e"])))
             if spot is not None:
-                ys = fftconvolve(x, room.pair_responses(p, [spot], hall, fs, rng, length)["h"][0])
+                ys = fftconvolve(x, room.pair_responses(p, [spot], hall, fs,
+                    random_stream(scene.seed, section, player, "spot"), length)["h"][0])
                 spot_all += ys
                 if section == "kb":
                     spot_kb += ys
 
     truth = {"bass_distance_m": float(np.mean(kb_dist)), "bass_drr_db": float(np.mean(kb_drr)),
-             "bass_x_m": float(kb_centre[0] - centre[0]), "spot": scene.spot, "spot_delta_ms": None}
+             "bass_x_m": float(kb_centre[0] - centre[0]), "spot": scene.spot, "spot_delta_ms": None,
+             "renderer_version": VERSION, "section_mode": scene.section_mode,
+             "bass_independent_parts": len(parts.get("kb", [])),
+             "drr_definition": "mean per-player broadband RIR energy ratio"}
     out = main
     if spot is not None:
         # level: the spot's basses at `spot_db` relative to the main pair's basses
@@ -96,5 +118,10 @@ def render_scene(scene, parts: dict[str, list[np.ndarray]], fs: int) -> tuple[np
         shift_n = int(round(delta * fs)) if scene.spot == "aligned" else 0
         s = np.concatenate([np.zeros(shift_n), spot_all[:len(spot_all) - shift_n]]) * g
         out = main + np.vstack([gl * s, gr * s])
-    out = out / (np.abs(out).max() + 1e-12) * 0.5
+    scale = 0.5 / (np.abs(out).max() + 1e-12)
+    if components is not None:
+        # Unnormalised controls: final peak normalisation depends on the scene.
+        components.update(main=main, bass_main=main_kb, other_main=other_main,
+                          dry_bass=dry_bass, output_scale=scale)
+    out = out * scale
     return out, truth

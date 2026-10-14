@@ -21,6 +21,7 @@ The report asks, for each cue, the question that matters:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sys
 from collections import defaultdict
@@ -39,10 +40,49 @@ CUES = {
     "fund_db": +1,                     # the track's solo fundamental
     **{f"{c}.coh_ratio": -1 for c in CONTEXTS},
     **{f"{c}.fund_db": +1 for c in CONTEXTS},
+    **{f"{c}.coh_comb": -1 for c in CONTEXTS},
+    "pizzicato.clarity_db": -1,
+    "fixed.bass.coh_comb": -1,
+    "fixed.mix.coh_comb": -1,
+    "fixed.bass.fund_db": +1,
+    "fixed.mix.fund_db": +1,
 }
 
 
-def detector_cues(x: np.ndarray, name: str) -> dict:
+def source_selection(dry: np.ndarray):
+    """Frames/pitches selected on the unchanged input bass performance.
+
+    This is a diagnostic independent of mixture detection, not annotated
+    pitch ground truth. Keep sustained, exposed source frames and exclude
+    128 ms at each selected boundary to tolerate propagation delays.
+    """
+    nfr = max(0, 1 + (len(dry) - bass_depth.NFFT) // bass_depth.HOP)
+    if nfr < 5:
+        return np.zeros(nfr), np.array([], dtype=int)
+    opts = bass_depth.build_parser().parse_args([])
+    f0, dom, peaks, energy = bass_depth.bass_salience(dry, nfr, opts.fmin, opts.fmax)
+    selected = ((energy > np.percentile(energy, 99) * 10 ** (-opts.gate_db / 10))
+                & (dom >= opts.dom) & (peaks >= opts.min_peaks))
+    stable = np.abs(np.diff(np.log2(f0), prepend=np.log2(f0[0]))) < 1 / 24
+    selected &= stable
+    selected = np.convolve(selected.astype(int), np.ones(5), mode="same") == 5
+    return f0, np.flatnonzero(selected)
+
+
+def fixed_cues(components: dict) -> dict:
+    f0, frames = source_selection(components["dry_bass"])
+    identity = np.column_stack((frames, f0[frames])).astype("<f8").tobytes()
+    out = {"fixed.frames": len(frames), "fixed.selection_sha256": hashlib.sha256(identity).hexdigest()}
+    if len(frames) < 20:
+        return out
+    for label, key in (("bass", "bass_main"), ("mix", "main")):
+        c = bass_depth.context_cues(*components[key], f0, frames, bass_depth.SR / bass_depth.NFFT, None)
+        for cue in ("coh_comb", "fund_db", "balance_db", "balance_fund_db"):
+            out[f"fixed.{label}.{cue}"] = c[cue]
+    return out
+
+
+def detector_cues(x: np.ndarray, name: str, components: dict | None = None) -> dict:
     """Run the detector on a (2, n) signal at its own rate and flatten what
     it reports into {cue: value}."""
     opts = bass_depth.build_parser().parse_args([])
@@ -54,10 +94,13 @@ def detector_cues(x: np.ndarray, name: str) -> dict:
            "delay_ms": res.get("delay_ms"), "version": res.get("version")}
     for c in CONTEXTS:
         ctx = (res.get("contexts") or {}).get(c, {})
-        for k in ("seconds", "coh_ratio", "fund_db", "balance_db", "balance_fund_db"):
+        for k in ("seconds", "coh_comb", "coh_ref", "coh_ratio", "fund_db", "balance_db",
+                  "balance_fund_db", "clarity_db", "clarity_notes"):
             out[f"{c}.{k}"] = ctx.get(k)
     gcc = (res.get("gcc") or {}).get("peaks") or []
     out["gcc_best"] = [{k: p.get(k) for k in ("lag_ms", "z", "rel_db")} for p in gcc[:3]]
+    if components is not None:
+        out.update(fixed_cues(components))
     return out
 
 
@@ -81,9 +124,10 @@ def report_distance(rows: list[dict]) -> list[str]:
     groups = defaultdict(list)
     for r in rows:
         s = r["scene"]
-        groups[(s["piece"], s["setup"], s["rt_mid"])].append(r)
+        groups[(s["piece"], s["setup"], s["rt_mid"], s.get("seed", 1),
+                s.get("section_mode", "copies"))].append(r)
     groups = {k: v for k, v in groups.items() if len({r["scene"]["bass_shift"] for r in v}) >= 3}
-    lines = [f"Distance: {len(groups)} groups (piece × main pair × hall), "
+    lines = [f"Distance: {len(groups)} groups (piece × main pair × hall × seed × section mode), "
              f"{sum(len(v) for v in groups.values())} scenes",
              f"{'cue':24} {'expect':>6} {'mean ρ':>7} {'right way':>9} "
              f"{'ρ vs dist (all)':>16} {'ρ vs DRR (all)':>15}"]
@@ -136,32 +180,55 @@ def report_spot(rows: list[dict]) -> list[str]:
 
 def report_hall(rows: list[dict]) -> list[str]:
     rows = [r for r in rows if r["scene"]["spot"] == "none" and r["scene"]["setup"] == "ORTF"]
-    rts = sorted({r["scene"]["rt_mid"] for r in rows})
-    if len(rts) < 3:
+    groups = defaultdict(list)
+    for r in rows:
+        s = r["scene"]
+        groups[(s["piece"], s.get("seed", 1), s.get("section_mode", "copies"))].append(r)
+    if not any(len({r["scene"]["rt_mid"] for r in v}) >= 3 for v in groups.values()):
         return []
     lines = ["Hall vs distance: spread of each cue across halls (fixed distance) "
-             "over its spread across distances (fixed hall)"]
+             "over its spread across the same distances in every hall (paired by seed)"]
     for cue in CUES:
         by_hall, by_dist = [], []
-        for piece in {r["scene"]["piece"] for r in rows}:
-            pr = [r for r in rows if r["scene"]["piece"] == piece]
-            for shift in {r["scene"]["bass_shift"] for r in pr}:
-                v = [r["cues"].get(cue) for r in pr if r["scene"]["bass_shift"] == shift]
-                v = [a for a in v if a is not None]
-                if len(v) >= 2:
-                    by_hall.append(np.ptp(v))
-            for rt in rts:
-                v = [r["cues"].get(cue) for r in pr if r["scene"]["rt_mid"] == rt]
-                v = [a for a in v if a is not None]
-                if len(v) >= 2:
-                    by_dist.append(np.ptp(v))
+        for pr in groups.values():
+            rts = sorted({r["scene"]["rt_mid"] for r in pr})
+            if len(rts) < 3:
+                continue
+            values = {(r["scene"]["rt_mid"], r["scene"]["bass_shift"]): r["cues"].get(cue) for r in pr}
+            shifts = sorted(set.intersection(*[
+                {shift for (rt0, shift), value in values.items() if rt0 == rt and value is not None}
+                for rt in rts]))
+            if len(shifts) < 2:
+                continue
+            matrix = np.array([[values[rt, shift] for shift in shifts] for rt in rts])
+            by_hall.extend(np.ptp(matrix, axis=0))
+            by_dist.extend(np.ptp(matrix, axis=1))
         if by_hall and by_dist and np.mean(by_dist) > 0:
             lines.append(f"  {cue:24} hall/distance spread {np.mean(by_hall) / np.mean(by_dist):5.2f}")
     return lines
 
 
 def report(rows: list[dict]) -> str:
-    out = []
+    # Grid files share controls. Never count duplicate observations twice.
+    unique = {}
+    for r in rows:
+        key = r["scene"]["key"]
+        if key in unique and unique[key] != r:
+            raise ValueError(f"Conflicting results for {key}; use separate result files")
+        unique[key] = r
+    rows = list(unique.values())
+    signatures = {json.dumps(r.get("provenance", {}).get("algorithm"), sort_keys=True) for r in rows}
+    if len(signatures) > 1:
+        raise ValueError("Cannot compare results from different algorithm versions")
+    by_piece = defaultdict(set)
+    for r in rows:
+        by_piece[r["scene"]["piece"]].add(json.dumps(r.get("provenance"), sort_keys=True))
+    if any(len(v) > 1 for v in by_piece.values()):
+        raise ValueError("Cannot compare different input recordings/excerpts for the same piece")
+    out = ["Experimental cues; these measurements do not validate perceived depth."]
+    if any(r["truth"].get("bass_independent_parts", 0) < 2
+           or r["scene"].get("section_mode", "copies") == "copies" for r in rows):
+        out.append("Coherence limitation: single recorded bass part and/or duplicated performances present.")
     for part in (report_distance(rows), report_spot(rows), report_hall(rows)):
         if part:
             out += part + [""]

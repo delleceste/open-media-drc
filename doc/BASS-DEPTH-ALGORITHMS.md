@@ -1,6 +1,6 @@
 # Bass depth: algorithms
 
-Every algorithm of the bass depth work, as implemented. The journal of how
+Detector 1.6 / bassval renderer 2. Every algorithm of the bass depth work, as implemented. The journal of how
 it was arrived at, the case studies and the open questions are in
 [BASS-DEPTH-DETECTOR.md](BASS-DEPTH-DETECTOR.md); this file is the
 reference for what the code does and why.
@@ -28,14 +28,13 @@ the 30–66 Hz fundamentals of the basses.
 
 A bowed or plucked bass note is a harmonic comb: energy at f0, 2·f0, 3·f0…
 For every frame, candidate f0s are tried on a 0.1-semitone grid between
-`fmin` and `fmax` (29–66 Hz for bowed contexts: below the cello's lowest
+`fmin` and `fmax` (29–66 Hz for bowed contexts, including the cello's lowest
 note, C2 = 65.4 Hz). For each candidate:
 
 - **dominance** = energy on its first 6 harmonics (3-bin sums) / energy in
   25–1500 Hz (`SAL_BAND`);
 - **peaks** = how many of those 6 harmonics stand 10 dB above a 31-bin
-  running median (`prom_db`); with `with_fund=True`, whether harmonic 1
-  itself is one of them;
+  running median (`prom_db`); there is no separate fundamental-presence gate;
 - **odd share**: a subharmonic comb (f0/2 of a real note) catches the even
   half only, so the rank is dominance × min(1, odd share / 0.3) × peaks.
 
@@ -68,38 +67,53 @@ removes single-frame flicker. Then:
 Over the frames of a context or passage:
 
 - **Equal-weight frames** (`_equal_weight`): each frame's spectra are
-  divided by the frame's band power (80–700 Hz, `CTX_BAND`, geometric mean
-  of L and R), so a few loud seconds cannot outweigh many quiet ones.
-- **coh_comb**: magnitude-squared-style coherence on the comb bins
+  divided by the square root of its geometric-mean L/R band power
+  (80–700 Hz, `CTX_BAND`), so a few loud seconds cannot outweigh many quiet ones.
+- **coh_comb**: weighted magnitude coherence (not magnitude-squared coherence) on the comb bins
   (harmonics ≥ 2 within 80–700 Hz, ±1 bin): Σ|ΣL*·R| / Σ√(ΣL²·ΣR²), summed
   over frames then bins (`_coh`). Estimation follows Carter, Knapp &
-  Nuttall (1973). A close pickup is coherent between channels; diffuse
-  hall sound is not (Cook et al. 1955).
-- **coh_ratio (×coh)**: coh_comb divided by the orchestra's coherence where
-  the basses rest, measured by a **matched reference** (`MatchedReference`):
-  coherence measured over few frames reads high whatever the source, so the
-  orchestra is measured over frames of the same shape: for each run of
-  consecutive frames in the set compared, a random run of the same length
-  (pieces of ≤ 64) from where the basses rest; 8 draws, median. Without
-  it, a single pluck read ×2–3 on orchestra noise alone.
+  Nuttall (1973), using magnitude rather than its square. Diffuse-field
+  coherence depends on frequency, microphone spacing and patterns; it is
+  not generally zero. Stable harmonic sources can remain highly coherent
+  through reverberation, so this is not a direct depth measurement.
+- **coh_ratio (×coh)**: coh_comb divided by a matched reference
+  (`MatchedReference`). The reference uses exactly the target's per-frame
+  harmonic masks, complete consecutive-run lengths (including short gaps whose FFT windows overlap),
+  and frequency weights
+  (the target's √(ΣL²·ΣR²)). Eight deterministic draws, median; no frame is
+  reused within a draw and runs are never split. Different reference runs
+  have a three-frame guard so their FFT windows do not overlap. Queries do
+  not depend on earlier queries. If any complete draw cannot fit, the ratio
+  is absent; raw coherence, spectrum and balance remain available.
+  Reference candidates exclude **all four** detected contexts, including
+  pizzicato, and three frames on each side to avoid overlapping windows.
+  This controls mask/count bias, not every source-dependent statistical
+  bias. Undetected bass or a reverberant tail can still contaminate a
+  reference; this is not a calibrated distance or DRR measurement.
 - **fund_db**: per frame, the fundamental's level over the mean of
-  harmonics 2–6 (mono, ±1 bin), median over frames. A heuristic (distance
+  harmonics 2–6 (mono, maximum within ±1 bin for each harmonic), median over frames. A heuristic (distance
   and hall favour the fundamental, a close mic the upper harmonics), register
   and EQ dependent.
 - **balance_db** / **balance_fund_db**: R−L level on the comb harmonics /
   on the fundamental, equal-weight frames. Position, not depth. Level
-  ratios are not biased by short passages. The fundamental is the basses
-  alone below C2 or when cellos double an octave up; the harmonics can mix
-  in the cellos.
+  ratios do not have the same finite-sample bias as coherence. Below C2,
+  cello fundamentals are excluded, but other low instruments and noise can
+  still contribute. Harmonics can mix in the cellos. Neither measure alone
+  identifies the instrument or establishes its perceived position.
 - **clarity_db** (pizzicato, `pizz_clarity`): per isolated pluck, comb
-  energy in the first 80 ms over 96–600 ms: a per-note C80 (ISO 3382-1).
+  energy in the first 80 ms over 96–600 ms. This is a truncated musical
+  attack/tail heuristic inspired by C80, not ISO 3382-1 clarity measured
+  from a room impulse response.
 
 ### 1.5 Passages for the timeline (`context_blocks`)
 
 Runs of each context closer than 2 s (`BLOCK_GAP_S`) are merged into
-passages. A passage gets its own cues and score when it has ≥ 12 frames
+passages. A passage gets its own descriptive cues when it has ≥ 12 frames
 (0.8 s, `BLOCK_MIN_FRAMES`), a pizzicato passage ≥ 5 (one pluck,
-`PIZZ_BLOCK_MIN_FRAMES`); shorter ones are listed without (grey).
+`PIZZ_BLOCK_MIN_FRAMES`). Only solo and with-sections receive scores,
+using their actual context and the same rule as the track; tutti and
+pizzicato remain unscored. A missing matching reference also leaves a
+passage unscored, without suppressing its balance or spectral cues.
 
 ### 1.6 The depth score (`depth_score`)
 
@@ -108,8 +122,10 @@ recordings): seconds-weighted ×coh mapped linearly 1.0 → 10, 2.2 → 0
 (`SCORE_COH`), seconds-weighted solo fund_db mapped −15 dB → 0, +10 dB → 10
 (`SCORE_FUND`), both clipped; score = ⅔ coherence part + ⅓ fundamental part
 (`SCORE_W_FUND`), or the coherence part alone without solo. Bands: ≥ 7
-green, 4–7 yellow, < 4 red (`SCORE_BANDS`); under 10 s of material it is
-marked provisional. The anchors were set by hand on three recordings: the
+green, 4–7 yellow, < 4 red (`SCORE_BANDS`); under 10 s of coherence material **or of solo material contributing the
+fundamental** it is marked provisional. `fund_seconds` exposes that separate
+support. All scores carry `experimental: true`; existing anchors are retained
+for comparison and are not recalibrated to fit the two recordings. The anchors were set by hand on three recordings: the
 score is **unproven** (section 4 is how it gets tested).
 
 ### 1.7 The spot-microphone check
@@ -205,12 +221,21 @@ repository).
 
 ### 4.1 Parts and sections (`stems.py`)
 
-Each part is one player, recorded anechoically by several microphones; the
-frontal one (mic 6) is used. File names are parsed by the longest known
+Each part is one recorded performance, captured by several microphones;
+the frontal one (mic 6) is used. File names are parsed by the longest known
 part name (`parse_name`: "vla" is the viola, not "vl" + divisi "a").
-A section of N players repeats the recorded parts with 5–30 ms offsets and
-±1.5 dB (`section_players`). Copies of one performance are more alike than
-different players: a limitation of the material.
+
+The default `--section-mode recorded` uses each supplied part once. It does
+not invent independent players from copies. `--section-mode copies` retains
+the older section sizes with 5–30 ms fixed offsets and ±1.5 dB
+(`section_players`) as an explicitly labelled diagnostic. Independent-part
+counts and section mode are saved; reports warn about copies and single
+bass performances. A single sustained harmonic source can remain coherent
+through reverberation, so neither mode establishes how a real section behaves.
+
+The Aalto source paper reports residual room effects below 100 Hz; the loader
+does not compensate them. Source directionality and low-frequency source-room
+colour remain limitations of these stimuli.
 
 ### 4.2 Geometry (`geometry.py`)
 
@@ -220,7 +245,7 @@ from the wall behind the orchestra; looking at the stage from the
 audience, +x is left. American seating (`SECTIONS`): first violins left
 front, cellos and violas right, basses back right (centre 4.5 m from the
 back wall). Players at 1.2 m. The main pair is centred 2 m beyond the stage
-edge at 3.5 m height, tilted 15° down (`main_pair`), in four setups
+edge at 3.5 m height, rigidly tilted 15° down, preserving capsule angles (`main_pair`), in four setups
 (`SETUPS`): AB (omnis 60 cm apart), ORTF (cardioids 17 cm, ±55°), XY
 (coincident cardioids ±45°), Blumlein (coincident figure-of-eights ±45°).
 First-order patterns g(θ) = a + (1 − a)·cos θ (`Mic.gain`). A bass spot is a
@@ -247,11 +272,18 @@ cardioid 1.5 m in front of the section at 2.2 m, aimed at it (`spot_mic`).
   r_c = 0.057·√(V/RT) (`critical_distance`), times the pattern's diffuse
   share (1 omni, ⅓ cardioid and figure-8, `diffuse_energy_factor`), times
   the fraction left after T_MIX, e^(−13.8·T_MIX/RT).
-- Checked against theory (`tests/test_bassval.py`): coherences as above,
-  direct timing and level, direct-to-reverberant ratio within 2 dB of
-  Sabine.
+- Checked against theory (`tests/test_bassval.py`): array coherence, an
+  ensemble of generated tails, direct timing/level, and per-player energy
+  bookkeeping within 2 dB of Sabine. These tests do not establish perceptual
+  validity or frequency-specific DRR in the musical mix. Early absorption
+  remains frequency independent; the late RT is specified separately.
 
 ### 4.4 Rendering (`render.py`)
+
+Stable random streams keyed by seed, section, player and purpose separate
+performance, layout, main responses and spot responses. Each tail capsule
+also has its own stream. A spot cannot change the main recording; moving
+basses cannot change other sections.
 
 Every player is convolved with its responses to the main pair (one shared
 tail realisation per player) and summed. With a spot, every player is also
@@ -263,31 +295,48 @@ constant-power panned to the basses' direction from the main pair
 peak.
 
 **Ground truth** per scene: the basses' mean distance to the main pair, their
-mean direct-to-reverberant ratio at the main pair (direct energy over the
-rest of the responses), their lateral offset, and the spot's true Δ.
+mean per-player broadband direct-to-reverberant ratio at the main pair
+(from ray/tail energy bookkeeping, not a measurement of the mixed section), their lateral offset, and the spot's true Δ.
 
 ### 4.5 Scenes (`scenes.py`)
 
 A scene = piece, main pair, hall RT, bass shift along the stage (negative =
-further back), spot (none / aligned / unaligned, level), seed. Grids vary
+further back), spot (none / aligned / unaligned, level), seed and section mode. Grids vary
 one thing around a reference: **distance** (3 setups × 4 bass positions,
 −2…+4 m), **spot** (3 setups × 3 spot conditions), **hall** (RT 1.4 / 1.9 /
 2.6 s × 2 bass positions), **smoke**.
 
 ### 4.6 Evaluation (`evaluate.py`)
 
-The detector runs in-process with its defaults (`detector_cues`). For each
+The detector runs in-process with its defaults (`detector_cues`). Raw comb
+coherence and pizzicato clarity are retained alongside the existing cues.
+An additional `fixed.*` diagnostic selects sustained frames and pitches
+from the unchanged dry bass performance, then measures the isolated main
+bass and the main mixture on those same frames across scenes. It saves a
+selection digest. These are source-selected frames, not manually annotated
+pitch truth, and measure the main pickup before spot mixing. This separates
+automatic mixture selection from cue behaviour.
+
+For each
 cue with an expected direction (further back -> score up, ×coh down,
 fundamental up), the report gives:
 
-- per group (piece × setup × hall, 4 distances) Spearman ρ against the true
+- per group (piece × setup × hall × seed × section mode, 4 distances) Spearman ρ against the true
   distance, its mean, and how many groups are monotonic the expected way
   (ρ = ±1);
 - ρ over all scenes against distance and against the true DRR (does the cue
   compare across setups?);
 - spot verdicts per condition, and the found delay against the true Δ;
-- the spread a change of hall causes over the spread a change of distance
-  causes, per cue.
+- hall/distance spread only on distance positions shared by every hall
+  with that cue available; each seed and section mode is paired separately.
+
+`--seeds 1,2,3` runs paired repeats. Reports deduplicate overlapping grid
+controls and reject conflicting results or mixed provenance. Run rows store
+code hashes, detector/renderer versions, NumPy/SciPy versions, sample rate,
+excerpt length and SHA-256 of the source files. Resume refuses old or changed
+provenance rather than silently reusing results. Use a new output file after
+changing code, sources or excerpt length. Scene keys preserve fractional
+parameters. Repeats do not by themselves supply confidence intervals.
 
 Command line: `cd tools; python3 -m bassval run --stems DIR --grid distance
 --out results.jsonl`, `python3 -m bassval report results.jsonl`, and

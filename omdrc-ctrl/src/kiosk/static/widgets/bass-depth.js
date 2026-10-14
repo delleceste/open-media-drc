@@ -107,8 +107,8 @@ function mount(root) {
             h('div', { class: 'bd-fb-q' }, 'How deep do the basses sound right now?'),
             fbButtons, noteBox, msg, tapList),
         h('details', { class: 'bd-explain' }, h('summary', {}, 'How this works'),
-            h('p', {}, 'Nothing happens until you start a tracking session, for the recordings you mean to evaluate. During a session every track played is analysed in the background and kept on the music drive (a streamed track is fetched again, a local one copied), so the drive can travel with you. The analysis finds the passages where the double basses play alone, with other sections, under a tutti, or pizzicato. Each passage gets a depth score from 0 (forward, spot-mic’d) to 10 (back, in the hall): green 7 and above, yellow 4–7, red below 4. Grey passages are too short to score (a single plucked note is scored on its own). Balance is where the basses sit, right or left in dB, measured on their harmonics (which can include cellos doubling them an octave up) and, as Bal. fund, on their fundamental alone. Move the Position slider, or tap the graph, to read the passages at one moment. Only solo and with-sections passages count towards the track score; tutti and pizzicato are shown but not yet calibrated. Bowed basses are searched below C2 (65 Hz), where no cello reaches; plucked lines sit higher, so pizzicato is searched up to G2 (98 Hz), and there it may include cellos playing the same notes.'),
-            h('p', {}, 'Tap Forward, In between or Back whenever the basses catch your ear. The box records the moment you heard (the DRC delay is taken off) and the passage under it, plus your note. Sessions, taps and analyses travel with the DR log’s sync, and are used to recalibrate the score.'),
+            h('p', {}, 'Nothing happens until you start a tracking session, for the recordings you mean to evaluate. During a session every track played is analysed in the background and kept on the music drive (a streamed track is fetched again, a local one copied), so the drive can travel with you. The analysis finds the passages where the double basses play alone, with other sections, under a tutti, or pizzicato. Solo and with-sections passages can receive an experimental depth score from 0 to 10: green 7 and above, yellow 4–7, red below 4. The score has not been validated as perceived distance. Grey passages have no score: they may be too short, lack a matching reference, or belong to tutti or pizzicato contexts. Balance is where the basses sit, right or left in dB, measured on their harmonics (which can include cellos doubling them an octave up) and, as Bal. fund, around their fundamental, where other low instruments may also contribute. Move the Position slider, or tap the graph, to read the passages at one moment. Only solo and with-sections passages count towards the track score; tutti and pizzicato are shown but not yet calibrated. Bowed bass candidates are searched up to 66 Hz, including the cello’s lowest C2; plucked lines sit higher, so pizzicato is searched up to G2 (98 Hz), and there it may include cellos playing the same notes.'),
+            h('p', {}, 'Tap Forward, In between or Back whenever the basses catch your ear. The box records the moment you heard (the DRC delay is taken off) and the passage under it, plus your note. Sessions, taps and analyses travel with the DR log’s sync, and can be compared with the experimental measurements. Listening judgments collected while scores are visible are not blind validation.'),
             h('p', {}, 'Background: doc/BASS-DEPTH-DETECTOR.md in the open-media-drc repository.'))));
 
     function paintHead() {
@@ -162,10 +162,10 @@ function mount(root) {
         const d = res.depth;
         if (d) {
             score.append(h('span', { class: `bd-badge ${d.band}` }, d.score.toFixed(1)),
-                h('span', { class: 'bd-score-text' }, h('strong', {}, `${d.band} — ${d.meaning}`),
-                    h('span', { class: 'bd-muted' }, ` ×coh ${num(d.coh_ratio)}${Number.isFinite(d.fund_db) ? `, solo fund ${num(d.fund_db, 1, true)} dB` : ''}, ${Math.round(d.seconds)} s of bass${d.low_material ? ' — little material, provisional' : ''}`)));
+                h('span', { class: 'bd-score-text' }, h('strong', {}, `Experimental · ${d.band} — ${d.meaning}`),
+                    h('span', { class: 'bd-muted' }, ` ×coh ${num(d.coh_ratio)}${Number.isFinite(d.fund_db) ? `, solo fund ${num(d.fund_db, 1, true)} dB` : ''}${Number.isFinite(d.fund_seconds) ? ` (${num(d.fund_seconds, 1)} s solo)` : ''}, ${Math.round(d.seconds)} s of bass${d.low_material ? ' — little material, provisional' : ''}`)));
         } else {
-            score.append(h('span', { class: 'bd-muted' }, 'No score: too little bass in this track.'));
+            score.append(h('span', { class: 'bd-muted' }, 'No score: insufficient bass material or no matching reference.'));
         }
         const dur = res.duration_s || (S.view.track && S.view.track.duration) || 1;
         S.dur = dur;
@@ -236,7 +236,7 @@ function mount(root) {
                 if (!b) return h('div', { class: 'bd-tr bd-none' }, h('span', {}, label), h('span', { class: 'bd-ncol' }),
                     h('span', { class: 'bd-muted' }, 'no passage'), h('span', {}), h('span', {}), h('span', {}), h('span', {}));
                 return h('div', { class: 'bd-tr' }, h('span', {}, label), h('span', { class: 'bd-ncol' }, `${clock(b.start)}–${clock(b.end)}`),
-                    h('span', {}, b.score !== undefined ? [h('span', { class: `bd-dot ${b.band}` }), ` ${b.score.toFixed(1)}`] : h('span', { class: 'bd-muted' }, 'short')),
+                    h('span', {}, b.score !== undefined ? [h('span', { class: `bd-dot ${b.band}` }), ` ${b.score.toFixed(1)}`] : h('span', { class: 'bd-muted' }, 'unscored')),
                     h('span', {}, num(b.coh_ratio)), h('span', {}, num(b.fund_db, 1, true)),
                     h('span', {}, bal(b.balance_db)), h('span', {}, bal(b.balance_fund_db)));
             }));

@@ -5,13 +5,17 @@ import json
 import math
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
 from bassval import evaluate, geometry, render, room, scenes, stems  # noqa: E402
+from bassval import __main__ as cli
 
 FS = 16000
 
@@ -52,6 +56,26 @@ class Geometry(unittest.TestCase):
 
 
 class Room(unittest.TestCase):
+    def test_generated_tails_have_the_requested_diffuse_coherence(self):
+        hall = geometry.hall_with_rt(1.0)
+        for setup in ("AB", "XY", "Blumlein"):
+            mics = geometry.main_pair(setup, [12, 14, 3.5])
+            ll = rr = lr = 0
+            # A decaying tail has few independent samples in a narrow band.
+            # Ensemble averaging is essential, especially near a sinc zero.
+            for seed in range(128):
+                tails = room.late_tails(mics, hall, FS, FS * 3, 0, np.random.default_rng(seed))
+                L, R = np.fft.rfft(tails, axis=1)
+                ll = ll + abs(L) ** 2
+                rr = rr + abs(R) ** 2
+                lr = lr + np.conj(L) * R
+            frequencies = np.fft.rfftfreq(FS * 3, 1 / FS)
+            for centre in (100, 250, 500):
+                band = abs(frequencies - centre) < 15
+                measured = lr[band].sum() / np.sqrt(ll[band].sum() * rr[band].sum())
+                expected = room.diffuse_coherence(*mics, np.array([centre]))[0]
+                self.assertLess(abs(measured - expected), .1, (setup, centre, measured, expected))
+
     def test_spaced_omnis_have_the_diffuse_coherence_of_theory(self):
         left, right = geometry.main_pair("AB", [12, 14, 3.5])
         f = np.array([50.0, 150.0, 400.0])
@@ -62,7 +86,14 @@ class Room(unittest.TestCase):
     def test_coincident_cardioids_at_90_degrees(self):
         left, right = geometry.main_pair("XY", [12, 14, 3.5])
         # (a² + (1−a)²·cos 90°/3) / (a² + (1−a)²/3) with a = 0.5
-        self.assertAlmostEqual(float(room.diffuse_coherence(left, right, [100.0])[0].real), 0.75, delta=0.03)
+        self.assertAlmostEqual(float(room.diffuse_coherence(left, right, [100.0])[0].real), 0.75, delta=0.001)
+
+    def test_tilted_blumlein_remains_orthogonal(self):
+        for tilt in (0, -15, -45):
+            left, right = geometry.main_pair("Blumlein", [12, 14, 3.5], tilt)
+            self.assertAlmostEqual(float(left.axis @ right.axis), 0, places=12)
+            self.assertAlmostEqual(float(room.diffuse_coherence(left, right, [100.])[0].real),
+                                   0, delta=0.001)
 
     def test_direct_sound_timing_and_level(self):
         hall = geometry.Hall()
@@ -145,8 +176,55 @@ class Render(unittest.TestCase):
             self.assertAlmostEqual(gl * gl + gr * gr, 1.0)
         self.assertGreater(render.pan_gains(1.0)[0], render.pan_gains(1.0)[1])   # +1 = left
 
+    def test_muted_spot_does_not_change_the_main_recording(self):
+        for mode in ("recorded", "copies"):
+            plain, muted = {}, {}
+            a, ta = render.render_scene(scenes.Scene("t", rt_mid=.4, section_mode=mode),
+                                       self.parts(), FS, plain)
+            b, tb = render.render_scene(scenes.Scene("t", rt_mid=.4, spot="unaligned",
+                                       spot_db=-300, section_mode=mode), self.parts(), FS, muted)
+            np.testing.assert_array_equal(plain["main"], muted["main"])
+            np.testing.assert_allclose(a, b, atol=1e-14)
+            self.assertEqual(ta["bass_distance_m"], tb["bass_distance_m"])
+
+    def test_moving_bass_preserves_other_sources_and_performance(self):
+        near, far = {}, {}
+        render.render_scene(scenes.Scene("t", rt_mid=.4, bass_shift=4, section_mode="copies"),
+                            self.parts(), FS, near)
+        render.render_scene(scenes.Scene("t", rt_mid=.4, bass_shift=-2, section_mode="copies"),
+                            self.parts(), FS, far)
+        np.testing.assert_array_equal(near["other_main"], far["other_main"])
+        np.testing.assert_array_equal(near["dry_bass"], far["dry_bass"])
+        self.assertFalse(np.allclose(near["bass_main"], far["bass_main"]))
+
+    def test_hall_change_preserves_player_layout_and_performance(self):
+        original = geometry.positions
+        layouts = []
+        def capture(*args, **kwargs):
+            positions = original(*args, **kwargs)
+            layouts.append(positions.copy())
+            return positions
+        a, b = {}, {}
+        with patch.object(geometry, "positions", capture):
+            render.render_scene(scenes.Scene("t", rt_mid=.4, section_mode="copies"), self.parts(), FS, a)
+            render.render_scene(scenes.Scene("t", rt_mid=.6, section_mode="copies"), self.parts(), FS, b)
+        np.testing.assert_array_equal(layouts[0], layouts[2])
+        np.testing.assert_array_equal(layouts[1], layouts[3])
+        np.testing.assert_array_equal(a["dry_bass"], b["dry_bass"])
+
+    def test_unrelated_sections_do_not_change_bass_realisation(self):
+        parts = self.parts()
+        a, b = {}, {}
+        sc = scenes.Scene("t", rt_mid=.4, section_mode="copies")
+        render.render_scene(sc, parts, FS, a)
+        render.render_scene(sc, {"brass": parts["vl1"], **parts}, FS, b)
+        np.testing.assert_array_equal(a["bass_main"], b["bass_main"])
+
 
 class Scenes(unittest.TestCase):
+    def test_fractional_parameters_do_not_collide(self):
+        self.assertNotEqual(scenes.Scene("a", bass_shift=.1).key, scenes.Scene("a", bass_shift=.2).key)
+        self.assertNotEqual(scenes.Scene("a", rt_mid=1.91).key, scenes.Scene("a", rt_mid=1.92).key)
     def test_grid_keys_are_unique(self):
         for name in scenes.GRIDS:
             g = scenes.grid(name, ["a", "b"])
@@ -154,6 +232,36 @@ class Scenes(unittest.TestCase):
 
 
 class Report(unittest.TestCase):
+    def rows(self, seeds=(1,)):
+        return [{"scene": scenes.Scene("p", rt_mid=rt, bass_shift=shift, seed=seed).as_dict(),
+                 "truth": {"bass_distance_m": 10 - shift, "bass_drr_db": shift},
+                 "cues": {"score": rt * 2 - shift}}
+                for seed in seeds for rt in (1.4, 1.9, 2.6) for shift in (-2., 2.)]
+
+    def test_hall_comparison_uses_the_same_distance_span(self):
+        rows = self.rows()
+        before = evaluate.report_hall(rows)
+        rows.append({"scene": scenes.Scene("p", bass_shift=4).as_dict(),
+                     "truth": {}, "cues": {"score": 1000}})
+        self.assertEqual(before, evaluate.report_hall(rows))
+        self.assertIn("0.60", "\n".join(before))
+
+    def test_repeated_seeds_are_separate_distance_groups(self):
+        rows = []
+        for seed in (1, 2):
+            for shift in (-2., 0., 2., 4.):
+                rows.append({"scene": scenes.Scene("p", bass_shift=shift, seed=seed).as_dict(),
+                             "truth": {"bass_distance_m": 10 - shift, "bass_drr_db": shift},
+                             "cues": {"score": 10 - shift}})
+        self.assertIn("2/2", "\n".join(evaluate.report_distance(rows)))
+
+    def test_duplicate_controls_are_counted_once_and_conflicts_rejected(self):
+        rows = self.rows()
+        self.assertEqual(evaluate.report(rows), evaluate.report(rows + rows))
+        changed = dict(rows[0], cues={"score": 123})
+        with self.assertRaisesRegex(ValueError, "Conflicting"):
+            evaluate.report(rows + [changed])
+
     def test_a_cue_that_follows_distance_is_reported_the_right_way(self):
         rows = []
         for setup in ("AB", "ORTF"):
@@ -168,6 +276,43 @@ class Report(unittest.TestCase):
         coh_line = next(line for line in text.splitlines() if line.startswith("coh_ratio "))
         self.assertIn("-1.00", coh_line)
         self.assertTrue(json.dumps(rows))
+
+
+class Provenance(unittest.TestCase):
+    def test_resume_rejects_old_algorithms_and_changed_excerpt_or_input(self):
+        algorithm = {"detector": "test", "code": "hash"}
+        identity = {"algorithm": algorithm, "seconds": 5, "sources": {"kb": "hash"}}
+        row = {"scene": scenes.Scene("p").as_dict(), "provenance": identity}
+        cli.validate_resume([row], {"p": identity}, algorithm)
+        for changed in (dict(identity, seconds=6), dict(identity, sources={"kb": "new"})):
+            with self.assertRaises(ValueError):
+                cli.validate_resume([row], {"p": changed}, algorithm)
+        with self.assertRaises(ValueError):
+            cli.validate_resume([row], {"p": identity}, {"detector": "new"})
+        with self.assertRaises(ValueError):
+            cli.validate_resume([{"scene": row["scene"]}], {"p": identity}, algorithm)
+
+    def test_source_identity_uses_contents_not_just_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "test_kb_6.mp3"
+            p.write_bytes(b"one")
+            first = cli.input_identity(tmp, 5, {})
+            p.write_bytes(b"two")
+            self.assertNotEqual(first, cli.input_identity(tmp, 5, {}))
+
+
+class FixedSelection(unittest.TestCase):
+    def test_fixed_measurement_uses_source_frames_and_survives_mixture_changes(self):
+        t = np.arange(FS * 4) / FS
+        dry = sum(np.sin(2 * np.pi * 50 * k * t) / k for k in range(1, 7))
+        source = np.vstack([dry, dry * .8])
+        a = evaluate.fixed_cues({"dry_bass": dry, "bass_main": source, "main": source})
+        b = evaluate.fixed_cues({"dry_bass": dry, "bass_main": source,
+                                "main": source + np.random.default_rng(1).standard_normal(source.shape) * 10})
+        self.assertGreater(a["fixed.frames"], 20)
+        self.assertEqual(a["fixed.selection_sha256"], b["fixed.selection_sha256"])
+        self.assertEqual(a["fixed.bass.coh_comb"], b["fixed.bass.coh_comb"])
+        self.assertGreater(a["fixed.mix.coh_comb"], b["fixed.mix.coh_comb"])
 
 
 if __name__ == "__main__":
