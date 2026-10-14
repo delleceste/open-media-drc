@@ -69,22 +69,24 @@ with-sections bass the score rests on; under 10 s it is provisional.
 
 | Recording | Label by ear | Score | Material |
 |---|---|---|---|
-| Shostakovich 2 + 12/I, BSO / Nelsons (DG) | back, good | 🟢 8.7 | 102 s |
-| Mahler 3/I, Czech Phil / Bychkov | not convincingly back | 🔴 3.3 | 78 s |
-| Dvořák 8/I, Budapest FO / Fischer | weak depth | 🔴 3.9 | 24 s |
-| Shostakovich 15, NRPO / Wigglesworth (BIS) | — | 🟢 8.9 | 267 s |
+| Shostakovich 2 + 12/I, BSO / Nelsons (DG) | back, good | 🟢 9.2 | 102 s |
+| Mahler 3/I, Czech Phil / Bychkov | not convincingly back | 🟡 4.8 | 78 s |
+| Dvořák 8/I, Budapest FO / Fischer | weak depth | 🟡 5.7 | 24 s |
+| Sibelius 2/I, Minnesota / Vänskä (BIS) | praised for depth and soundstage | 🟡 6.0 | 25 s |
+| Mahler 2/II, Rattle | opening pizzicato placed wrong | 🟢 8.3 | 17 s |
+| Shostakovich 15, NRPO / Wigglesworth (BIS) | — | 🟢 9.8 | 267 s |
+| Shostakovich 1, NRPO / Wigglesworth (BIS) | — | 🟢 9.0 | 144 s |
 | Shostakovich 13, CSO / Muti | — | 🟢 8.5 | 631 s |
-| Shostakovich 1, NRPO / Wigglesworth (BIS) | — | 🟢 8.0 | 144 s |
-| Shostakovich 11, NRPO / Wigglesworth | — | 🟢 7.4 | 430 s |
-| Nelsons album by symphony: 2 / 3 / 12/I / 12/II–IV / 13 | — | 🟢 9.2 / 🟢 7.5 (8 s, provisional) / 🟢 8.6 / 🟡 6.2 / 🟢 8.8 | see below |
+| Shostakovich 11, NRPO / Wigglesworth | — | 🟢 7.8 | 430 s |
+| Nelsons album by symphony: 2 / 3 / 12/I / 12/II–IV / 13 | — | 🟢 9.9 / 🟢 9.3 (8 s, provisional) / 🟢 9.0 / 🟢 7.6 / 🟢 9.3 | |
 
-Scores since equal-weight coherence (see "Equal-weight coherence" below).
-The three labelled rows are the calibration set, so their scores agree with
-the labels by construction. The others are predictions waiting for an ear.
-Single movements still scatter (Wigglesworth 11: 7.8 / 5.4 / 8.7 / 5.6), so
-judge a recording on all its movements together. Every unlabelled recording
-now lands green: either they really are all fairly natural, or the scale is
-too lenient between 1.1 and 1.5. Only more labels can tell.
+Detector 1.4 (matched reference, see "Matched reference" below). The
+three labelled rows set the scale. **After the fix the score separates the
+labels only weakly and mostly through the fundamental cue**: bowed-bass
+coherence is ×1.14 for Nelsons against ×1.25–1.35 for the other two, and
+×1.13 for the Minnesota Sibelius, which reviews praise and which scores
+yellow only for its weak fundamental (−16 dB). Nearly everything else is
+green. Treat the score as unproven.
 
 ## Reading the results
 
@@ -664,3 +666,45 @@ the bowed bass reads ×1.13. The plucks reach the microphones far more
 directly than the rest of the orchestra: consistent with the user's ear and
 with a close pickup on the basses, not yet a proof of one. Synthetic recall
 is unchanged (pizz 4–11 of 17–27 found, ≤ 1 bowed note flagged).
+
+### Matched reference (2026-10-14, detector 1.4)
+
+The user asked how the opening plucks of Mahler 2/II had come out red. They
+had not earned it: coherence measured over a few frames reads high whatever
+the source. On that track the orchestra at rest reads 0.27 over all its
+8208 frames, but ×2.47 that over runs of 6 consecutive frames (one pluck),
+×2.18 over 12 and ×1.71 over 50; bowed bass ×1.26 over all its frames and
+×2.65 over 6-frame runs. Every short passage, and every context with little
+material, was judged against the long-run value and leaned towards red.
+
+Fix (`MatchedReference`): the orchestra is measured over frames shaped like
+the ones it is compared with, i.e. the same lengths of runs of consecutive
+frames, drawn at random from where the basses rest (8 draws, median). The
+pizzicato of Mahler 2/II then reads ×1.13 (bowed ×0.90) instead of ×1.66 and
+×2.1–3.4 per pluck.
+
+| | 1.3 | 1.4 | bowed ×coh 1.3 → 1.4 |
+|---|---|---|---|
+| Nelsons 2 + 12/I (back) | 🟢 8.7 | 🟢 9.2 | 1.23 → 1.14 |
+| Mahler 3 / Bychkov (not back) | 🔴 3.3 | 🟡 4.8 | 1.61 → 1.35 |
+| Dvořák 8 / Fischer (weak) | 🔴 3.9 | 🟡 5.7 | 1.59 → 1.25 |
+| Sibelius 2/I / Minnesota (praised) | 🔴 3.8 | 🟡 6.0 | – → 1.13 |
+| Mahler 2/II / Rattle | 🟡 6.6 | 🟢 8.3 | 1.31 → 0.98 |
+
+What it shows: much of the coherence cue's earlier separation was the bias.
+The labelled order holds, but the margins are small, and two listening
+observations so far concern **position**, not depth, and were confirmed by
+level balance instead:
+
+- Mahler 2/II, Rattle: the plucks move right as the second cellos join
+  (bars 5–12, basses alone: 0.0 dB; from bar 13: +1.6 to +5.7 dB, together
+  +2.6 dB) while the bowed basses sit at 0.0 dB.
+- Sibelius 2/I, Minnesota: in 110–260 Hz the plucks at 1:56–2:08 lean left
+  by 2–3.7 dB; the loudest bowed passages sit at −2.6…+0.4 dB, with right
+  leans only below 110 Hz in places (+1.4…+3.8 dB at 6:34–6:38, 8:44). Inter-
+  channel delays are 0 throughout: a coincident pair or panned spots.
+
+Not pursued: a pizzicato detector for fast plucks (Sibelius 2/I from 2:00,
+notes 88–160 ms apart, which the 256 ms frames and the 320 ms decay test
+cannot see). Finding more plucks does not help while the cues do not track
+the ear.

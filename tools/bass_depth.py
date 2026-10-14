@@ -78,7 +78,7 @@ from scipy.signal import find_peaks
 
 # Bumped whenever results change: the box re-analyses tracks stored under an
 # older version, and calibration only compares results of one version.
-VERSION = "1.3"
+VERSION = "1.4"
 
 SR = 16000          # analysis rate: everything of interest is below 4 kHz
 NFFT = 4096         # 256 ms frames, 3.9 Hz bins: resolves 30 Hz fundamentals
@@ -472,12 +472,60 @@ def reference_coherence(L, R, frames, df):
     return _coh(acc)
 
 
+REF_DRAWS = 8          # orchestra draws per matched reference
+REF_PIECE = 64         # longest run of consecutive frames one draw piece takes
+
+
+class MatchedReference:
+    """The orchestra's coherence where the basses rest, measured over frames
+    shaped like the ones it is compared with: the same lengths of runs of
+    consecutive frames.  Coherence over few frames reads high whatever the
+    source (Mahler 2/II: the orchestra over 6-frame runs ×2.47 its long-run
+    value, bowed bass ×2.65), so a short passage judged against the long-run
+    value always looked forward."""
+
+    def __init__(self, L, R, rest, df, seed=0):
+        self.L, self.R, self.df = L, R, df
+        self.runs = [(a, b) for a, b in runs(np.isin(np.arange(len(L) // HOP + 2), rest))]
+        self.lens = np.array([b - a for a, b in self.runs])
+        self.rng = np.random.default_rng(seed)
+        self.whole = reference_coherence(L, R, rest, df) if len(rest) else None
+
+    def _piece(self, n):
+        ok = np.flatnonzero(self.lens >= n)
+        if not len(ok):
+            ok = np.array([int(np.argmax(self.lens))])
+            n = int(self.lens[ok[0]])
+        w = self.lens[ok] - n + 1
+        a, b = self.runs[int(self.rng.choice(ok, p=w / w.sum()))]
+        s0 = a + int(self.rng.integers(0, b - a - n + 1))
+        return list(range(s0, s0 + n)), n
+
+    def __call__(self, frames):
+        if self.whole is None or not len(self.lens):
+            return None
+        m = np.zeros(int(frames.max()) + 2, bool)
+        m[frames] = True
+        need = [b - a for a, b in runs(m)]
+        vals = []
+        for _ in range(REF_DRAWS):
+            pick = []
+            for n in need:
+                while n > 0:
+                    got, k = self._piece(min(n, REF_PIECE))
+                    pick += got
+                    n -= k
+            vals.append(reference_coherence(self.L, self.R, np.array(pick), self.df))
+        return float(np.median(vals))
+
+
 def context_cues(L, R, f0, frames, df, coh_ref):
     """Depth cues over a set of frames:
 
       coh_ratio  L/R coherence on the bass harmonics (80–700 Hz) over the
                  orchestra's where the basses rest, every frame weighted
-                 equally. A bass picked up more directly than the rest is
+                 equally; `coh_ref` is a number or a MatchedReference,
+                 which measures the orchestra over frames of the same shape. A bass picked up more directly than the rest is
                  more coherent (×>1).
       fund_db    fundamental vs the mean of harmonics 2–6 (mono). Distance
                  and hall favour the fundamental; a close mic the upper
@@ -503,6 +551,8 @@ def context_cues(L, R, f0, frames, df, coh_ref):
                  for k in range(1, 7)]
             fund.append(10 * np.log10(h[0] / (np.mean(h[1:]) + EPS) + EPS))
     cc = _coh(acc)
+    if callable(coh_ref):
+        coh_ref = coh_ref(np.asarray(frames))
     return {"coh_comb": cc, "coh_ref": coh_ref,
             "coh_ratio": cc / (coh_ref + EPS) if coh_ref else None,
             "fund_db": float(np.median(fund)) if fund else None}
@@ -569,7 +619,7 @@ def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts, pizz_comb=
         f0s["pizzicato"] = pizz_comb[0]
     rest = np.flatnonzero(gate & ~masks["solo"] & ~masks["with-sections"]
                           & ~masks["tutti"])
-    coh_ref = reference_coherence(L, R, rest, df) if len(rest) >= 20 else None
+    coh_ref = MatchedReference(L, R, rest, df) if len(rest) >= 20 else None
     out = {}
     for name in CONTEXTS:
         m = masks[name]
