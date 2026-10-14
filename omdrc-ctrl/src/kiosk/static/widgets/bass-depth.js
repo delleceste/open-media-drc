@@ -188,6 +188,9 @@ function mount(root) {
 
     function paintPlayhead() {
         if (!S.head || !S.dur) return;
+        // the lanes start after the label column, whatever its font makes it
+        const lane = timeline.querySelector('.bd-lane'), track = S.head.parentNode;
+        if (lane) { track.style.left = `${lane.offsetLeft}px`; track.style.width = `${lane.offsetWidth}px`; }
         const p = position();
         S.head.hidden = p === null;
         if (p !== null) S.head.style.left = `${Math.min(100, 100 * p / S.dur)}%`;

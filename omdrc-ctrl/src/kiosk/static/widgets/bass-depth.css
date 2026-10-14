@@ -41,7 +41,7 @@
     border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 12px solid var(--bd); }
 .bass-depth .bd-axis .bd-lane { background: none; height: 1.1em; font-size: .75em; opacity: .6; }
 .bass-depth .bd-axis .bd-lane span { position: absolute; }
-.bass-depth .bd-headlane { position: absolute; top: 0; bottom: 1.1em; left: calc(7.5em + .5rem); right: 0; pointer-events: none; }
+.bass-depth .bd-headlane { position: absolute; top: 0; bottom: 1.1em; pointer-events: none; }
 .bass-depth .bd-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: currentColor; opacity: .8; }
 .bass-depth .bd-pick { font-size: .9em; display: flex; flex-wrap: wrap; gap: .2rem .9rem; }
 .bass-depth .bd-dot { display: inline-block; width: .7em; height: .7em; border-radius: 50%; vertical-align: baseline; }
@@ -67,7 +67,6 @@
 .bass-depth .bd-explain summary { cursor: pointer; }
 @media (max-width: 520px) {
     .bass-depth .bd-lbl { flex-basis: 5.5em; }
-    .bass-depth .bd-headlane { left: calc(5.5em + .5rem); }
     .bass-depth .bd-table { grid-template-columns: auto auto auto auto; }
     .bass-depth .bd-tr > span:last-child { display: none; }
 }
