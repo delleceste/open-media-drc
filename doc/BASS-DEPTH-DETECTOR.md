@@ -736,3 +736,20 @@ cello range) made stronger by the room; the right later is the recording.
 A note-to-note room L−R of ±10 dB means even a narrow bass register can
 move with the notes played. Inter-channel delays in the file are 0: a
 coincident main pair or panned spots, so position is level only.
+
+### Balance per context and passage (detector 1.5)
+
+Each context and passage now carries `balance_db` (right minus left on the
+harmonics the coherence uses, every frame weighted equally) and
+`balance_fund_db` (the same on the fundamental). They say where the basses
+sit, not how deep, and being level ratios they hold on a single pluck.
+Two numbers because one mixes sections: on Rattle's Mahler 2/II plucks from
+bar 13 the fundamental (78 Hz, basses only) is right +5…+9 dB while the
+octave (156 Hz, where the second cellos pluck the same line) is left
+−7…−11 dB. **Correction of an earlier reading:** the "+2.6 dB right" of
+those plucks was the basses' fundamental, not cellos sitting right; in that
+recording the basses sit right and the cellos left.
+
+The card shows both in its table, for the whole track or, with the Position
+slider under the graph (or a tap on the graph, or "Now"), for the passages
+at one moment, marked on the graph by a dashed line.

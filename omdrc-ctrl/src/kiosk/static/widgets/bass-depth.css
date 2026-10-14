@@ -43,9 +43,14 @@
 .bass-depth .bd-axis .bd-lane span { position: absolute; }
 .bass-depth .bd-headlane { position: absolute; top: 0; bottom: 1.1em; pointer-events: none; }
 .bass-depth .bd-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: currentColor; opacity: .8; }
-.bass-depth .bd-pick { font-size: .9em; display: flex; flex-wrap: wrap; gap: .2rem .9rem; }
 .bass-depth .bd-dot { display: inline-block; width: .7em; height: .7em; border-radius: 50%; vertical-align: baseline; }
-.bass-depth .bd-table { display: grid; grid-template-columns: auto auto auto auto 1fr; gap: .15rem .9rem; font-size: .88em; }
+.bass-depth .bd-table { display: grid; grid-template-columns: auto auto auto auto auto auto 1fr; gap: .15rem .9rem; font-size: .88em; font-variant-numeric: tabular-nums; }
+.bass-depth .bd-table-head { display: flex; align-items: center; gap: .5rem; font-size: .9em; }
+.bass-depth .bd-mini { padding: .15rem .55rem; font-size: .85em; }
+.bass-depth .bd-cursor-row { margin-top: -.2rem; }
+.bass-depth .bd-slider { flex: 1; margin: 0; accent-color: #388bfd; height: 1.6rem; }
+.bass-depth .bd-cursor { position: absolute; top: 0; bottom: 0; width: 0; margin-left: -1px;
+    border-left: 2px dashed #388bfd; }
 .bass-depth .bd-tr { display: contents; }
 .bass-depth .bd-th span { opacity: .6; }
 .bass-depth .bd-fb { display: flex; flex-direction: column; gap: .45rem; padding-top: .4rem;
@@ -67,6 +72,6 @@
 .bass-depth .bd-explain summary { cursor: pointer; }
 @media (max-width: 520px) {
     .bass-depth .bd-lbl { flex-basis: 5.5em; }
-    .bass-depth .bd-table { grid-template-columns: auto auto auto auto; }
-    .bass-depth .bd-tr > span:last-child { display: none; }
+    .bass-depth .bd-table { grid-template-columns: auto auto auto auto auto auto; gap: .15rem .55rem; }
+    .bass-depth .bd-tr > span.bd-ncol { display: none; }
 }

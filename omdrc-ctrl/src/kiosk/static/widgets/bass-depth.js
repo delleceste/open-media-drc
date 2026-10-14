@@ -55,7 +55,7 @@ const STATUS = {
 };
 
 function mount(root) {
-    const S = { view: null, analysis: null, stamp: '', timer: null, tick: null, polledAt: 0, lastTap: null, picked: null };
+    const S = { view: null, analysis: null, stamp: '', timer: null, tick: null, polledAt: 0, lastTap: null, cursor: null };
 
     const statusLine = h('div', { class: 'bd-status' });
     const sessionName = h('input', { type: 'text', class: 'bd-note', maxlength: 200, placeholder: 'What will you evaluate? e.g. Altinoglu, Shostakovich 8' });
@@ -70,7 +70,13 @@ function mount(root) {
     const trackLine = h('div', { class: 'bd-track' });
     const score = h('div', { class: 'bd-score' });
     const timeline = h('div', { class: 'bd-tl', onclick: pick });
-    const pickLine = h('div', { class: 'bd-pick', hidden: true });
+    // The table shows the whole track, or the passages at the cursor: set by
+    // the slider under the graph, a tap on the graph, or "Now".
+    const slider = h('input', { type: 'range', class: 'bd-slider', min: 0, max: 1, step: 0.1, value: 0,
+        'aria-label': 'Position the table describes', oninput: e => setCursor(Number(e.target.value)) });
+    const cursorRow = h('div', { class: 'bd-row bd-cursor-row', hidden: true },
+        h('span', { class: 'bd-lbl' }, 'Position'), slider);
+    const tableHead = h('div', { class: 'bd-table-head' });
     const table = h('div', { class: 'bd-table' });
     const fbButtons = h('div', { class: 'bd-verdicts' }, VERDICTS.map(([v, label]) =>
         h('button', { type: 'button', class: `bd-btn bd-verdict ${v}`, onclick: () => tap(v) }, label)));
@@ -85,12 +91,12 @@ function mount(root) {
     clear(root).append(h('div', { class: 'bass-depth' },
         startBox, runBox, saveLine,
         h('div', { class: 'bd-head' }, statusLine, h('span', { class: 'bd-spacer' }), againBtn),
-        trackLine, score, timeline, pickLine, table,
+        trackLine, score, timeline, cursorRow, tableHead, table,
         h('div', { class: 'bd-fb' },
             h('div', { class: 'bd-fb-q' }, 'How deep do the basses sound right now?'),
             fbButtons, noteBox, msg, tapList),
         h('details', { class: 'bd-explain' }, h('summary', {}, 'How this works'),
-            h('p', {}, 'Nothing happens until you start a tracking session, for the recordings you mean to evaluate. During a session every track played is analysed in the background and kept on the music drive (a streamed track is fetched again, a local one copied), so the drive can travel with you. The analysis finds the passages where the double basses play alone, with other sections, under a tutti, or pizzicato. Each passage gets a depth score from 0 (forward, spot-mic’d) to 10 (back, in the hall): green 7 and above, yellow 4–7, red below 4. Grey passages are too short to score (a single plucked note is scored on its own). Only solo and with-sections passages count towards the track score; tutti and pizzicato are shown but not yet calibrated. Bowed basses are searched below C2 (65 Hz), where no cello reaches; plucked lines sit higher, so pizzicato is searched up to G2 (98 Hz), and there it may include cellos playing the same notes.'),
+            h('p', {}, 'Nothing happens until you start a tracking session, for the recordings you mean to evaluate. During a session every track played is analysed in the background and kept on the music drive (a streamed track is fetched again, a local one copied), so the drive can travel with you. The analysis finds the passages where the double basses play alone, with other sections, under a tutti, or pizzicato. Each passage gets a depth score from 0 (forward, spot-mic’d) to 10 (back, in the hall): green 7 and above, yellow 4–7, red below 4. Grey passages are too short to score (a single plucked note is scored on its own). Balance is where the basses sit, right or left in dB, measured on their harmonics (which can include cellos doubling them an octave up) and, as Bal. fund, on their fundamental alone. Move the Position slider, or tap the graph, to read the passages at one moment. Only solo and with-sections passages count towards the track score; tutti and pizzicato are shown but not yet calibrated. Bowed basses are searched below C2 (65 Hz), where no cello reaches; plucked lines sit higher, so pizzicato is searched up to G2 (98 Hz), and there it may include cellos playing the same notes.'),
             h('p', {}, 'Tap Forward, In between or Back whenever the basses catch your ear. The box records the moment you heard (the DRC delay is taken off) and the passage under it, plus your note. Sessions, taps and analyses travel with the DR log’s sync, and are used to recalibrate the score.'),
             h('p', {}, 'Background: doc/BASS-DEPTH-DETECTOR.md in the open-media-drc repository.'))));
 
@@ -127,9 +133,9 @@ function mount(root) {
 
     function paintAnalysis() {
         const res = S.analysis;
-        clear(score); clear(timeline); clear(table);
-        pickLine.hidden = true;
-        if (!res) { score.append(h('span', { class: 'bd-muted' }, S.view && S.view.track ? 'No analysis of this track yet.' : '')); return; }
+        clear(score); clear(timeline); clear(table); clear(tableHead);
+        cursorRow.hidden = !res;
+        if (!res) { S.cur = null; score.append(h('span', { class: 'bd-muted' }, S.view && S.view.track ? 'No analysis of this track yet.' : '')); return; }
         const d = res.depth;
         if (d) {
             score.append(h('span', { class: `bd-badge ${d.band}` }, d.score.toFixed(1)),
@@ -153,19 +159,63 @@ function mount(root) {
         });
         S.marks = h('div', { class: 'bd-lane bd-marks' });
         S.head = h('div', { class: 'bd-playhead' });
+        S.cur = h('div', { class: 'bd-cursor', hidden: true });
         timeline.append(h('div', { class: 'bd-row' }, h('span', { class: 'bd-lbl' }, 'Your taps'), S.marks), ...rows,
             h('div', { class: 'bd-row bd-axis' }, h('span', { class: 'bd-lbl' }), h('div', { class: 'bd-lane' },
                 h('span', { style: { left: '0' } }, '0:00'), h('span', { style: { right: '0' } }, clock(dur)))),
-            h('div', { class: 'bd-headlane' }, S.head));
+            h('div', { class: 'bd-headlane' }, S.head, S.cur));
+        slider.max = String(dur);
+        if (S.cursor !== null && S.cursor > dur) S.cursor = null;
         paintMarks();
         paintPlayhead();
-        const c = res.contexts || {};
-        table.append(h('div', { class: 'bd-tr bd-th' }, h('span', {}, 'Context'), h('span', {}, 'Seconds'), h('span', {}, '×coh'), h('span', {}, 'Fund dB'), h('span', {}, '')),
+        paintTable();
+    }
+
+    // Where the basses sit: right minus left, in dB.
+    const bal = x => !Number.isFinite(x) ? '–' : Math.abs(x) < 1 ? 'centre' : `${x > 0 ? 'R' : 'L'} ${Math.abs(x).toFixed(1)}`;
+
+    function setCursor(at) {
+        S.cursor = at === null || !Number.isFinite(at) ? null : Math.max(0, Math.min(S.dur || 0, at));
+        paintTable();
+        paintPlayhead();
+    }
+
+    function paintTable() {
+        const res = S.analysis;
+        clear(table); clear(tableHead);
+        if (!res) return;
+        const nowBtn = h('button', { type: 'button', class: 'bd-btn bd-mini', onclick: () => setCursor(position()) }, 'Now');
+        const wholeBtn = h('button', { type: 'button', class: 'bd-btn bd-mini', onclick: () => setCursor(null) }, 'Whole track');
+        // `narrow`: the column a phone drops
+        const head = (narrow, ...cols) => h('div', { class: 'bd-tr bd-th' }, cols.map((c, i) => h('span', { class: i === narrow ? 'bd-ncol' : null }, c)));
+        if (S.cursor === null) {
+            tableHead.append(h('strong', {}, 'Whole track'), h('span', { class: 'bd-muted' }, ' · move the slider or tap the graph for one moment'), h('span', { class: 'bd-spacer' }), nowBtn);
+            const c = res.contexts || {};
+            table.append(head(6, 'Context', 'Seconds', '×coh', 'Fund dB', 'Balance', 'Bal. fund', ''),
+                ...CONTEXTS.map(([ctx, label]) => {
+                    const x = c[ctx] || {};
+                    return h('div', { class: 'bd-tr' }, h('span', {}, label), h('span', {}, num(x.seconds, 1)),
+                        h('span', {}, num(x.coh_ratio)), h('span', {}, num(x.fund_db, 1, true)),
+                        h('span', {}, bal(x.balance_db)), h('span', {}, bal(x.balance_fund_db)),
+                        h('span', { class: 'bd-muted bd-ncol' }, SCORED.has(ctx) ? 'in the score' : (ctx === 'pizzicato' ? `${x.notes || 0} notes${Number.isFinite(x.clarity_db) ? `, clarity ${num(x.clarity_db, 1, true)} dB` : ''}; not in the score, may include cellos above C2` : 'not in the score yet')));
+                }));
+            return;
+        }
+        const at = S.cursor;
+        slider.value = String(at);
+        tableHead.append(h('strong', {}, `At ${clock(at)}`), h('span', { class: 'bd-spacer' }), nowBtn, wholeBtn);
+        table.append(head(1, 'Context', 'Passage', 'Score', '×coh', 'Fund dB', 'Balance', 'Bal. fund'),
             ...CONTEXTS.map(([ctx, label]) => {
-                const x = c[ctx] || {};
-                return h('div', { class: 'bd-tr' }, h('span', {}, label), h('span', {}, num(x.seconds, 1)),
-                    h('span', {}, num(x.coh_ratio)), h('span', {}, num(x.fund_db, 1, true)),
-                    h('span', { class: 'bd-muted' }, SCORED.has(ctx) ? 'in the score' : (ctx === 'pizzicato' ? `${x.notes || 0} notes${Number.isFinite(x.clarity_db) ? `, clarity ${num(x.clarity_db, 1, true)} dB` : ''}; not in the score, may include cellos above C2` : 'not in the score yet')));
+                // the passage under the cursor, else one within a second of it
+                const near = (res.blocks || []).filter(b => b.context === ctx && b.start - 1 <= at && at <= b.end + 1)
+                    .sort((a, b) => (a.start <= at && at <= a.end ? 0 : 1) - (b.start <= at && at <= b.end ? 0 : 1) || b.seconds - a.seconds);
+                const b = near[0];
+                if (!b) return h('div', { class: 'bd-tr bd-none' }, h('span', {}, label), h('span', { class: 'bd-ncol' }),
+                    h('span', { class: 'bd-muted' }, 'no passage'), h('span', {}), h('span', {}), h('span', {}), h('span', {}));
+                return h('div', { class: 'bd-tr' }, h('span', {}, label), h('span', { class: 'bd-ncol' }, `${clock(b.start)}–${clock(b.end)}`),
+                    h('span', {}, b.score !== undefined ? [h('span', { class: `bd-dot ${b.band}` }), ` ${b.score.toFixed(1)}`] : h('span', { class: 'bd-muted' }, 'short')),
+                    h('span', {}, num(b.coh_ratio)), h('span', {}, num(b.fund_db, 1, true)),
+                    h('span', {}, bal(b.balance_db)), h('span', {}, bal(b.balance_fund_db)));
             }));
     }
 
@@ -194,23 +244,20 @@ function mount(root) {
         const p = position();
         S.head.hidden = p === null;
         if (p !== null) S.head.style.left = `${Math.min(100, 100 * p / S.dur)}%`;
+        if (S.cur) {
+            S.cur.hidden = S.cursor === null;
+            if (S.cursor !== null) S.cur.style.left = `${Math.min(100, 100 * S.cursor / S.dur)}%`;
+        }
+        // the slider spans the lanes too
+        if (lane) { slider.style.marginLeft = '0'; slider.style.width = `${lane.offsetWidth}px`; }
     }
 
     function pick(e) {
-        const res = S.analysis;
         const lane = timeline.querySelector('.bd-lane');
-        if (!res || !lane) return;
+        if (!S.analysis || !lane) return;
         const r = lane.getBoundingClientRect();
         const at = (e.clientX - r.left) / r.width * S.dur;
-        if (at < 0 || at > S.dur) return;
-        const hits = (res.blocks || []).filter(b => b.start - 1 <= at && at <= b.end + 1);
-        pickLine.hidden = false;
-        clear(pickLine).append(h('strong', {}, clock(at)), ' ');
-        if (!hits.length) { pickLine.append('No bass passage here.'); return; }
-        pickLine.append(...hits.map(b => h('span', { class: 'bd-pickitem' },
-            `${CONTEXTS.find(c => c[0] === b.context)[1]} ${clock(b.start)}–${clock(b.end)}: `,
-            b.score !== undefined ? h('span', { class: `bd-dot ${b.band}` }) : null,
-            b.score !== undefined ? ` ${b.score.toFixed(1)} (×coh ${num(b.coh_ratio)}, fund ${num(b.fund_db, 1, true)} dB)` : 'too short to score')));
+        if (at >= 0 && at <= S.dur) setCursor(at);
     }
 
     function paintTaps() {

@@ -78,7 +78,7 @@ from scipy.signal import find_peaks
 
 # Bumped whenever results change: the box re-analyses tracks stored under an
 # older version, and calibration only compares results of one version.
-VERSION = "1.4"
+VERSION = "1.5"
 
 SR = 16000          # analysis rate: everything of interest is below 4 kHz
 NFFT = 4096         # 256 ms frames, 3.9 Hz bins: resolves 30 Hz fundamentals
@@ -525,13 +525,23 @@ def context_cues(L, R, f0, frames, df, coh_ref):
       coh_ratio  L/R coherence on the bass harmonics (80–700 Hz) over the
                  orchestra's where the basses rest, every frame weighted
                  equally; `coh_ref` is a number or a MatchedReference,
-                 which measures the orchestra over frames of the same shape. A bass picked up more directly than the rest is
-                 more coherent (×>1).
+                 which measures the orchestra over frames of the same shape.
+                 A bass picked up more directly than the rest is more
+                 coherent (×>1).
+      balance_db right minus left level on the same harmonics, every frame
+                 weighted equally: where the basses sit (position, not
+                 depth).  A level ratio, so short passages are not biased
+                 the way coherence is.  The harmonics may include cellos
+                 doubling an octave up (Mahler 2/II, Rattle: from bar 13
+                 the octave leans left 7–11 dB while the fundamental, the
+                 basses alone, leans right 5–9 dB).
+      balance_fund_db  the same on the fundamental: the basses alone.
       fund_db    fundamental vs the mean of harmonics 2–6 (mono). Distance
                  and hall favour the fundamental; a close mic the upper
                  harmonics. Register dependent: compare like with like."""
     acc = _acc_new()
     fund = []
+    fl = fr = 0.0
     bins = np.arange(NFFT // 2 + 1)
     band = (bins >= int(CTX_BAND[0] / df)) & (bins <= int(CTX_BAND[1] / df))
     for s in range(0, len(frames), 256):
@@ -546,6 +556,9 @@ def context_cues(L, R, f0, frames, df, coh_ref):
             acc["lr"][comb] += (np.conj(xl) * xr)[comb]
             acc["ll"][comb] += (np.abs(xl) ** 2)[comb]
             acc["rr"][comb] += (np.abs(xr) ** 2)[comb]
+            k0 = int(round(b0))
+            fl += float((np.abs(xl[max(k0 - 1, 0):k0 + 2]) ** 2).sum())
+            fr += float((np.abs(xr[max(k0 - 1, 0):k0 + 2]) ** 2).sum())
             pm = np.abs(0.5 * (xl + xr)) ** 2
             h = [pm[max(int(round(k * b0)) - 1, 0):int(round(k * b0)) + 2].max()
                  for k in range(1, 7)]
@@ -555,7 +568,10 @@ def context_cues(L, R, f0, frames, df, coh_ref):
         coh_ref = coh_ref(np.asarray(frames))
     return {"coh_comb": cc, "coh_ref": coh_ref,
             "coh_ratio": cc / (coh_ref + EPS) if coh_ref else None,
-            "fund_db": float(np.median(fund)) if fund else None}
+            "fund_db": float(np.median(fund)) if fund else None,
+            "balance_db": float(10 * np.log10((acc["rr"].sum() + EPS) / (acc["ll"].sum() + EPS)))
+            if acc["ll"].sum() > 0 else None,
+            "balance_fund_db": float(10 * np.log10((fr + EPS) / (fl + EPS))) if fl > 0 else None}
 
 
 def pizz_clarity(env, onsets):
@@ -603,6 +619,8 @@ def context_blocks(L, R, t_frame, f0s, masks, coh_ref):
                 d = depth_score([{"solo": {"seconds": blk["seconds"], **c}}])
                 blk.update(coh_ratio=round(c["coh_ratio"], 3),
                            fund_db=round(c["fund_db"], 2),
+                           balance_db=round(c["balance_db"], 2),
+                           balance_fund_db=round(c["balance_fund_db"], 2),
                            score=round(d["score"], 2), band=d["band"])
             blocks.append(blk)
     blocks.sort(key=lambda x: (x["start"], CONTEXTS.index(x["context"])))
@@ -906,7 +924,9 @@ def report_contexts(ctx, npass=4):
             line += f" {c['notes']:4d} notes"
         if c.get("coh_ratio"):
             line += (f"  coh {c['coh_comb']:.2f}/{c['coh_ref']:.2f} "
-                     f"(×{c['coh_ratio']:.2f})  fund {c['fund_db']:+5.1f} dB")
+                     f"(×{c['coh_ratio']:.2f})  fund {c['fund_db']:+5.1f} dB"
+                     f"  R−L {c['balance_db']:+5.1f} dB"
+                     f" (fundamental {c['balance_fund_db']:+5.1f})")
         if "clarity_db" in c:
             line += (f"  clarity {c['clarity_db']:+5.1f} dB "
                      f"({c['clarity_notes']} isolated)")
