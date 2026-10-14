@@ -753,3 +753,80 @@ recording the basses sit right and the cellos left.
 The card shows both in its table, for the whole track or, with the Position
 slider under the graph (or a tap on the graph, or "Now"), for the passages
 at one moment, marked on the graph by a dashed line.
+
+## Where this stands (2026-10-14, end of day)
+
+### Can recorded depth be estimated?
+
+The physical cues of distance are known: direct-to-reverberant ratio,
+early-reflection pattern, attack sharpness, high-frequency loss, inter-
+channel coherence. A recording bakes them in through hall, main pair, spots
+and added reverb, all at once, so one 0–10 number comparable across
+recordings is probably out of reach with the current cues:
+
+| Cue | Status |
+|---|---|
+| Coherence vs the orchestra at rest | after the matched-reference fix it barely separates the labels (×1.14 vs ×1.25–1.35) |
+| Fundamental vs harmonics | carries most of the separation; register and EQ dependent; penalises the praised Minnesota (−16 dB) |
+| Pizzicato clarity | does not order the labels |
+| Spot-mic double arrival | sound physics, no confirmed real detection (below) |
+| Balance per context | matched both listening observations (Rattle, Minnesota) |
+
+Realistic: descriptive measures of one recording (balance, spot-mic check,
+timeline) and **relative** measures within a recording. The most promising
+untried cue is relative direct-to-reverberant energy around attacks, basses
+vs violins of the same recording, where hall and setup largely cancel. If
+that does not follow the ear either, drop the depth score and keep the card
+as a descriptive tool.
+
+### Bias in the feedback
+
+1. The card shows score and colours while the listener taps: taps are not
+   independent of the detector. Proposed: a blind mode that hides them
+   during a session and reveals them after.
+2. Reputation and expectation (the Minnesota's): judge before reading.
+3. The room: mostly moves bass notes left/right (note by note), less their
+   distance. Check key verdicts on good headphones, which remove the room.
+
+### The listening room (`DRC-120.green`, filter `120.green.multipos.fdw6`)
+
+At 1/6 octave, the resolution closer to how the ear integrates bass:
+left/right within ±3 dB from 63 Hz up, 4–4.5 dB at 40–50 Hz; the ±10 dB
+per note quoted earlier is 1/48 octave at one microphone point (narrow modal
+features, real but typical of any small room). Bass +3…+9 dB over the
+200–500 Hz average below 100 Hz, consistent with the "Harman fuller" target
+the filters aim at (the common 25–80 Hz correction appears to cut nothing
+there; `L/R.filtered.txt` equal the raw responses below 80 Hz, not
+confirmed against the running chain). Above 100 Hz the filter brings the
+channels within 1–2 dB. Typical domestic bass, not a bad room on this
+evidence. **Not yet assessed**, and more relevant to depth: bass decay
+(ringing), early reflections, left/right symmetry above 300 Hz.
+
+### The spot-mic check: what it can and cannot say
+
+Detects an **unaligned** bass spot (mixed without the delay matching its
+distance): every note arrives twice, Δ = 5–40 ms apart, found as a fixed
+delay common to all notes in the L/R cross-correlation (GCC), with a mono
+autocorrelation (AC) as weak second estimator.
+
+- Synthetic: 15/16 found, Δ within 0.4 ms, 0/32 false alarms; thin margin
+  (worst clean case z 5.1 vs threshold 5.5).
+- Real: no confirmed detection. Bychkov's "likely +15.25 ms" was a method
+  flaw (fixed in v1.1). Muti 13/I's recurring +5.8 ms is real but a spot
+  2 m closer and a stage-wall reflection 1 m behind look alike. AC
+  "possible" verdicts are mostly pitch periods: listening hints only.
+- Blind to: delay-aligned spots (common in good modern productions),
+  recordings with no inter-channel delay at all (coincident pair or panned
+  spots, as most analysed here), spots mixed ≥ 8 dB under the main pickup.
+
+So "none" means "no unaligned spot found", not "no spot". The verdict is
+stored with each analysis but the card does not show it yet; if shown, in
+those terms.
+
+### Next steps, in order
+
+1. Blind mode for sessions.
+2. A room check from the REW measurements: bass decay, early reflections,
+   L/R symmetry above 300 Hz.
+3. Relative direct-to-reverberant energy, basses vs violins, on the
+   labelled recordings; decide then whether the depth score stays.
