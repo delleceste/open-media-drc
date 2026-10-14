@@ -47,6 +47,10 @@ configure_file(
 # omdrc-status wrappers supplied by core-drc in the same top-level build.
 message(STATUS "Rendering commands.conf from src/commands.conf.in")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/commands.conf.in" _cc)
+# A changed template must re-render on the next build, not only on a fresh
+# configure: file(READ) is not a dependency CMake tracks by itself.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/src/commands.conf.in")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(_UPMPDCLI_CONSOLE_LOG "/run/open-media-drc/upmpdcli-console.log")
 else()
