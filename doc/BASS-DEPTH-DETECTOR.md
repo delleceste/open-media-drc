@@ -838,3 +838,62 @@ those terms.
    L/R symmetry above 300 Hz.
 3. Relative direct-to-reverberant energy, basses vs violins, on the
    labelled recordings; decide then whether the depth score stays.
+
+## Validation against known geometry: first results (2026-10-14)
+
+`tools/bassval` (algorithms: BASS-DEPTH-ALGORITHMS.md §4), detector 1.5,
+Aalto anechoic parts of Beethoven 7/I, Bruckner 8/II and Mahler 1/IV,
+shoebox hall 24 × 40 × 15 m, RT 1.9 s (r_c 5 m), main pair 2 m beyond the
+stage edge. 81 scenes in three grids, plus two diagnostics.
+
+**Distance** (basses moved −2…+4 m: 13.4 → 8.3 m from the main pair, their
+direct-to-reverberant ratio −8.9 → −3.1 dB; AB, ORTF, XY):
+
+| Cue | mean ρ with distance (expected sign) | groups monotonic the right way |
+|---|---|---|
+| score | +0.00 (+) | 0/6 |
+| ×coh (track) | +0.34 (−) | 0/6 |
+| solo fundamental | −0.25 (+) | 0/5 |
+| with-sections ×coh | +0.32 (−) | 0/6 |
+| tutti ×coh | +0.12 (−) | 0/9 |
+| pizzicato ×coh | −0.30 (−) | 1/9 |
+
+No cue follows the basses' distance. A change of hall (RT 1.4 / 1.9 /
+2.6 s) moves each cue 0.4–1.4 times as much as a 6 m change of distance.
+
+**Basses alone** (no orchestra, Beethoven): the raw coherence of their
+harmonics stays at 0.69–0.83 over 8.3–13.1 m with no trend, in all three
+setups. Physically: the hall's diffuse field at 80–700 Hz is itself
+fairly coherent between the capsules (AB 0.6 m: sin(kd)/kd = 0.81 at
+100 Hz), and a 4 dB change of direct-to-reverberant ratio well beyond the
+critical distance moves the mixture's coherence by a few hundredths. The
+coherence cue reacts to a close pickup, not to stage depth.
+
+**Spot microphone**: an unaligned bass spot was found in 0 of 9 scenes at
+−6 dB, and not at 0, +6 or +12 dB either; not at true delays of 18.9, 21.0
+or 28.9 ms (to rule out the pitch masking hiding one particular lag); with
+the basses further back the check ran out of exposed bass
+("insufficient"). With realistic acoustics (early reflections, the spot
+hearing the whole orchestra), the double-arrival peak drowns among the
+delay peaks of the reflections. The synthetic selftest it passes has
+neither.
+
+**Spot vs coherence**: mixing a spot in (aligned or not, 0 dB… −6 dB) does
+not raise ×coh either (0.9–1.1 throughout): the spot's bleed of the
+orchestra raises the reference as much as the basses.
+
+**Limits of the simulation**, which could hide real effects: a shoebox with
+frequency-independent wall absorption in the early part; omnidirectional
+sources (a real bass radiates unevenly); sections made of copies of one
+player; MP3 stems; one hall size; spot bleed at its natural level (real
+engineers may gate or EQ spots). The basses-alone diagnostic is the least
+affected: it involves no reference and no masking.
+
+**Conclusion.** In this controlled test none of the detector's depth cues,
+and not the spot check, measures what it was meant to. Together with the
+weak separation on the labelled recordings, the depth score has no
+demonstrated basis. What stands: where the basses play (contexts and
+timeline) and where they sit left/right (balance), which are direct
+measurements. Recommended: take the depth score and colours off the card,
+or mark them clearly experimental; keep the timeline and balance; stop
+tuning the score on taps.
