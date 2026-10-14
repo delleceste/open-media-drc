@@ -154,3 +154,22 @@ A bass much more coherent than the orchestra means its L/R pickup is more direct
 harmonics fits a close mic (bow and string detail over hall bass). Both cues are
 confounded by dynamics, register (D1 fundamental is 37 Hz) and hall, and need more
 labelled tracks before they become a v2 "depth index".
+
+## Case study 3 (2026-10-14): Talking Heads, "Heaven" (Fear of Music, 1979, CD rip) — out of scope
+
+A review claims the bass sits "well at the back"; the user hears it centre and very
+front. A studio mix has no stage, so v1 does not apply. With `--fmax 110` it gives
+"none": the GCC peaks (z 13–16) are stronger in the rest of the mix than in the bass,
+i.e. mix-wide delays and reverb.
+
+Mix measurements (`mixdepth.py`/`tail.py`, scratch scripts):
+- 30–120 Hz: L/R coherence 0.95–0.99, side 15–20 dB under mid → mono, centre.
+  From 120 Hz up: coherence 0.72–0.82, side −7…−9 dB.
+- Bass band side/mid rises only +2.7 dB from attack to decay (−14.6 → −11.9 dB);
+  the 700–2500 Hz band rises +1.3 dB. Almost no stereo ambience around the bass.
+- 60–250 Hz holds ~38 % of the mix energy (kick included).
+
+Nothing supports "at the back": dry, mono, loud all read as front. Caveat: mono
+lows were standard for vinyl cutting in 1979, so centre/mono alone is no
+depth cue. A dark tone (few upper harmonics) can read as distance, but it can't be
+separated from the guitars in a full mix.
