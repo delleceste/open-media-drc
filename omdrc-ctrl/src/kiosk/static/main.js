@@ -88,9 +88,13 @@ function preparePage(i) {
     safe(() => page.prepareEnter && page.prepareEnter(cur >= 0 ? K.pages[cur].id : null));
 }
 
+// Slides only from a swipe page to its neighbour (Now <-> Qobuz <-> DRC), as a swipe
+// would; any other change (the menu, the tabs, a jump over a page) is instant.
 K.showPage = (id, smooth = true) => {
     const i = K.pages.findIndex(p => p.id === id);
     if (i < 0) return;
+    const n = swipeCount();
+    smooth = smooth && cur >= 0 && cur < n && i < n && Math.abs(i - cur) === 1;
     preparePage(i);
     pager.scrollTo({ left: i * pager.clientWidth, behavior: smooth ? 'smooth' : 'instant' });
     if (!smooth) activate(i);

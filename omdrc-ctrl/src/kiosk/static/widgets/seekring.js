@@ -16,7 +16,8 @@
  *   new K.SeekRing(box, { usable(), elapsed(), duration(), seek(seconds) })
  * Optional onMinimize is called on a downward swipe past a threshold, and
  * onPull(distance) moves the player with the finger as that swipe happens;
- * a tap always just reveals (or puts away) the ring, never minimizes.
+ * a tap always just reveals (or puts away) the ring, never minimizes -- or, with
+ * an optional onTap, calls that instead (a shown ring is still put away).
  * Optional onScroll(up) and onScrollEnd(velocity) take the vertical swipes off the
  * ring that are not a pull: an upward one, or any once scrolled() says the page under
  * the cover is scrolled (up: pixels moved up since the touch, velocity: px/ms upward).
@@ -108,7 +109,7 @@ K.SeekRing = class {
         box.addEventListener('pointerdown', e => {
             if (e.button !== 0) return;
             const usable = this.o.usable();
-            if (!usable && !this.o.onMinimize) return;   // nothing this gesture could do
+            if (!usable && !this.o.onMinimize && !this.o.onTap) return;   // nothing this gesture could do
             e.preventDefault();
             try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}   // not pull-to-reload
             const f = this.frac();
@@ -167,6 +168,7 @@ K.SeekRing = class {
             if (d.cover) {
                 if (!d.moved) {   // a tap: reveal the ring, or put an already-shown one away
                     if (d.wasShown) this.hide();
+                    else if (this.o.onTap) this.o.onTap();
                     else if (this.o.usable()) { this.show(); this.hideLater(RING_IDLE_MS); }
                 } else if (d.scroll) this.o.onScrollEnd && this.o.onScrollEnd(performance.now() - d.lastT < 80 ? d.v : 0);
                 else if (e.type === 'pointerup' && d.dy > 40) this.o.onMinimize && this.o.onMinimize();
@@ -181,18 +183,15 @@ K.SeekRing = class {
     }
 };
 
-// A button (now.js, qobuz.js) that opens the cover full screen, with its own
-// seek ring; a top-right "Close" button closes it.
-//   K.coverMaxButton(() => src, o, getMeta)   -> <button class="cover-max-btn">, wire it up yourself
+// The cover full screen (a tap on the cover of now.js, qobuz.js: their SeekRing's
+// onTap), with its own seek ring; a top-right "Close" button closes it.
+//   K.coverOpener(() => src, o, getMeta)   -> a function that opens it, if there is a cover
 //   K.openCoverMax(src, { usable(), elapsed(), duration(), seek(seconds) }, meta)
 // `getMeta`/`meta` is optional: { title, facts, albumId, transport: { playing(), action(name) } }.
 // `albumId` looks up the facts line (label, year) itself when the caller does not
 // already have it to hand; `transport` draws the same prev/play-pause/stop/next
 // row as the main player, acting through `action('prev' | 'play' | 'pause' | 'stop' | 'next')`.
-K.coverMaxButton = (getSrc, o, getMeta) => h('button', { type: 'button', class: 'cover-max-btn', title: 'View the cover full screen',
-    onpointerdown: e => e.stopPropagation(),
-    onclick: e => { e.stopPropagation(); const src = getSrc(); if (src) K.openCoverMax(src, o, getMeta ? getMeta() : {}); } },
-    K.tIcon('maximize'));
+K.coverOpener = (getSrc, o, getMeta) => () => { const src = getSrc(); if (src) K.openCoverMax(src, o, getMeta ? getMeta() : {}); };
 
 K.openCoverMax = (src, o, meta = {}) => {
     let closed = false;
@@ -229,7 +228,8 @@ K.openCoverMax = (src, o, meta = {}) => {
         if (a.title) titleEl.textContent = a.title;
         factsEl.textContent = [a.label, a.year].filter(Boolean).join(' · ');
     });
-    // the ring stays hidden until a first, separate touch on the cover asks for it
-    // (see widgets/seekring.js's own header): a swipe to minimize never shows it either
+    // the ring shows for a moment and fades, so it is known to be there; then it stays
+    // hidden until a touch on the cover asks for it (this file's header)
+    ring.flash(2000);
 };
 })();

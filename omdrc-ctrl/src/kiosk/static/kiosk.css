@@ -212,14 +212,6 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .seek-ring.active .sr-arc { stroke-width: 3.2; }
 .seek-ring.active .sr-knob { r: 4.8px; stroke-width: 1.2; }
 .sr-time { position: relative; padding: .2rem .7rem; border-radius: 1rem; background: rgba(13,17,23,.78); font: 600 1rem ui-monospace, monospace; white-space: nowrap; }
-/* the button at the bottom right of a cover box that opens it full screen (K.coverMaxButton) */
-.cover-max-btn { position: absolute; inset: auto .5rem .5rem auto; width: 1.3rem; height: 1.3rem; z-index: 1;
-    display: flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%;
-    background: rgba(0,0,0,.7); color: #fff; }
-.cover-max-btn .ticon { width: .75rem; height: .75rem; }
-.now-art.empty .cover-max-btn { display: none; }
-/* the landscape cover is small (beside the title); no room/need for this there */
-@media (orientation: landscape) { .now-art .cover-max-btn { display: none; } }
 .now-search { display: none; }                  /* upright only */
 /* ... but never hidden under the finger: the keyboard coming up may leave the page wider
    than tall, and a hidden field loses the focus (and the keyboard goes again) */
@@ -1091,12 +1083,7 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 .qz-grip:active i, .qz-grip:focus-visible i { opacity: 1; }
 .qz-full-top { display: flex; align-items: center; gap: .7rem; flex: 0 0 auto; margin-bottom: .5rem; }
 .qz-full-label { color: var(--muted); font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; }
-/* the cover's maximize button, out of the art and onto this row instead, pushed to the right */
-.qz-full-top .cover-max-btn { position: static; margin-left: auto; width: 2.1rem; height: 2.1rem;
-    background: none; border: 1.5px solid transparent; color: var(--text); }
-.qz-full-top .cover-max-btn .ticon { width: 1.2rem; height: 1.2rem; }
-.qz-full-top .cover-max-btn:active { background: var(--press); }
-.qz-full-top .qz-listening { display: inline-flex; align-items: center; justify-content: center;
+.qz-full-top .qz-listening { margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
     padding: .3rem; width: 2.1rem; height: 2.1rem; }
 .listening-icon { display: inline-block; width: 1.15rem; height: 1.15rem; object-fit: contain;
     flex: 0 0 auto; font-size: .65rem; font-weight: 700; line-height: 1.15rem; text-align: center; }

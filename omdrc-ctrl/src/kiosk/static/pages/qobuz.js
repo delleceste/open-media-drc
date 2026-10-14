@@ -2241,9 +2241,8 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
     P.queueHead = h('button', { type: 'button', class: 'btn lbl', 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: () => P.openQueueActions() }, 'Queue · 0 ▾');
     P.queueBox = h('div', { class: 'qz-queue' });
     P.queueTools = h('div', { class: 'qz-queue-tools' }, P.queueHead);
-    // The cover's own maximize button, moved up into this row (to the right of the
-    // "Now playing" label) rather than floating over the art itself.
-    v.maxBtn = K.coverMaxButton(() => v.cover.dataset.src || '',
+    // a tap on the cover opens it full screen
+    v.openCover = K.coverOpener(() => v.cover.dataset.src || '',
         { usable: P.seekable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seekTo(s) },
         () => {
             const t = P.trackInfo(), album = t ? t.album : null, d = P.now;
@@ -2257,7 +2256,7 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
         v.grip = h('div', { class: 'qz-grip', role: 'button', tabindex: '0', title: 'Swipe down or tap to close',
             'aria-label': 'Close the player' }, h('i')),
         h('div', { class: 'qz-full-top' },
-            h('span', { class: 'qz-full-label' }, 'Now playing'), v.maxBtn,
+            h('span', { class: 'qz-full-label' }, 'Now playing'),
             v.aiBtn = h('button', { type: 'button', class: 'btn qz-listening', title: 'Research this music',
                 'aria-label': 'Research this music', onclick: e => K.listening.open(P.listeningTrack(), e.currentTarget) }, K.listening.icon())),
         h('div', { class: 'qz-full-body' },
@@ -2275,7 +2274,7 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
     v.cover.classList.add('seek-zone');
     v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
         duration: () => P.base.duration, seek: s => P.seekTo(s),
-        onMinimize: () => P.closeFull(), sideways: true,
+        onMinimize: () => P.closeFull(), sideways: true, onTap: v.openCover,
         scrolled: () => P.fullEl.scrollTop > 0, onScroll: up => P.coverScroll(up), onScrollEnd: v => P.coverFling(v),
         onPull: distance => { if (P.fullEl) P.fullEl.style.transform = `translateY(${distance}px)`; } });
     P.seekTaps = null;
@@ -2570,7 +2569,6 @@ P.paintViews = () => {
         setCover(v.cover, album ? (v.full ? album.image_large || album.image : album.image || album.image_large) : '');
         if (!v.full) K.cover.tintStrips(v.cover.dataset.src);
         if (v.full) {
-            v.maxBtn.hidden = !v.cover.dataset.src;
             v.infoBtn.hidden = !(album && album.id);
             const aid = album && album.id || '';       // the album's awards, above its label (v.detail)
             if (v.awardsFor !== aid) { v.awardsFor = aid; K.clear(v.awards); if (aid) v.awards.append(K.awardsBox(album)); }

@@ -33,16 +33,15 @@ P.mount = el => {
         onload: e => { e.target.hidden = false; P.artBox.classList.remove('empty'); P.paintIdle(); },
         onerror: e => { e.target.hidden = true; P.artBox.classList.add('empty'); P.paintIdle(); } });
     // the cover's box: small beside the title in landscape, a third of the height upright,
-    // where a touch brings up the ring to seek along (see "seek ring" below); the centre
-    // button opens it full screen, with its own ring
-    P.coverMaxBtn = K.coverMaxButton(() => P.art.hidden ? '' : P.art.getAttribute('src') || '',
+    // where a tap opens it full screen, with its own ring to seek along (see "seek ring" below)
+    P.openCover = K.coverOpener(() => P.art.hidden ? '' : P.art.getAttribute('src') || '',
         { usable: P.ringUsable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seek(s) },
         () => ({
             title: P.track ? (P.track.album || P.track.title || '') : '',
             albumId: (P.track && P.track.qobuz_album) || '',
             transport: { playing: () => !!(P.track && P.track.state === 'play'), action: a => P.transport(a) },
         }));
-    P.artBox = h('div', { class: 'now-art empty' }, P.art, P.coverMaxBtn);
+    P.artBox = h('div', { class: 'now-art empty' }, P.art);
     P.titleText = h('span', {}, '—');
     P.t1 = h('div', { class: 'now-title', tabindex: '0',
         onpointerdown: () => P.t1.classList.add('reading'),
@@ -199,7 +198,7 @@ P.mount = el => {
     P.wireMeterTap();
     P.wireCoverGesture();
     P.ring = new K.SeekRing(P.artBox, { usable: P.ringUsable, elapsed: () => P.elapsedNow(),
-        duration: () => P.base.duration, seek: s => P.seek(s) });
+        duration: () => P.base.duration, seek: s => P.seek(s), onTap: P.openCover });
     new ResizeObserver(() => { if (P.coverMode) P.placeCover(); }).observe(P.lvlBody);
     new ResizeObserver(() => { if (P.coverMode === 'square') P.applyCols(); }).observe(P.mainBox);
     P.vu = new K.VuMeter(P.meterHost, 'needles');
