@@ -49,6 +49,12 @@ difference against the orchestra reference. A time-aligned spot leaves no
 double arrival; catching it is v2's job (direct-to-reverberant ratio and
 attack sharpness of the basses against the violins).
 
+Bass contexts (reported per file): frames where the basses play alone,
+with other sections, under a loud tutti, and pizzicato notes (16 ms comb
+envelope: sharp rise, immediate decay), each with depth cues measured over
+those frames: L/R coherence of the bass harmonics against the orchestra at
+rest, and the fundamental against harmonics 2–6.
+
 Thresholds are uncalibrated until run against recordings labelled by ear.
 
 Usage:
@@ -331,6 +337,194 @@ def peak_rel_to_ref(peaks, lags_ms, ref_env, ref_norm):
                                               / (ref_norm + EPS) + EPS))
 
 
+# ---------------------------------------------------------------- contexts
+
+CTX_BAND = (80.0, 700.0)   # band of the context coherence cue
+CONTEXTS = ("solo", "with-sections", "tutti", "pizzicato")
+
+
+PZ_NFFT, PZ_HOP = 1024, 256   # 64 ms window, 16 ms hop for attacks
+
+
+def comb_envelope(mono, f0, present):
+    """Bass comb energy (harmonics 2–6 of each coarse frame's f0) on a
+    16 ms grid, in dB; NaN where the basses are not playing."""
+    nf = 1 + (len(mono) - PZ_NFFT) // PZ_HOP
+    df = SR / PZ_NFFT
+    w = np.hanning(PZ_NFFT)
+    centre = (np.arange(nf) * PZ_HOP + PZ_NFFT / 2) / SR
+    ci = np.clip(((centre * SR - NFFT / 2) / HOP).round().astype(int),
+                 0, len(f0) - 1)
+    # A coarse frame straddling an onset is rarely 'present' itself: take
+    # the note from the first present frame up to 3 frames (192 ms) later.
+    src = np.full(len(f0), -1)
+    for d in (3, 2, 1, 0):
+        sh = np.full(len(f0), False)
+        sh[:len(f0) - d] = present[d:]
+        src[sh] = (np.arange(len(f0)) + d)[sh]
+    fi = src[ci]
+    env = np.full(nf, np.nan)
+    on = np.flatnonzero(fi >= 0)
+    for s in range(0, len(on), 2048):
+        k = on[s:s + 2048]
+        idx = k[:, None] * PZ_HOP + np.arange(PZ_NFFT)[None, :]
+        P = np.abs(np.fft.rfft(mono[idx] * w, axis=1)) ** 2
+        b = np.rint(f0[fi[k]][:, None] * np.arange(2, 7)[None, :] / df)
+        b = b.astype(int)
+        env[k] = 10 * np.log10(P[np.arange(len(k))[:, None], b].sum(1) + EPS)
+    return env, ci
+
+
+def classify_contexts(mono, f0, dom, npk, energy, gate, opts):
+    """Per frame: are the basses playing, and in which setting?
+
+      solo           the bass comb carries ≥ --solo-dom of 25–1500 Hz
+      tutti          basses audible under a loud orchestra (comb may miss
+                     some harmonics: --tutti-min-peaks)
+      with-sections  basses audible with other instruments, not tutti
+      pizzicato      overlay: on the 16 ms comb envelope, a rise of
+                     --pizz-rise within 64 ms, then a decay that starts at
+                     once (−1.5 dB by 80 ms: no bowed plateau or swell),
+                     never re-rises by 2 dB, and reaches --pizz-drop by
+                     320 ms (the hall holds a low pizzicato up)
+
+    Thresholds are first guesses; the report lists passages per context so
+    they can be checked by ear."""
+    nfr = len(f0)
+    loud = energy >= np.percentile(energy[gate], 70) if gate.any() else gate
+    # Under a loud orchestra some bass harmonics drown: accept a sparser comb.
+    present = gate & (dom >= opts.present_dom) & (
+        (npk >= opts.min_peaks) | (loud & (npk >= opts.tutti_min_peaks)))
+    present = median_filter(present.astype(np.int8), 3).astype(bool)
+    solo = present & (dom >= opts.solo_dom)
+    tutti = present & ~solo & (dom < opts.dom) & loud
+    with_s = present & ~solo & ~tutti
+
+    env, ci = comb_envelope(mono, f0, present)
+    pizz = np.zeros(nfr, bool)
+    onsets = []
+    i, n = 4, len(env)
+    while i < n - 21:
+        pk = i + int(np.nanargmax(env[i:i + 4])) if np.isfinite(
+            env[i:i + 4]).any() else i
+        base = env[i - 4]
+        e = env[pk:pk + 21]
+        if (np.isfinite(base) and np.isfinite(e).all()
+                and env[pk] - base >= opts.pizz_rise
+                and e[0] - e[5] >= 1.5
+                and e[0] - e[20] >= opts.pizz_drop
+                and np.all(np.diff(e) <= 2.0)):
+            onsets.append(pk)
+            pizz[ci[pk]:ci[min(pk + 20, n - 1)] + 1] = True
+            i = pk + 20
+        else:
+            i += 1
+    return ({"solo": solo, "with-sections": with_s, "tutti": tutti,
+             "pizzicato": pizz}, onsets, env)
+
+
+def _coh(acc):
+    w = np.sqrt(acc["ll"] * acc["rr"])
+    return float(np.abs(acc["lr"]).sum() / (w.sum() + EPS))
+
+
+def _acc_new():
+    nb = NFFT // 2 + 1
+    return {"lr": np.zeros(nb, complex), "ll": np.zeros(nb), "rr": np.zeros(nb)}
+
+
+def reference_coherence(L, R, frames, df):
+    """L/R coherence of the orchestra where the basses do not play, in the
+    band the bass harmonics are judged in."""
+    acc = _acc_new()
+    band = np.zeros(NFFT // 2 + 1, bool)
+    band[int(CTX_BAND[0] / df):int(CTX_BAND[1] / df) + 1] = True
+    for s in range(0, len(frames), 256):
+        fi = frames[s:s + 256]
+        XL, XR = spectra(L, fi), spectra(R, fi)
+        acc["lr"][band] += (np.conj(XL) * XR).sum(0)[band]
+        acc["ll"][band] += (np.abs(XL) ** 2).sum(0)[band]
+        acc["rr"][band] += (np.abs(XR) ** 2).sum(0)[band]
+    return _coh(acc)
+
+
+def context_cues(L, R, f0, frames, df, coh_ref):
+    """Depth cues over a set of frames:
+
+      coh_ratio  L/R coherence on the bass harmonics (80–700 Hz) over the
+                 orchestra's where the basses rest. A bass picked up more
+                 directly than the rest is more coherent (×>1).
+      fund_db    fundamental vs the mean of harmonics 2–6 (mono). Distance
+                 and hall favour the fundamental; a close mic the upper
+                 harmonics. Register dependent: compare like with like."""
+    acc = _acc_new()
+    fund = []
+    bins = np.arange(NFFT // 2 + 1)
+    band = (bins >= int(CTX_BAND[0] / df)) & (bins <= int(CTX_BAND[1] / df))
+    for s in range(0, len(frames), 256):
+        fi = frames[s:s + 256]
+        XL, XR = spectra(L, fi), spectra(R, fi)
+        for j, i in enumerate(fi):
+            b0 = f0[i] / df
+            r = bins / b0
+            comb = (band & (np.abs(r - np.rint(r)) * b0 <= 1.0)
+                    & (np.rint(r) >= 2))
+            xl, xr = XL[j], XR[j]
+            acc["lr"][comb] += (np.conj(xl) * xr)[comb]
+            acc["ll"][comb] += (np.abs(xl) ** 2)[comb]
+            acc["rr"][comb] += (np.abs(xr) ** 2)[comb]
+            pm = np.abs(0.5 * (xl + xr)) ** 2
+            h = [pm[max(int(round(k * b0)) - 1, 0):int(round(k * b0)) + 2].max()
+                 for k in range(1, 7)]
+            fund.append(10 * np.log10(h[0] / (np.mean(h[1:]) + EPS) + EPS))
+    cc = _coh(acc)
+    return {"coh_comb": cc, "coh_ref": coh_ref,
+            "coh_ratio": cc / (coh_ref + EPS) if coh_ref else None,
+            "fund_db": float(np.median(fund)) if fund else None}
+
+
+def pizz_clarity(env, onsets):
+    """Per isolated pizzicato: comb energy in the first 80 ms vs 96–600 ms
+    (a per-note C80). The hall and a distant pickup fill the tail."""
+    out = []
+    e = 10 ** (env / 10)
+    for n, i in enumerate(onsets):
+        nxt = onsets[n + 1] if n + 1 < len(onsets) else len(env)
+        if nxt < i + 38 or i + 38 > len(env) or not np.isfinite(
+                env[i:i + 38]).all():
+            continue
+        out.append(10 * np.log10(e[i:i + 5].sum() / (e[i + 6:i + 38].sum()
+                                                    + EPS)))
+    return out
+
+
+def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts):
+    df = SR / NFFT
+    masks, onsets, env = classify_contexts(0.5 * (L + R), f0, dom, npk,
+                                           energy, gate, opts)
+    rest = np.flatnonzero(gate & ~masks["solo"] & ~masks["with-sections"]
+                          & ~masks["tutti"])
+    coh_ref = reference_coherence(L, R, rest, df) if len(rest) >= 20 else None
+    out = {}
+    for name in CONTEXTS:
+        m = masks[name]
+        c = {"seconds": float(m.sum() * HOP / SR), "passages": []}
+        for a, b in runs(m):
+            if (b - a) * HOP / SR >= opts.ctx_min_s:
+                c["passages"].append((float(t_frame[a] - NFFT / 2 / SR),
+                                      float(t_frame[b - 1] + NFFT / 2 / SR)))
+        if m.sum() >= opts.ctx_min_frames:
+            c.update(context_cues(L, R, f0, np.flatnonzero(m), df, coh_ref))
+        if name == "pizzicato":
+            cl = pizz_clarity(env, onsets)
+            c["notes"] = len(onsets)
+            if cl:
+                c["clarity_db"] = float(np.median(cl))
+                c["clarity_notes"] = len(cl)
+        out[name] = c
+    return out, masks
+
+
 def analyze(x, opts, name="input"):
     L, R = x
     n = L.shape[0]
@@ -390,6 +584,9 @@ def analyze(x, opts, name="input"):
         res["segments"].append({"start": float(t_frame[a] - NFFT / 2 / SR),
                                 "end": float(t_frame[b - 1] + NFFT / 2 / SR),
                                 "note": note_name(float(np.median(f0[a:b])))})
+    res["contexts"], ctx_masks = analyze_contexts(
+        L, R, t_frame, f0, dom, npk, energy, gate, opts)
+    res["timeline"]["contexts"] = {k: v.tolist() for k, v in ctx_masks.items()}
     groups = {k: g for k, g in groups.items() if g["n"] >= opts.min_note_frames}
     res["pitch_variety"] = len(groups)
     if nb < opts.min_bass_frames or len(groups) < opts.min_notes:
@@ -510,6 +707,30 @@ def verdict(res, opts):
 
 # ---------------------------------------------------------------- output
 
+def report_contexts(ctx, npass=4):
+    if not ctx:
+        return
+    print("   bass contexts (depth cues: L/R coherence of the bass harmonics vs "
+          "the orchestra at rest; fundamental vs harmonics 2–6):")
+    for name in CONTEXTS:
+        c = ctx[name]
+        line = f"     {name:<14}{c['seconds']:6.1f}s"
+        if name == "pizzicato":
+            line += f" {c['notes']:4d} notes"
+        if c.get("coh_ratio"):
+            line += (f"  coh {c['coh_comb']:.2f}/{c['coh_ref']:.2f} "
+                     f"(×{c['coh_ratio']:.2f})  fund {c['fund_db']:+5.1f} dB")
+        if "clarity_db" in c:
+            line += (f"  clarity {c['clarity_db']:+5.1f} dB "
+                     f"({c['clarity_notes']} isolated)")
+        print(line)
+        ps = c["passages"]
+        if ps:
+            print("       " + ", ".join(f"{fmt_time(a)}–{fmt_time(b)}"
+                                        for a, b in ps[:npass])
+                  + (f" … +{len(ps) - npass}" if len(ps) > npass else ""))
+
+
 def report(res, nseg=12):
     print(f"== {res['file']}")
     print(f"   {fmt_time(res['duration_s'])} long; bass-dominated "
@@ -521,6 +742,7 @@ def report(res, nseg=12):
               f"~{s['note']}")
     if len(res["segments"]) > nseg:
         print(f"     … {len(res['segments']) - nseg} more")
+    report_contexts(res.get("contexts"))
     if res["verdict"] == "insufficient":
         print(f"   VERDICT: {res['verdict_text']}\n")
         return
@@ -718,6 +940,21 @@ def build_parser():
     g.add_argument("--max-lag", type=float, default=60.0, help="ms")
     g.add_argument("--pitch-tol", type=float, default=1.0,
                    help="ms masked around each pitch-period multiple")
+    g.add_argument("--present-dom", type=float, default=0.1,
+                   help="share of 25–1500 Hz on a complete bass comb for "
+                        "the basses to count as playing")
+    g.add_argument("--tutti-min-peaks", type=int, default=4,
+                   help="comb peaks enough for basses under a loud orchestra")
+    g.add_argument("--solo-dom", type=float, default=0.7,
+                   help="share above which the basses play alone")
+    g.add_argument("--pizz-rise", type=float, default=6.0,
+                   help="dB rise of the bass comb within 48 ms (pizzicato)")
+    g.add_argument("--pizz-drop", type=float, default=4.0,
+                   help="dB fall of the bass comb within 320 ms")
+    g.add_argument("--ctx-min-frames", type=int, default=20,
+                   help="frames a context needs for depth cues")
+    g.add_argument("--ctx-min-s", type=float, default=1.0,
+                   help="shortest passage listed per context")
     g.add_argument("--leak-db", type=float, default=10.0,
                    help="another bass note this close to a group's own note "
                         "(harmonic level) has its periods masked too")

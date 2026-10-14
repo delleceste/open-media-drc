@@ -245,3 +245,50 @@ AC possible 10.2 ms (unreliable on 3 notes). Cues: coherence **×1.00**,
 cues then describe the organ (far, in the room), not the string basses. A
 pitch-steadiness test should become part of bass-frame detection (organ, also
 synths, sustained tuba).
+
+## Bass contexts (2026-10-14)
+
+`analyze_contexts` classifies frames and measures depth cues per context:
+
+- **solo**: bass comb ≥ 70 % of 25–1500 Hz (`--solo-dom`).
+- **tutti**: basses present (in loud frames 4 of 6 comb peaks are enough,
+  `--tutti-min-peaks`), comb share < 50 %, frame in the loudest 30 %.
+- **with-sections**: basses present, neither of the above.
+- **pizzicato** (overlay): on a 16 ms envelope of harmonics 2–6, rise ≥ 6 dB
+  within 64 ms, −1.5 dB by 80 ms (no bowed plateau), never re-rising by 2 dB,
+  −4 dB by 320 ms. Synthetic: 15–40 % of plucks found, ≤ 1 bowed note flagged.
+  Low recall, high precision. A hall holds a low pizzicato up, so 9 dB/320 ms
+  found nothing.
+
+Cues per context: `coh_ratio` = L/R coherence on the bass harmonics (80–700 Hz)
+over the orchestra's in frames where the basses rest; `fund_db` = fundamental vs
+mean of harmonics 2–6; pizzicato `clarity_db` = first 80 ms vs 96–600 ms.
+A first version compared the harmonics with the bins between them in the same
+frames. It ranked the labelled recordings backwards (between harmonics sits
+mostly the bass's own reverb) and was dropped.
+
+### Calibration on the labelled recordings
+
+| Recording (label) | solo ×coh | solo fund | with ×coh | tutti ×coh | pizz clarity |
+|---|---|---|---|---|---|
+| Nelsons/BSO 2+12 (back) | 1.38 | +9.9 | 1.13 | 1.32 | −1.9 (1 note) |
+| Bychkov Mahler 3 (not back) | 1.64 | −14.3 | 1.58 | 1.30 | −6.1 |
+| Fischer Dvořák 8 (weak depth) | 2.34 | −11.6 | 1.80 | 1.49 | −3.2 |
+
+Solo and with-sections coherence, and solo fundamental, order all three as
+labelled. Tutti coherence and pizzicato clarity do not (yet).
+
+### Unlabelled: Muti/CSO Sym 13, Wigglesworth/NRPO (BIS) Sym 1, 11, 15
+
+| Recording | solo s | solo ×coh | solo fund | with s | with ×coh | v1.1 delay |
+|---|---|---|---|---|---|---|
+| Muti/CSO 13 (5 mvts) | 306 | 1.38 | +2.9 | 326 | 1.20 | I: +5.8 ms "double arrival" |
+| Wigglesworth 11 | 123 | 1.50 | −3.8 | 307 | 1.42 | IV: −5.8 ms (weak) |
+| Wigglesworth 1 | 47 | 1.18 | +2.7 | 97 | 1.32 | IV: −5.9 ms (weak) |
+| Wigglesworth 15 | 88 | 1.84 | +8.2 | 179 | 1.54 | none |
+
+The 5.8 ms GCC peak in Muti 13/I is persistent (6 of 13 minutes at z ≥ 5.8,
+unmasked, + side only, 9 dB above the orchestra). In the two Wigglesworth
+tracks it appears in one minute each. A bass spot ~2 m closer than the main
+pair and a reflection off the stage wall ~1 m behind the basses look alike
+to GCC; v1 cannot tell them apart.
