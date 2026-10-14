@@ -78,7 +78,7 @@ from scipy.signal import find_peaks
 
 # Bumped whenever results change: the box re-analyses tracks stored under an
 # older version, and calibration only compares results of one version.
-VERSION = "1.2"
+VERSION = "1.3"
 
 SR = 16000          # analysis rate: everything of interest is below 4 kHz
 NFFT = 4096         # 256 ms frames, 3.9 Hz bins: resolves 30 Hz fundamentals
@@ -381,7 +381,7 @@ def comb_envelope(mono, f0, present):
     return env, ci
 
 
-def classify_contexts(mono, f0, dom, npk, energy, gate, opts):
+def classify_contexts(mono, f0, dom, npk, energy, gate, opts, pizz_comb=None):
     """Per frame: are the basses playing, and in which setting?
 
       solo           the bass comb carries ≥ --solo-dom of 25–1500 Hz
@@ -392,7 +392,11 @@ def classify_contexts(mono, f0, dom, npk, energy, gate, opts):
                      --pizz-rise within 64 ms, then a decay that starts at
                      once (−1.5 dB by 80 ms: no bowed plateau or swell),
                      never re-rises by 2 dB, and reaches --pizz-drop by
-                     320 ms (the hall holds a low pizzicato up)
+                     320 ms (the hall holds a low pizzicato up).  Searched
+                     up to --pizz-fmax (G2) on its own comb (`pizz_comb`:
+                     f0, dom, npk): plucked bass lines sit higher than
+                     bowed ones (Mahler 2/II, Rattle: the plucks at 19 and
+                     23 s are E♭2), so they may include cellos above C2.
 
     Thresholds are first guesses; the report lists passages per context so
     they can be checked by ear."""
@@ -406,7 +410,11 @@ def classify_contexts(mono, f0, dom, npk, energy, gate, opts):
     tutti = present & ~solo & (dom < opts.dom) & loud
     with_s = present & ~solo & ~tutti
 
-    env, ci = comb_envelope(mono, f0, present)
+    pf0, pdom, pnpk = pizz_comb if pizz_comb is not None else (f0, dom, npk)
+    ppresent = gate & (pdom >= opts.present_dom) & (
+        (pnpk >= opts.min_peaks) | (loud & (pnpk >= opts.tutti_min_peaks)))
+    ppresent = median_filter(ppresent.astype(np.int8), 3).astype(bool)
+    env, ci = comb_envelope(mono, pf0, ppresent)
     pizz = np.zeros(nfr, bool)
     onsets = []
     i, n = 4, len(env)
@@ -517,9 +525,10 @@ def pizz_clarity(env, onsets):
 
 BLOCK_GAP_S = 2.0       # runs of one context closer than this form one block
 BLOCK_MIN_FRAMES = 12   # frames a block needs for cues of its own (0.8 s)
+PIZZ_BLOCK_MIN_FRAMES = 5   # one plucked note (0.3 s) is scored on its own
 
 
-def context_blocks(L, R, t_frame, f0, masks, coh_ref):
+def context_blocks(L, R, t_frame, f0s, masks, coh_ref):
     """The passages of each context, with their own cues and score: the
     timeline the box shows, and what a listener's feedback is matched to."""
     df = SR / NFFT
@@ -538,8 +547,9 @@ def context_blocks(L, R, t_frame, f0, masks, coh_ref):
                    "start": round(float(t_frame[a] - NFFT / 2 / SR), 2),
                    "end": round(float(t_frame[b - 1] + NFFT / 2 / SR), 2),
                    "seconds": round(float(len(fr) * HOP / SR), 2)}
-            if len(fr) >= BLOCK_MIN_FRAMES and coh_ref:
-                c = context_cues(L, R, f0, fr, df, coh_ref)
+            least = PIZZ_BLOCK_MIN_FRAMES if name == "pizzicato" else BLOCK_MIN_FRAMES
+            if len(fr) >= least and coh_ref:
+                c = context_cues(L, R, f0s[name], fr, df, coh_ref)
                 d = depth_score([{"solo": {"seconds": blk["seconds"], **c}}])
                 blk.update(coh_ratio=round(c["coh_ratio"], 3),
                            fund_db=round(c["fund_db"], 2),
@@ -549,10 +559,14 @@ def context_blocks(L, R, t_frame, f0, masks, coh_ref):
     return blocks
 
 
-def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts):
+def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts, pizz_comb=None):
     df = SR / NFFT
     masks, onsets, env = classify_contexts(0.5 * (L + R), f0, dom, npk,
-                                           energy, gate, opts)
+                                           energy, gate, opts, pizz_comb)
+    # each context's cues on the comb it was found with
+    f0s = {name: f0 for name in CONTEXTS}
+    if pizz_comb is not None:
+        f0s["pizzicato"] = pizz_comb[0]
     rest = np.flatnonzero(gate & ~masks["solo"] & ~masks["with-sections"]
                           & ~masks["tutti"])
     coh_ref = reference_coherence(L, R, rest, df) if len(rest) >= 20 else None
@@ -565,7 +579,7 @@ def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts):
                 c["passages"].append((float(t_frame[a] - NFFT / 2 / SR),
                                       float(t_frame[b - 1] + NFFT / 2 / SR)))
         if m.sum() >= opts.ctx_min_frames:
-            c.update(context_cues(L, R, f0, np.flatnonzero(m), df, coh_ref))
+            c.update(context_cues(L, R, f0s[name], np.flatnonzero(m), df, coh_ref))
         if name == "pizzicato":
             cl = pizz_clarity(env, onsets)
             c["notes"] = len(onsets)
@@ -573,7 +587,7 @@ def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts):
                 c["clarity_db"] = float(np.median(cl))
                 c["clarity_notes"] = len(cl)
         out[name] = c
-    out["blocks"] = context_blocks(L, R, t_frame, f0, masks, coh_ref)
+    out["blocks"] = context_blocks(L, R, t_frame, f0s, masks, coh_ref)
     return out, masks
 
 
@@ -683,8 +697,9 @@ def analyze(x, opts, name="input"):
         res["segments"].append({"start": float(t_frame[a] - NFFT / 2 / SR),
                                 "end": float(t_frame[b - 1] + NFFT / 2 / SR),
                                 "note": note_name(float(np.median(f0[a:b])))})
+    pizz_comb = bass_salience(mono, nfr, opts.fmin, opts.pizz_fmax)[:3]
     res["contexts"], ctx_masks = analyze_contexts(
-        L, R, t_frame, f0, dom, npk, energy, gate, opts)
+        L, R, t_frame, f0, dom, npk, energy, gate, opts, pizz_comb)
     res["blocks"] = res["contexts"].pop("blocks")
     res["version"] = VERSION
     res["timeline"]["contexts"] = {k: v.tolist() for k, v in ctx_masks.items()}
@@ -1071,6 +1086,9 @@ def build_parser():
                    help="comb peaks enough for basses under a loud orchestra")
     g.add_argument("--solo-dom", type=float, default=0.7,
                    help="share above which the basses play alone")
+    g.add_argument("--pizz-fmax", type=float, default=100.0,
+                   help="highest f0 searched for pizzicato (G2 is 98; above C2 "
+                        "cellos may be included)")
     g.add_argument("--pizz-rise", type=float, default=6.0,
                    help="dB rise of the bass comb within 48 ms (pizzicato)")
     g.add_argument("--pizz-drop", type=float, default=4.0,
