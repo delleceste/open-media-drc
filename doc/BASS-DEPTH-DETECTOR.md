@@ -40,20 +40,22 @@ with-sections bass the score rests on; under 10 s it is provisional.
 
 | Recording | Label by ear | Score | Material |
 |---|---|---|---|
-| Shostakovich 2 + 12/I, BSO / Nelsons (DG) | back, good | 🟢 8.8 | 102 s |
-| Mahler 3/I, Czech Phil / Bychkov | not convincingly back | 🔴 3.5 | 78 s |
-| Dvořák 8/I, Budapest FO / Fischer | weak depth | 🔴 2.2 | 24 s |
-| Shostakovich 13, CSO / Muti | — | 🟢 7.5 | 631 s |
-| Shostakovich 1, NRPO / Wigglesworth (BIS) | — | 🟢 7.5 | 144 s |
-| Shostakovich 15, NRPO / Wigglesworth (BIS) | — | 🟡 6.2 | 267 s |
-| Shostakovich 11, NRPO / Wigglesworth | — | 🟡 5.7 | 430 s |
-| Nelsons album by symphony: 2 / 3 / 12/I / 12/II–IV / 13 | — | 🟢 7.7 / 🟢 9.0 (8 s, provisional) / 🟢 9.7 / 🟡 6.4 / 🟢 8.3 | see below |
+| Shostakovich 2 + 12/I, BSO / Nelsons (DG) | back, good | 🟢 8.7 | 102 s |
+| Mahler 3/I, Czech Phil / Bychkov | not convincingly back | 🔴 3.3 | 78 s |
+| Dvořák 8/I, Budapest FO / Fischer | weak depth | 🔴 3.9 | 24 s |
+| Shostakovich 15, NRPO / Wigglesworth (BIS) | — | 🟢 8.9 | 267 s |
+| Shostakovich 13, CSO / Muti | — | 🟢 8.5 | 631 s |
+| Shostakovich 1, NRPO / Wigglesworth (BIS) | — | 🟢 8.0 | 144 s |
+| Shostakovich 11, NRPO / Wigglesworth | — | 🟢 7.4 | 430 s |
+| Nelsons album by symphony: 2 / 3 / 12/I / 12/II–IV / 13 | — | 🟢 9.2 / 🟢 7.5 (8 s, provisional) / 🟢 8.6 / 🟡 6.2 / 🟢 8.8 | see below |
 
+Scores since equal-weight coherence (see "Equal-weight coherence" below).
 The three labelled rows are the calibration set, so their scores agree with
 the labels by construction. The others are predictions waiting for an ear.
-Single movements scatter by about ±1.5 around their recording's score: the
-two labelled Nelsons tracks score 6.8 (Sym 2 Ia) and 9.7 (Sym 12/I). Judge a
-recording on all its movements together.
+Single movements still scatter (Wigglesworth 11: 7.8 / 5.4 / 8.7 / 5.6), so
+judge a recording on all its movements together. Every unlabelled recording
+now lands green: either they really are all fairly natural, or the scale is
+too lenient between 1.1 and 1.5. Only more labels can tell.
 
 ## Reading the results
 
@@ -137,8 +139,8 @@ pizzicato clarity stay out until they do.
 4. **Marker:** 🟢 ≥ 7 back / natural, 🟡 4–7 in between, 🔴 < 4 forward.
    Under 10 s of material it is flagged provisional.
 
-Example, Nelsons 2 + 12/I: × 1.22 gives 8.2; +9.9 dB gives 10.0;
-⅔·8.2 + ⅓·10.0 = 8.8 🟢.
+Example, Nelsons 2 + 12/I: × 1.23 gives 8.1; +9.9 dB gives 10.0;
+⅔·8.1 + ⅓·10.0 = 8.7 🟢.
 
 The anchors and weights were chosen by hand so that three recordings fall
 where the ear put them. Three points cannot test a scale. Every new labelled
@@ -161,8 +163,10 @@ the anchors are moved.
    Harmonic-comb pitch estimation of this kind is standard in music signal
    processing [Klapuri 2003]; this one is a simple version restricted to
    the bass range.
-4. **Coherence.** For each frequency the script adds up, over all slices of
-   a context, the left-right cross-spectrum and the two channels' powers.
+4. **Coherence.** Each slice is first scaled to the same loudness, so every
+   moment counts the same however loud it is. Then, for each frequency, the
+   script adds up over all slices of a context the left-right cross-spectrum
+   and the two channels' powers.
    The coherence is how much of the left-right relationship stays consistent
    across slices [Carter, Knapp & Nuttall 1973]. Why distance lowers it: in a
    diffuse reverberant field the correlation between two microphones falls
@@ -487,25 +491,32 @@ mostly the bass's own reverb) and was dropped.
 
 | Recording (label) | score | solo ×coh | solo fund | with ×coh | tutti ×coh | pizz clarity |
 |---|---|---|---|---|---|---|
-| Nelsons/BSO 2+12 (back) | 🟢 8.8 | 1.38 | +9.9 | 1.13 | 1.32 | −1.9 (1 note) |
-| Bychkov Mahler 3 (not back) | 🔴 3.5 | 1.64 | −14.3 | 1.58 | 1.30 | −6.1 |
-| Fischer Dvořák 8 (weak depth) | 🔴 2.2 | 2.34 | −11.6 | 1.80 | 1.49 | −3.2 |
+| Nelsons/BSO 2+12 (back) | 🟢 8.7 | 1.34 | +9.9 | 1.17 | 1.46 | −1.9 (1 note) |
+| Bychkov Mahler 3 (not back) | 🔴 3.3 | 1.69 | −14.3 | 1.59 | 1.46 | −6.1 |
+| Fischer Dvořák 8 (weak depth) | 🔴 3.9 | 2.20 | −11.6 | 1.48 | 1.27 | −3.2 |
 
-Solo and with-sections coherence, and solo fundamental, order all three as
-labelled. Tutti coherence and pizzicato clarity do not (yet).
+(Equal-weight coherence. Energy-weighted, the first version: Nelsons
+1.38 / 1.13 / 1.32, Mahler 1.64 / 1.58 / 1.30, Dvořák 2.34 / 1.80 / 1.49.)
+
+Solo coherence and solo fundamental order all three as labelled.
+With-sections coherence separates Nelsons from the other two but no longer
+ranks Dvořák below Mahler. Tutti coherence and pizzicato clarity do not
+separate them (yet).
 
 ### Unlabelled: Muti/CSO Sym 13, Wigglesworth/NRPO (BIS) Sym 1, 11, 15
 
 | Recording | score | solo s | solo ×coh | solo fund | with s | with ×coh | v1.1 delay |
 |---|---|---|---|---|---|---|---|
-| Muti/CSO 13 (5 mvts) | 🟢 7.5 | 306 | 1.38 | +2.9 | 326 | 1.20 | I: +5.8 ms "double arrival" |
-| Wigglesworth 11 | 🟡 5.7 | 123 | 1.50 | −3.8 | 307 | 1.42 | IV: −5.8 ms (weak) |
-| Wigglesworth 1 | 🟢 7.5 | 47 | 1.18 | +2.7 | 97 | 1.32 | IV: −5.9 ms (weak) |
-| Wigglesworth 15 | 🟡 6.2 | 88 | 1.84 | +8.2 | 179 | 1.54 | none |
+| Muti/CSO 13 (5 mvts) | 🟢 8.5 | 306 | 1.22 | +2.9 | 326 | 1.00 | I: +5.8 ms "double arrival" |
+| Wigglesworth 11 | 🟢 7.4 | 123 | 1.16 | −3.8 | 307 | 1.14 | IV: −5.8 ms (weak) |
+| Wigglesworth 1 | 🟢 8.0 | 47 | 1.14 | +2.7 | 97 | 1.22 | IV: −5.9 ms (weak) |
+| Wigglesworth 15 | 🟢 8.9 | 88 | 1.04 | +8.2 | 179 | 1.21 | none |
 
-Per movement: Muti 🟢 7.2 / 🟡 5.3 / 🟢 7.8 / 🟢 7.4 / 🟢 7.3; Wigglesworth 11
-🟡 5.9 / 5.8 / 6.2 / 5.1; Wigglesworth 1 🟡 5.9 / 🟡 5.6 (8 s) / 🟢 8.2 /
-🟢 7.1; Wigglesworth 15 🟡 6.1 (7 s) / 6.0 / 4.6 / 6.96 (just under green).
+Per movement: Muti 🟢 8.6 / 🟡 6.9 / 🟢 8.8 / 🟢 8.1 / 🟢 8.0; Wigglesworth 11
+🟢 7.8 / 🟡 5.4 / 🟢 8.7 / 🟡 5.6; Wigglesworth 1 🟢 7.5 / 🟡 5.2 (8 s) /
+🟢 8.7 / 🟡 6.7; Wigglesworth 15 🔴 3.7 (7 s) / 🟢 9.3 / 🟡 4.6 (11 s) / 🟢 9.2.
+(Energy-weighted, these four read 7.5 / 5.7 / 7.5 / 6.2: the per-recording
+verdicts in the text below were written then.)
 
 The 5.8 ms GCC peak in Muti 13/I is persistent (6 of 13 minutes at z ≥ 5.8,
 unmasked, + side only, 9 dB above the orchestra). In the two Wigglesworth
@@ -524,13 +535,15 @@ pieces still work; the GCC verdict on them is weaker.
 
 | Nelsons/BSO | score | solo s | solo ×coh | solo fund | with s | with ×coh | tutti ×coh |
 |---|---|---|---|---|---|---|---|
-| Sym 2 (complete) | 🟢 7.7 | 17 | 1.61 | +11.8 | 35 | 1.32 | 1.26 |
-| Sym 3 (partial) | 🟢 9.0 (8 s, provisional) | 4 | 0.92 | +4.5 | 4 | 1.21 | 1.28 |
-| Sym 12/I (complete) | 🟢 9.7 | 20 | 1.18 | +8.9 | 47 | 0.97 | 1.31 |
-| Sym 12/II–IV (partial) | 🟡 6.4 | 13 | 1.49 | +3.6 | 24 | 1.49 | 1.66 |
-| Sym 13 (partial, 5 mvts) | 🟢 8.3 | 41 | 1.19 | +4.7 | 48 | 1.16 | 1.30 |
+| Sym 2 (complete) | 🟢 9.2 | 17 | 1.36 | +11.8 | 35 | 1.05 | 1.24 |
+| Sym 3 (partial) | 🟢 7.5 (8 s, provisional) | 4 | 1.28 | +4.5 | 4 | 1.36 | 1.39 |
+| Sym 12/I (complete) | 🟢 8.6 | 20 | 1.29 | +8.9 | 47 | 1.19 | 1.56 |
+| Sym 12/II–IV (partial) | 🟡 6.2 | 13 | 1.45 | +3.6 | 24 | 1.56 | 1.81 |
+| Sym 13 (partial, 5 mvts) | 🟢 8.8 | 41 | 0.98 | +4.7 | 48 | 1.18 | 1.39 |
 
-Sym 13 per movement: 🟡 6.9 / 🟡 6.0 (3 s) / 🟢 9.5 / 🟢 8.7 / 🟢 7.0.
+Sym 13 per movement: 🟡 6.9 / 🟡 6.1 (3 s) / 🟢 9.5 / 🟢 9.4 / 🟡 6.6.
+Equal-weight values; the energy-weighted ones quoted in the text below
+gave the same conclusion.
 
 Sym 13 is not shallower by these cues. Its coherence sits at the "back"
 end of the album, and its fundamental (+4.7 dB) is below Sym 2 and 12/I but
@@ -540,3 +553,39 @@ against 0.40 in Sym 2 and 12/I), which flatters 13's ratio. Its raw bass
 coherence (~0.56 in solo) is still mid-album (0.47–0.70). No movement of 13
 gets a delay verdict. On the same work, Nelsons 13 reads slightly further
 back than Muti 13 (1.38 / +2.9 / 1.20).
+
+### Equal-weight coherence (2026-10-14)
+
+Question from the user: why does Nelsons Sym 2 Ia, labelled good, score only
+6.8 when Sym 12/I scores 9.7?
+
+Coherence was summed over frames with each frame's energy as its weight. In
+Sym 2 Ia, a few loud low passages (1:30–5:12, 25–120 Hz holding 83–98 % of
+the energy, notes down to A♯0 = 29 Hz, which is the contrabassoon's lowest
+note and below a 4-string bass) have coherence 0.8–0.9. That is about 5 s
+of the 35 s, but those seconds carry most of the energy. The rest of the
+basses sit at 0.50–0.56. The orchestra reference does not depend on level
+(0.37–0.42 in every loudness band), so loudness alone is not the cause.
+Those passages are pitched (comb 8–16 dB above the bins between harmonics,
+like bowed basses), so they are not drums. Whether they are basses,
+contrabassoon or tuba is for the ear: listen at 1:28–1:35, 3:17–3:23,
+4:35–4:43 and 5:08–5:13.
+
+Fix (`_equal_weight`): each frame is scaled to unit power in 80–700 Hz before
+summing, for the bass cue and the reference alike. Effect:
+
+| | before | after |
+|---|---|---|
+| Nelsons Sym 2 Ia | 🟡 6.8 | 🟢 8.6 |
+| Nelsons Sym 12/I | 🟢 9.7 | 🟢 8.6 |
+| Mahler 3 / Bychkov | 🔴 3.5 | 🔴 3.3 |
+| Dvořák 8 / Fischer | 🔴 2.2 | 🔴 3.9 |
+
+The two labelled Nelsons tracks now agree, and the labelled order holds.
+The score anchors were not moved.
+
+The user's observation, in one recording: pizzicato often sounds prominent,
+"in the speaker", while tuttis with the basses at the back sound deeper. So
+depth can differ by context within one recording, and one number per
+recording hides that. Per-context scores, and feedback per context, are the
+natural next step (see the live-feedback plan).

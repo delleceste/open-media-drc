@@ -435,6 +435,16 @@ def _acc_new():
     return {"lr": np.zeros(nb, complex), "ll": np.zeros(nb), "rr": np.zeros(nb)}
 
 
+def _equal_weight(XL, XR, band):
+    """Scale each frame to unit band power, so that coherence is an average
+    over time rather than over energy: otherwise a few loud seconds outweigh
+    minutes of quieter playing (Nelsons Sym 2 Ia: 5 loud seconds at 0.76
+    against 30 s at 0.50–0.56 made the whole track read ×1.6)."""
+    p = np.sqrt(np.sqrt((np.abs(XL[:, band]) ** 2).sum(1)
+                        * (np.abs(XR[:, band]) ** 2).sum(1)))[:, None] + EPS
+    return XL / p, XR / p
+
+
 def reference_coherence(L, R, frames, df):
     """L/R coherence of the orchestra where the basses do not play, in the
     band the bass harmonics are judged in."""
@@ -443,7 +453,7 @@ def reference_coherence(L, R, frames, df):
     band[int(CTX_BAND[0] / df):int(CTX_BAND[1] / df) + 1] = True
     for s in range(0, len(frames), 256):
         fi = frames[s:s + 256]
-        XL, XR = spectra(L, fi), spectra(R, fi)
+        XL, XR = _equal_weight(spectra(L, fi), spectra(R, fi), band)
         acc["lr"][band] += (np.conj(XL) * XR).sum(0)[band]
         acc["ll"][band] += (np.abs(XL) ** 2).sum(0)[band]
         acc["rr"][band] += (np.abs(XR) ** 2).sum(0)[band]
@@ -454,8 +464,9 @@ def context_cues(L, R, f0, frames, df, coh_ref):
     """Depth cues over a set of frames:
 
       coh_ratio  L/R coherence on the bass harmonics (80–700 Hz) over the
-                 orchestra's where the basses rest. A bass picked up more
-                 directly than the rest is more coherent (×>1).
+                 orchestra's where the basses rest, every frame weighted
+                 equally. A bass picked up more directly than the rest is
+                 more coherent (×>1).
       fund_db    fundamental vs the mean of harmonics 2–6 (mono). Distance
                  and hall favour the fundamental; a close mic the upper
                  harmonics. Register dependent: compare like with like."""
@@ -465,7 +476,7 @@ def context_cues(L, R, f0, frames, df, coh_ref):
     band = (bins >= int(CTX_BAND[0] / df)) & (bins <= int(CTX_BAND[1] / df))
     for s in range(0, len(frames), 256):
         fi = frames[s:s + 256]
-        XL, XR = spectra(L, fi), spectra(R, fi)
+        XL, XR = _equal_weight(spectra(L, fi), spectra(R, fi), band)
         for j, i in enumerate(fi):
             b0 = f0[i] / df
             r = bins / b0
