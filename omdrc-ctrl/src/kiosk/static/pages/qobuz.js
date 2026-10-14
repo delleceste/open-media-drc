@@ -2275,7 +2275,7 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
     v.cover.classList.add('seek-zone');
     v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
         duration: () => P.base.duration, seek: s => P.seekTo(s),
-        onMinimize: () => P.closeFull(),
+        onMinimize: () => P.closeFull(), sideways: true,
         onPull: distance => { if (P.fullEl) P.fullEl.style.transform = `translateY(${distance}px)`; } });
     P.seekTaps = null;
     P.wireGrip(v.grip);
@@ -2297,9 +2297,9 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
             setTimeout(() => { if (P.fullEl === sheet) sheet.style.transition = ''; }, 240);
         }));
     }
-    // a sideways swipe goes to the next page, as on the page under it; the queue rows
-    // swipe to remove, the grip drags the sheet down
-    K.pagerSwipe?.(P.fullEl, '.qz-qrow, .qz-grip');
+    // a sideways swipe goes to the next page, as on the page under it (the cover too,
+    // off its seek ring); the queue rows swipe to remove, the grip drags the sheet down
+    K.pagerSwipe?.(P.fullEl, '.qz-qrow, .qz-grip', '.qz-pcover');
     P.fullEl.backClose = () => P.queueActions ? P.closeQueueActions() : P.closeFull();   // as Escape (P.fullKey)
     document.getElementById('overlay-root').append(P.fullEl);
     P.fullView = v;

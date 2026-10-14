@@ -141,9 +141,9 @@ document.addEventListener('keydown', e => {
 // the next page if you moved a fifth of the width (at most 100 px) or flicked.
 let sw = null;
 const NO_SWIPE = 'input, select, textarea, .scrim, .splitter, .vsplit, .seek-zone, .now-title, .now-info, .now-fav, .qz-library-shortcut';
-function startSwipe(e, el) {
+function startSwipe(e, el, allow = null) {
     const no = e.target.closest(NO_SWIPE);   // a sheet swiping the pager is itself a .scrim
-    if (e.pointerType !== 'touch' || (no && no !== el) || cur >= swipeCount()) return;
+    if (e.pointerType !== 'touch' || (no && no !== el && !(allow && no.matches(allow))) || cur >= swipeCount()) return;
     sw = { id: e.pointerId, el, x: e.clientX, y: e.clientY, left: pager.scrollLeft, mode: null, lastX: e.clientX, lastT: performance.now(), v: 0 };
 }
 function moveSwipe(e) {
@@ -184,9 +184,11 @@ function endSwipe(e) {
 }
 // The pager's swipe on el too: a full-screen sheet over a swipe page (the Qobuz
 // player) drags the pager under it; the page itself makes the sheet follow
-// (K.onPagerScroll).  `skip`: places in el with a horizontal gesture of their own.
-K.pagerSwipe = (el, skip = null) => {
-    el.addEventListener('pointerdown', e => { if (!(skip && e.target.closest(skip))) startSwipe(e, el); });
+// (K.onPagerScroll).  `skip`: places in el with a horizontal gesture of their own;
+// `allow`: no-swipe places (NO_SWIPE) that let a sideways swipe go (a SeekRing cover
+// with sideways: true).
+K.pagerSwipe = (el, skip = null, allow = null) => {
+    el.addEventListener('pointerdown', e => { if (!(skip && e.target.closest(skip))) startSwipe(e, el, allow); });
     el.addEventListener('pointermove', moveSwipe);
     el.addEventListener('pointerup', endSwipe);
     el.addEventListener('pointercancel', cancelSwipe);

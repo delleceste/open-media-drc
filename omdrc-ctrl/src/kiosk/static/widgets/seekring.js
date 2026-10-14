@@ -17,6 +17,8 @@
  * Optional onMinimize is called on a downward swipe past a threshold, and
  * onPull(distance) moves the player with the finger as that swipe happens;
  * a tap always just reveals (or puts away) the ring, never minimizes.
+ * Optional sideways: true leaves a sideways swipe off the ring to the pager
+ * (K.pagerSwipe on the sheet the cover is in); a slide on the ring stays its own.
  * `box` is the cover's element (position: relative); the ring is added to it. */
 (() => {
 const h = K.h;
@@ -110,6 +112,7 @@ K.SeekRing = class {
             if (usable && this.shown && !this.el.classList.contains('fading') && onRing(e)) {
                 // the ring is up and the finger lands on it: a slide drags the knob
                 g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
+                e.stopPropagation();                         // never a page swipe
                 this.el.classList.add('active');           // drawn thick only while the finger is on it
                 try { box.setPointerCapture(e.pointerId); } catch {}
                 clearTimeout(this.timer);
@@ -126,6 +129,11 @@ K.SeekRing = class {
         box.addEventListener('pointermove', e => {
             if (!g || e.pointerId !== g.id) return;
             if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) < 8) return;
+            if (!g.moved && g.cover && this.o.sideways && Math.abs(e.clientX - g.x) > 1.4 * Math.abs(e.clientY - g.y)) {
+                g = null;                                    // the pager's swipe now
+                try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
+                return;
+            }
             g.moved = true;
             if (g.cover) {
                 if (g.wasShown) this.hide();   // a swipe puts a shown ring away, it never drags along with it
