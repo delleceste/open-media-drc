@@ -301,6 +301,25 @@ class Routes(unittest.TestCase):
         self.assertTrue(self.client.post("/bass/session", json={"action": "stop"}).get_json()["stopped"])
         self.assertIsNone(self.client.get("/bass").get_json()["session"])
 
+    def test_the_shipped_config_loads_with_its_bass_section(self):
+        # [bass_depth] once took the panel down: an unreserved section is read
+        # as a command and must have a 'what'.
+        import re
+        text = (SRC / "commands.conf.in").read_text(encoding="utf-8")
+        text = re.sub(r"@[A-Z_]+@", "", text)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "commands.conf")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text.replace("save_dir = /media/USBHD2/musica/Classica", f"save_dir = {tmp}"))
+            saved = (APP.COMMANDS, APP.CMD_MAP, APP.BASS_SAVE_DIR, APP._BASS.save_dir)
+            try:
+                APP.load_config(path)
+                self.assertEqual(APP.BASS_SAVE_DIR, tmp)
+                self.assertEqual(self.live.save_dir, tmp)
+                self.assertNotIn("bass_depth", APP.CMD_MAP)
+            finally:
+                APP.COMMANDS, APP.CMD_MAP, APP.BASS_SAVE_DIR, _ = saved
+
     def test_pages_carry_the_card(self):
         with patch.object(APP, "_resolve_mpd_port", return_value=None):
             index = self.client.get("/").get_data(as_text=True)

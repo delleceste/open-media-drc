@@ -924,7 +924,7 @@ def load_config(path: str) -> None:
 
     _RESERVED = {"qconnect", "monitor", "spectrum", "logs", "qobuz_oauth",
                  "qconnect_oauth", "cdin", "chain", "configuration",
-                 "bitperfect", "drdb", "dr_sync", "qobuz_search"}
+                 "bitperfect", "drdb", "dr_sync", "bass_depth", "qobuz_search"}
     COMMANDS = []
     for sid in cfg.sections():
         if sid in _RESERVED or sid.lower().startswith(_ALERT_PREFIX):
