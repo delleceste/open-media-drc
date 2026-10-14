@@ -2276,6 +2276,7 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
     v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
         duration: () => P.base.duration, seek: s => P.seekTo(s),
         onMinimize: () => P.closeFull(), sideways: true,
+        scrolled: () => P.fullEl.scrollTop > 0, onScroll: up => P.coverScroll(up), onScrollEnd: v => P.coverFling(v),
         onPull: distance => { if (P.fullEl) P.fullEl.style.transform = `translateY(${distance}px)`; } });
     P.seekTaps = null;
     P.wireGrip(v.grip);
@@ -2311,6 +2312,8 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
     P.markedId = null;
     P.queueAuto = true;
     P.wireQueueScroll();
+    P.fullEl.addEventListener('scroll', P.syncQueueScroll, { passive: true });
+    P.fullEl.addEventListener('pointerdown', P.coverFlingStop);
     P.queueSizer = new ResizeObserver(() => requestAnimationFrame(P.sizeQueue));
     [P.fullEl, v.cover, P.fullEl.querySelector('.qz-full-info'), v.seekRow, v.buttons, P.queueTools]
         .forEach(el => P.queueSizer.observe(el));
@@ -2342,6 +2345,7 @@ P.wireGrip = grip => {
 P.closeFull = () => {
     P.fullWanted = false;
     if (!P.fullEl) return;
+    P.coverFlingStop();
     P.closeQueueActions();
     P.listeningUnsub?.();
     P.queueSizer.disconnect();
@@ -2367,15 +2371,68 @@ P.followPager = () => {
 P.fullKey = e => { if (e.key === 'Escape') { if (P.queueActions) { P.closeQueueActions(); P.queueHead.focus(); } else P.closeFull(); } };
 
 // In portrait the outer sheet travels until the transport reaches its top edge.
-// The queue then fills the rest of the sheet and takes subsequent scrolling.
+// The queue then fills the rest of the sheet and takes subsequent scrolling: it
+// scrolls only once the sheet is all the way up (P.syncQueueScroll), so the two never
+// move apart, and it is never taller than its rows, so a short queue leaves no
+// empty space to scroll into.
 P.sizeQueue = () => {
     if (!P.fullEl) return;
-    if (!matchMedia('(orientation: portrait)').matches) { P.queueBox.style.height = ''; return; }
+    const box = P.queueBox;
+    if (!matchMedia('(orientation: portrait)').matches) { box.style.height = ''; P.syncQueueScroll(); return; }
     const bottom = parseFloat(getComputedStyle(P.fullEl).paddingBottom) || 0;
     const controls = P.fullView.buttons.getBoundingClientRect();
-    const queue = P.queueBox.getBoundingClientRect();
-    P.queueBox.style.height = `${Math.max(64, P.fullEl.clientHeight - (queue.top - controls.top) - bottom)}px`;
+    const queue = box.getBoundingClientRect();
+    const room = Math.max(64, P.fullEl.clientHeight - (queue.top - controls.top) - bottom);
+    const first = box.firstElementChild, last = box.lastElementChild;
+    const rows = first ? last.getBoundingClientRect().bottom - first.getBoundingClientRect().top + (box.offsetHeight - box.clientHeight) : 0;
+    box.style.height = `${Math.ceil(Math.min(room, Math.max(64, rows)))}px`;
+    P.syncQueueScroll();
 };
+
+// The sheet first, then the queue: while the sheet can still go up the queue does
+// not scroll by touch or wheel (programmatic alignment still works), and a drag on
+// it moves the sheet instead.  Down again, the browser chains from the queue's top
+// to the sheet.
+P.syncQueueScroll = () => {
+    if (!P.fullEl) return;
+    const sheet = P.fullEl;
+    const upright = matchMedia('(orientation: portrait)').matches;
+    const up = sheet.scrollTop >= sheet.scrollHeight - sheet.clientHeight - 1;
+    P.queueBox.classList.toggle('qz-queue-held', upright && !up);
+};
+
+// A vertical swipe on the cover scrolls as a swipe anywhere else on the sheet:
+// up, the sheet until the transport is at the top, then on into the queue; down,
+// the sheet only.  `up` counts from the touch.
+P.coverScroll = up => {
+    const sheet = P.fullEl, box = P.queueBox;
+    if (!sheet) return;
+    P.coverFlingStop();
+    if (!P.coverFrom) P.coverFrom = { sheet: sheet.scrollTop, queue: box.scrollTop };
+    const from = P.coverFrom, max = sheet.scrollHeight - sheet.clientHeight;
+    if (up >= 0) {
+        sheet.scrollTop = Math.min(max, from.sheet + up);
+        box.scrollTop = from.queue + Math.max(0, from.sheet + up - max);
+        if (from.sheet + up > max) P.queueAuto = false;
+    } else {
+        sheet.scrollTop = Math.max(0, from.sheet + up);
+        box.scrollTop = from.queue;
+    }
+};
+P.coverFling = v => {
+    P.coverFrom = null;
+    let t0 = performance.now(), moved = 0;
+    const step = t => {
+        const dt = t - t0; t0 = t;
+        moved += v * dt;
+        v *= Math.pow(0.996, dt);
+        P.coverScroll(moved);
+        P.coverRaf = Math.abs(v) > 0.02 && P.fullEl ? requestAnimationFrame(step) : null;
+        if (!P.coverRaf) P.coverFrom = null;
+    };
+    if (Math.abs(v) > 0.1) P.coverRaf = requestAnimationFrame(step);
+};
+P.coverFlingStop = () => { if (P.coverRaf) { cancelAnimationFrame(P.coverRaf); P.coverRaf = null; P.coverFrom = null; } };
 
 P.wireQueueScroll = () => {
     // Let the browser own wheel and touch scrolling so momentum stays native.
@@ -2654,10 +2711,9 @@ P.markQueue = () => {
         row.classList.toggle('on', on);
         if (on) current = row;
     }
-    // Leave enough room after the last row to align even the final track at the top.
+    // the playing track at the top, as far as the queue goes: no blank space after the
+    // last row to bring the final tracks up there
     const box = P.queueBox;
-    const last = box.querySelector('.qz-qrow:last-of-type');
-    box.style.setProperty('--queue-tail', `${Math.max(0, box.clientHeight - (last ? last.offsetHeight : 0) - 2)}px`);
     if (P.queueAuto && current && id !== P.markedId) {
         box.scrollTop += current.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientTop;
     }

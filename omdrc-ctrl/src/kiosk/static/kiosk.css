@@ -1170,7 +1170,7 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 .qz-full-side .lbl { margin: .3rem 0 0; }
 .btn.qz-finfo { align-self: flex-start; flex: 0 0 auto; }
 .qz-queue { flex: 1 1 auto; min-height: 4rem; overflow-y: auto; border-top: 1px solid var(--border); overscroll-behavior: contain; }
-.qz-queue::after { content: ""; display: block; height: var(--queue-tail, 0px); }
+.qz-queue.qz-queue-held { overflow-y: hidden; }   /* the sheet scrolls first (pages/qobuz.js) */
 .qz-qrow { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; gap: .6rem; align-items: center; width: 100%; min-height: 2.8rem;
     padding: .2rem .3rem; border: 0; border-bottom: 1px solid var(--hair); background: none; text-align: left; cursor: pointer; }
 .qz-qrow.on { background: rgba(88,166,255,.12); }
@@ -1192,7 +1192,7 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
     .qz-full-body { display: block; flex: 0 0 auto; min-height: auto; }
     .qz-full-side { min-height: auto; }
     .qz-full .qz-pcover { width: min(100%, 60dvh); margin-inline: auto; }
-    .qz-queue { flex: 0 0 auto; min-height: 4rem; }
+    .qz-queue { flex: 0 0 auto; min-height: 4rem; overscroll-behavior: auto; }   /* chains down to the sheet */
     .qz-row { grid-template-columns: 5.2rem minmax(0, 1fr) auto; }
     .qz-cover-wrap, .qz-cover { width: 5.2rem; height: 5.2rem; }
 }

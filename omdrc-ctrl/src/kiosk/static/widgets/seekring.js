@@ -17,6 +17,9 @@
  * Optional onMinimize is called on a downward swipe past a threshold, and
  * onPull(distance) moves the player with the finger as that swipe happens;
  * a tap always just reveals (or puts away) the ring, never minimizes.
+ * Optional onScroll(up) and onScrollEnd(velocity) take the vertical swipes off the
+ * ring that are not a pull: an upward one, or any once scrolled() says the page under
+ * the cover is scrolled (up: pixels moved up since the touch, velocity: px/ms upward).
  * Optional sideways: true leaves a sideways swipe off the ring to the pager
  * (K.pagerSwipe on the sheet the cover is in); a slide on the ring stays its own.
  * `box` is the cover's element (position: relative); the ring is added to it. */
@@ -123,7 +126,7 @@ K.SeekRing = class {
             // (reveals, or puts away, the ring) from a swipe down (minimizes instead;
             // the ring never appears for it, from any point inside the cover)
             g = { id: e.pointerId, x: e.clientX, y: e.clientY, cover: true, moved: false, dy: 0,
-                wasShown: this.shown && !this.el.classList.contains('fading') };
+                wasShown: this.shown && !this.el.classList.contains('fading'), lastY: e.clientY, lastT: performance.now(), v: 0 };
             try { box.setPointerCapture(e.pointerId); } catch {}
         });
         box.addEventListener('pointermove', e => {
@@ -134,9 +137,18 @@ K.SeekRing = class {
                 try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(false); } catch {}
                 return;
             }
+            if (!g.moved && g.cover && this.o.onScroll)    // decided once: a scroll, or a pull down
+                g.scroll = e.clientY < g.y || !!(this.o.scrolled && this.o.scrolled());
             g.moved = true;
             if (g.cover) {
                 if (g.wasShown) this.hide();   // a swipe puts a shown ring away, it never drags along with it
+                if (g.scroll) {
+                    const t = performance.now();
+                    g.v = (g.lastY - e.clientY) / Math.max(1, t - g.lastT);
+                    g.lastY = e.clientY; g.lastT = t;
+                    this.o.onScroll(g.y - e.clientY);
+                    return;
+                }
                 g.dy = Math.max(0, e.clientY - g.y);
                 if (this.o.onPull) this.o.onPull(g.dy);
                 return;
@@ -156,7 +168,8 @@ K.SeekRing = class {
                 if (!d.moved) {   // a tap: reveal the ring, or put an already-shown one away
                     if (d.wasShown) this.hide();
                     else if (this.o.usable()) { this.show(); this.hideLater(RING_IDLE_MS); }
-                } else if (e.type === 'pointerup' && d.dy > 40) this.o.onMinimize && this.o.onMinimize();
+                } else if (d.scroll) this.o.onScrollEnd && this.o.onScrollEnd(performance.now() - d.lastT < 80 ? d.v : 0);
+                else if (e.type === 'pointerup' && d.dy > 40) this.o.onMinimize && this.o.onMinimize();
                 else if (this.o.onPull) this.o.onPull(0);
                 return;
             }
