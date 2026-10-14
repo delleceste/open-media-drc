@@ -53,7 +53,9 @@ Bass contexts (reported per file): frames where the basses play alone,
 with other sections, under a loud tutti, and pizzicato notes (16 ms comb
 envelope: sharp rise, immediate decay), each with depth cues measured over
 those frames: L/R coherence of the bass harmonics against the orchestra at
-rest, and the fundamental against harmonics 2–6.
+rest, and the fundamental against harmonics 2–6. Those cues combine into a
+0–10 depth score with a green / yellow / red band (see depth_score), per file
+and, with several files, for all of them together.
 
 Thresholds are uncalibrated until run against recordings labelled by ear.
 
@@ -525,6 +527,53 @@ def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts):
     return out, masks
 
 
+# ---------------------------------------------------------------- score
+
+# Depth score 0–10 (10 = basses at the back, in the hall) from the cues that
+# ordered the labelled recordings correctly: solo and with-sections ×coh, and
+# solo fund_db. Each maps linearly between two anchors, clipped. First
+# calibration (3 recordings): recalibrate as labelled material grows.
+SCORE_COH = (1.0, 2.2)      # ×coh scoring 10 and 0
+SCORE_FUND = (-15.0, 10.0)  # solo fund_db scoring 0 and 10
+SCORE_W_FUND = 1 / 3        # weight of the fundamental cue (coherence 2/3)
+SCORE_BANDS = ((7.0, "green", "back / natural"),
+               (4.0, "yellow", "in between"),
+               (-1.0, "red", "forward"))
+SCORE_MIN_S = 10.0          # less solo + with-sections material: low confidence
+
+
+def depth_score(ctxs):
+    """Score one or more files' contexts together, weighting by seconds."""
+    coh, fund = [], []
+    for c in ctxs:
+        for k in ("solo", "with-sections"):
+            x = c.get(k, {})
+            if x.get("coh_ratio"):
+                coh.append((x["seconds"], x["coh_ratio"]))
+        x = c.get("solo", {})
+        if x.get("fund_db") is not None:
+            fund.append((x["seconds"], x["fund_db"]))
+    if not coh:
+        return None
+    ratio = np.average([v for _, v in coh], weights=[s for s, _ in coh])
+    s_coh = 10 * (SCORE_COH[1] - ratio) / (SCORE_COH[1] - SCORE_COH[0])
+    out = {"coh_ratio": float(ratio), "seconds": float(sum(s for s, _ in coh)),
+           "coh_score": float(np.clip(s_coh, 0, 10))}
+    score = out["coh_score"]
+    if fund:
+        fd = np.average([v for _, v in fund], weights=[s for s, _ in fund])
+        s_f = 10 * (fd - SCORE_FUND[0]) / (SCORE_FUND[1] - SCORE_FUND[0])
+        out["fund_db"] = float(fd)
+        out["fund_score"] = float(np.clip(s_f, 0, 10))
+        score = ((1 - SCORE_W_FUND) * score
+                 + SCORE_W_FUND * out["fund_score"])
+    out["score"] = float(score)
+    out["band"], out["meaning"] = next((b, m) for t, b, m in SCORE_BANDS
+                                       if score >= t)
+    out["low_material"] = out["seconds"] < SCORE_MIN_S
+    return out
+
+
 def analyze(x, opts, name="input"):
     L, R = x
     n = L.shape[0]
@@ -587,6 +636,7 @@ def analyze(x, opts, name="input"):
     res["contexts"], ctx_masks = analyze_contexts(
         L, R, t_frame, f0, dom, npk, energy, gate, opts)
     res["timeline"]["contexts"] = {k: v.tolist() for k, v in ctx_masks.items()}
+    res["depth"] = depth_score([res["contexts"]])
     groups = {k: g for k, g in groups.items() if g["n"] >= opts.min_note_frames}
     res["pitch_variety"] = len(groups)
     if nb < opts.min_bass_frames or len(groups) < opts.min_notes:
@@ -707,6 +757,26 @@ def verdict(res, opts):
 
 # ---------------------------------------------------------------- output
 
+ANSI = {"green": "\033[32m", "yellow": "\033[33m", "red": "\033[31m"}
+
+
+def fmt_depth(d):
+    """'8.8/10 ● green (back / natural)', coloured on a terminal."""
+    if not d:
+        return "no score (no bass context with enough frames)"
+    dot = "●"
+    if sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
+        dot = f"{ANSI[d['band']]}●\033[0m"
+    s = (f"{d['score']:.1f}/10 {dot} {d['band']} ({d['meaning']}) — "
+         f"×coh {d['coh_ratio']:.2f}")
+    if "fund_db" in d:
+        s += f", solo fund {d['fund_db']:+.1f} dB"
+    s += f", {d['seconds']:.0f}s"
+    if d["low_material"]:
+        s += " — LOW MATERIAL, provisional"
+    return s
+
+
 def report_contexts(ctx, npass=4):
     if not ctx:
         return
@@ -743,6 +813,8 @@ def report(res, nseg=12):
     if len(res["segments"]) > nseg:
         print(f"     … {len(res['segments']) - nseg} more")
     report_contexts(res.get("contexts"))
+    if "depth" in res:
+        print(f"   DEPTH: {fmt_depth(res['depth'])}")
     if res["verdict"] == "insufficient":
         print(f"   VERDICT: {res['verdict_text']}\n")
         return
@@ -1006,6 +1078,10 @@ def main():
             plot(res, out)
             print(f"   plot: {out}\n")
         results.append(res)
+    if len(results) > 1:
+        print(f"== all {len(results)} files together\n   DEPTH: "
+              + fmt_depth(depth_score([r["contexts"] for r in results
+                                       if "contexts" in r])))
     if opts.json:
         for r in results:
             r.pop("timeline", None)

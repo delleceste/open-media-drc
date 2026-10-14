@@ -4,8 +4,11 @@ Goal: tell from an orchestral recording whether the double basses sit at the
 back of the stage or are spot-mic'd "into the mix". If it works, it becomes a
 real omdrc tool (it lives in `tools/` for that reason).
 
-Status as of 2026-10-12: **v1 synthetically validated; first real recording
-analysed** (see "Case study 1" below). More labelled recordings to come.
+Status as of 2026-10-14: spot-mic detector (v1.1) plus per-context depth
+cues and a **0–10 depth score** with a 🟢 / 🟡 / 🔴 marker. The score is
+calibrated on only three recordings labelled by ear. Treat it as provisional
+and recalibrate it (`SCORE_*` constants in the script) as labelled material
+comes in. The scoreboard below collects every recording analysed so far.
 
 ## How to run
 
@@ -17,6 +20,219 @@ tools/bass_depth.py --selftest        # synthetic natural / spot / aligned spot
 
 Deps: numpy, scipy, ffmpeg on PATH (decodes any FLAC/rate to 16 kHz stereo),
 matplotlib only for `--plot`. No pip installs needed on this box.
+
+Each file's report ends its context block with a line like
+
+```
+   DEPTH: 8.3/10 ● green (back / natural) — ×coh 1.17, solo fund +4.7 dB, 89s
+```
+
+The dot is coloured on a terminal (`NO_COLOR=1` turns that off). Given
+several files (e.g. all movements of a symphony), the script also prints a
+combined score, `== all N files together`. JSON output carries the same
+numbers under `"depth"`.
+
+## Scoreboard
+
+Higher score = basses further back, in the hall. 🟢 ≥ 7 back / natural,
+🟡 4–7 in between, 🔴 < 4 forward. "Material" = seconds of solo plus
+with-sections bass the score rests on; under 10 s it is provisional.
+
+| Recording | Label by ear | Score | Material |
+|---|---|---|---|
+| Shostakovich 2 + 12/I, BSO / Nelsons (DG) | back, good | 🟢 8.8 | 102 s |
+| Mahler 3/I, Czech Phil / Bychkov | not convincingly back | 🔴 3.5 | 78 s |
+| Dvořák 8/I, Budapest FO / Fischer | weak depth | 🔴 2.2 | 24 s |
+| Shostakovich 13, CSO / Muti | — | 🟢 7.5 | 631 s |
+| Shostakovich 1, NRPO / Wigglesworth (BIS) | — | 🟢 7.5 | 144 s |
+| Shostakovich 15, NRPO / Wigglesworth (BIS) | — | 🟡 6.2 | 267 s |
+| Shostakovich 11, NRPO / Wigglesworth | — | 🟡 5.7 | 430 s |
+| Nelsons album by symphony: 2 / 3 / 12/I / 12/II–IV / 13 | — | 🟢 7.7 / 🟢 9.0 (8 s, provisional) / 🟢 9.7 / 🟡 6.4 / 🟢 8.3 | see below |
+
+The three labelled rows are the calibration set, so their scores agree with
+the labels by construction. The others are predictions waiting for an ear.
+Single movements scatter by about ±1.5 around their recording's score: the
+two labelled Nelsons tracks score 6.8 (Sym 2 Ia) and 9.7 (Sym 12/I). Judge a
+recording on all its movements together.
+
+## Reading the results
+
+The per-context lines and the tables below use these terms.
+
+**Contexts.** Every 256 ms frame where the basses are found playing is put in
+one of three groups:
+
+- **solo**: the basses alone. Their notes carry at least 70 % of the energy
+  between 25 and 1500 Hz.
+- **with sections**: basses clearly present (at least 10 %) together with
+  other instruments, e.g. with the cellos or under the woodwinds. Usually
+  the largest group.
+- **tutti**: basses under the full orchestra, in the loudest 30 % of the
+  track.
+
+A fourth overlay, **pizzicato**, marks plucked notes (see below).
+
+**Seconds** (e.g. "solo 41 s") is how much music a context was measured on.
+It tells you how far to trust the numbers next to it: 40 s is solid, 4 s is
+not.
+
+**Coherence** says how similar the left and right channels are at a given
+frequency, from 0 (unrelated) to 1 (one predicts the other exactly).
+
+- A microphone close to the basses picks up mostly their direct sound, which
+  reaches both channels in the same way: high coherence. The basses sound
+  close and forward.
+- Heard from the main microphones far away, the basses arrive mostly as hall
+  reflections from every direction. Left and right then differ: low
+  coherence. The basses sound back and spacious.
+
+It is measured only on the bass harmonics between 80 and 700 Hz, only in the
+frames of that context.
+
+**The × factor.** Raw coherence depends on the hall and the main microphones
+(a dry hall makes everything coherent). So the script divides the basses'
+coherence by the orchestra's, measured in the same band where the basses are
+silent:
+
+    × = bass coherence ÷ orchestra coherence
+
+- ×1.0: the basses are as diffuse as the rest of the orchestra, in the same
+  acoustic space.
+- ×1.6 and more: the basses are much drier and more direct than everything
+  else, as when a spot microphone brings them forward.
+
+Example: Nelsons Sym 12/I has basses 0.47, orchestra 0.39, so ×1.18.
+
+**Fundamental** (dB) is the level of the note's lowest partial against the
+mean of harmonics 2–6. Positive: a round, fundamental-heavy bass, the way the
+hall delivers it to distant microphones. Negative: a brighter bass with
+strong upper harmonics and bow detail, the way a close microphone hears it.
+Labelled recordings: Nelsons +9.9, Mahler/Bychkov −14.3, Dvořák/Fischer
+−11.6 dB. This cue is weaker than coherence. It also depends on which notes
+are played and on the mixing EQ, and it is this project's own rule of thumb,
+not an established measure.
+
+**Pizzicato clarity** (dB) is the energy of a plucked note in its first 80 ms
+against the following half second. A distant pickup and the hall fill the
+tail, so lower = more distant. Few plucks are found (see below), and so far
+this cue does not order the labelled recordings.
+
+**Reading them together.** Low × (near 1.0–1.3) with a positive fundamental
+points to basses back and natural. High × with a negative fundamental points
+to basses brought forward. When the two disagree (Wigglesworth 15: ×1.64 with
++8.2 dB) the score lands in the middle.
+
+## Depth score (0–10)
+
+Only the cues that ordered all three labelled recordings correctly go in:
+solo and with-sections ×coh, and solo fundamental. Tutti coherence and
+pizzicato clarity stay out until they do.
+
+1. **Coherence part.** The seconds-weighted mean × of solo and
+   with-sections, mapped on a straight line: ×1.0 → 10, ×2.2 → 0, clipped.
+2. **Fundamental part.** The seconds-weighted solo fundamental, mapped:
+   −15 dB → 0, +10 dB → 10, clipped.
+3. **Score** = ⅔ coherence part + ⅓ fundamental part. With no solo
+   passage, the coherence part alone.
+4. **Marker:** 🟢 ≥ 7 back / natural, 🟡 4–7 in between, 🔴 < 4 forward.
+   Under 10 s of material it is flagged provisional.
+
+Example, Nelsons 2 + 12/I: × 1.22 gives 8.2; +9.9 dB gives 10.0;
+⅔·8.2 + ⅓·10.0 = 8.8 🟢.
+
+The anchors and weights were chosen by hand so that three recordings fall
+where the ear put them. Three points cannot test a scale. Every new labelled
+recording should first be scored blind, then compared with the ear, before
+the anchors are moved.
+
+## How it works, in simple words
+
+1. **Decoding.** ffmpeg turns any file into 16 kHz stereo. Everything the
+   method uses lies below 4 kHz.
+2. **Spectra.** The track is cut into overlapping 256 ms slices. Each slice
+   goes through an FFT, which says how much energy (and what phase) every
+   frequency has, in steps of 3.9 Hz: fine enough to separate 30 Hz notes.
+3. **Finding the basses.** A bowed bass note is a *harmonic comb*: energy at
+   its fundamental f0 and at 2·f0, 3·f0, … For every slice the script tries
+   each candidate f0 between 29 and 66 Hz (below the cello's lowest note)
+   and keeps the one whose first six teeth hold the most energy. Enough
+   share, and enough teeth that are real spectral peaks, mean the basses are
+   playing. The share decides the context: solo, with sections, tutti.
+   Harmonic-comb pitch estimation of this kind is standard in music signal
+   processing [Klapuri 2003]; this one is a simple version restricted to
+   the bass range.
+4. **Coherence.** For each frequency the script adds up, over all slices of
+   a context, the left-right cross-spectrum and the two channels' powers.
+   The coherence is how much of the left-right relationship stays consistent
+   across slices [Carter, Knapp & Nuttall 1973]. Why distance lowers it: in a
+   diffuse reverberant field the correlation between two microphones falls
+   with frequency × spacing [Cook et al. 1955], while direct sound stays
+   correlated. Concert-hall acoustics measures spaciousness the same way at
+   the listener's ears (IACC) [ISO 3382-1; Beranek 2004]. Dividing by the
+   orchestra's coherence, so that each recording is compared with itself, is
+   this project's own choice.
+5. **Fundamental vs harmonics.** The level of harmonic 1 against harmonics
+   2–6, read from the same slices. Distance changes a source's level, its
+   direct-to-reverberant ratio and its spectrum, and listeners use all three
+   to judge distance [Zahorik, Brungart & Bronkhorst 2005; Bronkhorst &
+   Houtgast 1999]. Using this particular spectral ratio as a depth cue is
+   this project's heuristic, kept because it ordered the labelled recordings.
+6. **Pizzicato.** On a finer 16 ms grid the script follows the energy of the
+   bass harmonics and looks for a sharp rise (≥ 6 dB within 64 ms) followed
+   at once by a steady decay. That is onset detection [Bello et al. 2005] plus
+   a test that the note is plucked, not bowed. The clarity value is a per-note
+   version of the hall clarity index C80 [ISO 3382-1].
+7. **Spot-microphone check.** A spot microphone near the basses, mixed in
+   without a matching delay, makes each bass note arrive twice: through the
+   spot, then a few milliseconds later through the main pair. Generalised
+   cross-correlation with phase transform (GCC-PHAT) [Knapp & Carter 1976]
+   compares left and right with the spectrum's colour removed, so delays
+   stand out as peaks. The project's addition is pitch masking: bass notes
+   repeat every feature at their own period, so those lags are hidden note
+   by note, and only a delay common to all notes survives.
+8. **Score.** The linear mapping and weighting above.
+
+## Sources
+
+- Knapp, C. H. & Carter, G. C. (1976). The generalized correlation method
+  for estimation of time delay. *IEEE Trans. Acoustics, Speech, and Signal
+  Processing* 24(4), 320–327. — GCC-PHAT delay estimation (step 7).
+- Carter, G. C., Knapp, C. H. & Nuttall, A. H. (1973). Estimation of the
+  magnitude-squared coherence function via overlapped fast Fourier transform
+  processing. *IEEE Trans. Audio and Electroacoustics* AU-21(4), 337–344. —
+  coherence from averaged, overlapping FFT frames (step 4).
+- Cook, R. K., Waterhouse, R. V., Berendt, R. D., Edelman, S. & Thompson,
+  M. C. (1955). Measurement of correlation coefficients in reverberant sound
+  fields. *J. Acoust. Soc. Am.* 27(6), 1072–1077. — two-point correlation
+  in a diffuse field is sin(kr)/kr: reverberation decorrelates (step 4).
+- ISO 3382-1:2009. Acoustics — Measurement of room acoustic parameters —
+  Part 1: Performance spaces. — definitions of IACC and clarity C80
+  (steps 4 and 6).
+- Beranek, L. L. (2004). *Concert Halls and Opera Houses: Music, Acoustics,
+  and Architecture*, 2nd ed. Springer. — how IACC, clarity and bass
+  reverberation relate to what listeners hear in halls.
+- Zahorik, P., Brungart, D. S. & Bronkhorst, A. W. (2005). Auditory distance
+  perception in humans: a summary of past and present research. *Acta
+  Acustica united with Acustica* 91(3), 409–420. — level, direct-to-
+  reverberant ratio and spectrum as distance cues (step 5).
+- Bronkhorst, A. W. & Houtgast, T. (1999). Auditory distance perception in
+  rooms. *Nature* 397, 517–520. — the direct-to-reverberant ratio drives
+  perceived distance in rooms.
+- Klapuri, A. P. (2003). Multiple fundamental frequency estimation based on
+  harmonicity and spectral smoothness. *IEEE Trans. Speech and Audio
+  Processing* 11(6), 804–816. — harmonic-comb pitch estimation (step 3).
+- Bello, J. P., Daudet, L., Abdallah, S., Duxbury, C., Davies, M. &
+  Sandler, M. B. (2005). A tutorial on onset detection in music signals.
+  *IEEE Trans. Speech and Audio Processing* 13(5), 1035–1047. — onset
+  detection (step 6).
+- Pätynen, J., Pulkki, V. & Lokki, T. (2008). Anechoic recording system for
+  symphony orchestra. *Acta Acustica united with Acustica* 94(6), 856–865. —
+  anechoic orchestra recordings, a possible source of controlled test
+  material (next steps).
+
+Not from the literature, and so the first things to doubt: the × factor
+against the orchestra, the fundamental-vs-harmonics cue, the pitch masking,
+the context thresholds, and the score's anchors and weights.
 
 ## What v1 detects
 
@@ -269,23 +485,27 @@ mostly the bass's own reverb) and was dropped.
 
 ### Calibration on the labelled recordings
 
-| Recording (label) | solo ×coh | solo fund | with ×coh | tutti ×coh | pizz clarity |
-|---|---|---|---|---|---|
-| Nelsons/BSO 2+12 (back) | 1.38 | +9.9 | 1.13 | 1.32 | −1.9 (1 note) |
-| Bychkov Mahler 3 (not back) | 1.64 | −14.3 | 1.58 | 1.30 | −6.1 |
-| Fischer Dvořák 8 (weak depth) | 2.34 | −11.6 | 1.80 | 1.49 | −3.2 |
+| Recording (label) | score | solo ×coh | solo fund | with ×coh | tutti ×coh | pizz clarity |
+|---|---|---|---|---|---|---|
+| Nelsons/BSO 2+12 (back) | 🟢 8.8 | 1.38 | +9.9 | 1.13 | 1.32 | −1.9 (1 note) |
+| Bychkov Mahler 3 (not back) | 🔴 3.5 | 1.64 | −14.3 | 1.58 | 1.30 | −6.1 |
+| Fischer Dvořák 8 (weak depth) | 🔴 2.2 | 2.34 | −11.6 | 1.80 | 1.49 | −3.2 |
 
 Solo and with-sections coherence, and solo fundamental, order all three as
 labelled. Tutti coherence and pizzicato clarity do not (yet).
 
 ### Unlabelled: Muti/CSO Sym 13, Wigglesworth/NRPO (BIS) Sym 1, 11, 15
 
-| Recording | solo s | solo ×coh | solo fund | with s | with ×coh | v1.1 delay |
-|---|---|---|---|---|---|---|
-| Muti/CSO 13 (5 mvts) | 306 | 1.38 | +2.9 | 326 | 1.20 | I: +5.8 ms "double arrival" |
-| Wigglesworth 11 | 123 | 1.50 | −3.8 | 307 | 1.42 | IV: −5.8 ms (weak) |
-| Wigglesworth 1 | 47 | 1.18 | +2.7 | 97 | 1.32 | IV: −5.9 ms (weak) |
-| Wigglesworth 15 | 88 | 1.84 | +8.2 | 179 | 1.54 | none |
+| Recording | score | solo s | solo ×coh | solo fund | with s | with ×coh | v1.1 delay |
+|---|---|---|---|---|---|---|---|
+| Muti/CSO 13 (5 mvts) | 🟢 7.5 | 306 | 1.38 | +2.9 | 326 | 1.20 | I: +5.8 ms "double arrival" |
+| Wigglesworth 11 | 🟡 5.7 | 123 | 1.50 | −3.8 | 307 | 1.42 | IV: −5.8 ms (weak) |
+| Wigglesworth 1 | 🟢 7.5 | 47 | 1.18 | +2.7 | 97 | 1.32 | IV: −5.9 ms (weak) |
+| Wigglesworth 15 | 🟡 6.2 | 88 | 1.84 | +8.2 | 179 | 1.54 | none |
+
+Per movement: Muti 🟢 7.2 / 🟡 5.3 / 🟢 7.8 / 🟢 7.4 / 🟢 7.3; Wigglesworth 11
+🟡 5.9 / 5.8 / 6.2 / 5.1; Wigglesworth 1 🟡 5.9 / 🟡 5.6 (8 s) / 🟢 8.2 /
+🟢 7.1; Wigglesworth 15 🟡 6.1 (7 s) / 6.0 / 4.6 / 6.96 (just under green).
 
 The 5.8 ms GCC peak in Muti 13/I is persistent (6 of 13 minutes at z ≥ 5.8,
 unmasked, + side only, 9 dB above the orchestra). In the two Wigglesworth
@@ -302,13 +522,15 @@ the received frames: about a third of each track, in 4–5 s pieces, with no
 clipped or glitched seconds. Contexts and cues are frame-local, so the
 pieces still work; the GCC verdict on them is weaker.
 
-| Nelsons/BSO | solo s | solo ×coh | solo fund | with s | with ×coh | tutti ×coh |
-|---|---|---|---|---|---|---|
-| Sym 2 (complete) | 17 | 1.61 | +11.8 | 35 | 1.32 | 1.26 |
-| Sym 3 (partial) | 4 | 0.92 | +4.5 | 4 | 1.21 | 1.28 |
-| Sym 12/I (complete) | 20 | 1.18 | +8.9 | 47 | 0.97 | 1.31 |
-| Sym 12/II–IV (partial) | 13 | 1.49 | +3.6 | 24 | 1.49 | 1.66 |
-| Sym 13 (partial, 5 mvts) | 41 | 1.19 | +4.7 | 48 | 1.16 | 1.30 |
+| Nelsons/BSO | score | solo s | solo ×coh | solo fund | with s | with ×coh | tutti ×coh |
+|---|---|---|---|---|---|---|---|
+| Sym 2 (complete) | 🟢 7.7 | 17 | 1.61 | +11.8 | 35 | 1.32 | 1.26 |
+| Sym 3 (partial) | 🟢 9.0 (8 s, provisional) | 4 | 0.92 | +4.5 | 4 | 1.21 | 1.28 |
+| Sym 12/I (complete) | 🟢 9.7 | 20 | 1.18 | +8.9 | 47 | 0.97 | 1.31 |
+| Sym 12/II–IV (partial) | 🟡 6.4 | 13 | 1.49 | +3.6 | 24 | 1.49 | 1.66 |
+| Sym 13 (partial, 5 mvts) | 🟢 8.3 | 41 | 1.19 | +4.7 | 48 | 1.16 | 1.30 |
+
+Sym 13 per movement: 🟡 6.9 / 🟡 6.0 (3 s) / 🟢 9.5 / 🟢 8.7 / 🟢 7.0.
 
 Sym 13 is not shallower by these cues. Its coherence sits at the "back"
 end of the album, and its fundamental (+4.7 dB) is below Sym 2 and 12/I but
