@@ -76,6 +76,10 @@ import numpy as np
 from scipy.ndimage import median_filter, uniform_filter1d
 from scipy.signal import find_peaks
 
+# Bumped whenever results change: the box re-analyses tracks stored under an
+# older version, and calibration only compares results of one version.
+VERSION = "1.2"
+
 SR = 16000          # analysis rate: everything of interest is below 4 kHz
 NFFT = 4096         # 256 ms frames, 3.9 Hz bins: resolves 30 Hz fundamentals
 HOP = 1024
@@ -511,6 +515,40 @@ def pizz_clarity(env, onsets):
     return out
 
 
+BLOCK_GAP_S = 2.0       # runs of one context closer than this form one block
+BLOCK_MIN_FRAMES = 12   # frames a block needs for cues of its own (0.8 s)
+
+
+def context_blocks(L, R, t_frame, f0, masks, coh_ref):
+    """The passages of each context, with their own cues and score: the
+    timeline the box shows, and what a listener's feedback is matched to."""
+    df = SR / NFFT
+    blocks = []
+    for name in CONTEXTS:
+        m = masks[name]
+        merged = []
+        for a, b in runs(m):
+            if merged and t_frame[a] - t_frame[merged[-1][1] - 1] < BLOCK_GAP_S:
+                merged[-1][1] = b
+            else:
+                merged.append([a, b])
+        for a, b in merged:
+            fr = np.flatnonzero(m[a:b]) + a
+            blk = {"context": name,
+                   "start": round(float(t_frame[a] - NFFT / 2 / SR), 2),
+                   "end": round(float(t_frame[b - 1] + NFFT / 2 / SR), 2),
+                   "seconds": round(float(len(fr) * HOP / SR), 2)}
+            if len(fr) >= BLOCK_MIN_FRAMES and coh_ref:
+                c = context_cues(L, R, f0, fr, df, coh_ref)
+                d = depth_score([{"solo": {"seconds": blk["seconds"], **c}}])
+                blk.update(coh_ratio=round(c["coh_ratio"], 3),
+                           fund_db=round(c["fund_db"], 2),
+                           score=round(d["score"], 2), band=d["band"])
+            blocks.append(blk)
+    blocks.sort(key=lambda x: (x["start"], CONTEXTS.index(x["context"])))
+    return blocks
+
+
 def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts):
     df = SR / NFFT
     masks, onsets, env = classify_contexts(0.5 * (L + R), f0, dom, npk,
@@ -535,6 +573,7 @@ def analyze_contexts(L, R, t_frame, f0, dom, npk, energy, gate, opts):
                 c["clarity_db"] = float(np.median(cl))
                 c["clarity_notes"] = len(cl)
         out[name] = c
+    out["blocks"] = context_blocks(L, R, t_frame, f0, masks, coh_ref)
     return out, masks
 
 
@@ -646,6 +685,8 @@ def analyze(x, opts, name="input"):
                                 "note": note_name(float(np.median(f0[a:b])))})
     res["contexts"], ctx_masks = analyze_contexts(
         L, R, t_frame, f0, dom, npk, energy, gate, opts)
+    res["blocks"] = res["contexts"].pop("blocks")
+    res["version"] = VERSION
     res["timeline"]["contexts"] = {k: v.tolist() for k, v in ctx_masks.items()}
     res["depth"] = depth_score([res["contexts"]])
     groups = {k: g for k, g in groups.items() if g["n"] >= opts.min_note_frames}

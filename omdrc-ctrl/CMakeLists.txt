@@ -120,11 +120,15 @@ endif()
 
 # Python application + docs + helper scripts
 install(FILES src/app.py src/configuration.py src/bitperfect.py
-              src/audio_diagnostics.py src/drdb.py src/drmeter.py src/dr_store.py src/dr_sync.py src/dr_volumes.py
+              src/audio_diagnostics.py src/drdb.py src/drmeter.py src/dr_store.py src/dr_sync.py src/dr_volumes.py src/bass_live.py
               src/qobuz_search.py src/qobuz_web.py src/qobuz_favorites.py src/qobuz_ai.py src/openhome.py src/mpd_library.py src/local_db.py src/qobuz_words.txt
               src/qobuz_artists.txt
               README.md SPECTRUM_ANALYZER.md
         DESTINATION lib/omdrcctrl)
+
+# The bass depth detector, run by bass_live.py on every track played; it
+# lives in tools/ because it also runs on its own on any file.
+install(FILES ../tools/bass_depth.py DESTINATION lib/omdrcctrl)
 
 # The bit-perfect tap suite.  These must travel together: the tap scripts
 # resolve bitperfect-lib.py next to $0, so shipping one without the others

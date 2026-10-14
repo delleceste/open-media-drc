@@ -1571,6 +1571,7 @@
         #dlg-cancel { background: var(--bg);  color: var(--text); }
         #dlg-ok     { background: var(--red); color: #fff; border-color: var(--red); }
     </style>
+<link rel="stylesheet" href="{{ url_for('kiosk.static', filename='widgets/bass-depth.css', v=asset_version) }}">
 </head>
 <body>
 
@@ -1941,6 +1942,21 @@
         <div class="drm-msg" id="drm-msg"></div>
         <div class="drm-result" id="drm-result" hidden></div>
     </div>
+</div>
+
+<!-- Bass depth: the background analysis of the track playing, as a timeline
+     of bass passages, and feedback buttons (kiosk/static/widgets/bass-depth.js,
+     shared with the kiosk).  Folded by default; polls only while unfolded. -->
+<div class="card" id="bass-card">
+    <div class="card-title title-row">
+        <span>Bass depth</span>
+        <div class="title-actions">
+            <button class="btn-log" id="btn-bass" onclick="toggleBassCard()" aria-expanded="false"
+                    aria-controls="bass-depth-root"
+                    title="How far back the double basses sit, per passage of the track playing, and your feedback on it">Show</button>
+        </div>
+    </div>
+    <div id="bass-depth-root" hidden></div>
 </div>
 
 <!-- CD input: omdrc-cdin, the S/PDIF capture bridge.  The panel watches it
@@ -6533,6 +6549,27 @@ if (UAUDIO_ENABLED)
     startAutoRefresh('uaudio', UAUDIO_INTERVAL_MS, fetchUaudioDiagnostics);
 startAutoRefresh('topcpu', TOPCPU_INTERVAL_MS, fetchTopCpu);
 startAutoRefresh('ram', RAM_INTERVAL_MS, fetchRam);
+
+// Bass depth card: mounted on first unfold, polling only while unfolded.
+let bassCard = null;
+function toggleBassCard(open) {
+    const root = document.getElementById('bass-depth-root');
+    const btn = document.getElementById('btn-bass');
+    if (open === undefined) open = root.hidden;
+    root.hidden = !open;
+    btn.textContent = open ? 'Hide' : 'Show';
+    btn.setAttribute('aria-expanded', String(open));
+    try { localStorage.setItem('omdrc.bassCard', open ? '1' : '0'); } catch (e) {}
+    if (!window.BassDepth) return;
+    if (open) { bassCard = bassCard || BassDepth.mount(root); bassCard.start(); }
+    else if (bassCard) bassCard.stop();
+}
+try { if (localStorage.getItem('omdrc.bassCard') === '1') toggleBassCard(true); } catch (e) {}
+</script>
+<script src="{{ url_for('kiosk.static', filename='widgets/bass-depth.js', v=asset_version) }}"></script>
+<script>
+// The shared script loads after the page's own: a card left open mounts now.
+if (!document.getElementById('bass-depth-root').hidden) toggleBassCard(true);
 </script>
 </body>
 </html>

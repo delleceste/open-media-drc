@@ -1,0 +1,73 @@
+/* Bass depth card (widgets/bass-depth.js), in the web UI and the kiosk.  Neutral
+ * colours that read on both themes; the host page's own variables when it has them. */
+.bass-depth { display: flex; flex-direction: column; gap: .6rem; font-size: .95em; }
+.bass-depth .bd-session { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.bass-depth .bd-session-line { flex: 1; font-weight: 600; }
+.bass-depth .bd-start { border-color: #2ea043; font-weight: 600; }
+.bass-depth .bd-save { font-size: .88em; }
+.bass-depth .bd-warn { color: #d29922; opacity: 1; }
+.bass-depth .bd-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; }
+.bass-depth .bd-spacer { flex: 1; }
+.bass-depth .bd-status { font-weight: 600; }
+.bass-depth .bd-muted { opacity: .65; }
+.bass-depth .bd-btn {
+    font: inherit; padding: .35rem .75rem; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border, rgba(127, 127, 127, .45));
+    background: var(--btn-bg, rgba(127, 127, 127, .12)); color: inherit;
+}
+.bass-depth .bd-btn.on { border-color: #3fb950; box-shadow: inset 0 0 0 1px #3fb950; }
+.bass-depth .bd-btn:disabled { opacity: .45; cursor: default; }
+.bass-depth .bd-score { display: flex; align-items: center; gap: .7rem; min-height: 2.4rem; }
+.bass-depth .bd-badge {
+    font-size: 1.6em; font-weight: 700; min-width: 2.6em; text-align: center;
+    padding: .1em .35em; border-radius: 8px; color: #fff;
+}
+.bass-depth .bd-score-text { display: flex; flex-direction: column; }
+.bass-depth .green { --bd: #2ea043; }
+.bass-depth .yellow { --bd: #d29922; }
+.bass-depth .red { --bd: #e5534b; }
+.bass-depth .none { --bd: rgba(127, 127, 127, .55); }
+.bass-depth .forward { --bd: #e5534b; }
+.bass-depth .between { --bd: #d29922; }
+.bass-depth .back { --bd: #2ea043; }
+.bass-depth .bd-badge, .bass-depth .bd-blk, .bass-depth .bd-dot { background: var(--bd); }
+.bass-depth .bd-tl { position: relative; display: flex; flex-direction: column; gap: 3px; cursor: crosshair; user-select: none; }
+.bass-depth .bd-row { display: flex; align-items: center; gap: .5rem; }
+.bass-depth .bd-lbl { flex: 0 0 7.5em; font-size: .85em; opacity: .75; text-align: right; }
+.bass-depth .bd-lane { position: relative; flex: 1; height: 16px; border-radius: 3px; background: rgba(127, 127, 127, .12); }
+.bass-depth .bd-blk { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; }
+.bass-depth .bd-marks { background: none; }
+.bass-depth .bd-mark { position: absolute; top: 1px; width: 0; height: 0; transform: translateX(-6px);
+    border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 12px solid var(--bd); }
+.bass-depth .bd-axis .bd-lane { background: none; height: 1.1em; font-size: .75em; opacity: .6; }
+.bass-depth .bd-axis .bd-lane span { position: absolute; }
+.bass-depth .bd-headlane { position: absolute; top: 0; bottom: 1.1em; left: calc(7.5em + .5rem); right: 0; pointer-events: none; }
+.bass-depth .bd-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: currentColor; opacity: .8; }
+.bass-depth .bd-pick { font-size: .9em; display: flex; flex-wrap: wrap; gap: .2rem .9rem; }
+.bass-depth .bd-dot { display: inline-block; width: .7em; height: .7em; border-radius: 50%; vertical-align: baseline; }
+.bass-depth .bd-table { display: grid; grid-template-columns: auto auto auto auto 1fr; gap: .15rem .9rem; font-size: .88em; }
+.bass-depth .bd-tr { display: contents; }
+.bass-depth .bd-th span { opacity: .6; }
+.bass-depth .bd-fb { display: flex; flex-direction: column; gap: .45rem; padding-top: .4rem;
+    border-top: 1px solid var(--border, rgba(127, 127, 127, .3)); }
+.bass-depth .bd-fb-q { font-weight: 600; }
+.bass-depth .bd-verdicts { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+.bass-depth .bd-verdict { padding: .8rem .4rem; font-weight: 600; border-left: 6px solid var(--bd); }
+.bass-depth .bd-notebox { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.bass-depth .bd-tapped { flex-basis: 100%; }
+.bass-depth .bd-note { flex: 1; min-width: 12em; font: inherit; padding: .35rem .5rem; border-radius: 6px; color: inherit;
+    background: var(--input-bg, rgba(127, 127, 127, .08)); border: 1px solid var(--border, rgba(127, 127, 127, .45)); }
+.bass-depth .bd-msg:empty { display: none; }
+.bass-depth .bd-taps { display: flex; flex-direction: column; gap: .2rem; font-size: .9em; }
+.bass-depth .bd-tap { display: flex; align-items: center; gap: .5rem; }
+.bass-depth .bd-tap-at { font-variant-numeric: tabular-nums; min-width: 3em; }
+.bass-depth .bd-tap-note { flex: 1; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bass-depth .bd-x { border: none; background: none; color: inherit; font-size: 1.2em; cursor: pointer; opacity: .6; }
+.bass-depth .bd-explain { font-size: .88em; opacity: .85; }
+.bass-depth .bd-explain summary { cursor: pointer; }
+@media (max-width: 520px) {
+    .bass-depth .bd-lbl { flex-basis: 5.5em; }
+    .bass-depth .bd-headlane { left: calc(5.5em + .5rem); }
+    .bass-depth .bd-table { grid-template-columns: auto auto auto auto; }
+    .bass-depth .bd-tr > span:last-child { display: none; }
+}

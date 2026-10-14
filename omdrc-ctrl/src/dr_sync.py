@@ -12,6 +12,10 @@ and either box may be away for weeks.  Each round:
   3. import every other box's file whose content changed since last time
      (DrStore.import_box replaces that box's rows as a whole).
 
+Other stores can ride along (`extras`): each writes `<folder>/<box>.jsonl`
+the same way -- the bass depth taps and analyses go to `bass/` -- and is
+only written, never imported: they are read off the repository elsewhere.
+
 Git runs non-interactively with a timeout: credentials come from the service
 user's own git setup (a credential helper for HTTPS, or a deploy key for SSH);
 a missing one is reported on the DR page, never prompted for.
@@ -52,7 +56,7 @@ _GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true",
 
 class GitSync:
     def __init__(self, store, repo: str, box: str, workdir: str,
-                 interval: float = 600.0, git: str = "git") -> None:
+                 interval: float = 600.0, git: str = "git", extras: dict | None = None) -> None:
         if not BOX_RE.match(box or ""):
             raise SyncError(f"box name {box!r}: letters, digits, - and _ only")
         self.store = store
@@ -61,6 +65,7 @@ class GitSync:
         self.workdir = workdir
         self.interval = max(60.0, interval)
         self.git_bin = git
+        self.extras = {"boxes": store.export_rows, **(extras or {})}
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -124,10 +129,15 @@ class GitSync:
     # -- one round --
 
     def _write_own(self) -> bool:
-        rows = self.store.export_rows()
+        changed = False
+        for folder, export in self.extras.items():
+            changed |= self._write_file(folder, export())
+        return changed
+
+    def _write_file(self, folder: str, rows: list[dict]) -> bool:
         body = "".join(json.dumps(r, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n"
                        for r in rows)
-        path = os.path.join(self.workdir, "boxes", f"{self.box}.jsonl")
+        path = os.path.join(self.workdir, folder, f"{self.box}.jsonl")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             with open(path, encoding="utf-8") as f:
@@ -141,8 +151,8 @@ class GitSync:
         return True
 
     def _push(self) -> None:
-        self._git("add", "boxes")
-        if not self._git("status", "--porcelain", "boxes").strip():
+        self._git("add", *self.extras)
+        if not self._git("status", "--porcelain", *self.extras).strip():
             return
         self._git("commit", "--quiet", "-m", f"{self.box}: DR log")
         for _ in range(3):

@@ -32,6 +32,34 @@ several files (e.g. all movements of a symphony), the script also prints a
 combined score, `== all N files together`. JSON output carries the same
 numbers under `"depth"`.
 
+## Live on the box: tracking sessions
+
+To calibrate against the ear without moving files around, the panel runs the
+detector while you listen (omdrc-ctrl README, "Bass depth: tracking
+sessions"):
+
+1. On the box you listen on, open **Bass depth** (web UI Listen tab, or the
+   kiosk page) and **Start tracking session**, naming the recordings you mean
+   to evaluate. Outside a session nothing is fetched or analysed.
+2. Play them. Each track is analysed in a few seconds and kept on the USB
+   drive under `musica/Classica/<artist>/<album (year)>/`.
+3. Whenever the basses catch your ear, tap **Forward**, **In between** or
+   **Back**, and add a note if you like. The tap records the moment heard and
+   the timeline passage under it.
+4. **Stop session.** Within the DR log's sync interval the session, the taps
+   and the analyses reach the repository (`bass/<box>.jsonl`).
+5. On dal: pull a clone of the repository and run
+   `tools/bass_depth_calibrate.py <clone>`. It lists, per context, how the
+   passage scores and cues follow the verdicts, which taps fell where the
+   detector found no bass, and, with enough taps, a least-squares proposal for
+   new anchors. Proposals are reviewed with the user, never applied by
+   themselves. With the drive here, the same tracks can be re-analysed and
+   listened to together.
+
+`VERSION` in `bass_depth.py` names the detector's results: bump it whenever a
+change alters them, so the boxes re-analyse and calibration compares like
+with like.
+
 ## Scoreboard
 
 Higher score = basses further back, in the hall. 🟢 ≥ 7 back / natural,

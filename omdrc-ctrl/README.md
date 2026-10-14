@@ -352,6 +352,44 @@ is playing (MusicPD's buffer covers a brief squeeze, a slow link may not
 cover a hi-res album); only streamed tracks can be fetched again; and it
 needs 1 GB free in `/var/tmp` to start.
 
+## Bass depth: tracking sessions
+
+The **Bass depth** card (Listen tab, folded until **Show**; the kiosk's *Bass
+depth* page) studies how far back a recording places the double basses,
+together with the listener. Nothing runs until **Start tracking session**,
+which takes an optional name ("Altinoglu, Shostakovich 8"); **Stop session**
+ends it. During a session:
+
+- Every track played is analysed in the background by `bass_depth.py`
+  (`tools/`, installed next to `app.py`), at the lowest CPU priority, one track
+  at a time: a few seconds for a 15-minute track. Tracks over 45 minutes and
+  sources that cannot be read again (CD input, cue-sheet tracks) are skipped.
+- The track is kept on the music drive, in `[bass_depth] save_dir`
+  (`/media/USBHD2/musica/Classica` by default), as
+  `<artist>/<album (year)>/<NN - title>.<ext>`: a streamed track is fetched
+  again into it, the way **Meas.** does (so each streamed track crosses the
+  network twice); a local track outside it is copied. A track kept by an
+  earlier session is reused. The drive can then travel to another box with
+  the same recordings on it. The folder is never created: when it is missing
+  or not on a mounted drive (an unmounted drive's empty mount point lies on
+  the system disk) tracks are analysed from a work directory and not kept,
+  and the card says why.
+- The card shows the analysis as a timeline: one lane per context (basses
+  alone, with other sections, under a tutti, pizzicato), each passage coloured
+  by its 0–10 depth score (green back, yellow in between, red forward, grey
+  too short), the playhead, and the track's score. Click the timeline to read
+  a passage's cues.
+- **Forward / In between / Back** record your verdict at the moment heard
+  (MPD's position minus the DRC chain's delay), with the passage under it and
+  an optional note. A detector update re-analyses a track the next time it
+  plays in a session.
+
+Sessions, taps and analyses are stored in `<state dir>/bass-depth.sqlite` and
+shared through the DR log's repository (`[dr_sync]`), in `bass/<box>.jsonl`,
+next to `boxes/`. `tools/bass_depth_calibrate.py <clone>` compares the taps
+with the detector there. The method, its sources and its calibration are in
+`doc/BASS-DEPTH-DETECTOR.md`.
+
 ## Features
 
 - **READ widgets** — run a shell command and display its output next to a

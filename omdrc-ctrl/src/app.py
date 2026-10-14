@@ -33,6 +33,7 @@ import dr_store
 import dr_volumes
 from dr_store import DrStore, TrackWatch
 from dr_sync import GitSync, SyncError
+import bass_live
 from drdb import DrDb, DrDbError, Settings as DrDbSettings
 from drdb import identify as drdb_identify_version
 from drdb import release_year as drdb_release_year
@@ -328,6 +329,8 @@ DR_HOLD_SECONDS = 60.0
 DR_SYNC_REPO = ""
 DR_SYNC_BOX = ""
 DR_SYNC_INTERVAL_MINUTES = 10.0
+# [bass_depth] save_dir: where a tracking session's tracks are kept (bass_live.py)
+BASS_SAVE_DIR = "/media/USBHD2/musica/Classica"
 SPECTRUM_BITS = 32
 SPECTRUM_CHANNELS = 2
 SPECTRUM_REFRESH_HZ = 25.0
@@ -716,7 +719,7 @@ def load_config(path: str) -> None:
     global TOPCPU_THRESHOLD, MONITOR_INTERVAL, TOPCPU_INTERVAL
     global SNDSTAT_INTERVAL, BRUTEFIR_INTERVAL, DSP_GAUGE_POLL_STEPS, DSP_GAUGE_SETTLE_COUNT
     global QCONNECT_STATUS_RESYNC_S
-    global DR_SYNC_REPO, DR_SYNC_BOX, DR_SYNC_INTERVAL_MINUTES
+    global DR_SYNC_REPO, DR_SYNC_BOX, DR_SYNC_INTERVAL_MINUTES, BASS_SAVE_DIR
     global SPECTRUM_ENABLED, SPECTRUM_OUTPUT_NAME, SPECTRUM_FIFO
     global SPECTRUM_RATE, SPECTRUM_BITS, SPECTRUM_CHANNELS
     global DR_PUBLISH_SECONDS, DR_HOLD_SECONDS, SPECTRUM_REFRESH_HZ, SPECTRUM_FFT_SIZE, SPECTRUM_PRECISION_FFT_SIZE, SPECTRUM_BANDS
@@ -876,6 +879,9 @@ def load_config(path: str) -> None:
         )
         _BITPERFECT_MANAGER = None
 
+    if cfg.has_section("bass_depth"):
+        BASS_SAVE_DIR = cfg["bass_depth"].get("save_dir", fallback=BASS_SAVE_DIR).strip()
+        _BASS.save_dir = BASS_SAVE_DIR
     if cfg.has_section("dr_sync"):
         sec = cfg["dr_sync"]
         DR_SYNC_REPO = sec.get("repo", fallback=DR_SYNC_REPO).strip()
@@ -4341,8 +4347,11 @@ def index():
     drc_missing = _drc_chain_missing()
     drc_enabled = not drc_missing
     groups = [g for g in _groups() if drc_enabled or g[0] != "drc"]
+    import kiosk
     return render_template(
         "index.html",
+        # the kiosk scripts this page shares, fetched afresh after a deploy
+        asset_version=kiosk._asset_version(),
         control_title=f"Open Media DRC — {os_label}",
         os_label=os_label,
         os_name=platform.system(),
@@ -5814,7 +5823,8 @@ def _dr_sync_start() -> None:
     box = DR_SYNC_BOX or socket.gethostname().split(".")[0]
     try:
         _DR_SYNC = GitSync(_DR_STORE, DR_SYNC_REPO, box, os.path.join(_STATE_DIR, "dr-sync"),
-                           interval=DR_SYNC_INTERVAL_MINUTES * 60.0)
+                           interval=DR_SYNC_INTERVAL_MINUTES * 60.0,
+                           extras={"bass": _BASS_STORE.export_rows})
     except SyncError as error:
         _DR_SYNC_ERROR = str(error)
         return
@@ -6054,6 +6064,107 @@ def dr_measure_cancel():
         return jsonify({"ok": False, "error": "no measurement"}), 404
     job.cancel()
     return jsonify({"ok": True})
+
+
+# ── Bass depth while listening ──────────────────────────────────────────────
+#
+# In a tracking session the listener starts, every track played is analysed
+# in the background by tools/bass_depth.py (installed next to this file) and
+# kept on the music drive, and the listener's feedback is kept against the
+# moment heard; bass_live.py has the details.  Shared with the DR log.
+
+def _bass_script() -> str:
+    here = os.path.join(_HERE, "bass_depth.py")
+    return here if os.path.isfile(here) else os.path.join(_HERE, "..", "..", "tools", "bass_depth.py")
+
+
+def _bass_version(script: str) -> str:
+    try:
+        with open(script, encoding="utf-8") as f:
+            found = re.search(r'^VERSION = "([^"]+)"', f.read(), re.M)
+        return found.group(1) if found else ""
+    except OSError:
+        return ""
+
+
+def _bass_local_path(file: str) -> str | None:
+    if file.startswith("/"):
+        return file
+    root = _resolve_mpd_music_directory()
+    return os.path.join(root, file) if root else None
+
+
+_BASS_STORE = bass_live.BassStore(os.path.join(_STATE_DIR, bass_live.DB_FILE))
+_BASS = bass_live.BassLive(
+    _BASS_STORE, _bass_script(),
+    now=lambda: _mpd_now_playing_via_protocol(_resolve_mpd_port()),
+    identify=lambda song: _dr_album_for(song), local_path=_bass_local_path,
+    delay=lambda: _drc_display_delay_seconds(),
+    download=lambda *a: _drmeter_download(*a), workdir=DRMETER_WORKDIR,
+    version=_bass_version(_bass_script()), save_dir=BASS_SAVE_DIR, min_free=DRMETER_MIN_FREE)
+
+
+@app.route("/bass")
+def bass_now():
+    """The track playing, its analysis (unless the page holds it: ?have=) and
+    the taps on it."""
+    return jsonify({"ok": True, **_BASS.now_view(request.args.get("have", ""))})
+
+
+@app.route("/bass/session", methods=["POST"])
+def bass_session():
+    """{"action": "start", "name": "..."} or {"action": "stop"}: only during a
+    session are the tracks played fetched, kept and analysed."""
+    body = request.get_json(silent=True) or {}
+    if body.get("action") == "start":
+        return jsonify({"ok": True, "session": _BASS.start_session(str(body.get("name") or "").strip())})
+    if body.get("action") == "stop":
+        return jsonify({"ok": True, "stopped": _BASS.stop_session()})
+    return jsonify({"ok": False, "error": "action must be start or stop"}), 400
+
+
+@app.route("/bass/tap", methods=["POST"])
+def bass_tap():
+    """{"verdict": "forward" | "between" | "back", "note": ""}, at the
+    position heard now."""
+    body = request.get_json(silent=True) or {}
+    try:
+        tap = _BASS.tap(str(body.get("verdict", "")), str(body.get("note") or ""))
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except LookupError as error:
+        return jsonify({"ok": False, "error": str(error)}), 409
+    return jsonify({"ok": True, "tap": tap})
+
+
+@app.route("/bass/tap/<int:tap_id>", methods=["POST"])
+def bass_tap_note(tap_id):
+    body = request.get_json(silent=True) or {}
+    if not _BASS_STORE.set_note(tap_id, str(body.get("note") or "")):
+        return jsonify({"ok": False, "error": "no such tap"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/bass/tap/<int:tap_id>/delete", methods=["POST"])
+def bass_tap_delete(tap_id):
+    if not _BASS_STORE.delete_tap(tap_id):
+        return jsonify({"ok": False, "error": "no such tap"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/bass/reanalyse", methods=["POST"])
+def bass_reanalyse():
+    view = _BASS.now_view()
+    if not view["track"]:
+        return jsonify({"ok": False, "error": "nothing identifiable is playing"}), 409
+    _BASS.reanalyse(view["track"]["id"])
+    return jsonify({"ok": True})
+
+
+@app.route("/bass/recent")
+def bass_recent():
+    return jsonify({"ok": True, "analyses": _BASS_STORE.recent_analyses(),
+                    "taps": _BASS_STORE.taps(limit=50), "sync": _dr_sync_status()})
 
 
 @app.route("/drdb/identify", methods=["POST"])
@@ -10319,6 +10430,7 @@ if __name__ == "__main__":
     _dr_log_apply()
     threading.Thread(target=_dr_import_watch, name="dr-import-watch", daemon=True).start()
     _dr_sync_start()
+    _BASS.start()
     if platform.system() == "FreeBSD":
         _audio_diagnostics().start()
     app.run(host=args.host, port=args.port, threaded=True,

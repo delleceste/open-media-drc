@@ -92,6 +92,16 @@ dsp_gauge_settle_count = 10
 @DR_SYNC_BOX_LINE@
 interval_minutes = 10
 
+# -- Bass depth --------------------------------------------------------------
+# Tracking sessions (the Bass depth card): while one runs, every track played
+# is analysed for how far back the double basses sit, and kept here as
+# <artist>/<album (year)>/<NN - title> -- streamed tracks are fetched again,
+# local ones copied -- so the drive can be carried to another box.  Nothing is
+# kept when the folder is missing or not on a mounted drive: it is never
+# created, so an unmounted drive's empty mount point stays empty.
+[bass_depth]
+save_dir = /media/USBHD2/musica/Classica
+
 # -- Dynamic Range database -------------------------------------------------
 # The renderer card's "DR ↗" button looks the record up at dr.loudness-war.info
 # and lists the other masters people have measured, best first.  Read-only and
