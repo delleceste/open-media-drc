@@ -292,3 +292,29 @@ unmasked, + side only, 9 dB above the orchestra). In the two Wigglesworth
 tracks it appears in one minute each. A bass spot ~2 m closer than the main
 pair and a reflection off the stage wall ~1 m behind the basses look alike
 to GCC; v1 cannot tell them apart.
+
+### Nelsons/BSO album by symphony: is 13 shallower? (2026-10-14)
+
+The user asked whether Sym 13 has less depth than 2, 3 and 12 on the same
+album. Only tracks 01, 02 and 07 were complete downloads; the others are
+`.flac.part` files with 50–75 % zero-filled blocks. `flac -d -F` recovers
+the received frames: about a third of each track, in 4–5 s pieces, with no
+clipped or glitched seconds. Contexts and cues are frame-local, so the
+pieces still work; the GCC verdict on them is weaker.
+
+| Nelsons/BSO | solo s | solo ×coh | solo fund | with s | with ×coh | tutti ×coh |
+|---|---|---|---|---|---|---|
+| Sym 2 (complete) | 17 | 1.61 | +11.8 | 35 | 1.32 | 1.26 |
+| Sym 3 (partial) | 4 | 0.92 | +4.5 | 4 | 1.21 | 1.28 |
+| Sym 12/I (complete) | 20 | 1.18 | +8.9 | 47 | 0.97 | 1.31 |
+| Sym 12/II–IV (partial) | 13 | 1.49 | +3.6 | 24 | 1.49 | 1.66 |
+| Sym 13 (partial, 5 mvts) | 41 | 1.19 | +4.7 | 48 | 1.16 | 1.30 |
+
+Sym 13 is not shallower by these cues. Its coherence sits at the "back"
+end of the album, and its fundamental (+4.7 dB) is below Sym 2 and 12/I but
+far from Mahler/Dvořák (−12 to −14). Its solo notes are E1–C2, below the
+bass soloist and chorus. The voices do raise the reference coherence (0.47
+against 0.40 in Sym 2 and 12/I), which flatters 13's ratio. Its raw bass
+coherence (~0.56 in solo) is still mid-album (0.47–0.70). No movement of 13
+gets a delay verdict. On the same work, Nelsons 13 reads slightly further
+back than Muti 13 (1.38 / +2.9 / 1.20).
