@@ -1,0 +1,2716 @@
+{
+  "primary_scenes": 198,
+  "distance_scenes": 108,
+  "radial_scenes": 108,
+  "distance": {
+    "score": {
+      "groups": 27,
+      "complete": 19,
+      "varying": 11,
+      "mean_rho": -0.4119075090522679,
+      "right_sign": 2,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 79,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.6375405319302913,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 1,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 2,
+          "mean_rho": 0.6034410938988375,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "coh_ratio": {
+      "groups": 27,
+      "complete": 19,
+      "varying": 19,
+      "mean_rho": -0.15789473684210523,
+      "right_sign": 10,
+      "strictly_monotonic_right": 2,
+      "available_scenes": 79,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.15555555555555556,
+          "right_sign": 5,
+          "strictly_monotonic_right": 1
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 1,
+          "varying": 1,
+          "mean_rho": 0.39999999999999997,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.22222222222222218,
+          "right_sign": 5,
+          "strictly_monotonic_right": 1
+        }
+      }
+    },
+    "fund_db": {
+      "groups": 27,
+      "complete": 9,
+      "varying": 9,
+      "mean_rho": -0.6666666666666665,
+      "right_sign": 0,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 36,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.6666666666666665,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "solo.coh_ratio": {
+      "groups": 27,
+      "complete": 9,
+      "varying": 9,
+      "mean_rho": 0.37777777777777777,
+      "right_sign": 2,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 36,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.37777777777777777,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "with-sections.coh_ratio": {
+      "groups": 27,
+      "complete": 19,
+      "varying": 19,
+      "mean_rho": -0.22105263157894733,
+      "right_sign": 10,
+      "strictly_monotonic_right": 2,
+      "available_scenes": 79,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.2888888888888889,
+          "right_sign": 5,
+          "strictly_monotonic_right": 1
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 1,
+          "varying": 1,
+          "mean_rho": 0.39999999999999997,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.22222222222222218,
+          "right_sign": 5,
+          "strictly_monotonic_right": 1
+        }
+      }
+    },
+    "tutti.coh_ratio": {
+      "groups": 27,
+      "complete": 20,
+      "varying": 20,
+      "mean_rho": -0.21000000000000002,
+      "right_sign": 12,
+      "strictly_monotonic_right": 2,
+      "available_scenes": 99,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -1.850371707708594e-17,
+          "right_sign": 4,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 5,
+          "varying": 5,
+          "mean_rho": -0.36,
+          "right_sign": 4,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 6,
+          "varying": 6,
+          "mean_rho": -0.4000000000000001,
+          "right_sign": 4,
+          "strictly_monotonic_right": 2
+        }
+      }
+    },
+    "pizzicato.coh_ratio": {
+      "groups": 27,
+      "complete": 17,
+      "varying": 17,
+      "mean_rho": -0.3058823529411765,
+      "right_sign": 12,
+      "strictly_monotonic_right": 3,
+      "available_scenes": 87,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.17777777777777778,
+          "right_sign": 5,
+          "strictly_monotonic_right": 2
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 6,
+          "varying": 6,
+          "mean_rho": -0.49999999999999994,
+          "right_sign": 5,
+          "strictly_monotonic_right": 1
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 2,
+          "varying": 2,
+          "mean_rho": -0.3,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "solo.fund_db": {
+      "groups": 27,
+      "complete": 9,
+      "varying": 9,
+      "mean_rho": -0.6666666666666665,
+      "right_sign": 0,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 36,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.6666666666666665,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "with-sections.fund_db": {
+      "groups": 27,
+      "complete": 19,
+      "varying": 19,
+      "mean_rho": 0.19999999999999993,
+      "right_sign": 14,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 79,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.22222222222222218,
+          "right_sign": 7,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 1,
+          "varying": 1,
+          "mean_rho": 0.7999999999999999,
+          "right_sign": 1,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.11111111111111106,
+          "right_sign": 6,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "tutti.fund_db": {
+      "groups": 27,
+      "complete": 20,
+      "varying": 20,
+      "mean_rho": -0.22999999999999998,
+      "right_sign": 8,
+      "strictly_monotonic_right": 1,
+      "available_scenes": 99,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.19999999999999998,
+          "right_sign": 4,
+          "strictly_monotonic_right": 1
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 5,
+          "varying": 5,
+          "mean_rho": 0.07999999999999993,
+          "right_sign": 3,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 6,
+          "varying": 6,
+          "mean_rho": -0.5333333333333332,
+          "right_sign": 1,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "pizzicato.fund_db": {
+      "groups": 27,
+      "complete": 17,
+      "varying": 17,
+      "mean_rho": 0.27058823529411763,
+      "right_sign": 11,
+      "strictly_monotonic_right": 2,
+      "available_scenes": 87,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.04444444444444446,
+          "right_sign": 4,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 6,
+          "varying": 6,
+          "mean_rho": 0.5333333333333333,
+          "right_sign": 5,
+          "strictly_monotonic_right": 2
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 2,
+          "varying": 2,
+          "mean_rho": 0.49999999999999994,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "solo.coh_comb": {
+      "groups": 27,
+      "complete": 9,
+      "varying": 9,
+      "mean_rho": 0.4444444444444444,
+      "right_sign": 1,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 36,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.4444444444444444,
+          "right_sign": 1,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "with-sections.coh_comb": {
+      "groups": 27,
+      "complete": 19,
+      "varying": 19,
+      "mean_rho": 0.17894736842105266,
+      "right_sign": 6,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 79,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.39999999999999997,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 1,
+          "varying": 1,
+          "mean_rho": 0.39999999999999997,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.06666666666666665,
+          "right_sign": 4,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "tutti.coh_comb": {
+      "groups": 27,
+      "complete": 20,
+      "varying": 20,
+      "mean_rho": -0.040000000000000015,
+      "right_sign": 9,
+      "strictly_monotonic_right": 1,
+      "available_scenes": 99,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.17777777777777773,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 5,
+          "varying": 5,
+          "mean_rho": -0.11999999999999997,
+          "right_sign": 3,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 6,
+          "varying": 6,
+          "mean_rho": -0.3,
+          "right_sign": 4,
+          "strictly_monotonic_right": 1
+        }
+      }
+    },
+    "pizzicato.coh_comb": {
+      "groups": 27,
+      "complete": 17,
+      "varying": 17,
+      "mean_rho": 0.18823529411764703,
+      "right_sign": 4,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 87,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.2222222222222222,
+          "right_sign": 1,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 6,
+          "varying": 6,
+          "mean_rho": 0.0,
+          "right_sign": 3,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 2,
+          "varying": 2,
+          "mean_rho": 0.6,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "pizzicato.clarity_db": {
+      "groups": 27,
+      "complete": 21,
+      "varying": 21,
+      "mean_rho": 0.0380952380952381,
+      "right_sign": 9,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 94,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.26666666666666666,
+          "right_sign": 6,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.4,
+          "right_sign": 1,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 3,
+          "varying": 3,
+          "mean_rho": -0.13333333333333333,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "fixed.bass.coh_comb": {
+      "groups": 27,
+      "complete": 18,
+      "varying": 18,
+      "mean_rho": 0.21111111111111114,
+      "right_sign": 7,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 72,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.24444444444444446,
+          "right_sign": 3,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.17777777777777776,
+          "right_sign": 4,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "fixed.mix.coh_comb": {
+      "groups": 27,
+      "complete": 18,
+      "varying": 18,
+      "mean_rho": 0.2111111111111111,
+      "right_sign": 4,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 72,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.04444444444444444,
+          "right_sign": 3,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.46666666666666656,
+          "right_sign": 1,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "fixed.bass.fund_db": {
+      "groups": 27,
+      "complete": 18,
+      "varying": 18,
+      "mean_rho": -0.2666666666666667,
+      "right_sign": 5,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 72,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.06666666666666671,
+          "right_sign": 3,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.4666666666666667,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "fixed.mix.fund_db": {
+      "groups": 27,
+      "complete": 18,
+      "varying": 18,
+      "mean_rho": -0.3555555555555555,
+      "right_sign": 1,
+      "strictly_monotonic_right": 0,
+      "available_scenes": 72,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.26666666666666666,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 9,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.4444444444444444,
+          "right_sign": 1,
+          "strictly_monotonic_right": 0
+        }
+      }
+    }
+  },
+  "radial": {
+    "coh_comb": {
+      "groups": 18,
+      "complete": 18,
+      "varying": 18,
+      "mean_rho": 0.19999999999999993,
+      "right_sign": 8,
+      "strictly_monotonic_right": 0,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.3555555555555555,
+          "right_sign": 4,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 0,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.044444444444444446,
+          "right_sign": 4,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "fund_db": {
+      "groups": 18,
+      "complete": 18,
+      "varying": 18,
+      "mean_rho": -0.41111111111111104,
+      "right_sign": 2,
+      "strictly_monotonic_right": 0,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.7999999999999999,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 0,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.022222222222222223,
+          "right_sign": 2,
+          "strictly_monotonic_right": 0
+        }
+      }
+    },
+    "power_fund_db": {
+      "groups": 18,
+      "complete": 18,
+      "varying": 18,
+      "mean_rho": -0.39999999999999997,
+      "right_sign": 3,
+      "strictly_monotonic_right": 0,
+      "by_piece": {
+        "beethoven": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": -0.7999999999999999,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "bruckner": {
+          "groups": 0,
+          "complete": 0,
+          "varying": 0,
+          "mean_rho": null,
+          "right_sign": 0,
+          "strictly_monotonic_right": 0
+        },
+        "mahler": {
+          "groups": 9,
+          "complete": 9,
+          "varying": 9,
+          "mean_rho": 0.0,
+          "right_sign": 3,
+          "strictly_monotonic_right": 0
+        }
+      }
+    }
+  },
+  "spot": {
+    "none": {
+      "insufficient": 25,
+      "none": 2
+    },
+    "aligned": {
+      "none": 3,
+      "insufficient": 24
+    },
+    "unaligned": {
+      "insufficient": 24,
+      "none": 3
+    }
+  },
+  "hall": {
+    "score": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 0.6508305864124501
+    },
+    "coh_ratio": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 1.422660340132017
+    },
+    "fund_db": {
+      "complete_groups": 3,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 0.6120389535947895
+    },
+    "solo.coh_ratio": {
+      "complete_groups": 3,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 1.7588996876292244
+    },
+    "with-sections.coh_ratio": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 1.4507469744205042
+    },
+    "tutti.coh_ratio": {
+      "complete_groups": 5,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 2.0645518165523677
+    },
+    "pizzicato.coh_ratio": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 1.3189730352847344
+    },
+    "solo.fund_db": {
+      "complete_groups": 3,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 0.6120389535947895
+    },
+    "with-sections.fund_db": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 1.536619348804735
+    },
+    "tutti.fund_db": {
+      "complete_groups": 5,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 0.9372096781850545
+    },
+    "pizzicato.fund_db": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 1.446440255148204
+    },
+    "solo.coh_comb": {
+      "complete_groups": 3,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 0.8696784598096139
+    },
+    "with-sections.coh_comb": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 4.443124109394137
+    },
+    "tutti.coh_comb": {
+      "complete_groups": 5,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 5.077478027651453
+    },
+    "pizzicato.coh_comb": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 3.7387340571924623
+    },
+    "pizzicato.clarity_db": {
+      "complete_groups": 7,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 1.4954945448538384
+    },
+    "fixed.bass.coh_comb": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 0.7457413551048798
+    },
+    "fixed.mix.coh_comb": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 12.315961193690464
+    },
+    "fixed.bass.fund_db": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 0.45284721608010203
+    },
+    "fixed.mix.fund_db": {
+      "complete_groups": 6,
+      "total_groups": 9,
+      "hall_over_4m_stage_shift_spread": 0.3106474942044958
+    }
+  },
+  "spot_cue_changes": {
+    "aligned": {
+      "score": {
+        "available_pairs": 18,
+        "median_spot_minus_control": 0.0,
+        "expected_direction": 1,
+        "unchanged": 9,
+        "expected_sign": -1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 9,
+            "median_spot_minus_control": 0.6596551453176938,
+            "expected_direction": 1,
+            "unchanged": 0
+          },
+          "mahler": {
+            "available_pairs": 9,
+            "median_spot_minus_control": 0.0,
+            "expected_direction": 0,
+            "unchanged": 9
+          }
+        }
+      },
+      "coh_ratio": {
+        "available_pairs": 18,
+        "median_spot_minus_control": -0.006566284261447897,
+        "expected_direction": 7,
+        "unchanged": 0,
+        "expected_sign": 1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 9,
+            "median_spot_minus_control": -0.005978801824883084,
+            "expected_direction": 4,
+            "unchanged": 0
+          },
+          "mahler": {
+            "available_pairs": 9,
+            "median_spot_minus_control": -0.007153766698012709,
+            "expected_direction": 3,
+            "unchanged": 0
+          }
+        }
+      },
+      "solo.fund_db": {
+        "available_pairs": 9,
+        "median_spot_minus_control": 4.896306106028458,
+        "expected_direction": 1,
+        "unchanged": 0,
+        "expected_sign": -1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 9,
+            "median_spot_minus_control": 4.896306106028458,
+            "expected_direction": 1,
+            "unchanged": 0
+          }
+        }
+      },
+      "solo.coh_comb": {
+        "available_pairs": 9,
+        "median_spot_minus_control": 0.007023027413613603,
+        "expected_direction": 5,
+        "unchanged": 0,
+        "expected_sign": 1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 9,
+            "median_spot_minus_control": 0.007023027413613603,
+            "expected_direction": 5,
+            "unchanged": 0
+          }
+        }
+      },
+      "with-sections.coh_comb": {
+        "available_pairs": 18,
+        "median_spot_minus_control": -0.008356379856186757,
+        "expected_direction": 7,
+        "unchanged": 0,
+        "expected_sign": 1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 9,
+            "median_spot_minus_control": -0.0005321538156821681,
+            "expected_direction": 4,
+            "unchanged": 0
+          },
+          "mahler": {
+            "available_pairs": 9,
+            "median_spot_minus_control": -0.012831258197620432,
+            "expected_direction": 3,
+            "unchanged": 0
+          }
+        }
+      }
+    },
+    "unaligned": {
+      "score": {
+        "available_pairs": 18,
+        "median_spot_minus_control": 0.0,
+        "expected_direction": 5,
+        "unchanged": 9,
+        "expected_sign": -1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 9,
+            "median_spot_minus_control": -0.0037307463992792833,
+            "expected_direction": 5,
+            "unchanged": 0
+          },
+          "mahler": {
+            "available_pairs": 9,
+            "median_spot_minus_control": 0.0,
+            "expected_direction": 0,
+            "unchanged": 9
+          }
+        }
+      },
+      "coh_ratio": {
+        "available_pairs": 18,
+        "median_spot_minus_control": 0.01119522319887123,
+        "expected_direction": 13,
+        "unchanged": 0,
+        "expected_sign": 1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 9,
+            "median_spot_minus_control": 0.018314642564050354,
+            "expected_direction": 8,
+            "unchanged": 0
+          },
+          "mahler": {
+            "available_pairs": 9,
+            "median_spot_minus_control": 0.0023877863761088136,
+            "expected_direction": 5,
+            "unchanged": 0
+          }
+        }
+      },
+      "solo.fund_db": {
+        "available_pairs": 8,
+        "median_spot_minus_control": -0.13982210693106278,
+        "expected_direction": 4,
+        "unchanged": 0,
+        "expected_sign": -1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 8,
+            "median_spot_minus_control": -0.13982210693106278,
+            "expected_direction": 4,
+            "unchanged": 0
+          }
+        }
+      },
+      "solo.coh_comb": {
+        "available_pairs": 8,
+        "median_spot_minus_control": -0.007762173523426896,
+        "expected_direction": 3,
+        "unchanged": 0,
+        "expected_sign": 1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 8,
+            "median_spot_minus_control": -0.007762173523426896,
+            "expected_direction": 3,
+            "unchanged": 0
+          }
+        }
+      },
+      "with-sections.coh_comb": {
+        "available_pairs": 18,
+        "median_spot_minus_control": -0.01022794021180562,
+        "expected_direction": 6,
+        "unchanged": 0,
+        "expected_sign": 1,
+        "total_pairs": 27,
+        "by_piece": {
+          "beethoven": {
+            "available_pairs": 9,
+            "median_spot_minus_control": -0.009615660966645678,
+            "expected_direction": 3,
+            "unchanged": 0
+          },
+          "mahler": {
+            "available_pairs": 9,
+            "median_spot_minus_control": -0.012265952774275779,
+            "expected_direction": 3,
+            "unchanged": 0
+          }
+        }
+      }
+    }
+  },
+  "source_selection": {
+    "beethoven": {
+      "frames": 175,
+      "seconds": 11.200000000000001
+    },
+    "bruckner": {
+      "frames": 6,
+      "seconds": 0.384
+    },
+    "mahler": {
+      "frames": 142,
+      "seconds": 9.088000000000001
+    }
+  },
+  "annotations": [
+    {
+      "experiment": "annotations-dry-bass",
+      "piece": "beethoven",
+      "metrics": {
+        "annotated_active_frames": 1811,
+        "eligible_interior_frames": 412,
+        "detected_frames": 412,
+        "activity_precision_all_notes": 0.9975728155339806,
+        "in_range_interior_recall": 0.6796116504854369,
+        "pitch_accuracy_in_range_interiors": 0.7694174757281553,
+        "correct_pitch_detection_recall": 0.6577669902912622,
+        "note": "Activity at frame centres; pitch/recall only full FFT windows inside 29-66 Hz notes. Pizzicato excluded."
+      }
+    },
+    {
+      "experiment": "annotations-dry-mix",
+      "piece": "beethoven",
+      "metrics": {
+        "annotated_active_frames": 1812,
+        "eligible_interior_frames": 412,
+        "detected_frames": 526,
+        "activity_precision_all_notes": 0.8079847908745247,
+        "in_range_interior_recall": 0.38106796116504854,
+        "pitch_accuracy_in_range_interiors": 0.4854368932038835,
+        "correct_pitch_detection_recall": 0.25,
+        "note": "Activity at frame centres; pitch/recall only full FFT windows inside 29-66 Hz notes. Pizzicato excluded."
+      }
+    },
+    {
+      "experiment": "annotations-dry-bass",
+      "piece": "bruckner",
+      "metrics": {
+        "annotated_active_frames": 1166,
+        "eligible_interior_frames": 142,
+        "detected_frames": 42,
+        "activity_precision_all_notes": 1.0,
+        "in_range_interior_recall": 0.1619718309859155,
+        "pitch_accuracy_in_range_interiors": 0.5211267605633803,
+        "correct_pitch_detection_recall": 0.14084507042253522,
+        "note": "Activity at frame centres; pitch/recall only full FFT windows inside 29-66 Hz notes. Pizzicato excluded."
+      }
+    },
+    {
+      "experiment": "annotations-dry-mix",
+      "piece": "bruckner",
+      "metrics": {
+        "annotated_active_frames": 1166,
+        "eligible_interior_frames": 142,
+        "detected_frames": 29,
+        "activity_precision_all_notes": 1.0,
+        "in_range_interior_recall": 0.1267605633802817,
+        "pitch_accuracy_in_range_interiors": 0.6126760563380281,
+        "correct_pitch_detection_recall": 0.1267605633802817,
+        "note": "Activity at frame centres; pitch/recall only full FFT windows inside 29-66 Hz notes. Pizzicato excluded."
+      }
+    },
+    {
+      "experiment": "annotations-dry-bass",
+      "piece": "mahler",
+      "metrics": {
+        "annotated_active_frames": 1106,
+        "eligible_interior_frames": 432,
+        "detected_frames": 268,
+        "activity_precision_all_notes": 0.9440298507462687,
+        "in_range_interior_recall": 0.4652777777777778,
+        "pitch_accuracy_in_range_interiors": 0.7152777777777778,
+        "correct_pitch_detection_recall": 0.44675925925925924,
+        "note": "Activity at frame centres; pitch/recall only full FFT windows inside 29-66 Hz notes. Pizzicato excluded."
+      }
+    },
+    {
+      "experiment": "annotations-dry-mix",
+      "piece": "mahler",
+      "metrics": {
+        "annotated_active_frames": 1106,
+        "eligible_interior_frames": 432,
+        "detected_frames": 116,
+        "activity_precision_all_notes": 1.0,
+        "in_range_interior_recall": 0.18518518518518517,
+        "pitch_accuracy_in_range_interiors": 0.5115740740740741,
+        "correct_pitch_detection_recall": 0.17824074074074073,
+        "note": "Activity at frame centres; pitch/recall only full FFT windows inside 29-66 Hz notes. Pizzicato excluded."
+      }
+    }
+  ],
+  "spot_levels": [
+    {
+      "scene": {
+        "piece": "beethoven",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": -6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "beethoven-ORTF-unaligned-s1-4598dc45bd96320b"
+      },
+      "cues": {
+        "score": 6.876906487265629,
+        "coh_ratio": 1.0244139457185846,
+        "fund_db": -12.405953607233428,
+        "bass_seconds": 6.208,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 2.368,
+        "solo.coh_comb": 0.8860824404060041,
+        "solo.coh_ref": 0.866868626629004,
+        "solo.coh_ratio": 1.0221646200898018,
+        "solo.fund_db": -12.405953607233428,
+        "solo.balance_db": 2.4297905457993316,
+        "solo.balance_fund_db": -2.361090159690478,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 22.464,
+        "with-sections.coh_comb": 0.7784843199651309,
+        "with-sections.coh_ref": 0.7597555449109292,
+        "with-sections.coh_ratio": 1.0246510541181997,
+        "with-sections.fund_db": -11.369315958653178,
+        "with-sections.balance_db": 0.8549765103882366,
+        "with-sections.balance_fund_db": 0.6560118291063894,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 9.344,
+        "tutti.coh_comb": 0.817269469410022,
+        "tutti.coh_ref": 0.7349886948181583,
+        "tutti.coh_ratio": 1.1119483539977721,
+        "tutti.fund_db": -10.398366617846186,
+        "tutti.balance_db": 0.2085722469562416,
+        "tutti.balance_fund_db": 5.431130857105329,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 5.76,
+        "pizzicato.coh_comb": 0.7988564597232863,
+        "pizzicato.coh_ref": 0.8039016946580966,
+        "pizzicato.coh_ratio": 0.993724064809994,
+        "pizzicato.fund_db": -13.919735667866282,
+        "pizzicato.balance_db": 0.15297865097454783,
+        "pizzicato.balance_fund_db": -2.2663082375533565,
+        "pizzicato.clarity_db": -4.529351682492066,
+        "pizzicato.clarity_notes": 14,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "beethoven",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 0.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "beethoven-ORTF-unaligned-s1-517efa20393aaa2e"
+      },
+      "cues": {
+        "score": 6.463090681768458,
+        "coh_ratio": 1.0366436772816778,
+        "fund_db": -15.136748379060109,
+        "bass_seconds": 6.144,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 2.688,
+        "solo.coh_comb": 0.9004060785462705,
+        "solo.coh_ref": 0.8381790542843809,
+        "solo.coh_ratio": 1.0742407292854839,
+        "solo.fund_db": -15.136748379060109,
+        "solo.balance_db": 2.911484226252852,
+        "solo.balance_fund_db": 2.9503871212443507,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 23.232,
+        "with-sections.coh_comb": 0.7672878920221174,
+        "with-sections.coh_ref": 0.7432845541180735,
+        "with-sections.coh_ratio": 1.032293605149006,
+        "with-sections.fund_db": -9.472916467127007,
+        "with-sections.balance_db": 1.8868813145067163,
+        "with-sections.balance_fund_db": 2.8749419121092807,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 8.384,
+        "tutti.coh_comb": 0.7925044586509192,
+        "tutti.coh_ref": 0.755026336721532,
+        "tutti.coh_ratio": 1.0496381650633864,
+        "tutti.fund_db": -8.062637190292254,
+        "tutti.balance_db": 0.605443593255195,
+        "tutti.balance_fund_db": 5.932615657859143,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 4.928,
+        "pizzicato.coh_comb": 0.7856131479124221,
+        "pizzicato.coh_ref": 0.8088704747648967,
+        "pizzicato.coh_ratio": 0.9712471556595825,
+        "pizzicato.fund_db": -11.680413788293935,
+        "pizzicato.balance_db": 1.192958417347563,
+        "pizzicato.balance_fund_db": 4.447305077154493,
+        "pizzicato.clarity_db": -4.0339473684798595,
+        "pizzicato.clarity_notes": 11,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "beethoven",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "beethoven-ORTF-unaligned-s1-3e17074ff7d791c7"
+      },
+      "cues": {
+        "score": 7.700681751199889,
+        "coh_ratio": 0.9850723037619109,
+        "fund_db": -7.244886866000838,
+        "bass_seconds": 7.232,
+        "verdict": "none",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 2.752,
+        "solo.coh_comb": 0.8902952957731134,
+        "solo.coh_ref": 0.8636403282441178,
+        "solo.coh_ratio": 1.0308635049305632,
+        "solo.fund_db": -7.244886866000838,
+        "solo.balance_db": 4.77151350299958,
+        "solo.balance_fund_db": 8.85520182220661,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 24.32,
+        "with-sections.coh_comb": 0.7702252496011018,
+        "with-sections.coh_ref": 0.7860318246511904,
+        "with-sections.coh_ratio": 0.9798906678401949,
+        "with-sections.fund_db": -6.079302233912241,
+        "with-sections.balance_db": 4.010316523518066,
+        "with-sections.balance_fund_db": 6.24382672749777,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 9.216,
+        "tutti.coh_comb": 0.7562151603342522,
+        "tutti.coh_ref": 0.7159250750782453,
+        "tutti.coh_ratio": 1.056276957824956,
+        "tutti.fund_db": -6.218380690962744,
+        "tutti.balance_db": 3.168163166769087,
+        "tutti.balance_fund_db": 8.538997276376714,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 7.104,
+        "pizzicato.coh_comb": 0.7674567072975529,
+        "pizzicato.coh_ref": 0.814925868491591,
+        "pizzicato.coh_ratio": 0.9417503321106956,
+        "pizzicato.fund_db": -7.4193580653929105,
+        "pizzicato.balance_db": 3.0344792886024017,
+        "pizzicato.balance_fund_db": 6.585241977885228,
+        "pizzicato.clarity_db": -5.169540315328437,
+        "pizzicato.clarity_notes": 13,
+        "gcc_best": [
+          {
+            "lag_ms": 6.625,
+            "z": 5.987004364745827,
+            "rel_db": -14.160713575481441
+          },
+          {
+            "lag_ms": -6.9375,
+            "z": 5.558485916500319,
+            "rel_db": -14.657128446341183
+          },
+          {
+            "lag_ms": 27.5625,
+            "z": 4.121720374129542,
+            "rel_db": -16.08161403043614
+          }
+        ]
+      }
+    },
+    {
+      "scene": {
+        "piece": "beethoven",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 12.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "beethoven-ORTF-unaligned-s1-5f6a066db70b84b8"
+      },
+      "cues": {
+        "score": 7.971222562692468,
+        "coh_ratio": 1.0022444705865825,
+        "fund_db": -5.122311172032226,
+        "bass_seconds": 9.984,
+        "verdict": "none",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 4.544,
+        "solo.coh_comb": 0.8975748807280469,
+        "solo.coh_ref": 0.8571660834333635,
+        "solo.coh_ratio": 1.0471423194123906,
+        "solo.fund_db": -5.122311172032226,
+        "solo.balance_db": 7.062511954188494,
+        "solo.balance_fund_db": 9.92798585464515,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 25.536,
+        "with-sections.coh_comb": 0.8290389232283486,
+        "with-sections.coh_ref": 0.8338291641572699,
+        "with-sections.coh_ratio": 0.9942551290662006,
+        "with-sections.fund_db": -4.6789091182189955,
+        "with-sections.balance_db": 6.739158604933902,
+        "with-sections.balance_fund_db": 8.381867145016693,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 8.128,
+        "tutti.coh_comb": 0.8422950224355724,
+        "tutti.coh_ref": 0.8072133117181206,
+        "tutti.coh_ratio": 1.0434602727781852,
+        "tutti.fund_db": -2.991849185791227,
+        "tutti.balance_db": 7.031480116108392,
+        "tutti.balance_fund_db": 9.986291194548773,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 6.976,
+        "pizzicato.coh_comb": 0.8648099275255956,
+        "pizzicato.coh_ref": 0.872258084637054,
+        "pizzicato.coh_ratio": 0.9914610626801383,
+        "pizzicato.fund_db": -0.19862153819932887,
+        "pizzicato.balance_db": 5.763303319638489,
+        "pizzicato.balance_fund_db": 8.96913535640956,
+        "pizzicato.clarity_db": -2.6903973880384178,
+        "pizzicato.clarity_notes": 12,
+        "gcc_best": [
+          {
+            "lag_ms": 5.6875,
+            "z": 5.11990621672151,
+            "rel_db": -20.211936099101298
+          },
+          {
+            "lag_ms": 6.6875,
+            "z": 3.983218058474811,
+            "rel_db": -21.01101068176339
+          },
+          {
+            "lag_ms": -7.0,
+            "z": 3.574679991260298,
+            "rel_db": -21.670053369081614
+          }
+        ]
+      }
+    },
+    {
+      "scene": {
+        "piece": "beethoven",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": -6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "beethoven-ORTF-aligned-s1-e3c1e68750c91cea"
+      },
+      "cues": {
+        "score": 7.292436794459171,
+        "coh_ratio": 0.9929336170023847,
+        "fund_db": -10.306724041556228,
+        "bass_seconds": 7.104,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 2.56,
+        "solo.coh_comb": 0.8929669920836627,
+        "solo.coh_ref": 0.8912498890603688,
+        "solo.coh_ratio": 1.0019266235478628,
+        "solo.fund_db": -10.306724041556228,
+        "solo.balance_db": 2.577520117237247,
+        "solo.balance_fund_db": 1.990123583586139,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 23.68,
+        "with-sections.coh_comb": 0.7666768383567488,
+        "with-sections.coh_ref": 0.7728897901632452,
+        "with-sections.coh_ratio": 0.9919614000785492,
+        "with-sections.fund_db": -10.583546690570635,
+        "with-sections.balance_db": 0.9998604571748424,
+        "with-sections.balance_fund_db": 2.114117070165941,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 11.392,
+        "tutti.coh_comb": 0.8286948323295468,
+        "tutti.coh_ref": 0.7981567720999561,
+        "tutti.coh_ratio": 1.0382607293417367,
+        "tutti.fund_db": -8.97366660809204,
+        "tutti.balance_db": 1.2103835444931608,
+        "tutti.balance_fund_db": 6.476828668371235,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 6.144,
+        "pizzicato.coh_comb": 0.8015851267553814,
+        "pizzicato.coh_ref": 0.7975573291696397,
+        "pizzicato.coh_ratio": 1.005050166851247,
+        "pizzicato.fund_db": -23.997794172163452,
+        "pizzicato.balance_db": 0.37566805835187206,
+        "pizzicato.balance_fund_db": 1.2798687567225988,
+        "pizzicato.clarity_db": -3.146187719318281,
+        "pizzicato.clarity_notes": 13,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "beethoven",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 0.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "beethoven-ORTF-aligned-s1-00683e28473af402"
+      },
+      "cues": {
+        "score": 8.136577883423051,
+        "coh_ratio": 1.0085368567231752,
+        "fund_db": -3.619963510861483,
+        "bass_seconds": 7.296,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 3.264,
+        "solo.coh_comb": 0.8686990961684853,
+        "solo.coh_ref": 0.8805304241881569,
+        "solo.coh_ratio": 0.9865634080383083,
+        "solo.fund_db": -3.619963510861483,
+        "solo.balance_db": 3.1569701552872473,
+        "solo.balance_fund_db": 4.523139453800802,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 24.704,
+        "with-sections.coh_comb": 0.7505996242203425,
+        "with-sections.coh_ref": 0.7421098251867637,
+        "with-sections.coh_ratio": 1.0114400843991551,
+        "with-sections.fund_db": -8.06700770984224,
+        "with-sections.balance_db": 1.9893398798592048,
+        "with-sections.balance_fund_db": 3.7833092105587114,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 11.776,
+        "tutti.coh_comb": 0.8521468052389677,
+        "tutti.coh_ref": 0.7723646330307948,
+        "tutti.coh_ratio": 1.1032959936229911,
+        "tutti.fund_db": -6.703138155220815,
+        "tutti.balance_db": 2.1414994295053362,
+        "tutti.balance_fund_db": 7.19860223016481,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 7.616,
+        "pizzicato.coh_comb": 0.7952826236227912,
+        "pizzicato.coh_ref": 0.781299922312132,
+        "pizzicato.coh_ratio": 1.0178967140676012,
+        "pizzicato.fund_db": -1.1153613477393125,
+        "pizzicato.balance_db": 1.5826213937287341,
+        "pizzicato.balance_fund_db": 3.3037996285417446,
+        "pizzicato.clarity_db": -3.4121142619789655,
+        "pizzicato.clarity_notes": 17,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "beethoven",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "beethoven-ORTF-aligned-s1-5c5c36356917e045"
+      },
+      "cues": {
+        "score": 8.4738516394666,
+        "coh_ratio": 1.0223778698365344,
+        "fund_db": -0.5137014608115683,
+        "bass_seconds": 8.384,
+        "verdict": "none",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 4.032,
+        "solo.coh_comb": 0.8622737353828086,
+        "solo.coh_ref": 0.820227650957692,
+        "solo.coh_ratio": 1.0512614813412153,
+        "solo.fund_db": -0.5137014608115683,
+        "solo.balance_db": 4.906338601581377,
+        "solo.balance_fund_db": 6.4486106786428765,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 24.704,
+        "with-sections.coh_comb": 0.7484886714635862,
+        "with-sections.coh_ref": 0.7354970680309636,
+        "with-sections.coh_ratio": 1.017663705264527,
+        "with-sections.fund_db": -8.032410369170593,
+        "with-sections.balance_db": 4.1948089462092515,
+        "with-sections.balance_fund_db": 5.923884282600955,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 9.856,
+        "tutti.coh_comb": 0.8467482067775728,
+        "tutti.coh_ref": 0.7864734136261458,
+        "tutti.coh_ratio": 1.0766393270352543,
+        "tutti.fund_db": -4.317457575272437,
+        "tutti.balance_db": 4.370898607889582,
+        "tutti.balance_fund_db": 7.958656124308234,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 6.144,
+        "pizzicato.coh_comb": 0.8531020027271294,
+        "pizzicato.coh_ref": 0.8411549810008858,
+        "pizzicato.coh_ratio": 1.0142031159490108,
+        "pizzicato.fund_db": -0.26098918588356734,
+        "pizzicato.balance_db": 3.9227656813228524,
+        "pizzicato.balance_fund_db": 4.993043668478772,
+        "pizzicato.clarity_db": -3.191312780301562,
+        "pizzicato.clarity_notes": 14,
+        "gcc_best": [
+          {
+            "lag_ms": 6.5,
+            "z": 5.6776306960953935,
+            "rel_db": -16.484460381409992
+          },
+          {
+            "lag_ms": 19.75,
+            "z": 4.73060291571342,
+            "rel_db": -17.107996019282368
+          },
+          {
+            "lag_ms": 10.8125,
+            "z": 4.3490105157863725,
+            "rel_db": -16.522942032563257
+          }
+        ]
+      }
+    },
+    {
+      "scene": {
+        "piece": "beethoven",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 12.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "beethoven-ORTF-aligned-s1-ea59a8c3bb43f08c"
+      },
+      "cues": {
+        "score": 8.866272798532608,
+        "coh_ratio": 0.998179092462884,
+        "fund_db": 1.4970459889945478,
+        "bass_seconds": 11.52,
+        "verdict": "none",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 5.248,
+        "solo.coh_comb": 0.9060473820301921,
+        "solo.coh_ref": 0.866633341004852,
+        "solo.coh_ratio": 1.0454794884531444,
+        "solo.fund_db": 1.4970459889945478,
+        "solo.balance_db": 7.260334646373505,
+        "solo.balance_fund_db": 7.905807633273982,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 24.768,
+        "with-sections.coh_comb": 0.8258323056524188,
+        "with-sections.coh_ref": 0.8357300350228263,
+        "with-sections.coh_ratio": 0.9881567863357488,
+        "with-sections.fund_db": -6.305149738315375,
+        "with-sections.balance_db": 7.235295370502085,
+        "with-sections.balance_fund_db": 7.719696439951374,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 7.168,
+        "tutti.coh_comb": 0.9169293463473233,
+        "tutti.coh_ref": 0.8691544126623094,
+        "tutti.coh_ratio": 1.0549671416137374,
+        "tutti.fund_db": -0.04451258436284308,
+        "tutti.balance_db": 7.110277239865646,
+        "tutti.balance_fund_db": 8.74131594002196,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 9.408,
+        "pizzicato.coh_comb": 0.8767761346575069,
+        "pizzicato.coh_ref": 0.8745599719853138,
+        "pizzicato.coh_ratio": 1.0025340316767097,
+        "pizzicato.fund_db": -2.2158027716161413,
+        "pizzicato.balance_db": 6.745333427958372,
+        "pizzicato.balance_fund_db": 7.222734885011404,
+        "pizzicato.clarity_db": -3.2270256400663255,
+        "pizzicato.clarity_notes": 22,
+        "gcc_best": [
+          {
+            "lag_ms": 6.5,
+            "z": 5.734092610639952,
+            "rel_db": -21.356227956201423
+          },
+          {
+            "lag_ms": -6.0,
+            "z": 4.378180246537062,
+            "rel_db": -23.14052874789784
+          },
+          {
+            "lag_ms": 23.9375,
+            "z": 3.9720341831075414,
+            "rel_db": -22.47361223821283
+          }
+        ]
+      }
+    },
+    {
+      "scene": {
+        "piece": "bruckner",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": -6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "bruckner-ORTF-unaligned-s1-50a39eff579ea2bc"
+      },
+      "cues": {
+        "score": null,
+        "coh_ratio": null,
+        "fund_db": null,
+        "bass_seconds": 0.768,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.64,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 0.576,
+        "with-sections.coh_comb": null,
+        "with-sections.coh_ref": null,
+        "with-sections.coh_ratio": null,
+        "with-sections.fund_db": null,
+        "with-sections.balance_db": null,
+        "with-sections.balance_fund_db": null,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 2.048,
+        "tutti.coh_comb": 0.8890745477619258,
+        "tutti.coh_ref": 0.8322250340432307,
+        "tutti.coh_ratio": 1.0683102663260453,
+        "tutti.fund_db": -14.437643367131114,
+        "tutti.balance_db": 1.2841452920883347,
+        "tutti.balance_fund_db": 5.834897716784023,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 3.008,
+        "pizzicato.coh_comb": 0.8288719869448639,
+        "pizzicato.coh_ref": 0.7915047698951173,
+        "pizzicato.coh_ratio": 1.0472103497932148,
+        "pizzicato.fund_db": -2.309320349187537,
+        "pizzicato.balance_db": 0.4195889325584193,
+        "pizzicato.balance_fund_db": 5.033025637070824,
+        "pizzicato.clarity_db": -4.013079462584699,
+        "pizzicato.clarity_notes": 5,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "bruckner",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 0.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "bruckner-ORTF-unaligned-s1-35d5884c6bf96ba3"
+      },
+      "cues": {
+        "score": null,
+        "coh_ratio": null,
+        "fund_db": null,
+        "bass_seconds": 0.896,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.576,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 0.512,
+        "with-sections.coh_comb": null,
+        "with-sections.coh_ref": null,
+        "with-sections.coh_ratio": null,
+        "with-sections.fund_db": null,
+        "with-sections.balance_db": null,
+        "with-sections.balance_fund_db": null,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 1.472,
+        "tutti.coh_comb": 0.8940757261304766,
+        "tutti.coh_ref": 0.8075460282307809,
+        "tutti.coh_ratio": 1.1071514128913122,
+        "tutti.fund_db": -14.603611046524751,
+        "tutti.balance_db": 2.813431920310969,
+        "tutti.balance_fund_db": 6.102523534794292,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 4.16,
+        "pizzicato.coh_comb": 0.752268236880265,
+        "pizzicato.coh_ref": 0.7538690767508488,
+        "pizzicato.coh_ratio": 0.997876501477573,
+        "pizzicato.fund_db": -0.02202807196676577,
+        "pizzicato.balance_db": 0.6330208899563221,
+        "pizzicato.balance_fund_db": 6.737680200999069,
+        "pizzicato.clarity_db": -4.333491999441774,
+        "pizzicato.clarity_notes": 8,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "bruckner",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "bruckner-ORTF-unaligned-s1-210214c1a8ac43a2"
+      },
+      "cues": {
+        "score": null,
+        "coh_ratio": null,
+        "fund_db": null,
+        "bass_seconds": 0.512,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.64,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 0.384,
+        "with-sections.coh_comb": null,
+        "with-sections.coh_ref": null,
+        "with-sections.coh_ratio": null,
+        "with-sections.fund_db": null,
+        "with-sections.balance_db": null,
+        "with-sections.balance_fund_db": null,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 0.64,
+        "tutti.coh_comb": null,
+        "tutti.coh_ref": null,
+        "tutti.coh_ratio": null,
+        "tutti.fund_db": null,
+        "tutti.balance_db": null,
+        "tutti.balance_fund_db": null,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 3.264,
+        "pizzicato.coh_comb": 0.7113546870038939,
+        "pizzicato.coh_ref": 0.7262042739988145,
+        "pizzicato.coh_ratio": 0.9795517769220058,
+        "pizzicato.fund_db": 1.3785522372564654,
+        "pizzicato.balance_db": 2.4488146346395214,
+        "pizzicato.balance_fund_db": 6.944856055871439,
+        "pizzicato.clarity_db": -2.700493566293895,
+        "pizzicato.clarity_notes": 5,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "bruckner",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 12.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "bruckner-ORTF-unaligned-s1-fcdd488b453799cb"
+      },
+      "cues": {
+        "score": null,
+        "coh_ratio": null,
+        "fund_db": null,
+        "bass_seconds": 0.32,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.512,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 0.256,
+        "with-sections.coh_comb": null,
+        "with-sections.coh_ref": null,
+        "with-sections.coh_ratio": null,
+        "with-sections.fund_db": null,
+        "with-sections.balance_db": null,
+        "with-sections.balance_fund_db": null,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 0.832,
+        "tutti.coh_comb": null,
+        "tutti.coh_ref": null,
+        "tutti.coh_ratio": null,
+        "tutti.fund_db": null,
+        "tutti.balance_db": null,
+        "tutti.balance_fund_db": null,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 2.048,
+        "pizzicato.coh_comb": 0.817373158808585,
+        "pizzicato.coh_ref": 0.823278431971683,
+        "pizzicato.coh_ratio": 0.9928271251453102,
+        "pizzicato.fund_db": 0.7136137227993602,
+        "pizzicato.balance_db": 7.230910217060544,
+        "pizzicato.balance_fund_db": 8.15165030648538,
+        "pizzicato.clarity_db": -1.8639474165532923,
+        "pizzicato.clarity_notes": 3,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "bruckner",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": -6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "bruckner-ORTF-aligned-s1-11b5aa621bb20042"
+      },
+      "cues": {
+        "score": null,
+        "coh_ratio": null,
+        "fund_db": null,
+        "bass_seconds": 0.896,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.768,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 0.576,
+        "with-sections.coh_comb": null,
+        "with-sections.coh_ref": null,
+        "with-sections.coh_ratio": null,
+        "with-sections.fund_db": null,
+        "with-sections.balance_db": null,
+        "with-sections.balance_fund_db": null,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 1.92,
+        "tutti.coh_comb": 0.882823257413756,
+        "tutti.coh_ref": 0.809703338811524,
+        "tutti.coh_ratio": 1.0903045783528036,
+        "tutti.fund_db": -5.581038654428847,
+        "tutti.balance_db": 1.2438292371906186,
+        "tutti.balance_fund_db": 6.292831470589457,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 2.304,
+        "pizzicato.coh_comb": 0.8132169097318456,
+        "pizzicato.coh_ref": 0.8246740281930571,
+        "pizzicato.coh_ratio": 0.9861070943554325,
+        "pizzicato.fund_db": -4.0275091373726095,
+        "pizzicato.balance_db": -0.8183846648899711,
+        "pizzicato.balance_fund_db": 5.312844382555021,
+        "pizzicato.clarity_db": -2.955359164732689,
+        "pizzicato.clarity_notes": 4,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "bruckner",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 0.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "bruckner-ORTF-aligned-s1-1a8abd81dbcac3c4"
+      },
+      "cues": {
+        "score": null,
+        "coh_ratio": null,
+        "fund_db": null,
+        "bass_seconds": 0.832,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.704,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 0.448,
+        "with-sections.coh_comb": null,
+        "with-sections.coh_ref": null,
+        "with-sections.coh_ratio": null,
+        "with-sections.fund_db": null,
+        "with-sections.balance_db": null,
+        "with-sections.balance_fund_db": null,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 2.368,
+        "tutti.coh_comb": 0.8896206972835072,
+        "tutti.coh_ref": 0.8250189937678453,
+        "tutti.coh_ratio": 1.07830329241346,
+        "tutti.fund_db": -8.035952156181041,
+        "tutti.balance_db": 1.7047675146379575,
+        "tutti.balance_fund_db": 6.6271657413864595,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 3.072,
+        "pizzicato.coh_comb": 0.8387695956647355,
+        "pizzicato.coh_ref": 0.796548668137933,
+        "pizzicato.coh_ratio": 1.0530048309860351,
+        "pizzicato.fund_db": -3.546210702910029,
+        "pizzicato.balance_db": 0.45504315913390003,
+        "pizzicato.balance_fund_db": 5.831677704883371,
+        "pizzicato.clarity_db": -4.150509702849029,
+        "pizzicato.clarity_notes": 6,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "bruckner",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "bruckner-ORTF-aligned-s1-c92b773844a5936c"
+      },
+      "cues": {
+        "score": null,
+        "coh_ratio": null,
+        "fund_db": null,
+        "bass_seconds": 0.832,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.768,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 0.448,
+        "with-sections.coh_comb": null,
+        "with-sections.coh_ref": null,
+        "with-sections.coh_ratio": null,
+        "with-sections.fund_db": null,
+        "with-sections.balance_db": null,
+        "with-sections.balance_fund_db": null,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 1.92,
+        "tutti.coh_comb": 0.8872134766013366,
+        "tutti.coh_ref": 0.7993055066688439,
+        "tutti.coh_ratio": 1.1099804382667833,
+        "tutti.fund_db": -7.113995104808876,
+        "tutti.balance_db": 3.693704034594835,
+        "tutti.balance_fund_db": 7.4646865381688325,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 1.664,
+        "pizzicato.coh_comb": 0.8447459617300668,
+        "pizzicato.coh_ref": 0.8363138553410834,
+        "pizzicato.coh_ratio": 1.0100824664510006,
+        "pizzicato.fund_db": 1.4818244358363635,
+        "pizzicato.balance_db": 1.084305564721772,
+        "pizzicato.balance_fund_db": 8.729061882148482,
+        "pizzicato.clarity_db": -5.335186106760354,
+        "pizzicato.clarity_notes": 4,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "bruckner",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 12.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "bruckner-ORTF-aligned-s1-aed657900217db07"
+      },
+      "cues": {
+        "score": null,
+        "coh_ratio": null,
+        "fund_db": null,
+        "bass_seconds": 0.64,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.768,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 0.384,
+        "with-sections.coh_comb": null,
+        "with-sections.coh_ref": null,
+        "with-sections.coh_ratio": null,
+        "with-sections.fund_db": null,
+        "with-sections.balance_db": null,
+        "with-sections.balance_fund_db": null,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 2.112,
+        "tutti.coh_comb": 0.9172430950494975,
+        "tutti.coh_ref": 0.8852005511794074,
+        "tutti.coh_ratio": 1.0361980613629282,
+        "tutti.fund_db": -6.417196235153156,
+        "tutti.balance_db": 6.5562637470285186,
+        "tutti.balance_fund_db": 8.46505776087644,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 2.56,
+        "pizzicato.coh_comb": 0.8952456597121639,
+        "pizzicato.coh_ref": 0.8547516254007149,
+        "pizzicato.coh_ratio": 1.04737520597573,
+        "pizzicato.fund_db": 2.8465591608331584,
+        "pizzicato.balance_db": 5.515280686987812,
+        "pizzicato.balance_fund_db": 8.627534007474987,
+        "pizzicato.clarity_db": -4.013556474126515,
+        "pizzicato.clarity_notes": 5,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "mahler",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": -6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "mahler-ORTF-unaligned-s1-e9a095e4e5bfcbb5"
+      },
+      "cues": {
+        "score": 10.0,
+        "coh_ratio": 0.9299933082147057,
+        "fund_db": null,
+        "bass_seconds": 0.192,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.064,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 6.336,
+        "with-sections.coh_comb": 0.6829607933076403,
+        "with-sections.coh_ref": 0.7343717285651333,
+        "with-sections.coh_ratio": 0.9299933082147057,
+        "with-sections.fund_db": -2.448798718223398,
+        "with-sections.balance_db": -0.4971665680333184,
+        "with-sections.balance_fund_db": 4.576896190101333,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 2.688,
+        "tutti.coh_comb": 0.6442288482306809,
+        "tutti.coh_ref": 0.707975171035553,
+        "tutti.coh_ratio": 0.9099596632582037,
+        "tutti.fund_db": -6.781047415208832,
+        "tutti.balance_db": -0.8361836866832053,
+        "tutti.balance_fund_db": 6.229919577301636,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 1.984,
+        "pizzicato.coh_comb": 0.6965609406709093,
+        "pizzicato.coh_ref": 0.7775197931105375,
+        "pizzicato.coh_ratio": 0.8958755093349521,
+        "pizzicato.fund_db": -5.004194548446468,
+        "pizzicato.balance_db": -1.509092656924615,
+        "pizzicato.balance_fund_db": 0.12058516092455651,
+        "pizzicato.clarity_db": null,
+        "pizzicato.clarity_notes": null,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "mahler",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 0.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "mahler-ORTF-unaligned-s1-55597795c25c9176"
+      },
+      "cues": {
+        "score": 10.0,
+        "coh_ratio": 0.8614276076486451,
+        "fund_db": null,
+        "bass_seconds": 0.192,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.0,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 5.504,
+        "with-sections.coh_comb": 0.6121990005995556,
+        "with-sections.coh_ref": 0.7106795686182098,
+        "with-sections.coh_ratio": 0.8614276076486451,
+        "with-sections.fund_db": -0.2664335517249449,
+        "with-sections.balance_db": 0.6343612163222476,
+        "with-sections.balance_fund_db": 5.781743340537837,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 2.56,
+        "tutti.coh_comb": 0.6152145633898165,
+        "tutti.coh_ref": 0.6684909738012932,
+        "tutti.coh_ratio": 0.9203034708030136,
+        "tutti.fund_db": -5.765467708706009,
+        "tutti.balance_db": -0.919904124604018,
+        "tutti.balance_fund_db": 7.258673058407207,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 0.384,
+        "pizzicato.coh_comb": null,
+        "pizzicato.coh_ref": null,
+        "pizzicato.coh_ratio": null,
+        "pizzicato.fund_db": null,
+        "pizzicato.balance_db": null,
+        "pizzicato.balance_fund_db": null,
+        "pizzicato.clarity_db": null,
+        "pizzicato.clarity_notes": null,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "mahler",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "mahler-ORTF-unaligned-s1-930ad22973f19725"
+      },
+      "cues": {
+        "score": 10.0,
+        "coh_ratio": 0.8958311686307562,
+        "fund_db": null,
+        "bass_seconds": 0.192,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.0,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 6.656,
+        "with-sections.coh_comb": 0.6470743312218867,
+        "with-sections.coh_ref": 0.7223172779430249,
+        "with-sections.coh_ratio": 0.8958311686307562,
+        "with-sections.fund_db": 0.12936555690325094,
+        "with-sections.balance_db": 3.1736220261658366,
+        "with-sections.balance_fund_db": 7.408497620708195,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 2.56,
+        "tutti.coh_comb": 0.6289593219564792,
+        "tutti.coh_ref": 0.6943357612447726,
+        "tutti.coh_ratio": 0.9058431915258267,
+        "tutti.fund_db": -6.513562547401287,
+        "tutti.balance_db": 0.27455580296895843,
+        "tutti.balance_fund_db": 8.356190494265034,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 1.152,
+        "pizzicato.coh_comb": null,
+        "pizzicato.coh_ref": null,
+        "pizzicato.coh_ratio": null,
+        "pizzicato.fund_db": null,
+        "pizzicato.balance_db": null,
+        "pizzicato.balance_fund_db": null,
+        "pizzicato.clarity_db": -2.812165714767057,
+        "pizzicato.clarity_notes": 2,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "mahler",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "unaligned",
+        "spot_db": 12.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "mahler-ORTF-unaligned-s1-fd3aa9984d0c7240"
+      },
+      "cues": {
+        "score": 10.0,
+        "coh_ratio": 0.964027210247406,
+        "fund_db": null,
+        "bass_seconds": 1.088,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.256,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 9.856,
+        "with-sections.coh_comb": 0.6981165002118578,
+        "with-sections.coh_ref": 0.7241668002635472,
+        "with-sections.coh_ratio": 0.9640272102474059,
+        "with-sections.fund_db": -1.314496335590304,
+        "with-sections.balance_db": 6.662399213681068,
+        "with-sections.balance_fund_db": 8.704045217990448,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 4.224,
+        "tutti.coh_comb": 0.751313914488531,
+        "tutti.coh_ref": 0.7117058773091486,
+        "tutti.coh_ratio": 1.0556522552955927,
+        "tutti.fund_db": -6.5247025034723265,
+        "tutti.balance_db": 5.445443974758146,
+        "tutti.balance_fund_db": 9.26173690216109,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 2.048,
+        "pizzicato.coh_comb": 0.8299199720475108,
+        "pizzicato.coh_ref": 0.80142145555085,
+        "pizzicato.coh_ratio": 1.0355599619891291,
+        "pizzicato.fund_db": 0.554207554009868,
+        "pizzicato.balance_db": 5.651374114839603,
+        "pizzicato.balance_fund_db": 11.854820876252564,
+        "pizzicato.clarity_db": -3.1332846028090158,
+        "pizzicato.clarity_notes": 2,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "mahler",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": -6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "mahler-ORTF-aligned-s1-dcf92da230a9e0b6"
+      },
+      "cues": {
+        "score": 10.0,
+        "coh_ratio": 0.9315957588040915,
+        "fund_db": null,
+        "bass_seconds": 1.344,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.448,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 9.088,
+        "with-sections.coh_comb": 0.691345244567163,
+        "with-sections.coh_ref": 0.7421086217209243,
+        "with-sections.coh_ratio": 0.9315957588040915,
+        "with-sections.fund_db": -4.015484221283562,
+        "with-sections.balance_db": 0.8614538674659971,
+        "with-sections.balance_fund_db": 5.418479499121661,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 3.392,
+        "tutti.coh_comb": 0.6846280442531126,
+        "tutti.coh_ref": 0.7438800351545569,
+        "tutti.coh_ratio": 0.9203473838504976,
+        "tutti.fund_db": -6.745446291129404,
+        "tutti.balance_db": 0.6373351001232104,
+        "tutti.balance_fund_db": 6.746156623643243,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 2.304,
+        "pizzicato.coh_comb": 0.7004349530610485,
+        "pizzicato.coh_ref": 0.7701423564167397,
+        "pizzicato.coh_ratio": 0.9094876385191687,
+        "pizzicato.fund_db": -2.06528649025422,
+        "pizzicato.balance_db": 0.5907847952206209,
+        "pizzicato.balance_fund_db": 3.1192679607677802,
+        "pizzicato.clarity_db": -5.2700520457203766,
+        "pizzicato.clarity_notes": 2,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "mahler",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 0.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "mahler-ORTF-aligned-s1-fc3a2ff972f41e61"
+      },
+      "cues": {
+        "score": 10.0,
+        "coh_ratio": 0.9716816892335836,
+        "fund_db": null,
+        "bass_seconds": 2.24,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 0.512,
+        "solo.coh_comb": null,
+        "solo.coh_ref": null,
+        "solo.coh_ratio": null,
+        "solo.fund_db": null,
+        "solo.balance_db": null,
+        "solo.balance_fund_db": null,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 9.984,
+        "with-sections.coh_comb": 0.7079826551550651,
+        "with-sections.coh_ref": 0.7286158245026602,
+        "with-sections.coh_ratio": 0.9716816892335836,
+        "with-sections.fund_db": -3.841260495782567,
+        "with-sections.balance_db": 1.900099597476375,
+        "with-sections.balance_fund_db": 6.34167266361391,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 4.288,
+        "tutti.coh_comb": 0.6712206599377761,
+        "tutti.coh_ref": 0.6954998645963817,
+        "tutti.coh_ratio": 0.9650910001647586,
+        "tutti.fund_db": -6.704497891958471,
+        "tutti.balance_db": 1.948963456784775,
+        "tutti.balance_fund_db": 7.597796245922229,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 1.536,
+        "pizzicato.coh_comb": 0.6763923362762891,
+        "pizzicato.coh_ref": 0.775553785692978,
+        "pizzicato.coh_ratio": 0.8721411058188757,
+        "pizzicato.fund_db": -7.2502443154107254,
+        "pizzicato.balance_db": 2.5242653317676584,
+        "pizzicato.balance_fund_db": 2.746230298123832,
+        "pizzicato.clarity_db": -3.186837975294262,
+        "pizzicato.clarity_notes": 2,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "mahler",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 6.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "mahler-ORTF-aligned-s1-dbdfeca07861f165"
+      },
+      "cues": {
+        "score": 7.366394462090268,
+        "coh_ratio": 1.0271227906469158,
+        "fund_db": -8.621925257368176,
+        "bass_seconds": 3.072,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 1.472,
+        "solo.coh_comb": 0.8733238989257297,
+        "solo.coh_ref": 0.8010907227221755,
+        "solo.coh_ratio": 1.0901685341681397,
+        "solo.fund_db": -8.621925257368176,
+        "solo.balance_db": 4.4398648366391615,
+        "solo.balance_fund_db": 8.43630364983583,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 10.112,
+        "with-sections.coh_comb": 0.7415419626872415,
+        "with-sections.coh_ref": 0.7284694003108523,
+        "with-sections.coh_ratio": 1.0179452457039526,
+        "with-sections.fund_db": -3.322377827912659,
+        "with-sections.balance_db": 3.839009325836213,
+        "with-sections.balance_fund_db": 7.378413372079895,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 5.76,
+        "tutti.coh_comb": 0.6995315695482195,
+        "tutti.coh_ref": 0.7133779861639704,
+        "tutti.coh_ratio": 0.9805903505794916,
+        "tutti.fund_db": -6.603096438130446,
+        "tutti.balance_db": 4.106874877846172,
+        "tutti.balance_fund_db": 8.43037990082448,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 3.392,
+        "pizzicato.coh_comb": 0.6942234194719337,
+        "pizzicato.coh_ref": 0.7325905733864781,
+        "pizzicato.coh_ratio": 0.9476281086484798,
+        "pizzicato.fund_db": -4.680641564495123,
+        "pizzicato.balance_db": 4.136218482883795,
+        "pizzicato.balance_fund_db": 5.480678012205051,
+        "pizzicato.clarity_db": -2.480221076054467,
+        "pizzicato.clarity_notes": 6,
+        "gcc_best": []
+      }
+    },
+    {
+      "scene": {
+        "piece": "mahler",
+        "setup": "ORTF",
+        "rt_mid": 1.9,
+        "bass_shift": 0.0,
+        "spot": "aligned",
+        "spot_db": 12.0,
+        "seed": 1,
+        "section_mode": "recorded",
+        "key": "mahler-ORTF-aligned-s1-b9190029f8f6a22c"
+      },
+      "cues": {
+        "score": 7.213923761953794,
+        "coh_ratio": 1.0739284178453445,
+        "fund_db": -7.815221041790527,
+        "bass_seconds": 3.84,
+        "verdict": "insufficient",
+        "delay_ms": null,
+        "version": "1.6",
+        "solo.seconds": 2.112,
+        "solo.coh_comb": 0.9169338947576557,
+        "solo.coh_ref": 0.7527474896989502,
+        "solo.coh_ratio": 1.2181161774772167,
+        "solo.fund_db": -7.815221041790528,
+        "solo.balance_db": 6.984072564405159,
+        "solo.balance_fund_db": 9.129386392463571,
+        "solo.clarity_db": null,
+        "solo.clarity_notes": null,
+        "with-sections.seconds": 9.088,
+        "with-sections.coh_comb": 0.8159370271164581,
+        "with-sections.coh_ref": 0.7842381261117264,
+        "with-sections.coh_ratio": 1.0404199948323039,
+        "with-sections.fund_db": -2.4513246989157844,
+        "with-sections.balance_db": 6.480479629485054,
+        "with-sections.balance_fund_db": 8.323484433453148,
+        "with-sections.clarity_db": null,
+        "with-sections.clarity_notes": null,
+        "tutti.seconds": 6.528,
+        "tutti.coh_comb": 0.7671977649777141,
+        "tutti.coh_ref": 0.764092340877984,
+        "tutti.coh_ratio": 1.0040642000103832,
+        "tutti.fund_db": -6.321971057514402,
+        "tutti.balance_db": 6.742194172519659,
+        "tutti.balance_fund_db": 9.07299159449505,
+        "tutti.clarity_db": null,
+        "tutti.clarity_notes": null,
+        "pizzicato.seconds": 3.2,
+        "pizzicato.coh_comb": 0.8558051131149867,
+        "pizzicato.coh_ref": 0.7483990145546415,
+        "pizzicato.coh_ratio": 1.1435144842143607,
+        "pizzicato.fund_db": -5.219376893961472,
+        "pizzicato.balance_db": 7.452550967900182,
+        "pizzicato.balance_fund_db": 6.6814114135044935,
+        "pizzicato.clarity_db": -2.3353155734009796,
+        "pizzicato.clarity_notes": 2,
+        "gcc_best": []
+      }
+    }
+  ],
+  "score_coverage": {
+    "available": 79,
+    "coherence_at_upper_score_clip": 57,
+    "solo_support_under_10s": 77
+  }
+}

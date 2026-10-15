@@ -1,0 +1,79 @@
+Experimental cues; these measurements do not validate perceived depth.
+Coherence limitation: single recorded bass part and/or duplicated performances present.
+Distance: 27 groups (piece × main pair × hall × seed × section mode), 108 scenes
+cue                      expect  mean ρ right way  ρ vs dist (all)  ρ vs DRR (all)
+score                         +   -0.45    0/12              -0.11           -0.01
+coh_ratio                     −   -0.12    2/20              +0.00           +0.30
+fund_db                       +   -0.67    0/9               -0.43           +0.18
+solo.coh_ratio                −   +0.38    0/9               +0.00           +0.10
+with-sections.coh_ratio       −   -0.19    2/20              -0.01           +0.31
+tutti.coh_ratio               −   -0.23    2/25              -0.12           +0.18
+pizzicato.coh_ratio           −   -0.21    4/20              -0.08           +0.22
+solo.fund_db                  +   -0.67    0/9               -0.43           +0.18
+with-sections.fund_db         +   +0.16    0/20              +0.01           -0.16
+tutti.fund_db                 +   -0.18    2/25              -0.16           +0.06
+pizzicato.fund_db             +   +0.28    3/20              +0.03           -0.11
+solo.coh_comb                 −   +0.44    0/9               +0.06           +0.30
+with-sections.coh_comb        −   +0.20    0/20              +0.02           +0.41
+tutti.coh_comb                −   -0.11    2/25              -0.12           +0.43
+pizzicato.coh_comb            −   +0.21    1/20              -0.04           +0.41
+pizzicato.clarity_db          −   +0.01    1/23              +0.05           +0.02
+fixed.bass.coh_comb           −   +0.21    0/18              -0.15           +0.24
+fixed.mix.coh_comb            −   +0.21    0/18              -0.11           +0.40
+fixed.bass.fund_db            +   -0.27    0/18              -0.08           +0.09
+fixed.mix.fund_db             +   -0.36    0/18              -0.18           +0.13
+expect: the sign of ρ if the cue works (further -> score up, ×coh down, fundamental up); right way: groups with ρ = ±1 in that direction
+
+Spot microphone: verdicts per condition
+  none       insufficient: 25, none: 2
+  aligned    insufficient: 24, none: 3
+  unaligned  insufficient: 24, none: 3
+    beethoven-AB-unaligned-s1-2a93a0d3bc44d463: true Δ 27.8 ms, found none  best GCC peaks
+    beethoven-ORTF-unaligned-s1-4598dc45bd96320b: true Δ 27.8 ms, found none  best GCC peaks
+    beethoven-XY-unaligned-s1-6b34f6fbdf7c302d: true Δ 27.8 ms, found none  best GCC peaks
+    beethoven-AB-unaligned-s2-d44e909ceff70ec9: true Δ 27.8 ms, found none  best GCC peaks +5.1 ms z 6.2, -6.5 ms z 4.6, -10.3 ms z 3.8
+    beethoven-ORTF-unaligned-s2-0f7affaa6ab265de: true Δ 27.8 ms, found none  best GCC peaks
+    beethoven-XY-unaligned-s2-ce3b6488ced87885: true Δ 27.8 ms, found none  best GCC peaks -6.2 ms z 6.0, +6.2 ms z 4.4, +5.0 ms z 3.9
+    beethoven-AB-unaligned-s3-15b4b34c9574e782: true Δ 27.8 ms, found none  best GCC peaks
+    beethoven-ORTF-unaligned-s3-2b34b7bb3f98fda9: true Δ 27.8 ms, found none  best GCC peaks -6.9 ms z 6.5, +6.5 ms z 6.2, +9.1 ms z 3.1
+    beethoven-XY-unaligned-s3-add225878cff0d56: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-AB-unaligned-s1-a8d7dd59eb0e6e79: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-ORTF-unaligned-s1-50a39eff579ea2bc: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-XY-unaligned-s1-b7139b2b9acc3c21: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-AB-unaligned-s2-e6e691c45b6b9884: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-ORTF-unaligned-s2-321e1cace6a66991: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-XY-unaligned-s2-76ba5932a777e834: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-AB-unaligned-s3-295182c1b0c43195: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-ORTF-unaligned-s3-7eee057022cb7584: true Δ 27.8 ms, found none  best GCC peaks
+    bruckner-XY-unaligned-s3-18de19c3d440fae3: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-AB-unaligned-s1-fd22d481adb3d886: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-ORTF-unaligned-s1-e9a095e4e5bfcbb5: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-XY-unaligned-s1-548295b62d9d81eb: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-AB-unaligned-s2-903907dc6e860a48: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-ORTF-unaligned-s2-aee764de9ba97bc8: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-XY-unaligned-s2-fb45583a4d6ac0c7: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-AB-unaligned-s3-489f13ca55ac410c: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-ORTF-unaligned-s3-7f0c0699bc07c4b0: true Δ 27.8 ms, found none  best GCC peaks
+    mahler-XY-unaligned-s3-8ef6eba5c43b3c2a: true Δ 27.8 ms, found none  best GCC peaks
+
+Hall vs distance: spread of each cue across halls (fixed distance) over its spread across the same distances in every hall (paired by seed)
+  score                    hall/distance spread  0.65
+  coh_ratio                hall/distance spread  1.42
+  fund_db                  hall/distance spread  0.61
+  solo.coh_ratio           hall/distance spread  1.76
+  with-sections.coh_ratio  hall/distance spread  1.45
+  tutti.coh_ratio          hall/distance spread  2.06
+  pizzicato.coh_ratio      hall/distance spread  1.32
+  solo.fund_db             hall/distance spread  0.61
+  with-sections.fund_db    hall/distance spread  1.54
+  tutti.fund_db            hall/distance spread  0.94
+  pizzicato.fund_db        hall/distance spread  1.45
+  solo.coh_comb            hall/distance spread  0.87
+  with-sections.coh_comb   hall/distance spread  4.44
+  tutti.coh_comb           hall/distance spread  5.08
+  pizzicato.coh_comb       hall/distance spread  3.74
+  pizzicato.clarity_db     hall/distance spread  1.50
+  fixed.bass.coh_comb      hall/distance spread  0.75
+  fixed.mix.coh_comb       hall/distance spread 12.32
+  fixed.bass.fund_db       hall/distance spread  0.45
+  fixed.mix.fund_db        hall/distance spread  0.31

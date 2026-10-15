@@ -3,19 +3,14 @@
 Audited commit: `b52ddd3762791da9ea066807d0bb10822b69298f`
 (detector 1.6, renderer 2).
 
-## What was actually tested with Aalto
+## Validation status
 
-The repository records an 81-scene Aalto experiment with detector 1.5 and
-renderer 1. Its causal conclusions were subsequently withdrawn because the
-reference estimator was biased and scene changes also changed unrelated
-random realizations. The last audit explicitly says that the corrected
-implementation was tested with synthetic stems, not rerun with Aalto.
-
-This follow-up searched `/home/giacomo` and `/media/USBHD2` for the expected
-bass stems and bassval JSON results and found none. Downloading the Aalto
-index failed with `curl: (6) Could not resolve host: users.aalto.fi`.
-The current execution environment does not permit requesting network
-escalation. Consequently **no new Aalto result is claimed here**.
+The initial download from `users.aalto.fi` failed DNS resolution. Original
+MP3 stems were subsequently obtained from `mediatech.aalto.fi`, and annotated
+WAV derivatives from PHENICX. The corrected full-excerpt experiment is now
+complete: see [the Aalto validation report](BASS-DEPTH-AALTO-VALIDATION.md)
+for results, source URLs, provenance and reproducible commands. The old
+renderer-1 experiment is superseded and is not evidence for the current code.
 
 ## Findings
 
@@ -44,8 +39,8 @@ escalation. Consequently **no new Aalto result is claimed here**.
    the stage y axis at fixed x and microphone position. Source bearing,
    directional-microphone gain, and interchannel path difference therefore
    change with distance. This is a legitimate stage-placement experiment,
-   but it cannot isolate radial distance. Add a fixed-bearing radial sweep
-   before attributing a spectral/coherence trend specifically to distance.
+   but it cannot isolate radial distance. The completed fixed-bearing radial sweep also failed to establish a
+   consistent distance cue; it is documented in the validation report.
 
 3. **The source-controlled diagnostic is useful but is not annotated truth.**
    `source_selection` uses the detector's own estimated pitches and gates.
@@ -61,6 +56,14 @@ escalation. Consequently **no new Aalto result is claimed here**.
    meaningful repairs. None makes a different musical passage a calibrated
    reverberation reference. A stationary harmonic signal can have unit
    interchannel coherence at several delays, as the control above shows.
+
+5. **The existing loader omits nine Bruckner mic-6 string recordings.**
+   `stems.parse_name` recognizes `a`/`b` suffixes but not `c`–`h`. The corrected
+   run therefore uses 37 of 46 frontal files for that piece. No bass file is
+   omitted, but orchestra masking/reference behavior can change with the
+   additional strings. The validation report documents the exact exclusions;
+   full-corpus coverage must not be claimed. The current implementation was
+   held fixed for this audit.
 
 ## Reproduction of the phase control
 
@@ -82,26 +85,18 @@ for delay in [0, .0005, .001, .0015, .00175]:
 PY
 ```
 
-## Conclusion and outstanding experiment
+## Conclusion after corrected validation
 
-The practical conclusion remains: no current cue has demonstrated reliable
-bass-depth estimation. That is weaker than proving that depth cannot be
-estimated, or that the corrected detector fails on Aalto. The latter
-experiment is still outstanding; the old table cannot answer it.
+The corrected Aalto distance, hall and spot grids, radial control and
+independent annotation check are complete. They support the practical
+conclusion that the current cues do not supply reliable bass-depth estimation
+in the tested conditions. They do not prove that depth cannot be estimated.
+Channel-power averaging removes the specific phase-cancellation confound
+above but did not rescue the fundamental cue's distance relationship.
 
-Once original stems are accessible, run the full distance, hall and spot
-grids with recorded parts and paired seeds 1,2,3 into a fresh provenance-
-tracked results file. Compare isolated bass and mixture measurements on
-fixed source frames, include the radial control, and report missing cue
-coverage as well as correlations. Keep score anchors unchanged. Any
-candidate surviving those controls still needs held-out performances,
-different acoustics and independent listening judgments before calling
-it a reliable perceived-depth parameter.
-
-Verification in this follow-up: all 61 `test_bass*.py` tests passed,
-all three built-in synthetic spot selftests passed, and the card's JavaScript
-syntax check passed. All three selftests returned **no depth score**; their
-passing verdicts therefore do not validate depth ranking. The printed reason
-(`no bass context with enough frames`) is also incomplete: there are tens of
-seconds of detected solo/with-sections material, but no usable matched ratio.
-No detector or runtime component was modified or deployed.
+The [validation report](BASS-DEPTH-AALTO-VALIDATION.md) includes missing and
+constant cues, condition-specific successes, stronger spots and simulator
+limitations. All 66 bass tests pass, including five new validation regressions.
+The three built-in spot selftests passed during the initial audit, but all
+returned no depth score; their passing verdicts do not validate depth ranking.
+No detector or runtime component was modified or deployed in this follow-up.

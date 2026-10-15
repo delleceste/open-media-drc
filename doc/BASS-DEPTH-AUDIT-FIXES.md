@@ -76,7 +76,8 @@ OPENBLAS_NUM_THREADS=1 python3 tools/bass_depth.py --selftest
 node --check omdrc-ctrl/src/kiosk/static/widgets/bass-depth.js
 ```
 
-The bass detector, simulator and live integration suite has 61 passing tests.
+The original repair suite had 61 passing tests; the completed follow-up
+adds five validation regressions, for 66 passing bass tests.
 New regressions cover a muted spot, unrelated sections, moved basses, changed
 RT, rigid array rotation, generated-tail ensemble coherence, noise/pitch-variety
 bias, reference reuse/short gaps/abstention, pizzicato contamination, context
@@ -87,17 +88,13 @@ synthetic MP3 stems rendered two distances at seeds 1 and 2, preserving exactly
 164 source-selected frames per scene; resume scheduled no additional scenes.
 That smoke run verifies integration, not musical or perceptual validity.
 
-The original Aalto stems and historical scene files were not available in the
-searched locations. The old 81-entry scene experiment has **not** been rerun.
-Its physical explanations for failure are withdrawn pending a corrected run.
-
-For an actual Aalto run, use a fresh file, for example:
-
-```sh
-PYTHONPATH=tools OPENBLAS_NUM_THREADS=1 python3 -m bassval run \
-  --stems /path/to/stems --grid distance --seeds 1,2,3 \
-  --section-mode recorded --out /tmp/bassval-distance-v2.jsonl
-```
+The corrected full-excerpt Aalto validation is now complete: 198 unique
+primary scenes plus radial, annotation and stronger-spot checks. See
+[BASS-DEPTH-AALTO-VALIDATION.md](BASS-DEPTH-AALTO-VALIDATION.md) for results,
+source URLs, artifacts and reproduction. The current score did not provide
+reliable depth ordering. The earlier renderer-1 experiment and its physical
+explanations are superseded; implementation repairs alone do not establish
+validity.
 
 ## Supplied recordings, rerun with 1.6
 

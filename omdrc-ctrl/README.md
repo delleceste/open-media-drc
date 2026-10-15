@@ -356,7 +356,13 @@ needs 1 GB free in `/var/tmp` to start.
 
 The **Bass depth** card (Listen tab, folded until **Show**; the kiosk's *Bass
 depth* page) studies how far back a recording places the double basses,
-together with the listener. Nothing runs until **Start tracking session**,
+together with the listener. Its score is experimental: the corrected
+[Aalto validation](../doc/BASS-DEPTH-AALTO-VALIDATION.md) did not establish
+reliable depth ordering. Contexts are detector hypotheses and balance measures
+selected frequency bins, not guaranteed instrument identity. The
+[Aalto chapter](../doc/BASS-DEPTH-DETECTOR.md#aalto-validation-what-it-is-and-how-it-shapes-the-tool)
+explains the recordings, controlled tests and calibration requirements.
+Nothing runs until **Start tracking session**,
 which takes an optional name ("Altinoglu, Shostakovich 8"); **Stop session**
 ends it. During a session:
 
@@ -376,8 +382,8 @@ ends it. During a session:
   and the card says why.
 - The card shows the analysis as a timeline: one lane per context (basses
   alone, with other sections, under a tutti, pizzicato), each passage coloured
-  by its 0–10 depth score (green back, yellow in between, red forward, grey
-  too short), the playhead, and the track's score. Click the timeline to read
+  by its experimental 0–10 score (green/yellow/red heuristic depth labels;
+  grey for unscored passages), the playhead, and the track's score. Click the timeline to read
   a passage's cues.
 - **Forward / In between / Back** record your verdict at the moment heard
   (MPD's position minus the DRC chain's delay), with the passage under it and

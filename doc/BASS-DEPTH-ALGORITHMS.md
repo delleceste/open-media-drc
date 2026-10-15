@@ -1,9 +1,10 @@
 # Bass depth: algorithms
 
-Detector 1.6 / bassval renderer 2. Every algorithm of the bass depth work, as implemented. The journal of how
-it was arrived at, the case studies and the open questions are in
+Detector 1.6 / bassval renderer 2. Implementation reference. Current usage and interpretation are in
 [BASS-DEPTH-DETECTOR.md](BASS-DEPTH-DETECTOR.md); this file is the
-reference for what the code does and why.
+reference for what the code does. The completed
+[Aalto validation](BASS-DEPTH-AALTO-VALIDATION.md) found no reliable depth
+scale from these cues in the tested conditions.
 
 | Part | Code | Section |
 |---|---|---|
@@ -91,9 +92,9 @@ Over the frames of a context or passage:
   bias. Undetected bass or a reverberant tail can still contaminate a
   reference; this is not a calibrated distance or DRR measurement.
 - **fund_db**: per frame, the fundamental's level over the mean of
-  harmonics 2–6 (mono, maximum within ±1 bin for each harmonic), median over frames. A heuristic (distance
-  and hall favour the fundamental, a close mic the upper harmonics), register
-  and EQ dependent.
+  harmonics 2–6 (mono, maximum within ±1 bin for each harmonic), median over frames. A heuristic affected by register, EQ, room transfer and stereo phase
+  cancellation. The assumed positive relationship with distance did not
+  hold consistently in corrected validation.
 - **balance_db** / **balance_fund_db**: R−L level on the comb harmonics /
   on the fundamental, equal-weight frames. Position, not depth. Level
   ratios do not have the same finite-sample bias as coherence. Below C2,
@@ -117,8 +118,7 @@ passage unscored, without suppressing its balance or spectral cues.
 
 ### 1.6 The depth score (`depth_score`)
 
-From solo and with-sections only (the contexts that ordered the labelled
-recordings): seconds-weighted ×coh mapped linearly 1.0 → 10, 2.2 → 0
+From solo and with-sections only: seconds-weighted ×coh mapped linearly 1.0 → 10, 2.2 → 0
 (`SCORE_COH`), seconds-weighted solo fund_db mapped −15 dB → 0, +10 dB → 10
 (`SCORE_FUND`), both clipped; score = ⅔ coherence part + ⅓ fundamental part
 (`SCORE_W_FUND`), or the coherence part alone without solo. Bands: ≥ 7
@@ -126,7 +126,8 @@ green, 4–7 yellow, < 4 red (`SCORE_BANDS`); under 10 s of coherence material *
 fundamental** it is marked provisional. `fund_seconds` exposes that separate
 support. All scores carry `experimental: true`; existing anchors are retained
 for comparison and are not recalibrated to fit the two recordings. The anchors were set by hand on three recordings: the
-score is **unproven** (section 4 is how it gets tested).
+score did **not provide reliable distance ordering** in the corrected
+[Aalto validation](BASS-DEPTH-AALTO-VALIDATION.md).
 
 ### 1.7 The spot-microphone check
 
@@ -341,3 +342,15 @@ parameters. Repeats do not by themselves supply confidence intervals.
 Command line: `cd tools; python3 -m bassval run --stems DIR --grid distance
 --out results.jsonl`, `python3 -m bassval report results.jsonl`, and
 `python3 -m bassval render … --wav out.wav` to listen to a scene.
+
+### Completed validation and supplementary runners
+
+The [2026-10-15 report](BASS-DEPTH-AALTO-VALIDATION.md) documents the actual
+recordings, experiment scope, limitations and results. `bassval_controls.py`
+adds the hall/spot grid without duplicating distance controls;
+`bassval_followup.py` runs fixed-bearing isolated-bass and independent note
+annotation checks; `bassval_spot_levels.py` tests stronger spot gains.
+`bassval_summarize.py` requires complete expected grids, preserves missing
+and constant-group denominators, checks overlapping spot baselines, and
+exports the derived evidence. Its strict four-distance statistics differ
+from the exploratory reporter, which accepts three available distances.

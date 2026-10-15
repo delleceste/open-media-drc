@@ -1,0 +1,25 @@
+{
+  "rows": {
+    "radial.jsonl.gz": 108,
+    "distance.jsonl.gz": 108,
+    "spot-levels.jsonl.gz": 24,
+    "annotations.jsonl.gz": 6,
+    "controls.jsonl.gz": 90
+  },
+  "sha256": {
+    "annotations.jsonl.gz": "21643d5944f6f1861353b48f177c0aaf17fd6e20fe2401b34106123ded6182fb",
+    "controls.jsonl.gz": "b8b6501b89960af6730105b715465d747d0368c9ab22499761b9204ff938f3fa",
+    "distance.jsonl.gz": "308e05fd67848539e0f53d6dd9c537e04b12ceab65b9921f5ac478ceb14dce9d",
+    "radial.jsonl.gz": "ad23ca01b895b8d41a35e8a4bd1af25ce2f7ce9e3ec544da991cfee7488efe6e",
+    "report.txt": "edaf25d9c146a312ae73a43476960d73c2453f57a39a4e7ddddfdcb565b81e86",
+    "spot-levels.jsonl.gz": "1cebc3535f3cd147fd4b9dd3bb11ab61180c53154a23bcd20d918146759e9c08",
+    "summary.json": "ccb53517a62338fed5abc4d680d6edf98fb4d56e825b2e826154e2c2bce8b303"
+  },
+  "summarizer_sha256": "0462bd2094449b09c32bcbfe6df7830eeec173d2b632022d1d50870ac02f67ca",
+  "runner_sha256": {
+    "bassval_followup.py": "bf9a02ed265abf445f09050bc8f598d78c9ed84a5a3829cba731c697aed17cd5",
+    "bassval_spot_levels.py": "1042d0c939e49f90fd73a6fbe34b104a989a228e326cebef3d3a7962822000b5",
+    "bassval_summarize.py": "0462bd2094449b09c32bcbfe6df7830eeec173d2b632022d1d50870ac02f67ca",
+    "bassval_controls.py": "a9dd7be952576114388258ae9c5c6b54e279fd2b6c3fe7cda8082e8ef8ad0c5a"
+  }
+}
