@@ -216,7 +216,11 @@ K.openCoverMax = (src, o, meta = {}) => {
             act('stop', 'Stop', () => { playing = false; K.clear(toggle).append(K.tIcon('play')); t.action('stop'); }),
             act('next', 'Next track', () => t.action('next')));
     }
-    const scrim = h('div', { class: 'scrim cover-max', onclick: e => { if (e.target === scrim) close(); } },
+    // closed by a tap on the backdrop, one that also began there: the tap on the page's own
+    // cover that opened this ends with a click hit-tested here, on the new backdrop
+    let downOnScrim = false;
+    const scrim = h('div', { class: 'scrim cover-max', onpointerdown: e => { downOnScrim = e.target === scrim; },
+        onclick: e => { if (e.target === scrim && downOnScrim) close(); } },
         h('div', { class: 'cover-max-top' },
             h('button', { type: 'button', class: 'btn cover-max-close', title: 'Close', onclick: close }, K.tIcon('close'), h('span', {}, 'Close'))),
         art, info, controls);
