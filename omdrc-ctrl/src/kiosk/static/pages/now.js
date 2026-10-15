@@ -72,9 +72,10 @@ P.mount = el => {
     P.state = h('button', { class: 'chip state', type: 'button', title: 'Tap: play / pause · hold: stop' });
     P.time = h('div', { class: 'now-time' });
     P.prog = h('i');
+    // landscape: over the progress bar, grabbable at once; a touch shows its knob (kiosk.css)
     P.seekSlider = h('input', { type: 'range', class: 'now-seek-slider', min: 0, max: 1, step: 1, value: 0,
-        hidden: true, 'aria-label': 'Seek within the current track',
-        onpointerdown: () => { P.seekDragging = true; clearTimeout(P.seekSliderTimer); },
+        'aria-label': 'Seek within the current track',
+        onpointerdown: () => { P.seekDragging = true; P.showSeekSlider(); },
         oninput: () => {
             P.seekDragging = true; clearTimeout(P.seekSliderTimer);
             P.time.textContent = `${K.fmtClock(+P.seekSlider.value)} / ${K.fmtClock(P.base.duration)}`;
@@ -87,7 +88,7 @@ P.mount = el => {
         onpointerup: () => {
             P.seekDragging = false;
             clearTimeout(P.seekSliderTimer);
-            P.seekSliderTimer = setTimeout(P.hideSeekSlider, 4000);
+            P.seekSliderTimer = setTimeout(P.hideSeekSlider, SEEK_SLIDER_MS);
         },
         onpointercancel: () => { P.seekDragging = false; P.paintTime(); P.showSeekSlider(); },
     });
@@ -849,7 +850,7 @@ P.pollTrack = async () => {
     P.observeClipAlbum(t);
     if (P.track && t.ok && P.track.title !== t.title && K.sync) K.sync.onTrackChange();
     P.track = t;
-    if (!P.seekSlider.hidden && P.seekSliderTrack !== P.seekTrackKey()) P.hideSeekSlider();
+    if (P.progBox.classList.contains('seeking') && P.seekSliderTrack !== P.seekTrackKey()) P.hideSeekSlider();
     if (!P.stepSeekSending || !P.ring.taps || P.seekTrackKey(t) !== P.ring.taps.songid)
         P.base = { elapsed: t.elapsed, duration: t.duration, at: performance.now(), playing: t.state === 'play' };
     if (t.state === 'play' && !P.level) K.markSound();     // no level stream to listen to: trust the player
@@ -1077,19 +1078,18 @@ P.queueSeek = seconds => {
     P.stepSeekPending = { seconds, songid };
     P.flushStepSeek();
 };
+const SEEK_SLIDER_MS = 8000;   // the slider's knob stays this long after the last touch
 P.showSeekSlider = () => {
     if (K.portrait() || !P.ringUsable()) return;
     P.seekSliderTrack = P.seekTrackKey();
-    P.seekSlider.hidden = false;
     P.progBox.classList.add('seeking');
     P.paintTime();
     clearTimeout(P.seekSliderTimer);
-    if (!P.seekDragging) P.seekSliderTimer = setTimeout(P.hideSeekSlider, 4000);
+    if (!P.seekDragging) P.seekSliderTimer = setTimeout(P.hideSeekSlider, SEEK_SLIDER_MS);
 };
 P.hideSeekSlider = () => {
     clearTimeout(P.seekSliderTimer);
     P.seekDragging = false;
-    P.seekSlider.hidden = true;
     P.progBox.classList.remove('seeking');
 };
 P.flushStepSeek = async () => {
@@ -1127,8 +1127,10 @@ P.paintTime = () => {
     const b = P.base;
     if (!b || !Number.isFinite(b.elapsed) || !Number.isFinite(b.duration) || b.duration <= 0) {
         P.hideSeekSlider();
+        P.seekSlider.disabled = true;
         P.time.textContent = ''; P.prog.style.width = '0%'; return;
     }
+    P.seekSlider.disabled = false;
     const e = P.elapsedNow();
     if (P.ring.shown && !P.ring.el.classList.contains('active')) P.ring.paint(e / b.duration);
     if (!P.seekDragging) {

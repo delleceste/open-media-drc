@@ -270,13 +270,19 @@ button.award { font: inherit; font-size: .8rem; font-weight: 650; cursor: pointe
 /* chip + small time on one line, the progress bar under them */
 .now-timebox { display: grid; grid-template-columns: auto auto; justify-content: end; align-items: center; column-gap: .6rem; row-gap: .3rem; width: auto; min-width: 13rem; flex: 0 0 auto; }
 .now-time { font: .8rem ui-monospace, monospace; color: var(--muted); white-space: nowrap; }
+.now-seek-slider { display: none; }               /* landscape only (below) */
 .now-prog { grid-column: 1 / -1; height: 4px; background: var(--border); border-radius: .2rem; overflow: hidden; } .now-prog i { display: block; height: 100%; width: 0; background: var(--accent); }
 @media (orientation: landscape) {
     .now-dr .dr-head { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; }
     .now-dr .now-drthermo { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-top: .35rem; margin-bottom: .15rem; }
-    .now-prog.seeking { height: 4px; background: none; overflow: visible; }
+    /* the slider lies over the bar, unseen until touched, with a taller grip than the bar */
+    .now-prog { position: relative; overflow: visible; }
+    .now-prog > i { border-radius: .2rem; }
+    .now-prog.seeking { background: none; }
     .now-prog.seeking > i { display: none; }
-    .now-seek-slider { display: block; width: 100%; height: 4px; margin: 0; cursor: ew-resize; touch-action: none; }
+    .now-seek-slider { display: block; position: absolute; left: 0; top: 50%; width: 100%; height: 1.6rem; margin: 0;
+        transform: translateY(-50%); opacity: 0; cursor: ew-resize; touch-action: none; }
+    .now-prog.seeking .now-seek-slider { opacity: 1; }
 }
 
 .now-main { display: grid; grid-template-columns: 1.55fr 1fr; gap: .4rem; min-height: 0; }

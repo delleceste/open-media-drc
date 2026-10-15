@@ -29,6 +29,7 @@ const h = K.h;
 const RING_R = 44;            // in the ring's 100 x 100 viewBox
 const RING_GRAB = 0.11;       // how far off the ring a slide may start, as a share of the cover's width
 const RING_IDLE_MS = 4000;    // the ring goes away this long after the last touch
+const STEP_IDLE_MS = 8000;    // << / >> taps this close together keep seeking from where they got to
 const RING_C = 2 * Math.PI * RING_R;
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
@@ -58,11 +59,11 @@ K.SeekRing = class {
     step(direction, songid) {
         if (!this.o.usable()) return null;
         const now = performance.now(), previous = this.taps;
-        const repeat = previous && previous.direction === direction && previous.songid === songid && now - previous.at < RING_IDLE_MS;
+        const repeat = previous && previous.direction === direction && previous.songid === songid && now - previous.at < STEP_IDLE_MS;
         const interval = previous ? now - previous.at : 0;
         const amount = repeat && previous.count > 1 ? 5 * Math.max(1, Math.min(8, 600 / Math.max(75, interval))) : 5;
         this.taps = { direction, songid, at: now, count: repeat ? previous.count + 1 : 1 };
-        this.show(); this.hideLater(RING_IDLE_MS);
+        this.show(); this.hideLater(STEP_IDLE_MS);
         return repeat ? K.clamp(this.o.elapsed() + direction * amount, 0, Math.max(0, this.o.duration() - 1)) : null;
     }
 
