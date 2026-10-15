@@ -82,9 +82,16 @@ function mount(root) {
     const score = h('div', { class: 'bd-score' });
     const timeline = h('div', { class: 'bd-tl', onclick: pick });
     // The table shows the whole track, or the passages at the cursor: set by
-    // the slider under the graph, a tap on the graph, or "Now".
-    const slider = h('input', { type: 'range', class: 'bd-slider', min: 0, max: 1, step: 0.1, value: 0,
-        'aria-label': 'Position the table describes', oninput: e => setCursor(Number(e.target.value)) });
+    // the slider under the graph, a tap on the graph, or "Now".  While the track
+    // shown plays or is paused, the slider and the cursor follow the player and
+    // moving either seeks it; stopped (or another track shown) the slider is
+    // white and only moves the cursor.
+    const slider = h('input', { type: 'range', class: 'bd-slider offline', min: 0, max: 1, step: 0.1, value: 0,
+        'aria-label': 'Position the table describes',
+        oninput: e => { S.sliding = true; setCursor(Number(e.target.value)); },
+        onchange: e => { S.sliding = false; if (live()) seek(Number(e.target.value)); } });
+    slider.addEventListener('pointerdown', () => { S.sliding = true; });
+    ['pointerup', 'pointercancel'].forEach(t => slider.addEventListener(t, () => { S.sliding = false; }));
     const cursorRow = h('div', { class: 'bd-row bd-cursor-row', hidden: true },
         h('span', { class: 'bd-lbl' }, 'Position'), slider);
     const tableHead = h('div', { class: 'bd-table-head' });
@@ -262,6 +269,18 @@ function mount(root) {
         return t.pos + extra;
     }
 
+    // the player has the track shown, playing or paused: the slider is its own
+    const live = () => position() !== null;
+
+    async function seek(at) {
+        const t = S.view.track;
+        t.pos = at; S.polledAt = Date.now();          // optimistic; the next poll confirms
+        if (S.cursor !== null) setCursor(at); else paintPlayhead();
+        const d = await api('/k/api/transport', { action: 'seek', seconds: at });
+        if (!d.ok) msg.textContent = d.error || 'Seek failed';
+        poll();
+    }
+
     function paintPlayhead() {
         if (!S.head || !S.dur) return;
         // the lanes start after the label column, whatever its font makes it
@@ -270,6 +289,17 @@ function mount(root) {
         const p = position();
         S.head.hidden = p === null;
         if (p !== null) S.head.style.left = `${Math.min(100, 100 * p / S.dur)}%`;
+        slider.classList.toggle('offline', p === null);
+        if (p !== null && !S.sliding) {
+            const at = Math.min(S.dur, p);
+            slider.value = String(at);
+            // a cursor set follows the player too; the table is redrawn once a second
+            if (S.cursor !== null) {
+                const sec = Math.floor(S.cursor) !== Math.floor(at);
+                S.cursor = at;
+                if (sec) paintTable();
+            }
+        }
         if (S.cur) {
             S.cur.hidden = S.cursor === null;
             if (S.cursor !== null) S.cur.style.left = `${Math.min(100, 100 * S.cursor / S.dur)}%`;
@@ -283,7 +313,7 @@ function mount(root) {
         if (!S.analysis || !lane) return;
         const r = lane.getBoundingClientRect();
         const at = (e.clientX - r.left) / r.width * S.dur;
-        if (at >= 0 && at <= S.dur) setCursor(at);
+        if (at >= 0 && at <= S.dur) { if (live()) seek(at); else setCursor(at); }
     }
 
     function paintTaps() {

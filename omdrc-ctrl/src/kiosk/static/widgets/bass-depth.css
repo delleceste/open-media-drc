@@ -58,6 +58,7 @@
 .bass-depth .bd-mini { padding: .15rem .55rem; font-size: .85em; }
 .bass-depth .bd-cursor-row { margin-top: -.2rem; }
 .bass-depth .bd-slider { flex: 1; margin: 0; accent-color: #388bfd; height: 1.6rem; }
+.bass-depth .bd-slider.offline { accent-color: #fff; }   /* stopped: the cursor's only, not the player's */
 .bass-depth .bd-cursor { position: absolute; top: 0; bottom: 0; width: 0; margin-left: -1px;
     border-left: 2px dashed #388bfd; }
 .bass-depth .bd-tr { display: contents; }
