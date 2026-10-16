@@ -2163,12 +2163,12 @@ P.makeView = full => {
         v.favorite.hidden = true;
     }
     v.buttons = h('div', { class: 'qz-pbtns' },
-        full ? btn('<<', 'Seek backward within this track', () => P.stepSeek(-1), 'qz-step') : null,
+        full ? K.holdRepeat(btn('<<', 'Seek backward within this track', () => {}, 'qz-step'), () => P.stepSeek(-1)) : null,
         btn(K.tIcon('prev'), 'Previous track', () => P.transport('prev')),
         v.toggle,
         btn(K.tIcon('stop'), 'Stop', () => P.transport('stop')),
         btn(K.tIcon('next'), 'Next track', () => P.transport('next')),
-        full ? btn('>>', 'Seek forward within this track', () => P.stepSeek(1), 'qz-step') : null,
+        full ? K.holdRepeat(btn('>>', 'Seek forward within this track', () => {}, 'qz-step'), () => P.stepSeek(1)) : null,
         v.favoriteDivider, v.favorite);
     v.seekRow = h('div', { class: 'qz-pseek' }, v.elapsed, v.seek, v.total);
     return v;

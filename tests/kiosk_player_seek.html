@@ -48,6 +48,14 @@
             check(calls.at(-1).seconds === 90, 'Maximised taps build on each other and speed up');
             clock += 200; steps[0].click(); await sleep(0); await sleep(0);
             check(calls.at(-1).seconds < 90 && calls.at(-1).seconds > 60, 'Maximised rewind steps back');
+            {   // held: seeks at once, then keeps going until released
+                const n = calls.length, f = steps[1];
+                f.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 3 }));
+                await sleep(1000);
+                f.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 3 }));
+                const held = calls.length - n; check(held >= 3, 'Holding a seek button repeats (got ' + held + ')');
+                await sleep(600); check(calls.length - n === held, 'Releasing stops the repeat');
+            }
             const touch = (type, y) => { const t = new Touch({ identifier: 1, target: max, clientX: 100, clientY: y });
                 max.dispatchEvent(new TouchEvent(type, { bubbles: true, touches: type === 'touchend' ? [] : [t], changedTouches: [t] })); };
             touch('touchstart', 300); touch('touchend', 280);

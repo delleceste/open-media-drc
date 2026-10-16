@@ -34,6 +34,23 @@ const RING_C = 2 * Math.PI * RING_R;
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
 
+// Press-and-hold repeat for a << / >> button: the touch seeks at once, and held on
+// it goes on seeking (the step grows with the pace, SeekRing.step). A keyboard
+// activation (click without a pointer) still seeks once.
+K.holdRepeat = (el, fn) => {
+    let delay = null, tick = null;
+    const stop = () => { clearTimeout(delay); clearInterval(tick); delay = tick = null; };
+    el.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        stop(); fn();
+        delay = setTimeout(() => { tick = setInterval(fn, 220); }, 450);
+    });
+    for (const t of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(t, stop);
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('click', e => { e.stopImmediatePropagation(); if (!e.detail) fn(); }, true);
+    return el;
+};
+
 K.SeekRing = class {
     constructor(box, o) {
         this.box = box; this.o = o;
@@ -223,7 +240,7 @@ K.openCoverMax = (src, o, meta = {}) => {
         ring.paint(s / o.duration());
         pending = s; flush();
     };
-    const stepBtn = (dir, label, text) => h('button', { type: 'button', class: 'btn cover-max-ctl cover-max-step', title: label, 'aria-label': label, onclick: () => nudge(dir) }, text);
+    const stepBtn = (dir, label, text) => K.holdRepeat(h('button', { type: 'button', class: 'btn cover-max-ctl cover-max-step', title: label, 'aria-label': label }, text), () => nudge(dir));
     if (meta.transport || o.usable()) {
         const t = meta.transport;
         let playing = t ? !!t.playing() : false;
