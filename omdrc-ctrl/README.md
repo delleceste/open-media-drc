@@ -1017,8 +1017,10 @@ and reads its text for the guide. The overview summarizes the booklet author's
 notes, recording circumstances and performers, highlighting the studio or venue,
 techniques and equipment where documented. Track-specific details go in the
 corresponding track notes. The booklet appears among the guide's sources.
-Booklets without extractable text do not interrupt the guide.
-PDF text extraction uses `pdftotext` (Poppler) on the service host.
+For scanned booklets, the service attempts OCR on up to four opening and
+closing pages. Booklets it still cannot read do not interrupt the guide.
+This uses `pdftotext`, `pdfinfo`, `pdftoppm` (Poppler) and `tesseract` on the
+service host.
 For classical albums, Qobuz's work metadata groups movements even if the AI
 divides them differently. Jazz records and live anthologies show separate song
 sections; concept albums retain a whole-album section. If web research times

@@ -1,6 +1,8 @@
 """Provider contract, secret storage, catalog validation and Hi-Res filtering."""
 import json
 import io
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -186,6 +188,32 @@ class AITest(unittest.TestCase):
                 {'url': 'https://static.qobuz.com/goodies/1/bad.pdf'}])
         self.assertEqual((text, sources), ('', []))
         self.assertEqual(opener.open.call_count, 1)
+
+    def test_scanned_booklet_uses_bounded_ocr_when_available(self):
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except ImportError:
+            self.skipTest('Pillow is unavailable for the scanned PDF fixture')
+        if not all(shutil.which(name) for name in ('pdfinfo', 'pdftoppm', 'tesseract', 'fc-match')):
+            self.skipTest('PDF/OCR tools are unavailable')
+        languages = subprocess.run(['tesseract', '--list-langs'], capture_output=True, text=True).stdout
+        if not any(name in languages.splitlines() for name in ('eng', 'afr')):
+            self.skipTest('No supported OCR language is installed')
+        font = subprocess.check_output(['fc-match', '-f', '%{file}', 'sans-serif'], text=True).strip()
+        image = Image.new('RGB', (1600, 1200), 'white')
+        draw = ImageDraw.Draw(image)
+        for index, line in enumerate(('Recorded at Studio One', 'Engineer Ada Smith', 'Neumann microphones')):
+            draw.text((100, 150 + index * 130), line, font=ImageFont.truetype(font, 72), fill='black')
+        pdf = io.BytesIO()
+        image.save(pdf, format='PDF', resolution=150)
+        opener = MagicMock()
+        opener.open.return_value.__enter__.return_value = io.BytesIO(pdf.getvalue())
+        url = 'https://static.qobuz.com/goodies/1/scan.pdf'
+        with patch.object(ai.urllib.request, 'build_opener', return_value=opener):
+            text, sources = ai._booklet_context([{'url': url}])
+        self.assertIn('Studio One', text)
+        self.assertIn('Neumann microphones', text)
+        self.assertEqual(sources[0]['url'], url)
 
     def test_custom_prompt_files_replace_defaults_and_keep_placeholders(self):
         self.configure("claude")

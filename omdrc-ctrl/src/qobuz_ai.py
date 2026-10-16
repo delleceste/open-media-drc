@@ -33,7 +33,7 @@ MODEL_CHOICES = {"claude_account": ["sonnet", "opus", "fable", "haiku"],
 ENDPOINTS = {"openai": "https://api.openai.com/v1/responses",
              "claude": "https://api.anthropic.com/v1/messages"}
 MAX_BYTES = 2 * 1024 * 1024
-MAX_BOOKLET_BYTES = 12 * 1024 * 1024
+MAX_BOOKLET_BYTES = 24 * 1024 * 1024
 MAX_BOOKLET_TEXT = 22000
 _settings_lock = threading.Lock()
 _research_lock = threading.Lock()
@@ -530,6 +530,39 @@ def _booklet_excerpt(text):
     return (text[:7500] + "\n…\n" + selected + "\n…\n" + text[-7500:])[:MAX_BOOKLET_TEXT]
 
 
+def _ocr_booklet(data, cancel=None):
+    """Read a few pages of a scanned booklet without rendering the full PDF."""
+    with tempfile.TemporaryDirectory(prefix="omdrc-booklet-") as folder:
+        pdf = Path(folder) / "booklet.pdf"
+        pdf.write_bytes(data)
+        try:
+            info = subprocess.run(["pdfinfo", str(pdf)], capture_output=True, timeout=10, check=True)
+            match = re.search(r"^Pages:\s+(\d+)", info.stdout.decode(errors="replace"), re.M)
+            if not match:
+                return ""
+            installed = subprocess.run(["tesseract", "--list-langs"], capture_output=True,
+                                       timeout=5, check=True).stdout.decode(errors="replace").splitlines()
+            language = next((name for name in ("eng", "afr") if name in installed), None)
+            if not language:
+                return ""
+            count = min(int(match[1]), 1000)
+            pages = sorted({1, min(2, count), max(1, count - 1), count})
+            text = []
+            for page in pages:
+                if cancel is not None and cancel.is_set():
+                    raise AIError("Research stopped.")
+                image = Path(folder) / f"page-{page}"
+                subprocess.run(["pdftoppm", "-f", str(page), "-l", str(page), "-singlefile",
+                                "-scale-to", "1800", "-png", str(pdf), str(image)],
+                               capture_output=True, timeout=15, check=True)
+                result = subprocess.run(["tesseract", str(image) + ".png", "stdout", "-l", language],
+                                        capture_output=True, timeout=15, check=True)
+                text.append(result.stdout.decode("utf-8", errors="replace"))
+            return "\n\n".join(text).strip()
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return ""
+
+
 def _booklet_context(booklets, cancel=None):
     """Read Qobuz-hosted PDFs only; a missing or image-only booklet is optional."""
     if not isinstance(booklets, list):
@@ -560,9 +593,14 @@ def _booklet_context(booklets, cancel=None):
                 data = response.read(MAX_BOOKLET_BYTES + 1)
             if len(data) > MAX_BOOKLET_BYTES or not data.startswith(b"%PDF-"):
                 continue
-            result = subprocess.run(["pdftotext", "-layout", "-nopgbrk", "-", "-"], input=data,
-                                    capture_output=True, timeout=20, check=True)
-            content = result.stdout.decode("utf-8", errors="replace").strip()
+            try:
+                result = subprocess.run(["pdftotext", "-layout", "-nopgbrk", "-", "-"], input=data,
+                                        capture_output=True, timeout=20, check=True)
+                content = result.stdout.decode("utf-8", errors="replace").strip()
+            except (OSError, subprocess.SubprocessError):
+                content = ""
+            if len(content) < 50:
+                content = _ocr_booklet(data, cancel)
         except (OSError, ValueError, urllib.error.URLError, subprocess.SubprocessError):
             continue
         if len(content) < 50:
