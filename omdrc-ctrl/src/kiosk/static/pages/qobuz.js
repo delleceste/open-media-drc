@@ -1922,7 +1922,10 @@ P.row = (c, where = '') => {
         'aria-label': 'More actions', 'aria-haspopup': 'menu',
         onclick: () => P.tileMenuEl && P.tileMenuTile === row ? P.closeTileMenu() : P.tileMenu(c, where, row, moreBtn) }, '⋯');
     const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') },
-        h('div', { class: 'qz-cover-wrap' }, c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
+        h('div', { class: 'qz-cover-wrap' + (c.image ? ' tap' : ''), title: c.image ? 'Enlarge the cover' : '',
+            onclick: c.image ? () => K.openCoverMax(c.image_large || c.image, { usable: () => false },
+                { title: [c.title, c.version ? `(${c.version})` : ''].filter(Boolean).join(' '), facts: [c.artist, c.label, c.year].filter(Boolean).join(' · ') }) : null },
+            c.image ? h('img', { class: 'qz-cover', src: c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
         body,
         h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),

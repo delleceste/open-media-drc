@@ -55,16 +55,17 @@ K.SeekRing = class {
     hide() { clearTimeout(this.timer); this.el.classList.remove('fading'); this.el.hidden = true; }
     hideLater(ms) { clearTimeout(this.timer); this.timer = setTimeout(() => this.hide(), ms); }
 
-    // Shared tap rhythm for both Now playing views. A new sequence only reveals the ring.
+    // Shared tap rhythm for the << / >> buttons: every tap seeks at once, 5 s for the
+    // first of a run, then more the faster the taps follow each other (up to 8 x).
     step(direction, songid) {
         if (!this.o.usable()) return null;
         const now = performance.now(), previous = this.taps;
         const repeat = previous && previous.direction === direction && previous.songid === songid && now - previous.at < STEP_IDLE_MS;
         const interval = previous ? now - previous.at : 0;
-        const amount = repeat && previous.count > 1 ? 5 * Math.max(1, Math.min(8, 600 / Math.max(75, interval))) : 5;
+        const amount = repeat ? 5 * Math.max(1, Math.min(8, 600 / Math.max(75, interval))) : 5;
         this.taps = { direction, songid, at: now, count: repeat ? previous.count + 1 : 1 };
         this.show(); this.hideLater(STEP_IDLE_MS);
-        return repeat ? K.clamp(this.o.elapsed() + direction * amount, 0, Math.max(0, this.o.duration() - 1)) : null;
+        return K.clamp(this.o.elapsed() + direction * amount, 0, Math.max(0, this.o.duration() - 1));
     }
 
     // shown for `ms`, then faded out (kiosk.css) -- untouched meanwhile
@@ -203,9 +204,29 @@ K.openCoverMax = (src, o, meta = {}) => {
     const factsEl = h('div', { class: 'cover-max-facts' }, meta.facts || '');
     const info = h('div', { class: 'cover-max-info' }, titleEl, factsEl);
     let controls = null;
-    if (meta.transport) {
+    // << / >> seek at once, further the faster they are tapped; the target is kept here
+    // so rapid taps build on each other before the player's own position catches up, and
+    // the requests go one at a time, the newest target last
+    let held = null, sending = false, pending = null;
+    const flush = async () => {
+        if (sending) return;
+        sending = true;
+        try { while (pending !== null) { const s = pending; pending = null; await o.seek(s); } }
+        finally { sending = false; }
+    };
+    const ro = { ...o, elapsed: () => held && performance.now() - held.at < 2500 ? held.seconds : o.elapsed() };
+    const nudge = dir => {
+        if (closed || !o.usable()) return;
+        const s = ring.step(dir, 'max');
+        if (s === null) return;
+        held = { seconds: s, at: performance.now() };
+        ring.paint(s / o.duration());
+        pending = s; flush();
+    };
+    const stepBtn = (dir, label, text) => h('button', { type: 'button', class: 'btn cover-max-ctl cover-max-step', title: label, 'aria-label': label, onclick: () => nudge(dir) }, text);
+    if (meta.transport || o.usable()) {
         const t = meta.transport;
-        let playing = !!t.playing();
+        let playing = t ? !!t.playing() : false;
         const act = (icon, label, fn) => h('button', { type: 'button', class: 'btn cover-max-ctl', title: label, 'aria-label': label, onclick: fn }, K.tIcon(icon));
         const toggle = act(playing ? 'pause' : 'play', 'Play / pause', () => {
             playing = !playing;                               // optimistic; the next poll confirms
@@ -213,9 +234,11 @@ K.openCoverMax = (src, o, meta = {}) => {
             t.action(playing ? 'play' : 'pause');
         });
         controls = h('div', { class: 'cover-max-controls' },
-            act('prev', 'Previous track', () => t.action('prev')), toggle,
-            act('stop', 'Stop', () => { playing = false; K.clear(toggle).append(K.tIcon('play')); t.action('stop'); }),
-            act('next', 'Next track', () => t.action('next')));
+            o.usable() ? stepBtn(-1, 'Seek backward within this track', '<<') : null,
+            ...(t ? [act('prev', 'Previous track', () => t.action('prev')), toggle,
+                act('stop', 'Stop', () => { playing = false; K.clear(toggle).append(K.tIcon('play')); t.action('stop'); }),
+                act('next', 'Next track', () => t.action('next'))] : []),
+            o.usable() ? stepBtn(1, 'Seek forward within this track', '>>') : null);
     }
     // closed by a tap on the backdrop, one that also began there: the tap on the page's own
     // cover that opened this ends with a click hit-tested here, on the new backdrop
@@ -225,7 +248,7 @@ K.openCoverMax = (src, o, meta = {}) => {
         h('div', { class: 'cover-max-top' },
             h('button', { type: 'button', class: 'btn cover-max-close', title: 'Close', onclick: close }, K.tIcon('close'), h('span', {}, 'Close'))),
         art, info, controls);
-    const ring = new K.SeekRing(art, o);
+    const ring = new K.SeekRing(art, ro);
     document.addEventListener('keydown', onKey);
     document.getElementById('overlay-root').append(scrim);
     if (meta.albumId) K.qobuzAlbumFacts(meta.albumId).then(a => {
