@@ -5,7 +5,7 @@
 'use strict';
 const { h } = K;
 
-const P = { id: 'bass', label: 'Bass depth', title: 'Bass depth', card: null };
+const P = { id: 'bass', label: 'Bass depth', title: 'Bass depth', menuGroup: 'Experimental', card: null };
 
 P.mount = el => {
     P.el = el;

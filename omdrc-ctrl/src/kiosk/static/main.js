@@ -342,11 +342,15 @@ $('#top-menu').addEventListener('click', () => {
         ...(n === swipeCount() && n > 0 && !child ? { style: 'border-top:1px solid var(--border);margin-top:.25rem' } : {}),
     }, h('span', { class: 'mk' }, n === cur ? '●' : ''), p.title);
     const groups = new Set();
-    K.pages.forEach((p, n) => {
+    // Keep experimental actions last, with Bass depth last within that group.
+    const menuPages = K.pages.map((p, n) => ({ p, n })).sort((a, b) =>
+        Number(a.p.menuGroup === 'Experimental') - Number(b.p.menuGroup === 'Experimental')
+        || Number(a.p.id === 'bass') - Number(b.p.id === 'bass'));
+    menuPages.forEach(({ p, n }) => {
         if (!p.menuGroup) { menu.append(pageButton(p, n)); return; }
         if (groups.has(p.menuGroup)) return;
         groups.add(p.menuGroup);
-        const members = K.pages.map((page, index) => ({ page, index })).filter(x => x.page.menuGroup === p.menuGroup);
+        const members = menuPages.filter(x => x.p.menuGroup === p.menuGroup).map(x => ({ page: x.p, index: x.n }));
         let expanded = members.some(x => x.index === cur);
         const children = h('div', { class: 'menu-submenu', role: 'group', 'aria-label': p.menuGroup, hidden: !expanded },
             members.map(x => pageButton(x.page, x.index, true)));

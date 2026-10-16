@@ -1182,6 +1182,7 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
     .qz-pprog i { display: block; height: 100%; width: 0; background: var(--accent); }
     .qz-snack { bottom: 4.3rem; }
     .scrim.qz-full { overflow-y: auto; overscroll-behavior: contain; }
+    html:not([data-embed]) .scrim.qz-full { top: var(--top); }
     .qz-full-body { display: block; flex: 0 0 auto; min-height: auto; }
     .qz-full-side { min-height: auto; }
     .qz-full .qz-pcover { width: min(100%, 60dvh); margin-inline: auto; }

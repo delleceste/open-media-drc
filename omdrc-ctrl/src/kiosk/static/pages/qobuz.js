@@ -426,6 +426,7 @@ P.dockedOnNow = () => !!P.form && P.form.parentElement !== P.formHome;
 // The top bar's Search, from any page.  Reached otherwise (a swipe, a tab), this
 // page keeps the box scrolled out of sight above the lists.
 K.qobuzSearch = () => {
+    P.closeFull();    // the portrait toolbar remains reachable above the player
     P.wantSearch = true;
     if (P.mounted && P.view() !== 'results') P.setView('results');
     else if (!P.mounted) setPref('view', 'results');
@@ -2183,10 +2184,12 @@ P.buildPlayer = () => {
     P.wirePlayerDrawer();
 };
 
-// Where the strip's top edge is: the sheet rises from there, as the strip itself lifting, not from the screen bottom.
+// Distance from the open sheet's top to the strip: portrait keeps the toolbar visible.
 P.stripTop = () => {
     const r = P.player.getBoundingClientRect();
-    return r.height ? Math.max(0, Math.round(r.top)) : window.innerHeight;
+    const top = !K.embed && matchMedia('(orientation: portrait)').matches
+        ? document.getElementById('topbar').getBoundingClientRect().bottom : 0;
+    return Math.max(0, Math.round((r.height ? r.top : window.innerHeight) - top));
 };
 
 P.wirePlayerDrawer = () => {
@@ -2231,7 +2234,7 @@ P.wirePlayerDrawer = () => {
     P.player.addEventListener('pointercancel', end);
 };
 
-// Full screen, like Qobuz's own player: the cover as large as the screen
+// Expanded player (below the toolbar in portrait): the cover as large as the sheet
 // allows, the track, the transport, and the queue (a tap plays from there).
 P.openFull = ({ offset = 0, instant = false } = {}) => {
     if (P.fullEl || !P.usable()) return;
