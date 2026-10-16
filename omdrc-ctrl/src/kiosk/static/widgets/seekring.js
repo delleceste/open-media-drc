@@ -186,7 +186,7 @@ K.SeekRing = class {
 };
 
 // The cover full screen (a tap on the cover of now.js, qobuz.js: their SeekRing's
-// onTap), with its own seek ring; a top-right "Close" button closes it.
+// onTap), with its own seek ring; a top-right "Close" button, or a swipe up, closes it.
 //   K.coverOpener(() => src, o, getMeta)   -> a function that opens it, if there is a cover
 //   K.openCoverMax(src, { usable(), elapsed(), duration(), seek(seconds) }, meta)
 // `getMeta`/`meta` is optional: { title, facts, albumId, transport: { playing(), action(name) } }.
@@ -249,6 +249,18 @@ K.openCoverMax = (src, o, meta = {}) => {
             h('button', { type: 'button', class: 'btn cover-max-close', title: 'Close', onclick: close }, K.tIcon('close'), h('span', {}, 'Close'))),
         art, info, controls);
     const ring = new K.SeekRing(art, ro);
+    // a swipe up, from anywhere but a knob being dragged, closes it like Close; touch events
+    // so the page's own scrolling (a short screen) keeps working
+    let sw = null;
+    scrim.addEventListener('touchstart', e => {
+        sw = e.touches.length === 1 && !ring.el.classList.contains('active') ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    }, { passive: true });
+    scrim.addEventListener('touchend', e => {
+        const t = e.changedTouches[0];
+        if (sw && t && sw.y - t.clientY > 70 && sw.y - t.clientY > 1.5 * Math.abs(t.clientX - sw.x)) close();
+        sw = null;
+    }, { passive: true });
+    scrim.addEventListener('touchcancel', () => { sw = null; }, { passive: true });
     document.addEventListener('keydown', onKey);
     document.getElementById('overlay-root').append(scrim);
     if (meta.albumId) K.qobuzAlbumFacts(meta.albumId).then(a => {

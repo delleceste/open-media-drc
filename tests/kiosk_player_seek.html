@@ -48,7 +48,16 @@
             check(calls.at(-1).seconds === 90, 'Maximised taps build on each other and speed up');
             clock += 200; steps[0].click(); await sleep(0); await sleep(0);
             check(calls.at(-1).seconds < 90 && calls.at(-1).seconds > 60, 'Maximised rewind steps back');
-            max.querySelector('.cover-max-close').click();
+            const touch = (type, y) => { const t = new Touch({ identifier: 1, target: max, clientX: 100, clientY: y });
+                max.dispatchEvent(new TouchEvent(type, { bubbles: true, touches: type === 'touchend' ? [] : [t], changedTouches: [t] })); };
+            touch('touchstart', 300); touch('touchend', 280);
+            check(document.querySelector('.cover-max'), 'A short swipe up must not close');
+            touch('touchstart', 300); touch('touchend', 180);
+            check(!document.querySelector('.cover-max'), 'A swipe up closes the maximised cover');
+            P.fullView.cover.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 50, clientY: 50 }));
+            P.fullView.cover.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 1, clientX: 50, clientY: 50 }));
+            check(document.querySelector('.cover-max'), 'reopened');
+                        document.querySelector('.cover-max').querySelector('.cover-max-close').click();
             check(!document.querySelector('.cover-max'), 'Close closes the maximised cover');
             calls.length = 0;
         }
