@@ -1,5 +1,6 @@
 """Provider contract, secret storage, catalog validation and Hi-Res filtering."""
 import json
+import io
 from pathlib import Path
 import sys
 import tempfile
@@ -139,6 +140,52 @@ class AITest(unittest.TestCase):
         self.assertEqual(answer["sources"][0]["url"], self.source["url"])
         self.assertEqual(len(calls), 2)
         self.assertNotIn("test-secret", json.dumps(calls))
+
+    def test_booklet_pdf_is_read_and_used_as_a_cited_source(self):
+        self.configure("claude")
+        stream = b'BT /F1 12 Tf 72 720 Td (Recorded at Studio One, engineer Ada Smith, Neumann microphones.) Tj ET'
+        objects = [b'<< /Type /Catalog /Pages 2 0 R >>',
+                   b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+                   b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+                   b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+                   b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream']
+        pdf, offsets = bytearray(b'%PDF-1.4\n'), [0]
+        for number, obj in enumerate(objects, 1):
+            offsets.append(len(pdf))
+            pdf.extend(str(number).encode() + b' 0 obj\n' + obj + b'\nendobj\n')
+        start = len(pdf)
+        pdf.extend(b'xref\n0 6\n0000000000 65535 f \n')
+        for offset in offsets[1:]:
+            pdf.extend(f'{offset:010d} 00000 n \n'.encode())
+        pdf.extend(b'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n' + str(start).encode() + b'\n%%EOF\n')
+        url = 'https://static.qobuz.com/goodies/97/000215979.pdf'
+        opener = MagicMock()
+        opener.open.return_value.__enter__.return_value = io.BytesIO(pdf)
+        sent = []
+        def post(_cfg, body, _timeout):
+            sent.append(body)
+            if len(sent) == 1:
+                return {'content': [{'type': 'text', 'text': 'General album research.'}]}
+            return {'content': [{'type': 'tool_use', 'name': 'listening_guide', 'input': {
+                'form': 'single_work', 'overview': 'Recorded at Studio One.',
+                'compositions': [], 'track_notes': [{'track': 1, 'text': 'A note.'}]}}]}
+        with patch.object(ai.urllib.request, 'build_opener', return_value=opener):
+            answer = ai.listening_research(self.root, {'title': 'A work'}, [{'title': 'Movement I'}],
+                                           post=post, booklets=[{'url': url, 'name': 'Digital booklet'}])
+        self.assertIn('Studio One', sent[0]['messages'][0]['content'])
+        self.assertIn('Neumann microphones', sent[1]['messages'][0]['content'])
+        self.assertEqual(answer['sources'][0]['url'], url)
+        self.assertEqual(opener.open.call_count, 1)
+
+    def test_untrusted_or_unreadable_booklet_is_skipped(self):
+        opener = MagicMock()
+        opener.open.return_value.__enter__.return_value = io.BytesIO(b'not a PDF')
+        with patch.object(ai.urllib.request, 'build_opener', return_value=opener):
+            text, sources = ai._booklet_context([
+                {'url': 'http://127.0.0.1/private.pdf'},
+                {'url': 'https://static.qobuz.com/goodies/1/bad.pdf'}])
+        self.assertEqual((text, sources), ('', []))
+        self.assertEqual(opener.open.call_count, 1)
 
     def test_custom_prompt_files_replace_defaults_and_keep_placeholders(self):
         self.configure("claude")
@@ -408,6 +455,14 @@ class RouteTest(unittest.TestCase):
             self.assertEqual(result.get_json()["overview"], "Album overview")
             self.assertEqual(result.headers["Cache-Control"], "no-store")
             self.assertFalse(research.call_args.kwargs["cancel"].is_set())
+            self.assertEqual(research.call_args.kwargs["booklets"], [])
+        with (patch.object(ai, "listening_research", return_value={"overview": "With booklet"}) as research,
+              patch.object(web, "catalog") as catalog):
+            catalog.return_value.album.return_value = {"booklets": [{"url": "https://static.qobuz.com/goodies/1/a.pdf"}]}
+            result = self.client.post("/qobuz/ai/listening", json={**body, "album_id": "1234"}, headers=headers)
+            self.assertEqual(result.status_code, 200)
+            catalog.return_value.album.assert_called_once_with("1234")
+            self.assertEqual(len(research.call_args.kwargs["booklets"]), 1)
         self.assertEqual(self.client.post("/qobuz/ai/listening", json={**body, "job": []}, headers=headers).status_code, 400)
         self.assertEqual(self.client.post("/qobuz/ai/listening/cancel", json={"job": []}, headers=headers).status_code, 200)
         self.assertEqual(self.client.post("/qobuz/ai/listening/cancel", json={"job": job}, headers=headers).status_code, 200)

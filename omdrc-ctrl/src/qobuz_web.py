@@ -512,7 +512,15 @@ def ai_listening():
             _listening_cancelled.pop(job, None)
         _listening_jobs[job] = cancel
     try:
-        answer = qobuz_ai.listening_research(_state_dir(), body.get("album"), body.get("tracks"), cancel=cancel)
+        album_id = body.get("album_id")
+        booklets = []
+        if isinstance(album_id, str) and re.fullmatch(r"[0-9A-Za-z]+", album_id):
+            try:
+                booklets = catalog().album(album_id).get("booklets") or []
+            except QobuzError:
+                pass  # The guide can still research the supplied track metadata.
+        answer = qobuz_ai.listening_research(_state_dir(), body.get("album"), body.get("tracks"),
+                                             cancel=cancel, booklets=booklets)
         response = jsonify({"ok": True, **answer})
         response.headers["Cache-Control"] = "no-store"
         return response

@@ -275,6 +275,7 @@ G.research = async () => {
     const query = {
         album: { title: album.title, artist: album.artist, composer: album.composer,
             label: album.label, year: album.year, genre: album.genre, release_type: album.release_type },
+        album_id: track.qobuz_album || '',
         tracks: tracks.map(t => ({ title: t.title, work: t.work, composer: t.composer })),
     };
     const cacheKey = JSON.stringify({ provider: G.provider, model: G.model, ...query });

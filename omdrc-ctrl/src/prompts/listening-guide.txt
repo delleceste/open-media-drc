@@ -9,6 +9,8 @@
 
 Organize this music research into JSON for a listening guide. Overview covers the exact release and briefly introduces each work on it.
 
+If a PDF booklet was supplied, summarize relevant author and performer notes and the recording circumstances. Put release-wide studio, venue, recording technique and equipment facts prominently in the overview when the booklet states them. Put a note tied to one track in that track's note. Attribute booklet facts to the booklet, paraphrase them, and omit details the booklet does not establish.
+
 Give one composers entry per composer, or for a pop, rock or jazz album per artist or band (per main artist for a compilation): a biography of two to four paragraphs (origins and training, career, style and influences, the historical, cultural and philosophical outlook of their age and their place in it, legacy), separated by blank lines. Give one performers entry per principal orchestra, conductor, soloist or band whose background is verified and relevant (one paragraph each); leave it empty otherwise.
 
 Each composition section text is two to four paragraphs: when, where and why the work was written, the composer's life at that time, the place, era and cultural setting behind it, premiere and reception, then what to listen for.
