@@ -55,7 +55,7 @@ DEFAULT_CONFIG = {
     "down_timeout_s": 120,
     # reboot_commands[running][target], run with `sudo -n` on the box
     "reboot_commands": {
-        "Linux": {"Linux": "systemctl reboot",
+        "Linux": {"Linux": "grub-reboot-to-freebsd.sh Arch",
                   "FreeBSD": "grub-reboot-to-freebsd.sh"},
         "FreeBSD": {"FreeBSD": "shutdown -r now",
                     "Linux": "/usr/local/sbin/reboot-to-arch"},

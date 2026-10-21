@@ -32,13 +32,15 @@ the OMDRC app or kiosk during the test.
 Both OSes have a reboot script on the box. On arki it is
 `grub-reboot-to-freebsd.sh` (sticky, `grub-set-default`). On bee it is
 `/usr/local/sbin/reboot-to-arch` (not in this repo). It sets GRUB's one-shot
-`next_entry`, but every menuentry calls `savedefault`, so Arch becomes the
-saved default once it boots and a later plain reboot stays on Linux. Each
-trial is **one reboot**:
+`next_entry`, which also sets `boot_once`, so `savedefault` does *not* run and
+the saved default stays FreeBSD while Linux is up. A plain `systemctl reboot`
+from Linux would therefore land in FreeBSD. Linux → Linux uses
+`grub-reboot-to-freebsd.sh Arch` instead: the label sets Arch as the sticky
+default before rebooting. Each trial is **one reboot**:
 
 - target is the other OS: run that OS's reboot script;
-- target is the same OS: plain reboot (`systemctl reboot` /
-  `shutdown -r now`). This is the "fake" switch.
+- target is the same OS: `grub-reboot-to-freebsd.sh Arch` on Linux (see
+  above), plain `shutdown -r now` on FreeBSD. This is the "fake" switch.
 
 Each trial is an independent coin flip, so a fake switch happens about half
 the time. The box makes no OS-specific sound at boot (confirmed by the
