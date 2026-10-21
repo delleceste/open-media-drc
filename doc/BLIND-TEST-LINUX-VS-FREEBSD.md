@@ -69,7 +69,9 @@ reason>)`:
   running.
 - BruteFIR attenuation and the MPD volume equal the reference.
 - Output rate and sample format for the test tracks equal the reference.
-- The controller (`omdrcctrl`) and MPD respond.
+- The controller (`omdrcctrl`) and MPD respond, and every test track URL
+  answers (upmpdcli's Qobuz plugin starts late; a play sent before it
+  answers stalls).
 - No glitch or xrun alert has been raised since boot.
 
 The settings are restored automatically from the saved session at boot, so a

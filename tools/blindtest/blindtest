@@ -26,6 +26,7 @@ Every blind command sends what the box says to <session>/private/ and prints
 nothing else.  Nobody should read private/ before `reveal`.
 """
 
+import http.client
 import json
 import math
 import os
@@ -35,6 +36,7 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -185,6 +187,23 @@ def state_snapshot(cfg: dict) -> dict:
     }
 
 
+def track_answers(uri: str) -> bool:
+    """True when an http track URL answers.  upmpdcli's Qobuz plugin starts
+    after MPD, and a play issued before it answers stalls; it replies 302 to
+    the stream.  No Range header: upmpdcli sends an empty reply to one."""
+    url = urllib.parse.urlsplit(uri)
+    if url.scheme != "http":
+        return True
+    conn = http.client.HTTPConnection(url.hostname, url.port or 80, timeout=8)
+    try:
+        conn.request("GET", url.path + (f"?{url.query}" if url.query else ""))
+        return conn.getresponse().status in (200, 302)
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        conn.close()
+
+
 def snapshot_problems(cfg: dict, snap: dict, reference) -> list:
     problems = []
     drc_text = json.dumps([snap["session"], snap["active"]])
@@ -198,6 +217,8 @@ def snapshot_problems(cfg: dict, snap: dict, reference) -> list:
     tracks = [t["uri"] for t in cfg.get("tracks", [])]
     if tracks and snap["queue"] != tracks:
         problems.append("MPD queue differs from the test tracks")
+    if not all(track_answers(uri) for uri in tracks):
+        problems.append("a test track does not answer")
     if reference is None:
         problems.append("no reference snapshot")
     else:
