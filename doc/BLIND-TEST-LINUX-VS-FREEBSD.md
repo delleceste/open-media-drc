@@ -82,7 +82,7 @@ during the session. It sends every ssh/MPD/HTTP output to
 
 ```
 blindtest trial      -> "trial N: switching" ... "checks: OK" / "trial N: void" ... "READY"
-blindtest play|pause|next|prev|seek <s>|vol? -> "ok" / "failed"
+blindtest play 1|2|3 / stop / pause / resume -> "ok" / "failed"
 blindtest answer N linux|freebsd [1-3]  -> "recorded"
 blindtest reveal     -> score table (only at the very end)
 ```
@@ -104,12 +104,12 @@ The kiosk header shows the mascot (Tux or Beastie, with the OS name in its
 also show OS-specific details (`virtual_oss`, ALSA). So during the test **the
 OMDRC app and kiosk stay closed**. Playback uses one of these:
 
-- **The runner (preferred).** At each READY, the runner loads the same queue
-  into MPD (a saved playlist of the 2–3 test tracks, local or Qobuz through the
-  upmpdcli plugin) at the same volume. The listener says "play",
-  "next" and so on to Claude, which calls `blindtest play` etc. Every trial
-  starts identically.
-- **A plain MPD client** pointed at `192.168.1.9:6600`, for example MALP on the
+- **The runner (default).** The listener tells Claude "play track 1", "play
+  track 2", "stop", and so on. Claude runs `blindtest play 1` etc. The runner
+  clears the MPD queue, adds only that track (local or Qobuz through the
+  upmpdcli plugin), sets the reference volume and plays it from the start.
+  Every trial and every track starts identically, and nothing else is needed.
+- **A plain MPD client** (only as a fallback) pointed at `192.168.1.9:6600`, for example MALP on the
   phone. It shows only the IP. Check beforehand that it does not display the
   server's version string or any output names.
 
