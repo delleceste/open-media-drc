@@ -10,8 +10,8 @@ To start, say "blind test: go" and point Claude at this file.
 ## Roles and blinding
 
 - **Listener.** Picks the tracks, listens, and answers "Linux or FreeBSD?"
-  after each trial. Uses only the Claude terminal on dixi plus the playback
-  controls on the phone app or kiosk.
+  after each trial. Uses only the Claude terminal on dixi, plus at most a
+  plain MPD client (see "Playback").
 - **Claude.** Runs `blindtest` (see below) and never runs any command whose
   output could reveal the OS: no `uname`, no `hostname`, no `drc.sh status`
   printed raw, no service names, no boot logs. All box access goes through the
@@ -23,34 +23,25 @@ To start, say "blind test: go" and point Claude at this file.
 - **Answers file.** Claude writes the listener's answer for each trial to
   `~/blindtest/<session>/answers.log` *before* the next trial starts.
 
-The listener should not expand tool output in the terminal (ctrl+o), look at
-the box, its screen, its LEDs or the router, or open any page in the web UI or
-app that shows system information (diagnostics, bit-perfect, configuration,
-logs). Use only Now, the library and the playback controls.
+The listener should not expand tool output in the terminal (ctrl+o). They
+should also not look at the box, its screen, its LEDs or the router, or open
+the OMDRC app or kiosk during the test.
 
 ## How the box is switched
 
-GRUB (BIOS) is the boot loader, and **Arch Linux must be the saved default**.
-`scripts/grub-reboot-to-freebsd.sh` is sticky (`grub-set-default`) and there
-is no script on the FreeBSD side to switch back, because the return path is a
-manual pick at the GRUB menu. That pick cannot be made remotely, so the test
-uses a one-shot switch instead:
+Both OSes have a reboot script on the box. On arki it is
+`grub-reboot-to-freebsd.sh` (sticky, `grub-set-default`). On bee there is a
+script that boots into Linux; find its exact name during the dry run, because
+it is not in this repo. Each trial is **one reboot**:
 
-- Linux → FreeBSD: `sudo grub-reboot "<FreeBSD entry>" && sudo systemctl reboot`
-  (one-shot: GRUB sets `boot_once`, so `savedefault` does not record it).
-- FreeBSD → Linux: plain `sudo shutdown -r now`. The one-shot entry has been
-  used up, so GRUB boots the saved default, Arch Linux.
+- target is the other OS: run that OS's reboot script;
+- target is the same OS: plain reboot (`systemctl reboot` /
+  `shutdown -r now`). This is the "fake" switch.
 
-**Every trial does exactly two reboots**, whatever the outcome, so the number
-of DAC drop-outs, relay clicks and fan spin-ups is always the same:
-
-1. Reboot whatever is running. This always lands in Linux.
-2. From Linux, either reboot plainly (target Linux) or one-shot into FreeBSD
-   (target FreeBSD).
-
-A trial whose target is the OS that just played is a normal outcome, not a
-special case. Each trial is an independent coin flip, so repeats happen about
-half the time.
+Each trial is an independent coin flip, so a fake switch happens about half
+the time. The box makes no OS-specific sound at boot (confirmed by the
+listener), so the only physical cue is how long it takes, and the fixed `T`
+below hides that.
 
 ### Hiding the boot-time difference
 
@@ -83,6 +74,49 @@ failure means something is wrong. A trial that fails its checks or a boot is
 a fresh trial with a new coin flip replaces it. Claude only says "trial void,
 technical problem, redoing it".
 
+## The runner: nothing on screen but neutral lines
+
+`~/blindtest/blindtest` on dixi is a single script, and Claude calls only it
+during the session. It sends every ssh/MPD/HTTP output to
+`~/blindtest/<session>/private/` and prints a fixed set of lines:
+
+```
+blindtest trial      -> "trial N: switching" ... "checks: OK" / "trial N: void" ... "READY"
+blindtest play|pause|next|prev|seek <s>|vol? -> "ok" / "failed"
+blindtest answer N linux|freebsd [1-3]  -> "recorded"
+blindtest reveal     -> score table (only at the very end)
+```
+
+- The coin comes from Python `secrets`, and the truth is written to
+  `private/truth.log` before the reboot is issued.
+- Exit codes are 0 or 1 only; error text goes to `private/`. When a trial is
+  void, Claude reads only the runner's neutral reason, never the private logs,
+  unless the listener agrees to end blinding.
+- ssh runs with `-q`, `LogLevel=QUIET`, `BatchMode=yes` and its own
+  known_hosts file holding both host keys. That way neither a host-key
+  warning nor a login banner can name the OS.
+- The timing is fixed: the runner sleeps until `T` whatever the box does.
+
+## Playback without revealing the box
+
+The kiosk header shows the mascot (Tux or Beastie, with the OS name in its
+`title`). There is no setting that hides it, and Now, DRC, Chain and Source
+also show OS-specific details (`virtual_oss`, ALSA). So during the test **the
+OMDRC app and kiosk stay closed**. Playback uses one of these:
+
+- **The runner (preferred).** At each READY, the runner loads the same queue
+  into MPD (a saved playlist of the 2–3 test tracks, local or Qobuz through the
+  upmpdcli plugin) at the same volume. The listener says "play",
+  "next" and so on to Claude, which calls `blindtest play` etc. Every trial
+  starts identically.
+- **A plain MPD client** pointed at `192.168.1.9:6600`, for example MALP on the
+  phone. It shows only the IP. Check beforehand that it does not display the
+  server's version string or any output names.
+
+During the dry run, check that the same queue entries resolve on both OSes.
+Local paths come from the same library. Qobuz URLs go through upmpdcli, which
+needs to be up on both.
+
 ## Session flow
 
 1. **Tracks.** Choose 2 or 3 tracks together and use only those. Note their
@@ -109,7 +143,7 @@ The p-value is for a one-sided binomial test against guessing (p = 0.5):
 | 16 | 12 | 0.038 |
 | 20 | 15 | 0.021 |
 
-Each trial costs two reboots plus `T` plus listening time, roughly 6–10 min.
+Each trial costs one reboot plus `T` plus listening time, roughly 6–10 min.
 **16 trials** is a good target, split over two sittings if needed. Fix the
 count before starting and do not stop early because of a good or bad streak.
 
@@ -121,11 +155,8 @@ Do this once, ideally the day before:
       keys are stored in one dedicated known_hosts file used by the runner, so
       the key changing between OSes produces no warning.
 - [ ] Passwordless `sudo` works for the reboot commands on both OSes.
-- [ ] On arki: `grub-reboot-to-freebsd.sh -l` lists the exact FreeBSD entry
-      title, `-c` passes, and `saved_entry` is Arch Linux (set it with
-      `sudo grub-set-default "<Arch entry>"` if not).
-- [ ] The one-shot path works: from Linux, `grub-reboot` into FreeBSD, then a
-      plain reboot from FreeBSD comes back to Linux.
+- [ ] On arki, `grub-reboot-to-freebsd.sh -c` passes. On bee, locate the
+      reboot-to-Linux script. Run all four paths once: L→F, F→L, L→L, F→F.
 - [ ] DRC `120.green` / `fdw6.multipos` comes up on both OSes after a reboot,
       with the same attenuation and volume. Take the reference snapshot.
 - [ ] Time all four paths (start Linux or FreeBSD × target Linux or FreeBSD).
@@ -133,13 +164,8 @@ Do this once, ideally the day before:
 - [ ] Write `blindtest` (in `~/blindtest/` on dixi, not in this repo). It
       should provide `prep`, `trial`, `answer` and `reveal` subcommands, use
       Python `secrets` for the coin, and print only neutral lines.
-- [ ] Listen to whether the box makes an OS-specific sound you can hear from
-      the listening seat, such as a BIOS/boot beep, a disk spin-up or a
-      different fan profile. If it does, fix it or move away from the box during
-      the switch.
-- [ ] Decide who starts playback. Either the listener uses the app, or the
-      runner queues and starts the track through MPD so that every trial
-      starts identically.
+- [ ] Create the MPD playlist of the test tracks and check that it plays on
+      both OSes.
 
 ## After the session
 
