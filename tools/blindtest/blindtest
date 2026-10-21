@@ -58,10 +58,10 @@ DEFAULT_CONFIG = {
         "Linux": {"Linux": "systemctl reboot",
                   "FreeBSD": "grub-reboot-to-freebsd.sh"},
         "FreeBSD": {"FreeBSD": "shutdown -r now",
-                    "Linux": "SET-ME-reboot-to-linux-script"},
+                    "Linux": "/usr/local/sbin/reboot-to-arch"},
     },
     # must appear in the DRC session/active state on both OSes
-    "expect_substrings": ["120.green", "fdw6.multipos"],
+    "expect_substrings": ["120.green", "multipos.fdw6"],
     "tracks": [],
     "references": {},
 }
@@ -313,7 +313,7 @@ def cmd_init(args):
         raise Failure(f"{CONFIG} exists already")
     save_config(DEFAULT_CONFIG)
     KNOWN_HOSTS.touch()
-    print(f"wrote {CONFIG}; edit reboot_commands.FreeBSD.Linux, then keyscan on each OS")
+    print(f"wrote {CONFIG}; check it, then keyscan on each OS")
 
 
 def cmd_keyscan(args):

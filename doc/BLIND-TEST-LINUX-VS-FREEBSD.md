@@ -30,9 +30,11 @@ the OMDRC app or kiosk during the test.
 ## How the box is switched
 
 Both OSes have a reboot script on the box. On arki it is
-`grub-reboot-to-freebsd.sh` (sticky, `grub-set-default`). On bee there is a
-script that boots into Linux; find its exact name during the dry run, because
-it is not in this repo. Each trial is **one reboot**:
+`grub-reboot-to-freebsd.sh` (sticky, `grub-set-default`). On bee it is
+`/usr/local/sbin/reboot-to-arch` (not in this repo). It sets GRUB's one-shot
+`next_entry`, but every menuentry calls `savedefault`, so Arch becomes the
+saved default once it boots and a later plain reboot stays on Linux. Each
+trial is **one reboot**:
 
 - target is the other OS: run that OS's reboot script;
 - target is the same OS: plain reboot (`systemctl reboot` /
@@ -61,7 +63,7 @@ The runner compares the box with a reference snapshot taken on *both* OSes
 during the dry run, and prints only `checks: OK` or `checks: FAILED (<neutral
 reason>)`:
 
-- DRC is on: geometry `120.green`, design `fdw6.multipos` (home), BruteFIR
+- DRC is on: geometry `120.green`, design `@120.green.multipos.fdw6` (home), BruteFIR
   running.
 - BruteFIR attenuation and the MPD volume equal the reference.
 - Output rate and sample format for the test tracks equal the reference.
@@ -85,7 +87,7 @@ Prep commands are **not blind**. They may name the running OS, so run them
 only before a session:
 
 ```
-blindtest init                   default config; set reboot_commands.FreeBSD.Linux
+blindtest init                   default config (reboot commands, expected DRC)
 blindtest keyscan                on each OS: store its ssh host key
 blindtest doctor                 ssh, sudo -n, reboot commands found, DRC/MPD state
 blindtest capture-queue          save the MPD queue (built in the app) as tracks 1..n
@@ -178,14 +180,14 @@ Do this once, ideally the day before:
       keys are stored in one dedicated known_hosts file used by the runner, so
       the key changing between OSes produces no warning.
 - [ ] Passwordless `sudo` works for the reboot commands on both OSes.
-- [ ] On arki, `grub-reboot-to-freebsd.sh -c` passes. On bee, locate the
-      reboot-to-Linux script. Run all four paths once: L→F, F→L, L→L, F→F.
+- [ ] On arki, `grub-reboot-to-freebsd.sh -c` passes. On bee,
+      `reboot-to-arch --prepare-only` then `--cancel` passes. Run all four
+      paths once: L→F, F→L, L→L, F→F.
 - [ ] DRC `120.green` / `fdw6.multipos` comes up on both OSes after a reboot,
       with the same attenuation and volume. Take the reference snapshot.
 - [ ] Time all four paths (start Linux or FreeBSD × target Linux or FreeBSD).
       Set `T`.
-- [ ] `blindtest init`, then set the FreeBSD → Linux script name in
-      `~/blindtest/config.json`. Then `keyscan` + `doctor` on each OS.
+- [ ] `blindtest init`, then `keyscan` + `doctor` on each OS.
 - [ ] Build the queue of test tracks in the app, `capture-queue`, then
       `prep-queue` + `play 1..3` on each OS, then `snapshot` on each OS.
 
