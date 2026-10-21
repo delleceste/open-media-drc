@@ -102,6 +102,12 @@
         pointer('pointerup', P.fullView.cover.getBoundingClientRect().width * .44, 0);
         await sleep(0);
         check(calls.at(-1).seconds === 30, 'Dragging the revealed ring must still seek');
+        // a touch on the ring, anywhere round it, seeks there without a slide
+        P.fullView.ring.show();
+        pointer('pointerdown', 0, P.fullView.cover.getBoundingClientRect().width * .44);
+        pointer('pointerup', 0, P.fullView.cover.getBoundingClientRect().width * .44);
+        await sleep(0);
+        check(calls.at(-1).seconds === 60, 'Touching the ring at 6 o\'clock must seek to half the track (got ' + calls.at(-1).seconds + ')');
         let release;
         K.api = async (url, options) => { calls.push(options.json); return new Promise(resolve => { release = resolve; }); };
         P.seekTaps = null; P.base.elapsed = 50; forward.click();

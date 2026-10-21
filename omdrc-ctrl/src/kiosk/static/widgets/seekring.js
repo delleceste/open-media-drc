@@ -9,8 +9,9 @@
  * instead (onPull/onMinimize below), putting an already-shown ring away rather than
  * dragging it along. While the ring is up, a slide that *starts on the ring* moves
  * the knob round it (it stops at the start and the end, it never jumps across) and
- * lifting the finger seeks there. Untouched, the ring goes away by itself after a
- * few seconds. flash() shows it for a moment and fades it out, so the user knows it
+ * lifting the finger seeks there; the knob first jumps to where the finger lands,
+ * so a touch on the ring at any point, slid or not, seeks to that point.
+ * Untouched, the ring goes away by itself after a few seconds. flash() shows it for a moment and fades it out, so the user knows it
  * is there.
  *
  *   new K.SeekRing(box, { usable(), elapsed(), duration(), seek(seconds) })
@@ -131,10 +132,9 @@ K.SeekRing = class {
             if (!usable && !this.o.onMinimize && !this.o.onTap) return;   // nothing this gesture could do
             e.preventDefault();
             try { window.OmdrcApp && window.OmdrcApp.setPageScrolled(true); } catch {}   // not pull-to-reload
-            const f = this.frac();
             if (usable && this.shown && !this.el.classList.contains('fading') && onRing(e)) {
-                // the ring is up and the finger lands on it: a slide drags the knob
-                g = { id: e.pointerId, x: e.clientX, y: e.clientY, f, moved: false };
+                // the ring is up and the finger lands on it: the knob comes there, a slide drags it
+                g = { id: e.pointerId, x: e.clientX, y: e.clientY, f: fracAt(e), moved: false };
                 e.stopPropagation();                         // never a page swipe
                 this.el.classList.add('active');           // drawn thick only while the finger is on it
                 try { box.setPointerCapture(e.pointerId); } catch {}
@@ -194,8 +194,9 @@ K.SeekRing = class {
                 else if (this.o.onPull) this.o.onPull(0);
                 return;
             }
-            if (d.moved && e.type === 'pointerup') this.o.seek(d.f * this.o.duration());
-            this.hideLater(d.moved ? 1200 : RING_IDLE_MS);
+            if (e.type === 'pointerup') this.o.seek(d.f * this.o.duration());
+            else this.paint(this.frac());              // cancelled: the knob goes back
+            this.hideLater(1200);
         };
         box.addEventListener('pointerup', end);
         box.addEventListener('pointercancel', end);
