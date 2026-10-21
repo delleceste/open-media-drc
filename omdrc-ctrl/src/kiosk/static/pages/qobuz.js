@@ -255,7 +255,7 @@ P.show = () => {
     P.paintScope();
     if (P.fromNowShown) P.setView('results');
     else if (P.view() === 'recent') P.recent();
-    else if (P.view() === 'discover') P.discover();
+    else if (P.view() === 'discover') P.discover(0, { keep: true });
     else if (P.view() === 'awarded') P.awardedList();
     else if (P.view() === 'library') P.showLibrary();
     if (!P.fromNowShown) P.undock();
@@ -312,7 +312,7 @@ P.setView = (v, scroll = false) => {
     if (v === 'library') { if (P.visible && !K.library.visible) P.showLibrary(); }
     else if (v === 'recent') P.recent();
     else if (v === 'awarded') P.awardedList();
-    else if (v === 'discover') P.discover();
+    else if (v === 'discover') P.discover(0, { keep: true });
     if (scroll && P.visible && !P.viewRow.hidden) requestAnimationFrame(() => {
         if (P.viewRow.hidden) return;
         P.el.scrollTo({ top: P.el.scrollTop + P.viewRow.getBoundingClientRect().top
@@ -1448,12 +1448,24 @@ P.watchMore = (button, d) => {
     P.moreObserver.observe(button);
 };
 
+// Coming back to a view asks the server again, but the list on screen is rebuilt
+// only when the answer differs from the one it shows: the same albums keep their
+// covers, open tracks and scroll instead of blanking and loading again.
+P.unchanged = (box, ...what) => {
+    const sig = JSON.stringify(what);
+    if (box.__sig === sig && box.firstChild) return true;
+    box.__sig = sig;
+    return false;
+};
+// a row taken off by hand: the next answer is painted, whatever it is
+P.shownEdited = () => { P.recentBox.__sig = P.awardedBox.__sig = P.discoverFirst = null; };
+
 // The albums played from here, newest first (the "Played recently" view).
 P.recent = async () => {
     const q = pref(P.textKey('recent'), '').trim();
     const seq = P.recentSeq = (P.recentSeq || 0) + 1;
     const d = await K.api('/qobuz/played?' + new URLSearchParams(q ? { limit: 100, q } : { limit: 30 }));
-    if (!d.ok || seq !== P.recentSeq) return;
+    if (!d.ok || seq !== P.recentSeq || P.unchanged(P.recentBox, q, d.albums)) return;
     K.clear(P.recentBox).append(d.albums.length ? P.list(d.albums, 'recent')
         : h('p', { class: 'muted' }, q ? `Nothing in history matches “${q}”.` : 'Nothing played from here yet.'));
 };
@@ -1544,34 +1556,52 @@ P.paintDiscoverFilters = () => {
     P.discoverFilterSummary.title = summary;
 };
 
-P.discover = async (offset = 0) => {
+// keep: coming back to the view.  The list on screen stays (pages read further down
+// too) unless the first page now differs; a changed genre or filter starts afresh.
+P.discover = async (offset = 0, { keep = false } = {}) => {
     if (P.discoverObserver) P.discoverObserver.disconnect();
-    const seq = P.discoverSeq = (P.discoverSeq || 0) + 1;
     const genre = pref('discoverGenre', '');
-    if (!offset) K.clear(P.discoverList).append(h('p', { class: 'muted' }, 'Loading new releases…'));
     const params = new URLSearchParams({ genre, offset });
     for (const label of P.discoverSelected()) params.append('label', label);
     if (pref('discoverAwarded', false)) params.set('awarded', '1');
     if (pref('discoverHires', false)) params.set('hires', '1');
+    const shown = !offset && keep && P.discoverRows && P.discoverKey === params.toString();
+    // only looking whether the list on screen is still right: a page being read
+    // further down goes on meanwhile (its own seq)
+    let seq = shown ? P.discoverSeq : (P.discoverSeq = (P.discoverSeq || 0) + 1);
+    const probe = P.discoverProbe = (P.discoverProbe || 0) + 1;
+    if (!offset && !shown) {
+        P.discoverLoadMore = null;           // the pages below belong to the list going
+        K.clear(P.discoverList).append(h('p', { class: 'muted' }, 'Loading new releases…'));
+    }
     const d = await K.api('/qobuz/discover?' + params);
-    if (seq !== P.discoverSeq) return;
+    if (seq !== P.discoverSeq || (shown && probe !== P.discoverProbe)) return;
+    if (shown) {
+        // the same first page (or no answer this time): what is on screen stays
+        if (!d.ok || P.discoverFirst === JSON.stringify(d.albums)) { P.watchDiscover(); return; }
+        seq = P.discoverSeq = seq + 1;       // changed: a page still being read is dropped
+        P.discoverLoadMore = null;
+    }
     if (!d.ok) {
+        P.discoverRows = null;
         K.clear(P.discoverList).append(h('div', { class: 'errbox' }, d.error || 'Could not load new releases',
             h('button', { type: 'button', class: 'btn', onclick: () => P.discover() }, 'Retry')));
         return;
     }
     if (!offset) {
+        P.discoverKey = params.toString(); P.discoverFirst = JSON.stringify(d.albums);
         P.discoverRows = P.list([]);
         K.clear(P.discoverList).append(h('div', { class: 'qz-discover-heading' },
             h('span', { class: 'small muted' }, 'New releases'), P.discoverFilterSummary), P.discoverRows);
     }
     if (P.discoverMore) P.discoverMore.remove();
+    P.discoverMore = P.discoverLoadMore = P.discoverAuto = null;
     P.discoverRows.append(...d.albums.map(c => P.item(c)));
     if (!P.discoverRows.firstChild && !d.more) P.discoverRows.append(h('p', { class: 'muted' }, 'No matching new releases.'));
     if (d.more) {
         let loading = false;
         const loadMore = () => {
-            if (seq !== P.discoverSeq || loading) return;
+            if (P.discoverLoadMore !== loadMore || loading) return;
             loading = true;
             P.discoverMore.textContent = 'Loading new releases…';
             P.discover(d.next_offset);
@@ -1581,15 +1611,20 @@ P.discover = async (offset = 0) => {
             ? h('div', { class: 'qz-page-end', 'aria-live': 'polite' })
             : h('button', { type: 'button', class: 'btn', onclick: loadMore }, 'More releases');
         P.discoverList.append(P.discoverMore);
-        // As in Results, reaching the end while swiping up reads the next page.
-        // An empty page stops automatic reading; the button can still continue.
-        if (d.albums.length && P.visible && P.view() === 'discover' && 'IntersectionObserver' in window) {
-            P.discoverObserver = new IntersectionObserver(entries => {
-                if (P.visible && P.view() === 'discover' && entries.some(e => e.isIntersecting)) loadMore();
-            }, { root: P.el, rootMargin: '0px 0px 200px 0px' });
-            P.discoverObserver.observe(P.discoverMore);
-        }
+        P.discoverLoadMore = loadMore; P.discoverAuto = !!automatic;
+        P.watchDiscover();
     }
+};
+// As in Results, reaching the end while swiping up reads the next page.
+// An empty page stops automatic reading; the button can still continue.
+P.watchDiscover = () => {
+    if (P.discoverObserver) P.discoverObserver.disconnect();
+    const loadMore = P.discoverLoadMore;
+    if (!loadMore || !P.discoverAuto || !P.visible || P.view() !== 'discover') return;
+    P.discoverObserver = new IntersectionObserver(entries => {
+        if (P.visible && P.view() === 'discover' && entries.some(e => e.isIntersecting)) loadMore();
+    }, { root: P.el, rootMargin: '0px 0px 200px 0px' });
+    P.discoverObserver.observe(P.discoverMore);
 };
 
 // Every album met with an award or marked awarded, most recent first: to look at
@@ -1599,7 +1634,8 @@ P.awardedList = async () => {
     const seq = P.awardedSeq = (P.awardedSeq || 0) + 1;
     const d = await K.api('/qobuz/awarded' + (q ? '?' + new URLSearchParams({ q }) : ''));
     if (seq !== P.awardedSeq) return;
-    if (!d.ok) { K.clear(P.awardedBox).append(h('div', { class: 'errbox' }, d.error || 'the list cannot be read')); return; }
+    if (!d.ok) { P.awardedBox.__sig = null; K.clear(P.awardedBox).append(h('div', { class: 'errbox' }, d.error || 'the list cannot be read')); return; }
+    if (P.unchanged(P.awardedBox, q, d.albums)) return;
     const n = d.albums.length, albums = `${n} album${n === 1 ? '' : 's'}`;
     K.clear(P.awardedBox).append(n
         ? h('div', {}, h('div', { class: 'qz-summary small muted' }, q
@@ -1614,7 +1650,7 @@ P.hideRecent = async (c, row) => {
     row.classList.add('going');
     const d = await K.api('/qobuz/played', { json: { action: 'hide', album_id: c.id } });
     if (!d.ok) { row.classList.remove('going'); K.toast(d.error || 'could not hide it', 'error'); return; }
-    row.remove();
+    row.remove(); P.shownEdited();
     P.snack(`Hidden from Recent: “${c.title}”`, [{ label: 'Undo', run: async () => {
         const u = await K.api('/qobuz/played', { json: { action: 'show', album_id: c.id } });
         if (!u.ok) K.toast(u.error || 'could not put it back', 'error');
@@ -1789,7 +1825,7 @@ P.lower = async (c, row) => {
         // to the end, in the order the server would give it
         P.last.results = [...P.last.results.filter(x => x !== c && !x.lowered), c, ...P.last.results.filter(x => x !== c && x.lowered)];
         P.paintResults();
-    } else row.remove();
+    } else { row.remove(); P.shownEdited(); }
     P.paintLowLink();
     P.snack(`Lowered “${c.title}”`, [
         { label: 'Undo', run: () => P.restore(c.lowered) },
