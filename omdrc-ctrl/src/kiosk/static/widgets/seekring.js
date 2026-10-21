@@ -210,16 +210,48 @@ K.SeekRing = class {
 // `albumId` looks up the facts line (label, year) itself when the caller does not
 // already have it to hand; `transport` draws the same prev/play-pause/stop/next
 // row as the main player, acting through `action('prev' | 'play' | 'pause' | 'stop' | 'next')`.
+// `live()`, asked again every half second while open, follows the player:
+// { title, artist, album, albumId, chips: [{ text, cls, color }] } (the track, its
+// artist, the album; the label and year come from albumId; chips: format, DRC).
 K.coverOpener = (getSrc, o, getMeta) => () => { const src = getSrc(); if (src) K.openCoverMax(src, o, getMeta ? getMeta() : {}); };
 
 K.openCoverMax = (src, o, meta = {}) => {
     let closed = false;
     const art = h('div', { class: 'cover-max-art' }, h('img', { src, alt: '' }));
-    const close = () => { closed = true; ring.destroy(); document.removeEventListener('keydown', onKey); scrim.remove(); };
+    let liveTimer = null;
+    const close = () => { closed = true; clearInterval(liveTimer); ring.destroy(); document.removeEventListener('keydown', onKey); scrim.remove(); };
     const onKey = e => { if (e.key === 'Escape') close(); };
     const titleEl = h('div', { class: 'cover-max-title' }, meta.title || '');
+    const artistEl = h('div', { class: 'cover-max-artist' });
+    const albumEl = h('div', { class: 'cover-max-facts' });
     const factsEl = h('div', { class: 'cover-max-facts' }, meta.facts || '');
-    const info = h('div', { class: 'cover-max-info' }, titleEl, factsEl);
+    const chipsEl = h('div', { class: 'cover-max-chips' });
+    const info = h('div', { class: 'cover-max-info' }, titleEl, artistEl, albumEl, factsEl, chipsEl);
+    // the label and year of an album, looked up once per album shown
+    let factsFor = null;
+    const lookFacts = (albumId, useTitle) => {
+        if (!albumId || albumId === factsFor) return;
+        factsFor = albumId;
+        K.qobuzAlbumFacts(albumId).then(a => {
+            if (closed || factsFor !== albumId) return;
+            if (a && a.title && useTitle) titleEl.textContent = a.title;
+            factsEl.textContent = a ? [a.label, a.year].filter(Boolean).join(' · ') : '';
+        });
+    };
+    let chipsKey = '';
+    const setText = (el, text) => { if (el.textContent !== (text || '')) el.textContent = text || ''; };
+    const paintLive = () => {
+        const m = meta.live();
+        if (!m) return;
+        setText(titleEl, m.title); setText(artistEl, m.artist); setText(albumEl, m.album);
+        if ((m.albumId || null) !== factsFor) { factsEl.textContent = ''; factsFor = null; lookFacts(m.albumId, false); }
+        const chips = (m.chips || []).filter(c => c && c.text);
+        const key = JSON.stringify(chips);
+        if (key !== chipsKey) {
+            chipsKey = key;
+            K.clear(chipsEl).append(...chips.map(c => h('span', { class: 'chip ' + (c.cls || ''), style: c.color ? `color: ${c.color}` : null }, c.text)));
+        }
+    };
     let controls = null;
     // << / >> seek at once, further the faster they are tapped; the target is kept here
     // so rapid taps build on each other before the player's own position catches up, and
@@ -280,11 +312,8 @@ K.openCoverMax = (src, o, meta = {}) => {
     scrim.addEventListener('touchcancel', () => { sw = null; }, { passive: true });
     document.addEventListener('keydown', onKey);
     document.getElementById('overlay-root').append(scrim);
-    if (meta.albumId) K.qobuzAlbumFacts(meta.albumId).then(a => {
-        if (closed || !a) return;
-        if (a.title) titleEl.textContent = a.title;
-        factsEl.textContent = [a.label, a.year].filter(Boolean).join(' · ');
-    });
+    if (meta.live) { paintLive(); liveTimer = setInterval(paintLive, 500); }
+    else lookFacts(meta.albumId, true);
     // the ring shows for a moment and fades, so it is known to be there; then it stays
     // hidden until a touch on the cover asks for it (this file's header)
     ring.flash(2000);

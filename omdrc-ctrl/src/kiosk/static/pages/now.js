@@ -37,8 +37,7 @@ P.mount = el => {
     P.openCover = K.coverOpener(() => P.art.hidden ? '' : P.art.getAttribute('src') || '',
         { usable: P.ringUsable, elapsed: () => P.elapsedNow(), duration: () => P.base.duration, seek: s => P.seek(s) },
         () => ({
-            title: P.track ? (P.track.album || P.track.title || '') : '',
-            albumId: (P.track && P.track.qobuz_album) || '',
+            live: P.coverFacts,
             transport: { playing: () => !!(P.track && P.track.state === 'play'), action: a => P.transport(a) },
         }));
     P.artBox = h('div', { class: 'now-art empty' }, P.art);
@@ -1115,6 +1114,24 @@ P.seek = async seconds => {
     const d = await K.api('/k/api/transport', { json: { action: 'seek', seconds } });
     if (!d.ok) K.toast(d.error || 'seek failed', 'error');
     setTimeout(() => { if (P.trackPoll.running) P.trackPoll.now(); }, 700);
+};
+
+// What the full-screen cover shows under it, the player's state as it is now:
+// the track, the artist, the album (label and year looked up), the format, DRC on/off.
+P.coverFacts = () => {
+    const t = P.track;
+    if (!t || !t.ok) return { title: 'Nothing playing' };
+    const s = K.state.features.drc === false ? null : K.drcState.summary();
+    return {
+        title: t.title || '', artist: t.artist || '',
+        album: [t.album, t.edition].filter(Boolean).join(' · '),
+        albumId: t.qobuz_album || '',
+        chips: [
+            { text: P.shortFormat(t.format), color: K.formatColor(t.format) },
+            s && s.known ? { text: s.power === 'on' ? 'DRC ON' : s.power === 'off' ? 'DRC OFF' : 'DRC STOPPED',
+                cls: s.power === 'on' ? 'ok' : s.power === 'off' ? 'off' : 'warn' } : null,
+        ],
+    };
 };
 
 // "24 bit / 192 kHz / stereo" -> "24/192" (bits/kHz; stereo is the norm and is left out)

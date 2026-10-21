@@ -172,16 +172,30 @@ details summary { cursor: pointer; padding: .4rem 0; color: var(--muted); font-s
 .cover-max-close .ticon { width: 1.1rem; height: 1.1rem; }
 .cover-max-art { position: relative; touch-action: none; width: min(88vw, 60dvh); height: min(88vw, 60dvh); border-radius: .6rem; overflow: hidden; background: var(--surface2); flex: 0 0 auto; }
 .cover-max-art > img { display: block; width: 100%; height: 100%; object-fit: contain; }
-/* the album title, year and label under the cover (filled once K.qobuzAlbumFacts answers) */
+/* under the cover: the track (or album) title, the artist, the album, its label and year
+   (filled once K.qobuzAlbumFacts answers), and chips: the format, DRC on/off */
 .cover-max-info { text-align: center; color: #fff; max-width: 92vw; }
 .cover-max-title { font-weight: 700; font-size: 1.05rem; }
-.cover-max-title:empty, .cover-max-facts:empty { display: none; }
+.cover-max-title:empty, .cover-max-artist:empty, .cover-max-facts:empty, .cover-max-chips:empty { display: none; }
+.cover-max-artist { font-size: .95rem; margin-top: .1rem; }
+.cover-max-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: .4rem; margin-top: .45rem; }
+.cover-max-chips .chip { background: rgba(255,255,255,.1); }
 .cover-max-facts { color: rgba(255,255,255,.7); font-size: .85rem; margin-top: .15rem; }
 /* the same prev / play-pause / stop / next row as the main player, replicated here */
 .cover-max-controls { display: flex; align-items: center; gap: .7rem; }
 .cover-max-ctl { width: 2.7rem; height: 2.7rem; padding: 0; border: 0; border-radius: 50%;
     display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.14); color: #fff; }
 .cover-max-ctl .ticon { width: 1.3rem; height: 1.3rem; }
+/* landscape: no height for the cover and the lines under it, so the lines and the
+   buttons go beside it */
+@media (orientation: landscape) {
+    .scrim.cover-max { display: grid; grid-template-columns: auto minmax(0, 26rem); grid-template-rows: 1fr auto auto 1fr;
+        column-gap: 1.8rem; row-gap: 1rem; justify-content: center; align-items: center; }
+    .cover-max-art { grid-column: 1; grid-row: 1 / 5; width: min(84dvh, 48vw); height: min(84dvh, 48vw); }
+    .cover-max-info { grid-column: 2; grid-row: 2; text-align: left; max-width: none; }
+    .cover-max-chips { justify-content: flex-start; }
+    .cover-max-controls { grid-column: 2; grid-row: 3; flex-wrap: wrap; }
+}
 #toast { position: fixed; left: 50%; bottom: calc(var(--tabs) + .8rem); transform: translate(-50%, 1rem); opacity: 0; pointer-events: none; z-index: 70;
     background: var(--surface2); border: 1px solid var(--border); border-radius: .6rem; padding: .6rem 1.1rem; max-width: 80vw; transition: opacity .2s, transform .2s; }
 #toast.raised { bottom: calc(var(--tabs) + 5.2rem); }
