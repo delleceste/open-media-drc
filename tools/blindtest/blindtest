@@ -1,0 +1,591 @@
+#!/usr/bin/env python3
+"""Double-blind Linux vs FreeBSD listening test runner (see
+doc/BLIND-TEST-LINUX-VS-FREEBSD.md).
+
+Runs on the listener's machine (dixi) and drives the dual-boot box over ssh,
+HTTP (omdrcctrl) and the MPD protocol.  Commands come in two kinds:
+
+  prep (NOT blind, run before a session; they may name the running OS)
+    init                     write a default config to $BLINDTEST_HOME/config.json
+    keyscan                  add the running OS's ssh host key to the private known_hosts
+    doctor                   ssh, sudo, reboot commands, omdrcctrl and MPD reachable?
+    capture-queue            save the MPD queue as the test tracks (build it in the app first)
+    prep-queue               clear MPD's queue and load the test tracks (once per OS)
+    snapshot                 record the reference state of the running OS
+    calibrate linux|freebsd  reboot into the given OS and print the timings
+
+  blind (during a session; print only OS-neutral lines)
+    session new <name> <trials>
+    trial                    random reboot, checks, READY after a fixed time T
+    play 1|2|3, stop, pause, resume
+    answer linux|freebsd [1-3]
+    status
+    reveal                   score, only once every trial is answered
+
+Every blind command sends what the box says to <session>/private/ and prints
+nothing else.  Nobody should read private/ before `reveal`.
+"""
+
+import json
+import math
+import os
+import secrets
+import socket
+import subprocess
+import sys
+import time
+import traceback
+import urllib.request
+from pathlib import Path
+
+HOME = Path(os.environ.get("BLINDTEST_HOME", Path.home() / "blindtest"))
+CONFIG = HOME / "config.json"
+CURRENT = HOME / "current"
+KNOWN_HOSTS = HOME / "known_hosts"
+OSES = ("Linux", "FreeBSD")
+
+DEFAULT_CONFIG = {
+    "host": "192.168.1.9",
+    "ssh_user": "giacomo",
+    "omdrcctrl_port": 9090,
+    "mpd_port": 6600,
+    # seconds from the start of a trial to READY; set from `calibrate`
+    "ready_after_s": 300,
+    # how long a dropped connection may take before the reboot counts as failed
+    "down_timeout_s": 120,
+    # reboot_commands[running][target], run with `sudo -n` on the box
+    "reboot_commands": {
+        "Linux": {"Linux": "systemctl reboot",
+                  "FreeBSD": "grub-reboot-to-freebsd.sh"},
+        "FreeBSD": {"FreeBSD": "shutdown -r now",
+                    "Linux": "SET-ME-reboot-to-linux-script"},
+    },
+    # must appear in the DRC session/active state on both OSes
+    "expect_substrings": ["120.green", "fdw6.multipos"],
+    "tracks": [],
+    "references": {},
+}
+
+
+# ── plumbing ────────────────────────────────────────────────────────────────
+
+class Failure(Exception):
+    """A neutral, printable failure."""
+
+
+def load_config() -> dict:
+    if not CONFIG.exists():
+        raise Failure(f"no config: run `blindtest init` ({CONFIG})")
+    return json.loads(CONFIG.read_text())
+
+
+def save_config(cfg: dict) -> None:
+    tmp = CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.replace(CONFIG)
+
+
+def ssh(cfg: dict, command: str, timeout: float = 15) -> subprocess.CompletedProcess:
+    argv = [
+        "ssh", "-q", "-T",
+        "-o", "BatchMode=yes", "-o", "LogLevel=QUIET",
+        "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=3",
+        "-o", "ServerAliveCountMax=2",
+        "-o", f"UserKnownHostsFile={KNOWN_HOSTS}",
+        "-o", "GlobalKnownHostsFile=/dev/null",
+        "-o", "StrictHostKeyChecking=yes",
+        f"{cfg['ssh_user']}@{cfg['host']}", command,
+    ]
+    try:
+        return subprocess.run(argv, capture_output=True, text=True,
+                              timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 255, "", "timeout")
+
+
+def box_identity(cfg: dict):
+    """(os, boot marker) of the running system, or None when unreachable."""
+    r = ssh(cfg, "uname -s; cat /proc/sys/kernel/random/boot_id 2>/dev/null"
+                 " || sysctl -n kern.boottime")
+    lines = r.stdout.strip().splitlines()
+    if r.returncode != 0 or len(lines) < 2 or lines[0] not in OSES:
+        return None
+    return lines[0], lines[1].strip()
+
+
+def http_json(cfg: dict, path: str) -> dict:
+    url = f"http://{cfg['host']}:{cfg['omdrcctrl_port']}{path}"
+    with urllib.request.urlopen(url, timeout=8) as response:
+        return json.loads(response.read().decode())
+
+
+class MPD:
+    def __init__(self, cfg: dict):
+        self.sock = socket.create_connection((cfg["host"], cfg["mpd_port"]), timeout=8)
+        self.file = self.sock.makefile("rwb")
+        banner = self.file.readline().decode()
+        if not banner.startswith("OK MPD"):
+            raise Failure("MPD did not answer")
+
+    def command(self, *words: str) -> list:
+        line = " ".join([words[0]] + ['"%s"' % w.replace("\\", "\\\\").replace('"', '\\"')
+                                      for w in words[1:]])
+        self.file.write((line + "\n").encode())
+        self.file.flush()
+        pairs = []
+        while True:
+            reply = self.file.readline().decode().rstrip("\n")
+            if reply == "OK":
+                return pairs
+            if reply.startswith("ACK") or not reply:
+                raise Failure(f"MPD refused `{words[0]}`")
+            key, _, value = reply.partition(": ")
+            pairs.append((key, value))
+
+    def close(self) -> None:
+        try:
+            self.file.write(b"close\n")
+            self.file.flush()
+        except OSError:
+            pass
+        self.sock.close()
+
+
+def mpd_queue(mpd: MPD) -> list:
+    return [v for k, v in mpd.command("playlistinfo") if k == "file"]
+
+
+def state_snapshot(cfg: dict) -> dict:
+    """The OS-independent state the two systems must share."""
+    drc = http_json(cfg, "/drc/session")
+    if not drc.get("ok"):
+        raise Failure("DRC session unavailable")
+    session, active = drc.get("session", {}), drc.get("active", {})
+    att = http_json(cfg, "/drc/attenuation")
+    mpd = MPD(cfg)
+    try:
+        status = dict(mpd.command("status"))
+        queue = mpd_queue(mpd)
+    finally:
+        mpd.close()
+    return {
+        "session": {k: session.get(k) for k in
+                    ("geometry", "power", "mode", "rate", "design", "source")},
+        "active": {
+            "running": active.get("running"),
+            "geometry": active.get("geometry"),
+            "design": active.get("design"),
+            "rate": active.get("rate"),
+            "bundle_id": active.get("bundle_id"),
+            "verification": (active.get("verification") or {}).get("status"),
+        },
+        "attenuation_db": att.get("db"),
+        "mpd_volume": status.get("volume"),
+        "queue": queue,
+    }
+
+
+def snapshot_problems(cfg: dict, snap: dict, reference) -> list:
+    problems = []
+    drc_text = json.dumps([snap["session"], snap["active"]])
+    for needle in cfg.get("expect_substrings", []):
+        if needle not in drc_text:
+            problems.append(f"DRC state lacks {needle!r}")
+    if snap["session"].get("power") != "on":
+        problems.append("saved DRC power is not on")
+    if not snap["active"].get("running"):
+        problems.append("BruteFIR is not running")
+    tracks = [t["uri"] for t in cfg.get("tracks", [])]
+    if tracks and snap["queue"] != tracks:
+        problems.append("MPD queue differs from the test tracks")
+    if reference is None:
+        problems.append("no reference snapshot")
+    else:
+        for key in ("session", "active", "attenuation_db", "mpd_volume"):
+            if snap[key] != reference[key]:
+                problems.append(f"{key} differs from the reference")
+    return problems
+
+
+def ssh_detached(cfg: dict, sudo_command: str) -> None:
+    """Start a reboot without waiting for the connection it will cut."""
+    ssh(cfg, f"nohup sudo -n sh -c 'sleep 2; {sudo_command}' "
+             "</dev/null >/dev/null 2>&1 &", timeout=10)
+
+
+def reboot_and_wait(cfg: dict, target: str, deadline: float, log) -> dict:
+    """Reboot into target; return timings.  Raises Failure on anything odd."""
+    t0 = time.monotonic()
+    before = box_identity(cfg)
+    if before is None:
+        raise Failure("box unreachable before the reboot")
+    running, marker = before
+    command = cfg["reboot_commands"][running][target]
+    log(f"running={running} target={target} command={command!r}")
+    ssh_detached(cfg, command)
+    down_by = time.monotonic() + cfg["down_timeout_s"]
+    while box_identity(cfg) is not None:
+        if time.monotonic() > down_by:
+            raise Failure("the box did not go down")
+        time.sleep(2)
+    t_down = time.monotonic()
+    while True:
+        if time.monotonic() > deadline:
+            raise Failure("the box did not come back in time")
+        now = box_identity(cfg)
+        if now is not None:
+            if now[1] == marker:
+                raise Failure("the box came back without rebooting")
+            if now[0] != target:
+                log(f"landed in {now[0]}, wanted {target}")
+                raise Failure("the reboot did not land as planned")
+            break
+        time.sleep(3)
+    t_up = time.monotonic()
+    return {"from": running, "to": target, "down_s": round(t_down - t0, 1),
+            "ssh_up_s": round(t_up - t0, 1)}
+
+
+def wait_for_checks(cfg: dict, target: str, deadline: float, log) -> float:
+    """Retry the checks until they pass (services start late); return time."""
+    t0 = time.monotonic()
+    reference = cfg.get("references", {}).get(target)
+    last = ["not checked"]
+    while time.monotonic() < deadline:
+        try:
+            snap = state_snapshot(cfg)
+            last = snapshot_problems(cfg, snap, reference)
+            if not last:
+                return round(time.monotonic() - t0, 1)
+            log(f"checks pending: {last}")
+        except Exception as error:  # services still starting
+            last = [f"{type(error).__name__}: {error}"]
+            log(f"checks pending: {last}")
+        time.sleep(4)
+    log(f"checks failed: {last}")
+    raise Failure("checks failed")
+
+
+# ── sessions ────────────────────────────────────────────────────────────────
+
+def session_dir() -> Path:
+    if not CURRENT.exists():
+        raise Failure("no session: run `blindtest session new <name> <trials>`")
+    return HOME / CURRENT.read_text().strip()
+
+
+def read_jsonl(path: Path) -> list:
+    if not path.exists():
+        return []
+    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+
+
+def append_jsonl(path: Path, record: dict) -> None:
+    with path.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def session_state(sdir: Path) -> dict:
+    meta = json.loads((sdir / "session.json").read_text())
+    truth = read_jsonl(sdir / "private" / "truth.jsonl")
+    answers = read_jsonl(sdir / "answers.jsonl")
+    done = [t for t in truth if t.get("result") == "ready"]
+    return {"meta": meta, "truth": truth, "done": done, "answers": answers,
+            "awaiting_answer": len(done) > len(answers)}
+
+
+def private_logger(sdir: Path, trial: int):
+    path = sdir / "private" / "trial.log"
+
+    def log(message: str) -> None:
+        with path.open("a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} trial {trial}: {message}\n")
+    return log
+
+
+# ── commands ────────────────────────────────────────────────────────────────
+
+def cmd_init(args):
+    HOME.mkdir(parents=True, exist_ok=True)
+    if CONFIG.exists():
+        raise Failure(f"{CONFIG} exists already")
+    save_config(DEFAULT_CONFIG)
+    KNOWN_HOSTS.touch()
+    print(f"wrote {CONFIG}; edit reboot_commands.FreeBSD.Linux, then keyscan on each OS")
+
+
+def cmd_keyscan(args):
+    cfg = load_config()
+    r = subprocess.run(["ssh-keyscan", "-T", "5", cfg["host"]],
+                       capture_output=True, text=True)
+    have = set(KNOWN_HOSTS.read_text().splitlines()) if KNOWN_HOSTS.exists() else set()
+    new = [l for l in r.stdout.splitlines() if l and not l.startswith("#") and l not in have]
+    with KNOWN_HOSTS.open("a") as f:
+        f.writelines(l + "\n" for l in new)
+    ident = box_identity(cfg)
+    print(f"added {len(new)} key(s); box now answers as {ident[0] if ident else 'UNREACHABLE'}")
+
+
+def cmd_doctor(args):
+    cfg = load_config()
+    ident = box_identity(cfg)
+    if ident is None:
+        raise Failure("ssh failed (run keyscan on this OS?)")
+    running = ident[0]
+    print(f"ssh ok, running {running}")
+    r = ssh(cfg, "sudo -n true")
+    print("sudo -n ok" if r.returncode == 0 else "sudo -n FAILED")
+    for target, command in cfg["reboot_commands"][running].items():
+        exe = command.split()[0]
+        r = ssh(cfg, f"sudo -n sh -c 'command -v {exe}'")
+        print(f"reboot to {target}: {command!r} "
+              f"{'found ' + r.stdout.strip() if r.returncode == 0 else 'NOT FOUND'}")
+    snap = state_snapshot(cfg)
+    print(json.dumps(snap, indent=2))
+    ref = cfg.get("references", {}).get(running)
+    for p in snapshot_problems(cfg, snap, ref):
+        print(f"problem: {p}")
+
+
+def cmd_capture_queue(args):
+    cfg = load_config()
+    mpd = MPD(cfg)
+    try:
+        queue = mpd_queue(mpd)
+    finally:
+        mpd.close()
+    if not queue:
+        raise Failure("MPD queue is empty")
+    cfg["tracks"] = [{"n": i + 1, "uri": uri} for i, uri in enumerate(queue)]
+    save_config(cfg)
+    for t in cfg["tracks"]:
+        print(f"track {t['n']}: {t['uri']}")
+
+
+def cmd_prep_queue(args):
+    cfg = load_config()
+    if not cfg.get("tracks"):
+        raise Failure("no tracks: run capture-queue first")
+    mpd = MPD(cfg)
+    try:
+        mpd.command("stop")
+        mpd.command("clear")
+        for t in cfg["tracks"]:
+            mpd.command("add", t["uri"])
+        mpd.command("repeat", "0")
+        mpd.command("random", "0")
+        mpd.command("single", "1")   # play one track, then stop
+        mpd.command("consume", "0")
+        queue = mpd_queue(mpd)
+    finally:
+        mpd.close()
+    print(f"queue loaded: {len(queue)} track(s)")
+
+
+def cmd_snapshot(args):
+    cfg = load_config()
+    ident = box_identity(cfg)
+    if ident is None:
+        raise Failure("box unreachable")
+    snap = state_snapshot(cfg)
+    cfg.setdefault("references", {})[ident[0]] = snap
+    save_config(cfg)
+    print(f"reference saved for {ident[0]}")
+    print(json.dumps(snap, indent=2))
+    other = cfg["references"].get("FreeBSD" if ident[0] == "Linux" else "Linux")
+    if other:
+        diffs = [k for k in ("session", "active", "attenuation_db", "mpd_volume", "queue")
+                 if snap[k] != other[k]]
+        print("matches the other OS" if not diffs else f"DIFFERS from the other OS in: {diffs}")
+
+
+def cmd_calibrate(args):
+    cfg = load_config()
+    target = {"linux": "Linux", "freebsd": "FreeBSD"}[args[0].lower()]
+    t0 = time.monotonic()
+    deadline = t0 + 900
+    timings = reboot_and_wait(cfg, target, deadline, lambda m: print(m))
+    timings["checks_ok_s"] = round(time.monotonic() - t0
+                                   + wait_for_checks(cfg, target, deadline, print), 1)
+    log = HOME / "calibration.jsonl"
+    append_jsonl(log, {"at": time.strftime("%F %T"), **timings})
+    print(json.dumps(timings))
+    rows = read_jsonl(log)
+    print(f"slowest so far: {max(r['checks_ok_s'] for r in rows)} s over {len(rows)} run(s);"
+          f" ready_after_s = {cfg['ready_after_s']}")
+
+
+def cmd_session(args):
+    if len(args) != 3 or args[0] != "new":
+        raise Failure("usage: blindtest session new <name> <trials>")
+    name, trials = args[1], int(args[2])
+    cfg = load_config()
+    for os_name in OSES:
+        if os_name not in cfg.get("references", {}):
+            raise Failure("references missing: snapshot both OSes first")
+    sdir = HOME / name
+    if sdir.exists():
+        raise Failure(f"session {name} exists")
+    (sdir / "private").mkdir(parents=True)
+    (sdir / "session.json").write_text(json.dumps(
+        {"name": name, "trials": trials, "created": time.strftime("%F %T"),
+         "ready_after_s": cfg["ready_after_s"]}) + "\n")
+    CURRENT.write_text(name + "\n")
+    print(f"session {name}: {trials} trials")
+
+
+def cmd_trial(args):
+    cfg = load_config()
+    sdir = session_dir()
+    st = session_state(sdir)
+    if st["awaiting_answer"]:
+        raise Failure("answer the previous trial first")
+    n = len(st["done"]) + 1
+    if n > st["meta"]["trials"]:
+        raise Failure("all trials done: run reveal")
+    t0 = time.monotonic()
+    ready_at = t0 + st["meta"]["ready_after_s"]
+    print(f"trial {n}: switching", flush=True)
+    log = private_logger(sdir, n)
+    target = secrets.choice(OSES)
+    record = {"trial": n, "attempt": len(st["truth"]) + 1, "target": target,
+              "started": time.strftime("%F %T")}
+    append_jsonl(sdir / "private" / "pending.jsonl", record)
+    try:
+        timings = reboot_and_wait(cfg, target, ready_at, log)
+        timings["checks_s"] = wait_for_checks(cfg, target, ready_at, log)
+        timings["ready_margin_s"] = round(ready_at - time.monotonic(), 1)
+        record.update(timings, result="ready")
+    except Exception as error:
+        log("void: " + "".join(traceback.format_exception_only(type(error), error)).strip())
+        record.update(result="void", reason=str(error))
+    append_jsonl(sdir / "private" / "truth.jsonl", record)
+    # same wall-clock time for every outcome; a void that overran is late anyway
+    time.sleep(max(0.0, ready_at - time.monotonic()))
+    if record["result"] == "ready":
+        print("checks: OK")
+        print(f"trial {n}: READY")
+    else:
+        print(f"trial {n}: void (technical problem); run `blindtest trial` again")
+        return 1
+    return 0
+
+
+def cmd_play(args):
+    cfg = load_config()
+    mpd = MPD(cfg)
+    try:
+        if len(mpd_queue(mpd)) != len(cfg["tracks"]):
+            raise Failure("queue does not hold the test tracks")
+        n = int(args[0])
+        if not 1 <= n <= len(cfg["tracks"]):
+            raise Failure(f"track must be 1..{len(cfg['tracks'])}")
+        mpd.command("play", str(n - 1))
+    finally:
+        mpd.close()
+    print("ok")
+
+
+def simple_mpd(*words):
+    def run(args):
+        mpd = MPD(load_config())
+        try:
+            mpd.command(*words)
+        finally:
+            mpd.close()
+        print("ok")
+    return run
+
+
+def cmd_answer(args):
+    sdir = session_dir()
+    st = session_state(sdir)
+    if not st["awaiting_answer"]:
+        raise Failure("no trial waiting for an answer")
+    guess = {"linux": "Linux", "freebsd": "FreeBSD"}.get(args[0].lower() if args else "")
+    if guess is None:
+        raise Failure("usage: blindtest answer linux|freebsd [1-3]")
+    confidence = int(args[1]) if len(args) > 1 else None
+    n = len(st["answers"]) + 1
+    append_jsonl(sdir / "answers.jsonl", {"trial": n, "answer": guess,
+                                          "confidence": confidence,
+                                          "at": time.strftime("%F %T")})
+    print(f"trial {n}: recorded")
+
+
+def cmd_status(args):
+    st = session_state(session_dir())
+    voids = sum(1 for t in st["truth"] if t.get("result") == "void")
+    print(f"session {st['meta']['name']}: {len(st['done'])}/{st['meta']['trials']} trials, "
+          f"{len(st['answers'])} answered, {voids} void, "
+          f"{'waiting for an answer' if st['awaiting_answer'] else 'ready for the next trial'}")
+
+
+def cmd_reveal(args):
+    sdir = session_dir()
+    st = session_state(sdir)
+    if st["awaiting_answer"] or (len(st["done"]) < st["meta"]["trials"]
+                                 and "--early" not in args):
+        raise Failure("session not finished (use --early to end it now)")
+    rows, correct = [], 0
+    for truth, answer in zip(st["done"], st["answers"]):
+        ok = truth["target"] == answer["answer"]
+        correct += ok
+        rows.append((truth["trial"], truth["target"], answer["answer"],
+                     answer["confidence"], ok, truth.get("from")))
+    n = len(rows)
+    p = sum(math.comb(n, k) for k in range(correct, n + 1)) / 2 ** n if n else 1.0
+    lines = [f"# Blind test {st['meta']['name']}", "",
+             "| trial | played | previous | answer | conf | |",
+             "|---|---|---|---|---|---|"]
+    for trial, played, ans, conf, ok, prev in rows:
+        lines.append(f"| {trial} | {played} | {prev} | {ans} | {conf or ''} | "
+                     f"{'✓' if ok else '✗'} |")
+    voids = sum(1 for t in st["truth"] if t.get("result") == "void")
+    lines += ["", f"**{correct}/{n} correct**, one-sided binomial p = {p:.4f}"
+              f" ({voids} void trial(s) not counted)"]
+    text = "\n".join(lines) + "\n"
+    (sdir / "results.md").write_text(text)
+    print(text)
+
+
+COMMANDS = {
+    "init": cmd_init, "keyscan": cmd_keyscan, "doctor": cmd_doctor,
+    "capture-queue": cmd_capture_queue, "prep-queue": cmd_prep_queue,
+    "snapshot": cmd_snapshot, "calibrate": cmd_calibrate,
+    "session": cmd_session, "trial": cmd_trial, "play": cmd_play,
+    "stop": simple_mpd("stop"), "pause": simple_mpd("pause", "1"),
+    "resume": simple_mpd("pause", "0"),
+    "answer": cmd_answer, "status": cmd_status, "reveal": cmd_reveal,
+}
+BLIND = {"trial", "play", "stop", "pause", "resume", "answer", "status"}
+
+
+def main(argv) -> int:
+    if not argv or argv[0] not in COMMANDS:
+        print(__doc__.strip())
+        return 2
+    name, args = argv[0], argv[1:]
+    try:
+        return COMMANDS[name](args) or 0
+    except Failure as error:
+        print(f"failed: {error}")
+        return 1
+    except Exception:
+        if name in BLIND:
+            # the traceback could name the OS: keep it private
+            try:
+                with (session_dir() / "private" / "errors.log").open("a") as f:
+                    f.write(time.strftime("%F %T ") + name + "\n" + traceback.format_exc())
+            except Exception:
+                pass
+            print("failed")
+        else:
+            traceback.print_exc()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

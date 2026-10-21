@@ -76,26 +76,47 @@ technical problem, redoing it".
 
 ## The runner: nothing on screen but neutral lines
 
-`~/blindtest/blindtest` on dixi is a single script, and Claude calls only it
-during the session. It sends every ssh/MPD/HTTP output to
-`~/blindtest/<session>/private/` and prints a fixed set of lines:
+The runner is `tools/blindtest/blindtest` (Python 3, stdlib only). It runs on
+dixi, and its data lives in `~/blindtest/` (or `$BLINDTEST_HOME`):
+`config.json`, a private `known_hosts` holding both host keys, and one
+directory per session.
+
+Prep commands are **not blind**. They may name the running OS, so run them
+only before a session:
 
 ```
-blindtest trial      -> "trial N: switching" ... "checks: OK" / "trial N: void" ... "READY"
-blindtest play 1|2|3 / stop / pause / resume -> "ok" / "failed"
-blindtest answer N linux|freebsd [1-3]  -> "recorded"
-blindtest reveal     -> score table (only at the very end)
+blindtest init                   default config; set reboot_commands.FreeBSD.Linux
+blindtest keyscan                on each OS: store its ssh host key
+blindtest doctor                 ssh, sudo -n, reboot commands found, DRC/MPD state
+blindtest capture-queue          save the MPD queue (built in the app) as tracks 1..n
+blindtest prep-queue             on each OS once: stop, clear, load tracks, single=1
+blindtest snapshot               on each OS: reference state; says if the two differ
+blindtest calibrate linux|freebsd   timed reboot; run all four paths, set ready_after_s
 ```
 
-- The coin comes from Python `secrets`, and the truth is written to
-  `private/truth.log` before the reboot is issued.
-- Exit codes are 0 or 1 only; error text goes to `private/`. When a trial is
-  void, Claude reads only the runner's neutral reason, never the private logs,
-  unless the listener agrees to end blinding.
+Session commands are blind. Claude uses only these once the session starts:
+
+```
+blindtest session new <name> <trials>
+blindtest trial                  "trial N: switching" ... "checks: OK" + "trial N: READY"
+                                 or "trial N: void (technical problem)"
+blindtest play 1|2|3 / stop / pause / resume   -> "ok" / "failed"
+blindtest answer linux|freebsd [1-3]           -> "trial N: recorded"
+blindtest status                 trials done/answered/void, nothing else
+blindtest reveal                 score table + p, only when every trial is answered
+```
+
+- The coin comes from Python `secrets`, and the target is written to
+  `private/pending.jsonl` before the reboot is issued. The outcome and
+  timings go to `private/truth.jsonl`, and the box's replies to
+  `private/trial.log`. Tracebacks from blind commands go to
+  `private/errors.log`, and the screen shows only `failed`.
+- `trial` refuses to start while the previous trial is unanswered. A void
+  trial is reprinted at the same `T` as a good one and redone with a new coin.
 - ssh runs with `-q`, `LogLevel=QUIET`, `BatchMode=yes` and its own
-  known_hosts file holding both host keys. That way neither a host-key
-  warning nor a login banner can name the OS.
-- The timing is fixed: the runner sleeps until `T` whatever the box does.
+  known_hosts file, so no host-key warning or banner can name the OS.
+- `T` (`ready_after_s`) can exceed Claude's 10-minute foreground Bash limit. In
+  that case Claude runs `trial` in the background and waits for it to finish.
 
 ## Playback without revealing the box
 
@@ -105,10 +126,12 @@ also show OS-specific details (`virtual_oss`, ALSA). So during the test **the
 OMDRC app and kiosk stay closed**. Playback uses one of these:
 
 - **The runner (default).** The listener tells Claude "play track 1", "play
-  track 2", "stop", and so on. Claude runs `blindtest play 1` etc. The runner
-  clears the MPD queue, adds only that track (local or Qobuz through the
-  upmpdcli plugin), sets the reference volume and plays it from the start.
-  Every trial and every track starts identically, and nothing else is needed.
+  track 2", "stop", and so on. Claude runs `blindtest play 1` etc., which
+  plays that position of the queue from the start. MPD's `single` mode is on,
+  so it stops at the end of the track. The queue is built **once per OS during
+  prep** (`capture-queue` on the first OS, then `prep-queue` on each). MPD
+  keeps it across reboots, and every trial's checks confirm it is still exactly
+  the test tracks.
 - **A plain MPD client** (only as a fallback) pointed at `192.168.1.9:6600`, for example MALP on the
   phone. It shows only the IP. Check beforehand that it does not display the
   server's version string or any output names.
@@ -161,11 +184,10 @@ Do this once, ideally the day before:
       with the same attenuation and volume. Take the reference snapshot.
 - [ ] Time all four paths (start Linux or FreeBSD × target Linux or FreeBSD).
       Set `T`.
-- [ ] Write `blindtest` (in `~/blindtest/` on dixi, not in this repo). It
-      should provide `prep`, `trial`, `answer` and `reveal` subcommands, use
-      Python `secrets` for the coin, and print only neutral lines.
-- [ ] Create the MPD playlist of the test tracks and check that it plays on
-      both OSes.
+- [ ] `blindtest init`, then set the FreeBSD → Linux script name in
+      `~/blindtest/config.json`. Then `keyscan` + `doctor` on each OS.
+- [ ] Build the queue of test tracks in the app, `capture-queue`, then
+      `prep-queue` + `play 1..3` on each OS, then `snapshot` on each OS.
 
 ## After the session
 
