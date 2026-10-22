@@ -17,7 +17,7 @@ HTTP (omdrcctrl) and the MPD protocol.  Commands come in two kinds:
   blind (during a session; print only OS-neutral lines)
     session new <name> <trials>
     trial                    random reboot, checks, READY after a fixed time T
-    play 1|2|3, stop, pause, resume
+    play 1|2|3 [from_s], seek <s>|-<s>|+<s>, stop, pause, resume
     answer linux|freebsd [1-3]
     status
     reveal                   score, only once every trial is answered
@@ -503,7 +503,27 @@ def cmd_play(args):
         n = int(args[0])
         if not 1 <= n <= len(cfg["tracks"]):
             raise Failure(f"track must be 1..{len(cfg['tracks'])}")
-        mpd.command("play", str(n - 1))
+        if len(args) > 1:
+            # seek starts the track at an offset without a play-then-jump
+            mpd.command("seek", str(n - 1), str(float(args[1])))
+        else:
+            mpd.command("play", str(n - 1))
+    finally:
+        mpd.close()
+    print("ok")
+
+
+def cmd_seek(args):
+    """seek 8 jumps to 0:08; seek -20 / +20 moves relative to now."""
+    if len(args) != 1:
+        raise Failure("usage: blindtest seek <s> | -<s> | +<s>")
+    try:
+        float(args[0])
+    except ValueError:
+        raise Failure("usage: blindtest seek <s> | -<s> | +<s>")
+    mpd = MPD(load_config())
+    try:
+        mpd.command("seekcur", args[0])
     finally:
         mpd.close()
     print("ok")
@@ -576,12 +596,12 @@ COMMANDS = {
     "init": cmd_init, "keyscan": cmd_keyscan, "doctor": cmd_doctor,
     "capture-queue": cmd_capture_queue, "prep-queue": cmd_prep_queue,
     "snapshot": cmd_snapshot, "calibrate": cmd_calibrate,
-    "session": cmd_session, "trial": cmd_trial, "play": cmd_play,
+    "session": cmd_session, "trial": cmd_trial, "play": cmd_play, "seek": cmd_seek,
     "stop": simple_mpd("stop"), "pause": simple_mpd("pause", "1"),
     "resume": simple_mpd("pause", "0"),
     "answer": cmd_answer, "status": cmd_status, "reveal": cmd_reveal,
 }
-BLIND = {"trial", "play", "stop", "pause", "resume", "answer", "status"}
+BLIND = {"trial", "play", "seek", "stop", "pause", "resume", "answer", "status"}
 
 
 def main(argv) -> int:

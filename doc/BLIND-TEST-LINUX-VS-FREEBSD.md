@@ -106,7 +106,8 @@ Session commands are blind. Claude uses only these once the session starts:
 blindtest session new <name> <trials>
 blindtest trial                  "trial N: switching" ... "checks: OK" + "trial N: READY"
                                  or "trial N: void (technical problem)"
-blindtest play 1|2|3 / stop / pause / resume   -> "ok" / "failed"
+blindtest play 1|2|3 [from_s] / seek <s>|-<s>|+<s> / stop / pause / resume
+                                               -> "ok" / "failed"
 blindtest answer linux|freebsd [1-3]           -> "trial N: recorded"
 blindtest status                 trials done/answered/void, nothing else
 blindtest reveal                 score table + p, only when every trial is answered
