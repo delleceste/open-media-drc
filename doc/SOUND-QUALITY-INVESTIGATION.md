@@ -624,7 +624,7 @@ the cross-OS null needs the same DAC on both sides — but that is already done.
   not follow.
 - **Not in the equipment.** Level matching and expectation. Worth stating plainly
   because the measured digital difference is now exactly zero, while the reported
-  perceptual difference is large.
+  perceptual difference is large. Now being tested double-blind (§10.1).
 - **The provenance bug of §7 is unfixed.** `deploy_filter.py` still makes the
   deployed filter a function of the installing host's SoX build. The right fix is
   for the deploy to ship the coefficients the design produced — whose sha256 the
@@ -633,6 +633,47 @@ the cross-OS null needs the same DAC on both sides — but that is already done.
 - **The DRC path has never been wire-verified against a *source*** on either OS,
   only against the other machine. The method for that (unit-impulse filter,
   making the convolution an identity) is in `BIT-PERFECT-VERIFICATION.md`.
+
+### 10.1 Double-blind listening test, first results (2026-10-21/22)
+
+Procedure: `BLIND-TEST-LINUX-VS-FREEBSD.md`, runner `tools/blindtest/blindtest`.
+One box (192.168.1.9) rebooted into a coin-flipped OS for every trial, the
+same-OS case included, so a reboot carries no information. READY came at a
+fixed 95 s, and the slowest path took about 86 s. DRC state, filter bundle,
+attenuation (8 dB) and the MPD queue were checked against references that
+matched on both OSes. Level is therefore matched by construction. Neither the
+listener nor Claude saw the truth file before the reveal. One track (Qobuz,
+44.1 kHz/24, played from 0:05), DRC `120.green` / `@120.green.multipos.fdw6`
+at 192 kHz.
+
+| Session | Trials scored | Correct | One-sided p |
+|---|---|---|---|
+| `taste-2026-10-21` (practice, count fixed at 7, stopped at 4) | 4 | 4 | 0.0625 |
+| `night-2026-10-22` (count fixed at 12, stopped at 10) | 10 | 7 | 0.172 |
+
+- Both sessions stopped early because the listener was tired, with the
+  results still sealed. Unanswered trials (taste trial 5, night trial 11) were
+  not scored.
+- Night session by confidence: 3 → 3/4, 2 → 3/4, 1 → 0/1, none → 1/1. So
+  confidence did not separate right from wrong.
+- Both night misses after an OS change (trials 4 and 7) named the previous OS.
+  Trials on the same OS as the one before scored 5/6. Too few trials to mean
+  anything.
+- The listener's description, unprompted and before the reveal: FreeBSD
+  "not as airy and defined as I expected". In the taste session, trial 3
+  (Linux) "sounded better" than trial 4 (FreeBSD). Both labels were correct.
+- Pooled, 11/14 (p ≈ 0.029). The pooling was decided after the results were
+  seen, so this is a hint, not a result.
+
+Status: **suggestive, not established.** The next step is a fresh session whose
+count is fixed in advance (16 trials) and run rested to the end.
+
+Runner fixes found while setting up: GRUB `boot_once` means a Linux → Linux
+`systemctl reboot` lands in FreeBSD after `reboot-to-arch`. A first play
+issued before upmpdcli's Qobuz plugin answers stalls, with a different symptom
+on each OS. Both are now handled. Local FreeBSD boot changes for the test:
+wlan0 disabled in `/etc/rc.conf` and `autoboot_delay="1"`. Backups are
+`*.bak-blindtest`.
 
 ---
 
@@ -732,7 +773,7 @@ current default), `-n` (set the default without rebooting), and a read-back of
 | Resampling on rate mismatch — FreeBSD | **excluded** | MPD soxr measured, same +2.5…+4 dB, no resampler images (§9, `RATE-MISMATCH-PROCEDURE.md` §8) |
 | `resamp` mode's 24-bit OSS path (3-vs-4-byte stride) | **excluded** | BIT-PERFECT on both OSes, byte-identical taps (`RATE-MISMATCH-PROCEDURE.md` §8.4) |
 | DAC clocking / analogue / USB noise | open, not yet probed | §10 |
-| Level matching / expectation | open, not yet probed | §10 |
+| Level matching / expectation | **under test**: double-blind 7/10 (p = 0.17), taste run 4/4; not yet conclusive | §10.1 |
 
 ---
 
