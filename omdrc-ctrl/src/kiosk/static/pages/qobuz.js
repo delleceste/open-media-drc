@@ -217,11 +217,12 @@ P.mount = el => {
     K.api('/qobuz/lowered').then(d => { if (d.ok) { P.lowCountCache = d.entries.length; P.paintLowLink(); } });
 };
 
-// Pulling down past the top of Recent, Discover, Awarded or Favorites opens Results with
+// Pulling down past the top of Discover (which has no box of its own) opens Results with
 // the search box in view: a hint grows with the pull, and letting go past it switches.
+// Recent, Awarded and Favorites just scroll up to their own box.
 // Touch events, not pointer events: the browser cancels the pointer once it takes the
 // gesture for a scroll, but touchmove keeps coming through the overscroll.
-const PULL_AT = 70;                            // px of finger travel that switches
+const PULL_AT = 45;                            // px of finger travel that switches
 P.wirePullToResults = () => {
     let g = null;
     const paint = d => {
@@ -241,7 +242,7 @@ P.wirePullToResults = () => {
     };
     P.el.addEventListener('touchstart', e => {
         g = null;
-        if (e.touches.length !== 1 || P.el.scrollTop > 0 || P.view() === 'results' || P.fromNowShown || P.dockedOnNow()) return;
+        if (e.touches.length !== 1 || P.el.scrollTop > 0 || P.view() !== 'discover' || P.fromNowShown || P.dockedOnNow()) return;
         if (e.target.closest && e.target.closest('.qz-player, input, textarea, .qz-yspin')) return;
         g = { x: e.touches[0].clientX, y: e.touches[0].clientY, d: 0, on: false };
     }, { passive: true });
