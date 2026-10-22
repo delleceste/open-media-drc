@@ -690,6 +690,11 @@ input[type=range] { accent-color: var(--accent); }
 /* ── Qobuz search (pages/qobuz.js) ── */
 .qz { display: flex; flex-direction: column; min-height: 100%; }
 .qz-main { flex: 1 0 auto; display: flex; flex-direction: column; }
+.qz-pull { height: 0; overflow: hidden; display: flex; align-items: flex-end; justify-content: center;
+    color: var(--muted); font-size: .85rem; transition: height .18s ease-out; }
+.qz-pull.live { transition: none; }
+.qz-pull-in { display: inline-flex; align-items: center; gap: .35rem; padding-bottom: .4rem; opacity: .7; }
+.qz-pull.ready .qz-pull-in { color: var(--accent); opacity: 1; }
 .qz-home { display: flow-root; }
 .qz-home[hidden] { display: none; }
 .qz-viewrow { display: flex; align-items: center; gap: .6rem; margin: .1rem 0 .55rem; }

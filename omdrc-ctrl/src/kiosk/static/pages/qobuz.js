@@ -180,7 +180,9 @@ P.mount = el => {
         setPref(P.textKey('library'), '');
         if (P.scopeShown === 'library') P.input.value = '';
     };
-    P.main = h('div', { class: 'qz-main' }, P.resHead, P.formHome, P.viewRow,
+    P.pullHint = h('div', { class: 'qz-pull', 'aria-hidden': 'true' },
+        h('span', { class: 'qz-pull-in' }, K.tIcon('search'), P.pullText = h('span', {})));
+    P.main = h('div', { class: 'qz-main' }, P.pullHint, P.resHead, P.formHome, P.viewRow,
         P.recentBox, P.results, P.discoverBox, P.awardedBox, P.libraryBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.refreshAIIcon();
@@ -210,8 +212,54 @@ P.mount = el => {
     if ('IntersectionObserver' in window) new IntersectionObserver(es => {
         P.searchHint.hidden = es[es.length - 1].isIntersecting || P.formHome.hidden;
     }, { root: P.el, rootMargin: '-24px 0px 0px 0px' }).observe(P.formHome);   // a sliver at the top edge is not "in view"
+    P.wirePullToResults();
     P.loadWords();
     K.api('/qobuz/lowered').then(d => { if (d.ok) { P.lowCountCache = d.entries.length; P.paintLowLink(); } });
+};
+
+// Pulling down past the top of Recent, Discover, Awarded or Favorites opens Results with
+// the search box in view: a hint grows with the pull, and letting go past it switches.
+// Touch events, not pointer events: the browser cancels the pointer once it takes the
+// gesture for a scroll, but touchmove keeps coming through the overscroll.
+const PULL_AT = 70;                            // px of finger travel that switches
+P.wirePullToResults = () => {
+    let g = null;
+    const paint = d => {
+        P.pullHint.style.height = d > 0 ? `${Math.min(d * 0.5, PULL_AT * 0.75)}px` : '';
+        P.pullHint.classList.toggle('ready', d >= PULL_AT);
+        P.pullText.textContent = d >= PULL_AT ? 'Release for Results' : 'Pull for Results';
+    };
+    const end = () => {
+        if (!g) return;
+        const go = g.on && g.d >= PULL_AT;
+        g = null;
+        P.pullHint.classList.remove('live');
+        paint(0);
+        if (!go) return;
+        P.setView('results');
+        P.el.scrollTo({ top: 0, behavior: 'instant' });
+    };
+    P.el.addEventListener('touchstart', e => {
+        g = null;
+        if (e.touches.length !== 1 || P.el.scrollTop > 0 || P.view() === 'results' || P.fromNowShown || P.dockedOnNow()) return;
+        if (e.target.closest && e.target.closest('.qz-player, input, textarea, .qz-yspin')) return;
+        g = { x: e.touches[0].clientX, y: e.touches[0].clientY, d: 0, on: false };
+    }, { passive: true });
+    P.el.addEventListener('touchmove', e => {
+        if (!g) return;
+        const dx = e.touches[0].clientX - g.x, dy = e.touches[0].clientY - g.y;
+        if (!g.on) {
+            if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+            // a sideways swipe is the pager's, a push up a plain scroll
+            if (dy <= 0 || Math.abs(dx) * 1.5 > dy || P.el.scrollTop > 0) { g = null; return; }
+            g.on = true;
+            P.pullHint.classList.add('live');
+        }
+        g.d = Math.max(0, dy);
+        paint(g.d);
+    }, { passive: true });
+    P.el.addEventListener('touchend', end, { passive: true });
+    P.el.addEventListener('touchcancel', () => { g = null; P.pullHint.classList.remove('live'); paint(0); }, { passive: true });
 };
 
 // Prepare before the pager moves: bringing the form back after the swipe settles
