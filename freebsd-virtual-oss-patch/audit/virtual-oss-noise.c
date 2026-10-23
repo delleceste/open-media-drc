@@ -35,7 +35,9 @@
 #include <stdio.h>
 
 #define VVOLUME_UNIT_SHIFT 7
+#ifndef __predict_false
 #define __predict_false(x) (x)
+#endif
 
 int64_t
 vclient_noise(uint32_t *pnoise, int64_t volume, int8_t shift)

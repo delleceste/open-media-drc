@@ -206,64 +206,28 @@ the payload exactly.
 
 ---
 
-## Clock domains: free-running sinks, real-time pacing, and flow control
+## Clock domains and flow control
 
-This is the subtle part, and it is why the test *method* matters as much as the
-result.
+The deployed `-f /dev/null -L dsp.loop` creates a **synchronized** loopback.
+When BruteFIR opens `/dev/dsp.loop`, the null backend skips its nominal-rate
+software wait. The synchronized ring can then be paced by BruteFIR's DAC output
+through backpressure. The earlier two-free-running-clocks explanation was wrong;
+periodic sample slips are not an inherent property of this configuration. See
+[VIRTUAL-OSS-BRIDGE-AUDIT-2026-10-23.md](VIRTUAL-OSS-BRIDGE-AUDIT-2026-10-23.md).
 
-**A digital audio sink consumes samples on a clock.** `/dev/dsp.dac` (the OKTO DAC)
-consumes at the DAC's quartz crystal — exactly `rate` samples per second, no more,
-no less. `virtual_oss` started with `-f /dev/null` (as `drc.sh` does) has **no
-hardware clock**, so it consumes at a **software timer** it generates itself — a
-"free-running" clock that is *approximately* `rate` but is its own independent
-time base.
-
-**How a producer stays in step: flow control (back-pressure).** A well-behaved
-sink exposes a small buffer. When you `write()` faster than the sink drains, the
-buffer fills and the next `write()` **blocks** until space frees up. That block
-is the sink throttling the producer to *its* clock. So:
-
-- Writing to **`/dev/dsp.dac`** → the kernel/USB stack blocks your `write()`s in
-  lockstep with the DAC crystal. The producer is **slaved to the DAC clock**.
-  No drift is possible; the bytes can only arrive bit-exact (proven by the USB
-  tap).
-- A program (MPD, or any player) writing to **`/dev/dsp.play`** is likewise
-  blocked by virtual_oss's buffer and thus **slaved to virtual_oss's software
-  clock**. One producer, one clock → no drift, no slip.
-
-**Why a flat-out `write()` loop is *not* paced.** Our standalone writer just
-loops `read(file) → write(dsp)`. If the device gave perfect back-pressure that
-would be fine — and on `/dev/dsp.dac` it is. But virtual_oss's play device let our
-writer dump the whole buffer's worth and return *faster than real time*
-(measured: 480 KB "played" in 0.17 s instead of 1.36 s). With no throttle, the
-writer overran virtual_oss's free-running consumer and most samples were dropped.
-Adding manual `clock_nanosleep` pacing (`--paced`) helped — but now there are
-**two independent clocks**: our `CLOCK_MONOTONIC` schedule and virtual_oss's
-timer. They drift by tens of ppm plus scheduler jitter, so every second or so a
-buffer over/underruns and a **single sample is dropped or duplicated** — a
-*timing slip*. Crucially, the slip changes *when* samples arrive, never *what*
-they are: every sample that gets through is bit-identical.
-
-**Why MPD does it right.** MPD does not run on its own clock — it `write()`s and
-**blocks on virtual_oss's buffer**, so it is flow-controlled by (slaved to) the
-same clock that drains the data. One clock governs both ends → no drift → no
-slip. Measured end-to-end **MPD → `/dev/dsp.play` → virtual_oss → `/dev/dsp.loop`**:
+A standalone writer that sent 480 KB to `/dev/dsp.play` in 0.17 seconds, instead
+of the 1.36 seconds of audio represented, overran the virtual_oss consumer.
+Manual `clock_nanosleep` pacing introduced a second independent clock and
+produced sample slips. These were test-harness artifacts. MPD, which blocks on
+the sink, yielded this measured matched-rate S32 loopback result:
 
 ```
 value-matched 175376 frames (~4 s), slips=0, corrupt=0   => VALUE-EXACT
 ```
 
-So **virtual_oss as configured is bit-transparent**: with a properly
-flow-controlled producer it neither alters nor drops a single sample. The slips
-in the synthetic-writer test were the *test harness's* fault, not virtual_oss's.
-
-**The one caveat for the real DRC chain.** In playback, brutefir reads
-`/dev/dsp.loop` (virtual_oss's free-running clock) and writes `/dev/dsp.dac` (the
-DAC crystal) **without resampling**. Those two clocks are not the same, so over
-long runs brutefir must occasionally drop/duplicate one sample at the DAC to
-reconcile them — an inaudible slip every several minutes, on top of the
-intentional FIR convolution. Sample *values* are never altered; only the direct
-path is sample-count-exact indefinitely.
+For this **S32 client and matched rate**, virtual_oss neither changed nor dropped
+samples in the captured interval. S16 clients expanded to its 32-bit mixer do
+receive low-level noise, and long-run stream delivery needs separate evidence.
 
 ### Feeding MPD for a whole-chain test
 
