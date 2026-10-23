@@ -16,6 +16,7 @@ documents go deeper on individual pieces:
 | `CROSS-OS-FILTER-COEFFICIENTS.md` | the filter divergence, and §7 the final null |
 | `BIT-PERFECT-VERIFICATION.md` | the USB-wire tap suite |
 | `RATE-MISMATCH-PROCEDURE.md` | the rate-mismatch test: §2 Linux, §8 FreeBSD, both halves closed |
+| `VIRTUAL-OSS-QUALITY-STUDY.md` | virtual_oss source walk: S32 path is an identity; 16-bit sources take a FreeBSD-only truncation + noise path |
 
 ---
 
@@ -772,6 +773,8 @@ current default), `-n` (set the default without rebooting), and a read-back of
 | Resampling on rate mismatch — Linux | **excluded** | MPD soxr, +2.5…+4 dB above the 32-bit floor (§9, `RATE-MISMATCH-PROCEDURE.md` §2) |
 | Resampling on rate mismatch — FreeBSD | **excluded** | MPD soxr measured, same +2.5…+4 dB, no resampler images (§9, `RATE-MISMATCH-PROCEDURE.md` §8) |
 | `resamp` mode's 24-bit OSS path (3-vs-4-byte stride) | **excluded** | BIT-PERFECT on both OSes, byte-identical taps (`RATE-MISMATCH-PROCEDURE.md` §8.4) |
+| virtual_oss arithmetic, S32 client at chain rate | **excluded** | identity by source (`VIRTUAL-OSS-QUALITY-STUDY.md` §3) |
+| 16-bit sources: MPD float→S16 truncation + virtual_oss expansion noise | **open, FreeBSD only** | modelled ≈ −94 dBFS in-band, signal-correlated; not in the blind-test track (`VIRTUAL-OSS-QUALITY-STUDY.md` §5–§7) |
 | DAC clocking / analogue / USB noise | open, not yet probed | §10 |
 | Level matching / expectation | **under test**: double-blind 7/10 (p = 0.17), taste run 4/4; not yet conclusive | §10.1 |
 
