@@ -1,6 +1,9 @@
 # Minimal FreeBSD PCM bridge
 
-Status: design proposal, 2026-10-23. No implementation or deployment yet.
+Status: isolated prototype implemented, 2026-10-23. See
+[implementation, tests and rollout blockers](../pcm-bridge/README.md).
+Production virtual_oss replacement remains gated; BruteFIR still writes directly
+to the DAC.
 
 ## Decision and scope
 
@@ -99,7 +102,7 @@ Do not silently widen samples or enable resampling. Additional lossless
 container conversion, if ever required, is a separate feature with separate
 tests and a revised byte-transparency contract.
 
-Proposed invocation (not an existing executable):
+Intended production invocation (the prototype defaults to isolated test nodes):
 
 ```sh
 omdrc-pcm-bridge --rate 48000 --format s32le --channels 2 \
