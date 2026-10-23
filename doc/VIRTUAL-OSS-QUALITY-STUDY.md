@@ -258,7 +258,9 @@ repo (`L.raw` `3795ef75…`, `R.raw` `b4ccd78c…`, attenuation 8.0 dB). It maps
 left→left and right→right. Both OSes should show those hashes; this has not yet
 been checked on the listening box.
 
-**The DAC's own volume: considered, and very unlikely.** The blind test
+**The DAC's own volume: excluded.** The listener confirmed on 2026-10-23 that
+**Volume → USB sync** is off on the OKTO, so the host cannot set its volume.
+The reasoning below would have made it very unlikely anyway. The blind test
 matched only software levels. When a device attaches, FreeBSD's pcm layer sets
 `vol` and `pcm` to 75 (`sys/dev/sound/pcm/mixer.c:70–75`, applied at `:733`).
 uaudio forwards that to any USB Feature Unit volume the device exposes. But
@@ -279,8 +281,8 @@ Next checks, cheapest first, on the listening box:
    drc`). No test so far has combined the resampling, this filter, full level
    and this DAC (see the provenance in `bp-results/`). Resampled captures are
    not sample-identical run to run, so compare per-channel frequency response
-   and L/R coherence rather than nulling. Note also: check the OKTO menu once
-   (USB sync off, balance, filter).
+   and L/R coherence rather than nulling. USB sync is confirmed off. Balance and filter
+   are still worth noting once.
 2. `sha256` both coefficient files on each OS, from the paths in the installed
    BruteFIR config.
 3. Run `soxr-response.py` on Arch.
