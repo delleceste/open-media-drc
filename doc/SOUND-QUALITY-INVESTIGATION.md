@@ -1,5 +1,11 @@
 # The FreeBSD / Linux sound-quality investigation — complete record
 
+> **Scope correction, 2026-10-23:** the successful captures below do not exclude
+> every digital or delivery fault in the reported 44.1 kHz/24-bit → 192 kHz
+> OKTO listening condition. The current [resampler/stereo investigation](SOXR-44100-192000-INVESTIGATION.md)
+> distinguishes MPD's libsoxr from SoX/sox_ng, records a direct library probe,
+> and identifies the missing stereo and target-machine measurements.
+
 **Period:** 2026-09-08 → 2026-09-10
 **Machine:** Intel NUC `arki` (Arch Linux) / `bee` (FreeBSD 15.1-RELEASE-p2) — one
 box, dual-boot, one disk
