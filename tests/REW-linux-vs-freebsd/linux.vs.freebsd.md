@@ -107,3 +107,48 @@ Not yet retained/verified: FreeBSD `sysctl hw.usb.uaudio` / `/etc/sysctl.conf`
 snapshot from the moment of capture, filter hashes, and OKTO front-panel
 settings recorded during the session — needed to confirm the clock-ppm
 hypothesis above and to close out the procedure's "files to retain" list.
+
+## Follow-up 2026-10-23: impulse-response nulls, L/R timing, distortion
+
+Pulled again from REW's API (V5.40 beta 133 this time) with
+`rew_pull.py`, then `rew_analyse.py`. The pull writes `rew.json` to the
+current directory, and the analysis reads it from there. Both are
+pure-numpy; run with `python3 -I`.
+
+**IR null, −5…+300 ms**, after fitting a fractional delay and a gain.
+Residual energy relative to the measurement, in dB:
+
+| pair | 20–20k | 20–1k | 1–5k | 5–10k | 10–20k |
+|---|---|---|---|---|---|
+| L repeat, Linux | −61.4 | −69.3 | −65.8 | −63.0 | −59.6 |
+| L repeat, FreeBSD | −61.7 | −68.8 | −65.9 | −63.3 | −59.8 |
+| **L cross-OS** (1↔5, 2↔6) | −61.6 / −61.4 | −68.9 / −68.7 | −66.4 / −66.0 | −63.3 / −63.3 | −59.7 / −59.4 |
+| R repeat, Linux | −65.0 | −74.8 | −69.9 | −66.5 | −63.2 |
+| R repeat, FreeBSD | −64.9 | −74.7 | −69.8 | −66.0 | −63.2 |
+| **R cross-OS** (3↔7, 4↔8) | −64.7 / −64.8 | −74.8 / −74.6 | −70.2 / −69.7 | −66.2 / −66.5 | −62.8 / −62.8 |
+
+The fitted delays are within ±0.01 µs and the gains within 0.000 dB. Cross-OS
+nulls are as deep as each OS's own repeat in every band, including 10–20 kHz.
+They are limited by the SB1240's noise, not by the OS.
+
+**Inter-channel timing** (IR peak relative to REW's timing reference, with
+sub-sample interpolation): L−R is +0.02 / +0.02 µs on Linux and +0.00 /
++0.01 µs on FreeBSD. That is no interaural-timing difference that could
+narrow the stage.
+
+**Distortion** (REW THD-vs-frequency): THD, noise, H2 and H3 agree across OSes
+within the repeat spread in 50 Hz–1 kHz, 1–5 kHz and 5–10 kHz (about
+0.004–0.02 %).
+
+**What this measurement cannot see:**
+- anything below about −60 dB relative (capture noise);
+- content above 20 kHz (48 kHz capture);
+- what each channel does while the *other* channel plays (each sweep drives one
+  channel, and only that output was recorded). Digital channel swaps or mixing
+  are excluded separately by the distinct-L/R bit-perfect material;
+- full-level, dynamic or long-duration behaviour, since this is a 19 s sweep at
+  −12 dBFS.
+
+A music capture of both channels at once on each OS would test the reported
+treble and width directly: aligned spectra, plus mid/side energy and L/R
+coherence.
