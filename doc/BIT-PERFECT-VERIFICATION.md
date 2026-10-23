@@ -264,15 +264,18 @@ mpc -p 6610 add src.wav
 The DRC path applies the FIR filter, so it is not byte-equal by design. To check
 that the *non-correction* parts of that path (virtual_oss bridge, S32 container,
 brutefir I/O) are transparent, run the chain on a **pass-through** filter and
-compare as usual. The shipped `flat` geometry is exactly that: `dirac pulse` at
-`attenuation 0.0`, so the convolution is an identity and any byte difference on
-the wire belongs to the plumbing around it.
+compare as usual. The shipped `flat` geometry uses `dirac pulse`, but its
+current coefficient attenuation is **8.0 dB**, so it is not a byte-identity
+control. Use a separate trial config with both coefficient attenuations set to
+`0.0` and dither disabled before interpreting a byte comparison. The planned
+PCM-bridge trial documents this setup in
+[PCM-BRIDGE-EXPERIMENT.md](PCM-BRIDGE-EXPERIMENT.md).
 
 `bitperfect_runner.py --route drc` does this:
 
 ```sh
-./drc.sh geometry flat
-./drc.sh 44100
+# First prepare a zero-attenuation trial config and ensure the active chain
+# uses it; selecting the shipped flat geometry alone is insufficient.
 python3 scripts/bitperfect_runner.py --source mpd --route drc \
     --input tests/bitperfect-test-44100-s32-stereo-30s.wav \
     --out bp-results/drc-44100
