@@ -120,7 +120,9 @@ DAC or orphaned bridge behind.
 For a supervised listening trial with the installed MPD output, use
 `omdrc backend pcm_bridge` and inspect `omdrc status`, `omdrc session`, and
 `mpc outputs`. `omdrc backend virtual_oss` switches back. `omdrc off` selects
-the host's direct DAC output. If BruteFIR dies while the experimental route is
+the host's direct DAC output. If DRC is off, selecting a backend saves the
+choice without starting playback; run `omdrc 192000` to activate the bridge.
+If BruteFIR dies while the experimental route is
 selected, a watchdog marks DRC off and returns MPD to the direct output so its
 controller socket remains usable. The bridge still has the EOS reset/discard
 limitation; the watchdog is recovery, not a lossless-track fix.
@@ -141,7 +143,8 @@ The `drc.sh` launch sequence is: persist an explicit backend choice;
 disable the direct and legacy DRC MPD outputs while the old reader still runs;
 stop BruteFIR and virtual_oss; launch the bridge as root with `--user giacomo`,
 `--rate 192000`, and the canonical `/dev/dsp.play` and `/dev/dsp.loop` names;
-wait for both nodes; start the zero-attenuation flat 192 kHz BruteFIR config;
+wait for both nodes; start the installed 192 kHz BruteFIR config with its
+existing coefficients and attenuation;
 verify the DAC clock and process health; then enable only `DRC-bridge`. On any
 failure, disable `DRC-bridge` while BruteFIR can drain, stop BruteFIR and the
 bridge, and restore the direct DAC output. `off`, `stop`, `restore`, CD handoff,
