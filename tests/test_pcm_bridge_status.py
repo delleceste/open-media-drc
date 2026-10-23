@@ -32,6 +32,21 @@ class PcmBridgeStatus(unittest.TestCase):
         self.assertEqual(rate["kind"], "mismatch")
         self.assertEqual(path["kind"], "mismatch")
 
+    def test_backend_api_invokes_the_same_switch_as_the_cli(self):
+        with mock.patch.object(APP, "_IS_LINUX", False), \
+             mock.patch.object(APP, "_drc_script", return_value="/usr/local/bin/omdrc"), \
+             mock.patch.object(APP, "_binary_present", return_value=True), \
+             mock.patch.object(APP, "_run_drc_switch", return_value={"ok": True}) as switch, \
+             mock.patch.object(APP, "_drc_saved_session", return_value={"backend": "pcm_bridge"}), \
+             mock.patch.object(APP, "_active_design_identity", return_value={"backend": "pcm_bridge"}), \
+             APP.app.test_request_context("/drc/backend", method="POST",
+                                          json={"backend": "pcm_bridge"}):
+            response = APP.drc_backend()
+        self.assertTrue(response.json["ok"])
+        self.assertEqual(response.json["backend"], "pcm_bridge")
+        switch.assert_called_once_with("/usr/local/bin/omdrc",
+                                       ["backend", "pcm_bridge"], "backend")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,8 +29,9 @@ P.hide = () => { P.visible = false; P.poll.stop(); P.meterPoll.stop(); };
 
 P.refreshAll = async () => {
     if (P.busy) return;
-    const [geo, design, status] = await Promise.all([K.api('/drc/geometry'), K.api('/drc/design'), K.api('/drc/status')]);
-    P.geo = geo; P.design = design; P.status = status;
+    const [geo, design, status, backend] = await Promise.all([
+        K.api('/drc/geometry'), K.api('/drc/design'), K.api('/drc/status'), K.api('/drc/backend')]);
+    P.geo = geo; P.design = design; P.status = status; P.backend = backend;
     await K.drcState.refresh();          // repaints through onChange
     P.render();
 };
@@ -54,7 +55,7 @@ P.settle = () => {          // presets return before the chain is up: keep looki
 P.render = () => {
     if (!P.el) return;
     const s = K.drcState.summary();
-    K.clear(P.left).append(P.statusCard(s), P.presetCard(s), P.setsCard(s));
+    K.clear(P.left).append(...[P.statusCard(s), P.backendCard(), P.presetCard(s), P.setsCard(s)].filter(Boolean));
     K.clear(P.right).append(P.attCard(s), P.metersCard(s), P.rowsCard(), P.linksCard());
 };
 
@@ -73,7 +74,7 @@ P.statusCard = s => {
     const ses = s.session || {};
     let saved = 'Saved session unavailable';
     if (ses.geometry) {
-        saved = `Saved session: ${ses.power} · ${ses.geometry} · ${String(ses.design || '').replace(/^@/, '')} · ${ses.mode === 'resamp' ? 'auto-resample 192 kHz' : K.fmtRate(Number(ses.rate))}${ses.source_label ? ' · ' + ses.source_label : ''}`;
+        saved = `Saved session: ${ses.power} · ${ses.backend || 'virtual_oss'} · ${ses.geometry} · ${String(ses.design || '').replace(/^@/, '')} · ${ses.mode === 'resamp' ? 'auto-resample 192 kHz' : K.fmtRate(Number(ses.rate))}${ses.source_label ? ' · ' + ses.source_label : ''}`;
     }
     const restore = h('button', { class: 'btn', disabled: !s.known || s.matches || P.busy, onclick: () => P.restore() }, 'Restore saved');
     return K.card('Applied', h('div', { class: 'status-line ' + cls }, h('i', { class: 'dot' }), h('div', {}, ...lines)),
@@ -84,12 +85,28 @@ P.restore = async () => {
     P.longAction('Restoring the saved session…', () => K.api('/drc/session', { json: { action: 'restore' }, timeout: 130000 }));
 };
 
+P.backendCard = () => {
+    const b = P.backend;
+    if (!b || !b.ok || !Array.isArray(b.available) || b.available.length < 2) return null;
+    const options = b.available.map(value => ({ value,
+        label: value === 'pcm_bridge' ? 'PCM bridge · 192k' : 'virtual_oss' }));
+    return K.card('MPD transport', K.segmented(options, b.backend, async value => {
+        if (value === b.backend) return;
+        const yes = await K.confirm({ title: 'Switch MPD transport?',
+            message: 'Playback is interrupted while BruteFIR and the MPD output switch.', ok: 'Switch' });
+        if (yes) P.longAction(`Switching to ${value}…`,
+            () => K.api('/drc/backend', { json: { backend: value }, timeout: 130000 }));
+    }));
+};
+
 // ── presets ──────────────────────────────────────────────────────────────────
 P.presetCard = s => {
     const cmds = K.commands().filter(c => c.group === 'drc' && c.type === 'WRITE' && c.id !== 'drc_resamp');
     const applied = c => c.id === 'drc_cdin' ? (s.session && s.session.source === 'cdin') : c.id === (s.running && s.rate ? `drc_${s.rate}` : 'drc_off');
     const grid = h('div', { class: 'preset-grid' }, cmds.map(c => h('button', {
-        type: 'button', class: 'preset' + (applied(c) ? ' applied' : ''), disabled: P.busy,
+        type: 'button', class: 'preset' + (applied(c) ? ' applied' : ''),
+        disabled: P.busy || (P.backend?.backend === 'pcm_bridge' &&
+            !['drc_off', 'drc_192000'].includes(c.id)),
         onclick: async () => {
             P.busy = true;
             let d;

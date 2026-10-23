@@ -196,6 +196,62 @@ class DrcPowerStateTest(unittest.TestCase):
         # come back up, so it must not look like a user switching DRC off.
         self.assertEqual(self._power(), "on")
 
+    def test_backend_choice_is_persistent_and_preserves_virtual_oss_rate(self):
+        self._write_state(last_arg="96000", last_power="off")
+        self._stub("uname", "#!/bin/sh\necho FreeBSD\n")
+        (Path(self._tmp.name) / "site/configs/flat/brutefir-192000.conf").write_text(
+            "sampling_rate: 192000;\n", encoding="utf-8")
+        bridge = self.stub / "omdrc-pcm-bridge"
+        self._stub("omdrc-pcm-bridge", "#!/bin/sh\nexit 0\n")
+        self._stub("virtual_oss", "#!/bin/sh\nexit 0\n")
+        self.env["OMDRC_PCM_BRIDGE_BIN"] = str(bridge)
+        self._stub("mpc", "#!/bin/sh\n"
+                   "[ \"$1\" = outputs ] && echo 'Output 5 (DRC-bridge) is disabled'\n"
+                   "exit 0\n")
+        result = self._run("backend", "pcm_bridge")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.state / "last_backend").read_text().strip(), "pcm_bridge")
+        self.assertEqual((self.state / "last_arg").read_text().strip(), "192000")
+        self.assertEqual((self.state / "last_virtual_oss_arg").read_text().strip(), "96000")
+        self.assertEqual(self._power(), "off")
+        self.assertIn("backend=pcm_bridge", self._run("session").stdout)
+
+        result = self._run("backend", "virtual_oss")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.state / "last_backend").read_text().strip(), "virtual_oss")
+        self.assertEqual((self.state / "last_arg").read_text().strip(), "96000")
+
+    def test_direct_output_uses_the_installed_mpd_name(self):
+        self._write_state(last_power="off")
+        calls = Path(self._tmp.name) / "mpc.calls"
+        self.env["DRC_TEST_MPC_CALLS"] = str(calls)
+        self._stub("mpc", "#!/bin/sh\n"
+                   "echo \"$*\" >> \"$DRC_TEST_MPC_CALLS\"\n"
+                   "[ \"$1\" = outputs ] && echo 'Output 1 (cambridge audio DacMagic 100) is enabled'\n"
+                   "exit 0\n")
+        result = self._run("off")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("enable cambridge audio DacMagic 100", calls.read_text())
+
+    def test_direct_output_falls_back_to_config_when_mpd_resets_connections(self):
+        self._write_state(last_power="off")
+        prefix = Path(self._tmp.name) / "prefix"
+        config_dir = prefix / "etc/open-media-drc"
+        config_dir.mkdir(parents=True)
+        (config_dir / "musicpd.conf").write_text(
+            'audio_output {\n name "cambridge audio DacMagic 100"\n}\n'
+            'audio_output {\n name "DRC-bridge"\n}\n', encoding="utf-8")
+        self.env["PREFIX"] = str(prefix)
+        calls = Path(self._tmp.name) / "mpc.calls"
+        self.env["DRC_TEST_MPC_CALLS"] = str(calls)
+        self._stub("mpc", "#!/bin/sh\n"
+                   "echo \"$*\" >> \"$DRC_TEST_MPC_CALLS\"\n"
+                   "[ \"$1\" = outputs ] && exit 1\n"
+                   "exit 0\n")
+        result = self._run("off")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("enable cambridge audio DacMagic 100", calls.read_text())
+
     def test_a_warmup_that_never_locks_is_retried_and_rolled_back(self):
         """A failed warm-up must not take the run down with it.
 
@@ -457,7 +513,7 @@ class AudibleOutputSelectionTest(unittest.TestCase):
         for selected in ("OKTO-DAC", "DRC-native", "DRC-resamp", "DRC-bridge"):
             with self.subTest(selected=selected):
                 result = subprocess.run(
-                    ["bash", "-c", 'mpc_bounded() { printf "%s %s\\n" "$1" "$2" >&2; }; '
+                    ["bash", "-c", 'DIRECT_OUTPUT=OKTO-DAC; mpc_bounded() { printf "%s %s\\n" "$1" "$2" >&2; }; '
                      + "mpc_select_audible() {" + helper + "\n}; "
                      + 'mpc_select_audible "$1"', "test", selected],
                     capture_output=True, text=True, check=True)

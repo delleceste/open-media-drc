@@ -1591,7 +1591,7 @@
 {% macro render_group(group_name, group_label, cmds) %}
 <div class="card">
     <div class="card-title"{% if group_name == 'drc' %} style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px 8px"{% endif %}>
-        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/brutefir-config" target="_blank" rel="noopener noreferrer">Configuration ↗</a><span class="response-action"><a id="filter-response-link" class="btn-details active" href="/filter-response">Filter response ↗</a><small id="filter-response-note" class="response-unavailable" hidden>Not available for this WAV-only configuration</small></span></span>{% endif %}
+        <span>{{ group_label }}</span>{% if group_name == 'drc' %}<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><select id="drc-backend-select" class="geo-select" title="MPD transport" disabled hidden onchange="switchBackend(this.value)"></select><select id="drc-geometry-select" class="geo-select" title="Room geometry" disabled onchange="switchGeometry(this.value)"></select><select id="drc-design-select" class="geo-select" title="Filter design" disabled onchange="switchDesign(this.value)"></select><a class="btn-details active" href="/brutefir-config" target="_blank" rel="noopener noreferrer">Configuration ↗</a><span class="response-action"><a id="filter-response-link" class="btn-details active" href="/filter-response">Filter response ↗</a><small id="filter-response-note" class="response-unavailable" hidden>Not available for this WAV-only configuration</small></span></span>{% endif %}
     </div>
     {% if group_name == 'drc' %}
     <div id="drc-distances" class="drc-distances" hidden></div>
@@ -2312,6 +2312,8 @@ let geoBusy    = false;
 let geoCurrent = '';
 let designBusy = false;
 let designCurrent = '';
+let backendBusy = false;
+let backendCurrent = '';
 let drcSessionBusy = false;
 let drcLastState = null;
 let drcAttenuationBusy = false;
@@ -2699,6 +2701,57 @@ function scheduleDspGauge(delayMs) {
 }
 scheduleDspGauge(0);
 
+async function loadBackends() {
+    const sel = document.getElementById('drc-backend-select');
+    if (!sel || backendBusy) return;
+    try {
+        const d = await (await fetch('/drc/backend')).json();
+        if (!d.ok || !Array.isArray(d.available)) return;
+        backendCurrent = d.backend;
+        sel.replaceChildren();
+        for (const name of d.available) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name === 'pcm_bridge' ? 'PCM bridge · 192k' : 'virtual_oss';
+            option.selected = name === d.backend;
+            sel.appendChild(option);
+        }
+        sel.hidden = d.available.length < 2;
+        sel.disabled = d.available.length < 2;
+        for (const id of ['drc_44100', 'drc_48000', 'drc_88200', 'drc_96000', 'drc_cdin']) {
+            const button = document.getElementById(`btn-${id}`);
+            if (button) {
+                button.disabled = d.backend === 'pcm_bridge';
+                button.title = button.disabled ? 'PCM bridge is 192 kHz music-only' : '';
+            }
+        }
+    } catch { /* status polling will retry */ }
+}
+
+async function switchBackend(target) {
+    const sel = document.getElementById('drc-backend-select');
+    if (backendBusy || !target || target === backendCurrent) return;
+    if (!window.confirm(`Switch MPD transport to ${target === 'pcm_bridge' ? 'PCM bridge (192 kHz)' : 'virtual_oss'}? Playback will be interrupted.`)) {
+        sel.value = backendCurrent;
+        return;
+    }
+    backendBusy = true;
+    sel.disabled = true;
+    toast('switching MPD transport…', 'ok', 120000);
+    try {
+        const d = await (await fetch('/drc/backend', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ backend: target }),
+        })).json();
+        if (d.ok) toast(`MPD transport: ${target}`, 'ok');
+        else { toast('transport switch failed', 'error'); writeStatus(d.error || 'switch failed'); }
+    } catch { toast('network error', 'error'); }
+    backendBusy = false;
+    await loadBackends();
+    if (document.getElementById('out-drc_status')) fetchRead('drc_status');
+    fetchMpdInfo();
+}
+
 async function loadGeometries() {
     const sel = document.getElementById('drc-geometry-select');
     if (!sel || geoBusy) return;
@@ -2760,7 +2813,7 @@ async function switchGeometry(target) {
     if (document.getElementById('out-drc_status')) fetchRead('drc_status');
 }
 
-if (DRC_ENABLED) loadGeometries();
+if (DRC_ENABLED) { loadBackends(); loadGeometries(); }
 
 async function loadDesigns() {
     const sel = document.getElementById('drc-design-select');

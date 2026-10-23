@@ -1,7 +1,7 @@
 # Experimental PCM bridge deployment on the Cambridge DAC host
 
-Status: deployment plan, 2026-10-23. This plan does not switch the live audio
-chain. The first run is a supervised, temporary 192 kHz stereo S32 trial with
+Status: supervised trial, 2026-10-23. The first run is a temporary 192 kHz
+stereo S32 trial with
 music only. It uses `/usr/local/sbin/omdrc-pcm-bridge` in place of virtual_oss,
 BruteFIR with a zero-attenuation Dirac pulse, and the current `/dev/dsp.dac`
 role link for output.
@@ -43,11 +43,13 @@ sources: the bridge has one writer, whereas virtual_oss mixed multiple clients.
   to create mode-0600 nodes owned by the playback user while the daemon runs as
   root. The installed binary passed the live OSS suite at 192 kHz with those
   node permissions.
-- `drc.sh` still starts and stops virtual_oss by process name and expects
-  `/dev/dsp.play` and `/dev/dsp.loop`. Its output routing, rollback, status,
-  CD-source handoff, and hotplug restoration do not know this bridge. Do not
-  call `drc.sh` to start the isolated trial. Before any persistent deployment,
-  add an explicit backend selection and update every lifecycle branch.
+- `drc.sh backend pcm_bridge` selects the experimental transport and starts
+  BruteFIR with the already deployed 192 kHz config. On the actual listening
+  player, that includes its deployed coefficients and intended attenuation.
+  `drc.sh backend virtual_oss` returns to the remembered virtual_oss rate and
+  design. The choice persists through restore and hotplug. CD/line input and
+  non-192 kHz rate requests are rejected while the PCM bridge is selected.
+  The web DRC transport picker and kiosk DRC page call the same switch.
 
 ## Trial sequence
 
@@ -115,6 +117,14 @@ existing `drc.sh restore` path and check its output selection, DAC holder,
 process health, and audible output. A failed trial must not leave a root-owned
 DAC or orphaned bridge behind.
 
+For a supervised listening trial with the installed MPD output, use
+`omdrc backend pcm_bridge` and inspect `omdrc status`, `omdrc session`, and
+`mpc outputs`. `omdrc backend virtual_oss` switches back. `omdrc off` selects
+the host's direct DAC output. If BruteFIR dies while the experimental route is
+selected, a watchdog marks DRC off and returns MPD to the direct output so its
+controller socket remains usable. The bridge still has the EOS reset/discard
+limitation; the watchdog is recovery, not a lossless-track fix.
+
 ## Criteria before persistent integration
 
 The first trial answers whether this bridge transports a live identity stream
@@ -122,12 +132,12 @@ to this USB DAC correctly. Persistence needs additional evidence: fixed EOS
 drain behavior, repeatable pause/resume, native S16/S24 music expanded to S32
 with documented precision, supported sample rates, CD handoff or an explicit
 CD exclusion, device detach/reattach, and long-run starvation/teardown tests.
-Then add a selectable backend to `drc.sh`, boot/hotplug selection, and rollback.
-The disabled MPD S32 output and read-only status are already present. Default
-to the existing virtual_oss path until those checks pass. Keep a one-command
-route back to direct DAC playback.
+The selectable backend and disabled S32 MPD output are present for supervised
+testing. virtual_oss remains the default on a fresh install. Do not treat the
+experimental bridge as validated for unattended playback until these gates
+pass. Keep a one-command route back to direct DAC playback.
 
-The intended `drc.sh` launch sequence is: persist an explicit backend choice;
+The `drc.sh` launch sequence is: persist an explicit backend choice;
 disable the direct and legacy DRC MPD outputs while the old reader still runs;
 stop BruteFIR and virtual_oss; launch the bridge as root with `--user giacomo`,
 `--rate 192000`, and the canonical `/dev/dsp.play` and `/dev/dsp.loop` names;
@@ -135,12 +145,11 @@ wait for both nodes; start the zero-attenuation flat 192 kHz BruteFIR config;
 verify the DAC clock and process health; then enable only `DRC-bridge`. On any
 failure, disable `DRC-bridge` while BruteFIR can drain, stop BruteFIR and the
 bridge, and restore the direct DAC output. `off`, `stop`, `restore`, CD handoff,
-and USB detach must follow the same backend choice. The host's installed direct
-MPD output is named `cambridge audio DacMagic 100`, while `drc.sh` currently
-asks for `OKTO-DAC`; resolve that naming mismatch before using its rollback.
+and USB detach follow the same backend choice. `drc.sh` discovers the installed
+host's direct MPD output name, so this Cambridge host and an OKTO player can
+each return to their own DAC output.
 
 The web and kiosk read `/mpd/info` to show the active bridge and the deliberate
-MPD conversion. They should offer a backend selector only after the lifecycle
-and EOS gates pass. Android already uses the same DRC/session control path;
-there is no Android-specific launch service to add. An Android backend control
-would call the same guarded server-side selector and would require a new APK.
+MPD conversion, and provide a guarded selector through `/drc/backend`. Android
+still uses the existing DRC/session path; adding a native Android selector
+would require a new APK.

@@ -9340,6 +9340,7 @@ _CHAIN_FALLBACK_PATHS = {
     "brutefir": ("/usr/local/bin/brutefir", "/usr/bin/brutefir"),
     "virtual_oss": ("/usr/local/sbin/virtual_oss", "/usr/local/bin/virtual_oss",
                     "/usr/sbin/virtual_oss"),
+    "omdrc-pcm-bridge": ("/usr/local/sbin/omdrc-pcm-bridge",),
 }
 _CHAIN_CACHE_S = 30.0
 _chain_missing_cache: tuple[float, tuple[str, ...]] = (0.0, ())
@@ -9359,8 +9360,11 @@ def _drc_chain_missing() -> tuple[str, ...]:
     now = time.monotonic()
     if stamp and now - stamp < _CHAIN_CACHE_S:
         return cached
-    needed = ["brutefir"] if _IS_LINUX else ["brutefir", "virtual_oss"]
-    missing = tuple(name for name in needed if not _binary_present(name))
+    missing_list = [] if _binary_present("brutefir") else ["brutefir"]
+    if not _IS_LINUX and not (_binary_present("virtual_oss") or
+                              _binary_present("omdrc-pcm-bridge")):
+        missing_list.append("virtual_oss or omdrc-pcm-bridge")
+    missing = tuple(missing_list)
     _chain_missing_cache = (now, missing)
     return missing
 
@@ -9533,7 +9537,7 @@ def _drc_saved_session(script: str) -> dict:
     for line in result.stdout.splitlines():
         key, separator, value = line.partition("=")
         if separator and key in {"geometry", "power", "source", "mode", "rate",
-                                 "design", "label"}:
+                                 "design", "label", "backend"}:
             session[key] = value.strip()
     missing = {"geometry", "power", "mode", "rate", "design"} - session.keys()
     if missing:
@@ -9563,6 +9567,9 @@ def _active_design_identity() -> dict:
     rate_from_name, selector = _design_selector_from_conf(conf_path)
     identity: dict[str, object] = {
         "running": True,
+        "backend": ("snd_aloop" if _IS_LINUX else
+                    "pcm_bridge" if _pcm_bridge_args() else
+                    "virtual_oss" if _virtual_oss_args() else "none"),
         "geometry": os.path.basename(os.path.dirname(conf_path)),
         "rate": rate_from_name,
         "design": selector,
@@ -9605,7 +9612,8 @@ def _session_matches_active(session: dict, active: dict) -> bool:
         active.get("running") and
         active.get("geometry") == session.get("geometry") and
         active.get("rate") == session.get("rate") and
-        active.get("design") == session.get("design")
+        active.get("design") == session.get("design") and
+        (not session.get("backend") or active.get("backend") == session.get("backend"))
     )
 
 
@@ -9720,6 +9728,41 @@ def drc_session():
                 ok=False,
                 error="saved design is active, but its config/filter provenance is not verified",
             )
+        return jsonify(result)
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"})
+    except Exception as error:
+        return jsonify({"ok": False, "error": str(error)})
+
+
+@app.route("/drc/backend", methods=["GET", "POST"])
+def drc_backend():
+    """Select the persistent FreeBSD MPD-to-BruteFIR transport."""
+    if _IS_LINUX:
+        return jsonify({"ok": False, "error": "backend switching is FreeBSD-only"}), 400
+    script = _drc_script()
+    if not script:
+        return jsonify({"ok": False, "error": "drc_status not configured"})
+    available = [name for name, binary in (
+        ("virtual_oss", "virtual_oss"),
+        ("pcm_bridge", "omdrc-pcm-bridge"),
+    ) if _binary_present(binary)]
+    try:
+        if request.method == "POST":
+            wanted = str((request.get_json(silent=True) or {}).get("backend", "")).strip()
+            if wanted not in available:
+                return jsonify({"ok": False, "error": f"backend unavailable: {wanted}"}), 400
+            result = _run_drc_switch(script, ["backend", wanted], "backend")
+        else:
+            result = {"ok": True}
+        session = _drc_saved_session(script)
+        active = _active_design_identity()
+        result.update(backend=session.get("backend", "virtual_oss"),
+                      available=available, active_backend=active.get("backend", "none"),
+                      session=session)
+        if request.method == "POST" and result["ok"] and session.get("power") == "on" \
+                and active.get("backend") != wanted:
+            result.update(ok=False, error="selected backend did not become active")
         return jsonify(result)
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "timeout"})

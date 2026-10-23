@@ -6,8 +6,9 @@ CUSE OSS endpoints, one writer and one reader. It never opens the DAC and never
 mixes, rescales, dithers or resamples audio. Stereo interleaved S32_LE and an
 explicit fixed rate are mandatory. A mismatched negotiation fails.
 
-This is an isolated prototype, **not yet a replacement for the production
-virtual_oss backend**. `drc.sh` continues to use virtual_oss. The normal build
+This is an experimental opt-in backend, **not yet a validated replacement for
+virtual_oss**. `drc.sh backend pcm_bridge` switches to it at 192 kHz and
+`drc.sh backend virtual_oss` switches back. The normal build
 omits the prototype unless `OMDRC_BUILD_PCM_BRIDGE=ON` is selected.
 
 ## Build and install
@@ -33,7 +34,8 @@ The foreground process creates `/dev/dsp.omdrcbridgeplay` (write-only) and
 owner and primary group so unprivileged musicpd and BruteFIR can open them
 while the daemon retains access to root-only `/dev/cuse`. Without `--user`,
 the effective launch user/group owns the nodes. No service is
-started or enabled by installation. Names can be overridden with `--play` and
+started or enabled by installation. `drc.sh` uses canonical `dsp.play` and
+`dsp.loop` nodes when this backend is selected. Names can be overridden with `--play` and
 `--capture`; do not point production clients at these until rollout gates pass.
 
 `--capacity-ms` defaults to 200 and limits queue capacity; it is not a processing
@@ -123,6 +125,11 @@ ignoring reset would break intentional seek/stop cancellation. Inspect the
 installed MPD implementation and reconcile it with the checked-out OSS plugin,
 which describes a drain-on-close path. Do not infer production readiness from
 only the marked-region test.
+
+The experimental `drc.sh` selector starts the installed BruteFIR config,
+including its deployed coefficients and attenuation. It also watches for a
+reader exit and returns MPD to direct output if that happens. This recovers
+controller access after EOS failure; it cannot recover the discarded samples.
 
 Other gates remain: pause/resume without starving BruteFIR, explicit source
 handoff/reopen orchestration, actual CD client tests, native S16/S24 producer

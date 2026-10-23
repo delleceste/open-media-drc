@@ -80,6 +80,8 @@ DAC_PRIME_CYCLES=${DAC_PRIME_CYCLES:-0}
 
 VIRTUAL_OSS_PID=/tmp/virtual_oss.pid
 VIRTUAL_OSS_ARGS="-i 8 -C 2 -c 2 -b 32 -s 200ms -f /dev/null -a 0 -d dsp.play -L dsp.loop"
+PCM_BRIDGE_BIN="${OMDRC_PCM_BRIDGE_BIN:-$PREFIX/sbin/omdrc-pcm-bridge}"
+PCM_BRIDGE_USER="${OMDRC_PCM_BRIDGE_USER:-${AUDIO_USER:-$(id -un)}}"
 
 IS_LINUX=false
 [ "$(uname)" = "Linux" ] && IS_LINUX=true
@@ -131,7 +133,7 @@ LOCK_FILE="${OMDRC_LOCK_FILE:-$STATE_DIR/drc.lock}"
 # switches and reconcile all take the same lock before their first state read.
 _drc_read_only=false
 case "${1:-status}:${2:-}" in
-  status:|session:|geometry:|geometry:--list|geometry:-l|design:|design:--list|design:-l)
+  status:|session:|backend:|bridge-watchdog:*|geometry:|geometry:--list|geometry:-l|design:|design:--list|design:-l)
     _drc_read_only=true
     ;;
 esac
@@ -170,6 +172,16 @@ SOURCE_FILE="$STATE_DIR/last_source"
 # The web CDIN card reads the same file on STOP and restores this exact output;
 # the Spectrum FIFO is intentionally not part of the gate.
 CDIN_MPD_OUTPUT_FILE="$STATE_DIR/cdin-mpd-output"
+BACKEND_FILE="$STATE_DIR/last_backend"
+VOSS_STATE_FILE="$STATE_DIR/last_virtual_oss_arg"
+WATCHDOG_STOP_FILE="$STATE_DIR/bridge-watchdog-stop"
+BACKEND="virtual_oss"
+if [ -r "$BACKEND_FILE" ]; then
+  case "$(cat "$BACKEND_FILE" 2>/dev/null || true)" in
+    virtual_oss|pcm_bridge) BACKEND=$(cat "$BACKEND_FILE") ;;
+  esac
+fi
+$IS_LINUX && BACKEND="snd_aloop"
 # Runtime filter-set (geometry) override, written by `drc.sh geometry <name>`
 # and by the web remote.  The config file's GEOMETRY is the *default*; this file
 # is the *current choice*.  Kept in the state dir beside last_arg / last_power so
@@ -223,11 +235,46 @@ run_bounded() {
   "$_TIMEOUT_BIN" -k 1 "$seconds" "$@"
 }
 mpc_bounded() { run_bounded "$OMDRC_MPC_TIMEOUT" mpc "$@"; }
+# The direct output is host-specific (for example Cambridge here, OKTO on the
+# listening player). Keep the name out of the backend switch and its rollback.
+mpd_direct_output() {
+  if [ -n "${OMDRC_MPD_DIRECT_OUTPUT:-}" ]; then
+    printf '%s\n' "$OMDRC_MPD_DIRECT_OUTPUT"
+    return
+  fi
+  local found
+  found=$(mpc_bounded outputs 2>/dev/null | awk '
+    /^Output [0-9]+ \(/ {
+      name=$0; sub(/^Output [0-9]+ \(/, "", name)
+      sub(/\) is (enabled|disabled)$/, "", name)
+      if (name !~ /^(DRC-native|DRC-resamp|DRC-bridge|OMDRC Spectrum)$/) {
+        print name; exit
+      }
+    }' || true)
+  if [ -n "$found" ]; then printf '%s\n' "$found"; return; fi
+  # MPD may reset connections until the failed CUSE output is stopped. Read its
+  # installed output name so emergency rollback still reaches the right DAC.
+  local conf="$PREFIX/etc/open-media-drc/musicpd.conf"
+  [ -r "$conf" ] || return 0
+  awk '
+    /^[[:space:]]*audio_output[[:space:]]*\{/ { in_output=1; next }
+    in_output && /^[[:space:]]*name[[:space:]]+"/ {
+      name=$0; sub(/^[[:space:]]*name[[:space:]]+"/, "", name)
+      sub(/".*/, "", name)
+      if (name !~ /^(DRC-native|DRC-resamp|DRC-bridge|OMDRC Spectrum)$/) {
+        print name; exit
+      }
+    }
+    in_output && /^[[:space:]]*\}/ { in_output=0 }
+  ' "$conf"
+}
+DIRECT_OUTPUT=$(mpd_direct_output)
+[ -n "$DIRECT_OUTPUT" ] || DIRECT_OUTPUT=OKTO-DAC
 # Select the audible route without disabling independent analyzer outputs.
 # `mpc enable only` also turns off the Spectrum FIFO, stranding VU/DR readers.
 mpc_select_audible() {
   local selected="$1" output
-  for output in OKTO-DAC DRC-native DRC-resamp DRC-bridge; do
+  for output in "$DIRECT_OUTPUT" DRC-native DRC-resamp DRC-bridge; do
     if [ "$output" != "$selected" ]; then
       mpc_bounded disable "$output" >/dev/null || return $?
     fi
@@ -452,13 +499,23 @@ virtual_oss_available() {
     VIRTUAL_OSS_BIN=""
   [ -n "$VIRTUAL_OSS_BIN" ]
 }
+pcm_bridge_available() {
+  $IS_LINUX && return 1
+  [ -x "$PCM_BRIDGE_BIN" ]
+}
 
 # Space-separated list of the chain binaries this box is missing (empty when the
 # chain can be built).  Printed by `session` for the panel and by `status`.
 chain_missing() {
   local missing=""
   brutefir_available   || missing="brutefir"
-  virtual_oss_available || missing="${missing:+$missing }virtual_oss"
+  if ! $IS_LINUX; then
+    if [ "$BACKEND" = "pcm_bridge" ]; then
+      pcm_bridge_available || missing="${missing:+$missing }omdrc-pcm-bridge"
+    else
+      virtual_oss_available || missing="${missing:+$missing }virtual_oss"
+    fi
+  fi
   printf '%s' "$missing"
 }
 chain_available() { [ -z "$(chain_missing)" ]; }
@@ -466,7 +523,7 @@ chain_available() { [ -z "$(chain_missing)" ]; }
 # Actual-chain probes used by reconcile.  Process existence alone is not
 # enough: a stale BruteFIR at the wrong config/rate is a mismatch that needs one
 # rebuild, while a fully matching chain must be a no-op.
-bf_pattern='(^|/)brutefir .*-daemon'
+bf_pattern='(^|/)brutefir .*\.conf'
 bf_running() { pgrep -f "$bf_pattern" > /dev/null 2>&1; }
 
 # Preserve the output of a brutefir that died, and say why in one word.
@@ -503,10 +560,24 @@ pgrep_x() { pgrep -x "$1" > /dev/null 2>&1; }
 
 running_voss_rate() {
   ps -axww -o args= 2>/dev/null |
-    awk '($1=="virtual_oss" || $1~/\/virtual_oss$/) && /-r/ {
-      for (i=1; i<=NF; i++) if ($i=="-r") { print $(i+1); exit }
+    awk '!found && ($1=="virtual_oss" || $1~/\/virtual_oss$/) && /-r/ {
+      for (i=1; i<=NF; i++) if ($i=="-r") { print $(i+1); found=1; break }
     }'
 }
+
+# Match only a daemon owning the canonical production nodes. The isolated
+# byte-test bridge has different names and must survive an ordinary switch.
+pcm_bridge_pids() {
+  ps -axww -o pid= -o comm= -o args= 2>/dev/null |
+    awk '$2=="omdrc-pcm-bridge" && /--play dsp.play/ && /--capture dsp.loop/ {print $1}'
+}
+running_pcm_bridge_rate() {
+  ps -axww -o comm= -o args= 2>/dev/null |
+    awk '!found && $1=="omdrc-pcm-bridge" && /--play dsp.play/ && /--capture dsp.loop/ {
+      for (i=1; i<=NF; i++) if ($i=="--rate") {print $(i+1); found=1; break}
+    }'
+}
+pcm_bridge_running() { [ -n "$(pcm_bridge_pids)" ]; }
 
 bf_matches_conf() {
   local wanted="$1"
@@ -524,9 +595,14 @@ physical_chain_matches() {
   if $IS_LINUX; then
     return 0
   fi
-  pgrep -q -x virtual_oss 2>/dev/null || return 1
   [ -e /dev/dsp.play ] && [ -e /dev/dsp.loop ] || return 1
-  have_rate=$(running_voss_rate)
+  if [ "$BACKEND" = "pcm_bridge" ]; then
+    pcm_bridge_running || return 1
+    have_rate=$(running_pcm_bridge_rate)
+  else
+    pgrep -q -x virtual_oss 2>/dev/null || return 1
+    have_rate=$(running_voss_rate)
+  fi
   [ "$have_rate" = "$wanted_rate" ]
 }
 
@@ -792,11 +868,11 @@ release_cdin_or_restore_mpd() {
   release_cdin && return 0
 
   echo "warning: CD input release failed; restoring MPD direct output" >&2
-  if mpc_select_audible "OKTO-DAC" >/dev/null 2>&1; then
-    log_event "event=cdin_release_recovery result=ok output=OKTO-DAC"
-    echo "MPD direct output restored to OKTO-DAC; requested audio change was not applied" >&2
+  if mpc_select_audible "$DIRECT_OUTPUT" >/dev/null 2>&1; then
+    log_event "event=cdin_release_recovery result=ok output=$DIRECT_OUTPUT"
+    echo "MPD direct output restored to $DIRECT_OUTPUT; requested audio change was not applied" >&2
   else
-    log_event "event=cdin_release_recovery result=fail output=OKTO-DAC"
+    log_event "event=cdin_release_recovery result=fail output=$DIRECT_OUTPUT"
     echo "ERROR: could not restore MPD direct output after CD input release failure" >&2
   fi
   return 1
@@ -918,13 +994,33 @@ stop_virtual_oss() {
   done
 }
 
+stop_pcm_bridge() {
+  local pid i=0
+  for pid in $(pcm_bridge_pids); do _sudo kill "$pid" 2>/dev/null || true; done
+  while pcm_bridge_running; do
+    if [ "$i" -ge 25 ]; then
+      for pid in $(pcm_bridge_pids); do _sudo kill -KILL "$pid" 2>/dev/null || true; done
+      break
+    fi
+    sleep 0.2
+    i=$((i + 1))
+  done
+}
+
+stop_freebsd_backend() {
+  stop_virtual_oss
+  stop_pcm_bridge
+}
+
 usage() {
-  echo "Usage: $0 <rate>|resamp|cdin|reconcile|restore|off|stop|status|session|geometry|design [variant]"
+  echo "Usage: $0 <rate>|resamp|cdin|reconcile|restore|off|stop|status|session|backend|geometry|design [variant]"
   echo "  rate     : 44100 | 48000 | 88200 | 96000 | 192000"
   echo "             shorthand ok: 44.1 48 88.2 96 192, optional k (96k, 44.1k)"
   echo "             native mode: select the rate matching the source track;"
   echo "             MPD uses DRC-native format *:*:* and does not resample"
   echo "  resamp   : MPD resamples everything to 192000 Hz"
+  echo "  backend  : show or switch virtual_oss | pcm_bridge (FreeBSD, music only)"
+  echo "             pcm_bridge always feeds BruteFIR stereo S32 at 192000 Hz"
   echo "  cdin     : select the persistent CD/S-PDIF input (${CDIN_RATE} Hz)"
   echo "  reconcile: make the actual chain match saved power/source/rate state"
   echo "  restore  : re-apply the last saved state (reads last_arg file);"
@@ -970,18 +1066,135 @@ usage() {
 # below (which runs lock-free) rather than printing usage and exiting non-zero.
 [ $# -eq 0 ] && set -- status
 
+# An experimental bridge reader can exit after MPD closes/reset its output at
+# track end. Never leave MPD pointing at that dead route on a headless player.
+if [ "${1:-}" = "bridge-watchdog" ]; then
+  [ $# -eq 2 ] || exit 2
+  watch_pid="$2"
+  case "$watch_pid" in *[!0-9]*|"") exit 2 ;; esac
+  unset DRC_LOCKED
+  log_event "event=bridge_watchdog_active watch_pid=$watch_pid"
+  while :; do
+    [ "$(cat "$BACKEND_FILE" 2>/dev/null || true)" = "pcm_bridge" ] || exit 0
+    [ "$(cat "$POWER_FILE" 2>/dev/null || true)" = "on" ] || exit 0
+    [ ! -e "$WATCHDOG_STOP_FILE" ] || exit 0
+    if ! ps -p "$watch_pid" -o pid= >/dev/null 2>&1 || ! bf_running; then
+      sleep 0.5
+      [ ! -e "$WATCHDOG_STOP_FILE" ] || exit 0
+      [ "$(cat "$BACKEND_FILE" 2>/dev/null || true)" = "pcm_bridge" ] || exit 0
+      [ "$(cat "$POWER_FILE" 2>/dev/null || true)" = "on" ] || exit 0
+      if ps -p "$watch_pid" -o pid= >/dev/null 2>&1 && bf_running; then continue; fi
+      log_event "event=bridge_watchdog result=chain_died action=direct_fallback"
+      exec "$0" off
+    fi
+    sleep 1
+  done
+  exit 0
+fi
+
+# Experimental backend choice is persistent so restore and hotplug reconciliation
+# bring back the same route. Switching while powered on immediately rebuilds it.
+if [ "${1:-}" = "backend" ]; then
+  if [ $# -eq 1 ]; then
+    printf '%s\n' "$BACKEND"
+    exit 0
+  fi
+  [ $# -eq 2 ] || { usage; exit 2; }
+  $IS_LINUX && { echo "backend switching is FreeBSD-only" >&2; exit 2; }
+  case "$2" in
+    virtual_oss|pcm_bridge) ;;
+    *) echo "unknown backend: $2" >&2; exit 2 ;;
+  esac
+  want_backend="$2"
+  if [ "$want_backend" = "$BACKEND" ]; then
+    saved_power=on
+    [ -r "$POWER_FILE" ] && saved_power=$(cat "$POWER_FILE")
+    if [ "$saved_power" = "on" ]; then
+      exec "$0" reconcile
+    fi
+    if [ "$BACKEND" = "pcm_bridge" ]; then exec "$0" 192000; fi
+    voss_arg=resamp
+    [ -r "$VOSS_STATE_FILE" ] && voss_arg=$(state_to_args "$(cat "$VOSS_STATE_FILE")")
+    case "$voss_arg" in ""|off) voss_arg=resamp ;; esac
+    # shellcheck disable=SC2086
+    exec "$0" $voss_arg
+  fi
+  if [ "$want_backend" = "pcm_bridge" ]; then
+    pcm_bridge_available || { echo "PCM bridge not installed: $PCM_BRIDGE_BIN" >&2; exit 1; }
+    id -u "$PCM_BRIDGE_USER" >/dev/null 2>&1 || {
+      echo "PCM bridge client user does not exist: $PCM_BRIDGE_USER" >&2; exit 1;
+    }
+    if ! geometry_rates "$GEOMETRY" | grep -qx 192000; then
+      echo "PCM bridge requires a 192000 Hz config in $GEOMETRY" >&2
+      exit 1
+    fi
+    if ! mpc_bounded outputs 2>/dev/null | grep -qF '(DRC-bridge)'; then
+      echo "MPD has not loaded its DRC-bridge output" >&2
+      exit 1
+    fi
+    saved_source=music
+    [ -r "$SOURCE_FILE" ] && saved_source=$(cat "$SOURCE_FILE")
+    if is_capture_source "$saved_source"; then
+      echo "PCM bridge supports MPD music only; select music before switching" >&2
+      exit 1
+    fi
+    saved_voss_arg=""
+    [ -r "$STATE_FILE" ] && saved_voss_arg=$(state_to_args "$(cat "$STATE_FILE")")
+    case "$saved_voss_arg" in ""|off) saved_voss_arg=resamp ;; esac
+    printf '%s\n' "$saved_voss_arg" > "$VOSS_STATE_FILE"
+  elif ! virtual_oss_available; then
+    echo "virtual_oss is not installed" >&2
+    exit 1
+  fi
+  printf '%s\n' "$want_backend" > "$BACKEND_FILE"
+  chmod 644 "$BACKEND_FILE" 2>/dev/null || true
+  log_event "event=backend_selected from=$BACKEND to=$want_backend"
+  voss_arg=resamp
+  [ -r "$VOSS_STATE_FILE" ] && voss_arg=$(state_to_args "$(cat "$VOSS_STATE_FILE")")
+  case "$voss_arg" in ""|off) voss_arg=resamp ;; esac
+  saved_power=on
+  [ -r "$POWER_FILE" ] && saved_power=$(cat "$POWER_FILE")
+  if [ "$saved_power" = "off" ]; then
+    if [ "$want_backend" = "pcm_bridge" ]; then
+      bridge_variant=""
+      # shellcheck disable=SC2086
+      set -- $saved_voss_arg
+      candidate_variant="${2:-}"
+      if [ -n "$candidate_variant" ] &&
+         [ -f "$SITE_DIR/configs/$GEOMETRY/brutefir-192000${candidate_variant}.conf" ]; then
+        bridge_variant="$candidate_variant"
+      fi
+      printf '192000%s\n' "${bridge_variant:+ $bridge_variant}" > "$STATE_FILE"
+    else
+      printf '%s\n' "$voss_arg" > "$STATE_FILE"
+    fi
+    echo "backend selected: $want_backend (DRC is off; next restore will use it)"
+    exit 0
+  fi
+  if [ "$want_backend" = "pcm_bridge" ]; then
+    exec "$0" 192000
+  fi
+  # shellcheck disable=SC2086
+  exec "$0" $voss_arg
+fi
+
 # ── explicit persistent capture-input mode (CD / S-PDIF, or analog Line) ────
 # One action for both: they differ only in the rate the chain is built for and
 # in the input the bridge is told to open, and both of those come from the
 # source table above.
 if [ $# -eq 1 ] && is_capture_source "$1"; then
+  if [ "$BACKEND" = "pcm_bridge" ]; then
+    echo "PCM bridge is music-only; select virtual_oss before CD/line input" >&2
+    exit 1
+  fi
   _cdin_source="$1"
-  _cdin_previous_output=$(mpc_bounded outputs 2>/dev/null | awk '
-    /^Output [0-9]+ \((OKTO-DAC|DRC-native|DRC-resamp)\) is enabled$/ {
-      sub(/^Output [0-9]+ \(/, ""); sub(/\) is enabled$/, ""); print; exit
+  _cdin_previous_output=$(mpc_bounded outputs 2>/dev/null | awk -v direct="$DIRECT_OUTPUT" '
+    /^Output [0-9]+ \(.*\) is enabled$/ {
+      sub(/^Output [0-9]+ \(/, ""); sub(/\) is enabled$/, "")
+      if ($0==direct || $0=="DRC-native" || $0=="DRC-resamp") { print; exit }
     }')
   case "$_cdin_previous_output" in
-    OKTO-DAC|DRC-native|DRC-resamp)
+    "$DIRECT_OUTPUT"|DRC-native|DRC-resamp)
       printf '%s\n' "$_cdin_previous_output" > "$CDIN_MPD_OUTPUT_FILE"
       chmod 644 "$CDIN_MPD_OUTPUT_FILE" 2>/dev/null || true
       ;;
@@ -1019,7 +1232,7 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
   fi
 
   if ! $dac_present; then
-    if bf_running || { ! $IS_LINUX && pgrep -q -x virtual_oss 2>/dev/null; }; then
+    if bf_running || { ! $IS_LINUX && { pgrep -q -x virtual_oss 2>/dev/null || pcm_bridge_running; }; }; then
       echo "DAC absent — transiently stopping the DRC chain"
       log_event "event=reconcile result=stop reason=dac_absent power=${desired_power} source=${desired_source}"
       exec "$0" stop
@@ -1030,7 +1243,7 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
   fi
 
   if [ "$desired_power" = "off" ]; then
-    if bf_running || { ! $IS_LINUX && pgrep -q -x virtual_oss 2>/dev/null; }; then
+    if bf_running || { ! $IS_LINUX && { pgrep -q -x virtual_oss 2>/dev/null || pcm_bridge_running; }; }; then
       echo "Desired power is off — stopping the active/partial chain"
       export OMDRC_SOURCE_MODE="$desired_source"
       exec "$0" off
@@ -1051,7 +1264,7 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
       echo "DRC already off; the $(source_label "$desired_source") owns the DAC"
       exit 0
     fi
-    mpc_select_audible "OKTO-DAC" >/dev/null 2>&1 || true
+    mpc_select_audible "$DIRECT_OUTPUT" >/dev/null 2>&1 || true
     log_event "event=reconcile result=noop reason=already_off source=${desired_source}"
     echo "DRC already off"
     exit 0
@@ -1063,7 +1276,10 @@ if [ $# -eq 1 ] && [ "$1" = "reconcile" ]; then
   set -- $desired_args
   desired_mode="$1"
   desired_variant="${2:-}"
-  if [ "$desired_mode" = "resamp" ]; then
+  if [ "$BACKEND" = "pcm_bridge" ]; then
+    desired_rate=192000
+    desired_output="DRC-bridge"
+  elif [ "$desired_mode" = "resamp" ]; then
     desired_rate=192000
     desired_output="DRC-resamp"
   else
@@ -1109,6 +1325,11 @@ if [ $# -eq 1 ] && [ "$1" = "restore" ]; then
     echo "Last power state was off — leaving DRC disabled (direct DAC)"
     exec "$0" off
   fi
+  if [ "$BACKEND" = "pcm_bridge" ]; then
+    echo "Restoring PCM bridge at 192000 Hz"
+    export OMDRC_SOURCE_MODE=music
+    exec "$0" 192000
+  fi
   if is_capture_source "$restore_source"; then
     echo "Restoring the $(source_label "$restore_source") at $(source_rate "$restore_source") Hz"
     export OMDRC_SOURCE_MODE="$restore_source"
@@ -1151,6 +1372,7 @@ if [ $# -eq 1 ] && [ "$1" = "session" ]; then
   valid_source "$session_source" || session_source="music"
   printf 'geometry=%s\n' "$GEOMETRY"
   printf 'power=%s\n' "$session_power"
+  printf 'backend=%s\n' "$BACKEND"
   printf 'source=%s\n' "$session_source"
   printf 'mode=%s\n' "$session_mode"
   printf 'rate=%s\n' "$session_rate"
@@ -1181,6 +1403,10 @@ if [ $# -ge 1 ] && [ "$1" = "design" ]; then
   design_selector="${2:-}"
   design_rate="$design_mode"
   [ "$design_rate" = "resamp" ] && design_rate=192000
+  if [ "$BACKEND" = "pcm_bridge" ]; then
+    design_mode=192000
+    design_rate=192000
+  fi
 
   case "$design_request" in
     "")
@@ -1263,6 +1489,11 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
     echo "installed: $(list_geometries | tr '\n' ' ')" >&2
     exit 1
   fi
+  if [ "$BACKEND" = "pcm_bridge" ] &&
+     ! geometry_rates "$new_geo" | grep -qx 192000; then
+    echo "PCM bridge requires a 192000 Hz config in filter set $new_geo" >&2
+    exit 1
+  fi
 
   switch_source="music"
   [ -f "$SOURCE_FILE" ] && switch_source=$(cat "$SOURCE_FILE" 2>/dev/null || echo music)
@@ -1298,6 +1529,10 @@ if [ $# -ge 1 ] && [ "$1" = "geometry" ]; then
   want_rate="$1"
   need_rate="$want_rate"
   [ "$want_rate" = "resamp" ] && need_rate=192000
+  if [ "$BACKEND" = "pcm_bridge" ]; then
+    want_rate=192000
+    need_rate=192000
+  fi
 
   # Designs belong to a geometry. Prefer the design last used with the target
   # geometry; otherwise select that geometry's first valid design. Never carry
@@ -1362,10 +1597,10 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
   _st_voss_rate=""
   _st_bridge_rate=""
   if ! $IS_LINUX; then
-    _st_voss_rate=$(ps -ax -o args= 2>/dev/null \
-      | awk '($1=="virtual_oss" || $1~/\/virtual_oss$/) && /-r/ {for(i=1;i<=NF;i++) if($i=="-r"){print $(i+1); exit}}')
+  _st_voss_rate=$(ps -ax -o args= 2>/dev/null \
+      | awk '!found && ($1=="virtual_oss" || $1~/\/virtual_oss$/) && /-r/ {for(i=1;i<=NF;i++) if($i=="-r"){print $(i+1); found=1; break}}')
     _st_bridge_rate=$(ps -ax -o args= 2>/dev/null \
-      | awk '($1=="omdrc-pcm-bridge" || $1~/\/omdrc-pcm-bridge$/) && /--rate/ {for(i=1;i<=NF;i++) if($i=="--rate"){print $(i+1); exit}}')
+      | awk '!found && ($1=="omdrc-pcm-bridge" || $1~/\/omdrc-pcm-bridge$/) && /--rate/ {for(i=1;i<=NF;i++) if($i=="--rate"){print $(i+1); found=1; break}}')
   fi
 
   # Linux: sample rate of the active ALSA playback stream (DAC output).
@@ -1384,7 +1619,7 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
   fi
 
   # brutefir: extract rate and optional variant from the running conf path
-  _st_bf_args=$(ps -ax -o args= 2>/dev/null | awk '($1=="brutefir" || $1~/\/brutefir$/) && /\.conf/{print; exit}')
+  _st_bf_args=$(ps -ax -o args= 2>/dev/null | awk '!found && ($1=="brutefir" || $1~/\/brutefir$/) && /\.conf/{print; found=1}')
   _st_bf_conf_path=$(echo "$_st_bf_args" | grep -o '[^ ]*brutefir-[0-9][^ /]*\.conf' | head -1) || true
   _st_bf_conf=$(echo "$_st_bf_args" | grep -o 'brutefir-[0-9][^ /]*\.conf' | head -1) || true
   _st_bf_rate=$(echo "$_st_bf_conf" | sed 's/brutefir-\([0-9]*\).*/\1/')
@@ -1419,6 +1654,7 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
   [ -z "$_st_bf_rate" ] && _st_drc="off"
 
   printf "%-17s %s\n" "Geometry:"    "$GEOMETRY"
+  printf "%-17s %s\n" "Backend:"     "$BACKEND"
   printf "%-17s %s\n" "Active config:" "$(state_label "$_st_drc")"
   _st_attenuation=""
   _st_attenuation_source=""
@@ -1589,6 +1825,11 @@ else
   usage
   exit 1
 fi
+if [ "$BACKEND" = "pcm_bridge" ] && [ "$mode" != "off" ] && [ "$mode" != "stop" ] \
+   && [ "$actual_rate" != "192000" ]; then
+  echo "PCM bridge is fixed at 192000 Hz; use 192000 or resamp, or switch to virtual_oss" >&2
+  exit 2
+fi
 
 # ── confirm before disabling DRC ─────────────────────────────────────────────
 # Every generated BruteFIR config bakes in a fixed 8 dB of attenuation (see
@@ -1661,11 +1902,11 @@ if [ "$mode" != "off" ] && [ "$mode" != "stop" ]; then
       echo "note: the $(source_label "$source_mode") bridge feeds the DRC chain," \
            "so it is unavailable too" >&2
     fi
-    if ! $IS_LINUX && pgrep -q -x virtual_oss 2>/dev/null; then
-      echo "stopping virtual_oss: with no brutefir nothing reads its loopback"
-      stop_virtual_oss
+    if ! $IS_LINUX; then
+      echo "stopping FreeBSD bridge: with no brutefir nothing reads its loopback"
+      stop_freebsd_backend
     fi
-    if ! mpc_select_audible "OKTO-DAC" >/dev/null 2>&1; then
+    if ! mpc_select_audible "$DIRECT_OUTPUT" >/dev/null 2>&1; then
       echo "warning: could not switch MPD to the direct DAC output" >&2
     fi
     log_event "event=chain_unavailable missing=$(echo "$chain_gap" | tr ' ' ',')" \
@@ -1922,13 +2163,13 @@ ensure_mpd_has_output() {
     return 0
   fi
   echo "MPD has no enabled output; re-enabling the direct DAC" >&2
-  if mpc_select_audible "OKTO-DAC" >/dev/null 2>&1; then
-    log_event "event=mpd_output result=repaired output=OKTO-DAC"
+  if mpc_select_audible "$DIRECT_OUTPUT" >/dev/null 2>&1; then
+    log_event "event=mpd_output result=repaired output=$DIRECT_OUTPUT"
     return 0
   fi
   log_event "event=mpd_output result=repair_failed output=none"
   echo "warning: MPD still has no enabled output;" \
-       "run 'mpc enable only OKTO-DAC' to restore sound" >&2
+       "run 'mpc enable only $DIRECT_OUTPUT' to restore sound" >&2
   return 1
 }
 
@@ -1938,9 +2179,9 @@ ensure_mpd_has_output() {
 rollback_to_direct() {
   echo "rolling back to direct DAC output (off)" >&2
   if ! $IS_LINUX; then
-    stop_virtual_oss
+    stop_freebsd_backend
   fi
-  mpc_select_audible "OKTO-DAC" 2>/dev/null || true
+  mpc_select_audible "$DIRECT_OUTPUT" 2>/dev/null || true
 }
 
 # ── stop brutefir ────────────────────────────────────────────────────────────
@@ -1976,7 +2217,7 @@ fi
 # the output close cleanly.  Bounded and non-fatal: if MPD is already wedged
 # from an earlier brutefir crash there is nothing to save, and the teardown
 # must continue regardless.
-if $IS_LINUX; then
+if $IS_LINUX || pcm_bridge_running; then
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-bridge" >/dev/null 2>&1 || true
@@ -1984,6 +2225,7 @@ if $IS_LINUX; then
   # device; give it a moment so the loopback is released before the pkill.
   sleep 0.5
 fi
+if [ "$BACKEND" = "pcm_bridge" ]; then : > "$WATCHDOG_STOP_FILE"; fi
 stop_brutefir
 
 # ── off / stop: re-enable direct DAC, stop virtual_oss ───────────────────────
@@ -2039,8 +2281,8 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # Now tear the chain down so the DAC is free before the direct output opens
   # it (the DAC is single-open: vchans off / bit-perfect).
   if ! $IS_LINUX; then
-    echo "stopping virtual_oss"
-    stop_virtual_oss
+    echo "stopping FreeBSD bridge"
+    stop_freebsd_backend
   fi
   # Enable ONLY the direct DAC output — this disables every other output.
   # NB: mpc has no "disable all" keyword (it errors "all: no such output");
@@ -2054,8 +2296,8 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
     # look like the bridge failing to start.
     log_event "event=run_result mode=${mode} result=stopped source=${off_source} output=cdin"
     echo "The $(source_label "$off_source") keeps playing, straight to the DAC (no room correction)"
-  elif mpc_select_audible "OKTO-DAC"; then
-    log_event "event=run_result mode=${mode} result=stopped output=OKTO-DAC"
+  elif mpc_select_audible "$DIRECT_OUTPUT"; then
+    log_event "event=run_result mode=${mode} result=stopped output=$DIRECT_OUTPUT"
   else
     log_event "event=run_result mode=${mode} result=stopped output=fail"
     echo "warning: could not switch MPD to the direct DAC output" >&2
@@ -2088,7 +2330,7 @@ fi
 # output instead of being a no-op on an already-enabled (but stale) output.
 # stdout silenced: each "mpc disable" echoes the full output list, which is
 # just noise here — the post-start "enable only" below prints the final state.
-mpc_bounded disable "OKTO-DAC"   >/dev/null 2>&1 || true
+mpc_bounded disable "$DIRECT_OUTPUT" >/dev/null 2>&1 || true
 mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
 mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
 mpc_bounded disable "DRC-bridge" >/dev/null 2>&1 || true
@@ -2106,22 +2348,37 @@ fi
 
 # ── restart virtual_oss at the required sample rate ──────────────────────────
 if ! $IS_LINUX; then
-  echo "stopping virtual_oss"
-  stop_virtual_oss
-  echo "starting virtual_oss at ${actual_rate} Hz"
-  # shellcheck disable=SC2086
-  _sudo "${VIRTUAL_OSS_BIN:-virtual_oss}" -D "$VIRTUAL_OSS_PID" -r "$actual_rate" $VIRTUAL_OSS_ARGS &
-  # Wait until virtual_oss is actually up and the loopback node exists;
-  # brutefir's input opens /dev/dsp.loop and fails outright if it is not
-  # ready yet.  Fall back after ~5 s rather than blocking forever.
+  echo "stopping FreeBSD bridge"
+  stop_freebsd_backend
+  if [ "$BACKEND" = "pcm_bridge" ]; then
+    echo "starting PCM bridge at 192000 Hz for $PCM_BRIDGE_USER"
+    _sudo "$PCM_BRIDGE_BIN" --rate 192000 --user "$PCM_BRIDGE_USER" \
+      --capacity-ms 200 --play dsp.play --capture dsp.loop \
+      > /tmp/omdrc-pcm-bridge.out 2>&1 &
+  else
+    echo "starting virtual_oss at ${actual_rate} Hz"
+    # shellcheck disable=SC2086
+    _sudo "${VIRTUAL_OSS_BIN:-virtual_oss}" -D "$VIRTUAL_OSS_PID" -r "$actual_rate" $VIRTUAL_OSS_ARGS &
+  fi
+  # BruteFIR opens /dev/dsp.loop immediately, so wait for both CUSE nodes.
   _vo=0
   while [ "$_vo" -lt 25 ]; do
-    if pgrep -q virtual_oss 2>/dev/null && [ -e /dev/dsp.loop ]; then
+    if [ -e /dev/dsp.play ] && [ -e /dev/dsp.loop ] && \
+       { if [ "$BACKEND" = "pcm_bridge" ]; then
+           pcm_bridge_running
+         else
+           pgrep -q -x virtual_oss 2>/dev/null
+         fi; }; then
       break
     fi
     sleep 0.2
     _vo=$((_vo + 1))
   done
+  if [ "$_vo" -eq 25 ] && [ "$BACKEND" = "pcm_bridge" ]; then
+    echo "ERROR: $BACKEND did not create its OSS nodes" >&2
+    rollback_to_direct
+    exit 1
+  fi
 fi
 
 # ── prime the DAC on any rate CHANGE ─────────────────────────────────────────
@@ -2212,7 +2469,9 @@ if [ -z "$chain_ok" ]; then
 fi
 
 # ── enable the matching MPD output ───────────────────────────────────────────
-if [ "$mode" = "resamp" ]; then
+if [ "$BACKEND" = "pcm_bridge" ]; then
+  mpd_output="DRC-bridge"
+elif [ "$mode" = "resamp" ]; then
   mpd_output="DRC-resamp"
 else
   mpd_output="DRC-native"
@@ -2222,7 +2481,7 @@ fi
 # so enforce the same policy by gating MPD's audible outputs. The Spectrum FIFO
 # remains independently controlled by the visible analyzer card.
 if is_capture_source "${source_mode:-music}"; then
-  mpc_bounded disable "OKTO-DAC"   >/dev/null 2>&1 || true
+  mpc_bounded disable "$DIRECT_OUTPUT" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-bridge" >/dev/null 2>&1 || true
@@ -2258,6 +2517,21 @@ chmod 644 "$POWER_FILE" 2>/dev/null || true
 # while virtual_oss was still being replaced, and land back on the DAC that
 # brutefir is about to open.
 restart_cdin
+
+if [ "$BACKEND" = "pcm_bridge" ]; then
+  rm -f "$WATCHDOG_STOP_FILE"
+  bridge_pid=$(pcm_bridge_pids | head -n 1)
+  if [ -n "$bridge_pid" ]; then
+    log_event "event=bridge_watchdog_start watch_pid=$bridge_pid"
+    if command -v daemon >/dev/null 2>&1; then
+      daemon -cf -o /tmp/omdrc-pcm-bridge-watchdog.out \
+        "$0" bridge-watchdog "$bridge_pid"
+    else
+      nohup "$0" bridge-watchdog "$bridge_pid" </dev/null \
+        > /tmp/omdrc-pcm-bridge-watchdog.out 2>&1 &
+    fi
+  fi
+fi
 
 log_event "event=run_result mode=${mode} rate=${actual_rate} source=${source_mode} result=active attempts=${vattempt} bf_attempts=${BF_ATTEMPTS} warm_ms=${WARM_MS} observed=${VERIFY_OBSERVED} output=${mpd_result} switch_from=${OMDRC_SWITCH_FROM:-} switch_to=${OMDRC_SWITCH_TO:-}"
 echo "DRC active: $(state_label "$state_args") (MPD output: ${mpd_output})"
