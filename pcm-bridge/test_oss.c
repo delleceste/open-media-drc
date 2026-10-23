@@ -47,6 +47,8 @@ static void *interrupt_read(void *arg)
 int main(int argc, char **argv)
 {
     assert(argc == 3 || argc == 4); play_path = argv[1]; capture_path = argv[2];
+    const char *rate_text = getenv("BRIDGE_TEST_RATE");
+    int expected_rate = rate_text ? atoi(rate_text) : 48000;
     if (argc == 4) {
         bool reading = strcmp(argv[3], "block-read") == 0;
         int fd = open(reading ? capture_path : play_path, reading ? O_RDONLY : O_WRONLY);
@@ -68,8 +70,10 @@ int main(int argc, char **argv)
     assert(open(play_path, O_RDWR) == -1);
     int n = AFMT_S16_LE; assert(ioctl(writer, SNDCTL_DSP_SETFMT, &n) == -1);
     n = AFMT_S32_LE; assert(ioctl(writer, SNDCTL_DSP_SETFMT, &n) == 0 && n == AFMT_S32_LE);
-    n = 44100; assert(ioctl(writer, SNDCTL_DSP_SPEED, &n) == -1);
-    n = 48000; assert(ioctl(reader, SNDCTL_DSP_SPEED, &n) == 0 && n == 48000);
+    n = expected_rate == 44100 ? 96000 : 44100;
+    assert(ioctl(writer, SNDCTL_DSP_SPEED, &n) == -1);
+    n = expected_rate;
+    assert(ioctl(reader, SNDCTL_DSP_SPEED, &n) == 0 && n == expected_rate);
     n = 1; assert(ioctl(reader, SNDCTL_DSP_CHANNELS, &n) == -1);
     n = 2; assert(ioctl(reader, SNDCTL_DSP_CHANNELS, &n) == 0 && n == 2);
     n = (4 << 16) | 8; assert(ioctl(reader, SNDCTL_DSP_SETFRAGMENT, &n) == 0);

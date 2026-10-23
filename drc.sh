@@ -227,7 +227,7 @@ mpc_bounded() { run_bounded "$OMDRC_MPC_TIMEOUT" mpc "$@"; }
 # `mpc enable only` also turns off the Spectrum FIFO, stranding VU/DR readers.
 mpc_select_audible() {
   local selected="$1" output
-  for output in OKTO-DAC DRC-native DRC-resamp; do
+  for output in OKTO-DAC DRC-native DRC-resamp DRC-bridge; do
     if [ "$output" != "$selected" ]; then
       mpc_bounded disable "$output" >/dev/null || return $?
     fi
@@ -1360,9 +1360,12 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
 
   # virtual_oss: find the -r argument in the running process command line
   _st_voss_rate=""
+  _st_bridge_rate=""
   if ! $IS_LINUX; then
     _st_voss_rate=$(ps -ax -o args= 2>/dev/null \
       | awk '($1=="virtual_oss" || $1~/\/virtual_oss$/) && /-r/ {for(i=1;i<=NF;i++) if($i=="-r"){print $(i+1); exit}}')
+    _st_bridge_rate=$(ps -ax -o args= 2>/dev/null \
+      | awk '($1=="omdrc-pcm-bridge" || $1~/\/omdrc-pcm-bridge$/) && /--rate/ {for(i=1;i<=NF;i++) if($i=="--rate"){print $(i+1); exit}}')
   fi
 
   # Linux: sample rate of the active ALSA playback stream (DAC output).
@@ -1460,6 +1463,8 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
     else
       printf "%-17s not running\n"    "ALSA:"
     fi
+  elif [ -n "$_st_bridge_rate" ]; then
+    printf "%-17s running  %s Hz\n" "PCM bridge:" "$_st_bridge_rate"
   elif [ -n "$_st_voss_rate" ]; then
     printf "%-17s running  %s Hz\n"  "virtual_oss:"  "$_st_voss_rate"
   elif virtual_oss_available; then
@@ -1502,6 +1507,19 @@ if [ $# -eq 1 ] && [ "$1" = "status" ]; then
         printf "%-17s MPD %s Hz != brutefir %s Hz  %s%s\n" \
           "Rate:" "$_st_mpd_rate" "$_st_bf_rate" "$(rate_mismatch_label)" "$_st_alsa_suffix"
       fi
+    fi
+  elif [ -n "$_st_bridge_rate" ] && [ -n "$_st_mpc_audio" ]; then
+    _st_mpd_rate=$(echo "$_st_mpc_audio" | cut -d: -f1)
+    echo ""
+    if [ "$_st_bridge_rate" != "$_st_bf_rate" ]; then
+      printf "%-17s bridge %s Hz != brutefir %s Hz [MISMATCH]\n" \
+        "Rate:" "$_st_bridge_rate" "${_st_bf_rate:-unknown}"
+    elif [ "$_st_mpd_rate" = "$_st_bridge_rate" ]; then
+      printf "%-17s source %s Hz = bridge %s Hz [match]\n" \
+        "Rate:" "$_st_mpd_rate" "$_st_bridge_rate"
+    else
+      printf "%-17s source %s Hz → MPD converts to bridge %s Hz\n" \
+        "Rate:" "$_st_mpd_rate" "$_st_bridge_rate"
     fi
   elif [ -n "$_st_voss_rate" ] && [ -n "$_st_mpc_audio" ]; then
     _st_mpd_rate=$(echo "$_st_mpc_audio" | cut -d: -f1)
@@ -1961,6 +1979,7 @@ fi
 if $IS_LINUX; then
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
+  mpc_bounded disable "DRC-bridge" >/dev/null 2>&1 || true
   # `mpc disable` returns before the output thread has actually closed the
   # device; give it a moment so the loopback is released before the pkill.
   sleep 0.5
@@ -1986,6 +2005,7 @@ if [ "$mode" = "off" ] || [ "$mode" = "stop" ]; then
   # This mirrors what the chain-rebuild path does a few lines further down.
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
+  mpc_bounded disable "DRC-bridge" >/dev/null 2>&1 || true
   sleep 0.5
   # Does the disc survive "no DRC"?  On FreeBSD it always has: the bridge is
   # restarted at the bottom of this block and re-picks /dev/dsp.dac once
@@ -2071,6 +2091,7 @@ fi
 mpc_bounded disable "OKTO-DAC"   >/dev/null 2>&1 || true
 mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
 mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
+mpc_bounded disable "DRC-bridge" >/dev/null 2>&1 || true
 # "mpc disable" returns before MPD's player thread has actually closed the
 # device; give it a moment so MPD releases /dev/dsp.play (and the DAC) before
 # we tear down virtual_oss underneath it.  Yanking the backend out from under
@@ -2204,6 +2225,7 @@ if is_capture_source "${source_mode:-music}"; then
   mpc_bounded disable "OKTO-DAC"   >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-native" >/dev/null 2>&1 || true
   mpc_bounded disable "DRC-resamp" >/dev/null 2>&1 || true
+  mpc_bounded disable "DRC-bridge" >/dev/null 2>&1 || true
   mpd_output="none ($(source_label "$source_mode") owns the loopback)"
   mpd_result="cdin"
   log_event "event=mpd_output result=released reason=cdin_exclusive source=${source_mode}"

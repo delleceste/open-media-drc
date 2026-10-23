@@ -80,6 +80,19 @@ audio_output {
         mixer_type        "none"
 }
 
+# Experimental single-stream bridge. MPD always sends stereo S32 at 192 kHz;
+# its soxr resampler handles source-rate changes. This output is disabled until
+# drc.sh explicitly starts omdrc-pcm-bridge and BruteFIR on the matching nodes.
+# The bridge does not resample or widen samples itself.
+audio_output {
+        type "oss"
+        name "DRC-bridge"
+        device "/dev/dsp.play"
+        format "192000:32:2"
+        enabled "no"
+        mixer_type "none"
+}
+
 # Optional analyzer output for omdrc-ctrl's live spectrum card.
 #
 # This is a secondary MPD output, disabled at rest.  omdrc-ctrl enables it only

@@ -113,6 +113,7 @@ P.paintMpd = m => {
     if (!m || !m.ok) { K.clear(P.mpdBody).append(h('p', { class: 'muted' }, m ? (m.error || 'unavailable') : 'reading…')); return; }
     const rows = [K.kv('State', m.running ? m.state : 'not running'), m.song ? K.kv('Song', m.song) : null,
         m.audio ? K.kv('Audio', m.audio) : null];
+    if (m.bridge_backend === 'pcm_bridge') rows.push(K.kv('MPD output', `PCM bridge · ${K.fmtRate(m.bridge_rate)} · S32 stereo`));
     if (m.alsa) rows.push(K.kv('ALSA', `${m.alsa.rate} Hz · ${m.alsa.format} · ${m.alsa.channels} ch · buffer ${m.alsa.buffer_size} / period ${m.alsa.period_size}`));
     if (m.rate_status && m.rate_status.text) rows.push(K.kv('Rate', m.rate_status.text, m.rate_status.kind === 'mismatch' ? 'bad' : ''));
     if (m.path_status && m.path_status.text) rows.push(K.kv('Path', m.path_status.text, m.path_status.kind === 'bad' ? 'bad' : ''));

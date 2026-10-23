@@ -4354,8 +4354,9 @@ async function fetchMpdInfo() {
             monRow('Channels', d.channels || 'unknown',
                    d.channels ? 'var(--text)' : 'var(--muted)') +
             (!d.is_linux
-                ? monRow('virtual_oss', d.virtual_oss_rate ? fmtRate(d.virtual_oss_rate) : 'not running',
-                         d.virtual_oss_rate ? 'var(--text)' : 'var(--muted)')
+                ? monRow(d.bridge_backend === 'pcm_bridge' ? 'PCM bridge' : 'virtual_oss',
+                         d.bridge_rate ? fmtRate(d.bridge_rate) : 'not running',
+                         d.bridge_rate ? 'var(--text)' : 'var(--muted)')
                 : '') +
             // What the DAC is actually being fed right now (ALSA hw_params).
             (d.alsa
@@ -4392,10 +4393,13 @@ async function fetchMpdInfo() {
                     (ps.detail ? `<div style="font-size:.72rem;color:var(--muted);margin-top:2px;line-height:1.4">${escHtml(ps.detail)}</div>` : '') +
                     `</div>`;
         }
+        const bridgeName = d.is_linux ? 'ALSA loopback' :
+                           d.bridge_backend === 'pcm_bridge' ? 'PCM bridge' : 'virtual_oss';
         html += `<div style="font-size:.7rem;color:var(--muted);margin-top:6px;line-height:1.45">` +
-                `Signal path: MPD → BruteFIR (64-bit float convolution) → ` +
-                `${d.is_linux ? 'ALSA' : 'virtual_oss'} → DAC. ` +
-                `No sample-rate conversion occurs while all rates match.</div>`;
+                `Signal path: MPD → ${bridgeName} → BruteFIR (64-bit float convolution) → DAC. ` +
+                (d.bridge_backend === 'pcm_bridge'
+                    ? 'MPD output is fixed at 192 kHz S32; lower-rate sources are converted by MPD.'
+                    : 'No sample-rate conversion occurs while all rates match.') + `</div>`;
         el.innerHTML = html;
     } catch {
         el.innerHTML = '<span style="color:var(--red)">network error</span>';

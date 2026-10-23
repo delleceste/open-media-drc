@@ -500,7 +500,7 @@ class MpdOutputGate(unittest.TestCase):
         self.assertEqual(
             [call.args for call in action.call_args_list],
             [("OKTO-DAC", "disable"), ("DRC-native", "disable"),
-             ("DRC-resamp", "disable")])
+             ("DRC-resamp", "disable"), ("DRC-bridge", "disable")])
         write.assert_called_once_with(APP._CDIN_MPD_OUTPUT_FILE, "DRC-native")
 
     def test_stop_restores_exactly_the_remembered_output(self):
@@ -512,7 +512,7 @@ class MpdOutputGate(unittest.TestCase):
         self.assertEqual(
             [call.args for call in action.call_args_list],
             [("OKTO-DAC", "disable"), ("DRC-native", "disable"),
-             ("DRC-resamp", "enable")])
+             ("DRC-bridge", "disable"), ("DRC-resamp", "enable")])
 
 
 if __name__ == "__main__":

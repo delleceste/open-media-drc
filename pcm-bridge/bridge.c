@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <inttypes.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -276,11 +277,13 @@ static bool valid_name(const char *s)
 int main(int argc, char **argv)
 {
     const char *play_name = "dsp.omdrcbridgeplay", *capture_name = "dsp.omdrcbridgeloop";
+    const char *client_user = NULL;
     int capacity_ms = 200;
     static const struct option options[] = {
         {"rate", required_argument, NULL, 'r'}, {"capacity-ms", required_argument, NULL, 'b'},
         {"play", required_argument, NULL, 'p'}, {"capture", required_argument, NULL, 'c'},
         {"format", required_argument, NULL, 'f'}, {"channels", required_argument, NULL, 'n'},
+        {"user", required_argument, NULL, 'u'},
         {"help", no_argument, NULL, 'h'}, {NULL, 0, NULL, 0}
     };
     int opt;
@@ -292,8 +295,9 @@ int main(int argc, char **argv)
         case 'c': capture_name = optarg; break;
         case 'f': if (strcmp(optarg, "s32le")) return 2; break;
         case 'n': if (number(optarg, 2, 2) != 2) return 2; break;
+        case 'u': client_user = optarg; break;
         case 'h': puts("omdrc-pcm-bridge --rate HZ [--capacity-ms 200] [--format s32le]\n"
-                      "  [--channels 2] [--play dsp.NAME] [--capture dsp.NAME]\n"
+                      "  [--channels 2] [--user LOGIN] [--play dsp.NAME] [--capture dsp.NAME]\n"
                       "Experimental foreground bridge; defaults to isolated test nodes.\n"
                       "SIGUSR1: counters; SIGTERM/SIGINT: shutdown."); return 0;
         default: return 2;
@@ -301,6 +305,14 @@ int main(int argc, char **argv)
     }
     if (!rate || optind != argc || !valid_name(play_name) || !valid_name(capture_name) ||
         !strcmp(play_name, capture_name)) { fprintf(stderr, "invalid/missing arguments; see --help\n"); return 2; }
+    uid_t client_uid = getuid();
+    gid_t client_gid = getgid();
+    if (client_user) {
+        struct passwd *account = getpwnam(client_user);
+        if (!account) { fprintf(stderr, "unknown client user: %s\n", client_user); return 2; }
+        client_uid = account->pw_uid;
+        client_gid = account->pw_gid;
+    }
     size_t capacity = (size_t)rate * capacity_ms / 1000 * FRAME;
     if (pcm_queue_init(&queue, capacity)) return 1;
     sigset_t signals;
@@ -311,8 +323,8 @@ int main(int argc, char **argv)
     /* libcuse sends SIGHUP to interrupt a signalled/closing client call. */
     sigaction(SIGHUP, &action, NULL);
     if (cuse_init()) { fprintf(stderr, "cuse_init failed: load cuse and check /dev/cuse permissions\n"); return 1; }
-    struct cuse_dev *a = cuse_dev_create(&methods, &play, NULL, getuid(), getgid(), 0600, "%s", play_name);
-    struct cuse_dev *b = a ? cuse_dev_create(&methods, &capture, NULL, getuid(), getgid(), 0600, "%s", capture_name) : NULL;
+    struct cuse_dev *a = cuse_dev_create(&methods, &play, NULL, client_uid, client_gid, 0600, "%s", play_name);
+    struct cuse_dev *b = a ? cuse_dev_create(&methods, &capture, NULL, client_uid, client_gid, 0600, "%s", capture_name) : NULL;
     if (!a || !b) {
         fprintf(stderr, "cannot create test devices\n");
         if (a) cuse_dev_destroy(a);

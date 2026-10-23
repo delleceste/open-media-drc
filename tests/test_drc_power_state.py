@@ -454,7 +454,7 @@ class AudibleOutputSelectionTest(unittest.TestCase):
     def test_switches_both_directions_without_touching_spectrum(self):
         script = (ROOT / "drc.sh").read_text()
         helper = script.split("mpc_select_audible() {", 1)[1].split("\n}", 1)[0]
-        for selected in ("OKTO-DAC", "DRC-native", "DRC-resamp"):
+        for selected in ("OKTO-DAC", "DRC-native", "DRC-resamp", "DRC-bridge"):
             with self.subTest(selected=selected):
                 result = subprocess.run(
                     ["bash", "-c", 'mpc_bounded() { printf "%s %s\\n" "$1" "$2" >&2; }; '
@@ -465,7 +465,7 @@ class AudibleOutputSelectionTest(unittest.TestCase):
                 self.assertEqual(commands[-1], "enable " + selected)
                 self.assertEqual(set(commands[:-1]),
                                  {"disable " + output for output in
-                                  ("OKTO-DAC", "DRC-native", "DRC-resamp")
+                                  ("OKTO-DAC", "DRC-native", "DRC-resamp", "DRC-bridge")
                                   if output != selected})
 
 

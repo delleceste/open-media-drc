@@ -586,6 +586,7 @@ _CHAIN_APPS = {
     "mpd":              "music player daemon",
     "musicpd":          "music player daemon",
     "virtual_oss":      "OSS bridge",
+    "omdrc-pcm-bridge": "PCM bridge",
     "mpv":              "video player",
     "kodi":             "media centre",
     "kodi.bin":         "media centre",
@@ -3086,6 +3087,22 @@ def _virtual_oss_args() -> list[str] | None:
     return None
 
 
+def _pcm_bridge_args() -> list[str] | None:
+    """argv of the experimental FreeBSD bridge, if it is running."""
+    for line in _ps_arg_lines():
+        try:
+            parts = shlex.split(line)
+        except ValueError:
+            parts = line.split()
+        while parts and os.path.basename(parts[0]) == "sudo":
+            parts = parts[1:]
+            while parts and parts[0].startswith("-"):
+                parts = parts[1:]
+        if parts and os.path.basename(parts[0]) == "omdrc-pcm-bridge":
+            return parts
+    return None
+
+
 def _argv_option(args: list[str], flag: str) -> str | None:
     """The value following `flag` in an argv list, or None."""
     for i, arg in enumerate(args):
@@ -3099,6 +3116,17 @@ def _virtual_oss_rate() -> int | None:
     if not args:
         return None
     value = _argv_option(args, "-r")
+    try:
+        return int(value) if value else None
+    except ValueError:
+        return None
+
+
+def _pcm_bridge_rate() -> int | None:
+    args = _pcm_bridge_args()
+    if not args:
+        return None
+    value = _argv_option(args, "--rate")
     try:
         return int(value) if value else None
     except ValueError:
@@ -3196,6 +3224,24 @@ def _path_status(rate_status: dict, brutefir_running: bool) -> dict:
             "detail": "DRC is off and every stage runs at the same rate — samples reach the DAC unaltered.",
         }
     return {"kind": "unknown", "text": "Path status unavailable", "detail": ""}
+
+
+def _pcm_bridge_path_status(source_rate: int | None, bridge_rate: int,
+                            brutefir_rate: int | None) -> tuple[dict, dict]:
+    """Distinguish MPD's fixed-rate conversion from a broken bridge chain."""
+    if brutefir_rate != bridge_rate:
+        return ({"kind": "mismatch", "text": "Bridge/BruteFIR rate mismatch"},
+                {"kind": "mismatch", "text": "Audio chain rate mismatch",
+                 "detail": "The bridge and BruteFIR must use the same sample rate."})
+    if source_rate and source_rate != bridge_rate:
+        return ({"kind": "resampled", "text": f"MPD converts {source_rate} → {bridge_rate} Hz"},
+                {"kind": "resampled", "text": f"MPD resampling to {bridge_rate / 1000:g} kHz",
+                 "detail": "MPD converts the source before the S32 PCM bridge. "
+                           "The source stream is not bit-transparent."})
+    return ({"kind": "match", "text": f"{bridge_rate / 1000:g} kHz chain rate match"},
+            {"kind": "unknown", "text": f"{bridge_rate / 1000:g} kHz PCM bridge path",
+             "detail": "The bridge does not change PCM samples. BruteFIR gain, "
+                       "format conversion and DAC output still determine end-to-end transparency."})
 
 
 # ── BruteFIR filter (FIR coefficient) inspection ───────────────────────────────
@@ -3837,7 +3883,7 @@ _RENDERER_STATE_FILE = os.path.join(_STATE_DIR, "last_renderer")
 # dismissing can never blind the card to something that happens next.
 _CDIN_ACK_FILE = os.path.join(_STATE_DIR, "cdin_error_ack")
 _CDIN_MPD_OUTPUT_FILE = os.path.join(_STATE_DIR, "cdin-mpd-output")
-_CDIN_AUDIBLE_MPD_OUTPUTS = ("OKTO-DAC", "DRC-native", "DRC-resamp")
+_CDIN_AUDIBLE_MPD_OUTPUTS = ("OKTO-DAC", "DRC-native", "DRC-resamp", "DRC-bridge")
 _AUDIO_DIAGNOSTICS_MONITOR: AudioDiagnosticsMonitor | None = None
 
 
@@ -7782,7 +7828,9 @@ def _audio_roles() -> dict[str, str]:
 def _chain_bridge_name() -> str:
     """What is standing between the players and brutefir, named as the thing to
     go and look at when the middle of the chain is broken."""
-    return "snd-aloop" if _IS_LINUX else "virtual_oss"
+    if _IS_LINUX:
+        return "snd-aloop"
+    return "omdrc-pcm-bridge" if _pcm_bridge_args() else "virtual_oss"
 
 
 def _chain_app_note(cmd: str) -> tuple[str, bool]:
@@ -8881,11 +8929,18 @@ def mpd_info():
         mpc = _mpc_status(port)
         is_linux = platform.system() == "Linux"
         voss_rate = _virtual_oss_rate() if not is_linux else None
+        bridge_rate = _pcm_bridge_rate() if not is_linux else None
+        bridge_backend = ("pcm_bridge" if bridge_rate else
+                          "virtual_oss" if voss_rate else "none")
         alsa_hw   = _alsa_hw_params()   if is_linux     else None
         alsa_rate = alsa_hw["rate"] if alsa_hw else None
         bf_rate = _brutefir_rate()
-        rate_status = _rate_status(mpc["sample_rate"], voss_rate, bf_rate)
-        path_status = _path_status(rate_status, bf_rate is not None)
+        if bridge_rate:
+            rate_status, path_status = _pcm_bridge_path_status(
+                mpc["sample_rate"], bridge_rate, bf_rate)
+        else:
+            rate_status = _rate_status(mpc["sample_rate"], voss_rate, bf_rate)
+            path_status = _path_status(rate_status, bf_rate is not None)
         return jsonify({
             "ok":      True,
             "running": running,
@@ -8904,6 +8959,8 @@ def mpd_info():
             "mpc_error": mpc["error"],
             "is_linux": is_linux,
             "virtual_oss_rate": voss_rate,
+            "bridge_backend": bridge_backend,
+            "bridge_rate": bridge_rate or voss_rate,
             "alsa_rate": alsa_rate,
             "alsa": alsa_hw,
             "brutefir_rate": bf_rate,

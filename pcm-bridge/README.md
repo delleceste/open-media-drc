@@ -25,12 +25,14 @@ test assertions remain enabled in release builds.
 
 ```sh
 sudo kldload cuse                       # only if not already loaded
-sudo /usr/local/sbin/omdrc-pcm-bridge --rate 48000
+sudo /usr/local/sbin/omdrc-pcm-bridge --rate 192000 --user giacomo
 ```
 
 The foreground process creates `/dev/dsp.omdrcbridgeplay` (write-only) and
-`/dev/dsp.omdrcbridgeloop` (read-only), mode 0600, owned by its effective launch
-user/group. Running tests as root creates root-owned nodes. No service is
+`/dev/dsp.omdrcbridgeloop` (read-only), mode 0600. `--user LOGIN` sets their
+owner and primary group so unprivileged musicpd and BruteFIR can open them
+while the daemon retains access to root-only `/dev/cuse`. Without `--user`,
+the effective launch user/group owns the nodes. No service is
 started or enabled by installation. Names can be overridden with `--play` and
 `--capture`; do not point production clients at these until rollout gates pass.
 
@@ -74,7 +76,7 @@ The following explicitly create isolated devices with unique names. They never
 open `/dev/dsp.dac`, change live MPD configuration or restart audio services.
 
 ```sh
-sudo python3 pcm-bridge/test_live.py /tmp/omdrc-pcm-bridge-build
+sudo python3 pcm-bridge/test_live.py /tmp/omdrc-pcm-bridge-build --user giacomo --rate 192000
 sudo python3 pcm-bridge/test_clients.py /tmp/omdrc-pcm-bridge-build
 ```
 
@@ -107,7 +109,8 @@ sudo python3 pcm-bridge/test_live.py /tmp/omdrc-pcm-bridge-asan
 On 2026-10-23, the queue oracle test, live OSS suite (including ASan/UBSan), and
 installed MPD/BruteFIR marked-region tests passed on FreeBSD 15.1.
 The release executable was installed at `/usr/local/sbin/omdrc-pcm-bridge`;
-its hash matched the build artifact and its isolated OSS/shutdown suite passed.
+its hash matched the build artifact and its isolated OSS/shutdown suite passed
+at 192 kHz using unprivileged clients and `--user giacomo`.
 All temporary nodes and test processes were removed. No production service was
 restarted or switched to the bridge.
 
