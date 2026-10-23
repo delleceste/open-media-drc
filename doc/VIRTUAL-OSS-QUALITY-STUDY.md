@@ -258,24 +258,29 @@ repo (`L.raw` `3795ef75…`, `R.raw` `b4ccd78c…`, attenuation 8.0 dB). It maps
 left→left and right→right. Both OSes should show those hashes; this has not yet
 been checked on the listening box.
 
-**Unchecked: the DAC's own volume.** The blind test matched BruteFIR
-attenuation and MPD volume, which are software. It did not check any control
-the DAC itself holds. When a device attaches, FreeBSD's pcm layer sets `vol` and
-`pcm` to **75** (`sys/dev/sound/pcm/mixer.c:70–75`, applied at `:733`).
-uaudio forwards this with `SET_CUR` to any USB Feature Unit volume the
-device exposes (`uaudio.c:5470`). Linux leaves the device's own setting alone.
-Such a control-plane difference does not appear in a PCM wire null, yet it
-changes the analogue level. A level a few dB lower is reliably heard as less
-treble, less detail and a smaller stage. Whether the OKTO DAC8 Stereo exposes
-such a control is not recorded anywhere in this repo.
+**The DAC's own volume: considered, and very unlikely.** The blind test
+matched only software levels. When a device attaches, FreeBSD's pcm layer sets
+`vol` and `pcm` to 75 (`sys/dev/sound/pcm/mixer.c:70–75`, applied at `:733`).
+uaudio forwards that to any USB Feature Unit volume the device exposes. But
+`uaudio_mixer_bsd2value()` (`uaudio.c:5363`) maps the percentage linearly
+onto the device's whole range, min + 75 % × range. On any realistic dB range
+that is tens of dB down, an obvious loudness drop, not the tonal and spatial
+change reported. A sub-dB difference would need a control only about 4 dB
+wide. The OKTO also gates host control behind **Volume → USB sync**, which is
+off by default. The "0.75" readout in the September audit came from the
+DacMagic, not the OKTO. Worth one look at the OKTO menu, but this is not the
+lead.
 
 Next checks, cheapest first, on the listening box:
 
-1. With music playing, read the OKTO's front-panel volume on each OS. On
-   FreeBSD, run `mixer -f /dev/mixerN` for the OKTO's pcm unit. On Linux, run
-   `amixer -c DAC8STEREO contents`. If FreeBSD shows a lower level, set
-   `hint.pcm.N.vol="100"` and `hint.pcm.N.pcm="100"` (or `mixer vol=1 pcm=1` for
-   a quick test) and listen again.
+1. Capture the actual listening configuration on each OS. That is 44.1/24
+   material resampled to 192 kHz by MPD, `120.green` loaded, attenuation 8 dB,
+   real music level, on the OKTO (`scripts/bitperfect_runner.py --route
+   drc`). No test so far has combined the resampling, this filter, full level
+   and this DAC (see the provenance in `bp-results/`). Resampled captures are
+   not sample-identical run to run, so compare per-channel frequency response
+   and L/R coherence rather than nulling. Note also: check the OKTO menu once
+   (USB sync off, balance, filter).
 2. `sha256` both coefficient files on each OS, from the paths in the installed
    BruteFIR config.
 3. Run `soxr-response.py` on Arch.
