@@ -59,12 +59,51 @@ from `host.cmake` is lost on reinstall.
    difference that is not explained by the pulled commits (hand edits that the
    install just removed -> tell the user, and offer to move them into
    `host.cmake` or the template).
-4. **Restart only what changed.** Panel changes (`omdrc-ctrl/`): restart
+4. **MPD service (every deploy).** The user has authorized these rc.conf edits.
+   - **FreeBSD (dal, bee):** MPD runs from the project's `omdrc_musicpd`, never
+     the package's `musicpd`. The package owns `rc.d/musicpd`, and its stock
+     script ignores `musicpd_config`; every `pkg upgrade` puts it back. The
+     install prints a `renderers: rc.conf ...` line: `OK` or a WARNING naming
+     the fix. Check anyway:
+     ```sh
+     for f in /etc/rc.conf /etc/rc.conf.local; do
+       sysrc -f $f -n musicpd_enable musicpd_config omdrc_musicpd_enable omdrc_musicpd_config 2>/dev/null
+     done
+     ```
+     Migrate whatever is not yet in this state, editing the file that holds the key:
+     `musicpd_enable` and `musicpd_config` absent, `omdrc_musicpd_enable="YES"`.
+     ```sh
+     sudo sysrc [-f <file>] -x musicpd_enable musicpd_config
+     sudo sysrc omdrc_musicpd_enable=YES
+     ```
+     Do not add `omdrc_musicpd_config`: it defaults to
+     `/usr/local/etc/open-media-drc/musicpd.conf`. Set it only if the old
+     `musicpd_config` named a different file that exists, and report it.
+     Then switch the running MPD over. `omdrc_musicpd stop` finds the pid
+     through our config; the stock script would look in the wrong place:
+     ```sh
+     sudo service omdrc_musicpd stop; pgrep -lf musicpd   # must be empty
+     sudo service omdrc_musicpd start && sudo service omdrc_renderer restart
+     ```
+     Verify: `service omdrc_musicpd status`; exactly one `pgrep -lf musicpd`
+     with `/usr/local/etc/open-media-drc/musicpd.conf`; `mpc outputs`;
+     `/usr/local/etc/rc.conf.d/musicpd/omdrc_audio` is gone (the install
+     removes it) and `/usr/local/etc/rc.conf.d/omdrc_musicpd/omdrc_audio`
+     exists. Leave the package's `/usr/local/etc/musicpd.conf` alone; it is
+     unused.
+   - **arki (Arch):** nothing to migrate. The drop-in
+     `/usr/local/lib/systemd/system/mpd.service.d/open-media-drc.conf` is
+     not owned by pacman, so upgrades keep it. Verify after
+     `sudo systemctl daemon-reload`: `systemctl show -p User,ExecStart mpd`
+     names `AUDIO_USER` and `/usr/local/etc/open-media-drc/mpd.conf`, and
+     `systemctl is-active mpd`. If an `/etc/systemd/system/mpd.service.d/`
+     override also sets `ExecStart`, report it, since it wins over ours.
+5. **Restart only what changed.** Panel changes (`omdrc-ctrl/`): restart
    `omdrcctrl`. Audio chain/MPD changes: follow the install output's printed
    enable steps, and remember that **restarting musicpd makes upmpdcli exit -
    start it again**. Do not restart audio services for a docs or panel-only
    change.
-5. **Verify.**
+6. **Verify.**
    - service up: `service omdrcctrl status` / `systemctl status omdrcctrl`
    - panel answers: `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9090/`
    - rendered config: `grep -A4 '^\[dr_sync\]' <prefix>/etc/omdrcctrl/commands.conf`
@@ -72,18 +111,19 @@ from `host.cmake` is lost on reinstall.
    - DR sharing (after ~30 s or **Share now**): the DR page / API reports
      `ok` and lists the other boxes; the clone is `dr-sync/` in the state dir
      (`$OMDRC_STATE_DIR`, else `~/.local/state/omdrc` of the service user).
-6. **DR sync credentials.** If the sync reports a git error, the service user
+7. **DR sync credentials.** If the sync reports a git error, the service user
    has no credentials on this box. That needs an interactive login: give the
    user the commands (`gh auth login` then `gh auth setup-git` as the service
    user, or an SSH deploy key with write access) and ask them to run them with
    `!`. Never put tokens in `commands.conf` or the repo. Test afterwards with
    `GIT_TERMINAL_PROMPT=0 git ls-remote <repo>` as that user.
-7. **FIFO rate drift.** On a box not yet checked, compare the installed
+8. **FIFO rate drift.** On a box not yet checked, compare the installed
    `musicpd.conf` Spectrum FIFO format with the repo's (44100:32:2); the
    install normally fixes it, but verify after the restart.
 
 ## Report
 
 Pulled commits, whether the build dir was fresh, `commands.conf` diff verdict,
-services restarted and their state, DR sync status, anything not completed.
+services restarted and their state, MPD service migration (rc.conf keys changed,
+or already done), DR sync status, anything not completed.
 Do not commit anything unless source files were changed as part of the task.

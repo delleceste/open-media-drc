@@ -32,7 +32,11 @@ optimizes for a different thing (zero-config personal appliance):
 4. **rc.d scripts shadow other ports.** `etc/rc.d/musicpd` and `upmpdcli`
    replace scripts owned by audio/musicpd and net/upmpdcli. A port may not
    override another port's rc script — the stock scripts' rc.conf knobs
-   (`musicpd_config`, `upmpdcli_config`, …) must be used instead.
+   (`upmpdcli_config`, …) must be used instead.  The stock musicpd script has
+   no such knob: it hardcodes `%%PREFIX%%/etc/musicpd.conf` and ignores
+   `musicpd_config` (verified on musicpd-0.24.15, 2026-10-23).  The CMake
+   install therefore ships its own `omdrc_musicpd` (PROVIDE: omdrc_musicpd
+   musicpd), which a port may also do because it shadows nothing.
 5. **Dependency on a personal BruteFIR fork.** RUN_DEPENDS must resolve to
    ports; `github.com/delleceste/brutefir` is not one.
 6. **Kernel/userland patches.** A port cannot patch the base system (uaudio,
@@ -176,8 +180,10 @@ by this makefile.
   - `UPNP`: +upmpdcli (renderer front-end is optional)
 - `USE_RC_SUBR= drc_usb_audio omdrcctrl omdrcvideo` — **not** musicpd or
   upmpdcli; instead pkg-message documents the rc.conf lines to point the
-  stock scripts at our configs
-  (`musicpd_config="%%PREFIX%%/etc/open-media-drc/musicpd.conf"`, etc.).
+  stock scripts at our configs (`upmpdcli_config=...`).  For MPD either add
+  `omdrc_musicpd` to USE_RC_SUBR (with its post-start hook under
+  `rc.conf.d/omdrc_musicpd`) or have the user merge the outputs into the
+  stock `%%PREFIX%%/etc/musicpd.conf`; `musicpd_config` does nothing.
 - `@sample` entries for every config; `pkg-message` with the post-install
   checklist (edit omdrc.conf, enable services, kldload cuse, replace flat
   filters).

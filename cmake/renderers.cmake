@@ -176,6 +176,24 @@ else()  # FreeBSD
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/musicpd.conf" "${_m}")
     _omdrc_install_config("${CMAKE_CURRENT_BINARY_DIR}/musicpd.conf" "${_etc}")
 
+    # omdrc_musicpd rc.d.  Its own name, never rc.d/musicpd: that file belongs
+    # to the musicpd package, whose stock script ignores musicpd_config and
+    # comes back on every pkg upgrade (see the script's header comment).
+    file(READ etc/rc.d/omdrc_musicpd.in _mr)
+    _omdrc_common(_mr)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/omdrc_musicpd.rc" "${_mr}")
+    install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/omdrc_musicpd.rc"
+            DESTINATION etc/rc.d RENAME omdrc_musicpd)
+
+    # Check the live rc.conf (real host installs only, not DESTDIR staging):
+    # the stock musicpd must not also be enabled, and the config the rc script
+    # will read must exist.  Warnings, not errors: the files are installed.
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-musicpd-rc.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/check-musicpd-rc.cmake"
+        @ONLY)
+    install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/check-musicpd-rc.cmake")
+
     # upmpdcli rc.d
     file(READ etc/rc.d/upmpdcli.in _s)
     string(REPLACE "@REPO_DIR@/upmpdcli/upmpdcli.conf" "${_siteetc}/upmpdcli.conf" _s "${_s}")
@@ -193,5 +211,5 @@ else()  # FreeBSD
     install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/omdrc_renderer.rc"
             DESTINATION etc/rc.d RENAME omdrc_renderer)
 
-    install(CODE "message(STATUS \"renderers: musicpd.conf + upmpdcli.conf/rc.d + omdrc_renderer rc.d installed (see the final checklist to enable)\")")
+    install(CODE "message(STATUS \"renderers: musicpd.conf + omdrc_musicpd rc.d + upmpdcli.conf/rc.d + omdrc_renderer rc.d installed (see the final checklist to enable)\")")
 endif()

@@ -68,16 +68,20 @@ else()  # FreeBSD rc.d
 
     install(FILES etc/devd/omdrc-audio.conf DESTINATION etc/devd)
 
-    # rc.subr permits rc.conf.d/musicpd to be either one file or a directory.
-    # Prepare the directory form before installing our independent post-start
-    # fragment; the helper preserves a pre-existing file as 00-local.conf.
+    # The post-start hook follows the service that runs MPD here:
+    # omdrc_musicpd (renderers.cmake), not the package's stock musicpd.  The
+    # port keeps the stock service and installs the same file under
+    # rc.conf.d/musicpd (top-level Makefile).  rc.subr permits rc.conf.d/<name>
+    # to be either one file or a directory; prepare the directory form before
+    # installing our independent fragment, preserving a pre-existing file as
+    # 00-local.conf.
     configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/install-musicpd-hook.cmake.in"
         "${CMAKE_CURRENT_BINARY_DIR}/install-musicpd-hook.cmake"
         @ONLY)
     install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/install-musicpd-hook.cmake")
     install(FILES etc/rc.conf.d/musicpd/omdrc_audio
-            DESTINATION etc/rc.conf.d/musicpd)
+            DESTINATION etc/rc.conf.d/omdrc_musicpd)
 
-    install(CODE "message(STATUS \"hotplug: omdrc_audio rc.d + pcm devd rule + musicpd reconcile hook installed (see the final checklist to enable)\")")
+    install(CODE "message(STATUS \"hotplug: omdrc_audio rc.d + pcm devd rule + omdrc_musicpd reconcile hook installed (see the final checklist to enable)\")")
 endif()

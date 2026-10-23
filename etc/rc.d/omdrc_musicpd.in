@@ -1,0 +1,55 @@
+#!/bin/sh
+
+# PROVIDE: omdrc_musicpd musicpd
+# REQUIRE: mixer LOGIN avahi_daemon
+# KEYWORD: shutdown
+
+# Template — rendered to omdrc_musicpd by cmake/renderers.cmake.
+#
+# Launches the FreeBSD musicpd binary with the open-media-drc configuration.
+# It has its own name because the musicpd package owns rc.d/musicpd: a project
+# copy installed over it is silently replaced by the stock script, which
+# hardcodes /usr/local/etc/musicpd.conf and ignores musicpd_config, on every
+# `pkg upgrade`.  Enable this script instead of the stock one:
+#
+# omdrc_musicpd_enable="YES"
+# musicpd_enable="NO"        (or absent: never start both)
+#
+# omdrc_musicpd_config defaults to the rendered config; override it in
+# /etc/rc.conf only if MPD's config lives elsewhere.  mpd is started by root
+# and drops to the unprivileged "user"/"group" named inside the config file.
+# It still PROVIDEs musicpd, so upmpdcli and omdrc_renderer order after it.
+#
+# MPD-to-DRC lifecycle integration is deliberately kept in the separate
+# rc.conf.d fragment rc.conf.d/omdrc_musicpd/omdrc_audio.  rc.subr sources that
+# fragment and runs its one-way post-start reconcile only after this service
+# has successfully started; this script remains an ordinary musicpd launcher.
+
+. /etc/rc.subr
+
+name=omdrc_musicpd
+rcvar=omdrc_musicpd_enable
+desc="Music Player Daemon (open-media-drc configuration)"
+
+load_rc_config $name
+
+: ${omdrc_musicpd_enable:=NO}
+: ${omdrc_musicpd_config:="@PREFIX@/etc/open-media-drc/musicpd.conf"}
+
+command=/usr/local/bin/musicpd
+command_args="${omdrc_musicpd_config}"
+required_files="${omdrc_musicpd_config}"
+start_precmd=${name}_getpidfile
+stop_precmd=${name}_getpidfile
+status_precmd=${name}_getpidfile
+
+omdrc_musicpd_getpidfile()
+{
+	if get_pidfile_from_conf pid_file "${omdrc_musicpd_config}" ; then
+		pidfile="$_pidfile_from_conf"
+	else
+		pidfile="@AUDIO_HOME@/.cache/mpd/pid"
+	fi
+}
+
+run_rc_command $1

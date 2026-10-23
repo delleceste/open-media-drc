@@ -1,0 +1,63 @@
+# Install-time check of the live rc.conf for the omdrc_musicpd service.
+# Rendered by cmake/renderers.cmake; skipped for DESTDIR (staged) installs,
+# which have no live rc.conf to check.
+if(NOT "$ENV{DESTDIR}" STREQUAL "")
+    return()
+endif()
+
+function(_omdrc_rcvar var out)
+    execute_process(COMMAND /usr/sbin/sysrc -n ${var}
+                    OUTPUT_VARIABLE _v ERROR_QUIET
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(${out} "${_v}" PARENT_SCOPE)
+endfunction()
+
+set(_default_config "@CMAKE_INSTALL_PREFIX@/etc/open-media-drc/musicpd.conf")
+set(_problems "")
+
+_omdrc_rcvar(musicpd_enable _stock_enable)
+string(TOUPPER "${_stock_enable}" _stock_enable)
+if(_stock_enable MATCHES "^(YES|TRUE|ON|1)$")
+    string(APPEND _problems
+        "    musicpd_enable=YES starts the package's stock rc.d/musicpd, which ignores\n"
+        "    musicpd_config and reads @CMAKE_INSTALL_PREFIX@/etc/musicpd.conf:\n"
+        "      sudo sysrc -x musicpd_enable musicpd_config\n")
+endif()
+
+_omdrc_rcvar(omdrc_musicpd_enable _enable)
+string(TOUPPER "${_enable}" _enable)
+if(NOT _enable MATCHES "^(YES|TRUE|ON|1)$")
+    string(APPEND _problems
+        "    omdrc_musicpd is not enabled, so MPD will not start at boot:\n"
+        "      sudo sysrc omdrc_musicpd_enable=YES\n")
+endif()
+
+_omdrc_rcvar(omdrc_musicpd_config _config)
+if(_config STREQUAL "")
+    set(_config "${_default_config}")
+endif()
+if(NOT EXISTS "${_config}")
+    string(APPEND _problems
+        "    omdrc_musicpd_config names a missing file: ${_config}\n")
+endif()
+
+# Earlier installs put the post-start hook under the stock service's name.
+# Remove that copy (any version of it carries the same first line); anything
+# else in rc.conf.d/musicpd is the administrator's and stays.
+set(_old_hook "@CMAKE_INSTALL_PREFIX@/etc/rc.conf.d/musicpd/omdrc_audio")
+if(EXISTS "${_old_hook}")
+    file(STRINGS "${_old_hook}" _old_head LIMIT_COUNT 1)
+    if(_old_head MATCHES "^# open-media-drc: ")
+        file(REMOVE "${_old_hook}")
+        message(STATUS "renderers: removed obsolete ${_old_hook}")
+    else()
+        string(APPEND _problems
+            "    ${_old_hook} is not the open-media-drc hook; review and remove it\n")
+    endif()
+endif()
+
+if(_problems STREQUAL "")
+    message(STATUS "renderers: rc.conf OK (omdrc_musicpd enabled, stock musicpd off, ${_config})")
+else()
+    message(WARNING "renderers: rc.conf needs attention for omdrc_musicpd:\n${_problems}")
+endif()

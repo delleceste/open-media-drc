@@ -56,6 +56,38 @@ class FreeBSDAudioLifecycleTests(unittest.TestCase):
         self.assertIn("install-musicpd-hook.cmake", cmake)
         self.assertIn("etc/rc.conf.d/musicpd/omdrc_audio", plist)
 
+    def test_cmake_runs_mpd_from_project_owned_rc_script(self):
+        # rc.d/musicpd belongs to the musicpd package: pkg upgrade replaces any
+        # copy installed there with a script that ignores musicpd_config.
+        rc = (ROOT / "etc/rc.d/omdrc_musicpd.in").read_text()
+        self.assertRegex(rc, r"(?m)^# PROVIDE: omdrc_musicpd musicpd$")
+        self.assertIn("name=omdrc_musicpd", rc)
+        self.assertIn("rcvar=omdrc_musicpd_enable", rc)
+        self.assertIn('command_args="${omdrc_musicpd_config}"', rc)
+        self.assertIn("@PREFIX@/etc/open-media-drc/musicpd.conf", rc)
+        self.assertNotIn("@REPO_DIR@", rc)
+        self.assertFalse((ROOT / "etc/rc.d/musicpd.in").exists())
+
+        renderers = (ROOT / "cmake/renderers.cmake").read_text()
+        self.assertIn("RENAME omdrc_musicpd", renderers)
+        self.assertNotRegex(renderers, r"RENAME musicpd\b")
+        self.assertIn("check-musicpd-rc.cmake", renderers)
+
+        hotplug = (ROOT / "cmake/hotplug.cmake").read_text()
+        self.assertIn("DESTINATION etc/rc.conf.d/omdrc_musicpd", hotplug)
+        hook = (ROOT / "cmake/install-musicpd-hook.cmake.in").read_text()
+        self.assertIn("etc/rc.conf.d/omdrc_musicpd", hook)
+
+        check = (ROOT / "cmake/check-musicpd-rc.cmake.in").read_text()
+        for var in ("musicpd_enable", "omdrc_musicpd_enable",
+                    "omdrc_musicpd_config"):
+            self.assertIn(f"_omdrc_rcvar({var} ", check)
+        self.assertIn('if(NOT "$ENV{DESTDIR}" STREQUAL "")', check)
+
+        for dependent in ("upmpdcli.in", "omdrc_renderer.in"):
+            text = (ROOT / "etc/rc.d" / dependent).read_text()
+            self.assertRegex(text, r"(?m)^# REQUIRE: .*\bmusicpd\b")
+
     def test_musicpd_file_layout_is_migrated_without_losing_settings(self):
         helper = ROOT / "scripts/prepare-musicpd-rc-conf-dir.sh"
         with tempfile.TemporaryDirectory() as temporary:

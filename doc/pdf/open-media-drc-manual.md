@@ -3663,8 +3663,10 @@ Services and hotplug are in chapter \ref{sec:fbsd-lifecycle}.
 | Loopback | `virtual_oss` (+ the `cuse` kernel module) |
 | omdrc-ctrl | `py311-flask py311-Markdown py311-numpy` |
 
-**Naming.** MPD is `audio/musicpd`: the binary is `musicpd`, the service is
-`service musicpd ...` and the bundled client is `musicpc` (aliasing `mpc`).
+**Naming.** MPD is `audio/musicpd`: the binary is `musicpd` and the bundled
+client is `musicpc` (aliasing `mpc`). The project runs it as `service
+omdrc_musicpd ...`, not with the package's own `musicpd` script (section
+\ref{sec:fbsd-musicpd}).
 Service names, rc.d filenames, rc.conf keys and hook names use underscores
 (`omdrc_audio`, `omdrc_audio_enable`); standalone devd files use hyphens
 (`omdrc-audio.conf`). The separators are not interchangeable in `service`,
@@ -3702,16 +3704,16 @@ a possibly separate `/home`:
 ```sh
 install -m 755 etc/rc.d/omdrc_audio /usr/local/etc/rc.d/omdrc_audio
 install -m 644 etc/devd/omdrc-audio.conf /usr/local/etc/devd/omdrc-audio.conf
-sh scripts/prepare-musicpd-rc-conf-dir.sh /usr/local/etc/rc.conf.d/musicpd
+sh scripts/prepare-musicpd-rc-conf-dir.sh /usr/local/etc/rc.conf.d/omdrc_musicpd
 install -m 644 etc/rc.conf.d/musicpd/omdrc_audio \
-  /usr/local/etc/rc.conf.d/musicpd/omdrc_audio
+  /usr/local/etc/rc.conf.d/omdrc_musicpd/omdrc_audio
 ```
 
 Copy the other enabled rc.d scripts from the inventory (section
 \ref{sec:fbsd-inventory}) the same way, and refresh the copies after every
-update. `rc.subr` accepts `rc.conf.d/musicpd` as a file *or* a directory; the
-helper makes the directory form, moving an existing file unchanged (mode
-preserved) to `musicpd/00-local.conf`, so an administrator's MPD settings
+update. `rc.subr` accepts `rc.conf.d/<service>` as a file *or* a directory;
+the helper makes the directory form, moving an existing file unchanged (mode
+preserved) to `<service>/00-local.conf`, so an administrator's MPD settings
 survive. It is idempotent, and the Make and CMake installers and the package's
 `PRE-INSTALL` script all run it.
 
@@ -3736,8 +3738,7 @@ Merge the three named outputs from `mpd/musicpd.conf.in`: `OKTO-DAC`,
 A core installation with the controller and renderer restore service:
 
 ```sh
-musicpd_enable="YES"
-musicpd_config="/home/giacomo/open-media-drc/mpd/musicpd.conf"
+omdrc_musicpd_enable="YES"           # not musicpd_enable: see below
 
 omdrc_audio_enable="YES"
 omdrc_audio_user="giacomo"
@@ -3758,6 +3759,13 @@ omdrcvideo_enable="YES"
 omdrcvideo_user="giacomo"
 ```
 
+`musicpd_enable` and `musicpd_config` must be absent (`sysrc -x musicpd_enable
+musicpd_config`): the package's stock `musicpd` script ignores
+`musicpd_config` and would start a second MPD on its own
+`/usr/local/etc/musicpd.conf`. `omdrc_musicpd_config` defaults to
+`/usr/local/etc/open-media-drc/musicpd.conf`. `cmake --install` checks these
+keys and prints a warning naming the fix.
+
 Remove any numbered default-device assignment such as `hw.snd.default_unit=0`
 from `/etc/sysctl.conf`: its **value is a pcm unit number**, so only the role
 resolver can know it (section \ref{sec:fbsd-roles}). Genuinely global sound
@@ -3768,7 +3776,7 @@ Project key families:
 
 | Key family | Purpose |
 |---|---|
-| `musicpd_enable`, `musicpd_config` | MPD boot and configuration |
+| `omdrc_musicpd_enable`, `omdrc_musicpd_config` | MPD boot and configuration |
 | `omdrc_audio_enable`, `omdrc_audio_user`, `omdrc_audio_drcsh`, `omdrc_audio_statussh` | master audio lifecycle and user boundary |
 | `omdrc_audio_dac`, `omdrc_audio_capture` | stable card identities |
 | `omdrc_audio_dac_sysctls`, `omdrc_audio_capture_sysctls`, `omdrc_audio_capture_recsrc` | per-role settings reapplied after every attach |
@@ -3868,12 +3876,12 @@ script, so each appears once.
 
 ## Service inventory {#sec:fbsd-inventory}
 
-![FreeBSD hotplug: devd fires on the `pcm` device and a level-triggered reconcile follows; a successful `musicpd` start triggers one late reconcile.](build/hotplug-freebsd.pdf){width=80%}
+![FreeBSD hotplug: devd fires on the `pcm` device and a level-triggered reconcile follows; a successful `omdrc_musicpd` start triggers one late reconcile.](build/hotplug-freebsd.pdf){width=80%}
 
 | Script/configuration | rcorder relation or event | Function | Enable directly? |
 |---|---|---|---|
-| `musicpd` | `REQUIRE: mixer LOGIN avahi_daemon` | Starts MPD with the repository's FreeBSD configuration | Yes |
-| `rc.conf.d/musicpd/omdrc_audio` | successful `musicpd` `start_postcmd` | Issues one bounded audio reconcile after MPD is actually available | No; sourced by `musicpd` |
+| `omdrc_musicpd` | `PROVIDE: omdrc_musicpd musicpd`; `REQUIRE: mixer LOGIN avahi_daemon` | Starts MPD with the repository's FreeBSD configuration | Yes (stock `musicpd`: no) |
+| `rc.conf.d/omdrc_musicpd/omdrc_audio` | successful `omdrc_musicpd` `start_postcmd` | Issues one bounded audio reconcile after MPD is actually available | No; sourced by `omdrc_musicpd` |
 | `omdrc_audio` | `REQUIRE: FILESYSTEMS devd`; `shutdown` | Single owner of card roles and DRC lifecycle | Yes |
 | `omdrc_cdin` | `REQUIRE: omdrc_audio`; `shutdown` | Optional continuous S/PDIF capture bridge | Yes, only with CD input |
 | `omdrc_renderer` | `REQUIRE: NETWORKING FILESYSTEMS musicpd`; `shutdown` | Restores whichever renderer the UI last selected | Yes |
@@ -3882,19 +3890,25 @@ script, so each appears once.
 | `omdrcvideo` | `REQUIRE: NETWORKING LOGIN`; `shutdown` | Starts the video web remote; it does not start mpv | Yes when installed |
 | `omdrc-audio.conf` | devd `pcm[0-9]+` attach and detach | Detaches one level-triggered `omdrc_audio reconcile` request | Installed in devd; no rcvar |
 
-### musicpd
+### omdrc_musicpd {#sec:fbsd-musicpd}
 
-The project `musicpd` script selects the rendered `musicpd_config`, has
-rc.subr derive the pidfile from it, and launches the FreeBSD `musicpd` binary;
-MPD drops to the user/group declared in its own configuration. It owns no DRC
-transition and no project lock. The dependency token is `musicpd`: both
-`omdrc_renderer` and `upmpdcli` require the name this script actually
-provides.
+The project `omdrc_musicpd` script selects the rendered
+`omdrc_musicpd_config`, has rc.subr derive the pidfile from it, and launches
+the FreeBSD `musicpd` binary; MPD drops to the user/group declared in its own
+configuration. It owns no DRC transition and no project lock. It also
+provides `musicpd`, the dependency token both `omdrc_renderer` and `upmpdcli`
+require.
 
-### rc.conf.d/musicpd/omdrc_audio
+It has its own name because `/usr/local/etc/rc.d/musicpd` belongs to the
+`musicpd` package. A project script installed at that path is replaced on
+every `pkg upgrade` by the stock one, which hardcodes
+`/usr/local/etc/musicpd.conf` and ignores `musicpd_config`: MPD then fails to
+start on the package's sample configuration. Keep the stock script disabled.
+
+### rc.conf.d/omdrc_musicpd/omdrc_audio
 
 Not another daemon: a service-specific `rc.subr` fragment that sets
-`musicpd`'s `start_postcmd` to a function running only after MPD started
+`omdrc_musicpd`'s `start_postcmd` to a function running only after MPD started
 successfully:
 
 ```sh
@@ -3912,17 +3926,17 @@ for it, so the physical chain can be healthy while its bounded MPD output
 selection is still `pending`. A successful MPD start is the earliest factual
 readiness signal, so the hook retries once at that event instead of using a
 delay, endless polling or a readiness gate. It runs after a manual `service
-musicpd restart` too, when MPD may have forgotten its outputs. The edge is
+omdrc_musicpd restart` too, when MPD may have forgotten its outputs. The edge is
 strictly one-way:
 
 ```
-musicpd successful start
+omdrc_musicpd successful start
   -> service omdrc_audio reconcile
   -> roles transaction (device.lock, then release)
   -> drc.sh reconcile (drc.lock, bounded mpc)
 ```
 
-No `omdrc_audio` path starts `musicpd`, so there is no service cycle. The hook
+No `omdrc_audio` path starts `omdrc_musicpd`, so there is no service cycle. The hook
 takes no lock and creates no process; a reconcile failure is reported but the
 hook still returns success, since MPD itself is running; with
 `omdrc_audio_enable` off it is a no-op. The FreeBSD CMake branch, the direct
@@ -5305,13 +5319,13 @@ update so the revert path matches the running ABI):
 ```sh
 OBJ=/usr/obj/usr/src/amd64.amd64/sys/modules/sound/driver/uaudio/snd_uaudio.ko
 sudo cp -f /boot/kernel/snd_uaudio.ko /boot/kernel/snd_uaudio.ko.orig
-sudo service musicpd stop                 # release the DAC
+sudo service omdrc_musicpd stop           # release the DAC
 sudo cp -f "$OBJ" /boot/kernel/snd_uaudio.ko
 sudo kldunload snd_uaudio                 # devd auto-reloads on attach
 UG=$(usbconfig | awk '/DAC8STEREO/{print $1}' | tr -d ':')
 sudo usbconfig -d "$UG" reset             # clean re-enumeration
 sudo sysctl -f /etc/sysctl.conf           # restore buffer_ms baseline
-sudo service musicpd start
+sudo service omdrc_musicpd start
 ```
 
 Verify: `grep pcm0 /dev/sndstat` shows `(play/rec)`;

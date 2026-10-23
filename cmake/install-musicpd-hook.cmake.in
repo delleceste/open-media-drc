@@ -1,4 +1,4 @@
-set(_musicpd_rcconf_dir "$ENV{DESTDIR}@CMAKE_INSTALL_PREFIX@/etc/rc.conf.d/musicpd")
+set(_musicpd_rcconf_dir "$ENV{DESTDIR}@CMAKE_INSTALL_PREFIX@/etc/rc.conf.d/omdrc_musicpd")
 execute_process(
     COMMAND /bin/sh
             "@CMAKE_CURRENT_SOURCE_DIR@/scripts/prepare-musicpd-rc-conf-dir.sh"
