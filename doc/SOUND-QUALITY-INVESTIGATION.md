@@ -641,7 +641,7 @@ the cross-OS null needs the same DAC on both sides — but that is already done.
   only against the other machine. The method for that (unit-impulse filter,
   making the convolution an identity) is in `BIT-PERFECT-VERIFICATION.md`.
 
-### 10.1 Double-blind listening test, first results (2026-10-21/22)
+### 10.1 Double-blind listening test (2026-10-21 … 10-25)
 
 Procedure: `BLIND-TEST-LINUX-VS-FREEBSD.md`, runner `tools/blindtest/blindtest`.
 One box (192.168.1.9) rebooted into a coin-flipped OS for every trial, the
@@ -657,6 +657,7 @@ at 192 kHz.
 |---|---|---|---|
 | `taste-2026-10-21` (practice, count fixed at 7, stopped at 4) | 4 | 4 | 0.0625 |
 | `night-2026-10-22` (count fixed at 12, stopped at 10) | 10 | 7 | 0.172 |
+| `cachaito-2026-10-25` (count fixed at 8, completed; two Cachaito tracks, Qobuz 44.1/16, both played each trial) | 8 | 3 | 0.855 |
 
 - Both sessions stopped early because the listener was tired, with the
   results still sealed. Unanswered trials (taste trial 5, night trial 11) were
@@ -672,8 +673,18 @@ at 192 kHz.
 - Pooled, 11/14 (p ≈ 0.029). The pooling was decided after the results were
   seen, so this is a hint, not a result.
 
-Status: **suggestive, not established.** The next step is a fresh session whose
-count is fixed in advance (16 trials) and run rested to the end.
+- Third session: trial 7, answered "Linux for sure" (confidence 3), was
+  FreeBSD.
+- **All three sessions: 14/22 (p = 0.14).** Trials where the OS was the same as
+  in the trial before scored **9/11**, trials where it changed **5/11**, and
+  15/22 answers named the OS of the trial before. That is the pattern of
+  answering "sounds like the last one", not of hearing an OS. A run of same-OS
+  reboots scores well and a switch is missed. The taste run's 4/4 included two
+  same-OS reboots.
+
+Status: **no audible difference shown.** With level and chain state matched
+and both parties blind, identification is at chance once the OS actually
+changes. This agrees with the bit-identical cross-OS null of §6.8.
 
 Runner fixes found while setting up: GRUB `boot_once` means a Linux → Linux
 `systemctl reboot` lands in FreeBSD after `reboot-to-arch`. A first play
@@ -782,7 +793,7 @@ current default), `-n` (set the default without rebooting), and a read-back of
 | virtual_oss arithmetic, S32 client at chain rate | **excluded** | identity by source (`VIRTUAL-OSS-QUALITY-STUDY.md` §3) |
 | 16-bit sources: MPD float→S16 truncation + virtual_oss expansion noise | **open, FreeBSD only** | modelled ≈ −94 dBFS in-band, signal-correlated; not in the blind-test track (`VIRTUAL-OSS-QUALITY-STUDY.md` §5–§7) |
 | DAC clocking / analogue / USB noise | open, not yet probed | §10 |
-| Level matching / expectation | **under test**: double-blind 7/10 (p = 0.17), taste run 4/4; not yet conclusive | §10.1 |
+| Level matching / expectation | **likely explanation**: double-blind 14/22 over three sessions (p = 0.14), chance (5/11) whenever the OS actually changed | §10.1 |
 
 ---
 

@@ -17,7 +17,7 @@ HTTP (omdrcctrl) and the MPD protocol.  Commands come in two kinds:
   blind (during a session; print only OS-neutral lines)
     session new <name> <trials>
     trial                    random reboot, checks, READY after a fixed time T
-    play 1|2|3 [from_s], seek <s>|-<s>|+<s>, stop, pause, resume
+    play 1|2|3|all [from_s], seek <s>|-<s>|+<s>, stop, pause, resume
     answer linux|freebsd [1-3]
     status
     reveal                   score, only once every trial is answered
@@ -500,7 +500,9 @@ def cmd_play(args):
     try:
         if len(mpd_queue(mpd)) != len(cfg["tracks"]):
             raise Failure("queue does not hold the test tracks")
-        n = int(args[0])
+        # `play all` runs the whole queue once; `play N` plays one track
+        mpd.command("single", "0" if args[0] == "all" else "1")
+        n = 1 if args[0] == "all" else int(args[0])
         if not 1 <= n <= len(cfg["tracks"]):
             raise Failure(f"track must be 1..{len(cfg['tracks'])}")
         if len(args) > 1:
