@@ -579,6 +579,11 @@ P.find = async text => {
     }
     P.grid.hidden = P.tree.hidden = true;
     P.found.hidden = false;
+    // the folder's head would go on stepping up folders out of sight: Back ends the search
+    K.clear(P.head).append(
+        h('button', { type: 'button', class: 'btn', title: 'Back to ' + (P.pathName() || 'Qobuz Library'),
+            onclick: P.endFind }, '‹ Back'),
+        h('strong', {}, 'Found in the whole Library'));
     if (!P.found.firstChild) P.message.textContent = 'Searching the Library…';
     const d = await K.api('/qobuz/favorites/search?' + new URLSearchParams({ q: P.findText }), { timeout: 60000 });
     if (seq !== P.findSeq || !P.findText) return;
@@ -605,13 +610,17 @@ P.foundRow = album => h('div', { class: 'fav-tree-entry' },
             h('button', { type: 'button', class: 'btn', title: 'Add album to queue', disabled: album.streamable === false,
                 onclick: () => P.play(album, 'append') }, '+'),
             h('button', { type: 'button', class: 'btn', title: 'Add to a folder', onclick: () => K.saveQobuzFavorite(album) }, '♡'))));
-// A folder of a found album: the search ends (the box is emptied: onFindEnd), the folder opens.
+// The search ends (the box is emptied: onFindEnd) on the folder it was started from.
+P.endFind = () => {
+    if (P.onFindEnd) P.onFindEnd();
+    P.find('');
+};
+// A folder of a found album: the search ends, the folder opens.
 P.openFound = path => {
     const parts = path.split('/');
     P.path = parts;
     for (let i = 1; i <= parts.length; i++) P.expanded.add(parts.slice(0, i).join('/'));
-    if (P.onFindEnd) P.onFindEnd();
-    P.find('');
+    P.endFind();
     P.reveal();
 };
 K.library = P;
