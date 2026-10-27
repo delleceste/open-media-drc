@@ -9,7 +9,7 @@ their streams, says "Animations paused" over them and is remembered; DR's
 history starts again on resuming); on the desktop and in the popup a
 ring around the cover seeks (drag it clockwise from twelve o'clock).  It also
 browses Qobuz and the play queue, both played through upmpdcli on the box.
-Every icon-only button has a tooltip.
+Every icon-only button has a tooltip, except the self-evident transport ones.
 
 It works both ways Plasma offers:
 

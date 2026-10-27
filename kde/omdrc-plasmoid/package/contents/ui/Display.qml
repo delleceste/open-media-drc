@@ -22,6 +22,8 @@ Item {
     readonly property bool spectrumSplit: app.spectrumSplit
 
     function toggleSpectrumLayout() { app.setConfig("spectrumSplit", !spectrumSplit) }
+    // the transport buttons speak for themselves: no tooltip
+    function isTransport(action) { return ["prev", "toggle", "next", "stop"].indexOf(action) >= 0 }
     // beside the transport, while some pane moves with the music
     readonly property var animationsButton: !app.wantsLevels ? [] : [app.animationsPaused
         ? { action: "animations", icon: "chronometer-start", tip: i18n("Resume animations") }
@@ -693,7 +695,7 @@ Item {
                     text: modelData.tip
                     enabled: face.app.reachable || modelData.action === "animations"
                     PlasmaComponents.ToolTip.text: modelData.tip
-                    PlasmaComponents.ToolTip.visible: hovered
+                    PlasmaComponents.ToolTip.visible: hovered && !face.isTransport(modelData.action)
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                     PlasmaComponents.ToolTip.timeout: 1000
                     onClicked: {
@@ -739,7 +741,7 @@ Item {
                         icon.height: controls.size - 4
                         display: QQC2.AbstractButton.IconOnly
                         PlasmaComponents.ToolTip.text: text
-                        PlasmaComponents.ToolTip.visible: hovered && text !== ""
+                        PlasmaComponents.ToolTip.visible: hovered && text !== "" && !face.isTransport(modelData.action)
                         PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                         PlasmaComponents.ToolTip.timeout: 1000
                         text: modelData.tip
