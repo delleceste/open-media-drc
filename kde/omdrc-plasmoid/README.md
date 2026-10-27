@@ -6,7 +6,7 @@ channel balance meters, and the cover, in any combination. Hover the cover for
 playback, stop, search and queue controls, and a button that pauses the
 meters, spectrum, DR and balance (also in the right-click menu; it closes
 their streams, says so over them ("DR paused" on DR's bar, "Paused" under the
-needles' 0 dB) and is remembered; DR's
+needles' 0 dB, in the balance bar's right half) and is remembered; DR's
 history starts again on resuming); on the desktop and in the popup a
 ring around the cover seeks (drag it clockwise from twelve o'clock).  It also
 browses Qobuz and the play queue, both played through upmpdcli on the box.
@@ -16,7 +16,9 @@ It works both ways Plasma offers:
 
 * **In a panel** it is a strip as thick as the panel, its length following the
   panes you chose (in a vertical panel they stack). Hovering shows the
-  transport, search and queue buttons beside the cover. A click opens a larger
+  transport, search and queue buttons beside the cover. With the animations
+  paused (horizontal panel) the moving panes give way to those buttons, always
+  shown, and "Animations paused" where it fits. A click opens a larger
   view in a popup, with title and artist.
 * **The panel tooltip**, while a track is loaded, shows the cover on the left
   and on the right the track, artist, album, label, year, format, genre,

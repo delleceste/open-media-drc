@@ -130,6 +130,16 @@ Item {
                 border.width: 1.5
                 Behavior on x { NumberAnimation { duration: view.glide } }
             }
+            // paused: said in the right half, clear of the centre line
+            PlasmaComponents.Label {
+                anchors { right: parent.right; rightMargin: Kirigami.Units.smallSpacing
+                          verticalCenter: parent.verticalCenter }
+                visible: view.app.animationsPaused && implicitWidth <= parent.width / 2 - 2 * Kirigami.Units.smallSpacing
+                         && parent.height >= implicitHeight * 0.75
+                text: i18n("Paused")
+                font: Kirigami.Theme.smallFont
+                color: view.split ? "white" : Kirigami.Theme.textColor
+            }
             MouseArea {
                 anchors.fill: parent
                 visible: !view.compact

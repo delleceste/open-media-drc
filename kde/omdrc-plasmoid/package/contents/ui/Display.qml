@@ -18,7 +18,10 @@ Item {
     property bool horizontalPanel: false
     property bool verticalPanel: false
     readonly property bool compactSearchOpen: compact && app.compactSearchRequested
-    readonly property bool controlsShown: hover.hovered
+    // In a horizontal panel, paused: the cover and the controls, always shown,
+    // in place of the panes that would move.
+    readonly property bool pausedPanel: horizontalPanel && app.animationsPaused && app.wantsLevels
+    readonly property bool controlsShown: hover.hovered || pausedPanel
     readonly property bool spectrumSplit: app.spectrumSplit
 
     function toggleSpectrumLayout() { app.setConfig("spectrumSplit", !spectrumSplit) }
@@ -42,7 +45,8 @@ Item {
     // hold meters above spectrum. DR and balance span the bottom row.
     readonly property bool grid: !compact && !panel && app.coverMode === "pane"
                                  && meterStyle !== "off" && app.showSpectrum
-    readonly property var panes: {
+    readonly property var panes: pausedPanel ? ["cover"] : playingPanes
+    readonly property var playingPanes: {
         const list = []
         if (app.coverMode === "pane") list.push("cover")
         if (meterStyle !== "off") list.push(app.showSpectrum && app.spectrumBelow && !grid ? "meterspectrum" : "meters")
@@ -68,7 +72,7 @@ Item {
         if (meterStyle === "needles") return row ? 2.6 : 0.75
         return row ? 2.6 : 0.6
     }
-    readonly property real aspectSum: panes.reduce((s, p) => s + (row ? aspect(p) : 1 / aspect(p)), 0)
+    readonly property real aspectSum: playingPanes.reduce((s, p) => s + (row ? aspect(p) : 1 / aspect(p)), 0)
     readonly property real spacing: panes.length > 1 ? Math.max(2, Kirigami.Units.smallSpacing) : 0
     // each pane's length along the layout: the cover a square, with more room
     // on the desktop than in a panel; the others share what is left by aspect
@@ -88,6 +92,7 @@ Item {
     // each pane's rectangle in paneArea
     readonly property var rects: {
         const W = paneArea.width, H = paneArea.height
+        if (pausedPanel) return [{ x: 0, y: 0, w: Math.min(W, H), h: H }]
         if (grid) {
             const coverW = Math.round(Math.min(Math.max(0, W - spacing) * 10 / 16,
                                                Math.max(0, H - coverTitleHeight)))
@@ -149,8 +154,14 @@ Item {
     }
 
     // In a panel the long side follows the content.
-    implicitWidth: horizontalPanel ? Math.round(height * aspectSum + spacing * (panes.length - 1)) : Kirigami.Units.gridUnit * 16
-    implicitHeight: verticalPanel ? Math.round(width * aspectSum + spacing * (panes.length - 1)) : Kirigami.Units.gridUnit * 8
+    // The length the panes take while they play, kept while paused unless the
+    // controls need more.
+    readonly property real playingSpacing: playingPanes.length > 1 ? Math.max(2, Kirigami.Units.smallSpacing) : 0
+    readonly property real pausedLength: 2 * inset + paneArea.height + 2 + panelActionsBox.width + 2
+    implicitWidth: horizontalPanel ? Math.max(Math.round(height * aspectSum + playingSpacing * (playingPanes.length - 1)),
+                                              pausedPanel ? Math.ceil(pausedLength) : 0)
+                                   : Kirigami.Units.gridUnit * 16
+    implicitHeight: verticalPanel ? Math.round(width * aspectSum + playingSpacing * (playingPanes.length - 1)) : Kirigami.Units.gridUnit * 8
 
     // The custom background (Plasma draws its own, or none, otherwise).  Off a
     // panel the content keeps a margin from its edge, as on Plasma's own.
@@ -202,11 +213,10 @@ Item {
                                : modelData === "dr" ? drPane
                                : modelData === "balance" ? balancePane : metersPane
                 opacity: paneDrag.active ? 0.65 : 1
-                // DR says it on its own bar, the needles under their 0 dB
-                // (a spectrum below them on its own)
-                PausedNote { visible: paneLoader.modelData !== "cover" && paneLoader.modelData !== "dr"
-                                      && !(face.meterStyle === "needles" && paneLoader.modelData !== "spectrum"
-                                           && paneLoader.modelData !== "balance") }
+                // DR and balance say it on their own bars, the needles under
+                // their 0 dB (a spectrum below them on its own)
+                PausedNote { visible: ["cover", "dr", "balance"].indexOf(paneLoader.modelData) < 0
+                                      && !(face.meterStyle === "needles" && paneLoader.modelData !== "spectrum") }
                 TapHandler {
                     enabled: !face.editing && face.panes.length > 1
                     acceptedButtons: Qt.LeftButton
@@ -416,14 +426,35 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.preferredWidth: face.app.showDr ? Math.max(0, bottomRow.width - bottomRow.spacing) * 0.28 : bottomRow.width
-            PausedNote { text: i18n("Paused") }
         }
     }
 
     // One line over a pane that would move with the music, while it is held still.
+    // In the panel, paused: said beside the controls, where it fits.
+    PlasmaComponents.Label {
+        readonly property real startX: controls.x + coverHoverZone.width + 2 + panelActionsBox.width + Kirigami.Units.smallSpacing
+        x: startX
+        anchors.verticalCenter: controls.verticalCenter
+        visible: face.pausedPanel && !face.editing && startX + implicitWidth <= face.width - face.inset
+        text: i18n("Animations paused")
+        font: Kirigami.Theme.smallFont
+        opacity: 0.8
+    }
+
+    // The animations button, while paused: lit, so the state shows at a glance.
+    component PausedMark: Rectangle {
+        property string action
+        anchors.fill: parent
+        z: -1
+        visible: action === "animations" && face.app.animationsPaused
+        radius: Kirigami.Units.cornerRadius
+        color: Qt.rgba(Kirigami.Theme.highlightColor.r, Kirigami.Theme.highlightColor.g,
+                       Kirigami.Theme.highlightColor.b, 0.55)
+        border.width: 1
+        border.color: Kirigami.Theme.highlightColor
+    }
+
     component PausedNote: Item {
-        id: note
-        property string text: i18n("Animations paused")
         anchors.fill: parent
         z: 1    // above a Loader's item, made after it
         Rectangle {
@@ -438,7 +469,7 @@ Item {
                 id: pausedLabel
                 anchors.centerIn: parent
                 width: Math.min(implicitWidth, parent.width)
-                text: note.text
+                text: i18n("Animations paused")
                 font: Kirigami.Theme.smallFont
                 elide: Text.ElideRight
                 horizontalAlignment: Text.AlignHCenter
@@ -711,11 +742,13 @@ Item {
                         if (modelData.action === "animations") face.app.toggleAnimations()
                         else face.app.transport(modelData.action)
                     }
+                    PausedMark { action: modelData.action }
                 }
             }
             }
         }
         Rectangle {
+            id: panelActionsBox
             visible: face.panel
             anchors { left: parent.left; leftMargin: coverHoverZone.width + 2
                       verticalCenter: parent.verticalCenter }
@@ -763,6 +796,7 @@ Item {
                                 face.app.transport(modelData.action)
                             }
                         }
+                        PausedMark { action: modelData.action }
                     }
                 }
             }
