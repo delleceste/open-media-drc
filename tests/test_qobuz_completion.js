@@ -47,4 +47,13 @@ P.showSuggestions(P.suggestions(P.input.value, 4));
 P.composing = true;
 P.pick(0);
 assert.equal(P.input.blurred, 1, 'a word still being composed is ended first');
+// The labels of an artist typed: P.artists entries are flat ({ ...entry, term, labels }).
+// A throw here, on every pick ending in an artist, left the stale completions up.
+P = { plain: t => t.toLowerCase() };
+const hints = vm.createContext({ P });
+vm.runInContext(code.slice(0, code.indexOf('P.words = []'))
+    + source.slice(source.indexOf('P.hintsFor = '), source.indexOf('P.paintHints = '))
+    + `\nP.artists = [{ ...entry('The Beatles'), term: 'the beatles', labels: ['Apple'] }]; P.artistPairs = [];`, hints);
+assert.deepEqual(JSON.parse(JSON.stringify(P.hintsFor('beethoven the beatles'))),
+    [{ artist: 'The Beatles', labels: ['Apple'], term: 'the beatles' }], 'an artist at the end offers its labels');
 console.log('PASS: a completion replaces what is typed, however late it is picked');

@@ -703,7 +703,7 @@ P.hintsFor = query => {
         if (!t || t.length < 3) continue;
         const short = !t.includes(' ') && t.length <= 4;
         if (query === t || (!short && (query.startsWith(t + ' ') || query.endsWith(' ' + t)))) {
-            found.push({ artist: a.e.text, labels: [...a.labels], term: t });
+            found.push({ artist: a.text, labels: [...a.labels], term: t });
         }
     }
     for (const [artist, label] of P.artistPairs) {
@@ -1728,7 +1728,7 @@ const entry = (text, learned = 0) => {
 };
 P.words = [];
 P.learned = [];
-P.artists = [];          // [{ e: entry, term, labels }]: the shipped artists and their labels
+P.artists = [];          // [{ ...entry, term, labels }]: the shipped artists and their labels
 P.artistPairs = [];      // [[artist, label]]: learned from plays, a ring the server keeps
 
 P.loadWords = async () => {
@@ -1825,11 +1825,11 @@ P.pick = n => {
     const from = now ? now.from : Math.min(s.from, caret);
     const head = v.slice(0, from) + s.e.text + ' ';
     P.input.value = head + v.slice(caret).replace(/^\S*\s*/, '');
-    if (P.scoped()) P.filterSoon();
-    else { P.syncLabels(); P.paintStale(); }
     P.input.setSelectionRange(head.length, head.length);
     P.input.focus();
     P.showSuggestions([]);
+    if (P.scoped()) P.filterSoon();
+    else { P.syncLabels(); P.paintStale(); }
 };
 
 P.suggestKey = e => {
