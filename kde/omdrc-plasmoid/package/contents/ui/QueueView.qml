@@ -69,6 +69,7 @@ Item {
                 PlasmaComponents.ToolTip.text: text
                 PlasmaComponents.ToolTip.visible: hovered && text !== ""
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                PlasmaComponents.ToolTip.timeout: 1000
                 onClicked: view.refresh()
             }
             PlasmaComponents.ToolButton {
@@ -78,6 +79,7 @@ Item {
                 PlasmaComponents.ToolTip.text: text
                 PlasmaComponents.ToolTip.visible: hovered && text !== ""
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                PlasmaComponents.ToolTip.timeout: 1000
                 enabled: view.count > 0
                 onClicked: clearDialog.open()
             }
@@ -140,6 +142,7 @@ Item {
                             PlasmaComponents.ToolTip.text: text
                             PlasmaComponents.ToolTip.visible: hovered && text !== ""
                             PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                            PlasmaComponents.ToolTip.timeout: 1000
                             onClicked: view.edit("remove", row.modelData)
                         }
                     }

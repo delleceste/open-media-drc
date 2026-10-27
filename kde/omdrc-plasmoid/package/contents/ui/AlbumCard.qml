@@ -139,6 +139,7 @@ Rectangle {
                 PlasmaComponents.ToolTip.text: text
                 PlasmaComponents.ToolTip.visible: hovered && text !== ""
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                PlasmaComponents.ToolTip.timeout: 1000
                 enabled: card.canPlay && card.album.streamable !== false
                 onClicked: card.play("replace", "")
             }
@@ -151,6 +152,7 @@ Rectangle {
                 PlasmaComponents.ToolTip.text: text
                 PlasmaComponents.ToolTip.visible: hovered && text !== ""
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                PlasmaComponents.ToolTip.timeout: 1000
                 enabled: card.canPlay && card.album.streamable !== false
                 onClicked: card.play("append", "")
             }
@@ -205,6 +207,7 @@ Rectangle {
                     PlasmaComponents.ToolTip.text: text
                     PlasmaComponents.ToolTip.visible: hovered && text !== ""
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    PlasmaComponents.ToolTip.timeout: 1000
                     enabled: card.canPlay && modelData.streamable !== false
                     onClicked: card.play("replace", modelData.id)
                 }

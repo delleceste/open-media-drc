@@ -80,4 +80,5 @@ Canvas {
     PlasmaComponents.ToolTip.text: hoverDetail
     PlasmaComponents.ToolTip.visible: hoverDetail !== ""
     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+    PlasmaComponents.ToolTip.timeout: 1000
 }

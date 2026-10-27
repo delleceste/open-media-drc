@@ -143,10 +143,18 @@ PlasmoidItem {
 
     // In a panel, while a track is loaded: the cover and the album's details.
     // Nothing of the widget's own while the pointer is on its buttons or search.
+    // Shown for a second only: the tooltip's window takes the pointer, and
+    // would keep it from the panel's widgets beneath it.
     property bool panelControlsHovered: false
+    property bool tipExpired: false
     readonly property bool inPanel: Plasmoid.formFactor === PlasmaCore.Types.Horizontal
                                     || Plasmoid.formFactor === PlasmaCore.Types.Vertical
-    readonly property bool quietTip: inPanel && (panelControlsHovered || compactSearchRequested)
+    readonly property bool quietTip: inPanel && (panelControlsHovered || compactSearchRequested || tipExpired)
+    Timer {
+        id: tipTimer
+        interval: Kirigami.Units.toolTipDelay + 1000
+        onTriggered: root.tipExpired = true
+    }
     readonly property bool albumTip: inPanel && !quietTip && problem === "" && !!player.title
     toolTipMainText: quietTip || albumTip ? "" : player.title || i18n("OMDRC Monitor")
     toolTipSubText: quietTip || albumTip ? "" : problem !== "" ? problem
@@ -200,6 +208,13 @@ PlasmoidItem {
         Layout.preferredHeight: verticalPanel ? length : -1
         Layout.maximumHeight: verticalPanel ? length : -1
         Layout.fillHeight: horizontalPanel
+
+        HoverHandler {
+            onHoveredChanged: {
+                root.tipExpired = false
+                if (hovered) tipTimer.restart(); else tipTimer.stop()
+            }
+        }
 
         // Plasma reserves its own panel padding around the compact item. Let
         // the artwork and graphs occupy that space while preserving a chosen

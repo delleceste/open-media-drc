@@ -194,6 +194,7 @@ Item {
         PlasmaComponents.ToolTip.text: tip
         PlasmaComponents.ToolTip.visible: hovered && tip !== ""
         PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+        PlasmaComponents.ToolTip.timeout: 1000
     }
 
     // Quiet mode controls: transparent, with a hairline outline and small type.
@@ -214,5 +215,6 @@ Item {
         PlasmaComponents.ToolTip.text: tip
         PlasmaComponents.ToolTip.visible: hovered && tip !== ""
         PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+        PlasmaComponents.ToolTip.timeout: 1000
     }
 }

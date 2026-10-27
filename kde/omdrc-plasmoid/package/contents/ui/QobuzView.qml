@@ -249,6 +249,7 @@ Item {
                 PlasmaComponents.ToolTip.text: text
                 PlasmaComponents.ToolTip.visible: hovered && text !== ""
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                PlasmaComponents.ToolTip.timeout: 1000
                 onClicked: settingsDialog.open()
             }
         }

@@ -473,6 +473,7 @@ Item {
             PlasmaComponents.ToolTip.text: text
             PlasmaComponents.ToolTip.visible: hovered && text !== ""
             PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+            PlasmaComponents.ToolTip.timeout: 1000
             enabled: !face.app.simpleSearchBusy
             onClicked: face.app.simpleSearch(simpleInput.text)
         }
@@ -481,6 +482,7 @@ Item {
             PlasmaComponents.ToolTip.text: i18n("Ask the AI for albums")
             PlasmaComponents.ToolTip.visible: hovered
             PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+            PlasmaComponents.ToolTip.timeout: 1000
             onClicked: face.app.openQobuzOption("ai")
         }
         PlasmaComponents.ToolButton {
@@ -490,6 +492,7 @@ Item {
             PlasmaComponents.ToolTip.text: text
             PlasmaComponents.ToolTip.visible: hovered && text !== ""
             PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+            PlasmaComponents.ToolTip.timeout: 1000
             onClicked: face.app.openQobuzOption("filters")
         }
         PlasmaComponents.ToolButton {
@@ -499,6 +502,7 @@ Item {
             PlasmaComponents.ToolTip.text: text
             PlasmaComponents.ToolTip.visible: hovered && text !== ""
             PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+            PlasmaComponents.ToolTip.timeout: 1000
             onClicked: face.app.dismissCompactSearch()
         }
     }
@@ -602,6 +606,7 @@ Item {
                     PlasmaComponents.ToolTip.text: text
                     PlasmaComponents.ToolTip.visible: hovered && text !== ""
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    PlasmaComponents.ToolTip.timeout: 1000
                     width: controls.size
                     height: controls.size
                     padding: 1
@@ -614,6 +619,7 @@ Item {
                     PlasmaComponents.ToolTip.text: text
                     PlasmaComponents.ToolTip.visible: hovered && text !== ""
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    PlasmaComponents.ToolTip.timeout: 1000
                     width: controls.size
                     height: controls.size
                     padding: 1
@@ -659,6 +665,7 @@ Item {
                     PlasmaComponents.ToolTip.text: modelData.tip
                     PlasmaComponents.ToolTip.visible: hovered
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    PlasmaComponents.ToolTip.timeout: 1000
                     onClicked: {
                         face.app.transport(modelData.action)
                     }
@@ -702,6 +709,7 @@ Item {
                         PlasmaComponents.ToolTip.text: text
                         PlasmaComponents.ToolTip.visible: hovered && text !== ""
                         PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                        PlasmaComponents.ToolTip.timeout: 1000
                         text: modelData.tip
                         enabled: face.app.reachable
                         onClicked: {
