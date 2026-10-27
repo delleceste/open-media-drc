@@ -22,6 +22,10 @@ Item {
     readonly property bool spectrumSplit: app.spectrumSplit
 
     function toggleSpectrumLayout() { app.setConfig("spectrumSplit", !spectrumSplit) }
+    // beside the transport, while some pane moves with the music
+    readonly property var animationsButton: !app.wantsLevelStream ? [] : [app.animationsPaused
+        ? { action: "animations", icon: "chronometer-start", tip: i18n("Resume animations") }
+        : { action: "animations", icon: "chronometer-pause", tip: i18n("Pause animations") }]
 
     signal activated()
 
@@ -567,7 +571,7 @@ Item {
         objectName: "controls"
         x: coverHoverZone.x
         y: coverHoverZone.y
-        width: face.panel ? Math.min(face.width, coverHoverZone.width + controls.size * 6 + 8)
+        width: face.panel ? Math.min(face.width, coverHoverZone.width + panelActions.width + 8)
                           : coverHoverZone.width
         height: coverHoverZone.height
         opacity: paneArea.visible && !face.editing && face.controlsShown && face.app.host !== "" ? 1 : 0
@@ -650,7 +654,7 @@ Item {
                       tip: face.app.playing ? i18n("Pause") : i18n("Play") },
                     { action: "next", icon: "media-skip-forward", tip: i18n("Next") },
                     { action: "stop", icon: "media-playback-stop", tip: i18n("Stop") },
-                ]
+                ].concat(face.animationsButton)
                 delegate: PlasmaComponents.ToolButton {
                     required property var modelData
                     width: controls.size
@@ -661,13 +665,14 @@ Item {
                     icon.height: controls.size - 2 * padding
                     display: QQC2.AbstractButton.IconOnly
                     text: modelData.tip
-                    enabled: face.app.reachable
+                    enabled: face.app.reachable || modelData.action === "animations"
                     PlasmaComponents.ToolTip.text: modelData.tip
                     PlasmaComponents.ToolTip.visible: hovered
                     PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                     PlasmaComponents.ToolTip.timeout: 1000
                     onClicked: {
-                        face.app.transport(modelData.action)
+                        if (modelData.action === "animations") face.app.toggleAnimations()
+                        else face.app.transport(modelData.action)
                     }
                 }
             }
@@ -694,9 +699,10 @@ Item {
                           tip: face.app.playing ? i18n("Pause") : i18n("Play") },
                         { action: "next", icon: "media-skip-forward", tip: i18n("Next") },
                         { action: "stop", icon: "media-playback-stop", tip: i18n("Stop") },
+                    ].concat(face.animationsButton).concat([
                         { action: "search", icon: "edit-find", tip: i18n("Search Qobuz") },
                         { action: "queue", icon: "view-list-details", tip: i18n("Play queue") },
-                    ]
+                    ])
                     delegate: PlasmaComponents.ToolButton {
                         required property var modelData
                         width: controls.size
@@ -711,10 +717,11 @@ Item {
                         PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                         PlasmaComponents.ToolTip.timeout: 1000
                         text: modelData.tip
-                        enabled: face.app.reachable
+                        enabled: face.app.reachable || modelData.action === "animations"
                         onClicked: {
                             if (modelData.action === "search") face.app.openPage("qobuz")
                             else if (modelData.action === "queue") face.app.openPage("queue")
+                            else if (modelData.action === "animations") face.app.toggleAnimations()
                             else {
                                 face.app.transport(modelData.action)
                             }

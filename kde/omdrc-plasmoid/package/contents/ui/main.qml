@@ -26,6 +26,7 @@ PlasmoidItem {
     readonly property bool showSpectrum: Plasmoid.configuration.showSpectrum
     readonly property bool spectrumSplit: Plasmoid.configuration.spectrumSplit
     readonly property bool spectrumPeakHold: Plasmoid.configuration.spectrumPeakHold
+    readonly property bool animationsPaused: Plasmoid.configuration.animationsPaused
 
     Plasmoid.contextualActions: [
         PlasmaCore.Action {
@@ -34,6 +35,13 @@ PlasmoidItem {
             checked: root.spectrumPeakHold
             enabled: root.showSpectrum
             onTriggered: root.setConfig("spectrumPeakHold", !root.spectrumPeakHold)
+        },
+        PlasmaCore.Action {
+            text: i18n("Pause animations")
+            checkable: true
+            checked: root.animationsPaused
+            enabled: root.wantsLevelStream
+            onTriggered: root.toggleAnimations()
         }
     ]
     readonly property bool spectrumBelow: Plasmoid.configuration.spectrumBelow
@@ -456,6 +464,7 @@ PlasmoidItem {
         const i = DR.WINDOWS.indexOf(drWindow)
         setConfig("drWindow", DR.WINDOWS[(i + 1) % DR.WINDOWS.length])
     }
+    function toggleAnimations() { setConfig("animationsPaused", !animationsPaused) }
     function toggleBalanceLook() { setConfig("balanceLook", balanceLook === "split" ? "bar" : "split") }
     function cycleBalanceWindow() {
         const ws = [0.3, 1, 3, 5, 15, 30, 60], i = ws.indexOf(balanceWindow)
@@ -587,8 +596,9 @@ PlasmoidItem {
         onTriggered: root.drawDelayedFrames()
     }
 
-    // Only while there is something to show: the box enables MPD's analyzer
-    // FIFO output for as long as anyone listens.
+    // Only while there is something to show, and the animations are not
+    // paused: the box enables MPD's analyzer FIFO output for as long as anyone
+    // listens.
     // compact=1: the box leaves out of a level frame the DR state (the DR stream
     // has it) and the bands while they are the ones last sent on the connection;
     // they are filled back in here, so every frame reaches the views whole.
@@ -596,7 +606,8 @@ PlasmoidItem {
         id: levels
         property string bandsKey: ""
         property var lastBands: []
-        url: root.base !== "" && root.reachable && root.wantsLevelStream && (root.playing || root.cdinActive)
+        url: root.base !== "" && root.reachable && root.wantsLevelStream && !root.animationsPaused
+             && (root.playing || root.cdinActive)
              ? root.base + "/spectrum/stream?compact=1&mode=" + (root.showSpectrum ? "music" : "vu")
              : ""
         onUrlChanged: if (url === "") {
