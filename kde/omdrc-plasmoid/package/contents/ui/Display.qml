@@ -23,7 +23,7 @@ Item {
 
     function toggleSpectrumLayout() { app.setConfig("spectrumSplit", !spectrumSplit) }
     // beside the transport, while some pane moves with the music
-    readonly property var animationsButton: !app.wantsLevelStream ? [] : [app.animationsPaused
+    readonly property var animationsButton: !app.wantsLevels ? [] : [app.animationsPaused
         ? { action: "animations", icon: "chronometer-start", tip: i18n("Resume animations") }
         : { action: "animations", icon: "chronometer-pause", tip: i18n("Pause animations") }]
 
@@ -200,6 +200,7 @@ Item {
                                : modelData === "dr" ? drPane
                                : modelData === "balance" ? balancePane : metersPane
                 opacity: paneDrag.active ? 0.65 : 1
+                PausedNote { visible: paneLoader.modelData !== "cover" }
                 TapHandler {
                     enabled: !face.editing && face.panes.length > 1
                     acceptedButtons: Qt.LeftButton
@@ -406,6 +407,31 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.preferredWidth: face.app.showDr ? Math.max(0, bottomRow.width - bottomRow.spacing) * 0.28 : bottomRow.width
+        }
+    }
+    PausedNote { anchors.fill: bottomRow; visible: bottomRow.visible }
+
+    // One line over a pane that would move with the music, while it is held still.
+    component PausedNote: Item {
+        anchors.fill: parent
+        z: 1    // above a Loader's item, made after it
+        Rectangle {
+            anchors.centerIn: parent
+            visible: face.app.animationsPaused && parent.height >= pausedLabel.implicitHeight
+            width: Math.min(parent.width, pausedLabel.implicitWidth + Kirigami.Units.largeSpacing)
+            height: pausedLabel.implicitHeight + 2
+            radius: height / 3
+            color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
+                           Kirigami.Theme.backgroundColor.b, 0.75)
+            PlasmaComponents.Label {
+                id: pausedLabel
+                anchors.centerIn: parent
+                width: Math.min(implicitWidth, parent.width)
+                text: i18n("Animations paused")
+                font: Kirigami.Theme.smallFont
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+            }
         }
     }
 

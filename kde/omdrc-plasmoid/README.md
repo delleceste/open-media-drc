@@ -4,8 +4,9 @@ A Plasma 6 widget showing what an Open Media DRC box is playing: level meters
 (LED-style bars or analogue needles), the spectrum analyzer, live DR and
 channel balance meters, and the cover, in any combination. Hover the cover for
 playback, stop, search and queue controls, and a button that pauses the
-meters, spectrum and balance (also in the right-click menu; it closes their
-stream and is remembered); on the desktop and in the popup a
+meters, spectrum, DR and balance (also in the right-click menu; it closes
+their streams, says "Animations paused" over them and is remembered; DR's
+history starts again on resuming); on the desktop and in the popup a
 ring around the cover seeks (drag it clockwise from twelve o'clock).  It also
 browses Qobuz and the play queue, both played through upmpdcli on the box.
 Every icon-only button has a tooltip.

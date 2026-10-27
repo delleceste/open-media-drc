@@ -40,7 +40,7 @@ PlasmoidItem {
             text: i18n("Pause animations")
             checkable: true
             checked: root.animationsPaused
-            enabled: root.wantsLevelStream
+            enabled: root.wantsLevels
             onTriggered: root.toggleAnimations()
         }
     ]
@@ -628,12 +628,13 @@ PlasmoidItem {
     }
 
     // The rolling three-second DR history, on a stream of its own (the level
-    // stream carries none of it), sent only when it changes.  Every connection
+    // stream carries none of it), sent only when it changes.  Paused with the
+    // animations, so the box can rest: the history starts again on resuming.  Every connection
     // says which history is held here, so the bounded streams' rotation every
     // few seconds sends the new blocks only, not the whole window again.
     SseStream {
         id: drStream
-        url: root.base !== "" && root.reachable && root.showDr
+        url: root.base !== "" && root.reachable && root.showDr && !root.animationsPaused
              && (root.playing || root.cdinActive) ? root.base + "/spectrum/stream?compact=1&mode=dr" : ""
         query: "dr_gen=" + root.drGen + "&dr_end=" + root.drEnd
         onUrlChanged: if (url === "") {
