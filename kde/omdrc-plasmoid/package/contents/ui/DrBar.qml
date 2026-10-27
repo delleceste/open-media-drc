@@ -13,6 +13,7 @@ Canvas {
 
     property var blocks: []
     property int minCell: 22
+    property bool paused: false     // the animations paused: no DR stream
 
     readonly property color textColor: Kirigami.Theme.textColor
     readonly property bool light: Kirigami.Theme.backgroundColor.hslLightness > 0.5
@@ -68,6 +69,24 @@ Canvas {
             }
         }
         cells = out
+    }
+
+    Rectangle {
+        anchors.centerIn: parent
+        visible: bar.paused
+        width: Math.min(parent.width, pausedLabel.implicitWidth + Kirigami.Units.largeSpacing)
+        height: Math.min(parent.height, pausedLabel.implicitHeight + 2)
+        radius: height / 3
+        color: Qt.rgba(Kirigami.Theme.backgroundColor.r, Kirigami.Theme.backgroundColor.g,
+                       Kirigami.Theme.backgroundColor.b, 0.75)
+        PlasmaComponents.Label {
+            id: pausedLabel
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, parent.width)
+            text: i18n("DR paused")
+            font: Kirigami.Theme.smallFont
+            elide: Text.ElideRight
+        }
     }
 
     HoverHandler { id: hover }

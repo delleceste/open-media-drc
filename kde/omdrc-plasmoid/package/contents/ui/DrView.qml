@@ -91,6 +91,7 @@ Item {
             Layout.fillHeight: true
             Layout.minimumHeight: Kirigami.Units.gridUnit * 1.5
             blocks: view.app.drSelected
+            paused: view.app.animationsPaused
         }
         RowLayout {
             visible: view.history
@@ -145,6 +146,7 @@ Item {
             Layout.minimumHeight: view.stripBarHeight
             Layout.maximumHeight: view.stripBarHeight
             blocks: view.app.drSelected
+            paused: view.app.animationsPaused
         }
     }
 

@@ -202,7 +202,8 @@ Item {
                                : modelData === "dr" ? drPane
                                : modelData === "balance" ? balancePane : metersPane
                 opacity: paneDrag.active ? 0.65 : 1
-                PausedNote { visible: paneLoader.modelData !== "cover" }
+                // DR says it on its own bar
+                PausedNote { visible: paneLoader.modelData !== "cover" && paneLoader.modelData !== "dr" }
                 TapHandler {
                     enabled: !face.editing && face.panes.length > 1
                     acceptedButtons: Qt.LeftButton
@@ -409,12 +410,14 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.preferredWidth: face.app.showDr ? Math.max(0, bottomRow.width - bottomRow.spacing) * 0.28 : bottomRow.width
+            PausedNote { text: i18n("Paused") }
         }
     }
-    PausedNote { anchors.fill: bottomRow; visible: bottomRow.visible }
 
     // One line over a pane that would move with the music, while it is held still.
     component PausedNote: Item {
+        id: note
+        property string text: i18n("Animations paused")
         anchors.fill: parent
         z: 1    // above a Loader's item, made after it
         Rectangle {
@@ -429,7 +432,7 @@ Item {
                 id: pausedLabel
                 anchors.centerIn: parent
                 width: Math.min(implicitWidth, parent.width)
-                text: i18n("Animations paused")
+                text: note.text
                 font: Kirigami.Theme.smallFont
                 elide: Text.ElideRight
                 horizontalAlignment: Text.AlignHCenter
