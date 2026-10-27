@@ -50,6 +50,9 @@ P.makeInput = enabled => {
         onblur: () => setTimeout(() => P.showSuggestions([]), 150),
     });
     input.addEventListener('focus', () => P.revealInput());
+    input.addEventListener('compositionstart', () => { P.composing = true; });
+    input.addEventListener('compositionend', () => { P.composing = false; });
+    input.addEventListener('blur', () => { P.composing = false; });
     return input;
 };
 
@@ -1808,12 +1811,20 @@ P.showSuggestions = list => {
     });
 };
 
+// The list may be older than the field: letters typed since it was drawn (it
+// follows 60 ms behind) must be replaced too, not kept after the completion, so
+// the span is taken again from the field as it is now.  And a word the Android
+// keyboard is still composing is ended first, or the keyboard writes it back in
+// after the completion.
 P.pick = n => {
     const s = P.shown && P.shown[n];
     if (!s) return;
-    const v = P.input.value;
-    const head = v.slice(0, s.from) + s.e.text + ' ';
-    P.input.value = head + v.slice(s.to).replace(/^\s+/, '');
+    if (P.composing) { P.input.blur(); P.input.focus(); }
+    const v = P.input.value, caret = P.input.selectionStart ?? v.length;
+    const now = P.suggestions(v, caret).find(x => x.e.f === s.e.f);
+    const from = now ? now.from : Math.min(s.from, caret);
+    const head = v.slice(0, from) + s.e.text + ' ';
+    P.input.value = head + v.slice(caret).replace(/^\S*\s*/, '');
     if (P.scoped()) P.filterSoon();
     else { P.syncLabels(); P.paintStale(); }
     P.input.setSelectionRange(head.length, head.length);
