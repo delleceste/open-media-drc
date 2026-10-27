@@ -21,6 +21,7 @@ Item {
     property string pair: "auto"       // channel lanes: "auto" | "side" | "stacked"
     property var vu: ({})              // the frame's vu object: left_rms, left_peak, ...
     property real glass: 1             // < 1: a cover behind the meters shows through
+    property bool paused: false        // the animations paused: needles say so under 0 dB
 
     readonly property bool vertical: pair === "side" ? true : pair === "stacked" ? false : height > width * 1.1
     readonly property bool needles: style === "needles"
@@ -387,6 +388,13 @@ Item {
         item.hub.width = item.hub.height = 2 * g.hubR
         item.hub.x = g.cx - g.hubR - g.fx
         item.hub.y = g.cy - g.hubR - g.fy
+        // "Paused" under the 0 dB mark's label, kept inside the face
+        const zero = rad(gaugeDeg(0)), size = Math.round(Math.max(8, R * 0.08))
+        const zx = g.cx + Math.cos(zero) * g.rScale * 0.88, zy = g.cy + Math.sin(zero) * g.rScale * 0.88
+        item.pausedNote.font.pixelSize = size
+        item.pausedNote.x = Math.max(0, Math.min(g.fw - item.pausedNote.implicitWidth - 2,
+                                                 zx - item.pausedNote.implicitWidth / 2 - g.fx))
+        item.pausedNote.y = zy + size * (g.small ? 0.4 : 0.9) - g.fy
     }
 
     component LevelGradient: LinearGradient {
@@ -435,6 +443,7 @@ Item {
             property alias needle: needle
             property alias needleTurn: needleTurn
             property alias hub: hub
+            property alias pausedNote: pausedNote
             LevelBand { id: rmsBand; opacity: 0.45; gradStart: gauge.gradStart; gradEnd: gauge.gradEnd }
             LevelBand { id: peakBand; gradStart: gauge.gradStart; gradEnd: gauge.gradEnd }
             property bool holdRed: false
@@ -453,6 +462,14 @@ Item {
                 transform: Rotation { id: needleTurn; origin.x: needle.width / 2; origin.y: needle.height }
             }
             Rectangle { id: hub; radius: width / 2; color: meters.textColor; antialiasing: true }
+            Text {
+                id: pausedNote
+                visible: meters.paused
+                text: i18n("Paused")
+                color: meters.textColor
+                opacity: 0.8
+                onImplicitWidthChanged: meters.update()
+            }
             Component.onCompleted: meters.update()
         }
     }

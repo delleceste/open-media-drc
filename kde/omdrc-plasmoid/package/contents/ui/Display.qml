@@ -202,8 +202,11 @@ Item {
                                : modelData === "dr" ? drPane
                                : modelData === "balance" ? balancePane : metersPane
                 opacity: paneDrag.active ? 0.65 : 1
-                // DR says it on its own bar
-                PausedNote { visible: paneLoader.modelData !== "cover" && paneLoader.modelData !== "dr" }
+                // DR says it on its own bar, the needles under their 0 dB
+                // (a spectrum below them on its own)
+                PausedNote { visible: paneLoader.modelData !== "cover" && paneLoader.modelData !== "dr"
+                                      && !(face.meterStyle === "needles" && paneLoader.modelData !== "spectrum"
+                                           && paneLoader.modelData !== "balance") }
                 TapHandler {
                     enabled: !face.editing && face.panes.length > 1
                     acceptedButtons: Qt.LeftButton
@@ -335,6 +338,7 @@ Item {
             vu: face.app.vu
             interactionsEnabled: !face.editing
             glass: face.coverBehind ? 0.5 : 1
+            paused: face.app.animationsPaused
         }
     }
     Component {
@@ -349,6 +353,7 @@ Item {
                 vu: face.app.vu
                 interactionsEnabled: !face.editing
                 glass: face.coverBehind ? 0.5 : 1
+                paused: face.app.animationsPaused
             }
             Spectrum {
                 anchors { left: parent.left; right: parent.right }
@@ -363,6 +368,7 @@ Item {
                 peakHold: face.app.spectrumPeakHold
                 clickEnabled: !face.compact
                 onLayoutToggled: face.toggleSpectrumLayout()
+                PausedNote { visible: face.meterStyle === "needles" }
             }
         }
     }
