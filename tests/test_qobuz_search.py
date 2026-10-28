@@ -145,6 +145,14 @@ class LabelTest(unittest.TestCase):
         group = cat.label_groups(["Challenge Classics"])[0]
         self.assertTrue(group.matches("Challenge Classics"))
 
+    def test_an_unconfigured_label_matches_the_whole_name_only(self):
+        cat, _ = catalog({})
+        group = cat.label_groups(["linn"])[0]
+        self.assertTrue(group.matches("Linn"))
+        self.assertTrue(group.matches("  LINN "))
+        self.assertFalse(group.matches("Linn Records"))
+        self.assertFalse(group.matches("Linnaeus Classics"))
+
 
 class MetadataTest(unittest.TestCase):
     def test_date_prefers_release_date_original(self):

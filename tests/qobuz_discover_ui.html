@@ -72,6 +72,28 @@
         }
         check(scrolls.length === 5 && scrolls.every(s => s.behavior === 'smooth'),
             'Every Qobuz view button scrolls past the search box');
+        const chipOf = (box, name) => [...box.querySelectorAll('button')].find(b => b.textContent === name);
+        const removeChip = async name => {
+            chipOf(P.labelsScroll, name).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+            [...document.querySelectorAll('#overlay-root .sheet button')].find(b => b.textContent === 'Remove').click();
+            await new Promise(r => setTimeout(r));
+        };
+        await removeChip('Alpha Classics');
+        check(!chipOf(P.labelsScroll, 'Alpha Classics') && !chipOf(P.discoverLabelsScroll, 'Alpha Classics') &&
+            !K.pref('qobuz.customLabels', []).includes('Alpha Classics') &&
+            !K.pref('qobuz.labels', []).includes('Alpha Classics'),
+            'A long press removes a custom label from both lists and its ticks');
+        await removeChip('Decca');
+        check(!chipOf(P.labelsScroll, 'Decca') && !K.pref('qobuz.discoverLabels', []).includes('Decca') &&
+            K.pref('qobuz.hiddenLabels', []).includes('Decca'),
+            'A long press hides a configured label');
+        P.labelsBox.querySelector('[aria-label="Add search label"]').click();
+        dialog = document.querySelector('[aria-label="Add label"]');
+        dialog.querySelector('input').value = 'decca';
+        dialog.requestSubmit();
+        check(chipOf(P.labelsScroll, 'Decca') && !K.pref('qobuz.hiddenLabels', []).length &&
+            !K.pref('qobuz.customLabels', []).some(n => n.toLowerCase() === 'decca'),
+            'Adding a hidden configured label back shows it again');
         document.getElementById('result').textContent = 'PASS';
     } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
 })();

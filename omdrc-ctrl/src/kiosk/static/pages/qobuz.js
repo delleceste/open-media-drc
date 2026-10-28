@@ -732,12 +732,67 @@ P.paintHints = query => {
 };
 
 // User-entered labels are available in both filter lists, with independent ticks.
+// A label added by hand matches that one label name exactly, case aside (the
+// server's label_groups); a long press on any chip removes it from the lists.
 P.labelNames = selected => {
     const names = [];
-    for (const name of [...P.favourites, ...pref('customLabels', []), ...selected]) {
+    const hidden = new Set(pref('hiddenLabels', []).map(n => n.toLowerCase()));
+    for (const name of [...P.favourites.filter(n => !hidden.has(n.toLowerCase())),
+                        ...pref('customLabels', []), ...selected]) {
         if (!names.some(n => n.toLowerCase() === name.toLowerCase())) names.push(name);
     }
     return names;
+};
+
+// A configured favourite is hidden on this device; one added by hand is forgotten.
+P.removeLabel = async name => {
+    const ok = await K.confirm({ title: `Remove ${name}?`,
+        message: 'It leaves both label lists. + adds it back.', ok: 'Remove', danger: true });
+    if (!ok) return;
+    const same = n => n.toLowerCase() === name.toLowerCase();
+    setPref('customLabels', pref('customLabels', []).filter(n => !same(n)));
+    if (P.favourites.some(same) && !pref('hiddenLabels', []).some(same))
+        setPref('hiddenLabels', [...pref('hiddenLabels', []), name]);
+    const wasSearch = [...P.selected].some(same);
+    for (const n of [...P.selected]) if (same(n)) P.selected.delete(n);
+    setPref('labels', [...P.selected]);
+    const discover = P.discoverSelected();
+    const wasDiscover = [...discover].some(same);
+    setPref('discoverLabels', [...discover].filter(n => !same(n)));
+    P.paintLabels(); P.paintDiscoverFilters();
+    if (wasSearch) P.searchSoon();
+    if (wasDiscover) P.discover();
+};
+
+// A label chip: a tap ticks it, a long press offers to remove it.
+P.labelChip = (name, on, toggle) => {
+    const chip = h('button', {
+        type: 'button', class: 'chip tog qz-chip' + (on ? ' on' : ''), 'aria-pressed': String(on),
+        title: `${name} (long press: remove)`,
+        onclick: () => { if (!held) toggle(); },
+    }, name);
+    // as P.tile's press: held still for LONG_PRESS_MS; a move (a scroll) ends it
+    let timer = null, start = null, held = false;
+    const cancel = () => { clearTimeout(timer); timer = null; };
+    const fire = () => {
+        cancel();
+        if (held) return;
+        held = true;
+        try { navigator.vibrate && navigator.vibrate(25); } catch {}
+        P.removeLabel(name);
+    };
+    chip.addEventListener('pointerdown', e => {
+        if (e.button) return;
+        held = false;
+        start = { x: e.clientX, y: e.clientY };
+        timer = setTimeout(fire, LONG_PRESS_MS);
+    });
+    chip.addEventListener('pointermove', e => {
+        if (timer && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) cancel();
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => chip.addEventListener(t, cancel));
+    chip.addEventListener('contextmenu', e => { e.preventDefault(); if (timer || e.pointerType === 'mouse' || !e.pointerType) fire(); });
+    return chip;
 };
 P.addLabel = view => {
     const input = h('input', { type: 'text', class: 'qz-input', placeholder: 'Label name',
@@ -748,8 +803,11 @@ P.addLabel = view => {
         e.preventDefault();
         const typed = input.value.trim().replace(/\s+/g, ' ');
         if (!typed) { error.hidden = false; error.textContent = 'Enter a label name.'; input.focus(); return; }
-        const name = P.labelNames([]).find(n => n.toLowerCase() === typed.toLowerCase()) || typed;
-        if (!P.labelNames([]).some(n => n.toLowerCase() === typed.toLowerCase()))
+        const same = n => n.toLowerCase() === typed.toLowerCase();
+        const name = P.favourites.find(same) || P.labelNames([]).find(same) || typed;
+        if (pref('hiddenLabels', []).some(same))
+            setPref('hiddenLabels', pref('hiddenLabels', []).filter(n => !same(n)));
+        else if (!P.labelNames([]).some(same))
             setPref('customLabels', [...pref('customLabels', []), name]);
         if (view === 'discover') {
             const selected = P.discoverSelected();
@@ -780,11 +838,8 @@ P.paintLabels = () => {
     const top = P.labelsScroll.scrollTop;
     P.paintSummary();
     P.paintHints(P.plain(P.input.value));            // their ticks follow
-    const chip = name => h('button', {
-        type: 'button', class: 'chip tog qz-chip' + (P.selected.has(name) ? ' on' : ''),
-        onclick: () => P.toggleLabel(name),
-    }, name);
-    K.clear(P.labelsScroll).append(...names.map(chip));
+    K.clear(P.labelsScroll).append(...names.map(name =>
+        P.labelChip(name, P.selected.has(name), () => P.toggleLabel(name))));
     P.labelsScroll.scrollTop = top;
     K.clear(P.labelsBox).append(P.labelsScroll,
         h('button', { type: 'button', class: 'chip qz-chip qz-add-label-button',
@@ -1579,14 +1634,10 @@ P.paintDiscoverFilters = () => {
     const selected = P.discoverSelected();
     const names = P.labelNames(selected);
     const top = P.discoverLabelsScroll.scrollTop;
-    K.clear(P.discoverLabelsScroll).append(...names.map(name => h('button', {
-        type: 'button', class: 'chip tog qz-chip' + (selected.has(name) ? ' on' : ''),
-        'aria-pressed': String(selected.has(name)),
-        onclick: () => {
-            selected.has(name) ? selected.delete(name) : selected.add(name);
-            setPref('discoverLabels', [...selected]); P.paintDiscoverFilters(); P.discover();
-        },
-    }, name)));
+    K.clear(P.discoverLabelsScroll).append(...names.map(name => P.labelChip(name, selected.has(name), () => {
+        selected.has(name) ? selected.delete(name) : selected.add(name);
+        setPref('discoverLabels', [...selected]); P.paintDiscoverFilters(); P.discover();
+    })));
     P.discoverLabelsScroll.scrollTop = top;
     K.clear(P.discoverLabels).append(P.discoverLabelsScroll,
         h('button', { type: 'button', class: 'chip qz-chip qz-add-label-button',

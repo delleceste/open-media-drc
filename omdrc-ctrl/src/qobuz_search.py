@@ -74,9 +74,14 @@ cpo: cpo
 class LabelGroup:
     name: str
     patterns: tuple[str, ...]
+    # The whole label name, not a word in it: a label added by hand ("Linn"
+    # must not also match "Linn Records" or "Linnaeus Classics").
+    exact: bool = False
 
     def matches(self, label: str) -> bool:
         text = _fold(label)
+        if self.exact:
+            return text in self.patterns
         return any(_pattern_in(p, text) for p in self.patterns)
 
 
@@ -1050,7 +1055,7 @@ class QobuzCatalog:
                     if label.get("id") is not None and group.matches(_name(label)):
                         found.setdefault(str(label["id"]), None)
             return list(found)
-        return self._cached(f"labelids:{group.name}:{'|'.join(group.patterns)}",
+        return self._cached(f"labelids:{group.name}:{'=' if group.exact else '~'}:{'|'.join(group.patterns)}",
                             self.settings.album_cache_ttl, make)
 
     def _label_page(self, label_id: str, offset: int) -> tuple[list[dict], int | None]:
@@ -1175,14 +1180,14 @@ class QobuzCatalog:
 
     def label_groups(self, names: list[str]) -> list[LabelGroup]:
         """The configured groups named in `names`; an unknown name is taken as
-        a group of its own (so a label seen in the results can be ticked
-        before it is saved as a favourite)."""
+        a group of its own matching that one label name exactly, case aside
+        (a label added by hand, or one seen in the results)."""
         known = {g.name.casefold(): g for g in self.settings.labels}
         groups = []
         for name in names:
             name = name.strip()
             if name:
-                groups.append(known.get(name.casefold()) or LabelGroup(name, (_fold(name),)))
+                groups.append(known.get(name.casefold()) or LabelGroup(name, (_fold(name),), exact=True))
         return groups
 
     def _filter(self, scans: list[dict], groups: list[LabelGroup], lo: str, hi: str,
