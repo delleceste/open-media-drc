@@ -1,0 +1,10 @@
+[Unit]
+Description=Make Linux GRUB's default OS (last running OS is the next one)
+ConditionPathExists=/boot/grub/grubenv
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/grub-reboot-to-freebsd.sh -r
+
+[Install]
+WantedBy=multi-user.target

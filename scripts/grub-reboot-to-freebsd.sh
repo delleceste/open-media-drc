@@ -25,6 +25,14 @@
 #   grub-reboot-to-freebsd.sh -l        list GRUB menu entries and exit.
 #   grub-reboot-to-freebsd.sh -c        check setup + show current default, exit.
 #   grub-reboot-to-freebsd.sh -n [label]  set the default but do NOT reboot.
+#   grub-reboot-to-freebsd.sh -r [label]  record the running OS as the default
+#                                        (label defaults to "Arch Linux") and
+#                                        exit; run at Linux boot, see below.
+#
+# Why -r exists: GRUB's own `savedefault` write to grubenv (raw block write on
+# ext4) did not stick, so the saved entry stayed "FreeBSD" and every boot
+# landed there regardless of the last OS used.  omdrc-grub-mark-linux.service
+# runs `-r` at every Linux boot, so the last running OS is the next one.
 #
 # History: this used `grub-reboot` (one-shot, reverting to the previous default
 # on the next boot).  That contradicted the intended behaviour — after
@@ -78,6 +86,7 @@ while [ $# -gt 0 ]; do
         -l) list_entries; exit 0 ;;
         -c) check_setup; exit $? ;;
         -n) REBOOT=0; shift ;;
+        -r) REBOOT=0; LABEL="Arch Linux"; shift ;;
         --) shift; break ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *)  LABEL="$1"; shift ;;

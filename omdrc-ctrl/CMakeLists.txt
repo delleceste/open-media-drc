@@ -192,6 +192,10 @@ install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/omdrcctrl
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     install(PROGRAMS ../scripts/grub-reboot-to-freebsd.sh
             DESTINATION bin)
+    # GRUB's own savedefault write did not stick: record Linux as the default
+    # from userspace at every Linux boot (last running OS is the next one).
+    install(FILES systemd/omdrc-grub-mark-linux.service
+            DESTINATION lib/systemd/system)
 endif()
 
 # service integration
