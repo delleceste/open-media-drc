@@ -659,7 +659,7 @@ R.mount = el => {
     el.append(h('div', { class: 'fav-page' }, R.head, R.list));
 };
 R.show = () => { R.visible = true; R.refresh(); };
-R.hide = () => { R.visible = false; };
+R.hide = () => { R.visible = false; R.closeMenu(); };
 R.refresh = async () => {
     const d = await K.api(R.url, { timeout: 20000 });
     if (!d.ok) { R.head.textContent = d.error || 'Could not read the review list'; return; }
@@ -686,18 +686,41 @@ R.play = async (a, mode) => {
 };
 R.row = a => {
     const off = a.streamable === false;
+    const more = h('button', { type: 'button', class: 'btn', title: 'Remove or renew', 'aria-label': 'More actions',
+        'aria-haspopup': 'menu', onclick: () => R.menu(a, more) }, '⋯');
     return h('div', { class: 'fav-tree-entry' },
-        h('div', { class: 'fav-tree-row' },
+        h('div', { class: 'fav-review-row' },
+            h('button', { type: 'button', class: 'btn primary', title: 'Play album', 'aria-label': 'Play album',
+                disabled: off, onclick: () => R.play(a, 'replace') }, K.tIcon('play')),
             h('div', { class: 'fav-tree-album' },
                 h('button', { type: 'button', class: 'fav-tree-cover', title: 'Add or edit a note', onclick: () => R.editNote(a) },
                     a.image ? h('img', { src: a.image, alt: '', loading: 'lazy' }) : '♪'),
                 h('span', { class: 'fav-tree-name' }, h('strong', {}, a.title), h('small', {}, a.artist || ''),
                     h('small', { class: a.left <= 2 ? 'fav-review-soon' : '' }, left(a.left)),
                     a.note ? h('small', { class: 'fav-review-note', onclick: () => R.editNote(a) }, '“' + a.note + '”') : null)),
-            h('div', { class: 'fav-tree-actions' },
-                h('button', { type: 'button', class: 'btn', title: 'Play album', disabled: off, onclick: () => R.play(a, 'replace') }, '▶'),
-                h('button', { type: 'button', class: 'btn', title: `Keep ${R.settings.lifetime} more days of use`, onclick: () => R.act(a, 'extend') }, '+' + R.settings.lifetime + 'd'),
-                h('button', { type: 'button', class: 'btn danger', title: 'Remove from the review list', onclick: () => R.act(a, 'remove') }, '✕'))));
+            more));
+};
+R.closeMenu = () => {
+    if (!R.menuEl) return;
+    document.removeEventListener('pointerdown', R.menuOutside, true);
+    R.menuEl.remove(); R.menuEl = null;
+};
+R.menu = (a, anchor) => {
+    const was = R.menuEl;
+    R.closeMenu();
+    if (was && was.__for === anchor) return;
+    const item = (label, run) => h('button', { type: 'button', class: 'menu-item', role: 'menuitem',
+        onclick: () => { R.closeMenu(); run(); } }, label);
+    const menu = R.menuEl = h('div', { class: 'menu-pop qz-tilemenu', role: 'menu', 'aria-label': a.title },
+        item('Renew (+' + R.settings.lifetime + ' days of use)', () => R.act(a, 'extend')),
+        item('Remove', () => R.act(a, 'remove')));
+    menu.__for = anchor;
+    document.body.append(menu);
+    const r = anchor.getBoundingClientRect(), w = menu.offsetWidth, hgt = menu.offsetHeight;
+    menu.style.left = `${Math.max(8, Math.min(r.right - w, innerWidth - w - 8))}px`;
+    menu.style.top = `${r.bottom + hgt + 8 > innerHeight ? Math.max(8, r.top - hgt - 4) : r.bottom + 4}px`;
+    R.menuOutside = e => { if (!menu.contains(e.target) && e.target !== anchor) R.closeMenu(); };
+    document.addEventListener('pointerdown', R.menuOutside, true);
 };
 R.editNote = a => {
     const close = () => scrim.remove();

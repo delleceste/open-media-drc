@@ -1429,3 +1429,6 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .fav-review-note { font-style: italic; white-space: normal; cursor: pointer; }
 .fav-picker-sheet textarea { width: 100%; box-sizing: border-box; margin: .6rem 0; font: inherit; }
 .qz-review-btn .ticon { width: 1.2rem; height: 1.2rem; }
+.fav-review-row { display: flex; align-items: center; gap: .5rem; }
+.fav-review-row > .btn { flex: 0 0 auto; min-width: 2.4rem; min-height: 2.4rem; padding: .2rem; }
+.fav-review-row .fav-tree-album { flex: 1 1 auto; min-width: 0; }

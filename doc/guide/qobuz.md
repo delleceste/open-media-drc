@@ -88,8 +88,8 @@ their covers, or as an expandable tree.
 
 The bookmark beside **♡** (on Now, in the full player, in an album's menu) parks
 an album to listen to again. **Review later**, the bookmark chip beside the heart
-in Qobuz's list chips, shows them flat. Touch a cover to write why; ▶ plays, **+10d**
-extends, ✕ removes. An album lasts ten *days of use*: days the app wasn't opened
+in Qobuz's list chips, shows them flat. Touch a cover to write why; the play icon on
+the left plays, the ⋯ on the right renews or removes. An album lasts ten *days of use*: days the app wasn't opened
 don't count. The list is a ring of 16, the oldest making room. Both numbers are
 set in Configuration → Review later. It is kept on the box, shared by every screen.
 
