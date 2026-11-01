@@ -109,6 +109,7 @@ if [ -z "${title:-}" ]; then
     exit 1
 fi
 
+prev=$(current_default)
 grub-set-default "$title"          # NB: some distros name this 'grub2-set-default'
 
 # Trust the write rather than assume it: a silent failure here would send the
@@ -120,7 +121,7 @@ if [ "$saved" != "$title" ]; then
     exit 1
 fi
 
-echo "Default OS -> '$title'  (stays the default until changed again)"
+echo "Default OS -> '$title'  (was '$prev'; stays the default until changed again)"
 
 [ "$REBOOT" -eq 1 ] || exit 0
 
