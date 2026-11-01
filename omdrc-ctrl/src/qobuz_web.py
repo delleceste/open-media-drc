@@ -62,6 +62,7 @@ from flask import Blueprint, Response, jsonify, request
 import openhome
 import qobuz_ai
 import qobuz_favorites
+import qobuz_review
 import local_db
 import mpd_library
 import dr_volumes
@@ -1016,6 +1017,40 @@ def favorites():
             return jsonify({"ok": True})
         raise QobuzError("unknown favorites action")
     except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+def _review_list():
+    return qobuz_review.ReviewList(os.path.join(_state_dir(), f"qobuz-review-{_qobuz_user_id()}.json"))
+
+
+@bp.route("/review", methods=["GET", "POST"])
+def review():
+    """Albums parked to listen to later (qobuz_review): the list, and its actions."""
+    guard = _guard(renderer_needed=False)
+    if guard:
+        return guard
+    try:
+        store = _review_list()
+        if request.method == "GET":
+            return jsonify({"ok": True, **store.view(touch=request.args.get("touch") != "0")})
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        if action == "settings":
+            return jsonify({"ok": True, "settings": store.configure(body.get("settings"))})
+        album_id = str(body.get("album_id") or "")
+        if not re.fullmatch(r"[0-9A-Za-z]+", album_id):
+            raise QobuzError("bad album ID")
+        note = body.get("note") if isinstance(body.get("note"), str) else ""
+        if action == "add":
+            card = album_card(catalog()._album_raw(album_id))
+            return jsonify({"ok": True, **store.add(card, note.strip())})
+        if action in ("remove", "extend", "note"):
+            if not store.update(album_id, action, note.strip()):
+                raise QobuzError("That album is no longer in the review list")
+            return jsonify({"ok": True})
+        raise QobuzError("unknown review action")
+    except (QobuzError, ValueError, OSError) as error:
         return jsonify({"ok": False, "error": str(error)}), 400
 
 

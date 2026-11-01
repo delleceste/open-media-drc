@@ -84,6 +84,15 @@ their covers, or as an expandable tree.
 - **Hold** a folder tile to rename, move or delete it. **Drag** the handle to reorder tiles. The order is kept on the box and shared by every phone and screen.
 - Hearted albums that aren't in any folder are under **Qobuz**.
 
+## Review later
+
+The bookmark beside **♡** (on Now, in the full player, in an album's menu) parks
+an album to listen to again. **Review later**, the bookmark chip beside the heart
+in Qobuz's list chips, shows them flat. Touch a cover to write why; ▶ plays, **+10d**
+extends, ✕ removes. An album lasts ten *days of use*: days the app wasn't opened
+don't count. The list is a ring of 16, the oldest making room. Both numbers are
+set in Configuration → Review later. It is kept on the box, shared by every screen.
+
 ## Awarded and your ratings
 
 Qobuz lists awards for some albums (Gramophone Editor's Choice, Diapason d'Or…)

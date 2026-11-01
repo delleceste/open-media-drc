@@ -625,3 +625,105 @@ P.openFound = path => {
 };
 K.library = P;
 })();
+
+/* Review later: albums parked to listen to again, a short ring buffer that ages
+ * by days the application was used (qobuz_review.py).  Added from Now, the
+ * player or an album's menu; listed in Qobuz beside the Library's heart.  Touching
+ * a cover writes why the album is parked. */
+(() => {
+'use strict';
+const { h } = K;
+const R = { items: [], settings: { size: 16, lifetime: 10 } };
+
+R.url = '/qobuz/review';
+// Today counts as a day of use: asked once as the app opens and whenever it returns
+R.touch = async () => {
+    if (!K.state.features.qobuz_search) return;
+    const d = await K.api(R.url, { timeout: 20000 });
+    if (d.ok) { R.settings = d.settings; if (R.visible) R.paint(d); }
+};
+R.add = async a => {
+    const d = await K.api(R.url, { json: { action: 'add', album_id: a.id }, timeout: 30000 });
+    if (!d.ok) { K.toast(d.error || 'Could not park the album', 'error'); return; }
+    K.toast(d.already ? 'Review later: kept for another stretch' : 'Parked to review later: touch its cover there to add a note');
+    if (R.visible) R.refresh();
+};
+R.loadSettings = async () => {
+    const d = await K.api(R.url + '?touch=0', { timeout: 20000 });
+    if (d.ok) R.settings = d.settings;
+};
+R.mount = el => {
+    R.el = el;
+    R.head = h('div', { class: 'small muted qz-summary' });
+    R.list = h('div', { class: 'fav-tree fav-review' });
+    el.append(h('div', { class: 'fav-page' }, R.head, R.list));
+};
+R.show = () => { R.visible = true; R.refresh(); };
+R.hide = () => { R.visible = false; };
+R.refresh = async () => {
+    const d = await K.api(R.url, { timeout: 20000 });
+    if (!d.ok) { R.head.textContent = d.error || 'Could not read the review list'; return; }
+    R.settings = d.settings;
+    R.paint(d);
+};
+const left = n => n === 1 ? 'last day of use' : `${n} days of use left`;
+R.paint = d => {
+    R.items = d.items.slice().reverse();      // the newest first
+    const n = R.items.length;
+    R.head.textContent = n ? `${n} of ${d.settings.size} albums parked · they age only on days you use the app`
+        : 'Nothing parked. Use the bookmark beside ♡ on an album to listen to it later.';
+    K.clear(R.list).append(...R.items.map(R.row));
+};
+R.act = async (a, action, extra = {}) => {
+    const d = await K.api(R.url, { json: { action, album_id: a.id, ...extra }, timeout: 30000 });
+    if (!d.ok) { K.toast(d.error || 'Could not change the review list', 'error'); }
+    R.refresh();
+    return d.ok;
+};
+R.play = async (a, mode) => {
+    const d = await K.api('/qobuz/play', { json: { album_id: a.id, mode }, timeout: 90000 });
+    K.toast(d.ok ? (mode === 'append' ? 'Added to queue' : 'Playing') : d.error || 'Could not play album', d.ok ? 'ok' : 'error');
+};
+R.row = a => {
+    const off = a.streamable === false;
+    return h('div', { class: 'fav-tree-entry' },
+        h('div', { class: 'fav-tree-row' },
+            h('div', { class: 'fav-tree-album' },
+                h('button', { type: 'button', class: 'fav-tree-cover', title: 'Add or edit a note', onclick: () => R.editNote(a) },
+                    a.image ? h('img', { src: a.image, alt: '', loading: 'lazy' }) : '♪'),
+                h('span', { class: 'fav-tree-name' }, h('strong', {}, a.title), h('small', {}, a.artist || ''),
+                    h('small', { class: a.left <= 2 ? 'fav-review-soon' : '' }, left(a.left)),
+                    a.note ? h('small', { class: 'fav-review-note', onclick: () => R.editNote(a) }, '“' + a.note + '”') : null)),
+            h('div', { class: 'fav-tree-actions' },
+                h('button', { type: 'button', class: 'btn', title: 'Play album', disabled: off, onclick: () => R.play(a, 'replace') }, '▶'),
+                h('button', { type: 'button', class: 'btn', title: `Keep ${R.settings.lifetime} more days of use`, onclick: () => R.act(a, 'extend') }, '+' + R.settings.lifetime + 'd'),
+                h('button', { type: 'button', class: 'btn danger', title: 'Remove from the review list', onclick: () => R.act(a, 'remove') }, '✕'))));
+};
+R.editNote = a => {
+    const close = () => scrim.remove();
+    const text = h('textarea', { rows: 4, maxlength: 500, placeholder: 'Why review it later?', 'aria-label': 'Note' });
+    text.value = a.note || '';
+    const save = async () => { if (await R.act(a, 'note', { note: text.value })) close(); };
+    const scrim = h('div', { class: 'scrim fav-picker', onclick: e => { if (e.target === scrim) close(); } },
+        h('div', { class: 'sheet fav-picker-sheet' },
+            h('div', { class: 'fav-picker-top' },
+                a.image ? h('img', { src: a.image, alt: '' }) : null,
+                h('div', {}, h('div', { class: 'muted small' }, 'Review later'), h('h2', {}, a.title)),
+                h('button', { type: 'button', class: 'btn', title: 'Close', onclick: close }, '✕')),
+            text,
+            h('div', { class: 'sheet-actions' }, h('span', { class: 'spacer' }),
+                h('button', { type: 'button', class: 'btn primary', onclick: save }, 'Save note'))));
+    document.getElementById('overlay-root').append(scrim);
+    text.focus();
+};
+// Settings (Configuration page): the ring's size, and how many days of use an album lasts
+R.configure = async settings => {
+    const d = await K.api(R.url, { json: { action: 'settings', settings }, timeout: 20000 });
+    if (!d.ok) { K.toast(d.error || 'Could not save', 'error'); return false; }
+    R.settings = d.settings;
+    return true;
+};
+K.review = R;
+document.addEventListener('visibilitychange', () => { if (!document.hidden) R.touch(); });
+setTimeout(() => R.touch(), 3000);
+})();

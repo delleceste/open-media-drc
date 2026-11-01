@@ -475,6 +475,14 @@ P.render = function render() {
                 link('BruteFIR configuration', '/brutefir-config'),
                 link('Filter response', '/filter-response'),
                 K.state.features.drdb ? link('DR versions', '/dr-alternatives') : null)),
+        K.state.features.qobuz_search ? K.card('Review later',
+            h('div', { class: 'lbl' }, 'Albums kept in the list'),
+            K.segmented([8, 16, 32, 64].map(v => ({ value: v, label: String(v) })), K.review.settings.size,
+                async v => { if (await K.review.configure({ size: v })) P.render(); }),
+            h('div', { class: 'lbl' }, 'Days of use before one goes'),
+            K.segmented([5, 10, 20, 30].map(v => ({ value: v, label: String(v) })), K.review.settings.lifetime,
+                async v => { if (await K.review.configure({ lifetime: v })) P.render(); }),
+            h('p', { class: 'muted small' }, 'A day of use is a day the app was opened; days away do not count. The oldest album makes room when the list is full.')) : null,
         K.state.features.qobuz_search ? K.card('AI recommendations',
             h('p', { class: 'muted small' }, 'Choose the provider, model and API key used by Ask AI.'),
             h('button', { class: 'btn', type: 'button', onclick: () => K.openAISettings() }, 'AI settings')) : null,
@@ -487,7 +495,7 @@ P.render = function render() {
 
 P.hide = () => { if (P.tuneClose) P.tuneClose(true); };
 
-P.show = () => { P.render(); setTimeout(() => { if (P.left && P.left.isConnected) P.render(); }, 1500); };   // the keep-awake method settles just after load
+P.show = () => { if (K.state.features.qobuz_search && K.review) K.review.loadSettings().then(() => P.render()); P.render(); setTimeout(() => { if (P.left && P.left.isConnected) P.render(); }, 1500); };   // the keep-awake method settles just after load
 
 K.registerPage(P);
 })();

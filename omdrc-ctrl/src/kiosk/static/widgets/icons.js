@@ -24,6 +24,8 @@ const SHAPES = {
     // the award cup (the 🏆 on awarded albums), in line
     trophy: [['path', { d: 'M8 4.5 H16 V10 A4 4 0 0 1 8 10 Z' }], ['path', { d: 'M8 6 H5 V7.5 A3 3 0 0 0 8.4 10.5 M16 6 H19 V7.5 A3 3 0 0 1 15.6 10.5' }],
         ['path', { d: 'M12 14 V17 M8.5 19.5 H15.5 M9.5 19.5 L10 17 H14 L14.5 19.5' }]],
+    // review later: a bookmark ribbon
+    bookmark: [['path', { d: 'M7 4 H17 V20 L12 16 L7 20 Z' }]],
     grid: [['rect', { x: 4, y: 4, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 4, width: 6.5, height: 6.5, rx: 1 }],
         ['rect', { x: 4, y: 13.5, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 13.5, width: 6.5, height: 6.5, rx: 1 }]],
     list: [['rect', { x: 3.5, y: 5, width: 4.5, height: 4.5, rx: .8 }], ['rect', { x: 3.5, y: 14.5, width: 4.5, height: 4.5, rx: .8 }],

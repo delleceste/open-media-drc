@@ -1422,3 +1422,10 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 @media (max-width: 700px) { .drrank-tracks { padding-left: .6rem; } }
 .drlog-sync { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .3rem 0 .5rem; }
 .drlog-sync .warn { color: var(--warn-text); }
+
+/* Review later */
+.chip.now-review .ticon { width: 1rem; height: 1rem; margin-right: .25rem; }
+.fav-review-soon { color: var(--warn, #d9822b); }
+.fav-review-note { font-style: italic; white-space: normal; cursor: pointer; }
+.fav-picker-sheet textarea { width: 100%; box-sizing: border-box; margin: .6rem 0; font: inherit; }
+.qz-review-btn .ticon { width: 1.2rem; height: 1.2rem; }

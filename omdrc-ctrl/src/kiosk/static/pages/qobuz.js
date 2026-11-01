@@ -151,7 +151,10 @@ P.mount = el => {
                 title: name, 'aria-label': name, onclick: () => P.setView(x, true) }, icon ? K.tIcon(icon) : name)),
         h('button', { type: 'button', class: 'chip tog qz-chip qz-library-shortcut',
             dataset: { view: 'library' }, title: 'Favorites', 'aria-label': 'Favorites',
-            onclick: () => P.setView('library', true) }, '♡'));
+            onclick: () => P.setView('library', true) }, '♡'),
+        // beside the heart: albums parked to listen to later (pages/favorites.js, K.review)
+        h('button', { type: 'button', class: 'chip tog qz-chip qz-viewicon', dataset: { view: 'review' },
+            title: 'Review later', 'aria-label': 'Review later', onclick: () => P.setView('review', true) }, K.tIcon('bookmark')));
     P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'Back to search', 'aria-label': 'Back to search',
         onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, K.tIcon('search'), h('span', { 'aria-hidden': 'true' }, '⌃'));
     // list or grid, for all four lists alike (remembered)
@@ -179,6 +182,8 @@ P.mount = el => {
         h('span', { class: 'qz-reshead-title' }, 'Search results'));
     P.libraryBox = h('div', { class: 'qz-library', hidden: true });
     K.library.mount(P.libraryBox);
+    P.reviewBox = h('div', { class: 'qz-review', hidden: true });
+    K.review.mount(P.reviewBox);
     K.library.onFindEnd = () => {                  // a found album's folder opened
         setPref(P.textKey('library'), '');
         if (P.scopeShown === 'library') P.input.value = '';
@@ -186,7 +191,7 @@ P.mount = el => {
     P.pullHint = h('div', { class: 'qz-pull', 'aria-hidden': 'true' },
         h('span', { class: 'qz-pull-in' }, K.tIcon('search'), P.pullText = h('span', {})));
     P.main = h('div', { class: 'qz-main' }, P.pullHint, P.resHead, P.formHome, P.viewRow,
-        P.recentBox, P.results, P.discoverBox, P.awardedBox, P.libraryBox);
+        P.recentBox, P.results, P.discoverBox, P.awardedBox, P.libraryBox, P.reviewBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.refreshAIIcon();
     P.buildPlayer();
@@ -310,6 +315,7 @@ P.show = () => {
     else if (P.view() === 'discover') P.discover(0, { keep: true });
     else if (P.view() === 'awarded') P.awardedList();
     else if (P.view() === 'library') P.showLibrary();
+    else if (P.view() === 'review') K.review.show();
     if (!P.fromNowShown) P.undock();
     if (P.fullWanted && !P.fromNowShown) P.openFull({ instant: true });
     if (P.fullEl) P.fullEl.style.transform = '';
@@ -354,14 +360,16 @@ P.forget = () => {
 };
 
 // ── which list: played recently, or the results ──────────────────────────────
-P.view = () => ['results', 'recent', 'discover', 'awarded', 'library'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
+P.view = () => ['results', 'recent', 'discover', 'awarded', 'library', 'review'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
 P.setView = (v, scroll = false) => {
     P.closeGenreMenu(); P.closeTileMenu();
     if (scroll && document.activeElement === P.input) P.input.blur();
     const wasLibrary = P.view() === 'library';
     setPref('view', v); P.paintView();
     if (wasLibrary && v !== 'library') K.library.hide();
+    if (v !== 'review') K.review.hide();
     if (v === 'library') { if (P.visible && !K.library.visible) P.showLibrary(); }
+    else if (v === 'review') K.review.show();
     else if (v === 'recent') P.recent();
     else if (v === 'awarded') P.awardedList();
     else if (v === 'discover') P.discover(0, { keep: true });
@@ -379,7 +387,8 @@ P.paintView = () => {
     P.awardedBox.hidden = v !== 'awarded';
     P.discoverBox.hidden = v !== 'discover';
     P.libraryBox.hidden = v !== 'library';
-    P.layoutBtn.hidden = v === 'library';
+    P.reviewBox.hidden = v !== 'review';
+    P.layoutBtn.hidden = v === 'library' || v === 'review';
     P.paintScope();
     if (v === 'results' && !P.results.firstChild)
         P.results.append(h('p', { class: 'muted' }, 'No search yet: the search is at the top.'));
@@ -2147,6 +2156,7 @@ P.tileMenu = (c, where, tile, anchor = null) => {
         item(K.tIcon('play'), off ? 'Not available on Qobuz' : 'Play (replace the queue)', () => P.play(c, 'replace'), off),
         item('+', 'Add to the queue', () => P.play(c, 'append'), off),
         c.source === 'local' ? null : item('♡', 'Save in Qobuz Library', () => K.saveQobuzFavorite(c)),
+        c.source === 'local' ? null : item(K.tIcon('bookmark'), 'Review later', () => K.review.add(c)),
         c.source === 'local' ? null : where === 'recent' ? item('−', 'Remove from Recent', () => P.hideRecent(c, tile))
         : c.lowered ? item('↺', `Restore (lowered ${c.lowered.kind}: ${c.lowered.name})`, () => P.restore(c.lowered))
         : item('−', 'Remove (lower it)', () => P.lower(c, tile)));
@@ -2308,6 +2318,11 @@ P.makeView = full => {
             if (album && album.id) K.saveQobuzFavorite(album);
         }, 'qz-favorite');
         v.favorite.hidden = true;
+        v.review = btn(K.tIcon('bookmark'), 'Review this album later', () => {
+            const album = P.trackInfo()?.album;
+            if (album && album.id) K.review.add(album);
+        }, 'qz-favorite qz-review-btn');
+        v.review.hidden = true;
     }
     v.buttons = h('div', { class: 'qz-pbtns' },
         full ? K.holdRepeat(btn('<<', 'Seek backward within this track', () => {}, 'qz-step'), () => P.stepSeek(-1)) : null,
@@ -2316,7 +2331,7 @@ P.makeView = full => {
         btn(K.tIcon('stop'), 'Stop', () => P.transport('stop')),
         btn(K.tIcon('next'), 'Next track', () => P.transport('next')),
         full ? K.holdRepeat(btn('>>', 'Seek forward within this track', () => {}, 'qz-step'), () => P.stepSeek(1)) : null,
-        v.favoriteDivider, v.favorite);
+        v.favoriteDivider, v.favorite, v.review);
     v.seekRow = h('div', { class: 'qz-pseek' }, v.elapsed, v.seek, v.total);
     return v;
 };
@@ -2714,6 +2729,7 @@ P.paintViews = () => {
         if (v.favorite) {
             v.favorite.hidden = !(album && album.id);
             v.favoriteDivider.hidden = v.favorite.hidden;
+            v.review.hidden = v.favorite.hidden;
         }
         if (v.toggle.dataset.icon !== (playing ? 'pause' : 'play')) {
             v.toggle.dataset.icon = playing ? 'pause' : 'play';

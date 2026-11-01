@@ -60,6 +60,12 @@ P.mount = el => {
             id: P.track.qobuz_album, title: P.track.album || P.track.title,
             artist: P.track.artist, image: P.track.art,
         }) }, '♡ Favorites');
+    P.reviewBtn = h('button', { type: 'button', class: 'chip now-fav now-review', hidden: true,
+        title: 'Park this album to listen to again later',
+        onclick: () => P.track && P.track.qobuz_album && K.review.add({
+            id: P.track.qobuz_album, title: P.track.album || P.track.title,
+            artist: P.track.artist, image: P.track.art,
+        }) }, K.tIcon('bookmark'), ' Review later');
     P.aiBtn = h('button', { type: 'button', class: 'chip now-ai', hidden: true,
         onclick: e => K.listening.open(P.track, e.currentTarget) });
     P.paintAI = () => {
@@ -97,7 +103,7 @@ P.mount = el => {
     // landscape: smaller, beside the cover, so the row stays compact and the meters below
     // (the circular spectrum especially) keep the height; upright it goes back under the art (kiosk.css)
     const trackBox = h('div', { class: 'now-track' }, P.artBox, P.t1,
-        h('div', { class: 'now-meta' }, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.awards, P.pAlbum, P.infoBtn, P.favBtn, P.aiBtn), P.calLed,
+        h('div', { class: 'now-meta' }, h('div', { class: 'now-subrow' }, P.t2, P.fmt), P.pArtist, P.awards, P.pAlbum, P.infoBtn, P.favBtn, P.reviewBtn, P.aiBtn), P.calLed,
         // play/pause/stop chip and the small time sit above the progress bar, at the right
         // (upright, previous and next track either side of it)
         h('div', { class: 'now-timebox' },
@@ -877,6 +883,7 @@ P.pollTrack = async () => {
     }
     P.infoBtn.hidden = !t.qobuz_album;
     P.favBtn.hidden = !t.qobuz_album || !K.state.features.qobuz_search;
+    P.reviewBtn.hidden = P.favBtn.hidden;
     P.aiBtn.hidden = !t.ok || !t.title;
     K.listening.observe(t);
     if (P.awardsFor !== (t.qobuz_album || '')) {
