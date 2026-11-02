@@ -496,12 +496,12 @@ class App:
             self.message = f"{len(self.rows)} items" + (" · more available (m)" if self.more else "")
         self.submit(f"list-{generation}", lambda: self.api.request(path, params), apply)
 
-    def begin_search_edit(self):
+    def begin_search_edit(self, resume=False):
         self.library_auto_due = None
         self.library_sidebar_focus = False
         self.library_right_index = 0
         self.search_editing = True
-        self.search_draft = self.query
+        if not resume: self.search_draft = self.query
         self.search_decoder.reset()
 
     def finish_search_edit(self, submit=False):
@@ -509,6 +509,7 @@ class App:
             self.query = self.search_draft.strip()
             self.fetch_list()
         self.search_editing = False
+        if submit: self.search_draft = self.query
         self.search_decoder.reset()
         try: curses.curs_set(0)
         except curses.error: pass
@@ -518,10 +519,11 @@ class App:
             self.finish_search_edit(submit=True)
         elif key == 27:
             self.finish_search_edit()
+            self.search_draft = self.query
         elif key in (8, 127, curses.KEY_BACKSPACE):
             self.search_draft = self.search_draft[:-1]
             self.search_decoder.reset()
-        elif key == 9:
+        elif key in (9, curses.KEY_DOWN):
             self.finish_search_edit()
             self.library_right_index = 1
         elif 32 <= key <= 255:
@@ -837,15 +839,16 @@ class App:
             first_control = "Review later"
         if self.tab == 0:
             inner = result_width - 2
-            self.colored(screen, 3, result_x, "┌" + "─" * inner + "┐", "accent")
+            box_style = curses.A_BOLD if self.search_editing else 0
+            self.colored(screen, 3, result_x, "┌" + "─" * inner + "┐", "accent", box_style)
             if self.search_editing:
                 visible_text = self.search_draft[-max(1, inner - 3):]
                 cursor = "▌" if int(time.monotonic() * 2) % 2 == 0 else " "
                 content = "⌕ " + visible_text + cursor
             else:
-                content = "⌕ " + (self.query or "Type to search…")
-            self.colored(screen, 4, result_x, "│" + content[:inner].ljust(inner) + "│", "accent")
-            self.colored(screen, 5, result_x, "└" + "─" * inner + "┘", "accent")
+                content = "⌕ " + (self.search_draft or self.query or "Type to search…")
+            self.colored(screen, 4, result_x, "│" + content[:inner].ljust(inner) + "│", "accent", box_style)
+            self.colored(screen, 5, result_x, "└" + "─" * inner + "┘", "accent", box_style)
         else:
             self.colored(screen, 3, result_x, compact(first_control, result_width), "accent",
                          curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 0 else 0)
@@ -1315,6 +1318,7 @@ class App:
             if self.library_sidebar_focus:
                 self.library_sidebar_focus = False
                 self.library_right_index = 1 if self.tab == 5 else 0
+                if self.tab == 0: self.begin_search_edit(resume=True)
             elif self.library_right_index == 0 and self.tab in (0, 1):
                 self.library_right_index = 1
             elif self.library_right_index < (2 if self.tab in (0, 1) else 1):
@@ -1325,7 +1329,11 @@ class App:
         if key == curses.KEY_LEFT:
             self.library_sidebar_focus = True; return
         if key == curses.KEY_RIGHT:
-            self.library_sidebar_focus = False; self.library_right_index = 1 if self.tab == 5 else 0; return
+            if self.library_sidebar_focus:
+                self.library_sidebar_focus = False
+                self.library_right_index = 1 if self.tab == 5 else 0
+                if self.tab == 0: self.begin_search_edit(resume=True)
+            return
         if self.library_sidebar_focus and key in (curses.KEY_UP, curses.KEY_DOWN):
             step = -1 if key == curses.KEY_UP else 1
             selected = max(0, min(len(TABS) - 1, self.library_sidebar_index + step))
@@ -1340,9 +1348,18 @@ class App:
                 return
         if not self.library_sidebar_focus and key in (curses.KEY_UP, curses.KEY_DOWN):
             result_index = 2 if self.tab in (0, 1) else 1
-            if self.library_right_index < result_index:
-                self.library_right_index = max(0, min(result_index, self.library_right_index + (1 if key == curses.KEY_DOWN else -1)))
+            if key == curses.KEY_DOWN and self.library_right_index < result_index:
+                self.library_right_index += 1
                 return
+            if key == curses.KEY_UP:
+                if self.library_right_index == result_index and self.row > 0:
+                    self.row -= 1
+                    return
+                if self.library_right_index > 0:
+                    self.library_right_index -= 1
+                    if self.tab == 0 and self.library_right_index == 0:
+                        self.begin_search_edit(resume=True)
+                    return
         if not self.library_sidebar_focus and key in (10, 13):
             if self.library_right_index == 0:
                 if self.tab == 1:

@@ -226,6 +226,37 @@ class TuiTest(unittest.TestCase):
         self.assertFalse(app.search_editing)
         self.assertEqual(app.library_right_index, 1)
 
+    def test_search_arrow_navigation_moves_between_input_filters_and_results(self):
+        for entry in (9, tui.curses.KEY_RIGHT):
+            app = tui.App('http://localhost:9090')
+            app.page = 'Library'
+            app.rows = [{'title': 'One'}, {'title': 'Two'}]
+            app.action(entry, None)
+            self.assertTrue(app.search_editing)
+            self.assertFalse(app.library_sidebar_focus)
+            self.assertEqual(app.library_right_index, 0)
+            app.action(ord('A'), None)
+            app.action(tui.curses.KEY_DOWN, None)
+            self.assertFalse(app.search_editing)
+            self.assertEqual(app.library_right_index, 1)
+            self.assertEqual(app.search_draft, 'A')
+            app.action(tui.curses.KEY_DOWN, None)
+            self.assertEqual(app.library_right_index, 2)
+            app.action(tui.curses.KEY_DOWN, None)
+            self.assertEqual(app.row, 1)
+            app.action(tui.curses.KEY_UP, None)
+            self.assertEqual(app.row, 0)
+            app.action(tui.curses.KEY_UP, None)
+            self.assertEqual(app.library_right_index, 1)
+            app.action(tui.curses.KEY_UP, None)
+            self.assertEqual(app.library_right_index, 0)
+            self.assertTrue(app.search_editing)
+            self.assertEqual(app.search_draft, 'A')
+            with patch.object(app, 'fetch_list') as fetch:
+                app.action(10, None)
+            self.assertEqual(app.query, 'A')
+            fetch.assert_called_once()
+
     def test_discover_autoload_delay_and_enter_override(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'
