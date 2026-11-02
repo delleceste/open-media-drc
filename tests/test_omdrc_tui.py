@@ -55,6 +55,59 @@ class TuiTest(unittest.TestCase):
                 app.choose_genres(Screen([ord('c'), 10]))
             self.assertEqual(tui.App('http://localhost:9090').filters['genre'], '')
 
+    def test_label_picker_can_cancel_or_add_known_and_custom_labels(self):
+        class Screen:
+            def __init__(self, keys): self.keys = iter(keys)
+            def getmaxyx(self): return (24, 80)
+            def timeout(self, value): pass
+            def move(self, *args): pass
+            def clrtoeol(self): pass
+            def refresh(self): pass
+            def getch(self): return next(self.keys)
+        with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
+            app = tui.App('http://localhost:9090')
+            app.filters['label'] = ['Decca']
+            known = {'labels': [{'name': 'Decca'}, {'name': 'BIS'}]}
+            with patch.object(app.api, 'request', return_value=known) as request, \
+                 patch.object(app, 'draw'), patch.object(app, 'colored'), \
+                 patch.object(app, 'fetch_list') as fetch, patch.object(app, 'prompt', return_value='My Label'):
+                app.choose_labels(Screen([ord('c'), 27]))
+                self.assertEqual(app.filters['label'], ['Decca'])
+                fetch.assert_not_called()
+                app.choose_labels(Screen([ord('c'), tui.curses.KEY_DOWN, ord(' '), ord('a'), 10]))
+                self.assertEqual(app.filters['label'], ['BIS', 'My Label'])
+                fetch.assert_called_once()
+                self.assertEqual(request.call_args.args[0], '/qobuz/labels')
+            self.assertEqual(tui.App('http://localhost:9090').config['custom_labels'], ['My Label'])
+
+    def test_search_escape_returns_to_sidebar(self):
+        app = tui.App('http://localhost:9090')
+        app.query = 'Bach'
+        app.search_draft = 'Bach changed'
+        app.search_editing = True
+        app.library_sidebar_focus = False
+        with patch.object(tui.curses, 'curs_set'):
+            app.search_edit_key(27)
+        self.assertFalse(app.search_editing)
+        self.assertTrue(app.library_sidebar_focus)
+        self.assertEqual(app.library_sidebar_index, 0)
+        self.assertEqual(app.search_draft, 'Bach')
+
+    def test_search_shows_indeterminate_loading_and_result_gap(self):
+        app = tui.App('http://localhost:9090')
+        app.rows = [{'title': 'First'}, {'title': 'Second'}]
+        app.pending.add('list-0')
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
+             patch.object(tui.time, 'monotonic', return_value=100):
+            app.draw_library(Screen(), 20)
+        self.assertTrue(any(args[1] == 7 and 'Searching Qobuz' in args[3] and '█' in args[3]
+                            for args in painted))
+        titles = [(args[1], args[3]) for args in painted if args[3] in ('First', 'Second')]
+        self.assertEqual(titles, [(8, 'First'), (12, 'Second')])
+
     def test_room_correction_reports_applied_state(self):
         self.assertEqual(tui.drc_summary({"running": False}), "DRC OFF · direct")
         self.assertIn("96 kHz · flat · default · −3.0 dB", tui.drc_summary({

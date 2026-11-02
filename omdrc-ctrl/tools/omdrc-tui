@@ -339,6 +339,7 @@ class App:
         self.config_index = 0
         self.rows = []
         self.list_covers = {}
+        self.list_covers_hidden = False
         self.list_cover_retry = {}
         self.list_sixel_targets = []
         self.list_sixel_displayed = ()
@@ -555,6 +556,75 @@ class App:
         finally:
             screen.timeout(100)
 
+    def choose_labels(self, screen):
+        try:
+            configured = self.api.request("/qobuz/labels")["labels"]
+        except (RuntimeError, KeyError) as error:
+            self.message = f"Could not load labels: {error}"
+            return
+        saved_custom = self.config.get("custom_labels")
+        custom = [str(name) for name in saved_custom] if isinstance(saved_custom, list) else []
+        names = []
+        for name in [*(item.get("name", "") for item in configured), *custom, *self.filters["label"]]:
+            name = str(name).strip()
+            if name and not any(existing.casefold() == name.casefold() for existing in names):
+                names.append(name)
+        selected = {name.casefold() for name in self.filters["label"]}
+        cursor = 0
+        self.list_covers_hidden = True
+        screen.timeout(-1)
+        try:
+            while True:
+                self.draw(screen)
+                height, width = screen.getmaxyx()
+                visible = max(1, height - 6)
+                start = max(0, min(cursor - visible // 2, max(0, len(names) - visible)))
+                screen.move(2, 0); screen.clrtoeol()
+                self.colored(screen, 2, 2, compact("Labels · Space toggle · a add · Enter apply · c clear · Esc back", width - 4), "accent", curses.A_BOLD)
+                for row in range(visible):
+                    y = row + 3
+                    screen.move(y, 1); screen.clrtoeol()
+                    i = start + row
+                    if i < len(names):
+                        name = names[i]
+                        label = f"{'[x]' if name.casefold() in selected else '[ ]'} {name}"
+                        self.colored(screen, y, 2, compact(label, width - 4), "accent" if i == cursor else "soft",
+                                     curses.A_REVERSE if i == cursor else 0)
+                screen.refresh()
+                key = screen.getch()
+                if key == curses.KEY_UP: cursor = max(0, cursor - 1)
+                elif key == curses.KEY_DOWN: cursor = min(max(0, len(names) - 1), cursor + 1)
+                elif key == curses.KEY_NPAGE: cursor = min(max(0, len(names) - 1), cursor + visible)
+                elif key == curses.KEY_PPAGE: cursor = max(0, cursor - visible)
+                elif key == ord(" ") and names:
+                    name = names[cursor].casefold()
+                    if name in selected: selected.remove(name)
+                    else: selected.add(name)
+                elif key in (ord("c"), ord("C")): selected.clear()
+                elif key in (ord("a"), ord("A")):
+                    name = self.prompt(screen, "New label (blank cancels):").strip()
+                    screen.timeout(-1)
+                    if name:
+                        existing = next((item for item in names if item.casefold() == name.casefold()), None)
+                        if existing: name = existing
+                        else:
+                            names.append(name)
+                            custom.append(name)
+                        selected.add(name.casefold())
+                        cursor = names.index(name)
+                elif key in (10, 13):
+                    labels = [name for name in names if name.casefold() in selected]
+                    if labels != self.filters["label"] or custom != self.config.get("custom_labels", []):
+                        self.filters["label"] = labels
+                        self.config["custom_labels"] = custom
+                        self.save()
+                        self.fetch_list()
+                    return
+                elif key == 27: return
+        finally:
+            self.list_covers_hidden = False
+            screen.timeout(100)
+
     def begin_search_edit(self, resume=False):
         self.library_auto_due = None
         self.library_sidebar_focus = False
@@ -579,6 +649,8 @@ class App:
         elif key == 27:
             self.finish_search_edit()
             self.search_draft = self.query
+            self.library_sidebar_focus = True
+            self.library_sidebar_index = 0
         elif key in (8, 127, curses.KEY_BACKSPACE):
             self.search_draft = self.search_draft[:-1]
             self.search_decoder.reset()
@@ -934,11 +1006,19 @@ class App:
             self.colored(screen, filter_y, result_x, compact(f"Filters: {summary}  ·  Enter edit", result_width), "accent",
                          curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 else 0)
         first_result = 8 if self.tab == 0 else 6
-        self.colored(screen, first_result - 1, result_x, "─" * result_width, "muted")
+        loading = f"list-{self.list_generation}" in self.pending
+        if loading:
+            title = "Searching Qobuz" if self.tab == 0 else "Loading results"
+            track_width = max(1, result_width - len(title) - 2)
+            position = int(time.monotonic() * 8) % track_width
+            track = "─" * position + "█" + "─" * (track_width - position - 1)
+            self.colored(screen, first_result - 1, result_x, compact(title + " " + track, result_width), "accent")
+        else:
+            self.colored(screen, first_result - 1, result_x, "─" * result_width, "muted")
         cover_height = 4 if self.tab == 1 else 3
         cover_width = 12 if self.tab == 1 else 10
-        block_height = cover_height + 1 if self.tab == 1 else 3
-        visible = max(0, (bottom - 1 - first_result) // block_height)
+        block_height = cover_height + 1 if self.tab == 1 else 4
+        visible = max(0, (bottom - 1 - first_result - cover_height) // block_height + 1)
         if self.row < self.scroll: self.scroll = self.row
         if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
         for index in range(self.scroll, min(len(self.rows), self.scroll + visible)):
@@ -952,7 +1032,7 @@ class App:
                 continue
             art = item.get("image_large") or item.get("image") or ""
             art_width = cover_width if art and result_width >= cover_width + 20 else 0
-            if art_width: self.draw_list_cover(screen, art, result_x, y, cover_width, cover_height)
+            if art_width and not self.list_covers_hidden: self.draw_list_cover(screen, art, result_x, y, cover_width, cover_height)
             x = result_x + (art_width + 2 if art_width else 0)
             text_width = result_width - (x - result_x)
             artist = clean(item.get("artist"))
@@ -1484,7 +1564,7 @@ class App:
             finally:
                 screen.timeout(100)
             name = names[selected]
-            if name == "label": self.filters[name] = [x.strip() for x in self.prompt(screen, "Labels, comma separated:").split(",") if x.strip()]
+            if name == "label": self.choose_labels(screen); return
             elif name in ("from", "to"):
                 self.filters[name] = self.prompt(screen, name.title() + " (blank clears):").strip()
             elif name == "sort": self.toggle_sort(); return
