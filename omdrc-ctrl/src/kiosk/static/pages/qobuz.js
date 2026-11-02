@@ -144,9 +144,15 @@ P.mount = el => {
         h('div', { class: 'lbl' }, 'Awarded'), P.discoverAwarded,
         h('div', { class: 'lbl' }, 'Audio quality'), P.discoverQuality);
     P.discoverList = h('div', {});
+    P.cloudGenres = [];
+    P.cloudSwitch = h('div', { class: 'qz-cloud-switch', role: 'group', 'aria-label': 'Show albums or labels', hidden: true },
+        [['albums', 'Albums'], ['labels', 'Labels']].map(([x, name]) =>
+            h('button', { type: 'button', class: 'chip tog qz-chip', dataset: { show: x },
+                onclick: () => { setPref('discoverShow', x); P.discover(0, { keep: true }); } }, name)));
+    P.cloudBox = h('div', { class: 'qz-cloud-box', hidden: true });
     P.discoverBox = h('div', { class: 'qz-discover' },
-        h('div', { class: 'qz-discover-controls' }, P.genreBtn, P.discoverFilterBtn),
-        P.discoverFilters, P.discoverList);
+        h('div', { class: 'qz-discover-controls' }, P.genreBtn, P.cloudSwitch, P.discoverFilterBtn),
+        P.discoverFilters, P.discoverList, P.cloudBox);
     P.paintDiscoverFilters();
     P.loadGenres();
     // Under the box: which list is shown, remembered (the albums played from here, or
@@ -400,7 +406,7 @@ P.paintView = () => {
     P.labelBox.hidden = v !== 'label';
     P.libraryBox.hidden = v !== 'library';
     P.reviewBox.hidden = v !== 'review';
-    P.layoutBtn.hidden = v === 'library' || v === 'review';
+    P.layoutBtn.hidden = v === 'library' || v === 'review' || (v === 'discover' && P.cloudShown());
     P.paintScope();
     if (v === 'results' && !P.results.firstChild)
         P.results.append(h('p', { class: 'muted' }, 'No search yet: the search is at the top.'));
@@ -1608,11 +1614,59 @@ P.loadGenres = async () => {
     if (!d.ok) { K.toast(d.error || 'Could not load genres', 'error'); return; }
     P.genres = [{ id: '', name: 'All genres' }, ...d.genres.map(g => ({ id: String(g.id), name: g.name }))];
     P.paintGenre();
+    const was = P.cloudShown();
+    P.cloudGenres = (d.cloud_genres || []).map(String);
+    if (P.cloudShown() !== was && P.view() === 'discover') P.discover(0, { keep: true });
+    else P.paintDiscoverShow();
 };
 
 P.paintGenre = () => {
     const g = P.genres.find(x => x.id === String(pref('discoverGenre', '')));
     P.genreBtn.textContent = `${g ? g.name : 'All genres'} ▾`;
+};
+
+// ── the label cloud ──────────────────────────────────────────────────────────
+// Discover's other face, in the genres where labels recur enough to make one (the
+// server says which): the larger the name, the more it appears in Qobuz's lists of
+// that genre; the user's own are coloured.  A tap opens the label's catalogue.
+P.cloudOffered = () => P.cloudGenres.includes(String(pref('discoverGenre', '')));
+P.cloudShown = () => P.cloudOffered() && pref('discoverShow', 'albums') === 'labels';
+P.paintDiscoverShow = () => {
+    const labels = P.cloudShown();
+    P.cloudSwitch.hidden = !P.cloudOffered();
+    [...P.cloudSwitch.children].forEach(b => {
+        const on = (b.dataset.show === 'labels') === labels;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', String(on));
+    });
+    P.discoverFilterBtn.hidden = labels;         // the filters choose among albums
+    P.discoverFilters.hidden = labels || !P.discoverFiltersOpen;
+    P.discoverList.hidden = labels;
+    P.cloudBox.hidden = !labels;
+    if (P.view() === 'discover') P.layoutBtn.hidden = labels;
+};
+P.labelCloud = async () => {
+    const genre = String(pref('discoverGenre', ''));
+    const seq = P.cloudSeq = (P.cloudSeq || 0) + 1;
+    const have = P.cloudKey === genre;           // what is on screen stays, unless it changed
+    if (!have) K.clear(P.cloudBox).append(h('p', { class: 'muted' }, 'Reading Qobuz’s lists…'));
+    const d = await K.api('/qobuz/label-cloud?' + new URLSearchParams({ genre }), { timeout: 60000 });
+    if (seq !== P.cloudSeq || (have && !d.ok)) return;
+    if (!d.ok) {
+        K.clear(P.cloudBox).append(h('div', { class: 'errbox' }, d.error || 'Could not read the labels',
+            h('button', { type: 'button', class: 'btn', onclick: () => P.labelCloud() }, 'Retry')));
+        return;
+    }
+    const json = JSON.stringify(d.labels);
+    if (have && json === P.cloudJSON) return;
+    P.cloudKey = genre; P.cloudJSON = json;
+    K.clear(P.cloudBox).append(
+        h('p', { class: 'small muted qz-cloud-note' }, 'Larger: more in Qobuz’s most streamed, best-selling and awarded lists. Coloured: yours.'),
+        h('div', { class: 'qz-cloud' }, d.labels.map(l => h('button', {
+            type: 'button', class: `qz-cloud-tag s${l.size}` + (l.mine ? ' mine' : ''),
+            title: l.albums ? `${l.name}: ${l.albums} album${l.albums === 1 ? '' : 's'} in those lists` : l.name,
+            onclick: () => P.openLabel({ label: l.name, label_id: l.ids.join(',') }),
+        }, l.name))));
 };
 
 // The genre menu: the same look as the Now page's View menu (.menu-pop), one genre marked.
@@ -1684,6 +1738,8 @@ P.paintDiscoverFilters = () => {
 // too) unless the first page now differs; a changed genre or filter starts afresh.
 P.discover = async (offset = 0, { keep = false } = {}) => {
     if (P.discoverObserver) P.discoverObserver.disconnect();
+    P.paintDiscoverShow();
+    if (P.cloudShown()) return P.labelCloud();
     const genre = pref('discoverGenre', '');
     const params = new URLSearchParams({ genre, offset });
     for (const label of P.discoverSelected()) params.append('label', label);

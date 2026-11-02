@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 import datetime as dt
 import html
 import json
+import math
 import os
 import re
 import subprocess
@@ -49,6 +50,17 @@ PAGE_SIZE = 50
 DISCOVER_PAGES = 10
 # Search pages read to find a label's id from its exact name.
 LABEL_ID_PAGES = 4
+# The label cloud.  Where labels recur enough for one, and what its sizes weigh:
+# Qobuz publishes no search or play counts, so an album in these lists of a genre
+# stands in for them.  Not the new releases (that is how much a label puts out)
+# nor the editors' and "ideal" lists (the majors' back catalogue).
+CLOUD_GENRES = ("10",)
+CLOUD_LISTS = (("most-streamed", 2), ("best-sellers", 2), ("press-awards", 1), ("qobuzissims", 1))
+CLOUD_PAGES = 10
+CLOUD_TTL = 7 * 86400.0
+CLOUD_MIN_ALBUMS = 3             # fewer: mostly an artist's own label
+CLOUD_MAX_LABELS = 60
+CLOUD_SIZES = 5
 
 # One line per label group: "Name" or "Name: pattern, pattern".  Qobuz spells
 # one label many ways ("Decca Music Group Ltd.", "Decca (UMO)", "Decca
@@ -448,6 +460,14 @@ class PlayedAlbums:
     def counts(self) -> dict[str, int]:
         with self._lock:
             return {str(e["item"].get("id")): e.get("count", 1) for e in self._load()}
+
+    def labels(self, genre: str) -> list[dict]:
+        """The labels of the albums played in a genre or below it."""
+        with self._lock:
+            items = [e["item"] for e in self._load()]
+        return [item["label"] for item in items
+                if isinstance(item.get("label"), dict)
+                and genre in {str(g) for g in (item.get("genre") or {}).get("path") or []}]
 
     @staticmethod
     def _has(entry: dict, words: list[str]) -> bool:
@@ -1052,6 +1072,69 @@ class QobuzCatalog:
                                              else len(items) == PAGE_SIZE)}
         return self._cached(f"discover:{genre}:{offset}", self.settings.cache_ttl, make)
 
+    def _cloud_albums(self, genre: str) -> list[tuple[int, str, str]]:
+        """(weight, label name, label id) of each album in the genre's lists."""
+        def make():
+            albums = []
+            for kind, weight in CLOUD_LISTS:
+                seen = set()
+                for offset in range(0, CLOUD_PAGES * PAGE_SIZE, PAGE_SIZE):
+                    block = self._call("album/getFeatured", {
+                        "type": kind, "genre_id": genre, "limit": PAGE_SIZE, "offset": offset}).get("albums") or {}
+                    items = block.get("items") or []
+                    for item in items:
+                        album_id, label = str(item.get("id", "")), item.get("label") or {}
+                        if album_id not in seen and _name(label):
+                            seen.add(album_id)
+                            albums.append((weight, _name(label), str(label.get("id") or "")))
+                    if len(items) < PAGE_SIZE:
+                        break
+            if not albums:               # not worth keeping for a week
+                raise QobuzError("Qobuz lists no albums for this genre")
+            return albums
+        return self._cached(f"cloud:{genre}", CLOUD_TTL, make)
+
+    def label_cloud(self, genre: str) -> list[dict]:
+        """The labels that matter in a genre, A to Z: `size` (1 to CLOUD_SIZES)
+        says how much they appear in Qobuz's lists, `mine` that the user has them
+        configured or played from them, shown however little they appear.  The
+        spellings of a label count as one: a configured group's by its patterns,
+        others when they differ only in case and accents."""
+        if genre not in CLOUD_GENRES:
+            raise QobuzError("no label cloud for this genre")
+        groups = self.settings.labels
+        entries: dict[str, dict] = {}
+
+        def entry(name: str, label_id: str = "") -> dict:
+            group = next((g for g in groups if g.matches(name)), None)
+            e = entries.setdefault(group.name.casefold() if group else _fold(name), {
+                "name": group.name if group else name, "ids": {}, "albums": 0, "score": 0, "mine": False})
+            if label_id:
+                e["ids"][label_id] = None
+            return e
+
+        for weight, name, label_id in self._cloud_albums(genre):
+            e = entry(name, label_id)
+            e["albums"] += 1
+            e["score"] += weight
+        ranked = sorted((e for e in entries.values() if e["albums"] >= CLOUD_MIN_ALBUMS),
+                        key=lambda e: (-e["score"], _fold(e["name"])))[:CLOUD_MAX_LABELS]
+        for group in groups:
+            entries.setdefault(group.name.casefold(), {
+                "name": group.name, "ids": {}, "albums": 0, "score": 0, "mine": False})["mine"] = True
+        for label in self.played.labels(genre) if self.played else []:
+            if _name(label):
+                entry(_name(label), str(label.get("id") or ""))["mine"] = True
+        # by the logarithm: Deutsche Grammophon would otherwise leave all the
+        # others the same small size
+        low, high = (math.log(ranked[-1]["score"]), math.log(ranked[0]["score"])) if ranked else (0.0, 0.0)
+        sizes = {id(e): 1 + min(CLOUD_SIZES - 1, int(CLOUD_SIZES * (math.log(e["score"]) - low) / (high - low)))
+                 if high > low else 1 for e in ranked}
+        shown = {id(e): e for e in ranked} | {id(e): e for e in entries.values() if e["mine"]}
+        return [{"name": e["name"], "ids": list(e["ids"]), "albums": e["albums"],
+                 "size": sizes.get(id(e), 1), "mine": e["mine"]}
+                for e in sorted(shown.values(), key=lambda e: _fold(e["name"]))]
+
     def label_ids(self, group: LabelGroup) -> list[str]:
         """Qobuz's ids of the labels a group names, read off the labels of the
         albums a search for each pattern finds: Qobuz has no label search, and
@@ -1085,8 +1168,10 @@ class QobuzCatalog:
     def label_albums(self, label_id: str = "", name: str = "", offset: int = 0,
                      singles: bool = False, exclude_cd: bool = False) -> dict:
         """One label's catalogue, newest first: the label view, opened from a
-        label printed on an album.  `label_id` is Qobuz's, from that album;
-        without it the label is looked up by its exact name.
+        label printed on an album.  `label_id` is Qobuz's, from that album, or
+        several comma-separated for the spellings of one label (the label
+        cloud); without it the label is looked up by name: a configured group,
+        else the exact name.
 
         Qobuz lists what is not an album yet: a pre-order (dated ahead, a
         track or two already streaming) and the tracks sent ahead of it, as
@@ -1095,12 +1180,13 @@ class QobuzCatalog:
         if offset < 0:
             raise QobuzError("offset must be non-negative")
         label_id = str(label_id or "").strip()
-        if label_id and not label_id.isdigit():
+        ids = [i.strip() for i in label_id.split(",") if i.strip()]
+        if any(not i.isdigit() for i in ids):
             raise QobuzError("label id must be numeric")
-        if not label_id:
+        if not ids:
             if not (name or "").strip():
                 raise QobuzError("no label given")
-            ids = self.label_ids(LabelGroup(name.strip(), (_fold(name),), exact=True))
+            ids = self.label_ids(self.label_groups([name])[0])
             if not ids:
                 return {"albums": [], "next_offset": 0, "more": False,
                         "label": {"id": "", "name": name.strip()},
@@ -1108,7 +1194,7 @@ class QobuzCatalog:
         today = self._today().isoformat()
         cards, hidden, more, next_offset = [], {"upcoming": 0, "singles": 0}, True, offset
         for _ in range(DISCOVER_PAGES):
-            items, more = self._label_releases([label_id] if label_id else ids, next_offset + PAGE_SIZE)
+            items, more = self._label_releases(ids, next_offset + PAGE_SIZE)
             for item in items[next_offset:]:
                 if item.get("streamable") is False:
                     continue

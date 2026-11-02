@@ -68,6 +68,7 @@ These milestones summarize changes in commits that updated this manual:
 
 | Date | Documentation changes |
 |---|---|
+| 2026-11-02 | Documented Discover's label cloud for classical music. |
 | 2026-10-09 | Documented the AI features: Ask AI recommendations with their prompt-and-reply view, the listening guide (biographies, swipeable tabs, its strip tinted from the cover), the AI settings dialog (providers and their costs, the model list of always-latest aliases, the new-model notice, usage), and customizing the AI prompt files and the system prompt; Discover by label catalogue and the top-bar Search. |
 | 2026-10-08 | Gave the DR log its own chapter: how a new track measurement is kept, how the album figure is decided, what the live meter does on an album that already has a value, and how dr14.txt values reach the database (and a disputed one is measured again). |
 | 2026-09-27 to 2026-09-29 | Added the kiosk and Android app section (orientation and auto-rotate, keep-awake, fast start) and the Qobuz album search (Qobuz's own order, label and date filters, lowering, completions, the player). |
@@ -1809,6 +1810,15 @@ releases list (which ends a few hundred albums back and holds only a handful
 of any one label); unreleased albums are left out and a chosen genre still
 applies. With any filter, the list keeps reading on (up to ten pages at a
 time) while you scroll, until a screenful passes the filters.
+
+**Label cloud.** On Classical, Discover's Albums/Labels switch shows the
+genre's labels as a cloud, A to Z. A larger name appears more in Qobuz's
+most-streamed, best-selling, press-awarded and Qobuzissime lists of the genre
+(Qobuz publishes no search counts); labels with fewer than three albums there
+are left out. Your configured labels and those you played from are coloured
+and always shown. Spellings of one label count as one, and a tap opens its
+catalogue. The lists are read again once a week, or after a service restart.
+Other genres have no cloud: in pop/rock, labels hardly recur.
 
 **Search from anywhere.** The magnifier in the kiosk's top bar opens the
 Qobuz page already scrolled to its search box. Reaching the page any other

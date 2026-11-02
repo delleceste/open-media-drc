@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../omdrc-ctrl/src/kiosk/static/kiosk.css">
+<div id="page" style="width:390px"></div><div id="overlay-root"></div><pre id="result">RUNNING</pre>
+<script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/albuminfo.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
+<script>
+// The label cloud: only in the genres the server names, a tap opens the catalogue.
+(async () => {
+    const check = (ok, message) => { if (!ok) throw Error(message); };
+    try {
+        localStorage.clear();
+        K.state.features.qobuz_search = true;
+        K.library = { mount() {}, show() {}, hide() {}, visible: false };
+        K.review = { mount() {}, show() {}, hide() {} };
+        const calls = [];
+        const cloud = [
+            { name: 'Decca', ids: ['1', '2'], albums: 40, size: 5, mine: true },
+            { name: 'Ondine', ids: ['3'], albums: 4, size: 2, mine: false },
+            { name: 'cpo', ids: [], albums: 0, size: 1, mine: true },
+        ];
+        K.api = async url => {
+            calls.push(url);
+            if (url.startsWith('/qobuz/genres')) return { ok: true, genres: [{ id: '10', name: 'Classica' }, { id: '112', name: 'Pop/Rock' }], cloud_genres: ['10'] };
+            if (url.startsWith('/qobuz/label-cloud')) return { ok: true, labels: cloud };
+            return { ok: true, albums: [], more: false, next_offset: 0, label: { id: '', name: '' }, hidden: { upcoming: 0, singles: 0 }, entries: [] };
+        };
+        K.api = async url => {
+            calls.push(url);
+            if (url.startsWith('/qobuz/genres')) return { ok: true, genres: [{ id: '10', name: 'Classica' }, { id: '112', name: 'Pop/Rock' }], cloud_genres: ['10'] };
+            if (url.startsWith('/qobuz/label-cloud')) return { ok: true, labels: cloud };
+            return { ok: true, albums: [], more: false, next_offset: 0, label: { id: '', name: '' }, hidden: { upcoming: 0, singles: 0 }, entries: [] };
+        };
+        const P = K.pages.find(p => p.id === 'qobuz');
+        const loadGenres = P.loadGenres;
+        for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
+        P.mount(document.getElementById('page'));
+        P.setView('discover');
+        await new Promise(r => setTimeout(r));
+        check(P.cloudSwitch.hidden, 'No switch before the server names a genre');
+        K.setPref('qobuz.discoverGenre', '');
+        await loadGenres();
+        check(P.cloudSwitch.hidden, 'No switch on All genres');
+        K.setPref('qobuz.discoverGenre', '112');
+        await P.discover();
+        check(P.cloudSwitch.hidden && !P.discoverFilterBtn.hidden, 'No switch on a genre without a cloud');
+        K.setPref('qobuz.discoverShow', 'labels');
+        await P.discover();
+        check(!P.discoverList.hidden && P.cloudBox.hidden, 'Labels remembered from Classical still shows albums here');
+        K.setPref('qobuz.discoverGenre', '10');
+        await P.discover();
+        check(!P.cloudSwitch.hidden && P.discoverList.hidden && !P.cloudBox.hidden, 'Classical offers the cloud');
+        check(P.discoverFilterBtn.hidden && P.discoverFilters.hidden && P.layoutBtn.hidden, 'Filters and grid are for albums');
+        const tag = name => [...P.cloudBox.querySelectorAll('.qz-cloud-tag')].find(b => b.textContent === name);
+        check(tag('Decca').classList.contains('s5') && tag('Decca').classList.contains('mine') &&
+            tag('Ondine').classList.contains('s2') && !tag('Ondine').classList.contains('mine'), 'Sizes and marks are painted');
+        check(tag('cpo').offsetHeight >= 30, 'Even the smallest name is a whole tap high');
+        tag('Decca').click();
+        await new Promise(r => setTimeout(r));
+        let asked = new URLSearchParams(calls.at(-1).split('?')[1]);
+        check(P.view() === 'label' && asked.get('id') === '1,2' && asked.get('name') === 'Decca', 'A merged label opens every spelling');
+        P.labelBox.querySelector('[aria-label="Back"]').click();
+        await new Promise(r => setTimeout(r));
+        check(P.view() === 'discover' && !P.cloudBox.hidden && tag('Decca'), 'Back returns to the cloud');
+        tag('cpo').click();
+        await new Promise(r => setTimeout(r));
+        asked = new URLSearchParams(calls.at(-1).split('?')[1]);
+        check(asked.get('id') === '' && asked.get('name') === 'cpo', 'A label not in the lists goes by its name');
+        P.labelBox.querySelector('[aria-label="Back"]').click();
+        await new Promise(r => setTimeout(r));
+        P.cloudSwitch.querySelector('[data-show="albums"]').click();
+        await new Promise(r => setTimeout(r));
+        check(!P.discoverList.hidden && P.cloudBox.hidden && !P.discoverFilterBtn.hidden && !P.layoutBtn.hidden, 'Albums again');
+        document.getElementById('result').textContent = 'PASS';
+    } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
+})();
+</script>

@@ -10,6 +10,8 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     GET /qobuz/search?q=&label=&last=|from=&to=&sort=&awarded=&scan=&enrich=
     GET /qobuz/search/stream?...    the same, as server-sent events: partial
                                    results while it reads, then the answer
+    GET /qobuz/label-cloud?genre=  the labels that matter in a genre, sized by
+                                   Qobuz's lists, with the user's own marked
     GET /qobuz/label?id=|name=&offset=&singles=&hires=
                                    a label's own catalogue, newest first,
                                    without pre-orders (and advance singles)
@@ -69,7 +71,7 @@ import qobuz_review
 import local_db
 import mpd_library
 import dr_volumes
-from qobuz_search import (AWARD_PRESETS, AwardedAlbums, LoweredList, PlayedAlbums,
+from qobuz_search import (AWARD_PRESETS, CLOUD_GENRES, AwardedAlbums, LoweredList, PlayedAlbums,
                           QobuzCatalog, QobuzError, album_card,
                           SearchWords, ArtistLabels, discover_app_id, read_word_list,
                           read_artist_labels)
@@ -567,7 +569,18 @@ def genres():
     if guard:
         return guard
     try:
-        return jsonify({"ok": True, "genres": catalog().genres()})
+        return jsonify({"ok": True, "genres": catalog().genres(), "cloud_genres": list(CLOUD_GENRES)})
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/label-cloud")
+def label_cloud():
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        return jsonify({"ok": True, "labels": catalog().label_cloud(request.args.get("genre", ""))})
     except QobuzError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
 
@@ -589,7 +602,7 @@ def discover():
 
 @bp.route("/label")
 def label():
-    """?id=<Qobuz label id>|name=<exact label name>&offset=&singles=1&hires=1:
+    """?id=<Qobuz label id, or several comma-separated>|name=<label name>&offset=&singles=1&hires=1:
     the label view, the label's own catalogue newest first."""
     guard = _guard(False)
     if guard:

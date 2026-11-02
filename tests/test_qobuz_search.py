@@ -79,6 +79,109 @@ def catalog(searches, albums=None, **settings):
                            today=lambda: TODAY), calls
 
 
+class LabelCloudTest(unittest.TestCase):
+    GROUPS = [qs.LabelGroup("Decca", ("decca",)), qs.LabelGroup("cpo", ("cpo",))]
+
+    @staticmethod
+    def album(number, label, label_id):
+        return {"id": f"{label_id}-{number}", "label": {"name": label, "id": label_id}}
+
+    def catalog(self, lists, played=None, groups=None):
+        calls = []
+
+        def fetch(endpoint, params):
+            calls.append((endpoint, params))
+            items = lists.get(params["type"], [])
+            start = params["offset"]
+            return {"albums": {"items": items[start:start + params["limit"]]}}
+        settings = qs.Settings(labels=self.GROUPS if groups is None else groups)
+        return qs.QobuzCatalog(settings, fetch=fetch, played=played), calls
+
+    def test_only_the_genres_with_a_cloud(self):
+        catalog, calls = self.catalog({})
+        with self.assertRaises(qs.QobuzError):
+            catalog.label_cloud("112")
+        self.assertEqual(calls, [])
+
+    def test_sizes_follow_the_lists_and_spellings_count_as_one(self):
+        lists = {
+            "most-streamed": [self.album(i, "Decca Music Group Ltd.", 1) for i in range(30)]
+                + [self.album(i, "Decca (UMO)", 2) for i in range(30)],
+            "press-awards": [self.album(i, "BIS", 3) for i in range(8)]
+                + [self.album(i, "Tiny", 4) for i in range(3)]
+                + [self.album(i, "Artist's Own", 5) for i in range(2)],
+            "new-releases": [self.album(i, "Prolific", 6) for i in range(50)],
+        }
+        catalog, _ = self.catalog(lists)
+        labels = {e["name"]: e for e in catalog.label_cloud("10")}
+        self.assertNotIn("Prolific", labels, "output is not relevance")
+        self.assertNotIn("Artist's Own", labels, "too few albums")
+        self.assertEqual(labels["Decca"]["ids"], ["1", "2"])
+        self.assertEqual(labels["Decca"]["albums"], 60)
+        self.assertEqual(labels["Decca"]["size"], qs.CLOUD_SIZES)
+        self.assertEqual(labels["Tiny"]["size"], 1)
+        self.assertGreater(labels["BIS"]["size"], labels["Tiny"]["size"])
+
+    def test_results_go_a_to_z_and_an_album_counts_once_per_list(self):
+        double = self.album(1, "Alpha", 7)
+        lists = {"best-sellers": [self.album(i, "Zeta", 8) for i in range(3)] + [double, double],
+                 "press-awards": [self.album(i, "Alpha", 7) for i in range(1, 3)]}
+        catalog, _ = self.catalog(lists, groups=[])
+        labels = catalog.label_cloud("10")
+        self.assertEqual([e["name"] for e in labels], ["Alpha", "Zeta"])
+        self.assertEqual(labels[0]["albums"], 3)
+
+    def test_the_users_labels_always_show_and_are_marked(self):
+        lists = {"press-awards": [self.album(i, "Hyperion", 9) for i in range(4)]}
+        with tempfile.TemporaryDirectory() as folder:
+            played = qs.PlayedAlbums(f"{folder}/played.json")
+            for album_id, label, genre in (("a", "BR-Klassik", [10, 11]), ("b", "Pop Records", [112])):
+                played.record({"id": album_id, "title": album_id, "label": {"name": label, "id": 20},
+                               "genre": {"path": genre}}, [])
+            catalog, _ = self.catalog(lists, played=played)
+            labels = {e["name"]: e for e in catalog.label_cloud("10")}
+        self.assertTrue(labels["cpo"]["mine"], "a configured label not in the lists")
+        self.assertEqual((labels["cpo"]["size"], labels["cpo"]["ids"]), (1, []))
+        self.assertTrue(labels["BR-Klassik"]["mine"], "a label played in the genre")
+        self.assertEqual(labels["BR-Klassik"]["ids"], ["20"])
+        self.assertNotIn("Pop Records", labels, "played in another genre")
+        self.assertFalse(labels["Hyperion"]["mine"])
+
+    def test_the_lists_are_read_once_a_week_and_a_failure_is_not_kept(self):
+        catalog, calls = self.catalog({})
+        with self.assertRaises(qs.QobuzError):
+            catalog.label_cloud("10")
+        catalog, calls = self.catalog({"best-sellers": [self.album(i, "Alpha", 7) for i in range(3)]})
+        catalog.label_cloud("10")
+        read = len(calls)
+        self.assertEqual({params["type"] for _, params in calls}, {kind for kind, _ in qs.CLOUD_LISTS})
+        catalog.label_cloud("10")
+        self.assertEqual(len(calls), read)
+
+    def test_a_merged_label_reads_the_catalogue_of_every_spelling(self):
+        pages = {"1": [{"id": "new", "title": "New", "release_date_original": "2026-01-01"}],
+                 "2": [{"id": "old", "title": "Old", "release_date_original": "2001-01-01"}]}
+
+        def fetch(endpoint, params):
+            self.assertEqual(endpoint, "label/get")
+            items = pages[params["label_id"]] if not params["offset"] else []
+            return {"albums": {"items": items, "total": 1}}
+        catalog = qs.QobuzCatalog(qs.Settings(), fetch=fetch, today=lambda: dt.date(2026, 11, 2))
+        found = catalog.label_albums("1,2")
+        self.assertEqual([c["id"] for c in found["albums"]], ["new", "old"])
+        with self.assertRaises(qs.QobuzError):
+            catalog.label_albums("1,x")
+
+    def test_a_configured_label_with_no_id_is_found_by_its_group(self):
+        def fetch(endpoint, params):
+            if endpoint == "catalog/search":
+                return {"albums": {"items": [{"id": "a", "label": {"name": "cpo Records", "id": 42}}], "total": 1}}
+            self.assertEqual(params["label_id"], "42")
+            return {"albums": {"items": [{"id": "a", "title": "A", "release_date_original": "2020-01-01"}], "total": 1}}
+        catalog = qs.QobuzCatalog(qs.Settings(labels=self.GROUPS), fetch=fetch, today=lambda: dt.date(2026, 11, 2))
+        self.assertEqual([c["id"] for c in catalog.label_albums(name="cpo")["albums"]], ["a"])
+
+
 class SingleTrackRankingTest(unittest.TestCase):
     def test_single_tracks_remain_available_after_albums_in_both_orders(self):
         items = [album(str(i), "Debussy Preludes", "Decca", date=date)

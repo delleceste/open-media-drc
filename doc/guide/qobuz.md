@@ -66,6 +66,7 @@ searches the selected view**, each view with its own text.
 
 - **Results** is the catalogue search above, with its filters.
 - **Discover's Filters** pick labels, awarded only and Hi-Res. With a label ticked, Discover reads **that label's own catalogue**, newest first. Qobuz's new-releases list ends a few hundred albums back and holds only a handful of any one label. Discover has no search box: for words, search in Results with *Newest first*.
+- **Discover's Labels switch** appears on Classical only and shows a cloud of its labels. A larger name appears more in Qobuz's most-streamed, best-selling, press-awarded and Qobuzissime lists, not in its searches, which Qobuz doesn't publish. Your configured labels and those you played from are coloured, and always shown. Spellings of one label count as one, and a tap opens its whole catalogue. Other genres have no cloud: in pop/rock, labels hardly recur.
 - **The grid button** switches every list between rows and cover tiles.
 
 ## Favourites: folders Qobuz doesn't have
