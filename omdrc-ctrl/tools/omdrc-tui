@@ -1083,9 +1083,9 @@ class App:
                          compact("No matching albums" if not self.list_error else "Search unavailable", result_width), "muted")
         cover_height = 4 if self.tab == 1 else 3
         cover_width = 12 if self.tab == 1 else 10
-        boxed_results = self.tab in (0, 1) and result_width >= 4
-        row_height = cover_height
-        block_height = row_height
+        boxed_results = result_width >= 4
+        row_height = cover_height + 2 if boxed_results else cover_height
+        block_height = row_height + 1
         visible = max(0, (bottom - first_result - row_height) // block_height + 1)
         if self.row < self.scroll: self.scroll = self.row
         if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
@@ -1096,13 +1096,14 @@ class App:
             focused = results_focused and index == self.row
             selected = curses.A_REVERSE if focused and not boxed_results else 0
             if boxed_results:
-                edge_color = "green" if focused else "muted"
-                for border_y in range(y, y + row_height):
-                    first, last = border_y == y, border_y == y + row_height - 1
-                    left_edge = "┌" if first else "└" if last else "│"
-                    right_edge = "┐" if first else "┘" if last else "│"
-                    self.colored(screen, border_y, result_x, left_edge, edge_color)
-                    self.colored(screen, border_y, result_x + result_width - 1, right_edge, edge_color)
+                if focused:
+                    self.colored(screen, y, result_x, "┌" + "─" * (result_width - 2) + "┐", "green")
+                    for border_y in range(y + 1, y + row_height - 1):
+                        self.colored(screen, border_y, result_x, "│", "green")
+                        self.colored(screen, border_y, result_x + result_width - 1, "│", "green")
+                    self.colored(screen, y + row_height - 1, result_x,
+                                 "└" + "─" * (result_width - 2) + "┘", "green")
+                y += 1
             content_x = result_x + 2 if boxed_results else result_x
             content_width = result_width - 4 if boxed_results else result_width
             if item.get("kind") == "folder":

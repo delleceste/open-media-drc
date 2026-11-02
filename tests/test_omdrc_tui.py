@@ -229,12 +229,12 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 20)
         exact = next(args for args in painted if args[3] == 'DR=10')
         estimate = next(args for args in painted if args[3] == 'DR ~8')
-        self.assertEqual((exact[1], exact[4], exact[5]), (10, 'green', tui.curses.A_BOLD))
-        self.assertEqual((estimate[1], estimate[4], estimate[5]), (13, 'yellow', tui.curses.A_DIM))
-        self.assertTrue(any(args[1] == 10 and '24/96' in args[3] and args[4] == 'fmt_hires'
+        self.assertEqual((exact[1], exact[4], exact[5]), (11, 'green', tui.curses.A_BOLD))
+        self.assertEqual((estimate[1], estimate[4], estimate[5]), (17, 'yellow', tui.curses.A_DIM))
+        self.assertTrue(any(args[1] == 11 and '24/96' in args[3] and args[4] == 'fmt_hires'
                             and args[2] < exact[2] for args in painted))
 
-    def test_search_shows_indeterminate_loading_and_compact_result_spacing(self):
+    def test_search_shows_loading_and_one_line_between_result_boxes(self):
         app = tui.App('http://localhost:9090')
         app.rows = [{'title': 'First'}, {'title': 'Second'}]
         app.pending.add('list-0')
@@ -247,7 +247,8 @@ class TuiTest(unittest.TestCase):
         self.assertTrue(any(args[1] == 7 and 'Searching Qobuz' in args[3] and '█' in args[3]
                             and args[4] == 'green' for args in painted))
         titles = [(args[1], args[3]) for args in painted if args[3] in ('First', 'Second')]
-        self.assertEqual(titles, [(8, 'First'), (11, 'Second')])
+        self.assertEqual(titles, [(9, 'First'), (15, 'Second')])
+        self.assertFalse(any(args[1] == 13 and args[2] >= 29 for args in painted))
         app.tab = 1
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
@@ -583,7 +584,7 @@ class TuiTest(unittest.TestCase):
             app.library_key(10, None)
             fetch.assert_called_once()
 
-    def test_discover_result_brackets_follow_tab_focus(self):
+    def test_discover_result_box_follows_tab_focus(self):
         app = tui.App('http://localhost:9090')
         app.tab = 1
         app.rows = [{'kind': 'folder', 'path': 'Example'}]
@@ -592,18 +593,20 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (20, 55)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 13)
-        folder = next(args for args in painted if args[1] == 6 and 'Example' in str(args[3]))
+        folder = next(args for args in painted if args[1] == 7 and 'Example' in str(args[3]))
         self.assertFalse(folder[5] & tui.curses.A_REVERSE)
-        self.assertTrue(any(args[1:5] == (6, 29, '┌', 'muted') for args in painted))
+        self.assertFalse(any(args[1] == 6 and str(args[3]).startswith('┌') for args in painted))
         app.library_sidebar_focus = False
         app.library_right_index = 2
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 13)
-        folder = next(args for args in painted if args[1] == 6 and 'Example' in str(args[3]))
+        folder = next(args for args in painted if args[1] == 7 and 'Example' in str(args[3]))
         self.assertFalse(folder[5] & tui.curses.A_REVERSE)
-        self.assertTrue(any(args[1:5] == (6, 29, '┌', 'green') for args in painted))
-        self.assertTrue(any(args[1:5] == (9, 29, '└', 'green') for args in painted))
+        self.assertTrue(any(args[1] == 6 and str(args[3]).startswith('┌') and args[4] == 'green'
+                            for args in painted))
+        self.assertTrue(any(args[1] == 11 and str(args[3]).startswith('└') and args[4] == 'green'
+                            for args in painted))
 
     def test_favourites_selection_replaces_discover_timer(self):
         app = tui.App('http://localhost:9090')
@@ -656,7 +659,7 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 13)
         tabs = [args for args in painted if args[2] == 1 and 2 <= args[1] <= 7]
         self.assertEqual(len(tabs), 6)
-        self.assertTrue(any(args[1] == 9 and args[2] == 31 and 'Example' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 10 and args[2] == 31 and 'Example' in args[3] for args in painted))
 
     def test_filter_summaries_count_labels_in_each_context(self):
         app = tui.App('http://localhost:9090')
@@ -690,14 +693,14 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 120)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 17)
-        title = [args for args in painted if args[1] == 8 and args[2] >= 31]
+        title = [args for args in painted if args[1] == 9 and args[2] >= 31]
         self.assertTrue(any(args[3] == 'Animals' for args in title))
-        details = [args for args in painted if args[1] == 9 and args[2] >= 31]
+        details = [args for args in painted if args[1] == 10 and args[2] >= 31]
         self.assertTrue(any('1977 · Pink Floyd Records · 24/192' in args[3] for args in details))
         self.assertTrue(any(args[1] == 4 and 'pink floyd' in args[3] for args in painted))
         self.assertTrue(any(args[1] == 6 and 'Sort: Qobuz' in args[3] for args in painted))
 
-    def test_search_result_uses_green_brackets_without_reversing_text(self):
+    def test_search_result_uses_green_box_without_reversing_text(self):
         app = tui.App('http://localhost:9090')
         app.rows = [{'title': 'Animals', 'artist': 'Pink Floyd'}]
         app.library_sidebar_focus = False
@@ -708,12 +711,39 @@ class TuiTest(unittest.TestCase):
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 17)
         border = [(args[1], args[2], args[3]) for args in painted if args[4] == 'green']
-        self.assertEqual(border, [(8, 29, '┌'), (8, 77, '┐'),
+        self.assertEqual(border, [(8, 29, '┌' + '─' * 47 + '┐'),
                                   (9, 29, '│'), (9, 77, '│'),
-                                  (10, 29, '└'), (10, 77, '┘')])
+                                  (10, 29, '│'), (10, 77, '│'),
+                                  (11, 29, '│'), (11, 77, '│'),
+                                  (12, 29, '└' + '─' * 47 + '┘')])
         title = next(args for args in painted if args[3] == 'Animals')
         self.assertEqual(title[4], 'bright')
         self.assertFalse(title[5] & tui.curses.A_REVERSE)
+
+    def test_other_library_results_use_green_box_and_one_line_gap(self):
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        for tab in (2, 3, 4, 5):
+            with self.subTest(tab=tui.TABS[tab]):
+                app = tui.App('http://localhost:9090')
+                app.tab = tab
+                app.rows = [{'title': 'First'}, {'title': 'Second'}]
+                app.row = 1
+                app.library_sidebar_focus = False
+                app.library_right_index = 1
+                painted = []
+                with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+                    app.draw_library(Screen(), 20)
+                titles = [(args[1], args[3], args[5]) for args in painted
+                          if args[3] in ('First', 'Second')]
+                self.assertEqual([(y, title) for y, title, _ in titles],
+                                 [(7, 'First'), (13, 'Second')])
+                self.assertTrue(all(not style & tui.curses.A_REVERSE for _, _, style in titles))
+                self.assertTrue(any(args[1] == 12 and str(args[3]).startswith('┌') and args[4] == 'green'
+                                    for args in painted))
+                self.assertTrue(any(args[1] == 16 and str(args[3]).startswith('└') and args[4] == 'green'
+                                    for args in painted))
+                self.assertFalse(any(args[1] == 11 and args[2] >= 29 for args in painted))
 
     def test_discover_cover_uses_large_image_and_color(self):
         app = tui.App('http://localhost:9090')
