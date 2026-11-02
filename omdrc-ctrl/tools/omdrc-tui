@@ -621,7 +621,8 @@ class App:
             elapsed += max(0, time.monotonic() - self.last_player) if p.get("state") == "play" else 0
             self.text(screen, 6, x, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}")
             self.colored(screen, 7, x, bar(elapsed, min(40, avail - 2), 0, duration), "accent")
-        visible = max(1, bottom - 9)
+        drc_row = 3 + cover_h - 1 if cover_w else bottom - 1
+        visible = max(1, drc_row - 8)
         self.now_action_scroll = min(self.now_action_scroll, max(0, len(NOW_ACTIONS) - visible))
         if self.now_action < self.now_action_scroll: self.now_action_scroll = self.now_action
         if self.now_action >= self.now_action_scroll + visible:
@@ -636,7 +637,7 @@ class App:
                          "green" if index == 0 and p.get("state") == "play" else "accent" if index == self.now_action else "muted",
                          curses.A_REVERSE if index == self.now_action else 0)
         drc = (self.now_state.get("drc") or {})
-        self.colored(screen, bottom - 1, x, compact(drc_summary(drc), avail),
+        self.colored(screen, drc_row, x, compact(drc_summary(drc), avail),
                      "green" if drc.get("running") else "muted" if drc.get("running") is False else "yellow")
         if cover_w:
             self.draw_cover(screen, art, cover_w, cover_h, 2, 3)

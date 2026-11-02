@@ -43,6 +43,21 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.message, 'Connected')
         self.assertEqual(app.qstatus['art'], '/qconnect/art?v=1')
 
+    def test_drc_status_aligns_with_cover_bottom(self):
+        app = tui.App('http://localhost:9090')
+        app.qstatus = {'art': '/cover'}
+        app.now_state = {'drc': {'running': False}}
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
+             patch.object(app, 'text'), patch.object(app, 'draw_cover') as cover:
+            app.draw_now(Screen(), 17)
+        cover.assert_called_once_with(unittest.mock.ANY, '/cover', 26, 13, 2, 3)
+        drc_row = next(args[1] for args in painted if str(args[3]).startswith('DRC OFF'))
+        self.assertEqual(drc_row, 15)
+        self.assertLess(max(args[1] for args in painted if 'Album details' in str(args[3])), drc_row)
+
     def test_stale_sixel_key_clears_without_crashing(self):
         app = tui.App('http://localhost:9090')
         app.sixel_visible = True
