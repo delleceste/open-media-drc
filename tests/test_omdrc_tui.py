@@ -374,6 +374,7 @@ class TuiTest(unittest.TestCase):
     def test_discover_cover_uses_large_image_and_color(self):
         app = tui.App('http://localhost:9090')
         app.tab = 1
+        app.config['cover_mode'] = 'symbols'
         app.rows = [{'title': 'Album', 'image': 'https://example.test/small.jpg',
                      'image_large': 'https://example.test/large.jpg'}]
         calls = []
@@ -387,9 +388,28 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 20)
             calls[0][1]()
             app.draw_library(Screen(), 20)
-        render.assert_called_once_with('https://example.test/large.jpg', 20, 8, True)
+        render.assert_called_once_with('https://example.test/large.jpg', 12, 4, True, 'symbols')
         color.assert_called_with(196, 21)
         self.assertTrue(any(args[3] == '▀' and args[4] == 42 for args in painted))
+
+    def test_discover_cover_uses_sixel_in_konsole(self):
+        app = tui.App('http://localhost:9090')
+        app.config['cover_mode'] = 'sixel'
+        app.tab = 1
+        app.rows = [{'title': 'Album', 'image_large': 'https://example.test/large.jpg'}]
+        jobs = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'submit', side_effect=lambda key, work, accept: jobs.append((work, accept))), \
+             patch.object(app, 'render_cover', return_value=b'\x1bPq...\x1b\\') as render, \
+             patch.object(app, 'colored'), patch.object(app, 'text'):
+            app.draw_library(Screen(), 20)
+            work, accept = jobs[0]
+            accept(work())
+            app.list_sixel_targets = []
+            app.draw_library(Screen(), 20)
+        render.assert_called_once_with('https://example.test/large.jpg', 12, 4, True, 'sixel')
+        self.assertEqual(app.list_sixel_targets[0][2], b'\x1bPq...\x1b\\')
 
     def test_sort_shortcut_is_remembered(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(tui, 'CONFIG_PATH', Path(tmp) / 'config.json'):

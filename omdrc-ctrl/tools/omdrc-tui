@@ -338,6 +338,8 @@ class App:
         self.config_index = 0
         self.rows = []
         self.list_covers = {}
+        self.list_sixel_targets = []
+        self.list_sixel_displayed = ()
         self.row = 0
         self.scroll = 0
         self.query = ""
@@ -767,6 +769,7 @@ class App:
         return art or self.last_art
 
     def draw(self, screen):
+        self.list_sixel_targets = []
         active_art = self.current_art()
         if self.sixel_visible and (self.page != "Now" or not self.config["cover"] or
                                    not active_art or not self.cover_key or active_art != self.cover_key[0]):
@@ -794,6 +797,15 @@ class App:
         if not zoom: self.draw_nav(screen, bottom)
         self.colored(screen, height - 1, 1, self.footer_status(width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
+        targets = tuple(self.list_sixel_targets)
+        if targets != self.list_sixel_displayed:
+            if self.list_sixel_displayed:
+                os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
+                screen.touchwin()
+                screen.refresh()
+            for left, top, payload in targets:
+                os.write(sys.stdout.fileno(), f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + payload + b"\x1b8")
+            self.list_sixel_displayed = targets
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
             left, top = self.sixel_target
             payload = f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + self.cover_sixel + b"\x1b8"
@@ -862,8 +874,8 @@ class App:
                          curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 else 0)
         first_result = 8 if self.tab == 0 else 6
         self.colored(screen, first_result - 1, result_x, "─" * result_width, "muted")
-        cover_height = min(8, max(4, bottom - first_result - 2)) if self.tab == 1 else 3
-        cover_width = 20 if self.tab == 1 and result_width >= 48 else 12 if self.tab == 1 else 10
+        cover_height = 4 if self.tab == 1 else 3
+        cover_width = 12 if self.tab == 1 else 10
         block_height = cover_height + 1 if self.tab == 1 else 3
         visible = max(0, (bottom - 1 - first_result) // block_height)
         if self.row < self.scroll: self.scroll = self.row
@@ -896,12 +908,16 @@ class App:
             self.colored(screen, title_y + 1, x, compact(" · ".join(details), text_width), tier or "muted", selected)
 
     def draw_list_cover(self, screen, art, left, top, width, height):
-        key = (art, width, height)
+        mode = self.cover_mode()
+        key = (art, width, height, mode)
         if key not in self.list_covers:
             self.list_covers[key] = None
             def accept(lines):
                 self.list_covers[key] = lines
-            self.submit("list-cover-" + str(key), lambda: self.render_cover(art, width, height, True), accept)
+            self.submit("list-cover-" + str(key), lambda: self.render_cover(art, width, height, True, mode), accept)
+        if mode == "sixel":
+            if self.list_covers[key]: self.list_sixel_targets.append((left, top, self.list_covers[key]))
+            return
         for row, runs in enumerate((self.list_covers.get(key) or [])[:height]):
             col = left
             for value, fg, bg in runs:
