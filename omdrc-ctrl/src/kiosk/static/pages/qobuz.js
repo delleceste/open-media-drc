@@ -180,6 +180,7 @@ P.mount = el => {
     P.resHead = h('div', { class: 'qz-reshead', hidden: true },
         h('button', { type: 'button', class: 'btn qz-back', title: 'Back to Now playing', 'aria-label': 'Back to Now playing', onclick: () => K.showPage('now') }, '‹'),
         h('span', { class: 'qz-reshead-title' }, 'Search results'));
+    P.labelBox = h('div', { class: 'qz-labelview', hidden: true });
     P.libraryBox = h('div', { class: 'qz-library', hidden: true });
     K.library.mount(P.libraryBox);
     P.reviewBox = h('div', { class: 'qz-review', hidden: true });
@@ -191,7 +192,7 @@ P.mount = el => {
     P.pullHint = h('div', { class: 'qz-pull', 'aria-hidden': 'true' },
         h('span', { class: 'qz-pull-in' }, K.tIcon('search'), P.pullText = h('span', {})));
     P.main = h('div', { class: 'qz-main' }, P.pullHint, P.resHead, P.formHome, P.viewRow,
-        P.recentBox, P.results, P.discoverBox, P.awardedBox, P.libraryBox, P.reviewBox);
+        P.recentBox, P.results, P.discoverBox, P.labelBox, P.awardedBox, P.libraryBox, P.reviewBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.refreshAIIcon();
     P.buildPlayer();
@@ -250,7 +251,7 @@ P.wirePullToResults = () => {
     };
     P.el.addEventListener('touchstart', e => {
         g = null;
-        if (e.touches.length !== 1 || P.el.scrollTop > 0 || P.view() !== 'discover' || P.fromNowShown || P.dockedOnNow()) return;
+        if (e.touches.length !== 1 || P.el.scrollTop > 0 || !['discover', 'label'].includes(P.view()) || P.fromNowShown || P.dockedOnNow()) return;
         if (e.target.closest && e.target.closest('.qz-player, input, textarea, .qz-yspin')) return;
         g = { x: e.touches[0].clientX, y: e.touches[0].clientY, d: 0, on: false };
     }, { passive: true });
@@ -316,6 +317,7 @@ P.show = () => {
     else if (P.view() === 'awarded') P.awardedList();
     else if (P.view() === 'library') P.showLibrary();
     else if (P.view() === 'review') K.review.show();
+    else if (P.view() === 'label' && !P.labelRows) P.labelList();
     if (!P.fromNowShown) P.undock();
     if (P.fullWanted && !P.fromNowShown) P.openFull({ instant: true });
     if (P.fullEl) P.fullEl.style.transform = '';
@@ -360,7 +362,7 @@ P.forget = () => {
 };
 
 // ── which list: played recently, or the results ──────────────────────────────
-P.view = () => ['results', 'recent', 'discover', 'awarded', 'library', 'review'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
+P.view = () => ['results', 'recent', 'discover', 'awarded', 'library', 'review', 'label'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
 P.setView = (v, scroll = false) => {
     P.closeGenreMenu(); P.closeTileMenu();
     if (scroll && document.activeElement === P.input) P.input.blur();
@@ -373,6 +375,7 @@ P.setView = (v, scroll = false) => {
     else if (v === 'recent') P.recent();
     else if (v === 'awarded') P.awardedList();
     else if (v === 'discover') P.discover(0, { keep: true });
+    else if (v === 'label') P.labelList();
     if (scroll && P.visible && !P.viewRow.hidden) requestAnimationFrame(() => {
         if (P.viewRow.hidden) return;
         P.el.scrollTo({ top: P.el.scrollTop + P.viewRow.getBoundingClientRect().top
@@ -386,6 +389,7 @@ P.paintView = () => {
     P.results.hidden = v !== 'results';
     P.awardedBox.hidden = v !== 'awarded';
     P.discoverBox.hidden = v !== 'discover';
+    P.labelBox.hidden = v !== 'label';
     P.libraryBox.hidden = v !== 'library';
     P.reviewBox.hidden = v !== 'review';
     P.layoutBtn.hidden = v === 'library' || v === 'review';
@@ -427,7 +431,7 @@ P.paintScope = () => {
 };
 P.paintBoxHome = scope => {
     if (P.dockedOnNow()) return;                  // its place here stays empty meanwhile
-    const hide = scope === 'discover';
+    const hide = scope === 'discover' || scope === 'label';
     if (P.formHome.hidden === hide) return;
     if (hide && document.activeElement === P.input) P.input.blur();
     const top = P.el.scrollTop, before = P.formHome.hidden ? 0 : P.formHome.offsetHeight;
@@ -508,7 +512,7 @@ P.undock = () => {
     P.preview.remove();
     P.fetchProgress.remove();
     P.formHome.append(P.form);
-    P.formHome.hidden = P.scope() === 'discover';
+    P.formHome.hidden = ['discover', 'label'].includes(P.scope());
     P.paintScope();
 };
 
@@ -1739,6 +1743,90 @@ P.watchDiscover = () => {
     P.discoverObserver.observe(P.discoverMore);
 };
 
+// ── the label view ───────────────────────────────────────────────────────────
+// A label printed on an album (a row's, a tile's) opens that label's own catalogue,
+// newest first, read by the id the album carries (/qobuz/label): Qobuz's text
+// search hardly knows label names.  Pre-orders (dated ahead, a track or two already
+// streaming) are left out, and the tracks sent ahead of an album unless Singles is on.
+P.labelLink = c => c.label ? h('span', {
+    class: 'qz-labellink', role: 'link', tabindex: 0, title: `All of ${c.label}`,
+    onclick: e => { e.stopPropagation(); if (!e.currentTarget.closest('.qz-tile')?.__held) P.openLabel(c); },
+    onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); P.openLabel(c); } },
+}, c.label) : null;
+P.openLabel = c => {
+    P.closeTileMenu();
+    const back = P.view() === 'label' ? pref('labelView', {}).back : P.view();
+    setPref('labelView', { id: c.label_id || '', name: c.label, back: back || 'results' });
+    P.labelRows = null;
+    if (P.fromNowShown) { P.fromNowShown = false; P.resHead.hidden = true; P.viewRow.hidden = false; }
+    P.setView('label', true);
+};
+P.labelBack = () => P.setView(pref('labelView', {}).back || 'results', true);
+P.labelList = async (offset = 0) => {
+    if (P.labelObserver) P.labelObserver.disconnect();
+    const v = pref('labelView', null);
+    if (!v || !v.name) { P.labelBack(); return; }
+    const singles = pref('labelSingles', false);
+    const params = new URLSearchParams({ id: v.id || '', name: v.name, offset });
+    if (singles) params.set('singles', '1');
+    const seq = offset ? P.labelSeq : (P.labelSeq = (P.labelSeq || 0) + 1);
+    if (!offset) {
+        P.labelRows = P.labelMore = null;
+        P.labelHidden = { upcoming: 0, singles: 0 };
+        P.labelNote = h('div', { class: 'small muted qz-label-note' });
+        P.labelStatus = h('p', { class: 'muted' }, `Loading ${v.name}…`);
+        K.clear(P.labelBox).append(h('div', { class: 'qz-discover-heading qz-label-head' },
+            h('button', { type: 'button', class: 'btn qz-back', title: 'Back', 'aria-label': 'Back', onclick: P.labelBack }, '‹'),
+            h('span', { class: 'qz-label-name' }, v.name),
+            h('button', { type: 'button', class: 'chip tog qz-chip' + (singles ? ' on' : ''), 'aria-pressed': String(singles),
+                title: 'Also the single tracks Qobuz lists ahead of their album',
+                onclick: () => { setPref('labelSingles', !singles); P.labelList(); } }, 'Singles')),
+            P.labelNote, P.labelStatus);
+    }
+    const d = await K.api('/qobuz/label?' + params);
+    if (seq !== P.labelSeq) return;
+    if (P.labelMore) { P.labelMore.remove(); P.labelMore = null; }
+    if (!d.ok) {
+        const box = h('div', { class: 'errbox' }, d.error || `Could not load ${v.name}`,
+            h('button', { type: 'button', class: 'btn', onclick: () => { box.remove(); P.labelList(offset); } }, 'Retry'));
+        if (P.labelStatus) P.labelStatus.replaceWith(box); else P.labelBox.append(box);
+        P.labelStatus = null;
+        return;
+    }
+    if (!P.labelRows) {
+        P.labelRows = P.list([], 'label');
+        P.labelStatus.replaceWith(P.labelRows);
+        P.labelStatus = null;
+    }
+    P.labelHidden.upcoming += d.hidden.upcoming;
+    P.labelHidden.singles += d.hidden.singles;
+    const { upcoming: up, singles: one } = P.labelHidden;
+    P.labelNote.textContent = up || one ? 'Left out: ' + [
+        up ? `${up} not out yet` : '', one ? `${one} advance single${one === 1 ? '' : 's'}` : '',
+    ].filter(Boolean).join(', ') : '';
+    P.labelRows.append(...d.albums.map(c => P.item(c, 'label')));
+    if (!P.labelRows.firstChild && !d.more) P.labelRows.append(h('p', { class: 'muted' },
+        v.id || d.label.id ? 'Nothing out to play yet.' : `No Qobuz label is named exactly “${v.name}”.`));
+    if (!d.more) return;
+    let loading = false;
+    const loadMore = () => {
+        if (loading || seq !== P.labelSeq) return;
+        loading = true;
+        P.labelMore.textContent = 'Loading…';
+        P.labelList(d.next_offset);
+    };
+    const automatic = d.albums.length && 'IntersectionObserver' in window;
+    P.labelMore = automatic ? h('div', { class: 'qz-page-end', 'aria-live': 'polite' })
+        : h('button', { type: 'button', class: 'btn', onclick: loadMore }, 'More releases');
+    P.labelBox.append(P.labelMore);
+    if (automatic && P.visible) {
+        P.labelObserver = new IntersectionObserver(entries => {
+            if (P.visible && P.view() === 'label' && entries.some(e => e.isIntersecting)) loadMore();
+        }, { root: P.el, rootMargin: '0px 0px 200px 0px' });
+        P.labelObserver.observe(P.labelMore);
+    }
+};
+
 // Every album met with an award or marked awarded, most recent first: to look at
 // together (the "Awarded" view).
 P.awardedList = async () => {
@@ -2059,7 +2147,7 @@ P.row = (c, where = '') => {
         c.performers && c.performers.length
             ? h('div', { class: 'qz-perf small muted' }, c.performers.slice(0, 4).map(who).join(', ')) : null,
         h('div', { class: 'qz-meta small' },
-            h('span', {}, c.label || '—'), h('span', { class: 'muted' }, c.year || ''),
+            P.labelLink(c) || h('span', {}, '—'), h('span', { class: 'muted' }, c.year || ''),
             quality(c) ? h('span', { class: 'chip ok' }, quality(c)) : null,
             // the DR log's figure: exact, or ≈ from the tracks heard (widgets/dr.js)
             K.drLogBadge ? K.drLogBadge(c.dr_log) : null,
@@ -2097,7 +2185,7 @@ P.row = (c, where = '') => {
 const LONG_PRESS_MS = 550;
 P.tile = (c, where = '') => {
     const off = c.streamable === false;
-    const sub = [c.year, c.label].filter(Boolean).join(' · ');
+    const sub = c.year || c.label;
     const tile = h('div', {
         class: 'qz-tile' + (off ? ' off' : '') + (c.lowered ? ' lowered' : ''), role: 'button', tabindex: 0,
         'aria-haspopup': 'menu', title: [c.title, c.artist].filter(Boolean).join(' — ') + ' (long press: play, add, remove)',
@@ -2113,20 +2201,20 @@ P.tile = (c, where = '') => {
             K.drLogBadge ? K.drLogBadge(c.dr_log, 'qz-tdr') : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-tsub muted' }, c.artist || ''),
-        sub ? h('div', { class: 'qz-tsub muted' }, sub) : null);
+        sub ? h('div', { class: 'qz-tsub muted' }, c.year || '', c.year && c.label ? ' · ' : '', P.labelLink(c)) : null);
     // the press: held still for LONG_PRESS_MS; a move (a scroll, a page swipe) ends it
     let timer = null, start = null, held = false;
     const cancel = () => { clearTimeout(timer); timer = null; tile.classList.remove('pressing'); };
     const fire = () => {
         cancel();
         if (held) return;
-        held = true;
+        held = tile.__held = true;
         try { navigator.vibrate && navigator.vibrate(25); } catch {}
         P.tileMenu(c, where, tile);
     };
     tile.addEventListener('pointerdown', e => {
         if (e.button) return;
-        held = false;
+        held = tile.__held = false;
         start = { x: e.clientX, y: e.clientY };
         tile.classList.add('pressing');
         timer = setTimeout(fire, LONG_PRESS_MS);

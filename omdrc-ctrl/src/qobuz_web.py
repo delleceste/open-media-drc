@@ -10,6 +10,9 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
     GET /qobuz/search?q=&label=&last=|from=&to=&sort=&awarded=&scan=&enrich=
     GET /qobuz/search/stream?...    the same, as server-sent events: partial
                                    results while it reads, then the answer
+    GET /qobuz/label?id=|name=&offset=&singles=&hires=
+                                   a label's own catalogue, newest first,
+                                   without pre-orders (and advance singles)
     GET /qobuz/album/<id>          one album: tracks, performers, description
     GET /qobuz/awards?ids=a,b,...  the awards of up to 30 albums (a search
                                    carries them only for the ones it enriched)
@@ -578,6 +581,23 @@ def discover():
         found = catalog().discover(
             request.args.get("genre", ""), _number("offset", int) or 0,
             request.args.getlist("label"), request.args.get("awarded") == "1",
+            request.args.get("hires") == "1")
+        return jsonify({"ok": True, **found, "albums": annotate_dr(found.get("albums") or [])})
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+
+
+@bp.route("/label")
+def label():
+    """?id=<Qobuz label id>|name=<exact label name>&offset=&singles=1&hires=1:
+    the label view, the label's own catalogue newest first."""
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        found = catalog().label_albums(
+            request.args.get("id", ""), request.args.get("name", ""),
+            _number("offset", int) or 0, request.args.get("singles") == "1",
             request.args.get("hires") == "1")
         return jsonify({"ok": True, **found, "albums": annotate_dr(found.get("albums") or [])})
     except QobuzError as error:

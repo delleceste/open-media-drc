@@ -893,6 +893,73 @@ class DiscoverTests(unittest.TestCase):
                          ["d4", "d3", "d2"])
         self.assertNotIn("album/getFeatured", [endpoint for endpoint, _ in calls])
 
+    def test_label_view_leaves_out_pre_orders_and_advance_singles(self):
+        """The label view reads the label's own catalogue by the id the album
+        carried: a pre-order (dated ahead, a track already streaming) is left
+        out, and so are tracks sent ahead of an album unless asked for."""
+        def labelled(album_id, date, tracks=10, duration=3600, stream=None, streamable=True):
+            item = album(album_id, album_id, "Linn Records", date)
+            item.update(tracks_count=tracks, duration=duration, streamable=streamable)
+            item["label"]["id"] = 77
+            if stream:
+                item["release_date_stream"] = stream
+            return item
+        items = [labelled("preorder", "2026-11-20"),
+                 labelled("aria", "2026-10-05", tracks=1, duration=400),
+                 labelled("streamlater", "2026-10-04", stream="2026-11-01"),
+                 labelled("album", "2026-10-01"),
+                 labelled("gone", "2026-09-01", streamable=False),
+                 labelled("long-work", "2026-08-01", tracks=1, duration=2400)]
+        calls = []
+        def fetch(endpoint, params):
+            calls.append((endpoint, params))
+            self.assertEqual((endpoint, params["label_id"]), ("label/get", "77"))
+            return {"albums": {"items": items[params["offset"]:params["offset"] + 50],
+                               "total": len(items)}}
+        catalog = qs.QobuzCatalog(fetch=fetch, today=lambda: dt.date(2026, 10, 9))
+        result = catalog.label_albums("77")
+        self.assertEqual([a["id"] for a in result["albums"]], ["album", "long-work"])
+        self.assertEqual(result["hidden"], {"upcoming": 2, "singles": 1})
+        self.assertEqual(result["label"], {"id": "77", "name": "Linn Records"})
+        self.assertEqual(result["albums"][0]["label_id"], "77")
+        self.assertFalse(result["more"])
+        self.assertEqual([a["id"] for a in catalog.label_albums("77", singles=True)["albums"]],
+                         ["aria", "album", "long-work"])
+
+    def test_label_view_by_name_finds_the_exact_label_deeper(self):
+        """Without an id the label is found by its exact name, a few search
+        pages deep: artists sharing a word with it rank first."""
+        def search_page(offset):
+            if offset == 0:
+                return [album(f"a{i}", "X", "Linn Hope") for i in range(50)]
+            item = album("linn", "Y", "Linn Records")
+            item["label"]["id"] = 77
+            return [item]
+        def fetch(endpoint, params):
+            if endpoint == "catalog/search":
+                return {"albums": {"items": search_page(params["offset"]), "total": 51}}
+            self.assertEqual(params["label_id"], "77")
+            return {"albums": {"items": [album("z", "Z", "Linn Records", "2026-01-01")], "total": 1}}
+        catalog = qs.QobuzCatalog(fetch=fetch, today=lambda: dt.date(2026, 10, 9))
+        result = catalog.label_albums(name="linn")
+        self.assertEqual([a["id"] for a in result["albums"]], [])      # "Linn" is not "Linn Records"
+        result = catalog.label_albums(name="linn records")
+        self.assertEqual([a["id"] for a in result["albums"]], ["z"])
+        self.assertEqual(catalog.label_albums(name="Nobody At All Records")["albums"], [])
+
+    def test_an_exact_label_name_is_also_looked_for_by_its_first_word(self):
+        asked = []
+        def fetch(endpoint, params):
+            asked.append(params["query"])
+            if params["query"] == "linn":
+                item = album("l", "L", "Linn Records")
+                item["label"]["id"] = 77
+                return {"albums": {"items": [item], "total": 1}}
+            return {"albums": {"items": [album("v", "V", "V2 Records")], "total": 1}}
+        catalog = qs.QobuzCatalog(fetch=fetch)
+        self.assertEqual(catalog.label_ids(qs.LabelGroup("Linn Records", ("linn records",), exact=True)), ["77"])
+        self.assertEqual(asked, ["linn records", "linn"])
+
     def test_unplaceable_label_filters_the_new_releases(self):
         """A label no album search places is still matched in the new releases."""
         def fetch(endpoint, params):

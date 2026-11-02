@@ -4,6 +4,7 @@
 <div id="page" style="width:390px"></div><div id="overlay-root"></div><pre id="result">RUNNING</pre>
 <script src="../omdrc-ctrl/src/kiosk/static/core.js"></script>
 <script src="../omdrc-ctrl/src/kiosk/static/widgets/icons.js"></script>
+<script src="../omdrc-ctrl/src/kiosk/static/widgets/albuminfo.js"></script>
 <script src="../omdrc-ctrl/src/kiosk/static/pages/qobuz.js"></script>
 <script>
 (async () => {
@@ -12,6 +13,7 @@
         localStorage.clear();
         K.state.features.qobuz_search = true;
         K.library = { mount() {}, show() {}, hide() {}, visible: false };
+        K.review = { mount() {}, show() {}, hide() {} };
         K.api = async () => ({ ok: true, entries: [] });
         const P = K.pages.find(p => p.id === 'qobuz');
         for (const name of ['buildPlayer', 'recent', 'loadGenres', 'loadWords']) P[name] = () => {};
@@ -94,6 +96,38 @@
         check(chipOf(P.labelsScroll, 'Decca') && !K.pref('qobuz.hiddenLabels', []).length &&
             !K.pref('qobuz.customLabels', []).some(n => n.toLowerCase() === 'decca'),
             'Adding a hidden configured label back shows it again');
+        // a printed label opens the label view, by the id the album carries
+        const linn = { id: 'a1', title: 'Messiah', artist: 'Dunedin Consort', label: 'Linn Records', label_id: '77', year: 2026 };
+        K.api = async url => {
+            calls.push(url);
+            if (!url.startsWith('/qobuz/label?')) return { ok: true, albums: [], more: false, entries: [] };
+            return { ok: true, albums: [{ ...linn, id: 'a2', title: 'Tallis' }], more: false,
+                     next_offset: 50, label: { id: '77', name: 'Linn Records' }, hidden: { upcoming: 2, singles: 3 } };
+        };
+        P.setView('discover');
+        for (const layout of ['list', 'grid']) {
+            P.setLayout(layout);
+            P.discoverList.append(P.item(linn));
+            const link = P.discoverList.lastChild.querySelector('.qz-labellink');
+            check(link && link.textContent === 'Linn Records', `The ${layout} prints the label as a link`);
+            link.click();
+            await new Promise(r => setTimeout(r));
+            const asked = new URLSearchParams(calls.at(-1).split('?')[1]);
+            check(P.view() === 'label' && asked.get('id') === '77' && asked.get('name') === 'Linn Records' &&
+                !asked.has('singles'), `A tap on the ${layout}'s label opens its catalogue by id`);
+            check(!P.labelBox.hidden && P.discoverBox.hidden && P.formHome.hidden &&
+                P.labelBox.textContent.includes('Tallis') &&
+                P.labelBox.textContent.includes('Left out: 2 not out yet, 3 advance singles'),
+                'The label view lists the albums and says what it left out');
+            P.labelBox.querySelector('[aria-label="Back"]').click();
+            check(P.view() === 'discover', 'Back returns to the view the label was tapped in');
+        }
+        P.setLayout('list');
+        P.setView('label');
+        await new Promise(r => setTimeout(r));
+        [...P.labelBox.querySelectorAll('button')].find(b => b.textContent === 'Singles').click();
+        await new Promise(r => setTimeout(r));
+        check(new URLSearchParams(calls.at(-1).split('?')[1]).get('singles') === '1', 'Singles asks for advance singles too');
         document.getElementById('result').textContent = 'PASS';
     } catch (error) { document.getElementById('result').textContent = 'FAIL: ' + error.stack; }
 })();

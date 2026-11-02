@@ -715,6 +715,11 @@ input[type=range] { accent-color: var(--accent); }
 .qz-discover-filters[hidden] { display: none; }
 .qz-discover-filters .lbl { margin: .45rem 0 .3rem; }
 .qz-discover-heading { margin: .65rem 0; min-width: 0; }
+/* a printed label opens the label view (pages/qobuz.js P.labelLink) */
+.qz-labellink { cursor: pointer; text-decoration: underline dotted; text-underline-offset: .15em; }
+.qz-labellink:active { color: var(--accent); }
+.qz-label-head .qz-label-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qz-label-note:empty { display: none; }
 .qz-discover-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--yellow); }
 .qz-add-label .qz-input { width: 100%; box-sizing: border-box; }
 .qz-add-label .sheet-actions { margin-top: .8rem; }

@@ -47,6 +47,8 @@ DEFAULT_BASE_URL = "https://www.qobuz.com/api.json/0.2"
 PAGE_SIZE = 50
 # Pages one Discover request reads at most while a filter lets too few through.
 DISCOVER_PAGES = 10
+# Search pages read to find a label's id from its exact name.
+LABEL_ID_PAGES = 4
 
 # One line per label group: "Name" or "Name: pattern, pattern".  Qobuz spells
 # one label many ways ("Decca Music Group Ltd.", "Decca (UMO)", "Decca
@@ -212,6 +214,7 @@ def album_card(item: dict) -> dict:
         "artist": _name(item.get("artist")),
         "composer": _name(item.get("composer")),
         "label": _name(item.get("label")),
+        "label_id": str((item.get("label") or {}).get("id") or "") if isinstance(item.get("label"), dict) else "",
         "genre": _name(item.get("genre")),
         "date": date,
         "year": int(date[:4]) if date else None,
@@ -230,6 +233,14 @@ def is_short_single(card: dict) -> bool:
     duration = card.get("duration")
     return (card.get("tracks") == 1 and isinstance(duration, (int, float))
             and 0 < duration < 600)
+
+
+def is_advance_single(card: dict) -> bool:
+    """One track under twenty minutes in a label's catalogue: nearly always a
+    track sent ahead of its album (an aria, one movement), not an album."""
+    duration = card.get("duration")
+    return (card.get("tracks") == 1 and isinstance(duration, (int, float))
+            and duration < 1200)
 
 
 def is_cd_quality(card: dict) -> bool:
@@ -746,7 +757,7 @@ class AwardedAlbums:
     once merged (see merged), and are shown wherever the album is, as Qobuz's
     are."""
 
-    CARD_KEYS = ("id", "title", "version", "artist", "composer", "label", "year",
+    CARD_KEYS = ("id", "title", "version", "artist", "composer", "label", "label_id", "year",
                  "image", "image_large", "bits", "rate", "streamable")
 
     def __init__(self, path: str, limit: int = 5000) -> None:
@@ -1048,15 +1059,72 @@ class QobuzCatalog:
         Classics")."""
         def make():
             found: dict[str, None] = {}
-            for pattern in group.patterns:
-                items, _ = self._page(pattern, 0)
-                for item in items:
-                    label = item.get("label") or {}
-                    if label.get("id") is not None and group.matches(_name(label)):
-                        found.setdefault(str(label["id"]), None)
+            queries = list(group.patterns)
+            if group.exact:
+                # Qobuz's search hardly reads label names: "linn records"
+                # finds other labels' albums, "linn" Linn's own
+                queries += [w for p in group.patterns if " " in p
+                            for w in p.split()[:1] if len(w) >= 3 and w not in queries]
+            for pattern in queries:
+                if found:
+                    break
+                # an exact name ranks under artists that share a word with
+                # it: look a little deeper for it
+                for offset in range(0, (LABEL_ID_PAGES if group.exact else 1) * PAGE_SIZE, PAGE_SIZE):
+                    items, total = self._page(pattern, offset)
+                    for item in items:
+                        label = item.get("label") or {}
+                        if label.get("id") is not None and group.matches(_name(label)):
+                            found.setdefault(str(label["id"]), None)
+                    if found or len(items) < PAGE_SIZE or (isinstance(total, int) and offset + PAGE_SIZE >= total):
+                        break
             return list(found)
         return self._cached(f"labelids:{group.name}:{'=' if group.exact else '~'}:{'|'.join(group.patterns)}",
                             self.settings.album_cache_ttl, make)
+
+    def label_albums(self, label_id: str = "", name: str = "", offset: int = 0,
+                     singles: bool = False, exclude_cd: bool = False) -> dict:
+        """One label's catalogue, newest first: the label view, opened from a
+        label printed on an album.  `label_id` is Qobuz's, from that album;
+        without it the label is looked up by its exact name.
+
+        Qobuz lists what is not an album yet: a pre-order (dated ahead, a
+        track or two already streaming) and the tracks sent ahead of it, as
+        releases of their own.  The first are left out, the second unless
+        `singles`; `hidden` counts both in the pages read."""
+        if offset < 0:
+            raise QobuzError("offset must be non-negative")
+        label_id = str(label_id or "").strip()
+        if label_id and not label_id.isdigit():
+            raise QobuzError("label id must be numeric")
+        if not label_id:
+            if not (name or "").strip():
+                raise QobuzError("no label given")
+            ids = self.label_ids(LabelGroup(name.strip(), (_fold(name),), exact=True))
+            if not ids:
+                return {"albums": [], "next_offset": 0, "more": False,
+                        "label": {"id": "", "name": name.strip()},
+                        "hidden": {"upcoming": 0, "singles": 0}}
+        today = self._today().isoformat()
+        cards, hidden, more, next_offset = [], {"upcoming": 0, "singles": 0}, True, offset
+        for _ in range(DISCOVER_PAGES):
+            items, more = self._label_releases([label_id] if label_id else ids, next_offset + PAGE_SIZE)
+            for item in items[next_offset:]:
+                if item.get("streamable") is False:
+                    continue
+                card = album_card(item)
+                if (card["date"] or "0000") > today or (item.get("release_date_stream") or "") > today:
+                    hidden["upcoming"] += 1
+                elif not singles and is_advance_single(card):
+                    hidden["singles"] += 1
+                elif not (exclude_cd and is_cd_quality(card)):
+                    cards.append(card)
+            next_offset += PAGE_SIZE
+            if len(cards) >= self.settings.want or not more:
+                break
+        shown = next((c["label"] for c in cards if c["label"]), "") or (name or "").strip()
+        return {"albums": cards, "next_offset": next_offset, "more": more,
+                "label": {"id": label_id, "name": shown}, "hidden": hidden}
 
     def _label_page(self, label_id: str, offset: int) -> tuple[list[dict], int | None]:
         """One page of a label's albums, newest first, and the total Qobuz reports."""
