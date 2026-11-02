@@ -1959,19 +1959,27 @@ P.showSuggestions = list => {
         const t = s.e.text, len = s.to - s.from;
         const label = s.at < 0 ? [t]
             : [t.slice(0, s.at), h('b', {}, t.slice(s.at, s.at + len)), t.slice(s.at + len)];
-        P.suggestBox.append(h('button', {
-            type: 'button', class: 'qz-sug' + (s.e.learned ? ' learned' : ''), role: 'option',
+        const searches = P.searchesOnPick(s);
+        P.suggestBox.append(h('div', {
+            class: 'qz-sug' + (s.e.learned ? ' learned' : ''), role: 'option',
             // the field must keep the focus (and the keyboard): no default on
             // pointerdown.  A drag scrolls the list (the browser then cancels
             // the pointer); only a tap, lifted where it went down, picks.
-            onpointerdown: e => { e.preventDefault(); P.sugTap = { n, x: e.clientX, y: e.clientY, id: e.pointerId }; },
+            onpointerdown: e => {
+                e.preventDefault();
+                P.sugTap = { n, x: e.clientX, y: e.clientY, id: e.pointerId, fill: !!e.target.closest('.qz-sug-fill') };
+            },
             onpointerup: e => {
                 const t = P.sugTap;
                 P.sugTap = null;
-                if (t && t.n === n && t.id === e.pointerId && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 10) P.pick(n);
+                if (t && t.n === n && t.id === e.pointerId && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 10) P.pick(n, { fill: t.fill });
             },
             onpointercancel: () => { P.sugTap = null; },
-        }, h('span', { class: 'qz-sug-text' }, label), s.e.learned ? h('span', { class: 'qz-sug-mark', title: 'played before' }, '↺') : null));
+        }, h('span', { class: 'qz-sug-text' }, label), s.e.learned ? h('span', { class: 'qz-sug-mark', title: 'played before' }, '↺') : null,
+            // a tap on the row searches; the arrow only puts the text in the box
+            searches ? h('button', { type: 'button', class: 'qz-sug-fill', tabindex: '-1',
+                title: 'Put in the search box', 'aria-label': `Put ${t} in the search box` },
+                h('span', { 'aria-hidden': 'true' }, '↖')) : null));
     });
 };
 
@@ -1980,24 +1988,27 @@ P.showSuggestions = list => {
 // the span is taken again from the field as it is now.  And a word the Android
 // keyboard is still composing is ended first, or the keyboard writes it back in
 // after the completion.
-P.pick = n => {
+// What was searched before is a search of its own; a word of the shipped lists
+// only completes what is typed, so more words can follow.
+P.searchesOnPick = s => s.at < 0 || s.e.learned > 0;
+
+P.pick = (n, { fill = false } = {}) => {
     const s = P.shown && P.shown[n];
     if (!s) return;
     if (P.composing) { P.input.blur(); P.input.focus(); }
-    // An entry of the recent list (no match: the box is empty or selected) is a
-    // whole search: it takes the box over and runs, ending any search under way.
-    if (s.at < 0) {
-        P.input.value = s.e.text;
-        if (!P.scoped()) P.syncLabels();
-        if (P.request || P.aiStarting) P.stopSearch();
-        P.go();
-        return;
-    }
     const v = P.input.value, caret = P.input.selectionStart ?? v.length;
     const now = P.suggestions(v, caret).find(x => x.e.f === s.e.f);
     const from = now ? now.from : Math.min(s.from, caret);
-    const head = v.slice(0, from) + s.e.text + ' ';
-    P.input.value = head + v.slice(caret).replace(/^\S*\s*/, '');
+    // an entry of the recent list (no match: the box is empty or selected) takes the box over
+    const head = s.at < 0 ? s.e.text + ' ' : v.slice(0, from) + s.e.text + ' ';
+    P.input.value = head + (s.at < 0 ? '' : v.slice(caret).replace(/^\S*\s*/, ''));
+    if (!fill && P.searchesOnPick(s)) {
+        P.input.value = P.input.value.trim();
+        if (!P.scoped()) P.syncLabels();
+        if (P.request || P.aiStarting) P.stopSearch();   // ends a search under way, then starts this one
+        P.go();
+        return;
+    }
     P.input.setSelectionRange(head.length, head.length);
     P.input.focus();
     P.showSuggestions([]);
@@ -2015,11 +2026,11 @@ P.suggestKey = e => {
         [...P.suggestBox.children].forEach((b, i) => b.classList.toggle('on', i === P.active));
     } else if (e.key === 'Tab' && n) {
         e.preventDefault();
-        P.pick(Math.max(0, P.active));
+        P.pick(Math.max(0, P.active), { fill: true });
     } else if (e.key === 'Escape') {
         P.showSuggestions([]);
     } else if (e.key === 'Enter' && n && P.active >= 0) {
-        e.preventDefault();                       // a completion, not a search
+        e.preventDefault();                       // what the list offers, not what is typed
         P.pick(P.active);
     }                                             // else Enter submits the form: P.go()
 };

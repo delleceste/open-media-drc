@@ -66,13 +66,35 @@ P.showSuggestions(P.suggestions('', 0));
 P.pick(0);
 assert.ok(P.stopped && P.searched === 2, 'a search under way gives way to the entry, not just stops');
 
-// A completion of what is typed only completes: more words may follow.
+// The arrow only fills: the whole entry and a space, ready for more words, no search.
+P.input.value = 'Mahler Symphony'; P.input.selectionStart = 0;
+P.showSuggestions(P.suggestions(P.input.value, 0));
+P.pick(0, { fill: true });
+assert.equal(P.input.value, 'Bach Mass in B minor ', 'the arrow leaves the entry and a space');
+assert.equal(P.input.selectionStart, P.input.value.length, 'the caret ends after the space');
+assert.equal(P.searched, 2, 'the arrow does not search');
+
+// Something played before, offered while typing: the tap completes and searches, the arrow only completes.
+P.learn(['Karajan']);
+type(P, 'Mahler kar');
+P.showSuggestions(P.suggestions(P.input.value, 10));
+P.pick(0);
+assert.equal(P.valueAtGo, 'Mahler Karajan', 'a played entry completes what is typed, then searches');
+assert.equal(P.searched, 3);
+type(P, 'Mahler kar');
+P.showSuggestions(P.suggestions(P.input.value, 10));
+P.pick(0, { fill: true });
+assert.equal(P.input.value, 'Mahler Karajan ', 'its arrow only completes');
+assert.equal(P.searched, 3);
+
+// A word of the shipped lists only completes: more words may follow.
 P = launch(['Beethoven']);
 P.go = () => assert.fail('a completion must not search');
 type(P, 'beet');
 P.showSuggestions(P.suggestions(P.input.value, 4));
 P.pick(0);
 assert.equal(P.input.value, 'Beethoven ');
+
 // The labels of an artist typed: P.artists entries are flat ({ ...entry, term, labels }).
 // A throw here, on every pick ending in an artist, left the stale completions up.
 P = { plain: t => t.toLowerCase() };

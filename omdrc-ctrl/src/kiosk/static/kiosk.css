@@ -1041,6 +1041,12 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-sug b { color: var(--accent); font-weight: 700; }
 .qz-sug-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qz-sug-mark { color: var(--muted); font-size: .8rem; }
+/* full height and wide enough for a thumb; on Now the list opens above the box, so it points down to it */
+.qz-sug-fill { flex: 0 0 auto; align-self: stretch; width: 3rem; margin: 0 -.8rem 0 0; padding: 0; border: 0; border-left: 1px solid var(--hair);
+    border-radius: 0; background: none; color: var(--muted); font-size: 1.15rem; line-height: 1; cursor: pointer; }
+.qz-sug-fill span { display: inline-block; }
+.qz-docked .qz-sug-fill span { transform: scaleY(-1); }
+.qz-sug-fill:active { background: rgba(88,166,255,.22); color: var(--accent); }
 /* player strip: pinned to the bottom of the page, over the results */
 .qz-player { position: sticky; bottom: 0; z-index: 2; margin-top: .6rem; display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.3fr); grid-template-areas: "info btns seek";
