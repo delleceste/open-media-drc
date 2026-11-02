@@ -40,8 +40,23 @@ class TuiTest(unittest.TestCase):
         app.events.put(('qstatus', lambda data: setattr(app, 'qstatus', data),
                         {'art': '/qconnect/art?v=1'}, None))
         app.drain()
-        self.assertEqual(app.message, 'Connected')
+        self.assertEqual(app.footer_status(40), '■ Stopped')
         self.assertEqual(app.qstatus['art'], '/qconnect/art?v=1')
+
+    def test_footer_shows_playback_and_expires_transient_messages(self):
+        app = tui.App('http://localhost:9090')
+        self.assertEqual(app.footer_status(40), 'Connecting…')
+        app.connected = True
+        app.player = {'state': 'play', 'album': 'A long album title', 'title': 'A long track title'}
+        self.assertEqual(app.footer_status(80), '▶ A long album title / A long track title')
+        self.assertTrue(app.footer_status(14).endswith('…'))
+        app.player['state'] = 'pause'
+        self.assertTrue(app.footer_status(80).startswith('⏸ '))
+        app.message = 'levels on · dr on · balance on'
+        self.assertEqual(app.footer_status(80), app.message)
+        self.assertTrue(app.footer_status(80, app._message_at + 4).startswith('⏸ '))
+        app.player['state'] = 'stop'
+        self.assertEqual(app.footer_status(80, app._message_at + 4), '■ Stopped')
 
     def test_drc_status_aligns_with_cover_bottom(self):
         app = tui.App('http://localhost:9090')

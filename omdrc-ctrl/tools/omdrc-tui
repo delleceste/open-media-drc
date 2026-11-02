@@ -350,7 +350,8 @@ class App:
         self.research_setup_pending = False
         self.ai_settings = {}
         self.last_ai_check = 0
-        self.message = "Connecting…"
+        self._message = "Connecting…"
+        self._message_at = time.monotonic()
         self.connected = False
         self.cover_key = None
         self.cover_lines = []
@@ -363,6 +364,33 @@ class App:
         self.cover_pairs = {}
         self.styles = {}
         self.light = False
+
+    @property
+    def message(self):
+        return self._message
+
+    @message.setter
+    def message(self, value):
+        self._message = value
+        self._message_at = time.monotonic()
+
+    def footer_status(self, width, now=None):
+        now = time.monotonic() if now is None else now
+        if not self.connected:
+            label = self.message
+        elif self.message and self.message != "Connecting…" and now - self._message_at < 4:
+            label = self.message
+        else:
+            state = self.player.get("state")
+            symbol = "▶" if state == "play" else "⏸" if state == "pause" else "■"
+            album = clean(self.player.get("album")).strip()
+            track = clean(self.player.get("title")).strip()
+            title = " / ".join(part for part in (album, track) if part)
+            if state not in ("play", "pause"):
+                label = f"{symbol} Stopped"
+            else:
+                label = f"{symbol} {title or ('Playing' if state == 'play' else 'Paused')}"
+        return compact(label, width)
 
     def save(self):
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -517,7 +545,7 @@ class App:
             else:
                 if not self.connected and key in ("player", "qstatus", "now-state"):
                     self.connected = True
-                    self.message = "Connected"
+                    self._message = ""
                 if callback: callback(value)
 
     def switch(self, page):
@@ -625,7 +653,7 @@ class App:
         elif self.page == "Config": self.draw_config(screen, bottom)
         if not zoom: self.draw_live(screen, bottom)
         if not zoom: self.draw_nav(screen, bottom)
-        self.colored(screen, height - 1, 1, compact(self.message, width - 3), "accent", curses.A_REVERSE)
+        self.colored(screen, height - 1, 1, self.footer_status(width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
             left, top = self.sixel_target
