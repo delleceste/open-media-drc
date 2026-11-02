@@ -294,6 +294,7 @@ class App:
         self.message = "Connecting…"
         self.cover_key = None
         self.cover_lines = []
+        self.cover_zoom = False
         self.cover_pairs = {}
         self.styles = {}
         self.light = False
@@ -438,7 +439,10 @@ class App:
                 continue
             self.pending.discard(key)
             if error: self.message = compact(error, 120)
-            elif callback: callback(value)
+            else:
+                if self.message == "Connecting…" and key in ("player", "qstatus", "now-state"):
+                    self.message = "Connected"
+                if callback: callback(value)
 
     def switch(self, page):
         self.page = page
@@ -503,7 +507,8 @@ class App:
             screen.refresh(); return
         self.colored(screen, 0, 1, "open-media-drc  F1 Library  F2 Now  F3 Room correction  F4 Config  v Visibility  q Quit", "accent", curses.A_BOLD)
         self.colored(screen, 1, 0, "─" * (width - 1), "muted")
-        bottom = height - (7 if self.config["levels"] or self.config["dr"] or self.config["balance"] else 3)
+        zoom = self.page == "Now" and self.cover_zoom
+        bottom = height - (2 if zoom else 7 if self.config["levels"] or self.config["dr"] or self.config["balance"] else 3)
         if self.page == "Library": self.draw_library(screen, bottom)
         elif self.page == "Now": self.draw_now(screen, bottom)
         elif self.page == "DRC": self.draw_drc(screen, bottom)
@@ -511,7 +516,7 @@ class App:
         elif self.page == "Album": self.draw_album(screen, bottom)
         elif self.page == "Config": self.draw_config(screen, bottom)
         elif self.page == "Visibility": self.draw_visibility(screen, bottom)
-        self.draw_live(screen, bottom)
+        if not zoom: self.draw_live(screen, bottom)
         self.colored(screen, height - 1, 1, compact(self.message, width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
 
@@ -539,6 +544,12 @@ class App:
         h, w = screen.getmaxyx()
         p, q = self.player, self.qstatus
         art = q.get("art") or (self.now_state.get("music") or {}).get("art") or ""
+        if self.cover_zoom:
+            cover_h = max(0, bottom - 3)
+            cover_w = min(cover_h * 2, max(0, w - 4))
+            if self.config["cover"]: self.draw_cover(screen, art, cover_w, cover_h, max(1, (w - cover_w) // 2), 2)
+            self.colored(screen, bottom, 2, compact(f"{p.get('title') or q.get('line1') or 'Nothing playing'} — {p.get('artist', '')}    C/Esc back", w - 4), "accent")
+            return
         cover_h = max(0, bottom - 4)
         cover_w = min(cover_h * 2, max(0, w - 38)) if self.config["cover"] and art else 0
         if cover_w < 10 or cover_h < 3: cover_w = cover_h = 0
@@ -556,12 +567,18 @@ class App:
             self.colored(screen, 7, x, bar(elapsed, min(40, avail - 2), 0, duration), "accent")
         self.colored(screen, 8, x, f"{p.get('state', 'stop').upper()}  Space play/pause  ←→ track  s stop", "green" if p.get("state") == "play" else "muted")
         self.colored(screen, 9, x, "g seek  i details  h favourite  b review later", "muted")
-        self.colored(screen, 10, x, "R Research music  M measure album DR", "muted")
+        self.colored(screen, 10, x, "R Research music  M measure album DR  C enlarge cover", "muted")
         drc = (self.now_state.get("drc") or {})
         self.colored(screen, 11, x, compact(drc_summary(drc), avail),
                      "green" if drc.get("running") else "muted" if drc.get("running") is False else "yellow")
         if cover_w:
-            key = (art, cover_w, cover_h, curses.COLORS >= 256 if curses.has_colors() else False)
+            self.draw_cover(screen, art, cover_w, cover_h, 2, 3)
+        elif not art:
+            self.colored(screen, 13, 2, "Cover unavailable for this source", "muted")
+
+    def draw_cover(self, screen, art, width, height, left, top):
+        if art and width >= 10 and height >= 3:
+            key = (art, width, height, curses.COLORS >= 256 if curses.has_colors() else False)
             if key != self.cover_key:
                 self.cover_key = key
                 self.cover_lines = []
@@ -571,15 +588,13 @@ class App:
                 def accept_cover(lines):
                     if self.cover_key == key: self.cover_lines = lines
                     else: self.cover_key = None
-                self.submit("cover", lambda: self.render_cover(art, cover_w, cover_h, use_color), accept_cover)
-            for row, runs in enumerate(self.cover_lines[:cover_h]):
-                col = 2
+                self.submit("cover", lambda: self.render_cover(art, width, height, use_color), accept_cover)
+            for row, runs in enumerate(self.cover_lines[:height]):
+                col = left
                 for value, fg, bg in runs:
-                    if col >= 2 + cover_w: break
-                    self.text(screen, 3 + row, col, value[:2 + cover_w - col], self.cover_style(fg, bg))
+                    if col >= left + width: break
+                    self.text(screen, top + row, col, value[:left + width - col], self.cover_style(fg, bg))
                     col += len(value)
-        elif not art:
-            self.colored(screen, 13, 2, "Cover unavailable for this source", "muted")
 
     def render_cover(self, url, width, height, use_color=True):
         if not shutil.which("chafa") or width < 10 or height < 3:
@@ -590,7 +605,8 @@ class App:
             image = response.read(5_000_001)
         if len(image) > 5_000_000: return []
         mode = "full" if use_color else "none"
-        output = subprocess.run(["chafa", "--colors", mode, "--format", "symbols",
+        output = subprocess.run(["chafa", "--probe", "off", "--colors", mode,
+                                 "--format", "symbols", "--symbols", "vhalf",
                                  "--scale", "max", "--size", f"{width}x{height}", "-"],
                                 input=image, capture_output=True, timeout=10, check=True,
                                 env={**os.environ, "TERM": "dumb"}).stdout.decode(errors="replace")
@@ -832,7 +848,10 @@ class App:
             else: self.album_action(item, key, screen)
 
     def now_key(self, key, screen):
-        if key == ord(" "):
+        if key in (ord("C"), 27):
+            self.cover_zoom = not self.cover_zoom if key == ord("C") else False
+            self.cover_key = None
+        elif key == ord(" "):
             self.transport("pause" if self.player.get("state") == "play" else "play")
         elif key == curses.KEY_LEFT: self.transport("prev")
         elif key == curses.KEY_RIGHT: self.transport("next")

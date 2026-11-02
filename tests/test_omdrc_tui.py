@@ -35,6 +35,21 @@ class TuiTest(unittest.TestCase):
         app.dr = {'track_age_blocks': 1}
         app.draw_live(Screen(), 17)
 
+    def test_first_player_response_clears_connecting_status(self):
+        app = tui.App('http://localhost:9090')
+        app.events.put(('qstatus', lambda data: setattr(app, 'qstatus', data),
+                        {'art': '/qconnect/art?v=1'}, None))
+        app.drain()
+        self.assertEqual(app.message, 'Connected')
+        self.assertEqual(app.qstatus['art'], '/qconnect/art?v=1')
+
+    def test_cover_zoom_key(self):
+        app = tui.App('http://localhost:9090')
+        app.now_key(ord('C'), None)
+        self.assertTrue(app.cover_zoom)
+        app.now_key(27, None)
+        self.assertFalse(app.cover_zoom)
+
     def test_default_opens_now_on_local_service_even_with_saved_remote(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'config.json'
