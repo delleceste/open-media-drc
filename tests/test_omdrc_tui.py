@@ -99,6 +99,21 @@ class TuiTest(unittest.TestCase):
         self.assertAlmostEqual(tui.balance_db(samples, 2, 15), 10 * __import__('math').log10(2.5))
         self.assertIn('●', tui.balance_line(3, 11))
 
+    def test_balance_bubble_tracks_live_frame_while_average_stays_stable(self):
+        app = tui.App('http://localhost:9090')
+        app.config.update(levels=False, dr=False, balance=True, balance_window=15)
+        app.samples.extend([(90, 1.0, .1), (100, .1, 1.0)])
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(tui.time, 'monotonic', return_value=100), \
+             patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_live(Screen(), 20)
+        bubble = next(args for args in painted if args[3] == '●')
+        self.assertGreater(bubble[2], 2 + len('Balance L ') + 14)
+        line = next(args[3] for args in painted if str(args[3]).startswith('Balance '))
+        self.assertIn('15s avg +0.0 dB', line)
+
     def test_dr_stays_released_until_now_is_opened(self):
         class FakeStream:
             def __init__(self, *args): self.closed = False

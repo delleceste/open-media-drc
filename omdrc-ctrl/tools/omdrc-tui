@@ -747,13 +747,20 @@ class App:
                 self.colored(screen, y, 5 + bw, f"{peak:5.1f} dBFS", "red" if peak >= -3 else "yellow" if peak >= -12 else "green")
                 y += 1
         if self.config["balance"]:
-            db = balance_db(self.samples, time.monotonic(), self.config["balance_window"])
+            now = time.monotonic()
+            # The bubble tracks the latest RMS frame; the chosen window remains
+            # available as a stable, power-weighted balance readout.
+            live_db = balance_db(self.samples, now, .3)
+            average_db = balance_db(self.samples, now, self.config["balance_window"])
             width = min(29, w - 30)
-            self.colored(screen, y, 2, "Balance " + balance_line(db, width), "muted")
-            if db is not None:
+            line = "Balance " + balance_line(live_db, width)
+            if average_db is not None:
+                line += f"  {self.config['balance_window']:g}s avg {average_db:+.1f} dB"
+            self.colored(screen, y, 2, compact(line, w - 4), "muted")
+            if live_db is not None:
                 middle = max(5, width | 1) // 2
-                pos = round(middle + max(-6, min(6, db)) / 6 * middle)
-                self.colored(screen, y, 2 + len("Balance L ") + pos, "●", "red" if db > .05 else "accent")
+                pos = round(middle + max(-6, min(6, live_db)) / 6 * middle)
+                self.colored(screen, y, 2 + len("Balance L ") + pos, "●", "red" if live_db > .05 else "accent")
             y += 1
         if self.config["dr"]:
             d = self.dr
