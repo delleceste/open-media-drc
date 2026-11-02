@@ -636,7 +636,7 @@ class App:
 
     def draw_library(self, screen, bottom):
         h, w = screen.getmaxyx()
-        self.colored(screen, 2, 1, "  ".join((f"[{i+1} {TAB_ICONS[i]} {name}]" if i == self.tab else f" {i+1} {TAB_ICONS[i]} {name} ") for i, name in enumerate(TABS)), "accent")
+        self.colored(screen, 2, 1, "← →  " + "  ".join((f"[{i+1} {TAB_ICONS[i]} {name}]" if i == self.tab else f" {i+1} {TAB_ICONS[i]} {name} ") for i, name in enumerate(TABS)), "accent")
         if self.tab in (0, 2, 3, 4): self.text(screen, 3, 1, f"⌕ {self.query or '—'}    / edit    f filters")
         else: self.text(screen, 3, 1, "f filters" if self.tab == 1 else f"Folder: {self.folder or '/'}")
         first_result = 4
@@ -1030,12 +1030,35 @@ class App:
         elif self.page == "DRC" and key == ord("r"): self.last_drc = 0
 
     def library_key(self, key, screen):
+        if key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+            self.tab = (self.tab + (-1 if key == curses.KEY_LEFT else 1)) % len(TABS)
+            self.folder = ""; self.fetch_list(); return
         if key in (ord(str(i)) for i in range(1, 7)):
             self.tab = key - ord("1"); self.folder = ""; self.fetch_list(); return
         if key == ord("/") and self.tab in (0, 2, 3, 4):
             self.query = self.prompt(screen, "Search:").strip(); self.fetch_list(); return
         if key == ord("f") and self.tab in (0, 1):
-            name = self.prompt(screen, "Filter (label/from/to/sort/awarded/hires/local/genre):").strip()
+            names = ("label", "from", "to", "sort", "awarded", "hires", "local", "genre")
+            labels = ("Labels", "From date", "To date", "Sort", "Awarded", "Hi-res", "Local", "Genre")
+            selected = 0
+            screen.timeout(-1)
+            try:
+                while True:
+                    h, _ = screen.getmaxyx()
+                    for offset, group in enumerate((range(4), range(4, 8))):
+                        screen.move(h - 2 + offset, 0); screen.clrtoeol()
+                        self.text(screen, h - 2 + offset, 1, "  ".join(
+                            f"{'>' if i == selected else ' '}{i + 1} {labels[i]}" for i in group))
+                    screen.refresh()
+                    choice = screen.getch()
+                    if choice in (curses.KEY_LEFT, curses.KEY_UP): selected = (selected - 1) % len(names)
+                    elif choice in (curses.KEY_RIGHT, curses.KEY_DOWN): selected = (selected + 1) % len(names)
+                    elif ord("1") <= choice <= ord("8"): selected = choice - ord("1"); break
+                    elif choice in (10, 13): break
+                    elif choice == 27: return
+            finally:
+                screen.timeout(100)
+            name = names[selected]
             if name == "label": self.filters[name] = [x.strip() for x in self.prompt(screen, "Labels, comma separated:").split(",") if x.strip()]
             elif name in ("from", "to", "genre"): self.filters[name] = self.prompt(screen, name + ":").strip()
             elif name == "sort": self.filters[name] = "date" if self.filters[name] == "relevance" else "relevance"
