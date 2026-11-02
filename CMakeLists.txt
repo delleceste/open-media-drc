@@ -118,6 +118,16 @@ include(cmake/hotplug.cmake)           # DAC-hotplug + brutefir services (udev/d
 include(cmake/renderers.cmake)         # mpd config/drop-in + upmpdcli config/service
 include(cmake/browser-audio.cmake)     # Linux ALSA default + FreeBSD browser audio glue
 add_subdirectory(omdrc-ctrl)           # omdrcctrl  — control panel (:9090)
+# The terminal client is a standalone Python script.  chafa supplies cover
+# rendering; Sixel output also requires a compatible terminal such as Konsole.
+find_program(OMDRC_CHAFA chafa)
+if(NOT OMDRC_CHAFA)
+  message(WARNING "omdrc-tui: chafa is missing; covers will not render. Install chafa to enable covers (Sixel also needs a compatible terminal such as Konsole).")
+endif()
+install(PROGRAMS omdrc-ctrl/tools/omdrc-tui DESTINATION bin COMPONENT omdrc-tui)
+add_custom_target(omdrc-tui-install
+  COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --component omdrc-tui
+  COMMENT "Install omdrc-tui to ${CMAKE_INSTALL_PREFIX}/bin")
 add_subdirectory(video/webremote)      # omdrcvideo — video web remote (:9080)
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
   add_subdirectory(cdin)               # omdrc-cdin — CD/S-PDIF capture bridge (OSS only)
