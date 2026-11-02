@@ -110,6 +110,20 @@ class TuiTest(unittest.TestCase):
             app.draw_config(Screen(), 17)
         self.assertEqual([args[2] for args in painted if args[1] == 3], [2, 23])
 
+    def test_library_sidebar_reaches_filters_and_search_prompt(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        with patch.object(app, 'prompt', return_value='Bach') as prompt, patch.object(app, 'fetch_list'):
+            app.library_key(10, None)
+        prompt.assert_called_once_with(None, 'Search:')
+        self.assertEqual(app.query, 'Bach')
+        self.assertFalse(app.library_sidebar_focus)
+        app.library_key(tui.curses.KEY_LEFT, None)
+        for _ in range(len(tui.TABS)):
+            app.library_key(tui.curses.KEY_DOWN, None)
+        self.assertEqual(app.library_sidebar_index, len(tui.TABS))
+        self.assertTrue(app.library_sidebar_focus)
+
     def test_library_sidebar_keeps_all_tabs_visible_at_minimum_size(self):
         app = tui.App('http://localhost:9090')
         app.rows = [{'title': 'Example', 'artist': 'Artist'}]
@@ -131,7 +145,7 @@ class TuiTest(unittest.TestCase):
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_nav(Screen(), 17)
         self.assertEqual([args[1] for args in painted], [16, 16, 16, 16, 21])
-        self.assertEqual(painted[-1][3], "☷ +/- [Tab]")
+        self.assertEqual(painted[-1][3], "☷ Shift+Tab")
         for settings, expected_row in (
             ({"levels": True, "balance": True, "dr": False}, 20),
             ({"levels": True, "balance": False, "dr": False}, 19),
@@ -148,7 +162,7 @@ class TuiTest(unittest.TestCase):
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_nav(Screen(), 21)
         self.assertEqual([args[1] for args in painted], [20] * 4 + [21])
-        self.assertEqual(painted[-1][2], 80 - len("☷ +/- [Tab]") - 2)
+        self.assertEqual(painted[-1][2], 80 - len("☷ Shift+Tab") - 2)
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_live(Screen(), 21)
@@ -162,7 +176,7 @@ class TuiTest(unittest.TestCase):
         seen = set()
         with patch.object(app, 'save'):
             for _ in range(8):
-                app.action(9, None)
+                app.action(tui.curses.KEY_BTAB, None)
                 seen.add(tuple(app.config[name] for name in ('levels', 'dr', 'balance')))
         self.assertEqual(len(seen), 8)
         self.assertEqual(tuple(app.config[name] for name in ('levels', 'dr', 'balance')),
