@@ -96,8 +96,18 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 80)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_nav(Screen(), 17)
-        self.assertEqual([args[1] for args in painted], [16, 16, 16, 16, 17])
+        self.assertEqual([args[1] for args in painted], [16, 16, 16, 16, 23])
+        self.assertEqual(painted[-1][2], 1)
+        app.config.update(levels=False, dr=False, balance=False)
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_nav(Screen(), 21)
+        self.assertEqual([args[1] for args in painted], [20] * 5)
         self.assertEqual(painted[-1][2], 80 - len("v Visibility") - 2)
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_live(Screen(), 21)
+        self.assertFalse(any("─" in str(args[3]) for args in painted))
         app.action(9, None)
         self.assertTrue(app.nav_focus)
         app.action(tui.curses.KEY_RIGHT, None)
