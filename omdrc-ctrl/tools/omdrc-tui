@@ -656,10 +656,10 @@ class App:
             self.colored(screen, 2 + index, 1, compact(label, divider - 2),
                          "accent" if index == self.tab else "soft",
                          curses.A_REVERSE if index == self.tab else 0)
-        self.colored(screen, 8, 1, "f Filters" if self.tab in (0, 1) else "/ Search" if self.tab in (2, 3, 4) else "Review later", "accent")
+        self.colored(screen, 8, 1, "←→ Tabs  f Filters" if self.tab in (0, 1) else "←→ Tabs  / Search" if self.tab in (2, 3, 4) else "←→ Tabs", "accent")
         self.colored(screen, 9, 1, "p Play  a Append", "soft")
         self.colored(screen, 10, 1, "h Favourite  b Review", "soft")
-        self.colored(screen, 11, 1, "m More  r Refresh  x Edit", "soft")
+        self.colored(screen, 11, 1, "m More  r Refresh" + ("  x Edit" if self.tab == 5 else ""), "soft")
         if self.tab == 0:
             f = self.filters
             active = [key for key in ("label", "from", "to", "awarded", "hires", "local") if f[key]]
@@ -670,6 +670,17 @@ class App:
             title = f"{TABS[self.tab]}: {self.query or 'all'}  ·  / edit"
         else:
             title = f"{TABS[self.tab]} · {self.folder or '/'}"
+        if self.tab == 0:
+            f = self.filters
+            details = (f"Labels: {', '.join(f['label']) or 'Any'}", f"Dates: {f['from'] or 'Any'}–{f['to'] or 'Any'}",
+                       f"Awarded {int(f['awarded'])} · Hi-res {int(f['hires'])} · Local {int(f['local'])}")
+        elif self.tab == 1:
+            details = (f"Genre: {self.filters['genre'] or 'Any'}",)
+        else:
+            details = ()
+        for y, detail in enumerate(details, 12):
+            if y >= bottom - 1: break
+            self.colored(screen, y, 1, compact(detail, divider - 2), "muted")
         self.colored(screen, 2, result_x, compact(title, result_width), "accent")
         first_result = 3
         visible = max(0, bottom - 1 - first_result)

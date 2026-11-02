@@ -110,8 +110,21 @@ class TuiTest(unittest.TestCase):
             app.draw_config(Screen(), 17)
         self.assertEqual([args[2] for args in painted if args[1] == 3], [2, 23])
 
+    def test_library_sidebar_keeps_all_tabs_visible_at_minimum_size(self):
+        app = tui.App('http://localhost:9090')
+        app.rows = [{'title': 'Example', 'artist': 'Artist'}]
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (20, 55)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 13)
+        tabs = [args for args in painted if args[2] == 1 and 2 <= args[1] <= 7]
+        self.assertEqual(len(tabs), 6)
+        self.assertTrue(any(args[1] == 3 and args[2] == 29 and 'Example' in args[3] for args in painted))
+
     def test_page_shortcuts_and_visibility_hint(self):
         app = tui.App('http://localhost:9090')
+        app.config.update(levels=True, balance=True, dr=True)
         painted = []
         class Screen:
             def getmaxyx(self): return (24, 80)
