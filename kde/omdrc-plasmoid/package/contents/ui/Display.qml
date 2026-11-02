@@ -602,7 +602,8 @@ Item {
         x: coverHoverZone.x + coverHoverZone.width + Kirigami.Units.smallSpacing
         anchors.verticalCenter: coverHoverZone.verticalCenter
         width: Math.max(0, face.width - x - face.inset)
-        visible: face.pausedPanel && !face.editing && !hover.hovered
+        visible: face.pausedPanel && face.app.player.state !== "stop"
+                 && !face.compactSearchOpen && !face.editing && !hover.hovered
         font: Kirigami.Theme.smallFont
         elide: Text.ElideRight
         readonly property var parts: [
