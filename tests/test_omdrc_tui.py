@@ -68,12 +68,12 @@ class TuiTest(unittest.TestCase):
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
              patch.object(app, 'text'), patch.object(app, 'draw_cover') as cover:
             app.draw_now(Screen(), 17)
-        cover.assert_called_once_with(unittest.mock.ANY, '/cover', 26, 13, 2, 3)
+        cover.assert_called_once_with(unittest.mock.ANY, '/cover', 24, 12, 2, 3)
         drc_row = next(args[1] for args in painted if str(args[3]).startswith('DRC OFF'))
-        self.assertEqual(drc_row, 14)
+        self.assertEqual(drc_row, 15)
         self.assertLess(max(args[1] for args in painted if 'Album details' in str(args[3])), drc_row)
 
-    def test_seek_bar_uses_thin_colored_line_near_bottom(self):
+    def test_seek_bar_sits_below_play_without_label(self):
         app = tui.App('http://localhost:9090')
         app.player = {'elapsed': 30, 'duration': 60, 'state': 'pause'}
         painted = []
@@ -82,8 +82,8 @@ class TuiTest(unittest.TestCase):
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
              patch.object(app, 'text'):
             app.draw_now(Screen(), 17)
-        seek = [args for args in painted if args[1] == 15]
-        self.assertTrue(any(args[3] == 'Seek ' for args in seek))
+        seek = [args for args in painted if args[1] == tui.NOW_MENU_TOP + 1]
+        self.assertFalse(any('Seek' in str(args[3]) for args in seek))
         self.assertTrue(any('━' in str(args[3]) and args[4] == 'fmt_48' for args in seek))
         self.assertTrue(any('─' in str(args[3]) and args[4] == 'muted' for args in seek))
         self.assertTrue(any('← →' in str(args[3]) for args in seek))
@@ -117,7 +117,7 @@ class TuiTest(unittest.TestCase):
             app.now_key(tui.curses.KEY_RIGHT, None)
             transport.assert_called_once_with('seek', {'seconds': 60})
         self.assertEqual(tui.NOW_ACTION_ROWS[1], tui.NOW_ACTION_ROWS[2])
-        self.assertLess(tui.NOW_ACTION_ROWS[4], tui.NOW_ACTION_ROWS[5])
+        self.assertEqual(tui.NOW_ACTION_ROWS[4], tui.NOW_ACTION_ROWS[0] + 1)
 
     def test_config_arrows_select_and_enter_changes_value(self):
         app = tui.App('http://localhost:9090')
@@ -287,7 +287,8 @@ class TuiTest(unittest.TestCase):
         app = tui.App('http://localhost:9090')
         with patch.object(app, 'transport') as transport:
             app.now_key(tui.curses.KEY_DOWN, None)
-            self.assertEqual(app.now_action, 1)
+            self.assertEqual(app.now_action, 4)
+            app.now_key(tui.curses.KEY_DOWN, None)
             app.now_key(10, None)
             transport.assert_called_once_with('prev')
         app.now_action = 8

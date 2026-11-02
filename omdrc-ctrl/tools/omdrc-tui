@@ -38,7 +38,8 @@ NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
                ("Album details", "i"), ("Favourite", "h"),
                ("Review later", "b"), ("Research music", "R"),
                ("Measure album DR", "M"), ("Enlarge cover", "C"))
-NOW_ACTION_ROWS = (0, 1, 1, 2, 3, 5, 6, 7, 8, 9, 10)
+NOW_ACTION_ROWS = (0, 2, 2, 3, 1, 5, 6, 7, 8, 9, 10)
+NOW_ACTION_ORDER = (0, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10)
 NOW_MENU_TOP = 7
 CONFIG_KEYS = "uzc pwtkba".replace(" ", "")
 PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
@@ -782,7 +783,7 @@ class App:
             if self.config["cover"]: self.draw_cover(screen, art, cover_w, cover_h, max(1, (w - cover_w) // 2), 2)
             self.colored(screen, bottom, 2, compact(f"{p.get('title') or q.get('line1') or 'Nothing playing'} — {p.get('artist', '')}    C/Esc back", w - 4), "accent")
             return
-        cover_h = max(0, bottom - 4)
+        cover_h = max(0, bottom - 5)
         cover_w = min(cover_h * 2, max(0, w - 38)) if self.config["cover"] and art else 0
         if cover_w < 10 or cover_h < 3: cover_w = cover_h = 0
         x = cover_w + 4 if cover_w else 2
@@ -804,19 +805,31 @@ class App:
         if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration:
             elapsed += max(0, time.monotonic() - self.last_player) if p.get("state") == "play" else 0
             self.text(screen, 6, x, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}")
-        drc_row = bottom - 3
+        drc_row = bottom - 2
         visible = max(1, drc_row - NOW_MENU_TOP)
         selected_row = NOW_ACTION_ROWS[self.now_action]
         self.now_action_scroll = min(self.now_action_scroll, max(0, 11 - visible))
         if selected_row < self.now_action_scroll: self.now_action_scroll = selected_row
         if selected_row >= self.now_action_scroll + visible:
             self.now_action_scroll = selected_row - visible + 1
+        seek_width = min(30, max(4, avail - 7))
+        try:
+            fraction = max(0.0, min(1.0, float(elapsed) / float(duration))) if duration else 0.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            fraction = 0.0
+        filled = round(fraction * seek_width)
         for menu_row in range(self.now_action_scroll, min(11, self.now_action_scroll + visible)):
             y = NOW_MENU_TOP + menu_row - self.now_action_scroll
             if menu_row == 4:
                 self.colored(screen, y, x, "─" * min(avail, 30), "muted")
                 continue
             if menu_row == 1:
+                seek_style = curses.A_REVERSE if self.now_action == 4 else 0
+                self.colored(screen, y, x, "━" * filled, "fmt_48", seek_style)
+                self.colored(screen, y, x + filled, "─" * (seek_width - filled), "muted", seek_style)
+                self.colored(screen, y, x + seek_width, "  ← →", "soft", seek_style)
+                continue
+            if menu_row == 2:
                 self.colored(screen, y, x, "|<", "accent" if self.now_action == 1 else "soft",
                              curses.A_REVERSE if self.now_action == 1 else 0)
                 self.colored(screen, y, x + 6, ">|", "accent" if self.now_action == 2 else "soft",
@@ -825,22 +838,12 @@ class App:
             index = NOW_ACTION_ROWS.index(menu_row)
             label, shortcut = NOW_ACTIONS[index]
             if index == 0: label = "Pause" if p.get("state") == "play" else "Play"
-            if index == 4: label = "Seek ↓"
             mark = "▸ " if index == self.now_action else "  "
             self.colored(screen, y, x, compact(mark + label, avail),
                          "green" if index == 0 and p.get("state") == "play" else "accent" if index == self.now_action else "soft",
                          curses.A_REVERSE if index == self.now_action else 0)
-        seek_width = min(30, max(4, avail - 12))
-        try:
-            fraction = max(0.0, min(1.0, float(elapsed) / float(duration))) if duration else 0.0
-        except (TypeError, ValueError, ZeroDivisionError):
-            fraction = 0.0
-        filled = round(fraction * seek_width)
-        seek_style = curses.A_REVERSE if self.now_action == 4 else 0
-        self.colored(screen, bottom - 2, x, "Seek ", "accent", seek_style)
-        self.colored(screen, bottom - 2, x + 5, "━" * filled, "fmt_48", seek_style)
-        self.colored(screen, bottom - 2, x + 5 + filled, "─" * (seek_width - filled), "muted", seek_style)
-        self.colored(screen, bottom - 2, x + 5 + seek_width, "  ← →", "soft", seek_style)
+        if cover_w:
+            self.colored(screen, bottom - 2, 1, "─" * max(0, x - 3), "muted")
         drc = (self.now_state.get("drc") or {})
         self.colored(screen, drc_row, x, compact(drc_summary(drc), avail),
                      "green" if drc.get("running") else "muted" if drc.get("running") is False else "yellow")
@@ -1252,7 +1255,8 @@ class App:
     def now_key(self, key, screen):
         if key in (curses.KEY_UP, curses.KEY_DOWN):
             step = -1 if key == curses.KEY_UP else 1
-            self.now_action = max(0, min(len(NOW_ACTIONS) - 1, self.now_action + step))
+            position = NOW_ACTION_ORDER.index(self.now_action)
+            self.now_action = NOW_ACTION_ORDER[max(0, min(len(NOW_ACTION_ORDER) - 1, position + step))]
             self.message = "↑↓ select · Enter activate"
             return
         if key in (10, 13):
