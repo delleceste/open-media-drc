@@ -828,7 +828,7 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-act .btn.qz-more-menu { color: var(--muted); font-size: 1.3rem; line-height: 1; }
 .qz-tracks { grid-column: 1 / -1; }
 /* the grid (pages/qobuz.js P.tile): covers in columns, small text under each */
-.qz-list.qz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.6rem, 1fr)); gap: .75rem .6rem; }
+.qz-list.qz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 8rem), 10rem)); gap: .75rem .6rem; }
 .fav-page { padding: .8rem; }
 .fav-head { display: flex; align-items: center; gap: .7rem; margin-bottom: .7rem; }
 .fav-head strong { flex: 1; font-size: 1.15rem; }
