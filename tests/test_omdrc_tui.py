@@ -356,7 +356,7 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 20)
             calls[0][1]()
             app.draw_library(Screen(), 20)
-        render.assert_called_once_with('https://example.test/large.jpg', 10, 3, True)
+        render.assert_called_once_with('https://example.test/large.jpg', 20, 8, True)
         color.assert_called_with(196, 21)
         self.assertTrue(any(args[3] == '▀' and args[4] == 42 for args in painted))
 

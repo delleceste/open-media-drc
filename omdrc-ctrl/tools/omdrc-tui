@@ -859,7 +859,9 @@ class App:
                          curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 else 0)
         first_result = 8 if self.tab == 0 else 6
         self.colored(screen, first_result - 1, result_x, "─" * result_width, "muted")
-        block_height = 3
+        cover_height = min(8, max(4, bottom - first_result - 2)) if self.tab == 1 else 3
+        cover_width = 20 if self.tab == 1 and result_width >= 48 else 12 if self.tab == 1 else 10
+        block_height = cover_height + 1 if self.tab == 1 else 3
         visible = max(0, (bottom - 1 - first_result) // block_height)
         if self.row < self.scroll: self.scroll = self.row
         if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
@@ -873,8 +875,8 @@ class App:
                              "accent" if index == self.row else "muted", selected)
                 continue
             art = item.get("image_large") or item.get("image") or ""
-            art_width = 10 if art and result_width >= 30 else 0
-            if art_width: self.draw_list_cover(screen, art, result_x, y)
+            art_width = cover_width if art and result_width >= cover_width + 20 else 0
+            if art_width: self.draw_list_cover(screen, art, result_x, y, cover_width, cover_height)
             x = result_x + (art_width + 2 if art_width else 0)
             text_width = result_width - (x - result_x)
             artist = clean(item.get("artist"))
@@ -890,17 +892,18 @@ class App:
             if quality: details.append(quality)
             self.colored(screen, title_y + 1, x, compact(" · ".join(details), text_width), tier or "muted", selected)
 
-    def draw_list_cover(self, screen, art, left, top):
-        if art not in self.list_covers:
-            self.list_covers[art] = None
+    def draw_list_cover(self, screen, art, left, top, width, height):
+        key = (art, width, height)
+        if key not in self.list_covers:
+            self.list_covers[key] = None
             def accept(lines):
-                self.list_covers[art] = lines
-            self.submit("list-cover-" + art, lambda: self.render_cover(art, 10, 3, True), accept)
-        for row, runs in enumerate((self.list_covers.get(art) or [])[:3]):
+                self.list_covers[key] = lines
+            self.submit("list-cover-" + str(key), lambda: self.render_cover(art, width, height, True), accept)
+        for row, runs in enumerate((self.list_covers.get(key) or [])[:height]):
             col = left
             for value, fg, bg in runs:
-                if col >= left + 10: break
-                self.text(screen, top + row, col, value[:left + 10 - col], self.cover_style(fg, bg))
+                if col >= left + width: break
+                self.text(screen, top + row, col, value[:left + width - col], self.cover_style(fg, bg))
                 col += len(value)
 
     def draw_now(self, screen, bottom):
