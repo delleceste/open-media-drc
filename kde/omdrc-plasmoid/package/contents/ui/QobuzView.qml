@@ -163,6 +163,10 @@ Item {
         error = ""; message = ""
         loadTab()
     }
+    function setResultSort(newest) {
+        sort = newest ? "date" : "relevance"
+        if (tab === "results" && (query.trim() || selectedLabels.length) && !aiMode) search(0)
+    }
     function applyRequestedView() {
         if (!visible) return
         if (app.simpleSearchAnswer && appliedSimpleAnswer !== app.simpleSearchAnswer) {
@@ -236,6 +240,12 @@ Item {
                 text: view.query
                 onTextEdited: view.query = text
                 onAccepted: view.search(0)
+                Keys.onDownPressed: {
+                    if (albumList.count) {
+                        albumList.currentIndex = Math.max(0, albumList.currentIndex)
+                        albumList.forceActiveFocus()
+                    }
+                }
             }
             PlasmaComponents.ToolButton {
                 icon.name: "edit-find"
@@ -340,8 +350,17 @@ Item {
                     text: modelData.name
                     checkable: true
                     checked: view.tab === modelData.id
+                    palette.buttonText: modelData.id === "results" ? "white" : Kirigami.Theme.linkColor
                     onClicked: view.setTab(modelData.id)
                 }
+            }
+            Item { Layout.fillWidth: true }
+            QQC2.CheckBox {
+                visible: view.tab === "results" && !view.aiMode
+                text: i18n("Newest first")
+                checked: view.sort === "date"
+                enabled: !view.busy
+                onClicked: view.setResultSort(checked)
             }
         }
         RowLayout {
@@ -398,38 +417,43 @@ Item {
             color: view.error ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
             wrapMode: Text.Wrap
         }
-        QQC2.ScrollView {
-            id: albumScroll
+        ListView {
+            id: albumList
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            ColumnLayout {
-                width: albumScroll.availableWidth
-                spacing: Kirigami.Units.smallSpacing
-                Repeater {
-                    model: view.shown
-                    delegate: AlbumCard {
-                        required property var modelData
-                        Layout.fillWidth: true
-                        app: view.app
-                        album: modelData
-                        compact: view.tab === "recent"
-                        bigCover: view.tab === "discover"
-                        query: view.tab === "results" ? view.query : ""
-                        canPlay: view.usable || modelData.source === "local"
-                        onPlayed: (mode) => view.notice(mode === "append" ? i18n("Added to queue") : i18n("Playing"))
-                    }
-                }
-                PlasmaComponents.ToolButton {
-                    visible: view.more && (view.tab === "results" || view.tab === "discover")
-                    text: view.tab === "results" ? i18n("Load more results") : i18n("More releases")
-                    onClicked: view.tab === "results" ? view.search(view.nextScan) : view.loadTab(view.nextOffset)
-                }
-                PlasmaComponents.Label {
-                    visible: !view.busy && !view.shown.length && view.error === ""
-                    text: view.tab === "results" ? i18n("Search for albums") : i18n("No albums here yet")
-                }
+            spacing: Kirigami.Units.smallSpacing
+            model: view.shown
+            keyNavigationEnabled: true
+            highlightFollowsCurrentItem: true
+            QQC2.ScrollBar.vertical: QQC2.ScrollBar {}
+            delegate: AlbumCard {
+                required property var modelData
+                required property int index
+                width: albumList.width - Kirigami.Units.smallSpacing * 2
+                app: view.app
+                album: modelData
+                compact: view.tab === "recent"
+                resultEntry: view.tab === "results"
+                bigCover: view.tab === "discover"
+                selected: view.tab === "results" && albumList.activeFocus && albumList.currentIndex === index
+                query: view.tab === "results" ? view.query : ""
+                canPlay: view.usable || modelData.source === "local"
+                onSelectedByUser: { albumList.currentIndex = index; albumList.forceActiveFocus() }
+                onPlayed: (mode) => view.notice(mode === "append" ? i18n("Added to queue") : i18n("Playing"))
             }
+            footer: PlasmaComponents.ToolButton {
+                visible: view.more && (view.tab === "results" || view.tab === "discover")
+                text: view.tab === "results" ? i18n("Load more results") : i18n("More releases")
+                onClicked: view.tab === "results" ? view.search(view.nextScan) : view.loadTab(view.nextOffset)
+            }
+            Keys.onReturnPressed: if (currentItem && view.tab === "results") currentItem.play("replace", "")
+            Keys.onEnterPressed: if (currentItem && view.tab === "results") currentItem.play("replace", "")
+        }
+        PlasmaComponents.Label {
+            Layout.fillWidth: true
+            visible: !view.busy && !view.shown.length && view.error === ""
+            text: view.tab === "results" ? i18n("Search for albums") : i18n("No albums here yet")
         }
     }
 
