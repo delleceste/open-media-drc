@@ -96,14 +96,25 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 80)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_nav(Screen(), 17)
-        self.assertEqual([args[1] for args in painted], [16, 16, 16, 16, 23])
-        self.assertEqual(painted[-1][2], 1)
+        self.assertEqual([args[1] for args in painted], [16, 16, 16, 16, 21])
+        self.assertEqual(painted[-1][2], 80 - len("☷") - 2)
+        for settings, expected_row in (
+            ({"levels": True, "balance": True, "dr": False}, 20),
+            ({"levels": True, "balance": False, "dr": False}, 19),
+            ({"levels": False, "balance": True, "dr": False}, 18),
+            ({"levels": False, "balance": False, "dr": True}, 18),
+        ):
+            app.config.update(settings)
+            painted.clear()
+            with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+                app.draw_nav(Screen(), 17)
+            self.assertEqual(painted[-1][1], expected_row)
         app.config.update(levels=False, dr=False, balance=False)
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_nav(Screen(), 21)
         self.assertEqual([args[1] for args in painted], [20] * 5)
-        self.assertEqual(painted[-1][2], 80 - len("v Visibility") - 2)
+        self.assertEqual(painted[-1][2], 80 - len("☷") - 2)
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_live(Screen(), 21)

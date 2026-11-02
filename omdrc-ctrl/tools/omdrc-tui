@@ -43,7 +43,7 @@ NOW_ACTION_ROWS = (0, 1, 1, 2, 3, 5, 6, 7, 8, 9, 10)
 NOW_MENU_TOP = 7
 PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
             ("F3 Room correction", "DRC"), ("F4 Config", "Config"),
-            ("v Visibility", "Visibility"))
+            ("☷", "Visibility"))
 
 
 def research_rows(body, width):
@@ -301,6 +301,7 @@ class App:
         self.events = queue.SimpleQueue()
         self.pending = set()
         self.page = "Now"
+        self.visibility_back = "Now"
         self.tab = 0
         self.rows = []
         self.row = 0
@@ -517,6 +518,7 @@ class App:
                 if callback: callback(value)
 
     def switch(self, page):
+        if page == "Visibility" and self.page != "Visibility": self.visibility_back = self.page
         if self.page == "Research" and page != "Research": self.research_setup_pending = False
         self.page = page
         if page == "Now":
@@ -611,11 +613,16 @@ class App:
         elif self.page == "Research": self.draw_research(screen, bottom)
         elif self.page == "Album": self.draw_album(screen, bottom)
         elif self.page == "Config": self.draw_config(screen, bottom)
-        elif self.page == "Visibility": self.draw_visibility(screen, bottom)
+        elif self.page == "Visibility":
+            if self.visibility_back == "Library": self.draw_library(screen, bottom)
+            elif self.visibility_back == "DRC": self.draw_drc(screen, bottom)
+            elif self.visibility_back == "Config": self.draw_config(screen, bottom)
+            elif self.visibility_back == "Album": self.draw_album(screen, bottom)
+            else: self.draw_now(screen, bottom)
         if not zoom: self.draw_live(screen, bottom)
         if not zoom: self.draw_nav(screen, bottom)
-        status = compact(self.message, width - len(PAGE_NAV[-1][0]) - 5)
-        self.colored(screen, height - 1, width - len(status) - 2, status, "accent", curses.A_REVERSE)
+        if self.page == "Visibility": self.draw_visibility(screen, bottom)
+        self.colored(screen, height - 1, 1, compact(self.message, width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
             left, top = self.sixel_target
@@ -628,8 +635,8 @@ class App:
         live_visible = any(self.config[key] for key in ("levels", "dr", "balance"))
         x = 2
         for index, (label, page) in enumerate(PAGE_NAV):
-            y = (height - 1 if live_visible else bottom - 1) if page == "Visibility" else bottom - 1
-            position = (1 if live_visible else width - len(label) - 2) if page == "Visibility" else x
+            y = (bottom + 1 + 2 * int(self.config["levels"]) + int(self.config["balance"]) + int(self.config["dr"]) - 1) if live_visible and page == "Visibility" else bottom - 1
+            position = width - len(label) - 2 if page == "Visibility" else x
             if position < 1 or position + len(label) >= width - 1: continue
             self.colored(screen, y, position, label,
                          "accent" if self.page == page or self.nav_focus and self.nav_index == index else "soft",
@@ -871,10 +878,15 @@ class App:
         for y, line in enumerate(lines, 2): self.colored(screen, y, 2, line, "accent" if y == 2 else "muted" if y == 12 else "green" if "On" in line else "accent")
 
     def draw_visibility(self, screen, bottom):
-        self.colored(screen, 2, 2, "Moving parts · visibility", "accent", curses.A_BOLD)
-        for y, (key, label) in enumerate((("levels", "Level bars"), ("dr", "DR loudness bar"), ("balance", "Balance bubble")), 4):
-            self.colored(screen, y, 2, f"[{y-3}] {label}: {'shown' if self.config[key] else 'hidden'}", "green" if self.config[key] else "muted")
-        self.text(screen, 9, 2, "Esc closes this menu")
+        _, width = screen.getmaxyx()
+        left = width - 33
+        rows = (("levels", "Level bars"), ("dr", "DR loudness"), ("balance", "Balance"))
+        self.colored(screen, bottom - 5, left, "┌" + "─" * 29 + "┐", "accent")
+        self.colored(screen, bottom - 4, left, "│ Visibility            Esc │", "accent")
+        for index, (key, label) in enumerate(rows, 1):
+            self.colored(screen, bottom - 4 + index, left,
+                         f"│ {index} {label:<16} {'on ' if self.config[key] else 'off'} │", "green" if self.config[key] else "muted")
+        self.colored(screen, bottom, left, "└" + "─" * 29 + "┘", "accent")
 
     def draw_live(self, screen, bottom):
         h, w = screen.getmaxyx()
@@ -980,7 +992,7 @@ class App:
                 name = ("levels", "dr", "balance")[key - ord("1")]
                 self.config[name] = not self.config[name]; self.save()
                 if name == "dr" and self.config[name]: self.dr_paused = False
-            elif key == 27: self.switch("Now")
+            elif key == 27: self.switch(self.visibility_back)
             return
         if self.page == "Config":
             cycles = {ord("w"): ("dr_window", [60, 300, 900, 1800, 3600, 5400]),
