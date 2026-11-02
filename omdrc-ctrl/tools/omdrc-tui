@@ -354,6 +354,8 @@ class App:
         self.player = {}
         self.qstatus = {}
         self.last_art = ""
+        self.art_album_id = ""
+        self.art_large = ""
         self.drc = {}
         self.now_state = {}
         self.measure = None
@@ -555,7 +557,7 @@ class App:
         if now - self.last_player > 3:
             self.last_player = now
             self.submit("player", lambda: self.api.request("/k/api/player"), lambda d: setattr(self, "player", d))
-            self.submit("qstatus", lambda: self.api.request("/qconnect/status"), lambda d: setattr(self, "qstatus", d))
+            self.submit("qstatus", lambda: self.api.request("/qconnect/status"), self.update_qstatus)
             self.submit("now-state", lambda: self.api.request("/now"), lambda d: setattr(self, "now_state", d))
         if self.page == "DRC" and now - self.last_drc > 5:
             self.last_drc = now
@@ -733,8 +735,24 @@ class App:
                                "konsole" in env.get("TERM", "").lower()) else "symbols"
         return choice if choice in ("sixel", "symbols") else "symbols"
 
+    def update_qstatus(self, status):
+        self.qstatus = status
+        album_id = str(status.get("qobuz_album") or "")
+        if album_id and album_id != self.art_album_id:
+            self.art_album_id = album_id
+            self.art_large = ""
+            def accept(data):
+                if self.art_album_id == album_id:
+                    self.art_large = data.get("album", {}).get("image_large") or ""
+            self.submit("album-art-" + album_id,
+                        lambda: self.api.request("/qobuz/album/" + urllib.parse.quote(album_id)), accept)
+
     def current_art(self):
+        if self.qstatus.get("playback_state") == "stop" and self.last_art:
+            return self.last_art
         art = self.qstatus.get("art") or (self.now_state.get("music") or {}).get("art") or ""
+        if art and self.art_large and str(self.qstatus.get("qobuz_album") or "") == self.art_album_id:
+            art = self.art_large
         if art: self.last_art = art
         return art or self.last_art
 

@@ -43,6 +43,25 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.footer_status(40), '■ Stopped')
         self.assertEqual(app.qstatus['art'], '/qconnect/art?v=1')
 
+    def test_cover_remains_after_album_finishes_until_another_cover_arrives(self):
+        app = tui.App('http://localhost:9090')
+        app.qstatus = {'art': '/cover/first'}
+        self.assertEqual(app.current_art(), '/cover/first')
+        app.qstatus = {}
+        app.now_state = {'music': {}}
+        self.assertEqual(app.current_art(), '/cover/first')
+        app.now_state = {'music': {'art': '/cover/second'}}
+        self.assertEqual(app.current_art(), '/cover/second')
+
+    def test_now_cover_uses_large_qobuz_image_and_retains_it_at_stop(self):
+        app = tui.App('http://localhost:9090')
+        with patch.object(app, 'submit', side_effect=lambda key, work, callback: callback({
+                'album': {'image_large': 'https://static.qobuz.com/large.jpg'}})):
+            app.update_qstatus({'art': '/qconnect/art?v=1', 'qobuz_album': '123'})
+        self.assertEqual(app.current_art(), 'https://static.qobuz.com/large.jpg')
+        app.update_qstatus({})
+        self.assertEqual(app.current_art(), 'https://static.qobuz.com/large.jpg')
+
     def test_drc_status_aligns_with_cover_bottom(self):
         app = tui.App('http://localhost:9090')
         app.qstatus = {'art': '/cover'}
