@@ -21,7 +21,7 @@ Item {
     // In a horizontal panel, paused: the cover and the controls, always shown,
     // in place of the panes that would move.
     readonly property bool pausedPanel: horizontalPanel && app.animationsPaused && app.wantsLevels
-    readonly property bool controlsShown: hover.hovered || pausedPanel
+    readonly property bool controlsShown: hover.hovered
     readonly property bool spectrumSplit: app.spectrumSplit
 
     function toggleSpectrumLayout() { app.setConfig("spectrumSplit", !spectrumSplit) }
@@ -38,14 +38,15 @@ Item {
     readonly property bool editing: !!(panel && Plasmoid.containment
                                      && Plasmoid.containment.corona.editMode)
     readonly property string meterStyle: app.meterStyle
-    readonly property bool bottomMeters: !compact && app.page === "cover" && (app.showDr || app.showBalance)
+    readonly property bool bottomMeters: !compact && !app.animationsPaused && app.page === "cover" && (app.showDr || app.showBalance)
     readonly property bool coverBehind: app.coverMode === "background" && panes.some(p => p !== "cover")
     // On the desktop and in the popup, with cover, meters and spectrum all on:
     // the cover fills the left 10 columns of a 16-column grid; the right 6
     // hold meters above spectrum. DR and balance span the bottom row.
-    readonly property bool grid: !compact && !panel && app.coverMode === "pane"
+    readonly property bool grid: !compact && !panel && !app.animationsPaused && app.coverMode === "pane"
                                  && meterStyle !== "off" && app.showSpectrum
-    readonly property var panes: pausedPanel ? ["cover"] : playingPanes
+    readonly property var panes: pausedPanel || (!compact && !panel && app.animationsPaused)
+                                 ? ["cover"] : playingPanes
     readonly property var playingPanes: {
         const list = []
         if (app.coverMode === "pane") list.push("cover")
@@ -430,15 +431,16 @@ Item {
     }
 
     // One line over a pane that would move with the music, while it is held still.
-    // In the panel, paused: said beside the controls, where it fits.
+    // The paused panel uses the space beside the cover for track details;
+    // hovering replaces them with the usual controls.
     PlasmaComponents.Label {
-        readonly property real startX: controls.x + coverHoverZone.width + 2 + panelActionsBox.width + Kirigami.Units.smallSpacing
-        x: startX
-        anchors.verticalCenter: controls.verticalCenter
-        visible: face.pausedPanel && !face.editing && startX + implicitWidth <= face.width - face.inset
-        text: i18n("Animations paused")
+        x: coverHoverZone.x + coverHoverZone.width + Kirigami.Units.smallSpacing
+        anchors.verticalCenter: coverHoverZone.verticalCenter
+        width: Math.max(0, face.width - x - face.inset)
+        visible: face.pausedPanel && !face.editing && !hover.hovered
+        text: [face.app.player.artist, face.app.player.title].filter(s => s).join(" / ")
         font: Kirigami.Theme.smallFont
-        opacity: 0.8
+        elide: Text.ElideRight
     }
 
     // The animations button, while paused: lit, so the state shows at a glance.
