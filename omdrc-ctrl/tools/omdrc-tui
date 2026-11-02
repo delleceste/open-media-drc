@@ -31,7 +31,8 @@ CONFIG_PATH = Path.home() / ".config" / "omdrc-tui" / "config.json"
 DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "balance": True, "dr_window": 60, "dr_per_song": True,
             "dr_keep_minutes": 5, "balance_window": 15, "cover": True,
-            "theme": "auto", "cover_mode": "auto", "search_sort": "relevance"}
+            "theme": "auto", "cover_mode": "auto", "search_sort": "relevance",
+            "library_delay": 1.0}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
 NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
                ("Next track", "]"), ("Stop", "s"), ("Seek", "g"),
@@ -41,7 +42,7 @@ NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
 NOW_ACTION_ROWS = (0, 2, 2, 3, 1, 5, 6, 7, 8, 9, 10)
 NOW_ACTION_ORDER = (0, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10)
 NOW_MENU_TOP = 7
-CONFIG_KEYS = "uzc pwtkba".replace(" ", "")
+CONFIG_KEYS = "uzcpwtkbda"
 PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
             ("F3 Room correction", "DRC"), ("F4 Config", "Config"))
 ALBUM_ACTIONS = (("F5 Play", "green", "p"), ("F6 Add", "fmt_hires", "a"),
@@ -100,7 +101,7 @@ def album_quality(item):
 
 def same_name(name, query):
     """Whether the searched words already name this artist."""
-    fold = lambda value: " ".join(re.findall(r"\w+", clean(value).casefold()))
+    fold = lambda value: " ".join(clean(value).casefold().split())
     name = fold(name)
     return bool(name) and f" {name} " in f" {fold(query)} "
 
@@ -326,8 +327,13 @@ class App:
         self.tab = 0
         self.library_sidebar_focus = True
         self.library_sidebar_index = 0
+        self.library_right_index = 0
+        self.library_auto_due = None
+        self.library_auto_tab = None
+        self.list_generation = 0
         self.config_index = 0
         self.rows = []
+        self.list_covers = {}
         self.row = 0
         self.scroll = 0
         self.query = ""
@@ -439,6 +445,9 @@ class App:
         future.add_done_callback(done)
 
     def fetch_list(self, append=False):
+        self.library_auto_due = None
+        self.list_generation += 1
+        generation = self.list_generation
         tab = TABS[self.tab]
         query = self.query.strip()
         params = {}
@@ -464,7 +473,7 @@ class App:
         else:
             path = "/qobuz/review"
         def apply(data):
-            if tab != TABS[self.tab]: return
+            if generation != self.list_generation or tab != TABS[self.tab]: return
             if tab == "Favourites" and not self.folder:
                 rows = [{"kind": "folder", **f} for f in data.get("folders", [])]
                 rows += data.get("albums", [])
@@ -478,10 +487,30 @@ class App:
             self.more = bool(data.get("more"))
             self.offset = data.get("next_offset", data.get("next_scan", 0))
             self.message = f"{len(self.rows)} items" + (" · more available (m)" if self.more else "")
-        self.submit("list", lambda: self.api.request(path, params), apply)
+        self.submit(f"list-{generation}", lambda: self.api.request(path, params), apply)
+
+    def select_library_tab(self, index, immediate=False):
+        changed = index != self.tab
+        self.tab = index
+        self.library_sidebar_index = index
+        if changed:
+            self.folder = ""
+            self.rows = []
+            self.row = self.scroll = 0
+            self.more = False
+            self.list_generation += 1
+        if immediate or index not in (1, 2) or self.config.get("library_delay", 1.0) == 0:
+            self.fetch_list()
+        elif changed or self.library_auto_due is None:
+            self.library_auto_tab = index
+            self.library_auto_due = time.monotonic() + float(self.config.get("library_delay", 1.0))
 
     def poll(self):
         now = time.monotonic()
+        if self.page == "Library" and self.library_auto_due is not None and now >= self.library_auto_due:
+            tab = self.library_auto_tab
+            self.library_auto_due = None
+            if tab == self.tab: self.fetch_list()
         if now - self.last_player > 3:
             self.last_player = now
             self.submit("player", lambda: self.api.request("/k/api/player"), lambda d: setattr(self, "player", d))
@@ -571,6 +600,7 @@ class App:
 
     def switch(self, page):
         if self.page == "Research" and page != "Research": self.research_setup_pending = False
+        if self.page == "Library" and page != "Library": self.library_auto_due = None
         self.page = page
         if page == "Now":
             self.away_at = self.keep_prompt_at = None
@@ -718,60 +748,72 @@ class App:
             self.colored(screen, 2 + index, 1, compact(label, divider - 2),
                          "accent" if index == self.tab else "soft",
                          curses.A_REVERSE if self.library_sidebar_focus and index == self.library_sidebar_index else 0)
-        filter_label = "f Filters  / Search" if self.tab == 0 else "f Filters" if self.tab == 1 else "/ Search" if self.tab in (2, 3, 4) else "x Edit review"
-        self.colored(screen, 8, 1, filter_label, "accent",
-                     curses.A_REVERSE if self.library_sidebar_focus and self.library_sidebar_index == len(TABS) else 0)
-        self.colored(screen, 9, 1, "↑↓ menu  → results", "muted")
-        self.colored(screen, 10, 1, "p Play  a Add  h Fav", "soft")
-        self.colored(screen, 11, 1, "b Later  m More  r Reload", "soft")
+        self.colored(screen, 8, 1, "─" * (divider - 2), "muted")
+        self.colored(screen, 9, 1, "p Play  a Add  h Fav", "soft")
+        self.colored(screen, 10, 1, "b Later  m More", "soft")
+        self.colored(screen, 11, 1, "r Reload" + ("  x Edit" if self.tab == 5 else ""), "soft")
+        self.colored(screen, 2, result_x, TABS[self.tab], "accent", curses.A_BOLD)
         if self.tab == 0:
+            first_control = f"Search: {self.query or 'all'}  ·  Enter edit"
+        elif self.tab == 1:
+            first_control = f"Genre: {self.filters['genre'] or 'Any'}  ·  Enter edit"
+        elif self.tab in (2, 3, 4):
+            first_control = f"Search: {self.query or 'all'}  ·  Enter edit"
+        else:
+            first_control = "Review later"
+        self.colored(screen, 3, result_x, compact(first_control, result_width), "accent",
+                     curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 0 else 0)
+        if self.tab in (0, 1):
             f = self.filters
             active = [key for key in ("label", "from", "to", "awarded", "hires", "local") if f[key]]
-            title = [("Search: ", "bright", 0), (self.query or "all", "green", 0), ("  / edit  ·  ", "muted", 0),
-                     ("Sort: ", "bright", 0), (f["sort"], "orange" if f["sort"] != "relevance" else "bright", 0),
-                     ("  (s)  ·  ", "muted", 0), ("Filters: ", "bright", 0),
-                     (", ".join(active) or "none", "orange" if active else "bright", 0)]
-        elif self.tab == 1:
-            title = f"Discover · Genre: {self.filters['genre'] or 'Any'}  ·  f edit"
-        elif self.tab in (2, 3, 4):
-            title = f"{TABS[self.tab]}: {self.query or 'all'}  ·  / edit"
-        else:
-            title = f"{TABS[self.tab]} · {self.folder or '/'}"
-        if self.tab == 0:
-            f = self.filters
-            details = (f"Labels: {', '.join(f['label']) or 'Any'}", f"Dates: {f['from'] or 'Any'}–{f['to'] or 'Any'}",
-                       f"Awarded {int(f['awarded'])} · Hi-res {int(f['hires'])} · Local {int(f['local'])}")
-        elif self.tab == 1:
-            details = (f"Genre: {self.filters['genre'] or 'Any'}",)
-        else:
-            details = ()
-        for y, detail in enumerate(details, 12):
-            if y >= bottom - 1: break
-            self.colored(screen, y, 1, compact(detail, divider - 2), "muted")
-        if isinstance(title, list): self.segments(screen, 2, result_x, title, result_width)
-        else: self.colored(screen, 2, result_x, compact(title, result_width), "accent")
-        self.colored(screen, 3, result_x, "─" * result_width, "muted")
-        first_result = 4
-        visible = max(0, bottom - 1 - first_result)
+            summary = ", ".join(active) or "none"
+            if self.tab == 0: summary = f"{f['sort']} · {summary}"
+            self.colored(screen, 4, result_x, compact(f"Filters: {summary}  ·  Enter edit", result_width), "accent",
+                         curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 else 0)
+        self.colored(screen, 5, result_x, "─" * result_width, "muted")
+        first_result = 6
+        block_height = 3
+        visible = max(0, (bottom - 1 - first_result) // block_height)
         if self.row < self.scroll: self.scroll = self.row
         if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
-        for y, index in enumerate(range(self.scroll, min(len(self.rows), self.scroll + visible)), first_result):
+        for index in range(self.scroll, min(len(self.rows), self.scroll + visible)):
+            y = first_result + (index - self.scroll) * block_height
             item = self.rows[index]
             selected = curses.A_REVERSE if index == self.row else 0
             if item.get("kind") == "folder":
                 self.colored(screen, y, result_x, compact("▸ " + item.get("path", ""), result_width),
                              "accent" if index == self.row else "muted", selected)
                 continue
-            parts = [("★ ", "green", 0)] if item.get("rating") else []
-            parts.append((clean(item.get("title") or "—"), "bright", curses.A_BOLD))
+            art = item.get("image") or ""
+            art_width = 10 if art and result_width >= 30 else 0
+            if art_width: self.draw_list_cover(screen, art, result_x, y)
+            x = result_x + (art_width + 2 if art_width else 0)
+            text_width = result_width - (x - result_x)
             artist = clean(item.get("artist"))
-            if artist and not (self.tab == 0 and same_name(artist, self.query)):
-                parts.append((" — " + artist, "soft", 0))
-            if item.get("year"): parts.append(("  " + str(item["year"]), "year", 0))
-            if item.get("label"): parts.append(("  " + clean(item["label"]), "muted", getattr(curses, "A_ITALIC", 0)))
+            show_artist = bool(artist) and not (self.tab == 0 and same_name(artist, self.query))
+            title_y = y + int(show_artist)
+            if show_artist: self.colored(screen, y, x, compact(artist, text_width), "soft", selected)
+            title = ("★ " if item.get("rating") else "") + clean(item.get("title") or "—")
+            self.colored(screen, title_y, x, compact(title, text_width), "bright", selected | curses.A_BOLD)
+            details = []
+            if item.get("year"): details.append(str(item["year"]))
+            if item.get("label"): details.append(clean(item["label"]))
             quality, tier = album_quality(item)
-            if quality: parts.append(("  " + quality, tier, 0))
-            self.segments(screen, y, result_x, parts, result_width, selected)
+            if quality: details.append(quality)
+            self.colored(screen, title_y + 1, x, compact(" · ".join(details), text_width), tier or "muted", selected)
+
+    def draw_list_cover(self, screen, art, left, top):
+        if art not in self.list_covers:
+            self.list_covers[art] = None
+            def accept(lines):
+                self.list_covers[art] = lines
+            self.submit("list-cover-" + art, lambda: self.render_cover(art, 10, 3, False), accept)
+        for row, runs in enumerate((self.list_covers.get(art) or [])[:3]):
+            col = left
+            for value, _, _ in runs:
+                if col >= left + 10: break
+                self.text(screen, top + row, col, value[:left + 10 - col])
+                col += len(value)
 
     def draw_now(self, screen, bottom):
         h, w = screen.getmaxyx()
@@ -1000,6 +1042,7 @@ class App:
                 ("DR mode", "per song" if c["dr_per_song"] else "continuous"),
                 ("DR away period", f"{c['dr_keep_minutes']} min"),
                 ("Balance window", f"{c['balance_window']} s"),
+                ("Library delay", f"{c.get('library_delay', 1.0):g} s"),
                 ("AI provider", f"{self.ai_settings.get('provider', 'checking…')} · {'ready' if self.ai_settings.get('configured') else 'setup needed'}"))
         _, width = screen.getmaxyx()
         self.colored(screen, 2, 2, "Configuration  ·  ↑↓ choose  Enter change", "accent", curses.A_BOLD)
@@ -1133,6 +1176,10 @@ class App:
                 self.config["theme"] = choices[(choices.index(current) + 1) % len(choices)] if current in choices else "auto"
                 self.configure_colors()
                 self.cover_key = None
+            elif key == ord("d"):
+                delays = (0, 0.5, 1, 2, 3)
+                current = self.config.get("library_delay", 1.0)
+                self.config["library_delay"] = delays[(delays.index(current) + 1) % len(delays)] if current in delays else 1.0
             elif key == ord("a"):
                 self.open_ai_setup()
             elif key == ord("u"):
@@ -1170,42 +1217,63 @@ class App:
         elif self.page == "DRC" and key == ord("r"): self.last_drc = 0
 
     def library_key(self, key, screen):
+        if key == 9:
+            if self.library_sidebar_focus:
+                self.library_sidebar_focus = False
+                self.library_right_index = 1 if self.tab == 5 else 0
+            elif self.library_right_index == 0 and self.tab in (0, 1):
+                self.library_right_index = 1
+            elif self.library_right_index < (2 if self.tab in (0, 1) else 1):
+                self.library_right_index = 2 if self.tab in (0, 1) else 1
+            else:
+                self.library_sidebar_focus = True
+            return
         if key == curses.KEY_LEFT:
             self.library_sidebar_focus = True; return
         if key == curses.KEY_RIGHT:
-            self.library_sidebar_focus = False; return
+            self.library_sidebar_focus = False; self.library_right_index = 1 if self.tab == 5 else 0; return
         if self.library_sidebar_focus and key in (curses.KEY_UP, curses.KEY_DOWN):
             step = -1 if key == curses.KEY_UP else 1
-            self.library_sidebar_index = max(0, min(len(TABS), self.library_sidebar_index + step))
+            selected = max(0, min(len(TABS) - 1, self.library_sidebar_index + step))
+            if selected != self.library_sidebar_index:
+                self.select_library_tab(selected)
             return
         if self.library_sidebar_focus and key in (10, 13):
-            if self.library_sidebar_index == len(TABS):
-                key = ord("f") if self.tab in (0, 1) else ord("/") if self.tab in (2, 3, 4) else ord("x")
-            elif self.library_sidebar_index < len(TABS):
-                selected = self.library_sidebar_index
-                if selected == 0 and self.tab == 0:
-                    key = ord("/")
-                else:
-                    self.tab = selected
-                    self.folder = ""; self.fetch_list(); return
+            if self.library_sidebar_index == 0 and self.tab == 0:
+                key = ord("/")
             else:
+                self.select_library_tab(self.library_sidebar_index, immediate=True)
                 return
+        if not self.library_sidebar_focus and key in (curses.KEY_UP, curses.KEY_DOWN):
+            result_index = 2 if self.tab in (0, 1) else 1
+            if self.library_right_index < result_index:
+                self.library_right_index = max(0, min(result_index, self.library_right_index + (1 if key == curses.KEY_DOWN else -1)))
+                return
+        if not self.library_sidebar_focus and key in (10, 13):
+            if self.library_right_index == 0:
+                if self.tab == 1:
+                    self.filters["genre"] = self.prompt(screen, "Genre (blank clears):").strip()
+                    self.fetch_list(); return
+                if self.tab in (0, 2, 3, 4): key = ord("/")
+                else: return
+            elif self.library_right_index == 1 and self.tab in (0, 1): key = ord("f")
         if key in (ord(str(i)) for i in range(1, 7)):
-            self.tab = key - ord("1"); self.library_sidebar_index = self.tab
-            self.folder = ""; self.fetch_list(); return
+            self.select_library_tab(key - ord("1"), immediate=True)
+            return
         if key == ord("/") and self.tab in (0, 2, 3, 4):
             self.query = self.prompt(screen, "Search:").strip()
             self.library_sidebar_focus = False
+            self.library_right_index = 2 if self.tab == 0 else 1
             self.fetch_list(); return
         if key == ord("f") and self.tab in (0, 1):
-            names = ("label", "from", "to", "sort", "awarded", "hires", "local", "genre")
-            labels = ("Labels", "From date", "To date", "Sort", "Awarded", "Hi-res", "Local", "Genre")
+            names = ("label", "from", "to", "sort", "awarded", "hires", "local")
+            labels = ("Labels", "From date", "To date", "Sort", "Awarded", "Hi-res", "Local")
             selected = 0
             screen.timeout(-1)
             try:
                 while True:
                     h, _ = screen.getmaxyx()
-                    for offset, group in enumerate((range(4), range(4, 8))):
+                    for offset, group in enumerate((range(4), range(4, 7))):
                         screen.move(h - 2 + offset, 0); screen.clrtoeol()
                         self.text(screen, h - 2 + offset, 1, "  ".join(
                             f"{'>' if i == selected else ' '}{i + 1} {labels[i]}" for i in group))
@@ -1213,15 +1281,15 @@ class App:
                     choice = screen.getch()
                     if choice in (curses.KEY_LEFT, curses.KEY_UP): selected = (selected - 1) % len(names)
                     elif choice in (curses.KEY_RIGHT, curses.KEY_DOWN): selected = (selected + 1) % len(names)
-                    elif ord("1") <= choice <= ord("8"): selected = choice - ord("1"); break
+                    elif ord("1") <= choice <= ord("7"): selected = choice - ord("1"); break
                     elif choice in (10, 13): break
                     elif choice == 27: return
             finally:
                 screen.timeout(100)
             name = names[selected]
             if name == "label": self.filters[name] = [x.strip() for x in self.prompt(screen, "Labels, comma separated:").split(",") if x.strip()]
-            elif name in ("from", "to", "genre"):
-                self.filters[name] = self.prompt(screen, name.title() + (" (Discover; blank clears):" if name == "genre" else " (blank clears):")).strip()
+            elif name in ("from", "to"):
+                self.filters[name] = self.prompt(screen, name.title() + " (blank clears):").strip()
             elif name == "sort": self.toggle_sort(); return
             elif name in ("awarded", "hires", "local"): self.filters[name] = not self.filters[name]
             self.fetch_list(); return

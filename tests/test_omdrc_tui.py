@@ -149,10 +149,71 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.query, 'Bach')
         self.assertFalse(app.library_sidebar_focus)
         app.library_key(tui.curses.KEY_LEFT, None)
-        for _ in range(len(tui.TABS)):
-            app.library_key(tui.curses.KEY_DOWN, None)
-        self.assertEqual(app.library_sidebar_index, len(tui.TABS))
+        with patch.object(app, "fetch_list"):
+            for _ in range(len(tui.TABS)):
+                app.library_key(tui.curses.KEY_DOWN, None)
+        self.assertEqual(app.library_sidebar_index, len(tui.TABS) - 1)
         self.assertTrue(app.library_sidebar_focus)
+
+    def test_discover_autoload_delay_and_enter_override(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.config['library_delay'] = 1
+        with patch.object(app, 'fetch_list') as fetch, patch.object(tui.time, 'monotonic', return_value=100):
+            app.library_key(tui.curses.KEY_DOWN, None)
+        self.assertEqual(app.tab, 1)
+        self.assertEqual(app.library_auto_due, 101)
+        fetch.assert_not_called()
+        with patch.object(app, 'fetch_list') as fetch, patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=100.9):
+            app.poll()
+            fetch.assert_not_called()
+        with patch.object(app, 'fetch_list') as fetch, patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=101):
+            app.poll()
+            fetch.assert_called_once()
+        with patch.object(app, 'fetch_list') as fetch:
+            app.library_key(10, None)
+            fetch.assert_called_once()
+
+    def test_favourites_selection_replaces_discover_timer(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        with patch.object(app, 'fetch_list') as fetch, patch.object(tui.time, 'monotonic', side_effect=[100, 100.4]):
+            app.library_key(tui.curses.KEY_DOWN, None)
+            app.library_key(tui.curses.KEY_DOWN, None)
+        self.assertEqual(app.tab, 2)
+        self.assertEqual(app.library_auto_due, 101.4)
+        with patch.object(app, 'fetch_list') as fetch, patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=101):
+            app.poll()
+            fetch.assert_not_called()
+        with patch.object(app, 'fetch_list') as fetch, patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=101.4):
+            app.poll()
+            fetch.assert_called_once()
+
+    def test_tab_focuses_genre_then_filters_then_results(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = app.library_sidebar_index = 1
+        app.library_key(9, None)
+        self.assertEqual((app.library_sidebar_focus, app.library_right_index), (False, 0))
+        app.library_key(9, None)
+        self.assertEqual(app.library_right_index, 1)
+        app.library_key(9, None)
+        self.assertEqual(app.library_right_index, 2)
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (20, 55)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 13)
+        self.assertEqual(sum('Genre:' in str(args[3]) for args in painted), 1)
+        self.assertTrue(any(args[1] == 4 and 'Filters:' in str(args[3]) for args in painted))
+
+    def test_config_cycles_library_delay(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Config'
+        app.config_index = 8
+        with patch.object(app, 'save'):
+            app.action(10, None)
+        self.assertEqual(app.config['library_delay'], 2)
 
     def test_library_sidebar_keeps_all_tabs_visible_at_minimum_size(self):
         app = tui.App('http://localhost:9090')
@@ -164,7 +225,7 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 13)
         tabs = [args for args in painted if args[2] == 1 and 2 <= args[1] <= 7]
         self.assertEqual(len(tabs), 6)
-        self.assertTrue(any(args[1] == 4 and args[2] == 29 and 'Example' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 7 and args[2] == 29 and 'Example' in args[3] for args in painted))
 
     def test_search_results_drop_searched_artist_and_show_quality(self):
         self.assertTrue(tui.same_name('Pink Floyd', 'pink floyd'))
@@ -182,12 +243,12 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 120)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 17)
-        row = [(args[3], args[4]) for args in painted if args[1] == 4 and args[2] >= 29]
-        self.assertEqual([text for text, _ in row], ['Animals', '  1977', '  Pink Floyd Records', '  24/192'])
-        self.assertEqual(row[-1][1], 'green')
-        header = {args[3]: args[4] for args in painted if args[1] == 2 and args[2] >= 29}
-        self.assertEqual(header['pink floyd'], 'green')
-        self.assertEqual(header['relevance'], 'bright')
+        title = [args for args in painted if args[1] == 6 and args[2] >= 29]
+        self.assertTrue(any(args[3] == 'Animals' for args in title))
+        details = [args for args in painted if args[1] == 7 and args[2] >= 29]
+        self.assertTrue(any('1977 · Pink Floyd Records · 24/192' in args[3] for args in details))
+        self.assertTrue(any(args[1] == 3 and 'pink floyd' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 4 and 'relevance' in args[3] for args in painted))
 
     def test_sort_shortcut_is_remembered(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(tui, 'CONFIG_PATH', Path(tmp) / 'config.json'):
