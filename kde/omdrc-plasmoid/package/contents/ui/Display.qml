@@ -49,6 +49,7 @@ Item {
                  side: { x: 0, y: sideY, w: W, h: H - sideY } }
     }
     readonly property bool pausedDesk: pausedDeskLayout !== null
+    property string pausedSideView: "queue"
     readonly property bool spectrumSplit: app.spectrumSplit
 
     function toggleSpectrumLayout() { app.setConfig("spectrumSplit", !spectrumSplit) }
@@ -526,29 +527,39 @@ Item {
             PlasmaComponents.ToolButton {
                 icon.name: "edit-find"
                 text: i18n("Search Qobuz")
+                checkable: true
+                checked: face.pausedSideView === "qobuz"
                 display: QQC2.AbstractButton.IconOnly
                 PlasmaComponents.ToolTip.text: text
                 PlasmaComponents.ToolTip.visible: hovered
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 PlasmaComponents.ToolTip.timeout: 1000
-                onClicked: face.app.openPage("qobuz")
+                onClicked: face.pausedSideView = "qobuz"
             }
             PlasmaComponents.ToolButton {
                 icon.name: "view-list-details"
                 text: i18n("Play queue")
+                checkable: true
+                checked: face.pausedSideView === "queue"
                 display: QQC2.AbstractButton.IconOnly
                 PlasmaComponents.ToolTip.text: text
                 PlasmaComponents.ToolTip.visible: hovered
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 PlasmaComponents.ToolTip.timeout: 1000
-                onClicked: face.app.openPage("queue")
+                onClicked: face.pausedSideView = "queue"
             }
         }
         QueueView {
             app: face.app
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: pausedSide.visible
+            visible: pausedSide.visible && face.pausedSideView === "queue"
+        }
+        QobuzView {
+            app: face.app
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: pausedSide.visible && face.pausedSideView === "qobuz"
         }
     }
 
@@ -572,14 +583,38 @@ Item {
             { text: face.app.recordLabel, need: 2 },
             { text: face.app.audioQuality, need: 3 },
         ].filter(p => p.text)
-        function fitting(width) {
-            let kept = []
-            for (const p of parts.slice().sort((a, b) => a.need - b.need)) {
-                const trial = parts.filter(q => q === p || kept.indexOf(q) >= 0)
-                if (kept.length && panelMetrics.advanceWidth(trial.map(q => q.text).join(" · ")) > width) continue
-                kept = trial
+        function trimmed(value, width) {
+            if (panelMetrics.advanceWidth(value) <= width) return value
+            const suffix = "..."
+            if (panelMetrics.advanceWidth(suffix) > width) return ""
+            let lo = 0, hi = value.length
+            while (lo < hi) {
+                const mid = Math.ceil((lo + hi) / 2)
+                if (panelMetrics.advanceWidth(value.slice(0, mid) + suffix) <= width) lo = mid
+                else hi = mid - 1
             }
-            return kept.map(q => q.text).join(" · ")
+            return value.slice(0, lo) + suffix
+        }
+        function fitting(width) {
+            const title = face.app.player.title || ""
+            const album = face.app.player.album || ""
+            const separator = " · "
+            const sepWidth = panelMetrics.advanceWidth(separator)
+            let shown = []
+            if (title && album) {
+                const space = Math.max(0, width - sepWidth)
+                const titleWidth = Math.min(panelMetrics.advanceWidth(title),
+                                            Math.max(space / 2, space - panelMetrics.advanceWidth(album)))
+                shown = [trimmed(title, titleWidth), trimmed(album, space - titleWidth)].filter(s => s)
+            } else if (title || album) {
+                shown = [trimmed(title || album, width)].filter(s => s)
+            }
+            for (const p of parts.slice().sort((a, b) => a.need - b.need)) {
+                if (p.text === title || p.text === album) continue
+                const trial = shown.concat(p.text)
+                if (panelMetrics.advanceWidth(trial.join(separator)) <= width) shown.push(p.text)
+            }
+            return shown.join(separator)
         }
         text: fitting(width)
         FontMetrics { id: panelMetrics; font: panelTrack.font }
