@@ -1,0 +1,9 @@
+# Terminal client
+
+Run `omdrc-ctrl/tools/omdrc-tui --server http://your-box:9090` in an interactive terminal. Python 3 is required; `chafa` is optional for monochrome cover art. The server and display preferences live in `~/.config/omdrc-tui/config.json`. Set up Qobuz sign-in, AI provider and audio hardware in the phone UI.
+
+F1–F4 open Library, Now, read-only Room correction and Configuration. `v` opens the visibility menu; `1`–`3` toggle level bars, DR and balance. In Library, `1`–`6` choose Search, Discover, Favourites, Chronology, Awarded and Review later. `/` edits the query, `f` edits filters, `r` refreshes, `m` loads more, arrows select and Enter opens an album or folder. `p` plays, `a` appends, `h` favourites and `b` bookmarks for Review later. In Review later, `x` edits or removes a bookmark.
+
+In Now, Space toggles playback, Left/Right change track, `s` stops, `g` seeks, `i` opens album details, `R` opens Research music and `M` starts a streamed album DR measurement. Research music has separate overview, work, people, track-note and source sections. Left/Right change section, Up/Down scroll, and Esc returns to the opening page. Back cancels an unfinished research request.
+
+The bottom panel uses the same live MPD FIFO streams and three-second DR blocks as the phone UI. Away from Now, after the configured 2, 5 or 10 minutes it asks whether to keep estimating. If unanswered for a minute it releases the DR listener, allowing the server to stop computing when no other client is listening. Returning to Now starts a fresh listener. Album DR measurement is separate and works only for streamed tracks the server can fetch again.

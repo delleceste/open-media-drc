@@ -1,0 +1,758 @@
+#!/usr/bin/env python3
+"""Terminal client for omdrcctrl. Run with --help for connection options."""
+
+from __future__ import annotations
+
+import argparse
+import curses
+import json
+import math
+import os
+from pathlib import Path
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import textwrap
+import threading
+import time
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+
+
+CONFIG_PATH = Path.home() / ".config" / "omdrc-tui" / "config.json"
+DEFAULTS = {"server": "http://127.0.0.1:9090", "levels": True, "dr": True,
+            "balance": True, "dr_window": 60, "dr_per_song": True,
+            "dr_keep_minutes": 5, "balance_window": 15, "cover": True}
+TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
+
+
+def clean(value):
+    value = re.sub(r"<[^>]*>", "", str(value or ""))
+    return "".join(ch for ch in value if ch in "\n\t" or unicodedata.category(ch)[0] != "C")
+
+
+def compact(value, width):
+    value = clean(value).replace("\n", " ").strip()
+    return value[:max(0, width - 1)] + "…" if len(value) > width else value
+
+
+def bar(value, width, lo=-60, hi=0):
+    if width <= 0:
+        return ""
+    try:
+        fraction = max(0.0, min(1.0, (float(value) - lo) / (hi - lo)))
+    except (ValueError, TypeError):
+        fraction = 0
+    filled = round(fraction * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def balance_db(samples, now, window):
+    selected = [(l, r) for at, l, r in samples if at >= now - window]
+    left = sum(l for l, _ in selected)
+    right = sum(r for _, r in selected)
+    return 10 * math.log10(max(right, 1e-12) / max(left, 1e-12)) if left or right else None
+
+
+def balance_line(db, width):
+    width = max(5, width | 1)
+    middle = width // 2
+    cells = ["─"] * width
+    cells[middle] = "┼"
+    if db is not None:
+        cells[round(middle + max(-6, min(6, db)) / 6 * middle)] = "●"
+    label = "—" if db is None else ("Centre" if abs(db) < .05 else f"{'L' if db < 0 else 'R'} {abs(db):.1f} dB")
+    return f"L {''.join(cells)} R  {label}"
+
+
+def dr_value(blocks):
+    """Mirror the kiosk's rolling TT estimate from its three-second blocks."""
+    active = list(blocks)
+    for i in range(len(active) - 1, -1, -1):
+        if all(p <= .0001 for p in active[i][1]):
+            active = active[i + 1:]
+            break
+    if len(active) < 2: return None
+    result = 0.0
+    channels = len(active[0][0])
+    for channel in range(channels):
+        powers = sorted((b[0][channel] for b in active), reverse=True)
+        peaks = sorted((b[1][channel] for b in active), reverse=True)
+        count = max(1, int(len(active) * .2))
+        rms = math.sqrt(sum(powers[:count]) / count)
+        peak = peaks[min(1, len(peaks) - 1)]
+        result += 20 * math.log10(peak / rms) if rms > 0 and peak > 0 else 0
+    return result / channels
+
+
+def dr_level(block):
+    values = block[0]
+    mean = sum(values) / len(values) if values else 0
+    return 10 * math.log10(mean) if mean > 0 else -math.inf
+
+
+class API:
+    def __init__(self, server):
+        self.server = server.rstrip("/")
+
+    def request(self, path, params=None, body=None, timeout=12, ai=False):
+        url = self.server + path
+        if params:
+            url += "?" + urllib.parse.urlencode(params, doseq=True)
+        headers = {"Accept": "application/json"}
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+            if ai:
+                headers["X-Qobuz-AI"] = "1"
+        req = urllib.request.Request(url, data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                answer = json.load(response)
+        except urllib.error.HTTPError as error:
+            try:
+                answer = json.load(error)
+            except ValueError:
+                raise RuntimeError(f"HTTP {error.code}") from error
+        except (OSError, ValueError) as error:
+            raise RuntimeError(str(error)) from error
+        if not isinstance(answer, dict) or not answer.get("ok"):
+            raise RuntimeError(clean(answer.get("error", "Request failed")) if isinstance(answer, dict) else "Bad response")
+        return answer
+
+class Stream:
+    def __init__(self, api, mode, sink):
+        self.stop = threading.Event()
+        self.response = None
+        self.thread = threading.Thread(target=self.run, args=(api, mode, sink), daemon=True)
+        self.thread.start()
+
+    def run(self, api, mode, sink):
+        url = api.server + "/spectrum/stream?compact=1&mode=" + mode
+        while not self.stop.is_set():
+            try:
+                with urllib.request.urlopen(url, timeout=20) as response:
+                    self.response = response
+                    while not self.stop.is_set():
+                        line = response.readline()
+                        if not line: break
+                        if line.startswith(b"data:"):
+                            try: sink(json.loads(line[5:]))
+                            except ValueError: pass
+            except (OSError, ValueError, AttributeError):
+                pass
+            finally:
+                self.response = None
+            self.stop.wait(2)
+
+    def close(self):
+        self.stop.set()
+        if self.response:
+            try: self.response.close()
+            except OSError: pass
+
+
+class App:
+    def __init__(self, server=None):
+        self.config = dict(DEFAULTS)
+        try:
+            self.config.update(json.loads(CONFIG_PATH.read_text()))
+        except (OSError, ValueError, TypeError):
+            pass
+        if server:
+            self.config["server"] = server
+        self.api = API(self.config["server"])
+        self.pool = ThreadPoolExecutor(max_workers=5)
+        self.events = queue.SimpleQueue()
+        self.pending = set()
+        self.page = "Library"
+        self.tab = 0
+        self.rows = []
+        self.row = 0
+        self.scroll = 0
+        self.query = ""
+        self.filters = {"label": [], "sort": "relevance", "awarded": False,
+                        "hires": False, "local": False, "from": "", "to": "", "genre": ""}
+        self.more = False
+        self.offset = 0
+        self.album = None
+        self.album_source = "Library"
+        self.album_scroll = 0
+        self.folder = ""
+        self.player = {}
+        self.qstatus = {}
+        self.drc = {}
+        self.measure = None
+        self.level = {}
+        self.dr = {}
+        self.dr_blocks = []
+        self.dr_end = None
+        self.samples = deque(maxlen=1800)
+        self.level_stream = None
+        self.dr_stream = None
+        self.last_level = 0
+        self.last_dr = 0
+        self.last_player = 0
+        self.last_drc = 0
+        self.last_measure = 0
+        self.away_at = None
+        self.keep_prompt_at = None
+        self.dr_paused = False
+        self.guide = None
+        self.guide_album = ""
+        self.guide_section = 0
+        self.guide_scroll = 0
+        self.research_back = "Now"
+        self.research_job = None
+        self.message = "Connecting…"
+        self.cover_key = None
+        self.cover_lines = []
+
+    def save(self):
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CONFIG_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.config, indent=2) + "\n")
+        os.replace(tmp, CONFIG_PATH)
+
+    def submit(self, key, fn, callback=None):
+        if key in self.pending:
+            return
+        self.pending.add(key)
+        if key == "research":
+            def background():
+                try: self.events.put((key, callback, fn(), None))
+                except Exception as error: self.events.put((key, callback, None, str(error)))
+            threading.Thread(target=background, daemon=True).start()
+            return
+        future = self.pool.submit(fn)
+        def done(result):
+            try:
+                value = result.result()
+                self.events.put((key, callback, value, None))
+            except Exception as error:
+                self.events.put((key, callback, None, str(error)))
+        future.add_done_callback(done)
+
+    def fetch_list(self, append=False):
+        tab = TABS[self.tab]
+        query = self.query.strip()
+        params = {}
+        if tab == "Search":
+            path = "/qobuz/search"
+            params = {"q": query, "label": self.filters["label"],
+                      "sort": self.filters["sort"], "awarded": int(self.filters["awarded"]),
+                      "hires": int(self.filters["hires"]), "local": int(self.filters["local"])}
+            for name in ("from", "to"):
+                if self.filters[name]: params[name] = self.filters[name]
+            if append: params["scan"] = self.offset
+        elif tab == "Discover":
+            path = "/qobuz/discover"
+            params = {"genre": self.filters["genre"], "offset": self.offset if append else 0,
+                      "label": self.filters["label"], "awarded": int(self.filters["awarded"]),
+                      "hires": int(self.filters["hires"])}
+        elif tab == "Favourites":
+            path = "/qobuz/favorites/playlist/" + urllib.parse.quote(self.folder) if self.folder else "/qobuz/favorites"
+        elif tab == "Chronology":
+            path, params = "/qobuz/played", {"q": query, "limit": 100}
+        elif tab == "Awarded":
+            path, params = "/qobuz/awarded", {"q": query}
+        else:
+            path = "/qobuz/review"
+        def apply(data):
+            if tab != TABS[self.tab]: return
+            if tab == "Favourites" and not self.folder:
+                rows = [{"kind": "folder", **f} for f in data.get("folders", [])]
+                rows += data.get("albums", [])
+            else:
+                rows = data.get("results", data.get("albums", data.get("items", [])))
+            if query and tab == "Favourites":
+                needle = query.casefold()
+                rows = [row for row in rows if needle in (str(row.get("title", "")) + " " + str(row.get("artist", "")) + " " + str(row.get("path", ""))).casefold()]
+            self.rows = (self.rows + rows) if append and tab == "Discover" else rows
+            if not append: self.row = self.scroll = 0
+            self.more = bool(data.get("more"))
+            self.offset = data.get("next_offset", data.get("next_scan", 0))
+            self.message = f"{len(self.rows)} items" + (" · more available (m)" if self.more else "")
+        self.submit("list", lambda: self.api.request(path, params), apply)
+
+    def poll(self):
+        now = time.monotonic()
+        if now - self.last_player > 3:
+            self.last_player = now
+            self.submit("player", lambda: self.api.request("/k/api/player"), lambda d: setattr(self, "player", d))
+            self.submit("qstatus", lambda: self.api.request("/qconnect/status"), lambda d: setattr(self, "qstatus", d))
+        if self.page == "DRC" and now - self.last_drc > 5:
+            self.last_drc = now
+            self.submit("drc", lambda: self.api.request("/drc/status"), lambda d: setattr(self, "drc", d))
+        if now - self.last_measure > 3:
+            self.last_measure = now
+            self.submit("measure", lambda: self.api.request("/dr/measure"), lambda d: setattr(self, "measure", d.get("job")))
+        want_level = self.config["levels"] or self.config["balance"]
+        if want_level and not self.level_stream:
+            self.level_stream = Stream(self.api, "vu", lambda d: self.events.put(("level-frame", None, d, None)))
+        if not want_level and self.level_stream:
+            self.level_stream.close(); self.level_stream = None
+        if self.config["dr"] and not self.dr_stream and not self.dr_paused:
+            self.dr_stream = Stream(self.api, "dr", lambda d: self.events.put(("dr-frame", None, d, None)))
+        if not self.config["dr"] and self.dr_stream:
+            self.release_dr()
+        if self.page != "Now" and self.config["dr"] and self.dr_stream:
+            if self.away_at is None: self.away_at = now
+            if now - self.away_at >= self.config["dr_keep_minutes"] * 60 and self.keep_prompt_at is None:
+                self.keep_prompt_at = now
+                self.message = "Keep estimating DR? y = keep, n = stop (60 s timeout)"
+        else:
+            self.away_at = None
+        if self.keep_prompt_at and now - self.keep_prompt_at >= 60:
+            self.release_dr(); self.keep_prompt_at = None
+            self.message = "DR estimate stopped; return to Now to restart"
+
+    def release_dr(self):
+        if self.dr_stream:
+            self.dr_stream.close(); self.dr_stream = None
+        self.away_at = None
+        self.dr_paused = True
+
+    def drain(self):
+        while True:
+            try: key, callback, value, error = self.events.get_nowait()
+            except queue.Empty: break
+            if key == "level-frame":
+                self.level = value
+                vu = value.get("vu") or {}
+                try:
+                    l, r = float(vu["left_rms"]), float(vu["right_rms"])
+                    if max(l, r) > -60:
+                        self.samples.append((time.monotonic(), 10 ** (l / 10), 10 ** (r / 10)))
+                except (KeyError, TypeError, ValueError): pass
+                self.last_level = time.monotonic()
+                continue
+            if key == "dr-frame":
+                self.dr = value.get("dr") or {}
+                if isinstance(value.get("dr_blocks"), list):
+                    self.dr_blocks = value["dr_blocks"]
+                elif isinstance(value.get("dr_blocks_add"), list):
+                    additions = value["dr_blocks_add"]
+                    if self.dr_end is not None and self.dr_end == value.get("dr_blocks_end", 0) - len(additions):
+                        self.dr_blocks += additions
+                    else:
+                        self.dr_blocks = []
+                if isinstance(value.get("dr_blocks_len"), int):
+                    length = value["dr_blocks_len"]
+                    self.dr_blocks = self.dr_blocks[-length:] if length else []
+                self.dr_end = value.get("dr_blocks_end")
+                self.last_dr = time.monotonic()
+                continue
+            self.pending.discard(key)
+            if error: self.message = compact(error, 120)
+            elif callback: callback(value)
+
+    def switch(self, page):
+        self.page = page
+        if page == "Now":
+            self.away_at = self.keep_prompt_at = None
+            self.dr_paused = False
+            if self.config["dr"] and not self.dr_stream:
+                self.dr_stream = Stream(self.api, "dr", lambda d: self.events.put(("dr-frame", None, d, None)))
+        if page == "Library" and not self.rows: self.fetch_list()
+
+    def text(self, screen, y, x, value, style=0):
+        height, width = screen.getmaxyx()
+        if 0 <= y < height and x < width:
+            try: screen.addnstr(y, x, clean(value).replace("\n", " "), max(0, width - x - 1), style)
+            except curses.error: pass
+
+    def draw(self, screen):
+        screen.erase()
+        height, width = screen.getmaxyx()
+        if height < 15 or width < 55:
+            self.text(screen, 0, 0, "Need at least 55 columns × 15 rows")
+            screen.refresh(); return
+        self.text(screen, 0, 1, "open-media-drc  F1 Library  F2 Now  F3 Room correction  F4 Config  v Visibility  q Quit", curses.A_BOLD)
+        self.text(screen, 1, 0, "─" * (width - 1))
+        bottom = height - (7 if self.config["levels"] or self.config["dr"] or self.config["balance"] else 3)
+        if self.page == "Library": self.draw_library(screen, bottom)
+        elif self.page == "Now": self.draw_now(screen, bottom)
+        elif self.page == "DRC": self.draw_drc(screen, bottom)
+        elif self.page == "Research": self.draw_research(screen, bottom)
+        elif self.page == "Album": self.draw_album(screen, bottom)
+        elif self.page == "Config": self.draw_config(screen, bottom)
+        elif self.page == "Visibility": self.draw_visibility(screen, bottom)
+        self.draw_live(screen, bottom)
+        self.text(screen, height - 1, 1, compact(self.message, width - 3), curses.A_REVERSE)
+        screen.refresh()
+
+    def draw_library(self, screen, bottom):
+        h, w = screen.getmaxyx()
+        self.text(screen, 2, 1, "  ".join((f"[{i+1} {name}]" if i == self.tab else f" {i+1} {name} ") for i, name in enumerate(TABS)))
+        if self.tab in (0, 2, 3, 4): self.text(screen, 3, 1, f"Search: {self.query or '—'}    / edit    f filters")
+        else: self.text(screen, 3, 1, "f filters" if self.tab == 1 else f"Folder: {self.folder or '/'}")
+        if self.tab == 0:
+            f = self.filters
+            self.text(screen, 4, 1, f"Labels {','.join(f['label']) or 'any'} · {f['from'] or 'any'}–{f['to'] or 'any'} · {f['sort']} · Awarded {f['awarded']} · Hi-Res {f['hires']} · Local {f['local']}")
+        visible = max(1, bottom - 6)
+        if self.row < self.scroll: self.scroll = self.row
+        if self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
+        for y, index in enumerate(range(self.scroll, min(len(self.rows), self.scroll + visible)), 5):
+            item = self.rows[index]
+            if item.get("kind") == "folder":
+                label = "▸ " + item.get("path", "")
+            else:
+                label = f"{item.get('title', '—')} — {item.get('artist', '')}  {item.get('year', '')}  {item.get('label', '')}"
+            self.text(screen, y, 1, compact(label, w - 3), curses.A_REVERSE if index == self.row else 0)
+        self.text(screen, bottom - 1, 1, "↑↓ select  Enter details/folder  p play  a append  h favourite  b bookmark  m more  r refresh  x remove/renew")
+
+    def draw_now(self, screen, bottom):
+        h, w = screen.getmaxyx()
+        p, q = self.player, self.qstatus
+        title = p.get("title") or q.get("line1") or "Nothing playing"
+        album = p.get("album") or ""
+        self.text(screen, 2, 2, compact(title, w - 4), curses.A_BOLD)
+        self.text(screen, 3, 2, compact(f"{p.get('artist', '')} · {album}", w - 4))
+        self.text(screen, 4, 2, compact(f"{p.get('label', '')}  {p.get('date', '')}  {q.get('line2', '')}", w - 4))
+        elapsed, duration = p.get("elapsed"), p.get("duration")
+        if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration:
+            elapsed += max(0, time.monotonic() - self.last_player) if p.get("state") == "play" else 0
+            self.text(screen, 5, 2, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}  {bar(elapsed, min(40, w - 22), 0, duration)}")
+        self.text(screen, 6, 2, f"{p.get('state', 'stop').upper()}  Space play/pause  ←→ previous/next  s stop  g seek")
+        self.text(screen, 7, 2, "i album details  h favourite  b review later  R Research music  M measure album DR")
+        self.text(screen, 8, 2, compact(f"DRC: {self.drc.get('rows', [{}])[0].get('value', 'see room correction')}" if self.drc.get('rows') else "DRC: see Room correction", w - 4))
+        art = q.get("art") or ""
+        if self.config["cover"] and art:
+            if art != self.cover_key:
+                self.cover_key = art
+                self.submit("cover", lambda: self.render_cover(art, min(38, w // 2), min(12, bottom - 11)), lambda lines: setattr(self, "cover_lines", lines))
+            for i, line in enumerate(self.cover_lines[:max(0, bottom - 11)]):
+                self.text(screen, 10 + i, 2, line)
+        elif not art:
+            self.text(screen, 10, 2, "Cover unavailable for this source")
+
+    def render_cover(self, url, width, height):
+        if not shutil.which("chafa") or width < 10 or height < 2: return ["Cover: " + url]
+        if url.startswith("/"): url = self.api.server + url
+        if not url.startswith(("http://", "https://")): return []
+        with urllib.request.urlopen(url, timeout=10) as response:
+            image = response.read(5_000_001)
+        if len(image) > 5_000_000: return []
+        output = subprocess.run(["chafa", "--colors", "none", "--format", "symbols", "--size", f"{width}x{height}", "-"],
+                                input=image, capture_output=True, timeout=10, check=True,
+                                env={**os.environ, "TERM": "dumb"}).stdout.decode(errors="replace")
+        return output.splitlines()
+
+    def draw_drc(self, screen, bottom):
+        self.text(screen, 2, 2, "Room correction · read only", curses.A_BOLD)
+        for i, row in enumerate(self.drc.get("rows", [])[:max(0, bottom - 5)], 4):
+            self.text(screen, i, 2, f"{row.get('key', '')}: {row.get('value', '')}")
+        self.text(screen, bottom - 1, 2, "r refresh")
+
+    def draw_album(self, screen, bottom):
+        a = self.album or {}
+        self.text(screen, 2, 2, "‹ Back  [Esc]", curses.A_BOLD)
+        self.text(screen, 3, 2, f"{a.get('title', '')} — {a.get('artist', '')}", curses.A_BOLD)
+        self.text(screen, 4, 2, f"{a.get('label', '')} · {a.get('year', '')} · {a.get('technical', '')}")
+        self.text(screen, 5, 2, "p play  a append  h favourite  b review later  R Research music  ↑↓ scroll")
+        width = max(20, screen.getmaxyx()[1] - 5)
+        lines = []
+        for heading, value in (("Description", a.get("description")), ("Performers", a.get("performers")),
+                               ("Recording", a.get("recording")), ("Awards", a.get("awards")),
+                               ("Rating", a.get("rating")), ("Booklets", a.get("booklets"))):
+            if value:
+                lines.append(heading + ":")
+                if isinstance(value, list):
+                    for entry in value:
+                        if isinstance(entry, dict):
+                            text = " · ".join(str(entry.get(k, "")) for k in ("name", "title", "url") if entry.get(k))
+                        else: text = str(entry)
+                        lines += textwrap.wrap(clean(text), width) or [""]
+                else: lines += textwrap.wrap(clean(value), width) or [""]
+        lines.append("Tracks:")
+        for n, track in enumerate(a.get("track_list") or [], 1):
+            lines.append(f"{n}. {track.get('title', '')}  {track.get('work', '')}")
+        for y, line in enumerate(lines[self.album_scroll:self.album_scroll + max(0, bottom - 8)], 7):
+            self.text(screen, y, 3, compact(line, width))
+
+    def draw_research(self, screen, bottom):
+        self.text(screen, 2, 2, "‹ Back  [Esc]     Research music", curses.A_BOLD)
+        if not self.guide:
+            self.text(screen, 4, 2, "Researching…" if self.research_job else self.message)
+            return
+        guide = self.guide
+        sections = [("Overview", guide.get("overview", ""))]
+        sections += [(s.get("title", "Work"), s.get("text", "")) for s in guide.get("compositions", [])]
+        sections += [("Composer: " + s.get("name", ""), s.get("text", "")) for s in guide.get("composers", [])]
+        sections += [("Performer: " + s.get("name", ""), s.get("text", "")) for s in guide.get("performers", [])]
+        sections += [("Track " + str(s.get("track", "")), s.get("text", "")) for s in guide.get("track_notes", [])]
+        sections += [("Source: " + s.get("title", s.get("url", "")), s.get("url", "")) for s in guide.get("sources", [])]
+        self.guide_section %= len(sections)
+        title, body = sections[self.guide_section]
+        self.text(screen, 3, 2, f"◀ ▶ section {self.guide_section + 1}/{len(sections)}: {title}")
+        lines = textwrap.wrap(clean(body), max(20, screen.getmaxyx()[1] - 5), replace_whitespace=False, drop_whitespace=False)
+        for y, line in enumerate(lines[self.guide_scroll:self.guide_scroll + max(0, bottom - 6)], 5):
+            self.text(screen, y, 2, line)
+        self.text(screen, bottom - 1, 2, "←→ section   ↑↓ scroll   r research again   Esc back")
+
+    def draw_config(self, screen, bottom):
+        c = self.config
+        lines = ["Configuration · client preferences", f"Server: {c['server']}   [u] edit",
+                 f"Cover art: {'on' if c['cover'] else 'off'}   [c] toggle (requires chafa)",
+                 f"DR window: {c['dr_window']//60} min   [w] cycle 1/5/15/30/60/90",
+                 f"DR mode: {'per song' if c['dr_per_song'] else 'continuous'}   [t] toggle",
+                 f"DR away period: {c['dr_keep_minutes']} min   [k] cycle 2/5/10",
+                 f"Balance window: {c['balance_window']} s   [b] cycle",
+                 "Qobuz sign-in, AI provider and audio hardware remain in the phone UI."]
+        for y, line in enumerate(lines, 2): self.text(screen, y, 2, line)
+
+    def draw_visibility(self, screen, bottom):
+        self.text(screen, 2, 2, "Moving parts · visibility", curses.A_BOLD)
+        for y, (key, label) in enumerate((("levels", "Level bars"), ("dr", "DR loudness bar"), ("balance", "Balance bubble")), 4):
+            self.text(screen, y, 2, f"[{y-3}] {label}: {'shown' if self.config[key] else 'hidden'}")
+        self.text(screen, 9, 2, "Esc closes this menu")
+
+    def draw_live(self, screen, bottom):
+        h, w = screen.getmaxyx()
+        self.text(screen, bottom, 0, "─" * (w - 1))
+        y = bottom + 1
+        if self.config["levels"]:
+            v = self.level.get("vu") or {}
+            bw = min(28, max(8, (w - 40) // 2))
+            for side in ("left", "right"):
+                peak = v.get(side + "_peak", -120)
+                self.text(screen, y, 2, f"{side[0].upper()} {bar(peak, bw)} {float(peak):5.1f} dBFS")
+                y += 1
+        if self.config["balance"]:
+            db = balance_db(self.samples, time.monotonic(), self.config["balance_window"])
+            self.text(screen, y, 2, "Balance " + balance_line(db, min(29, w - 30)))
+            y += 1
+        if self.config["dr"]:
+            d = self.dr
+            count = min(len(self.dr_blocks), self.config["dr_window"] // 3)
+            if self.config["dr_per_song"]:
+                count = min(count, int(d.get("track_age_blocks") or 0))
+            selected = self.dr_blocks[-count:] if count else []
+            sampled = len(selected) * 3
+            value = dr_value(selected)
+            label = f"DR {value:.1f}" if isinstance(value, (int, float)) else f"DR collecting {sampled}s/{self.config['dr_window']}s"
+            blocks = selected
+            cells = []
+            for b in blocks[-min(28, w - 35):]:
+                level = dr_level(b)
+                try: cells.append("▂▃▄▅▆▇█"[max(0, min(6, int((float(level) + 40) / 40 * 6)))])
+                except (ValueError, TypeError): cells.append("·")
+            self.text(screen, y, 2, compact(label + "  " + "".join(cells), w - 4))
+            y += 1
+        job = self.measure
+        if isinstance(job, dict) and job.get("status") in ("queued", "running"):
+            self.text(screen, min(y, h - 2), 2, f"Album DR measurement {int(job.get('fraction', 0)*100)}%  {job.get('message', '')}")
+
+    def prompt(self, screen, label, initial=""):
+        h, w = screen.getmaxyx()
+        curses.echo(); curses.curs_set(1)
+        try:
+            screen.move(h - 1, 0); screen.clrtoeol()
+            self.text(screen, h - 1, 1, label + " " + initial)
+            screen.refresh(); screen.timeout(-1)
+            raw = screen.getstr(h - 1, min(w - 2, len(label) + len(initial) + 2), max(1, w - len(label) - len(initial) - 5))
+            return initial + raw.decode(errors="replace")
+        finally:
+            curses.noecho(); curses.curs_set(0); screen.timeout(100)
+
+    def action(self, key, screen):
+        if self.keep_prompt_at is not None:
+            if key in (ord("y"), ord("Y")):
+                self.keep_prompt_at = None; self.away_at = time.monotonic(); self.message = "Keeping DR estimate"
+            elif key in (ord("n"), ord("N"), 27):
+                self.keep_prompt_at = None; self.release_dr(); self.message = "DR estimate stopped"
+            return
+        if key == ord("q"): raise KeyboardInterrupt
+        if key == ord("v"): self.switch("Visibility"); return
+        if key == curses.KEY_F1: self.switch("Library"); return
+        if key == curses.KEY_F2: self.switch("Now"); return
+        if key == curses.KEY_F3: self.switch("DRC"); return
+        if key == curses.KEY_F4: self.switch("Config"); return
+        if self.page == "Visibility":
+            if key in (ord("1"), ord("2"), ord("3")):
+                name = ("levels", "dr", "balance")[key - ord("1")]
+                self.config[name] = not self.config[name]; self.save()
+                if name == "dr" and self.config[name]: self.dr_paused = False
+            elif key == 27: self.switch("Now")
+            return
+        if self.page == "Config":
+            cycles = {ord("w"): ("dr_window", [60, 300, 900, 1800, 3600, 5400]),
+                      ord("k"): ("dr_keep_minutes", [2, 5, 10]),
+                      ord("b"): ("balance_window", [.3, 1, 3, 5, 15, 30, 60])}
+            if key in cycles:
+                name, values = cycles[key]
+                self.config[name] = values[(values.index(self.config[name]) + 1) % len(values)]
+            elif key == ord("t"): self.config["dr_per_song"] = not self.config["dr_per_song"]
+            elif key == ord("c"): self.config["cover"] = not self.config["cover"]
+            elif key == ord("u"):
+                server = self.prompt(screen, "Server URL:").strip()
+                if server.startswith(("http://", "https://")):
+                    self.config["server"] = server.rstrip("/"); self.api = API(server)
+            elif key == 27: self.switch("Now")
+            self.save(); return
+        if self.page == "Library": self.library_key(key, screen)
+        elif self.page == "Now": self.now_key(key, screen)
+        elif self.page == "Album":
+            if key == 27: self.switch(self.album_source)
+            elif key == curses.KEY_UP: self.album_scroll = max(0, self.album_scroll - 1)
+            elif key == curses.KEY_DOWN: self.album_scroll += 1
+            else: self.album_key(key, screen)
+        elif self.page == "Research":
+            if key == 27:
+                if self.research_job:
+                    job = self.research_job
+                    self.research_job = None
+                    self.submit("research-cancel", lambda: self.api.request("/qobuz/ai/listening/cancel", body={"job": job}, ai=True))
+                self.switch(self.research_back)
+            elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+                self.guide_section += -1 if key == curses.KEY_LEFT else 1; self.guide_scroll = 0
+            elif key == curses.KEY_UP: self.guide_scroll = max(0, self.guide_scroll - 1)
+            elif key == curses.KEY_DOWN: self.guide_scroll += 1
+            elif key == ord("r"): self.start_research(force=True)
+        elif self.page == "DRC" and key == ord("r"): self.last_drc = 0
+
+    def library_key(self, key, screen):
+        if key in (ord(str(i)) for i in range(1, 7)):
+            self.tab = key - ord("1"); self.folder = ""; self.fetch_list(); return
+        if key == ord("/") and self.tab in (0, 2, 3, 4):
+            self.query = self.prompt(screen, "Search:").strip(); self.fetch_list(); return
+        if key == ord("f") and self.tab in (0, 1):
+            name = self.prompt(screen, "Filter (label/from/to/sort/awarded/hires/local/genre):").strip()
+            if name == "label": self.filters[name] = [x.strip() for x in self.prompt(screen, "Labels, comma separated:").split(",") if x.strip()]
+            elif name in ("from", "to", "genre"): self.filters[name] = self.prompt(screen, name + ":").strip()
+            elif name == "sort": self.filters[name] = "date" if self.filters[name] == "relevance" else "relevance"
+            elif name in ("awarded", "hires", "local"): self.filters[name] = not self.filters[name]
+            self.fetch_list(); return
+        if key == curses.KEY_UP: self.row = max(0, self.row - 1)
+        elif key == curses.KEY_DOWN: self.row = min(max(0, len(self.rows) - 1), self.row + 1)
+        elif key == ord("r"): self.fetch_list()
+        elif key == ord("m") and self.more: self.fetch_list(append=True)
+        elif key == ord("x") and self.rows and self.tab == 5:
+            album_id = str(self.rows[self.row].get("id") or "")
+            choice = self.prompt(screen, "Review later: remove/renew/note?").strip().lower()
+            action = {"remove": "remove", "renew": "extend", "note": "note"}.get(choice)
+            if action:
+                note = self.prompt(screen, "New note:") if action == "note" else ""
+                self.submit("review-edit", lambda: self.api.request("/qobuz/review", body={"action": action, "album_id": album_id, "note": note}),
+                            lambda d: self.fetch_list())
+        elif key == 27 and self.folder: self.folder = ""; self.fetch_list()
+        elif self.rows and key in (10, 13, ord("p"), ord("a"), ord("h"), ord("b")):
+            item = self.rows[self.row]
+            if item.get("kind") == "folder":
+                if key in (10, 13): self.folder = str(item.get("id", "")); self.fetch_list()
+            elif key in (10, 13): self.open_album(item)
+            else: self.album_action(item, key, screen)
+
+    def now_key(self, key, screen):
+        if key == ord(" "):
+            self.transport("pause" if self.player.get("state") == "play" else "play")
+        elif key == curses.KEY_LEFT: self.transport("prev")
+        elif key == curses.KEY_RIGHT: self.transport("next")
+        elif key == ord("s"): self.transport("stop")
+        elif key == ord("g"):
+            try: self.transport("seek", {"seconds": float(self.prompt(screen, "Seek to seconds:"))})
+            except ValueError: self.message = "Enter seconds as a number"
+        elif key == ord("i") and self.qstatus.get("qobuz_album"):
+            self.open_album({"id": self.qstatus["qobuz_album"]}, "Now")
+        elif key in (ord("h"), ord("b")):
+            self.album_action({"id": self.qstatus.get("qobuz_album")}, key, screen)
+        elif key == ord("R"): self.start_research()
+        elif key == ord("M"): self.submit("measure-start", lambda: self.api.request("/dr/measure", body={}), lambda d: setattr(self, "measure", d.get("job")))
+
+    def album_key(self, key, screen):
+        if key == ord("R"): self.start_research()
+        elif key in (ord("p"), ord("a"), ord("h"), ord("b")):
+            self.album_action(self.album or {}, key, screen)
+
+    def transport(self, action, extra=None):
+        self.submit("transport", lambda: self.api.request("/k/api/transport", body={"action": action, **(extra or {})}),
+                    lambda d: setattr(self, "message", action + " sent"))
+
+    def open_album(self, card, source="Library"):
+        album_id = str(card.get("id") or "")
+        if not album_id or card.get("local"):
+            self.message = "Album details require a Qobuz album"; return
+        self.album_source = source; self.album = card; self.album_scroll = 0; self.switch("Album")
+        self.submit("album", lambda: self.api.request("/qobuz/album/" + urllib.parse.quote(album_id)),
+                    lambda d: setattr(self, "album", d["album"]))
+
+    def album_action(self, card, key, screen):
+        album_id = str(card.get("id") or "")
+        if not album_id:
+            self.message = "A Qobuz album is required"; return
+        if key in (ord("p"), ord("a")):
+            body = {"album_id": album_id, "mode": "append" if key == ord("a") else "replace"}
+            self.submit("play", lambda: self.api.request("/qobuz/play", body=body), lambda d: setattr(self, "message", "Queued album"))
+        elif key == ord("h"):
+            path = self.prompt(screen, "Favourite folder (blank = Qobuz):").strip()
+            body = {"action": "add" if path else "favorite", "album_id": album_id, "path": path}
+            self.submit("favorite", lambda: self.api.request("/qobuz/favorites", body=body), lambda d: setattr(self, "message", "Added to favourites"))
+        elif key == ord("b"):
+            note = self.prompt(screen, "Review later note (optional):").strip()
+            self.submit("review", lambda: self.api.request("/qobuz/review", body={"action": "add", "album_id": album_id, "note": note}),
+                        lambda d: setattr(self, "message", "Bookmarked for later"))
+
+    def start_research(self, force=False):
+        album_id = str((self.album or {}).get("id") or self.qstatus.get("qobuz_album") or "")
+        title = self.player.get("album") or self.player.get("title") or ""
+        if not title and not album_id:
+            self.message = "Nothing playing to research"; return
+        if self.page != "Research": self.research_back = self.page
+        self.switch("Research")
+        guide_key = album_id or (title + "|" + str(self.player.get("artist", "")))
+        if guide_key == self.guide_album and self.guide and not force: return
+        self.guide = None; self.guide_album = guide_key; self.guide_section = self.guide_scroll = 0
+        job = str(uuid.uuid4()); self.research_job = job
+        def work():
+            settings = self.api.request("/qobuz/ai/settings")
+            if not settings.get("configured"): raise RuntimeError("Configure an AI provider in the phone UI")
+            album = self.album if self.album and str(self.album.get("id")) == album_id else None
+            if not album and album_id:
+                album = self.api.request("/qobuz/album/" + urllib.parse.quote(album_id))["album"]
+            album = album or {"title": title, "artist": self.player.get("artist", "")}
+            tracks = album.get("track_list") or [{"title": self.player.get("title", title), "work": "", "composer": ""}]
+            query = {"job": job, "album_id": album_id,
+                     "album": {k: album.get(k, "") for k in ("title", "artist", "composer", "label", "year", "genre", "release_type")},
+                     "tracks": [{k: t.get(k, "") for k in ("title", "work", "composer")} for t in tracks]}
+            return self.api.request("/qobuz/ai/listening", body=query, timeout=270, ai=True)
+        def apply(data):
+            if self.research_job == job:
+                self.research_job = None; self.guide = data; self.message = "Research ready"
+        self.submit("research", work, apply)
+
+    def run(self, screen):
+        curses.curs_set(0); screen.keypad(True); screen.timeout(100)
+        self.fetch_list()
+        try:
+            while True:
+                self.drain(); self.poll(); self.draw(screen)
+                key = screen.getch()
+                if key != -1: self.action(key, screen)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if self.level_stream: self.level_stream.close()
+            if self.dr_stream: self.dr_stream.close()
+            self.pool.shutdown(wait=False, cancel_futures=True)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--server", help="omdrcctrl base URL; saved in Configuration")
+    args = parser.parse_args(argv)
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        parser.error("requires an interactive terminal")
+    curses.wrapper(App(args.server).run)
+
+
+if __name__ == "__main__":
+    main()
