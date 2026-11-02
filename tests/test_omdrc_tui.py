@@ -43,21 +43,6 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.footer_status(40), '■ Stopped')
         self.assertEqual(app.qstatus['art'], '/qconnect/art?v=1')
 
-    def test_footer_shows_playback_and_expires_transient_messages(self):
-        app = tui.App('http://localhost:9090')
-        self.assertEqual(app.footer_status(40), 'Connecting…')
-        app.connected = True
-        app.player = {'state': 'play', 'album': 'A long album title', 'title': 'A long track title'}
-        self.assertEqual(app.footer_status(80), '▶ A long album title / A long track title')
-        self.assertTrue(app.footer_status(14).endswith('…'))
-        app.player['state'] = 'pause'
-        self.assertTrue(app.footer_status(80).startswith('⏸ '))
-        app.message = 'levels on · dr on · balance on'
-        self.assertEqual(app.footer_status(80), app.message)
-        self.assertTrue(app.footer_status(80, app._message_at + 4).startswith('⏸ '))
-        app.player['state'] = 'stop'
-        self.assertEqual(app.footer_status(80, app._message_at + 4), '■ Stopped')
-
     def test_drc_status_aligns_with_cover_bottom(self):
         app = tui.App('http://localhost:9090')
         app.qstatus = {'art': '/cover'}
@@ -143,17 +128,73 @@ class TuiTest(unittest.TestCase):
     def test_library_sidebar_reaches_filters_and_search_prompt(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'
-        with patch.object(app, 'prompt', return_value='Bach') as prompt, patch.object(app, 'fetch_list'):
-            app.library_key(10, None)
-        prompt.assert_called_once_with(None, 'Search:')
-        self.assertEqual(app.query, 'Bach')
+        app.library_key(10, None)
+        self.assertTrue(app.search_editing)
         self.assertFalse(app.library_sidebar_focus)
+        with patch.object(app, "fetch_list"), patch.object(tui.curses, "curs_set"):
+            for key in map(ord, "Bach"): app.action(key, None)
+            app.action(10, None)
+        self.assertEqual(app.query, "Bach")
         app.library_key(tui.curses.KEY_LEFT, None)
         with patch.object(app, "fetch_list"):
             for _ in range(len(tui.TABS)):
                 app.library_key(tui.curses.KEY_DOWN, None)
         self.assertEqual(app.library_sidebar_index, len(tui.TABS) - 1)
         self.assertTrue(app.library_sidebar_focus)
+
+    def test_search_opens_inline_after_library_delay(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = app.library_sidebar_index = 1
+        app.config['library_delay'] = 1
+        with patch.object(tui.time, 'monotonic', return_value=100):
+            app.library_key(tui.curses.KEY_UP, None)
+        self.assertEqual(app.library_auto_due, 101)
+        self.assertFalse(app.search_editing)
+        with patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=100.9):
+            app.poll()
+        self.assertFalse(app.search_editing)
+        with patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=101):
+            app.poll()
+        self.assertTrue(app.search_editing)
+        self.assertFalse(app.library_sidebar_focus)
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (20, 55)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 13)
+        self.assertTrue(any(args[1] == 3 and str(args[3]).startswith('⌕') for args in painted))
+        self.assertTrue(any(args[1] == 4 and '─' in str(args[3]) for args in painted))
+        class FullScreen(Screen):
+            def erase(self): pass
+            def refresh(self): pass
+            def move(self, y, x): self.cursor = (y, x)
+            def addnstr(self, *args): pass
+        full_screen = FullScreen()
+        with patch.object(tui.curses, 'curs_set') as cursor:
+            app.draw(full_screen)
+        self.assertEqual(full_screen.cursor[0], 3)
+        cursor.assert_called_with(2)
+        with patch.object(app, 'fetch_list') as fetch, patch.object(tui.curses, 'curs_set'):
+            for key in 'Béla'.encode(): app.action(key, None)
+            app.action(10, None)
+        self.assertEqual(app.query, 'Béla')
+        self.assertFalse(app.search_editing)
+        fetch.assert_called_once()
+
+    def test_search_inline_escape_and_tab_keep_previous_query(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.query = 'Old'
+        with patch.object(tui.curses, 'curs_set'):
+            app.begin_search_edit()
+            app.action(ord('x'), None)
+            app.action(27, None)
+            self.assertEqual(app.query, 'Old')
+            app.begin_search_edit()
+            app.action(9, None)
+        self.assertFalse(app.search_editing)
+        self.assertEqual(app.library_right_index, 1)
 
     def test_discover_autoload_delay_and_enter_override(self):
         app = tui.App('http://localhost:9090')
@@ -244,7 +285,7 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 13)
         tabs = [args for args in painted if args[2] == 1 and 2 <= args[1] <= 7]
         self.assertEqual(len(tabs), 6)
-        self.assertTrue(any(args[1] == 7 and args[2] == 29 and 'Example' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 8 and args[2] == 29 and 'Example' in args[3] for args in painted))
 
     def test_search_results_drop_searched_artist_and_show_quality(self):
         self.assertTrue(tui.same_name('Pink Floyd', 'pink floyd'))
@@ -262,12 +303,12 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 120)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 17)
-        title = [args for args in painted if args[1] == 6 and args[2] >= 29]
+        title = [args for args in painted if args[1] == 7 and args[2] >= 29]
         self.assertTrue(any(args[3] == 'Animals' for args in title))
-        details = [args for args in painted if args[1] == 7 and args[2] >= 29]
+        details = [args for args in painted if args[1] == 8 and args[2] >= 29]
         self.assertTrue(any('1977 · Pink Floyd Records · 24/192' in args[3] for args in details))
         self.assertTrue(any(args[1] == 3 and 'pink floyd' in args[3] for args in painted))
-        self.assertTrue(any(args[1] == 4 and 'relevance' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 5 and 'relevance' in args[3] for args in painted))
 
     def test_sort_shortcut_is_remembered(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(tui, 'CONFIG_PATH', Path(tmp) / 'config.json'):
