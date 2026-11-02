@@ -226,6 +226,8 @@ def player():
         "date": song.get("date", ""),
         "label": song.get("label", ""),
         "file": song.get("file", ""),
+        # what MPD decodes, "rate:bits:channels" ("96000:24:2"), while playing
+        "audio": st.get("audio", ""),
     })
 
 

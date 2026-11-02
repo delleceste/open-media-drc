@@ -83,6 +83,14 @@ PlasmoidItem {
     // A disc on the CD / S-PDIF input plays past MPD, which says "stop" meanwhile.
     property bool cdinActive: false
     readonly property string subtitle: [player.artist, player.album].filter(s => s).join(" — ")
+    // the record label, and the audio quality as "bits/kHz": MPD's own format
+    // while it plays, else what Qobuz says of the album
+    readonly property string recordLabel: (albumInfo && albumInfo.label) || player.label || ""
+    readonly property string audioQuality: {
+        const a = /^(\d+):(\d+):\d+$/.exec(player.audio || "")
+        if (a) return a[2] + "/" + Number((Number(a[1]) / 1000).toFixed(1))
+        return albumInfo && albumInfo.bits ? albumInfo.bits + "/" + albumInfo.rate : ""
+    }
     readonly property bool seekable: Number.isFinite(Number(player.duration)) && Number(player.duration) > 0
                                      && Number.isFinite(Number(player.elapsed))
 

@@ -21,7 +21,34 @@ Item {
     // In a horizontal panel, paused: the cover and the controls, always shown,
     // in place of the panes that would move.
     readonly property bool pausedPanel: horizontalPanel && app.animationsPaused && app.wantsLevels
-    readonly property bool controlsShown: hover.hovered
+    readonly property bool controlsShown: hover.hovered && !pausedDesk
+    // On the desktop and in the popup, paused, with room beside (or under) the
+    // cover: the controls and the play queue there, a seek bar under the cover
+    // along the whole width, and no overlay on the cover.  Without that room,
+    // or playing, the layout and the cover's hover controls are as ever.
+    readonly property real seekBarHeight: Kirigami.Units.gridUnit
+    readonly property var pausedDeskLayout: {
+        if (compact || panel || !app.animationsPaused) return null
+        const W = paneArea.width, H = paneArea.height, gap = Kirigami.Units.smallSpacing
+        const titleH = coverTitleHeight, bar = seekBarHeight
+        if (W >= H) {
+            const side = Math.max(0, Math.min(H - titleH - bar - gap, W * 0.5))
+            const sideX = side + gap * 2
+            if (W - sideX < Kirigami.Units.gridUnit * 10 || side < Kirigami.Units.gridUnit * 3) return null
+            const coverH = side + titleH
+            return { cover: { x: 0, y: 0, w: side, h: coverH },
+                     seek: { x: 0, y: coverH + gap, w: W, h: bar },
+                     side: { x: sideX, y: 0, w: W - sideX, h: coverH } }
+        }
+        const side = Math.max(0, Math.min(W, H * 0.5 - titleH))
+        const coverH = side + titleH
+        const sideY = coverH + gap + bar + gap
+        if (H - sideY < Kirigami.Units.gridUnit * 7 || side < Kirigami.Units.gridUnit * 3) return null
+        return { cover: { x: (W - side) / 2, y: 0, w: side, h: coverH },
+                 seek: { x: 0, y: coverH + gap, w: W, h: bar },
+                 side: { x: 0, y: sideY, w: W, h: H - sideY } }
+    }
+    readonly property bool pausedDesk: pausedDeskLayout !== null
     readonly property bool spectrumSplit: app.spectrumSplit
 
     function toggleSpectrumLayout() { app.setConfig("spectrumSplit", !spectrumSplit) }
@@ -94,6 +121,7 @@ Item {
     readonly property var rects: {
         const W = paneArea.width, H = paneArea.height
         if (pausedPanel) return [{ x: 0, y: 0, w: Math.min(W, H), h: H }]
+        if (pausedDesk) return [pausedDeskLayout.cover]
         if (grid) {
             const coverW = Math.round(Math.min(Math.max(0, W - spacing) * 10 / 16,
                                                Math.max(0, H - coverTitleHeight)))
@@ -430,17 +458,131 @@ Item {
         }
     }
 
+    // Paused on the desktop, with room: a thin seek bar under the cover, along
+    // the whole width, and beside the cover the controls over the play queue.
+    PlasmaComponents.Slider {
+        id: seekBar
+        readonly property var r: face.pausedDesk ? face.pausedDeskLayout.seek : ({ x: 0, y: 0, w: 0, h: 0 })
+        x: paneArea.x + r.x
+        y: paneArea.y + r.y
+        width: r.w
+        height: r.h
+        visible: face.pausedDesk && paneArea.visible
+        enabled: face.app.seekable && face.app.reachable
+        from: 0
+        to: Math.max(1, Number(face.app.player.duration) || 0)
+        // follows the song, except while it is being dragged
+        Binding on value {
+            when: !seekBar.pressed
+            value: Number(face.app.player.elapsed) || 0
+            restoreMode: Binding.RestoreNone
+        }
+        onPressedChanged: if (!pressed) face.app.seek(value)
+        PlasmaComponents.ToolTip.text: face.clock(value) + " / " + face.clock(to)
+        PlasmaComponents.ToolTip.visible: (hovered || pressed) && enabled
+    }
+    function clock(seconds) {
+        const n = Math.max(0, Math.floor(seconds))
+        return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0")
+    }
+    ColumnLayout {
+        id: pausedSide
+        readonly property var r: face.pausedDesk ? face.pausedDeskLayout.side : ({ x: 0, y: 0, w: 0, h: 0 })
+        x: paneArea.x + r.x
+        y: paneArea.y + r.y
+        width: r.w
+        height: r.h
+        visible: face.pausedDesk && paneArea.visible
+        spacing: Kirigami.Units.smallSpacing
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 0
+            Repeater {
+                model: [
+                    { action: "prev", icon: "media-skip-backward", tip: i18n("Previous") },
+                    { action: "toggle", icon: face.app.playing ? "media-playback-pause" : "media-playback-start",
+                      tip: face.app.playing ? i18n("Pause") : i18n("Play") },
+                    { action: "next", icon: "media-skip-forward", tip: i18n("Next") },
+                    { action: "stop", icon: "media-playback-stop", tip: i18n("Stop") },
+                ].concat(face.animationsButton)
+                delegate: PlasmaComponents.ToolButton {
+                    required property var modelData
+                    icon.name: modelData.icon
+                    display: QQC2.AbstractButton.IconOnly
+                    text: modelData.tip
+                    enabled: face.app.reachable || modelData.action === "animations"
+                    PlasmaComponents.ToolTip.text: modelData.tip
+                    PlasmaComponents.ToolTip.visible: hovered && !face.isTransport(modelData.action)
+                    PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    PlasmaComponents.ToolTip.timeout: 1000
+                    onClicked: {
+                        if (modelData.action === "animations") face.app.toggleAnimations()
+                        else face.app.transport(modelData.action)
+                    }
+                    PausedMark { action: modelData.action }
+                }
+            }
+            Item { Layout.fillWidth: true }
+            PlasmaComponents.ToolButton {
+                icon.name: "edit-find"
+                text: i18n("Search Qobuz")
+                display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                PlasmaComponents.ToolTip.timeout: 1000
+                onClicked: face.app.openPage("qobuz")
+            }
+            PlasmaComponents.ToolButton {
+                icon.name: "view-list-details"
+                text: i18n("Play queue")
+                display: QQC2.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                PlasmaComponents.ToolTip.timeout: 1000
+                onClicked: face.app.openPage("queue")
+            }
+        }
+        QueueView {
+            app: face.app
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: pausedSide.visible
+        }
+    }
+
     // One line over a pane that would move with the music, while it is held still.
     // The paused panel uses the space beside the cover for track details;
     // hovering replaces them with the usual controls.
+    // Title, album, record label, quality and artist, in that order of need:
+    // each joins the line only if it still fits (shown in reading order).
     PlasmaComponents.Label {
+        id: panelTrack
         x: coverHoverZone.x + coverHoverZone.width + Kirigami.Units.smallSpacing
         anchors.verticalCenter: coverHoverZone.verticalCenter
         width: Math.max(0, face.width - x - face.inset)
         visible: face.pausedPanel && !face.editing && !hover.hovered
-        text: [face.app.player.artist, face.app.player.title].filter(s => s).join(" / ")
         font: Kirigami.Theme.smallFont
         elide: Text.ElideRight
+        readonly property var parts: [
+            { text: face.app.player.title, need: 0 },
+            { text: face.app.player.artist, need: 4 },
+            { text: face.app.player.album, need: 1 },
+            { text: face.app.recordLabel, need: 2 },
+            { text: face.app.audioQuality, need: 3 },
+        ].filter(p => p.text)
+        function fitting(width) {
+            let kept = []
+            for (const p of parts.slice().sort((a, b) => a.need - b.need)) {
+                const trial = parts.filter(q => q === p || kept.indexOf(q) >= 0)
+                if (kept.length && panelMetrics.advanceWidth(trial.map(q => q.text).join(" · ")) > width) continue
+                kept = trial
+            }
+            return kept.map(q => q.text).join(" · ")
+        }
+        text: fitting(width)
+        FontMetrics { id: panelMetrics; font: panelTrack.font }
     }
 
     // The animations button, while paused: lit, so the state shows at a glance.

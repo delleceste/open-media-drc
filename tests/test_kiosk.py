@@ -317,7 +317,8 @@ class FakeMpd:
         part = me["part"]
         player = self.players.get(part, {})
         if cmd == "status":
-            return f"state: {player['state']}\nsong: {self.song}\nsongid: {player['songid']}\nelapsed: {self.elapsed}\n"
+            return (f"state: {player['state']}\nsong: {self.song}\nsongid: {player['songid']}\nelapsed: {self.elapsed}\n"
+                    + ("audio: 96000:24:2\n" if player["state"] != "stop" else ""))
         if cmd == "outputs":
             out = ""
             for i, o in enumerate(self.outputs):
@@ -456,6 +457,8 @@ class PlayerTests(unittest.TestCase):
         self.assertEqual((d["state"], d["elapsed"], d["duration"], d["pos"]), ("pause", 95.5, 1301.0, 4))
         self.assertEqual((d["title"], d["artist"], d["album"], d["label"]),
                          ("Adagio", "Nelsons", "Bruckner 7", "Deutsche Grammophon"))
+        self.assertEqual(d["audio"], "96000:24:2")          # the plasmoid's quality
+        self.assertEqual(self.ask(state="stop")[0]["audio"], "")
         self.assertEqual([c.split(": ", 1)[1] for c in mpd.log], ["status", "currentsong"])
 
     def test_queue_edits_use_ids_and_remove_album_beyond_display_limit(self):
