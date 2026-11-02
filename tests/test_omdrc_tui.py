@@ -14,6 +14,27 @@ spec.loader.exec_module(tui)
 
 
 class TuiTest(unittest.TestCase):
+    def test_room_correction_reports_applied_state(self):
+        self.assertEqual(tui.drc_summary({"running": False}), "DRC OFF · direct")
+        self.assertIn("96 kHz · flat · default · −3.0 dB", tui.drc_summary({
+            "running": True, "rate": 96000, "geometry": "flat", "design_id": "default",
+            "effective_attenuation_db": 3.0}))
+
+    def test_theme_detection_and_truecolor_cover_parser(self):
+        self.assertTrue(tui.theme_is_light('auto', {'COLORFGBG': '0;15'}))
+        self.assertFalse(tui.theme_is_light('auto', {'COLORFGBG': '15;0'}))
+        rows = tui.parse_cover_ansi('\x1b[38;2;255;0;0;48;2;0;0;255m█\x1b[0m')
+        self.assertEqual(rows, [[('█', 196, 21)]])
+
+    def test_silent_dr_block_does_not_crash_history_paint(self):
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+            def addnstr(self, *args): pass
+        app = tui.App('http://localhost:9090')
+        app.dr_blocks = [[[0, 0], [0, 0]]]
+        app.dr = {'track_age_blocks': 1}
+        app.draw_live(Screen(), 17)
+
     def test_default_opens_now_on_local_service_even_with_saved_remote(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'config.json'

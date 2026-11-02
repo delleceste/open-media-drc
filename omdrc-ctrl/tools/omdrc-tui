@@ -29,7 +29,8 @@ from concurrent.futures import ThreadPoolExecutor
 CONFIG_PATH = Path.home() / ".config" / "omdrc-tui" / "config.json"
 DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "balance": True, "dr_window": 60, "dr_per_song": True,
-            "dr_keep_minutes": 5, "balance_window": 15, "cover": True}
+            "dr_keep_minutes": 5, "balance_window": 15, "cover": True,
+            "theme": "auto"}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
 
 
@@ -52,6 +53,83 @@ def bar(value, width, lo=-60, hi=0):
         fraction = 0
     filled = round(fraction * width)
     return "█" * filled + "░" * (width - filled)
+
+
+def drc_summary(state):
+    """The applied path, from /now rather than the saved filter selection."""
+    if not isinstance(state, dict) or "running" not in state:
+        return "Reading room correction…"
+    if not state["running"]:
+        return "DRC OFF · direct"
+    parts = ["DRC ON"]
+    if state.get("rate"):
+        parts.append(f"{float(state['rate']) / 1000:g} kHz")
+    for key in ("geometry", "design_id"):
+        if state.get(key): parts.append(str(state[key]))
+    if isinstance(state.get("effective_attenuation_db"), (int, float)):
+        parts.append(f"−{state['effective_attenuation_db']:.1f} dB")
+    return " · ".join(parts)
+
+
+def theme_is_light(choice, environ=None):
+    if choice in ("light", "dark"):
+        return choice == "light"
+    value = (os.environ if environ is None else environ).get("COLORFGBG", "")
+    try:
+        background = int(value.split(";")[-1])
+        return background >= 7
+    except ValueError:
+        return False
+
+
+def xterm_color(rgb):
+    """Closest xterm-256 colour for a terminal cell."""
+    red, green, blue = rgb
+    cube = [0, 95, 135, 175, 215, 255]
+    ci = [min(range(6), key=lambda i: abs(cube[i] - v)) for v in rgb]
+    cube_rgb = tuple(cube[i] for i in ci)
+    gray = round((red + green + blue) / 3)
+    gi = min(range(24), key=lambda i: abs(8 + 10 * i - gray))
+    gray_rgb = (8 + 10 * gi,) * 3
+    distance = lambda a: sum((a[i] - rgb[i]) ** 2 for i in range(3))
+    return 232 + gi if distance(gray_rgb) < distance(cube_rgb) else 16 + ci[0] * 36 + ci[1] * 6 + ci[2]
+
+
+def parse_cover_ansi(output):
+    """Convert chafa's true-colour SGR to runs usable by curses."""
+    lines = [[]]
+    fg = bg = None
+    parts = re.split(r"(\x1b\[[0-9;?]*[A-Za-z])", output)
+    for part in parts:
+        if not part: continue
+        if part.startswith("\x1b["):
+            if not part.endswith("m"): continue
+            codes = [int(n) if n else 0 for n in part[2:-1].split(";")]
+            i = 0
+            while i < len(codes):
+                code = codes[i]
+                if code == 0: fg = bg = None
+                elif code == 39: fg = None
+                elif code == 49: bg = None
+                elif code in (38, 48) and i + 2 < len(codes):
+                    if codes[i + 1] == 5:
+                        value = codes[i + 2]; i += 2
+                    elif codes[i + 1] == 2 and i + 4 < len(codes):
+                        value = xterm_color(codes[i + 2:i + 5]); i += 4
+                    else:
+                        i += 1; continue
+                    if code == 38: fg = value
+                    else: bg = value
+                i += 1
+            continue
+        for n, text in enumerate(part.split("\n")):
+            if n: lines.append([])
+            if text:
+                if lines[-1] and lines[-1][-1][1:] == (fg, bg):
+                    previous = lines[-1].pop()
+                    lines[-1].append((previous[0] + text, fg, bg))
+                else: lines[-1].append((text, fg, bg))
+    return [line for line in lines if line]
 
 
 def balance_db(samples, now, window):
@@ -190,6 +268,7 @@ class App:
         self.player = {}
         self.qstatus = {}
         self.drc = {}
+        self.now_state = {}
         self.measure = None
         self.level = {}
         self.dr = {}
@@ -215,6 +294,9 @@ class App:
         self.message = "Connecting…"
         self.cover_key = None
         self.cover_lines = []
+        self.cover_pairs = {}
+        self.styles = {}
+        self.light = False
 
     def save(self):
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -289,6 +371,7 @@ class App:
             self.last_player = now
             self.submit("player", lambda: self.api.request("/k/api/player"), lambda d: setattr(self, "player", d))
             self.submit("qstatus", lambda: self.api.request("/qconnect/status"), lambda d: setattr(self, "qstatus", d))
+            self.submit("now-state", lambda: self.api.request("/now"), lambda d: setattr(self, "now_state", d))
         if self.page == "DRC" and now - self.last_drc > 5:
             self.last_drc = now
             self.submit("drc", lambda: self.api.request("/drc/status"), lambda d: setattr(self, "drc", d))
@@ -366,6 +449,46 @@ class App:
                 self.dr_stream = Stream(self.api, "dr", lambda d: self.events.put(("dr-frame", None, d, None)))
         if page == "Library" and not self.rows: self.fetch_list()
 
+    def configure_colors(self):
+        self.light = theme_is_light(self.config.get("theme", "auto"))
+        self.styles = {name: 0 for name in ("accent", "green", "yellow", "red", "muted", "cover")}
+        self.cover_pairs = {}
+        if not curses.has_colors(): return
+        curses.start_color()
+        try: curses.use_default_colors()
+        except curses.error: pass
+        palette = ({"accent": "0969da", "green": "1a7f37", "yellow": "9a6700",
+                    "red": "cf222e", "muted": "59636e"} if self.light else
+                   {"accent": "58a6ff", "green": "3fb950", "yellow": "d29922",
+                    "red": "f85149", "muted": "8b949e"})
+        fallback = {"accent": curses.COLOR_BLUE, "green": curses.COLOR_GREEN,
+                    "yellow": curses.COLOR_YELLOW, "red": curses.COLOR_RED,
+                    "muted": curses.COLOR_CYAN}
+        for number, (name, color) in enumerate(palette.items(), 1):
+            if number >= curses.COLOR_PAIRS: break
+            fg = (xterm_color(bytes.fromhex(color)) if curses.COLORS >= 256 else fallback[name])
+            try:
+                curses.init_pair(number, fg, -1)
+                self.styles[name] = curses.color_pair(number)
+            except curses.error: pass
+        self.next_cover_pair = 16
+
+    def cover_style(self, fg, bg):
+        if not curses.has_colors() or curses.COLORS < 256: return 0
+        key = (fg if fg is not None else -1, bg if bg is not None else -1)
+        if key not in self.cover_pairs:
+            number = self.next_cover_pair
+            if number >= curses.COLOR_PAIRS: return self.styles.get("accent", 0)
+            try:
+                curses.init_pair(number, *key)
+                self.cover_pairs[key] = curses.color_pair(number)
+                self.next_cover_pair += 1
+            except curses.error: return 0
+        return self.cover_pairs[key]
+
+    def colored(self, screen, y, x, value, color, style=0):
+        self.text(screen, y, x, value, style | self.styles.get(color, 0))
+
     def text(self, screen, y, x, value, style=0):
         height, width = screen.getmaxyx()
         if 0 <= y < height and x < width:
@@ -378,8 +501,8 @@ class App:
         if height < 15 or width < 55:
             self.text(screen, 0, 0, "Need at least 55 columns × 15 rows")
             screen.refresh(); return
-        self.text(screen, 0, 1, "open-media-drc  F1 Library  F2 Now  F3 Room correction  F4 Config  v Visibility  q Quit", curses.A_BOLD)
-        self.text(screen, 1, 0, "─" * (width - 1))
+        self.colored(screen, 0, 1, "open-media-drc  F1 Library  F2 Now  F3 Room correction  F4 Config  v Visibility  q Quit", "accent", curses.A_BOLD)
+        self.colored(screen, 1, 0, "─" * (width - 1), "muted")
         bottom = height - (7 if self.config["levels"] or self.config["dr"] or self.config["balance"] else 3)
         if self.page == "Library": self.draw_library(screen, bottom)
         elif self.page == "Now": self.draw_now(screen, bottom)
@@ -389,12 +512,12 @@ class App:
         elif self.page == "Config": self.draw_config(screen, bottom)
         elif self.page == "Visibility": self.draw_visibility(screen, bottom)
         self.draw_live(screen, bottom)
-        self.text(screen, height - 1, 1, compact(self.message, width - 3), curses.A_REVERSE)
+        self.colored(screen, height - 1, 1, compact(self.message, width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
 
     def draw_library(self, screen, bottom):
         h, w = screen.getmaxyx()
-        self.text(screen, 2, 1, "  ".join((f"[{i+1} {name}]" if i == self.tab else f" {i+1} {name} ") for i, name in enumerate(TABS)))
+        self.colored(screen, 2, 1, "  ".join((f"[{i+1} {name}]" if i == self.tab else f" {i+1} {name} ") for i, name in enumerate(TABS)), "accent")
         if self.tab in (0, 2, 3, 4): self.text(screen, 3, 1, f"Search: {self.query or '—'}    / edit    f filters")
         else: self.text(screen, 3, 1, "f filters" if self.tab == 1 else f"Folder: {self.folder or '/'}")
         if self.tab == 0:
@@ -409,55 +532,84 @@ class App:
                 label = "▸ " + item.get("path", "")
             else:
                 label = f"{item.get('title', '—')} — {item.get('artist', '')}  {item.get('year', '')}  {item.get('label', '')}"
-            self.text(screen, y, 1, compact(label, w - 3), curses.A_REVERSE if index == self.row else 0)
-        self.text(screen, bottom - 1, 1, "↑↓ select  Enter details/folder  p play  a append  h favourite  b bookmark  m more  r refresh  x remove/renew")
+            self.colored(screen, y, 1, compact(label, w - 3), "accent" if index == self.row else "muted" if item.get("kind") == "folder" else "green" if item.get("rating") else "accent", curses.A_REVERSE if index == self.row else 0)
+        self.colored(screen, bottom - 1, 1, "↑↓ select  Enter details/folder  p play  a append  h favourite  b bookmark  m more  r refresh  x remove/renew", "muted")
 
     def draw_now(self, screen, bottom):
         h, w = screen.getmaxyx()
         p, q = self.player, self.qstatus
+        art = q.get("art") or (self.now_state.get("music") or {}).get("art") or ""
+        cover_h = max(0, bottom - 4)
+        cover_w = min(cover_h * 2, max(0, w - 38)) if self.config["cover"] and art else 0
+        if cover_w < 10 or cover_h < 3: cover_w = cover_h = 0
+        x = cover_w + 4 if cover_w else 2
+        avail = max(10, w - x - 2)
         title = p.get("title") or q.get("line1") or "Nothing playing"
-        album = p.get("album") or ""
-        self.text(screen, 2, 2, compact(title, w - 4), curses.A_BOLD)
-        self.text(screen, 3, 2, compact(f"{p.get('artist', '')} · {album}", w - 4))
-        self.text(screen, 4, 2, compact(f"{p.get('label', '')}  {p.get('date', '')}  {q.get('line2', '')}", w - 4))
+        self.colored(screen, 2, x, compact(title, avail), "accent", curses.A_BOLD)
+        self.text(screen, 3, x, compact(p.get("artist", ""), avail))
+        self.text(screen, 4, x, compact(p.get("album", ""), avail))
+        self.colored(screen, 5, x, compact(f"{p.get('label', '')}  {p.get('date', '')}  {q.get('line2', '')}", avail), "muted")
         elapsed, duration = p.get("elapsed"), p.get("duration")
         if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration:
             elapsed += max(0, time.monotonic() - self.last_player) if p.get("state") == "play" else 0
-            self.text(screen, 5, 2, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}  {bar(elapsed, min(40, w - 22), 0, duration)}")
-        self.text(screen, 6, 2, f"{p.get('state', 'stop').upper()}  Space play/pause  ←→ previous/next  s stop  g seek")
-        self.text(screen, 7, 2, "i album details  h favourite  b review later  R Research music  M measure album DR")
-        self.text(screen, 8, 2, compact(f"DRC: {self.drc.get('rows', [{}])[0].get('value', 'see room correction')}" if self.drc.get('rows') else "DRC: see Room correction", w - 4))
-        art = q.get("art") or ""
-        if self.config["cover"] and art:
-            if art != self.cover_key:
-                self.cover_key = art
-                self.submit("cover", lambda: self.render_cover(art, min(38, w // 2), min(12, bottom - 11)), lambda lines: setattr(self, "cover_lines", lines))
-            for i, line in enumerate(self.cover_lines[:max(0, bottom - 11)]):
-                self.text(screen, 10 + i, 2, line)
+            self.text(screen, 6, x, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}")
+            self.colored(screen, 7, x, bar(elapsed, min(40, avail - 2), 0, duration), "accent")
+        self.colored(screen, 8, x, f"{p.get('state', 'stop').upper()}  Space play/pause  ←→ track  s stop", "green" if p.get("state") == "play" else "muted")
+        self.colored(screen, 9, x, "g seek  i details  h favourite  b review later", "muted")
+        self.colored(screen, 10, x, "R Research music  M measure album DR", "muted")
+        drc = (self.now_state.get("drc") or {})
+        self.colored(screen, 11, x, compact(drc_summary(drc), avail),
+                     "green" if drc.get("running") else "muted" if drc.get("running") is False else "yellow")
+        if cover_w:
+            key = (art, cover_w, cover_h, curses.COLORS >= 256 if curses.has_colors() else False)
+            if key != self.cover_key:
+                self.cover_key = key
+                self.cover_lines = []
+                self.cover_pairs = {}
+                self.next_cover_pair = 16
+                use_color = key[3]
+                def accept_cover(lines):
+                    if self.cover_key == key: self.cover_lines = lines
+                    else: self.cover_key = None
+                self.submit("cover", lambda: self.render_cover(art, cover_w, cover_h, use_color), accept_cover)
+            for row, runs in enumerate(self.cover_lines[:cover_h]):
+                col = 2
+                for value, fg, bg in runs:
+                    if col >= 2 + cover_w: break
+                    self.text(screen, 3 + row, col, value[:2 + cover_w - col], self.cover_style(fg, bg))
+                    col += len(value)
         elif not art:
-            self.text(screen, 10, 2, "Cover unavailable for this source")
+            self.colored(screen, 13, 2, "Cover unavailable for this source", "muted")
 
-    def render_cover(self, url, width, height):
-        if not shutil.which("chafa") or width < 10 or height < 2: return ["Cover: " + url]
+    def render_cover(self, url, width, height, use_color=True):
+        if not shutil.which("chafa") or width < 10 or height < 3:
+            return [[("Cover: " + url, None, None)]]
         if url.startswith("/"): url = self.api.server + url
         if not url.startswith(("http://", "https://")): return []
         with urllib.request.urlopen(url, timeout=10) as response:
             image = response.read(5_000_001)
         if len(image) > 5_000_000: return []
-        output = subprocess.run(["chafa", "--colors", "none", "--format", "symbols", "--size", f"{width}x{height}", "-"],
+        mode = "full" if use_color else "none"
+        output = subprocess.run(["chafa", "--colors", mode, "--format", "symbols",
+                                 "--scale", "max", "--size", f"{width}x{height}", "-"],
                                 input=image, capture_output=True, timeout=10, check=True,
                                 env={**os.environ, "TERM": "dumb"}).stdout.decode(errors="replace")
-        return output.splitlines()
+        return parse_cover_ansi(output)
 
     def draw_drc(self, screen, bottom):
-        self.text(screen, 2, 2, "Room correction · read only", curses.A_BOLD)
-        for i, row in enumerate(self.drc.get("rows", [])[:max(0, bottom - 5)], 4):
-            self.text(screen, i, 2, f"{row.get('key', '')}: {row.get('value', '')}")
+        self.colored(screen, 2, 2, "Room correction · read only", "accent", curses.A_BOLD)
+        self.colored(screen, 3, 2, drc_summary(self.now_state.get("drc")), "green" if (self.now_state.get("drc") or {}).get("running") else "muted")
+        for i, row in enumerate(self.drc.get("rows", [])[:max(0, bottom - 6)], 5):
+            key, value = row.get("key", ""), row.get("value", "")
+            self.colored(screen, i, 2, f"{key}:", "accent")
+            color = ("red" if value == "failed" else "muted" if value in ("off", "not set", "not running", "stopped")
+                     else "green")
+            self.colored(screen, i, min(24, len(key) + 4), value, color)
         self.text(screen, bottom - 1, 2, "r refresh")
 
     def draw_album(self, screen, bottom):
         a = self.album or {}
-        self.text(screen, 2, 2, "‹ Back  [Esc]", curses.A_BOLD)
+        self.colored(screen, 2, 2, "‹ Back  [Esc]", "accent", curses.A_BOLD)
         self.text(screen, 3, 2, f"{a.get('title', '')} — {a.get('artist', '')}", curses.A_BOLD)
         self.text(screen, 4, 2, f"{a.get('label', '')} · {a.get('year', '')} · {a.get('technical', '')}")
         self.text(screen, 5, 2, "p play  a append  h favourite  b review later  R Research music  ↑↓ scroll")
@@ -482,7 +634,7 @@ class App:
             self.text(screen, y, 3, compact(line, width))
 
     def draw_research(self, screen, bottom):
-        self.text(screen, 2, 2, "‹ Back  [Esc]     Research music", curses.A_BOLD)
+        self.colored(screen, 2, 2, "‹ Back  [Esc]     Research music", "accent", curses.A_BOLD)
         if not self.guide:
             self.text(screen, 4, 2, "Researching…" if self.research_job else self.message)
             return
@@ -504,34 +656,47 @@ class App:
     def draw_config(self, screen, bottom):
         c = self.config
         lines = ["Configuration · client preferences", f"Server: {c['server']}   [u] edit",
+                 f"Theme: {c.get('theme', 'auto')} ({'light' if self.light else 'dark'})   [z] cycle automatic/light/dark",
                  f"Cover art: {'on' if c['cover'] else 'off'}   [c] toggle (requires chafa)",
                  f"DR window: {c['dr_window']//60} min   [w] cycle 1/5/15/30/60/90",
                  f"DR mode: {'per song' if c['dr_per_song'] else 'continuous'}   [t] toggle",
                  f"DR away period: {c['dr_keep_minutes']} min   [k] cycle 2/5/10",
                  f"Balance window: {c['balance_window']} s   [b] cycle",
                  "Qobuz sign-in, AI provider and audio hardware remain in the phone UI."]
-        for y, line in enumerate(lines, 2): self.text(screen, y, 2, line)
+        for y, line in enumerate(lines, 2): self.colored(screen, y, 2, line, "accent" if y == 2 else "muted" if y == 10 else "green" if "On" in line else "accent")
 
     def draw_visibility(self, screen, bottom):
-        self.text(screen, 2, 2, "Moving parts · visibility", curses.A_BOLD)
+        self.colored(screen, 2, 2, "Moving parts · visibility", "accent", curses.A_BOLD)
         for y, (key, label) in enumerate((("levels", "Level bars"), ("dr", "DR loudness bar"), ("balance", "Balance bubble")), 4):
-            self.text(screen, y, 2, f"[{y-3}] {label}: {'shown' if self.config[key] else 'hidden'}")
+            self.colored(screen, y, 2, f"[{y-3}] {label}: {'shown' if self.config[key] else 'hidden'}", "green" if self.config[key] else "muted")
         self.text(screen, 9, 2, "Esc closes this menu")
 
     def draw_live(self, screen, bottom):
         h, w = screen.getmaxyx()
-        self.text(screen, bottom, 0, "─" * (w - 1))
+        self.colored(screen, bottom, 0, "─" * (w - 1), "muted")
         y = bottom + 1
         if self.config["levels"]:
             v = self.level.get("vu") or {}
             bw = min(28, max(8, (w - 40) // 2))
             for side in ("left", "right"):
-                peak = v.get(side + "_peak", -120)
-                self.text(screen, y, 2, f"{side[0].upper()} {bar(peak, bw)} {float(peak):5.1f} dBFS")
+                try: peak = float(v.get(side + "_peak", -120))
+                except (TypeError, ValueError): peak = -120
+                if not math.isfinite(peak): peak = -120
+                filled = round(max(0, min(1, (peak + 60) / 60)) * bw)
+                self.colored(screen, y, 2, side[0].upper() + " ", "accent")
+                for i in range(bw):
+                    color = "red" if i >= bw * 57 / 60 else "yellow" if i >= bw * 48 / 60 else "green"
+                    self.colored(screen, y, 4 + i, "█" if i < filled else "░", color if i < filled else "muted")
+                self.colored(screen, y, 5 + bw, f"{peak:5.1f} dBFS", "red" if peak >= -3 else "yellow" if peak >= -12 else "green")
                 y += 1
         if self.config["balance"]:
             db = balance_db(self.samples, time.monotonic(), self.config["balance_window"])
-            self.text(screen, y, 2, "Balance " + balance_line(db, min(29, w - 30)))
+            width = min(29, w - 30)
+            self.colored(screen, y, 2, "Balance " + balance_line(db, width), "muted")
+            if db is not None:
+                middle = max(5, width | 1) // 2
+                pos = round(middle + max(-6, min(6, db)) / 6 * middle)
+                self.colored(screen, y, 2 + len("Balance L ") + pos, "●", "red" if db > .05 else "accent")
             y += 1
         if self.config["dr"]:
             d = self.dr
@@ -542,17 +707,23 @@ class App:
             sampled = len(selected) * 3
             value = dr_value(selected)
             label = f"DR {value:.1f}" if isinstance(value, (int, float)) else f"DR collecting {sampled}s/{self.config['dr_window']}s"
-            blocks = selected
-            cells = []
-            for b in blocks[-min(28, w - 35):]:
-                level = dr_level(b)
-                try: cells.append("▂▃▄▅▆▇█"[max(0, min(6, int((float(level) + 40) / 40 * 6)))])
-                except (ValueError, TypeError): cells.append("·")
-            self.text(screen, y, 2, compact(label + "  " + "".join(cells), w - 4))
+            color = "red" if value is not None and value < 6 else "yellow" if value is not None and value < 9 else "green" if value is not None else "muted"
+            self.colored(screen, y, 2, compact(label, w - 4), color)
+            x = min(w - 3, 2 + len(label) + 2)
+            blocks = selected[-min(28, max(0, w - x - 2)):]
+            for i, block in enumerate(blocks):
+                level = dr_level(block)
+                if not math.isfinite(level):
+                    glyph, block_color = "·", "muted"
+                else:
+                    glyph = "▂▃▄▅▆▇█"[max(0, min(6, int((level + 40) / 40 * 6)))]
+                    local_dr = dr_value(blocks[max(0, i - 1):i + 1])
+                    block_color = "red" if local_dr is not None and local_dr < 6 else "yellow" if local_dr is not None and local_dr < 9 else "green"
+                self.colored(screen, y, x + i, glyph, block_color)
             y += 1
         job = self.measure
         if isinstance(job, dict) and job.get("status") in ("queued", "running"):
-            self.text(screen, min(y, h - 2), 2, f"Album DR measurement {int(job.get('fraction', 0)*100)}%  {job.get('message', '')}")
+            self.colored(screen, min(y, h - 2), 2, f"Album DR measurement {int(job.get('fraction', 0)*100)}%  {job.get('message', '')}", "accent")
 
     def prompt(self, screen, label, initial=""):
         h, w = screen.getmaxyx()
@@ -595,6 +766,12 @@ class App:
                 self.config[name] = values[(values.index(self.config[name]) + 1) % len(values)]
             elif key == ord("t"): self.config["dr_per_song"] = not self.config["dr_per_song"]
             elif key == ord("c"): self.config["cover"] = not self.config["cover"]
+            elif key == ord("z"):
+                choices = ["auto", "light", "dark"]
+                current = self.config.get("theme", "auto")
+                self.config["theme"] = choices[(choices.index(current) + 1) % len(choices)] if current in choices else "auto"
+                self.configure_colors()
+                self.cover_key = None
             elif key == ord("u"):
                 server = self.prompt(screen, "Server URL:").strip()
                 if server.startswith(("http://", "https://")):
@@ -733,6 +910,7 @@ class App:
 
     def run(self, screen):
         curses.curs_set(0); screen.keypad(True); screen.timeout(100)
+        self.configure_colors()
         try:
             while True:
                 self.drain(); self.poll(); self.draw(screen)
