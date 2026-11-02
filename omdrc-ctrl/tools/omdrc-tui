@@ -759,7 +759,7 @@ class App:
         if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration:
             elapsed += max(0, time.monotonic() - self.last_player) if p.get("state") == "play" else 0
             self.text(screen, 6, x, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}")
-        drc_row = 3 + cover_h - 1 if cover_w else bottom - 2
+        drc_row = bottom - 3
         visible = max(1, drc_row - NOW_MENU_TOP)
         selected_row = NOW_ACTION_ROWS[self.now_action]
         self.now_action_scroll = min(self.now_action_scroll, max(0, 11 - visible))
@@ -780,13 +780,22 @@ class App:
             index = NOW_ACTION_ROWS.index(menu_row)
             label, shortcut = NOW_ACTIONS[index]
             if index == 0: label = "Pause" if p.get("state") == "play" else "Play"
-            if index == 4:
-                progress = bar(elapsed, min(22, max(4, avail - 17)), 0, duration) if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration else "░" * min(22, max(4, avail - 17))
-                label = "Seek " + progress + "  ← →"
+            if index == 4: label = "Seek ↓"
             mark = "▸ " if index == self.now_action else "  "
             self.colored(screen, y, x, compact(mark + label, avail),
                          "green" if index == 0 and p.get("state") == "play" else "accent" if index == self.now_action else "soft",
                          curses.A_REVERSE if index == self.now_action else 0)
+        seek_width = min(30, max(4, avail - 12))
+        try:
+            fraction = max(0.0, min(1.0, float(elapsed) / float(duration))) if duration else 0.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            fraction = 0.0
+        filled = round(fraction * seek_width)
+        seek_style = curses.A_REVERSE if self.now_action == 4 else 0
+        self.colored(screen, bottom - 2, x, "Seek ", "accent", seek_style)
+        self.colored(screen, bottom - 2, x + 5, "━" * filled, "fmt_48", seek_style)
+        self.colored(screen, bottom - 2, x + 5 + filled, "─" * (seek_width - filled), "muted", seek_style)
+        self.colored(screen, bottom - 2, x + 5 + seek_width, "  ← →", "soft", seek_style)
         drc = (self.now_state.get("drc") or {})
         self.colored(screen, drc_row, x, compact(drc_summary(drc), avail),
                      "green" if drc.get("running") else "muted" if drc.get("running") is False else "yellow")
