@@ -1033,6 +1033,7 @@ textarea.qz-input { height: 7rem; min-height: 5rem; max-height: 18rem; padding: 
 .qz-suggest { display: none; position: absolute; left: 0; right: 0; top: calc(100% + .25rem); z-index: 5; max-height: 19rem; overflow-y: auto;
     border: 1px solid var(--border); border-radius: .5rem; background: var(--surface2); box-shadow: 0 .5rem 1.2rem var(--shadow); }
 .qz-suggest.on { display: block; }
+.qz-suggest { touch-action: pan-y; overscroll-behavior: contain; }
 .qz-sug { display: flex; align-items: center; gap: .5rem; width: 100%; min-height: 2.5rem; padding: 0 .8rem; border: 0; border-bottom: 1px solid var(--hair);
     background: none; text-align: left; font-size: .95rem; cursor: pointer; }
 .qz-sug:last-child { border-bottom: 0; }

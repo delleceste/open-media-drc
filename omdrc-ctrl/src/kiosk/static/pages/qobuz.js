@@ -50,6 +50,14 @@ P.makeInput = enabled => {
         onblur: () => setTimeout(() => P.showSuggestions([]), 150),
     });
     input.addEventListener('focus', () => P.revealInput());
+    // The tap that focuses the field selects what it holds, so the next search
+    // is simply typed over the last; a tap once it has the focus moves the caret.
+    let tapFocus = false;
+    input.addEventListener('pointerdown', () => { tapFocus = document.activeElement !== input; });
+    input.addEventListener('click', () => {
+        if (tapFocus && input.value) input.select();
+        tapFocus = false;
+    });
     input.addEventListener('compositionstart', () => { P.composing = true; });
     input.addEventListener('compositionend', () => { P.composing = false; });
     input.addEventListener('blur', () => { P.composing = false; });
@@ -1953,8 +1961,16 @@ P.showSuggestions = list => {
             : [t.slice(0, s.at), h('b', {}, t.slice(s.at, s.at + len)), t.slice(s.at + len)];
         P.suggestBox.append(h('button', {
             type: 'button', class: 'qz-sug' + (s.e.learned ? ' learned' : ''), role: 'option',
-            // pointerdown, not click: the field must keep the focus (and the keyboard)
-            onpointerdown: e => { e.preventDefault(); P.pick(n); },
+            // the field must keep the focus (and the keyboard): no default on
+            // pointerdown.  A drag scrolls the list (the browser then cancels
+            // the pointer); only a tap, lifted where it went down, picks.
+            onpointerdown: e => { e.preventDefault(); P.sugTap = { n, x: e.clientX, y: e.clientY, id: e.pointerId }; },
+            onpointerup: e => {
+                const t = P.sugTap;
+                P.sugTap = null;
+                if (t && t.n === n && t.id === e.pointerId && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 10) P.pick(n);
+            },
+            onpointercancel: () => { P.sugTap = null; },
         }, h('span', { class: 'qz-sug-text' }, label), s.e.learned ? h('span', { class: 'qz-sug-mark', title: 'played before' }, '↺') : null));
     });
 };
