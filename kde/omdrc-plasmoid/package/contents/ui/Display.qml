@@ -89,7 +89,8 @@ Item {
     }
     readonly property bool showTrack: !compact && app.page === "cover" && app.showTitle
     readonly property real coverTitleHeight: showTrack && app.player.title
-        ? Kirigami.Units.gridUnit * (app.subtitle ? 2.1 : 1.2) : 0
+        ? Kirigami.Units.gridUnit * ((app.subtitle ? 2.1 : 1.2)
+            + (!panel && (app.recordLabel || app.audioQuality || app.drCalculating) ? 1.1 : 0)) : 0
     // panes laid out in a row, or a column
     readonly property bool row: horizontalPanel || (!verticalPanel && paneArea.width >= paneArea.height)
 
@@ -366,6 +367,34 @@ Item {
                         wrapMode: Text.NoWrap
                     }
                 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: !face.panel && (face.app.recordLabel !== "" || face.app.audioQuality !== ""
+                                              || face.app.drCalculating)
+                    spacing: Kirigami.Units.smallSpacing
+                    Item { Layout.fillWidth: true }
+                    PlasmaComponents.Label {
+                        text: [face.app.recordLabel, face.app.audioQuality].filter(s => s).join(" · ")
+                        opacity: 0.7
+                        font: Kirigami.Theme.smallFont
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: Math.max(0, coverTrack.width
+                            - (drPulse.visible ? drPulse.implicitWidth + parent.spacing : 0))
+                    }
+                    PlasmaComponents.Label {
+                        id: drPulse
+                        visible: face.app.drCalculating
+                        text: "|"
+                        font: Kirigami.Theme.smallFont
+                        SequentialAnimation on opacity {
+                            running: drPulse.visible
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 1; to: 0; duration: 500 }
+                            NumberAnimation { from: 0; to: 1; duration: 500 }
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                }
             }
         }
     }
@@ -580,7 +609,7 @@ Item {
             { text: face.app.player.title, need: 0 },
             { text: face.app.player.artist, need: 4 },
             { text: face.app.player.album, need: 1 },
-            { text: face.app.recordLabel, need: 2 },
+            { text: face.app.recordLabel.replace(/\s+Records$/i, " R."), need: 2 },
             { text: face.app.audioQuality, need: 3 },
         ].filter(p => p.text)
         function trimmed(value, width) {

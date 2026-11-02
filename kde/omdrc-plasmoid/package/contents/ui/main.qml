@@ -108,6 +108,7 @@ PlasmoidItem {
     readonly property bool drPerSong: Plasmoid.configuration.drPerSong
     readonly property var drSelected: DR.selected(drBlocks, drTrackAge, drWindow, drPerSong)
     readonly property var drSummary: DR.summary(drFrame, drBlocks, drTrackAge, drWindow, drPerSong)
+    readonly property bool drCalculating: drStream.url !== ""
     readonly property bool showDr: Plasmoid.configuration.showDr
     readonly property bool showBalance: Plasmoid.configuration.showBalance
     readonly property string balanceLook: Plasmoid.configuration.balanceLook
