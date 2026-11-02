@@ -229,9 +229,9 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 20)
         exact = next(args for args in painted if args[3] == 'DR=10')
         estimate = next(args for args in painted if args[3] == 'DR ~8')
-        self.assertEqual((exact[1], exact[4], exact[5]), (11, 'green', tui.curses.A_BOLD))
-        self.assertEqual((estimate[1], estimate[4], estimate[5]), (16, 'yellow', tui.curses.A_DIM))
-        self.assertTrue(any(args[1] == 11 and '24/96' in args[3] and args[4] == 'fmt_hires'
+        self.assertEqual((exact[1], exact[4], exact[5]), (10, 'green', tui.curses.A_BOLD))
+        self.assertEqual((estimate[1], estimate[4], estimate[5]), (13, 'yellow', tui.curses.A_DIM))
+        self.assertTrue(any(args[1] == 10 and '24/96' in args[3] and args[4] == 'fmt_hires'
                             and args[2] < exact[2] for args in painted))
 
     def test_search_shows_indeterminate_loading_and_compact_result_spacing(self):
@@ -247,7 +247,7 @@ class TuiTest(unittest.TestCase):
         self.assertTrue(any(args[1] == 7 and 'Searching Qobuz' in args[3] and '█' in args[3]
                             and args[4] == 'green' for args in painted))
         titles = [(args[1], args[3]) for args in painted if args[3] in ('First', 'Second')]
-        self.assertEqual(titles, [(9, 'First'), (14, 'Second')])
+        self.assertEqual(titles, [(8, 'First'), (11, 'Second')])
         app.tab = 1
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
@@ -371,6 +371,45 @@ class TuiTest(unittest.TestCase):
             app.action(tui.curses.KEY_RESIZE, screen)
             app.draw(screen)
             self.assertEqual(screen.forced, 2)
+
+    def test_switch_from_discover_clears_sixel_before_favourites_redraw(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 1
+        app.list_sixel_displayed = ((29, 6, b'old cover'),)
+        app.query = 'Mahler'
+        class Screen:
+            def __init__(self): self.events = []
+            def clear(self): self.events.append('clear')
+            def erase(self): self.events.append('erase')
+            def refresh(self): self.events.append('refresh')
+            def getmaxyx(self): return (24, 80)
+        screen = Screen()
+        with patch.object(app, 'fetch_list'), patch.object(app, 'colored'), \
+             patch.object(app, 'draw_library', side_effect=lambda *_: screen.events.append('library')), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write') as write:
+            app.select_library_tab(2, immediate=True)
+            self.assertEqual(app.query, '')
+            app.draw(screen)
+        self.assertEqual(screen.events[:3], ['clear', 'erase', 'library'])
+        self.assertEqual(write.call_args.args[1], b'\x1b[H\x1b[2J')
+        self.assertFalse(app.list_sixel_clear_pending)
+
+    def test_favourites_query_is_separate_and_persisted(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
+            app = tui.App('http://localhost:9090')
+            app.query = 'Mahler'
+            with patch.object(app, 'fetch_list'), patch.object(app, 'prompt', return_value='Bach'):
+                app.select_library_tab(2, immediate=True)
+                self.assertEqual(app.query, '')
+                app.library_key(ord('/'), None)
+                self.assertEqual(app.query, 'Bach')
+                app.select_library_tab(0, immediate=True)
+                self.assertEqual(app.query, 'Mahler')
+                app.select_library_tab(2, immediate=True)
+                self.assertEqual(app.query, 'Bach')
+            self.assertEqual(tui.App('http://localhost:9090').queries[2], 'Bach')
 
     def test_stale_sixel_key_clears_without_crashing(self):
         app = tui.App('http://localhost:9090')
@@ -544,7 +583,7 @@ class TuiTest(unittest.TestCase):
             app.library_key(10, None)
             fetch.assert_called_once()
 
-    def test_discover_result_box_follows_tab_focus(self):
+    def test_discover_result_brackets_follow_tab_focus(self):
         app = tui.App('http://localhost:9090')
         app.tab = 1
         app.rows = [{'kind': 'folder', 'path': 'Example'}]
@@ -553,20 +592,18 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (20, 55)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 13)
-        folder = next(args for args in painted if args[1] == 7 and 'Example' in str(args[3]))
+        folder = next(args for args in painted if args[1] == 6 and 'Example' in str(args[3]))
         self.assertFalse(folder[5] & tui.curses.A_REVERSE)
-        self.assertFalse(any(args[1] == 6 and str(args[3]).startswith('┌') for args in painted))
+        self.assertTrue(any(args[1:5] == (6, 29, '┌', 'muted') for args in painted))
         app.library_sidebar_focus = False
         app.library_right_index = 2
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 13)
-        folder = next(args for args in painted if args[1] == 7 and 'Example' in str(args[3]))
+        folder = next(args for args in painted if args[1] == 6 and 'Example' in str(args[3]))
         self.assertFalse(folder[5] & tui.curses.A_REVERSE)
-        self.assertTrue(any(args[1] == 6 and str(args[3]).startswith('┌') and args[4] == 'green'
-                            for args in painted))
-        self.assertTrue(any(args[1] == 11 and str(args[3]).startswith('└') and args[4] == 'green'
-                            for args in painted))
+        self.assertTrue(any(args[1:5] == (6, 29, '┌', 'green') for args in painted))
+        self.assertTrue(any(args[1:5] == (9, 29, '└', 'green') for args in painted))
 
     def test_favourites_selection_replaces_discover_timer(self):
         app = tui.App('http://localhost:9090')
@@ -619,7 +656,23 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 13)
         tabs = [args for args in painted if args[2] == 1 and 2 <= args[1] <= 7]
         self.assertEqual(len(tabs), 6)
-        self.assertTrue(any(args[1] == 10 and args[2] == 31 and 'Example' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 9 and args[2] == 31 and 'Example' in args[3] for args in painted))
+
+    def test_filter_summaries_count_labels_in_each_context(self):
+        app = tui.App('http://localhost:9090')
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 100)
+        for tab, label_key, filter_y in ((0, 'label', 6), (1, 'discover_label', 4)):
+            app.tab = tab
+            for count in (1, 2, 3):
+                app.filters[label_key] = [f'Label {i}' for i in range(count)]
+                painted.clear()
+                with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+                    app.draw_library(Screen(), 17)
+                expected = f'{count} {"label" if count == 1 else "labels"}'
+                self.assertTrue(any(args[1] == filter_y and expected in args[3] for args in painted))
+            app.filters[label_key] = []
 
     def test_search_results_drop_searched_artist_and_show_quality(self):
         self.assertTrue(tui.same_name('Pink Floyd', 'pink floyd'))
@@ -637,14 +690,14 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 120)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 17)
-        title = [args for args in painted if args[1] == 9 and args[2] >= 31]
+        title = [args for args in painted if args[1] == 8 and args[2] >= 31]
         self.assertTrue(any(args[3] == 'Animals' for args in title))
-        details = [args for args in painted if args[1] == 10 and args[2] >= 31]
+        details = [args for args in painted if args[1] == 9 and args[2] >= 31]
         self.assertTrue(any('1977 · Pink Floyd Records · 24/192' in args[3] for args in details))
         self.assertTrue(any(args[1] == 4 and 'pink floyd' in args[3] for args in painted))
         self.assertTrue(any(args[1] == 6 and 'Sort: Qobuz' in args[3] for args in painted))
 
-    def test_search_result_uses_green_box_without_reversing_text(self):
+    def test_search_result_uses_green_brackets_without_reversing_text(self):
         app = tui.App('http://localhost:9090')
         app.rows = [{'title': 'Animals', 'artist': 'Pink Floyd'}]
         app.library_sidebar_focus = False
@@ -654,9 +707,10 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 80)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 17)
-        border = [args for args in painted if args[4] == 'green' and args[1] in (8, 12)]
-        self.assertEqual([(args[1], args[3][0], args[3][-1]) for args in border],
-                         [(8, '┌', '┐'), (12, '└', '┘')])
+        border = [(args[1], args[2], args[3]) for args in painted if args[4] == 'green']
+        self.assertEqual(border, [(8, 29, '┌'), (8, 77, '┐'),
+                                  (9, 29, '│'), (9, 77, '│'),
+                                  (10, 29, '└'), (10, 77, '┘')])
         title = next(args for args in painted if args[3] == 'Animals')
         self.assertEqual(title[4], 'bright')
         self.assertFalse(title[5] & tui.curses.A_REVERSE)

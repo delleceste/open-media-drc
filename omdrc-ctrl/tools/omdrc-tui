@@ -362,9 +362,13 @@ class App:
         self.list_sixel_targets = []
         self.list_sixel_displayed = ()
         self.list_sixel_size = None
+        self.list_sixel_clear_pending = False
         self.row = 0
         self.scroll = 0
         self.query = ""
+        saved_favourites_query = self.config.get("favourites_query")
+        self.queries = {0: "", 2: saved_favourites_query if isinstance(saved_favourites_query, str) else "",
+                        3: "", 4: ""}
         sort = self.config.get("search_sort")
         genre = self.config.get("discover_genre")
         search_labels = self.config.get("search_labels")
@@ -693,6 +697,10 @@ class App:
 
     def select_library_tab(self, index, immediate=False):
         changed = index != self.tab
+        if changed:
+            if self.tab in self.queries: self.queries[self.tab] = self.query
+            self.query = self.queries.get(index, "")
+            self.list_sixel_clear_pending = bool(self.list_sixel_displayed)
         self.tab = index
         self.library_sidebar_index = index
         self.sort_focus = False
@@ -939,6 +947,12 @@ class App:
             screen.clear()
             self.sixel_visible = False
             self.sixel_target = None
+        if self.list_sixel_clear_pending:
+            os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
+            screen.clear()
+            self.list_sixel_displayed = ()
+            self.list_sixel_size = None
+            self.list_sixel_clear_pending = False
         screen.erase()
         height, width = screen.getmaxyx()
         if height < (20 if self.page == "Library" and self.tab == 0 else 15) or width < 55:
@@ -1033,7 +1047,9 @@ class App:
         if self.tab in (0, 1):
             f = self.filters
             label_key = "label" if self.tab == 0 else "discover_label"
-            active = (["label"] if f[label_key] else []) + [key for key in ("from", "to", "awarded", "hires", "local") if f[key]]
+            label_count = len(f[label_key])
+            label_summary = f"{label_count} {'label' if label_count == 1 else 'labels'}"
+            active = ([label_summary] if label_count else []) + [key for key in ("from", "to", "awarded", "hires", "local") if f[key]]
             summary = ", ".join(active) or "none"
             filter_y = 6 if self.tab == 0 else 4
             filter_text = f"Filters: {summary}  ·  Enter edit"
@@ -1041,8 +1057,9 @@ class App:
                 sort_text = "Sort: Qobuz" if f["sort"] == "relevance" else "Sort: Time"
                 sort_x = result_x + result_width - len(sort_text)
                 filter_width = sort_x - result_x - 2
+                short_filter = f"{label_summary} ↵" if label_count else "Filters ↵"
                 self.colored(screen, filter_y, result_x,
-                             compact(filter_text if filter_width >= 17 else "Filters ↵", filter_width), "accent",
+                             compact(filter_text if filter_width >= 17 else short_filter, filter_width), "accent",
                              curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 and not self.sort_focus else 0)
                 self.colored(screen, filter_y, sort_x, sort_text, "accent",
                              curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 and self.sort_focus else 0)
@@ -1067,7 +1084,7 @@ class App:
         cover_height = 4 if self.tab == 1 else 3
         cover_width = 12 if self.tab == 1 else 10
         boxed_results = self.tab in (0, 1) and result_width >= 4
-        row_height = cover_height + 2 if boxed_results else cover_height
+        row_height = cover_height
         block_height = row_height
         visible = max(0, (bottom - first_result - row_height) // block_height + 1)
         if self.row < self.scroll: self.scroll = self.row
@@ -1079,14 +1096,13 @@ class App:
             focused = results_focused and index == self.row
             selected = curses.A_REVERSE if focused and not boxed_results else 0
             if boxed_results:
-                if focused:
-                    self.colored(screen, y, result_x, "┌" + "─" * (result_width - 2) + "┐", "green")
-                    for border_y in range(y + 1, y + row_height - 1):
-                        self.colored(screen, border_y, result_x, "│", "green")
-                        self.colored(screen, border_y, result_x + result_width - 1, "│", "green")
-                    self.colored(screen, y + row_height - 1, result_x,
-                                 "└" + "─" * (result_width - 2) + "┘", "green")
-                y += 1
+                edge_color = "green" if focused else "muted"
+                for border_y in range(y, y + row_height):
+                    first, last = border_y == y, border_y == y + row_height - 1
+                    left_edge = "┌" if first else "└" if last else "│"
+                    right_edge = "┐" if first else "┘" if last else "│"
+                    self.colored(screen, border_y, result_x, left_edge, edge_color)
+                    self.colored(screen, border_y, result_x + result_width - 1, right_edge, edge_color)
             content_x = result_x + 2 if boxed_results else result_x
             content_width = result_width - 4 if boxed_results else result_width
             if item.get("kind") == "folder":
@@ -1653,6 +1669,9 @@ class App:
                 self.begin_search_edit()
                 return
             self.query = self.prompt(screen, "Search:").strip()
+            if self.tab == 2:
+                self.config["favourites_query"] = self.query
+                self.save()
             self.library_sidebar_focus = False
             self.library_right_index = 1
             self.fetch_list(); return
