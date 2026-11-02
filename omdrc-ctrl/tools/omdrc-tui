@@ -725,7 +725,7 @@ class App:
             if index == 0: label = "Pause" if p.get("state") == "play" else "Play"
             if index == 4:
                 progress = bar(elapsed, min(22, max(4, avail - 17)), 0, duration) if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration else "░" * min(22, max(4, avail - 17))
-                label = "Seek " + progress
+                label = "Seek " + progress + "  ← →"
             mark = "▸ " if index == self.now_action else "  "
             self.colored(screen, y, x, compact(mark + label, avail),
                          "green" if index == 0 and p.get("state") == "play" else "accent" if index == self.now_action else "soft",
