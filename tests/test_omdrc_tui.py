@@ -164,7 +164,39 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 13)
         tabs = [args for args in painted if args[2] == 1 and 2 <= args[1] <= 7]
         self.assertEqual(len(tabs), 6)
-        self.assertTrue(any(args[1] == 3 and args[2] == 29 and 'Example' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 4 and args[2] == 29 and 'Example' in args[3] for args in painted))
+
+    def test_search_results_drop_searched_artist_and_show_quality(self):
+        self.assertTrue(tui.same_name('Pink Floyd', 'pink floyd'))
+        self.assertTrue(tui.same_name('Pink Floyd', 'Pink  Floyd animals'))
+        self.assertFalse(tui.same_name('Pink Floyd', 'pink'))
+        self.assertEqual(tui.album_quality({'bits': 24, 'rate': 96}), ('24/96', 'fmt_hires'))
+        self.assertEqual(tui.album_quality({'bits': 16, 'rate': 44.1}), ('16/44.1', 'muted'))
+        self.assertEqual(tui.album_quality({}), ('', None))
+        app = tui.App('http://localhost:9090')
+        app.query = 'pink floyd'
+        app.rows = [{'title': 'Animals', 'artist': 'Pink Floyd', 'year': 1977, 'label': 'Pink Floyd Records',
+                     'bits': 24, 'rate': 192}]
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 120)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 17)
+        row = [(args[3], args[4]) for args in painted if args[1] == 4 and args[2] >= 29]
+        self.assertEqual([text for text, _ in row], ['Animals', '  1977', '  Pink Floyd Records', '  24/192'])
+        self.assertEqual(row[-1][1], 'green')
+        header = {args[3]: args[4] for args in painted if args[1] == 2 and args[2] >= 29}
+        self.assertEqual(header['pink floyd'], 'green')
+        self.assertEqual(header['relevance'], 'bright')
+
+    def test_sort_shortcut_is_remembered(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(tui, 'CONFIG_PATH', Path(tmp) / 'config.json'):
+            app = tui.App('http://localhost:9090')
+            app.page = 'Library'; app.library_sidebar_focus = False
+            with patch.object(app, 'fetch_list'):
+                app.library_key(ord('s'), None)
+            self.assertEqual(app.filters['sort'], 'date')
+            self.assertEqual(tui.App('http://localhost:9090').filters['sort'], 'date')
 
     def test_page_shortcuts_and_visibility_hint(self):
         app = tui.App('http://localhost:9090')

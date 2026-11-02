@@ -31,7 +31,7 @@ CONFIG_PATH = Path.home() / ".config" / "omdrc-tui" / "config.json"
 DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "balance": True, "dr_window": 60, "dr_per_song": True,
             "dr_keep_minutes": 5, "balance_window": 15, "cover": True,
-            "theme": "auto", "cover_mode": "auto"}
+            "theme": "auto", "cover_mode": "auto", "search_sort": "relevance"}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
 NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
                ("Next track", "]"), ("Stop", "s"), ("Seek", "g"),
@@ -76,13 +76,32 @@ def format_color(line):
     """Use the same format tiers as the desktop and Android-facing UI."""
     match = re.search(r"(\d+)\s*bit.*?([\d.]+)\s*kHz", str(line or ""), re.I)
     if not match: return "muted"
-    bits, khz = int(match[1]), float(match[2])
+    return format_tier(int(match[1]), float(match[2]))
+
+
+def format_tier(bits, khz):
     if bits >= 24 and khz >= 176: return "green"
     if bits >= 24 and khz >= 88: return "fmt_hires"
     if bits >= 24: return "fmt_24"
     if khz >= 48: return "fmt_48"
     return "muted"
 
+
+
+def album_quality(item):
+    """Qobuz album quality as "24/96" with its format colour, or ("", None)."""
+    try: bits, khz = int(item.get("bits") or 0), float(item.get("rate") or 0)
+    except (TypeError, ValueError): return "", None
+    if not bits or not khz: return "", None
+    if khz >= 1000: khz /= 1000
+    return f"{bits}/{khz:g}", format_tier(bits, khz)
+
+
+def same_name(name, query):
+    """Whether the searched words already name this artist."""
+    fold = lambda value: " ".join(re.findall(r"\w+", clean(value).casefold()))
+    name = fold(name)
+    return bool(name) and f" {name} " in f" {fold(query)} "
 
 
 def clean(value):
@@ -311,7 +330,8 @@ class App:
         self.row = 0
         self.scroll = 0
         self.query = ""
-        self.filters = {"label": [], "sort": "relevance", "awarded": False,
+        sort = self.config.get("search_sort")
+        self.filters = {"label": [], "sort": sort if sort in ("relevance", "date") else "relevance", "awarded": False,
                         "hires": False, "local": False, "from": "", "to": "", "genre": ""}
         self.more = False
         self.offset = 0
@@ -563,7 +583,7 @@ class App:
 
     def configure_colors(self):
         self.light = theme_is_light(self.config.get("theme", "auto"))
-        self.styles = {name: 0 for name in ("accent", "green", "yellow", "red", "muted", "soft", "fmt_hires", "fmt_24", "fmt_48", "cover")}
+        self.styles = {name: 0 for name in ("accent", "green", "yellow", "red", "muted", "soft", "fmt_hires", "fmt_24", "fmt_48", "bright", "orange", "year", "cover")}
         self.cover_pairs = {}
         if not curses.has_colors(): return
         curses.start_color()
@@ -571,14 +591,17 @@ class App:
         except curses.error: pass
         palette = ({"accent": "0969da", "green": "1a7f37", "yellow": "9a6700",
                     "red": "cf222e", "muted": "59636e", "soft": "6e7781", "fmt_hires": "0969da",
-                    "fmt_24": "9a6700", "fmt_48": "8250df"} if self.light else
+                    "fmt_24": "9a6700", "fmt_48": "8250df", "bright": "1f2328", "orange": "bc4c00",
+                    "year": "1b7c83"} if self.light else
                    {"accent": "58a6ff", "green": "3fb950", "yellow": "d29922",
                     "red": "f85149", "muted": "8b949e", "soft": "c9d1d9", "fmt_hires": "79c0ff",
-                    "fmt_24": "e3b341", "fmt_48": "d2a8ff"})
+                    "fmt_24": "e3b341", "fmt_48": "d2a8ff", "bright": "f0f6fc", "orange": "ffa657",
+                    "year": "76e3ea"})
         fallback = {"accent": curses.COLOR_BLUE, "green": curses.COLOR_GREEN,
                     "yellow": curses.COLOR_YELLOW, "red": curses.COLOR_RED,
                     "muted": curses.COLOR_CYAN, "soft": curses.COLOR_WHITE, "fmt_hires": curses.COLOR_BLUE,
-                    "fmt_24": curses.COLOR_YELLOW, "fmt_48": curses.COLOR_MAGENTA}
+                    "fmt_24": curses.COLOR_YELLOW, "fmt_48": curses.COLOR_MAGENTA,
+                    "bright": curses.COLOR_WHITE, "orange": curses.COLOR_RED, "year": curses.COLOR_CYAN}
         for number, (name, color) in enumerate(palette.items(), 1):
             if number >= curses.COLOR_PAIRS: break
             fg = (xterm_color(bytes.fromhex(color)) if curses.COLORS >= 256 else fallback[name])
@@ -603,6 +626,15 @@ class App:
 
     def colored(self, screen, y, x, value, color, style=0):
         self.text(screen, y, x, value, style | self.styles.get(color, 0))
+
+    def segments(self, screen, y, x, parts, width, style=0):
+        """Paint (text, colour, style) parts in a row, cut at width."""
+        end = x + width
+        for value, color, part_style in parts:
+            if x >= end: break
+            if len(value) > end - x: value = value[:max(0, end - x - 1)] + "…"
+            self.colored(screen, y, x, value, color, part_style | style)
+            x += len(value)
 
     def text(self, screen, y, x, value, style=0):
         height, width = screen.getmaxyx()
@@ -694,7 +726,10 @@ class App:
         if self.tab == 0:
             f = self.filters
             active = [key for key in ("label", "from", "to", "awarded", "hires", "local") if f[key]]
-            title = f"Search: {self.query or 'all'}  / edit  ·  Sort: {f['sort']}  ·  Filters: {', '.join(active) or 'none'}"
+            title = [("Search: ", "bright", 0), (self.query or "all", "green", 0), ("  / edit  ·  ", "muted", 0),
+                     ("Sort: ", "bright", 0), (f["sort"], "orange" if f["sort"] != "relevance" else "bright", 0),
+                     ("  (s)  ·  ", "muted", 0), ("Filters: ", "bright", 0),
+                     (", ".join(active) or "none", "orange" if active else "bright", 0)]
         elif self.tab == 1:
             title = f"Discover · Genre: {self.filters['genre'] or 'Any'}  ·  f edit"
         elif self.tab in (2, 3, 4):
@@ -712,20 +747,30 @@ class App:
         for y, detail in enumerate(details, 12):
             if y >= bottom - 1: break
             self.colored(screen, y, 1, compact(detail, divider - 2), "muted")
-        self.colored(screen, 2, result_x, compact(title, result_width), "accent")
-        first_result = 3
+        if isinstance(title, list): self.segments(screen, 2, result_x, title, result_width)
+        else: self.colored(screen, 2, result_x, compact(title, result_width), "accent")
+        self.colored(screen, 3, result_x, "─" * result_width, "muted")
+        first_result = 4
         visible = max(0, bottom - 1 - first_result)
         if self.row < self.scroll: self.scroll = self.row
         if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
         for y, index in enumerate(range(self.scroll, min(len(self.rows), self.scroll + visible)), first_result):
             item = self.rows[index]
+            selected = curses.A_REVERSE if index == self.row else 0
             if item.get("kind") == "folder":
-                label = "▸ " + item.get("path", "")
-            else:
-                label = f"{item.get('title', '—')} — {item.get('artist', '')}  {item.get('year', '')}  {item.get('label', '')}"
-            self.colored(screen, y, result_x, compact(label, result_width),
-                         "accent" if index == self.row else "muted" if item.get("kind") == "folder" else "green" if item.get("rating") else "accent",
-                         curses.A_REVERSE if index == self.row else 0)
+                self.colored(screen, y, result_x, compact("▸ " + item.get("path", ""), result_width),
+                             "accent" if index == self.row else "muted", selected)
+                continue
+            parts = [("★ ", "green", 0)] if item.get("rating") else []
+            parts.append((clean(item.get("title") or "—"), "bright", curses.A_BOLD))
+            artist = clean(item.get("artist"))
+            if artist and not (self.tab == 0 and same_name(artist, self.query)):
+                parts.append((" — " + artist, "soft", 0))
+            if item.get("year"): parts.append(("  " + str(item["year"]), "year", 0))
+            if item.get("label"): parts.append(("  " + clean(item["label"]), "muted", getattr(curses, "A_ITALIC", 0)))
+            quality, tier = album_quality(item)
+            if quality: parts.append(("  " + quality, tier, 0))
+            self.segments(screen, y, result_x, parts, result_width, selected)
 
     def draw_now(self, screen, bottom):
         h, w = screen.getmaxyx()
@@ -1174,9 +1219,10 @@ class App:
             if name == "label": self.filters[name] = [x.strip() for x in self.prompt(screen, "Labels, comma separated:").split(",") if x.strip()]
             elif name in ("from", "to", "genre"):
                 self.filters[name] = self.prompt(screen, name.title() + (" (Discover; blank clears):" if name == "genre" else " (blank clears):")).strip()
-            elif name == "sort": self.filters[name] = "date" if self.filters[name] == "relevance" else "relevance"
+            elif name == "sort": self.toggle_sort(); return
             elif name in ("awarded", "hires", "local"): self.filters[name] = not self.filters[name]
             self.fetch_list(); return
+        if key == ord("s") and self.tab == 0: self.toggle_sort(); return
         if key == curses.KEY_UP: self.row = max(0, self.row - 1)
         elif key == curses.KEY_DOWN: self.row = min(max(0, len(self.rows) - 1), self.row + 1)
         elif key == ord("r"): self.fetch_list()
@@ -1196,6 +1242,12 @@ class App:
                 if key in (10, 13): self.folder = str(item.get("id", "")); self.fetch_list()
             elif key in (10, 13): self.open_album(item)
             else: self.album_action(item, key, screen)
+
+    def toggle_sort(self):
+        self.filters["sort"] = "date" if self.filters["sort"] == "relevance" else "relevance"
+        self.config["search_sort"] = self.filters["sort"]
+        self.save()
+        self.fetch_list()
 
     def now_key(self, key, screen):
         if key in (curses.KEY_UP, curses.KEY_DOWN):
