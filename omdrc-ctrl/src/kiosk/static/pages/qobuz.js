@@ -1984,6 +1984,15 @@ P.pick = n => {
     const s = P.shown && P.shown[n];
     if (!s) return;
     if (P.composing) { P.input.blur(); P.input.focus(); }
+    // An entry of the recent list (no match: the box is empty or selected) is a
+    // whole search: it takes the box over and runs, ending any search under way.
+    if (s.at < 0) {
+        P.input.value = s.e.text;
+        if (!P.scoped()) P.syncLabels();
+        if (P.request || P.aiStarting) P.stopSearch();
+        P.go();
+        return;
+    }
     const v = P.input.value, caret = P.input.selectionStart ?? v.length;
     const now = P.suggestions(v, caret).find(x => x.e.f === s.e.f);
     const from = now ? now.from : Math.min(s.from, caret);

@@ -47,6 +47,32 @@ P.showSuggestions(P.suggestions(P.input.value, 4));
 P.composing = true;
 P.pick(0);
 assert.equal(P.input.blurred, 1, 'a word still being composed is ended first');
+
+// The recent list, offered on an empty box or over a selected one: a pick searches.
+P = launch([]);
+P.go = () => { P.searched = (P.searched || 0) + 1; P.valueAtGo = P.input.value; };
+P.learn(['Bach Mass in B minor']);
+type(P, 'Mahler Symphony');
+P.input.selectionStart = 0;              // the tap that focuses the box selects its text
+P.showSuggestions(P.suggestions(P.input.value, 0));
+P.pick(0);
+assert.equal(P.valueAtGo, 'Bach Mass in B minor', 'a recent entry replaces the box whole');
+assert.equal(P.searched, 1, 'a recent entry starts its search');
+
+P.request = 'q=Mahler';
+P.stopSearch = () => { P.stopped = true; P.request = null; };
+P.input.value = ''; P.input.selectionStart = 0;
+P.showSuggestions(P.suggestions('', 0));
+P.pick(0);
+assert.ok(P.stopped && P.searched === 2, 'a search under way gives way to the entry, not just stops');
+
+// A completion of what is typed only completes: more words may follow.
+P = launch(['Beethoven']);
+P.go = () => assert.fail('a completion must not search');
+type(P, 'beet');
+P.showSuggestions(P.suggestions(P.input.value, 4));
+P.pick(0);
+assert.equal(P.input.value, 'Beethoven ');
 // The labels of an artist typed: P.artists entries are flat ({ ...entry, term, labels }).
 // A throw here, on every pick ending in an artist, left the stale completions up.
 P = { plain: t => t.toLowerCase() };
