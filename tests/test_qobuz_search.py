@@ -55,13 +55,20 @@ def fake_qobuz(searches, albums=None):
     def fetch(endpoint, params):
         calls.append((endpoint, params))
         if endpoint == "catalog/search":
-            items = searches.get(params["query"], [])
+            # Qobuz's search ignores case, as the page cache does
+            items = next((v for k, v in searches.items()
+                          if k.casefold() == params["query"].casefold()), [])
             start = params["offset"]
             return {"albums": {"items": items[start:start + params["limit"]],
                                "total": len(items), "offset": start,
                                "limit": params["limit"]}}
         if endpoint == "album/get":
             return (albums or {})[params["album_id"]]
+        if endpoint == "label/get":       # the searches' albums of that label
+            items = list({i["id"]: i for items in searches.values() for i in items
+                          if str(i["label"]["id"]) == params["label_id"]}.values())
+            start = params["offset"]
+            return {"albums": {"items": items[start:start + params["limit"]], "total": len(items)}}
         raise AssertionError(endpoint)
     return fetch, calls
 
@@ -327,7 +334,9 @@ class SearchTest(unittest.TestCase):
                              max_enrich=0)
         answer = cat.search("", labels=["Pentatone"])
         self.assertEqual(self.ids(answer), ["p"])
-        self.assertEqual([p["query"] for _, p in calls], ["Pentatone"])
+        # the name finds the label's id, the label's catalogue the albums
+        self.assertEqual([(e, p.get("query") or p.get("label_id")) for e, p in calls],
+                         [("catalog/search", "pentatone"), ("label/get", "1")])
 
     def test_nothing_to_search_for_is_refused_before_any_request(self):
         cat, calls = catalog({})
@@ -959,6 +968,36 @@ class DiscoverTests(unittest.TestCase):
         catalog = qs.QobuzCatalog(fetch=fetch)
         self.assertEqual(catalog.label_ids(qs.LabelGroup("Linn Records", ("linn records",), exact=True)), ["77"])
         self.assertEqual(asked, ["linn records", "linn"])
+
+    def test_a_label_without_words_searches_its_own_catalogue(self):
+        """Search with a ticked label and no words lists the label's own
+        catalogue (all of it, newest first), not a text search for its name;
+        pre-orders and advance singles are left out, the date filter applies."""
+        def labelled(album_id, date, tracks=10, duration=3600):
+            item = album(album_id, album_id, "Linn Records", date)
+            item.update(tracks_count=tracks, duration=duration)
+            item["label"]["id"] = 77
+            return item
+        catalogue = [labelled("preorder", "2026-11-20"), labelled("aria", "2026-10-05", 1, 300),
+                     labelled("new", "2026-10-01"), labelled("old", "2010-01-01")]
+        asked = []
+        def fetch(endpoint, params):
+            asked.append((endpoint, params.get("query") or params.get("label_id")))
+            if endpoint == "catalog/search":
+                return {"albums": {"items": [catalogue[2]], "total": 1}}
+            if endpoint == "label/get":
+                return {"albums": {"items": catalogue[params["offset"]:params["offset"] + 50],
+                                   "total": len(catalogue)}}
+            return {}
+        catalog = qs.QobuzCatalog(qs.Settings(labels=[]), fetch=fetch, today=lambda: dt.date(2026, 10, 9))
+        answer = catalog.search("", labels=["Linn Records"], sort="relevance", enrich=False)
+        self.assertEqual([c["id"] for c in answer["results"]], ["new", "old"])
+        self.assertNotIn(("catalog/search", "Linn Records"), asked)    # only to find the id
+        answer = catalog.search("", labels=["Linn Records"], from_year=2020, to_year=2026, enrich=False)
+        self.assertEqual([c["id"] for c in answer["results"]], ["new"])
+        # words still search the text, filtered by the label
+        answer = catalog.search("bach", labels=["Linn Records"], enrich=False)
+        self.assertIn(("catalog/search", "bach Linn Records"), asked)
 
     def test_unplaceable_label_filters_the_new_releases(self):
         """A label no album search places is still matched in the new releases."""

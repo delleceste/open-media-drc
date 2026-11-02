@@ -1183,7 +1183,28 @@ class QobuzCatalog:
         page past the end is ever asked for.  The rest go in parallel.  A
         first page that fails fails the search (it is the credentials, or the
         network); a later one only ends that query, with the error noted.
-        `on_page()`, if given, is called (in this thread) as pages come in."""
+        `on_page()`, if given, is called (in this thread) as pages come in.
+        A label's catalogue (a scan with "label_ids") is read in its own
+        order, newest first, without what is not an album yet: pre-orders and
+        the single tracks sent ahead of an album (see label_albums)."""
+        today = self._today().isoformat()
+        for scan in scans:
+            if "label_ids" in scan and not scan["done"]:
+                try:
+                    items, more = self._label_releases(scan["label_ids"], end)
+                except QobuzError as error:
+                    scan["done"], scan["error"] = True, str(error)
+                    continue
+                scan["fetched"] = len(items)
+                scan["items"] = [item for item in items
+                                 if (album_date(item) or "0000") <= today
+                                 and (item.get("release_date_stream") or "") <= today
+                                 and not is_advance_single(album_card(item))]
+                scan["done"] = not more
+                scan["total"] = len(items) if not more else None
+                if on_page:
+                    on_page()
+        scans = [s for s in scans if "label_ids" not in s]
         fresh = [s for s in scans if s["total"] is None and not s["done"]]
         for scan, (items, total) in zip(fresh, pool.map(
                 lambda s: self._page(s["query"], 0), fresh)):
@@ -1314,10 +1335,22 @@ class QobuzCatalog:
         lo, hi = date_window(last_years, from_year, to_year, today=self._today())
         awarded_ids = (self.awarded.awarded_ids() if self.awarded else set()) if awarded_only else None
 
+        # No words: a ticked label's own catalogue, all of it newest first,
+        # rather than a text search for its name, which Qobuz's search hardly
+        # matches (found 278 of Linn Records' 564 albums, then hit its 1000
+        # cap).  A label whose id cannot be found is still searched by name.
+        catalogues = {}
+        if not text:
+            for g in groups:
+                ids = self.label_ids(g)
+                if ids:
+                    catalogues[g.name] = ids
         queries = ([text] if text else []) + [
-            f"{text} {g.name}".strip() for g in groups]
+            f"{text} {g.name}".strip() for g in groups if g.name not in catalogues]
         scans = [{"query": q, "items": [], "total": None, "done": False, "error": ""}
-                 for q in queries]
+                 for q in queries] + [
+            {"query": f"(label {name})", "label_ids": ids, "items": [], "total": None,
+             "done": False, "error": ""} for name, ids in catalogues.items()]
         # With no filter, read Qobuz's list a page at a time. Short single-track
         # releases are ranked after other albums within the fetched results.
         # "Load more" reads the next page, like scrolling
