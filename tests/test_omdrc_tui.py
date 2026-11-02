@@ -174,6 +174,25 @@ class TuiTest(unittest.TestCase):
             app.library_key(10, None)
             fetch.assert_called_once()
 
+    def test_library_result_highlight_follows_tab_focus(self):
+        app = tui.App('http://localhost:9090')
+        app.tab = 1
+        app.rows = [{'kind': 'folder', 'path': 'Example'}]
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (20, 55)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 13)
+        folder = next(args for args in painted if args[1] == 6 and 'Example' in str(args[3]))
+        self.assertFalse(folder[5] & tui.curses.A_REVERSE)
+        app.library_sidebar_focus = False
+        app.library_right_index = 2
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 13)
+        folder = next(args for args in painted if args[1] == 6 and 'Example' in str(args[3]))
+        self.assertTrue(folder[5] & tui.curses.A_REVERSE)
+
     def test_favourites_selection_replaces_discover_timer(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'

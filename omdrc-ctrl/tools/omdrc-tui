@@ -349,6 +349,7 @@ class App:
         self.folder = ""
         self.player = {}
         self.qstatus = {}
+        self.last_art = ""
         self.drc = {}
         self.now_state = {}
         self.measure = None
@@ -690,8 +691,13 @@ class App:
                                "konsole" in env.get("TERM", "").lower()) else "symbols"
         return choice if choice in ("sixel", "symbols") else "symbols"
 
+    def current_art(self):
+        art = self.qstatus.get("art") or (self.now_state.get("music") or {}).get("art") or ""
+        if art: self.last_art = art
+        return art or self.last_art
+
     def draw(self, screen):
-        active_art = (self.qstatus.get("art") or (self.now_state.get("music") or {}).get("art") or "")
+        active_art = self.current_art()
         if self.sixel_visible and (self.page != "Now" or not self.config["cover"] or
                                    not active_art or not self.cover_key or active_art != self.cover_key[0]):
             # Konsole keeps Sixel pixels independently of curses' cell buffer.
@@ -779,7 +785,8 @@ class App:
         for index in range(self.scroll, min(len(self.rows), self.scroll + visible)):
             y = first_result + (index - self.scroll) * block_height
             item = self.rows[index]
-            selected = curses.A_REVERSE if index == self.row else 0
+            results_focused = not self.library_sidebar_focus and self.library_right_index == (2 if self.tab in (0, 1) else 1)
+            selected = curses.A_REVERSE if results_focused and index == self.row else 0
             if item.get("kind") == "folder":
                 self.colored(screen, y, result_x, compact("▸ " + item.get("path", ""), result_width),
                              "accent" if index == self.row else "muted", selected)
@@ -818,7 +825,7 @@ class App:
     def draw_now(self, screen, bottom):
         h, w = screen.getmaxyx()
         p, q = self.player, self.qstatus
-        art = q.get("art") or (self.now_state.get("music") or {}).get("art") or ""
+        art = self.current_art()
         if self.cover_zoom:
             cover_h = max(0, bottom - 3)
             cover_w = min(cover_h * 2, max(0, w - 4))
