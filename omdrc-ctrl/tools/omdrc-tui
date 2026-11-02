@@ -30,7 +30,7 @@ CONFIG_PATH = Path.home() / ".config" / "omdrc-tui" / "config.json"
 DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "balance": True, "dr_window": 60, "dr_per_song": True,
             "dr_keep_minutes": 5, "balance_window": 15, "cover": True,
-            "theme": "auto"}
+            "theme": "auto", "cover_mode": "auto"}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
 
 
@@ -292,9 +292,13 @@ class App:
         self.research_back = "Now"
         self.research_job = None
         self.message = "Connecting…"
+        self.connected = False
         self.cover_key = None
         self.cover_lines = []
         self.cover_zoom = False
+        self.cover_sixel = None
+        self.sixel_visible = False
+        self.sixel_target = None
         self.cover_pairs = {}
         self.styles = {}
         self.light = False
@@ -440,7 +444,8 @@ class App:
             self.pending.discard(key)
             if error: self.message = compact(error, 120)
             else:
-                if self.message == "Connecting…" and key in ("player", "qstatus", "now-state"):
+                if not self.connected and key in ("player", "qstatus", "now-state"):
+                    self.connected = True
                     self.message = "Connected"
                 if callback: callback(value)
 
@@ -499,7 +504,22 @@ class App:
             try: screen.addnstr(y, x, clean(value).replace("\n", " "), max(0, width - x - 1), style)
             except curses.error: pass
 
+    def cover_mode(self):
+        choice = self.config.get("cover_mode", "auto")
+        if choice == "auto":
+            env = os.environ
+            return "sixel" if (env.get("KONSOLE_VERSION") or env.get("KONSOLE_DBUS_SERVICE") or
+                               env.get("TERM_PROGRAM", "").lower() == "konsole" or
+                               "konsole" in env.get("TERM", "").lower()) else "symbols"
+        return choice if choice in ("sixel", "symbols") else "symbols"
+
     def draw(self, screen):
+        active_art = (self.qstatus.get("art") or (self.now_state.get("music") or {}).get("art") or "")
+        if self.sixel_visible and (self.page != "Now" or not self.config["cover"] or
+                                   not active_art or active_art != self.cover_key[0]):
+            screen.clear()
+            self.sixel_visible = False
+            self.sixel_target = None
         screen.erase()
         height, width = screen.getmaxyx()
         if height < 15 or width < 55:
@@ -519,6 +539,11 @@ class App:
         if not zoom: self.draw_live(screen, bottom)
         self.colored(screen, height - 1, 1, compact(self.message, width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
+        if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
+            left, top = self.sixel_target
+            payload = f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + self.cover_sixel + b"\x1b8"
+            os.write(sys.stdout.fileno(), payload)
+            self.sixel_visible = True
 
     def draw_library(self, screen, bottom):
         h, w = screen.getmaxyx()
@@ -578,17 +603,29 @@ class App:
 
     def draw_cover(self, screen, art, width, height, left, top):
         if art and width >= 10 and height >= 3:
-            key = (art, width, height, curses.COLORS >= 256 if curses.has_colors() else False)
+            mode = self.cover_mode()
+            key = (art, width, height, left, top, mode,
+                   curses.COLORS >= 256 if curses.has_colors() else False)
             if key != self.cover_key:
+                if self.sixel_visible:
+                    screen.clear()
+                    self.sixel_visible = False
                 self.cover_key = key
                 self.cover_lines = []
+                self.cover_sixel = None
                 self.cover_pairs = {}
                 self.next_cover_pair = 16
-                use_color = key[3]
-                def accept_cover(lines):
-                    if self.cover_key == key: self.cover_lines = lines
+                use_color = key[6]
+                def accept_cover(result):
+                    if self.cover_key == key:
+                        if mode == "sixel": self.cover_sixel = result
+                        else: self.cover_lines = result
                     else: self.cover_key = None
-                self.submit("cover", lambda: self.render_cover(art, width, height, use_color), accept_cover)
+                self.submit("cover", lambda: self.render_cover(art, width, height, use_color, mode), accept_cover)
+            if mode == "sixel":
+                self.sixel_target = (left, top)
+                return
+            self.sixel_target = None
             for row, runs in enumerate(self.cover_lines[:height]):
                 col = left
                 for value, fg, bg in runs:
@@ -596,21 +633,24 @@ class App:
                     self.text(screen, top + row, col, value[:left + width - col], self.cover_style(fg, bg))
                     col += len(value)
 
-    def render_cover(self, url, width, height, use_color=True):
+    def render_cover(self, url, width, height, use_color=True, mode="symbols"):
         if not shutil.which("chafa") or width < 10 or height < 3:
-            return [[("Cover: " + url, None, None)]]
+            return b"" if mode == "sixel" else [[("Cover: " + url, None, None)]]
         if url.startswith("/"): url = self.api.server + url
-        if not url.startswith(("http://", "https://")): return []
+        if not url.startswith(("http://", "https://")): return b"" if mode == "sixel" else []
         with urllib.request.urlopen(url, timeout=10) as response:
             image = response.read(5_000_001)
-        if len(image) > 5_000_000: return []
-        mode = "full" if use_color else "none"
-        output = subprocess.run(["chafa", "--probe", "off", "--colors", mode,
-                                 "--format", "symbols", "--symbols", "vhalf",
-                                 "--scale", "max", "--size", f"{width}x{height}", "-"],
-                                input=image, capture_output=True, timeout=10, check=True,
-                                env={**os.environ, "TERM": "dumb"}).stdout.decode(errors="replace")
-        return parse_cover_ansi(output)
+        if len(image) > 5_000_000: return b"" if mode == "sixel" else []
+        if mode == "sixel":
+            command = ["chafa", "--probe", "off", "--polite", "on", "--format", "sixels",
+                       "--colors", "full", "--scale", "max", "--size", f"{width}x{height}", "-"]
+        else:
+            command = ["chafa", "--probe", "off", "--colors", "full" if use_color else "none",
+                       "--format", "symbols", "--symbols", "vhalf",
+                       "--scale", "max", "--size", f"{width}x{height}", "-"]
+        output = subprocess.run(command, input=image, capture_output=True, timeout=10,
+                                check=True, env={**os.environ, "TERM": "dumb"}).stdout
+        return output if mode == "sixel" else parse_cover_ansi(output.decode(errors="replace"))
 
     def draw_drc(self, screen, bottom):
         self.colored(screen, 2, 2, "Room correction · read only", "accent", curses.A_BOLD)
@@ -674,12 +714,13 @@ class App:
         lines = ["Configuration · client preferences", f"Server: {c['server']}   [u] edit",
                  f"Theme: {c.get('theme', 'auto')} ({'light' if self.light else 'dark'})   [z] cycle automatic/light/dark",
                  f"Cover art: {'on' if c['cover'] else 'off'}   [c] toggle (requires chafa)",
+                 f"Cover mode: {c.get('cover_mode', 'auto')} → {self.cover_mode()}   [p] cycle",
                  f"DR window: {c['dr_window']//60} min   [w] cycle 1/5/15/30/60/90",
                  f"DR mode: {'per song' if c['dr_per_song'] else 'continuous'}   [t] toggle",
                  f"DR away period: {c['dr_keep_minutes']} min   [k] cycle 2/5/10",
                  f"Balance window: {c['balance_window']} s   [b] cycle",
                  "Qobuz sign-in, AI provider and audio hardware remain in the phone UI."]
-        for y, line in enumerate(lines, 2): self.colored(screen, y, 2, line, "accent" if y == 2 else "muted" if y == 10 else "green" if "On" in line else "accent")
+        for y, line in enumerate(lines, 2): self.colored(screen, y, 2, line, "accent" if y == 2 else "muted" if y == 11 else "green" if "On" in line else "accent")
 
     def draw_visibility(self, screen, bottom):
         self.colored(screen, 2, 2, "Moving parts · visibility", "accent", curses.A_BOLD)
@@ -782,6 +823,11 @@ class App:
                 self.config[name] = values[(values.index(self.config[name]) + 1) % len(values)]
             elif key == ord("t"): self.config["dr_per_song"] = not self.config["dr_per_song"]
             elif key == ord("c"): self.config["cover"] = not self.config["cover"]
+            elif key == ord("p"):
+                modes = ["auto", "sixel", "symbols"]
+                current = self.config.get("cover_mode", "auto")
+                self.config["cover_mode"] = modes[(modes.index(current) + 1) % len(modes)] if current in modes else "auto"
+                self.cover_key = None
             elif key == ord("z"):
                 choices = ["auto", "light", "dark"]
                 current = self.config.get("theme", "auto")

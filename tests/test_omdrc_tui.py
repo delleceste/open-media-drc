@@ -43,6 +43,27 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.message, 'Connected')
         self.assertEqual(app.qstatus['art'], '/qconnect/art?v=1')
 
+    def test_sixel_cover_uses_pixel_output_in_konsole(self):
+        app = tui.App('http://localhost:9090')
+        with patch.dict(tui.os.environ, {'KONSOLE_VERSION': '260802'}):
+            self.assertEqual(app.cover_mode(), 'sixel')
+        app.config['cover_mode'] = 'symbols'
+        self.assertEqual(app.cover_mode(), 'symbols')
+        app.config['cover_mode'] = 'sixel'
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit): return b'image'
+        class Result:
+            stdout = b'\x1bP0;1;0qdata\x1b\\'
+        with patch.object(tui.shutil, 'which', return_value='/usr/bin/chafa'), \
+             patch.object(tui.urllib.request, 'urlopen', return_value=Response()), \
+             patch.object(tui.subprocess, 'run', return_value=Result()) as run:
+            result = app.render_cover('/cover', 26, 13, mode='sixel')
+        self.assertEqual(result, Result.stdout)
+        self.assertIn('sixels', run.call_args.args[0])
+        self.assertIn('on', run.call_args.args[0])
+
     def test_cover_zoom_key(self):
         app = tui.App('http://localhost:9090')
         app.now_key(ord('C'), None)
