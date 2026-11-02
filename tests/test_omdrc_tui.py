@@ -62,6 +62,21 @@ class TuiTest(unittest.TestCase):
         app.update_qstatus({})
         self.assertEqual(app.current_art(), 'https://static.qobuz.com/large.jpg')
 
+    def test_footer_shows_playback_and_expires_transient_messages(self):
+        app = tui.App('http://localhost:9090')
+        self.assertEqual(app.footer_status(40), 'Connecting…')
+        app.connected = True
+        app.player = {'state': 'play', 'album': 'A long album title', 'title': 'A long track title'}
+        self.assertEqual(app.footer_status(80), '▶ A long album title / A long track title')
+        self.assertTrue(app.footer_status(14).endswith('…'))
+        app.player['state'] = 'pause'
+        self.assertTrue(app.footer_status(80).startswith('⏸ '))
+        app.message = 'levels on · dr on · balance on'
+        self.assertEqual(app.footer_status(80), app.message)
+        self.assertTrue(app.footer_status(80, app._message_at + 4).startswith('⏸ '))
+        app.player['state'] = 'stop'
+        self.assertEqual(app.footer_status(80, app._message_at + 4), '■ Stopped')
+
     def test_drc_status_aligns_with_cover_bottom(self):
         app = tui.App('http://localhost:9090')
         app.qstatus = {'art': '/cover'}
@@ -180,20 +195,16 @@ class TuiTest(unittest.TestCase):
         painted = []
         class Screen:
             def getmaxyx(self): return (20, 55)
-        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), patch.object(tui.time, 'monotonic', return_value=101):
             app.draw_library(Screen(), 13)
-        self.assertTrue(any(args[1] == 3 and str(args[3]).startswith('⌕') for args in painted))
-        self.assertTrue(any(args[1] == 4 and '─' in str(args[3]) for args in painted))
-        class FullScreen(Screen):
-            def erase(self): pass
-            def refresh(self): pass
-            def move(self, y, x): self.cursor = (y, x)
-            def addnstr(self, *args): pass
-        full_screen = FullScreen()
-        with patch.object(tui.curses, 'curs_set') as cursor:
-            app.draw(full_screen)
-        self.assertEqual(full_screen.cursor[0], 3)
-        cursor.assert_called_with(2)
+        self.assertTrue(any(args[1] == 3 and str(args[3]).startswith('┌') for args in painted))
+        self.assertTrue(any(args[1] == 4 and '⌕ ' in str(args[3]) for args in painted))
+        self.assertTrue(any(args[1] == 5 and str(args[3]).startswith('└') for args in painted))
+        self.assertTrue(any(args[1] == 4 and '▌' in str(args[3]) for args in painted))
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), patch.object(tui.time, 'monotonic', return_value=101.5):
+            app.draw_library(Screen(), 13)
+        self.assertFalse(any(args[1] == 4 and '▌' in str(args[3]) for args in painted))
         with patch.object(app, 'fetch_list') as fetch, patch.object(tui.curses, 'curs_set'):
             for key in 'Béla'.encode(): app.action(key, None)
             app.action(10, None)
@@ -304,7 +315,7 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 13)
         tabs = [args for args in painted if args[2] == 1 and 2 <= args[1] <= 7]
         self.assertEqual(len(tabs), 6)
-        self.assertTrue(any(args[1] == 8 and args[2] == 29 and 'Example' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 9 and args[2] == 29 and 'Example' in args[3] for args in painted))
 
     def test_search_results_drop_searched_artist_and_show_quality(self):
         self.assertTrue(tui.same_name('Pink Floyd', 'pink floyd'))
@@ -322,12 +333,32 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 120)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 17)
-        title = [args for args in painted if args[1] == 7 and args[2] >= 29]
+        title = [args for args in painted if args[1] == 8 and args[2] >= 29]
         self.assertTrue(any(args[3] == 'Animals' for args in title))
-        details = [args for args in painted if args[1] == 8 and args[2] >= 29]
+        details = [args for args in painted if args[1] == 9 and args[2] >= 29]
         self.assertTrue(any('1977 · Pink Floyd Records · 24/192' in args[3] for args in details))
-        self.assertTrue(any(args[1] == 3 and 'pink floyd' in args[3] for args in painted))
-        self.assertTrue(any(args[1] == 5 and 'relevance' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 4 and 'pink floyd' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 6 and 'relevance' in args[3] for args in painted))
+
+    def test_discover_cover_uses_large_image_and_color(self):
+        app = tui.App('http://localhost:9090')
+        app.tab = 1
+        app.rows = [{'title': 'Album', 'image': 'https://example.test/small.jpg',
+                     'image_large': 'https://example.test/large.jpg'}]
+        calls = []
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        def submit(key, work, accept):
+            calls.append((key, work))
+            accept([[('▀', 196, 21)]])
+        with patch.object(app, 'submit', side_effect=submit), patch.object(app, 'render_cover', return_value=[[('▀', 196, 21)]]) as render, patch.object(app, 'cover_style', return_value=42) as color, patch.object(app, 'text', side_effect=lambda *args: painted.append(args)), patch.object(app, 'colored'):
+            app.draw_library(Screen(), 20)
+            calls[0][1]()
+            app.draw_library(Screen(), 20)
+        render.assert_called_once_with('https://example.test/large.jpg', 10, 3, True)
+        color.assert_called_with(196, 21)
+        self.assertTrue(any(args[3] == '▀' and args[4] == 42 for args in painted))
 
     def test_sort_shortcut_is_remembered(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(tui, 'CONFIG_PATH', Path(tmp) / 'config.json'):

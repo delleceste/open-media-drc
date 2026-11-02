@@ -655,7 +655,15 @@ class App:
         if page == "Config":
             self.submit("ai-settings", lambda: self.api.request("/qobuz/ai/settings"),
                         lambda d: setattr(self, "ai_settings", d))
-        if page == "Library" and not self.rows: self.fetch_list()
+        if page == "Library":
+            if self.tab == 0 and not self.search_editing:
+                delay = float(self.config.get("library_delay", 1.0))
+                if delay == 0: self.begin_search_edit()
+                else:
+                    self.library_auto_tab = 0
+                    self.library_auto_due = time.monotonic() + delay
+            elif self.tab != 0 and not self.rows:
+                self.fetch_list()
 
     def configure_colors(self):
         self.light = theme_is_light(self.config.get("theme", "auto"))
@@ -783,14 +791,6 @@ class App:
         if not zoom: self.draw_live(screen, bottom)
         if not zoom: self.draw_nav(screen, bottom)
         self.colored(screen, height - 1, 1, self.footer_status(width - 3), "accent", curses.A_REVERSE)
-        if self.page == "Library" and self.tab == 0 and self.search_editing:
-            field_width = width - 31
-            shown = self.search_draft[-max(1, field_width - 2):]
-            screen.move(3, min(width - 3, 31 + len(shown)))
-            try: curses.curs_set(2)
-            except curses.error:
-                try: curses.curs_set(1)
-                except curses.error: pass
         screen.refresh()
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
             left, top = self.sixel_target
@@ -836,10 +836,16 @@ class App:
         else:
             first_control = "Review later"
         if self.tab == 0:
-            field_width = max(1, result_width - 2)
-            shown = first_control[:2] + first_control[2:][-field_width:]
-            self.colored(screen, 3, result_x, compact(shown, result_width), "accent")
-            self.colored(screen, 4, result_x, "─" * result_width, "muted")
+            inner = result_width - 2
+            self.colored(screen, 3, result_x, "┌" + "─" * inner + "┐", "accent")
+            if self.search_editing:
+                visible_text = self.search_draft[-max(1, inner - 3):]
+                cursor = "▌" if int(time.monotonic() * 2) % 2 == 0 else " "
+                content = "⌕ " + visible_text + cursor
+            else:
+                content = "⌕ " + (self.query or "Type to search…")
+            self.colored(screen, 4, result_x, "│" + content[:inner].ljust(inner) + "│", "accent")
+            self.colored(screen, 5, result_x, "└" + "─" * inner + "┘", "accent")
         else:
             self.colored(screen, 3, result_x, compact(first_control, result_width), "accent",
                          curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 0 else 0)
@@ -848,10 +854,10 @@ class App:
             active = [key for key in ("label", "from", "to", "awarded", "hires", "local") if f[key]]
             summary = ", ".join(active) or "none"
             if self.tab == 0: summary = f"{f['sort']} · {summary}"
-            filter_y = 5 if self.tab == 0 else 4
+            filter_y = 6 if self.tab == 0 else 4
             self.colored(screen, filter_y, result_x, compact(f"Filters: {summary}  ·  Enter edit", result_width), "accent",
                          curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 else 0)
-        first_result = 7 if self.tab == 0 else 6
+        first_result = 8 if self.tab == 0 else 6
         self.colored(screen, first_result - 1, result_x, "─" * result_width, "muted")
         block_height = 3
         visible = max(0, (bottom - 1 - first_result) // block_height)
@@ -866,7 +872,7 @@ class App:
                 self.colored(screen, y, result_x, compact("▸ " + item.get("path", ""), result_width),
                              "accent" if index == self.row else "muted", selected)
                 continue
-            art = item.get("image") or ""
+            art = item.get("image_large") or item.get("image") or ""
             art_width = 10 if art and result_width >= 30 else 0
             if art_width: self.draw_list_cover(screen, art, result_x, y)
             x = result_x + (art_width + 2 if art_width else 0)
@@ -889,12 +895,12 @@ class App:
             self.list_covers[art] = None
             def accept(lines):
                 self.list_covers[art] = lines
-            self.submit("list-cover-" + art, lambda: self.render_cover(art, 10, 3, False), accept)
+            self.submit("list-cover-" + art, lambda: self.render_cover(art, 10, 3, True), accept)
         for row, runs in enumerate((self.list_covers.get(art) or [])[:3]):
             col = left
-            for value, _, _ in runs:
+            for value, fg, bg in runs:
                 if col >= left + 10: break
-                self.text(screen, top + row, col, value[:left + 10 - col])
+                self.text(screen, top + row, col, value[:left + 10 - col], self.cover_style(fg, bg))
                 col += len(value)
 
     def draw_now(self, screen, bottom):
