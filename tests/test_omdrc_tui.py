@@ -110,7 +110,7 @@ class TuiTest(unittest.TestCase):
             app.draw_config(Screen(), 17)
         self.assertEqual([args[2] for args in painted if args[1] == 3], [2, 23])
 
-    def test_page_tabs_can_be_selected_below_cover(self):
+    def test_page_shortcuts_and_visibility_hint(self):
         app = tui.App('http://localhost:9090')
         painted = []
         class Screen:
@@ -118,7 +118,7 @@ class TuiTest(unittest.TestCase):
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_nav(Screen(), 17)
         self.assertEqual([args[1] for args in painted], [16, 16, 16, 16, 21])
-        self.assertEqual(painted[-1][2], 80 - len("☷") - 2)
+        self.assertEqual(painted[-1][3], "☷ +/- [Tab]")
         for settings, expected_row in (
             ({"levels": True, "balance": True, "dr": False}, 20),
             ({"levels": True, "balance": False, "dr": False}, 19),
@@ -134,18 +134,26 @@ class TuiTest(unittest.TestCase):
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_nav(Screen(), 21)
-        self.assertEqual([args[1] for args in painted], [20] * 5)
-        self.assertEqual(painted[-1][2], 80 - len("☷") - 2)
+        self.assertEqual([args[1] for args in painted], [20] * 4 + [21])
+        self.assertEqual(painted[-1][2], 80 - len("☷ +/- [Tab]") - 2)
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_live(Screen(), 21)
         self.assertFalse(any("─" in str(args[3]) for args in painted))
-        app.action(9, None)
-        self.assertTrue(app.nav_focus)
-        app.action(tui.curses.KEY_RIGHT, None)
-        app.action(10, None)
+        app.action(tui.curses.KEY_F3, None)
         self.assertEqual(app.page, 'DRC')
-        self.assertFalse(app.nav_focus)
+
+    def test_tab_cycles_all_visibility_combinations(self):
+        app = tui.App('http://localhost:9090')
+        app.config.update(levels=False, dr=False, balance=False)
+        seen = set()
+        with patch.object(app, 'save'):
+            for _ in range(8):
+                app.action(9, None)
+                seen.add(tuple(app.config[name] for name in ('levels', 'dr', 'balance')))
+        self.assertEqual(len(seen), 8)
+        self.assertEqual(tuple(app.config[name] for name in ('levels', 'dr', 'balance')),
+                         (False, False, False))
 
     def test_missing_ai_settings_opens_browser_and_waits_for_setup(self):
         app = tui.App('http://localhost:9090')

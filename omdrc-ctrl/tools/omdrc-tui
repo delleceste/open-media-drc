@@ -43,8 +43,7 @@ NOW_ACTION_ROWS = (0, 1, 1, 2, 3, 5, 6, 7, 8, 9, 10)
 NOW_MENU_TOP = 7
 CONFIG_KEYS = "uzc pwtkba".replace(" ", "")
 PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
-            ("F3 Room correction", "DRC"), ("F4 Config", "Config"),
-            ("☷", "Visibility"))
+            ("F3 Room correction", "DRC"), ("F4 Config", "Config"))
 ALBUM_ACTIONS = (("F5 Play", "green", "p"), ("F6 Add", "fmt_hires", "a"),
                  ("F7 Fav", "red", "h"), ("F8 Later", "yellow", "b"),
                  ("F9 Research", "fmt_48", "R"))
@@ -305,7 +304,6 @@ class App:
         self.events = queue.SimpleQueue()
         self.pending = set()
         self.page = "Now"
-        self.visibility_back = "Now"
         self.tab = 0
         self.config_index = 0
         self.rows = []
@@ -358,8 +356,6 @@ class App:
         self.cover_zoom = False
         self.now_action = 0
         self.now_action_scroll = 0
-        self.nav_focus = False
-        self.nav_index = 1
         self.cover_sixel = None
         self.sixel_visible = False
         self.sixel_target = None
@@ -524,7 +520,6 @@ class App:
                 if callback: callback(value)
 
     def switch(self, page):
-        if page == "Visibility" and self.page != "Visibility": self.visibility_back = self.page
         if self.page == "Research" and page != "Research": self.research_setup_pending = False
         self.page = page
         if page == "Now":
@@ -627,15 +622,8 @@ class App:
         elif self.page == "Research": self.draw_research(screen, bottom)
         elif self.page == "Album": self.draw_album(screen, bottom)
         elif self.page == "Config": self.draw_config(screen, bottom)
-        elif self.page == "Visibility":
-            if self.visibility_back == "Library": self.draw_library(screen, bottom)
-            elif self.visibility_back == "DRC": self.draw_drc(screen, bottom)
-            elif self.visibility_back == "Config": self.draw_config(screen, bottom)
-            elif self.visibility_back == "Album": self.draw_album(screen, bottom)
-            else: self.draw_now(screen, bottom)
         if not zoom: self.draw_live(screen, bottom)
         if not zoom: self.draw_nav(screen, bottom)
-        if self.page == "Visibility": self.draw_visibility(screen, bottom)
         self.colored(screen, height - 1, 1, compact(self.message, width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
@@ -646,46 +634,56 @@ class App:
 
     def draw_nav(self, screen, bottom):
         height, width = screen.getmaxyx()
-        live_visible = any(self.config[key] for key in ("levels", "dr", "balance"))
         x = 2
         for index, (label, page) in enumerate(PAGE_NAV):
-            y = (bottom + 1 + 2 * int(self.config["levels"]) + int(self.config["balance"]) + int(self.config["dr"]) - 1) if live_visible and page == "Visibility" else bottom - 1
-            position = width - len(label) - 2 if page == "Visibility" else x
-            if position < 1 or position + len(label) >= width - 1: continue
-            self.colored(screen, y, position, label,
-                         "accent" if self.page == page or self.nav_focus and self.nav_index == index else "soft",
-                         curses.A_REVERSE if self.nav_focus and self.nav_index == index else 0)
-            if page != "Visibility": x += len(label) + 3
+            if x + len(label) >= width - 1: continue
+            self.colored(screen, bottom - 1, x, label, "accent" if self.page == page else "soft")
+            x += len(label) + 3
+        live_rows = 2 * int(self.config["levels"]) + int(self.config["balance"]) + int(self.config["dr"])
+        y = bottom + live_rows if live_rows else bottom
+        hint = "☷ +/- [Tab]"
+        self.colored(screen, y, width - len(hint) - 2, hint, "accent")
 
     def draw_library(self, screen, bottom):
-        h, w = screen.getmaxyx()
-        self.colored(screen, 2, 1, "← →  " + "  ".join((f"[{i+1} {TAB_ICONS[i]} {name}]" if i == self.tab else f" {i+1} {TAB_ICONS[i]} {name} ") for i, name in enumerate(TABS)), "accent")
-        if self.tab in (0, 2, 3, 4): self.text(screen, 3, 1, f"⌕ {self.query or '—'}    / edit    f filters")
-        else: self.text(screen, 3, 1, "f filters" if self.tab == 1 else f"Folder: {self.folder or '/'}")
-        first_result = 4
-        if self.tab == 1:
-            self.text(screen, 4, 1, f"Genre: {self.filters['genre'] or 'Any'}    f edit (blank clears)")
-            first_result = 5
+        _, width = screen.getmaxyx()
+        divider = 27
+        result_x = divider + 2
+        result_width = width - result_x - 2
+        for y in range(2, bottom - 1):
+            self.colored(screen, y, divider, "│", "muted")
+        for index, name in enumerate(TABS):
+            label = f"{index + 1} {TAB_ICONS[index]} {name}"
+            self.colored(screen, 2 + index, 1, compact(label, divider - 2),
+                         "accent" if index == self.tab else "soft",
+                         curses.A_REVERSE if index == self.tab else 0)
+        self.colored(screen, 8, 1, "f Filters" if self.tab in (0, 1) else "/ Search" if self.tab in (2, 3, 4) else "Review later", "accent")
+        self.colored(screen, 9, 1, "p Play  a Append", "soft")
+        self.colored(screen, 10, 1, "h Favourite  b Review", "soft")
+        self.colored(screen, 11, 1, "m More  r Refresh  x Edit", "soft")
         if self.tab == 0:
             f = self.filters
-            filters = (f"Labels: {', '.join(f['label']) or 'Any'}",
-                       f"From: {f['from'] or 'Any date'}", f"To: {f['to'] or 'Any date'}",
-                       f"Sort: {f['sort']}", f"Awarded: {'Yes' if f['awarded'] else 'No'}",
-                       f"Hi-Res: {'Yes' if f['hires'] else 'No'}",
-                       f"Local: {'Yes' if f['local'] else 'No'}")
-            for y, line in enumerate(filters, 4): self.text(screen, y, 1, line)
-            first_result = 11
+            active = [key for key in ("label", "from", "to", "awarded", "hires", "local") if f[key]]
+            title = f"Search: {self.query or 'all'}  / edit  ·  Sort: {f['sort']}  ·  Filters: {', '.join(active) or 'none'}"
+        elif self.tab == 1:
+            title = f"Discover · Genre: {self.filters['genre'] or 'Any'}  ·  f edit"
+        elif self.tab in (2, 3, 4):
+            title = f"{TABS[self.tab]}: {self.query or 'all'}  ·  / edit"
+        else:
+            title = f"{TABS[self.tab]} · {self.folder or '/'}"
+        self.colored(screen, 2, result_x, compact(title, result_width), "accent")
+        first_result = 3
         visible = max(0, bottom - 1 - first_result)
         if self.row < self.scroll: self.scroll = self.row
-        if self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
+        if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
         for y, index in enumerate(range(self.scroll, min(len(self.rows), self.scroll + visible)), first_result):
             item = self.rows[index]
             if item.get("kind") == "folder":
                 label = "▸ " + item.get("path", "")
             else:
                 label = f"{item.get('title', '—')} — {item.get('artist', '')}  {item.get('year', '')}  {item.get('label', '')}"
-            self.colored(screen, y, 1, compact(label, w - 3), "accent" if index == self.row else "muted" if item.get("kind") == "folder" else "green" if item.get("rating") else "accent", curses.A_REVERSE if index == self.row else 0)
-        self.colored(screen, bottom - 2, 1, "↑↓ select  Enter details/folder  p play  a append  h favourite  b bookmark  m more  r refresh  x remove/renew", "muted")
+            self.colored(screen, y, result_x, compact(label, result_width),
+                         "accent" if index == self.row else "muted" if item.get("kind") == "folder" else "green" if item.get("rating") else "accent",
+                         curses.A_REVERSE if index == self.row else 0)
 
     def draw_now(self, screen, bottom):
         h, w = screen.getmaxyx()
@@ -916,17 +914,6 @@ class App:
             self.colored(screen, y, 2, f"{label:<19}", color, style)
             self.colored(screen, y, 23, compact(value, width - 25), color, style)
 
-    def draw_visibility(self, screen, bottom):
-        _, width = screen.getmaxyx()
-        left = width - 33
-        rows = (("levels", "Level bars"), ("dr", "DR loudness"), ("balance", "Balance"))
-        self.colored(screen, bottom - 5, left, "┌" + "─" * 29 + "┐", "accent")
-        self.colored(screen, bottom - 4, left, "│ Visibility            Esc │", "accent")
-        for index, (key, label) in enumerate(rows, 1):
-            self.colored(screen, bottom - 4 + index, left,
-                         f"│ {index} {label:<16} {'on ' if self.config[key] else 'off'} │", "green" if self.config[key] else "muted")
-        self.colored(screen, bottom, left, "└" + "─" * 29 + "┘", "accent")
-
     def draw_live(self, screen, bottom):
         h, w = screen.getmaxyx()
         if any(self.config[key] for key in ("levels", "dr", "balance")):
@@ -1010,29 +997,17 @@ class App:
             return
         if key == ord("q"): raise KeyboardInterrupt
         if key == 9:
-            self.nav_focus = True
-            self.nav_index = next((i for i, (_, page) in enumerate(PAGE_NAV) if page == self.page), 1)
-            self.message = "←→ choose page · Enter open · Esc return"
+            names = ("levels", "dr", "balance")
+            mask = sum(1 << i for i, name in enumerate(names) if self.config[name])
+            mask = (mask + 1) % (1 << len(names))
+            for i, name in enumerate(names): self.config[name] = bool(mask & (1 << i))
+            if self.config["dr"]: self.dr_paused = False
+            self.save()
+            self.message = " · ".join(f"{name} {'on' if self.config[name] else 'off'}" for name in names)
             return
-        if self.nav_focus:
-            if key in (curses.KEY_LEFT, curses.KEY_RIGHT):
-                self.nav_index = (self.nav_index + (-1 if key == curses.KEY_LEFT else 1)) % len(PAGE_NAV)
-            elif key in (10, 13):
-                self.switch(PAGE_NAV[self.nav_index][1]); self.nav_focus = False
-            elif key == 27 or key == curses.KEY_UP:
-                self.nav_focus = False
-            return
-        if key == ord("v"): self.switch("Visibility"); return
         for index in range(4):
             if key == curses.KEY_F1 + index:
-                self.switch(PAGE_NAV[index][1]); self.nav_index = index; return
-        if self.page == "Visibility":
-            if key in (ord("1"), ord("2"), ord("3")):
-                name = ("levels", "dr", "balance")[key - ord("1")]
-                self.config[name] = not self.config[name]; self.save()
-                if name == "dr" and self.config[name]: self.dr_paused = False
-            elif key == 27: self.switch(self.visibility_back)
-            return
+                self.switch(PAGE_NAV[index][1]); return
         if self.page == "Config":
             if key in (curses.KEY_UP, curses.KEY_DOWN):
                 self.config_index = max(0, min(len(CONFIG_KEYS) - 1,
@@ -1153,10 +1128,6 @@ class App:
 
     def now_key(self, key, screen):
         if key in (curses.KEY_UP, curses.KEY_DOWN):
-            if key == curses.KEY_DOWN and self.now_action == len(NOW_ACTIONS) - 1:
-                self.nav_focus = True
-                self.nav_index = 1
-                return
             step = -1 if key == curses.KEY_UP else 1
             self.now_action = max(0, min(len(NOW_ACTIONS) - 1, self.now_action + step))
             self.message = "↑↓ select · Enter activate"
