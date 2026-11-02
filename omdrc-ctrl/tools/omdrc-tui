@@ -33,6 +33,7 @@ DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "dr_keep_minutes": 5, "balance_window": 15, "cover": True,
             "theme": "auto", "cover_mode": "auto"}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
+TAB_ICONS = ("⌕", "✦", "♥", "◷", "★", "▣")
 NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
                ("Next track", "]"), ("Stop", "s"), ("Seek", "g"),
                ("Album details", "i"), ("Favourite", "h"),
@@ -41,7 +42,8 @@ NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
 NOW_ACTION_ROWS = (0, 1, 1, 2, 3, 5, 6, 7, 8, 9, 10)
 NOW_MENU_TOP = 7
 PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
-            ("F3 Room correction", "DRC"), ("F4 Config", "Config"))
+            ("F3 Room correction", "DRC"), ("F4 Config", "Config"),
+            ("v Visibility", "Visibility"))
 
 
 def research_rows(body, width):
@@ -596,10 +598,10 @@ class App:
             self.sixel_target = None
         screen.erase()
         height, width = screen.getmaxyx()
-        if height < 15 or width < 55:
-            self.text(screen, 0, 0, "Need at least 55 columns × 15 rows")
+        if height < (20 if self.page == "Library" and self.tab == 0 else 15) or width < 55:
+            self.text(screen, 0, 0, "Need at least 55 columns × 20 rows" if self.page == "Library" and self.tab == 0 else "Need at least 55 columns × 15 rows")
             screen.refresh(); return
-        self.colored(screen, 0, 1, "open-media-drc  F1 Library  F2 Now  F3 Room correction  F4 Config  v Visibility  q Quit", "accent", curses.A_BOLD)
+        self.colored(screen, 0, 1, f"open-media-drc  ·  {self.page}  ·  q Quit", "accent", curses.A_BOLD)
         self.colored(screen, 1, 0, "─" * (width - 1), "muted")
         zoom = self.page == "Now" and self.cover_zoom
         bottom = height - (2 if zoom else 7 if self.config["levels"] or self.config["dr"] or self.config["balance"] else 3)
@@ -624,24 +626,33 @@ class App:
         _, width = screen.getmaxyx()
         x = 2
         for index, (label, page) in enumerate(PAGE_NAV):
-            if x + len(label) >= width - 1: break
-            self.colored(screen, bottom - 1, x, label,
+            y = bottom if page == "Visibility" else bottom - 1
+            position = width - len(label) - 2 if page == "Visibility" else x
+            if position < 1 or position + len(label) >= width - 1: continue
+            self.colored(screen, y, position, label,
                          "accent" if self.page == page or self.nav_focus and self.nav_index == index else "soft",
                          curses.A_REVERSE if self.nav_focus and self.nav_index == index else 0)
-            x += len(label) + 3
+            if page != "Visibility": x += len(label) + 3
 
     def draw_library(self, screen, bottom):
         h, w = screen.getmaxyx()
-        self.colored(screen, 2, 1, "  ".join((f"[{i+1} {name}]" if i == self.tab else f" {i+1} {name} ") for i, name in enumerate(TABS)), "accent")
-        if self.tab in (0, 2, 3, 4): self.text(screen, 3, 1, f"Search: {self.query or '—'}    / edit    f filters")
+        self.colored(screen, 2, 1, "  ".join((f"[{i+1} {TAB_ICONS[i]} {name}]" if i == self.tab else f" {i+1} {TAB_ICONS[i]} {name} ") for i, name in enumerate(TABS)), "accent")
+        if self.tab in (0, 2, 3, 4): self.text(screen, 3, 1, f"⌕ {self.query or '—'}    / edit    f filters")
         else: self.text(screen, 3, 1, "f filters" if self.tab == 1 else f"Folder: {self.folder or '/'}")
+        first_result = 4
         if self.tab == 0:
             f = self.filters
-            self.text(screen, 4, 1, f"Labels {','.join(f['label']) or 'any'} · {f['from'] or 'any'}–{f['to'] or 'any'} · {f['sort']} · Awarded {f['awarded']} · Hi-Res {f['hires']} · Local {f['local']}")
-        visible = max(1, bottom - 6)
+            filters = (f"Labels: {', '.join(f['label']) or 'Any'}",
+                       f"From: {f['from'] or 'Any date'}", f"To: {f['to'] or 'Any date'}",
+                       f"Sort: {f['sort']}", f"Awarded: {'Yes' if f['awarded'] else 'No'}",
+                       f"Hi-Res: {'Yes' if f['hires'] else 'No'}",
+                       f"Local: {'Yes' if f['local'] else 'No'}")
+            for y, line in enumerate(filters, 4): self.text(screen, y, 1, line)
+            first_result = 11
+        visible = max(0, bottom - 1 - first_result)
         if self.row < self.scroll: self.scroll = self.row
         if self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
-        for y, index in enumerate(range(self.scroll, min(len(self.rows), self.scroll + visible)), 5):
+        for y, index in enumerate(range(self.scroll, min(len(self.rows), self.scroll + visible)), first_result):
             item = self.rows[index]
             if item.get("kind") == "folder":
                 label = "▸ " + item.get("path", "")

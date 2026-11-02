@@ -96,7 +96,8 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 80)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_nav(Screen(), 17)
-        self.assertTrue(all(args[1] == 16 for args in painted))
+        self.assertEqual([args[1] for args in painted], [16, 16, 16, 16, 17])
+        self.assertEqual(painted[-1][2], 80 - len("v Visibility") - 2)
         app.action(9, None)
         self.assertTrue(app.nav_focus)
         app.action(tui.curses.KEY_RIGHT, None)
