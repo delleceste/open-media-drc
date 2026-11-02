@@ -184,7 +184,7 @@ class TuiTest(unittest.TestCase):
         self.assertTrue(any(args[1] == 7 and 'Searching Qobuz' in args[3] and '█' in args[3]
                             and args[4] == 'green' for args in painted))
         titles = [(args[1], args[3]) for args in painted if args[3] in ('First', 'Second')]
-        self.assertEqual(titles, [(8, 'First'), (12, 'Second')])
+        self.assertEqual(titles, [(9, 'First'), (15, 'Second')])
         app.tab = 1
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
@@ -481,7 +481,7 @@ class TuiTest(unittest.TestCase):
             app.library_key(10, None)
             fetch.assert_called_once()
 
-    def test_library_result_highlight_follows_tab_focus(self):
+    def test_discover_result_box_follows_tab_focus(self):
         app = tui.App('http://localhost:9090')
         app.tab = 1
         app.rows = [{'kind': 'folder', 'path': 'Example'}]
@@ -490,15 +490,20 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (20, 55)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 13)
-        folder = next(args for args in painted if args[1] == 6 and 'Example' in str(args[3]))
+        folder = next(args for args in painted if args[1] == 7 and 'Example' in str(args[3]))
         self.assertFalse(folder[5] & tui.curses.A_REVERSE)
+        self.assertFalse(any(args[1] == 6 and str(args[3]).startswith('┌') for args in painted))
         app.library_sidebar_focus = False
         app.library_right_index = 2
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 13)
-        folder = next(args for args in painted if args[1] == 6 and 'Example' in str(args[3]))
-        self.assertTrue(folder[5] & tui.curses.A_REVERSE)
+        folder = next(args for args in painted if args[1] == 7 and 'Example' in str(args[3]))
+        self.assertFalse(folder[5] & tui.curses.A_REVERSE)
+        self.assertTrue(any(args[1] == 6 and str(args[3]).startswith('┌') and args[4] == 'green'
+                            for args in painted))
+        self.assertTrue(any(args[1] == 11 and str(args[3]).startswith('└') and args[4] == 'green'
+                            for args in painted))
 
     def test_favourites_selection_replaces_discover_timer(self):
         app = tui.App('http://localhost:9090')
@@ -551,7 +556,7 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 13)
         tabs = [args for args in painted if args[2] == 1 and 2 <= args[1] <= 7]
         self.assertEqual(len(tabs), 6)
-        self.assertTrue(any(args[1] == 9 and args[2] == 29 and 'Example' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 10 and args[2] == 31 and 'Example' in args[3] for args in painted))
 
     def test_search_results_drop_searched_artist_and_show_quality(self):
         self.assertTrue(tui.same_name('Pink Floyd', 'pink floyd'))
@@ -569,12 +574,29 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 120)
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
             app.draw_library(Screen(), 17)
-        title = [args for args in painted if args[1] == 8 and args[2] >= 29]
+        title = [args for args in painted if args[1] == 9 and args[2] >= 31]
         self.assertTrue(any(args[3] == 'Animals' for args in title))
-        details = [args for args in painted if args[1] == 9 and args[2] >= 29]
+        details = [args for args in painted if args[1] == 10 and args[2] >= 31]
         self.assertTrue(any('1977 · Pink Floyd Records · 24/192' in args[3] for args in details))
         self.assertTrue(any(args[1] == 4 and 'pink floyd' in args[3] for args in painted))
         self.assertTrue(any(args[1] == 6 and 'Sort: Qobuz' in args[3] for args in painted))
+
+    def test_search_result_uses_green_box_without_reversing_text(self):
+        app = tui.App('http://localhost:9090')
+        app.rows = [{'title': 'Animals', 'artist': 'Pink Floyd'}]
+        app.library_sidebar_focus = False
+        app.library_right_index = 2
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 17)
+        border = [args for args in painted if args[4] == 'green' and args[1] in (8, 12)]
+        self.assertEqual([(args[1], args[3][0], args[3][-1]) for args in border],
+                         [(8, '┌', '┐'), (12, '└', '┘')])
+        title = next(args for args in painted if args[3] == 'Animals')
+        self.assertEqual(title[4], 'bright')
+        self.assertFalse(title[5] & tui.curses.A_REVERSE)
 
     def test_discover_cover_uses_large_image_and_color(self):
         app = tui.App('http://localhost:9090')
@@ -699,6 +721,40 @@ class TuiTest(unittest.TestCase):
         self.assertFalse(any("─" in str(args[3]) for args in painted))
         app.action(tui.curses.KEY_F3, None)
         self.assertEqual(app.page, 'DRC')
+
+    def test_page_up_down_and_ctrl_arrows_navigate_four_pages(self):
+        app = tui.App('http://localhost:9090')
+        app.config['dr'] = False
+        with patch.object(app, 'submit'):
+            app.action(tui.curses.KEY_NPAGE, None)
+            self.assertEqual(app.page, 'DRC')
+            app.action(tui.CTRL_RIGHT, None)
+            self.assertEqual(app.page, 'Config')
+            app.action(tui.curses.KEY_NPAGE, None)
+            self.assertEqual(app.page, 'Config')
+            app.action(tui.CTRL_LEFT, None)
+            self.assertEqual(app.page, 'DRC')
+            app.action(tui.curses.KEY_PPAGE, None)
+            self.assertEqual(app.page, 'Now')
+            app.action(tui.curses.KEY_PPAGE, None)
+            self.assertEqual(app.page, 'Library')
+            app.action(tui.CTRL_LEFT, None)
+            self.assertEqual(app.page, 'Library')
+
+    def test_ctrl_arrow_escape_sequences_are_decoded(self):
+        app = tui.App('http://localhost:9090')
+        class Screen:
+            def __init__(self, keys):
+                self.keys = iter(keys)
+                self.timeouts = []
+            def getch(self): return next(self.keys)
+            def timeout(self, value): self.timeouts.append(value)
+        for suffix, expected in (('D', tui.CTRL_LEFT), ('C', tui.CTRL_RIGHT)):
+            screen = Screen([27, *map(ord, '[1;5' + suffix)])
+            self.assertEqual(app.read_key(screen), expected)
+            self.assertEqual(screen.timeouts, [25, 100])
+        screen = Screen([27, -1])
+        self.assertEqual(app.read_key(screen), 27)
 
     def test_tab_cycles_all_visibility_combinations(self):
         app = tui.App('http://localhost:9090')

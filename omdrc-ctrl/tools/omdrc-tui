@@ -47,6 +47,8 @@ NOW_MENU_TOP = 7
 CONFIG_KEYS = "uzcpwtkbda"
 PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
             ("F3 Room correction", "DRC"), ("F4 Config", "Config"))
+CTRL_LEFT = "ctrl-left"
+CTRL_RIGHT = "ctrl-right"
 ALBUM_ACTIONS = (("F5 Play", "green", "p"), ("F6 Add", "fmt_hires", "a"),
                  ("F7 Fav", "red", "h"), ("F8 Later", "yellow", "b"),
                  ("F9 Research", "fmt_48", "R"))
@@ -1040,24 +1042,38 @@ class App:
             self.colored(screen, first_result - 1, result_x, "─" * result_width, "muted")
         cover_height = 4 if self.tab == 1 else 3
         cover_width = 12 if self.tab == 1 else 10
-        block_height = cover_height + 1 if self.tab == 1 else 4
-        visible = max(0, (bottom - 1 - first_result - cover_height) // block_height + 1)
+        boxed_results = self.tab in (0, 1) and result_width >= 4
+        row_height = cover_height + 2 if boxed_results else cover_height
+        block_height = row_height + 1
+        visible = max(0, (bottom - first_result - row_height) // block_height + 1)
         if self.row < self.scroll: self.scroll = self.row
         if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
         for index in range(self.scroll, min(len(self.rows), self.scroll + visible)):
             y = first_result + (index - self.scroll) * block_height
             item = self.rows[index]
             results_focused = not self.library_sidebar_focus and self.library_right_index == (2 if self.tab in (0, 1) else 1)
-            selected = curses.A_REVERSE if results_focused and index == self.row else 0
+            focused = results_focused and index == self.row
+            selected = curses.A_REVERSE if focused and not boxed_results else 0
+            if boxed_results:
+                if focused:
+                    self.colored(screen, y, result_x, "┌" + "─" * (result_width - 2) + "┐", "green")
+                    for border_y in range(y + 1, y + row_height - 1):
+                        self.colored(screen, border_y, result_x, "│", "green")
+                        self.colored(screen, border_y, result_x + result_width - 1, "│", "green")
+                    self.colored(screen, y + row_height - 1, result_x,
+                                 "└" + "─" * (result_width - 2) + "┘", "green")
+                y += 1
+            content_x = result_x + 2 if boxed_results else result_x
+            content_width = result_width - 4 if boxed_results else result_width
             if item.get("kind") == "folder":
-                self.colored(screen, y, result_x, compact("▸ " + item.get("path", ""), result_width),
-                             "accent" if index == self.row else "muted", selected)
+                self.colored(screen, y, content_x, compact("▸ " + item.get("path", ""), content_width),
+                             "accent" if index == self.row and not boxed_results else "muted", selected)
                 continue
             art = item.get("image_large") or item.get("image") or ""
-            art_width = cover_width if art and result_width >= cover_width + 20 else 0
-            if art_width and not self.list_covers_hidden: self.draw_list_cover(screen, art, result_x, y, cover_width, cover_height)
-            x = result_x + (art_width + 2 if art_width else 0)
-            text_width = result_width - (x - result_x)
+            art_width = cover_width if art and content_width >= cover_width + 20 else 0
+            if art_width and not self.list_covers_hidden: self.draw_list_cover(screen, art, content_x, y, cover_width, cover_height)
+            x = content_x + (art_width + 2 if art_width else 0)
+            text_width = content_width - (x - content_x)
             artist = clean(item.get("artist"))
             show_artist = bool(artist) and not (self.tab == 0 and same_name(artist, self.query))
             title_y = y + int(show_artist)
@@ -1412,6 +1428,13 @@ class App:
         if key == curses.KEY_RESIZE:
             self.list_sixel_size = None
             return
+        if key in (curses.KEY_PPAGE, curses.KEY_NPAGE, CTRL_LEFT, CTRL_RIGHT):
+            page = self.album_source if self.page == "Album" else self.research_back if self.page == "Research" else self.page
+            index = next((i for i, (_, name) in enumerate(PAGE_NAV) if name == page), 1)
+            step = -1 if key in (curses.KEY_PPAGE, CTRL_LEFT) else 1
+            target = PAGE_NAV[max(0, min(len(PAGE_NAV) - 1, index + step))][1]
+            if target != self.page: self.switch(target)
+            return
         if self.page == "Library" and self.search_editing:
             self.search_edit_key(key)
             if key == 27 and screen is not None: self.draw(screen)
@@ -1756,6 +1779,36 @@ class App:
                     self.message = "Research ready"
         self.submit("research", work, apply)
 
+    def read_key(self, screen):
+        key = screen.getch()
+        if key != 27:
+            return key
+        # xterm and Konsole send Ctrl+Left/Right as CSI 1;5D/C, which
+        # curses does not recognize unless the terminal profile defines it.
+        consumed = []
+        screen.timeout(25)
+        try:
+            for expected in (ord('['), ord('1'), ord(';'), ord('5')):
+                next_key = screen.getch()
+                if next_key == -1:
+                    break
+                consumed.append(next_key)
+                if next_key != expected:
+                    break
+            else:
+                next_key = screen.getch()
+                if next_key == ord('D'):
+                    return CTRL_LEFT
+                if next_key == ord('C'):
+                    return CTRL_RIGHT
+                if next_key != -1:
+                    consumed.append(next_key)
+        finally:
+            screen.timeout(100)
+        for value in reversed(consumed):
+            curses.ungetch(value)
+        return key
+
     def run(self, screen):
         if hasattr(curses, "set_escdelay"):
             curses.set_escdelay(25)
@@ -1764,7 +1817,7 @@ class App:
         try:
             while True:
                 self.drain(); self.poll(); self.draw(screen)
-                key = screen.getch()
+                key = self.read_key(screen)
                 if key != -1: self.action(key, screen)
         except KeyboardInterrupt:
             pass
