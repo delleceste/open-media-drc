@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 CONFIG_PATH = Path.home() / ".config" / "omdrc-tui" / "config.json"
-DEFAULTS = {"server": "http://127.0.0.1:9090", "levels": True, "dr": True,
+DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "balance": True, "dr_window": 60, "dr_per_song": True,
             "dr_keep_minutes": 5, "balance_window": 15, "cover": True}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
@@ -154,10 +154,10 @@ class Stream:
             self.stop.wait(2)
 
     def close(self):
+        # Closing HTTPResponse from the curses thread can block while the
+        # reader owns its buffer lock. The daemon reader checks this event on
+        # the next frame (or after its socket timeout) and closes its own socket.
         self.stop.set()
-        if self.response:
-            try: self.response.close()
-            except OSError: pass
 
 
 class App:
@@ -167,13 +167,13 @@ class App:
             self.config.update(json.loads(CONFIG_PATH.read_text()))
         except (OSError, ValueError, TypeError):
             pass
-        if server:
-            self.config["server"] = server
+        # A saved address must not silently replace the local default.
+        self.config["server"] = server if server is not None else DEFAULTS["server"]
         self.api = API(self.config["server"])
         self.pool = ThreadPoolExecutor(max_workers=5)
         self.events = queue.SimpleQueue()
         self.pending = set()
-        self.page = "Library"
+        self.page = "Now"
         self.tab = 0
         self.rows = []
         self.row = 0
@@ -219,7 +219,7 @@ class App:
     def save(self):
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = CONFIG_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.config, indent=2) + "\n")
+        tmp.write_text(json.dumps({k: v for k, v in self.config.items() if k != "server"}, indent=2) + "\n")
         os.replace(tmp, CONFIG_PATH)
 
     def submit(self, key, fn, callback=None):
@@ -322,7 +322,9 @@ class App:
         self.dr_paused = True
 
     def drain(self):
-        while True:
+        # Bound work per paint so a busy stream cannot starve track polling,
+        # keyboard input, and the on-screen clock.
+        for _ in range(100):
             try: key, callback, value, error = self.events.get_nowait()
             except queue.Empty: break
             if key == "level-frame":
@@ -731,7 +733,6 @@ class App:
 
     def run(self, screen):
         curses.curs_set(0); screen.keypad(True); screen.timeout(100)
-        self.fetch_list()
         try:
             while True:
                 self.drain(); self.poll(); self.draw(screen)
@@ -747,7 +748,8 @@ class App:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server", help="omdrcctrl base URL; saved in Configuration")
+    parser.add_argument("--server", default="http://localhost:9090",
+                        help="omdrcctrl base URL (default: http://localhost:9090)")
     args = parser.parse_args(argv)
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("requires an interactive terminal")

@@ -1,6 +1,6 @@
 # Terminal client
 
-Run `omdrc-ctrl/tools/omdrc-tui --server http://your-box:9090` in an interactive terminal. Python 3 is required; `chafa` is optional for monochrome cover art. The server and display preferences live in `~/.config/omdrc-tui/config.json`. Set up Qobuz sign-in, AI provider and audio hardware in the phone UI.
+Run `omdrc-ctrl/tools/omdrc-tui` in an interactive terminal. It opens Now playing and connects to `http://localhost:9090`; use `--server http://your-box:9090` for another box. Python 3 is required; `chafa` is optional for monochrome cover art. Display preferences live in `~/.config/omdrc-tui/config.json`. A server address changed in Configuration applies to the current session; pass `--server` on later launches to use a remote box. Set up Qobuz sign-in, AI provider and audio hardware in the phone UI.
 
 F1–F4 open Library, Now, read-only Room correction and Configuration. `v` opens the visibility menu; `1`–`3` toggle level bars, DR and balance. In Library, `1`–`6` choose Search, Discover, Favourites, Chronology, Awarded and Review later. `/` edits the query, `f` edits filters, `r` refreshes, `m` loads more, arrows select and Enter opens an album or folder. `p` plays, `a` appends, `h` favourites and `b` bookmarks for Review later. In Review later, `x` edits or removes a bookmark.
 

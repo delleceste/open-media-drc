@@ -2,6 +2,8 @@
 import importlib.machinery
 import importlib.util
 from pathlib import Path
+import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +14,24 @@ spec.loader.exec_module(tui)
 
 
 class TuiTest(unittest.TestCase):
+    def test_default_opens_now_on_local_service_even_with_saved_remote(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            config.write_text('{"server":"http://remote:9090"}')
+            with patch.object(tui, 'CONFIG_PATH', config):
+                app = tui.App()
+        self.assertEqual(app.page, 'Now')
+        self.assertEqual(app.api.server, 'http://localhost:9090')
+
+    def test_stream_close_does_not_wait_on_reader_buffer(self):
+        stream = tui.Stream.__new__(tui.Stream)
+        stream.stop = threading.Event()
+        class BlockingResponse:
+            def close(self): raise AssertionError('must close in reader thread')
+        stream.response = BlockingResponse()
+        stream.close()
+        self.assertTrue(stream.stop.is_set())
+
     def test_dr_matches_two_channel_tt_blocks_and_silence_resets(self):
         block = [[.01, .01], [.2, .2]]
         self.assertAlmostEqual(tui.dr_value([block, block]), 6.020599913, places=5)
