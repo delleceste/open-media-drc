@@ -476,6 +476,12 @@ class TuiTest(unittest.TestCase):
             app.draw_nav(Screen(), 17)
         self.assertEqual([args[1] for args in painted], [16, 16, 16, 16, 21])
         self.assertEqual(painted[-1][3], "☷ Shift+Tab")
+        app.page = 'Library'
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_nav(Screen(), 17)
+        self.assertEqual(len(painted), 4)
+        app.page = 'Now'
         for settings, expected_row in (
             ({"levels": True, "balance": True, "dr": False}, 20),
             ({"levels": True, "balance": False, "dr": False}, 19),

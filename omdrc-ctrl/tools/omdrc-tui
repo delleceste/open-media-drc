@@ -872,10 +872,11 @@ class App:
             if x + len(label) >= width - 1: continue
             self.colored(screen, bottom - 1, x, label, "accent" if self.page == page else "soft")
             x += len(label) + 3
-        live_rows = 2 * int(self.config["levels"]) + int(self.config["balance"]) + int(self.config["dr"])
-        y = bottom + live_rows if live_rows else bottom
-        hint = "☷ Shift+Tab"
-        self.colored(screen, y, width - len(hint) - 2, hint, "accent")
+        if self.page == "Now":
+            live_rows = 2 * int(self.config["levels"]) + int(self.config["balance"]) + int(self.config["dr"])
+            y = bottom + live_rows if live_rows else bottom
+            hint = "☷ Shift+Tab"
+            self.colored(screen, y, width - len(hint) - 2, hint, "accent")
 
     def draw_library(self, screen, bottom):
         _, width = screen.getmaxyx()
