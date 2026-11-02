@@ -340,6 +340,7 @@ class App:
         self.list_covers = {}
         self.list_sixel_targets = []
         self.list_sixel_displayed = ()
+        self.list_sixel_size = None
         self.row = 0
         self.scroll = 0
         self.query = ""
@@ -517,6 +518,7 @@ class App:
                 height, width = screen.getmaxyx()
                 visible = max(1, height - 6)
                 start = max(0, min(cursor - visible // 2, len(genres) - visible))
+                screen.move(2, 0); screen.clrtoeol()
                 self.colored(screen, 2, 2, compact("Genres · Space toggle · Enter apply · c clear · Esc cancel", width - 4), "accent", curses.A_BOLD)
                 for row in range(visible):
                     y = row + 3
@@ -848,14 +850,15 @@ class App:
         self.colored(screen, height - 1, 1, self.footer_status(width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
         targets = tuple(self.list_sixel_targets)
-        if targets != self.list_sixel_displayed:
+        if targets != self.list_sixel_displayed or (targets and (height, width) != self.list_sixel_size):
             if self.list_sixel_displayed:
                 os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
-                screen.touchwin()
+                screen.clearok(True)  # repaint after an external terminal clear
                 screen.refresh()
             for left, top, payload in targets:
                 os.write(sys.stdout.fileno(), f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + payload + b"\x1b8")
             self.list_sixel_displayed = targets
+        self.list_sixel_size = (height, width)
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
             left, top = self.sixel_target
             payload = f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + self.cover_sixel + b"\x1b8"
@@ -1293,6 +1296,9 @@ class App:
             curses.noecho(); curses.curs_set(0); screen.timeout(100)
 
     def action(self, key, screen):
+        if key == curses.KEY_RESIZE:
+            self.list_sixel_size = None
+            return
         if self.page == "Library" and self.search_editing:
             self.search_edit_key(key)
             return

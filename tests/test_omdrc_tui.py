@@ -129,6 +129,30 @@ class TuiTest(unittest.TestCase):
         self.assertTrue(any('─' in str(args[3]) and args[4] == 'muted' for args in seek))
         self.assertTrue(any('← →' in str(args[3]) for args in seek))
 
+    def test_list_sixel_repaints_curses_after_cover_change_and_resize(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.config['cover_mode'] = 'sixel'
+        class Screen:
+            def __init__(self): self.forced = 0
+            def erase(self): pass
+            def refresh(self): pass
+            def clearok(self, enabled): self.forced += enabled
+            def getmaxyx(self): return (24, 80)
+        screen = Screen()
+        images = [(20, 8, b'first')]
+        def draw_library(*_): app.list_sixel_targets.extend(images)
+        with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=draw_library), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), patch.object(tui.os, 'write') as write:
+            app.draw(screen)
+            images.append((20, 13, b'second'))
+            app.draw(screen)
+            self.assertEqual(screen.forced, 1)
+            self.assertTrue(any(call.args[1] == b'\x1b[H\x1b[2J' for call in write.call_args_list))
+            app.action(tui.curses.KEY_RESIZE, screen)
+            app.draw(screen)
+            self.assertEqual(screen.forced, 2)
+
     def test_stale_sixel_key_clears_without_crashing(self):
         app = tui.App('http://localhost:9090')
         app.sixel_visible = True
