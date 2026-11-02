@@ -43,6 +43,44 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.message, 'Connected')
         self.assertEqual(app.qstatus['art'], '/qconnect/art?v=1')
 
+    def test_stale_sixel_key_clears_without_crashing(self):
+        app = tui.App('http://localhost:9090')
+        app.sixel_visible = True
+        app.cover_key = None
+        app.qstatus = {'art': '/cover'}
+        app.page = 'DRC'
+        class Screen:
+            cleared = False
+            def clear(self): self.cleared = True
+            def erase(self): pass
+            def refresh(self): pass
+            def getmaxyx(self): return (24, 80)
+        screen = Screen()
+        with patch.object(app, 'colored'), patch.object(app, 'draw_drc'), \
+             patch.object(app, 'draw_live'):
+            app.draw(screen)
+        self.assertTrue(screen.cleared)
+        self.assertFalse(app.sixel_visible)
+
+    def test_now_actions_select_and_activate_with_arrows(self):
+        app = tui.App('http://localhost:9090')
+        with patch.object(app, 'transport') as transport:
+            app.now_key(tui.curses.KEY_DOWN, None)
+            self.assertEqual(app.now_action, 1)
+            app.now_key(10, None)
+            transport.assert_called_once_with('prev')
+        app.now_action = 8
+        with patch.object(app, 'start_research') as research:
+            app.now_key(13, None)
+            research.assert_called_once()
+
+    def test_audio_format_tiers_match_app(self):
+        self.assertEqual(tui.format_color('24 bit / 192 kHz / stereo'), 'green')
+        self.assertEqual(tui.format_color('24 bit / 96 kHz / stereo'), 'fmt_hires')
+        self.assertEqual(tui.format_color('24 bit / 48 kHz / stereo'), 'fmt_24')
+        self.assertEqual(tui.format_color('16 bit / 48 kHz / stereo'), 'fmt_48')
+        self.assertEqual(tui.format_color('16 bit / 44.1 kHz / stereo'), 'muted')
+
     def test_sixel_cover_uses_pixel_output_in_konsole(self):
         app = tui.App('http://localhost:9090')
         with patch.dict(tui.os.environ, {'KONSOLE_VERSION': '260802'}):

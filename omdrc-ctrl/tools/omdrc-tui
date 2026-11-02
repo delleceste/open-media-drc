@@ -32,6 +32,24 @@ DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "dr_keep_minutes": 5, "balance_window": 15, "cover": True,
             "theme": "auto", "cover_mode": "auto"}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
+NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "left"),
+               ("Next track", "right"), ("Stop", "s"), ("Seek", "g"),
+               ("Album details", "i"), ("Favourite", "h"),
+               ("Review later", "b"), ("Research music", "R"),
+               ("Measure album DR", "M"), ("Enlarge cover", "C"))
+
+
+def format_color(line):
+    """Use the same format tiers as the desktop and Android-facing UI."""
+    match = re.search(r"(\d+)\s*bit.*?([\d.]+)\s*kHz", str(line or ""), re.I)
+    if not match: return "muted"
+    bits, khz = int(match[1]), float(match[2])
+    if bits >= 24 and khz >= 176: return "green"
+    if bits >= 24 and khz >= 88: return "fmt_hires"
+    if bits >= 24: return "fmt_24"
+    if khz >= 48: return "fmt_48"
+    return "muted"
+
 
 
 def clean(value):
@@ -296,6 +314,8 @@ class App:
         self.cover_key = None
         self.cover_lines = []
         self.cover_zoom = False
+        self.now_action = 0
+        self.now_action_scroll = 0
         self.cover_sixel = None
         self.sixel_visible = False
         self.sixel_target = None
@@ -460,19 +480,22 @@ class App:
 
     def configure_colors(self):
         self.light = theme_is_light(self.config.get("theme", "auto"))
-        self.styles = {name: 0 for name in ("accent", "green", "yellow", "red", "muted", "cover")}
+        self.styles = {name: 0 for name in ("accent", "green", "yellow", "red", "muted", "fmt_hires", "fmt_24", "fmt_48", "cover")}
         self.cover_pairs = {}
         if not curses.has_colors(): return
         curses.start_color()
         try: curses.use_default_colors()
         except curses.error: pass
         palette = ({"accent": "0969da", "green": "1a7f37", "yellow": "9a6700",
-                    "red": "cf222e", "muted": "59636e"} if self.light else
+                    "red": "cf222e", "muted": "59636e", "fmt_hires": "0969da",
+                    "fmt_24": "9a6700", "fmt_48": "8250df"} if self.light else
                    {"accent": "58a6ff", "green": "3fb950", "yellow": "d29922",
-                    "red": "f85149", "muted": "8b949e"})
+                    "red": "f85149", "muted": "8b949e", "fmt_hires": "79c0ff",
+                    "fmt_24": "e3b341", "fmt_48": "d2a8ff"})
         fallback = {"accent": curses.COLOR_BLUE, "green": curses.COLOR_GREEN,
                     "yellow": curses.COLOR_YELLOW, "red": curses.COLOR_RED,
-                    "muted": curses.COLOR_CYAN}
+                    "muted": curses.COLOR_CYAN, "fmt_hires": curses.COLOR_BLUE,
+                    "fmt_24": curses.COLOR_YELLOW, "fmt_48": curses.COLOR_MAGENTA}
         for number, (name, color) in enumerate(palette.items(), 1):
             if number >= curses.COLOR_PAIRS: break
             fg = (xterm_color(bytes.fromhex(color)) if curses.COLORS >= 256 else fallback[name])
@@ -516,7 +539,7 @@ class App:
     def draw(self, screen):
         active_art = (self.qstatus.get("art") or (self.now_state.get("music") or {}).get("art") or "")
         if self.sixel_visible and (self.page != "Now" or not self.config["cover"] or
-                                   not active_art or active_art != self.cover_key[0]):
+                                   not active_art or not self.cover_key or active_art != self.cover_key[0]):
             screen.clear()
             self.sixel_visible = False
             self.sixel_target = None
@@ -584,17 +607,36 @@ class App:
         self.colored(screen, 2, x, compact(title, avail), "accent", curses.A_BOLD)
         self.text(screen, 3, x, compact(p.get("artist", ""), avail))
         self.text(screen, 4, x, compact(p.get("album", ""), avail))
-        self.colored(screen, 5, x, compact(f"{p.get('label', '')}  {p.get('date', '')}  {q.get('line2', '')}", avail), "muted")
+        edition = "  ".join(str(value) for value in (p.get("label"), p.get("date")) if value)
+        quality = q.get("line2") or ""
+        if edition:
+            self.colored(screen, 5, x, compact(edition, avail), "muted")
+            quality_x = x + min(len(edition) + 2, avail)
+        else:
+            quality_x = x
+        if quality and quality_x < w - 2:
+            self.colored(screen, 5, quality_x, compact(quality, w - quality_x - 2), format_color(quality))
         elapsed, duration = p.get("elapsed"), p.get("duration")
         if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration:
             elapsed += max(0, time.monotonic() - self.last_player) if p.get("state") == "play" else 0
             self.text(screen, 6, x, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}")
             self.colored(screen, 7, x, bar(elapsed, min(40, avail - 2), 0, duration), "accent")
-        self.colored(screen, 8, x, f"{p.get('state', 'stop').upper()}  Space play/pause  ←→ track  s stop", "green" if p.get("state") == "play" else "muted")
-        self.colored(screen, 9, x, "g seek  i details  h favourite  b review later", "muted")
-        self.colored(screen, 10, x, "R Research music  M measure album DR  C enlarge cover", "muted")
+        visible = max(1, bottom - 9)
+        self.now_action_scroll = min(self.now_action_scroll, max(0, len(NOW_ACTIONS) - visible))
+        if self.now_action < self.now_action_scroll: self.now_action_scroll = self.now_action
+        if self.now_action >= self.now_action_scroll + visible:
+            self.now_action_scroll = self.now_action - visible + 1
+        for row, index in enumerate(range(self.now_action_scroll,
+                                          min(len(NOW_ACTIONS), self.now_action_scroll + visible)), 8):
+            label, shortcut = NOW_ACTIONS[index]
+            if shortcut == " ":
+                label = "Pause" if p.get("state") == "play" else "Play"
+            mark = "▸ " if index == self.now_action else "  "
+            self.colored(screen, row, x, compact(mark + label, avail),
+                         "green" if index == 0 and p.get("state") == "play" else "accent" if index == self.now_action else "muted",
+                         curses.A_REVERSE if index == self.now_action else 0)
         drc = (self.now_state.get("drc") or {})
-        self.colored(screen, 11, x, compact(drc_summary(drc), avail),
+        self.colored(screen, bottom - 1, x, compact(drc_summary(drc), avail),
                      "green" if drc.get("running") else "muted" if drc.get("running") is False else "yellow")
         if cover_w:
             self.draw_cover(screen, art, cover_w, cover_h, 2, 3)
@@ -901,6 +943,14 @@ class App:
             else: self.album_action(item, key, screen)
 
     def now_key(self, key, screen):
+        if key in (curses.KEY_UP, curses.KEY_DOWN):
+            step = -1 if key == curses.KEY_UP else 1
+            self.now_action = max(0, min(len(NOW_ACTIONS) - 1, self.now_action + step))
+            self.message = "↑↓ select · Enter activate"
+            return
+        if key in (10, 13):
+            shortcut = NOW_ACTIONS[self.now_action][1]
+            key = curses.KEY_LEFT if shortcut == "left" else curses.KEY_RIGHT if shortcut == "right" else ord(shortcut)
         if key in (ord("C"), 27):
             self.cover_zoom = not self.cover_zoom if key == ord("C") else False
             self.cover_key = None
