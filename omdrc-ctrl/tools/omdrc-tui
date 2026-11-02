@@ -330,6 +330,7 @@ class App:
         self.library_sidebar_focus = True
         self.library_sidebar_index = 0
         self.library_right_index = 0
+        self.sort_focus = False
         self.library_auto_due = None
         self.library_auto_tab = None
         self.search_editing = False
@@ -349,7 +350,11 @@ class App:
         self.query = ""
         sort = self.config.get("search_sort")
         genre = self.config.get("discover_genre")
-        self.filters = {"label": [], "sort": sort if sort in ("relevance", "date") else "relevance", "awarded": False,
+        search_labels = self.config.get("search_labels")
+        discover_labels = self.config.get("discover_labels")
+        self.filters = {"label": list(search_labels) if isinstance(search_labels, list) else [],
+                        "discover_label": list(discover_labels) if isinstance(discover_labels, list) else [],
+                        "sort": sort if sort in ("relevance", "date") else "relevance", "awarded": False,
                         "hires": False, "local": False, "from": "", "to": "", "genre": genre if isinstance(genre, str) else ""}
         self.genres = []
         self.more = False
@@ -477,7 +482,7 @@ class App:
         elif tab == "Discover":
             path = "/qobuz/discover"
             params = {"genre": self.filters["genre"], "offset": self.offset if append else 0,
-                      "label": self.filters["label"], "awarded": int(self.filters["awarded"]),
+                      "label": self.filters["discover_label"], "awarded": int(self.filters["awarded"]),
                       "hires": int(self.filters["hires"])}
         elif tab == "Favourites":
             path = "/qobuz/favorites/playlist/" + urllib.parse.quote(self.folder) if self.folder else "/qobuz/favorites"
@@ -562,14 +567,16 @@ class App:
         except (RuntimeError, KeyError) as error:
             self.message = f"Could not load labels: {error}"
             return
+        label_key = "discover_label" if self.tab == 1 else "label"
+        config_key = "discover_labels" if self.tab == 1 else "search_labels"
         saved_custom = self.config.get("custom_labels")
         custom = [str(name) for name in saved_custom] if isinstance(saved_custom, list) else []
         names = []
-        for name in [*(item.get("name", "") for item in configured), *custom, *self.filters["label"]]:
+        for name in [*(item.get("name", "") for item in configured), *custom, *self.filters[label_key]]:
             name = str(name).strip()
             if name and not any(existing.casefold() == name.casefold() for existing in names):
                 names.append(name)
-        selected = {name.casefold() for name in self.filters["label"]}
+        selected = {name.casefold() for name in self.filters[label_key]}
         cursor = 0
         self.list_covers_hidden = True
         screen.timeout(-1)
@@ -614,8 +621,9 @@ class App:
                         cursor = names.index(name)
                 elif key in (10, 13):
                     labels = [name for name in names if name.casefold() in selected]
-                    if labels != self.filters["label"] or custom != self.config.get("custom_labels", []):
-                        self.filters["label"] = labels
+                    if labels != self.filters[label_key] or custom != self.config.get("custom_labels", []):
+                        self.filters[label_key] = labels
+                        self.config[config_key] = labels
                         self.config["custom_labels"] = custom
                         self.save()
                         self.fetch_list()
@@ -629,6 +637,7 @@ class App:
         self.library_auto_due = None
         self.library_sidebar_focus = False
         self.library_right_index = 0
+        self.sort_focus = False
         self.search_editing = True
         if not resume: self.search_draft = self.query
         self.search_decoder.reset()
@@ -651,11 +660,12 @@ class App:
             self.search_draft = self.query
             self.library_sidebar_focus = True
             self.library_sidebar_index = 0
+            self.sort_focus = False
         elif key in (8, 127, curses.KEY_BACKSPACE):
             self.search_draft = self.search_draft[:-1]
             self.search_decoder.reset()
         elif key in (9, curses.KEY_DOWN):
-            self.finish_search_edit()
+            self.finish_search_edit(submit=self.search_draft.strip() != self.query)
             self.library_right_index = 1
         elif 32 <= key <= 255:
             try: self.search_draft += self.search_decoder.decode(bytes((key,)))
@@ -665,6 +675,7 @@ class App:
         changed = index != self.tab
         self.tab = index
         self.library_sidebar_index = index
+        self.sort_focus = False
         if changed:
             self.folder = ""
             self.rows = []
@@ -963,10 +974,11 @@ class App:
         for y in range(2, bottom - 1):
             self.colored(screen, y, divider, "│", "muted")
         for index, name in enumerate(TABS):
-            label = f"{index + 1} {name}"
-            self.colored(screen, 2 + index, 1, compact(label, divider - 2),
+            focused = self.library_sidebar_focus and index == self.library_sidebar_index
+            label = f"{'▸' if focused else ' '} {index + 1} {name}"
+            self.colored(screen, 2 + index, 1, compact(label, divider - 2).ljust(divider - 2),
                          "accent" if index == self.tab else "soft",
-                         curses.A_REVERSE if self.library_sidebar_focus and index == self.library_sidebar_index else 0)
+                         curses.A_REVERSE | curses.A_BOLD if focused else 0)
         self.colored(screen, 8, 1, "─" * (divider - 2), "muted")
         self.colored(screen, 9, 1, "p Play  a Add  h Fav", "soft")
         self.colored(screen, 10, 1, "b Later  m More", "soft")
@@ -999,12 +1011,23 @@ class App:
                          curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 0 else 0)
         if self.tab in (0, 1):
             f = self.filters
-            active = [key for key in ("label", "from", "to", "awarded", "hires", "local") if f[key]]
+            label_key = "label" if self.tab == 0 else "discover_label"
+            active = (["label"] if f[label_key] else []) + [key for key in ("from", "to", "awarded", "hires", "local") if f[key]]
             summary = ", ".join(active) or "none"
-            if self.tab == 0: summary = f"{f['sort']} · {summary}"
             filter_y = 6 if self.tab == 0 else 4
-            self.colored(screen, filter_y, result_x, compact(f"Filters: {summary}  ·  Enter edit", result_width), "accent",
-                         curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 else 0)
+            filter_text = f"Filters: {summary}  ·  Enter edit"
+            if self.tab == 0:
+                sort_text = "Sort: Qobuz" if f["sort"] == "relevance" else "Sort: Time"
+                sort_x = result_x + result_width - len(sort_text)
+                filter_width = sort_x - result_x - 2
+                self.colored(screen, filter_y, result_x,
+                             compact(filter_text if filter_width >= 17 else "Filters ↵", filter_width), "accent",
+                             curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 and not self.sort_focus else 0)
+                self.colored(screen, filter_y, sort_x, sort_text, "accent",
+                             curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 and self.sort_focus else 0)
+            else:
+                self.colored(screen, filter_y, result_x, compact(filter_text, result_width), "accent",
+                             curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 else 0)
         first_result = 8 if self.tab == 0 else 6
         loading = f"list-{self.list_generation}" in self.pending
         if loading:
@@ -1012,7 +1035,7 @@ class App:
             track_width = max(1, result_width - len(title) - 2)
             position = int(time.monotonic() * 8) % track_width
             track = "─" * position + "█" + "─" * (track_width - position - 1)
-            self.colored(screen, first_result - 1, result_x, compact(title + " " + track, result_width), "accent")
+            self.colored(screen, first_result - 1, result_x, compact(title + " " + track, result_width), "green")
         else:
             self.colored(screen, first_result - 1, result_x, "─" * result_width, "muted")
         cover_height = 4 if self.tab == 1 else 3
@@ -1391,6 +1414,10 @@ class App:
             return
         if self.page == "Library" and self.search_editing:
             self.search_edit_key(key)
+            if key == 27 and screen is not None: self.draw(screen)
+            return
+        if key == ord(" ") and self.page != "Now":
+            self.transport("pause" if self.player.get("state") == "play" else "play")
             return
         if self.keep_prompt_at is not None:
             if key in (ord("y"), ord("Y")):
@@ -1485,14 +1512,27 @@ class App:
                 if self.tab == 0: self.begin_search_edit(resume=True)
             elif self.library_right_index == 0 and self.tab in (0, 1):
                 self.library_right_index = 1
+                self.sort_focus = False
+            elif self.tab == 0 and self.library_right_index == 1 and not self.sort_focus:
+                self.sort_focus = True
             elif self.library_right_index < (2 if self.tab in (0, 1) else 1):
                 self.library_right_index = 2 if self.tab in (0, 1) else 1
+                self.sort_focus = False
             else:
                 self.library_sidebar_focus = True
+                self.sort_focus = False
             return
         if key == curses.KEY_LEFT:
-            self.library_sidebar_focus = True; return
+            if self.tab == 0 and not self.library_sidebar_focus and self.library_right_index == 1 and self.sort_focus:
+                self.sort_focus = False
+            else:
+                self.library_sidebar_focus = True
+                self.sort_focus = False
+            return
         if key == curses.KEY_RIGHT:
+            if self.tab == 0 and not self.library_sidebar_focus and self.library_right_index == 1:
+                self.sort_focus = True
+                return
             if self.library_sidebar_focus:
                 self.library_sidebar_focus = False
                 self.library_right_index = 1 if self.tab == 5 else 0
@@ -1514,6 +1554,7 @@ class App:
             result_index = 2 if self.tab in (0, 1) else 1
             if key == curses.KEY_DOWN and self.library_right_index < result_index:
                 self.library_right_index += 1
+                self.sort_focus = False
                 return
             if key == curses.KEY_UP:
                 if self.library_right_index == result_index and self.row > 0:
@@ -1521,6 +1562,7 @@ class App:
                     return
                 if self.library_right_index > 0:
                     self.library_right_index -= 1
+                    self.sort_focus = False
                     if self.tab == 0 and self.library_right_index == 0:
                         self.begin_search_edit(resume=True)
                     return
@@ -1530,6 +1572,8 @@ class App:
                     self.choose_genres(screen); return
                 if self.tab in (0, 2, 3, 4): key = ord("/")
                 else: return
+            elif self.library_right_index == 1 and self.tab == 0 and self.sort_focus:
+                self.toggle_sort(); return
             elif self.library_right_index == 1 and self.tab in (0, 1): key = ord("f")
         if key in (ord(str(i)) for i in range(1, 7)):
             self.select_library_tab(key - ord("1"), immediate=True)
@@ -1713,6 +1757,8 @@ class App:
         self.submit("research", work, apply)
 
     def run(self, screen):
+        if hasattr(curses, "set_escdelay"):
+            curses.set_escdelay(25)
         curses.curs_set(0); screen.keypad(True); screen.timeout(100)
         self.configure_colors()
         try:

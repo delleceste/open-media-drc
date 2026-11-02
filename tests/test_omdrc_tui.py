@@ -93,6 +93,84 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.library_sidebar_index, 0)
         self.assertEqual(app.search_draft, 'Bach')
 
+    def test_space_toggles_playback_across_views(self):
+        app = tui.App('http://localhost:9090')
+        with patch.object(app, 'transport') as transport:
+            for page in ('Library', 'Album', 'DRC', 'Research', 'Config'):
+                app.page = page
+                app.player['state'] = 'play'
+                app.action(ord(' '), None)
+                transport.assert_called_with('pause')
+                app.player['state'] = 'pause'
+                app.action(ord(' '), None)
+                transport.assert_called_with('play')
+            self.assertEqual(transport.call_count, 10)
+            app.page = 'Library'
+            app.begin_search_edit()
+            app.action(ord(' '), None)
+            self.assertEqual(app.search_draft, ' ')
+            self.assertEqual(transport.call_count, 10)
+
+    def test_search_escape_redraws_highlighted_sidebar_immediately(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.begin_search_edit()
+        screen = object()
+        with patch.object(tui.curses, 'curs_set'), patch.object(app, 'draw') as draw:
+            app.action(27, screen)
+        draw.assert_called_once_with(screen)
+        self.assertTrue(app.library_sidebar_focus)
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 20)
+        search = next(args for args in painted if args[1:3] == (2, 1))
+        self.assertTrue(search[3].startswith('▸ 1 Search'))
+        self.assertEqual(len(search[3]), 25)
+        self.assertEqual(search[5], tui.curses.A_REVERSE | tui.curses.A_BOLD)
+
+    def test_search_query_is_submitted_before_choosing_labels(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        with patch.object(tui.curses, 'curs_set'), patch.object(app, 'submit') as submit:
+            app.begin_search_edit()
+            for char in 'Mahler': app.action(ord(char), None)
+            app.action(9, None)
+            self.assertEqual(app.query, 'Mahler')
+            self.assertEqual(app.library_right_index, 1)
+            app.filters['label'] = ['Pentatone', 'Deutsche Grammophon']
+            app.fetch_list()
+            work = submit.call_args.args[1]
+        with patch.object(app.api, 'request', return_value={'results': []}) as request:
+            work()
+        self.assertEqual(request.call_args.args[0], '/qobuz/search')
+        self.assertEqual(request.call_args.args[1]['q'], 'Mahler')
+        self.assertEqual(request.call_args.args[1]['label'], ['Pentatone', 'Deutsche Grammophon'])
+
+    def test_search_and_discover_labels_are_saved_separately(self):
+        class Screen:
+            def __init__(self, keys): self.keys = iter(keys)
+            def getmaxyx(self): return (24, 80)
+            def timeout(self, value): pass
+            def move(self, *args): pass
+            def clrtoeol(self): pass
+            def refresh(self): pass
+            def getch(self): return next(self.keys)
+        known = {'labels': [{'name': 'Pentatone'}, {'name': 'Deutsche Grammophon'}]}
+        with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
+            app = tui.App('http://localhost:9090')
+            with patch.object(app.api, 'request', return_value=known), \
+                 patch.object(app, 'draw'), patch.object(app, 'colored'), patch.object(app, 'fetch_list'):
+                app.choose_labels(Screen([ord(' '), 10]))
+                app.tab = 1
+                app.choose_labels(Screen([tui.curses.KEY_DOWN, ord(' '), 10]))
+            fresh = tui.App('http://localhost:9090')
+            self.assertEqual(fresh.filters['label'], ['Pentatone'])
+            self.assertEqual(fresh.filters['discover_label'], ['Deutsche Grammophon'])
+            self.assertEqual(fresh.config['search_labels'], ['Pentatone'])
+            self.assertEqual(fresh.config['discover_labels'], ['Deutsche Grammophon'])
+
     def test_search_shows_indeterminate_loading_and_result_gap(self):
         app = tui.App('http://localhost:9090')
         app.rows = [{'title': 'First'}, {'title': 'Second'}]
@@ -104,9 +182,15 @@ class TuiTest(unittest.TestCase):
              patch.object(tui.time, 'monotonic', return_value=100):
             app.draw_library(Screen(), 20)
         self.assertTrue(any(args[1] == 7 and 'Searching Qobuz' in args[3] and '█' in args[3]
-                            for args in painted))
+                            and args[4] == 'green' for args in painted))
         titles = [(args[1], args[3]) for args in painted if args[3] in ('First', 'Second')]
         self.assertEqual(titles, [(8, 'First'), (12, 'Second')])
+        app.tab = 1
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 20)
+        self.assertTrue(any(args[1] == 5 and 'Loading results' in args[3] and args[4] == 'green'
+                            for args in painted))
 
     def test_room_correction_reports_applied_state(self):
         self.assertEqual(tui.drc_summary({"running": False}), "DRC OFF · direct")
@@ -354,10 +438,13 @@ class TuiTest(unittest.TestCase):
             self.assertFalse(app.library_sidebar_focus)
             self.assertEqual(app.library_right_index, 0)
             app.action(ord('A'), None)
-            app.action(tui.curses.KEY_DOWN, None)
+            with patch.object(app, 'fetch_list') as initial_fetch:
+                app.action(tui.curses.KEY_DOWN, None)
+            initial_fetch.assert_called_once()
             self.assertFalse(app.search_editing)
             self.assertEqual(app.library_right_index, 1)
             self.assertEqual(app.search_draft, 'A')
+            self.assertEqual(app.query, 'A')
             app.action(tui.curses.KEY_DOWN, None)
             self.assertEqual(app.library_right_index, 2)
             app.action(tui.curses.KEY_DOWN, None)
@@ -487,7 +574,7 @@ class TuiTest(unittest.TestCase):
         details = [args for args in painted if args[1] == 9 and args[2] >= 29]
         self.assertTrue(any('1977 · Pink Floyd Records · 24/192' in args[3] for args in details))
         self.assertTrue(any(args[1] == 4 and 'pink floyd' in args[3] for args in painted))
-        self.assertTrue(any(args[1] == 6 and 'relevance' in args[3] for args in painted))
+        self.assertTrue(any(args[1] == 6 and 'Sort: Qobuz' in args[3] for args in painted))
 
     def test_discover_cover_uses_large_image_and_color(self):
         app = tui.App('http://localhost:9090')
@@ -537,6 +624,32 @@ class TuiTest(unittest.TestCase):
             app.draw_library(Screen(), 20)
         render.assert_called_once_with('https://example.test/large.jpg', 12, 4, True, 'sixel')
         self.assertEqual(app.list_sixel_targets[0][2], b'\x1bPq...\x1b\\')
+
+    def test_search_sort_control_toggles_and_is_remembered(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
+            app = tui.App('http://localhost:9090')
+            app.page = 'Library'
+            app.library_sidebar_focus = False
+            app.library_right_index = 1
+            app.library_key(9, None)
+            self.assertTrue(app.sort_focus)
+            with patch.object(app, 'fetch_list') as fetch:
+                app.library_key(10, None)
+            fetch.assert_called_once()
+            self.assertEqual(app.filters['sort'], 'date')
+            self.assertEqual(tui.App('http://localhost:9090').filters['sort'], 'date')
+            painted = []
+            class Screen:
+                def getmaxyx(self): return (24, 80)
+            with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+                app.draw_library(Screen(), 20)
+            sort = next(args for args in painted if args[1] == 6 and args[3] == 'Sort: Time')
+            self.assertEqual(sort[5], tui.curses.A_REVERSE)
+            app.library_key(tui.curses.KEY_LEFT, None)
+            self.assertFalse(app.sort_focus)
+            self.assertFalse(app.library_sidebar_focus)
+            app.library_key(tui.curses.KEY_RIGHT, None)
+            self.assertTrue(app.sort_focus)
 
     def test_sort_shortcut_is_remembered(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(tui, 'CONFIG_PATH', Path(tmp) / 'config.json'):
