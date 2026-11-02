@@ -50,9 +50,11 @@ away. The bar that follows can lower its **whole label or artist** instead,
 including a conductor or any performer. The **Lowered list** brings them
 back.
 
-**Your local collection** is searched at the same time: matching local albums
+**Your local collection** is searched at the same time when no label is selected: matching local albums
 appear among the Qobuz results, marked ⌂, with their DR, and play through
-the same queue.
+the same queue. MPD local entries do not carry label metadata, so a label filter
+shows only matching Qobuz albums. Local covers require the indexed music files
+to be mounted and readable.
 
 ## The views
 

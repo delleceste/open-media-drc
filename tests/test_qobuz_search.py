@@ -815,6 +815,24 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertFalse(status["renderer"])
 
+    def test_label_filtered_search_excludes_unlabeled_local_albums(self):
+        import json
+        cat, _ = catalog(SearchTest.SEARCHES, max_enrich=0)
+        local = [{"id": "local:one", "source": "local", "label": ""}]
+        with patch.object(qobuz_web, "catalog", return_value=cat), \
+                patch.object(qobuz_web.mpd_library, "search", return_value=local) as mpd_search, \
+                self.running():
+            data = self.client.get("/qobuz/search?q=bruckner+7&label=Pentatone").get_json()
+            response = self.client.get("/qobuz/search/stream?q=bruckner+7&label=Pentatone")
+            frames = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines()
+                      if line.startswith("data: ")]
+        self.assertTrue(data["results"])
+        self.assertEqual(data["local_count"], 0)
+        self.assertEqual(frames[-1]["local_count"], 0)
+        self.assertTrue(all(not card["id"].startswith("local:") for card in data["results"]))
+        self.assertTrue(all(not card["id"].startswith("local:") for card in frames[-1]["results"]))
+        mpd_search.assert_not_called()
+
     def test_local_filter_returns_only_local_albums(self):
         with patch.object(qobuz_web, "catalog", side_effect=AssertionError("Qobuz should be skipped")), \
                 patch.object(qobuz_web.mpd_library, "search", return_value=[{"id": "local:one", "source": "local"}]), \

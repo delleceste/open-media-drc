@@ -339,6 +339,7 @@ class App:
         self.search_draft = ""
         self.search_decoder = codecs.getincrementaldecoder("utf-8")()
         self.list_generation = 0
+        self.list_error = ""
         self.config_index = 0
         self.rows = []
         self.list_covers = {}
@@ -469,6 +470,7 @@ class App:
     def fetch_list(self, append=False):
         self.library_auto_due = None
         self.list_generation += 1
+        self.list_error = ""
         generation = self.list_generation
         tab = TABS[self.tab]
         query = self.query.strip()
@@ -508,8 +510,10 @@ class App:
             if not append: self.row = self.scroll = 0
             self.more = bool(data.get("more"))
             self.offset = data.get("next_offset", data.get("next_scan", 0))
-            self.message = f"{len(self.rows)} items" + (" · more available (m)" if self.more else "")
-        self.submit(f"list-{generation}", lambda: self.api.request(path, params), apply)
+            self.list_error = str(data.get("qobuz_error") or "")
+            self.message = self.list_error or (f"{len(self.rows)} items" + (" · more available (m)" if self.more else ""))
+        self.submit(f"list-{generation}", lambda: self.api.request(path, params,
+                    timeout=60 if tab == "Search" else 12), apply)
 
     def choose_genres(self, screen):
         try:
@@ -779,6 +783,7 @@ class App:
                 continue
             self.pending.discard(key)
             if error:
+                if key == f"list-{self.list_generation}": self.list_error = str(error)
                 self.message = compact(error, 120)
                 if key == "research": self.research_job = None
             else:
@@ -1038,8 +1043,13 @@ class App:
             position = int(time.monotonic() * 8) % track_width
             track = "─" * position + "█" + "─" * (track_width - position - 1)
             self.colored(screen, first_result - 1, result_x, compact(title + " " + track, result_width), "green")
+        elif self.list_error:
+            self.colored(screen, first_result - 1, result_x, compact(self.list_error, result_width), "red")
         else:
             self.colored(screen, first_result - 1, result_x, "─" * result_width, "muted")
+        if not loading and not self.rows and self.tab == 0 and (self.query or self.filters["label"]):
+            self.colored(screen, first_result, result_x,
+                         compact("No matching albums" if not self.list_error else "Search unavailable", result_width), "muted")
         cover_height = 4 if self.tab == 1 else 3
         cover_width = 12 if self.tab == 1 else 10
         boxed_results = self.tab in (0, 1) and result_width >= 4
@@ -1099,6 +1109,8 @@ class App:
             def accept(lines):
                 self.list_covers[key] = lines
             self.submit(job, lambda: self.render_cover(art, width, height, True, mode), accept)
+        if screen is not None and not self.list_covers[key] and job not in self.pending:
+            self.colored(screen, top + height // 2, left, compact("No cover", width), "muted")
         if mode == "sixel":
             if self.list_covers[key]: self.list_sixel_targets.append((left, top, self.list_covers[key]))
             return

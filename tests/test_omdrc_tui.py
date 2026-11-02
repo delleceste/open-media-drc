@@ -171,6 +171,36 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(fresh.config['search_labels'], ['Pentatone'])
             self.assertEqual(fresh.config['discover_labels'], ['Deutsche Grammophon'])
 
+    def test_search_displays_backend_failure_and_allows_long_fetch(self):
+        app = tui.App('http://localhost:9090')
+        app.query = 'Mahler'
+        app.filters['label'] = ['Pentatone', 'Alpha']
+        with patch.object(app, 'submit') as submit:
+            app.fetch_list()
+        work, apply = submit.call_args.args[1:]
+        with patch.object(app.api, 'request', return_value={'ok': True, 'results': []}) as request:
+            work()
+        self.assertEqual(request.call_args.kwargs['timeout'], 60)
+        apply({'results': [], 'qobuz_error': 'Qobuz unavailable'})
+        self.assertEqual(app.list_error, 'Qobuz unavailable')
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 20)
+        self.assertTrue(any(args[1] == 7 and 'Qobuz unavailable' in args[3] and args[4] == 'red'
+                            for args in painted))
+        self.assertTrue(any(args[1] == 8 and 'Search unavailable' in args[3] for args in painted))
+
+    def test_missing_list_cover_has_visible_placeholder(self):
+        app = tui.App('http://localhost:9090')
+        app.config['cover_mode'] = 'sixel'
+        painted = []
+        class Screen: pass
+        with patch.object(app, 'submit'), patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_list_cover(Screen(), 'https://example.test/missing.jpg', 3, 4, 12, 4)
+        self.assertTrue(any(args[1:5] == (6, 3, 'No cover', 'muted') for args in painted))
+
     def test_search_shows_indeterminate_loading_and_result_gap(self):
         app = tui.App('http://localhost:9090')
         app.rows = [{'title': 'First'}, {'title': 'Second'}]

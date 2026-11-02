@@ -630,7 +630,7 @@ def search():
         args = _search_args()
         local_only = request.args.get("local", "0").lower() in ("1", "true", "yes")
         try:
-            local = mpd_library.search(args["text"])
+            local = [] if args["labels"] else mpd_library.search(args["text"])
             local_error = ""
         except mpd_library.MPDError as error:
             local, local_error = [], str(error)
@@ -826,7 +826,7 @@ def search_stream():
         try:
             mpd_library.set_music_directory(_library_root())
             try:
-                local = mpd_library.search(args["text"])
+                local = [] if args["labels"] else mpd_library.search(args["text"])
                 local_error = ""
             except mpd_library.MPDError as error:
                 local, local_error = [], str(error)
@@ -855,7 +855,7 @@ def search_stream():
             frames.put({"ok": True, **answer})
         except QobuzError as error:
             try:
-                local = mpd_library.search(args["text"])
+                local = [] if args["labels"] else mpd_library.search(args["text"])
                 frames.put({"ok": True, "query": args["text"], "results": local,
                             "count": len(local), "local_count": len(local), "more": False,
                             "next_scan": 0, "qobuz_error": str(error), "queries": [],
