@@ -201,7 +201,40 @@ class TuiTest(unittest.TestCase):
             app.draw_list_cover(Screen(), 'https://example.test/missing.jpg', 3, 4, 12, 4)
         self.assertTrue(any(args[1:5] == (6, 3, 'No cover', 'muted') for args in painted))
 
-    def test_search_shows_indeterminate_loading_and_result_gap(self):
+    def test_failed_local_cover_uses_boxed_local_marker(self):
+        app = tui.App('http://localhost:9090')
+        app.config['cover_mode'] = 'sixel'
+        painted = []
+        class Screen: pass
+        with patch.object(app, 'submit'), patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_list_cover(Screen(), '/qobuz/local/art?file=missing.flac', 3, 4, 10, 3, local=True)
+        marker = [(args[1], args[3]) for args in painted]
+        self.assertEqual(marker, [(4, '┌────────┐'), (5, '│ local  │'), (6, '└────────┘')])
+
+    def test_result_dr_badges_follow_web_log_kind_and_use_own_color(self):
+        self.assertEqual(tui.album_dr({'dr': 10}), ('DR=10', 'green', tui.curses.A_BOLD))
+        self.assertEqual(tui.album_dr({'dr_log': {'dr': 8, 'kind': 'estimate'}}),
+                         ('DR ~8', 'yellow', tui.curses.A_DIM))
+        app = tui.App('http://localhost:9090')
+        app.rows = [
+            {'title': 'Exact', 'artist': 'Orchestra', 'year': 2024, 'bits': 24, 'rate': 96,
+             'dr_log': {'dr': 10, 'kind': 'exact'}},
+            {'title': 'Estimated', 'artist': 'Orchestra', 'year': 2025, 'bits': 24, 'rate': 96,
+             'dr_log': {'dr': 8, 'kind': 'estimate'}},
+        ]
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 20)
+        exact = next(args for args in painted if args[3] == 'DR=10')
+        estimate = next(args for args in painted if args[3] == 'DR ~8')
+        self.assertEqual((exact[1], exact[4], exact[5]), (11, 'green', tui.curses.A_BOLD))
+        self.assertEqual((estimate[1], estimate[4], estimate[5]), (16, 'yellow', tui.curses.A_DIM))
+        self.assertTrue(any(args[1] == 11 and '24/96' in args[3] and args[4] == 'fmt_hires'
+                            and args[2] < exact[2] for args in painted))
+
+    def test_search_shows_indeterminate_loading_and_compact_result_spacing(self):
         app = tui.App('http://localhost:9090')
         app.rows = [{'title': 'First'}, {'title': 'Second'}]
         app.pending.add('list-0')
@@ -214,7 +247,7 @@ class TuiTest(unittest.TestCase):
         self.assertTrue(any(args[1] == 7 and 'Searching Qobuz' in args[3] and '█' in args[3]
                             and args[4] == 'green' for args in painted))
         titles = [(args[1], args[3]) for args in painted if args[3] in ('First', 'Second')]
-        self.assertEqual(titles, [(9, 'First'), (15, 'Second')])
+        self.assertEqual(titles, [(9, 'First'), (14, 'Second')])
         app.tab = 1
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):

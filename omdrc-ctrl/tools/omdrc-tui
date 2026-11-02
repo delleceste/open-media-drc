@@ -103,6 +103,20 @@ def album_quality(item):
     return f"{bits}/{khz:g}", format_tier(bits, khz)
 
 
+def album_dr(item):
+    """DR badge text, color and emphasis from the same log used by the web UI."""
+    summary = item.get("dr_log") or {}
+    value = summary.get("dr") if isinstance(summary, dict) else None
+    exact = summary.get("kind") == "exact" if isinstance(summary, dict) else False
+    if value is None:
+        value = item.get("dr")
+        exact = value is not None  # local dr14.txt when a log entry is unavailable
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return "", None, 0
+    color = "red" if value < 6 else "orange" if value < 8 else "yellow" if value < 10 else "green"
+    return (f"DR={value:g}" if exact else f"DR ~{value:g}"), color, curses.A_BOLD if exact else curses.A_DIM
+
+
 def same_name(name, query):
     """Whether the searched words already name this artist."""
     fold = lambda value: " ".join(clean(value).casefold().split())
@@ -1054,7 +1068,7 @@ class App:
         cover_width = 12 if self.tab == 1 else 10
         boxed_results = self.tab in (0, 1) and result_width >= 4
         row_height = cover_height + 2 if boxed_results else cover_height
-        block_height = row_height + 1
+        block_height = row_height
         visible = max(0, (bottom - first_result - row_height) // block_height + 1)
         if self.row < self.scroll: self.scroll = self.row
         if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
@@ -1080,8 +1094,11 @@ class App:
                              "accent" if index == self.row and not boxed_results else "muted", selected)
                 continue
             art = item.get("image_large") or item.get("image") or ""
-            art_width = cover_width if art and content_width >= cover_width + 20 else 0
-            if art_width and not self.list_covers_hidden: self.draw_list_cover(screen, art, content_x, y, cover_width, cover_height)
+            local = item.get("source") == "local"
+            art_width = cover_width if (art or local) and content_width >= cover_width + 20 else 0
+            if art_width and not self.list_covers_hidden:
+                if art: self.draw_list_cover(screen, art, content_x, y, cover_width, cover_height, local=local)
+                elif local: self.draw_local_cover_marker(screen, content_x, y, cover_width, cover_height)
             x = content_x + (art_width + 2 if art_width else 0)
             text_width = content_width - (x - content_x)
             artist = clean(item.get("artist"))
@@ -1095,9 +1112,26 @@ class App:
             if item.get("label"): details.append(clean(item["label"]))
             quality, tier = album_quality(item)
             if quality: details.append(quality)
-            self.colored(screen, title_y + 1, x, compact(" · ".join(details), text_width), tier or "muted", selected)
+            dr_text, dr_color, dr_style = album_dr(item)
+            detail_text = " · ".join(details)
+            if dr_text and text_width >= len(dr_text):
+                available = text_width - len(dr_text) - 3
+                detail_text = compact(detail_text, available) if available > 0 else ""
+                dr_x = x + len(detail_text) + (3 if detail_text else 0)
+                self.colored(screen, title_y + 1, x, detail_text, tier or "muted", selected)
+                self.colored(screen, title_y + 1, dr_x, dr_text, dr_color, selected | dr_style)
+            else:
+                self.colored(screen, title_y + 1, x, compact(detail_text, text_width), tier or "muted", selected)
 
-    def draw_list_cover(self, screen, art, left, top, width, height):
+    def draw_local_cover_marker(self, screen, left, top, width, height):
+        inner = max(0, width - 2)
+        self.colored(screen, top, left, "┌" + "─" * inner + "┐", "muted")
+        for row in range(1, height - 1):
+            label = "local" if row == (height - 1) // 2 else ""
+            self.colored(screen, top + row, left, "│" + label.center(inner) + "│", "muted")
+        self.colored(screen, top + height - 1, left, "└" + "─" * inner + "┘", "muted")
+
+    def draw_list_cover(self, screen, art, left, top, width, height, local=False):
         mode = self.cover_mode()
         key = (art, width, height, mode)
         job = "list-cover-" + str(key)
@@ -1110,7 +1144,8 @@ class App:
                 self.list_covers[key] = lines
             self.submit(job, lambda: self.render_cover(art, width, height, True, mode), accept)
         if screen is not None and not self.list_covers[key] and job not in self.pending:
-            self.colored(screen, top + height // 2, left, compact("No cover", width), "muted")
+            if local: self.draw_local_cover_marker(screen, left, top, width, height)
+            else: self.colored(screen, top + height // 2, left, compact("No cover", width), "muted")
         if mode == "sixel":
             if self.list_covers[key]: self.list_sixel_targets.append((left, top, self.list_covers[key]))
             return
