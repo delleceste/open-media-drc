@@ -346,6 +346,7 @@ class App:
         sort = self.config.get("search_sort")
         self.filters = {"label": [], "sort": sort if sort in ("relevance", "date") else "relevance", "awarded": False,
                         "hires": False, "local": False, "from": "", "to": "", "genre": ""}
+        self.genres = []
         self.more = False
         self.offset = 0
         self.album = None
@@ -497,6 +498,55 @@ class App:
             self.offset = data.get("next_offset", data.get("next_scan", 0))
             self.message = f"{len(self.rows)} items" + (" · more available (m)" if self.more else "")
         self.submit(f"list-{generation}", lambda: self.api.request(path, params), apply)
+
+    def choose_genres(self, screen):
+        try:
+            if not self.genres:
+                self.genres = self.api.request("/qobuz/genres")["genres"]
+        except (RuntimeError, KeyError) as error:
+            self.message = f"Could not load genres: {error}"
+            return
+        genres = self.genres
+        selected = set(self.filters["genre"].split(",")) - {""}
+        cursor = next((i for i, genre in enumerate(genres)
+                       if str(genre["id"]) in selected), 0)
+        screen.timeout(-1)
+        try:
+            while True:
+                self.draw(screen)
+                height, width = screen.getmaxyx()
+                visible = max(1, height - 6)
+                start = max(0, min(cursor - visible // 2, len(genres) - visible))
+                self.colored(screen, 2, 2, compact("Genres · Space toggle · Enter apply · c clear · Esc cancel", width - 4), "accent", curses.A_BOLD)
+                for row in range(visible):
+                    y = row + 3
+                    screen.move(y, 1); screen.clrtoeol()
+                    i = start + row
+                    if i < len(genres):
+                        genre = genres[i]
+                        label = f"{'[x]' if str(genre['id']) in selected else '[ ]'} {genre['name']}"
+                        self.colored(screen, y, 2, compact(label, width - 4), "accent" if i == cursor else "soft",
+                                     curses.A_REVERSE if i == cursor else 0)
+                screen.refresh()
+                key = screen.getch()
+                if key == curses.KEY_UP: cursor = max(0, cursor - 1)
+                elif key == curses.KEY_DOWN: cursor = min(len(genres) - 1, cursor + 1)
+                elif key == curses.KEY_NPAGE: cursor = min(len(genres) - 1, cursor + visible)
+                elif key == curses.KEY_PPAGE: cursor = max(0, cursor - visible)
+                elif key == ord(" ") and genres:
+                    genre_id = str(genres[cursor]["id"])
+                    if genre_id in selected: selected.remove(genre_id)
+                    else: selected.add(genre_id)
+                elif key in (ord("c"), ord("C")): selected.clear()
+                elif key in (10, 13):
+                    value = ",".join(str(genre["id"]) for genre in genres if str(genre["id"]) in selected)
+                    if value != self.filters["genre"]:
+                        self.filters["genre"] = value
+                        self.fetch_list()
+                    return
+                elif key == 27: return
+        finally:
+            screen.timeout(100)
 
     def begin_search_edit(self, resume=False):
         self.library_auto_due = None
@@ -844,7 +894,9 @@ class App:
         if self.tab == 0:
             first_control = "⌕ " + (self.search_draft if self.search_editing else self.query or "Enter to search")
         elif self.tab == 1:
-            first_control = f"Genre: {self.filters['genre'] or 'Any'}  ·  Enter edit"
+            selected = set(self.filters["genre"].split(",")) - {""}
+            names = [genre["name"] for genre in self.genres if str(genre["id"]) in selected]
+            first_control = f"Genre: {', '.join(names) if names else f'{len(selected)} selected' if selected else 'Any'}  ·  Enter choose"
         elif self.tab in (2, 3, 4):
             first_control = f"Search: {self.query or 'all'}  ·  Enter edit"
         else:
@@ -1379,8 +1431,7 @@ class App:
         if not self.library_sidebar_focus and key in (10, 13):
             if self.library_right_index == 0:
                 if self.tab == 1:
-                    self.filters["genre"] = self.prompt(screen, "Genre (blank clears):").strip()
-                    self.fetch_list(); return
+                    self.choose_genres(screen); return
                 if self.tab in (0, 2, 3, 4): key = ord("/")
                 else: return
             elif self.library_right_index == 1 and self.tab in (0, 1): key = ord("f")
