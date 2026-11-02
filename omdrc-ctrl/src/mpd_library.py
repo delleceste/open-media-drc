@@ -149,10 +149,20 @@ def search(text: str, limit: int = 5000) -> list[dict]:
 
 
 def albumart(uri: str, max_bytes: int = 16 * 1024 * 1024) -> tuple[bytes, str]:
-    """Read MPD's external album art in binary-safe 8 KiB protocol chunks."""
+    """Read external album art, falling back to embedded track artwork."""
     if (not uri or uri.startswith("/") or "\\" in uri or
             any(part in ("", ".", "..") for part in uri.split("/"))):
         raise MPDError("invalid library path")
+    try:
+        return _read_art(uri, max_bytes, "albumart")
+    except MPDError as error:
+        if "no file exists" not in str(error).lower() and "not found" not in str(error).lower():
+            raise
+    return _read_art(uri, max_bytes, "readpicture")
+
+
+def _read_art(uri: str, max_bytes: int, command: str) -> tuple[bytes, str]:
+    """Read one MPD binary art command in chunks on its own connection."""
     s = _connect(timeout=30)
     output = bytearray()
     total = None
@@ -160,7 +170,7 @@ def albumart(uri: str, max_bytes: int = 16 * 1024 * 1024) -> tuple[bytes, str]:
         f = s.makefile("rwb", buffering=0)
         while total is None or len(output) < total:
             offset = len(output)
-            f.write(("albumart " + _quote(uri) + f" {offset}\n").encode())
+            f.write((command + " " + _quote(uri) + f" {offset}\n").encode())
             headers = {}
             while True:
                 line = f.readline()

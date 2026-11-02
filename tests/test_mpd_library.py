@@ -63,6 +63,14 @@ class FolderNamesTest(unittest.TestCase):
         self.assertEqual(mpd_library._folder_names("Rock/Nirvana/Nirvana - In Utero (1993)"),
                          ("Nirvana", "In Utero (1993)"))
 
+    def test_albumart_falls_back_to_embedded_picture(self):
+        with patch.object(mpd_library, "_read_art", side_effect=[
+                mpd_library.MPDError("ACK {albumart} No file exists"),
+                (b"\xff\xd8\xffimage", "image/jpeg")]) as read:
+            art, mime = mpd_library.albumart("Music/Album/track.flac")
+        self.assertEqual((art, mime), (b"\xff\xd8\xffimage", "image/jpeg"))
+        self.assertEqual([call.args[2] for call in read.call_args_list], ["albumart", "readpicture"])
+
     def test_a_top_level_folder_has_no_artist(self):
         self.assertEqual(mpd_library._folder_names("Album"), ("", "Album"))
 

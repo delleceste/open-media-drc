@@ -438,6 +438,15 @@ class TuiTest(unittest.TestCase):
         color.assert_called_with(196, 21)
         self.assertTrue(any(args[3] == '▀' and args[4] == 42 for args in painted))
 
+    def test_failed_list_cover_is_retried_after_delay(self):
+        app = tui.App('http://localhost:9090')
+        app.config['cover_mode'] = 'sixel'
+        with patch.object(app, 'submit') as submit, patch.object(tui.time, 'monotonic', side_effect=[100, 110, 131, 131]):
+            app.draw_list_cover(None, 'https://example.test/cover.jpg', 0, 0, 10, 3)
+            app.draw_list_cover(None, 'https://example.test/cover.jpg', 0, 0, 10, 3)
+            app.draw_list_cover(None, 'https://example.test/cover.jpg', 0, 0, 10, 3)
+        self.assertEqual(submit.call_count, 2)
+
     def test_discover_cover_uses_sixel_in_konsole(self):
         app = tui.App('http://localhost:9090')
         app.config['cover_mode'] = 'sixel'

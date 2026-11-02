@@ -338,6 +338,7 @@ class App:
         self.config_index = 0
         self.rows = []
         self.list_covers = {}
+        self.list_cover_retry = {}
         self.list_sixel_targets = []
         self.list_sixel_displayed = ()
         self.list_sixel_size = None
@@ -966,11 +967,15 @@ class App:
     def draw_list_cover(self, screen, art, left, top, width, height):
         mode = self.cover_mode()
         key = (art, width, height, mode)
-        if key not in self.list_covers:
+        job = "list-cover-" + str(key)
+        if (key not in self.list_covers or
+                (self.list_covers[key] is None and job not in self.pending and
+                 time.monotonic() >= self.list_cover_retry.get(key, 0))):
             self.list_covers[key] = None
+            self.list_cover_retry[key] = time.monotonic() + 30
             def accept(lines):
                 self.list_covers[key] = lines
-            self.submit("list-cover-" + str(key), lambda: self.render_cover(art, width, height, True, mode), accept)
+            self.submit(job, lambda: self.render_cover(art, width, height, True, mode), accept)
         if mode == "sixel":
             if self.list_covers[key]: self.list_sixel_targets.append((left, top, self.list_covers[key]))
             return
