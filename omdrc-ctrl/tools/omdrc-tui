@@ -22,6 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import webbrowser
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
@@ -32,11 +33,39 @@ DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "dr_keep_minutes": 5, "balance_window": 15, "cover": True,
             "theme": "auto", "cover_mode": "auto"}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
-NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "left"),
-               ("Next track", "right"), ("Stop", "s"), ("Seek", "g"),
+NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
+               ("Next track", "]"), ("Stop", "s"), ("Seek", "g"),
                ("Album details", "i"), ("Favourite", "h"),
                ("Review later", "b"), ("Research music", "R"),
                ("Measure album DR", "M"), ("Enlarge cover", "C"))
+NOW_ACTION_ROWS = (0, 1, 1, 2, 3, 5, 6, 7, 8, 9, 10)
+NOW_MENU_TOP = 7
+PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
+            ("F3 Room correction", "DRC"), ("F4 Config", "Config"))
+
+
+def research_rows(body, width):
+    """Wrap the AI guide while retaining headings, lists, quotes and links."""
+    rows = []
+    for raw in clean(body).splitlines():
+        raw = raw.strip()
+        if not raw:
+            rows.append(("", "soft", 0))
+            continue
+        heading = re.match(r"^#{1,6}\s+(.*)", raw)
+        bullet = re.match(r"^[-*]\s+(.*)", raw)
+        quote = raw.startswith("> ")
+        content = heading[1] if heading else bullet[1] if bullet else raw[2:] if quote else raw
+        content = re.sub(r"\[([^]]+)\]\(([^)]+)\)", r"\1 (\2)", content)
+        content = re.sub(r"\*\*(.*?)\*\*|__(.*?)__", lambda m: m[1] or m[2], content)
+        content = re.sub(r"(?<!\w)[*_]([^*_]+)[*_]", r"\1", content)
+        prefix = "• " if bullet else "│ " if quote else ""
+        color = "accent" if heading or content.startswith(("http://", "https://")) else "muted" if quote else "soft"
+        style = curses.A_BOLD if heading or "**" in raw else 0
+        for i, line in enumerate(textwrap.wrap(content, max(10, width - len(prefix)),
+                                               break_long_words=True, break_on_hyphens=False) or [""]):
+            rows.append(((prefix if i == 0 else "  " if prefix else "") + line, color, style))
+    return rows
 
 
 def format_color(line):
@@ -309,6 +338,10 @@ class App:
         self.guide_scroll = 0
         self.research_back = "Now"
         self.research_job = None
+        self.research_started = 0
+        self.research_setup_pending = False
+        self.ai_settings = {}
+        self.last_ai_check = 0
         self.message = "Connecting…"
         self.connected = False
         self.cover_key = None
@@ -316,6 +349,8 @@ class App:
         self.cover_zoom = False
         self.now_action = 0
         self.now_action_scroll = 0
+        self.nav_focus = False
+        self.nav_index = 1
         self.cover_sixel = None
         self.sixel_visible = False
         self.sixel_target = None
@@ -403,6 +438,14 @@ class App:
         if now - self.last_measure > 3:
             self.last_measure = now
             self.submit("measure", lambda: self.api.request("/dr/measure"), lambda d: setattr(self, "measure", d.get("job")))
+        if self.research_setup_pending and now - self.last_ai_check > 3:
+            self.last_ai_check = now
+            def ready(settings):
+                self.ai_settings = settings
+                if settings.get("configured") and self.research_setup_pending:
+                    self.research_setup_pending = False
+                    self.start_research(force=True)
+            self.submit("ai-settings", lambda: self.api.request("/qobuz/ai/settings"), ready)
         want_level = self.config["levels"] or self.config["balance"]
         if want_level and not self.level_stream:
             self.level_stream = Stream(self.api, "vu", lambda d: self.events.put(("level-frame", None, d, None)))
@@ -462,7 +505,9 @@ class App:
                 self.last_dr = time.monotonic()
                 continue
             self.pending.discard(key)
-            if error: self.message = compact(error, 120)
+            if error:
+                self.message = compact(error, 120)
+                if key == "research": self.research_job = None
             else:
                 if not self.connected and key in ("player", "qstatus", "now-state"):
                     self.connected = True
@@ -470,31 +515,35 @@ class App:
                 if callback: callback(value)
 
     def switch(self, page):
+        if self.page == "Research" and page != "Research": self.research_setup_pending = False
         self.page = page
         if page == "Now":
             self.away_at = self.keep_prompt_at = None
             self.dr_paused = False
             if self.config["dr"] and not self.dr_stream:
                 self.dr_stream = Stream(self.api, "dr", lambda d: self.events.put(("dr-frame", None, d, None)))
+        if page == "Config":
+            self.submit("ai-settings", lambda: self.api.request("/qobuz/ai/settings"),
+                        lambda d: setattr(self, "ai_settings", d))
         if page == "Library" and not self.rows: self.fetch_list()
 
     def configure_colors(self):
         self.light = theme_is_light(self.config.get("theme", "auto"))
-        self.styles = {name: 0 for name in ("accent", "green", "yellow", "red", "muted", "fmt_hires", "fmt_24", "fmt_48", "cover")}
+        self.styles = {name: 0 for name in ("accent", "green", "yellow", "red", "muted", "soft", "fmt_hires", "fmt_24", "fmt_48", "cover")}
         self.cover_pairs = {}
         if not curses.has_colors(): return
         curses.start_color()
         try: curses.use_default_colors()
         except curses.error: pass
         palette = ({"accent": "0969da", "green": "1a7f37", "yellow": "9a6700",
-                    "red": "cf222e", "muted": "59636e", "fmt_hires": "0969da",
+                    "red": "cf222e", "muted": "59636e", "soft": "6e7781", "fmt_hires": "0969da",
                     "fmt_24": "9a6700", "fmt_48": "8250df"} if self.light else
                    {"accent": "58a6ff", "green": "3fb950", "yellow": "d29922",
-                    "red": "f85149", "muted": "8b949e", "fmt_hires": "79c0ff",
+                    "red": "f85149", "muted": "8b949e", "soft": "c9d1d9", "fmt_hires": "79c0ff",
                     "fmt_24": "e3b341", "fmt_48": "d2a8ff"})
         fallback = {"accent": curses.COLOR_BLUE, "green": curses.COLOR_GREEN,
                     "yellow": curses.COLOR_YELLOW, "red": curses.COLOR_RED,
-                    "muted": curses.COLOR_CYAN, "fmt_hires": curses.COLOR_BLUE,
+                    "muted": curses.COLOR_CYAN, "soft": curses.COLOR_WHITE, "fmt_hires": curses.COLOR_BLUE,
                     "fmt_24": curses.COLOR_YELLOW, "fmt_48": curses.COLOR_MAGENTA}
         for number, (name, color) in enumerate(palette.items(), 1):
             if number >= curses.COLOR_PAIRS: break
@@ -540,6 +589,8 @@ class App:
         active_art = (self.qstatus.get("art") or (self.now_state.get("music") or {}).get("art") or "")
         if self.sixel_visible and (self.page != "Now" or not self.config["cover"] or
                                    not active_art or not self.cover_key or active_art != self.cover_key[0]):
+            # Konsole keeps Sixel pixels independently of curses' cell buffer.
+            os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
             screen.clear()
             self.sixel_visible = False
             self.sixel_target = None
@@ -560,6 +611,7 @@ class App:
         elif self.page == "Config": self.draw_config(screen, bottom)
         elif self.page == "Visibility": self.draw_visibility(screen, bottom)
         if not zoom: self.draw_live(screen, bottom)
+        if not zoom: self.draw_nav(screen, bottom)
         self.colored(screen, height - 1, 1, compact(self.message, width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
@@ -567,6 +619,16 @@ class App:
             payload = f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + self.cover_sixel + b"\x1b8"
             os.write(sys.stdout.fileno(), payload)
             self.sixel_visible = True
+
+    def draw_nav(self, screen, bottom):
+        _, width = screen.getmaxyx()
+        x = 2
+        for index, (label, page) in enumerate(PAGE_NAV):
+            if x + len(label) >= width - 1: break
+            self.colored(screen, bottom - 1, x, label,
+                         "accent" if self.page == page or self.nav_focus and self.nav_index == index else "soft",
+                         curses.A_REVERSE if self.nav_focus and self.nav_index == index else 0)
+            x += len(label) + 3
 
     def draw_library(self, screen, bottom):
         h, w = screen.getmaxyx()
@@ -586,7 +648,7 @@ class App:
             else:
                 label = f"{item.get('title', '—')} — {item.get('artist', '')}  {item.get('year', '')}  {item.get('label', '')}"
             self.colored(screen, y, 1, compact(label, w - 3), "accent" if index == self.row else "muted" if item.get("kind") == "folder" else "green" if item.get("rating") else "accent", curses.A_REVERSE if index == self.row else 0)
-        self.colored(screen, bottom - 1, 1, "↑↓ select  Enter details/folder  p play  a append  h favourite  b bookmark  m more  r refresh  x remove/renew", "muted")
+        self.colored(screen, bottom - 2, 1, "↑↓ select  Enter details/folder  p play  a append  h favourite  b bookmark  m more  r refresh  x remove/renew", "muted")
 
     def draw_now(self, screen, bottom):
         h, w = screen.getmaxyx()
@@ -620,21 +682,33 @@ class App:
         if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration:
             elapsed += max(0, time.monotonic() - self.last_player) if p.get("state") == "play" else 0
             self.text(screen, 6, x, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}")
-            self.colored(screen, 7, x, bar(elapsed, min(40, avail - 2), 0, duration), "accent")
-        drc_row = 3 + cover_h - 1 if cover_w else bottom - 1
-        visible = max(1, drc_row - 8)
-        self.now_action_scroll = min(self.now_action_scroll, max(0, len(NOW_ACTIONS) - visible))
-        if self.now_action < self.now_action_scroll: self.now_action_scroll = self.now_action
-        if self.now_action >= self.now_action_scroll + visible:
-            self.now_action_scroll = self.now_action - visible + 1
-        for row, index in enumerate(range(self.now_action_scroll,
-                                          min(len(NOW_ACTIONS), self.now_action_scroll + visible)), 8):
+        drc_row = 3 + cover_h - 1 if cover_w else bottom - 2
+        visible = max(1, drc_row - NOW_MENU_TOP)
+        selected_row = NOW_ACTION_ROWS[self.now_action]
+        self.now_action_scroll = min(self.now_action_scroll, max(0, 11 - visible))
+        if selected_row < self.now_action_scroll: self.now_action_scroll = selected_row
+        if selected_row >= self.now_action_scroll + visible:
+            self.now_action_scroll = selected_row - visible + 1
+        for menu_row in range(self.now_action_scroll, min(11, self.now_action_scroll + visible)):
+            y = NOW_MENU_TOP + menu_row - self.now_action_scroll
+            if menu_row == 4:
+                self.colored(screen, y, x, "─" * min(avail, 30), "muted")
+                continue
+            if menu_row == 1:
+                self.colored(screen, y, x, "|<", "accent" if self.now_action == 1 else "soft",
+                             curses.A_REVERSE if self.now_action == 1 else 0)
+                self.colored(screen, y, x + 6, ">|", "accent" if self.now_action == 2 else "soft",
+                             curses.A_REVERSE if self.now_action == 2 else 0)
+                continue
+            index = NOW_ACTION_ROWS.index(menu_row)
             label, shortcut = NOW_ACTIONS[index]
-            if shortcut == " ":
-                label = "Pause" if p.get("state") == "play" else "Play"
+            if index == 0: label = "Pause" if p.get("state") == "play" else "Play"
+            if index == 4:
+                progress = bar(elapsed, min(22, max(4, avail - 17)), 0, duration) if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration else "░" * min(22, max(4, avail - 17))
+                label = "Seek " + progress
             mark = "▸ " if index == self.now_action else "  "
-            self.colored(screen, row, x, compact(mark + label, avail),
-                         "green" if index == 0 and p.get("state") == "play" else "accent" if index == self.now_action else "muted",
+            self.colored(screen, y, x, compact(mark + label, avail),
+                         "green" if index == 0 and p.get("state") == "play" else "accent" if index == self.now_action else "soft",
                          curses.A_REVERSE if index == self.now_action else 0)
         drc = (self.now_state.get("drc") or {})
         self.colored(screen, drc_row, x, compact(drc_summary(drc), avail),
@@ -651,6 +725,7 @@ class App:
                    curses.COLORS >= 256 if curses.has_colors() else False)
             if key != self.cover_key:
                 if self.sixel_visible:
+                    os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
                     screen.clear()
                     self.sixel_visible = False
                 self.cover_key = key
@@ -704,7 +779,7 @@ class App:
             color = ("red" if value == "failed" else "muted" if value in ("off", "not set", "not running", "stopped")
                      else "green")
             self.colored(screen, i, min(24, len(key) + 4), value, color)
-        self.text(screen, bottom - 1, 2, "r refresh")
+        self.text(screen, bottom - 2, 2, "r refresh")
 
     def draw_album(self, screen, bottom):
         a = self.album or {}
@@ -733,9 +808,22 @@ class App:
             self.text(screen, y, 3, compact(line, width))
 
     def draw_research(self, screen, bottom):
-        self.colored(screen, 2, 2, "‹ Back  [Esc]     Research music", "accent", curses.A_BOLD)
+        _, width = screen.getmaxyx()
+        left, right = 2, width - 3
+        inner = right - left - 3
+        self.colored(screen, 2, left, "┌" + "─" * (right - left - 1) + "┐", "accent")
+        for y in range(3, bottom - 2):
+            self.colored(screen, y, left, "│", "accent")
+            self.colored(screen, y, right, "│", "accent")
+        self.colored(screen, bottom - 2, left, "└" + "─" * (right - left - 1) + "┘", "accent")
+        self.colored(screen, 3, left + 2, "Research music  ·  Esc back", "accent", curses.A_BOLD)
         if not self.guide:
-            self.text(screen, 4, 2, "Researching…" if self.research_job else self.message)
+            if self.research_job:
+                elapsed = max(0, int(time.monotonic() - self.research_started))
+                label = f"Researching… {elapsed}s  ·  Esc cancels"
+            else:
+                label = self.message
+            self.colored(screen, 6, left + 2, compact(label, inner), "soft")
             return
         guide = self.guide
         sections = [("Overview", guide.get("overview", ""))]
@@ -746,11 +834,14 @@ class App:
         sections += [("Source: " + s.get("title", s.get("url", "")), s.get("url", "")) for s in guide.get("sources", [])]
         self.guide_section %= len(sections)
         title, body = sections[self.guide_section]
-        self.text(screen, 3, 2, f"◀ ▶ section {self.guide_section + 1}/{len(sections)}: {title}")
-        lines = textwrap.wrap(clean(body), max(20, screen.getmaxyx()[1] - 5), replace_whitespace=False, drop_whitespace=False)
-        for y, line in enumerate(lines[self.guide_scroll:self.guide_scroll + max(0, bottom - 6)], 5):
-            self.text(screen, y, 2, line)
-        self.text(screen, bottom - 1, 2, "←→ section   ↑↓ scroll   r research again   Esc back")
+        self.colored(screen, 4, left + 2, compact(f"◀ ▶  {self.guide_section + 1}/{len(sections)}  {title}", inner), "accent", curses.A_BOLD)
+        self.colored(screen, 5, left + 2, "─" * inner, "muted")
+        rows = research_rows(body, inner)
+        limit = max(0, bottom - 9)
+        self.guide_scroll = min(self.guide_scroll, max(0, len(rows) - limit))
+        for y, (line, color, style) in enumerate(rows[self.guide_scroll:self.guide_scroll + limit], 6):
+            self.colored(screen, y, left + 2, line, color, style)
+        self.colored(screen, bottom - 3, left + 2, "←→ section   ↑↓ scroll   r retry   Esc back", "muted")
 
     def draw_config(self, screen, bottom):
         c = self.config
@@ -762,8 +853,9 @@ class App:
                  f"DR mode: {'per song' if c['dr_per_song'] else 'continuous'}   [t] toggle",
                  f"DR away period: {c['dr_keep_minutes']} min   [k] cycle 2/5/10",
                  f"Balance window: {c['balance_window']} s   [b] cycle",
-                 "Qobuz sign-in, AI provider and audio hardware remain in the phone UI."]
-        for y, line in enumerate(lines, 2): self.colored(screen, y, 2, line, "accent" if y == 2 else "muted" if y == 11 else "green" if "On" in line else "accent")
+                 f"AI provider: {self.ai_settings.get('provider', 'checking…')} · {'ready' if self.ai_settings.get('configured') else 'setup needed'}   [a] browser setup",
+                 "Qobuz sign-in and audio hardware remain in the phone UI."]
+        for y, line in enumerate(lines, 2): self.colored(screen, y, 2, line, "accent" if y == 2 else "muted" if y == 12 else "green" if "On" in line else "accent")
 
     def draw_visibility(self, screen, bottom):
         self.colored(screen, 2, 2, "Moving parts · visibility", "accent", curses.A_BOLD)
@@ -852,11 +944,23 @@ class App:
                 self.keep_prompt_at = None; self.release_dr(); self.message = "DR estimate stopped"
             return
         if key == ord("q"): raise KeyboardInterrupt
+        if key == 9:
+            self.nav_focus = True
+            self.nav_index = next((i for i, (_, page) in enumerate(PAGE_NAV) if page == self.page), 1)
+            self.message = "←→ choose page · Enter open · Esc return"
+            return
+        if self.nav_focus:
+            if key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+                self.nav_index = (self.nav_index + (-1 if key == curses.KEY_LEFT else 1)) % len(PAGE_NAV)
+            elif key in (10, 13):
+                self.switch(PAGE_NAV[self.nav_index][1]); self.nav_focus = False
+            elif key == 27 or key == curses.KEY_UP:
+                self.nav_focus = False
+            return
         if key == ord("v"): self.switch("Visibility"); return
-        if key == curses.KEY_F1: self.switch("Library"); return
-        if key == curses.KEY_F2: self.switch("Now"); return
-        if key == curses.KEY_F3: self.switch("DRC"); return
-        if key == curses.KEY_F4: self.switch("Config"); return
+        for index in range(4):
+            if key == curses.KEY_F1 + index:
+                self.switch(PAGE_NAV[index][1]); self.nav_index = index; return
         if self.page == "Visibility":
             if key in (ord("1"), ord("2"), ord("3")):
                 name = ("levels", "dr", "balance")[key - ord("1")]
@@ -884,6 +988,8 @@ class App:
                 self.config["theme"] = choices[(choices.index(current) + 1) % len(choices)] if current in choices else "auto"
                 self.configure_colors()
                 self.cover_key = None
+            elif key == ord("a"):
+                self.open_ai_setup()
             elif key == ord("u"):
                 server = self.prompt(screen, "Server URL:").strip()
                 if server.startswith(("http://", "https://")):
@@ -903,6 +1009,7 @@ class App:
                     job = self.research_job
                     self.research_job = None
                     self.submit("research-cancel", lambda: self.api.request("/qobuz/ai/listening/cancel", body={"job": job}, ai=True))
+                self.research_setup_pending = False
                 self.switch(self.research_back)
             elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
                 self.guide_section += -1 if key == curses.KEY_LEFT else 1; self.guide_scroll = 0
@@ -945,20 +1052,34 @@ class App:
 
     def now_key(self, key, screen):
         if key in (curses.KEY_UP, curses.KEY_DOWN):
+            if key == curses.KEY_DOWN and self.now_action == len(NOW_ACTIONS) - 1:
+                self.nav_focus = True
+                self.nav_index = 1
+                return
             step = -1 if key == curses.KEY_UP else 1
             self.now_action = max(0, min(len(NOW_ACTIONS) - 1, self.now_action + step))
             self.message = "↑↓ select · Enter activate"
             return
         if key in (10, 13):
             shortcut = NOW_ACTIONS[self.now_action][1]
-            key = curses.KEY_LEFT if shortcut == "left" else curses.KEY_RIGHT if shortcut == "right" else ord(shortcut)
-        if key in (ord("C"), 27):
+            key = ord(shortcut)
+        if key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+            elapsed = self.player.get("elapsed")
+            if isinstance(elapsed, (int, float)):
+                if self.player.get("state") == "play":
+                    elapsed += max(0, time.monotonic() - self.last_player)
+                duration = self.player.get("duration")
+                target = max(0, elapsed + (-10 if key == curses.KEY_LEFT else 10))
+                if isinstance(duration, (int, float)) and duration > 0: target = min(duration, target)
+                self.transport("seek", {"seconds": target})
+            else: self.message = "Seek unavailable for this source"
+        elif key in (ord("C"), 27):
             self.cover_zoom = not self.cover_zoom if key == ord("C") else False
             self.cover_key = None
         elif key == ord(" "):
             self.transport("pause" if self.player.get("state") == "play" else "play")
-        elif key == curses.KEY_LEFT: self.transport("prev")
-        elif key == curses.KEY_RIGHT: self.transport("next")
+        elif key == ord("["): self.transport("prev")
+        elif key == ord("]"): self.transport("next")
         elif key == ord("s"): self.transport("stop")
         elif key == ord("g"):
             try: self.transport("seek", {"seconds": float(self.prompt(screen, "Seek to seconds:"))})
@@ -1003,6 +1124,13 @@ class App:
             self.submit("review", lambda: self.api.request("/qobuz/review", body={"action": "add", "album_id": album_id, "note": note}),
                         lambda d: setattr(self, "message", "Bookmarked for later"))
 
+    def open_ai_setup(self):
+        url = self.api.server + "/k/?page=config&ai_setup=1"
+        if webbrowser.open(url):
+            self.message = "AI setup opened in browser; return here when ready"
+        else:
+            self.message = "Open AI setup: " + url
+
     def start_research(self, force=False):
         album_id = str((self.album or {}).get("id") or self.qstatus.get("qobuz_album") or "")
         title = self.player.get("album") or self.player.get("title") or ""
@@ -1014,9 +1142,10 @@ class App:
         if guide_key == self.guide_album and self.guide and not force: return
         self.guide = None; self.guide_album = guide_key; self.guide_section = self.guide_scroll = 0
         job = str(uuid.uuid4()); self.research_job = job
+        self.research_started = time.monotonic()
         def work():
             settings = self.api.request("/qobuz/ai/settings")
-            if not settings.get("configured"): raise RuntimeError("Configure an AI provider in the phone UI")
+            if not settings.get("configured"): return {"setup_required": True, "settings": settings}
             album = self.album if self.album and str(self.album.get("id")) == album_id else None
             if not album and album_id:
                 album = self.api.request("/qobuz/album/" + urllib.parse.quote(album_id))["album"]
@@ -1028,7 +1157,15 @@ class App:
             return self.api.request("/qobuz/ai/listening", body=query, timeout=270, ai=True)
         def apply(data):
             if self.research_job == job:
-                self.research_job = None; self.guide = data; self.message = "Research ready"
+                self.research_job = None
+                if data.get("setup_required"):
+                    self.ai_settings = data["settings"]
+                    self.research_setup_pending = True
+                    self.last_ai_check = 0
+                    self.open_ai_setup()
+                else:
+                    self.guide = data
+                    self.message = "Research ready"
         self.submit("research", work, apply)
 
     def run(self, screen):

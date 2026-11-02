@@ -72,10 +72,76 @@ class TuiTest(unittest.TestCase):
             def getmaxyx(self): return (24, 80)
         screen = Screen()
         with patch.object(app, 'colored'), patch.object(app, 'draw_drc'), \
-             patch.object(app, 'draw_live'):
+             patch.object(app, 'draw_live'), patch.object(tui.os, 'write'):
             app.draw(screen)
         self.assertTrue(screen.cleared)
         self.assertFalse(app.sixel_visible)
+
+    def test_now_arrows_seek_and_track_buttons_share_row(self):
+        app = tui.App('http://localhost:9090')
+        app.player = {'elapsed': 50, 'duration': 100, 'state': 'pause'}
+        with patch.object(app, 'transport') as transport:
+            app.now_key(tui.curses.KEY_LEFT, None)
+            transport.assert_called_once_with('seek', {'seconds': 40})
+        with patch.object(app, 'transport') as transport:
+            app.now_key(tui.curses.KEY_RIGHT, None)
+            transport.assert_called_once_with('seek', {'seconds': 60})
+        self.assertEqual(tui.NOW_ACTION_ROWS[1], tui.NOW_ACTION_ROWS[2])
+        self.assertLess(tui.NOW_ACTION_ROWS[4], tui.NOW_ACTION_ROWS[5])
+
+    def test_page_tabs_can_be_selected_below_cover(self):
+        app = tui.App('http://localhost:9090')
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_nav(Screen(), 17)
+        self.assertTrue(all(args[1] == 16 for args in painted))
+        app.action(9, None)
+        self.assertTrue(app.nav_focus)
+        app.action(tui.curses.KEY_RIGHT, None)
+        app.action(10, None)
+        self.assertEqual(app.page, 'DRC')
+        self.assertFalse(app.nav_focus)
+
+    def test_missing_ai_settings_opens_browser_and_waits_for_setup(self):
+        app = tui.App('http://localhost:9090')
+        app.player = {'title': 'Track', 'album': 'Album'}
+        pending = {}
+        with patch.object(app, 'submit', side_effect=lambda key, work, callback=None: pending.update(key=key, work=work, callback=callback)):
+            app.start_research()
+        self.assertEqual(pending['key'], 'research')
+        with patch.object(app.api, 'request', return_value={'configured': False, 'provider': 'openai'}):
+            result = pending['work']()
+        with patch.object(tui.webbrowser, 'open', return_value=True) as browser:
+            pending['callback'](result)
+        browser.assert_called_once_with('http://localhost:9090/k/?page=config&ai_setup=1')
+        self.assertTrue(app.research_setup_pending)
+        self.assertIsNone(app.research_job)
+
+    def test_research_failure_clears_busy_state(self):
+        app = tui.App('http://localhost:9090')
+        app.research_job = 'job'
+        app.events.put(('research', None, None, 'provider failed'))
+        app.drain()
+        self.assertIsNone(app.research_job)
+        self.assertIn('provider failed', app.message)
+
+    def test_research_box_and_markdown_rows(self):
+        rows = tui.research_rows('# Heading\n- A **bold** note\n[Source](https://example.org)', 40)
+        self.assertEqual(rows[0][0], 'Heading')
+        self.assertEqual(rows[1][0], '• A bold note')
+        self.assertIn('https://example.org', rows[2][0])
+        app = tui.App('http://localhost:9090')
+        app.guide = {'overview': '# Heading\n- A **bold** note'}
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_research(Screen(), 17)
+        self.assertTrue(any(str(args[3]).startswith('┌') for args in painted))
+        self.assertTrue(any(str(args[3]).startswith('└') for args in painted))
+        self.assertTrue(any(args[3] == 'Heading' for args in painted))
 
     def test_now_actions_select_and_activate_with_arrows(self):
         app = tui.App('http://localhost:9090')

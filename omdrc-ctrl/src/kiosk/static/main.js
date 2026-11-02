@@ -641,6 +641,9 @@ async function boot() {
     }
     const wanted = (location.hash || '').slice(1) || new URLSearchParams(location.search).get('page') || rememberedPage();
     K.showPage(K.pages.some(p => p.id === wanted) ? wanted : K.pages[0].id, false);
+    if (new URLSearchParams(location.search).get('ai_setup') === '1' && K.openAISettings) {
+        K.openAISettings(true);
+    }
     // the app's splash covers the page until now: tell it once this first page is painted
     requestAnimationFrame(() => requestAnimationFrame(() => {
         try { if (K.inApp && window.OmdrcApp.pageReady) window.OmdrcApp.pageReady(); } catch {}
