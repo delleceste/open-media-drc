@@ -28,13 +28,32 @@ class TuiTest(unittest.TestCase):
             def getch(self): return next(self.keys)
         with patch.object(app.api, 'request', return_value={'genres': genres}) as request, \
              patch.object(app, 'draw'), patch.object(app, 'colored'), \
-             patch.object(app, 'fetch_list') as fetch:
+             patch.object(app, 'save'), patch.object(app, 'fetch_list') as fetch:
             app.choose_genres(Screen([ord(' '), tui.curses.KEY_DOWN, ord(' '), 10]))
             self.assertEqual(app.filters['genre'], '1,2')
             fetch.assert_called_once()
             app.choose_genres(Screen([ord('c'), 27]))
             self.assertEqual(app.filters['genre'], '1,2')
             request.assert_called_once_with('/qobuz/genres')
+
+    def test_discover_genres_persist_across_restarts_and_can_be_cleared(self):
+        class Screen:
+            def __init__(self, keys): self.keys = iter(keys)
+            def getmaxyx(self): return (20, 80)
+            def timeout(self, value): pass
+            def move(self, *args): pass
+            def clrtoeol(self): pass
+            def refresh(self): pass
+            def getch(self): return next(self.keys)
+        with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
+            app = tui.App('http://localhost:9090')
+            app.genres = [{'id': '1', 'name': 'Jazz'}]
+            with patch.object(app, 'draw'), patch.object(app, 'colored'), patch.object(app, 'fetch_list'):
+                app.choose_genres(Screen([ord(' '), 10]))
+            self.assertEqual(tui.App('http://localhost:9090').filters['genre'], '1')
+            with patch.object(app, 'draw'), patch.object(app, 'colored'), patch.object(app, 'fetch_list'):
+                app.choose_genres(Screen([ord('c'), 10]))
+            self.assertEqual(tui.App('http://localhost:9090').filters['genre'], '')
 
     def test_room_correction_reports_applied_state(self):
         self.assertEqual(tui.drc_summary({"running": False}), "DRC OFF · direct")

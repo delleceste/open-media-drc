@@ -33,6 +33,7 @@ DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "balance": True, "dr_window": 60, "dr_per_song": True,
             "dr_keep_minutes": 5, "balance_window": 15, "cover": True,
             "theme": "auto", "cover_mode": "auto", "search_sort": "relevance",
+            "discover_genre": "",
             "library_delay": 1.0}
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
 NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
@@ -346,8 +347,9 @@ class App:
         self.scroll = 0
         self.query = ""
         sort = self.config.get("search_sort")
+        genre = self.config.get("discover_genre")
         self.filters = {"label": [], "sort": sort if sort in ("relevance", "date") else "relevance", "awarded": False,
-                        "hires": False, "local": False, "from": "", "to": "", "genre": ""}
+                        "hires": False, "local": False, "from": "", "to": "", "genre": genre if isinstance(genre, str) else ""}
         self.genres = []
         self.more = False
         self.offset = 0
@@ -545,6 +547,8 @@ class App:
                     value = ",".join(str(genre["id"]) for genre in genres if str(genre["id"]) in selected)
                     if value != self.filters["genre"]:
                         self.filters["genre"] = value
+                        self.config["discover_genre"] = value
+                        self.save()
                         self.fetch_list()
                     return
                 elif key == 27: return
