@@ -41,6 +41,7 @@ NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
                ("Measure album DR", "M"), ("Enlarge cover", "C"))
 NOW_ACTION_ROWS = (0, 1, 1, 2, 3, 5, 6, 7, 8, 9, 10)
 NOW_MENU_TOP = 7
+CONFIG_KEYS = "uzc pwtkba".replace(" ", "")
 PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
             ("F3 Room correction", "DRC"), ("F4 Config", "Config"),
             ("☷", "Visibility"))
@@ -303,6 +304,7 @@ class App:
         self.page = "Now"
         self.visibility_back = "Now"
         self.tab = 0
+        self.config_index = 0
         self.rows = []
         self.row = 0
         self.scroll = 0
@@ -649,6 +651,9 @@ class App:
         if self.tab in (0, 2, 3, 4): self.text(screen, 3, 1, f"⌕ {self.query or '—'}    / edit    f filters")
         else: self.text(screen, 3, 1, "f filters" if self.tab == 1 else f"Folder: {self.folder or '/'}")
         first_result = 4
+        if self.tab == 1:
+            self.text(screen, 4, 1, f"Genre: {self.filters['genre'] or 'Any'}    f edit (blank clears)")
+            first_result = 5
         if self.tab == 0:
             f = self.filters
             filters = (f"Labels: {', '.join(f['label']) or 'Any'}",
@@ -865,17 +870,26 @@ class App:
 
     def draw_config(self, screen, bottom):
         c = self.config
-        lines = ["Configuration · client preferences", f"Server: {c['server']}   [u] edit",
-                 f"Theme: {c.get('theme', 'auto')} ({'light' if self.light else 'dark'})   [z] cycle automatic/light/dark",
-                 f"Cover art: {'on' if c['cover'] else 'off'}   [c] toggle (requires chafa)",
-                 f"Cover mode: {c.get('cover_mode', 'auto')} → {self.cover_mode()}   [p] cycle",
-                 f"DR window: {c['dr_window']//60} min   [w] cycle 1/5/15/30/60/90",
-                 f"DR mode: {'per song' if c['dr_per_song'] else 'continuous'}   [t] toggle",
-                 f"DR away period: {c['dr_keep_minutes']} min   [k] cycle 2/5/10",
-                 f"Balance window: {c['balance_window']} s   [b] cycle",
-                 f"AI provider: {self.ai_settings.get('provider', 'checking…')} · {'ready' if self.ai_settings.get('configured') else 'setup needed'}   [a] browser setup",
-                 "Qobuz sign-in and audio hardware remain in the phone UI."]
-        for y, line in enumerate(lines, 2): self.colored(screen, y, 2, line, "accent" if y == 2 else "muted" if y == 12 else "green" if "On" in line else "accent")
+        rows = (("Server", c["server"]),
+                ("Theme", f"{c.get('theme', 'auto')} ({'light' if self.light else 'dark'})"),
+                ("Cover art", "on" if c["cover"] else "off"),
+                ("Cover mode", f"{c.get('cover_mode', 'auto')} → {self.cover_mode()}"),
+                ("DR window", f"{c['dr_window']//60} min"),
+                ("DR mode", "per song" if c["dr_per_song"] else "continuous"),
+                ("DR away period", f"{c['dr_keep_minutes']} min"),
+                ("Balance window", f"{c['balance_window']} s"),
+                ("AI provider", f"{self.ai_settings.get('provider', 'checking…')} · {'ready' if self.ai_settings.get('configured') else 'setup needed'}"))
+        _, width = screen.getmaxyx()
+        self.colored(screen, 2, 2, "Configuration  ·  ↑↓ choose  Enter change", "accent", curses.A_BOLD)
+        visible = max(1, bottom - 4)
+        start = min(max(0, self.config_index - visible + 1), max(0, len(rows) - visible))
+        for index in range(start, min(len(rows), start + visible)):
+            y = 3 + index - start
+            label, value = rows[index]
+            style = curses.A_REVERSE if index == self.config_index else 0
+            color = "accent" if index == self.config_index else "soft"
+            self.colored(screen, y, 2, f"{label:<19}", color, style)
+            self.colored(screen, y, 23, compact(value, width - 25), color, style)
 
     def draw_visibility(self, screen, bottom):
         _, width = screen.getmaxyx()
@@ -995,6 +1009,12 @@ class App:
             elif key == 27: self.switch(self.visibility_back)
             return
         if self.page == "Config":
+            if key in (curses.KEY_UP, curses.KEY_DOWN):
+                self.config_index = max(0, min(len(CONFIG_KEYS) - 1,
+                    self.config_index + (-1 if key == curses.KEY_UP else 1)))
+                return
+            if key in (10, 13, curses.KEY_LEFT, curses.KEY_RIGHT):
+                key = ord(CONFIG_KEYS[self.config_index])
             cycles = {ord("w"): ("dr_window", [60, 300, 900, 1800, 3600, 5400]),
                       ord("k"): ("dr_keep_minutes", [2, 5, 10]),
                       ord("b"): ("balance_window", [.3, 1, 3, 5, 15, 30, 60])}
@@ -1075,7 +1095,8 @@ class App:
                 screen.timeout(100)
             name = names[selected]
             if name == "label": self.filters[name] = [x.strip() for x in self.prompt(screen, "Labels, comma separated:").split(",") if x.strip()]
-            elif name in ("from", "to", "genre"): self.filters[name] = self.prompt(screen, name + ":").strip()
+            elif name in ("from", "to", "genre"):
+                self.filters[name] = self.prompt(screen, name.title() + (" (Discover; blank clears):" if name == "genre" else " (blank clears):")).strip()
             elif name == "sort": self.filters[name] = "date" if self.filters[name] == "relevance" else "relevance"
             elif name in ("awarded", "hires", "local"): self.filters[name] = not self.filters[name]
             self.fetch_list(); return

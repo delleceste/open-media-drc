@@ -89,6 +89,27 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(tui.NOW_ACTION_ROWS[1], tui.NOW_ACTION_ROWS[2])
         self.assertLess(tui.NOW_ACTION_ROWS[4], tui.NOW_ACTION_ROWS[5])
 
+    def test_config_arrows_select_and_enter_changes_value(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Config'
+        app.config_index = 2
+        original = app.config['cover']
+        app.action(tui.curses.KEY_DOWN, None)
+        self.assertEqual(app.config_index, 3)
+        app.action(tui.curses.KEY_UP, None)
+        with patch.object(app, "save"):
+            app.action(10, None)
+        self.assertEqual(app.config['cover'], not original)
+
+    def test_config_options_use_aligned_columns(self):
+        app = tui.App('http://localhost:9090')
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_config(Screen(), 17)
+        self.assertEqual([args[2] for args in painted if args[1] == 3], [2, 23])
+
     def test_page_tabs_can_be_selected_below_cover(self):
         app = tui.App('http://localhost:9090')
         painted = []
