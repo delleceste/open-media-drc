@@ -28,7 +28,7 @@ Rectangle {
     // denser and shows more albums at once.
     readonly property int titleSize: Kirigami.Theme.smallFont.pixelSize
     readonly property int bodySize: Math.max(9, Kirigami.Theme.smallFont.pixelSize - 1)
-    readonly property int coverSide: compact || resultEntry ? 32 : bigCover ? 92 : 46
+    readonly property int coverSide: compact || resultEntry ? 32 : bigCover ? details.implicitHeight : 46
 
     width: parent ? parent.width : 320
     implicitHeight: body.implicitHeight + 2 * Kirigami.Units.smallSpacing
@@ -88,7 +88,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignTop
                 Image {
                     anchors.fill: parent
-                    source: card.album.image || ""
+                    source: card.album.image_large || card.album.image || ""
                     asynchronous: true
                     fillMode: Image.PreserveAspectFit
                 }
@@ -111,6 +111,7 @@ Rectangle {
                 font.pixelSize: card.titleSize
             }
             ColumnLayout {
+                id: details
                 Layout.fillWidth: true
                 visible: !card.compact && !card.resultEntry
                 spacing: 0
@@ -119,7 +120,8 @@ Rectangle {
                     text: card.album.title + (card.album.version ? " (" + card.album.version + ")" : "")
                     font.bold: true
                     font.pixelSize: card.titleSize
-                    wrapMode: Text.Wrap
+                    wrapMode: card.bigCover ? Text.NoWrap : Text.Wrap
+                    elide: card.bigCover ? Text.ElideRight : Text.ElideNone
                 }
                 PlasmaComponents.Label {
                     Layout.fillWidth: true
