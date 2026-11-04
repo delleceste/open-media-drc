@@ -64,6 +64,12 @@
         P.labelBox.querySelector('[aria-label="Back"]').click();
         await new Promise(r => setTimeout(r));
         check(P.view() === 'discover' && !P.cloudBox.hidden && tag('Decca'), 'Back returns to the cloud');
+        tag('Decca').click();
+        await new Promise(r => setTimeout(r));
+        check(P.view() === 'label' && P.handleBack() === true, 'Android Back takes the press in a catalogue');
+        await new Promise(r => setTimeout(r));
+        check(P.view() === 'discover' && !P.cloudBox.hidden && tag('Decca'), 'Android Back returns to the cloud');
+        check(P.handleBack() === false, 'On the cloud, Android Back is left to the page menu');
         tag('cpo').click();
         await new Promise(r => setTimeout(r));
         asked = new URLSearchParams(calls.at(-1).split('?')[1]);

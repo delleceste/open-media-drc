@@ -66,4 +66,15 @@ for (const [from, to] of walk)
 assert.deepEqual(back('now'), { handled: false, calls: [] }, 'Now leaves the app');
 assert.deepEqual(back('now', { overlays: [strip] }), { handled: false, calls: [] },
     'a minimized guide strip does not hold the app back');
-console.log('PASS: Android Back closes the topmost popup, then walks the page menu up to Now');
+
+// A page with a view of its own steps out of it first; popups still come before that.
+const inner = name => [{ id: 'now' }, { id: 'qobuz', handleBack: () => { name.push('inner'); return name.length === 1; } }];
+let seen = [];
+assert.deepEqual(back('qobuz', { pages: inner(seen) }), { handled: true, calls: [] }, 'the page takes the press');
+assert.deepEqual(seen, ['inner']);
+assert.deepEqual(back('qobuz', { pages: inner(seen) }), { handled: true, calls: ['now'] }, 'then the menu');
+seen = [];
+assert.deepEqual(back('qobuz', { pages: inner(seen), overlays: [details] }),
+    { handled: true, calls: ['details:back'] }, 'a popup comes before the page');
+assert.deepEqual(seen, []);
+console.log('PASS: Android Back closes the topmost popup, then a page view, then walks the page menu up to Now');

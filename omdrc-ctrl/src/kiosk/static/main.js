@@ -119,7 +119,8 @@ const menuWalk = () => {
 // Android Back first closes the page menu or the popup on top: a popup through its
 // backClose when it has one (a page or sheet with no backdrop to tap), else as a tap
 // on its backdrop would, so Cancel / Close keep their meaning.  A popup that cannot
-// close now (a busy spinner) still takes the press.  Then Back walks the page menu
+// close now (a busy spinner) still takes the press.  Then the page itself, if it has
+// a view of its own to step out of (handleBack), and then Back walks the page menu
 // upwards, one page a press.  Return false at the top of the menu (Now): the kiosk
 // has nowhere left to go, and the app leaves.
 K.handleAndroidBack = () => {
@@ -133,6 +134,7 @@ K.handleAndroidBack = () => {
         if (top.backClose) top.backClose(); else top.click();
         return true;
     }
+    if (cur >= 0 && K.pages[cur].handleBack && K.pages[cur].handleBack()) return true;
     const walk = menuWalk(), at = walk.findIndex(x => x.n === cur);
     if (at > 0) {
         K.showPage(walk[at - 1].p.id, false);    // instant: a quick second press counts from here

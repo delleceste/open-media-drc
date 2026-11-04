@@ -1826,6 +1826,12 @@ P.openLabel = c => {
     P.setView('label', true);
 };
 P.labelBack = () => P.setView(pref('labelView', {}).back || 'results', true);
+// Android Back out of a catalogue goes where its ‹ does: to the cloud it was opened from.
+P.handleBack = () => {
+    if (P.view() !== 'label') return false;
+    P.labelBack();
+    return true;
+};
 P.labelList = async (offset = 0) => {
     if (P.labelObserver) P.labelObserver.disconnect();
     const v = pref('labelView', null);
