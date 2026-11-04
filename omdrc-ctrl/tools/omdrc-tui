@@ -1095,9 +1095,10 @@ class App:
         """End every row with a blank that differs from its neighbours'.
 
         ncurses moves rows with insert/delete-line when their text matches
-        rows shown elsewhere last frame (moving the selection border is
-        enough), even with idlok off, and Konsole moves Sixel images with
-        them.  Rows that differ by position never match, so they stay put.
+        rows shown elsewhere last frame (e.g. when results lose their first
+        entry), even with idlok off, and Konsole moves Sixel images with
+        them.  ncurses compares characters only, not attributes, so the
+        blanks differ by character; rows that differ by position never match.
         """
         for y in range(height):
             try: screen.insstr(y, width - 1, ROW_MARKS[y % len(ROW_MARKS)])
