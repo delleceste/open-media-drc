@@ -481,6 +481,7 @@ class App:
         self.last_level = 0
         self.last_dr = 0
         self.last_player = 0
+        self.player_synced_at = 0
         self.last_drc = 0
         self.last_measure = 0
         self.away_at = None
@@ -853,7 +854,7 @@ class App:
                 else: self.fetch_list()
         if now - self.last_player > 3:
             self.last_player = now
-            self.submit("player", lambda: self.api.request("/k/api/player"), lambda d: setattr(self, "player", d))
+            self.submit("player", lambda: self.api.request("/k/api/player"), self.update_player)
             self.submit("qstatus", lambda: self.api.request("/qconnect/status"), self.update_qstatus)
             self.submit("now-state", lambda: self.api.request("/now"), lambda d: setattr(self, "now_state", d))
         if self.page == "DRC" and now - self.last_drc > 5:
@@ -889,6 +890,10 @@ class App:
         if self.keep_prompt_at and now - self.keep_prompt_at >= 60:
             self.release_dr(); self.keep_prompt_at = None
             self.message = "DR estimate stopped; return to Now to restart"
+
+    def update_player(self, player):
+        self.player = player
+        self.player_synced_at = time.monotonic()
 
     def release_dr(self):
         if self.dr_stream:
@@ -1431,7 +1436,8 @@ class App:
             self.colored(screen, 5, quality_x, compact(quality, w - quality_x - 2), format_color(quality))
         elapsed, duration = p.get("elapsed"), p.get("duration")
         if isinstance(elapsed, (int, float)) and isinstance(duration, (int, float)) and duration:
-            elapsed += max(0, time.monotonic() - self.last_player) if p.get("state") == "play" else 0
+            elapsed += max(0, time.monotonic() - self.player_synced_at) if p.get("state") == "play" else 0
+            elapsed = min(elapsed, duration)
             self.text(screen, 6, x, f"{int(elapsed//60)}:{int(elapsed%60):02d} / {int(duration//60)}:{int(duration%60):02d}")
         drc_row = bottom - 2
         visible = max(1, drc_row - NOW_MENU_TOP)
@@ -2011,7 +2017,7 @@ class App:
             elapsed = self.player.get("elapsed")
             if isinstance(elapsed, (int, float)):
                 if self.player.get("state") == "play":
-                    elapsed += max(0, time.monotonic() - self.last_player)
+                    elapsed += max(0, time.monotonic() - self.player_synced_at)
                 duration = self.player.get("duration")
                 target = max(0, elapsed + (-10 if key == curses.KEY_LEFT else 10))
                 if isinstance(duration, (int, float)) and duration > 0: target = min(duration, target)

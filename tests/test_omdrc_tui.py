@@ -334,6 +334,30 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(drc_row, 15)
         self.assertLess(max(args[1] for args in painted if 'Album details' in str(args[3])), drc_row)
 
+    def test_now_time_ticks_each_second_from_the_player_response(self):
+        app = tui.App('http://localhost:9090')
+        app.last_player = 98  # request began before the player response arrived
+        with patch.object(tui.time, 'monotonic', return_value=100):
+            app.update_player({'elapsed': 10, 'duration': 60, 'state': 'play'})
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored'), patch.object(app, 'text', side_effect=lambda *args: painted.append(args)):
+            for now, expected in ((100.4, '0:10 / 1:00'), (101.4, '0:11 / 1:00'),
+                                  (102.4, '0:12 / 1:00')):
+                with patch.object(tui.time, 'monotonic', return_value=now):
+                    app.draw_now(Screen(), 17)
+                self.assertEqual(next(args[3] for args in painted if args[1] == 6), expected)
+                painted.clear()
+            app.config.update(levels=False, balance=False, dr=False)
+            app.last_player = 100
+            app.last_measure = 103.4
+            with patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=103.4):
+                app.poll()  # a new request starts, but the old sample must keep ticking
+            with patch.object(tui.time, 'monotonic', return_value=104.4):
+                app.draw_now(Screen(), 17)
+            self.assertEqual(next(args[3] for args in painted if args[1] == 6), '0:14 / 1:00')
+
     def test_seek_bar_sits_below_play_without_label(self):
         app = tui.App('http://localhost:9090')
         app.player = {'elapsed': 30, 'duration': 60, 'state': 'pause'}
