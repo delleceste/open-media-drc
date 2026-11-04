@@ -436,6 +436,7 @@ class App:
         self.list_sixel_nav_state = None
         self.list_sixel_areas = []
         self.list_sixel_displayed_areas = ()
+        self.list_sixel_scroll = None
         self.sixel_repaint_serial = 0
         self.list_sixel_clear_pending = False
         self.row = 0
@@ -1140,6 +1141,16 @@ class App:
         if not zoom: self.draw_live(screen, bottom)
         if not zoom: self.draw_nav(screen, bottom)
         self.colored(screen, height - 1, 1, self.footer_status(width - 3), "accent", curses.A_REVERSE)
+        list_scroll = (self.tab, self.folder, self.scroll) if self.page == "Library" else None
+        if self.list_sixel_displayed and list_scroll != self.list_sixel_scroll:
+            # curses shifts scrolled rows with delete-line, and Konsole moves
+            # Sixel images with them (into the header).  Repaint without
+            # scrolling instead; the clear drops the old images.
+            screen.clearok(True)
+            stale_areas.extend(self.list_sixel_displayed_areas)
+            self.list_sixel_displayed = ()
+            self.list_sixel_displayed_areas = ()
+        self.list_sixel_scroll = list_scroll
         screen.refresh()
         targets = tuple(self.list_sixel_targets)
         nav_state = ((self.tab, self.scroll, self.row, self.library_sidebar_focus, self.library_right_index)

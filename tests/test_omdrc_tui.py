@@ -1186,6 +1186,7 @@ class TuiTest(unittest.TestCase):
         app.list_sixel_displayed = ((5, 8, cover),)
         app.list_sixel_displayed_areas = ((5, 8, 12, 4),)
         app.list_sixel_size = (24, 80)
+        app.list_sixel_scroll = (1, '', 0)
         app.focused = False
         def draw_library(*_):
             app.list_sixel_targets.append((5, 8, app.cover_payload(cover)))
@@ -1202,6 +1203,35 @@ class TuiTest(unittest.TestCase):
             app.draw(Screen())
         self.assertFalse(any(b'\x1b[2J' in data for data in writes))
         self.assertIn(b'#0;2;60;60;60', writes[-1])
+
+    def test_list_scroll_repaints_without_terminal_scrolling(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 0
+        app.list_sixel_displayed = ((5, 8, b'old'),)
+        app.list_sixel_displayed_areas = ((5, 8, 10, 3),)
+        app.list_sixel_size = (24, 80)
+        app.list_sixel_scroll = (0, '', 0)
+        app.scroll = 1
+        def draw_library(*_):
+            app.list_sixel_targets.append((5, 8, b'new'))
+            app.list_sixel_areas.append((5, 8, 10, 3))
+        events = []
+        class Screen:
+            def clearok(self, enabled): events.append('clearok')
+            def erase(self): pass
+            def refresh(self): events.append('refresh')
+            def getmaxyx(self): return (24, 80)
+            def inch(self, y, x): return 32
+        with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=draw_library), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write', side_effect=lambda fd, data: events.append(data)):
+            app.draw(Screen())
+        self.assertEqual(events[:2], ['clearok', 'refresh'])  # curses repaints instead of scrolling
+        self.assertFalse(any(isinstance(event, bytes) and b'\x1b[2J' in event for event in events))
+        self.assertIn(b'\x1b[0;38;5;17m', events[2])  # stale cells under old covers
+        self.assertTrue(events[3].endswith(b'new\x1b8'))
+        self.assertEqual(app.list_sixel_scroll, (0, '', 1))
 
     def test_tab_cycles_all_visibility_combinations(self):
         app = tui.App('http://localhost:9090')
