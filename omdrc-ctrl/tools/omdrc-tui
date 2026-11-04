@@ -419,6 +419,8 @@ class App:
         self.library_auto_tab = None
         self.search_editing = False
         self.search_draft = ""
+        self.search_cursor = 0
+        self.search_view_start = 0
         self.search_auto_due = None
         self.search_decoder = codecs.getincrementaldecoder("utf-8")()
         self.list_generation = 0
@@ -742,6 +744,8 @@ class App:
         self.search_editing = True
         self.search_auto_due = None
         if not resume: self.search_draft = self.query
+        self.search_cursor = len(self.search_draft)
+        self.search_view_start = 0
         self.search_decoder.reset()
 
     def finish_search_edit(self, submit=False):
@@ -755,24 +759,49 @@ class App:
         try: curses.curs_set(0)
         except curses.error: pass
 
+    def leave_search_edit(self):
+        self.finish_search_edit()
+        self.search_draft = self.query
+        self.search_cursor = len(self.search_draft)
+        self.search_view_start = 0
+        self.library_sidebar_focus = True
+        self.library_sidebar_index = 0
+        self.sort_focus = False
+
     def search_edit_key(self, key):
         previous = self.search_draft
         if key in (10, 13):
             self.finish_search_edit(submit=True)
         elif key == 27:
-            self.finish_search_edit()
-            self.search_draft = self.query
-            self.library_sidebar_focus = True
-            self.library_sidebar_index = 0
-            self.sort_focus = False
+            self.leave_search_edit()
+        elif key == curses.KEY_LEFT:
+            if self.search_cursor:
+                self.search_cursor -= 1
+            else:
+                self.leave_search_edit()
+        elif key == curses.KEY_RIGHT:
+            self.search_cursor = min(len(self.search_draft), self.search_cursor + 1)
         elif key in (8, 127, curses.KEY_BACKSPACE):
-            self.search_draft = self.search_draft[:-1]
+            if self.search_cursor:
+                self.search_draft = (self.search_draft[:self.search_cursor - 1] +
+                                     self.search_draft[self.search_cursor:])
+                self.search_cursor -= 1
+            self.search_decoder.reset()
+        elif key == curses.KEY_DC:
+            if self.search_cursor < len(self.search_draft):
+                self.search_draft = (self.search_draft[:self.search_cursor] +
+                                     self.search_draft[self.search_cursor + 1:])
             self.search_decoder.reset()
         elif key in (9, curses.KEY_DOWN):
             self.finish_search_edit(submit=self.search_draft.strip() != self.query)
             self.library_right_index = 1
         elif 32 <= key <= 255:
-            try: self.search_draft += self.search_decoder.decode(bytes((key,)))
+            try:
+                chars = self.search_decoder.decode(bytes((key,)))
+                if chars:
+                    self.search_draft = (self.search_draft[:self.search_cursor] + chars +
+                                         self.search_draft[self.search_cursor:])
+                    self.search_cursor += len(chars)
             except UnicodeDecodeError: self.search_decoder.reset()
         if self.search_editing and self.search_draft != previous:
             self.search_auto_due = (time.monotonic() + SEARCH_DEBOUNCE_SECONDS
@@ -1197,9 +1226,16 @@ class App:
             box_style = curses.A_BOLD if self.search_editing else 0
             self.colored(screen, 3, result_x, "┌" + "─" * inner + "┐", "accent", box_style)
             if self.search_editing:
-                visible_text = self.search_draft[-max(1, inner - 3):]
+                text_width = max(1, inner - 3)
+                if self.search_cursor < self.search_view_start:
+                    self.search_view_start = self.search_cursor
+                elif self.search_cursor > self.search_view_start + text_width:
+                    self.search_view_start = self.search_cursor - text_width
+                self.search_view_start = min(self.search_view_start, max(0, len(self.search_draft) - text_width))
+                visible_text = self.search_draft[self.search_view_start:self.search_view_start + text_width]
+                cursor_at = self.search_cursor - self.search_view_start
                 cursor = "▌" if int(time.monotonic() * 2) % 2 == 0 else " "
-                content = "⌕ " + visible_text + cursor
+                content = "⌕ " + visible_text[:cursor_at] + cursor + visible_text[cursor_at:]
             else:
                 content = "⌕ " + (self.search_draft or self.query or "Type to search…")
             self.colored(screen, 4, result_x, "│" + content[:inner].ljust(inner) + "│", "accent", box_style)
@@ -1669,7 +1705,7 @@ class App:
             return
         if self.page == "Library" and self.search_editing:
             self.search_edit_key(key)
-            if key == 27 and screen is not None: self.draw(screen)
+            if self.library_sidebar_focus and screen is not None: self.draw(screen)
             return
         if key == ord(" ") and self.page != "Now":
             self.transport("pause" if self.player.get("state") == "play" else "play")

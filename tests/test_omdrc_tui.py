@@ -596,6 +596,76 @@ class TuiTest(unittest.TestCase):
         self.assertFalse(app.search_editing)
         fetch.assert_called_once()
 
+    def test_search_arrows_move_cursor_and_edit_at_its_position(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.query = 'Mahler'
+        app.begin_search_edit()
+        for _ in range(4): app.action(tui.curses.KEY_LEFT, None)
+        self.assertEqual(app.search_cursor, 2)
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
+             patch.object(tui.time, 'monotonic', return_value=100):
+            app.draw_library(Screen(), 17)
+        self.assertTrue(any(args[1] == 4 and '⌕ Ma▌hler' in args[3] for args in painted))
+        with patch.object(tui.time, 'monotonic', return_value=101):
+            app.action(ord('X'), None)
+        self.assertEqual((app.search_draft, app.search_cursor), ('MaXhler', 3))
+        self.assertEqual(app.search_auto_due, 103)
+        app.action(tui.curses.KEY_RIGHT, None)
+        self.assertEqual(app.search_cursor, 4)
+        app.action(tui.curses.KEY_BACKSPACE, None)
+        self.assertEqual((app.search_draft, app.search_cursor), ('MaXler', 3))
+        app.action(tui.curses.KEY_DC, None)
+        self.assertEqual((app.search_draft, app.search_cursor), ('MaXer', 3))
+
+    def test_search_left_past_start_highlights_sidebar_immediately(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.query = 'Mahler'
+        app.begin_search_edit()
+        app.action(ord('X'), None)
+        screen = object()
+        with patch.object(app, 'draw') as draw, patch.object(app, 'fetch_list') as fetch, \
+             patch.object(tui.curses, 'curs_set'):
+            for _ in range(len(app.search_draft)):
+                app.action(tui.curses.KEY_LEFT, screen)
+            self.assertTrue(app.search_editing)
+            self.assertEqual(app.search_cursor, 0)
+            draw.assert_not_called()
+            app.action(tui.curses.KEY_LEFT, screen)
+        draw.assert_called_once_with(screen)
+        fetch.assert_not_called()
+        self.assertFalse(app.search_editing)
+        self.assertTrue(app.library_sidebar_focus)
+        self.assertEqual(app.library_sidebar_index, 0)
+        self.assertEqual(app.search_draft, 'Mahler')
+        self.assertIsNone(app.search_auto_due)
+
+    def test_search_cursor_stays_visible_in_long_input(self):
+        app = tui.App('http://localhost:9090')
+        app.query = 'abcdefghijklmnopqrstuvwxyz1234567890'
+        app.begin_search_edit()
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (20, 55)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
+             patch.object(tui.time, 'monotonic', return_value=100):
+            app.draw_library(Screen(), 13)
+        row = next(args[3] for args in painted if args[1] == 4 and args[2] == 29)
+        self.assertIn('▌', row)
+        self.assertEqual(len(row), 24)
+        for _ in range(len(app.search_draft)): app.search_edit_key(tui.curses.KEY_LEFT)
+        self.assertEqual(app.search_cursor, 0)
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
+             patch.object(tui.time, 'monotonic', return_value=100):
+            app.draw_library(Screen(), 13)
+        row = next(args[3] for args in painted if args[1] == 4 and args[2] == 29)
+        self.assertTrue(row.startswith('│⌕ ▌abc'))
+
     def test_search_auto_starts_after_two_idle_seconds_and_resets_on_typing(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'
