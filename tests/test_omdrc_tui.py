@@ -403,6 +403,7 @@ class TuiTest(unittest.TestCase):
         class Screen:
             def __init__(self): self.events = []
             def clear(self): self.events.append('clear')
+            def clearok(self, enabled): self.events.append('clearok')
             def erase(self): self.events.append('erase')
             def refresh(self): self.events.append('refresh')
             def getmaxyx(self): return (24, 80)
@@ -414,9 +415,54 @@ class TuiTest(unittest.TestCase):
             app.select_library_tab(2, immediate=True)
             self.assertEqual(app.query, '')
             app.draw(screen)
-        self.assertEqual(screen.events[:3], ['clear', 'erase', 'library'])
+        self.assertEqual(screen.events[:4], ['clear', 'clearok', 'erase', 'library'])
         self.assertEqual(write.call_args.args[1], b'\x1b[H\x1b[2J')
         self.assertFalse(app.list_sixel_clear_pending)
+
+    def test_discover_sixel_repaints_complete_selection_border(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 1
+        app.config['cover_mode'] = 'sixel'
+        app.library_sidebar_focus = False
+        app.library_right_index = 2
+        art = 'https://example.test/cover.jpg'
+        app.rows = [{'title': 'Album', 'image_large': art}]
+        app.list_covers[(art, 12, 4, 'sixel')] = b'cover'
+        events = []
+        class Screen:
+            def erase(self): pass
+            def refresh(self): events.append(('refresh',))
+            def getmaxyx(self): return (24, 80)
+            def touchline(self, row, count): events.append(('touchline', row, count))
+            def clearok(self, enabled): raise AssertionError('initial draw must not clear')
+        with patch.object(app, 'colored'), patch.object(app, 'draw_live'), \
+             patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write', side_effect=lambda fd, data: events.append(('write', data))):
+            app.draw(Screen())
+        cover = next(i for i, event in enumerate(events) if event[0] == 'write' and b'cover' in event[1])
+        self.assertEqual(events[cover + 1:cover + 4],
+                         [('touchline', 6, 1), ('touchline', 11, 1), ('refresh',)])
+
+    def test_discover_to_search_clears_sixel_even_without_tracked_cover(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 1
+        app.config['cover_mode'] = 'sixel'
+        events = []
+        class Screen:
+            def clear(self): events.append('clear')
+            def clearok(self, enabled): events.append('clearok')
+            def erase(self): events.append('erase')
+            def refresh(self): events.append('refresh')
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=lambda *_: events.append('search')), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write') as write:
+            app.select_library_tab(0, immediate=True)
+            app.draw(Screen())
+        self.assertEqual(events[:4], ['clear', 'clearok', 'erase', 'search'])
+        self.assertEqual(write.call_args.args[1], b'\x1b[H\x1b[2J')
 
     def test_favourites_query_is_separate_and_persisted(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):

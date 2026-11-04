@@ -363,6 +363,7 @@ class App:
         self.list_sixel_displayed = ()
         self.list_sixel_size = None
         self.list_sixel_nav_state = None
+        self.list_sixel_border_rows = None
         self.list_sixel_clear_pending = False
         self.row = 0
         self.scroll = 0
@@ -701,7 +702,7 @@ class App:
         if changed:
             if self.tab in self.queries: self.queries[self.tab] = self.query
             self.query = self.queries.get(index, "")
-            self.list_sixel_clear_pending = bool(self.list_sixel_displayed)
+            self.list_sixel_clear_pending = bool(self.list_sixel_displayed) or self.cover_mode() == "sixel"
         self.tab = index
         self.library_sidebar_index = index
         self.sort_focus = False
@@ -940,6 +941,7 @@ class App:
 
     def draw(self, screen):
         self.list_sixel_targets = []
+        self.list_sixel_border_rows = None
         active_art = self.current_art()
         if self.sixel_visible and (self.page != "Now" or not self.config["cover"] or
                                    not active_art or not self.cover_key or active_art != self.cover_key[0]):
@@ -951,6 +953,7 @@ class App:
         if self.list_sixel_clear_pending:
             os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
             screen.clear()
+            screen.clearok(True)
             self.list_sixel_displayed = ()
             self.list_sixel_size = None
             self.list_sixel_nav_state = None
@@ -977,6 +980,7 @@ class App:
         targets = tuple(self.list_sixel_targets)
         nav_state = ((self.tab, self.scroll, self.row, self.library_sidebar_focus, self.library_right_index)
                      if self.page == "Library" else None)
+        drew_list_sixel = False
         if (targets != self.list_sixel_displayed or
                 (targets and ((height, width) != self.list_sixel_size or nav_state != self.list_sixel_nav_state))):
             if self.list_sixel_displayed:
@@ -986,7 +990,13 @@ class App:
                     screen.refresh()
             for left, top, payload in targets:
                 os.write(sys.stdout.fileno(), f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + payload + b"\x1b8")
+                drew_list_sixel = True
             self.list_sixel_displayed = targets
+        # Konsole Sixel can paint over Discover borders on adjacent text rows.
+        if drew_list_sixel and self.list_sixel_border_rows:
+            for border_y in self.list_sixel_border_rows:
+                screen.touchline(border_y, 1)
+            screen.refresh()
         self.list_sixel_size = (height, width)
         self.list_sixel_nav_state = nav_state
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
@@ -1104,6 +1114,7 @@ class App:
             selected = curses.A_REVERSE if focused and not boxed_results else 0
             if boxed_results:
                 if focused:
+                    if self.tab == 1: self.list_sixel_border_rows = (y - 1, y + cover_height)
                     self.colored(screen, y - 1, result_x, "┌" + "─" * (result_width - 2) + "┐", "green")
                     for border_y in range(y, y + cover_height):
                         self.colored(screen, border_y, result_x, "│", "green")
