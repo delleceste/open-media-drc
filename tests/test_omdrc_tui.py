@@ -596,6 +596,71 @@ class TuiTest(unittest.TestCase):
         self.assertFalse(app.search_editing)
         fetch.assert_called_once()
 
+    def test_search_auto_starts_after_two_idle_seconds_and_resets_on_typing(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.begin_search_edit()
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(tui.time, 'monotonic', return_value=100):
+            for char in 'Ma': app.search_edit_key(ord(char))
+        self.assertIsNone(app.search_auto_due)
+        with patch.object(tui.time, 'monotonic', return_value=101):
+            app.search_edit_key(ord('h'))
+        self.assertEqual(app.search_auto_due, 103)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
+             patch.object(tui.time, 'monotonic', return_value=101.1):
+            app.draw_library(Screen(), 17)
+        self.assertTrue(any(args[1] == 2 and args[3] == 'starting search in 2s...' and
+                            args[2] == 29 + 49 - len(args[3]) for args in painted))
+        with patch.object(tui.time, 'monotonic', return_value=102):
+            app.search_edit_key(ord('l'))
+        self.assertEqual(app.search_auto_due, 104)
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)), \
+             patch.object(tui.time, 'monotonic', return_value=103.1):
+            app.draw_library(Screen(), 17)
+        self.assertTrue(any(args[1] == 2 and args[3] == 'starting search in 1s...' for args in painted))
+        with patch.object(app, 'fetch_list') as fetch, patch.object(app, 'submit'), \
+             patch.object(tui.time, 'monotonic', return_value=103.9):
+            app.poll()
+        fetch.assert_not_called()
+        with patch.object(app, 'fetch_list') as fetch, patch.object(app, 'submit'), \
+             patch.object(tui.time, 'monotonic', return_value=104):
+            app.poll()
+        fetch.assert_called_once()
+        self.assertEqual(app.query, 'Mahl')
+        self.assertTrue(app.search_editing)
+        self.assertIsNone(app.search_auto_due)
+        with patch.object(tui.time, 'monotonic', return_value=105):
+            app.search_edit_key(ord('e'))
+        self.assertEqual(app.search_auto_due, 107)
+
+    def test_search_auto_cancelled_by_shortening_escape_or_enter(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.begin_search_edit()
+        with patch.object(tui.time, 'monotonic', return_value=100):
+            for char in 'Mah': app.search_edit_key(ord(char))
+        self.assertEqual(app.search_auto_due, 102)
+        app.search_edit_key(127)
+        self.assertIsNone(app.search_auto_due)
+        with patch.object(tui.time, 'monotonic', return_value=101):
+            app.search_edit_key(ord('h'))
+        self.assertEqual(app.search_auto_due, 103)
+        with patch.object(tui.curses, 'curs_set'):
+            app.search_edit_key(27)
+        self.assertIsNone(app.search_auto_due)
+        with patch.object(app, 'fetch_list') as fetch, patch.object(tui.curses, 'curs_set'):
+            app.begin_search_edit()
+            for char in 'Bach': app.search_edit_key(ord(char))
+            app.search_edit_key(10)
+        fetch.assert_called_once()
+        self.assertEqual(app.query, 'Bach')
+        self.assertIsNone(app.search_auto_due)
+        self.assertFalse(app.search_editing)
+
     def test_search_inline_escape_and_tab_keep_previous_query(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'

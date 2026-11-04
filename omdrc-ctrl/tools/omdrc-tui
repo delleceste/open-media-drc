@@ -35,6 +35,7 @@ DEFAULTS = {"server": "http://localhost:9090", "levels": True, "dr": True,
             "theme": "auto", "cover_mode": "auto", "search_sort": "relevance",
             "discover_genre": "",
             "library_delay": 1.0}
+SEARCH_DEBOUNCE_SECONDS = 2.0
 TABS = ("Search", "Discover", "Favourites", "Chronology", "Awarded", "Review later")
 NOW_ACTIONS = (("Play / pause", " "), ("Previous track", "["),
                ("Next track", "]"), ("Stop", "s"), ("Seek", "g"),
@@ -418,6 +419,7 @@ class App:
         self.library_auto_tab = None
         self.search_editing = False
         self.search_draft = ""
+        self.search_auto_due = None
         self.search_decoder = codecs.getincrementaldecoder("utf-8")()
         self.list_generation = 0
         self.list_error = ""
@@ -738,6 +740,7 @@ class App:
         self.library_right_index = 0
         self.sort_focus = False
         self.search_editing = True
+        self.search_auto_due = None
         if not resume: self.search_draft = self.query
         self.search_decoder.reset()
 
@@ -746,12 +749,14 @@ class App:
             self.query = self.search_draft.strip()
             self.fetch_list()
         self.search_editing = False
+        self.search_auto_due = None
         if submit: self.search_draft = self.query
         self.search_decoder.reset()
         try: curses.curs_set(0)
         except curses.error: pass
 
     def search_edit_key(self, key):
+        previous = self.search_draft
         if key in (10, 13):
             self.finish_search_edit(submit=True)
         elif key == 27:
@@ -769,6 +774,9 @@ class App:
         elif 32 <= key <= 255:
             try: self.search_draft += self.search_decoder.decode(bytes((key,)))
             except UnicodeDecodeError: self.search_decoder.reset()
+        if self.search_editing and self.search_draft != previous:
+            self.search_auto_due = (time.monotonic() + SEARCH_DEBOUNCE_SECONDS
+                                    if len(self.search_draft.strip()) >= 3 else None)
 
     def select_library_tab(self, index, immediate=False):
         changed = index != self.tab
@@ -795,6 +803,11 @@ class App:
 
     def poll(self):
         now = time.monotonic()
+        if (self.page == "Library" and self.tab == 0 and self.search_editing and
+                self.search_auto_due is not None and now >= self.search_auto_due):
+            self.search_auto_due = None
+            self.query = self.search_draft.strip()
+            self.fetch_list()
         if self.page == "Library" and self.library_auto_due is not None and now >= self.library_auto_due:
             tab = self.library_auto_tab
             self.library_auto_due = None
@@ -1161,6 +1174,14 @@ class App:
         self.colored(screen, 10, 1, "b Later  m More", "soft")
         self.colored(screen, 11, 1, "r Reload" + ("  x Edit" if self.tab == 5 else ""), "soft")
         self.colored(screen, 2, result_x, TABS[self.tab], "accent", curses.A_BOLD)
+        if self.tab == 0 and self.search_editing and self.search_auto_due is not None:
+            seconds = max(1, math.ceil(self.search_auto_due - time.monotonic()))
+            countdown = f"starting search in {seconds}s..."
+            available = result_width - len(TABS[self.tab]) - 1
+            if available > 0:
+                if len(countdown) > available: countdown = f"in {seconds}s..."
+                if len(countdown) <= available:
+                    self.colored(screen, 2, result_x + result_width - len(countdown), countdown, "muted")
         if self.tab == 0:
             first_control = "⌕ " + (self.search_draft if self.search_editing else self.query or "Enter to search")
         elif self.tab == 1:
