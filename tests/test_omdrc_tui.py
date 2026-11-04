@@ -25,6 +25,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getch(self): return next(self.keys, -1)  # Esc delay expires
         with patch.object(app.api, 'request', return_value={'genres': genres}) as request, \
              patch.object(app, 'draw'), patch.object(app, 'colored'), \
@@ -44,6 +45,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getch(self): return next(self.keys)
         with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
             app = tui.App('http://localhost:9090')
@@ -63,6 +65,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getch(self): return next(self.keys, -1)  # Esc delay expires
         with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
             app = tui.App('http://localhost:9090')
@@ -156,6 +159,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getch(self): return next(self.keys)
         known = {'labels': [{'name': 'Pentatone'}, {'name': 'Deutsche Grammophon'}]}
         with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
@@ -381,6 +385,7 @@ class TuiTest(unittest.TestCase):
             def __init__(self): self.forced = 0
             def erase(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def clearok(self, enabled): self.forced += enabled
             def getmaxyx(self): return (24, 80)
         screen = Screen()
@@ -397,6 +402,25 @@ class TuiTest(unittest.TestCase):
             app.draw(screen)
             self.assertEqual(screen.forced, 2)
 
+    def test_rows_end_with_distinct_blanks_so_curses_never_shifts_them(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        marks = {}
+        class Screen:
+            def erase(self): pass
+            def refresh(self): marks['refreshed'] = dict(marks)
+            def insstr(self, y, x, value): marks[y] = (x, value)
+            def getmaxyx(self): return (40, 120)
+            def clearok(self, enabled): pass
+        with patch.object(app, 'colored'), patch.object(app, 'draw_library'), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), patch.object(tui.os, 'write'):
+            app.draw(Screen())
+        rows = marks.pop('refreshed')
+        self.assertEqual(sorted(rows), list(range(40)))
+        self.assertTrue(all(x == 119 and not value.strip() for x, value in rows.values()))
+        # No row repeats a row up to 12 lines away (list slots are 4-8 rows).
+        self.assertTrue(all(rows[y][1] != rows[y + d][1] for d in range(1, 13) for y in range(40 - d)))
+
     def test_list_sixel_repaints_cover_when_selection_moves(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'
@@ -404,6 +428,7 @@ class TuiTest(unittest.TestCase):
         class Screen:
             def erase(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
             def clearok(self, enabled): raise AssertionError('selection must not clear the screen')
         screen = Screen()
@@ -430,6 +455,7 @@ class TuiTest(unittest.TestCase):
             def clearok(self, enabled): self.events.append('clearok')
             def erase(self): self.events.append('erase')
             def refresh(self): self.events.append('refresh')
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
         screen = Screen()
         with patch.object(app, 'fetch_list'), patch.object(app, 'colored'), \
@@ -465,6 +491,7 @@ class TuiTest(unittest.TestCase):
             def clearok(self, enabled): pass
             def erase(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
             def inch(self, y, x): return ord('x') if (y, x) == (8, 6) else 32
         writes = []
@@ -491,6 +518,7 @@ class TuiTest(unittest.TestCase):
             def clearok(self, enabled): events.append('clearok')
             def erase(self): events.append('erase')
             def refresh(self): events.append('refresh')
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
         with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=lambda *_: events.append('search')), \
              patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
@@ -526,6 +554,7 @@ class TuiTest(unittest.TestCase):
             def clear(self): self.cleared = True
             def erase(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
         screen = Screen()
         with patch.object(app, 'colored'), patch.object(app, 'draw_drc'), \
@@ -1188,6 +1217,7 @@ class TuiTest(unittest.TestCase):
             def clear(self): raise AssertionError('focus change must not clear')
             def erase(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
         with patch.object(app, 'current_art', return_value='art'), patch.object(app, 'draw_now'), \
              patch.object(app, 'colored'), patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
@@ -1220,6 +1250,7 @@ class TuiTest(unittest.TestCase):
             def clearok(self, enabled): raise AssertionError('focus change must not clear')
             def erase(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
             def inch(self, y, x): return 32
         with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=draw_library), \
@@ -1247,6 +1278,7 @@ class TuiTest(unittest.TestCase):
             def clearok(self, enabled): pass
             def erase(self): pass
             def refresh(self): pass
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
             def inch(self, y, x): return 32
         with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=draw_library), \
@@ -1274,6 +1306,7 @@ class TuiTest(unittest.TestCase):
             def clearok(self, enabled): events.append('clearok')
             def erase(self): pass
             def refresh(self): events.append('refresh')
+            def insstr(self, *args): pass
             def getmaxyx(self): return (24, 80)
             def inch(self, y, x): return 32
         with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=draw_library), \

@@ -55,6 +55,9 @@ FOCUS_REPORTING_OFF = b"\x1b[?1004l"
 MOUSE_MASK = curses.BUTTON1_PRESSED | curses.BUTTON4_PRESSED | getattr(curses, "BUTTON5_PRESSED", 0)
 CTRL_LEFT = "ctrl-left"
 CTRL_RIGHT = "ctrl-right"
+# Blank characters, one per row in turn, so that no row repeats another (App.mark_rows).
+# A prime count keeps list slots (4-8 rows) from lining up with the cycle.
+ROW_MARKS = tuple(map(chr, range(0x2000, 0x200B))) + ("\u00a0", "\u202f")
 ALBUM_ACTIONS = (("F5 Play", "green", "p"), ("F6 Add", "fmt_hires", "a"),
                  ("F7 Fav", "red", "h"), ("F8 Later", "yellow", "b"),
                  ("F9 Research", "fmt_48", "R"))
@@ -1088,6 +1091,18 @@ class App:
         if art: self.last_art = art
         return art or self.last_art
 
+    def mark_rows(self, screen, height, width):
+        """End every row with a blank that differs from its neighbours'.
+
+        ncurses moves rows with insert/delete-line when their text matches
+        rows shown elsewhere last frame (moving the selection border is
+        enough), even with idlok off, and Konsole moves Sixel images with
+        them.  Rows that differ by position never match, so they stay put.
+        """
+        for y in range(height):
+            try: screen.insstr(y, width - 1, ROW_MARKS[y % len(ROW_MARKS)])
+            except curses.error: pass
+
     def repaint_sixel_cells(self, screen, areas):
         """Make Konsole repaint text cells that a removed Sixel image covered.
 
@@ -1144,6 +1159,7 @@ class App:
         height, width = screen.getmaxyx()
         if height < (20 if self.page == "Library" and self.tab == 0 else 15) or width < 55:
             self.text(screen, 0, 0, "Need at least 55 columns × 20 rows" if self.page == "Library" and self.tab == 0 else "Need at least 55 columns × 15 rows")
+            self.mark_rows(screen, height, width)
             screen.refresh(); self.repaint_sixel_cells(screen, stale_areas); return
         self.colored(screen, 0, 1, f"open-media-drc  ·  {self.page}  ·  q Quit", "accent", curses.A_BOLD)
         self.colored(screen, 1, 0, "─" * (width - 1), "muted")
@@ -1169,6 +1185,7 @@ class App:
             self.list_sixel_displayed_areas = ()
             self.list_sixel_displayed_sources = ()
         self.list_sixel_scroll = list_scroll
+        self.mark_rows(screen, height, width)
         screen.refresh()
         targets = tuple(self.list_sixel_targets)
         nav_state = ((self.tab, self.scroll, self.row, self.library_sidebar_focus, self.library_right_index)
