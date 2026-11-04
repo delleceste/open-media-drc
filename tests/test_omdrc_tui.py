@@ -230,7 +230,7 @@ class TuiTest(unittest.TestCase):
         exact = next(args for args in painted if args[3] == 'DR=10')
         estimate = next(args for args in painted if args[3] == 'DR ~8')
         self.assertEqual((exact[1], exact[4], exact[5]), (11, 'green', tui.curses.A_BOLD))
-        self.assertEqual((estimate[1], estimate[4], estimate[5]), (17, 'yellow', tui.curses.A_DIM))
+        self.assertEqual((estimate[1], estimate[4], estimate[5]), (15, 'yellow', tui.curses.A_DIM))
         self.assertTrue(any(args[1] == 11 and '24/96' in args[3] and args[4] == 'fmt_hires'
                             and args[2] < exact[2] for args in painted))
 
@@ -247,8 +247,8 @@ class TuiTest(unittest.TestCase):
         self.assertTrue(any(args[1] == 7 and 'Searching Qobuz' in args[3] and '█' in args[3]
                             and args[4] == 'green' for args in painted))
         titles = [(args[1], args[3]) for args in painted if args[3] in ('First', 'Second')]
-        self.assertEqual(titles, [(9, 'First'), (15, 'Second')])
-        self.assertFalse(any(args[1] == 13 and args[2] >= 29 for args in painted))
+        self.assertEqual(titles, [(9, 'First'), (13, 'Second')])
+        self.assertFalse(any(args[1] == 12 and args[2] >= 29 for args in painted))
         app.tab = 1
         painted.clear()
         with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
@@ -372,6 +372,27 @@ class TuiTest(unittest.TestCase):
             app.action(tui.curses.KEY_RESIZE, screen)
             app.draw(screen)
             self.assertEqual(screen.forced, 2)
+
+    def test_list_sixel_repaints_cover_when_selection_moves(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 1
+        class Screen:
+            def erase(self): pass
+            def refresh(self): pass
+            def getmaxyx(self): return (24, 80)
+            def clearok(self, enabled): raise AssertionError('selection must not clear the screen')
+        screen = Screen()
+        with patch.object(app, 'colored'), \
+             patch.object(app, 'draw_library', side_effect=lambda *_: app.list_sixel_targets.append((31, 7, b'cover'))), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write') as write:
+            app.draw(screen)
+            write.reset_mock()
+            app.row = 1
+            app.draw(screen)
+        self.assertEqual(write.call_count, 1)
+        self.assertIn(b'cover', write.call_args.args[1])
 
     def test_switch_from_discover_clears_sixel_before_favourites_redraw(self):
         app = tui.App('http://localhost:9090')
@@ -737,13 +758,14 @@ class TuiTest(unittest.TestCase):
                 titles = [(args[1], args[3], args[5]) for args in painted
                           if args[3] in ('First', 'Second')]
                 self.assertEqual([(y, title) for y, title, _ in titles],
-                                 [(7, 'First'), (13, 'Second')])
+                                 [(7, 'First'), (11, 'Second')])
                 self.assertTrue(all(not style & tui.curses.A_REVERSE for _, _, style in titles))
-                self.assertTrue(any(args[1] == 12 and str(args[3]).startswith('┌') and args[4] == 'green'
+                self.assertTrue(any(args[1] == 10 and str(args[3]).startswith('┌') and args[4] == 'green'
                                     for args in painted))
-                self.assertTrue(any(args[1] == 16 and str(args[3]).startswith('└') and args[4] == 'green'
+                self.assertTrue(any(args[1] == 14 and str(args[3]).startswith('└') and args[4] == 'green'
                                     for args in painted))
-                self.assertFalse(any(args[1] == 11 and args[2] >= 29 for args in painted))
+                self.assertFalse(any(args[1] == 10 and args[2] >= 29 and args[4] != 'green'
+                                     for args in painted))
 
     def test_discover_cover_uses_large_image_and_color(self):
         app = tui.App('http://localhost:9090')

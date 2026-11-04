@@ -362,6 +362,7 @@ class App:
         self.list_sixel_targets = []
         self.list_sixel_displayed = ()
         self.list_sixel_size = None
+        self.list_sixel_nav_state = None
         self.list_sixel_clear_pending = False
         self.row = 0
         self.scroll = 0
@@ -952,6 +953,7 @@ class App:
             screen.clear()
             self.list_sixel_displayed = ()
             self.list_sixel_size = None
+            self.list_sixel_nav_state = None
             self.list_sixel_clear_pending = False
         screen.erase()
         height, width = screen.getmaxyx()
@@ -973,15 +975,20 @@ class App:
         self.colored(screen, height - 1, 1, self.footer_status(width - 3), "accent", curses.A_REVERSE)
         screen.refresh()
         targets = tuple(self.list_sixel_targets)
-        if targets != self.list_sixel_displayed or (targets and (height, width) != self.list_sixel_size):
+        nav_state = ((self.tab, self.scroll, self.row, self.library_sidebar_focus, self.library_right_index)
+                     if self.page == "Library" else None)
+        if (targets != self.list_sixel_displayed or
+                (targets and ((height, width) != self.list_sixel_size or nav_state != self.list_sixel_nav_state))):
             if self.list_sixel_displayed:
-                os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
-                screen.clearok(True)  # repaint after an external terminal clear
-                screen.refresh()
+                if targets != self.list_sixel_displayed or (height, width) != self.list_sixel_size:
+                    os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
+                    screen.clearok(True)  # repaint after an external terminal clear
+                    screen.refresh()
             for left, top, payload in targets:
                 os.write(sys.stdout.fileno(), f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + payload + b"\x1b8")
             self.list_sixel_displayed = targets
         self.list_sixel_size = (height, width)
+        self.list_sixel_nav_state = nav_state
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
             left, top = self.sixel_target
             payload = f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + self.cover_sixel + b"\x1b8"
@@ -1084,26 +1091,25 @@ class App:
         cover_height = 4 if self.tab == 1 else 3
         cover_width = 12 if self.tab == 1 else 10
         boxed_results = result_width >= 4
-        row_height = cover_height + 2 if boxed_results else cover_height
-        block_height = row_height + 1
-        visible = max(0, (bottom - first_result - row_height) // block_height + 1)
+        block_height = cover_height + 1
+        first_content = first_result + int(boxed_results)
+        visible = max(0, (bottom - first_content - cover_height - int(boxed_results)) // block_height + 1)
         if self.row < self.scroll: self.scroll = self.row
         if visible and self.row >= self.scroll + visible: self.scroll = self.row - visible + 1
         for index in range(self.scroll, min(len(self.rows), self.scroll + visible)):
-            y = first_result + (index - self.scroll) * block_height
+            y = first_content + (index - self.scroll) * block_height
             item = self.rows[index]
             results_focused = not self.library_sidebar_focus and self.library_right_index == (2 if self.tab in (0, 1) else 1)
             focused = results_focused and index == self.row
             selected = curses.A_REVERSE if focused and not boxed_results else 0
             if boxed_results:
                 if focused:
-                    self.colored(screen, y, result_x, "┌" + "─" * (result_width - 2) + "┐", "green")
-                    for border_y in range(y + 1, y + row_height - 1):
+                    self.colored(screen, y - 1, result_x, "┌" + "─" * (result_width - 2) + "┐", "green")
+                    for border_y in range(y, y + cover_height):
                         self.colored(screen, border_y, result_x, "│", "green")
                         self.colored(screen, border_y, result_x + result_width - 1, "│", "green")
-                    self.colored(screen, y + row_height - 1, result_x,
+                    self.colored(screen, y + cover_height, result_x,
                                  "└" + "─" * (result_width - 2) + "┘", "green")
-                y += 1
             content_x = result_x + 2 if boxed_results else result_x
             content_width = result_width - 4 if boxed_results else result_width
             if item.get("kind") == "folder":
