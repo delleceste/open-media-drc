@@ -1303,6 +1303,28 @@ class TuiTest(unittest.TestCase):
             app.mouse(None, ('click', 90, 1))  # nothing there
         self.assertEqual(app.tab, 1)
 
+    def test_results_enter_plays_right_opens_and_album_left_returns(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 2
+        app.rows = [{'id': '1', 'title': 'A'}, {'id': '2', 'title': 'B'}]
+        app.library_sidebar_focus = False
+        app.library_right_index = 1
+        app.row = 1
+        with patch.object(app, 'open_album') as open_album, patch.object(app, 'album_action') as album_action:
+            app.library_key(10, None)
+            album_action.assert_called_once_with(app.rows[1], ord('p'), None)
+            open_album.assert_not_called()
+            app.library_key(tui.curses.KEY_RIGHT, None)
+            open_album.assert_called_once_with(app.rows[1])
+        app.page = 'Album'; app.album_source = 'Library'; app.album_action_index = 1
+        with patch.object(app, 'switch') as switch:
+            app.action(tui.curses.KEY_LEFT, None)
+            self.assertEqual(app.album_action_index, 0)
+            switch.assert_not_called()
+            app.action(tui.curses.KEY_LEFT, None)
+            switch.assert_called_once_with('Library')
+
     def test_mouse_selects_then_opens_results_and_wheel_stays_in_list(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'

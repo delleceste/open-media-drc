@@ -1581,7 +1581,7 @@ class App:
                          curses.A_BOLD | (curses.A_REVERSE if index == self.album_action_index else 0))
             self.clickable(5, col, len(text), lambda _x, _y, screen, index=index: self.click_album_action(index, screen))
             col += len(text) + 1
-        self.colored(screen, 6, 2, "←→ action  Enter select  ↑↓ scroll", "muted")
+        self.colored(screen, 6, 2, "←→ action (← from Play: back)  Enter select  ↑↓ scroll", "muted")
         width = max(20, screen_width - 6)
         lines = []
         for heading, value in (("Description", a.get("description")), ("Performers", a.get("performers")),
@@ -1833,6 +1833,7 @@ class App:
             if key == 27: self.switch(self.album_source)
             elif key == curses.KEY_UP: self.album_scroll = max(0, self.album_scroll - 1)
             elif key == curses.KEY_DOWN: self.album_scroll += 1
+            elif key == curses.KEY_LEFT and self.album_action_index == 0: self.switch(self.album_source)
             elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
                 self.album_action_index = (self.album_action_index + (-1 if key == curses.KEY_LEFT else 1)) % len(ALBUM_ACTIONS)
             elif key in (10, 13): self.album_key(ord(ALBUM_ACTIONS[self.album_action_index][2]), screen)
@@ -1881,6 +1882,9 @@ class App:
                 self.sort_focus = False
             return
         if key == curses.KEY_RIGHT:
+            if not self.library_sidebar_focus and self.library_right_index == (2 if self.tab in (0, 1) else 1):
+                if self.rows: self.open_result(self.rows[self.row])
+                return
             if self.tab == 0 and not self.library_sidebar_focus and self.library_right_index == 1:
                 self.sort_focus = True
                 return
@@ -2003,9 +2007,12 @@ class App:
         elif self.rows and key in (10, 13, ord("p"), ord("a"), ord("h"), ord("b")):
             item = self.rows[self.row]
             if item.get("kind") == "folder":
-                if key in (10, 13): self.folder = str(item.get("id", "")); self.fetch_list()
-            elif key in (10, 13): self.open_album(item)
-            else: self.album_action(item, key, screen)
+                if key in (10, 13): self.open_result(item)
+            else: self.album_action(item, ord("p") if key in (10, 13) else key, screen)
+
+    def open_result(self, item):
+        if item.get("kind") == "folder": self.folder = str(item.get("id", "")); self.fetch_list()
+        else: self.open_album(item)
 
     def toggle_sort(self):
         self.filters["sort"] = "date" if self.filters["sort"] == "relevance" else "relevance"
@@ -2139,7 +2146,7 @@ class App:
         """First click selects a result; clicking the selected result opens it."""
         result_index = 2 if self.tab in (0, 1) else 1
         if not self.library_sidebar_focus and self.library_right_index == result_index and self.row == index:
-            self.library_key(10, screen); return
+            self.library_key(curses.KEY_RIGHT, screen); return
         self.library_sidebar_focus = False
         self.library_right_index = result_index
         self.sort_focus = False
