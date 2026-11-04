@@ -185,6 +185,37 @@ def xterm_color(rgb):
     return 232 + gi if distance(gray_rgb) < distance(cube_rgb) else 16 + ci[0] * 36 + ci[1] * 6 + ci[2]
 
 
+def terminal_cell_height(default=20):
+    """Pixel height of one terminal row, from TIOCGWINSZ when the terminal reports it."""
+    try:
+        import fcntl, struct, termios
+        rows, _, _, ypixel = struct.unpack("HHHH", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8))
+        return ypixel // rows if rows and ypixel else default
+    except (ImportError, OSError, ValueError):
+        return default
+
+
+def fit_sixel_rows(payload, rows, cell_height=None):
+    """Drop trailing six-pixel bands so a Sixel never paints below its rows.
+
+    Konsole paints every band in full, so chafa's 80 px cover for 4 rows of
+    20 px becomes 84 px and covers the text row underneath (e.g. the result
+    border).  Keep only the bands that fit and fix the raster height.
+    """
+    start = payload.find(b"q")
+    end = payload.rfind(b"\x1b\\")
+    if not payload.startswith(b"\x1bP") or start < 0 or end < start:
+        return payload
+    bands = (rows * (cell_height or terminal_cell_height())) // 6
+    parts = payload[start + 1:end].split(b"-")
+    if bands < 1 or len(parts) <= bands:
+        return payload
+    body = re.sub(rb'^"(\d+);(\d+);(\d+);(\d+)',
+                  lambda m: b'"%s;%s;%s;%d' % (m[1], m[2], m[3], min(int(m[4]), bands * 6)),
+                  b"-".join(parts[:bands]))
+    return payload[:start + 1] + body + payload[end:]
+
+
 def parse_cover_ansi(output):
     """Convert chafa's true-colour SGR to runs usable by curses."""
     lines = [[]]
@@ -363,7 +394,9 @@ class App:
         self.list_sixel_displayed = ()
         self.list_sixel_size = None
         self.list_sixel_nav_state = None
-        self.list_sixel_border_rows = None
+        self.list_sixel_areas = []
+        self.list_sixel_displayed_areas = ()
+        self.sixel_repaint_serial = 0
         self.list_sixel_clear_pending = False
         self.row = 0
         self.scroll = 0
@@ -431,6 +464,7 @@ class App:
         self.cover_sixel = None
         self.sixel_visible = False
         self.sixel_target = None
+        self.sixel_area = None
         self.cover_pairs = {}
         self.styles = {}
         self.light = False
@@ -939,22 +973,52 @@ class App:
         if art: self.last_art = art
         return art or self.last_art
 
+    def repaint_sixel_cells(self, screen, areas):
+        """Make Konsole repaint text cells that a removed Sixel image covered.
+
+        Konsole drops the image on a clear but only repaints cells whose text
+        changed, so blank cells keep stale cover pixels (e.g. the empty fourth
+        row of Discover covers).  Rewrite curses-blank cells as spaces with a
+        foreground colour that differs from the previous repaint: invisible,
+        but different enough for Konsole to redraw them.
+        """
+        areas = [area for area in areas if area]
+        if not areas: return
+        height, width = screen.getmaxyx()
+        self.sixel_repaint_serial = self.sixel_repaint_serial % 200 + 1
+        out = [b"\x1b7", f"\x1b[0;38;5;{16 + self.sixel_repaint_serial}m".encode()]
+        for left, top, area_width, area_height in areas:
+            for y in range(max(0, top), min(height - 1, top + area_height)):
+                x = max(0, left)
+                while x < min(width - 1, left + area_width):
+                    cell = screen.inch(y, x)
+                    if cell & curses.A_CHARTEXT == 32 and not cell & ~curses.A_CHARTEXT:
+                        out.append(f"\x1b[{y + 1};{x + 1}H ".encode())
+                    x += 1
+        out.append(b"\x1b[0m\x1b8")
+        os.write(sys.stdout.fileno(), b"".join(out))
+
     def draw(self, screen):
         self.list_sixel_targets = []
-        self.list_sixel_border_rows = None
+        self.list_sixel_areas = []
+        stale_areas = []
         active_art = self.current_art()
         if self.sixel_visible and (self.page != "Now" or not self.config["cover"] or
                                    not active_art or not self.cover_key or active_art != self.cover_key[0]):
             # Konsole keeps Sixel pixels independently of curses' cell buffer.
             os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
             screen.clear()
+            stale_areas.append(self.sixel_area)
             self.sixel_visible = False
             self.sixel_target = None
+            self.sixel_area = None
         if self.list_sixel_clear_pending:
             os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
             screen.clear()
             screen.clearok(True)
+            stale_areas.extend(self.list_sixel_displayed_areas)
             self.list_sixel_displayed = ()
+            self.list_sixel_displayed_areas = ()
             self.list_sixel_size = None
             self.list_sixel_nav_state = None
             self.list_sixel_clear_pending = False
@@ -962,7 +1026,7 @@ class App:
         height, width = screen.getmaxyx()
         if height < (20 if self.page == "Library" and self.tab == 0 else 15) or width < 55:
             self.text(screen, 0, 0, "Need at least 55 columns × 20 rows" if self.page == "Library" and self.tab == 0 else "Need at least 55 columns × 15 rows")
-            screen.refresh(); return
+            screen.refresh(); self.repaint_sixel_cells(screen, stale_areas); return
         self.colored(screen, 0, 1, f"open-media-drc  ·  {self.page}  ·  q Quit", "accent", curses.A_BOLD)
         self.colored(screen, 1, 0, "─" * (width - 1), "muted")
         zoom = self.page == "Now" and self.cover_zoom
@@ -980,7 +1044,6 @@ class App:
         targets = tuple(self.list_sixel_targets)
         nav_state = ((self.tab, self.scroll, self.row, self.library_sidebar_focus, self.library_right_index)
                      if self.page == "Library" else None)
-        drew_list_sixel = False
         if (targets != self.list_sixel_displayed or
                 (targets and ((height, width) != self.list_sixel_size or nav_state != self.list_sixel_nav_state))):
             if self.list_sixel_displayed:
@@ -988,15 +1051,14 @@ class App:
                     os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
                     screen.clearok(True)  # repaint after an external terminal clear
                     screen.refresh()
+                    stale_areas.extend(self.list_sixel_displayed_areas)
+            self.repaint_sixel_cells(screen, stale_areas)
+            stale_areas = []
             for left, top, payload in targets:
                 os.write(sys.stdout.fileno(), f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + payload + b"\x1b8")
-                drew_list_sixel = True
             self.list_sixel_displayed = targets
-        # Konsole Sixel can paint over Discover borders on adjacent text rows.
-        if drew_list_sixel and self.list_sixel_border_rows:
-            for border_y in self.list_sixel_border_rows:
-                screen.touchline(border_y, 1)
-            screen.refresh()
+            self.list_sixel_displayed_areas = tuple(self.list_sixel_areas)
+        self.repaint_sixel_cells(screen, stale_areas)
         self.list_sixel_size = (height, width)
         self.list_sixel_nav_state = nav_state
         if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
@@ -1114,7 +1176,6 @@ class App:
             selected = curses.A_REVERSE if focused and not boxed_results else 0
             if boxed_results:
                 if focused:
-                    if self.tab == 1: self.list_sixel_border_rows = (y - 1, y + cover_height)
                     self.colored(screen, y - 1, result_x, "┌" + "─" * (result_width - 2) + "┐", "green")
                     for border_y in range(y, y + cover_height):
                         self.colored(screen, border_y, result_x, "│", "green")
@@ -1181,7 +1242,9 @@ class App:
             if local: self.draw_local_cover_marker(screen, left, top, width, height)
             else: self.colored(screen, top + height // 2, left, compact("No cover", width), "muted")
         if mode == "sixel":
-            if self.list_covers[key]: self.list_sixel_targets.append((left, top, self.list_covers[key]))
+            if self.list_covers[key]:
+                self.list_sixel_targets.append((left, top, self.list_covers[key]))
+                self.list_sixel_areas.append((left, top, width, height))
             return
         for row, runs in enumerate((self.list_covers.get(key) or [])[:height]):
             col = left
@@ -1293,6 +1356,7 @@ class App:
                 self.submit("cover", lambda: self.render_cover(art, width, height, use_color, mode), accept_cover)
             if mode == "sixel":
                 self.sixel_target = (left, top)
+                self.sixel_area = (left, top, width, height)
                 return
             self.sixel_target = None
             for row, runs in enumerate(self.cover_lines[:height]):
@@ -1319,7 +1383,7 @@ class App:
                        "--scale", "max", "--size", f"{width}x{height}", "-"]
         output = subprocess.run(command, input=image, capture_output=True, timeout=10,
                                 check=True, env={**os.environ, "TERM": "dumb"}).stdout
-        return output if mode == "sixel" else parse_cover_ansi(output.decode(errors="replace"))
+        return fit_sixel_rows(output, height) if mode == "sixel" else parse_cover_ansi(output.decode(errors="replace"))
 
     def draw_drc(self, screen, bottom):
         self.colored(screen, 2, 2, "Room correction · read only", "accent", curses.A_BOLD)

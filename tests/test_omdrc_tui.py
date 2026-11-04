@@ -419,30 +419,42 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(write.call_args.args[1], b'\x1b[H\x1b[2J')
         self.assertFalse(app.list_sixel_clear_pending)
 
-    def test_discover_sixel_repaints_complete_selection_border(self):
+    def test_sixel_is_trimmed_to_whole_bands_inside_its_rows(self):
+        bands = b"-".join(b"#0~~" for _ in range(14))
+        payload = b'\x1bP0;1;0q"1;1;80;80' + bands + b"\x1b\\"
+        trimmed = tui.fit_sixel_rows(payload, 4, cell_height=20)
+        self.assertTrue(trimmed.startswith(b'\x1bP0;1;0q"1;1;80;78#0~~'))
+        self.assertEqual(trimmed.count(b"-"), 12)
+        self.assertTrue(trimmed.endswith(b"#0~~\x1b\\"))
+        self.assertEqual(tui.fit_sixel_rows(payload, 5, cell_height=20), payload)
+        self.assertEqual(tui.fit_sixel_rows(b"not sixel", 4, cell_height=20), b"not sixel")
+
+    def test_discover_to_search_repaints_blank_cells_under_old_covers(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'
         app.tab = 1
         app.config['cover_mode'] = 'sixel'
-        app.library_sidebar_focus = False
-        app.library_right_index = 2
-        art = 'https://example.test/cover.jpg'
-        app.rows = [{'title': 'Album', 'image_large': art}]
-        app.list_covers[(art, 12, 4, 'sixel')] = b'cover'
-        events = []
+        app.list_sixel_displayed = ((5, 8, b'old cover'),)
+        app.list_sixel_displayed_areas = ((5, 8, 3, 2),)
         class Screen:
+            def clear(self): pass
+            def clearok(self, enabled): pass
             def erase(self): pass
-            def refresh(self): events.append(('refresh',))
+            def refresh(self): pass
             def getmaxyx(self): return (24, 80)
-            def touchline(self, row, count): events.append(('touchline', row, count))
-            def clearok(self, enabled): raise AssertionError('initial draw must not clear')
-        with patch.object(app, 'colored'), patch.object(app, 'draw_live'), \
-             patch.object(app, 'draw_nav'), \
-             patch.object(tui.os, 'write', side_effect=lambda fd, data: events.append(('write', data))):
+            def inch(self, y, x): return ord('x') if (y, x) == (8, 6) else 32
+        writes = []
+        with patch.object(app, 'colored'), patch.object(app, 'draw_library'), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write', side_effect=lambda fd, data: writes.append(data)):
+            app.select_library_tab(0, immediate=True)
             app.draw(Screen())
-        cover = next(i for i, event in enumerate(events) if event[0] == 'write' and b'cover' in event[1])
-        self.assertEqual(events[cover + 1:cover + 4],
-                         [('touchline', 6, 1), ('touchline', 11, 1), ('refresh',)])
+        repaint = writes[-1]
+        self.assertIn(b'\x1b[0;38;5;17m', repaint)
+        for y, x in ((8, 5), (8, 7), (9, 5), (9, 6), (9, 7)):
+            self.assertIn(f'\x1b[{y + 1};{x + 1}H '.encode(), repaint)
+        self.assertNotIn(b'\x1b[9;7H ', repaint)  # keep text curses drew
+        self.assertEqual(app.list_sixel_displayed_areas, ())
 
     def test_discover_to_search_clears_sixel_even_without_tracked_cover(self):
         app = tui.App('http://localhost:9090')
