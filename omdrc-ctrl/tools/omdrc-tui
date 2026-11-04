@@ -49,6 +49,9 @@ PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
             ("F3 Room correction", "DRC"), ("F4 Config", "Config"))
 CTRL_LEFT = "ctrl-left"
 CTRL_RIGHT = "ctrl-right"
+# xterm focus reporting (DECSET 1004) sends CSI I / CSI O on focus change.
+FOCUS_IN = "focus-in"
+FOCUS_OUT = "focus-out"
 ALBUM_ACTIONS = (("F5 Play", "green", "p"), ("F6 Add", "fmt_hires", "a"),
                  ("F7 Fav", "red", "h"), ("F8 Later", "yellow", "b"),
                  ("F9 Research", "fmt_48", "R"))
@@ -423,6 +426,7 @@ class App:
         self._message = "Connecting…"
         self._message_at = time.monotonic()
         self.connected = False
+        self.focused = True
         self.cover_key = None
         self.cover_lines = []
         self.cover_zoom = False
@@ -565,7 +569,7 @@ class App:
                         self.colored(screen, y, 2, compact(label, width - 4), "accent" if i == cursor else "soft",
                                      curses.A_REVERSE if i == cursor else 0)
                 screen.refresh()
-                key = screen.getch()
+                key = self.modal_key(screen)
                 if key == curses.KEY_UP: cursor = max(0, cursor - 1)
                 elif key == curses.KEY_DOWN: cursor = min(len(genres) - 1, cursor + 1)
                 elif key == curses.KEY_NPAGE: cursor = min(len(genres) - 1, cursor + visible)
@@ -624,7 +628,7 @@ class App:
                         self.colored(screen, y, 2, compact(label, width - 4), "accent" if i == cursor else "soft",
                                      curses.A_REVERSE if i == cursor else 0)
                 screen.refresh()
-                key = screen.getch()
+                key = self.modal_key(screen)
                 if key == curses.KEY_UP: cursor = max(0, cursor - 1)
                 elif key == curses.KEY_DOWN: cursor = min(max(0, len(names) - 1), cursor + 1)
                 elif key == curses.KEY_NPAGE: cursor = min(max(0, len(names) - 1), cursor + visible)
@@ -963,7 +967,7 @@ class App:
         if height < (20 if self.page == "Library" and self.tab == 0 else 15) or width < 55:
             self.text(screen, 0, 0, "Need at least 55 columns × 20 rows" if self.page == "Library" and self.tab == 0 else "Need at least 55 columns × 15 rows")
             screen.refresh(); return
-        self.colored(screen, 0, 1, f"open-media-drc  ·  {self.page}  ·  q Quit", "accent", curses.A_BOLD)
+        self.draw_header(screen, width)
         self.colored(screen, 1, 0, "─" * (width - 1), "muted")
         zoom = self.page == "Now" and self.cover_zoom
         bottom = height - (2 if zoom else 7 if self.config["levels"] or self.config["dr"] or self.config["balance"] else 3)
@@ -1004,6 +1008,13 @@ class App:
             payload = f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + self.cover_sixel + b"\x1b8"
             os.write(sys.stdout.fileno(), payload)
             self.sixel_visible = True
+
+    def draw_header(self, screen, width):
+        if self.focused:
+            self.colored(screen, 0, 1, f"open-media-drc  ·  {self.page}  ·  q Quit", "accent", curses.A_BOLD)
+        else:
+            label = compact(" ○ NOT FOCUSED · keys go to another window · click here to control open-media-drc", width - 1)
+            self.colored(screen, 0, 0, label.ljust(width - 1), "yellow", curses.A_REVERSE | curses.A_BOLD)
 
     def draw_nav(self, screen, bottom):
         height, width = screen.getmaxyx()
@@ -1496,6 +1507,7 @@ class App:
     def prompt(self, screen, label, initial=""):
         h, w = screen.getmaxyx()
         curses.echo(); curses.curs_set(1)
+        set_focus_reporting(False)  # getstr would echo CSI I / CSI O into the answer
         try:
             screen.move(h - 1, 0); screen.clrtoeol()
             self.text(screen, h - 1, 1, label + " " + initial)
@@ -1503,9 +1515,13 @@ class App:
             raw = screen.getstr(h - 1, min(w - 2, len(label) + len(initial) + 2), max(1, w - len(label) - len(initial) - 5))
             return initial + raw.decode(errors="replace")
         finally:
+            set_focus_reporting(True)
             curses.noecho(); curses.curs_set(0); screen.timeout(100)
 
     def action(self, key, screen):
+        if key in (FOCUS_IN, FOCUS_OUT):
+            self.focused = key == FOCUS_IN
+            return
         if key == curses.KEY_RESIZE:
             self.list_sixel_size = None
             return
@@ -1706,7 +1722,7 @@ class App:
                         self.text(screen, h - 2 + offset, 1, "  ".join(
                             f"{'>' if i == selected else ' '}{i + 1} {labels[i]}" for i in group))
                     screen.refresh()
-                    choice = screen.getch()
+                    choice = self.modal_key(screen)
                     if choice in (curses.KEY_LEFT, curses.KEY_UP): selected = (selected - 1) % len(names)
                     elif choice in (curses.KEY_RIGHT, curses.KEY_DOWN): selected = (selected + 1) % len(names)
                     elif ord("1") <= choice <= ord("7"): selected = choice - ord("1"); break
@@ -1863,41 +1879,64 @@ class App:
                     self.message = "Research ready"
         self.submit("research", work, apply)
 
-    def read_key(self, screen):
+    def read_key(self, screen, wait=100):
         key = screen.getch()
+        if key > curses.KEY_MAX:
+            # ncurses decodes focus reports itself when terminfo has kxIN/kxOUT.
+            try: name = curses.keyname(key)
+            except ValueError: name = b""
+            if name == b"kxIN": return FOCUS_IN
+            if name == b"kxOUT": return FOCUS_OUT
         if key != 27:
             return key
-        # xterm and Konsole send Ctrl+Left/Right as CSI 1;5D/C, which
-        # curses does not recognize unless the terminal profile defines it.
+        # Otherwise decode CSI I / CSI O here, together with Ctrl+Left/Right:
+        # xterm and Konsole send those as CSI 1;5D/C, which curses does not
+        # recognize unless the terminal profile defines it.
         consumed = []
+        def take():
+            value = screen.getch()
+            if value != -1:
+                consumed.append(value)
+            return value
         screen.timeout(25)
         try:
-            for expected in (ord('['), ord('1'), ord(';'), ord('5')):
-                next_key = screen.getch()
-                if next_key == -1:
-                    break
-                consumed.append(next_key)
-                if next_key != expected:
-                    break
-            else:
-                next_key = screen.getch()
-                if next_key == ord('D'):
-                    return CTRL_LEFT
-                if next_key == ord('C'):
-                    return CTRL_RIGHT
-                if next_key != -1:
-                    consumed.append(next_key)
+            if take() == ord('['):
+                value = take()
+                if value == ord('I'):
+                    return FOCUS_IN
+                if value == ord('O'):
+                    return FOCUS_OUT
+                if value == ord('1') and take() == ord(';') and take() == ord('5'):
+                    value = take()
+                    if value == ord('D'):
+                        return CTRL_LEFT
+                    if value == ord('C'):
+                        return CTRL_RIGHT
         finally:
-            screen.timeout(100)
+            screen.timeout(wait)
         for value in reversed(consumed):
             curses.ungetch(value)
         return key
+
+    def modal_key(self, screen):
+        """Blocking read for pickers: track focus changes, return other keys."""
+        while True:
+            key = self.read_key(screen, wait=-1)
+            if key in (CTRL_LEFT, CTRL_RIGHT):
+                continue  # pickers compare keys as integers
+            if key not in (FOCUS_IN, FOCUS_OUT):
+                return key
+            self.focused = key == FOCUS_IN
+            screen.move(0, 0); screen.clrtoeol()
+            self.draw_header(screen, screen.getmaxyx()[1])
+            screen.refresh()
 
     def run(self, screen):
         if hasattr(curses, "set_escdelay"):
             curses.set_escdelay(25)
         curses.curs_set(0); screen.keypad(True); screen.timeout(100)
         self.configure_colors()
+        set_focus_reporting(True)
         try:
             while True:
                 self.drain(); self.poll(); self.draw(screen)
@@ -1906,9 +1945,14 @@ class App:
         except KeyboardInterrupt:
             pass
         finally:
+            set_focus_reporting(False)
             if self.level_stream: self.level_stream.close()
             if self.dr_stream: self.dr_stream.close()
             self.pool.shutdown(wait=False, cancel_futures=True)
+
+
+def set_focus_reporting(enabled):
+    os.write(sys.stdout.fileno(), b"\x1b[?1004h" if enabled else b"\x1b[?1004l")
 
 
 def main(argv=None):

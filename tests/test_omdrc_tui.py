@@ -25,7 +25,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
-            def getch(self): return next(self.keys)
+            def getch(self): return next(self.keys, -1)
         with patch.object(app.api, 'request', return_value={'genres': genres}) as request, \
              patch.object(app, 'draw'), patch.object(app, 'colored'), \
              patch.object(app, 'save'), patch.object(app, 'fetch_list') as fetch:
@@ -44,7 +44,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
-            def getch(self): return next(self.keys)
+            def getch(self): return next(self.keys, -1)
         with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
             app = tui.App('http://localhost:9090')
             app.genres = [{'id': '1', 'name': 'Jazz'}]
@@ -63,7 +63,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
-            def getch(self): return next(self.keys)
+            def getch(self): return next(self.keys, -1)
         with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
             app = tui.App('http://localhost:9090')
             app.filters['label'] = ['Decca']
@@ -156,7 +156,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
-            def getch(self): return next(self.keys)
+            def getch(self): return next(self.keys, -1)
         known = {'labels': [{'name': 'Pentatone'}, {'name': 'Deutsche Grammophon'}]}
         with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
             app = tui.App('http://localhost:9090')
@@ -962,7 +962,7 @@ class TuiTest(unittest.TestCase):
             def __init__(self, keys):
                 self.keys = iter(keys)
                 self.timeouts = []
-            def getch(self): return next(self.keys)
+            def getch(self): return next(self.keys, -1)
             def timeout(self, value): self.timeouts.append(value)
         for suffix, expected in (('D', tui.CTRL_LEFT), ('C', tui.CTRL_RIGHT)):
             screen = Screen([27, *map(ord, '[1;5' + suffix)])
@@ -970,6 +970,56 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(screen.timeouts, [25, 100])
         screen = Screen([27, -1])
         self.assertEqual(app.read_key(screen), 27)
+
+    def test_focus_reports_are_decoded_and_shown_in_header(self):
+        app = tui.App('http://localhost:9090')
+        class Screen:
+            def __init__(self, keys):
+                self.keys = iter(keys)
+                self.timeouts = []
+            def getch(self): return next(self.keys, -1)
+            def timeout(self, value): self.timeouts.append(value)
+            def getmaxyx(self): return (24, 80)
+            def move(self, *args): pass
+            def clrtoeol(self): pass
+            def refresh(self): pass
+        for suffix, expected in (('O', tui.FOCUS_OUT), ('I', tui.FOCUS_IN)):
+            screen = Screen([27, *map(ord, '[' + suffix)])
+            self.assertEqual(app.read_key(screen), expected)
+            self.assertEqual(screen.timeouts, [25, 100])
+        with patch.object(tui.curses, 'ungetch') as ungetch:
+            self.assertEqual(app.read_key(Screen([27, ord('['), ord('A')])), 27)
+        self.assertEqual([call.args[0] for call in ungetch.call_args_list], [ord('A'), ord('[')])
+        app.action(tui.FOCUS_OUT, None)
+        self.assertFalse(app.focused)
+        painted = []
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_header(Screen([]), 80)
+        self.assertIn('NOT FOCUSED', painted[-1][3])
+        self.assertEqual(len(painted[-1][3]), 79)
+        app.action(tui.FOCUS_IN, None)
+        self.assertTrue(app.focused)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_header(Screen([]), 80)
+        self.assertTrue(painted[-1][3].startswith('open-media-drc'))
+
+    def test_modal_key_tracks_focus_and_skips_string_keys(self):
+        app = tui.App('http://localhost:9090')
+        class Screen:
+            def __init__(self, keys):
+                self.keys = iter(keys)
+                self.timeouts = []
+            def getch(self): return next(self.keys, -1)
+            def timeout(self, value): self.timeouts.append(value)
+            def getmaxyx(self): return (24, 80)
+            def move(self, *args): pass
+            def clrtoeol(self): pass
+            def refresh(self): pass
+        screen = Screen([27, *map(ord, '[O'), 27, *map(ord, '[1;5D'), ord(' ')])
+        with patch.object(app, 'colored'):
+            self.assertEqual(app.modal_key(screen), ord(' '))
+        self.assertFalse(app.focused)
+        self.assertEqual(screen.timeouts, [25, -1, 25, -1])
 
     def test_tab_cycles_all_visibility_combinations(self):
         app = tui.App('http://localhost:9090')
