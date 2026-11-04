@@ -1233,6 +1233,58 @@ class TuiTest(unittest.TestCase):
         self.assertTrue(events[3].endswith(b'new\x1b8'))
         self.assertEqual(app.list_sixel_scroll, (0, '', 1))
 
+    def test_mouse_clicks_dispatch_to_regions_drawn_this_frame(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 0
+        class Screen:
+            def getmaxyx(self): return (30, 100)
+            def addnstr(self, *args): pass
+        with patch.object(app, 'fetch_list'), patch.object(app, 'switch') as switch:
+            app.draw_library(Screen(), 24)
+            app.draw_nav(Screen(), 24)
+            app.mouse(None, ('click', 5, 3))  # sidebar: "2 Discover"
+            self.assertEqual(app.tab, 1)
+            app.mouse(None, ('click', 2, 23))  # page nav: "F1 Library"
+            switch.assert_called_once_with('Library')
+            app.mouse(None, ('click', 90, 1))  # nothing there
+        self.assertEqual(app.tab, 1)
+
+    def test_mouse_selects_then_opens_results_and_wheel_stays_in_list(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 2
+        app.rows = [{'id': '1', 'title': 'A'}, {'id': '2', 'title': 'B'}, {'id': '3', 'title': 'C'}]
+        app.library_sidebar_focus = True
+        with patch.object(app, 'open_album') as open_album:
+            app.click_result(1, None)
+            self.assertEqual((app.row, app.library_sidebar_focus, app.library_right_index), (1, False, 1))
+            open_album.assert_not_called()
+            app.click_result(1, None)
+            open_album.assert_called_once_with(app.rows[1])
+        app.tab = 0
+        app.row = 0
+        app.mouse(None, ('up', 50, 12))
+        self.assertEqual((app.row, app.search_editing), (0, False))
+        for _ in range(5): app.mouse(None, ('down', 50, 12))
+        self.assertEqual(app.row, 2)
+        app.mouse(None, ('down', 5, 12))  # over the sidebar: ignored
+        self.assertEqual(app.row, 2)
+
+    def test_mouse_in_pickers_and_seek_bar(self):
+        app = tui.App('http://localhost:9090')
+        with patch.object(app, 'mouse_event', return_value=('click', 4, 6)):
+            self.assertEqual(app.picker_mouse(tui.curses.KEY_MOUSE, 3, 10, 5, 20), (ord(' '), 8))
+        with patch.object(app, 'mouse_event', return_value=('down', 4, 6)):
+            self.assertEqual(app.picker_mouse(tui.curses.KEY_MOUSE, 3, 10, 5, 20), (tui.curses.KEY_DOWN, None))
+        with patch.object(app, 'mouse_event', return_value=('click', 4, 40)):
+            self.assertEqual(app.picker_mouse(tui.curses.KEY_MOUSE, 3, 10, 5, 20), (-1, None))
+        self.assertEqual(app.picker_mouse(ord('x'), 3, 10, 5, 20), (ord('x'), None))
+        app.player = {'duration': 200}
+        with patch.object(app, 'transport') as transport:
+            app.seek_fraction(0.25)
+        transport.assert_called_once_with('seek', {'seconds': 50})
+
     def test_tab_cycles_all_visibility_combinations(self):
         app = tui.App('http://localhost:9090')
         app.config.update(levels=False, dr=False, balance=False)

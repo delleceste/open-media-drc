@@ -51,6 +51,8 @@ PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
 # xterm focus reporting: the terminal sends CSI I / CSI O when its window gains or loses focus.
 FOCUS_REPORTING_ON = b"\x1b[?1004h"
 FOCUS_REPORTING_OFF = b"\x1b[?1004l"
+# Mouse: act on press (no click-resolution delay); wheel notches arrive as buttons 4/5.
+MOUSE_MASK = curses.BUTTON1_PRESSED | curses.BUTTON4_PRESSED | getattr(curses, "BUTTON5_PRESSED", 0)
 CTRL_LEFT = "ctrl-left"
 CTRL_RIGHT = "ctrl-right"
 ALBUM_ACTIONS = (("F5 Play", "green", "p"), ("F6 Add", "fmt_hires", "a"),
@@ -507,6 +509,7 @@ class App:
         self.sixel_target = None
         self.sixel_area = None
         self.focused = True
+        self.click_targets = []
         self.sixel_drawn_dim = False
         self.grey_sixels = {}
         self.cover_pairs = {}
@@ -644,6 +647,8 @@ class App:
                                      curses.A_REVERSE if i == cursor else 0)
                 screen.refresh()
                 key = self.read_key(screen, restore_timeout=-1)
+                key, clicked = self.picker_mouse(key, 3, visible, start, len(genres))
+                if clicked is not None: cursor = clicked
                 if key == curses.KEY_UP: cursor = max(0, cursor - 1)
                 elif key == curses.KEY_DOWN: cursor = min(len(genres) - 1, cursor + 1)
                 elif key == curses.KEY_NPAGE: cursor = min(len(genres) - 1, cursor + visible)
@@ -703,6 +708,8 @@ class App:
                                      curses.A_REVERSE if i == cursor else 0)
                 screen.refresh()
                 key = self.read_key(screen, restore_timeout=-1)
+                key, clicked = self.picker_mouse(key, 3, visible, start, len(names))
+                if clicked is not None: cursor = clicked
                 if key == curses.KEY_UP: cursor = max(0, cursor - 1)
                 elif key == curses.KEY_DOWN: cursor = min(max(0, len(names) - 1), cursor + 1)
                 elif key == curses.KEY_NPAGE: cursor = min(max(0, len(names) - 1), cursor + visible)
@@ -1101,6 +1108,7 @@ class App:
 
     def draw(self, screen):
         self.list_sixel_targets = []
+        self.click_targets = []
         self.list_sixel_areas = []
         stale_areas = []
         active_art = self.current_art()
@@ -1189,6 +1197,7 @@ class App:
         for index, (label, page) in enumerate(PAGE_NAV):
             if x + len(label) >= width - 1: continue
             self.colored(screen, bottom - 1, x, label, "accent" if self.page == page else "soft")
+            self.clickable(bottom - 1, x, len(label), lambda *_, page=page: self.switch(page))
             x += len(label) + 3
         if self.page == "Now":
             live_rows = 2 * int(self.config["levels"]) + int(self.config["balance"]) + int(self.config["dr"])
@@ -1209,6 +1218,7 @@ class App:
             self.colored(screen, 2 + index, 1, compact(label, divider - 2).ljust(divider - 2),
                          "accent" if index == self.tab else "soft",
                          curses.A_REVERSE | curses.A_BOLD if focused else 0)
+            self.clickable(2 + index, 1, divider - 2, lambda *_, index=index: self.select_library_tab(index, immediate=True))
         self.colored(screen, 8, 1, "─" * (divider - 2), "muted")
         self.colored(screen, 9, 1, "p Play  a Add  h Fav", "soft")
         self.colored(screen, 10, 1, "b Later  m More", "soft")
@@ -1251,9 +1261,11 @@ class App:
                 content = "⌕ " + (self.search_draft or self.query or "Type to search…")
             self.colored(screen, 4, result_x, "│" + content[:inner].ljust(inner) + "│", "accent", box_style)
             self.colored(screen, 5, result_x, "└" + "─" * inner + "┘", "accent", box_style)
+            self.clickable(3, result_x, result_width, lambda *_: self.search_editing or self.begin_search_edit(), height=3)
         else:
             self.colored(screen, 3, result_x, compact(first_control, result_width), "accent",
                          curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 0 else 0)
+            if self.tab != 5: self.clickable(3, result_x, min(result_width, len(first_control)), lambda _x, _y, screen: self.click_library_control(0, screen))
         if self.tab in (0, 1):
             f = self.filters
             label_key = "label" if self.tab == 0 else "discover_label"
@@ -1273,9 +1285,12 @@ class App:
                              curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 and not self.sort_focus else 0)
                 self.colored(screen, filter_y, sort_x, sort_text, "accent",
                              curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 and self.sort_focus else 0)
+                self.clickable(filter_y, result_x, filter_width, lambda _x, _y, screen: self.click_library_control(1, screen))
+                self.clickable(filter_y, sort_x, len(sort_text), lambda *_: self.toggle_sort())
             else:
                 self.colored(screen, filter_y, result_x, compact(filter_text, result_width), "accent",
                              curses.A_REVERSE if not self.library_sidebar_focus and self.library_right_index == 1 else 0)
+                self.clickable(filter_y, result_x, min(result_width, len(filter_text)), lambda _x, _y, screen: self.click_library_control(1, screen))
         first_result = 8 if self.tab == 0 else 6
         loading = f"list-{self.list_generation}" in self.pending
         if loading:
@@ -1302,6 +1317,7 @@ class App:
         for index in range(self.scroll, min(len(self.rows), self.scroll + visible)):
             y = first_content + (index - self.scroll) * block_height
             item = self.rows[index]
+            self.clickable(y, result_x, result_width, lambda _x, _y, screen, index=index: self.click_result(index, screen), height=cover_height)
             results_focused = not self.library_sidebar_focus and self.library_right_index == (2 if self.tab in (0, 1) else 1)
             focused = results_focused and index == self.row
             selected = curses.A_REVERSE if focused and not boxed_results else 0
@@ -1392,6 +1408,7 @@ class App:
             cover_h = max(0, bottom - 3)
             cover_w = min(cover_h * 2, max(0, w - 4))
             if self.config["cover"]: self.draw_cover(screen, art, cover_w, cover_h, max(1, (w - cover_w) // 2), 2)
+            self.clickable(2, 0, w, lambda _x, _y, screen: self.now_key(ord("C"), screen), height=max(1, bottom - 1))
             self.colored(screen, bottom, 2, compact(f"{p.get('title') or q.get('line1') or 'Nothing playing'} — {p.get('artist', '')}    C/Esc back", w - 4), "accent")
             return
         cover_h = max(0, bottom - 5)
@@ -1439,12 +1456,15 @@ class App:
                 self.colored(screen, y, x, "━" * filled, "fmt_48", seek_style)
                 self.colored(screen, y, x + filled, "─" * (seek_width - filled), "muted", seek_style)
                 self.colored(screen, y, x + seek_width, "  ← →", "soft", seek_style)
+                self.clickable(y, x, seek_width, lambda mx, *_, x=x, seek_width=seek_width: self.seek_fraction((mx - x + 0.5) / seek_width))
                 continue
             if menu_row == 2:
                 self.colored(screen, y, x, "|<", "accent" if self.now_action == 1 else "soft",
                              curses.A_REVERSE if self.now_action == 1 else 0)
                 self.colored(screen, y, x + 6, ">|", "accent" if self.now_action == 2 else "soft",
                              curses.A_REVERSE if self.now_action == 2 else 0)
+                self.clickable(y, x, 2, lambda _x, _y, screen: self.click_now_action(1, screen))
+                self.clickable(y, x + 6, 2, lambda _x, _y, screen: self.click_now_action(2, screen))
                 continue
             index = NOW_ACTION_ROWS.index(menu_row)
             label, shortcut = NOW_ACTIONS[index]
@@ -1453,6 +1473,7 @@ class App:
             self.colored(screen, y, x, compact(mark + label, avail),
                          "green" if index == 0 and p.get("state") == "play" else "accent" if index == self.now_action else "soft",
                          curses.A_REVERSE if index == self.now_action else 0)
+            self.clickable(y, x, min(avail, len(mark + label)), lambda _x, _y, screen, index=index: self.click_now_action(index, screen))
         if cover_w:
             self.colored(screen, bottom - 2, 1, "─" * max(0, x - 3), "muted")
         drc = (self.now_state.get("drc") or {})
@@ -1460,6 +1481,7 @@ class App:
                      "green" if drc.get("running") else "muted" if drc.get("running") is False else "yellow")
         if cover_w:
             self.draw_cover(screen, art, cover_w, cover_h, 2, 3)
+            self.clickable(3, 2, cover_w, lambda _x, _y, screen: self.now_key(ord("C"), screen), height=cover_h)
         elif not art:
             self.colored(screen, 13, 2, "Cover unavailable for this source", "muted")
 
@@ -1526,11 +1548,13 @@ class App:
                      else "green")
             self.colored(screen, i, min(24, len(key) + 4), value, color)
         self.text(screen, bottom - 2, 2, "r refresh")
+        self.clickable(bottom - 2, 2, 9, lambda *_: setattr(self, "last_drc", 0))
 
     def draw_album(self, screen, bottom):
         a = self.album or {}
         _, screen_width = screen.getmaxyx()
         self.colored(screen, 2, 2, "‹ Back  [Esc]", "accent", curses.A_BOLD)
+        self.clickable(2, 2, 13, lambda _x, _y, screen: self.action(27, screen))
         self.colored(screen, 3, 2, f"{a.get('title', '')} — {a.get('artist', '')}", "soft", curses.A_BOLD)
         self.colored(screen, 4, 2, f"{a.get('label', '')} · {a.get('year', '')} · {a.get('technical', '')}",
                      format_color(a.get("technical")) if a.get("technical") else "muted")
@@ -1539,6 +1563,7 @@ class App:
             text = ("▸" if index == self.album_action_index else " ") + label
             self.colored(screen, 5, col, text, color,
                          curses.A_BOLD | (curses.A_REVERSE if index == self.album_action_index else 0))
+            self.clickable(5, col, len(text), lambda _x, _y, screen, index=index: self.click_album_action(index, screen))
             col += len(text) + 1
         self.colored(screen, 6, 2, "←→ action  Enter select  ↑↓ scroll", "muted")
         width = max(20, screen_width - 6)
@@ -1575,6 +1600,7 @@ class App:
             self.colored(screen, y, right, "│", "accent")
         self.colored(screen, bottom - 2, left, "└" + "─" * (right - left - 1) + "┘", "accent")
         self.colored(screen, 3, left + 2, "Research music  ·  Esc back", "accent", curses.A_BOLD)
+        self.clickable(3, left + 21, 8, lambda _x, _y, screen: self.action(27, screen))
         if not self.guide:
             if self.research_job:
                 elapsed = max(0, int(time.monotonic() - self.research_started))
@@ -1593,6 +1619,8 @@ class App:
         self.guide_section %= len(sections)
         title, body = sections[self.guide_section]
         self.colored(screen, 4, left + 2, compact(f"◀ ▶  {self.guide_section + 1}/{len(sections)}  {title}", inner), "accent", curses.A_BOLD)
+        self.clickable(4, left + 2, 1, lambda _x, _y, screen: self.action(curses.KEY_LEFT, screen))
+        self.clickable(4, left + 4, 1, lambda _x, _y, screen: self.action(curses.KEY_RIGHT, screen))
         self.colored(screen, 5, left + 2, "─" * inner, "muted")
         rows = research_rows(body, inner)
         limit = max(0, bottom - 9)
@@ -1625,6 +1653,7 @@ class App:
             color = "accent" if index == self.config_index else "soft"
             self.colored(screen, y, 2, f"{label:<19}", color, style)
             self.colored(screen, y, 23, compact(value, width - 25), color, style)
+            self.clickable(y, 2, width - 4, lambda _x, _y, screen, index=index: self.click_config(index, screen))
 
     def draw_live(self, screen, bottom):
         h, w = screen.getmaxyx()
@@ -1691,15 +1720,17 @@ class App:
     def prompt(self, screen, label, initial=""):
         h, w = screen.getmaxyx()
         curses.echo(); curses.curs_set(1)
+        # getstr would insert focus and mouse reports as text; pause them while editing.
+        mask = curses.mousemask(0)[1]
+        os.write(sys.stdout.fileno(), FOCUS_REPORTING_OFF)
         try:
             screen.move(h - 1, 0); screen.clrtoeol()
             self.text(screen, h - 1, 1, label + " " + initial)
             screen.refresh(); screen.timeout(-1)
-            # getstr would insert focus reports as text; pause them while editing.
-            os.write(sys.stdout.fileno(), FOCUS_REPORTING_OFF)
             raw = screen.getstr(h - 1, min(w - 2, len(label) + len(initial) + 2), max(1, w - len(label) - len(initial) - 5))
             return initial + raw.decode(errors="replace")
         finally:
+            if mask: curses.mousemask(mask)
             os.write(sys.stdout.fileno(), FOCUS_REPORTING_ON)
             curses.noecho(); curses.curs_set(0); screen.timeout(100)
 
@@ -1707,6 +1738,8 @@ class App:
         if key == curses.KEY_RESIZE:
             self.list_sixel_size = None
             return
+        if key == curses.KEY_MOUSE:
+            self.mouse(screen); return
         if key in (curses.KEY_PPAGE, curses.KEY_NPAGE, CTRL_LEFT, CTRL_RIGHT):
             page = self.album_source if self.page == "Album" else self.research_back if self.page == "Research" else self.page
             index = next((i for i, (_, name) in enumerate(PAGE_NAV) if name == page), 1)
@@ -1905,6 +1938,22 @@ class App:
                             f"{'>' if i == selected else ' '}{i + 1} {labels[i]}" for i in group))
                     screen.refresh()
                     choice = self.read_key(screen, restore_timeout=-1)
+                    if choice == curses.KEY_MOUSE:
+                        event = self.mouse_event()
+                        if event and event[0] in ("up", "down"):
+                            choice = curses.KEY_UP if event[0] == "up" else curses.KEY_DOWN
+                        elif event:
+                            _, mx, my = event
+                            hit = None
+                            for offset, group in enumerate((range(4), range(4, 7))):
+                                col = 1
+                                for i in group:
+                                    cell = f" {i + 1} {labels[i]}"
+                                    if my == h - 2 + offset and col <= mx < col + len(cell): hit = i
+                                    col += len(cell) + 2
+                            if hit is None: continue
+                            selected = hit; break
+                        else: continue
                     if choice == -1:  # focus change: redraw the dimmed or restored view
                         self.draw(screen); continue
                     if choice in (curses.KEY_LEFT, curses.KEY_UP): selected = (selected - 1) % len(names)
@@ -2063,6 +2112,89 @@ class App:
                     self.message = "Research ready"
         self.submit("research", work, apply)
 
+    def click_library_control(self, index, screen):
+        """Click on the first control (search/genre/query) or the Filters row."""
+        self.library_sidebar_focus = False
+        self.library_right_index = index
+        self.sort_focus = False
+        self.library_key(10, screen)
+
+    def click_result(self, index, screen):
+        """First click selects a result; clicking the selected result opens it."""
+        result_index = 2 if self.tab in (0, 1) else 1
+        if not self.library_sidebar_focus and self.library_right_index == result_index and self.row == index:
+            self.library_key(10, screen); return
+        self.library_sidebar_focus = False
+        self.library_right_index = result_index
+        self.sort_focus = False
+        self.row = index
+
+    def click_now_action(self, index, screen):
+        self.now_action = index
+        self.now_key(10, screen)
+
+    def seek_fraction(self, fraction):
+        duration = self.player.get("duration")
+        if isinstance(duration, (int, float)) and duration > 0:
+            self.transport("seek", {"seconds": round(max(0.0, min(1.0, fraction)) * duration)})
+        else: self.message = "Seek unavailable for this source"
+
+    def click_album_action(self, index, screen):
+        self.album_action_index = index
+        self.album_key(ord(ALBUM_ACTIONS[index][2]), screen)
+
+    def click_config(self, index, screen):
+        self.config_index = index
+        self.action(10, screen)
+
+    def clickable(self, y, x, width, handler, height=1):
+        """Register a screen region for this frame; handler(mx, my) runs on click."""
+        if width > 0 and height > 0:
+            self.click_targets.append((y, y + height, x, x + width, handler))
+
+    def mouse_event(self):
+        """('click' | 'up' | 'down', x, y) for the pending KEY_MOUSE, or None."""
+        try: _, mx, my, _, state = curses.getmouse()
+        except curses.error: return None
+        if state & curses.BUTTON4_PRESSED: return "up", mx, my
+        if state & getattr(curses, "BUTTON5_PRESSED", 0): return "down", mx, my
+        if state & curses.BUTTON1_PRESSED: return "click", mx, my
+        return None
+
+    def mouse(self, screen, event=None):
+        event = event or self.mouse_event()
+        if not event: return
+        kind, mx, my = event
+        if self.page == "Library" and self.search_editing and not (kind == "click" and 3 <= my <= 5 and mx > 27):
+            self.finish_search_edit(submit=self.search_draft.strip() != self.query)
+        if kind == "click":
+            for top, end, left, right, handler in reversed(self.click_targets):
+                if top <= my < end and left <= mx < right:
+                    handler(mx, my, screen); return
+            return
+        key = curses.KEY_UP if kind == "up" else curses.KEY_DOWN
+        if self.page == "Library":
+            if mx > 27 and self.rows:  # wheel over the results pane moves through results
+                self.library_sidebar_focus = False
+                self.library_right_index = 2 if self.tab in (0, 1) else 1
+                self.sort_focus = False
+                self.row = max(0, min(len(self.rows) - 1, self.row + (-1 if kind == "up" else 1)))
+        elif self.page == "Album": self.album_scroll = max(0, self.album_scroll + (-3 if kind == "up" else 3))
+        elif self.page == "Research": self.guide_scroll = max(0, self.guide_scroll + (-3 if kind == "up" else 3))
+        elif self.page in ("Now", "Config"): self.action(key, screen)
+
+    def picker_mouse(self, key, top, visible, start, count):
+        """Translate mouse input in a list picker: wheel -> arrows, click -> (index, Space)."""
+        if key != curses.KEY_MOUSE: return key, None
+        event = self.mouse_event()
+        if not event: return -1, None
+        kind, _, my = event
+        if kind == "up": return curses.KEY_UP, None
+        if kind == "down": return curses.KEY_DOWN, None
+        index = start + my - top
+        if top <= my < top + visible and 0 <= index < count: return ord(" "), index
+        return -1, None
+
     def read_key(self, screen, restore_timeout=100):
         """Read a key; focus reports update self.focused and return -1."""
         key = screen.getch()
@@ -2104,6 +2236,8 @@ class App:
         curses.curs_set(0); screen.keypad(True); screen.timeout(100)
         self.configure_colors()
         os.write(sys.stdout.fileno(), FOCUS_REPORTING_ON)
+        curses.mouseinterval(0)
+        curses.mousemask(MOUSE_MASK)
         try:
             while True:
                 self.drain(); self.poll(); self.draw(screen)
