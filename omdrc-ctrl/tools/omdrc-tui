@@ -175,6 +175,39 @@ def theme_is_light(choice, environ=None):
         return False
 
 
+COVER_DIM = 0.6  # brightness of greyscale covers while the terminal is unfocused
+
+
+def grey_sixel(payload, factor=COVER_DIM):
+    """Greyscale, dimmed copy of a Sixel image: rewrite its RGB palette entries."""
+    def grey(match):
+        red, green, blue = (int(value) for value in match.group(2, 3, 4))
+        level = round((0.299 * red + 0.587 * green + 0.114 * blue) * factor)
+        return b"#%s;2;%d;%d;%d" % (match[1], level, level, level)
+    return re.sub(rb"#(\d+);2;(\d+);(\d+);(\d+)", grey, payload)
+
+
+def xterm_rgb(index):
+    """Approximate RGB of an xterm-256 colour index."""
+    if index < 16:
+        base = [(0, 0, 0), (205, 0, 0), (0, 205, 0), (205, 205, 0), (0, 0, 238), (205, 0, 205), (0, 205, 205), (229, 229, 229),
+                (127, 127, 127), (255, 0, 0), (0, 255, 0), (255, 255, 0), (92, 92, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255)]
+        return base[index]
+    if index >= 232:
+        return (8 + 10 * (index - 232),) * 3
+    cube = [0, 95, 135, 175, 215, 255]
+    index -= 16
+    return cube[index // 36], cube[index // 6 % 6], cube[index % 6]
+
+
+def grey_xterm(index, factor=COVER_DIM):
+    """Dimmed greyscale xterm-256 colour for symbol-mode cover cells."""
+    if index is None or index < 0: return index
+    red, green, blue = xterm_rgb(index)
+    level = (0.299 * red + 0.587 * green + 0.114 * blue) * factor
+    return 232 + max(0, min(23, round((level - 8) / 10)))
+
+
 def xterm_color(rgb):
     """Closest xterm-256 colour for a terminal cell."""
     red, green, blue = rgb
@@ -469,6 +502,8 @@ class App:
         self.sixel_target = None
         self.sixel_area = None
         self.focused = True
+        self.sixel_drawn_dim = False
+        self.grey_sixels = {}
         self.cover_pairs = {}
         self.styles = {}
         self.light = False
@@ -910,6 +945,7 @@ class App:
 
     def cover_style(self, fg, bg):
         if not curses.has_colors() or curses.COLORS < 256: return 0
+        if not self.focused: fg, bg = grey_xterm(fg), grey_xterm(bg)
         key = (fg if fg is not None else -1, bg if bg is not None else -1)
         if key not in self.cover_pairs:
             number = self.next_cover_pair
@@ -941,6 +977,14 @@ class App:
         """
         if (style & curses.A_COLOR) >> 8 >= 16: return style  # symbol-mode cover art
         return (style & curses.A_REVERSE) | curses.A_DIM | self.styles.get("muted", 0)
+
+    def cover_payload(self, payload):
+        """The Sixel to show: greyscale while the terminal is unfocused."""
+        if self.focused or not payload: return payload
+        if payload not in self.grey_sixels:
+            if len(self.grey_sixels) > 64: self.grey_sixels.clear()
+            self.grey_sixels[payload] = grey_sixel(payload)
+        return self.grey_sixels[payload]
 
     def text(self, screen, y, x, value, style=0):
         height, width = screen.getmaxyx()
@@ -1060,8 +1104,11 @@ class App:
                      if self.page == "Library" else None)
         if (targets != self.list_sixel_displayed or
                 (targets and ((height, width) != self.list_sixel_size or nav_state != self.list_sixel_nav_state))):
+            # Same covers in the same places (e.g. greyed on focus change) are simply overdrawn.
+            layout_changed = ([target[:2] for target in targets] != [shown[:2] for shown in self.list_sixel_displayed] or
+                              tuple(self.list_sixel_areas) != self.list_sixel_displayed_areas)
             if self.list_sixel_displayed:
-                if targets != self.list_sixel_displayed or (height, width) != self.list_sixel_size:
+                if layout_changed or (height, width) != self.list_sixel_size:
                     os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
                     screen.clearok(True)  # repaint after an external terminal clear
                     screen.refresh()
@@ -1075,11 +1122,13 @@ class App:
         self.repaint_sixel_cells(screen, stale_areas)
         self.list_sixel_size = (height, width)
         self.list_sixel_nav_state = nav_state
-        if self.page == "Now" and self.sixel_target and self.cover_sixel and not self.sixel_visible:
+        if (self.page == "Now" and self.sixel_target and self.cover_sixel and
+                (not self.sixel_visible or self.sixel_drawn_dim != (not self.focused))):
             left, top = self.sixel_target
-            payload = f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + self.cover_sixel + b"\x1b8"
+            payload = f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + self.cover_payload(self.cover_sixel) + b"\x1b8"
             os.write(sys.stdout.fileno(), payload)
             self.sixel_visible = True
+            self.sixel_drawn_dim = not self.focused
 
     def draw_nav(self, screen, bottom):
         height, width = screen.getmaxyx()
@@ -1257,7 +1306,7 @@ class App:
             else: self.colored(screen, top + height // 2, left, compact("No cover", width), "muted")
         if mode == "sixel":
             if self.list_covers[key]:
-                self.list_sixel_targets.append((left, top, self.list_covers[key]))
+                self.list_sixel_targets.append((left, top, self.cover_payload(self.list_covers[key])))
                 self.list_sixel_areas.append((left, top, width, height))
             return
         for row, runs in enumerate((self.list_covers.get(key) or [])[:height]):

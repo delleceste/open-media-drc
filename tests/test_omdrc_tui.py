@@ -1008,6 +1008,66 @@ class TuiTest(unittest.TestCase):
         app.text(screen, 1, 1, 'bright', tui.curses.A_BOLD)
         self.assertEqual(screen.styles[-1], tui.curses.A_BOLD)
 
+    def test_unfocused_covers_turn_dim_greyscale(self):
+        payload = b'\x1bP0;1;0q"1;1;8;6#0;2;100;0;0#1;2;0;0;100#0~~$#1~~\x1b\\'
+        grey = tui.grey_sixel(payload)
+        self.assertIn(b'#0;2;18;18;18', grey)  # red: 0.299 * 100 * 0.6
+        self.assertIn(b'#1;2;7;7;7', grey)
+        self.assertTrue(grey.endswith(b'#0~~$#1~~\x1b\\'))
+        self.assertEqual(tui.grey_xterm(None), None)
+        self.assertEqual(tui.grey_xterm(231), 232 + 14)  # white -> 60 % grey
+        self.assertEqual(tui.grey_xterm(16), 232)
+
+    def test_now_cover_is_redrawn_grey_on_focus_loss_without_clearing(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Now'
+        app.sixel_target = (2, 3)
+        app.cover_sixel = b'\x1bPq#0;2;100;100;100#0~\x1b\\'
+        app.sixel_visible = True
+        writes = []
+        class Screen:
+            def clear(self): raise AssertionError('focus change must not clear')
+            def erase(self): pass
+            def refresh(self): pass
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'current_art', return_value='art'), patch.object(app, 'draw_now'), \
+             patch.object(app, 'colored'), patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write', side_effect=lambda fd, data: writes.append(data)):
+            app.cover_key = ('art',)
+            app.draw(Screen())
+            self.assertEqual(writes, [])
+            app.focused = False
+            app.draw(Screen())
+            self.assertIn(b'#0;2;60;60;60', writes[-1])
+            app.focused = True
+            app.draw(Screen())
+            self.assertIn(b'#0;2;100;100;100', writes[-1])
+
+    def test_list_covers_are_overdrawn_grey_without_clearing(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 1
+        cover = b'\x1bPq#0;2;100;100;100#0~\x1b\\'
+        app.list_sixel_displayed = ((5, 8, cover),)
+        app.list_sixel_displayed_areas = ((5, 8, 12, 4),)
+        app.list_sixel_size = (24, 80)
+        app.focused = False
+        def draw_library(*_):
+            app.list_sixel_targets.append((5, 8, app.cover_payload(cover)))
+            app.list_sixel_areas.append((5, 8, 12, 4))
+        writes = []
+        class Screen:
+            def clearok(self, enabled): raise AssertionError('focus change must not clear')
+            def erase(self): pass
+            def refresh(self): pass
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=draw_library), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write', side_effect=lambda fd, data: writes.append(data)):
+            app.draw(Screen())
+        self.assertFalse(any(b'\x1b[2J' in data for data in writes))
+        self.assertIn(b'#0;2;60;60;60', writes[-1])
+
     def test_tab_cycles_all_visibility_combinations(self):
         app = tui.App('http://localhost:9090')
         app.config.update(levels=False, dr=False, balance=False)
