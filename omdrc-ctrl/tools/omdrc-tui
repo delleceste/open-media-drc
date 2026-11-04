@@ -438,6 +438,8 @@ class App:
         self.list_sixel_nav_state = None
         self.list_sixel_areas = []
         self.list_sixel_displayed_areas = ()
+        self.list_sixel_sources = []  # covers before greyscale, to tell a focus change from new covers
+        self.list_sixel_displayed_sources = ()
         self.list_sixel_scroll = None
         self.sixel_repaint_serial = 0
         self.list_sixel_clear_pending = False
@@ -1115,6 +1117,7 @@ class App:
         self.list_sixel_targets = []
         self.click_targets = []
         self.list_sixel_areas = []
+        self.list_sixel_sources = []
         stale_areas = []
         active_art = self.current_art()
         if self.sixel_visible and (self.page != "Now" or not self.config["cover"] or
@@ -1133,6 +1136,7 @@ class App:
             stale_areas.extend(self.list_sixel_displayed_areas)
             self.list_sixel_displayed = ()
             self.list_sixel_displayed_areas = ()
+            self.list_sixel_displayed_sources = ()
             self.list_sixel_size = None
             self.list_sixel_nav_state = None
             self.list_sixel_clear_pending = False
@@ -1163,6 +1167,7 @@ class App:
             stale_areas.extend(self.list_sixel_displayed_areas)
             self.list_sixel_displayed = ()
             self.list_sixel_displayed_areas = ()
+            self.list_sixel_displayed_sources = ()
         self.list_sixel_scroll = list_scroll
         screen.refresh()
         targets = tuple(self.list_sixel_targets)
@@ -1170,11 +1175,14 @@ class App:
                      if self.page == "Library" else None)
         if (targets != self.list_sixel_displayed or
                 (targets and ((height, width) != self.list_sixel_size or nav_state != self.list_sixel_nav_state))):
-            # Same covers in the same places (e.g. greyed on focus change) are simply overdrawn.
-            layout_changed = ([target[:2] for target in targets] != [shown[:2] for shown in self.list_sixel_displayed] or
-                              tuple(self.list_sixel_areas) != self.list_sixel_displayed_areas)
+            # Only the same covers in the same places (greyed or restored on a focus
+            # change) are simply overdrawn.  New covers mean the rows changed, and
+            # curses may have shifted the old images with delete-line, so clear.
+            covers_changed = ([target[:2] for target in targets] != [shown[:2] for shown in self.list_sixel_displayed] or
+                              tuple(self.list_sixel_areas) != self.list_sixel_displayed_areas or
+                              tuple(self.list_sixel_sources) != self.list_sixel_displayed_sources)
             if self.list_sixel_displayed:
-                if layout_changed or (height, width) != self.list_sixel_size:
+                if covers_changed or (height, width) != self.list_sixel_size:
                     os.write(sys.stdout.fileno(), b"\x1b[H\x1b[2J")
                     screen.clearok(True)  # repaint after an external terminal clear
                     screen.refresh()
@@ -1185,6 +1193,7 @@ class App:
                 os.write(sys.stdout.fileno(), f"\x1b7\x1b[{top + 1};{left + 1}H".encode() + payload + b"\x1b8")
             self.list_sixel_displayed = targets
             self.list_sixel_displayed_areas = tuple(self.list_sixel_areas)
+            self.list_sixel_displayed_sources = tuple(self.list_sixel_sources)
         self.repaint_sixel_cells(screen, stale_areas)
         self.list_sixel_size = (height, width)
         self.list_sixel_nav_state = nav_state
@@ -1397,6 +1406,7 @@ class App:
             if self.list_covers[key]:
                 self.list_sixel_targets.append((left, top, self.cover_payload(self.list_covers[key])))
                 self.list_sixel_areas.append((left, top, width, height))
+                self.list_sixel_sources.append(self.list_covers[key])
             return
         for row, runs in enumerate((self.list_covers.get(key) or [])[:height]):
             col = left

@@ -1221,12 +1221,41 @@ class TuiTest(unittest.TestCase):
             def erase(self): pass
             def refresh(self): pass
             def getmaxyx(self): return (24, 80)
+            def inch(self, y, x): return 32
         with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=draw_library), \
              patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
              patch.object(tui.os, 'write', side_effect=lambda fd, data: writes.append(data)):
             app.draw(Screen())
         self.assertFalse(any(b'\x1b[2J' in data for data in writes))
         self.assertIn(b'#0;2;60;60;60', writes[-1])
+
+    def test_new_covers_in_same_slots_clear_moved_images(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = 0
+        app.list_sixel_displayed = ((5, 8, b'old'),)
+        app.list_sixel_displayed_areas = ((5, 8, 10, 3),)
+        app.list_sixel_displayed_sources = (b'old',)
+        app.list_sixel_size = (24, 80)
+        app.list_sixel_scroll = (0, '', 0)
+        def draw_library(*_):  # new search results: a different cover in the same slot
+            app.list_sixel_targets.append((5, 8, b'new'))
+            app.list_sixel_areas.append((5, 8, 10, 3))
+            app.list_sixel_sources.append(b'new')
+        writes = []
+        class Screen:
+            def clearok(self, enabled): pass
+            def erase(self): pass
+            def refresh(self): pass
+            def getmaxyx(self): return (24, 80)
+            def inch(self, y, x): return 32
+        with patch.object(app, 'colored'), patch.object(app, 'draw_library', side_effect=draw_library), \
+             patch.object(app, 'draw_live'), patch.object(app, 'draw_nav'), \
+             patch.object(tui.os, 'write', side_effect=lambda fd, data: writes.append(data)):
+            app.draw(Screen())
+        self.assertIn(b'\x1b[H\x1b[2J', writes)
+        self.assertTrue(writes[-1].endswith(b'new\x1b8'))
+        self.assertEqual(app.list_sixel_displayed_sources, (b'new',))
 
     def test_list_scroll_repaints_without_terminal_scrolling(self):
         app = tui.App('http://localhost:9090')
