@@ -100,13 +100,31 @@ K.showPage = (id, smooth = true) => {
     if (!smooth) activate(i);
 };
 
-// Android Back first closes the popup on top: through its backClose when it has
-// one (a page or sheet with no backdrop to tap), else as a tap on its backdrop
-// would, so Cancel / Close keep their meaning.  A popup that cannot close now (a
-// busy spinner) still takes the press.  Then Back leaves Now for Qobuz.  Return
-// false when the kiosk has no navigation to handle so the app can use WebView
-// history (or move to the background) as before.
+// The page menu's order, top to bottom: the pages in the order they are listed,
+// and a group's pages all where the group stands.
+const menuPages = () => K.pages.map((p, n) => ({ p, n })).sort((a, b) =>
+    // Keep experimental actions last, with Bass depth last within that group.
+    Number(a.p.menuGroup === 'Experimental') - Number(b.p.menuGroup === 'Experimental')
+    || Number(a.p.id === 'bass') - Number(b.p.id === 'bass'));
+const menuWalk = () => {
+    const pages = menuPages(), groups = new Set();
+    return pages.flatMap(x => {
+        if (!x.p.menuGroup) return [x];
+        if (groups.has(x.p.menuGroup)) return [];
+        groups.add(x.p.menuGroup);
+        return pages.filter(y => y.p.menuGroup === x.p.menuGroup);
+    });
+};
+
+// Android Back first closes the page menu or the popup on top: a popup through its
+// backClose when it has one (a page or sheet with no backdrop to tap), else as a tap
+// on its backdrop would, so Cancel / Close keep their meaning.  A popup that cannot
+// close now (a busy spinner) still takes the press.  Then Back walks the page menu
+// upwards, one page a press.  Return false at the top of the menu (Now): the kiosk
+// has nowhere left to go, and the app leaves.
 K.handleAndroidBack = () => {
+    const pageMenu = document.querySelector('#page-menu');
+    if (pageMenu) { pageMenu.closeMenu(); return true; }
     const z = el => parseInt(getComputedStyle(el).zIndex, 10) || 0;
     const top = [...document.querySelectorAll('#overlay-root > *, body > .scrim')]
         .filter(el => el.backClose || el.classList.contains('scrim'))
@@ -115,8 +133,9 @@ K.handleAndroidBack = () => {
         if (top.backClose) top.backClose(); else top.click();
         return true;
     }
-    if (cur >= 0 && K.pages[cur].id === 'now' && K.pages.some(p => p.id === 'qobuz')) {
-        K.showPage('qobuz', false);
+    const walk = menuWalk(), at = walk.findIndex(x => x.n === cur);
+    if (at > 0) {
+        K.showPage(walk[at - 1].p.id, false);    // instant: a quick second press counts from here
         return true;
     }
     return false;
@@ -342,15 +361,12 @@ $('#top-menu').addEventListener('click', () => {
         ...(n === swipeCount() && n > 0 && !child ? { style: 'border-top:1px solid var(--border);margin-top:.25rem' } : {}),
     }, h('span', { class: 'mk' }, n === cur ? '●' : ''), p.title);
     const groups = new Set();
-    // Keep experimental actions last, with Bass depth last within that group.
-    const menuPages = K.pages.map((p, n) => ({ p, n })).sort((a, b) =>
-        Number(a.p.menuGroup === 'Experimental') - Number(b.p.menuGroup === 'Experimental')
-        || Number(a.p.id === 'bass') - Number(b.p.id === 'bass'));
-    menuPages.forEach(({ p, n }) => {
+    const listed = menuPages();
+    listed.forEach(({ p, n }) => {
         if (!p.menuGroup) { menu.append(pageButton(p, n)); return; }
         if (groups.has(p.menuGroup)) return;
         groups.add(p.menuGroup);
-        const members = menuPages.filter(x => x.p.menuGroup === p.menuGroup).map(x => ({ page: x.p, index: x.n }));
+        const members = listed.filter(x => x.p.menuGroup === p.menuGroup).map(x => ({ page: x.p, index: x.n }));
         let expanded = members.some(x => x.index === cur);
         const children = h('div', { class: 'menu-submenu', role: 'group', 'aria-label': p.menuGroup, hidden: !expanded },
             members.map(x => pageButton(x.page, x.index, true)));

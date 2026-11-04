@@ -509,12 +509,18 @@ class MainActivity : ComponentActivity() {
 
         onBackPressedDispatcher.addCallback(this) {
             val fallback = {
-                // Back leaves the app like Home does when the kiosk has no view to close.
                 if (webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
             }
             if (AppPrefs.viewMode(this@MainActivity) == AppPrefs.VIEW_KIOSK && !loadFailed) {
-                webView.evaluateJavascript("window.K && K.handleAndroidBack ? K.handleAndroidBack() : false") { result ->
-                    if (result != "true") fallback()
+                webView.evaluateJavascript("window.K && K.handleAndroidBack ? K.handleAndroidBack() : null") { result ->
+                    when (result) {
+                        "true" -> {}
+                        // The kiosk is at the top of its menu.  Leave like Home does, whatever
+                        // is in the history: every network change or view switch loads the
+                        // kiosk anew, and going back through those only reloads it.
+                        "false" -> moveTaskToBack(true)
+                        else -> fallback()      // not the kiosk: the page it opened (the full panel)
+                    }
                 }
             } else fallback()
         }

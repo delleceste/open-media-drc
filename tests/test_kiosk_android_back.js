@@ -4,14 +4,22 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const source = fs.readFileSync('omdrc-ctrl/src/kiosk/static/main.js', 'utf8');
-const backCode = source.slice(source.indexOf('K.handleAndroidBack = () => {'),
+const backCode = source.slice(source.indexOf("// The page menu's order, top to bottom"),
     source.indexOf('// Commit the page only once'));
+
+// The pager's order; the menu lists Experimental last and Bass depth last within it,
+// and a group's pages where its first page stands.
+const menu = [
+    { id: 'now' }, { id: 'qobuz' }, { id: 'drc' },
+    { id: 'bass', menuGroup: 'Experimental' }, { id: 'system' },
+    { id: 'lab', menuGroup: 'Experimental' },
+    { id: 'dr', menuGroup: 'DR' }, { id: 'logs' }, { id: 'history', menuGroup: 'DR' },
+];
 
 // overlays: [{ name, z, scrim, back }] in DOM order.  `back` registers backClose;
 // a scrim without it records the backdrop tap.
-function back(page, { overlays = [], qobuz = true } = {}) {
+function back(page, { overlays = [], menuOpen = false, pages = menu } = {}) {
     const calls = [];
-    const pages = [{ id: 'now' }, ...(qobuz ? [{ id: 'qobuz' }] : []), { id: 'drc' }];
     const els = overlays.map(o => ({
         z: o.z,
         classList: { contains: c => c === 'scrim' && !!o.scrim },
@@ -21,7 +29,10 @@ function back(page, { overlays = [], qobuz = true } = {}) {
     const K = { pages, showPage: id => calls.push(id) };
     const context = {
         K, cur: pages.findIndex(p => p.id === page),
-        document: { querySelectorAll: () => els },
+        document: {
+            querySelector: () => menuOpen ? { closeMenu: () => calls.push('menu:close') } : null,
+            querySelectorAll: () => els,
+        },
         getComputedStyle: el => ({ zIndex: String(el.z) }),
     };
     vm.runInNewContext(backCode, context);
@@ -44,10 +55,15 @@ assert.deepEqual(back('qobuz', { overlays: [strip, confirm] }),
     { handled: true, calls: ['confirm:tap'] }, 'a minimized guide strip is not a popup');
 assert.deepEqual(back('qobuz', { overlays: [player, guide] }),
     { handled: true, calls: ['guide:back'] });
-assert.deepEqual(back('now', { overlays: [strip] }),
-    { handled: true, calls: ['qobuz'] });
-assert.deepEqual(back('now', { qobuz: false }),
-    { handled: false, calls: [] });
-assert.deepEqual(back('drc'),
-    { handled: false, calls: [] });
-console.log('PASS: Android Back closes the topmost popup, then leaves Now for Qobuz');
+assert.deepEqual(back('qobuz', { menuOpen: true, overlays: [player] }),
+    { handled: true, calls: ['menu:close'] }, 'the open page menu closes first');
+
+// The menu reads now, qobuz, drc, system, dr, history, logs, lab, bass.
+const walk = [['bass', 'lab'], ['lab', 'logs'], ['logs', 'history'], ['history', 'dr'],
+    ['dr', 'system'], ['system', 'drc'], ['drc', 'qobuz'], ['qobuz', 'now']];
+for (const [from, to] of walk)
+    assert.deepEqual(back(from), { handled: true, calls: [to] }, `${from} goes up to ${to}`);
+assert.deepEqual(back('now'), { handled: false, calls: [] }, 'Now leaves the app');
+assert.deepEqual(back('now', { overlays: [strip] }), { handled: false, calls: [] },
+    'a minimized guide strip does not hold the app back');
+console.log('PASS: Android Back closes the topmost popup, then walks the page menu up to Now');
