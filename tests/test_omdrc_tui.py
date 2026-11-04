@@ -25,7 +25,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
-            def getch(self): return next(self.keys)
+            def getch(self): return next(self.keys, -1)  # Esc delay expires
         with patch.object(app.api, 'request', return_value={'genres': genres}) as request, \
              patch.object(app, 'draw'), patch.object(app, 'colored'), \
              patch.object(app, 'save'), patch.object(app, 'fetch_list') as fetch:
@@ -63,7 +63,7 @@ class TuiTest(unittest.TestCase):
             def move(self, *args): pass
             def clrtoeol(self): pass
             def refresh(self): pass
-            def getch(self): return next(self.keys)
+            def getch(self): return next(self.keys, -1)  # Esc delay expires
         with tempfile.TemporaryDirectory() as directory, patch.object(tui, 'CONFIG_PATH', Path(directory) / 'config.json'):
             app = tui.App('http://localhost:9090')
             app.filters['label'] = ['Decca']
@@ -982,6 +982,31 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(screen.timeouts, [25, 100])
         screen = Screen([27, -1])
         self.assertEqual(app.read_key(screen), 27)
+
+    def test_focus_reports_toggle_dimming_without_reaching_actions(self):
+        app = tui.App('http://localhost:9090')
+        class Screen:
+            def __init__(self, keys):
+                self.keys = iter(keys)
+                self.timeouts = []
+                self.styles = []
+            def getch(self): return next(self.keys)
+            def timeout(self, value): self.timeouts.append(value)
+            def getmaxyx(self): return (24, 80)
+            def addnstr(self, y, x, value, count, style): self.styles.append(style)
+        screen = Screen([27, ord('['), ord('O')])
+        self.assertEqual(app.read_key(screen, restore_timeout=-1), -1)
+        self.assertFalse(app.focused)
+        self.assertEqual(screen.timeouts, [25, -1])
+        app.styles['muted'] = 3 << 8
+        app.text(screen, 1, 1, 'dim', tui.curses.A_BOLD | tui.curses.A_REVERSE | (1 << 8))
+        self.assertEqual(screen.styles[-1], tui.curses.A_REVERSE | tui.curses.A_DIM | (3 << 8))
+        app.text(screen, 1, 1, 'cover', 20 << 8)
+        self.assertEqual(screen.styles[-1], 20 << 8)
+        self.assertEqual(app.read_key(Screen([27, ord('['), ord('I')])), -1)
+        self.assertTrue(app.focused)
+        app.text(screen, 1, 1, 'bright', tui.curses.A_BOLD)
+        self.assertEqual(screen.styles[-1], tui.curses.A_BOLD)
 
     def test_tab_cycles_all_visibility_combinations(self):
         app = tui.App('http://localhost:9090')

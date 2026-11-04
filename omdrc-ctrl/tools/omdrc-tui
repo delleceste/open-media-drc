@@ -47,6 +47,9 @@ NOW_MENU_TOP = 7
 CONFIG_KEYS = "uzcpwtkbda"
 PAGE_NAV = (("F1 Library", "Library"), ("F2 Now", "Now"),
             ("F3 Room correction", "DRC"), ("F4 Config", "Config"))
+# xterm focus reporting: the terminal sends CSI I / CSI O when its window gains or loses focus.
+FOCUS_REPORTING_ON = b"\x1b[?1004h"
+FOCUS_REPORTING_OFF = b"\x1b[?1004l"
 CTRL_LEFT = "ctrl-left"
 CTRL_RIGHT = "ctrl-right"
 ALBUM_ACTIONS = (("F5 Play", "green", "p"), ("F6 Add", "fmt_hires", "a"),
@@ -465,6 +468,7 @@ class App:
         self.sixel_visible = False
         self.sixel_target = None
         self.sixel_area = None
+        self.focused = True
         self.cover_pairs = {}
         self.styles = {}
         self.light = False
@@ -599,7 +603,7 @@ class App:
                         self.colored(screen, y, 2, compact(label, width - 4), "accent" if i == cursor else "soft",
                                      curses.A_REVERSE if i == cursor else 0)
                 screen.refresh()
-                key = screen.getch()
+                key = self.read_key(screen, restore_timeout=-1)
                 if key == curses.KEY_UP: cursor = max(0, cursor - 1)
                 elif key == curses.KEY_DOWN: cursor = min(len(genres) - 1, cursor + 1)
                 elif key == curses.KEY_NPAGE: cursor = min(len(genres) - 1, cursor + visible)
@@ -658,7 +662,7 @@ class App:
                         self.colored(screen, y, 2, compact(label, width - 4), "accent" if i == cursor else "soft",
                                      curses.A_REVERSE if i == cursor else 0)
                 screen.refresh()
-                key = screen.getch()
+                key = self.read_key(screen, restore_timeout=-1)
                 if key == curses.KEY_UP: cursor = max(0, cursor - 1)
                 elif key == curses.KEY_DOWN: cursor = min(max(0, len(names) - 1), cursor + 1)
                 elif key == curses.KEY_NPAGE: cursor = min(max(0, len(names) - 1), cursor + visible)
@@ -929,8 +933,18 @@ class App:
             self.colored(screen, y, x, value, color, part_style | style)
             x += len(value)
 
+    def dimmed(self, style):
+        """Unfocused look: every view turns muted grey; selections keep reverse video.
+
+        Uses the muted colour rather than relying on A_DIM alone, because
+        FreeBSD's xterm-256color terminfo has no dim capability.
+        """
+        if (style & curses.A_COLOR) >> 8 >= 16: return style  # symbol-mode cover art
+        return (style & curses.A_REVERSE) | curses.A_DIM | self.styles.get("muted", 0)
+
     def text(self, screen, y, x, value, style=0):
         height, width = screen.getmaxyx()
+        if not self.focused: style = self.dimmed(style)
         if 0 <= y < height and x < width:
             try: screen.addnstr(y, x, clean(value).replace("\n", " "), max(0, width - x - 1), style)
             except curses.error: pass
@@ -1564,9 +1578,12 @@ class App:
             screen.move(h - 1, 0); screen.clrtoeol()
             self.text(screen, h - 1, 1, label + " " + initial)
             screen.refresh(); screen.timeout(-1)
+            # getstr would insert focus reports as text; pause them while editing.
+            os.write(sys.stdout.fileno(), FOCUS_REPORTING_OFF)
             raw = screen.getstr(h - 1, min(w - 2, len(label) + len(initial) + 2), max(1, w - len(label) - len(initial) - 5))
             return initial + raw.decode(errors="replace")
         finally:
+            os.write(sys.stdout.fileno(), FOCUS_REPORTING_ON)
             curses.noecho(); curses.curs_set(0); screen.timeout(100)
 
     def action(self, key, screen):
@@ -1770,7 +1787,9 @@ class App:
                         self.text(screen, h - 2 + offset, 1, "  ".join(
                             f"{'>' if i == selected else ' '}{i + 1} {labels[i]}" for i in group))
                     screen.refresh()
-                    choice = screen.getch()
+                    choice = self.read_key(screen, restore_timeout=-1)
+                    if choice == -1:  # focus change: redraw the dimmed or restored view
+                        self.draw(screen); continue
                     if choice in (curses.KEY_LEFT, curses.KEY_UP): selected = (selected - 1) % len(names)
                     elif choice in (curses.KEY_RIGHT, curses.KEY_DOWN): selected = (selected + 1) % len(names)
                     elif ord("1") <= choice <= ord("7"): selected = choice - ord("1"); break
@@ -1927,12 +1946,14 @@ class App:
                     self.message = "Research ready"
         self.submit("research", work, apply)
 
-    def read_key(self, screen):
+    def read_key(self, screen, restore_timeout=100):
+        """Read a key; focus reports update self.focused and return -1."""
         key = screen.getch()
         if key != 27:
             return key
         # xterm and Konsole send Ctrl+Left/Right as CSI 1;5D/C, which
         # curses does not recognize unless the terminal profile defines it.
+        # With focus reporting on they also send CSI I / CSI O.
         consumed = []
         screen.timeout(25)
         try:
@@ -1941,6 +1962,9 @@ class App:
                 if next_key == -1:
                     break
                 consumed.append(next_key)
+                if consumed[0] == ord('[') and len(consumed) == 2 and next_key in (ord('I'), ord('O')):
+                    self.focused = next_key == ord('I')
+                    return -1
                 if next_key != expected:
                     break
             else:
@@ -1952,7 +1976,7 @@ class App:
                 if next_key != -1:
                     consumed.append(next_key)
         finally:
-            screen.timeout(100)
+            screen.timeout(restore_timeout)
         for value in reversed(consumed):
             curses.ungetch(value)
         return key
@@ -1962,6 +1986,7 @@ class App:
             curses.set_escdelay(25)
         curses.curs_set(0); screen.keypad(True); screen.timeout(100)
         self.configure_colors()
+        os.write(sys.stdout.fileno(), FOCUS_REPORTING_ON)
         try:
             while True:
                 self.drain(); self.poll(); self.draw(screen)
@@ -1970,6 +1995,7 @@ class App:
         except KeyboardInterrupt:
             pass
         finally:
+            os.write(sys.stdout.fileno(), FOCUS_REPORTING_OFF)
             if self.level_stream: self.level_stream.close()
             if self.dr_stream: self.dr_stream.close()
             self.pool.shutdown(wait=False, cancel_futures=True)
