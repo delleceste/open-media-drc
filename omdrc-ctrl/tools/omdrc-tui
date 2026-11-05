@@ -1361,6 +1361,8 @@ class App:
                         self.colored(screen, border_y, result_x + result_width - 1, "│", "green")
                     self.colored(screen, y + cover_height, result_x,
                                  "└" + "─" * (result_width - 2) + "┘", "green")
+                    self.colored(screen, y + cover_height // 2, result_x + result_width,
+                                 "›", "green", curses.A_BOLD)
             content_x = result_x + 2 if boxed_results else result_x
             content_width = result_width - 4 if boxed_results else result_width
             if item.get("kind") == "folder":

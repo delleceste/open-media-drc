@@ -982,7 +982,8 @@ class TuiTest(unittest.TestCase):
                                   (9, 29, '│'), (9, 77, '│'),
                                   (10, 29, '│'), (10, 77, '│'),
                                   (11, 29, '│'), (11, 77, '│'),
-                                  (12, 29, '└' + '─' * 47 + '┘')])
+                                  (12, 29, '└' + '─' * 47 + '┘'),
+                                  (10, 78, '›')])
         title = next(args for args in painted if args[3] == 'Animals')
         self.assertEqual(title[4], 'bright')
         self.assertFalse(title[5] & tui.curses.A_REVERSE)
@@ -990,27 +991,32 @@ class TuiTest(unittest.TestCase):
     def test_other_library_results_use_green_box_and_one_line_gap(self):
         class Screen:
             def getmaxyx(self): return (24, 80)
-        for tab in (2, 3, 4, 5):
+        for tab in (1, 2, 3, 4, 5):
             with self.subTest(tab=tui.TABS[tab]):
                 app = tui.App('http://localhost:9090')
                 app.tab = tab
                 app.rows = [{'title': 'First'}, {'title': 'Second'}]
                 app.row = 1
                 app.library_sidebar_focus = False
-                app.library_right_index = 1
+                app.library_right_index = 2 if tab == 1 else 1
                 painted = []
                 with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
                     app.draw_library(Screen(), 20)
                 titles = [(args[1], args[3], args[5]) for args in painted
                           if args[3] in ('First', 'Second')]
+                second_y = 12 if tab == 1 else 11
+                border_top = second_y - 1
+                border_bottom = second_y + (4 if tab == 1 else 3)
                 self.assertEqual([(y, title) for y, title, _ in titles],
-                                 [(7, 'First'), (11, 'Second')])
+                                 [(7, 'First'), (second_y, 'Second')])
                 self.assertTrue(all(not style & tui.curses.A_REVERSE for _, _, style in titles))
-                self.assertTrue(any(args[1] == 10 and str(args[3]).startswith('┌') and args[4] == 'green'
+                self.assertTrue(any(args[1] == border_top and str(args[3]).startswith('┌') and args[4] == 'green'
                                     for args in painted))
-                self.assertTrue(any(args[1] == 14 and str(args[3]).startswith('└') and args[4] == 'green'
+                self.assertTrue(any(args[1] == border_bottom and str(args[3]).startswith('└') and args[4] == 'green'
                                     for args in painted))
-                self.assertFalse(any(args[1] == 10 and args[2] >= 29 and args[4] != 'green'
+                arrows = [(args[1], args[2]) for args in painted if args[3] == '›' and args[4] == 'green']
+                self.assertEqual(arrows, [(second_y + (2 if tab == 1 else 1), 78)])
+                self.assertFalse(any(args[1] == border_top and args[2] >= 29 and args[4] != 'green'
                                      for args in painted))
 
     def test_discover_cover_uses_large_image_and_color(self):
