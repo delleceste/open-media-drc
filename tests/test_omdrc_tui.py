@@ -952,6 +952,7 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(tui.album_quality({'bits': 16, 'rate': 44.1}), ('16/44.1', 'muted'))
         self.assertEqual(tui.album_quality({}), ('', None))
         app = tui.App('http://localhost:9090')
+        app.filters['sort'] = 'relevance'
         app.query = 'pink floyd'
         app.rows = [{'title': 'Animals', 'artist': 'Pink Floyd', 'year': 1977, 'label': 'Pink Floyd Records',
                      'bits': 24, 'rate': 192}]
@@ -1004,9 +1005,9 @@ class TuiTest(unittest.TestCase):
                     app.draw_library(Screen(), 20)
                 titles = [(args[1], args[3], args[5]) for args in painted
                           if args[3] in ('First', 'Second')]
-                second_y = 12 if tab == 1 else 11
+                second_y = 12 if tab in (1, 4) else 11
                 border_top = second_y - 1
-                border_bottom = second_y + (4 if tab == 1 else 3)
+                border_bottom = second_y + (4 if tab in (1, 4) else 3)
                 self.assertEqual([(y, title) for y, title, _ in titles],
                                  [(7, 'First'), (second_y, 'Second')])
                 self.assertTrue(all(not style & tui.curses.A_REVERSE for _, _, style in titles))
@@ -1015,9 +1016,70 @@ class TuiTest(unittest.TestCase):
                 self.assertTrue(any(args[1] == border_bottom and str(args[3]).startswith('└') and args[4] == 'green'
                                     for args in painted))
                 arrows = [(args[1], args[2]) for args in painted if args[3] == '›' and args[4] == 'green']
-                self.assertEqual(arrows, [(second_y + (2 if tab == 1 else 1), 78)])
+                self.assertEqual(arrows, [(second_y + (2 if tab in (1, 4) else 1), 78)])
                 self.assertFalse(any(args[1] == border_top and args[2] >= 29 and args[4] != 'green'
                                      for args in painted))
+
+    def test_awarded_result_shows_award_names_and_personal_rating(self):
+        app = tui.App('http://localhost:9090')
+        app.tab = 4
+        app.rows = [{'title': 'Goldberg Variations', 'artist': 'Bach',
+                     'awards': [{'name': "Diapason d'Or", 'publication': 'Diapason'},
+                                {'name': 'Recording of the Month', 'publication': 'Gramophone'}],
+                     'rating': 2}]
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 100)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 20)
+        self.assertTrue(any(args[1] == 10 and args[3] ==
+                            "Awards: Diapason d'Or · Recording of the Month · My rating: 2/3"
+                            for args in painted))
+        app.rows = [{'title': 'Unawarded favourite', 'rating': 3}]
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 20)
+        self.assertTrue(any(args[1] == 10 and args[3] == 'My rating: 3/3' for args in painted))
+
+    def test_awarded_search_hint_and_escape_cancel(self):
+        app = tui.App('http://localhost:9090')
+        app.page = 'Library'
+        app.tab = app.library_sidebar_index = 4
+        app.query = 'Gramophone'
+        painted = []
+        class Screen:
+            def getmaxyx(self): return (24, 80)
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 20)
+        self.assertTrue(any(args[1] == 3 and 'Search award, album or artist: Gramophone' in args[3]
+                            for args in painted))
+        app.query = ''
+        painted.clear()
+        with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+            app.draw_library(Screen(), 20)
+        self.assertTrue(any(args[1] == 3 and 'Search award, album or artist  ·  Enter edit' in args[3]
+                            for args in painted))
+        app.query = 'Gramophone'
+        with patch.object(app, 'fetch_list') as fetch, patch.object(tui.curses, 'curs_set'):
+            app.action(ord('/'), None)
+            self.assertTrue(app.search_editing)
+            for char in ' Bach': app.action(ord(char), None)
+            painted.clear()
+            with patch.object(app, 'colored', side_effect=lambda *args: painted.append(args)):
+                app.draw_library(Screen(), 20)
+            self.assertTrue(any(args[1] == 3 and 'Esc cancel' in args[3] for args in painted))
+            app.action(27, None)
+            fetch.assert_not_called()
+        self.assertEqual(app.query, 'Gramophone')
+        self.assertFalse(app.search_editing)
+        self.assertTrue(app.library_sidebar_focus)
+        self.assertEqual(app.library_sidebar_index, 4)
+        app.action(ord('/'), None)
+        with patch.object(app, 'fetch_list') as fetch, patch.object(tui.curses, 'curs_set'):
+            app.action(ord('X'), None)
+            app.action(10, None)
+        fetch.assert_called_once()
+        self.assertEqual(app.query, 'GramophoneX')
 
     def test_discover_cover_uses_large_image_and_color(self):
         app = tui.App('http://localhost:9090')

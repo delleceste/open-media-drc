@@ -779,7 +779,7 @@ class App:
         self.search_cursor = len(self.search_draft)
         self.search_view_start = 0
         self.library_sidebar_focus = True
-        self.library_sidebar_index = 0
+        self.library_sidebar_index = self.tab
         self.sort_focus = False
 
     def search_edit_key(self, key):
@@ -817,7 +817,7 @@ class App:
                                          self.search_draft[self.search_cursor:])
                     self.search_cursor += len(chars)
             except UnicodeDecodeError: self.search_decoder.reset()
-        if self.search_editing and self.search_draft != previous:
+        if self.tab == 0 and self.search_editing and self.search_draft != previous:
             self.search_auto_due = (time.monotonic() + SEARCH_DEBOUNCE_SECONDS
                                     if len(self.search_draft.strip()) >= 3 else None)
 
@@ -1270,7 +1270,22 @@ class App:
             selected = set(self.filters["genre"].split(",")) - {""}
             names = [genre["name"] for genre in self.genres if str(genre["id"]) in selected]
             first_control = f"Genre: {', '.join(names) if names else f'{len(selected)} selected' if selected else 'Any'}  ·  Enter choose"
-        elif self.tab in (2, 3, 4):
+        elif self.tab == 4:
+            if self.search_editing:
+                hint = "  Esc cancel"
+                text_width = max(1, result_width - len(hint) - 3)
+                if self.search_cursor < self.search_view_start:
+                    self.search_view_start = self.search_cursor
+                elif self.search_cursor > self.search_view_start + text_width:
+                    self.search_view_start = self.search_cursor - text_width
+                visible_text = self.search_draft[self.search_view_start:self.search_view_start + text_width]
+                cursor_at = self.search_cursor - self.search_view_start
+                cursor = "▌" if int(time.monotonic() * 2) % 2 == 0 else " "
+                first_control = "⌕ " + visible_text[:cursor_at] + cursor + visible_text[cursor_at:] + hint
+            else:
+                first_control = (f"Search award, album or artist: {self.query}  ·  Enter edit"
+                                 if self.query else "Search award, album or artist  ·  Enter edit")
+        elif self.tab in (2, 3):
             first_control = f"Search: {self.query or 'all'}  ·  Enter edit"
         else:
             first_control = "Review later"
@@ -1338,7 +1353,7 @@ class App:
         if not loading and not self.rows and self.tab == 0 and (self.query or self.filters["label"]):
             self.colored(screen, first_result, result_x,
                          compact("No matching albums" if not self.list_error else "Search unavailable", result_width), "muted")
-        cover_height = 4 if self.tab == 1 else 3
+        cover_height = 4 if self.tab in (1, 4) else 3
         cover_width = 12 if self.tab == 1 else 10
         boxed_results = result_width >= 4
         block_height = cover_height + 1
@@ -1398,6 +1413,18 @@ class App:
                 self.colored(screen, title_y + 1, dr_x, dr_text, dr_color, selected | dr_style)
             else:
                 self.colored(screen, title_y + 1, x, compact(detail_text, text_width), tier or "muted", selected)
+            if self.tab == 4:
+                awards = [clean(award.get("name") or award.get("publication")).strip()
+                          for award in item.get("awards", []) if isinstance(award, dict)]
+                awards = [name for name in awards if name]
+                award_text = (("Awards: " if len(awards) > 1 else "Award: ") + " · ".join(awards)
+                              if awards else "")
+                rating = item.get("rating") or 0
+                if rating:
+                    award_text += (" · " if award_text else "") + f"My rating: {rating}/3"
+                if award_text:
+                    self.colored(screen, y + cover_height - 1, x, compact(award_text, text_width),
+                                 "yellow", selected)
 
     def draw_local_cover_marker(self, screen, left, top, width, height):
         inner = max(0, width - 2)
@@ -1954,7 +1981,7 @@ class App:
             self.select_library_tab(key - ord("1"), immediate=True)
             return
         if key == ord("/") and self.tab in (0, 2, 3, 4):
-            if self.tab == 0:
+            if self.tab in (0, 4):
                 self.begin_search_edit()
                 return
             self.query = self.prompt(screen, "Search:").strip()
