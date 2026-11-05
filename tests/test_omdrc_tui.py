@@ -613,20 +613,24 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.library_sidebar_index, len(tui.TABS) - 1)
         self.assertTrue(app.library_sidebar_focus)
 
-    def test_search_opens_inline_after_library_delay(self):
+    def test_search_tab_selection_waits_for_explicit_edit(self):
         app = tui.App('http://localhost:9090')
         app.page = 'Library'
         app.tab = app.library_sidebar_index = 1
         app.config['library_delay'] = 1
-        with patch.object(tui.time, 'monotonic', return_value=100):
+        with patch.object(app, 'fetch_list') as fetch, patch.object(tui.time, 'monotonic', return_value=100):
             app.library_key(tui.curses.KEY_UP, None)
-        self.assertEqual(app.library_auto_due, 101)
+        self.assertEqual(app.tab, 0)
+        self.assertIsNone(app.library_auto_due)
         self.assertFalse(app.search_editing)
-        with patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=100.9):
+        self.assertTrue(app.library_sidebar_focus)
+        fetch.assert_not_called()
+        with patch.object(app, 'submit'), patch.object(app, 'fetch_list') as fetch, \
+             patch.object(tui.time, 'monotonic', return_value=101):
             app.poll()
         self.assertFalse(app.search_editing)
-        with patch.object(app, 'submit'), patch.object(tui.time, 'monotonic', return_value=101):
-            app.poll()
+        fetch.assert_not_called()
+        app.library_key(10, None)
         self.assertTrue(app.search_editing)
         self.assertFalse(app.library_sidebar_focus)
         painted = []
@@ -648,6 +652,19 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(app.query, 'Béla')
         self.assertFalse(app.search_editing)
         fetch.assert_called_once()
+
+    def test_search_tab_click_and_library_return_do_not_focus_input(self):
+        app = tui.App('http://localhost:9090')
+        app.tab = app.library_sidebar_index = 1
+        app.library_sidebar_focus = False
+        with patch.object(app, 'fetch_list') as fetch:
+            app.select_library_tab(0, immediate=True)
+            app.switch('Library')
+        self.assertEqual(app.tab, 0)
+        self.assertTrue(app.library_sidebar_focus)
+        self.assertFalse(app.search_editing)
+        self.assertIsNone(app.library_auto_due)
+        fetch.assert_not_called()
 
     def test_search_arrows_move_cursor_and_edit_at_its_position(self):
         app = tui.App('http://localhost:9090')

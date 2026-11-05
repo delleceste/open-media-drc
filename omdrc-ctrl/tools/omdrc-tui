@@ -837,9 +837,12 @@ class App:
             self.more = False
             self.list_generation += 1
         if changed and self.search_editing: self.finish_search_edit()
-        if immediate or index not in (0, 1, 2) or self.config.get("library_delay", 1.0) == 0:
-            if index == 0: self.begin_search_edit()
-            else: self.fetch_list()
+        if index == 0:
+            self.library_sidebar_focus = True
+            self.library_auto_due = self.library_auto_tab = None
+            return
+        if immediate or index not in (1, 2) or self.config.get("library_delay", 1.0) == 0:
+            self.fetch_list()
         elif changed or self.library_auto_due is None:
             self.library_auto_tab = index
             self.library_auto_due = time.monotonic() + float(self.config.get("library_delay", 1.0))
@@ -854,9 +857,8 @@ class App:
         if self.page == "Library" and self.library_auto_due is not None and now >= self.library_auto_due:
             tab = self.library_auto_tab
             self.library_auto_due = None
-            if tab == self.tab:
-                if tab == 0: self.begin_search_edit()
-                else: self.fetch_list()
+            if tab == self.tab and tab != 0:
+                self.fetch_list()
         if now - self.last_player > 3:
             self.last_player = now
             self.submit("player", lambda: self.api.request("/k/api/player"), self.update_player)
@@ -963,15 +965,8 @@ class App:
         if page == "Config":
             self.submit("ai-settings", lambda: self.api.request("/qobuz/ai/settings"),
                         lambda d: setattr(self, "ai_settings", d))
-        if page == "Library":
-            if self.tab == 0 and not self.search_editing:
-                delay = float(self.config.get("library_delay", 1.0))
-                if delay == 0: self.begin_search_edit()
-                else:
-                    self.library_auto_tab = 0
-                    self.library_auto_due = time.monotonic() + delay
-            elif self.tab != 0 and not self.rows:
-                self.fetch_list()
+        if page == "Library" and self.tab != 0 and not self.rows:
+            self.fetch_list()
 
     def configure_colors(self):
         self.light = theme_is_light(self.config.get("theme", "auto"))
