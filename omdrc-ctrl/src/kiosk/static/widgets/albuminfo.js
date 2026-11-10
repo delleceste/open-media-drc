@@ -275,7 +275,12 @@ const page = (a, actions) => {
         act('primary qz-play ai-playbtn', 'Replace the queue and play', () => { close(); actions.play(); }, K.tIcon('play')),
         act('ai-addbtn', 'Add to the queue', () => actions.add(), '+')) : null;
     out.push(h('div', { class: 'ai-head' },
-        a.image_large || a.image ? h('img', { class: 'ai-cover', src: a.image_large || a.image, alt: '' }) : null,
+        // a tap enlarges the cover (K.openCoverMax, as on the Qobuz rows)
+        a.image_large || a.image ? h('button', { type: 'button', class: 'ai-cover-btn', title: 'Enlarge the cover', 'aria-label': 'Enlarge the cover',
+            onclick: () => K.openCoverMax(a.image_large || a.image, { usable: () => false },
+                { title: [a.title, a.version ? `(${a.version})` : ''].filter(Boolean).join(' '),
+                  facts: [a.artist, a.label, (a.date || a.year || '').toString().slice(0, 4)].filter(Boolean).join(' · ') }) },
+            h('img', { class: 'ai-cover', src: a.image_large || a.image, alt: '' })) : null,
         h('div', { class: 'ai-headtext' },
             h('div', { class: 'ai-title' }, a.title, a.version ? h('span', { class: 'muted' }, ` (${a.version})`) : null),
             a.artist ? h('div', { class: 'ai-artist' }, a.artist) : null,

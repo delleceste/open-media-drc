@@ -1101,6 +1101,7 @@ html[data-page="now"] .listening-panel.collapsed, html[data-page="qobuz"] .liste
 .ai-body { display: flex; flex-direction: column; gap: .7rem; max-width: 46rem; width: 100%; margin: 0 auto; }
 .ai-head { display: grid; grid-template-columns: min(38vw, 12rem) minmax(0, 1fr); gap: .9rem; align-items: start; }
 .ai-cover { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: .5rem; background: var(--surface2); }
+.ai-cover-btn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: .5rem; -webkit-tap-highlight-color: transparent; }
 .ai-headtext { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
 .ai-title { font-size: 1.3rem; font-weight: 700; line-height: 1.2; }
 .ai-artist { font-weight: 600; }

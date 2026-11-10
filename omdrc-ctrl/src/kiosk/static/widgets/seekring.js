@@ -299,6 +299,7 @@ K.openCoverMax = (src, o, meta = {}) => {
             h('button', { type: 'button', class: 'btn cover-max-close', title: 'Close', onclick: close }, K.tIcon('close'), h('span', {}, 'Close'))),
         art, info, controls);
     const ring = new K.SeekRing(art, ro);
+    scrim.backClose = close;          // Android Back closes it (a synthetic click would not pass the backdrop test)
     // a swipe up, from anywhere but a knob being dragged, closes it like Close; touch events
     // so the page's own scrolling (a short screen) keeps working
     let sw = null;
