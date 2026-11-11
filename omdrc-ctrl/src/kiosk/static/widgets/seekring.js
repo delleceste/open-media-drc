@@ -35,18 +35,58 @@ const RING_C = 2 * Math.PI * RING_R;
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
 
-// Press-and-hold repeat for a << / >> button: the touch seeks at once, and held on
-// it goes on seeking (the step grows with the pace, SeekRing.step). A keyboard
-// activation (click without a pointer) still seeks once.
+// A finger that lands on a playback button and then slides is a swipe of the page (a scroll, the player sheet's
+// drag, a cover fling), never a press: past this many pixels the button does nothing.
+const SWIPE_PX = 10;
+// The playback buttons everywhere: the Qobuz player and strip, Now's row and state chip, the enlarged cover's row.
+K.TRANSPORT_SELECTOR = '.qz-pbtn, .now-skip, .now-step, .chip.state, .cover-max-ctl';
+// One guard for all of them: a click that ends a slide (some sheets take the touch, touch-action: none, so the
+// browser still delivers it) is swallowed before the button's own handler runs.
+K.swipeGuard = { start: null, moved: false };
+document.addEventListener('pointerdown', e => {
+    K.swipeGuard.start = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    K.swipeGuard.moved = false;
+}, true);
+document.addEventListener('pointermove', e => {
+    const s = K.swipeGuard.start;
+    if (s && e.pointerId === s.id && Math.hypot(e.clientX - s.x, e.clientY - s.y) > SWIPE_PX) K.swipeGuard.moved = true;
+}, true);
+document.addEventListener('pointercancel', () => { K.swipeGuard.moved = true; }, true);   // the browser scrolled
+document.addEventListener('click', e => {
+    if (!e.detail || !K.swipeGuard.moved || !e.target.closest?.(K.TRANSPORT_SELECTOR)) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+}, true);
+
+// Press-and-hold repeat for a << / >> button.  Nothing happens as the finger lands (it may be starting a swipe):
+// a tap seeks once on release; a finger held still for a moment seeks and goes on seeking (the step grows with the
+// pace, SeekRing.step); a finger that slides cancels it all.  A keyboard activation (click without a pointer) seeks
+// once.
 K.holdRepeat = (el, fn) => {
-    let delay = null, tick = null;
+    let delay = null, tick = null, press = null;
     const stop = () => { clearTimeout(delay); clearInterval(tick); delay = tick = null; };
     el.addEventListener('pointerdown', e => {
         if (e.button !== 0) return;
-        stop(); fn();
-        delay = setTimeout(() => { tick = setInterval(fn, 220); }, 450);
+        stop();
+        press = { x: e.clientX, y: e.clientY, id: e.pointerId, fired: false };
+        delay = setTimeout(() => {
+            if (!press) return;
+            press.fired = true;
+            fn();
+            tick = setInterval(fn, 220);
+        }, 350);
     });
-    for (const t of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(t, stop);
+    el.addEventListener('pointermove', e => {
+        if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > SWIPE_PX) {
+            stop(); press = null;
+        }
+    });
+    el.addEventListener('pointerup', e => {
+        stop();
+        if (press && e.pointerId === press.id && !press.fired) fn();
+        press = null;
+    });
+    for (const t of ['pointercancel', 'pointerleave']) el.addEventListener(t, () => { stop(); press = null; });
     el.addEventListener('contextmenu', e => e.preventDefault());
     el.addEventListener('click', e => { e.stopImmediatePropagation(); if (!e.detail) fn(); }, true);
     return el;

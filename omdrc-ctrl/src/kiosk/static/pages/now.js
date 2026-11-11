@@ -1062,6 +1062,8 @@ P.wireTransport = () => {
         timer = setTimeout(() => { held = true; timer = null; P.transport('stop'); K.toast('Stopped'); }, 650);
     });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => P.state.addEventListener(t, cancel));
+    // a finger that slides is swiping the page: no hold-to-stop (and no tap: K.swipeGuard, widgets/seekring.js)
+    P.state.addEventListener('pointermove', () => { if (K.swipeGuard.moved) cancel(); });
     P.state.addEventListener('click', () => {
         if (held) { held = false; return; }            // the long press already stopped it
         if (!P.track || !P.track.ok) { P.transport('play'); return; }
