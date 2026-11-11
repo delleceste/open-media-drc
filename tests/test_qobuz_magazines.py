@@ -216,7 +216,7 @@ class ReadingTest(unittest.TestCase):
         self.assertTrue((self.root / "2026/12/digest.md").is_file())
         self.assertLess(text.index("several magazines"), text.index("Goldberg"))
         self.assertIn("Shared verdict", text)
-        self.assertIn("sound 9.0/10 (Q)", text)
+        self.assertIn("sound 9.0/10 (Q: recording singled out)", text)
 
         self.assertTrue(mags.remove_issue(self.root, "2026-12", "diapason-2026-12"))
         self.assertEqual(mags.month_view(self.root, "2026-12")["entries"][0]["mag"]["agreement"], 2)
@@ -301,14 +301,17 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(mags.month_view(self.root, "2026-12")["entries"][0]["mag"]["artistic"], "Both love it.")
         self.assertFalse(any(r["kind"] == "verdicts" for r in mags.export_rows(self.root)), "bee's verdict stays bee's")
 
-    def test_circles_run_green_to_yellow_and_silent_sound_last(self):
+    def test_every_circle_has_a_colour_and_the_list_follows_it(self):
         self.write_issue("2026-10", "Gramophone", [
             pick(composer="A", performers="Ann One", catalogue="", sound_score=0, award="Editor's Choice", artistic_score=10),
             pick(composer="B", performers="Bob Two", catalogue="", sound_score=6),
             pick(composer="C", performers="Cy Three", catalogue="", sound_score=9, sound_exceptional=True),
-            pick(composer="D", performers="Di Four", catalogue="", sound_score=8)])
-        order = [c["mag"]["composer"] for c in mags.month_view(self.root, "2026-10")["entries"]]
-        self.assertEqual(order, ["C", "D", "B", "A"])
+            pick(composer="D", performers="Di Four", catalogue="", sound_score=0, artistic_score=7)])
+        entries = mags.month_view(self.root, "2026-10")["entries"]
+        self.assertEqual([(c["mag"]["composer"], c["mag"]["rating"], c["mag"]["rating_basis"], c["mag"]["q"])
+                          for c in entries],
+                         [("A", 10.0, "performance", False), ("C", 9.0, "sound", True),
+                          ("D", 7.0, "performance", False), ("B", 6.0, "sound", False)])
 
     def test_same_recording_needs_shared_performers(self):
         a = pick(catalogue="")

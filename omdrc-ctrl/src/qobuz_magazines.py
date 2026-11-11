@@ -1102,6 +1102,10 @@ def entry(group: list[dict], key: str, verdicts: dict) -> dict:
         "key": _signature(group), "agreement": len(magazines), "magazines": magazines,
         "awards": [f"{r['magazine']}: {r['award']}" for r in group if r.get("award")],
         "quality": quality, "q": any(r.get("sound_exceptional") for r in group) or (quality or 0) >= 9,
+        # the circle's colour: the sound as rated when a review describes it, else the performance
+        "rating": quality if quality is not None else round(
+            sum(r["artistic_score"] or 0 for r in group) / len(group), 1),
+        "rating_basis": "sound" if quality is not None else "performance",
         "artistic": (verdict or {}).get("artistic") or best["artistic"],
         "sound": (verdict or {}).get("sound") or sound_best["sound"],
         "shared": bool(verdict), "query": lead.get("query") or "",
@@ -1113,14 +1117,13 @@ def entry(group: list[dict], key: str, verdicts: dict) -> dict:
 
 
 def _rank(card: dict):
-    """Agreement first; then, so the circles run green to yellow, the sound as the reviews
-    rate it (an outstanding Q first, a review silent on the sound last); then awards and
-    the performance's rating; a recording not on Qobuz after the ones that play."""
+    """Agreement first; then the circle's rating, so the colours run green to yellow (a Q
+    first among equals); then awards and the performance's rating; a recording not on
+    Qobuz after the ones that play."""
     m = card["mag"]
     scores = [r["artistic_score"] or 0 for r in m["reviews"]]
-    quality = m["quality"]
-    return (-m["agreement"], quality is None and not m["q"], not m["q"], -(quality or 0), -len(m["awards"]),
-            -sum(scores) / len(scores), not card.get("id"))
+    return (-m["agreement"], -m["rating"], not m["q"], -len(m["awards"]), -sum(scores) / len(scores),
+            not card.get("id"))
 
 
 def month_view(root: Path, key: str) -> dict:
@@ -1171,7 +1174,8 @@ def document(root: Path, key: str) -> str:
                                            for i in view["issues"]), ""]
     lines += [f"Recordings recommended by more than one magazine come first. Agreement also counts the issues of "
               f"the {WINDOW} months before and after. Sound quality is the reviews' rating of the recording "
-              "(depth, detail, soundstage, warmth), 10 being the best; Q marks an outstanding recording.", ""]
+              "(depth, detail, soundstage, warmth), or the performance's when the review does not describe the "
+              "sound, 10 being the best; Q marks a recording singled out for its sound.", ""]
     agreed = [c for c in view["entries"] if c["mag"]["agreement"] > 1]
     single = [c for c in view["entries"] if c["mag"]["agreement"] == 1]
     for title, cards in (("Recommended by several magazines", agreed), ("Recommended by one magazine", single)):
@@ -1183,10 +1187,7 @@ def document(root: Path, key: str) -> str:
             head = " — ".join(x for x in (m["composer"], m["works"] or card.get("title"), m["performers"]) if x)
             lines.append(f"### {head}")
             facts = [", ".join(m["magazines"])]
-            if m["quality"] is not None:
-                facts.append(f"sound {m['quality']}/10" + (" (Q)" if m["q"] else ""))
-            elif m["q"]:
-                facts.append("sound: Q")
+            facts.append(f"{m['rating_basis']} {m['rating']}/10" + (" (Q: recording singled out)" if m["q"] else ""))
             if card.get("id"):
                 facts.append(f"[Qobuz: {card.get('title')} — {card.get('artist')}]({card.get('url')})")
             else:

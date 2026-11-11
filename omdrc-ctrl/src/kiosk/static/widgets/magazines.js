@@ -22,12 +22,13 @@ const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 M.hue = q => 52 + Math.max(0, Math.min(1, (q - 5) / 5)) * 78;
 M.dot = (m, cls = '') => {
     if (!m) return null;
-    const known = m.quality !== null && m.quality !== undefined;
-    const title = m.q ? `Outstanding recording${known ? ` (sound ${m.quality}/10)` : ''}`
-        : known ? `Recording quality ${m.quality}/10 in the reviews` : 'The reviews do not rate the sound';
-    const el = h('span', { class: 'mag-dot' + (m.q ? ' mag-q' : known ? '' : ' mag-unknown') + (cls ? ' ' + cls : ''),
+    // always a colour: the sound's rating when a review describes it, else the performance's
+    const rating = m.rating ?? m.quality ?? 7;
+    const basis = m.rating_basis === 'performance' ? 'Performance' : 'Recording quality';
+    const title = `${basis} ${rating}/10 in the reviews` + (m.q ? ' · Q: the recording is singled out' : '');
+    const el = h('span', { class: 'mag-dot' + (m.q ? ' mag-q' : '') + (cls ? ' ' + cls : ''),
         title, 'aria-label': title, role: 'img' }, m.q ? 'Q' : '');
-    if (known && !m.q) el.style.setProperty('--mag-hue', M.hue(m.quality));
+    el.style.setProperty('--mag-hue', M.hue(rating));
     return el;
 };
 
@@ -181,8 +182,8 @@ M.paintList = () => {
         d.refreshing ? h('div', { class: 'small muted mag-refreshing' }, h('span', { class: 'spinner small' }),
             ` Looking on Qobuz again for ${plural(d.refreshing, 'album')} missing or incomplete a day ago…`) : null,
         h('div', { class: 'mag-legend small muted' },
-            M.dot({ quality: 5 }), M.dot({ quality: 7.5 }), M.dot({ quality: 10 }), ' sound quality in the reviews, all good recordings ·',
-            M.dot({ q: true }), ' outstanding ·', M.dot({ quality: null }), ' sound not described')].filter(Boolean));
+            M.dot({ rating: 5 }), M.dot({ rating: 7.5 }), M.dot({ rating: 10 }),
+            ' rating (sound, else performance) ·', M.dot({ rating: 9, q: true }), ' great sound')].filter(Boolean));
     const agreed = d.entries.filter(c => c.mag.agreement > 1), single = d.entries.filter(c => c.mag.agreement === 1);
     if (agreed.length) M.list.append(h('h3', { class: 'mag-section' }, 'Agreed by several magazines'), K.qobuzList(agreed, 'magazines'));
     if (single.length) M.list.append(h('h3', { class: 'mag-section' }, agreed.length ? 'Recommended by one magazine' : 'Recommended'),
