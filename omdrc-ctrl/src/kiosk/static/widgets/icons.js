@@ -26,6 +26,10 @@ const SHAPES = {
         ['path', { d: 'M12 14 V17 M8.5 19.5 H15.5 M9.5 19.5 L10 17 H14 L14.5 19.5' }]],
     // review later: a bookmark ribbon
     bookmark: [['path', { d: 'M7 4 H17 V20 L12 16 L7 20 Z' }]],
+    // a page with its corner folded and lines: the month's document
+    document: [['path', { d: 'M6.5 3.5 H14 L18.5 8 V20.5 H6.5 Z M14 3.5 V8 H18.5' }], ['path', { d: 'M9 12 H16 M9 15 H16 M9 18 H13.5' }]],
+    // an arrow up out of a tray: upload
+    upload: [['path', { d: 'M12 15.5 V4 M7.5 8.5 L12 4 L16.5 8.5' }], ['path', { d: 'M4.5 14 V19.5 H19.5 V14' }]],
     // the music magazines' recommendations: an open magazine
     magazine: [['path', { d: 'M3.5 6 Q7.5 4.5 12 6.5 Q16.5 4.5 20.5 6 V18.5 Q16.5 17 12 19 Q7.5 17 3.5 18.5 Z' }],
         ['path', { d: 'M12 6.5 V19 M6 9 H9.5 M6 11.5 H9.5 M14.5 9 H18 M14.5 11.5 H18' }]],

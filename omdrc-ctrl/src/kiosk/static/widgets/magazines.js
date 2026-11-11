@@ -46,7 +46,8 @@ M.block = (c, { open = false } = {}) => {
             r.award ? h('span', { class: 'mag-review-award' }, ' · ' + r.award) : null,
             r.rating ? h('span', { class: 'muted' }, ' · ' + r.rating) : null,
             r.reviewer ? h('span', { class: 'muted' }, ' · ' + r.reviewer) : null,
-            r.page ? h('button', { type: 'button', class: 'btn link mag-page', title: 'Open the issue at the review',
+            r.remote ? h('span', { class: 'muted', title: 'Read on another box: its PDF is there' }, ` · ${r.box}`) : null,
+            r.page && !r.remote ? h('button', { type: 'button', class: 'btn link mag-page', title: 'Open the issue at the review',
                 onclick: e => { e.stopPropagation(); M.openPdf(r.month, r.slug, r.page); } }, `p. ${r.page} ›`) : null),
         r.artistic ? h('p', {}, r.artistic) : null,
         r.sound ? h('p', { class: 'mag-sound' }, h('span', { class: 'mag-label' }, 'Sound '), r.sound) : null)));
@@ -117,7 +118,7 @@ M.paintHead = () => {
     const go = key => { setPref('month', key); M.sig = null; M.refresh(); };
     const pick = h('select', { class: 'mag-month', 'aria-label': 'Month', disabled: !list.length,
         onchange: e => go(e.target.value) },
-        list.length ? list.map(m => h('option', { value: m.key, selected: m.key === d.month }, m.label))
+        list.length ? list.map(m => h('option', { value: m.key, selected: m.key === d.month }, M.short(m.key)))
             : h('option', {}, 'No issues yet'));
     K.clear(M.head).append(...[
         h('button', { type: 'button', class: 'btn mag-step', title: 'Earlier month', 'aria-label': 'Earlier month',
@@ -126,11 +127,13 @@ M.paintHead = () => {
         h('button', { type: 'button', class: 'btn mag-step', title: 'Later month', 'aria-label': 'Later month',
             disabled: i <= 0, onclick: () => go(list[i - 1].key) }, '›'),
         h('span', { class: 'spacer' }),
-        d.month ? h('button', { type: 'button', class: 'btn', title: 'The month’s document, cross-referenced',
-            onclick: () => M.document() }, 'Document') : null,
-        h('button', { type: 'button', class: 'btn primary', title: 'Upload magazine issues (PDF)',
-            disabled: !!M.uploading, onclick: () => M.file.click() }, '⇪ Upload')].filter(Boolean));
+        d.month ? h('button', { type: 'button', class: 'btn mag-icon', title: 'The month’s document, cross-referenced',
+            'aria-label': 'The month’s document', onclick: () => M.document() }, K.tIcon('document')) : null,
+        h('button', { type: 'button', class: 'btn primary mag-icon', title: 'Upload magazine issues (PDF)',
+            'aria-label': 'Upload magazine issues', disabled: !!M.uploading, onclick: () => M.file.click() }, K.tIcon('upload'))].filter(Boolean));
 };
+// "Nov 2026": the month picker, the arrows and the two buttons share one line on a phone
+M.short = key => `${new Date(+key.slice(0, 4), +key.slice(5) - 1, 1).toLocaleString('en', { month: 'short' })} ${key.slice(0, 4)}`;
 
 M.paintJob = () => {
     const j = M.d.job, items = j.items || [];
@@ -171,7 +174,7 @@ M.paintList = () => {
     M.info.append(...[
         h('div', { class: 'mag-issues' }, d.issues.map(i => h('button', { type: 'button', class: 'chip mag-issue',
             title: `${i.issue || ''} — ${i.picks} recommendations (tap: open or remove)`,
-            onclick: e => M.issueMenu(i, e.currentTarget) }, `${i.magazine} · ${i.picks}`))),
+            onclick: e => M.issueMenu(i, e.currentTarget) }, `${i.magazine} · ${i.picks}` + (i.remote ? ` · ${i.box}` : '')))),
         h('div', { class: 'qz-summary small muted' }, `${d.label}: ${plural(n, 'recommendation')}`
             + (d.agreed ? `, ${d.agreed} agreed by several magazines` : '')),
         d.refreshing ? h('div', { class: 'small muted mag-refreshing' }, h('span', { class: 'spinner small' }),
@@ -239,8 +242,10 @@ M.issueMenu = (issue, anchor) => {
         onclick: () => { M.closeMenu(); run(); } }, label);
     const menu = M.menuEl = h('div', { class: 'menu-pop qz-tilemenu', role: 'menu', 'aria-label': issue.magazine },
         h('div', { class: 'qz-tilemenu-head' }, `${issue.magazine} — ${issue.issue || M.d.label}`),
-        item('Open the PDF', () => M.openPdf(M.d.month, issue.slug)),
-        item('Remove this issue', async () => {
+        // read on another box (shared through the DR log's repository): its PDF stays there
+        issue.remote ? h('div', { class: 'small muted mag-remote-note' }, `Read on ${issue.box}, shared through GitHub; the PDF is on ${issue.box}.`) : null,
+        issue.remote ? null : item('Open the PDF', () => M.openPdf(M.d.month, issue.slug)),
+        issue.remote ? null : item('Remove this issue', async () => {
             if (!await K.confirm({ title: 'Remove this issue?', message: `${issue.magazine}, ${issue.issue || M.d.label}: its PDF and its recommendations are deleted from the box.`, ok: 'Remove', danger: true })) return;
             const d = await M.post('/qobuz/magazines/remove', { month: M.d.month, slug: issue.slug });
             if (!d.ok) K.toast(d.error || 'Could not remove it', 'error');
