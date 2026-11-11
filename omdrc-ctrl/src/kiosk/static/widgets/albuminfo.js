@@ -296,7 +296,12 @@ const page = (a, actions) => {
     if (a.booklets && a.booklets.length) out.push(h('div', { class: 'ai-booklets' }, a.booklets.map(b =>
         h('button', { type: 'button', class: 'btn primary ai-booklet', title: b.description || b.name, onclick: () => K.openExternal(b.url) },
             h('span', { class: 'ai-bk-icon' }, '📖'),
-            h('span', { class: 'ai-bk-text' }, h('strong', {}, 'Booklet'), h('span', { class: 'small' }, b.name))))));
+            h('span', { class: 'ai-bk-text' }, h('strong', {}, 'Booklet'), h('span', { class: 'small' }, b.name)))),
+        // the booklet read by the AI: composers, context, works, the recording (widgets/booklet.js)
+        h('button', { type: 'button', class: 'btn ai-booklet bk-summary-btn', onclick: () => K.booklet.summary(a.id, a.title) },
+            h('span', { class: 'ai-bk-icon' }, '✦'),
+            h('span', { class: 'ai-bk-text' }, h('strong', {}, 'AI summary of the booklet'),
+                h('span', { class: 'small' }, 'Composer, context, works and recording, from the PDF only')))));
     if (a.catchline) out.push(h('p', { class: 'ai-catch' }, a.catchline));
 
     const rows = [

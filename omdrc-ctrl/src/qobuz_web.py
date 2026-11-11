@@ -537,6 +537,54 @@ def ai_listening():
             _listening_jobs.pop(job, None)
 
 
+@bp.route("/ai/booklet/<album_id>", methods=["GET", "POST"])
+def ai_booklet(album_id):
+    """GET: the summary made earlier for this album (summary: null when none).
+    POST {job, refresh}: read the album's PDF booklet and summarise it with the
+    configured AI; cancelled like a listening guide (/ai/listening/cancel)."""
+    guard = _guard(False)
+    if guard:
+        return guard
+    if not re.fullmatch(r"[0-9A-Za-z]{1,64}", album_id):
+        return jsonify({"ok": False, "error": "Invalid album."}), 400
+    cached = qobuz_ai.cached_booklet_summary(_state_dir(), album_id)
+    if request.method == "GET":
+        response = jsonify({"ok": True, "summary": cached})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    guard = _ai_mutation_guard()
+    if guard:
+        return guard
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "Invalid booklet request."}), 400
+    if cached and not body.get("refresh"):
+        return jsonify({"ok": True, "summary": cached})
+    job = body.get("job")
+    try:
+        uuid.UUID(job if isinstance(job, str) and len(job) == 36 else "")
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid summary session."}), 400
+    cancel = threading.Event()
+    with _listening_lock:
+        if _listening_cancelled.pop(job, None) is not None:
+            cancel.set()
+        _listening_jobs[job] = cancel
+    try:
+        album = catalog().album(album_id)
+        answer = qobuz_ai.booklet_summary(_state_dir(), album_id, album, album.get("booklets") or [],
+                                          cancel=cancel)
+        notice = answer.pop("model_notice", "")
+        response = jsonify({"ok": True, "summary": answer, "model_notice": notice})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+    finally:
+        with _listening_lock:
+            _listening_jobs.pop(job, None)
+
+
 @bp.route("/ai/listening/cancel", methods=["POST"])
 def ai_listening_cancel():
     guard = _guard(False) or _ai_mutation_guard()

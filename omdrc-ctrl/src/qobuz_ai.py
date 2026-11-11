@@ -64,7 +64,8 @@ PROMPT_DIR = Path(__file__).resolve().with_name("prompts")
 PROMPTS = {"system": (), "listening-research": ("metadata",),
            "listening-guide": ("metadata", "research"),
            "recommend-research": ("quantity", "request"),
-           "recommend-queries": ("research",), "recommend-select": ("quantity", "data")}
+           "recommend-queries": ("research",), "recommend-select": ("quantity", "data"),
+           "booklet-summary": ("metadata", "booklet")}
 
 
 def prompt_path(state_dir, name):
@@ -563,8 +564,9 @@ def _ocr_booklet(data, cancel=None):
             return ""
 
 
-def _booklet_context(booklets, cancel=None):
+def _booklet_context(booklets, cancel=None, excerpt=None, limit=2 * MAX_BOOKLET_TEXT):
     """Read Qobuz-hosted PDFs only; a missing or image-only booklet is optional."""
+    excerpt = excerpt or _booklet_excerpt
     if not isinstance(booklets, list):
         return "", []
     sources, notes = [], []
@@ -607,10 +609,10 @@ def _booklet_context(booklets, cancel=None):
             continue
         name = str(item.get("description") or item.get("name") or "Digital booklet")[:160]
         sources.append({"url": url, "title": name})
-        notes.append(f"Booklet: {name}\nSource: {url}\n{_booklet_excerpt(content)}")
+        notes.append(f"Booklet: {name}\nSource: {url}\n{excerpt(content)}")
         if len(notes) == 2:
             break
-    return "\n\n".join(notes)[:2 * MAX_BOOKLET_TEXT], sources
+    return "\n\n".join(notes)[:limit], sources
 
 
 def listening_research(state_dir, album, tracks, post=None, cancel=None, booklets=None):
@@ -746,6 +748,124 @@ def listening_research(state_dir, album, tracks, post=None, cancel=None, booklet
             "performers": people("performers"), "sources": booklet_sources + [s for s in _sources(raw)
                 if s["url"] not in {b["url"] for b in booklet_sources}], "research_status": research_status,
             "provider": cfg["provider"], "model_notice": _take_model_notice(cfg)}
+
+
+# The recording facts a booklet summary keeps, in display order; live is the one flag.
+BOOKLET_RECORDING = ("live", "venue", "dates", "producer", "engineers", "equipment", "loudspeakers",
+                     "instruments", "format", "notes")
+BOOKLET_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "composers": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+            "properties": {"name": {"type": "string"}, "text": {"type": "string"}},
+            "required": ["name", "text"]}},
+        "context": {"type": "string"},
+        "works": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+            "properties": {"title": {"type": "string"}, "text": {"type": "string"}},
+            "required": ["title", "text"]}},
+        "recording": {"type": "object", "additionalProperties": False,
+            "properties": {key: {"type": "boolean" if key == "live" else "string"} for key in BOOKLET_RECORDING},
+            "required": list(BOOKLET_RECORDING)}},
+    "required": ["composers", "context", "works", "recording"]}
+# A summary reads far more of the booklet than the listening guide's excerpt: the whole notes, every language.
+MAX_SUMMARY_TEXT = 90000
+_booklet_lock = threading.Lock()
+
+
+def _summary_path(state_dir, album_id):
+    return Path(state_dir) / "booklet-summaries" / f"{album_id}.json"
+
+
+def cached_booklet_summary(state_dir, album_id):
+    """The summary made earlier for this album, or None."""
+    if not state_dir or not isinstance(album_id, str) or not re.fullmatch(r"[0-9A-Za-z]{1,64}", album_id):
+        return None
+    try:
+        data = json.loads(_summary_path(state_dir, album_id).read_text())
+        return data if isinstance(data, dict) and isinstance(data.get("works"), list) else None
+    except (OSError, ValueError):
+        return None
+
+
+def booklet_summary(state_dir, album_id, album, booklets, post=None, cancel=None):
+    """Summarise a release's PDF booklet, from the booklet alone, in four parts:
+    composers, context of the works, the works, the recording's technical facts."""
+    if not isinstance(album_id, str) or not re.fullmatch(r"[0-9A-Za-z]{1,64}", album_id):
+        raise AIError("Invalid album.")
+    if not isinstance(album, dict) or not isinstance(booklets, list) or not booklets:
+        raise AIError("This album has no booklet.")
+    cfg = configuration(state_dir)
+    if cfg["provider"] == "claude_account" and not account_ready():
+        raise AIError("Sign in to Claude Code on this server as the web service user first.")
+    if cfg["provider"] != "claude_account" and not cfg["key"]:
+        raise AIError("Add your API key in AI settings first.")
+
+    def field(value):
+        return value.strip()[:240] if isinstance(value, str) else str(value)[:240] if type(value) in (int, float) else ""
+    metadata = json.dumps({
+        "album": {key: field(album.get(key)) for key in ("title", "artist", "composer", "label", "year")},
+        "tracks": [{"number": i + 1, "title": field(t.get("title")), "work": field(t.get("work")),
+                    "composer": field(t.get("composer"))}
+                   for i, t in enumerate((album.get("track_list") or [])[:120]) if isinstance(t, dict)],
+    }, ensure_ascii=False)[:18000]
+    if not _booklet_lock.acquire(blocking=False):
+        raise AIError("A booklet summary is already being made. Please wait.")
+    try:
+        if cancel is not None and cancel.is_set():
+            raise AIError("Summary stopped.")
+        clean = lambda text: re.sub(r"[ \t]{3,}", "  ", re.sub(r"\n{3,}", "\n\n", text.replace("\x00", ""))).strip()
+        text, sources = _booklet_context(booklets, cancel, excerpt=clean, limit=MAX_SUMMARY_TEXT)
+        if not text:
+            raise AIError("Could not read text from this booklet (it may be scanned images only).")
+        if cancel is not None and cancel.is_set():
+            raise AIError("Summary stopped.")
+        prompt = _prompt(state_dir, "booklet-summary", metadata=metadata, booklet=text)
+        if post is not None:
+            transport = post
+        elif cfg["provider"] == "claude_account":
+            transport = lambda config, body, timeout: _claude_post(config, body, timeout, cancel=cancel)
+        else:
+            transport = _post
+        if cfg["provider"] == "openai":
+            result = transport(cfg, {"model": cfg["model"], "store": False, "max_output_tokens": 12000,
+                                     "input": prompt, "tools": [{"type": "function", "name": "booklet_summary",
+                                     "strict": True, "parameters": BOOKLET_SCHEMA}],
+                                     "tool_choice": {"type": "function", "name": "booklet_summary"}}, 300)
+            calls = [x for x in result.get("output", []) if x.get("type") == "function_call"
+                     and x.get("name") == "booklet_summary"]
+            answer = _json(calls[0].get("arguments", "")) if calls else {}
+        else:
+            result = transport(cfg, {"model": cfg["model"], "max_tokens": 12000,
+                                     "messages": [{"role": "user", "content": prompt}],
+                                     "tools": [{"name": "booklet_summary", "input_schema": BOOKLET_SCHEMA}],
+                                     "tool_choice": {"type": "tool", "name": "booklet_summary"}}, 300)
+            calls = [x for x in result.get("content", []) if x.get("type") == "tool_use"
+                     and x.get("name") == "booklet_summary"]
+            answer = calls[0].get("input", {}) if calls else {}
+    finally:
+        _booklet_lock.release()
+    if not isinstance(answer, dict) or not isinstance(answer.get("works"), list):
+        raise AIError("The AI returned an invalid booklet summary. Try again.")
+
+    def entries(key, name):
+        return [{name: field(e.get(name)), "text": e["text"].strip()[:8000]}
+                for e in (answer.get(key) if isinstance(answer.get(key), list) else [])[:30]
+                if isinstance(e, dict) and isinstance(e.get("text"), str) and e["text"].strip() and field(e.get(name))]
+    raw = answer.get("recording") if isinstance(answer.get("recording"), dict) else {}
+    recording = {key: (raw.get(key) is True) if key == "live" else
+                 (raw.get(key).strip()[:3000] if isinstance(raw.get(key), str) else "")
+                 for key in BOOKLET_RECORDING}
+    summary = {"composers": entries("composers", "name"),
+               "context": str(answer.get("context") or "").strip()[:12000],
+               "works": entries("works", "title"), "recording": recording, "sources": sources,
+               "provider": cfg["provider"], "model": cfg["model"], "made_at": int(time.time())}
+    try:
+        path = _summary_path(state_dir, album_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(path, summary)
+    except OSError:
+        pass   # the summary is still shown; it is only not kept
+    return {**summary, "model_notice": _take_model_notice(cfg)}
 
 
 SELECTION_SCHEMA = {

@@ -1,0 +1,27 @@
+# BOOKLET SUMMARY: one structured call, no web access.
+# Used: when the kiosk's Booklet chip asks the AI to summarise an album's
+#   digital booklet (Now page and album details). The model must fill the
+#   booklet_summary fields: composers, context, works and recording.
+# Placeholders (required):
+#   ${metadata}  JSON with the album (title, artist, composer, label, year)
+#                and its numbered tracks, to name the works correctly.
+#   ${booklet}   the text extracted from the release's PDF booklet(s).
+# Lines starting with # at the top of this file are not sent to the AI.
+
+Summarise this release's digital booklet for a listener. Use ONLY the booklet text below; the album metadata only helps you name the works. Do not add anything from your own knowledge or from elsewhere. When the booklet does not say something, leave that field empty rather than guessing. The booklet is often printed in several languages: read every language, and write the summary in English.
+
+Fill four parts:
+
+composers: one entry per composer the booklet writes about (for a pop, rock or jazz release, per artist or band): who they were and what the booklet says about their life, training, style and outlook. One to three paragraphs each, separated by blank lines.
+
+context: the context of the work or works as the booklet presents it: when, where and why the music was written, commissions, dedications, the composer's circumstances, the era, the premiere and reception. One to four paragraphs.
+
+works: one entry per work on the release (each symphony, concerto, sonata, song cycle or group of pieces the booklet discusses separately), titled as on the track list: the form, movements, character, what to listen for, and the booklet's analysis. One to three paragraphs each. For a single work, give one entry.
+
+recording: the technical facts of this recording only: whether it is a LIVE recording (live: true only when the booklet says it was recorded live, in concert or before an audience), venue or studio, recording dates and year, producer, recording/balance engineer, editing, mixing and mastering engineers, microphones, recorders, consoles and other equipment, monitor loudspeakers, instruments (e.g. which piano or the performers' historical instruments), formats and sample rates. Copy names exactly as printed. Put anything technical that does not fit a field into notes.
+
+Album metadata:
+${metadata}
+
+Booklet text:
+${booklet}

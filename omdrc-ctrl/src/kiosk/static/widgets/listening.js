@@ -14,8 +14,14 @@ const newJob = () => {
     const hex = [...b].map(n => n.toString(16).padStart(2, '0')).join('');
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
+// One guide per album: a Qobuz release by its id, anything else by its album name (the title only stands in when
+// there is no album, a single track).  The artist is left out: a compilation names a different one on every track.
 const keyOf = t => t && (t.qobuz_album ? 'q:' + t.qobuz_album :
-    'a:' + norm(t.album || t.title) + '|' + norm(t.artist) + '|' + norm(t.title));
+    t.album ? 'a:' + norm(t.album) : 'a:' + norm(t.title) + '|' + norm(t.artist));
+// How long an album change seen without a Qobuz id must hold before the guide follows it: at a track boundary the
+// renderer's status briefly reports a half-written line (no album, no id), which must not wipe the guide and the
+// section the listener picked.
+const UNSURE_CHANGE_MS = 7000;
 const STORAGE_KEY = 'omdrc.listening.v1';
 const CACHE_KEY = 'omdrc.listening.last-result.v2';
 G.materialKey = (albumKey, tracks) => JSON.stringify({ albumKey, provider: G.provider, model: G.model,
@@ -95,18 +101,38 @@ G.selectPlaying = () => {
     G.remember();
     G.paint();
 };
+// Two reports of the same track: an id on both decides; otherwise the titles, where one source may have cut an
+// "Artist - " prefix the other kept (the renderer's status line is split on " - ").
+const sameTrack = (a, b) => {
+    if (a?.track_id && b?.track_id) return String(a.track_id) === String(b.track_id);
+    const x = norm(a?.title), y = norm(b?.title);
+    return x === y || (!!x && !!y && (x.endsWith(' ' + y) || y.endsWith(' ' + x)));
+};
 G.observe = t => {
     if (!G.active || !t || !t.ok || !t.title) return;
     if (!t.qobuz_album && G.track?.qobuz_album && norm(t.album) === norm(G.track.album)) {
         t = { ...t, qobuz_album: G.track.qobuz_album,
-            track_id: t.track_id || (t.title === G.track.title ? G.track.track_id : '') };
+            track_id: t.track_id || (sameTrack(t, G.track) ? G.track.track_id : '') };
     }
-    const key = keyOf(t);
+    let key = keyOf(t);
     if (!key) return;
+    if (key !== G.albumKey && t.qobuz_album && G.track && !G.track.qobuz_album
+        && norm(t.album) && norm(t.album) === norm(G.track.album)) {
+        // The same album, now known by its Qobuz id: keep the guide and what is selected in it.
+        G.albumKey = key;
+        G.track = { ...G.track, qobuz_album: t.qobuz_album };
+    }
     if (key !== G.albumKey) {
-        G.tabScroll = 0;
-        const oldTabs = G.panel?.querySelector('.listening-tabs');
-        if (oldTabs) oldTabs.scrollLeft = 0;
+        // A Qobuz id on both sides is a sure change; anything else must hold for a while first.
+        const sure = !G.albumKey || (t.qobuz_album && G.track?.qobuz_album)
+            || (!t.qobuz_album && !G.track?.qobuz_album && norm(t.album) && norm(G.track?.album));
+        const now = Date.now();
+        if (!sure) {
+            if (G.pendingKey !== key) { G.pendingKey = key; G.pendingSince = now; return; }
+            if (now - G.pendingSince < UNSURE_CHANGE_MS) return;
+        }
+        G.pendingKey = null;
+        G.menuOpen = false;
         G.albumKey = key;
         G.track = t;
         G.guide = null;
@@ -116,13 +142,17 @@ G.observe = t => {
         G.selectedTrack = null;
         G.userSelected = false;
         G.research();
-    } else if (norm(G.track?.title) !== norm(t.title)
-        || (t.track_id && String(t.track_id) !== String(G.track?.track_id || ''))) {
+        return;
+    }
+    G.pendingKey = null;
+    if (!sameTrack(G.track, t)) {
         // Now, the Qobuz player and this guide's own poll all report the track, not all with its id:
         // a report without one is the same track, not a change (which flickered the guide to Overview).
         G.track = t;
         G.selectPlaying();
         G.remember();
+    } else if (t.track_id && !G.track.track_id) {
+        G.track = { ...G.track, track_id: t.track_id };
     }
 };
 G.open = async (t, source) => {
@@ -227,7 +257,6 @@ G.close = () => {
     clearInterval(G.poll);
     G.swipePreview?.remove();
     G.swipePreview = null;
-    G.tabsObserver?.disconnect();
     G.sizeObserver?.disconnect();
     G.panel?.remove();
     G.panel = null;
@@ -328,7 +357,6 @@ G.makePanel = () => {
     let touch = null;
     const nestedScroller = target => {
         for (let el = target; el && el !== G.panel; el = el.parentElement) {
-            if (el.matches('.listening-tabs')) return true;
             const style = getComputedStyle(el);
             if (/auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1) return true;
             if (/auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1) return true;
@@ -340,7 +368,7 @@ G.makePanel = () => {
     let side = null;
     G.panel.addEventListener('touchstart', e => {
         const point = e.touches[0];
-        side = point && e.touches.length === 1 && !G.collapsed && !e.target.closest('.listening-tabs-wrap')
+        side = point && e.touches.length === 1 && !G.collapsed && !e.target.closest('.listening-nav, .listening-menu')
             ? { x: point.clientX, y: point.clientY } : null;
         touch = point && G.panel.scrollTop <= 1 && !nestedScroller(e.target)
             && !e.target.closest('button, a, input, select, textarea')
@@ -488,11 +516,72 @@ G.label = () => {
 G.stripIcon = () => G.busy && G.provider?.startsWith('claude')
     ? h('span', { class: 'listening-icon busy listening-claude-pulse', 'aria-hidden': 'true' })
     : G.icon(G.busy ? 'busy' : '');
+// The guide's sections in one menu: Overview, the works, then the tracks when they have entries of their own.  A bar
+// shows where the guide is (‹ and › step, the middle opens the list); the list drops down under it, the playing
+// track marked, and closes on a pick.
+G.selectStop = stop => {
+    G.userSelected = true;
+    G.selected = stop.selected;
+    G.selectedTrack = stop.track;
+    G.menuOpen = false;
+    G.remember();
+    G.paint();
+    if (G.panel) G.panel.scrollTop = 0;
+};
+G.toggleMenu = open => {
+    G.menuOpen = open ?? !G.menuOpen;
+    G.menuScroll = null;
+    G.paint();
+};
+G.navigator = (items, singleTrackSections) => {
+    const stops = G.tabStops();
+    const at = stops.findIndex(stop => G.selectedTrack ? stop.track === G.selectedTrack
+        : !stop.track && stop.selected === G.selected);
+    const playing = G.trackNumber();
+    const where = !G.selectedTrack && G.selected < 0 ? 'Overview'
+        : G.selectedTrack ? `Track ${G.selectedTrack} of ${G.tracks.length}`
+        : `${singleTrackSections ? 'Track' : 'Work'} ${G.selected + 1} of ${G.guide.compositions.length}`;
+    const step = (dir, label) => h('button', { type: 'button', class: 'btn listening-step', title: label, 'aria-label': label,
+        disabled: stops.length < 2, onclick: () => G.step(dir) }, dir < 0 ? '‹' : '›');
+    const bar = h('div', { class: 'listening-nav' }, step(-1, 'Previous section'),
+        h('button', { type: 'button', class: 'listening-picker' + (G.menuOpen ? ' open' : ''),
+            'aria-haspopup': 'listbox', 'aria-expanded': String(!!G.menuOpen), onclick: () => G.toggleMenu() },
+            h('span', { class: 'listening-picker-text' }, h('small', {}, where), h('strong', {}, G.label())),
+            h('span', { class: 'listening-picker-caret', 'aria-hidden': 'true' }, '▾')),
+        step(1, 'Next section'));
+    if (!G.menuOpen) return [bar];
+    const menu = h('div', { class: 'listening-menu', role: 'listbox', 'aria-label': 'Guide sections' });
+    const option = (stop, text, extra = '') => {
+        const on = stops[at] === stop;
+        const isPlaying = playing && (stop.track ? stop.track === playing
+            : singleTrackSections && G.guide.compositions[stop.selected]?.tracks.includes(playing));
+        menu.append(h('button', { type: 'button', role: 'option', 'aria-selected': String(on),
+            class: 'listening-option' + (on ? ' on' : '') + extra, onclick: () => G.selectStop(stop) },
+            h('span', { class: 'listening-option-text' }, text),
+            isPlaying ? h('span', { class: 'listening-playing', title: 'Playing now' }, '▶') : null));
+    };
+    const group = text => menu.append(h('div', { class: 'listening-group', role: 'presentation' }, text));
+    stops.forEach((stop, index) => {
+        if (stop.selected < 0 && !stop.track) { option(stop, items[0].title); return; }
+        if (!stop.track) {
+            if (index === 1) group(singleTrackSections ? 'Tracks' : G.guide.compositions.length > 1 ? 'Works' : 'Work');
+            option(stop, items[stop.selected + 1].title);
+            return;
+        }
+        if (!stops[index - 1]?.track) group('Tracks');
+        option(stop, `${stop.track}. ${G.tracks[stop.track - 1]?.title || ''}`, ' track');
+    });
+    requestAnimationFrame(() => {
+        if (!menu.isConnected) return;
+        if (G.menuScroll != null) menu.scrollTop = G.menuScroll;
+        else menu.querySelector('.listening-option.on')?.scrollIntoView({ block: 'center' });
+        menu.addEventListener('scroll', () => { G.menuScroll = menu.scrollTop; }, { passive: true });
+    });
+    return [bar, menu];
+};
 G.paint = () => {
     G.changed();
     if (!G.panel) return;
-    G.tabsObserver?.disconnect();
-    G.tabScroll = G.panel.querySelector('.listening-tabs')?.scrollLeft ?? G.tabScroll ?? 0;
     if (G.singleTrackSections() && G.selectedTrack) {
         G.selected = G.guide.compositions.findIndex(section => section.tracks[0] === G.selectedTrack);
         G.selectedTrack = null;
@@ -500,8 +589,14 @@ G.paint = () => {
     }
     const active = G.guide?.compositions?.[G.selected];
     const label = G.label();
+    // Every player poll lands here; rebuilding an unchanged sheet would cut a scroll or a tap in progress.
+    const look = JSON.stringify([G.collapsed, G.busy, G.error, G.selected, G.selectedTrack, G.userSelected,
+        G.menuOpen, G.trackNumber(), label, G.track?.album, G.provider, !!G.guide]);
+    if (look === G.lastLook && G.guide === G.lastGuide && G.panel.childElementCount) return;
+    G.lastLook = look;
+    G.lastGuide = G.guide;
     G.panel.classList.toggle('collapsed', G.collapsed);
-    G.panel.backClose = G.collapsed ? null : G.minimize;     // Android Back (main.js)
+    G.panel.backClose = G.collapsed ? null : G.menuOpen ? () => G.toggleMenu(false) : G.minimize;     // Android Back (main.js)
     document.documentElement.toggleAttribute('data-ls-strip', G.collapsed);
     K.clear(G.panel);
     const icon = G.collapsed ? G.stripIcon() : G.icon(G.busy ? 'busy' : '');
@@ -517,53 +612,14 @@ G.paint = () => {
         h('strong', {}, 'Listening guide'),
         h('button', { type: 'button', class: 'chip', onclick: G.minimize }, '⌄ Minimize'),
         h('button', { type: 'button', class: 'chip', onclick: G.close }, G.busy ? 'Stop & close' : 'Close')),
-        h('div', { class: 'listening-subtitle' }, label));
+        h('div', { class: 'listening-subtitle' }, G.track?.album || label));
     if (G.busy) G.panel.append(h('p', { role: 'status' }, 'Researching this album…'));
     if (G.error) G.panel.append(h('p', { role: 'alert' }, G.error),
         h('button', { type: 'button', class: 'chip', onclick: G.research }, 'Retry'));
     if (!G.guide) return;
-    const tabs = h('div', { class: 'listening-tabs', role: 'tablist' });
-    const leftHint = h('span', { class: 'listening-tab-hint left', hidden: true, 'aria-hidden': 'true' }, '<');
-    const rightHint = h('span', { class: 'listening-tab-hint right', hidden: true, 'aria-hidden': 'true' }, '>');
     const items = [{ title: 'Overview', text: G.guide.overview }, ...G.guide.compositions];
     const singleTrackSections = G.singleTrackSections();
-    items.forEach((item, index) => tabs.append(h('button', { type: 'button', class: 'chip' + (!G.selectedTrack && G.selected === index - 1 ? ' on' : ''),
-        role: 'tab', 'aria-selected': String(!G.selectedTrack && G.selected === index - 1),
-        onclick: () => { G.userSelected = true; G.selectedTrack = null; G.selected = index - 1; G.remember(); G.paint(); } }, item.title)));
-    if (G.tracks?.length && !singleTrackSections) {
-        G.tracks.forEach((track, index) => tabs.append(h('button', {
-            type: 'button', class: 'chip' + (G.selectedTrack === index + 1 ? ' on' : ''),
-            role: 'tab', 'aria-selected': String(G.selectedTrack === index + 1),
-            'aria-current': G.trackNumber() === index + 1 ? 'true' : 'false',
-            onclick: () => {
-                G.userSelected = true;
-                G.selectedTrack = index + 1;
-                G.selected = G.guide.compositions.findIndex(s => s.tracks.includes(index + 1));
-                G.remember();
-                G.paint();
-            },
-        }, `${index + 1}. ${track.title}`)));
-    }
-    G.panel.append(h('div', { class: 'listening-tabs-wrap' }, tabs, leftHint, rightHint));
-    const updateHints = () => {
-        if (!tabs.isConnected) return;
-        G.tabScroll = tabs.scrollLeft;
-        leftHint.hidden = tabs.scrollLeft < 2;
-        rightHint.hidden = tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 2;
-    };
-    tabs.addEventListener('scroll', updateHints, { passive: true });
-    G.tabsObserver = new ResizeObserver(updateHints);
-    G.tabsObserver.observe(tabs);
-    requestAnimationFrame(() => {
-        tabs.scrollLeft = G.tabScroll || 0;
-        const on = tabs.querySelector('.chip.on');
-        if (on) {
-            const left = on.offsetLeft - tabs.offsetLeft, right = left + on.offsetWidth;
-            if (left < tabs.scrollLeft) tabs.scrollLeft = left;
-            else if (right > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = right - tabs.clientWidth;
-        }
-        updateHints();
-    });
+    G.panel.append(...G.navigator(items, singleTrackSections));
     const shown = G.selectedTrack ? {
         title: G.tracks[G.selectedTrack - 1]?.title || `Track ${G.selectedTrack}`,
         text: G.guide.track_notes?.find(n => n.track === G.selectedTrack)?.text ||

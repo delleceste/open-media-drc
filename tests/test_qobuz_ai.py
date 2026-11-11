@@ -143,6 +143,38 @@ class AITest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertNotIn("test-secret", json.dumps(calls))
 
+    def test_booklet_summary_reads_the_pdf_only_and_is_kept(self):
+        self.configure("claude")
+        sent = []
+        def post(_cfg, body, _timeout):
+            sent.append(body)
+            return {"content": [{"type": "tool_use", "name": "booklet_summary", "input": {
+                "composers": [{"name": "Kurtag", "text": "Born 1926."}, {"name": "", "text": "nameless"}],
+                "context": "Written for the Halle.",
+                "works": [{"title": "Double Concerto", "text": "Two soloists."}],
+                "recording": {"live": "yes", "venue": "Bridgewater Hall", "dates": "2025", "producer": "",
+                              "engineers": "Ada Smith", "equipment": "Neumann", "loudspeakers": "B&W 801",
+                              "instruments": "", "format": "24/96", "notes": ""}}}]}
+        booklet = ("Booklet: Notes\nSource: https://static.qobuz.com/goodies/1/a.pdf\nRecorded at Bridgewater Hall.",
+                   [{"url": "https://static.qobuz.com/goodies/1/a.pdf", "title": "Notes"}])
+        album = {"title": "Ades", "artist": "Halle", "track_list": [{"title": "I. Poco allegretto", "work": "Double Concerto"}]}
+        with patch.object(ai, "_booklet_context", return_value=booklet) as context:
+            answer = ai.booklet_summary(self.root, "igbge0u8", album, [{"url": "x"}], post=post)
+        self.assertEqual(context.call_args.kwargs["limit"], ai.MAX_SUMMARY_TEXT)
+        self.assertNotIn("web_search", json.dumps(sent[0]["tools"]))
+        self.assertIn("Recorded at Bridgewater Hall.", sent[0]["messages"][0]["content"])
+        self.assertIn("Double Concerto", sent[0]["messages"][0]["content"])
+        self.assertIs(answer["recording"]["live"], False, "only a true boolean marks a live recording")
+        self.assertEqual(answer["recording"]["loudspeakers"], "B&W 801")
+        self.assertEqual([c["name"] for c in answer["composers"]], ["Kurtag"])
+        self.assertEqual(ai.cached_booklet_summary(self.root, "igbge0u8")["works"][0]["title"], "Double Concerto")
+        self.assertIsNone(ai.cached_booklet_summary(self.root, "../etc"))
+        with self.assertRaisesRegex(ai.AIError, "no booklet"):
+            ai.booklet_summary(self.root, "igbge0u8", album, [], post=post)
+        with (patch.object(ai, "_booklet_context", return_value=("", [])),
+              self.assertRaisesRegex(ai.AIError, "Could not read text")):
+            ai.booklet_summary(self.root, "igbge0u8", album, [{"url": "x"}], post=post)
+
     def test_booklet_pdf_is_read_and_used_as_a_cited_source(self):
         self.configure("claude")
         stream = b'BT /F1 12 Tf 72 720 Td (Recorded at Studio One, engineer Ada Smith, Neumann microphones.) Tj ET'
@@ -471,6 +503,26 @@ class RouteTest(unittest.TestCase):
         self.assertIn(body["prompt"], response.get_json()["prompt"])
         self.assertNotIn("${request}", response.get_json()["prompt"])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_booklet_route_serves_the_kept_summary_and_guards_making_one(self):
+        job = "a38cbe40-f3af-44af-a76f-59826db907b1"
+        self.assertEqual(self.client.get("/qobuz/ai/booklet/12ab").get_json(), {"ok": True, "summary": None})
+        self.assertEqual(self.client.get("/qobuz/ai/booklet/a-b").status_code, 400)
+        self.assertEqual(self.client.post("/qobuz/ai/booklet/12ab", json={"job": job}).status_code, 403)
+        headers = {"X-Qobuz-AI": "1"}
+        self.assertEqual(self.client.post("/qobuz/ai/booklet/12ab", json={"job": "x"}, headers=headers).status_code, 400)
+        made = {"works": [{"title": "W", "text": "T"}], "model_notice": ""}
+        with (patch.object(ai, "booklet_summary", return_value=made) as summary, patch.object(web, "catalog") as catalog):
+            catalog.return_value.album.return_value = {"booklets": [{"url": "u"}]}
+            result = self.client.post("/qobuz/ai/booklet/12ab", json={"job": job}, headers=headers)
+            self.assertEqual(result.get_json()["summary"]["works"][0]["title"], "W")
+            self.assertEqual(summary.call_args.args[3], [{"url": "u"}])
+            self.assertFalse(summary.call_args.kwargs["cancel"].is_set())
+        with patch.object(ai, "cached_booklet_summary", return_value={"works": []}), \
+                patch.object(ai, "booklet_summary") as summary:
+            self.assertEqual(self.client.post("/qobuz/ai/booklet/12ab", json={"job": job}, headers=headers)
+                             .get_json()["summary"], {"works": []})
+            summary.assert_not_called()
 
     def test_listening_route_requires_guard_and_passes_cancel_event(self):
         job = "a38cbe40-f3af-44af-a76f-59826db907b1"

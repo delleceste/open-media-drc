@@ -470,9 +470,11 @@ P.remove = async (a, folder) => {
     if (!d.ok) { K.toast(d.error || 'Could not remove album', 'error'); return; }
     await P.refresh();
 };
+// The sheet opens at once, reading the Library inside it: reading the folders from Qobuz takes seconds, and a tap
+// that shows nothing until then looks like it did nothing (and invites a second one).
 K.saveQobuzFavorite = async a => {
-    const d = await K.api('/qobuz/favorites', { timeout: 60000 });
-    if (!d.ok) { K.toast(d.error || 'Could not read folders', 'error'); return; }
+    if (K.saveQobuzFavorite.open?.isConnected) return;
+    let d = null;
     const parts = P.visible && P.layout === 'grid' && P.pathName() !== 'Qobuz' ? [...P.path] : [];
     const pathName = () => parts.join('/');
     const title = h('strong', {}, 'Library');
@@ -493,13 +495,16 @@ K.saveQobuzFavorite = async a => {
     const close = () => scrim.remove();
     const save = async () => {
         const path = pathName();
-        if (!path) return;
+        if (!path || saveButton.disabled) return;
+        const label = saveButton.textContent;
         saveButton.disabled = true;
+        K.clear(saveButton).append(h('span', { class: 'spinner small' }), ' Saving…');
         const body = path === 'Qobuz'
             ? { action: 'favorite', album_id: a.id }
             : { action: 'add', album_id: a.id, path };
         const r = await K.api('/qobuz/favorites', { json: body, timeout: 60000 });
         saveButton.disabled = false;
+        saveButton.textContent = label;
         if (!r.ok) { K.toast(r.error || 'Could not save album', 'error'); return; }
         close(); K.toast(r.already_present ? 'Already in that folder' : `Saved in ${path}`);
         if (P.visible) P.refresh();
@@ -524,6 +529,7 @@ K.saveQobuzFavorite = async a => {
             h('div', { class: 'fav-picker-path' }, back, title),
             grid, existing, newRow,
             h('div', { class: 'sheet-actions' }, newButton, h('span', { class: 'spacer' }), saveButton)));
+    K.saveQobuzFavorite.open = scrim;
     let paintToken = 0;
     const paint = async () => {
         const path = pathName(), token = ++paintToken;
@@ -562,6 +568,12 @@ K.saveQobuzFavorite = async a => {
         }
     };
     document.getElementById('overlay-root').append(scrim);
+    back.hidden = newButton.hidden = saveButton.hidden = true;
+    grid.append(h('div', { class: 'qz-working fav-picker-loading' }, h('div', { class: 'spinner' }),
+        h('div', { class: 'muted' }, 'Reading your Library…')));
+    d = await K.api('/qobuz/favorites', { timeout: 60000 });
+    if (!scrim.isConnected) return;
+    if (!d.ok) { close(); K.toast(d.error || 'Could not read folders', 'error'); return; }
     paint();
 };
 

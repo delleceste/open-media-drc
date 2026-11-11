@@ -2621,8 +2621,9 @@ P.openFull = ({ offset = 0, instant = false } = {}) => {
     v.infoBtn = h('button', { type: 'button', class: 'btn qz-finfo', hidden: true, onclick: () => {
         const t = P.trackInfo();
         if (t && t.album && t.album.id) K.albumInfo(t.album.id);
-    } }, 'Album details ›');
-    P.queueTools.append(v.infoBtn);
+    } }, 'Details ›');
+    v.booklet = K.booklet.chip();       // the album's booklet: its PDF, ▾ for the AI summary (widgets/booklet.js)
+    P.queueTools.append(h('span', { class: 'qz-finfo-row' }, v.infoBtn, v.booklet.el));
     // Tap the cover to seek; a downward swipe minimizes the player.
     v.cover.classList.add('seek-zone');
     v.ring = new K.SeekRing(v.cover, { usable: P.seekable, elapsed: () => P.elapsedNow(),
@@ -2924,6 +2925,7 @@ P.paintViews = () => {
         if (!v.full) K.cover.tintStrips(v.cover.dataset.src);
         if (v.full) {
             v.infoBtn.hidden = !(album && album.id);
+            v.booklet.show(album && album.id || '', album && album.title || '');
             const aid = album && album.id || '';       // the album's awards, above its label (v.detail)
             if (v.awardsFor !== aid) { v.awardsFor = aid; K.clear(v.awards); if (aid) v.awards.append(K.awardsBox(album)); }
             v.work.textContent = t && t.work ? t.work : '';
