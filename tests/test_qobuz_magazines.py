@@ -71,7 +71,7 @@ class ReadingTest(unittest.TestCase):
             self.assertNotIn("web_search", name)
             if name == "magazine_issue":
                 return {"content": [{"type": "tool_use", "name": name, "input": {
-                    "magazine": "Diapason", "language": "fr", "year": 2026, "month": 12, "issue": "Décembre 2026"}}]}
+                    "magazine": "DIAPASON n° 999", "language": "fr", "year": 2026, "month": 12, "issue": "Décembre 2026"}}]}
             return {"content": [{"type": "tool_use", "name": name, "input": {"picks": [
                 pick(award="Diapason d'or", page=4),
                 pick(artistic="Short.", sound="", page=40),               # the same disc, from the summary page
@@ -96,6 +96,14 @@ class ReadingTest(unittest.TestCase):
         self.assertTrue((self.root / "2026/12/diapason-2026-12.pdf").is_file())
         self.assertFalse(pdf.exists())
         self.assertIn("English", sent[1]["messages"][0]["content"])
+
+    def test_magazine_names_and_file_names_are_normalised(self):
+        for given, name in (("BBC Music", "BBC Music Magazine"), ("Gramophone Magazine UK", "Gramophone"),
+                            ("DIAPASON N° 745 - décembre 2026", "Diapason"), ("FONO FORUM", "Fono Forum"),
+                            ("Revue XYZ 12 2026", "Revue XYZ"), ("", "Magazine")):
+            self.assertEqual(mags.canonical_magazine(given), name)
+        self.assertEqual(mags.issue_slug("BBC Music Magazine, Dec 2026", "2026-12"), "bbc-music-magazine-2026-12")
+        self.assertEqual(mags.issue_slug("Crescendo Magazin", "2027-01"), "crescendo-2027-01")
 
     def test_a_long_work_title_falls_back_to_the_names(self):
         card = {"id": "x1", "title": "Sibelius: Complete Symphonies", "artist": "Klaus Mäkelä",

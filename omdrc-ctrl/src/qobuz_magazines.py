@@ -159,6 +159,43 @@ def inbox(root: Path) -> list[Path]:
     return sorted((root / "inbox").glob("*.pdf"))
 
 
+# The magazines' own names, whatever the AI or a file name calls them ("BBC Music",
+# "Gramophone Magazine UK", "DIAPASON N° 745"): one name per magazine, so its
+# issues file alike and two spellings never count as two magazines agreeing.
+KNOWN_MAGAZINES = (
+    (r"\bgramophone\b", "Gramophone"), (r"\bdiapason\b", "Diapason"),
+    (r"\bbbc\b", "BBC Music Magazine"), (r"\bclassica\b", "Classica"),
+    (r"\bfono\s*forum\b", "Fono Forum"), (r"\bfanfare\b", "Fanfare"),
+    (r"\bamerican\s+record\s+guide\b", "American Record Guide"), (r"\bpizzicato\b", "Pizzicato"),
+    (r"\bopernwelt\b", "Opernwelt"), (r"\bcrescendo\b", "Crescendo"), (r"\bamadeus\b", "Amadeus"),
+    (r"\bmusica\b", "Musica"), (r"\bscherzo\b", "Scherzo"), (r"\britmo\b", "Ritmo"),
+    (r"\blimelight\b", "Limelight"), (r"\bstereophile\b", "Stereophile"),
+    (r"\babsolute\s+sound\b", "The Absolute Sound"), (r"\bhi\W?fi\s+news\b", "Hi-Fi News"),
+    (r"\bresmusica\b", "ResMusica"), (r"\bopera\s+magazine\b|^opera$", "Opera"))
+
+
+def canonical_magazine(name: str) -> str:
+    """One name per magazine; an unknown one is cleaned of issue numbers, dates and
+    "magazine", and capitalised as it was written (or title-cased if all one case)."""
+    folded = _fold(name).replace("_", " ")
+    for pattern, canonical in KNOWN_MAGAZINES:
+        if re.search(pattern, folded.strip()):
+            return canonical
+    months = "|".join(w for words in _MONTH_WORDS.values() for w in words.split())
+    text = re.sub(r"\b(?:n[°o]\.?|no\.?|nr\.?|issue|num[eé]ro)\s*\d+\b|\b(?:19|20)\d\d\b|\b\d+\b", " ", name or "", flags=re.I)
+    text = re.sub(rf"\b(?:{months})\b\.?", " ", text, flags=re.I)
+    text = re.sub(r"\b(?:magazine|uk|edition|pdf)\b", " ", text, flags=re.I)
+    text = re.sub(r"[_\s\-–—·|/,.]+", " ", text).strip(" -")
+    if not text:
+        return "Magazine"
+    return text.title() if text.isupper() or text.islower() else text
+
+
+def issue_slug(magazine: str, key: str) -> str:
+    """The issue's file name: <magazine>-<YYYY>-<MM>, lower case ASCII and hyphens."""
+    return f"{_safe(canonical_magazine(magazine), 50)}-{key}"
+
+
 def _safe(text: str, limit: int = 60) -> str:
     text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:limit] or "issue"
@@ -385,7 +422,7 @@ def identify(cfg, path: Path, original: str, pages: list[str], cancel=None, post
     year, month = answer.get("year"), answer.get("month")
     if not (type(year) is int and 1950 <= year <= 2100 and type(month) is int and 1 <= month <= 12):
         year, month = guess["year"], guess["month"]
-    magazine = str(answer.get("magazine") or "").strip()[:80] or Path(original).stem[:80] or "Magazine"
+    magazine = canonical_magazine(str(answer.get("magazine") or "").strip()[:80] or Path(original).stem[:80])
     language = str(answer.get("language") or "").strip().lower()[:2]
     return {"magazine": magazine, "language": language, "year": year, "month": month,
             "issue": str(answer.get("issue") or "").strip()[:120]}
@@ -667,7 +704,7 @@ def read_issue(root: Path, cfg, path: Path, catalog_fn, cancel=None, post=None, 
         folder = _month_dir(root, key)
     else:
         key, folder = "", root / "undated"
-    slug = _safe(issue["magazine"], 50) + (f"-{key}" if key else f"-{path.stem[-20:]}")
+    slug = issue_slug(issue["magazine"], key) if key else issue_slug(issue["magazine"], "undated-" + path.stem[16:22])
     folder.mkdir(parents=True, exist_ok=True)
     data = {**issue, "slug": slug, "uploaded": original, "pages": len(pages), "read_at": int(time.time()),
             "provider": cfg["provider"], "model": cfg["model"], "picks": picks}
