@@ -183,7 +183,8 @@ M.paintList = () => {
     M.info.append(...[
         h('div', { class: 'mag-issues' }, d.issues.map(i => h('button', { type: 'button', class: 'chip mag-issue',
             title: `${i.issue || ''} — ${i.picks} recommendations (tap: open or remove)`,
-            onclick: e => M.issueMenu(i, e.currentTarget) }, `${i.magazine} · ${i.picks}` + (i.remote ? ` · ${i.box}` : '')))),
+            onclick: e => M.issueMenu(i, e.currentTarget) }, `${i.magazine}` + (i.span ? ` (${i.span})` : '')
+                + ` · ${i.picks}` + (i.remote ? ` · ${i.box}` : '')))),
         h('div', { class: 'qz-summary small muted' }, `${d.label}: ${plural(n, 'recommendation')}`
             + (d.agreed ? `, ${d.agreed} agreed by several magazines` : '')),
         d.refreshing ? h('div', { class: 'small muted mag-refreshing' }, h('span', { class: 'spinner small' }),
@@ -250,13 +251,14 @@ M.issueMenu = (issue, anchor) => {
     const item = (label, run) => h('button', { type: 'button', class: 'menu-item', role: 'menuitem',
         onclick: () => { M.closeMenu(); run(); } }, label);
     const menu = M.menuEl = h('div', { class: 'menu-pop qz-tilemenu', role: 'menu', 'aria-label': issue.magazine },
-        h('div', { class: 'qz-tilemenu-head' }, `${issue.magazine} — ${issue.issue || M.d.label}`),
+        h('div', { class: 'qz-tilemenu-head' }, `${issue.magazine} — ${issue.issue || M.d.label}` + (issue.span ? ` (${issue.span})` : '')),
         // read on another box (shared through the DR log's repository): its PDF stays there
         issue.remote ? h('div', { class: 'small muted mag-remote-note' }, `Read on ${issue.box}, shared through GitHub; the PDF is on ${issue.box}.`) : null,
-        issue.remote ? null : item('Open the PDF', () => M.openPdf(M.d.month, issue.slug)),
+        // a two-month issue is filed under its first month (issue.filed)
+        issue.remote ? null : item('Open the PDF', () => M.openPdf(issue.filed || M.d.month, issue.slug)),
         issue.remote ? null : item('Remove this issue', async () => {
             if (!await K.confirm({ title: 'Remove this issue?', message: `${issue.magazine}, ${issue.issue || M.d.label}: its PDF and its recommendations are deleted from the box.`, ok: 'Remove', danger: true })) return;
-            const d = await M.post('/qobuz/magazines/remove', { month: M.d.month, slug: issue.slug });
+            const d = await M.post('/qobuz/magazines/remove', { month: issue.filed || M.d.month, slug: issue.slug });
             if (!d.ok) K.toast(d.error || 'Could not remove it', 'error');
             M.sig = null; M.refresh();
         }));

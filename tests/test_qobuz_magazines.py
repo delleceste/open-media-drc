@@ -318,6 +318,19 @@ class ReadingTest(unittest.TestCase):
                          [("A", 10.0, "performance", False), ("C", 9.0, "sound", True),
                           ("D", 7.0, "performance", False), ("B", 6.0, "sound", False)])
 
+    def test_a_summer_issue_covers_july_and_august(self):
+        slug = self.write_issue("2026-07", "Diapason", [pick(award="Diapason d'or")])
+        path = self.root / "2026/07" / f"{slug}.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "issue": "N° 757 – Été 2026"}))
+        self.write_issue("2026-08", "Gramophone", [pick(catalogue="")])
+        self.assertEqual(mags.months(self.root), ["2026-08", "2026-07"])
+        august = mags.month_view(self.root, "2026-08")
+        self.assertEqual([(i["magazine"], i["filed"], i["span"]) for i in august["issues"]],
+                         [("Gramophone", "2026-08", ""), ("Diapason", "2026-07", "Jul–Aug")])
+        self.assertEqual(august["entries"][0]["mag"]["agreement"], 2)
+        self.assertEqual(mags.month_view(self.root, "2026-09")["issues"], [], "not past August")
+        self.assertEqual(mags.guess_issue("n-757-ete-2026-diapason.pdf", []), {"year": 2026, "month": 7})
+
     def test_same_recording_needs_shared_performers(self):
         a = pick(catalogue="")
         self.assertTrue(mags.same_recording(a, pick(catalogue="", works="Symphonie n° 5 en ut mineur")))

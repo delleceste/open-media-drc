@@ -84,8 +84,9 @@ PICKS_SCHEMA = {
 ISSUE_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {"magazine": {"type": "string"}, "language": {"type": "string"},
-                   "year": {"type": "integer"}, "month": {"type": "integer"}, "issue": {"type": "string"}},
-    "required": ["magazine", "language", "year", "month", "issue"]}
+                   "year": {"type": "integer"}, "month": {"type": "integer"}, "issue": {"type": "string"},
+                   "months_covered": {"type": "integer"}},
+    "required": ["magazine", "language", "year", "month", "issue", "months_covered"]}
 CONSENSUS_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {"verdicts": {"type": "array", "items": {
@@ -207,13 +208,57 @@ def _remote() -> dict:
     return found
 
 
+# Issues dated by a season or by two months ("Été 2026", "July/August", "Sommer"): such an
+# issue is filed under its first month and shown in each month it covers.
+_SPAN_WORDS = re.compile(r"\b(?:ete|summer|sommer|estate|verano|hiver|winter|inverno|invierno)\b")
+
+
+def months_covered(issue: dict) -> int:
+    """How many months an issue covers: as recognised when it was read, else told from
+    how it is named ("Été 2026", "Juillet-Août", "July/August"); 1 to 3."""
+    given = issue.get("covers")
+    if type(given) is int and 1 <= given <= 3:
+        return given
+    text = _fold(f"{issue.get('issue', '')} {issue.get('uploaded', '')}").replace("_", " ")
+    named = [n for n, words in _MONTH_WORDS.items() for w in words.split() if re.search(rf"\b{w}\b", text)]
+    if len(set(named)) >= 2:
+        first, last = min(named), max(named)
+        return max(1, min(3, last - first + 1 if last - first < 6 else 12 - last + first + 1))
+    return 2 if _SPAN_WORDS.search(text) else 1
+
+
+def span_label(key: str, count: int) -> str:
+    """"Jul–Aug" for a two-month issue filed under July; "" for a single month."""
+    if count <= 1:
+        return ""
+    short = lambda k: MONTH_NAMES[int(k[5:]) - 1][:3]  # noqa: E731
+    return f"{short(key)}–{short(_shift(key, count - 1))}"
+
+
 def months(root: Path, shared: bool = True) -> list[str]:
-    """The months holding read issues (this box's and, `shared`, the others'), newest first."""
-    found = set(_remote()["issues"]) if shared else set()
+    """The months holding read issues (this box's and, `shared`, the others'), each month a
+    multi-month issue covers included, newest first."""
+    filed = set(_remote()["issues"]) if shared else set()
     for path in root.glob("[0-9][0-9][0-9][0-9]/[0-9][0-9]/*.json"):
         if path.name != "digest.json":
-            found.add(f"{path.parent.parent.name}-{path.parent.name}")
-    return sorted((m for m in found if re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", m)), reverse=True)
+            filed.add(f"{path.parent.parent.name}-{path.parent.name}")
+    filed = {m for m in filed if re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", m)}
+    found = set(filed)
+    if shared:
+        for key in filed:
+            for issue in issues(root, key, shared=True):
+                found.update(_shift(key, n) for n in range(months_covered(issue)))
+    return sorted(found, reverse=True)
+
+
+def month_issues(root: Path, key: str) -> list[dict]:
+    """The issues shown in a month: the ones filed under it, and a two- or three-month
+    issue filed under one of the months before that also covers this one."""
+    out = issues(root, key, shared=True)
+    for back in (1, 2):
+        earlier = _shift(key, -back)
+        out += [i for i in issues(root, earlier, shared=True) if months_covered(i) > back]
+    return out
 
 
 def issues(root: Path, key: str, shared: bool = False) -> list[dict]:
@@ -514,6 +559,8 @@ def guess_issue(filename: str, pages: list[str]) -> dict:
         text = _fold(source).replace("_", " ")
         for match in re.finditer(r"\b([a-z]{3,10})\.?[\s_./-]*(20\d\d)\b", text):
             month = next((n for n, words in _MONTH_WORDS.items() if match[1] in words.split()), 0)
+            if not month and match[1] in ("ete", "summer", "sommer", "estate", "verano"):
+                month = 7                   # a summer issue: July and August
             if month:
                 return {"year": int(match[2]), "month": month}
         match = re.search(r"\b(20\d\d)[-_.](0[1-9]|1[0-2])\b", text)
@@ -607,8 +654,13 @@ def identify(cfg, path: Path, original: str, pages: list[str], cancel=None, post
         year, month = guess["year"], guess["month"]
     magazine = canonical_magazine(str(answer.get("magazine") or "").strip()[:80] or Path(original).stem[:80])
     language = str(answer.get("language") or "").strip().lower()[:2]
-    return {"magazine": magazine, "language": language, "year": year, "month": month,
-            "issue": str(answer.get("issue") or "").strip()[:120]}
+    found = {"magazine": magazine, "language": language, "year": year, "month": month,
+             "issue": str(answer.get("issue") or "").strip()[:120], "uploaded": original}
+    given = answer.get("months_covered")
+    found["covers"] = given if type(given) is int and 1 <= given <= 3 else months_covered(found)
+    if found["covers"] == 1 and months_covered({**found, "covers": None}) > 1:
+        found["covers"] = months_covered({**found, "covers": None})   # "Été" on the cover says more
+    return found
 
 
 def _clean_pick(raw: dict, pages: int) -> dict | None:
@@ -1056,6 +1108,7 @@ def _review(issue: dict, index: int, pick: dict) -> dict:
     return {"id": f"{issue['slug']}#{index}", "magazine": issue.get("magazine", ""), "month": issue["month_key"],
             "issue": issue.get("issue") or month_label(issue["month_key"]), "slug": issue["slug"],
             "box": issue.get("box", ""), "remote": bool(issue.get("remote")),
+            "months": [_shift(issue["month_key"], n) for n in range(months_covered(issue))],
             **{k: pick.get(k) for k in ("award", "rating", "artistic", "sound", "reviewer", "page",
                                          "artistic_score", "sound_score", "sound_exceptional",
                                          "composer", "works", "performers", "label", "catalogue",
@@ -1079,7 +1132,7 @@ def clusters(root: Path, key: str) -> list[list[dict]]:
             continue
         merged = [review] + [r for g in hits for r in g]
         groups = [g for g in groups if g not in hits] + [merged]
-    return [g for g in groups if any(r["month"] == key for r in g)]
+    return [g for g in groups if any(key in r["months"] for r in g)]
 
 
 def _signature(group: list[dict]) -> str:
@@ -1100,14 +1153,14 @@ def _digest(root: Path, key: str, shared: bool = True) -> dict:
 
 
 def entry(group: list[dict], key: str, verdicts: dict) -> dict:
-    group = sorted(group, key=lambda r: (r["month"] != key, -(r["artistic_score"] or 0)))
+    group = sorted(group, key=lambda r: (key not in r["months"], -(r["artistic_score"] or 0)))
     magazines = []
     for r in group:
         if r["magazine"] not in magazines:
             magazines.append(r["magazine"])
     sounds = [r["sound_score"] for r in group if r.get("sound_score")]
     quality = round(sum(sounds) / len(sounds), 1) if sounds else None
-    lead = max(group, key=lambda r: (bool(r.get("qobuz")), r["month"] == key, r["artistic_score"] or 0))
+    lead = max(group, key=lambda r: (bool(r.get("qobuz")), key in r["months"], r["artistic_score"] or 0))
     card = dict(lead["qobuz"]) if lead.get("qobuz") else {
         "id": "", "title": lead.get("album_title") or lead.get("works") or "", "version": "",
         "artist": lead.get("performers", ""), "composer": lead.get("composer", ""), "label": lead.get("label", ""),
@@ -1148,7 +1201,8 @@ def month_view(root: Path, key: str) -> dict:
     verdicts = _digest(root, key).get("verdicts") or {}
     cards = sorted((entry(g, key, verdicts) for g in clusters(root, key)), key=_rank)
     shown = [{k: i.get(k) for k in ("slug", "magazine", "issue", "language", "uploaded", "pages", "read_at", "box")}
-             | {"picks": len(i["picks"]), "remote": bool(i.get("remote"))} for i in issues(root, key, shared=True)]
+             | {"picks": len(i["picks"]), "remote": bool(i.get("remote")), "filed": i["month_key"],
+                "span": span_label(i["month_key"], months_covered(i))} for i in month_issues(root, key)]
     return {"month": key, "label": month_label(key), "issues": shown, "entries": cards,
             "agreed": sum(1 for c in cards if c["mag"]["agreement"] > 1)}
 
@@ -1188,7 +1242,8 @@ def document(root: Path, key: str) -> str:
     """The month's recommendations as a Markdown document, in English."""
     view = month_view(root, key)
     lines = [f"# Magazine recommendations — {view['label']}", ""]
-    lines += ["Issues read: " + "; ".join(f"{i['magazine']} ({i['issue'] or view['label']})"
+    lines += ["Issues read: " + "; ".join(f"{i['magazine']} ({i['issue'] or view['label']}"
+                                           + (f", {i['span']})" if i["span"] else ")")
                                            for i in view["issues"]), ""]
     lines += [f"Recordings recommended by more than one magazine come first. Agreement also counts the issues of "
               f"the {WINDOW} months before and after. Sound quality is the reviews' rating of the recording "
