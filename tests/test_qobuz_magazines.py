@@ -1,0 +1,254 @@
+"""Magazine issues: recognising the month, reading the picks, cross-referencing them."""
+import io
+import json
+from pathlib import Path
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "omdrc-ctrl/src"))
+from flask import Flask
+import qobuz_ai as ai
+import qobuz_magazines as mags
+import qobuz_search as qs
+import qobuz_web as web
+
+REVIEW = ("Beethoven Symphony No 5. Orchestra conducted by the maestro, recorded in a warm acoustic. "
+          "Hyperion CDA68400. The sound engineer gives depth; the piano and violin recording is superb. ") * 12
+
+
+def pick(**values):
+    base = {"composer": "Beethoven", "works": "Symphony No 5 in C minor", "performers": "Les Siècles, François-Xavier Roth",
+            "label": "Harmonia Mundi", "catalogue": "HMM902500", "album_title": "", "award": "", "rating": "",
+            "artistic": "Fiery and lean.", "sound": "Deep, detailed soundstage.", "reviewer": "",
+            "artistic_score": 9, "sound_score": 9, "sound_exceptional": False, "page": 3}
+    return {**base, **values}
+
+
+class FakeCatalog:
+    def __init__(self, results=None):
+        self.results = results or []
+        self.queries = []
+
+    def search(self, text, **_):
+        self.queries.append(text)
+        return {"results": self.results}
+
+
+class ReadingTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.state = self.temp.name
+        self.root = Path(self.state) / "magazines"
+        ai.save_settings(self.state, {"provider": "claude", "key": "test-secret"})
+        self.cfg = ai.configuration(self.state)
+
+    def test_review_pages_are_chosen_award_pages_first_within_the_budget(self):
+        pages = ["Advertisement: buy speakers", "Contents and editorial " * 30, REVIEW,
+                 "Editor's Choice: the month's ten best discs. " + "x" * 600, REVIEW]
+        chosen = mags.select_pages(pages)
+        self.assertEqual([n for n, _ in chosen], [3, 4, 5])
+        self.assertEqual([n for n, _ in mags.select_pages(pages, budget=700)], [4], "the award page is kept first")
+        parts = mags.chunks(chosen, size=len(REVIEW) + 50)
+        self.assertEqual(len(parts), 3)
+        self.assertTrue(parts[0].startswith("[Page 3]"))
+
+    def test_month_is_guessed_from_the_name_or_cover_in_several_languages(self):
+        self.assertEqual(mags.guess_issue("Diapason_Decembre_2026.pdf", []), {"year": 2026, "month": 12})
+        self.assertEqual(mags.guess_issue("x.pdf", ["NOVEMBRE 2026 · N° 745"]), {"year": 2026, "month": 11})
+        self.assertEqual(mags.guess_issue("gramophone 2026-03.pdf", []), {"year": 2026, "month": 3})
+        self.assertEqual(mags.guess_issue("issue.pdf", ["no date"]), {"year": 0, "month": 0})
+
+    def test_an_issue_is_read_filed_under_its_month_and_bad_reviews_dropped(self):
+        sent = []
+
+        def post(_cfg, body, _timeout):
+            sent.append(body)
+            name = body["tools"][0]["name"]
+            self.assertNotIn("web_search", name)
+            if name == "magazine_issue":
+                return {"content": [{"type": "tool_use", "name": name, "input": {
+                    "magazine": "Diapason", "language": "fr", "year": 2026, "month": 12, "issue": "Décembre 2026"}}]}
+            return {"content": [{"type": "tool_use", "name": name, "input": {"picks": [
+                pick(award="Diapason d'or", page=4),
+                pick(artistic="Short.", sound="", page=40),               # the same disc, from the summary page
+                pick(composer="Ravel", works="Boléro", performers="Some Band", catalogue="", artistic_score=3),
+                pick(composer="", works="", performers="Nobody")]}}]}
+        inbox = self.root / "inbox"
+        inbox.mkdir(parents=True)
+        pdf = inbox / "20261201-101010-abcdef-diapason.pdf"
+        pdf.write_bytes(b"%PDF-1.4 test")
+        card = {"id": "abc123", "title": "Beethoven: Symphony No. 5", "artist": "Les Siècles, François-Xavier Roth",
+                "composer": "Ludwig van Beethoven", "label": "Harmonia Mundi", "year": 2026, "streamable": True}
+        found = FakeCatalog([{"id": "zzz", "title": "Other", "artist": "Somebody", "year": 2026}, card])
+        pages = ["DIAPASON décembre 2026", "Sommaire " * 60, "pub", REVIEW, REVIEW]
+        with patch.object(mags, "_pdf_info", return_value=""):
+            issue = mags.read_issue(self.root, self.cfg, pdf, lambda: found, post=post, pages=pages)
+        self.assertEqual(issue["month_key"], "2026-12")
+        self.assertEqual(len(issue["picks"]), 1, "a duplicate is merged, a bad review and an empty one dropped")
+        merged = issue["picks"][0]
+        self.assertEqual(merged["award"], "Diapason d'or")
+        self.assertEqual(merged["qobuz"]["id"], "abc123")
+        self.assertIn("Roth", found.queries[0])
+        self.assertTrue((self.root / "2026/12/diapason-2026-12.pdf").is_file())
+        self.assertFalse(pdf.exists())
+        self.assertIn("English", sent[1]["messages"][0]["content"])
+
+    def test_a_long_work_title_falls_back_to_the_names(self):
+        card = {"id": "x1", "title": "Sibelius: Complete Symphonies", "artist": "Klaus Mäkelä",
+                "label": "Decca Music Group Ltd.", "year": 2022, "streamable": True}
+
+        class Picky(FakeCatalog):
+            def search(self, text, **_):
+                self.queries.append(text)
+                return {"results": [card] if "Nos" not in text else []}
+        found = Picky()
+        p = pick(composer="Sibelius", works="Symphonies Nos 1-7", performers="Oslo Philharmonic Orchestra / Klaus Mäkelä",
+                 label="Decca", catalogue="")
+        self.assertEqual(mags.find_on_qobuz(found, p, 2026)["id"], "x1")
+        self.assertEqual(found.queries[1], "Mäkelä Sibelius")
+
+    def test_no_text_layer_is_refused_and_left_in_the_inbox(self):
+        inbox = self.root / "inbox"
+        inbox.mkdir(parents=True)
+        pdf = inbox / "scan.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        with self.assertRaisesRegex(mags.MagazineError, "scan"):
+            mags.read_issue(self.root, self.cfg, pdf, FakeCatalog, pages=["", "  "])
+        self.assertTrue(pdf.exists())
+
+    def write_issue(self, key, magazine, picks):
+        folder = self.root / key[:4] / key[5:]
+        folder.mkdir(parents=True, exist_ok=True)
+        slug = f"{mags._safe(magazine)}-{key}"
+        (folder / f"{slug}.json").write_text(json.dumps({"magazine": magazine, "issue": "", "language": "en",
+                                                          "slug": slug, "picks": picks}))
+        (folder / f"{slug}.pdf").write_bytes(b"%PDF-1.4")
+        return slug
+
+    def test_agreement_across_magazines_and_neighbouring_months_ranks_first(self):
+        qobuz = {"id": "q1", "title": "Beethoven 5", "artist": "Roth", "streamable": True}
+        self.write_issue("2026-12", "Gramophone", [
+            pick(qobuz=qobuz, award="Editor's Choice", sound_score=8),
+            pick(composer="Bach", works="Goldberg Variations", performers="Jane Pianist", catalogue="",
+                 artistic_score=10, sound_score=0, qobuz=None)])
+        self.write_issue("2026-12", "Diapason", [pick(catalogue="HMM 902500", performers="Les Siecles, F.-X. Roth",
+                                                      works="Symphonie n° 5", sound_score=10, sound_exceptional=True)])
+        self.write_issue("2027-01", "BBC Music Magazine", [pick(catalogue="", works="Symphony No. 5", sound_score=9)])
+        self.write_issue("2026-06", "Fono Forum", [pick(catalogue="")])           # too far away to count
+        view = mags.month_view(self.root, "2026-12")
+        self.assertEqual([i["magazine"] for i in view["issues"]], ["Diapason", "Gramophone"])
+        first, second = view["entries"]
+        self.assertEqual(first["id"], "q1")
+        self.assertEqual(first["mag"]["agreement"], 3)
+        self.assertEqual(first["mag"]["quality"], 9.0)
+        self.assertTrue(first["mag"]["q"])
+        self.assertEqual(first["mag"]["awards"], ["Gramophone: Editor's Choice"])
+        self.assertEqual(second["id"], "")
+        self.assertIsNone(second["mag"]["quality"])
+        self.assertEqual(view["agreed"], 1)
+        self.assertEqual([m for m in mags.months(self.root)], ["2027-01", "2026-12", "2026-06"])
+
+        asked = []
+
+        def post(_cfg, body, _timeout):
+            data = body["messages"][0]["content"]
+            asked.append(data)
+            key = mags._signature(next(g for g in mags.clusters(self.root, "2026-12") if len(g) > 1))
+            return {"content": [{"type": "tool_use", "name": "magazine_consensus", "input": {"verdicts": [
+                {"key": key, "artistic": "All three praise its fire.", "sound": "Deep and detailed."}]}}]}
+        mags.consensus(self.root, self.cfg, "2026-12", post=post)
+        mags.consensus(self.root, self.cfg, "2026-12", post=post)
+        self.assertEqual(len(asked), 1, "a shared verdict is asked for once")
+        view = mags.month_view(self.root, "2026-12")
+        self.assertEqual(view["entries"][0]["mag"]["artistic"], "All three praise its fire.")
+        text = mags.write_document(self.root, "2026-12")
+        self.assertTrue((self.root / "2026/12/digest.md").is_file())
+        self.assertLess(text.index("several magazines"), text.index("Goldberg"))
+        self.assertIn("Shared verdict", text)
+        self.assertIn("sound 9.0/10 (Q)", text)
+
+        self.assertTrue(mags.remove_issue(self.root, "2026-12", "diapason-2026-12"))
+        self.assertEqual(mags.month_view(self.root, "2026-12")["entries"][0]["mag"]["agreement"], 2)
+        with self.assertRaises(mags.MagazineError):
+            mags.remove_issue(self.root, "2026-12", "../x")
+        with self.assertRaises(mags.MagazineError):
+            mags.pdf_path(self.root, "../../etc", "passwd")
+
+    def test_same_recording_needs_shared_performers(self):
+        a = pick(catalogue="")
+        self.assertTrue(mags.same_recording(a, pick(catalogue="", works="Symphonie n° 5 en ut mineur")))
+        self.assertFalse(mags.same_recording(a, pick(catalogue="", performers="Berliner Philharmoniker, Karajan")))
+        self.assertFalse(mags.same_recording(a, pick(catalogue="", composer="Brahms", works="Symphony No 1")))
+        self.assertTrue(mags.same_recording(a, pick(catalogue="", performers="Other", qobuz=None)) is False)
+
+
+class UploadTest(unittest.TestCase):
+    def setUp(self):
+        mags._job.update(running=False, items=[], detail="", error="", finished=0)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        app = Flask(__name__)
+        app.register_blueprint(web.bp)
+        self.client = app.test_client()
+        for name, value in (("_state_dir", lambda: self.temp.name),
+                            ("_settings", lambda: qs.Settings()), ("renderer_running", lambda: True)):
+            patcher = patch.object(web, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_upload_needs_the_app_header_and_a_pdf(self):
+        data = lambda: {"files": (io.BytesIO(b"%PDF-1.4 hello"), "Gramophone Dec 2026.pdf"), "start": "0"}  # noqa: E731
+        refused = self.client.post("/qobuz/magazines/upload", data=data(), content_type="multipart/form-data")
+        self.assertEqual(refused.status_code, 403)
+        answer = self.client.post("/qobuz/magazines/upload", data=data(), content_type="multipart/form-data",
+                                  headers={"X-Qobuz-AI": "1"}).get_json()
+        self.assertTrue(answer["ok"], answer)
+        self.assertEqual(answer["job"]["items"][0]["name"], "gramophone-dec-2026.pdf")
+        bad = self.client.post("/qobuz/magazines/upload", content_type="multipart/form-data",
+                               data={"files": (io.BytesIO(b"<html>"), "x.pdf"), "start": "0"},
+                               headers={"X-Qobuz-AI": "1"}).get_json()
+        self.assertFalse(bad["ok"])
+        self.assertIn("not a PDF", bad["error"])
+        view = self.client.get("/qobuz/magazines").get_json()
+        self.assertEqual(view["month"], "")
+        self.assertEqual(view["job"]["items"][0]["state"], "waiting")
+        name = view["job"]["items"][0]["file"]
+        gone = self.client.post("/qobuz/magazines/remove", json={"upload": name},
+                                headers={"X-Qobuz-AI": "1"}).get_json()
+        self.assertTrue(gone["ok"])
+        self.assertEqual(self.client.get("/qobuz/magazines").get_json()["job"]["items"], [])
+
+    def test_the_job_reads_the_inbox_in_the_background(self):
+        ai.save_settings(self.temp.name, {"provider": "claude", "key": "test-secret"})
+        root = Path(self.temp.name) / "magazines"
+        mags.save_upload(root, io.BytesIO(b"%PDF-1.4 x"), "BBC Music November 2026.pdf")
+
+        def read(root_, cfg, path, catalog_fn, **_):
+            folder = root_ / "2026/11"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "bbc-2026-11.json").write_text(json.dumps({"magazine": "BBC", "slug": "bbc-2026-11", "picks": []}))
+            path.unlink()
+            return {"magazine": "BBC", "month_key": "2026-11", "picks": []}
+        with patch.object(mags, "read_issue", side_effect=read):
+            answer = self.client.post("/qobuz/magazines/job", json={"action": "start"},
+                                      headers={"X-Qobuz-AI": "1"}).get_json()
+            self.assertTrue(answer["ok"], answer)
+            for _ in range(100):
+                if not mags.status(root)["running"]:
+                    break
+                time.sleep(.02)
+        job = mags.status(root)
+        self.assertFalse(job["running"])
+        self.assertEqual(job["items"][0]["state"], "done")
+        self.assertTrue((root / "2026/11/digest.md").is_file())
+        view = self.client.get("/qobuz/magazines").get_json()
+        self.assertEqual(view["month"], "2026-11")
+        self.assertEqual(view["months"], [{"key": "2026-11", "label": "November 2026"}])
+
+
+if __name__ == "__main__":
+    unittest.main()

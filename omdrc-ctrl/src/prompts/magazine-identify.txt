@@ -1,0 +1,19 @@
+# MAGAZINE ISSUE: one structured call, no web access.
+# Used: when an uploaded magazine PDF is read (Qobuz page, Magazines view), to
+#   recognise which magazine and which issue it is, so the PDF is filed under
+#   its year/month and its picks are grouped with the other magazines' issues
+#   of the same month.
+# Placeholders (required):
+#   ${file}   the uploaded file's name and the PDF's own metadata.
+#   ${pages}  the text of the first pages (cover, contents, editorial).
+# Lines starting with # at the top of this file are not sent to the AI.
+
+Identify this music magazine issue from its first pages. Name the magazine as it calls itself (for example Gramophone, Diapason, BBC Music Magazine, Fono Forum, Classica, Musica). Give the language it is written in as a two-letter ISO code.
+
+Give the month and year the issue is dated (the cover date, such as "December 2026" or "Décembre 2026"), not the date of a concert, a release or a deadline mentioned inside. For an issue covering two months ("July/August"), give the first month. For a quarterly or seasonal issue, give the first month it covers. Put the issue as printed (for example "December 2026", "N° 745 – décembre 2026") into issue. If the month or the year cannot be read, set it to 0.
+
+File:
+${file}
+
+First pages:
+${pages}

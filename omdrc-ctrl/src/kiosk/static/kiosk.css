@@ -1518,3 +1518,72 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
         touch-action: pan-y; cursor: grab; }
     .qz-up-handle i { width: 2.6rem; height: .25rem; border-radius: .15rem; background: var(--muted); }
 }
+
+/* ── Magazines (widgets/magazines.js) ─────────────────────────────────────── */
+.qz-magazines[hidden] { display: none; }
+.mag-head { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin: .2rem 0 .5rem; }
+.mag-head .spacer { flex: 1; }
+.mag-month { min-height: 2.4rem; padding: .2rem .5rem; border-radius: .5rem; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); font: inherit; font-weight: 650; max-width: 12rem; }
+.mag-step { min-width: 2.4rem; }
+.mag-job { border: 1px solid var(--border); border-radius: .6rem; background: var(--surface); padding: .5rem .7rem; margin: 0 0 .6rem; }
+.mag-job[hidden] { display: none; }
+.mag-item { display: flex; align-items: center; gap: .6rem; padding: .3rem 0; border-bottom: 1px solid var(--hair); }
+.mag-item:last-of-type { border-bottom: 0; }
+.mag-item .spinner.small, .mag-mark { width: 1.2rem; height: 1.2rem; flex: none; }
+.mag-item .spinner.small { border-width: .18rem; }
+.mag-mark { display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: var(--muted); }
+.mag-done .mag-mark { color: var(--ok-text); }
+.mag-error .mag-mark, .mag-error .mag-item-text .muted { color: var(--bad-text); }
+.mag-item-text { flex: 1; min-width: 0; }
+.mag-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .88rem; }
+.mag-job-actions { display: flex; align-items: center; gap: .5rem; margin-top: .4rem; }
+.mag-job-actions .spacer { flex: 1; }
+.mag-upload { margin-bottom: .4rem; }
+.mag-bar { height: .35rem; border-radius: .2rem; background: var(--surface2); overflow: hidden; margin-top: .25rem; }
+.mag-bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+.mag-issues { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .4rem; }
+.chip.mag-issue { cursor: pointer; }
+.mag-legend { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; margin: .1rem 0 .4rem; }
+.mag-section { font-size: .95rem; margin: .9rem 0 .4rem; color: var(--muted); font-weight: 650; }
+
+/* the quality circle: yellow to green, every shade between; a green Q when outstanding */
+.mag-dot { --mag-hue: 90; display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: .95rem; height: .95rem; border-radius: 50%; background: hsl(var(--mag-hue) 72% 46%);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.25) inset; vertical-align: middle; }
+.mag-dot.mag-unknown { background: transparent; box-shadow: 0 0 0 2px var(--off-dot) inset; }
+.mag-dot.mag-q { width: 1.25rem; height: 1.25rem; background: hsl(135 65% 38%); color: #fff;
+    font-size: .78rem; font-weight: 800; line-height: 1; box-shadow: 0 0 0 2px hsl(135 60% 60% / .55); }
+.qz-tmag { position: absolute; top: .3rem; left: .3rem; box-shadow: 0 0 0 2px rgba(0,0,0,.45); }
+.qz-tmag.mag-q { box-shadow: 0 0 0 2px rgba(0,0,0,.45); }
+.qz-tagree { position: absolute; bottom: .25rem; right: .25rem; font-size: .7rem; font-weight: 700; line-height: 1;
+    padding: .2rem .3rem; border-radius: .3rem; background: var(--green); color: #fff; }
+.qz-tile .qz-tq + .qz-tagree, .qz-tcover:has(.qz-tq) .qz-tagree { bottom: 1.45rem; }
+
+.mag-block { margin-top: .45rem; cursor: default; }
+.mag-badges { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem; }
+.chip.mag-agree { color: var(--ok-text); border-color: var(--ok-edge); background: rgba(63,185,80,.14); font-weight: 650; }
+.chip.mag-name { font-size: .74rem; min-height: 1.4rem; }
+.chip.mag-award { font-size: .74rem; min-height: 1.4rem; white-space: normal; color: var(--warn-text); border-color: var(--warn-edge); }
+.mag-block p, .sheet .mag-block p { margin: .35rem 0; color: var(--text); font-size: .9rem; line-height: 1.45; }
+.mag-block .mag-sound { color: var(--text); }
+.mag-label { font-weight: 700; font-size: .72rem; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); margin-right: .25rem; }
+.mag-more { font-size: .82rem; padding: .1rem 0; }
+.mag-reviews[hidden] { display: none; }
+.mag-review { border-left: .2rem solid var(--border); padding: .1rem 0 .1rem .6rem; margin: .45rem 0; }
+.mag-review p, .sheet .mag-review p { font-size: .85rem; margin: .2rem 0; }
+.mag-review-award { color: var(--warn-text); }
+.mag-page { font-size: .8rem; padding: 0 .3rem; }
+.sheet.mag-sheet { width: min(38rem, 94vw); max-height: 88vh; overflow-y: auto; }
+.mag-sheet-top { display: flex; gap: .7rem; align-items: flex-start; }
+.mag-sheet-top img { width: 4.5rem; height: 4.5rem; border-radius: .35rem; object-fit: cover; flex: none; }
+.mag-sheet-top > div { flex: 1; min-width: 0; }
+.mag-sheet-top h2 { font-size: 1.05rem; margin: 0 0 .2rem; }
+.mag-sheet .sheet-actions { flex-wrap: wrap; margin-top: .6rem; }
+.sheet.mag-doc { width: min(46rem, 96vw); max-height: 90vh; display: flex; flex-direction: column; gap: .5rem; }
+.mag-doc-body { overflow-y: auto; flex: 1; min-height: 0; }
+.mag-doc-body h2 { font-size: 1.2rem; } .mag-doc-body h3 { font-size: 1.02rem; margin: 1rem 0 .3rem; }
+.mag-doc-body h4 { font-size: .92rem; margin: .8rem 0 .2rem; }
+.mag-doc-body p, .mag-doc-body li { color: var(--text); font-size: .88rem; line-height: 1.45; margin: .25rem 0; }
+.mag-doc-body ul { padding-left: 1.1rem; margin: .2rem 0 .5rem; }
+.mag-sheet .sheet-actions .btn { display: inline-flex; align-items: center; gap: .3rem; }

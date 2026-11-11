@@ -168,6 +168,11 @@ played_limit = 1000
 # (qobuz_artists.txt), so typing an artist offers its label.  A ring: when
 # full, the oldest is forgotten.  0: nothing is learned.
 artist_ring = 200
+# Uploaded music magazine issues (the Qobuz page's Magazines view), filed as
+# <year>/<month>/<issue>.pdf beside what the AI read from them and the
+# month's document (digest.md).  An issue is a 50-200 MB PDF: put this on a
+# disk with room.  Empty: <state dir>/magazines.
+magazine_dir = @MAGAZINE_DIR@
 # Label groups offered as check boxes, one per line: "Name" or
 # "Name: pattern, pattern".  Qobuz spells a label many ways ("Decca Music
 # Group Ltd.", "Decca (UMO)"), so a group matches any label containing one of

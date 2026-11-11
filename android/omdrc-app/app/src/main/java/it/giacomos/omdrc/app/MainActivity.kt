@@ -102,7 +102,12 @@ class MainActivity : ComponentActivity() {
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        val values = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+        // parseResult reads only the intent's single Uri; several files picked at once
+        // (the Magazines upload) come back as ClipData instead.
+        val clip = result.data?.clipData
+        val values = if (result.resultCode == android.app.Activity.RESULT_OK && clip != null && clip.itemCount > 0)
+            Array(clip.itemCount) { clip.getItemAt(it).uri }
+        else WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
         filePathCallback?.onReceiveValue(values)
         filePathCallback = null
     }

@@ -131,6 +131,9 @@ class Settings:
     # Artist -> label pairs learned from plays beyond the shipped list: a ring,
     # the oldest forgotten.  0: nothing is learned.
     artist_ring: int = 200
+    # Uploaded magazine issues and what was read from them (qobuz_magazines).
+    # Empty: <state dir>/magazines.  Each issue is a PDF of 50-200 MB.
+    magazine_dir: str = ""
 
 
 # A search reporting its progress (the kiosk's preview) does so at most this often, seconds.
@@ -159,6 +162,7 @@ def settings_from_section(sec, current: Settings) -> Settings:
         renderer=sec.get("renderer", fallback=current.renderer).strip(),
         played_limit=max(0, sec.getint("played_limit", fallback=current.played_limit)),
         artist_ring=min(1000, max(0, sec.getint("artist_ring", fallback=current.artist_ring))),
+        magazine_dir=sec.get("magazine_dir", fallback=current.magazine_dir).strip(),
     )
 
 

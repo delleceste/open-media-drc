@@ -91,6 +91,8 @@ string(REPLACE "@AUDIO_HOME@" "${OMDRCCTRL_AUDIO_HOME}" _cc "${_cc}")
 # The CD capture source's rate, from the top-level project, so the button
 # never claims a rate the chain would not actually be built at.
 string(REPLACE "@CDIN_RATE@" "${CDIN_RATE}" _cc "${_cc}")
+# [qobuz_search] magazine_dir: from host.cmake; empty keeps them in the state dir.
+string(REPLACE "@MAGAZINE_DIR@" "${MAGAZINE_DIR}" _cc "${_cc}")
 # [dr_sync]: from host.cmake, so a reinstall does not switch sharing off.
 if(DR_SYNC_REPO)
     set(_dr_repo_line "repo = ${DR_SYNC_REPO}")
@@ -125,7 +127,7 @@ endif()
 # Python application + docs + helper scripts
 install(FILES src/app.py src/configuration.py src/bitperfect.py
               src/audio_diagnostics.py src/drdb.py src/drmeter.py src/dr_store.py src/dr_sync.py src/dr_volumes.py src/bass_live.py
-              src/qobuz_search.py src/qobuz_web.py src/qobuz_favorites.py src/qobuz_review.py src/qobuz_ai.py src/openhome.py src/mpd_library.py src/local_db.py src/qobuz_words.txt
+              src/qobuz_search.py src/qobuz_web.py src/qobuz_favorites.py src/qobuz_review.py src/qobuz_ai.py src/qobuz_magazines.py src/openhome.py src/mpd_library.py src/local_db.py src/qobuz_words.txt
               src/qobuz_artists.txt
               README.md SPECTRUM_ANALYZER.md
         DESTINATION lib/omdrcctrl)

@@ -26,6 +26,9 @@ const SHAPES = {
         ['path', { d: 'M12 14 V17 M8.5 19.5 H15.5 M9.5 19.5 L10 17 H14 L14.5 19.5' }]],
     // review later: a bookmark ribbon
     bookmark: [['path', { d: 'M7 4 H17 V20 L12 16 L7 20 Z' }]],
+    // the music magazines' recommendations: an open magazine
+    magazine: [['path', { d: 'M3.5 6 Q7.5 4.5 12 6.5 Q16.5 4.5 20.5 6 V18.5 Q16.5 17 12 19 Q7.5 17 3.5 18.5 Z' }],
+        ['path', { d: 'M12 6.5 V19 M6 9 H9.5 M6 11.5 H9.5 M14.5 9 H18 M14.5 11.5 H18' }]],
     grid: [['rect', { x: 4, y: 4, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 4, width: 6.5, height: 6.5, rx: 1 }],
         ['rect', { x: 4, y: 13.5, width: 6.5, height: 6.5, rx: 1 }], ['rect', { x: 13.5, y: 13.5, width: 6.5, height: 6.5, rx: 1 }]],
     list: [['rect', { x: 3.5, y: 5, width: 4.5, height: 4.5, rx: .8 }], ['rect', { x: 3.5, y: 14.5, width: 4.5, height: 4.5, rx: .8 }],

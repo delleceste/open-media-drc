@@ -65,7 +65,9 @@ PROMPTS = {"system": (), "listening-research": ("metadata",),
            "listening-guide": ("metadata", "research"),
            "recommend-research": ("quantity", "request"),
            "recommend-queries": ("research",), "recommend-select": ("quantity", "data"),
-           "booklet-summary": ("metadata", "booklet")}
+           "booklet-summary": ("metadata", "booklet"),
+           "magazine-identify": ("file", "pages"), "magazine-picks": ("magazine", "pages"),
+           "magazine-consensus": ("data",)}
 
 
 def prompt_path(state_dir, name):

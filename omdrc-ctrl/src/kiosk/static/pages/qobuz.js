@@ -168,7 +168,10 @@ P.mount = el => {
             onclick: () => P.setView('library', true) }, '♡'),
         // beside the heart: albums parked to listen to later (pages/favorites.js, K.review)
         h('button', { type: 'button', class: 'chip tog qz-chip qz-viewicon', dataset: { view: 'review' },
-            title: 'Review later', 'aria-label': 'Review later', onclick: () => P.setView('review', true) }, K.tIcon('bookmark')));
+            title: 'Review later', 'aria-label': 'Review later', onclick: () => P.setView('review', true) }, K.tIcon('bookmark')),
+        // the music magazines' recommendations, read from uploaded issues (widgets/magazines.js)
+        h('button', { type: 'button', class: 'chip tog qz-chip qz-viewicon', dataset: { view: 'magazines' },
+            title: 'Magazines', 'aria-label': 'Magazine recommendations', onclick: () => P.setView('magazines', true) }, K.tIcon('magazine')));
     P.searchHint = h('button', { type: 'button', class: 'btn link qz-searchhint', hidden: true, title: 'Back to search', 'aria-label': 'Back to search',
         onclick: () => P.el.scrollTo({ top: 0, behavior: 'smooth' }) }, K.tIcon('search'), h('span', { 'aria-hidden': 'true' }, '⌃'));
     // list or grid, for all four lists alike (remembered)
@@ -199,6 +202,8 @@ P.mount = el => {
     K.library.mount(P.libraryBox);
     P.reviewBox = h('div', { class: 'qz-review', hidden: true });
     K.review.mount(P.reviewBox);
+    P.magazinesBox = h('div', { class: 'qz-magazines', hidden: true });
+    K.magazines.mount(P.magazinesBox);
     K.library.onFindEnd = () => {                  // a found album's folder opened
         setPref(P.textKey('library'), '');
         if (P.scopeShown === 'library') P.input.value = '';
@@ -206,7 +211,7 @@ P.mount = el => {
     P.pullHint = h('div', { class: 'qz-pull', 'aria-hidden': 'true' },
         h('span', { class: 'qz-pull-in' }, K.tIcon('search'), P.pullText = h('span', {})));
     P.main = h('div', { class: 'qz-main' }, P.pullHint, P.resHead, P.formHome, P.viewRow,
-        P.recentBox, P.results, P.discoverBox, P.labelBox, P.awardedBox, P.libraryBox, P.reviewBox);
+        P.recentBox, P.results, P.discoverBox, P.labelBox, P.awardedBox, P.libraryBox, P.reviewBox, P.magazinesBox);
     el.append(h('div', { class: 'qz' }, P.banner, P.main, P.player));
     P.refreshAIIcon();
     P.buildPlayer();
@@ -265,7 +270,7 @@ P.wirePullToResults = () => {
     };
     P.el.addEventListener('touchstart', e => {
         g = null;
-        if (e.touches.length !== 1 || P.el.scrollTop > 0 || !['discover', 'label'].includes(P.view()) || P.fromNowShown || P.dockedOnNow()) return;
+        if (e.touches.length !== 1 || P.el.scrollTop > 0 || !['discover', 'label', 'magazines'].includes(P.view()) || P.fromNowShown || P.dockedOnNow()) return;
         if (e.target.closest && e.target.closest('.qz-player, input, textarea, .qz-yspin')) return;
         g = { x: e.touches[0].clientX, y: e.touches[0].clientY, d: 0, on: false };
     }, { passive: true });
@@ -331,6 +336,7 @@ P.show = () => {
     else if (P.view() === 'awarded') P.awardedList();
     else if (P.view() === 'library') P.showLibrary();
     else if (P.view() === 'review') K.review.show();
+    else if (P.view() === 'magazines') K.magazines.show();
     else if (P.view() === 'label' && !P.labelRows) P.labelList();
     if (!P.fromNowShown) P.undock();
     if (P.fullWanted && !P.fromNowShown) P.openFull({ instant: true });
@@ -346,6 +352,7 @@ P.hide = () => {
     P.closeFull();
     P.fullWanted = full;
     K.library.hide();
+    K.magazines.hide();
     P.closeTileMenu();
     if (P.discoverObserver) P.discoverObserver.disconnect();
     P.poll.stop();
@@ -376,7 +383,7 @@ P.forget = () => {
 };
 
 // ── which list: played recently, or the results ──────────────────────────────
-P.view = () => ['results', 'recent', 'discover', 'awarded', 'library', 'review', 'label'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
+P.view = () => ['results', 'recent', 'discover', 'awarded', 'library', 'review', 'magazines', 'label'].includes(pref('view', 'recent')) ? pref('view', 'recent') : 'recent';
 P.setView = (v, scroll = false) => {
     P.closeGenreMenu(); P.closeTileMenu();
     if (scroll && document.activeElement === P.input) P.input.blur();
@@ -384,8 +391,10 @@ P.setView = (v, scroll = false) => {
     setPref('view', v); P.paintView();
     if (wasLibrary && v !== 'library') K.library.hide();
     if (v !== 'review') K.review.hide();
+    if (v !== 'magazines') K.magazines.hide();
     if (v === 'library') { if (P.visible && !K.library.visible) P.showLibrary(); }
     else if (v === 'review') K.review.show();
+    else if (v === 'magazines') { if (P.visible) K.magazines.show(); }
     else if (v === 'recent') P.recent();
     else if (v === 'awarded') P.awardedList();
     else if (v === 'discover') P.discover(0, { keep: true });
@@ -406,6 +415,7 @@ P.paintView = () => {
     P.labelBox.hidden = v !== 'label';
     P.libraryBox.hidden = v !== 'library';
     P.reviewBox.hidden = v !== 'review';
+    P.magazinesBox.hidden = v !== 'magazines';
     P.layoutBtn.hidden = v === 'library' || v === 'review' || (v === 'discover' && P.cloudShown());
     P.paintScope();
     if (v === 'results' && !P.results.firstChild)
@@ -445,7 +455,7 @@ P.paintScope = () => {
 };
 P.paintBoxHome = scope => {
     if (P.dockedOnNow()) return;                  // its place here stays empty meanwhile
-    const hide = scope === 'discover' || scope === 'label';
+    const hide = scope === 'discover' || scope === 'label' || scope === 'magazines';
     if (P.formHome.hidden === hide) return;
     if (hide && document.activeElement === P.input) P.input.blur();
     const top = P.el.scrollTop, before = P.formHome.hidden ? 0 : P.formHome.offsetHeight;
@@ -526,7 +536,7 @@ P.undock = () => {
     P.preview.remove();
     P.fetchProgress.remove();
     P.formHome.append(P.form);
-    P.formHome.hidden = ['discover', 'label'].includes(P.scope());
+    P.formHome.hidden = ['discover', 'label', 'magazines'].includes(P.scope());
     P.paintScope();
 };
 
@@ -657,7 +667,20 @@ P.startRenderer = async () => {
     await P.refreshStatus();
 };
 
-K.qobuzBusy = () => !!P.request;     // a search running: main.js waits with a reload
+K.qobuzBusy = () => !!P.request;
+// For the Magazines view (widgets/magazines.js): its recommendations are results like
+// any other, and one not found on Qobuz is searched for in Results.
+K.qobuzList = (cards, where) => P.list(cards, where);
+K.qobuzFind = text => {
+    if (pref('aiMode', false)) P.setAIMode(false);
+    P.setView('results');
+    P.resultsDraft = null;
+    setPref('q', text);
+    P.paintScope();
+    P.input.value = text;
+    P.el.scrollTo({ top: 0, behavior: 'smooth' });
+    P.search();
+};     // a search running: main.js waits with a reload
 P.usable = () => !!(P.status && P.status.ok && P.status.enabled && P.status.renderer);
 
 P.paintBanner = () => {
@@ -2237,7 +2260,8 @@ const who = p => p.roles && p.roles.length ? `${p.name} (${p.roles[0]})` : p.nam
 
 P.row = (c, where = '') => {
     const tracks = h('div', { class: 'qz-tracks' });
-    const body = h('div', { class: 'qz-body tap', onclick: () => P.toggleTracks(c, row, tracks) },
+    const unfound = !!c.mag && !c.id;      // a magazine's pick Qobuz did not match: searched for
+    const body = h('div', { class: 'qz-body tap', onclick: () => unfound ? K.magazines.find(c) : P.toggleTracks(c, row, tracks) },
         h('div', { class: 'qz-title' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-artist' }, c.artist),
         // one badge: awards and my rating, a tap shows them all (widgets/albuminfo.js)
@@ -2250,8 +2274,9 @@ P.row = (c, where = '') => {
             // the DR log's figure: exact, or ≈ from the tracks heard (widgets/dr.js)
             K.drLogBadge ? K.drLogBadge(c.dr_log) : null,
             c.played ? h('span', { class: 'chip dim' }, `played ${c.played}×`) : null));
-    const off = c.streamable === false;
+    const off = c.streamable === false && !unfound;
     const local = c.source === 'local';
+    if (c.mag) body.append(K.magazines.block(c));
     if (c.ai) body.append(h('div', { class: 'qz-ai-reason small', onclick: e => e.stopPropagation() },
         h('p', {}, c.ai.reason),
         c.ai.uncertain ? h('p', { class: 'muted' }, 'Limited evidence: no supporting review linked.') : null,
@@ -2269,11 +2294,14 @@ P.row = (c, where = '') => {
                 { title: [c.title, c.version ? `(${c.version})` : ''].filter(Boolean).join(' '), facts: [c.artist, c.label, c.year].filter(Boolean).join(' · ') }) : null },
             c.image ? h('img', { class: 'qz-cover', src: c.image_large || c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
         body,
-        h('div', { class: 'qz-act' },
+        unfound ? h('div', { class: 'qz-act' },
+            h('button', { type: 'button', class: 'btn qz-play', title: 'Search for it on Qobuz', 'aria-label': 'Search for it on Qobuz',
+                onclick: () => K.magazines.find(c) }, K.tIcon('search')))
+        : h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn primary qz-play', disabled: off, title: 'Replace the queue and play', onclick: () => P.play(c, 'replace') }, K.tIcon('play')),
             moreBtn),
         tracks);
-    if (P.open.has(c.id)) P.toggleTracks(c, row, tracks, true);
+    if (c.id && P.open.has(c.id)) P.toggleTracks(c, row, tracks, true);
     row.__card = c; row.__where = where;
     return row;
 };
@@ -2282,20 +2310,22 @@ P.row = (c, where = '') => {
 // drops a menu under the cover with the list row's three buttons (P.tileMenu).
 const LONG_PRESS_MS = 550;
 P.tile = (c, where = '') => {
-    const off = c.streamable === false;
+    const off = c.streamable === false && !(c.mag && !c.id);
     const sub = c.year || c.label;
     const tile = h('div', {
         class: 'qz-tile' + (off ? ' off' : '') + (c.lowered ? ' lowered' : ''), role: 'button', tabindex: 0,
         'aria-haspopup': 'menu', title: [c.title, c.artist].filter(Boolean).join(' — ') + ' (long press: play, add, remove)',
-        onclick: () => { if (!held) P.details(c); },
-        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.details(c); } },
+        onclick: () => { if (!held) P.open1(c); },
+        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.open1(c); } },
     },
         h('div', { class: 'qz-tcover' },
             c.image ? h('img', { src: c.image_large || c.image, alt: '', loading: 'lazy', draggable: 'false' }) : null,
             (c.awards && c.awards.length) || c.rating ? h('span', { class: 'qz-taward', title: 'Awarded' }, '🏆') : null,
             c.source === 'local' ? h('span', { class: 'qz-taward qz-local-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null,
             quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null,
-            K.drLogBadge ? K.drLogBadge(c.dr_log, 'qz-tdr') : null),
+            K.drLogBadge ? K.drLogBadge(c.dr_log, 'qz-tdr') : null,
+            c.mag ? K.magazines.dot(c.mag, 'qz-tmag') : null,
+            c.mag && c.mag.agreement > 1 ? h('span', { class: 'qz-tagree', title: c.mag.magazines.join(', ') }, `×${c.mag.agreement}`) : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-tsub muted' }, c.artist || ''),
         sub ? h('div', { class: 'qz-tsub muted' }, c.year || '', c.year && c.label ? ' · ' : '', P.labelLink(c)) : null);
@@ -2326,11 +2356,16 @@ P.tile = (c, where = '') => {
     return tile;
 };
 
+// A tile's tap: its details; a magazine's pick shows the magazines' summaries first.
+P.open1 = c => c.mag ? K.magazines.sheet(c, { play: () => P.play(c, 'replace'), add: () => P.play(c, 'append'),
+    details: () => P.details(c) }) : P.details(c);
+
 // The long press's menu, dropped under the cover (over it when there is no room
 // below): ▶ replaces the queue, + adds to it, and − is the list's −: out of Recent,
 // else lowered (the bar after it can undo).  A lowered album gets ↺ there instead.
 P.tileMenu = (c, where, tile, anchor = null) => {
     P.closeTileMenu();
+    if (c.mag && !c.id) { K.magazines.find(c); return; }
     const off = c.streamable === false;
     const item = (icon, label, run, disabled = false) => h('button', {
         type: 'button', class: 'menu-item', role: 'menuitem', disabled,

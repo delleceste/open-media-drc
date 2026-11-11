@@ -45,6 +45,7 @@ set(GEOMETRIES   "flat"                    CACHE STRING "Extra filter sets to in
 
 set(MUSIC_DIR    "/media/USBHD2/musica"    CACHE PATH   "Music library root (MPD / upmpdcli)")
 set(VIDEO_DIR    "/media/USBHD2/video"     CACHE PATH   "Video library root (omdrcvideo)")
+set(MAGAZINE_DIR "/media/USBHD2/magazines" CACHE PATH "Uploaded magazine issues (blank = state dir)")
 
 # DR log sharing between boxes (commands.conf [dr_sync]).  Rendered into the
 # installed commands.conf, so a reinstall keeps it.  Blank repo = no sharing.

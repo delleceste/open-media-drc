@@ -34,6 +34,14 @@ with the other renderer (qobuzconnect2mpd) active a result could not be played.
                                    the artists with their labels (shipped,
                                    and a ring learned from plays)
     GET /qobuz/track/<id>          one track and its album (the player's cover)
+    GET /qobuz/magazines?month=    the music magazines' recommendations of a
+                                   month, cross-referenced (qobuz_magazines),
+                                   the months there are, and the reading job
+    POST /qobuz/magazines/upload   multipart "files": issues (PDF) to read
+    POST /qobuz/magazines/job      {"action": "start"|"stop"}: read the uploads
+    POST /qobuz/magazines/remove   {"upload": name} | {"month", "slug"}
+    GET /qobuz/magazines/document?month=   the month's document (Markdown)
+    GET /qobuz/magazines/pdf?month=&slug=  an issue's PDF
     GET /qobuz/lowered             albums, labels and artists moved to the end
     POST /qobuz/lowered            {"action": "add", "kind", "key", "name"} |
                                    {"action": "remove", "kind", "key"} |
@@ -62,11 +70,12 @@ import time
 import uuid
 from functools import lru_cache
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, jsonify, request, send_file
 
 import openhome
 import qobuz_ai
 import qobuz_favorites
+import qobuz_magazines
 import qobuz_review
 import local_db
 import mpd_library
@@ -583,6 +592,132 @@ def ai_booklet(album_id):
     finally:
         with _listening_lock:
             _listening_jobs.pop(job, None)
+
+
+def _magazine_root():
+    return qobuz_magazines.root_dir(_settings().magazine_dir, _state_dir())
+
+
+def _same_origin_guard():
+    """A form upload cannot be JSON: the header and the origin are what is checked."""
+    origin = request.headers.get("Origin")
+    if (request.headers.get("X-Qobuz-AI") != "1"
+            or (origin and origin.rstrip("/") != request.host_url.rstrip("/"))):
+        return jsonify({"ok": False, "error": "Use AI controls in this app."}), 403
+    return None
+
+
+@bp.route("/magazines")
+def magazines():
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        root = _magazine_root()
+        months = qobuz_magazines.months(root) if root.is_dir() else []
+        month = request.args.get("month") or ""
+        if month not in months:
+            current = time.strftime("%Y-%m")
+            month = current if current in months else (months[0] if months else "")
+        view = qobuz_magazines.month_view(root, month) if month else {"month": "", "entries": [], "issues": []}
+        annotate_dr([c for c in view["entries"] if c.get("id")])
+        response = jsonify({"ok": True, **view, "months": [{"key": m, "label": qobuz_magazines.month_label(m)}
+                                                             for m in months],
+                            "job": qobuz_magazines.status(root), "folder": str(root)})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except (QobuzError, OSError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/magazines/upload", methods=["POST"])
+def magazine_upload():
+    guard = _guard(False) or _same_origin_guard()
+    if guard:
+        return guard
+    root = _magazine_root()
+    try:
+        qobuz_magazines.check_space(root, request.content_length)
+        files = [f for f in request.files.getlist("files") if f and f.filename]
+        if not files:
+            raise qobuz_magazines.MagazineError("Choose one or more magazine PDFs.")
+        saved, errors = [], []
+        for upload in files:
+            try:
+                saved.append(qobuz_magazines.save_upload(root, upload.stream, upload.filename).name)
+            except qobuz_magazines.MagazineError as error:
+                errors.append(str(error))
+        started = False
+        if saved and request.form.get("start", "1") != "0":
+            started = qobuz_magazines.start(root, _state_dir(), catalog)["started"]
+        return jsonify({"ok": bool(saved), "saved": saved, "errors": errors, "started": started,
+                        "error": "; ".join(errors), "job": qobuz_magazines.status(root)})
+    except (QobuzError, OSError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/magazines/job", methods=["POST"])
+def magazine_job():
+    guard = _guard(False) or _ai_mutation_guard()
+    if guard:
+        return guard
+    body = request.get_json(silent=True) or {}
+    root = _magazine_root()
+    try:
+        if body.get("action") == "stop":
+            qobuz_magazines.stop()
+        elif body.get("action") == "start":
+            qobuz_magazines.start(root, _state_dir(), catalog)
+        else:
+            return jsonify({"ok": False, "error": "want action start|stop"}), 400
+        return jsonify({"ok": True, "job": qobuz_magazines.status(root)})
+    except (QobuzError, OSError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/magazines/remove", methods=["POST"])
+def magazine_remove():
+    guard = _guard(False) or _ai_mutation_guard()
+    if guard:
+        return guard
+    body = request.get_json(silent=True) or {}
+    root = _magazine_root()
+    try:
+        if body.get("upload"):
+            found = qobuz_magazines.remove_upload(root, str(body["upload"]))
+        else:
+            found = qobuz_magazines.remove_issue(root, str(body.get("month") or ""), str(body.get("slug") or ""))
+        return jsonify({"ok": found, "error": "" if found else "Already gone."})
+    except (QobuzError, OSError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/magazines/document")
+def magazine_document():
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        month = request.args.get("month") or ""
+        root = _magazine_root()
+        text = qobuz_magazines.write_document(root, month)
+        return jsonify({"ok": True, "text": text, "label": qobuz_magazines.month_label(month),
+                        "path": str(root / month[:4] / month[5:] / "digest.md")})
+    except (QobuzError, OSError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+
+@bp.route("/magazines/pdf")
+def magazine_pdf():
+    guard = _guard(False)
+    if guard:
+        return guard
+    try:
+        path = qobuz_magazines.pdf_path(_magazine_root(), request.args.get("month") or "",
+                                        request.args.get("slug") or "")
+        return send_file(path, mimetype="application/pdf", conditional=True)
+    except QobuzError as error:
+        return jsonify({"ok": False, "error": str(error)}), 404
 
 
 @bp.route("/ai/listening/cancel", methods=["POST"])

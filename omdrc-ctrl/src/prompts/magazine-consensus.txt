@@ -1,0 +1,16 @@
+# MAGAZINE CONSENSUS: one structured call per month, no web access.
+# Used: after magazine issues are read (Qobuz page, Magazines view), for the
+#   recordings that more than one magazine recommends: a short shared verdict
+#   in English, from the magazines' own summaries.
+# Placeholders (required):
+#   ${data}  JSON: each recording with every magazine's summary of it.
+# Lines starting with # at the top of this file are not sent to the AI.
+
+Each recording below is recommended by more than one music magazine. For each one, write in English, from the magazines' summaries only:
+- artistic: two or three sentences on where the magazines agree about the performance, naming them, and any notable difference between them.
+- sound: one or two sentences on what they say about the recording quality (depth, detail, soundstage, warmth), or "" when none of them discusses it.
+
+Return one entry per key, using the given keys. Do not add judgments the summaries do not contain.
+
+Recordings:
+${data}
