@@ -2273,7 +2273,9 @@ P.row = (c, where = '') => {
             quality(c) ? h('span', { class: 'chip ok' }, quality(c)) : null,
             // the DR log's figure: exact, or ≈ from the tracks heard (widgets/dr.js)
             K.drLogBadge ? K.drLogBadge(c.dr_log) : null,
-            c.played ? h('span', { class: 'chip dim' }, `played ${c.played}×`) : null));
+            c.played ? h('span', { class: 'chip dim' }, `played ${c.played}×`) : null,
+            // only a one-track advance release is on Qobuz yet (a magazine's pick): looked up again daily
+            c.partial ? h('span', { class: 'chip warn qz-partial-chip', title: 'Only one track of this album is on Qobuz so far; the whole album is looked for again every day' }, '◐ 1 track only') : null));
     const off = c.streamable === false && !unfound;
     const local = c.source === 'local';
     if (c.mag) body.append(K.magazines.block(c));
@@ -2288,7 +2290,7 @@ P.row = (c, where = '') => {
     const moreBtn = h('button', { type: 'button', class: 'btn qz-more-menu', title: 'More: add to the queue, save, remove',
         'aria-label': 'More actions', 'aria-haspopup': 'menu',
         onclick: () => P.tileMenuEl && P.tileMenuTile === row ? P.closeTileMenu() : P.tileMenu(c, where, row, moreBtn) }, '⋯');
-    const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') },
+    const row = h('div', { class: 'qz-row' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') + (c.partial ? ' partial' : '') },
         h('div', { class: 'qz-cover-wrap' + (c.image ? ' tap' : ''), title: c.image ? 'Enlarge the cover' : '',
             onclick: c.image ? () => K.openCoverMax(c.image_large || c.image, { usable: () => false },
                 { title: [c.title, c.version ? `(${c.version})` : ''].filter(Boolean).join(' '), facts: [c.artist, c.label, c.year].filter(Boolean).join(' · ') }) : null },
@@ -2314,7 +2316,7 @@ P.tile = (c, where = '') => {
     const off = c.streamable === false && !(c.mag && !c.id);
     const sub = c.year || c.label;
     const tile = h('div', {
-        class: 'qz-tile' + (off ? ' off' : '') + (c.lowered ? ' lowered' : ''), role: 'button', tabindex: 0,
+        class: 'qz-tile' + (off ? ' off' : '') + (c.lowered ? ' lowered' : '') + (c.partial ? ' partial' : ''), role: 'button', tabindex: 0,
         'aria-haspopup': 'menu', title: [c.title, c.artist].filter(Boolean).join(' — ') + ' (long press: play, add, remove)',
         onclick: () => { if (!held) P.open1(c); },
         onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.open1(c); } },
@@ -2327,6 +2329,7 @@ P.tile = (c, where = '') => {
             quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null,
             K.drLogBadge ? K.drLogBadge(c.dr_log, 'qz-tdr') : null,
             c.mag ? K.magazines.dot(c.mag, 'qz-tmag') : null,
+            c.partial ? h('span', { class: 'qz-tpartial', title: 'Only one track on Qobuz so far' }, '◐ 1 track') : null,
             c.mag && c.mag.agreement > 1 ? h('span', { class: 'qz-tagree', title: c.mag.magazines.join(', ') }, `×${c.mag.agreement}`) : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-tsub muted' }, c.artist || ''),

@@ -1606,3 +1606,11 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .btn.mag-icon { min-width: 2.6rem; padding: 0 .55rem; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .btn.mag-icon .ticon { width: 1.3rem; height: 1.3rem; }
 .mag-step { flex: none; }
+/* a magazine's pick of which Qobuz has only a one-track advance release so far */
+.qz-row.partial .qz-cover, .qz-tile.partial .qz-tcover img { filter: grayscale(.85); opacity: .6; }
+.qz-row.partial .qz-title { color: var(--muted); }
+.chip.qz-partial-chip { font-size: .72rem; min-height: 1.3rem; }
+.qz-tpartial { position: absolute; left: .25rem; bottom: .25rem; font-size: .68rem; line-height: 1; padding: .2rem .3rem;
+    border-radius: .3rem; background: rgba(0,0,0,.7); color: var(--warn-text); }
+.qz-tcover:has(.qz-tpartial) .qz-taward { bottom: 1.45rem; }
+.mag-partial { color: var(--warn-text) !important; }

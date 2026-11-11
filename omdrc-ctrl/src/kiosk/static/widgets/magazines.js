@@ -60,6 +60,7 @@ M.block = (c, { open = false } = {}) => {
         h('p', { class: 'mag-art' }, m.shared ? h('span', { class: 'mag-label' }, 'Shared verdict ') : null, m.artistic),
         m.sound ? h('p', { class: 'mag-sound' }, h('span', { class: 'mag-label' }, 'Sound '), m.sound) : null,
         !c.id ? h('p', { class: 'small muted' }, 'Not found on Qobuz: search for it.') : null,
+        c.partial ? h('p', { class: 'small mag-partial' }, '◐ Only one track of this album is on Qobuz so far: the whole album is looked for again every day.') : null,
         toggle, reviews);
 };
 M.sheet = (c, actions) => {

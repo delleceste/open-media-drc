@@ -740,7 +740,9 @@ def _card_score(card: dict, pick: dict, year: int) -> int:
     if label_words & set(_words(card.get("label", ""))):
         score += 2
     works = _work_words(pick)
-    shared = works & set(_words(f"{card.get('title', '')} {card.get('version', '')}"))
+    stem = lambda w: w[:-1] if len(w) > 4 and w.endswith("s") else w  # noqa: E731 - Nocturne(s), Sonata(s)
+    title = {stem(w) for w in _words(f"{card.get('title', '')} {card.get('version', '')}")}
+    shared = {w for w in works if stem(w) in title}
     # the same artists in another of their albums (Bernstein's Nielsen symphonies for his
     # Nielsen clarinet concerto) is not the recording reviewed
     distinctive = {w for w in works if not w.isdigit()}
@@ -765,6 +767,10 @@ def _queries(pick: dict) -> list[str]:
 
 
 def find_on_qobuz(catalog, pick: dict, year: int) -> dict | None:
+    """The album reviewed, as a result card.  When Qobuz has only a one-track advance
+    single of it so far, that single, marked "partial": shown as incomplete, and looked
+    up again a day later (refresh_matches) until the whole album comes."""
+    single, single_score = None, 4
     for query in _queries(pick):
         try:
             answer = catalog.search(text=query, enrich=False, scan=50)
@@ -772,16 +778,17 @@ def find_on_qobuz(catalog, pick: dict, year: int) -> dict | None:
             continue
         best, best_score = None, 4
         for card in answer.get("results", [])[:30]:
-            # a one-track advance single is never the album reviewed (it would play one track)
-            if (card.get("source") == "local" or card.get("streamable") is False or not card.get("id")
-                    or is_advance_single(card)):
+            if card.get("source") == "local" or card.get("streamable") is False or not card.get("id"):
                 continue
             score = _card_score(card, pick, year)
-            if score > best_score:
+            if is_advance_single(card):
+                if score > single_score:
+                    single, single_score = card, score
+            elif score > best_score:
                 best, best_score = card, score
         if best:
             return {k: best.get(k) for k in CARD_FIELDS}
-    return None
+    return {**{k: single.get(k) for k in CARD_FIELDS}, "partial": True} if single else None
 
 
 def rematch(root: Path, key: str, catalog) -> int:
@@ -804,7 +811,7 @@ def rematch(root: Path, key: str, catalog) -> int:
 
 def _incomplete(pick: dict, now: float) -> bool:
     card = pick.get("qobuz") or {}
-    missing = not card.get("id") or card.get("tracks") == 1 or not card.get("image")
+    missing = not card.get("id") or card.get("partial") or card.get("tracks") == 1 or not card.get("image")
     return missing and now - (pick.get("matched_at") or 0) >= REMATCH_AFTER
 
 
@@ -846,7 +853,9 @@ def _refresh(root: Path, key: str, catalog_fn):
                 for index, card in found.items():
                     pick = current["picks"][index]
                     old = pick.get("qobuz") or {}
-                    if card or not old.get("id"):
+                    # a whole album found earlier is never traded for a single or for nothing
+                    if card and not (card.get("partial") and old.get("id") and not old.get("partial")) \
+                            or not old.get("id"):
                         pick["qobuz"] = card
                     changed |= (card or {}).get("id") != old.get("id")
                     pick["matched_at"] = int(time.time())

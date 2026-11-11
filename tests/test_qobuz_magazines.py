@@ -107,6 +107,9 @@ class ReadingTest(unittest.TestCase):
         album = {**single, "id": "a1", "title": "Chopin: Nocturnes", "tracks": 22, "duration": 6400}
         found = FakeCatalog([single, album])
         self.assertEqual(mags.find_on_qobuz(found, nocturnes, 2026)["id"], "a1")
+        only = mags.find_on_qobuz(FakeCatalog([single]), nocturnes, 2026)
+        self.assertEqual((only["id"], only["partial"]), ("s1", True), "a single alone is kept, marked incomplete")
+        self.assertNotIn("partial", mags.find_on_qobuz(FakeCatalog([single, album]), nocturnes, 2026))
         self.assertEqual(found.queries[0], "Pavel Kolesnikov Chopin Complete Nocturnes")
         concerto = pick(composer="Nielsen", works="Clarinet Concerto, Op 57", catalogue="",
                         performers="Stanley Drucker; New York Philharmonic / Leonard Bernstein", label="Sony Classical")
@@ -240,6 +243,8 @@ class ReadingTest(unittest.TestCase):
 
         def find(_catalog, p, _year):
             asked.append(p["works"])
+            if p["works"] == "Goldberg Variations":
+                return {**single, "partial": True}          # worse than the album already found
             return whole if p["works"] == "Symphony No 8" else None
         with patch.object(mags, "find_on_qobuz", side_effect=find):
             mags._job["running"] = True
@@ -253,7 +258,7 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(sorted(asked), ["Goldberg Variations", "Symphony No 8"])
         picks = json.loads((self.root / "2026/11" / f"{slug}.json").read_text())["picks"]
         self.assertEqual(picks[0]["qobuz"]["id"], "a1", "the whole album replaces the single")
-        self.assertEqual(picks[2]["qobuz"]["id"], "g1", "a lookup finding nothing keeps what was there")
+        self.assertEqual(picks[2]["qobuz"]["id"], "g1", "a whole album is never traded for a single")
         self.assertGreater(picks[2]["matched_at"], 0)
         self.assertEqual(mags.refresh_matches(self.root, "2026-11", FakeCatalog), 0, "not again the same day")
         self.assertIn("Shostakovich: Symphony No. 8", (self.root / "2026/11/digest.md").read_text())
