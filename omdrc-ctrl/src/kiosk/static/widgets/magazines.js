@@ -32,6 +32,13 @@ M.dot = (m, cls = '') => {
     return el;
 };
 
+// Which magazines recommend it, on its cover: G (Gramophone), D (Diapason), BBC, ...
+M.marks = m => {
+    const marks = m.marks || m.magazines.map(name => name.split(/\s+/).map(w => w[0]).join('').slice(0, 3).toUpperCase());
+    return h('span', { class: 'mag-marks', title: 'Recommended by ' + m.magazines.join(', '), 'aria-label': 'Recommended by ' + m.magazines.join(', ') },
+        marks.map(x => h('span', { class: 'mag-mark-letter' }, x)));
+};
+
 // What a result row shows of the magazines (pages/qobuz.js P.row), and the sheet a tile opens.
 M.badges = m => h('div', { class: 'mag-badges' },
     M.dot(m),

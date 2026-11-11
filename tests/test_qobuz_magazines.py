@@ -124,6 +124,8 @@ class ReadingTest(unittest.TestCase):
             self.assertEqual(mags.canonical_magazine(given), name)
         self.assertEqual(mags.issue_slug("BBC Music Magazine, Dec 2026", "2026-12"), "bbc-music-magazine-2026-12")
         self.assertEqual(mags.issue_slug("Crescendo Magazin", "2027-01"), "crescendo-2027-01")
+        self.assertEqual([mags.magazine_mark(n) for n in ("Gramophone", "DIAPASON n° 760", "BBC Music", "Revue XYZ")],
+                         ["G", "D", "BBC", "RX"])
 
     def test_a_long_work_title_falls_back_to_the_names(self):
         card = {"id": "x1", "title": "Sibelius: Complete Symphonies", "artist": "Klaus Mäkelä",
@@ -192,6 +194,7 @@ class ReadingTest(unittest.TestCase):
         first, second = view["entries"]
         self.assertEqual(first["id"], "q1")
         self.assertEqual(first["mag"]["agreement"], 3)
+        self.assertEqual(sorted(first["mag"]["marks"]), ["BBC", "D", "G"])
         self.assertEqual(first["mag"]["quality"], 9.0)
         self.assertTrue(first["mag"]["q"])
         self.assertEqual(first["mag"]["awards"], ["Gramophone: Editor's Choice"])

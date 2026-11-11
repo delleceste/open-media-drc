@@ -261,6 +261,23 @@ KNOWN_MAGAZINES = (
     (r"\bresmusica\b", "ResMusica"), (r"\bopera\s+magazine\b|^opera$", "Opera"))
 
 
+# The mark a magazine leaves on a recommendation's cover.
+MAGAZINE_MARKS = {"Gramophone": "G", "Diapason": "D", "BBC Music Magazine": "BBC", "Classica": "C",
+                  "Fono Forum": "FF", "Fanfare": "F", "American Record Guide": "ARG", "Pizzicato": "P",
+                  "Opernwelt": "OW", "Crescendo": "Cr", "Amadeus": "A", "Musica": "M", "Scherzo": "S",
+                  "Ritmo": "R", "Limelight": "L", "Stereophile": "SP", "The Absolute Sound": "TAS",
+                  "Hi-Fi News": "HFN", "ResMusica": "RM", "Opera": "O"}
+
+
+def magazine_mark(name: str) -> str:
+    """"G" for Gramophone, "BBC" for BBC Music Magazine; another one's initials."""
+    canonical = canonical_magazine(name)
+    if canonical in MAGAZINE_MARKS:
+        return MAGAZINE_MARKS[canonical]
+    words = [w for w in re.findall(r"[^\W\d_]+", canonical) if w.lower() not in ("the", "le", "la", "der", "die", "il")]
+    return "".join(w[0].upper() for w in words)[:3] or "?"
+
+
 def canonical_magazine(name: str) -> str:
     """One name per magazine; an unknown one is cleaned of issue numbers, dates and
     "magazine", and capitalised as it was written (or title-cased if all one case)."""
@@ -1100,6 +1117,7 @@ def entry(group: list[dict], key: str, verdicts: dict) -> dict:
     sound_best = max(group, key=lambda r: (r["sound_score"] or 0, len(r["sound"] or "")))
     card["mag"] = {
         "key": _signature(group), "agreement": len(magazines), "magazines": magazines,
+        "marks": [magazine_mark(name) for name in magazines],
         "awards": [f"{r['magazine']}: {r['award']}" for r in group if r.get("award")],
         "quality": quality, "q": any(r.get("sound_exceptional") for r in group) or (quality or 0) >= 9,
         # the circle's colour: the sound as rated when a review describes it, else the performance

@@ -2295,7 +2295,8 @@ P.row = (c, where = '') => {
             onclick: c.image ? () => K.openCoverMax(c.image_large || c.image, { usable: () => false },
                 { title: [c.title, c.version ? `(${c.version})` : ''].filter(Boolean).join(' '), facts: [c.artist, c.label, c.year].filter(Boolean).join(' · ') }) : null },
             c.image ? h('img', { class: 'qz-cover', src: c.image_large || c.image, alt: '', loading: 'lazy' })
-                : h('div', { class: 'qz-cover' + (c.mag ? ' qz-nocover' : '') }, c.mag ? K.tIcon('magazine') : null), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
+                : h('div', { class: 'qz-cover' + (c.mag ? ' qz-nocover' : '') }, c.mag ? K.tIcon('magazine') : null),
+            c.mag ? K.magazines.marks(c.mag) : null, local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
         body,
         unfound ? h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn qz-play', title: 'Search for it on Qobuz', 'aria-label': 'Search for it on Qobuz',
@@ -2330,7 +2331,8 @@ P.tile = (c, where = '') => {
             K.drLogBadge ? K.drLogBadge(c.dr_log, 'qz-tdr') : null,
             c.mag ? K.magazines.dot(c.mag, 'qz-tmag') : null,
             c.partial ? h('span', { class: 'qz-tpartial', title: 'Only one track on Qobuz so far' }, '◐ 1 track') : null,
-            c.mag && c.mag.agreement > 1 ? h('span', { class: 'qz-tagree', title: c.mag.magazines.join(', ') }, `×${c.mag.agreement}`) : null),
+            c.mag && c.mag.agreement > 1 ? h('span', { class: 'qz-tagree', title: c.mag.magazines.join(', ') }, `×${c.mag.agreement}`) : null,
+            c.mag ? K.magazines.marks(c.mag) : null),
         h('div', { class: 'qz-ttl' }, c.title, c.version ? h('span', { class: 'muted' }, ` (${c.version})`) : null),
         h('div', { class: 'qz-tsub muted' }, c.artist || ''),
         sub ? h('div', { class: 'qz-tsub muted' }, c.year || '', c.year && c.label ? ' · ' : '', P.labelLink(c)) : null);
