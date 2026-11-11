@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 import threading
@@ -628,57 +629,95 @@ def _item(name: str, **values):
 
 
 def start(root: Path, state_dir: str, catalog_fn, post=None) -> dict:
-    """Read every PDF waiting in the inbox, one after another, in the background."""
+    """Read every PDF waiting in the inbox, one after another, in the background.
+    Issues uploaded while a job runs join its queue."""
     files = inbox(root)
     if not files:
         raise MagazineError("No uploaded issue is waiting to be read.")
     cfg = qobuz_ai.configuration(state_dir)
     _ready(cfg)
     with _lock:
-        if _job["running"]:
-            return {"started": False}
-        _cancel.clear()
-        _job.update(running=True, detail="Starting", error="", items=[
-            {"file": p.name, "name": _display(p.name), "state": "queued", "detail": ""} for p in files])
-    threading.Thread(target=_run, args=(root, cfg, catalog_fn, files, post),
-                     name="magazines", daemon=True).start()
-    return {"started": True}
+        running = _job["running"]
+        if not running:
+            _cancel.clear()
+            _job.update(running=True, detail="Starting", error="", items=[])
+        pending = {i["file"] for i in _job["items"] if i["state"] in ("queued", "reading")}
+        _job["items"] = [i for i in _job["items"] if i["file"] not in {p.name for p in files} or i["file"] in pending]
+        _job["items"] += [{"file": p.name, "name": _display(p.name), "state": "queued", "detail": ""}
+                          for p in files if p.name not in pending]
+    if not running:
+        threading.Thread(target=_run, args=(root, cfg, catalog_fn, post), name="magazines", daemon=True).start()
+    return {"started": True, "queued": running}
 
 
 def stop() -> None:
     _cancel.set()
 
 
-def _run(root: Path, cfg, catalog_fn, files, post):
+def _log(text: str) -> None:
+    print(f"magazines: {text}", file=sys.stderr, flush=True)
+
+
+def _next() -> str | None:
+    with _lock:
+        for item in _job["items"]:
+            if item["state"] == "queued":
+                item.update(state="reading", detail="Reading the PDF")
+                return item["file"]
+    return None
+
+
+def _run(root: Path, cfg, catalog_fn, post):
     touched = set()
     try:
-        for path in files:
-            if _cancel.is_set():
-                break
-            _item(path.name, state="reading", detail="Reading the PDF")
-            try:
-                issue = read_issue(root, cfg, path, catalog_fn, cancel=_cancel, post=post,
-                                   progress=lambda text, name=path.name: (_item(name, detail=text), _set(detail=text)))
-                touched.add(issue["month_key"])
-                _item(path.name, state="done", detail=f"{issue['magazine']}, {month_label(issue['month_key'])}: "
-                      f"{len(issue['picks'])} recommendations", month=issue["month_key"])
-            except (QobuzError, OSError) as error:
-                stopped = _cancel.is_set()
-                _item(path.name, state="waiting" if stopped else "error",
-                      detail="Stopped" if stopped else str(error)[:300])
-        for key in sorted(touched):
-            for near in range(-WINDOW, WINDOW + 1):
-                near_key = _shift(key, near)
-                if not _month_dir(root, near_key).is_dir() or _cancel.is_set():
+        while True:
+            while not _cancel.is_set() and (name := _next()):
+                path = root / "inbox" / name
+                if not path.is_file():
+                    _item(name, state="error", detail="The upload is no longer on the box.")
                     continue
-                _set(detail=f"Cross-referencing {month_label(near_key)}")
+                _log(f"reading {name}")
                 try:
-                    consensus(root, cfg, near_key, cancel=_cancel, post=post)
+                    issue = read_issue(root, cfg, path, catalog_fn, cancel=_cancel, post=post,
+                                       progress=lambda text, n=name: (_item(n, detail=text), _set(detail=text)))
+                    touched.add(issue["month_key"])
+                    _item(name, state="done", detail=f"{issue['magazine']}, {month_label(issue['month_key'])}: "
+                          f"{len(issue['picks'])} recommendations", month=issue["month_key"])
+                    _log(f"{name}: {issue.get('slug', issue['month_key'])}, {len(issue['picks'])} recommendations")
                 except (QobuzError, OSError) as error:
-                    _set(error=f"Shared verdicts for {month_label(near_key)}: {str(error)[:200]}")
-                write_document(root, near_key)
+                    stopped = _cancel.is_set()
+                    _item(name, state="waiting" if stopped else "error",
+                          detail="Stopped" if stopped else str(error)[:300])
+                    _log(f"{name}: {'stopped' if stopped else error}")
+            for key in sorted(touched):
+                for near in range(-WINDOW, WINDOW + 1):
+                    near_key = _shift(key, near)
+                    if not _month_dir(root, near_key).is_dir() or _cancel.is_set():
+                        continue
+                    _set(detail=f"Cross-referencing {month_label(near_key)}")
+                    try:
+                        consensus(root, cfg, near_key, cancel=_cancel, post=post)
+                    except (QobuzError, OSError) as error:
+                        _set(error=f"Shared verdicts for {month_label(near_key)}: {str(error)[:200]}")
+                        _log(f"shared verdicts {near_key}: {error}")
+                    write_document(root, near_key)
+            touched.clear()
+            with _lock:
+                # an upload made meanwhile was queued: read it too, else this job ends here
+                if _cancel.is_set() or not any(i["state"] == "queued" for i in _job["items"]):
+                    for item in _job["items"]:
+                        if item["state"] == "queued":
+                            item.update(state="waiting", detail="Stopped")
+                    _job.update(running=False, detail="Stopped" if _cancel.is_set() else "",
+                                finished=int(time.time()))
+                    return
+    except Exception as error:      # noqa: BLE001 - never leave the job marked running
+        _log(f"job failed: {error!r}")
+        raise
     finally:
-        _set(running=False, detail="Stopped" if _cancel.is_set() else "", finished=int(time.time()))
+        with _lock:
+            if _job["running"]:
+                _job.update(running=False, detail="", finished=int(time.time()))
 
 
 def read_issue(root: Path, cfg, path: Path, catalog_fn, cancel=None, post=None, progress=None,

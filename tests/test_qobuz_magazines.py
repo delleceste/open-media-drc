@@ -257,6 +257,31 @@ class UploadTest(unittest.TestCase):
         self.assertEqual(view["month"], "2026-11")
         self.assertEqual(view["months"], [{"key": "2026-11", "label": "November 2026"}])
 
+    def test_an_upload_during_a_job_joins_its_queue(self):
+        import threading
+        ai.save_settings(self.temp.name, {"provider": "claude", "key": "test-secret"})
+        root = Path(self.temp.name) / "magazines"
+        mags.save_upload(root, io.BytesIO(b"%PDF-1.4 x"), "Gramophone.pdf")
+        gate, read = threading.Event(), []
+
+        def slow(root_, cfg, path, catalog_fn, **_):
+            gate.wait(5)
+            read.append(path.name)
+            path.unlink()
+            raise mags.MagazineError("no text")
+        with patch.object(mags, "read_issue", side_effect=slow):
+            self.assertEqual(mags.start(root, self.temp.name, None), {"started": True, "queued": False})
+            mags.save_upload(root, io.BytesIO(b"%PDF-1.4 y"), "Diapason.pdf")
+            self.assertEqual(mags.start(root, self.temp.name, None), {"started": True, "queued": True})
+            gate.set()
+            for _ in range(200):
+                if not mags.status(root)["running"]:
+                    break
+                time.sleep(.02)
+        self.assertEqual(len(read), 2, "the second upload was read by the same job")
+        self.assertEqual([i["state"] for i in mags.status(root)["items"]], ["error", "error"])
+        self.assertEqual(mags.status(root)["items"][1]["detail"], "no text")
+
 
 if __name__ == "__main__":
     unittest.main()
