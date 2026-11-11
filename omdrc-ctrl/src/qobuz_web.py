@@ -607,6 +607,18 @@ def _same_origin_guard():
     return None
 
 
+def magazine_rows() -> list:
+    """This box's magazine results, for the shared git sync (dr_sync extras)."""
+    try:
+        return qobuz_magazines.export_rows(_magazine_root())
+    except (QobuzError, OSError):
+        return []
+
+
+def set_magazine_share(folder: str, box: str, trigger=None) -> None:
+    qobuz_magazines.set_share(folder, box, trigger)
+
+
 @bp.route("/magazines")
 def magazines():
     guard = _guard(False)
@@ -614,7 +626,7 @@ def magazines():
         return guard
     try:
         root = _magazine_root()
-        months = qobuz_magazines.months(root) if root.is_dir() else []
+        months = qobuz_magazines.months(root)      # this box's, and the ones the others share
         month = request.args.get("month") or ""
         if month not in months:
             current = time.strftime("%Y-%m")

@@ -135,16 +135,89 @@ def _shift(key: str, months: int) -> str:
     return _month_key(n // 12, n % 12 + 1)
 
 
-def months(root: Path) -> list[str]:
-    """The months holding read issues, newest first."""
-    found = set()
+# ── shared with the other boxes ─────────────────────────────────────────────
+# What was read from the issues -- never the PDFs -- rides along with the DR log's
+# git sync (dr_sync.GitSync extras): this box writes magazines/<box>.jsonl in the
+# shared clone, one row per issue and one per month's shared verdicts, and reads
+# the other boxes' files from it.  Their issues join this box's months; an issue
+# read on two boxes counts once (this box's own copy, else the newest).
+_share = {"dir": "", "box": "", "trigger": None, "cache": {}}
+
+
+def set_share(folder: str, box: str, trigger=None) -> None:
+    """`folder`: the shared clone's magazines/; `trigger()` asks for a sync soon."""
+    _share.update(dir=folder or "", box=box or "", trigger=trigger, cache={})
+
+
+def _shared_changed() -> None:
+    if _share["trigger"]:
+        try:
+            _share["trigger"]()
+        except Exception:                # noqa: BLE001 - shared at the next round anyway
+            pass
+
+
+def export_rows(root: Path) -> list[dict]:
+    """This box's own issues and verdicts, as the sync writes them."""
+    rows = []
+    for key in months(root, shared=False):
+        for issue in issues(root, key, shared=False):
+            row = {k: v for k, v in issue.items() if k not in ("month_key", "box", "remote")}
+            rows.append({"kind": "issue", "month": key, **row})
+        verdicts = (_digest(root, key, shared=False).get("verdicts") or {})
+        if verdicts:
+            rows.append({"kind": "verdicts", "month": key, "verdicts": verdicts})
+    return rows
+
+
+def _remote() -> dict:
+    """The other boxes' rows: {"issues": {month: [issue]}, "verdicts": {month: {...}}}."""
+    folder = _share["dir"]
+    found = {"issues": {}, "verdicts": {}}
+    if not folder or not os.path.isdir(folder):
+        return found
+    for name in sorted(os.listdir(folder)):
+        box, ext = os.path.splitext(name)
+        if ext != ".jsonl" or box == _share["box"] or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", box):
+            continue
+        path = os.path.join(folder, name)
+        try:
+            stamp = os.stat(path).st_mtime_ns
+            cached = _share["cache"].get(box)
+            if not cached or cached[0] != stamp:
+                rows = []
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        try:
+                            row = json.loads(line)
+                        except ValueError:
+                            continue
+                        if isinstance(row, dict) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", str(row.get("month"))):
+                            rows.append(row)
+                _share["cache"][box] = cached = (stamp, rows)
+        except OSError:
+            continue
+        for row in cached[1]:
+            if row.get("kind") == "issue" and isinstance(row.get("picks"), list) and re.fullmatch(
+                    r"[a-z0-9-]{1,90}", str(row.get("slug"))):
+                issue = {k: v for k, v in row.items() if k not in ("kind", "month")}
+                found["issues"].setdefault(row["month"], []).append({**issue, "box": box, "remote": True})
+            elif row.get("kind") == "verdicts" and isinstance(row.get("verdicts"), dict):
+                found["verdicts"].setdefault(row["month"], {}).update(row["verdicts"])
+    return found
+
+
+def months(root: Path, shared: bool = True) -> list[str]:
+    """The months holding read issues (this box's and, `shared`, the others'), newest first."""
+    found = set(_remote()["issues"]) if shared else set()
     for path in root.glob("[0-9][0-9][0-9][0-9]/[0-9][0-9]/*.json"):
         if path.name != "digest.json":
             found.add(f"{path.parent.parent.name}-{path.parent.name}")
     return sorted((m for m in found if re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", m)), reverse=True)
 
 
-def issues(root: Path, key: str) -> list[dict]:
+def issues(root: Path, key: str, shared: bool = False) -> list[dict]:
+    """This month's issues read on this box; `shared`: with the other boxes' too."""
     folder = _month_dir(root, key)
     out = []
     for path in sorted(folder.glob("*.json")):
@@ -157,6 +230,15 @@ def issues(root: Path, key: str) -> list[dict]:
         if isinstance(data, dict) and isinstance(data.get("picks"), list):
             data["month_key"] = key
             out.append(data)
+    if shared:
+        own = {i.get("slug") for i in out}
+        newest: dict[str, dict] = {}
+        for issue in _remote()["issues"].get(key, []):
+            if issue["slug"] in own:
+                continue
+            if issue["slug"] not in newest or (issue.get("read_at") or 0) > (newest[issue["slug"]].get("read_at") or 0):
+                newest[issue["slug"]] = issue
+        out += [{**i, "month_key": key} for _, i in sorted(newest.items())]
     return out
 
 
@@ -283,6 +365,7 @@ def remove_issue(root: Path, key: str, slug: str) -> bool:
             near_key = _shift(key, near)
             if _month_dir(root, near_key).is_dir():
                 write_document(root, near_key)
+        _shared_changed()
         if not any(p.name != "digest.json" for p in folder.glob("*.json")):
             for leftover in ("digest.json", "digest.md"):
                 (folder / leftover).unlink(missing_ok=True)
@@ -715,6 +798,7 @@ def rematch(root: Path, key: str, catalog) -> int:
         issue.pop("month_key", None)
         qobuz_ai._write_json(_month_dir(root, key) / f"{issue['slug']}.json", issue)
     write_document(root, key)
+    _shared_changed()
     return found
 
 
@@ -769,6 +853,7 @@ def _refresh(root: Path, key: str, catalog_fn):
                 qobuz_ai._write_json(path, current)
         if changed:
             write_document(root, key)
+            _shared_changed()
             _log(f"{key}: Qobuz lookups refreshed")
     except Exception as error:           # noqa: BLE001 - a lookup is retried the next day
         _log(f"{key}: Qobuz lookups failed: {error!r}")
@@ -879,6 +964,8 @@ def _run(root: Path, cfg, catalog_fn, post):
                         _set(error=f"Shared verdicts for {month_label(near_key)}: {str(error)[:200]}")
                         _log(f"shared verdicts {near_key}: {error}")
                     write_document(root, near_key)
+            if touched:
+                _shared_changed()
             touched.clear()
             with _lock:
                 # an upload made meanwhile was queued: read it too, else this job ends here
@@ -942,6 +1029,7 @@ def read_issue(root: Path, cfg, path: Path, catalog_fn, cancel=None, post=None, 
 def _review(issue: dict, index: int, pick: dict) -> dict:
     return {"id": f"{issue['slug']}#{index}", "magazine": issue.get("magazine", ""), "month": issue["month_key"],
             "issue": issue.get("issue") or month_label(issue["month_key"]), "slug": issue["slug"],
+            "box": issue.get("box", ""), "remote": bool(issue.get("remote")),
             **{k: pick.get(k) for k in ("award", "rating", "artistic", "sound", "reviewer", "page",
                                          "artistic_score", "sound_score", "sound_exceptional",
                                          "composer", "works", "performers", "label", "catalogue",
@@ -955,9 +1043,7 @@ def clusters(root: Path, key: str) -> list[list[dict]]:
     reviews = []
     for near in range(-WINDOW, WINDOW + 1):
         near_key = _shift(key, near)
-        if not _month_dir(root, near_key).is_dir():
-            continue
-        for issue in issues(root, near_key):
+        for issue in issues(root, near_key, shared=True):
             reviews += [_review(issue, i, p) for i, p in enumerate(issue["picks"]) if isinstance(p, dict)]
     groups: list[list[dict]] = []
     for review in reviews:
@@ -974,12 +1060,17 @@ def _signature(group: list[dict]) -> str:
     return hashlib.sha1("|".join(sorted(r["id"] for r in group)).encode()).hexdigest()[:16]
 
 
-def _digest(root: Path, key: str) -> dict:
+def _digest(root: Path, key: str, shared: bool = True) -> dict:
+    """The month's shared verdicts made here; `shared`: and on the other boxes (ours first)."""
     try:
         data = json.loads((_month_dir(root, key) / "digest.json").read_text())
-        return data if isinstance(data, dict) else {}
+        data = data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        return {}
+        data = {}
+    if shared:
+        own = data.get("verdicts") if isinstance(data.get("verdicts"), dict) else {}
+        data = {**data, "verdicts": {**_remote()["verdicts"].get(key, {}), **own}}
+    return data
 
 
 def entry(group: list[dict], key: str, verdicts: dict) -> dict:
@@ -1008,7 +1099,7 @@ def entry(group: list[dict], key: str, verdicts: dict) -> dict:
         "works": lead.get("works", ""), "performers": lead.get("performers", ""), "composer": lead.get("composer", ""),
         "reviews": [{k: r.get(k) for k in ("magazine", "issue", "month", "slug", "award", "rating", "artistic",
                                            "sound", "reviewer", "page", "artistic_score", "sound_score",
-                                           "sound_exceptional", "catalogue")} for r in group]}
+                                           "sound_exceptional", "catalogue", "box", "remote")} for r in group]}
     return card
 
 
@@ -1022,8 +1113,8 @@ def _rank(card: dict):
 def month_view(root: Path, key: str) -> dict:
     verdicts = _digest(root, key).get("verdicts") or {}
     cards = sorted((entry(g, key, verdicts) for g in clusters(root, key)), key=_rank)
-    shown = [{k: i.get(k) for k in ("slug", "magazine", "issue", "language", "uploaded", "pages", "read_at")}
-             | {"picks": len(i["picks"])} for i in issues(root, key)]
+    shown = [{k: i.get(k) for k in ("slug", "magazine", "issue", "language", "uploaded", "pages", "read_at", "box")}
+             | {"picks": len(i["picks"]), "remote": bool(i.get("remote"))} for i in issues(root, key, shared=True)]
     return {"month": key, "label": month_label(key), "issues": shown, "entries": cards,
             "agreed": sum(1 for c in cards if c["mag"]["agreement"] > 1)}
 
@@ -1031,14 +1122,15 @@ def month_view(root: Path, key: str) -> dict:
 def consensus(root: Path, cfg, key: str, cancel=None, post=None) -> None:
     """A shared English verdict for each recording more than one magazine recommends;
     kept by the set of reviews it was made from, so it is asked for once."""
-    digest = _digest(root, key)
+    digest = _digest(root, key, shared=False)
     verdicts = digest.get("verdicts") if isinstance(digest.get("verdicts"), dict) else {}
+    known = _digest(root, key)["verdicts"]          # another box may have written it already
     wanted = {}
     for group in clusters(root, key):
         if len({r["magazine"] for r in group}) < 2:
             continue
         sig = _signature(group)
-        if sig in verdicts:
+        if sig in known:
             continue
         wanted[sig] = {"key": sig, "recording": {k: group[0].get(k) for k in ("composer", "works", "performers")},
                        "reviews": [{k: r.get(k) for k in ("magazine", "issue", "award", "rating", "artistic", "sound")}

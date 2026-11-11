@@ -258,6 +258,44 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(mags.refresh_matches(self.root, "2026-11", FakeCatalog), 0, "not again the same day")
         self.assertIn("Shostakovich: Symphony No. 8", (self.root / "2026/11/digest.md").read_text())
 
+    def test_results_are_shared_with_other_boxes_but_not_the_pdfs(self):
+        shared = Path(self.state) / "dr-sync" / "magazines"
+        shared.mkdir(parents=True)
+        mags.set_share(str(shared), "arki")
+        self.addCleanup(mags.set_share, "", "")
+        self.write_issue("2026-12", "Gramophone", [pick(award="Editor's Choice")])
+        rows = mags.export_rows(self.root)
+        self.assertEqual([r["kind"] for r in rows], ["issue"])
+        self.assertEqual(rows[0]["slug"], "gramophone-2026-12")
+        self.assertNotIn("pdf", json.dumps(rows).lower().replace("pdf_", ""), "no PDF travels")
+
+        diapason = {"kind": "issue", "month": "2026-12", "slug": "diapason-2026-12", "magazine": "Diapason",
+                    "issue": "Décembre 2026", "read_at": 5, "picks": [pick(catalogue="HMM 902500", award="Diapason d'or")]}
+        older = {**diapason, "read_at": 1, "picks": []}
+        again = {**rows[0], "read_at": 99, "picks": []}           # our own issue, read on bee too
+        lines = [diapason, older, again]
+        (shared / "bee.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
+        (shared / "arki.jsonl").write_text(json.dumps({**diapason, "slug": "ours-2026-12"}) + "\n")
+        mags.set_share(str(shared), "arki")
+        view = mags.month_view(self.root, "2026-12")
+        self.assertEqual([(i["magazine"], i["remote"], i["box"]) for i in view["issues"]],
+                         [("Gramophone", False, None), ("Diapason", True, "bee")])
+        self.assertEqual(view["entries"][0]["mag"]["agreement"], 2, "bee's newest Diapason agrees with ours")
+        remote = [r for r in view["entries"][0]["mag"]["reviews"] if r["remote"]]
+        self.assertEqual(remote[0]["box"], "bee")
+        self.assertEqual(mags.months(self.root), ["2026-12"])
+        with self.assertRaises(mags.MagazineError):
+            mags.pdf_path(self.root, "2026-12", "diapason-2026-12")
+
+        key = view["entries"][0]["mag"]["key"]
+        (shared / "bee.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines) + json.dumps(
+            {"kind": "verdicts", "month": "2026-12", "verdicts": {key: {"artistic": "Both love it.", "sound": ""}}}) + "\n")
+        asked = []
+        mags.consensus(self.root, self.cfg, "2026-12", post=lambda *a: asked.append(a))
+        self.assertEqual(asked, [], "a verdict made on another box is not asked for again")
+        self.assertEqual(mags.month_view(self.root, "2026-12")["entries"][0]["mag"]["artistic"], "Both love it.")
+        self.assertFalse(any(r["kind"] == "verdicts" for r in mags.export_rows(self.root)), "bee's verdict stays bee's")
+
     def test_same_recording_needs_shared_performers(self):
         a = pick(catalogue="")
         self.assertTrue(mags.same_recording(a, pick(catalogue="", works="Symphonie n° 5 en ut mineur")))

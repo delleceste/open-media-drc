@@ -5871,12 +5871,18 @@ def _dr_sync_start() -> None:
     _BASS.shared_dir = os.path.join(_STATE_DIR, "dr-sync", "bass")
     _BASS.box = box
     try:
+        extras = {"bass": _BASS_STORE.export_rows}
+        # what was read from music magazine issues (never the PDFs): magazines/<box>.jsonl
+        if "qobuz_web" in sys.modules:
+            extras["magazines"] = sys.modules["qobuz_web"].magazine_rows
         _DR_SYNC = GitSync(_DR_STORE, DR_SYNC_REPO, box, os.path.join(_STATE_DIR, "dr-sync"),
-                           interval=DR_SYNC_INTERVAL_MINUTES * 60.0,
-                           extras={"bass": _BASS_STORE.export_rows})
+                           interval=DR_SYNC_INTERVAL_MINUTES * 60.0, extras=extras)
     except SyncError as error:
         _DR_SYNC_ERROR = str(error)
         return
+    if "magazines" in extras:
+        sys.modules["qobuz_web"].set_magazine_share(os.path.join(_STATE_DIR, "dr-sync", "magazines"),
+                                                    box, _DR_SYNC.trigger)
     _DR_SYNC.start()
 
 
