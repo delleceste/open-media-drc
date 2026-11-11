@@ -119,14 +119,33 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(mags.find_on_qobuz(found, p, 2026)["id"], "x1")
         self.assertEqual(found.queries[1], "Mäkelä Sibelius")
 
-    def test_no_text_layer_is_refused_and_left_in_the_inbox(self):
+    def test_a_scan_is_read_by_ocr_and_refused_only_if_that_finds_nothing(self):
         inbox = self.root / "inbox"
         inbox.mkdir(parents=True)
         pdf = inbox / "scan.pdf"
         pdf.write_bytes(b"%PDF-1.4")
-        with self.assertRaisesRegex(mags.MagazineError, "scan"):
+        with (patch.object(mags, "ocr_pages", return_value=["", ""]) as ocr,
+              self.assertRaisesRegex(mags.MagazineError, "even by OCR")):
             mags.read_issue(self.root, self.cfg, pdf, FakeCatalog, pages=["", "  "])
-        self.assertTrue(pdf.exists())
+        ocr.assert_called_once()
+        self.assertTrue(pdf.exists(), "a failed upload stays in the inbox")
+
+    def test_ocr_resumes_from_the_pages_already_read(self):
+        pdf = Path(self.state) / "scan.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        mags._ocr_cache(pdf).write_text(json.dumps({"count": 3, "languages": "fra+eng",
+                                                     "pages": ["cover", None, None]}))
+        read = []
+
+        def page(_pdf, number, languages, _folder):
+            read.append((number, languages))
+            return f"page {number}"
+        with (patch.object(mags, "_page_count", return_value=3), patch.object(mags, "_ocr_page", side_effect=page),
+              patch.object(mags.subprocess, "run") as run):
+            run.return_value.stdout = b"List of available languages\neng\nfra\nosd\n"
+            pages = mags.ocr_pages(pdf)
+        self.assertEqual(pages, ["cover", "page 2", "page 3"])
+        self.assertEqual(read, [(2, "fra+eng"), (3, "fra+eng")])
 
     def write_issue(self, key, magazine, picks):
         folder = self.root / key[:4] / key[5:]

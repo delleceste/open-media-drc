@@ -259,6 +259,7 @@ def remove_upload(root: Path, name: str) -> bool:
     if not path.is_file():
         return False
     path.unlink()
+    _ocr_cache(path).unlink(missing_ok=True)
     with _lock:
         _job["items"] = [i for i in _job["items"] if i["file"] != name]
     return True
@@ -299,6 +300,83 @@ def pdf_path(root: Path, key: str, slug: str) -> Path:
 
 
 # ── reading an issue ─────────────────────────────────────────────────────────
+
+# Scanned issues (pages as images, as digital editions often are) are read by OCR:
+# one page at a time at the lowest priority on one thread, so the audio chain is never
+# short of CPU.  About 9 s a page: a 130-page issue takes some 20 minutes.
+OCR_DPI = 150
+OCR_MAX_PAGES = 300
+OCR_LANGUAGES = {"fra": r"\b(?:les|des|une|est|pour|dans|avec|sur|qui|par|du)\b",
+                 "deu": r"\b(?:der|die|und|das|ist|mit|nicht|von|ein|eine|auf)\b",
+                 "ita": r"\b(?:il|della|che|di|per|una|con|sono|gli|nel|del)\b",
+                 "eng": r"\b(?:the|and|of|with|for|this|is|by|his|their|which)\b"}
+
+
+def _ocr_cache(path: Path) -> Path:
+    return path.with_name(path.name + ".ocr.json")
+
+
+def _page_count(path: Path) -> int:
+    try:
+        out = subprocess.run(["pdfinfo", str(path)], capture_output=True, timeout=30).stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    match = re.search(r"^Pages:\s+(\d+)", out, re.M)
+    return int(match[1]) if match else 0
+
+
+def _ocr_page(pdf: Path, number: int, languages: str, folder: str) -> str:
+    image = Path(folder) / "page"
+    env = {**os.environ, "OMP_THREAD_LIMIT": "1"}
+    subprocess.run(["nice", "-n", "19", "pdftoppm", "-f", str(number), "-l", str(number), "-singlefile",
+                    "-r", str(OCR_DPI), "-gray", str(pdf), str(image)], capture_output=True, timeout=120, check=True)
+    result = subprocess.run(["nice", "-n", "19", "tesseract", str(image) + ".pgm", "stdout", "-l", languages],
+                            capture_output=True, timeout=300, check=True, env=env)
+    return re.sub(r"[ \t]{2,}", " ", re.sub(r"\n{3,}", "\n\n", result.stdout.decode("utf-8", "replace"))).strip()
+
+
+def ocr_pages(path: Path, cancel=None, progress=None) -> list[str]:
+    """The text of a scanned PDF, page by page; pages read before a stop are kept
+    beside the upload, so reading again goes on where it stopped."""
+    try:
+        installed = set(subprocess.run(["tesseract", "--list-langs"], capture_output=True, timeout=20,
+                                       check=True).stdout.decode().split())
+    except (OSError, subprocess.SubprocessError):
+        raise MagazineError("This PDF is scanned (no text layer) and tesseract (OCR) is not installed.") from None
+    usable = [lang for lang in OCR_LANGUAGES if lang in installed]
+    if not usable:
+        raise MagazineError("This PDF is scanned (no text layer): install tesseract's French or English data.")
+    count = min(_page_count(path), OCR_MAX_PAGES)
+    if not count:
+        raise MagazineError("Could not read the PDF's pages.")
+    cache = _ocr_cache(path)
+    try:
+        saved = json.loads(cache.read_text())
+        pages = saved["pages"] if saved.get("count") == count else [None] * count
+        languages = saved.get("languages") or ""
+    except (OSError, ValueError, KeyError, AttributeError):
+        pages, languages = [None] * count, ""
+    with tempfile.TemporaryDirectory(prefix="omdrc-ocr-") as folder:
+        for index in range(count):
+            if pages[index] is not None:
+                continue
+            if cancel is not None and cancel.is_set():
+                raise AIError("Reading stopped.")
+            if progress:
+                progress(f"Scanned issue: reading page {index + 1} of {count} (OCR)")
+            try:
+                if not languages:
+                    # the cover and first page tell the language; English is always added
+                    sample = " ".join(_ocr_page(path, n, "+".join(usable), folder).lower()
+                                      for n in range(1, min(count, 2) + 1))
+                    best = max(usable, key=lambda lang: len(re.findall(OCR_LANGUAGES[lang], sample)))
+                    languages = "+".join(dict.fromkeys([best] + (["eng"] if "eng" in usable else [])))
+                pages[index] = _ocr_page(path, index + 1, languages, folder)
+            except (OSError, subprocess.SubprocessError):
+                pages[index] = ""
+            qobuz_ai._write_json(cache, {"count": count, "languages": languages, "pages": pages})
+    return pages
+
 
 def pdf_pages(path: Path) -> list[str]:
     """The text of each page, in reading order (a magazine's columns stay apart)."""
@@ -727,7 +805,9 @@ def read_issue(root: Path, cfg, path: Path, catalog_fn, cancel=None, post=None, 
     original = _display(path.name)
     pages = pdf_pages(path) if pages is None else pages
     if not any(len(p) >= 400 for p in pages):
-        raise MagazineError("This PDF has almost no text (a scan without a text layer cannot be read).")
+        pages = ocr_pages(path, cancel, say)
+    if not any(len(p) >= 400 for p in pages):
+        raise MagazineError("No readable text in this PDF, even by OCR.")
     say("Recognising the magazine and its month")
     issue = identify(cfg, path, original, pages, cancel, post)
     picks = extract(cfg, issue, pages, cancel, post, say)
@@ -749,6 +829,7 @@ def read_issue(root: Path, cfg, path: Path, catalog_fn, cancel=None, post=None, 
             "provider": cfg["provider"], "model": cfg["model"], "picks": picks}
     qobuz_ai._write_json(folder / f"{slug}.json", data)
     shutil.move(str(path), str(folder / f"{slug}.pdf"))
+    _ocr_cache(path).unlink(missing_ok=True)
     if not key:
         raise MagazineError(f"Read {issue['magazine']}, but its month could not be recognised: "
                             f"filed under {folder}.")
