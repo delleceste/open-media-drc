@@ -2292,7 +2292,8 @@ P.row = (c, where = '') => {
         h('div', { class: 'qz-cover-wrap' + (c.image ? ' tap' : ''), title: c.image ? 'Enlarge the cover' : '',
             onclick: c.image ? () => K.openCoverMax(c.image_large || c.image, { usable: () => false },
                 { title: [c.title, c.version ? `(${c.version})` : ''].filter(Boolean).join(' '), facts: [c.artist, c.label, c.year].filter(Boolean).join(' · ') }) : null },
-            c.image ? h('img', { class: 'qz-cover', src: c.image_large || c.image, alt: '', loading: 'lazy' }) : h('div', { class: 'qz-cover' }), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
+            c.image ? h('img', { class: 'qz-cover', src: c.image_large || c.image, alt: '', loading: 'lazy' })
+                : h('div', { class: 'qz-cover' + (c.mag ? ' qz-nocover' : '') }, c.mag ? K.tIcon('magazine') : null), local ? h('span', { class: 'qz-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null),
         body,
         unfound ? h('div', { class: 'qz-act' },
             h('button', { type: 'button', class: 'btn qz-play', title: 'Search for it on Qobuz', 'aria-label': 'Search for it on Qobuz',
@@ -2319,7 +2320,8 @@ P.tile = (c, where = '') => {
         onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); P.open1(c); } },
     },
         h('div', { class: 'qz-tcover' },
-            c.image ? h('img', { src: c.image_large || c.image, alt: '', loading: 'lazy', draggable: 'false' }) : null,
+            c.image ? h('img', { src: c.image_large || c.image, alt: '', loading: 'lazy', draggable: 'false' })
+                : c.mag ? h('span', { class: 'qz-nocover', title: 'Not found on Qobuz' }, K.tIcon('magazine')) : null,
             (c.awards && c.awards.length) || c.rating ? h('span', { class: 'qz-taward', title: 'Awarded' }, '🏆') : null,
             c.source === 'local' ? h('span', { class: 'qz-taward qz-local-source', title: 'Local collection', 'aria-label': 'Local collection' }, '⌂') : null,
             quality(c) ? h('span', { class: 'qz-tq' }, quality(c)) : null,

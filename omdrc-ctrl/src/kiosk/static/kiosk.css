@@ -1587,3 +1587,7 @@ html[data-ls-strip][data-page="qobuz"] .qz-results { padding-bottom: calc(var(--
 .mag-doc-body p, .mag-doc-body li { color: var(--text); font-size: .88rem; line-height: 1.45; margin: .25rem 0; }
 .mag-doc-body ul { padding-left: 1.1rem; margin: .2rem 0 .5rem; }
 .mag-sheet .sheet-actions .btn { display: inline-flex; align-items: center; gap: .3rem; }
+.qz-nocover { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.qz-cover.qz-nocover .ticon { width: 45%; height: 45%; }
+.qz-tcover .qz-nocover { position: absolute; inset: 0; }
+.qz-tcover .qz-nocover .ticon { width: 40%; height: 40%; }

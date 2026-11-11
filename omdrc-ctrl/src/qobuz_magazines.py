@@ -37,7 +37,7 @@ from pathlib import Path
 
 import qobuz_ai
 from qobuz_ai import AIError
-from qobuz_search import QobuzError
+from qobuz_search import QobuzError, is_advance_single
 
 MAX_UPLOAD = 400 * 1024 * 1024
 FREE_MARGIN = 1024 * 1024 * 1024        # never fill the disk the archive is on
@@ -565,7 +565,7 @@ symphony symphonique sinfonie sinfonieorchester chamber chambre kammer choir cho
 quartet quatuor quartett trio consort players soloists singers band baroque barocca baroque academy academie
 akademie national nationale radio de du des la le les the of and et und di del della von van der
 piano violin cello soprano tenor baritone bass mezzo conductor direction dir various artists""".split())
-_WORK_STOP = set("""no nr op bwv kv k hob d rv in major minor dur moll majeur mineur and et und the de la le les des
+_WORK_STOP = set("""no nr nos nrs op bwv kv k hob d rv in major minor dur moll majeur mineur and et und the de la le les des
 du of for pour fur a an complete integrale works oeuvres werke vol volume sonata sonatas symphony symphonies
 concerto concertos quartet quartets string piano music musique""".split())
 
@@ -574,11 +574,24 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", _fold(text))
 
 
+# The roles magazines print after a name ("Pavel Kolesnikov pf", "Cyrille Dubois ten",
+# "Bruno de Sá counterten"): never part of a name, never searched for.
+ROLES = re.compile(
+    r"(?<![\w-])(?:pf|pno|vn|vns|va|vas|vc|vcs|db|dbs|fl|fls|ob|obs|cl|cls|bn|bns|hn|hns|tpt|tpts|tbn|tba|perc"
+    r"|hp|hpd|hpds|org|gtr|kbd|cond|sop|sops|mez|mezzo|contr|alt|ten|tens|bar|bass-bar|bbar|bass|counterten|ct"
+    r"|narr|spkr|treb|voc|viols?|rec|recs|sax|acc|cimb|theorbo?|lute|dir|chbr|ens|pianos?|violins?|violas?|cellos?"
+    r"|soprano|tenor|baritone|countertenor|conductor|piano|violon|violoncelle|chef|direction)(?![\w-])\.?")
+
+
+def _people(performers: str) -> str:
+    return re.sub(r"\s+", " ", ROLES.sub(" ", re.sub(r"\([^)]*\)", " ", performers or ""))).strip()
+
+
 def _surnames(names: str) -> set[str]:
-    text = re.sub(r"\([^)]*\)", " ", names or "")
+    text = _people(names)
     out = set()
     for part in re.split(r"[,;/&+]|\band\b|\bet\b|\bund\b|\bwith\b", text, flags=re.I):
-        words = [w for w in _words(part) if len(w) >= 3 and w not in _GENERIC]
+        words = [w for w in _words(part) if len(w) >= 2 and w not in _GENERIC]
         if words:
             out.add(words[-1])
     return out
@@ -616,8 +629,8 @@ def same_recording(a: dict, b: dict) -> bool:
 # ── Qobuz ────────────────────────────────────────────────────────────────────
 
 def _query(pick: dict) -> str:
-    performers = re.sub(r"\([^)]*\)", " ", pick["performers"])
-    names = [n.strip() for n in re.split(r"[,;/&]|\band\b|\bet\b", performers) if n.strip()]
+    performers = _people(pick["performers"])
+    names = [n.strip() for n in re.split(r"[,;/&]|\band\b|\bet\b|\bwith\b", performers) if n.strip()]
     # an orchestra and its conductor, a singer and the pianist: both are how Qobuz names the album
     lead = " ".join(names[:1] + [n.split()[-1] for n in names[1:2]])
     composer = re.split(r"[,;/&]", pick["composer"])[0].strip()
@@ -639,7 +652,12 @@ def _card_score(card: dict, pick: dict, year: int) -> int:
     label_words = {w for w in _words(pick["label"]) if len(w) >= 3 and w not in ("records", "classics", "music")}
     if label_words & set(_words(card.get("label", ""))):
         score += 2
-    score += min(4, len(_work_words(pick) & set(_words(str(card.get("title", ""))))))
+    works = _work_words(pick)
+    shared = works & set(_words(f"{card.get('title', '')} {card.get('version', '')}"))
+    # the same artists in another of their albums (Bernstein's Nielsen symphonies for his
+    # Nielsen clarinet concerto) is not the recording reviewed
+    distinctive = {w for w in works if not w.isdigit()}
+    score += min(4, len(shared)) if shared or not distinctive else -5
     card_year = card.get("year")
     if year and isinstance(card_year, int):
         score += 1 if card_year >= year - 2 else -2 if card_year < year - 6 else 0
@@ -651,7 +669,7 @@ def _queries(pick: dict) -> list[str]:
     work's printed title ("Symphonies Nos 1-7") can hide the album a name finds."""
     composer = re.split(r"[,;/&]", pick["composer"])[0].strip()
     composer = composer.split()[-1] if composer else ""
-    names = [n.strip() for n in re.split(r"[,;/&]|\band\b|\bet\b", re.sub(r"\([^)]*\)", " ", pick["performers"]))
+    names = [n.strip() for n in re.split(r"[,;/&]|\band\b|\bet\b|\bwith\b", _people(pick["performers"]))
              if n.strip()]
     found = [_query(pick)] + [f"{n.split()[-1]} {composer}".strip() for n in reversed(names[:3])]
     if pick["album_title"]:
@@ -667,7 +685,9 @@ def find_on_qobuz(catalog, pick: dict, year: int) -> dict | None:
             continue
         best, best_score = None, 4
         for card in answer.get("results", [])[:30]:
-            if card.get("source") == "local" or card.get("streamable") is False or not card.get("id"):
+            # a one-track advance single is never the album reviewed (it would play one track)
+            if (card.get("source") == "local" or card.get("streamable") is False or not card.get("id")
+                    or is_advance_single(card)):
                 continue
             score = _card_score(card, pick, year)
             if score > best_score:
@@ -675,6 +695,22 @@ def find_on_qobuz(catalog, pick: dict, year: int) -> dict | None:
         if best:
             return {k: best.get(k) for k in CARD_FIELDS}
     return None
+
+
+def rematch(root: Path, key: str, catalog) -> int:
+    """Look this month's recommendations up on Qobuz again (after the matching changed);
+    no AI is asked.  Returns how many are found."""
+    found = 0
+    for issue in issues(root, key):
+        for pick in issue["picks"]:
+            if isinstance(pick, dict):
+                pick["query"] = _query(pick)
+                pick["qobuz"] = find_on_qobuz(catalog, pick, int(key[:4]))
+                found += bool(pick["qobuz"])
+        issue.pop("month_key", None)
+        qobuz_ai._write_json(_month_dir(root, key) / f"{issue['slug']}.json", issue)
+    write_document(root, key)
+    return found
 
 
 # ── the job ──────────────────────────────────────────────────────────────────

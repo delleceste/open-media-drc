@@ -97,6 +97,23 @@ class ReadingTest(unittest.TestCase):
         self.assertFalse(pdf.exists())
         self.assertIn("English", sent[1]["messages"][0]["content"])
 
+    def test_roles_singles_and_other_albums_are_not_matched(self):
+        self.assertEqual(mags._people("Pavel Kolesnikov pf"), "Pavel Kolesnikov")
+        self.assertEqual(mags._surnames("Bruno de Sá counterten; Cyrille Dubois ten"), {"sa", "dubois"})
+        nocturnes = pick(composer="Chopin", works="Complete Nocturnes", performers="Pavel Kolesnikov pf",
+                         label="Harmonia Mundi", catalogue="")
+        single = {"id": "s1", "title": "Nocturne Op 9 No 2", "artist": "Pavel Kolesnikov", "composer": "Chopin",
+                  "label": "Harmonia Mundi", "year": 2026, "tracks": 1, "duration": 280, "streamable": True}
+        album = {**single, "id": "a1", "title": "Chopin: Nocturnes", "tracks": 22, "duration": 6400}
+        found = FakeCatalog([single, album])
+        self.assertEqual(mags.find_on_qobuz(found, nocturnes, 2026)["id"], "a1")
+        self.assertEqual(found.queries[0], "Pavel Kolesnikov Chopin Complete Nocturnes")
+        concerto = pick(composer="Nielsen", works="Clarinet Concerto, Op 57", catalogue="",
+                        performers="Stanley Drucker; New York Philharmonic / Leonard Bernstein", label="Sony Classical")
+        symphonies = {"id": "b1", "title": "Nielsen: Symphony No. 3 & Symphony No. 5", "artist": "Leonard Bernstein",
+                      "composer": "Carl Nielsen", "label": "Sony Classical", "year": 2017, "tracks": 6, "streamable": True}
+        self.assertIsNone(mags.find_on_qobuz(FakeCatalog([symphonies]), concerto, 2026))
+
     def test_magazine_names_and_file_names_are_normalised(self):
         for given, name in (("BBC Music", "BBC Music Magazine"), ("Gramophone Magazine UK", "Gramophone"),
                             ("DIAPASON N° 745 - décembre 2026", "Diapason"), ("FONO FORUM", "Fono Forum"),
