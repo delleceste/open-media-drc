@@ -163,7 +163,7 @@ def export_rows(root: Path) -> list[dict]:
     for key in months(root, shared=False):
         for issue in issues(root, key, shared=False):
             row = {k: v for k, v in issue.items() if k not in ("month_key", "box", "remote")}
-            rows.append({"kind": "issue", "month": key, **row})
+            rows.append({**row, "kind": "issue", "month": key})   # the key, not the issue's own month number
         verdicts = (_digest(root, key, shared=False).get("verdicts") or {})
         if verdicts:
             rows.append({"kind": "verdicts", "month": key, "verdicts": verdicts})

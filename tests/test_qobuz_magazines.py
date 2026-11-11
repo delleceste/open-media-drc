@@ -172,6 +172,7 @@ class ReadingTest(unittest.TestCase):
         folder.mkdir(parents=True, exist_ok=True)
         slug = f"{mags._safe(magazine)}-{key}"
         (folder / f"{slug}.json").write_text(json.dumps({"magazine": magazine, "issue": "", "language": "en",
+                                                          "year": int(key[:4]), "month": int(key[5:]),
                                                           "slug": slug, "picks": picks}))
         (folder / f"{slug}.pdf").write_bytes(b"%PDF-1.4")
         return slug
@@ -272,6 +273,7 @@ class ReadingTest(unittest.TestCase):
         rows = mags.export_rows(self.root)
         self.assertEqual([r["kind"] for r in rows], ["issue"])
         self.assertEqual(rows[0]["slug"], "gramophone-2026-12")
+        self.assertEqual(rows[0]["month"], "2026-12", "the month key, which the other boxes file it by")
         self.assertNotIn("pdf", json.dumps(rows).lower().replace("pdf_", ""), "no PDF travels")
 
         diapason = {"kind": "issue", "month": "2026-12", "slug": "diapason-2026-12", "magazine": "Diapason",
